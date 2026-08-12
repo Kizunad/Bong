@@ -11163,7 +11163,7 @@ mod tests {
 
     /// 对比 proto (prost) 与 JSON (serde_json) 的编解码性能和体积。
     ///
-    /// 运行：`cargo test proto_vs_json_benchmark -- --ignored --nocapture`
+    /// 运行：`scripts/build-token.sh cargo test proto_vs_json_benchmark -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn proto_vs_json_benchmark() {
@@ -11695,26 +11695,31 @@ mod tests {
     // P4.4 — buf breaking CI 配置 pin 测试
     // ═══════════════════════════════════════════════════════════════
 
-    /// 验证 buf breaking CI 配置存在且内容正确。
+    /// 验证 buf breaking CI 保护仍然存在且真正执行。
     /// 防止 CI 配置被意外移除或修改导致 proto 兼容性保护失效。
     #[test]
     fn buf_breaking_ci_is_configured() {
-        // 1. 验证 e2e.yml 包含 buf breaking 步骤
-        let e2e_yml = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .join(".github/workflows/e2e.yml"),
-        )
-        .expect("应能读取 .github/workflows/e2e.yml — CI 配置缺失");
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+
+        // 1. 验证 e2e.yml 把 proto 破坏性检查委托给 check-proto-breaking.sh（PR 事件）
+        let e2e_yml = std::fs::read_to_string(repo_root.join(".github/workflows/e2e.yml"))
+            .expect("应能读取 .github/workflows/e2e.yml — CI 配置缺失");
 
         assert!(
-            e2e_yml.contains("scripts/check-proto-breaking.sh"),
-            "e2e.yml 应调用 verified base-ref proto breaking gate"
+            e2e_yml.contains("bash scripts/check-proto-breaking.sh"),
+            "e2e.yml 应通过 'bash scripts/check-proto-breaking.sh' 执行 proto 破坏性检查 — \
+             proto 兼容性 CI 保护缺失"
         );
         assert!(
-            e2e_yml.contains("github.event.pull_request.base.ref"),
-            "e2e.yml 应将 PR base ref 传给 proto breaking gate"
+            e2e_yml.contains("github.event_name == 'pull_request'"),
+            "e2e.yml 的 proto 破坏性检查必须限定在 pull_request 事件，否则检查会被静默绕过"
+        );
+        assert!(
+            e2e_yml.contains("BASE_REF")
+                && e2e_yml.contains("github.event.pull_request.base.ref"),
+            "e2e.yml 的 proto 破坏性检查必须把 PR base ref 注入 BASE_REF"
         );
         assert!(
             e2e_yml.contains("Install buf") || e2e_yml.contains("bufbuild/buf-action"),
@@ -11725,14 +11730,31 @@ mod tests {
             "e2e.yml 应包含 'buf lint' 步骤 — proto lint CI 保护缺失"
         );
 
-        // 2. 验证 proto/buf.yaml 配置
-        let buf_yaml = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .join("proto/buf.yaml"),
-        )
-        .expect("应能读取 proto/buf.yaml — buf 配置文件缺失");
+        // 2. 验证被委托的脚本真的执行 buf breaking（委托不是空壳）
+        let breaking_script =
+            std::fs::read_to_string(repo_root.join("scripts/check-proto-breaking.sh"))
+                .expect("应能读取 scripts/check-proto-breaking.sh — 委托脚本缺失");
+
+        let buf_breaking_lines: Vec<&str> = breaking_script
+            .lines()
+            .filter(|line| line.trim_start().starts_with("buf breaking"))
+            .collect();
+        assert!(
+            !buf_breaking_lines.is_empty(),
+            "check-proto-breaking.sh 必须包含真实的 'buf breaking' 调用行（非注释）— \
+             委托后脚本若不再执行 buf breaking，proto 兼容性保护即失效"
+        );
+        assert!(
+            buf_breaking_lines
+                .iter()
+                .any(|line| line.contains("--against")),
+            "check-proto-breaking.sh 的 buf breaking 必须带 '--against' 比较基准，\
+             否则无法与 base 分支 proto 做破坏性对比"
+        );
+
+        // 3. 验证 proto/buf.yaml 配置
+        let buf_yaml = std::fs::read_to_string(repo_root.join("proto/buf.yaml"))
+            .expect("应能读取 proto/buf.yaml — buf 配置文件缺失");
 
         assert!(
             buf_yaml.contains("breaking:"),

@@ -403,6 +403,7 @@ fn relic_hydrate_app(
         ..Default::default()
     });
     app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
         zones: vec![test_zone(zone_name, DimensionKind::Overworld)],
     });
     // registry 含 engraved_plaque（GuardianRelic chance=1.0 必命中）。

@@ -40,5 +40,6 @@
     "station_pos_z": {
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e61cb5ce204101c723db2ca384dc73abc29780bd0ab9359e23c177699ec705a6"
 }

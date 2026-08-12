@@ -103,5 +103,6 @@
     "is_hunyuan": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "ef10e71afb6f04bc82ef0f14061a15341826d2b8d2a1098e97c32d98efdfad96"
 }

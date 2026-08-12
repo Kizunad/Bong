@@ -1,0 +1,227 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "lower_jog",
+  "description": "下半身·慢跑循环（vanilla sprint 档）。步频提高、膝弯加深、body 微前倾。",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 16,
+    "stopTick": 19,
+    "isLoop": true,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "pitch": -0.5585054
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "bend": 0.1570796
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "pitch": 0.5585054
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "bend": 0.3490659
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.055
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "pitch": 0.122173
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "pitch": -0.0558505
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "bend": 0.3490659
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "pitch": -0.0558505
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "bend": 0.9075712
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": -0.055
+        }
+      },
+      {
+        "tick": 4,
+        "easing": "INOUTSINE",
+        "body": {
+          "pitch": 0.122173
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "pitch": 0.5585054
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "bend": 0.3490659
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "pitch": -0.5585054
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "bend": 0.1570796
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.055
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "body": {
+          "pitch": 0.122173
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "pitch": 0.0558505
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "bend": 0.9075712
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "pitch": 0.0558505
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "bend": 0.3490659
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": -0.055
+        }
+      },
+      {
+        "tick": 12,
+        "easing": "INOUTSINE",
+        "body": {
+          "pitch": 0.122173
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "pitch": -0.5585054
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "rightLeg": {
+          "bend": 0.1570796
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "pitch": 0.5585054
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "leftLeg": {
+          "bend": 0.3490659
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.055
+        }
+      },
+      {
+        "tick": 16,
+        "easing": "INOUTSINE",
+        "body": {
+          "pitch": 0.122173
+        }
+      }
+    ]
+  }
+}

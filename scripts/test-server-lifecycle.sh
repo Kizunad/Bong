@@ -22,6 +22,47 @@ fail() {
     exit 1
 }
 
+# The reserved-id boundary is security-critical and must be pinned independently
+# from record metadata, permissions, or /proc fixtures.
+for signal_id in 0 1 -1 '' not-a-pid 1.5; do
+    if bong_server_validate_signal_id "$signal_id"; then
+        fail "reserved or malformed signal id '$signal_id' was accepted"
+    fi
+done
+for signal_id in 2 2147483647; do
+    bong_server_validate_signal_id "$signal_id" \
+        || fail "valid positive signal id '$signal_id' was rejected"
+done
+for reserved_pgid in 0 1; do
+    if bong_server_pidfd_signal 2 0 0:0 TERM "$reserved_pgid"; then
+        fail "reserved PGID '$reserved_pgid' reached pidfd signaling"
+    else
+        signal_status=$?
+    fi
+    [ "$signal_status" -eq 2 ] \
+        || fail "reserved PGID '$reserved_pgid' must fail closed with status 2, got $signal_status"
+done
+for reserved_id in 0 1; do
+    if python3 "$ROOT/scripts/lib/bong-pidfd-signal.py" \
+        "$reserved_id" 0 0:0 TERM; then
+        fail "Python pidfd helper accepted reserved PID '$reserved_id'"
+    else
+        helper_status=$?
+    fi
+    [ "$helper_status" -eq 2 ] \
+        || fail "reserved PID '$reserved_id' must fail closed in Python helper with status 2, got $helper_status"
+done
+for reserved_pgid in 0 1; do
+    if python3 "$ROOT/scripts/lib/bong-pidfd-signal.py" \
+        2 0 0:0 TERM "$reserved_pgid"; then
+        fail "Python pidfd helper accepted reserved PGID '$reserved_pgid'"
+    else
+        helper_status=$?
+    fi
+    [ "$helper_status" -eq 2 ] \
+        || fail "reserved PGID '$reserved_pgid' must fail closed in Python helper with status 2, got $helper_status"
+done
+
 spawn_fixture() {
     local mode="$1"
     local marker="$2"
@@ -2507,39 +2548,41 @@ server_ready_path="$TEST_ROOT/start-cleanup.ready"
 SESSION=bong-cleanup-fixture
 server_pid=424242
 server_starttime=1
+server_executable=/bin/bash
 server_executable_identity=1:1
 server_identity_pinned=0
 tmux_kill_calls=0
-pinned_stop_calls=0
+rollback_calls=0
 tmux() { [ "${1:-}" = kill-session ] && tmux_kill_calls=$((tmux_kill_calls + 1)); }
-bong_server_stop_pinned_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return 0; }
+bong_server_rollback_pinned_managed_process() { rollback_calls=$((rollback_calls + 1)); return 0; }
 if cleanup_pinned_server_or_preserve_tmux "identity pin failed"; then
     fail "unverified production startup cleanup must fail closed"
 fi
-[ "$pinned_stop_calls" -eq 0 ] \
+[ "$rollback_calls" -eq 0 ] \
     || fail "unverified production startup cleanup must not signal a guessed PID"
 [ "$tmux_kill_calls" -eq 0 ] \
     || fail "unverified production startup cleanup must preserve tmux instead of HUP"
 server_identity_pinned=1
 cleanup_pinned_server_or_preserve_tmux "readiness failed" \
-    || fail "verified production startup cleanup should accept a safe pinned stop"
-[ "$pinned_stop_calls" -eq 1 ] \
-    || fail "verified production startup cleanup must use pinned TERM/wait/KILL"
+    || fail "verified production cleanup should accept a safe pinned rollback"
+[ "$rollback_calls" -eq 1 ] \
+    || fail "verified production cleanup must use the managed rollback wrapper"
 [ "$tmux_kill_calls" -eq 1 ] \
-    || fail "verified production startup cleanup may destroy tmux only after graceful stop"
-bong_server_stop_pinned_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return "$BONG_SERVER_STOP_FORCED"; }
-if cleanup_pinned_server_or_preserve_tmux "forced shutdown"; then
-    fail "force-stopped startup cleanup must not authorize tmux teardown"
-fi
-[ "$tmux_kill_calls" -eq 1 ] \
-    || fail "force-stopped startup cleanup must preserve tmux"
-bong_server_stop_pinned_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return 2; }
+    || fail "verified production cleanup may destroy tmux only after rollback"
+bong_server_rollback_pinned_managed_process() { rollback_calls=$((rollback_calls + 1)); return 0; }
+cleanup_pinned_server_or_preserve_tmux "forced shutdown" \
+    || fail "identity-safe forced rollback should authorize tmux teardown"
+[ "$rollback_calls" -eq 2 ] \
+    || fail "forced rollback must use the managed rollback wrapper"
+[ "$tmux_kill_calls" -eq 2 ] \
+    || fail "forced rollback must destroy tmux only after exact process cleanup"
+bong_server_rollback_pinned_managed_process() { rollback_calls=$((rollback_calls + 1)); return 2; }
 if cleanup_pinned_server_or_preserve_tmux "inspection failed"; then
     fail "uninspectable pinned startup cleanup must fail closed"
 fi
-[ "$tmux_kill_calls" -eq 1 ] \
-    || fail "uninspectable pinned startup cleanup must preserve tmux"
-unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_stop_pinned_process
+[ "$tmux_kill_calls" -eq 2 ] \
+    || fail "uninspectable pinned cleanup must preserve tmux"
+unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_rollback_pinned_managed_process
 
 # The three production entrypoints must execute the same tri-state contract, not
 # merely mention it in static text. Start/reload may replace after status 3 while
@@ -2856,8 +2899,8 @@ grep -Fq 'bong-process-group-supervisor.py' "$ROOT/scripts/e2e-redis.sh" \
     || fail "e2e server launch must use the persistent process-group supervisor"
 ! grep -Fq 'setsid --fork' "$ROOT/scripts/e2e-redis.sh" \
     || fail "e2e launch must not recover authority through a replaceable pathname"
-grep -Fq 'bong_server_stop_pinned_process \' "$ROOT/scripts/start.sh" \
-    || fail "production startup cleanup must delegate to the pinned TERM/wait/KILL helper"
+grep -Fq 'bong_server_rollback_pinned_managed_process \' "$ROOT/scripts/start.sh" \
+    || fail "production startup cleanup must delegate to the pinned managed rollback helper"
 grep -Fq 'cleanup_pinned_server_or_preserve_tmux \' "$ROOT/scripts/start.sh" \
     || fail "readiness and record failure paths must use safe pinned cleanup"
 grep -Fq 'preserving tmux for diagnosis' "$ROOT/scripts/start.sh" \

@@ -20,5 +20,6 @@
       "const": "ascension_quota_open",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "acc909ef3a474be12c0228fa98c6fdb81468936ab482131564dd1ee077a427c6"
 }

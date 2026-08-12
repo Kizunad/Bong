@@ -24,8 +24,8 @@ use valence::prelude::{
     EventWriter, IntoSystemConfigs, Position, PreUpdate, Query, Update, With, Without,
 };
 
-use crate::combat::events::DeathEvent;
-use crate::cultivation::components::Realm;
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Realm};
+use crate::cultivation::life_record::LifeRecord;
 use crate::dandao::boss::{compute_loot, BaolongwangBoss, BossPhase};
 use crate::dandao::boss_ai::{
     pick_best_action, score_avoid_player, score_berserk_attack, score_horn_charge,
@@ -35,14 +35,12 @@ use crate::dandao::boss_ai::{
 use crate::fauna::visual::BAOLONGWANG_ENTITY_KIND;
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::npc::brain::{AgeingScorer, RetireAction};
-use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcTerminalSettlementSucceeded};
 use crate::npc::movement::{MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker};
-use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
-use crate::qi_physics::release::qi_release_to_zone;
+use crate::qi_physics::{QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::world::zone::ZoneRegistry;
 
 /// 暴龙王活动区域 zone 名称（plan §接入面/zone 锚点）。
@@ -335,30 +333,28 @@ pub fn baolongwang_action_system(
 /// worldview §十六:1572 依据：负压畸变体通过真元吸取光环从附近修士持续抽取真元，
 /// 吸取量基础 × 1.5（+50% 加成）。
 ///
-/// **守恒保证**：吸取的真元通过 `QiTransfer{reason:BossDrain, from:player, to:zone}`
-/// 转入 `baolongwang_cavern_deep` zone 账户，total 守恒；同时把等量写回
-/// `ZoneRegistry.spirit_qi`（field authority），与 ledger zone 镜像保持一致——
-/// 否则 `heartbeat::zone_qi_inflow_tick` 等字段权威重同步 system 会用陈旧
-/// `zone.spirit_qi` 覆写掉这笔 ledger 增量（吞真元红旗）。
+/// **守恒保证**：附近玩家必须携带 canonical `LifeRecord`；同一类型化事务直接借记
+/// `Cultivation`、增加 signed `Zone.spirit_qi`，并在成功后投影 `BossDrain` audit/event。
+/// zone 是唯一物理 owner，`WorldQiAccount` 不保存长期 `zone:*` 镜像。
 pub fn baolongwang_qi_drain_aura_system(
     bosses: Query<(&BaolongwangBoss, &Position), With<BaolongwangMarker>>,
     mut players: Query<
         (
-            Entity,
             &Position,
             &mut crate::cultivation::components::Cultivation,
+            &LifeRecord,
         ),
         Without<BaolongwangMarker>,
     >,
-    mut qi_account: Option<bevy_ecs::system::ResMut<WorldQiAccount>>,
+    qi_account: Option<bevy_ecs::system::ResMut<WorldQiAccount>>,
     mut zone_registry: Option<bevy_ecs::system::ResMut<ZoneRegistry>>,
     mut qi_transfer_events: EventWriter<QiTransfer>,
 ) {
-    let Some(ref mut account) = qi_account else {
+    // ledger 或 zone 缺失：跳过本 tick 全部吸取，不能先扣玩家再入账失败。
+    // 原子性要求宁可整 tick 不吸，也不留半截状态。
+    let Some(mut qi_account) = qi_account else {
         return;
     };
-    // zone 缺失（资源未插入 / BOSS_HOME_ZONE 未注册）：跳过本 tick 全部吸取，
-    // 不能先扣玩家再入账失败——原子性要求宁可整 tick 不吸，也不留半截状态。
     let Some(zone_registry) = zone_registry.as_deref_mut() else {
         return;
     };
@@ -373,8 +369,7 @@ pub fn baolongwang_qi_drain_aura_system(
         }
         let boss_origin = boss_pos.get();
 
-        for (player_entity, player_pos, mut cultivation) in &mut players {
-            let entity_id_bits = player_entity.to_bits();
+        for (player_pos, mut cultivation, life_record) in &mut players {
             let dist = player_pos.get().distance(boss_origin);
             if dist > QI_DRAIN_AURA_RADIUS {
                 continue;
@@ -388,91 +383,54 @@ pub fn baolongwang_qi_drain_aura_system(
                 continue;
             }
 
-            // 不能吸超过玩家当前真元
-            let actual_drain = drain_amount.min(cultivation.qi_current.max(0.0));
+            let actual_drain = drain_amount.min(cultivation.qi_current().max(0.0));
             if actual_drain <= f64::EPSILON {
                 continue;
             }
+            let Ok(actor) = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Player)
+            else {
+                continue;
+            };
 
-            // player_id 使用 entity bits 作为唯一标识符，保证 audit trail 可追溯至具体实体。
-            let player_id = QiAccountId::player(format!("entity:{}", entity_id_bits));
-            let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-
-            // 复用既有 qi_release_to_zone（release_dormant_qi_to_zone / release_attrition_to_zone
-            // 同款范式）算出本次可入账量与 zone 新值，不自造衰减/入账公式。
-            // zone_current 用 .max(0.0)：这只是 ledger 镜像的输入基线，WorldQiAccount::set_balance
-            // 硬性要求非负（与 heartbeat::zone_qi_inflow_tick 同一镜像口径）。field authority
-            // （ZoneRegistry.spirit_qi）本身允许为负（负灵域债务）——保留原始有符号值到
-            // zone_spirit_qi_before，稍后写回时按它累加，不能拿这个 floor 过的镜像值反向覆盖字段。
-            let zone_spirit_qi_before = zone.spirit_qi;
-            let zone_current = zone_spirit_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-            let Ok(outcome) = qi_release_to_zone(
+            let Ok(outcome) = cultivation.release_to_zone(
+                Some(&mut *zone),
+                &mut qi_account,
+                &actor,
                 actual_drain,
-                player_id.clone(),
-                zone_id.clone(),
-                zone_current,
-                QI_ZONE_UNIT_CAPACITY,
+                QiTransferReason::BossDrain,
             ) else {
-                // 非法输入（理论不可达，actual_drain/zone_current 恒为有限值）：
-                // 不碰玩家、不碰 zone，跳过本次吸取，保证原子性。
                 continue;
             };
-            if outcome.accepted <= f64::EPSILON {
-                continue;
+            for transfer in outcome.transfers {
+                qi_transfer_events.send(transfer);
             }
-
-            // 先提交唯一可能失败的一步（ledger 写入）；失败则不动玩家/zone，整次吸取回滚。
-            if account
-                .set_balance(zone_id.clone(), outcome.zone_after)
-                .is_err()
-            {
-                continue;
-            }
-
-            // ledger 写入已成功，此后全部是不可失败的字段写入：玩家扣减与 zone 权威字段
-            // 同一 outcome.accepted 同成同败，不存在"扣了玩家、zone 没入账"的半截状态。
-            // 注意：玩家真元在 Cultivation.qi_current 中管理，不在 WorldQiAccount balances 里，
-            // 所以不走 WorldQiAccount::transfer（后者会检查 from 账户余额，而 player 余额未在 ledger 中）。
-            cultivation.qi_current -= outcome.accepted;
-            // field authority 按原始有符号 zone_spirit_qi_before 累加本次实际吸取量
-            // outcome.accepted，不能用 floor 过的 outcome.zone_after 覆盖：既有负灵域债务
-            // 在被填平前继续为负、只减少 accepted 那部分；填平后自然转正，全程不凭空
-            // 抹除或增加真元（守恒）。
-            zone.spirit_qi =
-                (zone_spirit_qi_before + outcome.accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
-
-            // 构造 QiTransfer 审计记录：reason 固定 BossDrain（不用 qi_release_to_zone 内部
-            // 生成的 ReleaseToZone transfer），推入 transfers 向量 + emit event。
-            let transfer = QiTransfer {
-                from: player_id,
-                to: zone_id,
-                amount: outcome.accepted,
-                reason: QiTransferReason::BossDrain,
-            };
-            // 将转账记录推入审计轨迹（不改 from 账户 balance，因为玩家余额不在此 ledger）
-            account.push_transfer_audit(transfer.clone());
-            qi_transfer_events.send(transfer);
         }
     }
 }
 
 // ── 死亡 + 掉落 ───────────────────────────────────────────────────────────────
 
-/// BOSS 死亡 reader：监听 `DeathEvent`，若死者是暴龙王则调 `compute_loot` 掉落物品，
-/// 并广播击杀旁白。
+/// BOSS 终结 reader：durable NPC terminal transaction 成功后，若死者是暴龙王则调
+/// `compute_loot` 记录掉落，并广播击杀旁白。raw lethal edge 不得提前产生外部叙事。
 pub fn baolongwang_death_system(
-    mut deaths: EventReader<DeathEvent>,
+    mut deaths: EventReader<NpcTerminalSettlementSucceeded>,
     bosses: Query<(&BaolongwangBoss, &Position, &EntityLayerId), With<BaolongwangMarker>>,
     mut clients: Query<(&Position, &EntityLayerId, &mut Client), Without<BaolongwangMarker>>,
 ) {
     for death in deaths.read() {
-        let Ok((boss, boss_pos, boss_layer)) = bosses.get(death.target) else {
+        let Ok((boss, boss_pos, boss_layer)) = bosses.get(death.entity) else {
             continue;
         };
         let origin = boss_pos.get();
 
-        // 计算掉落（seed = entity bits）
-        let seed = death.target.to_bits();
+        // 计算掉落（seed = canonical actor account，避免 ECS entity recycling 漂移）
+        let seed = death.actor_qi_identity.account().to_string().bytes().fold(
+            death.at_tick,
+            |seed, byte| {
+                seed.wrapping_mul(0x517C_C1B7_2722_0A95)
+                    .wrapping_add(u64::from(byte))
+            },
+        );
         let loot = compute_loot(boss, seed);
 
         // 记录掉落 log（实际 spawn 道具待 inventory 系统接入后对接，此处 tracing 留痕）
@@ -573,7 +531,7 @@ pub fn baolongwang_phase_narration_system(
 
 pub fn register(app: &mut App) {
     // 注册本模块依赖的 events（幂等：若已被上层注册，add_event 是 no-op）。
-    app.add_event::<crate::combat::events::DeathEvent>();
+    app.add_event::<NpcTerminalSettlementSucceeded>();
     app.add_event::<crate::qi_physics::ledger::QiTransfer>();
     app.add_event::<PlaySoundRecipeRequest>();
     app.add_systems(
@@ -588,7 +546,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             baolongwang_qi_drain_aura_system,
-            baolongwang_death_system,
+            baolongwang_death_system
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
             baolongwang_spawn_narration_system,
             baolongwang_phase_narration_system,
         ),
@@ -614,8 +573,10 @@ fn splitmix64(mut x: u64) -> u64 {
 #[cfg(test)]
 mod boss_spawn_tests {
     use super::*;
+    use crate::cultivation::life_record::LifeRecord;
     use crate::dandao::boss::{BaolongwangBoss, BossPhase};
-    use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
+    use crate::player::state::canonical_player_id;
+    use crate::qi_physics::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_ZONE_UNIT_CAPACITY};
     use crate::qi_physics::ledger::{QiAccountId, WorldQiAccount};
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::Zone;
@@ -971,17 +932,12 @@ mod boss_spawn_tests {
         app.add_event::<QiTransfer>();
         app.add_systems(Update, baolongwang_qi_drain_aura_system);
 
-        // 插入 WorldQiAccount 资源，初始化 zone 账户；ZoneRegistry 与之保持同一口径
-        // （spirit_qi=0.1 <-> ledger 5.0，QI_ZONE_UNIT_CAPACITY=50.0）。
+        // Zone.spirit_qi 是唯一物理 owner；ledger 仅保存 audit，不初始化 zone mirror。
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
         let initial_spirit_qi = 0.1f64;
-        let initial_zone_qi = initial_spirit_qi * QI_ZONE_UNIT_CAPACITY;
-        let mut account = WorldQiAccount::default();
-        account
-            .set_balance(zone_id.clone(), initial_zone_qi)
-            .unwrap();
-        app.insert_resource(account);
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1009,6 +965,7 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
@@ -1022,24 +979,18 @@ mod boss_spawn_tests {
             .get::<Cultivation>(player)
             .expect("player Cultivation missing")
             .qi_current;
-        let zone_qi_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
         let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
 
         let player_decrease = initial_player_qi - player_qi_after;
-        let zone_increase = zone_qi_after - initial_zone_qi;
         let zone_spirit_qi_increase = zone_spirit_qi_after - initial_spirit_qi;
 
-        // 玩家减少量 == zone ledger 增加量（守恒恰一次）
-        assert!(
-            (player_decrease - zone_increase).abs() < 1e-9,
-            "守恒：玩家减少({player_decrease:.6}) 应 == zone ledger 增加({zone_increase:.6})，\
-             实际差值 = {:.9}；DEFAULT_SPIRIT_QI_TOTAL={DEFAULT_SPIRIT_QI_TOTAL}",
-            (player_decrease - zone_increase).abs()
+        // zone mirror 永远不存在；物理守恒只比较 actor 与 signed zone owner。
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&zone_id),
+            0.0,
+            "BossDrain 不得创建长期 zone ledger mirror"
         );
 
-        // plan 修复要求 #4：ZoneRegistry.spirit_qi 增量（换算成绝对真元点）也必须与
-        // 玩家减少量 / zone ledger 增量三者对齐——这是本次修复要锁住的行为，若
-        // `zone.spirit_qi` 那行写入被删掉，此断言应撞红（不应仍然通过）。
         let zone_spirit_qi_increase_absolute = zone_spirit_qi_increase * QI_ZONE_UNIT_CAPACITY;
         assert!(
             (player_decrease - zone_spirit_qi_increase_absolute).abs() < 1e-9,
@@ -1108,6 +1059,7 @@ mod boss_spawn_tests {
         // 余额，与生产冷启动时 ledger 尚未记过该 zone 的状态一致（balance() 缺省 0.0）。
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1133,6 +1085,7 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
@@ -1190,6 +1143,7 @@ mod boss_spawn_tests {
         let initial_spirit_qi = -0.001f64;
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1215,6 +1169,7 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
@@ -1303,13 +1258,9 @@ mod boss_spawn_tests {
 
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
         let initial_spirit_qi = 0.2f64;
-        let initial_zone_qi = initial_spirit_qi * QI_ZONE_UNIT_CAPACITY;
-        let mut account = WorldQiAccount::default();
-        account
-            .set_balance(zone_id.clone(), initial_zone_qi)
-            .unwrap();
-        app.insert_resource(account);
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1338,6 +1289,7 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
@@ -1358,13 +1310,9 @@ mod boss_spawn_tests {
              实际 player_qi before={initial_player_qi:.6} after={player_qi_after:.6}"
         );
 
-        // zone ledger 余额也不变
+        // zone ledger mirror 始终不存在。
         let zone_qi_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
-        assert!(
-            (zone_qi_after - initial_zone_qi).abs() < 1e-9,
-            "期望驱逐阶段 zone ledger 余额不变，因为 system 对 Expel 阶段 boss 跳过；\
-             实际 zone_qi before={initial_zone_qi:.6} after={zone_qi_after:.6}"
-        );
+        assert_eq!(zone_qi_after, 0.0, "驱逐阶段不得创建 zone ledger mirror");
 
         // ZoneRegistry.spirit_qi 字段同样不变
         let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
@@ -1398,12 +1346,7 @@ mod boss_spawn_tests {
         // 故意不插入 ZoneRegistry 资源
 
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        let initial_zone_qi = 10.0f64;
-        let mut account = WorldQiAccount::default();
-        account
-            .set_balance(zone_id.clone(), initial_zone_qi)
-            .unwrap();
-        app.insert_resource(account);
+        app.insert_resource(WorldQiAccount::default());
 
         let _boss = app
             .world_mut()
@@ -1427,6 +1370,7 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
@@ -1445,10 +1389,9 @@ mod boss_spawn_tests {
         );
 
         let zone_qi_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
-        assert!(
-            (zone_qi_after - initial_zone_qi).abs() < 1e-9,
-            "ZoneRegistry 资源缺失时 zone ledger 余额也不应变化；\
-             实际 before={initial_zone_qi:.6} after={zone_qi_after:.6}"
+        assert_eq!(
+            zone_qi_after, 0.0,
+            "ZoneRegistry 资源缺失时不得创建 zone ledger mirror"
         );
 
         let transfers = app.world().resource::<WorldQiAccount>().transfers().len();
@@ -1456,6 +1399,132 @@ mod boss_spawn_tests {
             transfers, 0,
             "ZoneRegistry 资源缺失时不应产生任何 BossDrain 审计记录，实际 transfers.len()={transfers}"
         );
+    }
+
+    #[test]
+    fn qi_drain_skips_player_without_life_record_without_partial_settlement() {
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::Position;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, baolongwang_qi_drain_aura_system);
+
+        let initial_spirit_qi = 0.1f64;
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
+        });
+
+        app.world_mut().spawn((
+            BaolongwangMarker,
+            BaolongwangBoss {
+                phase: BossPhase::Rage,
+                hp_fraction: 0.5,
+                ..BaolongwangBoss::default()
+            },
+            Position::new([0.0, 0.0, 0.0]),
+        ));
+
+        let initial_player_qi = 50.0f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_player_qi,
+                    qi_max: initial_player_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 1.0, 0.0]),
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current(),
+            initial_player_qi,
+            "缺少 LifeRecord 组件时 BossDrain query 必须跳过玩家，不能先扣 qi"
+        );
+        assert_eq!(
+            app.world().resource::<ZoneRegistry>().zones[0].spirit_qi,
+            initial_spirit_qi,
+            "缺少 LifeRecord 组件时 signed zone owner 必须保持原样"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .is_empty(),
+            "缺少 LifeRecord 组件时不得留下未发生转移的 audit"
+        );
+    }
+
+    #[test]
+    fn qi_drain_rejects_invalid_life_records_without_partial_settlement() {
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::Position;
+
+        for (label, life_record) in [
+            ("空白", LifeRecord::new("   ")),
+            ("未分配", LifeRecord::default()),
+        ] {
+            let mut app = App::new();
+            app.add_event::<QiTransfer>();
+            app.add_systems(Update, baolongwang_qi_drain_aura_system);
+
+            let initial_spirit_qi = 0.1f64;
+            app.insert_resource(WorldQiAccount::default());
+            app.insert_resource(ZoneRegistry {
+                spatial_revision: 0,
+                zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
+            });
+
+            app.world_mut().spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Rage,
+                    hp_fraction: 0.5,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 0.0, 0.0]),
+            ));
+
+            let initial_player_qi = 50.0f64;
+            let player = app
+                .world_mut()
+                .spawn((
+                    Cultivation {
+                        qi_current: initial_player_qi,
+                        qi_max: initial_player_qi,
+                        ..Cultivation::default()
+                    },
+                    life_record,
+                    Position::new([0.0, 1.0, 0.0]),
+                ))
+                .id();
+
+            app.update();
+
+            assert_eq!(
+                app.world().get::<Cultivation>(player).unwrap().qi_current(),
+                initial_player_qi,
+                "{label} canonical character_id 时 BossDrain 必须 fail closed，不能先扣玩家"
+            );
+            assert_eq!(
+                app.world().resource::<ZoneRegistry>().zones[0].spirit_qi,
+                initial_spirit_qi,
+                "{label} actor identity 无效时 signed zone owner 必须保持原样"
+            );
+            assert!(
+                app.world()
+                    .resource::<WorldQiAccount>()
+                    .transfers()
+                    .is_empty(),
+                "{label} actor identity 无效时不得写 audit，避免记录一笔未发生的物理转移"
+            );
+        }
     }
 
     #[test]
@@ -1470,14 +1539,10 @@ mod boss_spawn_tests {
         app.add_systems(Update, baolongwang_qi_drain_aura_system);
 
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        let initial_zone_qi = 10.0f64;
-        let mut account = WorldQiAccount::default();
-        account
-            .set_balance(zone_id.clone(), initial_zone_qi)
-            .unwrap();
-        app.insert_resource(account);
+        app.insert_resource(WorldQiAccount::default());
         // ZoneRegistry 存在，但注册的是另一个 zone，不含 BOSS_HOME_ZONE
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(0.5)]
                 .into_iter()
                 .map(|mut z| {
@@ -1509,6 +1574,7 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
@@ -1527,10 +1593,9 @@ mod boss_spawn_tests {
         );
 
         let zone_qi_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
-        assert!(
-            (zone_qi_after - initial_zone_qi).abs() < 1e-9,
-            "BOSS_HOME_ZONE 未注册时 zone ledger 余额也不应变化；\
-             实际 before={initial_zone_qi:.6} after={zone_qi_after:.6}"
+        assert_eq!(
+            zone_qi_after, 0.0,
+            "BOSS_HOME_ZONE 未注册时不得创建 zone ledger mirror"
         );
 
         let transfers = app.world().resource::<WorldQiAccount>().transfers().len();
@@ -1558,14 +1623,10 @@ mod boss_spawn_tests {
         );
     }
 
-    // ── heartbeat 覆盖链回归：字段权威重同步不能抹掉 BossDrain 入账 ────────────
+    // ── heartbeat 同 owner 回归：BossDrain 与 pending inflow 都只写 signed zone ────────────
 
     #[test]
     fn qi_drain_survives_heartbeat_zone_inflow_resync() {
-        // 覆盖链回归：BossDrain 入账后推进一次 heartbeat::zone_qi_inflow_tick
-        // （字段权威重同步 system，会用 zone.spirit_qi 覆写 ledger zone 镜像）。
-        // 断言 BossDrain 刚入账的真元不会被这次重同步抹掉——这正是本 plan 要修的
-        // "只落 ledger 镜像、不写 ZoneRegistry.spirit_qi" 吞真元红旗的复现场景。
         use crate::cultivation::components::Cultivation;
         use crate::cultivation::tick::CultivationClock;
         use crate::qi_physics::ledger::pending_inflow_account;
@@ -1584,23 +1645,17 @@ mod boss_spawn_tests {
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
         let initial_spirit_qi = 0.1f64;
         let mut zone = baolongwang_zone_fixture(initial_spirit_qi);
-        // 平衡点显著高于当前值 + qi_inflow_per_min > 0：确保 zone_qi_inflow_tick 真的
-        // 进入覆写分支（而不是被 qi_equilibrium<=0 的 opt-out 短路，测出空转的假阳性）。
-        // qi_inflow_per_min 故意设得比单 tick BossDrain 吸取量（约 0.35，见
-        // QI_DRAIN_BASE_PER_TICK*QI_DRAIN_BOSS_MULTIPLIER*proximity_factor）更小：
-        // 若不这样做，inflow-tick 自身叠加的量会比被抹掉的 drain 量还大，
-        // 掩盖掉"覆写抹掉了 BossDrain 贡献"这件事，让下面的 >= 断言产生假阳性通过。
         zone.qi_equilibrium = 0.5;
         zone.qi_inflow_per_min = 0.1;
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: 0 });
         app.insert_resource(ZoneQiInflowClock::default());
         app.insert_resource(ActiveEventsResource::default());
 
         let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(zone_id.clone(), initial_spirit_qi * QI_ZONE_UNIT_CAPACITY)
-            .unwrap();
         ledger
             .set_balance(pending_inflow_account(), 1000.0)
             .unwrap();
@@ -1620,7 +1675,7 @@ mod boss_spawn_tests {
             .id();
 
         let initial_player_qi = 50.0f64;
-        let _player = app
+        let player = app
             .world_mut()
             .spawn((
                 Cultivation {
@@ -1628,52 +1683,48 @@ mod boss_spawn_tests {
                     qi_max: initial_player_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-drain-test-player")),
                 Position::new([0.0, 1.0, 0.0]),
             ))
             .id();
 
-        // Step 1：首次 update。CultivationClock 与 ZoneQiInflowClock 都从 0 起步，
-        // elapsed_ticks==0，zone_qi_inflow_tick 本次是 no-op；BossDrain 正常吸取一次，
-        // 得到"入账后、尚未被任何重同步 system 碰过"的基线。
         app.update();
 
-        let ledger_after_drain = app.world().resource::<WorldQiAccount>().balance(&zone_id);
         let spirit_qi_after_drain = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
-        assert!(
-            ledger_after_drain > initial_spirit_qi * QI_ZONE_UNIT_CAPACITY + 1e-9,
-            "基线检查：BossDrain 应该已经把真元入账进 zone ledger，\
-             实际 ledger_after_drain={ledger_after_drain:.6}"
+        let player_qi_after_drain = app.world().get::<Cultivation>(player).unwrap().qi_current;
+        assert!(player_qi_after_drain < initial_player_qi);
+        assert!(spirit_qi_after_drain > initial_spirit_qi);
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&zone_id),
+            0.0,
+            "BossDrain 不得建立 zone mirror"
         );
 
-        // Step 2：boss 离场（不再吸取，隔离变量），推进 CultivationClock 触发
-        // zone_qi_inflow_tick 的字段权威重同步分支。
         app.world_mut().despawn(boss);
-        {
-            let mut clock = app.world_mut().resource_mut::<CultivationClock>();
-            clock.tick += TICKS_PER_MINUTE;
-        }
+        app.world_mut().resource_mut::<CultivationClock>().tick += TICKS_PER_MINUTE;
+        let pending_before = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .balance(&pending_inflow_account());
         app.update();
 
-        let ledger_after_inflow = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        let pending_after = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .balance(&pending_inflow_account());
         let spirit_qi_after_inflow = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
-
         assert!(
-            ledger_after_inflow >= ledger_after_drain - 1e-9,
-            "heartbeat 覆盖链回归：zone_qi_inflow_tick 重同步后 zone ledger 余额\
-             ({ledger_after_inflow:.6}) 不能低于 BossDrain 入账后的基线({ledger_after_drain:.6})——\
-             若 baolongwang_qi_drain_aura_system 不写 ZoneRegistry.spirit_qi，\
-             这里会被陈旧 zone.spirit_qi 覆写抹掉 BossDrain 的贡献"
+            pending_after < pending_before,
+            "heartbeat 应真实借记 pending inflow"
         );
         assert!(
-            spirit_qi_after_inflow >= spirit_qi_after_drain - 1e-9,
-            "heartbeat 覆盖链回归：zone_qi_inflow_tick 后 ZoneRegistry.spirit_qi\
-             ({spirit_qi_after_inflow:.9}) 不能低于 BossDrain 后的基线({spirit_qi_after_drain:.9})"
+            spirit_qi_after_inflow > spirit_qi_after_drain,
+            "heartbeat 应在 BossDrain 后继续增加同一 signed zone owner"
         );
-        assert!(
-            ledger_after_inflow > ledger_after_drain + 1e-9,
-            "覆盖链 system 本身要真的跑了平衡回流（不是空转）：\
-             ledger_after_inflow({ledger_after_inflow:.6}) 应严格大于\
-             ledger_after_drain({ledger_after_drain:.6})，否则本测试测不出覆写行为"
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&zone_id),
+            0.0,
+            "heartbeat 也不得建立 zone mirror"
         );
     }
 

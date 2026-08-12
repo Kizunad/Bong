@@ -413,7 +413,10 @@ mod tests {
             "tsy_lingxu_01_mid",
             vec![DVec3::new(10.0, 64.0, 20.0), DVec3::new(-5.0, 64.0, 30.0)],
         );
-        let zones = ZoneRegistry { zones: vec![zone] };
+        let zones = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        };
         let pos = sample_position_in_layer(&zones, "tsy_lingxu_01", TsyDepth::Mid, 0)
             .expect("Mid zone exists");
         // 偏移 ±2 之内
@@ -424,7 +427,10 @@ mod tests {
     #[test]
     fn sample_position_returns_none_when_layer_missing() {
         let zone = make_tsy_zone("tsy_other_01_mid", vec![DVec3::new(0.0, 64.0, 0.0)]);
-        let zones = ZoneRegistry { zones: vec![zone] };
+        let zones = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        };
         let pos = sample_position_in_layer(&zones, "tsy_lingxu_01", TsyDepth::Mid, 0);
         assert!(pos.is_none(), "family 不匹配应返回 None");
     }
@@ -432,7 +438,10 @@ mod tests {
     #[test]
     fn sample_position_falls_back_to_center_when_no_anchors() {
         let zone = make_tsy_zone("tsy_lingxu_01_deep", vec![]);
-        let zones = ZoneRegistry { zones: vec![zone] };
+        let zones = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        };
         let pos = sample_position_in_layer(&zones, "tsy_lingxu_01", TsyDepth::Deep, 0)
             .expect("Deep zone exists");
         // bounds 中心：x=0, y=32, z=0

@@ -18,6 +18,8 @@ import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
+import com.bong.client.lifecycle.ClientStoreScopeManifest;
+import com.bong.client.lifecycle.JavaLifecycleSourceInspector;
 import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
@@ -40,6 +42,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -48,6 +52,47 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongNetworkHandlerTest {
+    private static final Set<String> DISCONNECT_ENTRY_ALLOWED_INVOCATIONS = Set.of(
+        "SessionScopedStoreRegistry.clearAllOnDisconnect",
+        "runAdjunctDisconnectTeardown"
+    );
+    private static final Set<String> DISCONNECT_ADJUNCT_ALLOWED_INVOCATIONS = Set.of(
+        "runDisconnectCleanups",
+        "EnvironmentEffectController.clearOnDisconnect",
+        "BongShaderState.clearOnDisconnect",
+        "CastFovController.clearOnDisconnect",
+        "CombatJuiceSystem.clearOnDisconnect",
+        "CombatHudBootstrap.clearOnDisconnect",
+        "MovementKeybindings.clearOnDisconnect",
+        "BotanyHudBootstrap.clearOnDisconnect",
+        "TechniquesListPanel.clearOnDisconnect",
+        "WeaponTreasurePanel.clearOnDisconnect",
+        "HomeSequence.clearOnDisconnect",
+        "InventoryMoveRejectedHandler.clearOnDisconnect",
+        "PillBuffHudPlanner.clearOnDisconnect",
+        "MorphCastVignetteState.clearOnDisconnect",
+        "SeasonVisualController.clearOnDisconnect",
+        "ScreenTransitionController.clearOnDisconnect",
+        "WorldVfxDemoBootstrap.clearOnDisconnect",
+        "DeadDropBreakPlayer.clearOnDisconnect",
+        "NpcFootstepAudioController.clearOnDisconnect",
+        "BongAnimationRegistry.clearOnDisconnect",
+        "NpcDialogueBubbleRenderer.clear",
+        "com.bong.client.audio.MusicStateMachine.clearOnDisconnect",
+        "SoundRecipePlayer.instance",
+        "SoundRecipePlayer.instance().clearOnDisconnect",
+        "BongAnimationPlayer.clearOnDisconnect",
+        "AnimationLayerManager.clearOnDisconnect",
+        "LowerBodyGaitController.clearOnDisconnect",
+        "BongPunchCombo.clearOnDisconnect",
+        "MutationVisualState.reset",
+        "SpiderDisguiseHandler.clearOnDisconnect",
+        "RatQiTierHandler.clearOnDisconnect",
+        "DaoZhanDisguiseHandler.clearOnDisconnect",
+        "com.bong.client.era.EraAmbianceState.reset",
+        "BongToast.clearOnDisconnect"
+    );
+
     @AfterEach
     void resetUnknownTypeLogCache() {
         BongNetworkHandler.resetUnknownTypeLogTimesForTests();
@@ -613,11 +658,14 @@ public class BongNetworkHandlerTest {
                 + "否则 registry 和非 Store hook 都不会在真实断线时执行"
         );
 
-        int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(clearHelperStart >= 0, "统一断线清理 helper 必须存在");
-        int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
-        assertTrue(clearHelperEnd > clearHelperStart, "必须能精确圈定统一断线清理 helper 范围");
-        String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
+        String clearHelper = methodSource(
+            src,
+            "static void clearClientStateOnDisconnect()"
+        );
+        String adjunctHelper = methodSource(
+            src,
+            "private static void runAdjunctDisconnectTeardown()"
+        );
 
         String registryCall = "SessionScopedStoreRegistry.clearAllOnDisconnect()";
         assertEquals(
@@ -631,67 +679,292 @@ public class BongNetworkHandlerTest {
         );
 
         List<String> nonStoreHooks = List.of(
-            "NpcDialogueBubbleRenderer.clear()",
-            "MusicStateMachine.instance().clear()",
-            "SoundRecipePlayer.instance().clearOnDisconnect()",
-            "BongAnimationPlayer.clearOnDisconnect()",
-            "AnimationLayerManager.clearOnDisconnect()",
-            "BongPunchCombo.clearOnDisconnect()",
-            "MutationVisualState.reset()",
-            "SpiderDisguiseHandler.clearOnDisconnect()",
-            "RatQiTierHandler.clearOnDisconnect()",
-            "DaoZhanDisguiseHandler.clearOnDisconnect()",
-            "EraAmbianceState.reset()",
-            "BongToast.clearOnDisconnect()"
+            "() -> NpcDialogueBubbleRenderer.clear()",
+            "() -> com.bong.client.audio.MusicStateMachine.clearOnDisconnect()",
+            "() -> SoundRecipePlayer.instance().clearOnDisconnect()",
+            "() -> BongAnimationPlayer.clearOnDisconnect()",
+            "() -> AnimationLayerManager.clearOnDisconnect()",
+            "() -> BongPunchCombo.clearOnDisconnect()",
+            "() -> MutationVisualState.reset()",
+            "() -> SpiderDisguiseHandler.clearOnDisconnect()",
+            "() -> RatQiTierHandler.clearOnDisconnect()",
+            "() -> DaoZhanDisguiseHandler.clearOnDisconnect()",
+            "() -> com.bong.client.era.EraAmbianceState.reset()",
+            "() -> BongToast.clearOnDisconnect()"
         );
-        int previousIndex = clearHelper.indexOf(registryCall);
+        int previousIndex = -1;
         for (String hook : nonStoreHooks) {
-            int hookIndex = clearHelper.indexOf(hook);
+            int hookIndex = adjunctHelper.indexOf(hook);
             assertTrue(
                 hookIndex > previousIndex,
                 "非 Store hook 必须保留且维持既有相对顺序；未按序找到 " + hook
             );
             assertEquals(
                 hookIndex,
-                clearHelper.lastIndexOf(hook),
+                adjunctHelper.lastIndexOf(hook),
                 "非 Store hook 必须恰好调用一次，避免重复副作用：" + hook
             );
             previousIndex = hookIndex;
         }
 
-        List<String> migratedStoreTypes = List.of(
-            "RealmCollapseHudStateStore",
-            "NpcMetadataStore",
-            "NpcLodStore",
-            "NpcMoodStore",
-            "TsyBossHealthStore",
-            "TsyDeathVfxStore",
-            "CoffinStateStore",
-            "GatheringSessionStore",
-            "CrackReadingHudStateStore",
-            "ResonanceLockHudStateStore",
-            "VoidErosionVisualStore",
-            "HallucinationLayerStore",
-            "DyingElderEncounterStore",
-            "TiandaoPresenceStore",
-            "BongHudStateStore",
-            "SearchHudStateStore",
-            "AgentUiStore",
-            "HalfStepRechallengeStore",
-            "TutorialCoffinPosStore",
-            "RemainsStore",
-            "DroppedItemStore",
-            "CraftStore",
-            "IdentityPanelStateStore",
-            "FalseSkinHudStateStore",
-            "DuguV2HudStateStore"
+        StoreTokenLexicon lexicon = registryManagedStoreTokens(clientRoot.resolve("src/main/java"));
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            src,
+            "BongNetworkHandler",
+            "clearClientStateOnDisconnect",
+            lexicon.fqcns(),
+            DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+            Set.of()
         );
-        for (String storeType : migratedStoreTypes) {
-            assertFalse(
-                clearHelper.contains(storeType + "."),
-                storeType + " 应只由 registry adapter 清理，helper 不得保留任何 direct call"
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            src,
+            "BongNetworkHandler",
+            "runAdjunctDisconnectTeardown",
+            lexicon.fqcns(),
+            DISCONNECT_ADJUNCT_ALLOWED_INVOCATIONS,
+            Set.of()
+        );
+    }
+
+    private record StoreTokenLexicon(Set<String> fqcns) {}
+
+    private static StoreTokenLexicon registryManagedStoreTokens(
+        java.nio.file.Path productionSourceRoot
+    ) throws Exception {
+        Set<String> fqcns = new TreeSet<>(ClientStoreScopeManifest.registryManagedSessionStores());
+        for (String fqcn : fqcns) {
+            java.nio.file.Path source = productionSourceRoot.resolve(fqcn.replace('.', '/') + ".java");
+            assertTrue(java.nio.file.Files.exists(source), "allowlist 门禁必须能读取 registry-managed Store：" + fqcn);
+        }
+        return new StoreTokenLexicon(Set.copyOf(fqcns));
+    }
+
+    private static StoreTokenLexicon fixtureStoreTokens() {
+        return new StoreTokenLexicon(Set.of("com.bong.client.hud.LootContainerStateStore"));
+    }
+
+    @Test
+    void storeReferenceGuardRejectsEveryDirectStoreReferenceShape() {
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+        List<String> forbiddenFixtures = List.of(
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        LootContainerStateStore.clearOnDisconnect();
+                    }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        com.bong.client.hud.LootContainerStateStore.clearOnDisconnect();
+                    }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable cleaner = LootContainerStateStore::clearOnDisconnect;
+                    }
+                }
+                """,
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Class<?> storeType = LootContainerStateStore.class;
+                    }
+                }
+                """,
+            """
+                import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { clearOnDisconnect(); }
+                }
+                """,
+            """
+                import static com.bong.client.hud.LootContainerStateStore.*;
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { Helper.clearOnDisconnect(); }
+                }
+                final class Helper {
+                    static void clearOnDisconnect() { }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { Helper.clear(); }
+                }
+                final class Helper {
+                    static void clear() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable cleaner = Helper::clearOnDisconnect;
+                    }
+                }
+                final class Helper {
+                    static void clearOnDisconnect() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { new Helper(); }
+                }
+                final class Helper {
+                    Helper() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable cleaner = Helper::clear;
+                    }
+                }
+                final class Helper {
+                    static void clear() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """
+        );
+
+        for (String fixture : forbiddenFixtures) {
+            assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+                    fixture,
+                    "BongNetworkHandler",
+                    "clearClientStateOnDisconnect",
+                    lexicon.fqcns(),
+                    Set.of(),
+                    Set.of()
+                )
             );
         }
+    }
+
+    @Test
+    void adjunctStoreReferenceGuardRejectsStoreMethodReference() {
+        String fixture = """
+            final class BongNetworkHandler {
+                private static void runAdjunctDisconnectTeardown() {
+                    Runnable cleaner = LootContainerStateStore::clearOnDisconnect;
+                }
+            }
+            """;
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+
+        assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+                fixture,
+                "BongNetworkHandler",
+                "runAdjunctDisconnectTeardown",
+                lexicon.fqcns(),
+                Set.of(),
+                Set.of()
+            )
+        );
+    }
+
+    @Test
+    void storeReferenceGuardAllowsSanctionedRegistryAndNonStoreTeardown() {
+        String fixture = """
+            final class BongNetworkHandler {
+                static void clearClientStateOnDisconnect() {
+                    SessionScopedStoreRegistry.clearAllOnDisconnect();
+                    runAdjunctDisconnectTeardown();
+                }
+            }
+            """;
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            fixture,
+            "BongNetworkHandler",
+            "clearClientStateOnDisconnect",
+            lexicon.fqcns(),
+            DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+            Set.of()
+        );
+    }
+
+    @Test
+    void disconnectAllowlistRejectsRenamedHelperCallAndMethodReference() {
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+        for (String fixture : List.of(
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { Helper.teardown(); }
+                }
+                final class Helper {
+                    static void teardown() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable teardown = Helper::teardown;
+                    }
+                }
+                final class Helper {
+                    static void teardown() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """
+        )) {
+            assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+                    fixture,
+                    "BongNetworkHandler",
+                    "clearClientStateOnDisconnect",
+                    lexicon.fqcns(),
+                    DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+                    Set.of()
+                )
+            );
+        }
+    }
+
+    @Test
+    void storeImportUsedOnlyOutsideAuditedDisconnectMethodIsAllowed() {
+        String fixture = """
+            import com.bong.client.hud.LootContainerStateStore;
+            final class BongNetworkHandler {
+                static void clearClientStateOnDisconnect() {
+                    SessionScopedStoreRegistry.clearAllOnDisconnect();
+                    runAdjunctDisconnectTeardown();
+                }
+                private static void runAdjunctDisconnectTeardown() { }
+                static void applyBusinessPayload() {
+                    LootContainerStateStore.replace(null);
+                }
+            }
+            """;
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            fixture,
+            "BongNetworkHandler",
+            "clearClientStateOnDisconnect",
+            lexicon.fqcns(),
+            DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+            Set.of()
+        );
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            fixture,
+            "BongNetworkHandler",
+            "runAdjunctDisconnectTeardown",
+            lexicon.fqcns(),
+            Set.of(),
+            Set.of()
+        );
     }
 
     private static Envelope.PlayerState.Builder seasonAuditPlayerState() {
@@ -826,6 +1099,23 @@ public class BongNetworkHandlerTest {
         } catch (ReflectiveOperationException exception) {
             throw new AssertionError(scenario + " 无法反射调用 private applyDispatch", exception);
         }
+    }
+
+    private static String methodSource(String source, String declaration) {
+        int start = source.indexOf(declaration);
+        assertTrue(start >= 0, "必须存在 production lifecycle helper：" + declaration);
+        int bodyStart = source.indexOf('{', start);
+        assertTrue(bodyStart >= 0, "production lifecycle helper 必须有方法体：" + declaration);
+        int depth = 0;
+        for (int index = bodyStart; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}' && --depth == 0) {
+                return source.substring(start, index + 1);
+            }
+        }
+        throw new AssertionError("无法圈定 production lifecycle helper：" + declaration);
     }
 
     private static MinecraftClient allocateHeadlessClientWithoutPlayer() {

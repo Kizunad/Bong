@@ -13,5 +13,6 @@
       "const": "F",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "5c76edd89fe5922255766f7e91bc81a1fc27874cee14c811092039afe5726348"
 }

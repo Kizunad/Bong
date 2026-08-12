@@ -681,4 +681,91 @@ mod tests {
             "mineral_anchors.json should contain a fan_tie anchor (mineral_id field) for spawn area iron sword crafting"
         );
     }
+
+    /// verdict-1906-r2 major #4 — surface_stash_craft 的 20 个 craft scroll 端到端契约：
+    /// ① exact set（多/少/改名都红）② weight==2 && count==(1,1)（新旧 scroll 权重分层
+    /// 契约：craft scroll 保持低权重、单张）③ 每个 scroll 在 ItemRegistry 中确实存在且
+    /// category==Scroll ④ 每个 scroll 确实能解锁至少一条 craft 配方（UnlockSource::Scroll）。
+    #[test]
+    fn surface_stash_craft_contains_exactly_the_twenty_craft_scrolls_with_contract() {
+        const CRAFT_SCROLLS: [&str; 20] = [
+            "scroll_fake_skin_light",
+            "scroll_herb_knife_iron",
+            "scroll_zhenfa_trap_iron",
+            "scroll_workbench_sealed_vial",
+            "scroll_workbench_seal_box",
+            "scroll_workbench_dead_drop",
+            "scroll_workbench_qi_talisman",
+            "scroll_workbench_meridian_rub",
+            "scroll_workbench_ningmai_prep",
+            "scroll_workbench_meridian_salve",
+            "scroll_workbench_anti_gu",
+            "scroll_workbench_qingzhuo",
+            "scroll_workbench_array_flag",
+            "scroll_workbench_array_eye",
+            "scroll_workbench_decoy_stake",
+            "scroll_workbench_scatter_bead",
+            "scroll_workbench_gather_base",
+            "scroll_workbench_niche_repair",
+            "scroll_workbench_lantern",
+            "scroll_workbench_niche_base",
+        ];
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let pool = pools
+            .get("surface_stash_craft")
+            .expect("surface_stash_craft pool must exist");
+        let items = crate::inventory::load_item_registry().expect("item registry must load");
+        let mut craft_registry = crate::craft::CraftRegistry::new();
+        crate::craft::load_default_craft_recipes(&mut craft_registry, &items)
+            .expect("default craft recipes must load for scroll-unlock contract");
+
+        // ① exact set：把 pool 里的 craft scroll（前缀识别）收集起来，必须恰好等于
+        // 上面 20 个，且不能有多余/缺失。
+        let craft_scroll_entries: Vec<_> = pool
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.template_id.starts_with("scroll_")
+                    && !entry.template_id.starts_with("scroll_technique_")
+                    && !entry.template_id.starts_with("scroll_body_")
+                    && !entry.template_id.starts_with("scroll_gathering_")
+                    && entry.template_id != "scroll_bronze_coffin"
+            })
+            .collect();
+        assert_eq!(
+            craft_scroll_entries.len(),
+            CRAFT_SCROLLS.len(),
+            "surface_stash_craft must contain exactly {} craft recipe scrolls, got {}",
+            CRAFT_SCROLLS.len(),
+            craft_scroll_entries.len()
+        );
+        for scroll in CRAFT_SCROLLS {
+            let entry = pool
+                .entries
+                .iter()
+                .find(|e| e.template_id == scroll)
+                .unwrap_or_else(|| {
+                    panic!("surface_stash_craft must contain craft scroll `{scroll}`")
+                });
+            // ② weight/count 契约
+            assert_eq!(entry.weight, 2, "`{scroll}` must keep weight 2");
+            assert_eq!(entry.count, (1, 1), "`{scroll}` must drop exactly one copy");
+            // ③ ItemRegistry 存在 + Scroll category
+            let template = items
+                .get(scroll)
+                .unwrap_or_else(|| panic!("craft scroll `{scroll}` must exist in ItemRegistry"));
+            assert_eq!(
+                template.category,
+                ItemCategory::Scroll,
+                "craft scroll `{scroll}` must have category Scroll"
+            );
+            // ④ 配方解锁源存在（scroll id → 至少一条配方的 UnlockSource::Scroll）
+            let unlockable =
+                crate::craft::unlock::find_recipes_unlockable_by_scroll(&craft_registry, scroll);
+            assert!(
+                !unlockable.is_empty(),
+                "craft scroll `{scroll}` must unlock at least one recipe, but none found"
+            );
+        }
+    }
 }

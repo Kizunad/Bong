@@ -132,7 +132,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-preview-clean-v1-
 
-      - name: Build server (release) — 让后续 cargo run 直接命中 cache
+      - name: Build server (release) — 让后续 wrapper cargo run 直接命中 cache
         working-directory: server
         run: ../scripts/build-token.sh cargo build --release
 

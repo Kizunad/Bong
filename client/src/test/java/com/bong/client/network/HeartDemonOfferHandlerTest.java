@@ -24,7 +24,7 @@ public class HeartDemonOfferHandlerTest {
             {
               "v": 1,
               "type": "heart_demon_offer",
-              "offer_id": "heart_demon:1:1000",
+              "offer_id": "heart_demon_offer:1:1000",
               "trigger_id": "heart_demon:1:1000",
               "trigger_label": "心魔劫临身",
               "realm_label": "渡虚劫 · 心魔",
@@ -53,6 +53,8 @@ public class HeartDemonOfferHandlerTest {
         assertTrue(dispatch.handled());
         InsightOfferViewModel offer = InsightOfferStore.snapshot();
         assertNotNull(offer);
+        assertEquals("heart_demon_offer:1:1000", offer.offerId(),
+            "heart_demon_offer 的 offer_id 必须保留为实例唯一 identity（R7 P4 窄接缝）");
         assertEquals("heart_demon:1:1000", offer.triggerId());
         assertEquals("心魔劫临身", offer.triggerLabel());
         assertEquals("渡虚劫 · 心魔", offer.realmLabel());

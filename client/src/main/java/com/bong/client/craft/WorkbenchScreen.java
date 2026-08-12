@@ -3,6 +3,8 @@ package com.bong.client.craft;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -59,6 +61,7 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
     private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener;
     private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh();
     private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh();
+    private final Consumer<SkillSetSnapshot> skillListener = skills -> scheduleRefresh();
 
     public WorkbenchScreen() {
         this(CraftOutcomeFeedback::playDefaultCompleteSound, null);
@@ -198,6 +201,7 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         CraftStore.addOutcomeListener(outcomeListener);
         CraftStore.addUnlockListener(unlockListener);
         InventoryStateStore.addListener(inventoryListener);
+        SkillSetStore.addListener(skillListener);
     }
 
     private void detachListeners() {
@@ -210,6 +214,7 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         CraftStore.removeOutcomeListener(outcomeListener);
         CraftStore.removeUnlockListener(unlockListener);
         InventoryStateStore.removeListener(inventoryListener);
+        SkillSetStore.removeListener(skillListener);
     }
 
     private void refreshAll() {
@@ -218,12 +223,13 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
-        ensureSelection();
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
+        ensureSelection(skills);
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
-        recipeList.refresh(inventory);
+        recipeList.refresh(inventory, skills);
         CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
+        actionBar.refresh(selected, inventory, session, skills);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
         outputPreview.refresh(selected, flashTicks);
         if (subtitle != null) {
@@ -231,8 +237,11 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
             int known = wb.size();
             int craftable = selected == null ? 0
                 : CraftInventoryCounter.maxCraftable(selected, inventory);
+            String skillHint = selected != null && !CraftActionBar.skillSatisfied(selected, skills)
+                ? " · 技艺不足"
+                : "";
             subtitle.text(Text.literal(
-                "Esc 关闭 · 配方 " + known + " · 当前可做 x" + craftable));
+                "Esc 关闭 · 配方 " + known + " · 当前可做 x" + craftable + skillHint));
         }
     }
 
@@ -241,9 +250,10 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
         CraftRecipe selected = currentRecipe();
         CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
+        actionBar.refresh(selected, inventory, session, skills);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
         outputPreview.refresh(selected, flashTicks);
         if (subtitle != null) {
@@ -251,9 +261,16 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
             int known = wb.size();
             int craftable = selected == null ? 0
                 : CraftInventoryCounter.maxCraftable(selected, inventory);
+            String skillHint = selected != null && !CraftActionBar.skillSatisfied(selected, skills)
+                ? " · 技艺不足"
+                : "";
             subtitle.text(Text.literal(
-                "Esc 关闭 · 配方 " + known + " · 当前可做 x" + craftable));
+                "Esc 关闭 · 配方 " + known + " · 当前可做 x" + craftable + skillHint));
         }
+    }
+
+    private void refreshSkillOnly() {
+        refreshAll();
     }
 
     private void refreshOutputOnly() {
@@ -262,14 +279,33 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    private void ensureSelection() {
+    private void updateSubtitle(CraftRecipe selected, InventoryModel inventory, SkillSetSnapshot skills) {
+        if (subtitle == null) {
+            return;
+        }
         List<CraftRecipe> wb = workbenchRecipes();
-        if (selectedId != null && wb.stream().anyMatch(r -> r.id().equals(selectedId))) {
+        int known = wb.size();
+        int craftable = selected == null ? 0
+            : CraftInventoryCounter.maxCraftable(selected, inventory);
+        String skillHint = selected != null && !CraftActionBar.skillSatisfied(selected, skills)
+            ? " · 技艺不足"
+            : "";
+        subtitle.text(Text.literal(
+            "Esc 关闭 · 配方 " + known + " · 当前可做 x" + craftable + skillHint));
+    }
+
+    private void ensureSelection(SkillSetSnapshot skills) {
+        List<CraftRecipe> wb = workbenchRecipes();
+        if (selectedId != null && wb.stream()
+            .filter(recipe -> recipe.id().equals(selectedId))
+            .anyMatch(recipe -> recipe.unlocked() && CraftActionBar.skillSatisfied(recipe, skills))) {
             return;
         }
         selectedId = wb.stream()
             .filter(CraftRecipe::unlocked)
+            .filter(recipe -> CraftActionBar.skillSatisfied(recipe, skills))
             .findFirst()
+            .or(() -> wb.stream().filter(CraftRecipe::unlocked).findFirst())
             .or(() -> wb.stream().findFirst())
             .map(CraftRecipe::id)
             .orElse(null);
@@ -285,7 +321,11 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
 
     private void startCraft(int quantity) {
         CraftRecipe selected = currentRecipe();
-        if (selected == null) return;
+        if (selected == null
+            || !selected.unlocked()
+            || !CraftActionBar.skillSatisfied(selected, SkillSetStore.snapshot())) {
+            return;
+        }
         ClientRequestSender.sendCraftStart(selected.id(), Math.max(1, quantity));
         playTickSound();
     }

@@ -2,10 +2,11 @@
 
 use valence::prelude::{Added, DVec3, Entity, EventReader, EventWriter, Position, Query, With};
 
-use crate::combat::events::{AttackIntent, DeathEvent};
+use crate::combat::events::AttackIntent;
 use crate::combat::rat_bite::RatBiteEvent;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
 use crate::npc::spawn::NpcMarker;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
@@ -77,25 +78,17 @@ pub fn emit_fauna_attack_audio_system(
 }
 
 pub fn emit_fauna_death_vfx_audio_system(
-    mut deaths: EventReader<DeathEvent>,
+    mut deaths: EventReader<NpcTerminalSettlementSucceeded>,
     visuals: VisualNpcQuery<'_, '_>,
     tags: Query<&FaunaTag>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
 ) {
     for death in deaths.read() {
-        let Ok((entity, position, visual)) = visuals.get(death.target) else {
+        let Ok((entity, position, _visual)) = visuals.get(death.entity) else {
             continue;
         };
         let pos = position.get();
-        vfx_events.send(spawn_particle(
-            "bong:death_soul_dissipate",
-            pos,
-            visual.event_color(),
-            0.85,
-            18,
-            38,
-        ));
         vfx_events.send(spawn_particle(
             "bong:fauna_bone_shatter",
             pos,
@@ -239,6 +232,9 @@ mod tests {
     use super::*;
     use crate::combat::components::WoundKind;
     use crate::combat::events::AttackReach;
+    use crate::cultivation::components::{ActorQiIdentity, ActorQiKind};
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::npc::lifecycle::NpcDeathReason;
     use valence::prelude::{App, Events, Update};
 
     #[test]
@@ -380,7 +376,7 @@ mod tests {
     #[test]
     fn void_distorted_death_audio_uses_planned_death_recipe() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<VfxEventRequest>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_fauna_death_vfx_audio_system);
@@ -393,12 +389,19 @@ mod tests {
                 FaunaTag::new(BeastKind::VoidDistorted),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: beast,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: beast,
+            at_tick: 3,
             cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
             attacker_player_id: None,
-            at_tick: 3,
+            authorize_loot: true,
+            actor_qi_identity: ActorQiIdentity::from_life_record(
+                &LifeRecord::new("npc:fauna-experience-test"),
+                ActorQiKind::Npc,
+            )
+            .expect("terminal event fixture must use canonical NPC identity"),
         });
 
         app.update();

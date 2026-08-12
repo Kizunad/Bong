@@ -215,37 +215,47 @@ class Bot:
                         raise ValueError(
                             f"player-list property count {properties} must be non-negative"
                         )
+                    prop_entries = []
                     for _ in range(properties):
-                        reader.string()  # property name
-                        reader.string()  # property value
+                        prop = {
+                            "name": reader.string(),
+                            "value": reader.string(),
+                        }
                         if reader.boolean():
-                            reader.string()  # property signature
+                            prop["signature"] = reader.string()
+                        prop_entries.append(prop)
+                    entry["properties"] = prop_entries
                     pending_player_names[player_uuid] = username
                 if actions & 0x02:  # initialize_chat
-                    if reader.boolean():
-                        reader.uuid()
-                        reader.i64()
+                    has_chat = reader.boolean()
+                    chat = {"has_chat_session": has_chat}
+                    if has_chat:
+                        chat["session_id"] = reader.uuid()
+                        chat["public_key_expiry"] = reader.i64()
                         key_length = reader.varint()
                         if key_length < 0 or key_length > len(reader.data) - reader.pos:
                             raise ValueError(
                                 f"player-list chat key length {key_length} exceeds remaining bytes"
                             )
+                        chat["public_key"] = reader.data[reader.pos : reader.pos + key_length]
                         reader.pos += key_length
                         signature_length = reader.varint()
                         if signature_length < 0 or signature_length > len(reader.data) - reader.pos:
                             raise ValueError(
                                 f"player-list chat signature length {signature_length} exceeds remaining bytes"
                             )
+                        chat["signature"] = reader.data[reader.pos : reader.pos + signature_length]
                         reader.pos += signature_length
+                    entry["initialize_chat"] = chat
                 if actions & 0x04:  # update_game_mode
-                    reader.varint()
+                    entry["game_mode"] = reader.varint()
                 if actions & 0x08:  # update_listed
-                    reader.boolean()
+                    entry["listed"] = reader.boolean()
                 if actions & 0x10:  # update_latency
-                    reader.varint()
+                    entry["latency"] = reader.varint()
                 if actions & 0x20:  # update_display_name
                     if reader.boolean():
-                        reader.string()
+                        entry["display_name"] = reader.string()
                 entries.append(entry)
             self.player_names.update(pending_player_names)
             self._emit("player_list", {"actions": actions, "entries": entries})

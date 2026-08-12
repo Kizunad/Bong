@@ -15,10 +15,13 @@ use crate::npc::lifecycle::NpcRegistry;
 use crate::npc::spawn::ambient_scheduler::{danger_tide_required_ticks_scale, danger_tide_weight};
 use crate::persistence::HeartbeatPseudoVeinRecord;
 use crate::player::state::canonical_player_id;
+#[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+#[cfg(test)]
+use crate::qi_physics::QiAccountId;
 use crate::qi_physics::{
-    pending_inflow_account, zone_equilibrium_inflow, QiAccountId, QiTransfer, QiTransferReason,
-    WorldQiAccount,
+    pending_inflow_account, transfer_ledger_qi_to_zone, zone_equilibrium_inflow, QiTransfer,
+    QiTransferReason, WorldQiAccount,
 };
 use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
@@ -383,12 +386,6 @@ impl WorldHeartbeat {
     #[cfg(test)]
     pub(crate) fn active_pseudo_vein_count(&self) -> usize {
         self.active_pseudo_veins.len()
-    }
-
-    pub(crate) fn active_pseudo_vein_zone_ids(&self) -> Vec<String> {
-        let mut zone_ids = self.active_pseudo_veins.keys().cloned().collect::<Vec<_>>();
-        zone_ids.sort();
-        zone_ids
     }
 
     /// `zones_runtime` 是跨重启的物理余额权威；生命周期记录只保存时钟与阶段元数据。
@@ -2320,6 +2317,10 @@ fn remove_runtime_pseudo_vein_zone(zone_registry: &mut ZoneRegistry, zone_name: 
     }
     let before = zone_registry.zones.len();
     zone_registry.zones.retain(|zone| zone.name != zone_name);
+    if before != zone_registry.zones.len() {
+        // fix-spec-1901-v2 §7.1 — 空间变化（删除 zone）递增 revision。
+        zone_registry.spatial_revision = zone_registry.spatial_revision.wrapping_add(1);
+    }
     before != zone_registry.zones.len()
 }
 
@@ -2487,10 +2488,8 @@ impl Resource for ZoneQiInflowClock {}
 /// plan-zone-qi-economy-v1 P1 §8.1 决议 #1/#5 — 平衡回流：独立待分配池按各 zone 的
 /// `qi_equilibrium` / `qi_inflow_per_min` 配置滴灌回 `zone.spirit_qi`。
 ///
-/// 记账范本照抄 `npc::dormant::apply_dormant_regen_with_multiplier`（先用
-/// `set_balance` 把 zone ledger 镜像同步到真实 `zone.spirit_qi`，再走
-/// `WorldQiAccount::transfer` 做原子记账，最后把转账后余额写回真实字段）——
-/// **不是** audit-only 记账，待分配池与 zone 之间是真实的 `WorldQiAccount::transfer`。
+/// 事务入口直接借记稳定待分配池、增加外部 Zone owner 并追加 audit；不创建长期
+/// `zone:*` 镜像余额，避免 `summarize_world_qi` 把同一份区域真元重复计算。
 ///
 /// 跳过条件（§8.1 #5）：
 /// - `zone.qi_equilibrium <= 0.0` 或 `zone.qi_inflow_per_min <= 0.0`（未配置 / 显式不回流）；
@@ -2553,35 +2552,19 @@ pub fn zone_qi_inflow_tick(
             continue;
         }
 
-        let zone_account = QiAccountId::zone(zone.name.clone());
-        // 先把 zone 的 ledger 镜像同步到真实值（apply_dormant_regen_with_multiplier 范本），
-        // 让 transfer() 的 insufficient 检查针对的是真实容量，而不是陈旧的镜像余额。
-        if ledger
-            .set_balance(
-                zone_account.clone(),
-                (zone.spirit_qi.max(0.0)) * QI_ZONE_UNIT_CAPACITY,
-            )
-            .is_err()
+        if transfer_ledger_qi_to_zone(
+            ledger,
+            pool,
+            zone.name.as_str(),
+            &mut zone.spirit_qi,
+            actual_absolute,
+            zone.qi_equilibrium,
+            QiTransferReason::ZoneInflow,
+        )
+        .is_err()
         {
             continue;
         }
-
-        let Ok(transfer) = QiTransfer::new(
-            pool.clone(),
-            zone_account.clone(),
-            actual_absolute,
-            QiTransferReason::ZoneInflow,
-        ) else {
-            continue;
-        };
-        if ledger.transfer(transfer).is_err() {
-            continue;
-        }
-
-        let updated_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
-        // 再夹一层浮点安全网：数学上 actual_absolute <= needed_absolute 已保证不过冲，
-        // 这里防的是累计误差，绝不允许 spirit_qi 越过 equilibrium。
-        zone.spirit_qi = updated_fraction.min(zone.qi_equilibrium);
     }
 }
 
@@ -2677,6 +2660,36 @@ mod tests {
             loop_phase,
             current_tick,
         }
+    }
+
+    #[test]
+    fn pseudo_vein_removal_updates_spatial_revision_only_for_real_geometry_change() {
+        let mut registry = ZoneRegistry {
+            zones: vec![zone("pseudo_vein_test", 0.0, 0.0, 1.0)],
+            spatial_revision: 41,
+        };
+
+        assert!(remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "pseudo_vein_test"
+        ));
+        assert_eq!(registry.spatial_revision, 42);
+        assert!(!remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "pseudo_vein_test"
+        ));
+        assert_eq!(
+            registry.spatial_revision, 42,
+            "missing removal must not advance revision"
+        );
+        assert!(!remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "ordinary_zone"
+        ));
+        assert_eq!(
+            registry.spatial_revision, 42,
+            "non-pseudo names must be ignored"
+        );
     }
 
     #[test]
@@ -2806,6 +2819,7 @@ mod tests {
     fn pseudo_vein_omen_borrows_from_pending_pool_without_creating_qi() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -2813,7 +2827,12 @@ mod tests {
         qi_ledger
             .set_balance(pending_inflow_account(), 100.0)
             .expect("pending pool fixture should accept a finite balance");
-        let total_before = qi_ledger.total();
+        let physical_total_before = qi_ledger.total()
+            + zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
         let omen = WorldEventOmen {
             kind: OmenKind::PseudoVeinForming,
             zone_name: "waste".to_string(),
@@ -2849,10 +2868,16 @@ mod tests {
             pseudo_zone.spirit_qi, 0.6,
             "expected dynamic zone field to reflect only the amount actually borrowed"
         );
+        let physical_total_after = qi_ledger.total()
+            + zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
         assert_eq!(
-            qi_ledger.total(),
-            total_before,
-            "expected pending-pool debit and dynamic-zone credit to preserve ledger total"
+            physical_total_after,
+            physical_total_before,
+            "expected pending-pool debit and external dynamic-zone credit to preserve the complete owner total"
         );
         assert_eq!(zones.find_zone_by_name("waste").unwrap().spirit_qi, 0.1);
     }
@@ -2861,6 +2886,7 @@ mod tests {
     fn pseudo_vein_anchor_ignores_tsy_blueprint_zones() {
         let heartbeat = WorldHeartbeat::default();
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, -0.95),
                 zone("overworld_waste", 300.0, 0.0, 0.08),
@@ -2880,6 +2906,7 @@ mod tests {
     fn pseudo_vein_spawn_rejects_tsy_anchor_without_runtime_state() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_zone("tsy_daneng_01_shallow", 0.0, 0.0, -0.45)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -2922,6 +2949,7 @@ mod tests {
     fn restored_pseudo_vein_records_rebuild_zone_and_advance_next_index() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored = heartbeat.restore_pseudo_vein_records(
@@ -3027,6 +3055,7 @@ mod tests {
         for restart_tick in [0, 199, 200, 201] {
             let mut heartbeat = WorldHeartbeat::default();
             let mut zones = ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone("waste", 0.0, 0.0, 0.1)],
             };
             let restored = heartbeat.restore_pseudo_vein_records(
@@ -3081,6 +3110,7 @@ mod tests {
         record.snapshot_wall = 100;
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         assert_eq!(
@@ -3110,15 +3140,9 @@ mod tests {
             .spirit_qi = before_qi;
         let mut ledger = WorldQiAccount::default();
         ledger
-            .set_balance(
-                QiAccountId::zone(zone_id.as_str()),
-                before_qi * QI_ZONE_UNIT_CAPACITY,
-            )
-            .expect("zone ledger fixture should initialize");
-        ledger
             .set_balance(pending_inflow_account(), 10.0)
             .expect("pending pool fixture should initialize");
-        let total_before = ledger.total();
+        let total_before = before_qi * QI_ZONE_UNIT_CAPACITY + ledger.total();
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3146,10 +3170,19 @@ mod tests {
             0,
             "expected restored heartbeat phase carry to clear after the due evaluation"
         );
-        assert_eq!(
-            app.world().resource::<WorldQiAccount>().total(),
-            total_before,
-            "expected catch-up decay to transfer into pending pool without changing ledger total"
+        let zones = app.world().resource::<ZoneRegistry>();
+        let zone_after = zones
+            .find_zone_by_name(zone_id.as_str())
+            .expect("restored dynamic zone should remain after catch-up")
+            .spirit_qi;
+        let ledger_after = app.world().resource::<WorldQiAccount>();
+        assert!(
+            (zone_after * QI_ZONE_UNIT_CAPACITY + ledger_after.total() - total_before).abs() < 1e-9,
+            "expected catch-up decay to move qi from the external Zone owner into the pending pool"
+        );
+        assert!(
+            !ledger_after.has_account(&QiAccountId::zone(zone_id.as_str())),
+            "catch-up must not recreate a zone:* ledger mirror"
         );
     }
 
@@ -3157,6 +3190,7 @@ mod tests {
     fn restored_pseudo_vein_preserves_warning_then_dissipation_boundaries() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let decay_per_tick = decay_rate_per_tick(0);
@@ -3206,6 +3240,7 @@ mod tests {
             ..Default::default()
         };
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -3233,7 +3268,11 @@ mod tests {
             0,
         )
         .expect("funded pending pool should spawn the dynamic pseudo-vein fixture");
-        let total_before = qi_ledger.total();
+        let dynamic_zone_qi = zones
+            .find_zone_by_name("pseudo_vein_heartbeat_0")
+            .expect("spawned pseudo-vein zone should exist")
+            .spirit_qi;
+        let total_before = dynamic_zone_qi * QI_ZONE_UNIT_CAPACITY + qi_ledger.total();
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3259,7 +3298,6 @@ mod tests {
             .expect("active pseudo-vein record must retain its dynamic zone");
         let ledger = app.world().resource::<WorldQiAccount>();
         let zone_account = QiAccountId::zone(record.zone_id.as_str());
-        let ledger_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
         assert!(
             record.qi_current < 0.6,
             "expected lifecycle qi to decay below 0.6 after one tick, actual {}",
@@ -3272,15 +3310,12 @@ mod tests {
             zone.spirit_qi
         );
         assert!(
-            (zone.spirit_qi - ledger_fraction).abs() < 1e-12,
-            "expected zone field and ledger mirror to match, zone={} ledger={}",
-            zone.spirit_qi,
-            ledger_fraction
+            !ledger.has_account(&zone_account),
+            "the dynamic Zone field is the physical owner; no zone:* ledger mirror may remain"
         );
-        assert_eq!(
-            ledger.total(),
-            total_before,
-            "expected continuous pseudo-vein decay to preserve total ledger qi"
+        assert!(
+            (zone.spirit_qi * QI_ZONE_UNIT_CAPACITY + ledger.total() - total_before).abs() < 1e-9,
+            "continuous pseudo-vein decay must conserve external Zone qi plus stable ledger pools"
         );
         assert!(
             ledger.transfers().iter().any(|transfer| {
@@ -3297,6 +3332,7 @@ mod tests {
     fn post_update_sync_tracks_external_zone_change_without_rewriting_ledger() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -3329,7 +3365,6 @@ mod tests {
             .expect("spawned dynamic zone must exist")
             .spirit_qi = 0.55;
         let zone_account = QiAccountId::zone("pseudo_vein_heartbeat_0");
-        let ledger_balance_before = qi_ledger.balance(&zone_account);
         let ledger_total_before = qi_ledger.total();
         qi_ledger.push_transfer_audit(
             QiTransfer::new(
@@ -3364,15 +3399,14 @@ mod tests {
             "expected PostUpdate sync to observe external zone drain before next heartbeat eval"
         );
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            ledger.balance(&zone_account),
-            ledger_balance_before,
-            "expected frame-end lifecycle sync not to overwrite the ledger without a real transfer"
+        assert!(
+            !ledger.has_account(&zone_account),
+            "frame-end lifecycle sync must not create a Zone ledger mirror"
         );
         assert_eq!(
             ledger.total(),
             ledger_total_before,
-            "expected frame-end lifecycle sync to preserve ledger total, actual {}",
+            "expected frame-end lifecycle sync to preserve stable ledger total, actual {}",
             ledger.total()
         );
         assert!(
@@ -3398,6 +3432,7 @@ mod tests {
             ..Default::default()
         };
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut record = heartbeat_pseudo_vein_record(decay_rate_per_tick(0) * 0.5, false);
@@ -3414,11 +3449,8 @@ mod tests {
 
         let zone_account = QiAccountId::zone(record.zone_id.as_str());
         let zone_absolute = restored_zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-        let mut qi_ledger = WorldQiAccount::default();
-        qi_ledger
-            .set_balance(zone_account.clone(), zone_absolute)
-            .expect("restored zone ledger mirror should accept the persisted balance");
-        let total_before = qi_ledger.total();
+        let qi_ledger = WorldQiAccount::default();
+        let total_before = zone_absolute;
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3448,10 +3480,9 @@ mod tests {
             "expected settlement to drain the ephemeral zone before it can be removed"
         );
         let qi_ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            qi_ledger.balance(&zone_account),
-            0.0,
-            "expected ephemeral zone ledger balance to be fully settled"
+        assert!(
+            !qi_ledger.has_account(&zone_account),
+            "expected no zone:* mirror after settlement"
         );
         assert_eq!(
             qi_ledger.balance(&pending_inflow_account()),
@@ -3478,6 +3509,7 @@ mod tests {
     fn restored_pseudo_vein_can_persist_and_restore_again_without_losing_age() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored = heartbeat.restore_pseudo_vein_records(
@@ -3519,6 +3551,7 @@ mod tests {
 
         let mut second_heartbeat = WorldHeartbeat::default();
         let mut second_zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored_again =
@@ -3583,6 +3616,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone("hungry", 300.0, 0.0, 0.1),
@@ -3611,6 +3645,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 tsy_zone("pseudo_vein_tsy_done", 0.0, 0.0, 0.0),
                 tsy_zone("tsy_hungry", 300.0, 0.0, -0.30),
@@ -3657,6 +3692,7 @@ mod tests {
         app.insert_resource(heartbeat);
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone("hungry", 300.0, 0.0, 0.1),
@@ -3702,6 +3738,7 @@ mod tests {
             0,
         );
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("hungry", 0.0, 0.0, 0.1)],
         };
         let npc_registry = NpcRegistry {
@@ -3746,6 +3783,7 @@ mod tests {
             .low_qi_ticks_by_zone
             .insert("scorch".to_string(), low_ticks);
         let zones_high_danger = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
         };
         maybe_queue_beast_tide(
@@ -3768,6 +3806,7 @@ mod tests {
             .low_qi_ticks_by_zone
             .insert("spawn".to_string(), low_ticks);
         let zones_low_danger = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_with_danger("spawn", 0.0, 0.0, 0.05, 1)],
         };
         maybe_queue_beast_tide(
@@ -3801,6 +3840,7 @@ mod tests {
         maybe_queue_beast_tide(
             &mut heartbeat_high,
             &ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
             },
             Some(&npc_registry),
@@ -3816,6 +3856,7 @@ mod tests {
         maybe_queue_beast_tide(
             &mut heartbeat_low,
             &ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone_with_danger("spawn", 0.0, 0.0, 0.05, 1)],
             },
             Some(&npc_registry),
@@ -3843,6 +3884,7 @@ mod tests {
             BEAST_TIDE_LOW_QI_REQUIRED_TICKS,
         );
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_zone("tsy_daneng_01_shallow", 0.0, 0.0, -0.45)],
         };
         let npc_registry = NpcRegistry {
@@ -3882,6 +3924,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone_with_danger("scorch_neighbor", 300.0, 0.0, 0.2, 7),
@@ -3916,6 +3959,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone_with_danger("calm_neighbor", 300.0, 0.0, 0.2, 1),
@@ -3958,6 +4002,7 @@ mod tests {
         maybe_queue_beast_tide(
             &mut heartbeat,
             &ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
             },
             Some(&npc_registry),
@@ -3974,6 +4019,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone_with_danger("healthy_neighbor", 300.0, 0.0, 0.5, 7),
@@ -4003,6 +4049,7 @@ mod tests {
     fn world_pressure_ignores_tsy_blueprint_zones() {
         let mut heartbeat = WorldHeartbeat::default();
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("spawn", 0.0, 0.0, 0.8),
                 zone("waste", 300.0, 0.0, 0.2),
@@ -4050,6 +4097,7 @@ mod tests {
     #[test]
     fn heartbeat_loop_phase_uses_zone_risk_without_new_player_state() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone(DEFAULT_SPAWN_ZONE_NAME, 0.0, 0.0, 0.9),
                 zone("route_ash", 200.0, 0.0, 0.05),
@@ -4107,6 +4155,7 @@ mod tests {
         let mut tsy_deep = tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, -0.95);
         tsy_deep.danger_level = DEEP_GATHERING_DANGER_LEVEL;
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone(DEFAULT_SPAWN_ZONE_NAME, 200.0, 0.0, 0.5), tsy_deep],
         };
 
@@ -4269,6 +4318,7 @@ mod tests {
     #[test]
     fn realm_collapse_queues_only_when_collapsing_zone_is_empty() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("dead_zone", 0.0, 0.0, 0.0)],
         };
         let mut heartbeat = WorldHeartbeat::default();
@@ -4325,6 +4375,7 @@ mod tests {
     #[test]
     fn realm_collapse_heartbeat_ignores_tsy_blueprint_zones() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, 0.0)],
         };
         let mut heartbeat = WorldHeartbeat::default();
@@ -4373,6 +4424,7 @@ mod tests {
             intensity: 0.9,
         });
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("hungry", 0.0, 0.0, 0.1)],
         };
 
@@ -4452,7 +4504,10 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(ZoneQiInflowClock::default());
         app.insert_resource(CultivationClock { tick: start_tick });
-        app.insert_resource(ZoneRegistry { zones });
+        app.insert_resource(ZoneRegistry {
+            zones,
+            spatial_revision: 0,
+        });
         app.insert_resource(ActiveEventsResource::default());
         let mut ledger = WorldQiAccount::default();
         if pending_pool_balance > 0.0 {

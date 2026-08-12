@@ -36,7 +36,7 @@ use self::events::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, Karma, Realm};
+use crate::cultivation::components::{Cultivation, Karma, QiFlowError, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
@@ -58,7 +58,7 @@ use crate::player::state::{
     player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
     PlayerStatePersistence,
 };
-use crate::qi_physics::ledger::QiTransfer;
+use crate::qi_physics::ledger::{QiTransfer, WorldQiAccount};
 use crate::schema::common::NarrationStyle;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
@@ -1802,6 +1802,7 @@ fn handle_spirit_niche_place_requests(
     mut registry: ResMut<SpiritNicheRegistry>,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for event in events.read() {
@@ -1870,7 +1871,8 @@ fn handle_spirit_niche_place_requests(
             );
             continue;
         }
-        if let Err(error) = consume_item_instance_once(&mut inventory, item_instance_id) {
+        let mut staged_inventory = inventory.clone();
+        if let Err(error) = consume_item_instance_once(&mut staged_inventory, item_instance_id) {
             tracing::warn!(
                 "[bong][social] spirit niche place rejected for `{}`: consume failed: {error}",
                 lifecycle.character_id
@@ -1898,17 +1900,24 @@ fn handle_spirit_niche_place_requests(
             .find_zone(lookup_dim, position.get())
             .map(|z| z.spirit_qi);
         if let Some(cultivation) = cultivation.as_deref_mut() {
-            apply_spirit_niche_negative_qi_cost(
+            if let Err(error) = apply_spirit_niche_negative_qi_cost(
                 zone_qi,
-                entity,
                 position,
                 current_dimension,
                 life_record,
                 zone_registry.as_deref_mut(),
+                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 cultivation,
-            );
+            ) {
+                tracing::warn!(
+                    ?error,
+                    "[bong][social] spirit niche placement qi cost failed closed"
+                );
+                continue;
+            }
         }
+        *inventory = staged_inventory;
         if let Some(mut lifespan) = lifespan {
             apply_spirit_niche_negative_lifespan_cost(zone_qi, &mut lifespan);
         }
@@ -2286,16 +2295,16 @@ fn niche_place_target_is_close(position: &Position, target: [i32; 3]) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn apply_spirit_niche_negative_qi_cost(
     zone_qi: Option<f64>,
-    entity: Entity,
     position: &Position,
     current_dimension: Option<&CurrentDimension>,
     life_record: Option<&LifeRecord>,
     zones: Option<&mut ZoneRegistry>,
+    ledger: &mut WorldQiAccount,
     qi_transfers: Option<&mut Events<QiTransfer>>,
     cultivation: &mut Cultivation,
-) {
+) -> Result<(), QiFlowError> {
     if !zone_qi.is_some_and(|qi| qi < 0.0) {
-        return;
+        return Ok(());
     }
     let realm_factor = match cultivation.realm {
         Realm::Awaken => 1.0,
@@ -2309,21 +2318,18 @@ fn apply_spirit_niche_negative_qi_cost(
     // 守恒（CodeRabbit #699 Critical）：qi_current clamp 到 0，实际扣减 = min(damage, qi_current)；
     // 必须只回灌实际扣减量，否则 qi_current<damage 时向 zone 多记、凭空创生真元。
     let actual_damage = damage.min(cultivation.qi_current.max(0.0));
-    // Deduct qi from the player, then credit the SAME (actual) amount back to the negative zone so
-    // the ledger stays balanced.  Negative-pressure zones act as sinks and accept incoming
-    // qi (spirit_qi rises toward 0).  This mirrors the pattern used for jiemai_parry and
-    // other skill-cost conservation fixes (see combat/resolve.rs).
-    cultivation.qi_current = (cultivation.qi_current - damage).max(0.0);
     release_qi_amount_to_zone(
-        entity,
+        cultivation,
         actual_damage,
         Some(position),
         current_dimension,
         life_record,
         zones,
+        ledger,
         qi_transfers,
         "spirit_niche_penalty",
-    );
+    )?;
+    Ok(())
 }
 
 fn apply_spirit_niche_negative_lifespan_cost(
@@ -3510,6 +3516,13 @@ fn zone_name_for_position(zone_registry: &ZoneRegistry, position: &Position) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn qi_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     use crate::combat::components::Lifecycle;
     use crate::combat::CombatClock;
     use crate::identity::events::IdentityReactionChangedEvent;
@@ -3676,7 +3689,7 @@ mod tests {
     }
 
     fn setup_trade_app() -> App {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_event::<TradeOfferResponseEvent>();
@@ -3768,7 +3781,7 @@ mod tests {
 
     #[test]
     fn joined_client_gets_default_social_bundle() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_systems(Update, attach_social_bundle_to_joined_clients);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -3791,7 +3804,7 @@ mod tests {
         persist_social_faction_reputation(&persistence, "char:azure", &persisted)
             .expect("faction reputation should persist before join");
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence);
         app.add_systems(Update, attach_social_bundle_to_joined_clients);
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -3818,7 +3831,7 @@ mod tests {
 
     #[test]
     fn chat_exposure_records_nearby_witness_only_after_collected_chat() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<PlayerChatCollected>();
         app.add_event::<SocialExposureEvent>();
         app.add_systems(Update, expose_chat_speakers);
@@ -3865,7 +3878,7 @@ mod tests {
     #[test]
     fn social_events_persist_and_reload_by_character_id() {
         let (persistence, data_dir) = social_persistence("event-roundtrip");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<SocialExposureEvent>();
         app.add_event::<SocialRelationshipEvent>();
@@ -3956,7 +3969,7 @@ mod tests {
             ExposureKindV1::Trade,
             ExposureKindV1::Death,
         ] {
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.add_event::<SocialExposureEvent>();
             app.add_systems(Update, apply_social_exposures);
             let (_actor, mut actor_helper) =
@@ -4035,7 +4048,7 @@ mod tests {
 
     #[test]
     fn faction_reputation_delta_updates_matching_client_only() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<FactionReputationDeltaEvent>();
         app.add_systems(Update, apply_faction_reputation_deltas);
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -4097,7 +4110,7 @@ mod tests {
             .unwrap()
             .set_status(crate::npc::faction::FactionStatus::Decayed);
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(registry);
         app.add_event::<FactionReputationDeltaEvent>();
         app.add_systems(Update, apply_faction_reputation_deltas);
@@ -4131,7 +4144,7 @@ mod tests {
     #[test]
     fn faction_reputation_delta_persists_for_offline_character() {
         let (persistence, data_dir) = social_persistence("offline-faction-reputation-delta");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<FactionReputationDeltaEvent>();
         app.add_systems(Update, apply_faction_reputation_deltas);
@@ -4161,7 +4174,7 @@ mod tests {
 
     #[test]
     fn pact_relationship_emits_link_vfx_for_online_participants() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<SocialRelationshipEvent>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, apply_social_relationships);
@@ -4216,7 +4229,7 @@ mod tests {
     #[test]
     fn pact_events_create_relationship_exposure_and_betrayer_renown() {
         let (persistence, data_dir) = social_persistence("pact-event");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<SocialPactEvent>();
         app.add_event::<SocialExposureEvent>();
@@ -4289,7 +4302,7 @@ mod tests {
 
     #[test]
     fn pact_broken_producer_bridges_to_active_identity_and_panel_score() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<SocialPactEvent>();
         app.add_event::<SocialExposureEvent>();
         app.add_event::<SocialRelationshipEvent>();
@@ -4358,7 +4371,7 @@ mod tests {
 
     #[test]
     fn renown_delta_crosses_wanted_reaction_from_active_identity_bridge() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(crate::npc::movement::GameTick(120));
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_event::<IdentityReactionChangedEvent>();
@@ -4429,7 +4442,7 @@ mod tests {
     #[test]
     fn mentorship_event_writes_directional_master_disciple_edges() {
         let (persistence, data_dir) = social_persistence("mentorship-event");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<SocialMentorshipEvent>();
         app.add_event::<SocialRelationshipEvent>();
@@ -4481,7 +4494,7 @@ mod tests {
 
     #[test]
     fn sparring_invite_dispatches_payload_only_to_target() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.init_resource::<SparringInviteRegistry>();
         app.add_event::<SparringInviteRequest>();
         app.add_systems(Update, dispatch_sparring_invites);
@@ -4536,7 +4549,7 @@ mod tests {
 
     #[test]
     fn sparring_acceptance_creates_runtime_session() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.init_resource::<SparringInviteRegistry>();
         app.add_event::<SparringInviteRequest>();
         app.add_event::<SparringInviteResponseEvent>();
@@ -4599,7 +4612,7 @@ mod tests {
 
     #[test]
     fn trade_offer_dispatches_payload_only_to_target_and_hides_ids() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
@@ -4657,7 +4670,7 @@ mod tests {
 
     #[test]
     fn trade_offer_dispatch_rejects_wanted_initiator_identity() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
@@ -4722,7 +4735,7 @@ mod tests {
             "empty_target_inventory",
         ];
         for case in cases {
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.init_resource::<TradeOfferRegistry>();
             app.add_event::<TradeOfferRequest>();
             app.add_systems(Update, dispatch_trade_offers);
@@ -4789,7 +4802,7 @@ mod tests {
 
     #[test]
     fn trade_offer_dispatch_rejects_equipped_offered_item() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.init_resource::<TradeOfferRegistry>();
         app.add_event::<TradeOfferRequest>();
         app.add_systems(Update, dispatch_trade_offers);
@@ -5171,7 +5184,7 @@ mod tests {
 
     #[test]
     fn expire_trade_offers_garbage_collects_timed_out_pending_offers() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let initiator = app.world_mut().spawn_empty().id();
         let target = app.world_mut().spawn_empty().id();
         let mut registry = TradeOfferRegistry::default();
@@ -5213,7 +5226,7 @@ mod tests {
     #[test]
     fn faction_membership_decisions_apply_cooldown_and_betrayal_tags() {
         let (persistence, data_dir) = social_persistence("faction-membership");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<FactionMembershipDecisionEvent>();
         app.add_event::<SocialRenownDeltaEvent>();
@@ -5320,7 +5333,7 @@ mod tests {
     #[test]
     fn resign_persists_neutral_faction_prevents_reconnect_readmission() {
         let (persistence, data_dir) = social_persistence("resign-neutral");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<FactionMembershipDecisionEvent>();
         app.add_event::<SocialRenownDeltaEvent>();
@@ -5385,7 +5398,7 @@ mod tests {
     #[test]
     fn expel_persists_neutral_faction_prevents_reconnect_readmission() {
         let (persistence, data_dir) = social_persistence("expel-neutral");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<FactionMembershipDecisionEvent>();
         app.add_event::<SocialRenownDeltaEvent>();
@@ -5462,7 +5475,7 @@ mod tests {
     #[test]
     fn betray_persists_neutral_faction_and_preserves_refusal_state() {
         let (persistence, data_dir) = social_persistence("betray-neutral");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<FactionMembershipDecisionEvent>();
         app.add_event::<SocialRenownDeltaEvent>();
@@ -5539,7 +5552,7 @@ mod tests {
     #[test]
     fn renown_delta_persists_for_offline_character() {
         let (persistence, data_dir) = social_persistence("offline-renown-delta");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_systems(Update, apply_social_renown_deltas);
@@ -5574,7 +5587,7 @@ mod tests {
 
     #[test]
     fn renown_delta_bridges_to_active_identity_only() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_systems(Update, apply_social_renown_deltas);
 
@@ -5629,7 +5642,7 @@ mod tests {
 
     #[test]
     fn renown_delta_with_identity_id_does_not_follow_later_active_switch() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_systems(Update, apply_social_renown_deltas);
 
@@ -5693,7 +5706,7 @@ mod tests {
         identity_db::save_player_identities(&persistence, "char:online", &identities)
             .expect("identity row should persist before online renown event");
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_systems(Update, apply_social_renown_deltas);
@@ -5772,7 +5785,7 @@ mod tests {
         identity_db::save_player_identities(&persistence, "char:offline", &identities)
             .expect("identity row should persist before offline renown event");
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.add_event::<SocialRenownDeltaEvent>();
         app.add_systems(Update, apply_social_renown_deltas);
@@ -5817,7 +5830,7 @@ mod tests {
 
     #[test]
     fn companion_relationship_emits_after_five_hours_nearby() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: COMPANION_SCAN_INTERVAL_TICKS,
         });
@@ -5891,7 +5904,7 @@ mod tests {
         )
         .expect("right companion edge should persist");
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.insert_resource(CombatClock {
             tick: 10 + COMPANION_EXPIRE_TICKS,
@@ -5930,7 +5943,7 @@ mod tests {
 
     #[test]
     fn pk_notoriety_delta_requires_higher_fame_victim() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<DeathEvent>();
         app.add_event::<SocialExposureEvent>();
         app.add_event::<SocialRelationshipEvent>();
@@ -6007,7 +6020,7 @@ mod tests {
     #[test]
     fn spirit_niche_place_consumes_base_sets_anchor_and_persists() {
         let (persistence, data_dir) = social_persistence("spirit-niche-place");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
@@ -6072,7 +6085,7 @@ mod tests {
     #[test]
     fn spirit_niche_repair_consumes_kit_clears_damage_and_emits_feedback() {
         let (persistence, data_dir) = social_persistence("spirit-niche-repair");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         let mut registry = SpiritNicheRegistry::default();
         registry.upsert(SpiritNiche {
@@ -6174,7 +6187,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_repair_rejects_intact_or_wrong_item_without_consuming() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNicheRepairRequest>();
         app.add_systems(Update, handle_spirit_niche_repair_requests);
@@ -6266,7 +6279,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_repair_rejects_non_owner_and_allows_repeated_damage_repair_cycle() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNicheRepairRequest>();
         app.add_systems(Update, handle_spirit_niche_repair_requests);
@@ -6359,7 +6372,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_place_rejects_old_stone_material() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_systems(Update, handle_spirit_niche_place_requests);
@@ -6395,7 +6408,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_place_rejects_missing_or_wrong_item_without_consuming() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_systems(Update, handle_spirit_niche_place_requests);
@@ -6438,7 +6451,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_place_rejects_remote_target_without_consuming() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_systems(Update, handle_spirit_niche_place_requests);
@@ -6474,7 +6487,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_place_rejects_occupied_active_coordinates() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let mut registry = SpiritNicheRegistry::default();
         registry.upsert(SpiritNiche {
             owner: "char:owner".to_string(),
@@ -6558,7 +6571,7 @@ mod tests {
     #[test]
     fn spirit_niche_break_attempt_reveals_and_disables_anchor() {
         let (persistence, data_dir) = social_persistence("spirit-niche-reveal");
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(persistence.clone());
         let mut registry = SpiritNicheRegistry::default();
         registry.upsert(SpiritNiche {
@@ -6657,7 +6670,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_coordinate_reveal_emits_owner_reveal_only_for_exact_active_hit() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let mut registry = SpiritNicheRegistry::default();
         registry.upsert(SpiritNiche {
             owner: "char:owner".to_string(),
@@ -6710,7 +6723,7 @@ mod tests {
 
     #[test]
     fn spirit_niche_coordinate_reveal_rejects_remote_coordinate_hits() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let mut registry = SpiritNicheRegistry::default();
         registry.upsert(SpiritNiche {
             owner: "char:owner".to_string(),
@@ -6768,7 +6781,7 @@ mod tests {
         use crate::world::dimension::{CurrentDimension, DimensionKind};
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<VfxEventRequest>();
@@ -6793,6 +6806,7 @@ mod tests {
                 character_id: "char:negative".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("char:negative"),
             inventory_with_item(spirit_niche_test_item(9001)),
             Cultivation {
                 realm: Realm::Awaken,
@@ -6861,7 +6875,7 @@ mod tests {
         use crate::world::dimension::{CurrentDimension, DimensionKind};
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<VfxEventRequest>();
@@ -6883,6 +6897,7 @@ mod tests {
                 character_id: "char:lowqi".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("char:lowqi"),
             inventory_with_item(spirit_niche_test_item(9002)),
             Cultivation {
                 realm: Realm::Awaken,
@@ -6945,7 +6960,7 @@ mod tests {
         use crate::world::dimension::{CurrentDimension, DimensionKind};
         use crate::world::zone::ZoneRegistry;
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<VfxEventRequest>();
@@ -7009,7 +7024,7 @@ mod tests {
         use crate::world::dimension::{CurrentDimension, DimensionKind};
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<VfxEventRequest>();
@@ -7070,7 +7085,7 @@ mod tests {
         use crate::world::dimension::{CurrentDimension, DimensionKind};
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(SpiritNicheRegistry::default());
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<VfxEventRequest>();
@@ -7092,6 +7107,7 @@ mod tests {
                 character_id: "char:voidrealm".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("char:voidrealm"),
             inventory_with_item(spirit_niche_test_item(9004)),
             Cultivation {
                 realm: Realm::Void,

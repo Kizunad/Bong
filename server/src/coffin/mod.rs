@@ -328,7 +328,10 @@ pub fn register(app: &mut App) {
             emit_coffin_ambient_audio,
         )
             .after(crate::network::client_request_handler::handle_client_request_payloads)
-            .before(crate::network::audio_event_emit::emit_audio_play_payloads),
+            .before(crate::network::audio_event_emit::emit_audio_play_payloads)
+            // fix-spec-1901-v2 §4.2 — 进棺/出棺/破棺/回收会直接写玩家 `Position`，
+            // 纳入统一移动 commit set（在灵田 post-transfer validation 之前落地）。
+            .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
     );
     app.add_systems(
         Update,
@@ -345,7 +348,10 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            pin_coffin_players,
+            // fix-spec-1901-v2 §4.2 — 每 tick 把棺内玩家钉回棺位（Position 直写），
+            // 同样纳入统一移动 commit set。
+            pin_coffin_players
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
             emit_coffin_state_payloads,
             emit_coffin_state_to_joined_clients
                 .after(crate::player::attach_player_state_to_joined_clients),
@@ -355,7 +361,7 @@ pub fn register(app: &mut App) {
 
 pub fn register_craft_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     // 凡木棺 ×0.9 — 手搓（station: None），Scroll 解锁
-    // 寒玉/玄石/青铜棺 workbench 配方由 craft::workbench_recipes 统一注册（plan-coffin-tiers-v1 P4）
+    // 寒玉/玄石/青铜棺配方由 craft 数据资产统一注册（plan-coffin-tiers-v1 P4）
     registry.register(CraftRecipe {
         id: RecipeId::new("coffin.mundane_coffin"),
         category: CraftCategory::Misc,
@@ -1368,7 +1374,7 @@ mod tests {
     fn craft_registry_with_coffin() -> CraftRegistry {
         let mut registry = CraftRegistry::new();
         register_craft_recipes(&mut registry).expect("coffin mundane recipe should register");
-        // P4: jade/stone/bronze 配方在 workbench_recipes 注册
+        // P4: jade/stone/bronze 配方由 craft 数据资产加载
         crate::craft::register_workbench_recipes(&mut registry)
             .expect("workbench recipes should register (includes P4 coffin tiers)");
         registry

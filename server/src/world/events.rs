@@ -2939,6 +2939,7 @@ mod events_tests {
     #[test]
     fn average_zone_qi_ignores_tsy_blueprint_zones() {
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone("spawn", DimensionKind::Overworld, 0.8, 0.0),
                 test_zone("blood_valley", DimensionKind::Overworld, 0.2, 32.0),
@@ -2956,6 +2957,7 @@ mod events_tests {
     #[test]
     fn average_zone_qi_uses_fallback_when_no_overworld_zones_exist() {
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "tsy_daneng_01_deep",
                 DimensionKind::Tsy,
@@ -4055,6 +4057,7 @@ mod events_tests {
     #[test]
     fn collapse_redistribution_preserves_positive_zone_qi() {
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "source".to_string(),
@@ -4131,6 +4134,7 @@ mod events_tests {
         use crate::qi_physics::ledger::{QiAccountKind, QiTransferReason};
 
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "source".to_string(),
@@ -4226,6 +4230,7 @@ mod events_tests {
         use crate::qi_physics::ledger::QiAccountKind;
 
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "source".to_string(),
@@ -4305,6 +4310,7 @@ mod events_tests {
     fn collapse_redistribute_zero_qi_no_transfers() {
         // 边界：坍缩 zone qi=0，不产生任何 overflow 也不崩溃。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "source".to_string(),
@@ -4359,6 +4365,7 @@ mod events_tests {
 
         let stored_qi = 0.6_f64;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "lone".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -4857,6 +4864,7 @@ mod events_tests {
     fn low_qi_monitor_ignores_tsy_blueprint_zones() {
         let zone_name = "tsy_daneng_01_shallow";
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(zone_name, DimensionKind::Tsy, -0.45, 0.0)],
         };
         let mut events = ActiveEventsResource::default();
@@ -5429,6 +5437,7 @@ mod events_tests {
     fn maybe_nullify_zeros_source_zone_when_all_neighbors_full() {
         let initial_qi = 0.5_f64;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "source_full_neighbors".to_string(),

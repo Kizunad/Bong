@@ -1,0 +1,209 @@
+[[recipes]]
+id = "workbench.shelter.camo_net"
+category = "tuike_skin"
+display_name = "伪装网"
+qi_cost = 0.0
+time_sec = 55
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 3
+
+[[recipes.materials]]
+template_id = "spirit_grass"
+count = 2
+
+[recipes.output]
+template_id = "camouflage_net"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.shelter.door_bolt"
+category = "misc"
+display_name = "门闩"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 3
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 2
+
+[recipes.output]
+template_id = "door_bolt"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.shelter.lantern"
+category = "misc"
+display_name = "灯笼"
+qi_cost = 1.0
+time_sec = 45
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[[recipes.materials]]
+template_id = "spirit_charcoal"
+count = 1
+
+[[recipes.materials]]
+template_id = "ling_jing"
+count = 1
+
+[recipes.output]
+template_id = "lantern_item"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_lantern"
+
+[[recipes]]
+id = "workbench.shelter.moisture_base"
+category = "misc"
+display_name = "防潮地基"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 4
+
+[[recipes.materials]]
+template_id = "hui_jin_tai"
+count = 2
+
+[recipes.output]
+template_id = "moisture_base"
+count = 4
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.shelter.niche_base"
+category = "misc"
+display_name = "灵龛基座"
+qi_cost = 5.0
+time_sec = 180
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_niche_stone"
+count = 1
+
+[[recipes.materials]]
+template_id = "ling_tie"
+count = 2
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 4
+
+[recipes.output]
+template_id = "niche_base"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_niche_base"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "hermit_builder"
+
+[[recipes.unlock_sources]]
+kind = "insight"
+trigger = "breakthrough"
+
+[[recipes]]
+id = "workbench.shelter.simple_bed"
+category = "misc"
+display_name = "简易床铺"
+qi_cost = 0.0
+time_sec = 60
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 4
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 4
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 2
+
+[recipes.output]
+template_id = "simple_bed"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.shelter.torch"
+category = "misc"
+display_name = "火把"
+qi_cost = 0.0
+time_sec = 10
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[[recipes.materials]]
+template_id = "spirit_charcoal"
+count = 1
+
+[[recipes.materials]]
+template_id = "rat_tail_oil"
+count = 1
+
+[recipes.output]
+template_id = "torch_item"
+count = 4
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.shelter.window_grate"
+category = "misc"
+display_name = "窗栅"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 4
+
+[recipes.output]
+template_id = "window_grate"
+count = 2
+
+[recipes.requirements]

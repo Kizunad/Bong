@@ -508,7 +508,7 @@ mod tests {
     const RECIPE_ID: &str = "hud_contract_recipe";
     const ACTIVE_PROTO_FIXTURE: &str = "alchemy_session_active_v1.pb";
     const FINISHED_PROTO_FIXTURE: &str = "alchemy_session_finished_v1.pb";
-    const REGENERATE_FIXTURES_COMMAND: &str = "cargo test network::alchemy_snapshot_emit::tests::regenerate_alchemy_session_production_proto_fixtures -- --ignored --exact --nocapture";
+    const REGENERATE_FIXTURES_COMMAND: &str = "scripts/build-token.sh cargo test network::alchemy_snapshot_emit::tests::regenerate_alchemy_session_production_proto_fixtures -- --ignored --exact --nocapture";
 
     fn test_registry() -> RecipeRegistry {
         let mut registry = RecipeRegistry::new();

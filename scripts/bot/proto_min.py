@@ -73,13 +73,17 @@ SERVER_DATA_PAYLOAD_NAMES = {
     34: "cast_sync",
     36: "skillbar_config",
     51: "combat_event",
+    66: "tribulation_state",
     71: "breakthrough_cinematic",
+    72: "death_screen",
+    73: "terminate_screen",
     80: "inventory_event",
     81: "dropped_loot_sync",
     90: "container_state",
     119: "loot_container_open",
     120: "loot_container_update",
     121: "loot_container_close",
+    131: "insight_offer",
     137: "inventory_move_rejected",
     142: "morph_state",
 }
@@ -351,6 +355,51 @@ def _container_state(data: bytes) -> dict[str, Any]:
         "type": "container_state",
         "entity_id": _varint(fields, 1),
         "visual_entity_id": _optional_varint(fields, 10),
+    }
+
+
+def _death_screen(data: bytes) -> dict[str, Any]:
+    """死亡屏（field 72，envelope.proto `DeathScreen`）。
+
+    濒死判定出决策（Fortune/Tribulation）后 server 推送，visible=true；复活/终结
+    后 visible=false 收屏。stage/zone_kind 为 proto 枚举值：stage 1=Fortune、
+    2=Tribulation；zone_kind 1=ordinary、2=death、3=negative。
+    """
+    fields = _fields(data)
+    out: dict[str, Any] = {
+        "v": 1,
+        "type": "death_screen",
+        "visible": bool(_varint(fields, 1)),
+        "cause": _string(fields, 2),
+        "luck_remaining": _double(fields, 3),
+        "final_words": _strings(fields, 4),
+        "countdown_until_ms": _varint(fields, 5),
+        "can_reincarnate": bool(_varint(fields, 6)),
+        "can_terminate": bool(_varint(fields, 7)),
+    }
+    if _has(fields, 8):
+        out["stage"] = _varint(fields, 8)
+    if _has(fields, 9):
+        out["death_number"] = _varint(fields, 9)
+    if _has(fields, 10):
+        out["zone_kind"] = _varint(fields, 10)
+    return out
+
+
+def _terminate_screen(data: bytes) -> dict[str, Any]:
+    """终结屏（field 73，envelope.proto `TerminateScreen`）。
+
+    终结（主动归隐或劫数失败）后推送，visible=true；新建角色/复生后收屏
+    visible=false。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "terminate_screen",
+        "visible": bool(_varint(fields, 1)),
+        "final_words": _string(fields, 2),
+        "epilogue": _string(fields, 3),
+        "archetype_suggestion": _string(fields, 4),
     }
 
 
@@ -1080,6 +1129,47 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     }
 
 
+def _tribulation_state(data: bytes) -> dict[str, Any]:
+    """DONE-W6-HEADLESSAUDIT §5 P0-4：渡虚劫状态（envelope.proto:66）。
+
+    kind/phase 在 wire 上是 **string** 字段，不是 varint enum（envelope.proto:2374-2375：
+    `string kind = 4; // du_xu / zone_collapse / targeted / jue_bi / ascension_quota_open`、
+    `string phase = 5; // omen / lock / wave / heart_demon / settle`），用 `_string` 解。
+    场景断言字面值（cultivation_start_du_xu.py 校验 kind=du_xu phase=omen）。
+
+    只解场景要断言的字段（active/char/kind/phase/waves）；started_tick 等遥测字段
+    留待需要时再扩。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "tribulation_state",
+        "active": bool(_varint(fields, 1)),
+        "char_id": _string(fields, 2),
+        "actor_name": _string(fields, 3),
+        "kind": _string(fields, 4),
+        "phase": _string(fields, 5),
+        "wave_current": _varint(fields, 8),
+        "wave_total": _varint(fields, 9),
+    }
+
+
+def _insight_offer(data: bytes) -> dict[str, Any]:
+    """DONE-W6-HEADLESSAUDIT §5 P0-4：顿悟邀约（envelope.proto:131）。
+
+    只解 offer 标识字段；choices 保持原始 message 字节（场景按需浅扫描）。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "insight_offer",
+        "offer_id": _string(fields, 1),
+        "trigger_id": _string(fields, 2),
+        "character_id": _string(fields, 3),
+        "choices": _messages(fields, 4),
+    }
+
+
 SERVER_DATA_PAYLOAD_DECODERS = {
     3: _narration_batch,
     SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
@@ -1101,13 +1191,17 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     34: _cast_sync,
     36: _skill_bar_config,
     51: _combat_event_floater,
+    66: _tribulation_state,
     SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
+    72: _death_screen,
+    73: _terminate_screen,
     80: _inventory_event,
     81: _dropped_loot_sync,
     90: _container_state,
     119: _loot_container_open,
     120: _loot_container_update,
     121: _loot_container_close,
+    131: _insight_offer,
     137: _inventory_move_rejected,
     142: _morph_state,
 }

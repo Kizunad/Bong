@@ -47,5 +47,6 @@
       "const": "void_quota_exceeded",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e1d8aa88540b090eff61082f352f995a2636206b3691575161749e3623a0e97e"
 }

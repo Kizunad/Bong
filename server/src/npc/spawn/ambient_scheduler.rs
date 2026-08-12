@@ -37,19 +37,22 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity,
-    Position, Query, Res, ResMut, Resource, Update, With, Without,
+    apply_deferred, bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3,
+    Despawned, Entity, IntoSystemConfigs, IntoSystemSetConfigs, Position, Query, Res, ResMut,
+    Resource, SystemSet, Update, With, Without,
 };
 
-use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation, QiFlowError};
+use crate::cultivation::life_record::LifeRecord;
+use crate::fauna::mimic_spider::{transfer_spider_qi_to_zone, MimicSpiderBlackboard};
 use crate::fauna::mundane::{mundane_pool_fn, MundaneFaunaMarker};
-use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
+use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone_or_overflow;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::PoissonSpawnSampler;
 use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
-use crate::qi_physics::{QiAccountId, WorldQiAccount};
+use crate::qi_physics::WorldQiAccount;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::era::WorldEraState;
 use crate::world::mob_spawn::{
@@ -70,6 +73,29 @@ pub const AMBIENT_RING_MIN_RADIUS: f64 = 24.0;
 pub const AMBIENT_RING_MAX_RADIUS: f64 = 64.0;
 /// 存活 ambient 实体距所有 Overworld 玩家超过此距离即回收（`insert(Despawned)`）。
 pub const AMBIENT_DESPAWN_RADIUS: f64 = 96.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub enum AmbientTerminalSystemSet {
+    Recycle,
+    Flush,
+    PostRecycle,
+}
+
+pub fn configure_terminal_schedule(app: &mut App) {
+    app.configure_sets(
+        Update,
+        (
+            AmbientTerminalSystemSet::Recycle,
+            AmbientTerminalSystemSet::Flush,
+            AmbientTerminalSystemSet::PostRecycle,
+        )
+            .chain(),
+    )
+    .add_systems(
+        Update,
+        apply_deferred.in_set(AmbientTerminalSystemSet::Flush),
+    );
+}
 
 // ---------------------------------------------------------------------------
 // ThreatBudget — 按 zone danger_level 查表
@@ -1037,7 +1063,66 @@ pub fn register(app: &mut App) {
             ambient_threat_pool_fn,
             true,
         ))
-        .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+        .add_systems(
+            Update,
+            ambient_scheduler_system::<AmbientThreatMarker>
+                .in_set(AmbientTerminalSystemSet::Recycle),
+        );
+}
+
+fn settle_rat_recycle(
+    cultivation: &mut Cultivation,
+    life_record: &LifeRecord,
+    zone: Option<&mut Zone>,
+    ledger: &mut WorldQiAccount,
+) -> Result<(), QiFlowError> {
+    let identity = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)?;
+    let rat_account = identity.account();
+    let mut staged_cultivation = cultivation.clone();
+    let mut staged_zone = zone.as_deref().cloned();
+    let mut staged_ledger = ledger.clone();
+    let cultivation_qi = staged_cultivation.qi_current;
+    staged_cultivation.release_to_zone(
+        staged_zone.as_mut(),
+        &mut staged_ledger,
+        &identity,
+        cultivation_qi,
+        crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+    )?;
+    transfer_rat_drained_qi_to_zone_or_overflow(
+        &mut staged_ledger,
+        staged_zone.as_mut(),
+        &rat_account,
+    )?;
+    *cultivation = staged_cultivation;
+    if let (Some(zone), Some(staged_zone)) = (zone, staged_zone) {
+        *zone = staged_zone;
+    }
+    *ledger = staged_ledger;
+    Ok(())
+}
+
+fn settle_spider_recycle(
+    cultivation: &mut Cultivation,
+    life_record: &LifeRecord,
+    zone: Option<&mut Zone>,
+    ledger: &mut WorldQiAccount,
+) -> Result<(), QiFlowError> {
+    let mut staged_cultivation = cultivation.clone();
+    let mut staged_zone = zone.as_deref().cloned();
+    let mut staged_ledger = ledger.clone();
+    transfer_spider_qi_to_zone(
+        &mut staged_cultivation,
+        staged_zone.as_mut(),
+        &mut staged_ledger,
+        life_record,
+    )?;
+    *cultivation = staged_cultivation;
+    if let (Some(zone), Some(staged_zone)) = (zone, staged_zone) {
+        *zone = staged_zone;
+    }
+    *ledger = staged_ledger;
+    Ok(())
 }
 
 /// 通用 ambient 调度系统，按 `M: AmbientMarkerData` 单态化——每个 marker 类型注册一次
@@ -1048,13 +1133,15 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     tick: Option<Res<GameTick>>,
     mut state: ResMut<AmbientSchedulerState<M>>,
     config: Res<AmbientSchedulerConfig<M>>,
-    alive: Query<
+    mut alive: Query<
         (
             Entity,
             &M,
             &Position,
             Option<&RatBlackboard>,
             Option<&MimicSpiderBlackboard>,
+            Option<&LifeRecord>,
+            Option<&mut Cultivation>,
         ),
         Without<Despawned>,
     >,
@@ -1109,58 +1196,100 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     // 1) 超距回收：任意存活 ambient marker 距最近 Overworld 玩家 > 96 格 → Despawned。
     //    Valence 层实体裸 despawn 会在下一次 send_entity_update_messages 崩服，必须走
     //    insert(Despawned) 软删除模式（对齐 heiwushi/scenario/dying_master 现有回收路径）。
-    for (entity, _marker, pos, rat_blackboard, spider_blackboard) in &alive {
+    for (entity, _marker, pos, rat_blackboard, spider_blackboard, life_record, cultivation) in
+        &mut alive
+    {
         let nearest = overworld_players
             .iter()
             .map(|p| planar_distance(pos.get(), *p))
             .fold(f64::INFINITY, f64::min);
         if should_recycle_ambient(nearest) {
-            // §Verify blocker②(守恒蒸发红线) — 持有 drained_qi>0 的鼠患/拟态蛛（咬玩家/
-            // 吸收 Disguised 期偷来的 qi）超距回收若直接 insert(Despawned)，不会触发
-            // `release_drained_qi_on_death_system`/`spider_release_qi_on_death_system`
-            // （两者只监听 `DeathEvent`，超距回收从不发它），残余 qi 会在软删除时 100%
-            // 蒸发。回收前必须先走与死亡归还同一条计算路径把 qi 还给 zone，再
-            // insert(Despawned)。
-            if rat_blackboard.is_some() || spider_blackboard.is_some() {
-                if let Some(zone_name) = registry
-                    .find_zone(DimensionKind::Overworld, pos.get())
-                    .map(|zone| zone.name.clone())
-                {
-                    if let Some(zone) = registry.find_zone_mut(zone_name.as_str()) {
-                        if rat_blackboard.is_some() {
-                            // §8.1 决议 #1/#3 —— 100% 转账 + field-authority 写回，
-                            // 替换旧的 1% 直写字段路径（`return_rat_drained_qi_to_zone`）。
-                            match qi_account.as_deref_mut() {
-                                Some(account) => {
-                                    let rat_account =
-                                        QiAccountId::npc(format!("rat:{}", entity.index()));
-                                    if let Err(error) =
-                                        transfer_rat_drained_qi_to_zone(account, zone, &rat_account)
-                                    {
-                                        tracing::debug!(
-                                            "[bong][npc] ambient recycle rat qi transfer to \
-                                             zone failed for {:?}: {:?}",
-                                            entity,
-                                            error
-                                        );
-                                    }
-                                }
-                                None => {
-                                    tracing::debug!(
-                                        "[bong][npc] ambient recycle qi ledger unavailable, \
-                                         skipping rat qi transfer for {:?}",
-                                        entity
-                                    );
-                                }
+            // §Verify blocker②（守恒蒸发红线）——鼠患 reserve 必须先完成 durable
+            // 结算，实体才可进入 Despawned。缺 zone 时全额进入固定 stable overflow；缺
+            // ledger/identity 或事务失败时保留实体，下一轮重试，不能先删 owner 的载体。
+            let mut recycle_ready = true;
+            if rat_blackboard.is_some() {
+                recycle_ready = match (qi_account.as_deref_mut(), life_record, cultivation) {
+                    (Some(account), Some(life_record), Some(mut cultivation)) => {
+                        let zone_name = registry
+                            .find_zone(DimensionKind::Overworld, pos.get())
+                            .map(|zone| zone.name.clone());
+                        let zone = zone_name
+                            .as_deref()
+                            .and_then(|zone_name| registry.find_zone_mut(zone_name));
+                        match settle_rat_recycle(&mut cultivation, life_record, zone, account) {
+                            Ok(()) => true,
+                            Err(error) => {
+                                tracing::debug!(
+                                    "[bong][npc] ambient recycle rat qi settlement failed for \
+                                     {:?}: {:?}",
+                                    entity,
+                                    error
+                                );
+                                false
                             }
                         }
-                        if let Some(spider) = spider_blackboard {
-                            return_spider_drained_qi_to_zone(zone, spider.drained_qi);
+                    }
+                    (None, _, _) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle qi ledger unavailable; preserving rat \
+                             owner {:?}",
+                            entity
+                        );
+                        false
+                    }
+                    (_, None, _) | (_, _, None) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle rat owner identity unavailable; \
+                             preserving {:?}",
+                            entity
+                        );
+                        false
+                    }
+                };
+            } else if spider_blackboard.is_some() {
+                recycle_ready = match (qi_account.as_deref_mut(), life_record, cultivation) {
+                    (Some(account), Some(life_record), Some(mut cultivation)) => {
+                        let zone_name = registry
+                            .find_zone(DimensionKind::Overworld, pos.get())
+                            .map(|zone| zone.name.clone());
+                        let zone = zone_name
+                            .as_deref()
+                            .and_then(|zone_name| registry.find_zone_mut(zone_name));
+                        match settle_spider_recycle(&mut cultivation, life_record, zone, account) {
+                            Ok(()) => true,
+                            Err(error) => {
+                                tracing::debug!(
+                                    "[bong][npc] ambient recycle spider qi settlement failed for \
+                                     {:?}: {:?}",
+                                    entity,
+                                    error
+                                );
+                                false
+                            }
                         }
                     }
-                }
+                    (None, _, _) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle qi ledger unavailable; preserving spider \
+                             owner {:?}",
+                            entity
+                        );
+                        false
+                    }
+                    (_, None, _) | (_, _, None) => {
+                        tracing::debug!(
+                            "[bong][npc] ambient recycle spider owner identity unavailable; \
+                             preserving {:?}",
+                            entity
+                        );
+                        false
+                    }
+                };
             }
-            commands.entity(entity).insert(Despawned);
+            if recycle_ready {
+                commands.entity(entity).insert(Despawned);
+            }
         }
     }
 
@@ -1181,8 +1310,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 
         let alive_in_zone: Vec<DVec3> = alive
             .iter()
-            .filter(|(_, marker, _, _, _)| marker.home_zone() == zone.name)
-            .map(|(_, _, pos, _, _)| pos.get())
+            .filter(|(_, marker, _, _, _, _, _)| marker.home_zone() == zone.name)
+            .map(|(_, _, pos, _, _, _, _)| pos.get())
             .collect();
         let pending_in_zone = pending_spawns_by_zone.get(&zone.name).copied().unwrap_or(0);
         let alive_count = alive_in_zone.len() as u32 + pending_in_zone;
@@ -1250,6 +1379,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 mod tests {
     use super::*;
     use crate::npc::spawn::common::NpcMarker;
+    use crate::qi_physics::QiAccountId;
     use crate::world::terrain::{SurfaceInfo, TerrainProvider};
     use valence::prelude::{App, BlockState, Chunk, PropName, PropValue, UnloadedChunk};
     use valence::testing::ScenarioSingleClient;
@@ -4104,7 +4234,12 @@ mod tests {
                 test_pool_fn,
                 true,
             ))
-            .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+            .add_systems(
+                Update,
+                ambient_scheduler_system::<AmbientThreatMarker>
+                    .in_set(AmbientTerminalSystemSet::Recycle),
+            );
+        configure_terminal_schedule(&mut app);
         install_test_terrain(&mut app);
         app
     }
@@ -4245,9 +4380,14 @@ mod tests {
                                     home_zone: "test_zone".to_string(),
                                 },
                                 blackboard,
+                                Cultivation::default(),
                             ))
                             .id();
-                        let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
+                        let rat_character_id = crate::npc::brain::canonical_npc_id(stray);
+                        app.world_mut()
+                            .entity_mut(stray)
+                            .insert(LifeRecord::new(rat_character_id.clone()));
+                        let rat_account = QiAccountId::npc(rat_character_id);
                         let mut ledger = WorldQiAccount::default();
                         ledger
                             .set_balance(rat_account.clone(), 10.0)
@@ -4259,25 +4399,28 @@ mod tests {
                         (stray, Some(rat_account), expected)
                     }
                     RecycleQiCarrier::MimicSpider => {
+                        app.insert_resource(WorldQiAccount::default());
                         let mut blackboard =
                             MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
-                        blackboard.drained_qi = 50.0;
-                        let stray = app
-                            .world_mut()
-                            .spawn((
-                                Position::new([0.0, 64.0, 0.0]),
-                                AmbientThreatMarker {
-                                    spawned_at: 0,
-                                    home_zone: "test_zone".to_string(),
-                                },
-                                blackboard,
-                            ))
-                            .id();
-                        let expected = (0.5
-                            + (50.0
-                                * crate::fauna::mimic_spider::SPIDER_DRAINED_QI_DEATH_RETURN_RATIO)
-                                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-                            .clamp(-1.0, 1.0);
+                        blackboard.drained_qi = 5.0;
+                        let stray = app.world_mut().spawn_empty().id();
+                        let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(
+                            stray,
+                            crate::npc::lifecycle::NpcArchetype::Beast,
+                            crate::cultivation::components::Realm::Awaken,
+                        );
+                        bundle.cultivation.qi_current = 5.0;
+                        app.world_mut().entity_mut(stray).insert((
+                            Position::new([0.0, 64.0, 0.0]),
+                            AmbientThreatMarker {
+                                spawned_at: 0,
+                                home_zone: "test_zone".to_string(),
+                            },
+                            blackboard,
+                            bundle,
+                        ));
+                        let expected =
+                            0.5 + 5.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
                         (stray, None, expected)
                     }
                 };
@@ -4415,6 +4558,7 @@ mod tests {
 
     fn install_zone_registry(app: &mut App, danger_level: u8) {
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "test_zone".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -4591,15 +4735,8 @@ mod tests {
 
     #[test]
     fn recycle_transfers_full_rat_drained_qi_before_despawn() {
-        // §P0 验收抓手 #3（替换旧 1% 归还 pin）：超距回收持有 drained_qi>0 的鼠患（咬玩家
-        // 偷来的 qi）必须把 `npc:rat:<id>` 账户 100% 转入 zone 账户（不再是 1%），并同步
-        // 写回 `zone.spirit_qi` 字段（§8.1 决议 #3），再 insert(Despawned)。
-        //
-        // ★promote 博弈 blocker v2 修正后的调值说明：drained_qi 从旧版 100.0 降到 10.0——
-        // `QI_ZONE_UNIT_CAPACITY`=50 是 zone 账户绝对上限，旧版 100.0 在 spirit_qi=0.5
-        // （room=25）下必然溢出 75，这正是 blocker 要修的"无条件全额转账不截断"缺陷；调小
-        // 到 room 充足的量级后，本 pin 专测"非满 zone 全额落袋、无 overflow"场景（满 zone/
-        // overflow 场景见 `fauna::rat_phase::tests::rat_death_near_cap_zone_routes_overflow_conserving`）。
+        // §P0：超距回收必须按与咬击写入相同的 canonical NPC owner 结算；Zone 是外部
+        // owner，不创建 ledger mirror。只有结算成功后才可 insert(Despawned)。
         use valence::prelude::ChunkPos;
 
         let mut app = make_app();
@@ -4623,7 +4760,15 @@ mod tests {
             ))
             .id();
 
-        let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
+        let rat_character_id = crate::npc::brain::canonical_npc_id(stray);
+        let cultivation = Cultivation {
+            qi_current: 3.0,
+            ..Cultivation::default()
+        };
+        app.world_mut()
+            .entity_mut(stray)
+            .insert((LifeRecord::new(rat_character_id.clone()), cultivation));
+        let rat_account = QiAccountId::npc(rat_character_id);
         let mut ledger = WorldQiAccount::default();
         ledger
             .set_balance(rat_account.clone(), 10.0)
@@ -4637,29 +4782,26 @@ mod tests {
             "守恒修复不应影响回收本身——超距鼠患仍应被 insert(Despawned)"
         );
 
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            0.0,
+            "超距回收必须同时清空 live Cultivation owner"
+        );
+
         let ledger_after = app.world().resource::<WorldQiAccount>();
         assert_eq!(
             ledger_after.balance(&rat_account),
             0.0,
-            "超距回收必须把 npc:rat 账户清零（100% 转账，不再是只归还 1% 留 99% 僵尸余额）"
+            "超距回收必须把 canonical NPC 账户清零（100% 转账，不再留下僵尸余额）"
         );
-
-        let zone_account = QiAccountId::zone("test_zone");
-        let expected_zone_account_balance =
-            0.5_f64 * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY + 10.0;
         assert!(
-            (ledger_after.balance(&zone_account) - expected_zone_account_balance).abs() < 1e-9,
-            "超距回收 drained_qi=10 的鼠患必须 100% 转入 zone 账户（room 充足，无 overflow），\
-             期望 {expected_zone_account_balance}，实际 {}",
-            ledger_after.balance(&zone_account)
+            !ledger_after.has_account(&QiAccountId::zone("test_zone")),
+            "Zone.spirit_qi 是环境唯一 owner，回收不得合成 zone ledger mirror"
         );
-
-        // room 充足场景不应产生 overflow，overflow 账户必须为空。
-        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat_account.id));
         assert_eq!(
-            ledger_after.balance(&overflow_account),
+            ledger_after.balance(&crate::qi_physics::qi_flow_overflow_account()),
             0.0,
-            "room 充足（25 > drained 10.0）时超距回收不应产生 overflow，overflow 账户应保持空账"
+            "room 充足（25 > drained 10.0）时固定 overflow 应保持空账"
         );
 
         let zone_after = app
@@ -4668,9 +4810,7 @@ mod tests {
             .find_zone_by_name("test_zone")
             .expect("test_zone 必须仍存在")
             .spirit_qi;
-        let expected_spirit_qi = (expected_zone_account_balance
-            / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-            .clamp(-1.0, 1.0);
+        let expected_spirit_qi = 0.5 + 13.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         assert!(
             (zone_after - expected_spirit_qi).abs() < 1e-9,
             "§8.1 #3 blocker 修正：zone.spirit_qi 字段必须与超距回收账户转账同步写回，\
@@ -4680,19 +4820,229 @@ mod tests {
     }
 
     #[test]
-    fn recycle_returns_spider_drained_qi_to_zone_instead_of_evaporating() {
-        // §Verify blocker②同一红线，覆盖 danger5-7 池内的拟态蛛（AshSpider）——它与鼠患
-        // 共用本调度核的超距回收路径，同样持有 drained_qi（Disguised 期吸收的 qi）。
+    fn recycle_barrier_hides_terminal_rat_and_spider_from_same_tick_qi_producers() {
+        use crate::combat::rat_bite::{apply_rat_bite_qi_drain, RatBiteEvent};
+        use crate::cultivation::death_hooks::CultivationDeathTrigger;
+        use crate::fauna::mimic_spider::{spider_disguised_qi_absorb_system, SpiderDisguiseState};
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+        use crate::network::vfx_event_emit::VfxEventRequest;
+        use crate::qi_physics::ledger::QiTransfer;
+        use valence::prelude::ChunkPos;
+
         let mut app = make_app();
         install_layers(&mut app);
-        install_zone_registry(&mut app, 5); // spirit_qi = 0.5
+        install_zone_registry(&mut app, 1);
+        app.insert_resource(GameTick(AMBIENT_SCHEDULER_STRIDE_TICKS as u32));
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(
+            Update,
+            (apply_rat_bite_qi_drain, spider_disguised_qi_absorb_system)
+                .in_set(AmbientTerminalSystemSet::PostRecycle),
+        );
+
+        let player = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Position::new([10_000.0, 64.0, 10_000.0]),
+                Cultivation {
+                    qi_current: 6.0,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+                LifeRecord::new(crate::player::state::canonical_player_id(
+                    "AmbientBarrierTarget",
+                )),
+            ))
+            .id();
+
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                AmbientThreatMarker {
+                    spawned_at: 0,
+                    home_zone: "test_zone".to_string(),
+                },
+                RatBlackboard::new("test_zone", ChunkPos::new(0, 0)),
+            ))
+            .id();
+        let rat_character_id = crate::npc::brain::canonical_npc_id(rat);
+        app.world_mut().entity_mut(rat).insert((
+            LifeRecord::new(rat_character_id.clone()),
+            Cultivation {
+                qi_current: 2.0,
+                qi_max: 10.0,
+                ..Default::default()
+            },
+        ));
+        let rat_account = QiAccountId::npc(rat_character_id);
+
+        let spider = app.world_mut().spawn_empty().id();
+        let mut spider_bundle = crate::npc::lifecycle::npc_runtime_bundle(
+            spider,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            crate::cultivation::components::Realm::Awaken,
+        );
+        spider_bundle.cultivation.qi_current = 4.0;
+        app.world_mut().entity_mut(spider).insert((
+            NpcMarker,
+            Position::new([0.0, 64.0, 1.0]),
+            AmbientThreatMarker {
+                spawned_at: 0,
+                home_zone: "test_zone".to_string(),
+            },
+            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 1.0)),
+            SpiderDisguiseState::Disguised,
+            spider_bundle,
+        ));
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(rat_account.clone(), 3.0)
+            .expect("rat reserve fixture must be valid");
+        app.insert_resource(ledger);
+        app.world_mut().send_event(RatBiteEvent {
+            rat,
+            target: player,
+            qi_steal: 2,
+        });
+
+        app.world_mut().run_schedule(Update);
+
+        assert!(
+            app.world().get::<Despawned>(rat).is_some(),
+            "rat recycle must commit before Last removes marked entities"
+        );
+        assert!(app.world().get::<Despawned>(spider).is_some());
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current(),
+            6.0,
+            "queued rat bite must not debit its target after terminal settlement"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(spider).unwrap().qi_current(),
+            0.0,
+            "post-recycle spider absorption must not recreate a settled owner"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MimicSpiderBlackboard>(spider)
+                .unwrap()
+                .drained_qi,
+            0.0,
+            "post-recycle spider telemetry must remain unchanged"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&rat_account), 0.0);
+        assert_eq!(
+            ledger.transfers().len(),
+            3,
+            "only the rat's two owners and spider cultivation may transfer"
+        );
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("test_zone")
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_qi - (0.5 + 9.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)).abs()
+                < 1e-12,
+            "zone qi must contain exactly the three settled owners within floating-point tolerance"
+        );
+    }
+
+    #[test]
+    fn recycle_without_zone_routes_canonical_rat_balance_to_fixed_overflow() {
+        use valence::prelude::ChunkPos;
+
+        let mut app = make_app();
+        install_layers(&mut app);
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        });
         app.insert_resource(GameTick(0));
         app.world_mut()
             .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
 
-        let mut spider_blackboard =
-            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
-        spider_blackboard.drained_qi = 50.0;
+        let mut rat_blackboard = RatBlackboard::new("missing_zone", ChunkPos::new(0, 0));
+        rat_blackboard.drained_qi = 7.0;
+        let stray = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                AmbientThreatMarker {
+                    spawned_at: 0,
+                    home_zone: "missing_zone".to_string(),
+                },
+                rat_blackboard,
+            ))
+            .id();
+        let character_id = crate::npc::brain::canonical_npc_id(stray);
+        let cultivation = Cultivation {
+            qi_current: 2.0,
+            ..Cultivation::default()
+        };
+        app.world_mut()
+            .entity_mut(stray)
+            .insert((LifeRecord::new(character_id.clone()), cultivation));
+        let rat_account = QiAccountId::npc(character_id);
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(rat_account.clone(), 7.0)
+            .expect("seeding missing-zone rat balance must succeed");
+        app.insert_resource(ledger);
+
+        app.world_mut().run_schedule(Update);
+
+        assert!(
+            app.world().get::<Despawned>(stray).is_some(),
+            "missing Zone is recoverable through the fixed overflow owner, so recycle should commit"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&rat_account), 0.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            0.0,
+            "missing-zone recycle must settle the live Cultivation owner"
+        );
+        assert_eq!(
+            ledger.balance(&crate::qi_physics::qi_flow_overflow_account()),
+            9.0,
+            "both physical rat owners must survive in the persistent fixed overflow"
+        );
+        assert_eq!(
+            ledger.transfers().len(),
+            2,
+            "successful missing-zone settlement must audit both physical owner transfers"
+        );
+    }
+
+    #[test]
+    fn recycle_rat_settlement_failure_preserves_entity_owners_and_audit_for_retry() {
+        use valence::prelude::ChunkPos;
+
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_zone_registry(&mut app, 1);
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("test_zone")
+            .expect("test_zone must exist")
+            .spirit_qi = 1.0;
+        app.insert_resource(GameTick(0));
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+        let mut rat_blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
+        rat_blackboard.drained_qi = 5.0;
         let stray = app
             .world_mut()
             .spawn((
@@ -4701,9 +5051,154 @@ mod tests {
                     spawned_at: 0,
                     home_zone: "test_zone".to_string(),
                 },
-                spider_blackboard,
+                rat_blackboard,
             ))
             .id();
+        let character_id = crate::npc::brain::canonical_npc_id(stray);
+        let cultivation = Cultivation {
+            qi_current: 2.0,
+            ..Cultivation::default()
+        };
+        app.world_mut()
+            .entity_mut(stray)
+            .insert((LifeRecord::new(character_id.clone()), cultivation));
+        let rat_account = QiAccountId::npc(character_id);
+        let overflow_account = crate::qi_physics::qi_flow_overflow_account();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(rat_account.clone(), 5.0)
+            .expect("seeding rat balance must succeed");
+        ledger
+            .set_balance(overflow_account.clone(), f64::MAX)
+            .expect("seeding a saturated fixed overflow must succeed");
+        let audit_before = ledger.transfers().to_vec();
+        app.insert_resource(ledger);
+
+        app.world_mut().run_schedule(Update);
+
+        assert!(
+            app.world().get::<Despawned>(stray).is_none(),
+            "failed settlement must preserve the rat carrier so the canonical owner can retry"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&rat_account), 5.0);
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            2.0,
+            "failed second-owner settlement must roll back the Cultivation prefix"
+        );
+        assert_eq!(ledger.balance(&overflow_account), f64::MAX);
+        assert_eq!(ledger.transfers(), audit_before);
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("test_zone")
+                .expect("test_zone must remain available")
+                .spirit_qi,
+            1.0,
+            "failed late overflow credit must not leave a committed Zone prefix"
+        );
+
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(overflow_account.clone(), 0.0)
+            .expect("restoring overflow capacity must succeed");
+        app.insert_resource(GameTick(AMBIENT_SCHEDULER_STRIDE_TICKS as u32));
+        app.world_mut().run_schedule(Update);
+
+        assert!(
+            app.world().get::<Despawned>(stray).is_some(),
+            "the next eligible scheduler tick must commit the retained transaction exactly once"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&rat_account), 0.0);
+        assert_eq!(ledger.balance(&overflow_account), 7.0);
+        assert_eq!(ledger.transfers().len(), 2);
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn recycle_rat_without_ledger_or_identity_fails_closed_before_despawn() {
+        use valence::prelude::ChunkPos;
+
+        for missing_identity in [false, true] {
+            let mut app = make_app();
+            install_layers(&mut app);
+            install_zone_registry(&mut app, 1);
+            app.insert_resource(GameTick(0));
+            app.world_mut()
+                .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+            let stray = app
+                .world_mut()
+                .spawn((
+                    Position::new([0.0, 64.0, 0.0]),
+                    AmbientThreatMarker {
+                        spawned_at: 0,
+                        home_zone: "test_zone".to_string(),
+                    },
+                    RatBlackboard::new("test_zone", ChunkPos::new(0, 0)),
+                ))
+                .id();
+            if missing_identity {
+                app.insert_resource(WorldQiAccount::default());
+            } else {
+                let character_id = crate::npc::brain::canonical_npc_id(stray);
+                app.world_mut()
+                    .entity_mut(stray)
+                    .insert(LifeRecord::new(character_id));
+            }
+
+            app.world_mut().run_schedule(Update);
+
+            assert!(
+                app.world().get::<Despawned>(stray).is_none(),
+                "missing_identity={missing_identity}: missing transaction capability must retain the rat"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<ZoneRegistry>()
+                    .find_zone_by_name("test_zone")
+                    .expect("test_zone must remain available")
+                    .spirit_qi,
+                0.5,
+                "missing_identity={missing_identity}: failed admission must preserve Zone owner"
+            );
+        }
+    }
+
+    #[test]
+    fn recycle_returns_spider_cultivation_qi_to_zone_instead_of_evaporating() {
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_zone_registry(&mut app, 5); // spirit_qi = 0.5
+        app.insert_resource(GameTick(0));
+        app.insert_resource(WorldQiAccount::default());
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+        let mut spider_blackboard =
+            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+        spider_blackboard.drained_qi = 5.0;
+        let stray = app.world_mut().spawn_empty().id();
+        let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(
+            stray,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            crate::cultivation::components::Realm::Awaken,
+        );
+        bundle.cultivation.qi_current = 5.0;
+        app.world_mut().entity_mut(stray).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            AmbientThreatMarker {
+                spawned_at: 0,
+                home_zone: "test_zone".to_string(),
+            },
+            spider_blackboard,
+            bundle,
+        ));
         app.world_mut().run_schedule(Update);
 
         assert!(
@@ -4716,15 +5211,163 @@ mod tests {
             .find_zone_by_name("test_zone")
             .expect("test_zone 必须仍存在")
             .spirit_qi;
-        let expected = (0.5
-            + (50.0 * crate::fauna::mimic_spider::SPIDER_DRAINED_QI_DEATH_RETURN_RATIO)
-                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-            .clamp(-1.0, 1.0);
+        assert_eq!(
+            zone_after,
+            0.5 + 5.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
+            "recycle must return the full Cultivation qi to the Zone owner"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            0.0,
+            "回收必须清空拟态蛛唯一物理 owner"
+        );
+    }
+
+    #[test]
+    fn recycle_spider_without_zone_routes_cultivation_to_fixed_overflow() {
+        let mut app = make_app();
+        install_layers(&mut app);
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        });
+        app.insert_resource(GameTick(0));
+        app.insert_resource(WorldQiAccount::default());
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+        let stray = app.world_mut().spawn_empty().id();
+        let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(
+            stray,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            crate::cultivation::components::Realm::Awaken,
+        );
+        bundle.cultivation.qi_current = 4.0;
+        app.world_mut().entity_mut(stray).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            AmbientThreatMarker {
+                spawned_at: 0,
+                home_zone: "missing_zone".to_string(),
+            },
+            MimicSpiderBlackboard::new("missing_zone", DVec3::new(0.0, 64.0, 0.0)),
+            bundle,
+        ));
+
+        app.world_mut().run_schedule(Update);
+
+        assert!(app.world().get::<Despawned>(stray).is_some());
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            0.0
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&crate::qi_physics::qi_flow_overflow_account()),
+            4.0,
+            "missing-zone spider qi must survive in the fixed persistent overflow"
+        );
+        assert_eq!(ledger.transfers().len(), 1);
+    }
+
+    #[test]
+    fn recycle_spider_failure_preserves_actor_zone_ledger_and_entity_for_retry() {
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_zone_registry(&mut app, 5); // spirit_qi = 0.5
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("test_zone")
+            .expect("test_zone must exist")
+            .spirit_qi = 1.0;
+        app.insert_resource(GameTick(0));
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(crate::qi_physics::qi_flow_overflow_account(), f64::MAX)
+            .expect("saturated overflow fixture must be valid");
+        app.insert_resource(ledger);
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+        let stray = app.world_mut().spawn_empty().id();
+        let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(
+            stray,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            crate::cultivation::components::Realm::Awaken,
+        );
+        bundle.cultivation.qi_current = 5.0;
+        let mut spider_blackboard =
+            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+        spider_blackboard.drained_qi = 5.0;
+        app.world_mut().entity_mut(stray).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            AmbientThreatMarker {
+                spawned_at: 0,
+                home_zone: "test_zone".to_string(),
+            },
+            spider_blackboard,
+            bundle,
+        ));
+
+        app.world_mut().run_schedule(Update);
+
         assert!(
-            (zone_after - expected).abs() < 1e-9,
-            "超距回收 drained_qi=50 的拟态蛛必须按 drained_qi × ratio / QI_ZONE_UNIT_CAPACITY \
-             把残余 qi 还给 zone，期望 zone.spirit_qi={expected}，实际={zone_after}\
-             （回收前 zone.spirit_qi=0.5）——相等说明蒸发未修复"
+            app.world().get::<Despawned>(stray).is_none(),
+            "overflow commit failure must preserve the live spider for retry"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            5.0,
+            "failed recycle must preserve the physical actor owner"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("test_zone")
+                .unwrap()
+                .spirit_qi,
+            1.0,
+            "failed recycle must preserve signed Zone owner"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&crate::qi_physics::qi_flow_overflow_account()),
+            f64::MAX,
+            "failed recycle must preserve the stable overflow owner"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "failed recycle must not append an audit"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MimicSpiderBlackboard>(stray)
+                .unwrap()
+                .drained_qi,
+            5.0,
+            "failed recycle must preserve telemetry until physical settlement succeeds"
+        );
+
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(crate::qi_physics::qi_flow_overflow_account(), 0.0)
+            .expect("restoring overflow capacity must succeed");
+        app.insert_resource(GameTick(AMBIENT_SCHEDULER_STRIDE_TICKS as u32));
+        app.world_mut().run_schedule(Update);
+
+        assert!(app.world().get::<Despawned>(stray).is_some());
+        assert_eq!(
+            app.world().get::<Cultivation>(stray).unwrap().qi_current(),
+            0.0
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&crate::qi_physics::qi_flow_overflow_account()),
+            5.0
+        );
+        assert_eq!(
+            ledger.transfers().len(),
+            1,
+            "retry must commit the retained spider owner exactly once"
         );
     }
 
@@ -4818,6 +5461,7 @@ mod tests {
         ));
         install_layers(&mut app);
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "test_zone".to_string(),

@@ -155,9 +155,9 @@ return { design, implResults, verdicts, blocked: (implResults.find(r => r.blocke
 ```bash
 cd "$WT_ABS"
 # Rust（server/ 改动）：
-cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test
 # Java（client/ 改动）：
-cd client && ./gradlew test build
+scripts/build-token.sh gradle test build
 # TypeScript（agent/ 改动）：
 cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)
 # Python 改动：ruff PostToolUse hook 会自动格式化
@@ -177,7 +177,7 @@ cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/s
 1. 在 `$WT_ABS/docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，至少包含：
    - **落地清单**：每个 P 对应的真实模块/文件路径
    - **关键 commit**：本 worktree 内的实施 commit hash + 日期 + 消息（取自 `implResults[].commits`）
-   - **测试结果**：跑过的命令 + 数量（如 `cargo test cultivation:: → 94 passed`）
+   - **测试结果**：跑过的命令 + 数量（如 `scripts/build-token.sh cargo test cultivation:: → 94 passed`）
    - **跨仓库核验**：server / agent / client 各命中的 symbol（plan 跨仓库时）
    - **遗留 / 后续**：未在本 plan 范围、依赖其他 plan 的待办（若有）
 
@@ -333,7 +333,7 @@ gh pr checks "$PR_NUM" --watch --fail-fast
 ### CI 失败修复策略（≤2 轮）
 
 1. `cd "$WT_ABS" && gh run view --log-failed` 拉失败日志
-2. **在 `$WT_ABS` 内复现**失败 step 的命令（通常是 `cargo clippy` / `./gradlew test` / `npm test`）
+2. **在 `$WT_ABS` 内复现**失败 step 的命令（通常是 `scripts/build-token.sh cargo clippy` / `scripts/build-token.sh gradle test` / `npm test`）
 3. 本地能复现 → 本地修 + atomic fix commit + `cd "$WT_ABS" && git push` → 回到 step 5 重等
    - 最多 **2 轮修复**（首次失败后最多再推 2 次）
    - 每轮修复必须先在本地测试通过才 push

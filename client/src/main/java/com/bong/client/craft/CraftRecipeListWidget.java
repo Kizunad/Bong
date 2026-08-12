@@ -1,6 +1,7 @@
 package com.bong.client.craft;
 
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.skill.SkillSetSnapshot;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.component.TextBoxComponent;
@@ -44,6 +45,7 @@ public final class CraftRecipeListWidget {
 
     private String query = "";
     private InventoryModel lastInventory = InventoryModel.empty();
+    private SkillSetSnapshot lastSkills = SkillSetSnapshot.empty();
     /** 上一次 refresh() 渲染出的行 id 序列（含顺序），用于判定是否需要 clearChildren 重建。 */
     private List<String> renderedIds = List.of();
     /** 是否已经跑过至少一次完整重建（含"无匹配配方"占位）。首次 refresh() 必须走重建路径，
@@ -74,7 +76,7 @@ public final class CraftRecipeListWidget {
         searchBox.text("");
         searchBox.onChanged().subscribe(value -> {
             query = value == null ? "" : value;
-            refresh(lastInventory);
+            refresh(lastInventory, lastSkills);
         });
         root.child(searchBox);
         root.child(buildCategoryTabs());
@@ -99,7 +101,12 @@ public final class CraftRecipeListWidget {
     }
 
     public void refresh(InventoryModel inventory) {
+        refresh(inventory, SkillSetSnapshot.empty());
+    }
+
+    public void refresh(InventoryModel inventory, SkillSetSnapshot skills) {
         lastInventory = inventory == null ? InventoryModel.empty() : inventory;
+        lastSkills = skills == null ? SkillSetSnapshot.empty() : skills;
         List<CraftRecipe> scoped = CraftStore.recipes().stream()
             .filter(stationScope)
             .collect(Collectors.toList());
@@ -116,7 +123,7 @@ public final class CraftRecipeListWidget {
                 if (row == null || text == null) {
                     continue; // 理论不可达：needsRebuild=false 已保证 id 集合与 rowById 一致
                 }
-                applyRowContent(row, text, recipe, lastInventory);
+                applyRowContent(row, text, recipe, lastInventory, lastSkills);
             }
             return;
         }
@@ -131,7 +138,7 @@ public final class CraftRecipeListWidget {
             return;
         }
         for (CraftRecipe recipe : recipes) {
-            FlowLayout r = row(recipe, lastInventory);
+            FlowLayout r = row(recipe, lastInventory, lastSkills);
             rowById.put(recipe.id(), r);
             rows.child(r);
         }
@@ -155,16 +162,24 @@ public final class CraftRecipeListWidget {
         return !currentIds.equals(nextIds);
     }
 
-    /** 把配方最新状态（收藏/锁定/可做数量/选中态）写入已存在的行，不新建/不重排组件树。 */
-    private void applyRowContent(FlowLayout row, LabelComponent text, CraftRecipe recipe, InventoryModel inventory) {
+    /** 把配方最新状态（收藏/锁定/技能门/可做数量/选中态）写入已存在的行。 */
+    private void applyRowContent(
+        FlowLayout row,
+        LabelComponent text,
+        CraftRecipe recipe,
+        InventoryModel inventory,
+        SkillSetSnapshot skills
+    ) {
         String fav = favorites.contains(recipe.id()) ? "★" : " ";
-        String lock = recipe.unlocked() ? " " : "🔒";
+        boolean skillSatisfied = CraftActionBar.skillSatisfied(recipe, skills);
+        boolean available = recipe.unlocked() && skillSatisfied;
+        String lock = recipe.unlocked() ? (skillSatisfied ? " " : "技") : "🔒";
         int max = CraftInventoryCounter.maxCraftable(recipe, inventory);
-        String count = recipe.unlocked() ? (max > 0 ? " §a" + max : " §8-") : " §8?";
+        String count = available ? (max > 0 ? " §a" + max : " §8-") : " §8?";
         text.text(Text.literal(fav + lock + CraftRecipeFilter.displayName(recipe) + count));
-        text.color(Color.ofArgb(recipe.unlocked() ? 0xFFE8DDC4 : 0xFF777777));
+        text.color(Color.ofArgb(available ? 0xFFE8DDC4 : 0xFF777777));
         row.tooltip(Text.literal(recipe.unlocked()
-            ? recipe.displayName() + " · 右键收藏"
+            ? (skillSatisfied ? recipe.displayName() + " · 右键收藏" : "技艺不足 · " + recipe.requirements().humanLines())
             : "??? · " + CraftRecipeFilter.unlockHint(recipe)));
         row.surface(recipe.id().equals(selectedId) ? SELECTED_SURFACE : Surface.BLANK);
     }
@@ -211,7 +226,7 @@ public final class CraftRecipeListWidget {
         label.mouseDown().subscribe((x, y, button) -> {
             if (button == 0) {
                 category = next;
-                refresh(lastInventory);
+                refresh(lastInventory, lastSkills);
                 return true;
             }
             return false;
@@ -219,7 +234,7 @@ public final class CraftRecipeListWidget {
         return label;
     }
 
-    private FlowLayout row(CraftRecipe recipe, InventoryModel inventory) {
+    private FlowLayout row(CraftRecipe recipe, InventoryModel inventory, SkillSetSnapshot skills) {
         FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
         row.verticalAlignment(VerticalAlignment.CENTER);
         row.padding(Insets.of(1, 2, 2, 2));
@@ -227,7 +242,7 @@ public final class CraftRecipeListWidget {
         text.maxWidth(CraftScreenLayout.LEFT_W - 12);
         row.child(text);
         row.cursorStyle(CursorStyle.HAND);
-        applyRowContent(row, text, recipe, inventory);
+        applyRowContent(row, text, recipe, inventory, skills);
         labelById.put(recipe.id(), text);
         row.mouseDown().subscribe((x, y, button) -> {
             if (button == 0) {
@@ -240,7 +255,7 @@ public final class CraftRecipeListWidget {
                 }
                 // 用 lastInventory 而非闭包捕获的 inventory：后者是本行构建瞬间的旧快照，
                 // 若在此之前已发生过原地更新（diff 路径不重建行/不重订阅），捕获值会 stale。
-                refresh(lastInventory);
+                refresh(lastInventory, lastSkills);
                 return true;
             }
             return false;

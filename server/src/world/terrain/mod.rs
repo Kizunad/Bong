@@ -107,6 +107,147 @@ pub struct RasterBootstrapConfig {
     pub raster_dir: PathBuf,
 }
 
+pub struct ValidatedRasterBootstrap {
+    pub decoration_registry: nbt_registry::DecorationNbtRegistry,
+    pub providers: TerrainProviders,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerrainBootstrapError {
+    diagnostics: Vec<String>,
+}
+
+impl TerrainBootstrapError {
+    fn new<I>(diagnostics: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut diagnostics = diagnostics.into_iter().collect::<Vec<_>>();
+        diagnostics.sort();
+        diagnostics.dedup();
+        Self { diagnostics }
+    }
+
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+}
+
+impl std::fmt::Display for TerrainBootstrapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "raster bootstrap failed startup preflight:\n- {}",
+            self.diagnostics.join("\n- ")
+        )
+    }
+}
+
+impl std::error::Error for TerrainBootstrapError {}
+
+pub(crate) fn configured_tsy_raster_bootstrap() -> Result<Option<RasterBootstrapConfig>, String> {
+    let Some(raw) = std::env::var_os(TSY_RASTER_PATH_ENV_VAR) else {
+        return Ok(None);
+    };
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let manifest_path = PathBuf::from(raw);
+    let raster_dir = raster_dir_from_manifest_path(&manifest_path).map_err(|error| {
+        format!(
+            "{TSY_RASTER_PATH_ENV_VAR}={} is invalid: {error}",
+            manifest_path.display()
+        )
+    })?;
+    Ok(Some(RasterBootstrapConfig {
+        manifest_path,
+        raster_dir,
+    }))
+}
+
+pub fn prepare_raster_bootstrap(
+    overworld: RasterBootstrapConfig,
+    tsy: Option<RasterBootstrapConfig>,
+    biomes: &BiomeRegistry,
+) -> Result<ValidatedRasterBootstrap, TerrainBootstrapError> {
+    prepare_raster_bootstrap_with_nbt_preflight(
+        overworld,
+        tsy,
+        biomes,
+        nbt_registry::DecorationNbtRegistry::prepare_default(),
+    )
+}
+
+fn prepare_raster_bootstrap_with_nbt_preflight(
+    overworld: RasterBootstrapConfig,
+    tsy: Option<RasterBootstrapConfig>,
+    biomes: &BiomeRegistry,
+    nbt_preflight: nbt_registry::DecorationNbtPreflight,
+) -> Result<ValidatedRasterBootstrap, TerrainBootstrapError> {
+    let mut diagnostics = nbt_preflight
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| format!("nbt: {diagnostic}"))
+        .collect::<Vec<_>>();
+
+    let overworld_provider = match TerrainProvider::load_preflighted(
+        &overworld.manifest_path,
+        &overworld.raster_dir,
+        biomes,
+        nbt_preflight.candidate(),
+    ) {
+        Ok(provider) => Some(provider),
+        Err(error) => {
+            diagnostics.extend(
+                error
+                    .diagnostics()
+                    .iter()
+                    .map(|diagnostic| format!("overworld: {diagnostic}")),
+            );
+            None
+        }
+    };
+    let tsy_provider = tsy.and_then(|config| {
+        match TerrainProvider::load_preflighted(
+            &config.manifest_path,
+            &config.raster_dir,
+            biomes,
+            nbt_preflight.candidate(),
+        ) {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                diagnostics.extend(
+                    error
+                        .diagnostics()
+                        .iter()
+                        .map(|diagnostic| format!("tsy: {diagnostic}")),
+                );
+                None
+            }
+        }
+    });
+
+    if !diagnostics.is_empty() {
+        return Err(TerrainBootstrapError::new(diagnostics));
+    }
+
+    Ok(ValidatedRasterBootstrap {
+        decoration_registry: nbt_preflight
+            .into_registry()
+            .expect("diagnostic-free NBT preflight must commit"),
+        providers: TerrainProviders {
+            overworld: overworld_provider.expect("validated overworld provider must be present"),
+            tsy: tsy_provider,
+        },
+    })
+}
+
+pub fn load_default_decoration_registry() -> nbt_registry::DecorationNbtRegistry {
+    nbt_registry::DecorationNbtRegistry::load_default().unwrap_or_else(|error| {
+        panic!("[bong][world] failed to initialize decoration NBT registry: {error}")
+    })
+}
+
 // F12 — 按维度分桶的已生成 chunk 记录。overworld / TSY 各自独立的 `ChunkLayer`
 // 实体，但 `ChunkPos` 坐标空间是共享的（都从 (0,0) 起算），若用单一
 // `HashSet<ChunkPos>` 会导致"overworld 已生成 (x,z)"错误地让 TSY 同坐标的
@@ -120,17 +261,13 @@ struct GeneratedChunks {
 impl Resource for GeneratedChunks {}
 
 pub fn register(app: &mut App) {
-    // worldgen-v4 P6 §8.1 #10 — decompress every decoration NBT template once at
-    // app-build time and hold it resident for the process lifetime, so chunk-gen
-    // stamps are memcpy-level (no runtime gzip). Bootstrap-path agnostic: inserted
-    // for raster / flat / anvil worlds alike. A missing `decorations/` dir (assets
-    // authored in a later P6 stage) loads an empty registry — never panics.
-    let deco_registry = nbt_registry::DecorationNbtRegistry::load_default();
-    tracing::info!(
-        "[bong][world] decoration NBT registry: {} templates resident",
-        deco_registry.len()
-    );
-    app.insert_resource(deco_registry);
+    blocks::initialize_default_block_catalog().unwrap_or_else(|error| {
+        panic!("[bong][world] failed to initialize terrain block catalog: {error}")
+    });
+
+    // The resident decoration registry is prepared and committed transactionally
+    // by world::setup_world. Raster worlds merge its diagnostics with overworld and
+    // TSY manifest/sidecar diagnostics before any runtime resource or layer exists.
     app.insert_resource(GeneratedChunks::default())
         .insert_resource(TickRateProbe::default())
         .add_systems(
@@ -146,14 +283,20 @@ pub fn register(app: &mut App) {
         // 修复"非 spawn 位置穿地坠落"：会话中途 ViewDistance 变化让原版客户端重建
         // 区块存储、丢掉已加载 chunk，而 Valence 只补发视野差集 → 客户端缺脚下 chunk
         // 的碰撞 → 穿地。本系统检测并恢复（重发 chunk + 弹回地表，真虚空则回 spawn）。
-        .add_systems(Update, recover_fall_through)
         // 修复"join 后世界全虚空"：valence 在 join tick 永远不发
         // ChunkRenderDistanceCenterS2c（OldPosition 被拍成当前 Position，diff 恒空），
         // 原版客户端 chunk 缓存中心停留在默认 (0,0)，出生点 (11,6) 附近的 chunk
         // 全部在接收瞬间被静默丢弃。本系统在 join 的下一 tick 补发 center 包并重灌
         // 已被客户端丢弃的 chunk。无需 ordering 约束：Update 相写入的包总是先于本
         // tick PostUpdate 的 chunk LOAD 数据进入发送缓冲。
-        .add_systems(Update, resync_view_after_join);
+        .add_systems(Update, resync_view_after_join)
+        // fix-spec-1901-v2 §4.2 — recover_fall_through 会直接写玩家 `Position`
+        //（弹回地表 / 真虚空回 spawn），纳入统一移动 commit set。
+        .add_systems(
+            Update,
+            recover_fall_through
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        );
 }
 
 /// 玩家穿过自己脚下方块（即客户端丢失了服务端仍持有的 chunk 碰撞）时低于地板多少
@@ -627,9 +770,13 @@ pub fn spawn_raster_world(
     dimensions: &mut DimensionTypeRegistry,
     biomes: &BiomeRegistry,
     config: RasterBootstrapConfig,
+    bootstrap: ValidatedRasterBootstrap,
 ) -> Entity {
-    let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, biomes)
-        .unwrap_or_else(|error| panic!("failed to bootstrap raster terrain: {error}"));
+    let ValidatedRasterBootstrap {
+        decoration_registry,
+        providers,
+    } = bootstrap;
+    let provider = &providers.overworld;
     tracing::info!(
         "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations / {} placements from {}",
         provider.tile_count(),
@@ -638,10 +785,17 @@ pub fn spawn_raster_world(
         provider.placement_block_count(),
         config.manifest_path.display()
     );
-    if let Some(payload) = bot_raster_fixture_ready_payload(&config.manifest_path, &provider)
+    if let Some(payload) = bot_raster_fixture_ready_payload(&config.manifest_path, provider)
         .unwrap_or_else(|error| panic!("failed to bind Bot raster fixture readiness: {error}"))
     {
         tracing::info!("{payload}");
+    }
+    if let Some(tsy_provider) = &providers.tsy {
+        tracing::info!(
+            "[bong][world] loaded TSY {} terrain tiles / {} POIs",
+            tsy_provider.tile_count(),
+            tsy_provider.pois().len()
+        );
     }
 
     if let Some((_, _, dim)) = dimensions
@@ -654,55 +808,16 @@ pub fn spawn_raster_world(
 
     let layer = valence::prelude::LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
     let entity = commands.spawn((layer, OverworldLayer)).id();
-
-    // plan-tsy-worldgen-v1 §6.1 — optional TSY raster manifest from
-    // BONG_TSY_RASTER_PATH; absent → tsy=None (legacy behaviour).
-    let tsy_provider = load_tsy_provider_from_env(biomes);
-
-    commands.insert_resource(TerrainProviders {
-        overworld: provider,
-        tsy: tsy_provider,
-    });
+    tracing::info!(
+        "[bong][world] decoration NBT registry: {} templates resident",
+        decoration_registry.len()
+    );
+    commands.insert_resource(decoration_registry);
+    commands.insert_resource(providers);
     entity
 }
 
 const TSY_RASTER_PATH_ENV_VAR: &str = "BONG_TSY_RASTER_PATH";
-
-fn load_tsy_provider_from_env(biomes: &BiomeRegistry) -> Option<TerrainProvider> {
-    let raw = std::env::var_os(TSY_RASTER_PATH_ENV_VAR)?;
-    if raw.is_empty() {
-        return None;
-    }
-    let manifest_path = PathBuf::from(raw);
-    let raster_dir = match raster_dir_from_manifest_path(&manifest_path) {
-        Ok(path) => path,
-        Err(error) => {
-            tracing::warn!(
-                "[bong][world] BONG_TSY_RASTER_PATH={} unreadable: {error}",
-                manifest_path.display()
-            );
-            return None;
-        }
-    };
-    match TerrainProvider::load(&manifest_path, &raster_dir, biomes) {
-        Ok(provider) => {
-            tracing::info!(
-                "[bong][world] loaded TSY {} terrain tiles / {} POIs from {}",
-                provider.tile_count(),
-                provider.pois().len(),
-                manifest_path.display()
-            );
-            Some(provider)
-        }
-        Err(error) => {
-            tracing::warn!(
-                "[bong][world] failed to load TSY raster {}: {error}",
-                manifest_path.display()
-            );
-            None
-        }
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 fn generate_chunks_around_players(
@@ -1032,7 +1147,226 @@ fn mineral_block_state(mineral_id: crate::mineral::MineralId) -> BlockState {
 mod tests {
     use super::*;
     use crate::mineral::MineralId;
-    use valence::prelude::BlockPos;
+    use std::fs;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use valence::prelude::{Biome, BlockPos, Ident};
+
+    static RASTER_BOOTSTRAP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn bootstrap_temp_dir(tag: &str) -> PathBuf {
+        let counter = RASTER_BOOTSTRAP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bong-raster-bootstrap-{tag}-{}-{nanos}-{counter}",
+            std::process::id()
+        ))
+    }
+
+    fn bootstrap_test_biomes() -> BiomeRegistry {
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(
+            Ident::new("plains").expect("valid test biome identifier"),
+            Biome::default(),
+        );
+        biomes
+    }
+
+    fn write_bootstrap_manifest(path: &Path, surface_name: &str) {
+        fs::write(
+            path,
+            format!(
+                r#"{{
+                    "version": 2,
+                    "tile_size": 1,
+                    "world_bounds": {{"min_x":0,"max_x":0,"min_z":0,"max_z":0}},
+                    "surface_palette": ["{surface_name}"],
+                    "biome_palette": ["plains"],
+                    "tiles": []
+                }}"#
+            ),
+        )
+        .expect("bootstrap manifest should be writable");
+    }
+
+    #[test]
+    fn raster_bootstrap_aggregates_nbt_overworld_and_tsy_diagnostics() {
+        let root = bootstrap_temp_dir("aggregate");
+        let overworld_dir = root.join("overworld");
+        let tsy_dir = root.join("tsy");
+        fs::create_dir_all(&overworld_dir).expect("overworld fixture dir should be creatable");
+        fs::create_dir_all(&tsy_dir).expect("TSY fixture dir should be creatable");
+        let overworld_manifest = overworld_dir.join("manifest.json");
+        let tsy_manifest = tsy_dir.join("manifest.json");
+        write_bootstrap_manifest(&overworld_manifest, "broken_overworld_surface");
+        write_bootstrap_manifest(&tsy_manifest, "broken_tsy_surface");
+
+        let nbt_preflight = nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+            nbt_registry::DecorationNbtRegistry::empty(),
+            vec!["broken NBT palette for aggregate test".to_string()],
+        );
+        let error = match prepare_raster_bootstrap_with_nbt_preflight(
+            RasterBootstrapConfig {
+                manifest_path: overworld_manifest,
+                raster_dir: overworld_dir,
+            },
+            Some(RasterBootstrapConfig {
+                manifest_path: tsy_manifest,
+                raster_dir: tsy_dir,
+            }),
+            &bootstrap_test_biomes(),
+            nbt_preflight,
+        ) {
+            Ok(_) => panic!("all invalid dimensions and NBT admission must reject bootstrap"),
+            Err(error) => error,
+        };
+        let diagnostics = error.diagnostics();
+        assert!(diagnostics.windows(2).all(|pair| pair[0] <= pair[1]));
+        for (prefix, authored_value) in [
+            ("nbt: ", "broken NBT palette"),
+            ("overworld: ", "broken_overworld_surface"),
+            ("tsy: ", "broken_tsy_surface"),
+        ] {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.starts_with(prefix)
+                        && diagnostic.contains(authored_value)),
+                "bootstrap must retain {prefix:?} diagnostic for {authored_value:?}: {error}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn raster_bootstrap_commits_one_registry_and_optional_tsy_provider_on_success() {
+        let root = bootstrap_temp_dir("success");
+        let overworld_dir = root.join("overworld");
+        let tsy_dir = root.join("tsy");
+        fs::create_dir_all(&overworld_dir).expect("overworld fixture dir should be creatable");
+        fs::create_dir_all(&tsy_dir).expect("TSY fixture dir should be creatable");
+        let overworld_manifest = overworld_dir.join("manifest.json");
+        let tsy_manifest = tsy_dir.join("manifest.json");
+        write_bootstrap_manifest(&overworld_manifest, "stone");
+        write_bootstrap_manifest(&tsy_manifest, "deepslate");
+
+        let bootstrap = prepare_raster_bootstrap_with_nbt_preflight(
+            RasterBootstrapConfig {
+                manifest_path: overworld_manifest,
+                raster_dir: overworld_dir,
+            },
+            Some(RasterBootstrapConfig {
+                manifest_path: tsy_manifest,
+                raster_dir: tsy_dir,
+            }),
+            &bootstrap_test_biomes(),
+            nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+                nbt_registry::DecorationNbtRegistry::empty(),
+                Vec::new(),
+            ),
+        )
+        .expect("diagnostic-free sources must commit one validated bootstrap bundle");
+        assert!(bootstrap.decoration_registry.is_empty());
+        assert!(bootstrap.providers.tsy.is_some());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn raster_bootstrap_keeps_absent_tsy_optional_but_configured_missing_tsy_is_fatal() {
+        let root = bootstrap_temp_dir("optional-tsy");
+        let overworld_dir = root.join("overworld");
+        fs::create_dir_all(&overworld_dir).expect("overworld fixture dir should be creatable");
+        let overworld_manifest = overworld_dir.join("manifest.json");
+        write_bootstrap_manifest(&overworld_manifest, "stone");
+        let overworld_config = RasterBootstrapConfig {
+            manifest_path: overworld_manifest,
+            raster_dir: overworld_dir,
+        };
+        let biomes = bootstrap_test_biomes();
+
+        let without_tsy = prepare_raster_bootstrap_with_nbt_preflight(
+            overworld_config.clone(),
+            None,
+            &biomes,
+            nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+                nbt_registry::DecorationNbtRegistry::empty(),
+                Vec::new(),
+            ),
+        )
+        .expect("absent TSY configuration remains backward-compatible");
+        assert!(without_tsy.providers.tsy.is_none());
+
+        let missing_tsy = root.join("missing-tsy/manifest.json");
+        let error = match prepare_raster_bootstrap_with_nbt_preflight(
+            overworld_config,
+            Some(RasterBootstrapConfig {
+                raster_dir: missing_tsy.parent().unwrap().to_path_buf(),
+                manifest_path: missing_tsy.clone(),
+            }),
+            &biomes,
+            nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+                nbt_registry::DecorationNbtRegistry::empty(),
+                Vec::new(),
+            ),
+        ) {
+            Ok(_) => panic!("configured missing TSY manifest must be fatal"),
+            Err(error) => error,
+        };
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.starts_with("tsy: manifest:")
+                && diagnostic.contains(missing_tsy.to_string_lossy().as_ref())
+        }));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn configured_tsy_manifest_path_is_optional_but_preserved_when_present() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        struct RestoreEnv(Option<std::ffi::OsString>);
+        impl Drop for RestoreEnv {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var(TSY_RASTER_PATH_ENV_VAR, value),
+                    None => std::env::remove_var(TSY_RASTER_PATH_ENV_VAR),
+                }
+            }
+        }
+
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os(TSY_RASTER_PATH_ENV_VAR);
+        let _restore = RestoreEnv(previous);
+
+        std::env::remove_var(TSY_RASTER_PATH_ENV_VAR);
+        assert!(configured_tsy_raster_bootstrap()
+            .expect("an unconfigured TSY raster remains backward-compatible")
+            .is_none());
+
+        std::env::set_var(TSY_RASTER_PATH_ENV_VAR, "");
+        assert!(configured_tsy_raster_bootstrap()
+            .expect("an empty TSY raster path remains disabled")
+            .is_none());
+
+        let missing = std::env::temp_dir().join(format!(
+            "bong-registry-datafication-missing-tsy-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&missing);
+        std::env::set_var(TSY_RASTER_PATH_ENV_VAR, &missing);
+        let config = configured_tsy_raster_bootstrap()
+            .expect("configured path parsing must not hide a later loader failure")
+            .expect("configured TSY path must produce a bootstrap config");
+        assert_eq!(config.manifest_path, missing);
+        assert_eq!(config.raster_dir, missing.parent().unwrap());
+    }
 
     #[test]
     fn set_mineral_block_writes_matching_vanilla_block() {
@@ -1308,7 +1642,7 @@ mod tests {
     mod join_view_resync {
         use super::*;
         use std::collections::BTreeSet;
-        use valence::prelude::OldPosition;
+        use valence::prelude::{Despawned, OldPosition};
         use valence::protocol::Packet;
         use valence::testing::ScenarioSingleClient;
 
@@ -1559,6 +1893,107 @@ mod tests {
                 centers_tick3.is_empty(),
                 "期望第 3 次 update 不再发 center 包，因为 marker 已在 fire 时移除、\
                  Added<Client> 也早已消费；实际收到 {centers_tick3:?}"
+            );
+        }
+
+        /// 回归（Kizunad/valence pin 8eff652，Fix A）：despawn cleanup 对「客户端
+        /// 从未 inc 过的 chunk」必须是无害跳过——而不是 debug 下 panic（release 下
+        /// fetch_sub 回绕成 u32::MAX 让 chunk 永久滞留、无法被保留 GC 回收）。
+        ///
+        /// 构造原理：`OldVisibleChunkLayer(Entity)` 与 `OldViewDistance(u8)` 的字段
+        /// 是 crate 私有的、无 pub 构造器，Bong 无法从外部构造「old layer == layer」
+        /// 来绕开 join layer-change 的全量 inc。改用同效的**反向构造**：给 late-joiner
+        /// 移除 `Client` 组件。
+        ///   - `handle_layer_messages` 与 `update_view_and_layers` 的查询都要求
+        ///     `&mut Client` → 移除后实体被两者跳过：LOAD 消息不投递、layer-change /
+        ///     view diff 两条 inc 路径全部短路；
+        ///   - `cleanup_chunks_after_client_despawn` 只要求 `With<ClientMarker> +
+        ///     With<Despawned>`（再加 View + VisibleChunkLayer），不需要 `Client` →
+        ///     仍然对 view 内的每个 chunk 执行 dec。
+        /// 于是「chunk 已在层内、viewer_count 恒为 0、despawn 客户端 view 覆盖它」
+        /// 的 underflow 状态被确定性构造出来，全程无 mid-tick 时序依赖。
+        ///
+        /// 消息丢弃：chunk 先入层，其 LOAD 消息在「无任何客户端」的 tick 里被
+        /// staged→ready→unready 清空（unready 丢弃整条消息队列）→ 永不投递、计数 0。
+        ///
+        /// 种子客户端（ScenarioSingleClient 自带，仍带 `Client` 且 join 后 old layer
+        /// 同步为 layer）必须先移出舞台，否则它会投递 chunk 的 LOAD 消息、破坏计数
+        /// 0 的前提。
+        ///
+        /// 确定性论证：late-joiner 出生即带 Despawned，其第一次 update 必然触发
+        /// cleanup（`despawn_marked_entities` 在 `Last` 调度、cleanup 在 PostUpdate，
+        /// 实体在 cleanup 之后才被移除）。断言锚到 cleanup 之后仍可观察的结果契约上
+        /// ——viewer_count 必须仍为 0（对未计数 chunk 的 dec 是无害 no-op），chunk
+        /// 不再被任何假想 viewer 钉住、可被移出 layer 回收。未修复实现：debug 直接
+        /// panic，release 回绕成 u32::MAX → viewer_count 断言失败，两种 profile 都被拦。
+        #[test]
+        fn despawn_cleanup_skips_chunks_client_never_incd() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let layer = scenario.layer;
+
+            // 种子客户端从 bundle 起 old_visible_chunk_layer 就是 PLACEHOLDER → 它的
+            // join layer-change 会把任何已存在的 view chunk 全量 inc。直接移出舞台，
+            // 保证 tick 1 的消息丢弃阶段没有任何客户端把 layer 当 old layer。
+            app.world_mut().despawn(scenario.client);
+
+            // chunk 先于所有客户端存在：LOAD 消息 staged → tick 1 ready → 无人消费
+            // → unready 丢弃。viewer_count 从始至终是 0。
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(0, 0), UnloadedChunk::new());
+
+            // tick 1：LOAD 消息被 readied 后无人投递、被 unready 清空。
+            app.update();
+
+            // 后加入客户端：出生即带 Despawned、view 覆盖 chunk，但移除 `Client` 组件
+            // ——`handle_layer_messages` / `update_view_and_layers` 查询都要求
+            // `&mut Client`，两条 inc 路径全部跳过；`cleanup_chunks_after_client_despawn`
+            // 只要求 ClientMarker + Despawned，仍会对 view 内 chunk 执行 dec。
+            let (mut bundle, _helper) = valence::testing::create_mock_client("late-joiner");
+            bundle.visible_chunk_layer.0 = layer;
+            let client = app.world_mut().spawn(bundle).id();
+            app.world_mut().entity_mut(client).insert((
+                Position::new([8.5, 64.0, 8.5]),
+                OldPosition::new([8.5, 64.0, 8.5]),
+                ViewDistance::new(2),
+                Despawned,
+            ));
+            app.world_mut()
+                .entity_mut(client)
+                .remove::<valence::prelude::Client>();
+
+            // tick 2：cleanup 对计数 0 的 chunk 执行 dec。契约断言锚到 dec 的结果
+            // 本身，而不是"update 是否 panic"：release 下未修复的 fetch_sub 只是
+            // 回绕成 u32::MAX、并不 panic，只看 panic 会让坏实现在 release 测试里
+            // 溜过。viewer_count 断言在 debug（panic）与 release（回绕）下都拦得住。
+            app.update();
+            let viewer_count = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .chunk(ChunkPos::new(0, 0))
+                .expect("chunk (0,0) should still be loaded after cleanup")
+                .viewer_count();
+            assert_eq!(
+                viewer_count,
+                0,
+                "despawn cleanup 对从未 inc 过的 chunk 执行 dec 必须是无害 no-op：\
+                 viewer_count 应为 0，实际是 {viewer_count}（未修复的 release 实现会把\
+                 未计数 chunk 回绕到 u32::MAX，使其永久滞留、无法被保留 GC 回收）"
+            );
+
+            // 计数归零后，孤儿 chunk 不再被任何假想 viewer 钉住：它必须能被移出 layer、
+            // 正常回收，而不是永久滞留。
+            assert!(
+                app.world_mut()
+                    .get_mut::<ChunkLayer>(layer)
+                    .expect("scenario layer should carry a ChunkLayer")
+                    .remove_chunk(ChunkPos::new(0, 0))
+                    .is_some(),
+                "viewer_count 为 0 的孤儿 chunk 必须可回收（能从 layer 移出）；\
+                 u32::MAX 回绕会让它永久滞留"
             );
         }
     }

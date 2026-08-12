@@ -42,6 +42,46 @@ class ScenarioEnv:
             )
         return Bot(username, host=self.host, port=self.port)
 
+    def lookup_character_id(self, username: str) -> str:
+        """反查 server 侧当前角色的完整 character_id（`offline:<user>:<uuid>`）。
+
+        运行时 lifecycle.character_id 是复合形式（`player_character_id` = canonical id +
+        `player_core.current_char_id` uuid），且任何 S2C payload 都不下发该 uuid——
+        duo_she 客户端 UI 尚未接线，黑盒客户端无法自行构造合法 target_id。
+        本查询仅用于**构造输入**（同 fixture raster 由 harness 提供），断言面仍是纯协议黑盒。
+        """
+        import sqlite3
+
+        candidates = [
+            os.environ.get("BONG_SERVER_DB"),
+            os.path.join("data", "bong.db"),
+            os.path.join("server", "data", "bong.db"),
+        ]
+        tried = []
+        for path in candidates:
+            if not path or not os.path.isfile(path):
+                continue
+            tried.append(path)
+            try:
+                connection = sqlite3.connect(path, timeout=10.0)
+                try:
+                    row = connection.execute(
+                        "SELECT current_char_id FROM player_core WHERE username = ?1",
+                        (username,),
+                    ).fetchone()
+                finally:
+                    connection.close()
+            except sqlite3.Error as error:
+                raise RuntimeError(
+                    f"lookup_character_id(`{username}`) 读 {path} 失败: {error}"
+                ) from error
+            if row is not None:
+                return f"offline:{username}:{row[0]}"
+        raise RuntimeError(
+            f"lookup_character_id(`{username}`) 查不到 player_core 行——"
+            f"尝试过 {tried or [p for p in candidates if p]}"
+        )
+
 
 def validate_scenario_module(name: str, module: object) -> None:
     """校验场景模块契约（DESCRIPTION/MODULES/run），缺失抛 RuntimeError。"""
@@ -112,7 +152,7 @@ def main() -> int:
     if not check_server_reachable(args.host, args.port, timeout=5.0):
         print(
             f"server {args.host}:{args.port} 不可达——先起 server"
-            "（bash scripts/bot-e2e.sh 会自动起，或手动 cd server && cargo run）",
+            "（bash scripts/bot-e2e.sh 会自动起，或手动 scripts/build-token.sh cargo run）",
             file=sys.stderr,
         )
         return 2

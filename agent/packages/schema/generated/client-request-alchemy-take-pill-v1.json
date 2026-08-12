@@ -18,5 +18,6 @@
     "pill_item_id": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "53c8776244ac1fb7e5aee3d7ec0ab0bfecbe4a92cc2b6187aec72d19e49a1a1a"
 }

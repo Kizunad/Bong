@@ -14,7 +14,7 @@
 //!   `VfxPlayer` 类上。
 //!
 //! 清单**不可手改**——唯一重生成入口：
-//! `cd server && BONG_REGEN_VFX_MANIFEST=1 cargo test skill_vfx_wiring`。
+//! `BONG_REGEN_VFX_MANIFEST=1 scripts/build-token.sh cargo test skill_vfx_wiring`。
 
 use crate::combat::zhenmai_v2;
 use crate::cultivation::burst_meridian;

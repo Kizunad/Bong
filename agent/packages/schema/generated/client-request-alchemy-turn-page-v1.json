@@ -18,5 +18,6 @@
     "delta": {
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "4e317c4ee5cea6ad7c0c3503385d64d677171319338671bf3a7bf3c69c980745"
 }

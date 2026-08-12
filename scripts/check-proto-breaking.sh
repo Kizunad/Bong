@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASE_REF="${BASE_REF:?BASE_REF is required}"
 
 git -C "$ROOT" fetch --no-tags --depth=1 origin \
-  "$BASE_REF:refs/remotes/origin/$BASE_REF"
+  "+$BASE_REF:refs/remotes/origin/$BASE_REF"
 base_commit="$(git -C "$ROOT" rev-parse --verify "refs/remotes/origin/$BASE_REF^{commit}")"
 proto_type="$(git -C "$ROOT" cat-file -t "$base_commit:proto" 2>/dev/null || true)"
 

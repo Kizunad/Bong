@@ -608,6 +608,8 @@ mod tests {
     #[test]
     fn startup_spawned_npc_default_thinker_emits_attack_intent_in_melee_range() {
         let mut app = App::new();
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+        app.add_event::<crate::qi_physics::QiTransfer>();
         crate::npc::lifecycle::register(&mut app);
         brain::register(&mut app);
         app.insert_resource(CapturedAttackIntents::default());
@@ -1597,6 +1599,7 @@ mod tests {
 
     fn seed_rogue_population_realm_test_zones() -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 // background bucket: spirit_qi < 0.4 threshold.
                 mk_big_zone("background_big", 0.3, [0.0, 66.0, 0.0]),
@@ -2156,6 +2159,8 @@ mod tests {
         // We only call spawn::register() (not brain::register()) to avoid needing
         // all the events that brain systems require.
         let mut app = App::new();
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+        app.add_event::<crate::qi_physics::QiTransfer>();
         crate::npc::lifecycle::register(&mut app);
         app.insert_resource(RoguePopulationSeedConfig {
             target_count: 0,

@@ -36,5 +36,6 @@
     "recipe_id": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "71421046e330d02acab0469edca87a8cc798e44997ea1ded4fbf29a2c43e1f27"
 }

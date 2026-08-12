@@ -62,8 +62,20 @@ pub fn register(app: &mut App) {
     // 语义允许这里重复 add_event，同时保证 cmd 单测可独立运行。
     app.add_event::<DimensionTransferRequest>()
         .add_command::<TpdimCmd>()
-        .add_systems(Update, handle_tpdim)
-        .add_systems(Update, confirm_tpdim_position.after(DimensionTransferSet));
+        .add_systems(
+            Update,
+            // Producers must run before the DimensionTransferSet consumer in the same
+            // authoritative commit phase; set membership alone does not order them.
+            handle_tpdim
+                .before(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        )
+        .add_systems(
+            Update,
+            confirm_tpdim_position
+                .after(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        );
 }
 
 pub fn handle_tpdim(

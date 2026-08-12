@@ -145,8 +145,8 @@ public final class BongAnimationPlayer {
         Map<Identifier, ActiveLayer> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
         ActiveLayer existing = perPlayer.get(animId);
-        if (existing != null) {
-            // 同 id 重触发：在现有层上淡入替换，连击时这条路径保证平滑过渡——
+        if (existing != null && existing.stack == stack) {
+            // 同 id 重触发：在同一层上淡入替换，连击时这条路径保证平滑过渡——
             // 不新增 AnimationStack 条目，避免同 animId 叠 N 层。
             existing.layer.replaceAnimationWithFade(
                 AbstractFadeModifier.standardFadeIn(Math.max(0, fadeInTicks), Ease.INOUTSINE),
@@ -154,8 +154,13 @@ public final class BongAnimationPlayer {
             );
             return true;
         }
+        if (existing != null) {
+            // UUID 可能在重建玩家实体后复用；新 AnimationStack 必须取得自己的层，
+            // 旧 stack 的层同时摘除，避免 ownership 指向已经替换的玩家栈。
+            removeLayer(existing.stack, existing.layer, "替换 player stack");
+        }
 
-        // 首次：新建层，插进玩家的 AnimationStack，并挂上 fade-in modifier
+        // 首次或 replacement stack：新建层，插进目标 AnimationStack，并挂上 fade-in modifier
         ModifierLayer<KeyframeAnimationPlayer> layer = new ModifierLayer<>(framePlayer);
         if (fadeInTicks > 0) {
             layer.addModifierLast(AbstractFadeModifier.standardFadeIn(fadeInTicks, Ease.INOUTSINE));
@@ -286,10 +291,11 @@ public final class BongAnimationPlayer {
         if (perPlayer == null) {
             return false;
         }
-        ActiveLayer active = perPlayer.remove(animId);
-        if (active == null) {
+        ActiveLayer active = perPlayer.get(animId);
+        if (active == null || active.stack != stack) {
             return false;
         }
+        perPlayer.remove(animId);
         if (perPlayer.isEmpty()) {
             ACTIVE_LAYERS.remove(pid);
         }
@@ -334,6 +340,16 @@ public final class BongAnimationPlayer {
             }
             PENDING_REMOVALS.clear();
         }
+    }
+
+    /** 测试/诊断用：指定 stack 上的动画层是否仍处于 PlayerAnimator active 状态。 */
+    static boolean isActiveOnStack(AnimationStack stack, UUID playerId, Identifier animId) {
+        if (stack == null || playerId == null || animId == null) {
+            return false;
+        }
+        Map<Identifier, ActiveLayer> perPlayer = ACTIVE_LAYERS.get(playerId);
+        ActiveLayer active = perPlayer == null ? null : perPlayer.get(animId);
+        return active != null && active.stack == stack && active.layer.isActive();
     }
 
     /** 测试/诊断用：玩家当前正在播的动画 id 集合。 */

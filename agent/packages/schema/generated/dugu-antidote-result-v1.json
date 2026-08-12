@@ -8,5 +8,6 @@
       "const": "failed",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "202cbc73cf1e1e997a41817d784d2d9ea75545c6a68e46a89794d7deb9b80d15"
 }

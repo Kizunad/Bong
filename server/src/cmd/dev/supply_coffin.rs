@@ -131,7 +131,11 @@ impl Command for SupplyCoffinCmd {
 
 pub fn register(app: &mut App) {
     app.add_command::<SupplyCoffinCmd>()
-        .add_systems(Update, handle_supply_coffin_cmd)
+        .add_systems(
+            Update,
+            handle_supply_coffin_cmd
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        )
         .add_systems(
             Update,
             flush_supply_coffin_barriers

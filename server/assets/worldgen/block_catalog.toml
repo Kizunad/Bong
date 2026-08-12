@@ -1,0 +1,646 @@
+# plan-registry-datafication-v1 P2 — authoritative terrain logical-key catalog.
+# The checked-in 213 entries preserve the migration baseline; they are not a production limit.
+# Direct entries resolve through Valence BlockKind::from_str(name).to_state().
+# Additional aliases may target any direct key declared in this file; alias chains are rejected.
+version = 1
+
+[[block]]
+name = "stone"
+
+[[block]]
+name = "smooth_stone"
+
+[[block]]
+name = "coarse_dirt"
+
+[[block]]
+name = "gravel"
+
+[[block]]
+name = "grass_block"
+
+[[block]]
+name = "dirt"
+
+[[block]]
+name = "sand"
+
+[[block]]
+name = "sandstone"
+
+[[block]]
+name = "red_sandstone"
+
+[[block]]
+name = "red_sand"
+
+[[block]]
+name = "chiseled_red_sandstone"
+
+[[block]]
+name = "terracotta"
+
+[[block]]
+name = "red_terracotta"
+
+[[block]]
+name = "blackstone"
+
+[[block]]
+name = "basalt"
+
+[[block]]
+name = "polished_basalt"
+
+[[block]]
+name = "magma_block"
+
+[[block]]
+name = "crimson_nylium"
+
+[[block]]
+name = "calcite"
+
+[[block]]
+name = "snow_block"
+
+[[block]]
+name = "packed_ice"
+
+[[block]]
+name = "blue_ice"
+
+[[block]]
+name = "podzol"
+
+[[block]]
+name = "rooted_dirt"
+
+[[block]]
+name = "soul_sand"
+
+[[block]]
+name = "soul_soil"
+
+[[block]]
+name = "bone_block"
+
+[[block]]
+name = "mud"
+
+[[block]]
+name = "clay"
+
+[[block]]
+name = "moss_block"
+
+[[block]]
+name = "moss_carpet"
+
+[[block]]
+name = "andesite"
+
+[[block]]
+name = "polished_andesite"
+
+[[block]]
+name = "polished_diorite"
+
+[[block]]
+name = "deepslate"
+
+[[block]]
+name = "cobbled_deepslate"
+
+[[block]]
+name = "tuff"
+
+[[block]]
+name = "cobblestone"
+
+[[block]]
+name = "mossy_cobblestone"
+
+[[block]]
+name = "dead_bush"
+
+[[block]]
+name = "grass"
+
+[[block]]
+name = "cobweb"
+
+[[block]]
+name = "gray_concrete_powder"
+
+[[block]]
+name = "cobblestone_wall"
+
+[[block]]
+name = "torch"
+
+[[block]]
+name = "stone_button"
+
+[[block]]
+name = "muddy_mangrove_roots"
+
+[[block]]
+name = "oak_log"
+
+[[block]]
+name = "stripped_oak_log"
+
+[[block]]
+name = "oak_leaves"
+
+[[block]]
+name = "birch_log"
+
+[[block]]
+name = "birch_leaves"
+
+[[block]]
+name = "stripped_birch_log"
+
+[[block]]
+name = "spruce_log"
+
+[[block]]
+name = "spruce_leaves"
+
+[[block]]
+name = "stripped_spruce_log"
+
+[[block]]
+name = "jungle_log"
+
+[[block]]
+name = "azalea_leaves"
+
+[[block]]
+name = "flowering_azalea_leaves"
+
+[[block]]
+name = "mangrove_log"
+
+[[block]]
+name = "mangrove_leaves"
+
+[[block]]
+name = "mangrove_roots"
+
+[[block]]
+name = "bamboo_block"
+
+[[block]]
+name = "stripped_bamboo_block"
+
+[[block]]
+name = "crimson_stem"
+
+[[block]]
+name = "crimson_hyphae"
+
+[[block]]
+name = "crimson_roots"
+
+[[block]]
+name = "warped_wart_block"
+
+[[block]]
+name = "nether_wart_block"
+
+[[block]]
+name = "weeping_vines"
+
+[[block]]
+name = "red_mushroom_block"
+
+[[block]]
+name = "brown_mushroom_block"
+
+[[block]]
+name = "mushroom_stem"
+
+[[block]]
+name = "shroomlight"
+
+[[block]]
+name = "iron_block"
+
+[[block]]
+name = "copper_block"
+
+[[block]]
+name = "weathered_copper"
+
+[[block]]
+name = "diamond_block"
+
+[[block]]
+name = "emerald_block"
+
+[[block]]
+name = "quartz_block"
+
+[[block]]
+name = "smooth_quartz"
+
+[[block]]
+name = "quartz_stairs"
+
+[[block]]
+name = "amethyst_block"
+
+[[block]]
+name = "amethyst_cluster"
+
+[[block]]
+name = "budding_amethyst"
+
+[[block]]
+name = "emerald_ore"
+
+[[block]]
+name = "deepslate_emerald_ore"
+
+[[block]]
+name = "obsidian"
+
+[[block]]
+name = "crying_obsidian"
+
+[[block]]
+name = "lodestone"
+
+[[block]]
+name = "chiseled_deepslate"
+
+[[block]]
+name = "deepslate_bricks"
+
+[[block]]
+name = "stone_bricks"
+
+[[block]]
+name = "chiseled_stone_bricks"
+
+[[block]]
+name = "cracked_stone_bricks"
+
+[[block]]
+name = "mossy_stone_bricks"
+
+[[block]]
+name = "smooth_stone_slab"
+
+[[block]]
+name = "stone_brick_slab"
+
+[[block]]
+name = "stone_brick_stairs"
+
+[[block]]
+name = "warped_planks"
+
+[[block]]
+name = "end_stone"
+
+[[block]]
+name = "white_wool"
+
+[[block]]
+name = "red_wool"
+
+[[block]]
+name = "black_wool"
+
+[[block]]
+name = "white_concrete"
+
+[[block]]
+name = "black_concrete"
+
+[[block]]
+name = "red_concrete"
+
+[[block]]
+name = "light_blue_concrete"
+
+[[block]]
+name = "gray_concrete"
+
+[[block]]
+name = "light_gray_concrete"
+
+[[block]]
+name = "soul_lantern"
+
+[[block]]
+name = "redstone_lamp"
+
+[[block]]
+name = "verdant_froglight"
+
+[[block]]
+name = "cyan_stained_glass"
+
+[[block]]
+name = "light_blue_stained_glass"
+
+[[block]]
+name = "blue_stained_glass"
+
+[[block]]
+name = "glass"
+
+[[block]]
+name = "tinted_glass"
+
+[[block]]
+name = "glow_lichen"
+
+[[block]]
+name = "sculk"
+
+[[block]]
+name = "sculk_vein"
+
+[[block]]
+name = "dripstone_block"
+
+[[block]]
+name = "pointed_dripstone"
+
+[[block]]
+name = "lily_pad"
+
+[[block]]
+name = "sugar_cane"
+
+[[block]]
+name = "tall_grass"
+
+[[block]]
+name = "fern"
+
+[[block]]
+name = "dandelion"
+
+[[block]]
+name = "poppy"
+
+[[block]]
+name = "peony"
+
+[[block]]
+name = "pink_tulip"
+
+[[block]]
+name = "pink_petals"
+
+[[block]]
+name = "lily_of_the_valley"
+
+[[block]]
+name = "sweet_berry_bush"
+
+[[block]]
+name = "prismarine"
+
+[[block]]
+name = "tube_coral_block"
+
+[[block]]
+name = "oak_sign"
+
+[[block]]
+name = "spruce_sign"
+
+[[block]]
+name = "birch_sign"
+
+[[block]]
+name = "dark_oak_sign"
+
+[[block]]
+name = "farmland"
+
+[[block]]
+name = "wheat"
+
+[[block]]
+name = "potatoes"
+
+[[block]]
+name = "carrots"
+
+[[block]]
+name = "beetroots"
+
+[[block]]
+name = "chiseled_polished_blackstone"
+
+[[block]]
+name = "polished_blackstone"
+
+[[block]]
+name = "polished_blackstone_bricks"
+
+[[block]]
+name = "cracked_polished_blackstone_bricks"
+
+[[block]]
+name = "nether_bricks"
+
+[[block]]
+name = "red_nether_bricks"
+
+[[block]]
+name = "end_stone_bricks"
+
+[[block]]
+name = "purpur_block"
+
+[[block]]
+name = "lectern"
+
+[[block]]
+name = "wither_skeleton_skull"
+
+[[block]]
+name = "skeleton_skull"
+
+[[block]]
+name = "barrel"
+
+[[block]]
+name = "crafting_table"
+
+[[block]]
+name = "furnace"
+
+[[block]]
+name = "brewing_stand"
+
+[[block]]
+name = "cauldron"
+
+[[block]]
+name = "bookshelf"
+
+[[block]]
+name = "chiseled_bookshelf"
+
+[[block]]
+name = "chest"
+
+[[block]]
+name = "trapped_chest"
+
+[[block]]
+name = "iron_bars"
+
+[[block]]
+name = "raw_iron_block"
+
+[[block]]
+name = "chain"
+
+[[block]]
+name = "lantern"
+
+[[block]]
+name = "end_rod"
+
+[[block]]
+name = "lightning_rod"
+
+[[block]]
+name = "sea_lantern"
+
+[[block]]
+name = "glowstone"
+
+[[block]]
+name = "glowshroom"
+alias_of = "shroomlight"
+
+[[block]]
+name = "air"
+
+[[block]]
+name = "cave_air"
+
+[[block]]
+name = "smooth_basalt"
+
+[[block]]
+name = "polished_deepslate"
+
+[[block]]
+name = "polished_deepslate_slab"
+
+[[block]]
+name = "deepslate_brick_slab"
+
+[[block]]
+name = "cracked_deepslate_bricks"
+
+[[block]]
+name = "water"
+
+[[block]]
+name = "vine"
+
+[[block]]
+name = "dark_oak_planks"
+
+[[block]]
+name = "oak_planks"
+
+[[block]]
+name = "spruce_planks"
+
+[[block]]
+name = "dark_oak_slab"
+
+[[block]]
+name = "dark_oak_stairs"
+
+[[block]]
+name = "polished_blackstone_slab"
+
+[[block]]
+name = "polished_blackstone_stairs"
+
+[[block]]
+name = "polished_blackstone_wall"
+
+[[block]]
+name = "purple_terracotta"
+
+[[block]]
+name = "purple_glazed_terracotta"
+
+[[block]]
+name = "purple_stained_glass"
+
+[[block]]
+name = "purple_stained_glass_pane"
+
+[[block]]
+name = "campfire"
+
+[[block]]
+name = "soul_campfire"
+
+[[block]]
+name = "candle"
+
+[[block]]
+name = "coal_block"
+
+[[block]]
+name = "coal_ore"
+
+[[block]]
+name = "cut_copper"
+
+[[block]]
+name = "raw_copper_block"
+
+[[block]]
+name = "flower_pot"
+
+[[block]]
+name = "birch_pressure_plate"
+
+[[block]]
+name = "oak_fence"
+
+[[block]]
+name = "red_mushroom"
+
+[[block]]
+name = "brown_mushroom"
+
+[[block]]
+name = "warped_roots"
+
+[[block]]
+name = "twisting_vines"
+
+[[block]]
+name = "bamboo"
+
+[[block]]
+name = "small_amethyst_bud"
+
+[[block]]
+name = "white_banner"
+
+[[block]]
+name = "iron_nugget"
+alias_of = "air"

@@ -115,5 +115,6 @@
         "type": "integer"
       }
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "eae701e5fe346f3a6de326891e44e42469b8cd4f805352501d26deb0e3eb13e4"
 }
