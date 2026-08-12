@@ -1977,8 +1977,7 @@ mod tests {
                 .expect("chunk (0,0) should still be loaded after cleanup")
                 .viewer_count();
             assert_eq!(
-                viewer_count,
-                0,
+                viewer_count, 0,
                 "despawn cleanup 对从未 inc 过的 chunk 执行 dec 必须是无害 no-op：\
                  viewer_count 应为 0，实际是 {viewer_count}（未修复的 release 实现会把\
                  未计数 chunk 回绕到 u32::MAX，使其永久滞留、无法被保留 GC 回收）"

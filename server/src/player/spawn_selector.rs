@@ -423,7 +423,10 @@ mod tests {
             .expect("fallback spawn zone should exist")
             .clone();
         empty.patrol_anchors.clear();
-        let registry = ZoneRegistry { zones: vec![empty] };
+        let registry = ZoneRegistry {
+            zones: vec![empty],
+            spatial_revision: 0,
+        };
 
         let distribution = distribution_from_zone_patrol_anchors(&registry);
 

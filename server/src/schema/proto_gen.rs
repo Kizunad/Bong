@@ -11717,8 +11717,7 @@ mod tests {
             "e2e.yml 的 proto 破坏性检查必须限定在 pull_request 事件，否则检查会被静默绕过"
         );
         assert!(
-            e2e_yml.contains("BASE_REF")
-                && e2e_yml.contains("github.event.pull_request.base.ref"),
+            e2e_yml.contains("BASE_REF") && e2e_yml.contains("github.event.pull_request.base.ref"),
             "e2e.yml 的 proto 破坏性检查必须把 PR base ref 注入 BASE_REF"
         );
         assert!(

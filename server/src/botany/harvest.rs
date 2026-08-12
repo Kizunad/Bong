@@ -1,13 +1,15 @@
 use std::collections::HashSet;
 
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    Entity, EventReader, EventWriter, Position, Query, RemovedComponents, Res, ResMut, With,
+    bevy_ecs, Entity, EventReader, EventWriter, Position, Query, RemovedComponents, Res, ResMut,
+    With,
 };
 
 use crate::combat::components::Wounds;
 use crate::combat::events::CombatEvent;
 use crate::cultivation::breakthrough::skill_cap_for_realm;
-use crate::cultivation::components::{Contamination, Cultivation, Realm};
+use crate::cultivation::components::{Contamination, Cultivation};
 use crate::gathering::quality::roll_quality;
 use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
@@ -15,11 +17,15 @@ use crate::inventory::{
     InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
     PlayerInventory,
 };
-use crate::player::state::canonical_player_id;
+use crate::player::gameplay::{settle_gather_reward, PendingGameplayNarrations};
+use crate::player::state::{canonical_player_id, PlayerState};
+use crate::qi_physics::WorldQiAccount;
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::dimension::DimensionKind;
+use crate::world::events::ActiveEventsResource;
+use crate::world::zone::ZoneRegistry;
 
 use super::components::{
     BotanyAttractsMobsEvent, BotanyHarvestMode, BotanyPhase, BotanySkillChangedEvent,
@@ -50,10 +56,11 @@ type HarvestHazardQuery<'w, 's> = Query<
     'w,
     's,
     (
-        Option<&'static mut Cultivation>,
+        &'static mut Cultivation,
         Option<&'static SkillSet>,
         Option<&'static mut Contamination>,
         Option<&'static mut Wounds>,
+        &'static mut PlayerState,
     ),
     With<valence::prelude::Client>,
 >;
@@ -165,6 +172,10 @@ pub fn complete_harvest_for_player(
     mob_attraction_events: &mut EventWriter<BotanyAttractsMobsEvent>,
     now_tick: u64,
     dropped_loot: Option<&mut DroppedLootRegistry>,
+    zone_registry: &mut ZoneRegistry,
+    qi_ledger: &mut WorldQiAccount,
+    active_events: &mut ActiveEventsResource,
+    pending_narrations: &mut PendingGameplayNarrations,
 ) -> Result<(), String> {
     let pending_session = store
         .session_for(player_id)
@@ -209,6 +220,14 @@ pub fn complete_harvest_for_player(
     // 已被上面移除，若不发终结帧，客户端 HUD 会停在进度满格等一个永远不来的 terminal。
     // 缺 Client 的情形理论上已被 release_disconnected_harvest_sessions 在同帧更早拦截
     // （见 botany/mod.rs 的 .chain() 顺序），这里是权威侧最后一道兜底。
+    if harvest_hazards.get_mut(session.client_entity).is_err() {
+        send_structural_cancel_terminal(&session, terminal_events);
+        return Err(format!(
+            "player progression missing on entity {:?}",
+            session.client_entity
+        ));
+    }
+
     let kind = match kind_registry.get(session.target_plant) {
         Some(kind) => kind,
         None => {
@@ -252,18 +271,14 @@ pub fn complete_harvest_for_player(
     let actual_tool = crate::tools::main_hand_tool_in_inventory(&inventory);
     let gathering_tool = equipped_gathering_tool(&inventory)
         .filter(|tool| tool.matches_target(GatheringTargetKind::Herb));
-    let mut herbalism_quality_bonus = 0.0;
-    let mut player_realm = Realm::Awaken;
-    if let Ok((cultivation, skill_set, _, _)) = harvest_hazards.get_mut(session.client_entity) {
-        player_realm = cultivation
-            .as_deref()
-            .map(|cultivation| cultivation.realm)
-            .unwrap_or(Realm::Awaken);
-        herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
-            cultivation.as_deref(),
-            skill_set,
-        ));
-    }
+    let (cultivation, skill_set, _, _, _) = harvest_hazards
+        .get_mut(session.client_entity)
+        .expect("progression was validated before quality calculation");
+    let player_realm = cultivation.realm;
+    let herbalism_quality_bonus = super::skill_hook::spirit_quality_bonus(herbalism_effective_lv(
+        Some(&*cultivation),
+        skill_set,
+    ));
     let gathering_quality_seed = now_tick
         ^ session
             .client_entity
@@ -338,23 +353,19 @@ pub fn complete_harvest_for_player(
         }
     }
 
-    let mut bare_hand_wound = false;
-    if let Ok((cultivation, _skill_set, contamination, wounds)) =
-        harvest_hazards.get_mut(session.client_entity)
-    {
-        let mut cultivation = cultivation;
-        let mut contamination = contamination;
-        let mut wounds = wounds;
-        bare_hand_wound = super::hazard::apply_completion_hazards(
-            session.target_plant,
-            kind_registry,
-            cultivation.as_deref_mut(),
-            contamination.as_deref_mut(),
-            wounds.as_deref_mut(),
-            actual_tool,
-            now_tick,
-        );
-    }
+    let (mut cultivation, _skill_set, mut contamination, mut wounds, _player_state) =
+        harvest_hazards
+            .get_mut(session.client_entity)
+            .expect("progression was validated before completion hazards");
+    let bare_hand_wound = super::hazard::apply_completion_hazards(
+        session.target_plant,
+        kind_registry,
+        Some(&mut *cultivation),
+        contamination.as_deref_mut(),
+        wounds.as_deref_mut(),
+        actual_tool,
+        now_tick,
+    );
 
     if let (Some(target_pos), Some(zone_name)) = (target_pos, target_zone_name.as_deref()) {
         for (mob_kind, min_count, max_count) in
@@ -372,6 +383,28 @@ pub fn complete_harvest_for_player(
             });
         }
     }
+
+    // The item grant and plant consumption above are the authoritative successful completion
+    // point. Session start, cancellation, target invalidation, and structural failures all return
+    // before here, so the established gather economy is awarded exactly once per consumed plant.
+    let zone_name = target_zone_name
+        .as_deref()
+        .expect("a validated live harvest target must retain its zone");
+    let (mut cultivation, _, _, _, mut player_state) = harvest_hazards
+        .get_mut(session.client_entity)
+        .expect("progression was validated before the successful grant");
+    settle_gather_reward(
+        session.player_id.as_str(),
+        session.target_plant.as_str(),
+        zone_name,
+        now_tick,
+        &mut player_state,
+        &mut cultivation,
+        Some(zone_registry),
+        Some(qi_ledger),
+        Some(active_events),
+        pending_narrations,
+    );
 
     let base_xp = match session.mode {
         BotanyHarvestMode::Manual => MANUAL_SKILL_XP,
@@ -701,6 +734,15 @@ fn should_trample(seed: u64, chance_inverse: u32) -> bool {
     z.is_multiple_of(u64::from(chance_inverse))
 }
 
+#[derive(SystemParam)]
+pub struct HarvestCompletionResources<'w> {
+    dropped_loot: Option<ResMut<'w, DroppedLootRegistry>>,
+    zone_registry: ResMut<'w, ZoneRegistry>,
+    qi_ledger: ResMut<'w, WorldQiAccount>,
+    active_events: ResMut<'w, ActiveEventsResource>,
+    pending_narrations: ResMut<'w, PendingGameplayNarrations>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn tick_harvest_sessions(
     gameplay_tick: Option<Res<crate::player::gameplay::GameplayTick>>,
@@ -718,7 +760,7 @@ pub fn tick_harvest_sessions(
     mut skill_xp_events: EventWriter<SkillXpGain>,
     mut durability_events: EventWriter<InventoryDurabilityChangedEvent>,
     mut mob_attraction_events: EventWriter<BotanyAttractsMobsEvent>,
-    mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
+    mut completion_resources: HarvestCompletionResources<'_>,
 ) {
     let Some(gameplay_tick) = gameplay_tick else {
         return;
@@ -749,7 +791,11 @@ pub fn tick_harvest_sessions(
             &mut durability_events,
             &mut mob_attraction_events,
             now,
-            dropped_loot.as_deref_mut(),
+            completion_resources.dropped_loot.as_deref_mut(),
+            &mut completion_resources.zone_registry,
+            &mut completion_resources.qi_ledger,
+            &mut completion_resources.active_events,
+            &mut completion_resources.pending_narrations,
         ) {
             // plan-bughunt-botany-disconnect-session P1：文案与实际状态一致——session
             // 已取消（不会自动 retry），植物保持未收获，玩家需重新发起采集。
@@ -1005,6 +1051,9 @@ mod tests {
         app.insert_resource(BotanyTrampleRoll { chance_inverse: 1 }); // 100% trample
         app.insert_resource(GameplayTick::default());
         app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(PendingGameplayNarrations::default());
         app.add_event::<CombatEvent>();
         app.add_event::<InventorySnapshotRequestEvent>();
         app.add_event::<InventoryDurabilityChangedEvent>();
@@ -1031,6 +1080,11 @@ mod tests {
         target: Entity,
         mode: BotanyHarvestMode,
     ) {
+        if !app.world().entity(client_entity).contains::<PlayerState>() {
+            app.world_mut()
+                .entity_mut(client_entity)
+                .insert(PlayerState::default());
+        }
         app.world_mut()
             .resource_mut::<HarvestSessionStore>()
             .upsert_session(HarvestSession {
@@ -1181,6 +1235,7 @@ mod tests {
                 realm: Realm::Awaken,
                 ..Default::default()
             })
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .insert(skill_set)
@@ -1250,6 +1305,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(empty_inventory_8x8())
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1328,6 +1384,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(full_1x1_inventory_blocking("filler"))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1390,6 +1447,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(empty_inventory_8x8())
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1451,6 +1509,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(empty_inventory_8x8())
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1509,6 +1568,96 @@ mod tests {
     }
 
     #[test]
+    fn harvest_completion_missing_progression_is_structurally_cancelled_without_reward() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let initial_cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(initial_cultivation.clone())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .remove::<PlayerState>();
+
+        app.update();
+
+        assert!(
+            !app.world().entity(target).get::<Plant>().unwrap().harvested,
+            "missing required progression must cancel before consuming the plant"
+        );
+        let inventory = app
+            .world()
+            .entity(client_entity)
+            .get::<PlayerInventory>()
+            .expect("inventory remains attached");
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .flat_map(|container| &container.items)
+                .all(|placed| placed.instance.template_id != "ci_she_hao"),
+            "structural cancellation must grant no product"
+        );
+        assert_eq!(
+            app.world().entity(client_entity).get::<Cultivation>(),
+            Some(&initial_cultivation),
+            "structural cancellation must grant no qi"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .expect("fallback spawn zone exists")
+                .spirit_qi,
+            zone_qi_before
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot()
+            .is_empty());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].interrupted && !frames[0].completed);
+    }
+
+    #[test]
     fn harvest_completion_missing_player_inventory_leaves_plant_unharvested() {
         // plan-bughunt-botany-disconnect-session P2：本测试**不再**覆盖断线场景——断线
         // 语义由 release_disconnected_harvest_sessions 的专属测试组锁定。这里 pin 的是
@@ -1526,6 +1675,7 @@ mod tests {
             .world_mut()
             .spawn(client_bundle)
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1607,6 +1757,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(full_1x1_inventory_blocking("filler"))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1670,6 +1821,7 @@ mod tests {
                 realm: Realm::Awaken,
                 ..Default::default()
             })
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .insert(skill_set)
@@ -1761,6 +1913,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(inventory)
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1811,6 +1964,7 @@ mod tests {
                 .spawn(client_bundle)
                 .insert(full_1x1_inventory_blocking("filler"))
                 .insert(Cultivation::default())
+                .insert(PlayerState::default())
                 .insert(Contamination::default())
                 .insert(Wounds::default())
                 .id();
@@ -1857,11 +2011,22 @@ mod tests {
             .world_mut()
             .spawn(client_bundle)
             .insert(empty_inventory_8x8())
-            .insert(Cultivation::default())
+            .insert(Cultivation {
+                qi_current: 70.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            })
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
         let target = plant_entity(&mut app, "spawn");
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
 
         queue_completed_ci_she_harvest(&mut app, client_entity, target);
         app.update();
@@ -1926,6 +2091,117 @@ mod tests {
         );
         assert!(frames[0].completed && !frames[0].interrupted);
         assert!(frames[1].interrupted && !frames[1].completed);
+
+        let cultivation = app
+            .world()
+            .entity(client_entity)
+            .get::<Cultivation>()
+            .expect("successful harvest keeps cultivation");
+        assert_eq!(
+            cultivation.qi_current,
+            70.0 + crate::qi_physics::constants::QI_GATHER_REWARD,
+            "successful completion plus rejected replay must award gather qi exactly once"
+        );
+        let state = app
+            .world()
+            .entity(client_entity)
+            .get::<PlayerState>()
+            .expect("successful harvest keeps player progression");
+        assert_eq!(
+            state.inventory_score,
+            crate::player::gameplay::GATHER_INVENTORY_REWARD
+        );
+        assert_eq!(state.karma, crate::player::gameplay::GATHER_KARMA_REWARD);
+        let zone_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        assert!(
+            (zone_qi_before
+                - zone_qi_after
+                - crate::qi_physics::constants::QI_GATHER_REWARD
+                    / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                .abs()
+                < 1e-9,
+            "successful completion plus rejected replay must debit zone qi exactly once"
+        );
+        let transfers = app.world().resource::<WorldQiAccount>().transfers();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "rejected replay must not append a second QiTransfer"
+        );
+        assert_eq!(
+            transfers[0].from,
+            crate::qi_physics::QiAccountId::zone("spawn")
+        );
+        assert_eq!(
+            transfers[0].to,
+            crate::qi_physics::QiAccountId::player("offline:Azure")
+        );
+        assert_eq!(
+            transfers[0].amount,
+            crate::qi_physics::constants::QI_GATHER_REWARD
+        );
+        assert_eq!(
+            transfers[0].reason,
+            crate::qi_physics::QiTransferReason::CultivationRegen
+        );
+        let recent = app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot();
+        let zone_changes: Vec<_> = recent
+            .iter()
+            .filter(|event| event.event_type == crate::schema::common::GameEventType::ZoneQiChange)
+            .collect();
+        assert_eq!(
+            zone_changes.len(),
+            1,
+            "success must record one ZoneQiChange and rejection must record none"
+        );
+        let zone_change = zone_changes[0];
+        assert_eq!(zone_change.player.as_deref(), Some("offline:Azure"));
+        assert_eq!(zone_change.target.as_deref(), Some("ci_she_hao"));
+        assert_eq!(zone_change.zone.as_deref(), Some("spawn"));
+        let details = zone_change
+            .details
+            .as_ref()
+            .expect("ZoneQiChange must retain gather accounting details");
+        assert_eq!(details.get("action"), Some(&serde_json::json!("gather")));
+        assert_eq!(
+            details.get("spirit_qi_gain"),
+            Some(&serde_json::json!(
+                crate::qi_physics::constants::QI_GATHER_REWARD
+            ))
+        );
+        assert_eq!(
+            details.get("inventory_gain"),
+            Some(&serde_json::json!(
+                crate::player::gameplay::GATHER_INVENTORY_REWARD
+            ))
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "success must narrate once and rejection must be silent"
+        );
+        assert_eq!(
+            narrations[0].scope,
+            crate::schema::common::NarrationScope::Player
+        );
+        assert_eq!(narrations[0].target.as_deref(), Some("offline:Azure"));
+        assert_eq!(
+            narrations[0].style,
+            crate::schema::common::NarrationStyle::Narration
+        );
+        assert!(narrations[0].text.contains("ci_she_hao"));
     }
 
     #[test]
@@ -1942,6 +2218,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(full_1x1_inventory_blocking("filler"))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -1974,6 +2251,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(inventory_with_main_hand_tool(Some("dun_qi_jia")))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -2025,6 +2303,7 @@ mod tests {
                 .spawn(client_bundle)
                 .insert(inventory_with_main_hand_tool(Some(tool_id)))
                 .insert(Cultivation::default())
+                .insert(PlayerState::default())
                 .insert(Contamination::default())
                 .insert(Wounds::default())
                 .id();
@@ -2089,6 +2368,7 @@ mod tests {
                 0.0,
             ))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -2143,6 +2423,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(inventory_with_main_hand_tool(Some("cai_yao_dao")))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -2192,6 +2473,7 @@ mod tests {
                 .spawn(client_bundle)
                 .insert(inventory_with_main_hand_tool(None))
                 .insert(Cultivation::default())
+                .insert(PlayerState::default())
                 .insert(Contamination::default())
                 .insert(Wounds::default())
                 .id();
@@ -2264,6 +2546,7 @@ mod tests {
                 0.0,
             ))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -2328,6 +2611,7 @@ mod tests {
             .spawn(client_bundle)
             .insert(inventory_with_main_hand_tool(None))
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
@@ -2751,10 +3035,24 @@ mod tests {
             .spawn(client_bundle)
             .insert(empty_inventory_8x8())
             .insert(Cultivation::default())
+            .insert(PlayerState::default())
             .insert(Contamination::default())
             .insert(Wounds::default())
             .id();
         let target = plant_entity(&mut app, "spawn");
+        let initial_state = PlayerState::default();
+        let initial_cultivation = app
+            .world()
+            .entity(client_entity)
+            .get::<Cultivation>()
+            .expect("fixture has cultivation")
+            .clone();
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
         // duration_ticks=0 => progress_at(any tick) >= 1.0 immediately, same as the
         // existing `queue_completed_ci_she_harvest` helper's "already complete" setup.
         queue_completed_ci_she_harvest(&mut app, client_entity, target);
@@ -2806,6 +3104,53 @@ mod tests {
             dropped.entries.is_empty(),
             "no product should ever be granted or dropped for a session cancelled by disconnect"
         );
+        let inventory = app
+            .world()
+            .entity(client_entity)
+            .get::<PlayerInventory>()
+            .expect("disconnected fixture retains its inventory component");
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .flat_map(|container| &container.items)
+                .all(|placed| placed.instance.template_id != "ci_she_hao"),
+            "disconnect interruption must not put the harvest product in inventory"
+        );
+        assert_eq!(
+            app.world().entity(client_entity).get::<PlayerState>(),
+            Some(&initial_state),
+            "disconnect interruption must award no progression"
+        );
+        assert_eq!(
+            app.world().entity(client_entity).get::<Cultivation>(),
+            Some(&initial_cultivation),
+            "disconnect interruption must award no qi"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .expect("fallback spawn zone exists")
+                .spirit_qi,
+            zone_qi_before,
+            "disconnect interruption must not debit zone qi"
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot()
+            .is_empty());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
     }
 
     #[test]

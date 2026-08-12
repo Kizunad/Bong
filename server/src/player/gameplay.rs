@@ -31,8 +31,8 @@ use crate::world::dimension::DimensionKind;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-const GATHER_INVENTORY_REWARD: f64 = 0.12;
-const GATHER_KARMA_REWARD: f64 = 0.06;
+pub(crate) const GATHER_INVENTORY_REWARD: f64 = 0.12;
+pub(crate) const GATHER_KARMA_REWARD: f64 = 0.06;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -322,6 +322,33 @@ fn apply_gather_action(
         return;
     }
 
+    settle_gather_reward(
+        canonical_player,
+        resource_name,
+        zone_name,
+        event_tick,
+        player_state,
+        cultivation,
+        zone_registry,
+        qi_ledger,
+        active_events,
+        pending_narrations,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn settle_gather_reward(
+    canonical_player: &str,
+    resource_name: &str,
+    zone_name: &str,
+    event_tick: u64,
+    player_state: &mut PlayerState,
+    cultivation: &mut Cultivation,
+    zone_registry: Option<&mut ZoneRegistry>,
+    qi_ledger: Option<&mut WorldQiAccount>,
+    active_events: Option<&mut ActiveEventsResource>,
+    pending_narrations: &mut PendingGameplayNarrations,
+) -> f64 {
     let qi_gain = gather_qi_from_zone(
         zone_registry,
         zone_name,
@@ -354,6 +381,7 @@ fn apply_gather_action(
         format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
         NarrationStyle::Narration,
     );
+    qi_gain
 }
 
 fn gather_qi_from_zone(
@@ -1142,9 +1170,25 @@ mod tests {
     }
 
     #[test]
-    fn explicit_gather_target_accepts_exact_six_block_boundary() {
+    fn explicit_gather_target_accepts_exact_six_block_boundary_without_awarding_on_start() {
         let mut app = setup_gather_action_test_app();
-        spawn_gather_action_test_player(&mut app, PlayerState::default(), Cultivation::default());
+        let initial_state = PlayerState::default();
+        let initial_cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+        let player = spawn_gather_action_test_player(
+            &mut app,
+            initial_state.clone(),
+            initial_cultivation.clone(),
+        );
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
         let plant = spawn_gather_action_test_plant(
             &mut app,
             crate::botany::registry::BotanyPlantId::SpiritGrass,
@@ -1167,6 +1211,45 @@ mod tests {
             session.target_plant,
             crate::botany::registry::BotanyPlantId::SpiritGrass
         );
+        assert!(
+            !app.world().entity(plant).get::<Plant>().unwrap().harvested,
+            "starting the delayed harvest session must not consume or grant the herb"
+        );
+        let player_ref = app.world().entity(player);
+        assert_eq!(
+            player_ref.get::<PlayerState>(),
+            Some(&initial_state),
+            "starting the delayed harvest session must not award progression"
+        );
+        assert_eq!(
+            player_ref.get::<Cultivation>(),
+            Some(&initial_cultivation),
+            "starting the delayed harvest session must not award qi"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("fallback spawn zone exists")
+                .spirit_qi,
+            zone_qi_before,
+            "starting the delayed harvest session must not debit zone qi"
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot()
+            .is_empty());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
     }
 
     #[test]

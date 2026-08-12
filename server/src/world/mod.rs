@@ -763,8 +763,8 @@ mod tests {
         TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::{
-        App, BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3,
-        DimensionTypeRegistry, UnloadedChunk, Update,
+        App, BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3, DimensionTypeRegistry,
+        UnloadedChunk, Update,
     };
     use valence::testing::ScenarioSingleClient;
 
@@ -1136,6 +1136,7 @@ mod tests {
                 qi_equilibrium: 0.0,
                 qi_inflow_per_min: 0.0,
             }],
+            spatial_revision: 0,
         }
     }
 
