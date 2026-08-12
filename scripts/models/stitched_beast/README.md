@@ -20,6 +20,7 @@
 | 核心层 | 黏状核心本体 + 挂载点 + 癒合痕 | ✅ |
 | 基因组 | 挑槽 / 挑部件种类 / 供体物种 / 尺寸——一只兽的配方 | ✅ |
 | 运动层 | 骑乘高度 + 步态（由肢体几何推导）| ✅ |
+| 核心动画 | 无肢阶段的七条动作：蠕动 / 搏动 / 扑咬 / 包裹 / 嫁接 / 受击 / 死 | ⏳ round 1/3 |
 | 部件层 | 头颅与肢体的真实几何（鼠/狼/猪/牛/羊/鸡/兔/狐/蛙 + 蛛足/兽腿/禽腿/触手/退化肢） | ⬜ |
 | 攻击层 | 逐肢攻击方式（由该肢的种类与长度派生） | ⬜ |
 
@@ -77,6 +78,31 @@ f(p) = Σ wᵢ · exp(-|(p - cᵢ)/sᵢ|²)      等值面 f = 1 即表皮
 （体坐标位移必须是 `stride×duty` 而非 `stride`，差一个 duty 因子就是每步都在蹭地，
 初版就写错了）/ 不过伸 / 触地 / 支撑数 / 稳定余量 / 循环周期性 / 可复现 / 错拍率 ≥60%。
 
+## 核心阶段动画：还没有腿的时候
+
+缝合兽不是刷出来的成品——它先是一团核心，靠捡尸体一件件把部件长进去（正典那头幼兽只有
+三条腿，第四条从野狗尸体上"借"来，花了约七日）。**无肢阶段是它必经的一段人生**，需要
+一整套自己的动作，不能拿有腿的步态凑。
+
+**蠕动和步态是同一条物理约束**：着地的那一段在世界系里必须静止，只是"脚"换成了身体的
+"锚段"。双锚循环——相 A 后段锚地、前段前伸 d；相 B 前段锚地、后段跟上。净前进 d 是
+**推出来的**。自检把每周期净位移加回去，验锚段世界位移为零（实测 0.0000 px）。
+
+体积严格守恒：拉长时 `scale_xy ∝ √(L₀/L)`，实测波动 4.44e-16（机器精度）。
+
+**爬得比走慢是算出来的**：`v_crawl = d × f`，而 `f = rate/(2d)`，所以 `v = rate/2`
+——**只取决于组织收缩速率，与拉伸幅度无关**。算出 0.19 格/s，而有腿步态 0.56–1.10 格/s。
+没捡到腿之前它又慢又脆，这就是它必须去捡尸体的原因；进化压力是算出来的，不是设定的。
+
+**芽的几何按满尺寸建，当前生长度由 bone scale 表达**（休眠 0.10）。反过来做行不通：
+Blockbench/GeckoLib 几何是静态的，缩放一个 0.44 半径的小疙瘩永远长不出东西，实测整条
+嫁接动画看不见。运行时服务端直接驱动 `bud_<槽>` 的 scale，动画只是参考曲线。
+
+七条动作各自的设计约束写在 `core_anim.py` 的 docstring 里，自检在 `check_core_anim.py`：
+不滑步 / 净前进 / 体积守恒 / 循环接缝 / **各 lobe 异步搏动**（同步会读成"一只动物在喘"，
+断言互相关 <0.85，实测 0.249）/ 嫁接单调且有停滞（匀速长大读成技能特效）/ 死亡逐 lobe
+依次泄气且赘生物先瘪 / 受击回到静止 / 不穿地。
+
 ## 命令
 
 ```bash
@@ -88,7 +114,14 @@ python3 scripts/models/stitched_beast/preview.py --sockets   # 挂载点针（�
 python3 scripts/models/stitched_beast/genome.py              # 几只兽的配方
 python3 scripts/models/stitched_beast/locomotion.py --seed 7 # 单只兽的步态报告
 python3 scripts/models/stitched_beast/check_gait.py          # 运动层物理自检
+
+python3 scripts/models/stitched_beast/core_anim.py           # 核心阶段七条动画
+python3 scripts/models/stitched_beast/check_core_anim.py     # 核心动画物理自检
+python3 scripts/models/stitched_beast/render_core_anim.py --only core_crawl --world --gif
 ```
+
+> 蠕动**必须加 `--world`** 才看得出在前进：导出的是循环动画（每周期净位移已减掉），
+> 不加回去渲出来是原地伸缩。
 
 `.bbmodel` 落 `scripts/models/local_models/`（gitignored）；渲染图落 `renders/`。
 
@@ -102,6 +135,9 @@ python3 scripts/models/stitched_beast/check_gait.py          # 运动层物理�
 | `genome.py` | 一只兽的配方：挑槽 / 部件种类 / **供体物种** / 尺寸——纯数据 |
 | `locomotion.py` | 骑乘高度 + 摆频 + 步数比 + 相位（静态稳定求解）|
 | `check_gait.py` | 运动层九项物理自检 |
+| `core_anim.py` | 无肢阶段七条动画 + 导出 bbmodel/geckolib |
+| `check_core_anim.py` | 核心动画九项物理自检 |
+| `render_core_anim.py` | 连拍图 / GIF；`--world` 看蠕动真实前进 |
 
 ## 当前数字
 

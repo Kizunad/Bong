@@ -495,6 +495,33 @@ def core_bounds() -> tuple[np.ndarray, np.ndarray]:
     return lo, hi
 
 
+# ---------------------------------------------------------------- 芽（嫁接前体）
+def bud_shape(sock: Socket, growth: float) -> list[tuple[np.ndarray, float, str]]:
+    """挂载点上的**芽**：还没长成部件的那团未分化组织。返回 [(中心, 半径, 材质)]。
+
+    正典（《异兽三形考》§兽·噬）：那头幼兽的第四条腿是从野狗尸体上"借"的，花了约七日
+    才长进去——"一层层组织的重新编织"。所以部件不是瞬间出现的，中间有一段它只是一个
+    鼓包的时期，这个时期得看得见。
+
+    growth=0 也**不是没有东西**：挂载点本身就是皮上一处微隆，是这具身体"这里可以再长
+    点什么"的记号。0 → 1 的过程是这团东西沿法向鼓出、变粗、末端开始分叉。
+
+    分三节而不是一个球：单球放大只是"变大"，三节沿法向排开且末节最细，才读得出
+    **方向性**——它在朝外长，而不是在肿。
+    """
+    g = float(np.clip(growth, 0.0, 1.0))
+    r0 = 0.8 + (sock.girth - 0.8) * g          # 根部：从微隆长到挂载面满径
+    out = []
+    for k, (frac, shrink, mat) in enumerate(((0.0, 1.00, "bud_base"),
+                                             (0.55, 0.78, "bud_mid"),
+                                             (1.05, 0.50, "bud_tip"))):
+        if k > 0 and g < 0.18:
+            break                               # 太早，还只是一处微隆，没有节
+        d = r0 * frac * (0.5 + 1.6 * g)
+        out.append((sock.pos + sock.normal * d, r0 * shrink * (0.55 + 0.45 * g), mat))
+    return out
+
+
 def centroid() -> np.ndarray:
     """核心本体的**体积质心**（世界坐标）。
 

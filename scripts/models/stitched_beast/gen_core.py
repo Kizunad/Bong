@@ -44,6 +44,9 @@ MATS: dict[str, tuple[int, int, int]] = {
     "weld": (96, 58, 58),
     "weld_dark": (66, 38, 42),
     "drip": (118, 116, 80),
+    "bud_base": (140, 112, 108),
+    "bud_mid": (158, 128, 118),
+    "bud_tip": (186, 160, 142),   # 末端最亮：新生组织，还没被环境糟蹋
 }
 
 # 垂滴：挂在下腹最低处的黏液柱。数量少而长短不一——等长的一排会读成"流苏"，
@@ -53,11 +56,20 @@ DRIP_FLOOR = 8.5   # 垂滴最低不得低于此高度——再低就垂进腿�
 
 
 def _bone_tree(rig: Rig) -> None:
-    """root → core_mid → 各 lobe。pivot 取 lobe 中心，搏动才绕自己的中心胀缩。"""
+    """root → core_mid → 各 lobe → 各挂载点的芽骨。
+
+    lobe pivot 取 lobe 中心，搏动才绕自己的中心胀缩。芽骨 pivot 取挂载点本身，嫁接
+    动画对它做 scale 时才是"从皮上鼓出来"，而不是"从核心中心放大"。
+
+    **每个挂载点都建芽骨**，即使当前 growth=0：芽骨是部件层将来的挂点，动画契约得先
+    锁死（"每个槽都能嫁接"），否则部件层接进来时动画得重写一遍。
+    """
     rig.bone("root", (0.0, 0.0, 0.0))
     for lb in C.LOBES:
         pivot = tuple(np.array(lb.center) + C.CORE_CENTER)
         rig.bone(lb.name, pivot, lb.parent or "root")
+    for s in C.sockets().values():
+        rig.bone(f"bud_{s.name}", tuple(s.pos), s.bone)
 
 
 def part_mass(rig: Rig) -> int:
@@ -136,23 +148,45 @@ def part_welds(rig: Rig) -> int:
     return n
 
 
-def build() -> Rig:
+def part_buds(rig: Rig, growth: dict[str, float]) -> int:
+    """各挂载点的芽。
+
+    **几何一律按 growth=1 建**，当前生长度由动画的 bone scale 表达（见 core_anim
+    的 BUD_DORMANT）。反过来做——几何建在 growth=0 再让动画放大——是行不通的：
+    Blockbench/GeckoLib 的几何是静态的，缩放一个 0.44 半径的小疙瘩永远长不出东西，
+    实测嫁接动画整条看不见。几何 = 最大形态，动画 = 当前状态。
+
+    `growth` 参数只影响**静态出图**（想看某个中间形态的定格时用）。
+    """
+    n = 0
+    for s in C.sockets().values():
+        for k, (ctr, r, mat) in enumerate(C.bud_shape(s, growth.get(s.name, 1.0))):
+            rig.cube(f"bud_{s.name}", f"bud_{s.name}_{k}",
+                     tuple(ctr - r), tuple(ctr + r), mat=mat)
+            n += 1
+    return n
+
+
+def build(growth: dict[str, float] | None = None) -> Rig:
     rig = Rig(Palette(MATS, swatch=8, size=64))
     _bone_tree(rig)
     part_mass(rig)
     part_welds(rig)
     part_drips(rig)
+    part_buds(rig, growth or {})
     return rig
 
 
 # ---------------------------------------------------------------- 自检
 def body_bounds(rig: Rig) -> tuple[list[float], list[float]]:
-    """**本体**包围盒（不含垂滴）。
+    """**本体**包围盒（不含垂滴与芽）。
 
-    垂滴是挂在外面的黏液，把它算进核心尺寸会让"核心多大"这个数字随垂滴长短漂移，
-    卡不住真正想卡的东西。量测与自检必须同一口径，否则打印值和断言值对不上。
+    垂滴是挂在外面的黏液；芽的几何按 growth=1 建但运行时默认压到 BUD_DORMANT。
+    把这两样算进核心尺寸，"核心多大"这个数字就会随它们漂移，卡不住真正想卡的东西。
+    量测与自检必须同一口径，否则打印值和断言值对不上。芽的尺寸另有专门断言（⑧）。
     """
-    body = [e for e in rig.elements if not e["name"].startswith("drip_")]
+    body = [e for e in rig.elements
+            if not e["name"].startswith(("drip_", "bud_"))]
     lo = [min(min(c[i] for c in Rig.corners(e)) for e in body) for i in range(3)]
     hi = [max(max(c[i] for c in Rig.corners(e)) for e in body) for i in range(3)]
     return lo, hi
@@ -188,7 +222,7 @@ def check(rig: Rig) -> list[str]:
         bad.append(f"垂滴最低 y={drip_low:.1f} 垂进腿层（<8），会读成触手")
 
     # ④ 骨骼：每根 lobe 骨都得真的分到几何，否则搏动动画驱动的是空骨。
-    orphans = rig.orphan_bones()
+    orphans = [b for b in rig.orphan_bones() if not b.startswith("bud_")]
     if orphans:
         bad.append(f"空骨：{', '.join(orphans)}")
     for lb in C.LOBES:
@@ -235,18 +269,37 @@ def check(rig: Rig) -> list[str]:
     if not any(w.bulge for w in wl):
         bad.append("没有一处融合肉瘤——通篇均匀的痕不像自己长的")
 
-    # ⑧ 块数预算。翻倍说明 merge 或材质斑块化退化了。
-    if len(rig.elements) > 400:
-        bad.append(f"块数 {len(rig.elements)} 超预算 400——检查 MAT_PATCH / merge_slabs")
+    # ⑧ 芽：满长时不得粗过挂载面能承的半径（否则嫁接完必然穿模），也不得伸太远
+    #    （几何按 growth=1 建，运行时靠 bone scale 压到休眠尺寸）
+    for s in socks.values():
+        shape = C.bud_shape(s, 1.0)
+        for ctr, r, _m in shape:
+            if r > s.girth + 0.3:
+                bad.append(f"芽 {s.name} 半径 {r:.2f} 超过挂载面 girth {s.girth:.2f}")
+        reach = max(float(np.linalg.norm(ctr - s.pos)) + r for ctr, r, _m in shape)
+        if reach > 14.0:
+            bad.append(f"芽 {s.name} 伸出 {reach:.1f} px 过长（>14），未分化组织不该比部件还大")
+        if not C.bud_shape(s, 0.0):
+            bad.append(f"挂载点 {s.name} 在 growth=0 时没有任何几何——"
+                       f"槽本身该是皮上一处微隆，不是虚无")
+
+    # ⑨ 块数预算。翻倍说明 merge 或材质斑块化退化了。
+    if len(rig.elements) > 460:
+        bad.append(f"块数 {len(rig.elements)} 超预算 460——检查 MAT_PATCH / merge_slabs")
     return bad
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="只自检不写文件")
+    ap.add_argument("--growth", default="", help="嫁接进度，形如 head_c=0.4,limb_fl=0.8")
     args = ap.parse_args()
 
-    rig = build()
+    growth = {}
+    for item in filter(None, args.growth.split(",")):
+        k, _, v = item.partition("=")
+        growth[k.strip()] = float(v)
+    rig = build(growth)
     blo, bhi = body_bounds(rig)
     flo, fhi = rig.bounds()
     socks = C.sockets()
