@@ -80,6 +80,38 @@ const BEAST_CORE_ITEM_ID: &str = "mutant_beast_core";
 
 const MAIN_HAND_SLOT: &str = "main_hand";
 
+#[cfg(test)]
+#[derive(Resource, Default)]
+struct StartHandlerPlotScanCount {
+    index_builds: usize,
+    scanned_plots: usize,
+}
+
+#[cfg(not(test))]
+fn build_start_plot_index<'a>(
+    plots: impl Iterator<Item = &'a LingtianPlot>,
+) -> HashMap<BlockPos, &'a LingtianPlot> {
+    plots.map(|plot| (plot.pos, plot)).collect()
+}
+
+#[cfg(test)]
+fn build_start_plot_index<'a>(
+    plots: impl Iterator<Item = &'a LingtianPlot>,
+    mut plot_scan_count: Option<&mut StartHandlerPlotScanCount>,
+) -> HashMap<BlockPos, &'a LingtianPlot> {
+    if let Some(count) = plot_scan_count.as_deref_mut() {
+        count.index_builds += 1;
+    }
+    plots
+        .inspect(|_| {
+            if let Some(count) = plot_scan_count.as_deref_mut() {
+                count.scanned_plots += 1;
+            }
+        })
+        .map(|plot| (plot.pos, plot))
+        .collect()
+}
+
 fn plot_zone_key(plot: &LingtianPlot) -> &str {
     let zone = plot.zone.trim();
     if zone.is_empty() {
@@ -518,12 +550,17 @@ pub fn handle_start_till(
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
-    // fix-spec-1901-v2 #8（central review 1984-31332727941 finding [4]）— 每 tick
-    // 快照一次 plot 位置索引，本批所有 Till 请求共用 O(1) 查找；不再对每个请求
-    // 全量扫描 plot query（请求数 × plot 数二次方）。
-    let plot_positions: HashMap<BlockPos, &LingtianPlot> =
-        plots.iter().map(|plot| (plot.pos, plot)).collect();
+    if events.is_empty() {
+        return;
+    }
+    // fix-spec-1901-v2 #8（central review 1984-31332727941 finding [4]）— 每批
+    // 请求快照一次 plot 位置索引，共用 O(1) 查找；空闲 tick 不触碰 plot query。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         // fix-spec-1901-v2 §4.4 — 距离/维度 gate 已由唯一 post-transfer validator
         // 完成；本 handler 只做业务前置。直接注入本 event 的测试只能算
@@ -577,11 +614,17 @@ pub fn handle_start_renew(
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
     // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
-    // 每 tick 快照 plot 位置索引，请求共用 O(1) 查找，不做二次方全量扫描。
-    let plot_positions: HashMap<BlockPos, &LingtianPlot> =
-        plots.iter().map(|plot| (plot.pos, plot)).collect();
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -632,11 +675,17 @@ pub fn handle_start_planting(
     seeds: Res<SeedRegistry>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
     // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
-    // 每 tick 快照 plot 位置索引，请求共用 O(1) 查找，不做二次方全量扫描。
-    let plot_positions: HashMap<BlockPos, &LingtianPlot> =
-        plots.iter().map(|plot| (plot.pos, plot)).collect();
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -684,11 +733,17 @@ pub fn handle_start_drain_qi(
     mut events: EventReader<StartDrainQiRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
     // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
-    // 每 tick 快照 plot 位置索引，请求共用 O(1) 查找，不做二次方全量扫描。
-    let plot_positions: HashMap<BlockPos, &LingtianPlot> =
-        plots.iter().map(|plot| (plot.pos, plot)).collect();
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -721,11 +776,17 @@ pub fn handle_start_harvest(
     plots: Query<&LingtianPlot>,
     cultivations: Query<&Cultivation>,
     skill_sets: Query<&SkillSet>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
     // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
-    // 每 tick 快照 plot 位置索引，请求共用 O(1) 查找，不做二次方全量扫描。
-    let plot_positions: HashMap<BlockPos, &LingtianPlot> =
-        plots.iter().map(|plot| (plot.pos, plot)).collect();
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -780,12 +841,18 @@ pub fn handle_start_replenish(
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
     zone_qi: Res<ZoneQiAccount>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
     let residue_tick = time.residue_tick();
     // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
-    // 每 tick 快照 plot 位置索引，请求共用 O(1) 查找，不做二次方全量扫描。
-    let plot_positions: HashMap<BlockPos, &LingtianPlot> =
-        plots.iter().map(|plot| (plot.pos, plot)).collect();
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -5251,6 +5318,78 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn start_handlers_index_plots_only_for_matching_event_ticks() {
+        let mut app = App::new();
+        app.insert_resource(ActiveLingtianSessions::new())
+            .insert_resource(SeedRegistry::new())
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(LingtianClock::default())
+            .insert_resource(StartHandlerPlotScanCount::default())
+            .add_event::<StartTillRequest>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<StartDrainQiRequest>()
+            .add_systems(
+                Update,
+                (
+                    handle_start_till,
+                    handle_start_renew,
+                    handle_start_planting,
+                    handle_start_harvest,
+                    handle_start_replenish,
+                    handle_start_drain_qi,
+                )
+                    .chain(),
+            );
+
+        let plot_count = 7;
+        for x in 0..plot_count {
+            let mut plot = LingtianPlot::new(BlockPos::new(x, 64, 0), None);
+            plot.plot_qi = 0.5;
+            app.world_mut().spawn(plot);
+        }
+
+        app.update();
+        app.update();
+        let idle_count = app.world().resource::<StartHandlerPlotScanCount>();
+        assert_eq!(
+            (idle_count.index_builds, idle_count.scanned_plots),
+            (0, 0),
+            "six idle start handlers must not build an index or scan any plot"
+        );
+
+        app.world_mut().send_event(StartDrainQiRequest {
+            player: Entity::from_raw(100),
+            pos: BlockPos::new(0, 64, 0),
+        });
+        app.world_mut().send_event(StartDrainQiRequest {
+            player: Entity::from_raw(101),
+            pos: BlockPos::new(1, 64, 0),
+        });
+        app.update();
+        let event_count = app.world().resource::<StartHandlerPlotScanCount>();
+        assert_eq!(
+            event_count.index_builds, 1,
+            "only the handler with matching events may build a plot index on this tick"
+        );
+        assert_eq!(
+            event_count.scanned_plots, plot_count as usize,
+            "one event batch must scan each plot once, not once per request or idle handler"
+        );
+
+        app.update();
+        let next_idle_count = app.world().resource::<StartHandlerPlotScanCount>();
+        assert_eq!(
+            (next_idle_count.index_builds, next_idle_count.scanned_plots),
+            (1, plot_count as usize),
+            "after the batch is consumed, the next idle tick must not scan or re-index plots"
+        );
+    }
+
     #[test]
     fn every_start_handler_fails_closed_for_wrong_or_missing_authority_components() {
         for (action_index, action) in [

@@ -2305,14 +2305,15 @@ mod zone_tests {
             "empty merge must leave spatial_revision unchanged"
         );
 
-        // 被拒绝的并入（与已有 spawn 冲突）→ Err 且不变。
+        // 被拒绝的并入（与刚并入的合法 TSY zone 重名）→ 冲突 Err 且不变。
+        // 使用非 TSY 的 `spawn` 会先撞 supplemental identity gate，覆盖不到重名分支。
         let conflict = unique_temp_path("bong-zones-tsy-revision-conflict", ".json");
         fs::write(
             &conflict,
             r#"{
   "zones": [
     {
-      "name": "spawn",
+      "name": "tsy_revision_01_shallow",
       "dimension": "tsy",
       "aabb": { "min": [32.0, 20.0, 32.0], "max": [48.0, 40.0, 48.0] },
       "spirit_qi": -0.5,
@@ -2322,12 +2323,17 @@ mod zone_tests {
 }"#,
         )
         .expect("fixture should be writable");
-        registry
+        let conflict_error = registry
             .merge_tsy_blueprint_from_path(&conflict)
-            .expect_err("name conflict must be rejected");
+            .expect_err("registered TSY name conflict must be rejected");
+        assert_eq!(
+            conflict_error,
+            "zone `tsy_revision_01_shallow` already registered; TSY blueprint merge rejected",
+            "fixture must reach the existing-name conflict branch"
+        );
         assert_eq!(
             registry.spatial_revision, 2,
-            "rejected merge must leave spatial_revision unchanged"
+            "rejected existing-name merge must leave spatial_revision unchanged"
         );
     }
 }
