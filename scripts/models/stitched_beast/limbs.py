@@ -90,6 +90,19 @@ SAFETY = 2.0               # 骨的安全系数。活体实测普遍 2–4（Bie
 PENALTY = 400.0            # 姿态求解里"每穿模一像素"折算成多少肌肉代价。取到足以压过
                            # 肌肉项的量级即可——它表达的是"宁可多长肉也不要穿模"
 
+# 骨外面那层软组织的厚度。**这一条不是推出来的，是量出来的**，得说清楚：上面每个
+# 半径都是"某样东西必须扛住某个力"解出来的，而腱鞘、筋膜、皮下、血管、皮这几层不扛
+# 主要载荷——力矩归零它们也不会消失。漏掉它们的后果是远端那几节的渲染半径**恰好等于
+# 骨半径**，也就是把骨头直接画在外面（用户第一句话："看着应该没安装上肌肉和皮肤吧"）。
+#
+# 量出来的比例：远端肢的外径 ≈ 骨径的两倍。马的管骨 ø35 mm，整个管部连屈腱带皮
+# ø70–80 mm；狼、禽的跗跖同量级。所以这里取 2.0，作用是给每一节一个**下限**。
+#
+# 注意皮**不在**这个厚度里起作用：1 px = 6.25 cm，兽皮 2–5 mm 连十分之一像素都不到。
+# 皮在这个尺度上不是厚度，是**表面**——它的存在只能靠材质和裂痕表达（见
+# `gen_beast.part_cracks`），加粗一个像素来"表示有皮"是假的。
+SOFT_OVER_BONE = 2.0
+
 # 关节弯折方向。这是**供体的解剖事实**，不是造型选择：兽腿的膝向前折、禽腿的膝藏在
 # 体羽里而外面看到的"反折膝"其实是踝、蛛足先把腿节抬到身体之上再落下去。
 BEND: dict[str, tuple[float, ...]] = {
@@ -133,6 +146,7 @@ LIMB_MATS: dict[str, tuple[int, int, int]] = {
     "wool": (168, 158, 140),     # 羊毛：全身最亮的一处，扎眼是对的
     "bristle": (70, 60, 52),     # 猪鬃
     "plume": (118, 104, 92),     # 禽腿上段的覆羽——鳞只长在跗跖骨上，大腿是有毛的
+    "crack": (34, 26, 24),       # 裂口：看见的是**裂缝底下的暗**，不是一条画上去的线
 }
 
 
@@ -533,10 +547,32 @@ class Limb:
     weld_r: float                   # 接合痕半径 px（剪切传力所需，从来不是瓶颈）
     root_need: float                # 根部**需要**的半径（未被 girth 钳过），自检用
     pad: tuple[float, float]        # 脚掌 (半宽 px, 半长 px)；不承重为 (0,0)
+    node_r: list[float]             # 每个**关节处**的包络半径 px（len = len(joints)）
 
     @property
     def name(self) -> str:
         return self.sock.name
+
+    def profile(self, i: int, t: float) -> float:
+        """第 i 节上、沿节长走到 t∈[0,1] 处的**外表面**半径。
+
+        肉是**一整条连续的包络**，不是一节一个粗细。上一版每节渲成一根等粗（或三段
+        纺锤）的柱子，于是在关节处直接跳变——大腿 4.8 px 接着小腿 0.5 px，中间没有
+        过渡。那读出来就是"一块肉后面插了根棍"，不是腿。
+
+        真实的外形由两样东西叠出来，这里就取两者的上包络：
+
+        · **关节处的包络**（`node_r`）：肌腹**不跨关节**，所以关节那一圈只有骨 + 腱 +
+          皮下 + 皮，是整条肢最细的地方。两侧必须取同一个值——肉是连续的，不能从
+          关节两边看过去粗细不一样。
+        · **肌腹的鼓包**：峰值就是解出来的 `radius[i]`，位置偏**近端**（约 38%），
+          两端收进腱里归零。所以是小腿肚在上、跟腱在下，不是一根均匀的棒。
+        """
+        a, b = self.node_r[i], self.node_r[i + 1]
+        t = min(max(t, 0.0), 1.0)
+        line = a + (b - a) * t                      # 关节到关节的锥形过渡
+        belly = self.radius[i] * math.sin(math.pi * t ** 0.72)   # 峰值偏近端
+        return max(line, belly)
 
     @property
     def bearing(self) -> bool:
@@ -613,6 +649,11 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
                 break
         ankle = paw[0]
 
+        # 脚掌：面积 = 载荷 / 地面承载力。踩不住就陷进灰里。**这一步得在算粗细之前**
+        # ——脚掌的长度就是脚里那几根骨头的等效力臂（见下面 eff）。
+        side = math.sqrt(load / BEARING) / PX
+        pad = (side * 0.5, side * 0.62)
+
         # 两轮：第一轮只禁止关节本身穿地，量出粗细后第二轮连肉一起禁（见 stand_pose）
         clear: list[float] | None = None
         forced = False
@@ -623,7 +664,24 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
             # 力臂 = 该关节到**地面接触点**的水平距离。接触点是 `ground` 不是趾尖——
             # 跖行/趾行的趾节还往前伸一截，地面反力不在那儿。
             arms = [float(np.hypot(*(ground - p)[[0, 2]])) for p in joints]
-            bone_r = [bone_radius(segs[i], arms[i], load)[0] for i in range(n)]
+            # 但**脚里面**的关节不能这么算：把地面反力缩成一个点，对脚掌以内的骨头是
+            # 假杠杆。脚掌是一片有长度的接触面（`pad`），一根趾骨只撬得动它**远端那
+            # 一小片**的力，撬不动整只脚的。照点接触算的后果实测得很清楚：人足的趾骨
+            # 比掌骨还粗（0.51 vs 0.41 px），末节反而成了最粗的一节——自检直接红。
+            #
+            # 正确的做法是按分布力积分：设接触面沿前进方向半长 hl、压强均匀，位于中心
+            # 前方 d 处的关节，其远端那一片占总载荷 (hl−d)/2hl，形心在 (hl−d)/2 处，
+            # 于是**等效力臂** = 份额 × 形心距。踝以上的关节不受此限——整片脚掌都在它
+            # 的远端，力矩仍旧是全载荷乘到形心的距离。
+            eff = list(arms)
+            hl = max(pad[1], 1e-6)
+            for j in range(nleg + 1, len(joints)):
+                d = float(np.dot(joints[j] - ground, FWD))     # 沿脚尖方向的前伸量
+                if d >= hl:
+                    eff[j] = 0.0                               # 已经伸出接触面之外
+                else:
+                    eff[j] = (hl - d) / (2.0 * hl) * (hl - d) / 2.0
+            bone_r = [bone_radius(segs[i], eff[i], load)[0] for i in range(n)]
 
             # 肌肉：关节 j 的肌腹长在第 j−1 节上，更远的关节只有腱穿过（腱强两百倍
             # ⇒ 远端细）。**根部那一节还要额外背上嫁接关节（j=0）自己的肌肉**：脊椎
@@ -636,7 +694,7 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
             for i in range(n):
                 A = B = 0.0
                 for j in ([0] if i == 0 else []) + list(range(i + 1, n)):
-                    tau = load * arms[j] * PX
+                    tau = load * eff[j] * PX
                     a = ARM_RATIO * max(segs[max(j - 1, 0)], segs[min(j, n - 1)]) * PX
                     # **脚上没有肌腹**——掌骨与趾骨那几节只有腱和角质穿过（马的管骨、
                     # 羊的蹄都是这样）。不这么分的话，趾尖比接触点还靠前会让力臂反过来
@@ -656,9 +714,6 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
             rest = np.cumsum(list(segs)[::-1])[::-1]
             clear = [min(max(radius[max(i - 1, 0)], radius[min(i, n - 1)]), float(rest[i]))
                      for i in range(nleg)] + [0.0]   # 末项是踝，由站姿定高不受此约束
-        # 脚掌：面积 = 载荷 / 地面承载力。踩不住就陷进灰里
-        side = math.sqrt(load / BEARING) / PX
-        pad = (side * 0.5, side * 0.62)
     else:
         arms = [0.0] * (n + 1)
         sinew = [0.0] * n
@@ -697,12 +752,29 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
     cap = [0.5 * segs[i] for i in range(n)]
     cap[0] = min(cap[0], 0.5 * territory)
     radius = [min(r, cap[i]) for i, r in enumerate(radius)]
+
+    # 骨外面那层不扛载荷的软组织（见 SOFT_OVER_BONE）。**钳完再抬**：上面那个 cap
+    # 管的是肌腹能堆多大，管不着腱鞘和皮下——那几层再薄也不会薄到零。没有这一步，
+    # 远端几节的半径**恰好等于骨半径**，画出来就是把骨头露在外面。
+    envelope = [bone_r[i] * SOFT_OVER_BONE for i in range(n)]
+    if boneless:
+        # 无骨的软柱（触手）没有"肌腹 vs 腱"的分工——整根都是连续的软组织，也就没有
+        # 关节可收细。照 bone_r 算包络会得到 0，画出零长的裂口直接崩（4 只兽实测）。
+        envelope = list(radius)
+    radius = [max(radius[i], envelope[i]) for i in range(n)]
+
+    # 关节处的包络：肌腹不跨关节，所以那一圈只剩骨+腱+皮。两侧取同一个值——从关节
+    # 哪一边看过去都得一样粗，肉是连续的。根部是例外：那儿的肌腹直接连进体内，不收。
+    node_r = [max(envelope[max(i - 1, 0)], envelope[min(i, n - 1)])
+              for i in range(n + 1)]
+    node_r[0] = max(node_r[0], radius[0])
+
     # 接合面传力靠剪切，需要的面积 A = F/σ：软组织 0.5 MPa 下只要一两像素半径，
     # 所以**接合从来不是瓶颈**，它只是皮上一圈看得见的痕。
     weld_r = math.sqrt((bone_r[0] * PX) ** 2 + load / (math.pi * SIGMA_SOFT)) / PX
     weld_r = max(weld_r, 0.6)
     return Limb(gene, sock, load, joints, radius, bone_r, muscle, arms, ankle,
-                mats, forced, weld_r, need, pad)
+                mats, forced, weld_r, need, pad, node_r)
 
 
 def build(seed: int, *, socks: dict[str, C.Socket] | None = None

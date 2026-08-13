@@ -41,9 +41,6 @@ MATS.update(LB.LIMB_MATS)
 # 柱子渲出来会消失或闪烁。这是渲染的界不是物理的界，和 core_anim.FLICK_MAX_HZ 同类。
 RENDER_MIN_R = 0.5
 
-# 肌腹沿节长的粗细剖面（相对峰值）。纺锤形：中段最粗，两端收进腱里。
-SPINDLE = (0.66, 1.0, 0.74)
-
 
 def bone_tree(rig: Rig, limbs: dict[str, LB.Limb]) -> None:
     """core 的骨树 + 逐肢骨链。
@@ -72,34 +69,36 @@ def bone_tree(rig: Rig, limbs: dict[str, LB.Limb]) -> None:
 
 
 def part_limbs(rig: Rig, limbs: dict[str, LB.Limb]) -> int:
-    """逐肢几何：接合痕 + 各节柱（肌腹分三段收成纺锤）+ 脚掌。"""
+    """逐肢几何：连续包络的肉 + 脚掌 + 体表 + 疤 + 裂口。"""
     n = 0
     for lb in limbs.values():
         s = lb.sock
         base = f"limb_{s.name}_0"
         for i, (p, q) in enumerate(zip(lb.joints, lb.joints[1:])):
-            r = max(lb.radius[i], RENDER_MIN_R)
-            # 肌腹是**纺锤形**的：算出来的那个半径是所需生理横截面的**峰值**，出现在
-            # 腹的中段，两端收进腱里。整节渲成一根等粗的柱子就成了一块方砖——round 2
-            # 的图上六条腿的大腿全是大方块，读不出是肉。分三段按 SPINDLE 收，两端收细
-            # 还顺带把关节处的方角削掉了。细到只剩腱骨的节（末节）没有腹，不分段。
-            # 分几段要看**长细比**：一节粗腿分成三段，每一段比它自己还宽，渲出来是
-            # 一摞板子（round 2 整只兽实测，六条腿全是木板）。只有细长到分得开的才分。
+            # 沿着这一节把**连续包络**（`Limb.profile`）采样成几段柱子。上一版是每节
+            # 一根等粗柱（或按 SPINDLE 分三段），于是关节处粗细直接跳变：大腿 4.8 px
+            # 接上小腿 0.5 px，中间没有任何过渡，读出来是"一坨肉后面插了根棍"。
+            #
+            # 分几段是**分辨率**问题，不是造型问题：段数取到每段长度 ≈ 2 px 为止，
+            # 再细也超过模型精度。但要防住 round 2 那个坑——一节粗短的腿分成好几段，
+            # 每段比它自己还宽，渲出来是一摞板子。所以段数还要被长细比压住。
             L = float(np.linalg.norm(q - p))
-            prof = (SPINDLE if L >= 6.0 * r else
-                    (SPINDLE[1:] if L >= 3.0 * r else (1.0,)))
-            if r <= RENDER_MIN_R * 2.0 or lb.muscle[i] <= 0.0:
-                prof = (1.0,)
-            for k, f in enumerate(prof):
-                a = p + (q - p) * (k / len(prof))
-                b = p + (q - p) * ((k + 1) / len(prof))
+            rmax = max(lb.profile(i, k / 8.0) for k in range(9))
+            k_res = int(L / 2.0)                       # 分辨率给的段数
+            k_flat = int(L / max(1.2 * rmax, 1e-6))    # 长细比给的上限（别摞成板）
+            steps = max(1, min(6, k_res, max(k_flat, 1)))
+            for k in range(steps):
+                a = p + (q - p) * (k / steps)
+                b = p + (q - p) * ((k + 1) / steps)
+                r = max(lb.profile(i, (k + 0.5) / steps), RENDER_MIN_R)
                 rig.shaft(f"limb_{s.name}_{i}", f"seg_{s.name}_{i}_{k}",
-                          tuple(a), tuple(b), max(r * f, RENDER_MIN_R), mat=lb.mats[i])
+                          tuple(a), tuple(b), r, mat=lb.mats[i])
                 n += 1
         if lb.bearing:
             n += part_foot(rig, lb)
         n += part_coat(rig, lb)
         n += part_scars(rig, lb)
+        n += part_cracks(rig, lb)
     return n
 
 
@@ -147,7 +146,12 @@ def part_foot(rig: Rig, lb: LB.Limb) -> int:
             box(bone, "claw", c + np.array([0.0, 0.0, -run * 0.55]),
                 (hw * 0.16, 0.35, run * 0.22), "claw")
     elif sk.foot == "human":
-        # 人足：整片脚底 + 向后支出来的脚跟 + 三枚趾。跖行的读法全在这块脚跟上
+        # 人足：整片脚底 + 向后支出来的脚跟 + **五枚趾，拇趾最粗、往小趾递减**。
+        #
+        # "我好像没看见人腿"——它一直在（seed 5 的左后腿就是），只是读不出来。这个
+        # 尺度上人腿的辨识全在脚上：跟骨支出去那一块 + 五枚不等长的趾。三枚等大的趾
+        # 是"某种爪"，五枚递减的趾才是人。趾长按真实比例递减（拇趾最粗但不最长，
+        # 第二趾最长），这几个数是量的不是编的。
         heel, sole = j[-2], j[-1]
         mid = 0.5 * (heel + sole)
         run = max(float(np.linalg.norm((sole - heel)[[0, 2]])), 1.0)
@@ -155,9 +159,12 @@ def part_foot(rig: Rig, lb: LB.Limb) -> int:
             "hide")
         box(prev, "heel", (heel[0], 1.1, heel[2] + run * 0.28),
             (hw * 0.62, 1.1, run * 0.30), "hide")
-        for sgn in (-1.0, 0.0, 1.0):
-            box(bone, "toe", (sole[0] + sgn * hw * 0.46, 0.6, sole[2] - hl * 0.35),
-                (hw * 0.2, 0.6, hl * 0.4), "hide")
+        # (横向位置, 趾粗, 趾长)：拇趾在内侧最粗，第二趾最长
+        for off, wide, long in ((-0.78, 0.26, 0.34), (-0.32, 0.17, 0.42),
+                                (0.06, 0.16, 0.38), (0.40, 0.15, 0.32),
+                                (0.70, 0.13, 0.25)):
+            box(bone, "toe", (sole[0] + off * hw, 0.6, sole[2] - hl * long),
+                (hw * wide, 0.6, hl * long * 1.15), "hide")
     elif sk.foot == "bird":
         # 禽爪：三前一后。后趾是禽腿最好认的特征，别省
         run = max(float(np.linalg.norm((tip - ball)[[0, 2]])), 1.0)
@@ -274,6 +281,85 @@ def part_scars(rig: Rig, lb: LB.Limb) -> int:
                          tuple(c - s), tuple(c + s), mat="weld_dark")
                 n += 1
     return n
+
+
+def crack_lines(lb: LB.Limb) -> list[tuple[str, np.ndarray, np.ndarray, np.ndarray]]:
+    """算出这条肢上每一道裂口：(种类, 端点a, 端点b, 当地的参考轴)。
+
+    单独拎出来是为了让自检能直接量方向（见 check ⑫）——渲染和判据读同一份数据，
+    不是各算各的。
+    """
+    out: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]] = []
+    axes = [lb.joints[i + 1] - lb.joints[i] for i in range(len(lb.joints) - 1)]
+
+    for i in range(1, len(axes)):
+        up, dn = axes[i - 1], axes[i]
+        nu, nd = float(np.linalg.norm(up)), float(np.linalg.norm(dn))
+        if nu < 1e-6 or nd < 1e-6:
+            continue
+        up, dn = up / nu, dn / nd
+        bend = math.degrees(math.acos(float(np.clip(np.dot(up, dn), -1.0, 1.0))))
+        if bend < 12.0:
+            continue                        # 几乎不折的关节，皮不需要多余的余量
+        outward = up - dn                   # 两节轴之差指向弯心，取反就是伸侧
+        no = float(np.linalg.norm(outward))
+        if no < 1e-6:
+            continue
+        outward = -outward / no
+        ring = np.cross(dn, outward)        # 横裂沿这个方向躺（垂直于肢轴）
+        nr = float(np.linalg.norm(ring))
+        if nr < 1e-6:
+            continue
+        ring /= nr
+        r = lb.node_r[i]
+        for k in range(min(3, 1 + int(bend / 30.0))):
+            off = (k - 1) * 0.9 + 0.4 * C._noise(lb.name, i, k, "ck")
+            ctr = lb.joints[i] + dn * off + outward * (r * 0.86)
+            half = r * (0.55 + 0.35 * C._noise(lb.name, i, k, "cl"))
+            if half < 0.25:
+                continue                    # 比模型精度还短的缝，画不出来
+            out.append(("joint", ctr - ring * half, ctr + ring * half, dn))
+
+    sk = lb.gene.skeleton
+    if sk is not None and lb.bearing and sk.foot in ("cloven", "claw"):
+        hw, hl = lb.pad
+        ball = lb.joints[-2]
+        for k, sgn in enumerate((-1.0, 1.0)):
+            if C._noise(lb.name, "hoof", k, "g") < 0.35:
+                continue                    # 不是每一片都裂
+            x = ball[0] + sgn * hw * (0.5 if sk.foot == "cloven" else 0.35)
+            z = ball[2] + (0.35 - 0.7 * C._noise(lb.name, "hoof", k, "z")) * hl
+            top = hl * (0.5 + 0.35 * C._noise(lb.name, "hoof", k, "h"))
+            out.append(("keratin", np.array([x, 0.05, z]), np.array([x, top, z]),
+                        np.array([0.0, 1.0, 0.0])))
+    return out
+
+
+def part_cracks(rig: Rig, lb: LB.Limb) -> int:
+    """裂口。**位置和方向都是拉出来的**——裂缝一律垂直于把它拉开的那个方向。
+
+    皮在这个尺度上不到十分之一个像素（1 px = 6.25 cm），所以"装上皮肤"不可能表现成
+    加粗，只能表现成**表面**。表面上唯一看得见的结构就是它裂在哪儿、朝哪个方向裂。
+    两处，方向正好互相垂直，这是可以核验的：
+
+    · **关节的横裂。** 关节要屈伸，外侧（伸侧）的皮必须跟着这段弧长伸缩，是全肢应变
+      最大的一圈。拉伸方向沿着肢的轴，裂缝就横着开——大象、犀牛的关节皱、人的指节
+      纹都是横的。折得越死裂得越多：条数直接取自这个关节在站姿里的实际折角。
+    · **角质的纵裂。** 蹄/爪/甲是管状的角质，失水收缩加上着地时管壁向外张，拉的是
+      **周向**，于是裂缝顺着生长方向竖着开——马蹄的裂蹄（quarter crack）就是竖的。
+
+    所以同一条腿上两种裂缝互相垂直。这不是随手撒的纹理，撒歪了自检会红（见 ⑫）。
+    """
+    last = len(lb.joints) - 2
+    lines = crack_lines(lb)
+    for k, (kind, a, b, _ref) in enumerate(lines):
+        # 挂在**裂口所在那一节**的骨上，腿一动裂口跟着动
+        i = last if kind == "keratin" else max(
+            min(int(np.argmin([np.linalg.norm(a - p) for p in lb.joints])) - 1,
+                last), 0)
+        rig.shaft(f"limb_{lb.name}_{i}", f"crack_{lb.name}_{kind}_{k}",
+                  tuple(a), tuple(b), 0.3 if kind == "joint" else 0.28, mat="crack")
+    return len(lines)
 
 
 def build(seed: int, *, bud_growth: float = 1.0
@@ -458,6 +544,40 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
     if len(left) == len(right) and all(abs(a - b) < 1.5 for a, b in zip(left, right)):
         bad.append("左右承重肢镜像对称——缝合兽不该对称")
 
+    # ⑪ 不许把骨头画在外面，也不许在关节处跳粗细。用户一眼就看出来的那两条：
+    #    "没安装上肌肉和皮肤"——远端几节的渲染半径**恰好等于骨半径**，等于露骨；
+    #    大腿 4.8 px 直接接上小腿 0.5 px——肉是连续的，不可能在关节处断一截。
+    for lb in limbs.values():
+        for i in range(len(lb.radius)):
+            floor = lb.bone_r[i] * LB.SOFT_OVER_BONE
+            thin = min(lb.profile(i, k / 10.0) for k in range(11))
+            if thin < floor - 1e-6:
+                bad.append(f"{lb.name} 第 {i} 节最细处 {thin:.2f} px 已经贴到骨面 "
+                           f"（骨半径 {lb.bone_r[i]:.2f}×{LB.SOFT_OVER_BONE}）——露骨了")
+            if i + 1 < len(lb.radius):
+                jump = abs(lb.profile(i, 1.0) - lb.profile(i + 1, 0.0))
+                if jump > 1e-6:
+                    bad.append(f"{lb.name} 第 {i}/{i + 1} 节交界处粗细跳了 {jump:.2f} px"
+                               f"——关节两边必须是同一个包络")
+
+    # ⑫ 裂口方向：裂缝一律**垂直于把它拉开的方向**，所以两族互相垂直。
+    #    关节的皮被沿肢轴拉 ⇒ 横裂；蹄甲失水沿周向收缩 ⇒ 纵裂。撒歪了这里红。
+    for lb in limbs.values():
+        for kind, a, b, ref in crack_lines(lb):
+            d = b - a
+            nd = float(np.linalg.norm(d))
+            if nd < 1e-6:
+                bad.append(f"{lb.name} 有一道零长的裂口")
+                continue
+            cos = abs(float(np.dot(d / nd, ref / max(float(np.linalg.norm(ref)), 1e-9))))
+            if kind == "joint" and cos > 0.25:
+                bad.append(f"{lb.name} 关节裂口和肢轴夹角只有 "
+                           f"{math.degrees(math.acos(min(cos, 1.0))):.0f}°——"
+                           f"皮是被沿轴拉开的，裂缝必须横着走")
+            if kind == "keratin" and cos < 0.9:
+                bad.append(f"{lb.name} 蹄甲裂口没顺着生长方向（cos={cos:.2f}）——"
+                           f"角质是周向收缩裂的，缝必须竖着走")
+
     # ⑩ 块数预算
     # 预算从 560 提到 760：脚（每条 4–8 块）和毛（每条 13–15 块）是这一轮加的，都是
     # "看得见才算数"的东西。参照：拟态灰烬蛛整只约 200 块，这只兽有 6–9 条肢。
@@ -501,7 +621,7 @@ def main() -> int:
             print(f"   {x}")
         return 1
     print("✓ 触地 / 不埋进核心 / 根部不互穿 / 粗细单调 / 载荷守恒 / 不陷地 / "
-          "骨骼 / 站高 / 不对称 / 块数 全部通过")
+          "骨骼 / 站高 / 不对称 / 不露骨 / 裂口方向 / 块数 全部通过")
     if not args.check:
         p = rig.save(OUT_DIR / f"StitchedBeast_{args.seed}.bbmodel",
                      f"StitchedBeast_{args.seed}")
