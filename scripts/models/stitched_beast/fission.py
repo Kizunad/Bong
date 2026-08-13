@@ -73,8 +73,19 @@ class Fragment:
 
     @property
     def span(self) -> float:
-        """特征体长：体积的立方根。蠕动速度正比于它（见 core_anim.crawl_speed）。"""
-        return float((self.mass * C.VOX ** 3) ** (1.0 / 3.0))
+        """特征体长 = **前后锚段的间距**。蠕动速度正比于它（见 core_anim.crawl_speed）。
+
+        本来图省事取体积的立方根，那是错的：蠕动收缩的是两个锚段之间那一段，立方根量的
+        是"这块肉有多大"，不是"能收缩多长"。两者对紧凑的碎片差得很远——`core_fore` 立方根
+        9.16px 而锚段只隔 5.02px，报出来的逃窜速度会是动画实际爬速的两倍。**同一个量在
+        两处给出两个数**，那就是有一处在骗人。
+
+        锚段间距由 `fragment.geom` 按碎片自己的骨（或重新分节）算，和 `fragment_anim`
+        用的是同一个数。
+        """
+        import fragment as FR
+
+        return FR.geom(self.lobes).span
 
     def genome(self, parent: GN.Genome) -> GN.Genome:
         """碎片自己的基因组 = 亲代基因里落在它带走的挂载点上的那些部件。

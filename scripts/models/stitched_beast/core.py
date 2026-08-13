@@ -656,6 +656,7 @@ def bud_shape(sock: Socket, growth: float) -> list[tuple[np.ndarray, float, str]
 
 
 _TISSUE_STEP = 0.35        # 芽体积数值积分的采样步长（px）
+_TISSUE_CACHE: dict[tuple[str, float], float] = {}
 
 
 def bud_tissue(sock: Socket, growth: float) -> float:
@@ -666,7 +667,14 @@ def bud_tissue(sock: Socket, growth: float) -> float:
     算会把用料高估到两倍以上。
 
     这个数字有实际后果：芽的组织不是凭空出现的，得有来源。见 `graft_budget`。
+
+    结果按 (槽名, 生长度) 记账：这是数值积分，而嫁接时长、组织预算、乱抽缩放三处都要
+    反复问同一批槽。不记的话每 import 一次 core_anim 就要白算三四十遍。
     """
+    key = (sock.name, round(float(growth), 6))
+    hit = _TISSUE_CACHE.get(key)
+    if hit is not None:
+        return hit
     nodes = bud_shape(sock, growth)
     if not nodes:
         return 0.0
@@ -679,10 +687,12 @@ def bud_tissue(sock: Socket, growth: float) -> float:
         inside |= np.all(np.abs(pts - c) <= r, axis=1)
     pts = pts[inside]
     if not len(pts):
+        _TISSUE_CACHE[key] = 0.0
         return 0.0
     d = (pts[:, None, :] - CORE_CENTER - _LC[None, :, :]) / _LR[None, :, :]
     f = (_LW[None, :] * np.exp(-np.einsum("ijk,ijk->ij", d, d))).sum(axis=1)
-    return float((f < ISO).sum()) * _TISSUE_STEP ** 3
+    _TISSUE_CACHE[key] = float((f < ISO).sum()) * _TISSUE_STEP ** 3
+    return _TISSUE_CACHE[key]
 
 
 def _tangent_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
