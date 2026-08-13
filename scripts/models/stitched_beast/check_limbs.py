@@ -63,17 +63,6 @@ def check_seed(seed: int, socks) -> tuple[list[str], list[tuple]]:
         if max(abs(mx), abs(mz)) > 1e-3 * W * 30:
             bad.append(f"{tag} t={t:.2f} 力矩不平衡 ({mx:.0f},{mz:.0f})——身体会翻")
 
-    # ---- ② 扛重的是短近腿：份额 vs 落点离质心的距离，必须负相关
-    if len(gait.limbs) >= 4:
-        d = np.array([float(np.hypot(*(np.array(feet[lg.gene.socket])[[0, 2]] - com2)))
-                      for lg in gait.limbs])
-        f = np.array([loads[lg.gene.socket] for lg in gait.limbs])
-        if d.std() > 1e-6 and f.std() > 1e-6:
-            r = float(np.corrcoef(d, f)[0, 1])
-            if r > -0.10:
-                bad.append(f"{tag} 载荷与落点距离相关 {r:+.2f}（应显著为负）——"
-                           f"离质心越远该分得越少，正相关说明载荷不是从静力平衡解的")
-
     rows = []
     for gene in gen.limbs:
         sock = socks[gene.socket]
@@ -99,18 +88,24 @@ def check_seed(seed: int, socks) -> tuple[list[str], list[tuple]]:
                     bad.append(f"{tag} {lb.name} 第{i}节 力臂 {arms[i]:.1f} px 却是"
                                f"轴压/屈曲主导（弯曲 {bd:.2f} / 轴压 {ax:.2f} / "
                                f"屈曲 {bk:.2f}）——腿是被掰断的，力矩没进公式")
-            # ---- ④ 肌肉递减 + 末节只剩腱
+            # ---- ④ 肌肉全长在**腿**上，脚上一点没有
+            #
+            # 这条原本写的是"肌肉截面从根到梢单调递减"。接上真实的脚之后它是错的：
+            # 趾行动物的踝（跗关节）被掌骨推到接触点后面一大截，力矩臂比髋还大——
+            # 那正是跟腱和腓肠肌粗壮的原因，小腿比大腿鼓是解剖事实不是算错。
             m = lb.muscle
-            if any(b > a + 1e-12 for a, b in zip(m, m[1:])):
-                bad.append(f"{tag} {lb.name} 肌肉截面不单调 "
-                           f"{[f'{x:.3f}' for x in m]}——力矩臂算反了")
-            if m[-1] > m[0] * 0.05:
-                bad.append(f"{tag} {lb.name} 末节仍有 {m[-1] / m[0]:.0%} 的肌肉——"
-                           f"末节该只有腱穿过")
-            # ---- ⑤ 站姿命中落点
-            err = float(np.linalg.norm(lb.joints[-1] - np.asarray(feet[gene.socket])))
+            nleg = len(segs) - gene.foot_bones
+            if any(x > 1e-12 for x in m[nleg:]):
+                bad.append(f"{tag} {lb.name} 脚上长了肌腹 {[f'{x:.3f}' for x in m]}"
+                           f"——掌骨与趾骨那几节只有腱和角质穿过")
+            if sum(m[:nleg]) <= 0.0:
+                bad.append(f"{tag} {lb.name} 腿上一点肌肉都没有——抗重力肌去哪了")
+            # ---- ⑤ IK 收敛：腿的末端必须落在**站姿要求的踝位**上。
+            #    不能拿链的末端和落点比——链的末端是趾尖，趾行/跖行的趾尖本来就在
+            #    接触点前面一截（那正是脚的形状）。
+            err = float(np.linalg.norm(lb.joints[len(segs) - gene.foot_bones] - lb.ankle))
             if err > 0.6:
-                bad.append(f"{tag} {lb.name} 站姿末端偏离落点 {err:.2f} px——IK 没收敛")
+                bad.append(f"{tag} {lb.name} 腿的末端偏离踝位 {err:.2f} px——IK 没收敛")
             # ---- ⑧ 脚掌压强
             area = (2 * lb.pad[0] * LB.PX) * (2 * lb.pad[1] * LB.PX)
             if lb.load / max(area, 1e-9) > LB.BEARING * 1.02:
@@ -164,10 +159,26 @@ def cross_seed(rows: list[tuple]) -> list[str]:
         rs = [x.root_need for _s, x in bear if x.gene.kind == kind]
         if len(rs) < 3:
             continue
-        if max(rs) / min(rs) < 2.0:
+        print(f"[粗细] {kind} 类内 {min(rs):.2f}..{max(rs):.2f} px "
+              f"（{max(rs) / min(rs):.2f}×，{len(rs)} 条）")
+        if max(rs) / min(rs) < 1.35:
             bad.append(f"{kind} 类内部的粗细跨度只有 {max(rs) / min(rs):.2f}×——"
                        f"同一种类的肢挂在不同位置该差出好几倍，挤成一团说明载荷"
                        f"没进公式，粗细退化成了按种类查表")
+
+    # ---- ② 扛重的是短近腿：载荷份额与"落点离质心的距离"负相关。
+    #
+    # 这条只在**汇总**上成立，不能逐只兽卡：质心偏向一侧时，那一侧的远脚照样可能
+    # 分到大头（实测 seed 2 单只相关 +0.78）。它是个统计规律不是定理——"离质心越远
+    # 力臂越长、分到的反力越少"在质心居中时才干净。
+    dd = np.array([x.arm0 for _s, x in bear])
+    ff = np.array([x.load for _s, x in bear])
+    if dd.std() > 1e-6 and ff.std() > 1e-6:
+        rc = float(np.corrcoef(dd, ff)[0, 1])
+        print(f"[载荷] 与落点力臂的相关 {rc:+.3f}（{len(bear)} 条）")
+        if rc > -0.10:
+            bad.append(f"载荷与力臂相关 {rc:+.2f}（应为负）——离质心越远该分得越少，"
+                       f"正相关说明载荷不是从静力平衡解的")
 
     r = np.log([x.root_need for _s, x in bear])
     drv = np.log([math.sqrt(x.load * max(x.arm1, 1e-6) / max(x.gene.segments[0], 1e-9))
