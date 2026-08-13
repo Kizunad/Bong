@@ -4438,7 +4438,7 @@ mod tests {
                     channel: "LargeIntestine".to_string(),
                     min_health: 0.01,
                 }],
-                qi_cost: 16_777_217.0,
+                qi_cost: 0.4,
                 stamina_cost: 0.0,
                 cast_ticks: 8,
                 cooldown_ticks: 60,
@@ -4454,8 +4454,26 @@ mod tests {
         assert_eq!(e.required_meridians.len(), 1);
         assert_eq!(e.required_meridians[0].channel, "LargeIntestine");
         assert_eq!(e.cast_ticks, 8);
-        assert_eq!(e.qi_cost, 16_777_217.0);
+        assert_eq!(e.qi_cost, 0.4_f32);
         assert_eq!(e.range, 1.3_f32);
+    }
+
+    #[test]
+    fn technique_entry_tag_10_remains_legacy_fixed32() {
+        let entry = TechniqueEntry {
+            qi_cost: 0.4,
+            ..Default::default()
+        };
+        let bytes = entry.encode_to_vec();
+        let expected = [0x55, 0xcd, 0xcc, 0xcc, 0x3e];
+        assert_eq!(
+            bytes, expected,
+            "field 10 must encode as fixed32 (tag byte 0x55) for old clients"
+        );
+
+        let decoded = TechniqueEntry::decode(expected.as_slice())
+            .expect("legacy fixed32 tag 10 bytes must decode on the new server");
+        assert_eq!(decoded.qi_cost, 0.4_f32);
     }
 
     #[test]

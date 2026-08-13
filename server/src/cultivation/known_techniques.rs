@@ -92,6 +92,29 @@ pub enum TechniqueDispatch {
 pub const DIRECT_GENERIC_ALLOWLIST: &[&str] =
     &["movement.dash", "shield_block", "body.guangbo_ticao"];
 
+/// Metadata that production systems dereference after startup and therefore cannot be deleted
+/// independently of their runtime consumers. Direct-generic entries are included because their
+/// allowlist is also a positive runtime contract, not merely a dispatch filter.
+pub const RUNTIME_REQUIRED_TECHNIQUE_IDS: &[&str] = &[
+    "movement.dash",
+    "shield_block",
+    "body.guangbo_ticao",
+    "morph.yixing",
+    "sword_path.condense_edge",
+    "sword_path.qi_slash",
+    "sword_path.resonance",
+    "sword_path.manifest",
+    "sword_path.heaven_gate",
+];
+
+/// These resolvers intentionally apply additional runtime-only gates. Their TOML metadata must
+/// remain empty so the exception cannot silently become two conflicting sources.
+pub const RUNTIME_ONLY_MERIDIAN_GATE_IDS: &[&str] = &[
+    "zhenmai.multipoint",
+    "baomai.full_power_charge",
+    "baomai.full_power_release",
+];
+
 /// 运行时 owned metadata。所有字符串与经脉列表均来自启动期 TOML，不能借用临时解析缓冲区。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TechniqueDefinition {
@@ -543,6 +566,16 @@ fn validate_and_convert(
             ));
         }
     }
+    if raw.qi_cost > f64::from(f32::MAX) {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "qi_cost must fit the legacy TechniqueEntry float/fixed32 wire field, got {}",
+                raw.qi_cost
+            ),
+        ));
+    }
     if raw.id == "body.guangbo_ticao" && raw.qi_cost <= 0.0 {
         return Err(TechniqueLoadError::invalid(
             path,
@@ -738,6 +771,22 @@ pub fn validate_startup_wiring(
     skills: &SkillRegistry,
     dependencies: &SkillMeridianDependencies,
 ) -> Result<(), TechniqueWiringError> {
+    validate_startup_relationships(techniques, skills, dependencies)?;
+    for required_id in RUNTIME_REQUIRED_TECHNIQUE_IDS {
+        if techniques.get(required_id).is_none() {
+            return Err(TechniqueWiringError(format!(
+                "runtime-required technique {required_id:?} is missing from the metadata catalog"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_startup_relationships(
+    techniques: &TechniqueRegistry,
+    skills: &SkillRegistry,
+    dependencies: &SkillMeridianDependencies,
+) -> Result<(), TechniqueWiringError> {
     // M18：catalog 被接受 ⇒ 学会全部条目的玩家必能收到完整快照。编码检查（发送端
     // `PayloadBuildError::Oversize`）是逐玩家逐 tick 的，启动期必须先行量一次最坏
     // 聚合大小，否则超限 catalog 会让快照在发送端被整包丢弃。
@@ -761,6 +810,33 @@ pub fn validate_startup_wiring(
                 if !dependencies.is_declared(&definition.id) {
                     return Err(TechniqueWiringError(format!(
                         "metadata_backed technique {:?} lacks an explicit meridian dependency declaration",
+                        definition.id
+                    )));
+                }
+
+                if RUNTIME_ONLY_MERIDIAN_GATE_IDS.contains(&definition.id.as_str()) {
+                    if !definition.required_meridians.is_empty() {
+                        return Err(TechniqueWiringError(format!(
+                            "runtime-only meridian gate {:?} must keep TOML required_meridians empty",
+                            definition.id
+                        )));
+                    }
+                    continue;
+                }
+
+                let metadata_meridians: HashSet<_> = definition
+                    .required_meridians
+                    .iter()
+                    .map(|required| {
+                        crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
+                            .expect("loaded technique metadata must contain known meridian channels")
+                    })
+                    .collect();
+                let declared_meridians: HashSet<_> =
+                    dependencies.lookup(&definition.id).iter().copied().collect();
+                if metadata_meridians != declared_meridians {
+                    return Err(TechniqueWiringError(format!(
+                        "technique {:?} required_meridians mismatch: metadata={metadata_meridians:?}, declared={declared_meridians:?}",
                         definition.id
                     )));
                 }
@@ -1129,6 +1205,7 @@ dispatch = "metadata_backed"
     fn rejects_each_numeric_field_invalid_value_class_independently() {
         let negative_qi = minimal_toml().replace("qi_cost = 0.0", "qi_cost = -0.1");
         let nonfinite_qi = minimal_toml().replace("qi_cost = 0.0", "qi_cost = inf");
+        let above_wire_max = minimal_toml().replace("qi_cost = 0.0", "qi_cost = 1e40");
         let negative_stamina = minimal_toml().replace("stamina_cost = 0.0", "stamina_cost = -0.1");
         let nonfinite_stamina = minimal_toml().replace("stamina_cost = 0.0", "stamina_cost = nan");
         let negative_range = minimal_toml().replace("range = 0.0", "range = -1.0");
@@ -1140,6 +1217,7 @@ dispatch = "metadata_backed"
         for text in [
             negative_qi,
             nonfinite_qi,
+            above_wire_max,
             negative_stamina,
             nonfinite_stamina,
             negative_range,
@@ -1380,8 +1458,11 @@ dispatch = "metadata_backed"
         .expect("an arbitrary valid id may parse as direct_generic metadata");
         let skills = SkillRegistry::default();
 
-        let error =
-            validate_startup_wiring(&registry, &skills, &SkillMeridianDependencies::default())
+        let error = validate_startup_relationships(
+            &registry,
+            &skills,
+            &SkillMeridianDependencies::default(),
+        )
                 .expect_err(
                     "arbitrary direct_generic without a gameplay consumer must be rejected",
                 );
@@ -1390,7 +1471,7 @@ dispatch = "metadata_backed"
 
         let mut dependencies = SkillMeridianDependencies::default();
         dependencies.declare("test.skill", Vec::new());
-        let error = validate_startup_wiring(&registry, &skills, &dependencies)
+        let error = validate_startup_relationships(&registry, &skills, &dependencies)
             .expect_err("dependency declaration must not bypass the direct_generic allowlist");
         assert!(error.to_string().contains("no gameplay consumer"));
 
@@ -1405,7 +1486,7 @@ dispatch = "metadata_backed"
                 ),
         )
         .expect("allowlisted id parses as direct_generic");
-        validate_startup_wiring(
+        validate_startup_relationships(
             &allowlisted,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),
@@ -1413,7 +1494,11 @@ dispatch = "metadata_backed"
         .expect("allowlisted direct_generic without resolver must pass");
         let mut skills = SkillRegistry::default();
         skills.register("movement.dash", noop_skill);
-        validate_startup_wiring(&allowlisted, &skills, &SkillMeridianDependencies::default())
+        validate_startup_relationships(
+            &allowlisted,
+            &skills,
+            &SkillMeridianDependencies::default(),
+        )
             .expect_err("allowlisted direct_generic with a resolver must still fail");
     }
 
@@ -1427,7 +1512,7 @@ dispatch = "metadata_backed"
         dependencies.declare("test.skill", Vec::new());
         dependencies.declare("dependency.only", Vec::new());
 
-        validate_startup_wiring(&registry, &skills, &dependencies).expect(
+        validate_startup_relationships(&registry, &skills, &dependencies).expect(
             "existing resolver plus explicit empty dependency must admit metadata without Rust allowlists",
         );
     }
@@ -1438,7 +1523,8 @@ dispatch = "metadata_backed"
         let no_skills = SkillRegistry::default();
         let mut declared = SkillMeridianDependencies::default();
         declared.declare("test.skill", Vec::new());
-        let missing_resolver = validate_startup_wiring(&metadata_backed, &no_skills, &declared)
+        let missing_resolver =
+            validate_startup_relationships(&metadata_backed, &no_skills, &declared)
             .expect_err("metadata_backed without resolver must fail");
         assert!(missing_resolver.to_string().contains("test.skill"));
         assert!(missing_resolver
@@ -1447,7 +1533,7 @@ dispatch = "metadata_backed"
 
         let mut skills = SkillRegistry::default();
         skills.register("test.skill", noop_skill);
-        let missing_dependency = validate_startup_wiring(
+        let missing_dependency = validate_startup_relationships(
             &metadata_backed,
             &skills,
             &SkillMeridianDependencies::default(),
@@ -1469,7 +1555,7 @@ dispatch = "metadata_backed"
         )
         .expect("direct_generic metadata loads");
         skills.register("movement.dash", noop_skill);
-        let resolver_conflict = validate_startup_wiring(
+        let resolver_conflict = validate_startup_relationships(
             &direct_generic,
             &skills,
             &SkillMeridianDependencies::default(),
@@ -1481,15 +1567,114 @@ dispatch = "metadata_backed"
             .contains("unexpectedly has a SkillRegistry resolver"));
     }
 
+    fn production_registry_without(id: &str) -> TechniqueRegistry {
+        let mut registry = production_registry();
+        registry.definitions.retain(|definition| definition.id != id);
+        registry.id_to_index = registry
+            .definitions
+            .iter()
+            .enumerate()
+            .map(|(index, definition)| (definition.id.clone(), index))
+            .collect();
+        registry
+    }
+
+    fn production_wiring_for() -> (SkillRegistry, SkillMeridianDependencies) {
+        (
+            crate::cultivation::skill_registry::init_registry(),
+            crate::cultivation::skill_registry::init_meridian_dependencies(),
+        )
+    }
+
     #[test]
     fn checked_in_production_wiring_satisfies_dynamic_relationships() {
         let techniques = production_registry();
-        let skills = crate::cultivation::skill_registry::init_registry();
-        let dependencies =
-            crate::cultivation::skill_registry::init_meridian_dependencies(&techniques);
+        let (skills, dependencies) = production_wiring_for();
 
         validate_startup_wiring(&techniques, &skills, &dependencies)
             .expect("checked-in metadata, resolvers, and dependencies must satisfy startup wiring");
+    }
+
+    #[test]
+    fn public_startup_wiring_rejects_deleted_runtime_required_techniques() {
+        for missing_id in ["body.guangbo_ticao", "sword_path.heaven_gate"] {
+            let techniques = production_registry_without(missing_id);
+            let (skills, dependencies) = production_wiring_for();
+            let error = validate_startup_wiring(&techniques, &skills, &dependencies)
+                .expect_err("production startup must reject deleted runtime metadata");
+            assert!(
+                error.to_string().contains(missing_id),
+                "missing runtime id must appear in the startup diagnostic: {error}"
+            );
+            assert!(error.to_string().contains("runtime-required"));
+        }
+    }
+
+    #[test]
+    fn startup_wiring_rejects_meridian_mismatch_in_both_directions() {
+        let metadata_requires_lung = load(&minimal_toml().replace(
+            "required_meridians = []",
+            "required_meridians = [{ channel = \"Lung\", min_health = 0.5 }]",
+        ))
+        .expect("valid Lung metadata must load");
+        let mut skills = SkillRegistry::default();
+        skills.register("test.skill", noop_skill);
+        let mut declared_empty = SkillMeridianDependencies::default();
+        declared_empty.declare("test.skill", Vec::new());
+        let error = validate_startup_relationships(
+            &metadata_requires_lung,
+            &skills,
+            &declared_empty,
+        )
+        .expect_err("metadata-only Lung dependency must be rejected");
+        assert!(error.to_string().contains("required_meridians mismatch"));
+        assert!(error.to_string().contains("test.skill"));
+
+        let metadata_empty = load(&minimal_toml()).expect("empty metadata must load");
+        let mut declared_lung = SkillMeridianDependencies::default();
+        declared_lung.declare("test.skill", vec![crate::cultivation::components::MeridianId::Lung]);
+        let error =
+            validate_startup_relationships(&metadata_empty, &skills, &declared_lung)
+                .expect_err("declaration-only Lung dependency must be rejected");
+        assert!(error.to_string().contains("required_meridians mismatch"));
+        assert!(error.to_string().contains("test.skill"));
+    }
+
+    #[test]
+    fn public_startup_wiring_rejects_static_burst_contract_drift() {
+        let techniques = TechniqueRegistry::load_for_tests_with_override(
+            crate::cultivation::burst_meridian::TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Liver".to_string(),
+                    min_health: 0.5,
+                }];
+            },
+        );
+        let (skills, dependencies) = production_wiring_for();
+        let error = validate_startup_wiring(&techniques, &skills, &dependencies)
+            .expect_err("public startup must reject TOML drift from static resolver dependencies");
+        assert!(error.to_string().contains("burst_meridian.tie_shan_kao"));
+        assert!(error.to_string().contains("required_meridians mismatch"));
+        assert!(error.to_string().contains("Stomach"));
+    }
+
+    #[test]
+    fn startup_wiring_rejects_nonempty_runtime_only_metadata_gate() {
+        let techniques = TechniqueRegistry::load_for_tests_with_override(
+            "zhenmai.multipoint",
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.5,
+                }];
+            },
+        );
+        let (skills, dependencies) = production_wiring_for();
+        let error = validate_startup_wiring(&techniques, &skills, &dependencies)
+            .expect_err("runtime-only exceptions must keep TOML required_meridians empty");
+        assert!(error.to_string().contains("zhenmai.multipoint"));
+        assert!(error.to_string().contains("must keep TOML required_meridians empty"));
     }
 
     #[test]
@@ -1543,7 +1728,7 @@ dispatch = "direct_generic"
             "400×1000-byte descriptions must exceed the 32 KiB wire limit (aggregate = {})",
             registry.aggregate_snapshot_size()
         );
-        let error = validate_startup_wiring(
+        let error = validate_startup_relationships(
             &registry,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),
@@ -1586,7 +1771,7 @@ dispatch = "direct_generic"
             aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
             "protobuf-sized short catalog must fit the wire limit, aggregate={aggregate}"
         );
-        validate_startup_wiring(
+        validate_startup_relationships(
             &registry,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),

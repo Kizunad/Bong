@@ -9,7 +9,7 @@ use crate::combat::components::{
     CastSource, Casting, SkillBarBindings, Stamina, StaminaState, WoundKind,
 };
 use crate::combat::events::{
-    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind,
+    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind, FIST_REACH,
 };
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
@@ -133,11 +133,16 @@ pub struct NiMaiHuTiAura {
     pub expires_at_tick: u64,
 }
 
-const RIGHT_ARM_MERIDIANS: [MeridianId; 3] = [
+/// Static resolver contracts. Keep these independent from TOML so startup can detect
+/// metadata drift instead of deriving both sides from the same source.
+pub const RIGHT_ARM_MERIDIANS: [MeridianId; 3] = [
     MeridianId::LargeIntestine,
     MeridianId::SmallIntestine,
     MeridianId::TripleEnergizer,
 ];
+pub const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
+pub const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
+pub const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
 
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct BurstMeridianEvent {
@@ -197,35 +202,17 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(NI_MAI_HU_TI_SKILL_ID, resolve_ni_mai_hu_ti);
 }
 
-/// 从权威 `TechniqueRegistry`（单一真源）派生经脉依赖声明（M38）。
+/// Declare the meridian dependencies owned by the static resolvers.
 ///
-/// 各招的 `required_meridians` 在 TOML 定义（loader 已验证 channel 可被
-/// `parse_meridian_id` 解析、min_health ∈ (0,1]），此处逐条声明，消除「TOML 改了
-/// 经脉而声明表仍锁旧常量」的双源发散。channel 解析失败（理论不可达：loader 已
-/// 保证可解析）时静默跳过——声明表只防启动期重复声明，运行时门禁由 resolver 自身
-/// 从 `definition.required_meridians` 读取（`npc/technique.rs` 同理）。
+/// TOML `required_meridians` is validated against these contracts during startup; it must not
+/// be used to construct them, or a metadata/resolver mismatch would be invisible.
 pub fn declare_meridian_dependencies(
     dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
-    techniques: &TechniqueRegistry,
 ) {
-    for skill_id in [
-        BENG_QUAN_SKILL_ID,
-        TIE_SHAN_KAO_SKILL_ID,
-        XUE_BENG_BU_SKILL_ID,
-        NI_MAI_HU_TI_SKILL_ID,
-    ] {
-        let meridian_ids: Vec<MeridianId> = techniques
-            .get(skill_id)
-            .map(|definition| {
-                definition
-                    .required_meridians
-                    .iter()
-                    .filter_map(|required| parse_meridian_id(&required.channel))
-                    .collect()
-            })
-            .unwrap_or_default();
-        dependencies.declare(skill_id, meridian_ids);
-    }
+    dependencies.declare(BENG_QUAN_SKILL_ID, RIGHT_ARM_MERIDIANS.to_vec());
+    dependencies.declare(TIE_SHAN_KAO_SKILL_ID, TIE_SHAN_KAO_MERIDIANS.to_vec());
+    dependencies.declare(XUE_BENG_BU_SKILL_ID, XUE_BENG_BU_MERIDIANS.to_vec());
+    dependencies.declare(NI_MAI_HU_TI_SKILL_ID, NI_MAI_HU_TI_MERIDIANS.to_vec());
 }
 
 /// 从 known_techniques 读招式的 flat qi_cost（单一真值源，严禁在本文件硬编码重复）。
@@ -276,7 +263,9 @@ pub fn resolve_beng_quan(
     let Some(definition) = definition else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-    let reach = f64::from(definition.range);
+    // `definition.range` 保留旧 metadata 展示值 1.3；resolver 的有效距离和衰减基准
+    // 历来是 FIST_REACH = base 2.0 + step bonus 0.6，不能用展示值把 2.6 射程砍半。
+    let effective_reach = f64::from(FIST_REACH.max);
     // Option B 去目标门禁（对齐 sword_basics 劈/刺）：崩拳是近战直拳，准星没对准
     // 实体也照常轰出（动画/粒子/扣费/撕脉/冷却照走），无目标 = 空挥。
     // 有目标时仍校验存在与射程——锁着超距目标硬轰属"目标无效"的正确语义。
@@ -287,7 +276,7 @@ pub fn resolve_beng_quan(
             else {
                 return rejected(CastRejectReason::InvalidTarget);
             };
-            if caster_position.distance(target_position) > reach + f64::EPSILON {
+            if caster_position.distance(target_position) > effective_reach + f64::EPSILON {
                 return rejected(CastRejectReason::InvalidTarget);
             }
             Some(target_position)
@@ -360,7 +349,7 @@ pub fn resolve_beng_quan(
         // Option 透传：Some 命中结算，None 时 resolver 跳过 = 空挥。
         target,
         issued_at_tick: now_tick,
-        reach: AttackReach::new(definition.range, 0.0),
+        reach: FIST_REACH,
         qi_invest: (cost * BENG_QUAN_OVERLOAD_RATIO) as f32,
         wound_kind: WoundKind::Blunt,
         source: AttackSource::BurstMeridian,
@@ -375,7 +364,7 @@ pub fn resolve_beng_quan(
         integrity_snapshot,
     });
     let vfx_toward = target_position
-        .unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, definition.range));
+        .unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, FIST_REACH.max));
     emit_beng_quan_vfx(world, caster, caster_position, vfx_toward, cast_ticks);
 
     CastResult::Started {
@@ -1383,16 +1372,6 @@ mod tests {
         app
     }
 
-    fn beng_quan_range(app: &App) -> f64 {
-        f64::from(
-            app.world()
-                .resource::<TechniqueRegistry>()
-                .get(BENG_QUAN_SKILL_ID)
-                .expect("beng_quan metadata must exist")
-                .range,
-        )
-    }
-
     fn assert_no_mutation(app: &App, caster: Entity, qi: f64, integrity: f64) {
         assert_eq!(
             app.world().get::<Cultivation>(caster).unwrap().qi_current,
@@ -1414,6 +1393,25 @@ mod tests {
             .world()
             .resource::<Events<BurstMeridianEvent>>()
             .is_empty());
+    }
+
+    #[test]
+    fn beng_quan_checked_in_metadata_keeps_legacy_display_range() {
+        let app = app();
+        let definition = app
+            .world()
+            .resource::<TechniqueRegistry>()
+            .get(BENG_QUAN_SKILL_ID)
+            .expect("checked-in beng_quan metadata must exist");
+        assert_eq!(
+            definition.range, 1.3,
+            "registry datafication must preserve the legacy 1.3 display metadata"
+        );
+        assert_eq!(
+            FIST_REACH,
+            AttackReach::new(2.0, 0.6),
+            "combat resolution keeps base reach and step bonus separate from display metadata"
+        );
     }
 
     #[test]
@@ -1450,15 +1448,15 @@ mod tests {
             app.world().get::<Casting>(caster).unwrap().duration_ticks,
             13
         );
+        let attack = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("崩拳成功必须发 AttackIntent");
         assert_eq!(
-            app.world()
-                .resource::<Events<AttackIntent>>()
-                .iter_current_update_events()
-                .next()
-                .unwrap()
-                .reach
-                .max,
-            2.75
+            attack.reach, FIST_REACH,
+            "metadata range override 只影响展示，resolver 必须保留旧版 2.6 有效距离与衰减基准"
         );
     }
 
@@ -1523,8 +1521,7 @@ mod tests {
     fn beng_quan_happy_path_mutates_atomically_and_emits_events() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let range = beng_quan_range(&app);
-        let target = spawn_target(&mut app, DVec3::new(range, 0.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(2.6, 0.0, 0.0));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 
@@ -1567,6 +1564,7 @@ mod tests {
         let attack = attack_events.iter_current_update_events().next().unwrap();
         assert_eq!(attack.target, Some(target));
         assert_eq!(attack.source, AttackSource::BurstMeridian);
+        assert_eq!(attack.reach, FIST_REACH, "2.6 reach must retain base 2.0 and step bonus 0.6");
         assert_eq!(attack.qi_invest, 60.0);
         assert_eq!(attack.wound_kind, WoundKind::Blunt);
 
@@ -1709,8 +1707,7 @@ mod tests {
     fn beng_quan_rejects_out_of_range_target_without_mutation() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let range = beng_quan_range(&app);
-        let target = spawn_target(&mut app, DVec3::new(range + 0.01, 0.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(2.600_001, 0.0, 0.0));
 
         // 锁定超距目标硬轰仍是"目标无效"的正确语义（有目标时距离门保留）。
         assert_eq!(
@@ -1779,9 +1776,15 @@ mod tests {
             })
             .expect("空挥应发带方向的 SpawnParticle");
         assert!(
-            direction[0] > 0.9 && direction[1].abs() < 1e-3 && direction[2].abs() < 1e-3,
+            direction[0] > 0.0 && direction[1].abs() < 1e-3 && direction[2].abs() < 1e-3,
             "yaw=-90 的空挥粒子方向应沿视线朝 +X（whiff_focus_point Look 分支），\
              实际 direction={direction:?}"
+        );
+        let direction_len =
+            (direction[0].powi(2) + direction[1].powi(2) + direction[2].powi(2)).sqrt();
+        assert!(
+            (direction_len - f64::from(FIST_REACH.max)).abs() < 1e-6,
+            "空挥焦点必须沿视线前推旧版有效射程 2.6，而不是 metadata 1.3；实际 {direction_len}"
         );
     }
 
@@ -3049,44 +3052,11 @@ mod tests {
         assert!(registry.lookup(NI_MAI_HU_TI_SKILL_ID).is_some());
 
         let mut deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
-        let techniques = TechniqueRegistry::load_for_tests();
-        declare_meridian_dependencies(&mut deps, &techniques);
-        // M38：声明必须派生自权威 registry（TOML required_meridians），
-        // 而非本文件锁死的旧常量（双源发散）。
-        assert_eq!(
-            deps.lookup(TIE_SHAN_KAO_SKILL_ID),
-            &[MeridianId::Stomach],
-            "tie_shan_kao 声明须来自 registry required_meridians"
-        );
-        assert_eq!(
-            deps.lookup(XUE_BENG_BU_SKILL_ID),
-            &[MeridianId::Gallbladder],
-            "xue_beng_bu 声明须来自 registry required_meridians"
-        );
-        assert_eq!(
-            deps.lookup(NI_MAI_HU_TI_SKILL_ID),
-            &[MeridianId::Pericardium],
-            "ni_mai_hu_ti 声明须来自 registry required_meridians"
-        );
-    }
-
-    #[test]
-    fn declare_meridian_dependencies_follows_registry_override() {
-        // M38 双源发散回归锁：TOML 改经脉后声明表必须跟随，不能锁旧常量。
-        let techniques =
-            TechniqueRegistry::load_for_tests_with_override(TIE_SHAN_KAO_SKILL_ID, |definition| {
-                definition.required_meridians = vec![TechniqueRequiredMeridian {
-                    channel: "Liver".to_string(),
-                    min_health: 0.3,
-                }];
-            });
-        let mut deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
-        declare_meridian_dependencies(&mut deps, &techniques);
-        assert_eq!(
-            deps.lookup(TIE_SHAN_KAO_SKILL_ID),
-            &[MeridianId::Liver],
-            "声明必须跟随 registry 覆盖后的 required_meridians"
-        );
+        declare_meridian_dependencies(&mut deps);
+        assert_eq!(deps.lookup(BENG_QUAN_SKILL_ID), RIGHT_ARM_MERIDIANS.as_slice());
+        assert_eq!(deps.lookup(TIE_SHAN_KAO_SKILL_ID), TIE_SHAN_KAO_MERIDIANS.as_slice());
+        assert_eq!(deps.lookup(XUE_BENG_BU_SKILL_ID), XUE_BENG_BU_MERIDIANS.as_slice());
+        assert_eq!(deps.lookup(NI_MAI_HU_TI_SKILL_ID), NI_MAI_HU_TI_MERIDIANS.as_slice());
     }
 
     #[test]
@@ -3148,8 +3118,10 @@ mod tests {
         let mut app = app_with_zone();
         // 在 spawn zone AABB 内（y=70）生成施法者。
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let range = beng_quan_range(&app);
-        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, range));
+        let target = spawn_target(
+            &mut app,
+            DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)),
+        );
 
         let initial_spirit_qi = zone_spirit_qi(&app);
 
@@ -3285,8 +3257,10 @@ mod tests {
             .spirit_qi = 1.0;
 
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let range = beng_quan_range(&app);
-        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, range));
+        let target = spawn_target(
+            &mut app,
+            DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)),
+        );
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 

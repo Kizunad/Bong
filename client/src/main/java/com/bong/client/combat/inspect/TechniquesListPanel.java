@@ -61,7 +61,7 @@ public final class TechniquesListPanel {
         String description,
         String requiredRealm,
         List<RequiredMeridian> requiredMeridians,
-        double qiCost,
+        float qiCost,
         int castTicks,
         int cooldownTicks,
         float range
@@ -77,7 +77,7 @@ public final class TechniquesListPanel {
             String description,
             String requiredRealm,
             List<RequiredMeridian> requiredMeridians,
-            double qiCost,
+            float qiCost,
             int castTicks,
             int cooldownTicks,
             float range
@@ -111,7 +111,7 @@ public final class TechniquesListPanel {
             String description,
             String requiredRealm,
             List<RequiredMeridian> requiredMeridians,
-            double qiCost,
+            float qiCost,
             int castTicks,
             int cooldownTicks,
             float range
@@ -149,7 +149,7 @@ public final class TechniquesListPanel {
             requiredMeridians = requiredMeridians == null
                 ? List.of()
                 : List.copyOf(requiredMeridians);
-            if (!Double.isFinite(qiCost) || qiCost < 0.0) qiCost = 0.0;
+            if (!Float.isFinite(qiCost) || qiCost < 0f) qiCost = 0f;
             castTicks = Math.max(0, castTicks);
             cooldownTicks = Math.max(0, cooldownTicks);
             if (!Float.isFinite(range) || range < 0f) range = 0f;

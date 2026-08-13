@@ -3302,7 +3302,7 @@ class ProtoServerDataBridgeTest {
                                 .setId("technique.flying_sword")
                                 .setDisplayName("御剑术")
                                 .setGrade("earth")
-                                .setQiCost(16_777_217.0)))
+                                .setQiCost(0.4f)))
                 .build();
 
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
@@ -3313,7 +3313,7 @@ class ProtoServerDataBridgeTest {
 
         List<TechniquesListPanel.Technique> snapshot = TechniquesListPanel.snapshot();
         assertEquals(1, snapshot.size());
-        assertEquals(16_777_217.0, snapshot.get(0).qiCost());
+        assertEquals(0.4f, snapshot.get(0).qiCost());
         assertTrue(snapshot.get(0).aliases().isEmpty(),
                 "aliases 在 proto TechniqueEntry 里从未存在过，恒空列表（无源数据可补，属"
                 + "已知优雅降级——alias 搜索永远不命中，但 id/display_name 搜索仍可用）");

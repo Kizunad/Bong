@@ -43,9 +43,11 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{
-    pending_inflow_account, transfer_external_qi_to_ledger, QiAccountId, QiTransfer,
-    QiTransferReason, WorldQiAccount,
+    qi_flow_overflow_account, transfer_external_qi_to_ledger, transfer_ledger_qi_to_zone,
+    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
+#[cfg(test)]
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::qi_physics::QiPhysicsError;
 use crate::world::dimension::DimensionKind;
@@ -413,13 +415,13 @@ fn cast_heaven_gate(
 }
 
 /// P2.1 — `HeavenGateCastEvent` → 化虚结算：
-/// 1. 计算 `staging_buffer = qi_max + stored_qi`
+/// 1. 计算 `staging_buffer = qi_max + stored_qi`（仅作为 AoE 伤害基数）
 /// 2. 100 格范围 AoE：按 `compute_heaven_gate_damage(staging, dist)` 发 AttackIntent
 /// 3. `Cultivation.qi_max *= HEAVEN_GATE_QI_MAX_RETAIN`（10% 保留），`qi_current = 0`
 /// 4. 境界跌至固元（plan §techniques::effects + worldview §三:128）
 /// 5. 注册 `TiandaoBlindZone`（5 min TTL）
-/// 6. 发 `SwordShatterEvent`（灵剑碎裂，反噬走 sword_shatter_system）
-/// 7. 把 staging_buffer 通过 QiTransfer ledger 释放回所在 zone，守 worldview §二
+/// 6. 玩家 `qi_current` 与灵剑 ledger owner 的 `stored_qi` 分别释放到 zone/overflow；
+///    `qi_max` 是容量而非真元质量，容量损失绝不生成 `QiTransfer`
 #[allow(clippy::too_many_arguments)]
 pub fn heaven_gate_cast_system(
     clock: Res<CombatClock>,
@@ -490,22 +492,19 @@ pub fn heaven_gate_cast_system(
             }
         }
 
-        // Caster 修为 / 灵剑 aftermath（化虚自带完整结算：qi 归零、qi_max ×0.1、
-        // 境界跌固元、灵剑 stored_qi 清零）。
-        //
-        // **不**再额外 emit `SwordShatterEvent`——下面 `staging_buffer` 通过
-        // `QiTransfer::ReleaseToZone` 已经把全部真元（qi_max + bond.stored_qi）
-        // 走 ledger 回灌 zone。如果再让 `sword_shatter_system` 按 stored_qi 走
-        // 一次反噬，就会重复扣 qi_max / 重复写 ledger，破坏 worldview §二 守恒。
-        //
-        // 化虚走单向门 - cast 即结算 - 视觉碎剑 / 开天 release AV 由本 system
-        // 上方 emit 的 SwordPathSkillCastEvent(HeavenGateRelease) 独立触发（见
-        // network::vfx_animation_trigger / audio_trigger），逻辑上不走通用 shatter pipeline。
+        // 化虚走单向门，不再额外 emit `SwordShatterEvent`。aftermath 只搬运真实质量：
+        // `Cultivation.qi_current` 从 ECS owner 释放，bond.stored_qi 从稳定 container owner
+        // 扣账后释放；`qi_max` 只缩容。视觉碎剑由 release AV 独立触发。
         let _shatter_events_unused = shatter_events.as_deref_mut(); // 保留 ResMut 借出以维持系统签名兼容性
-        let qi_current = players
+        let (qi_current, stored_qi) = players
             .get(event.caster)
-            .map(|(cultivation, _)| cultivation.qi_current)
-            .unwrap_or(0.0);
+            .map(|(cultivation, bond)| {
+                (
+                    cultivation.qi_current,
+                    bond.map(|bond| bond.stored_qi).unwrap_or(0.0),
+                )
+            })
+            .unwrap_or((0.0, 0.0));
         let player_id = usernames
             .get(event.caster)
             .map(|username| canonical_player_id(username.0.as_str()))
@@ -516,14 +515,14 @@ pub fn heaven_gate_cast_system(
             event.position,
             &player_id,
             qi_current,
-            staging_buffer,
+            stored_qi,
             zone_registry.as_deref(),
         ) {
             if settle_heaven_gate_player(
                 &mut players,
                 event.caster,
                 event.qi_max,
-                event.stored_qi,
+                stored_qi,
                 plan,
                 &mut settlement_ledger,
                 zone_registry.as_deref_mut(),
@@ -683,10 +682,15 @@ pub fn heaven_gate_phase_system(
             let staging_buffer = channeling.qi_max + channeling.stored_qi;
             let caster = channeling.caster;
 
-            let qi_current = players
+            let (qi_current, stored_qi) = players
                 .get(caster)
-                .map(|(cultivation, _)| cultivation.qi_current)
-                .unwrap_or(0.0);
+                .map(|(cultivation, bond)| {
+                    (
+                        cultivation.qi_current,
+                        bond.map(|bond| bond.stored_qi).unwrap_or(0.0),
+                    )
+                })
+                .unwrap_or((0.0, 0.0));
             let player_id = usernames
                 .get(caster)
                 .map(|username| canonical_player_id(username.0.as_str()))
@@ -697,14 +701,14 @@ pub fn heaven_gate_phase_system(
                 origin,
                 &player_id,
                 qi_current,
-                staging_buffer,
+                stored_qi,
                 zone_registry.as_deref(),
             ) {
                 if settle_heaven_gate_player(
                     &mut players,
                     caster,
                     channeling.qi_max,
-                    channeling.stored_qi,
+                    stored_qi,
                     plan,
                     &mut settlement_ledger,
                     zone_registry.as_deref_mut(),
@@ -726,8 +730,8 @@ pub fn heaven_gate_phase_system(
             let zone = create_blind_zone_from_cast(&blind_zone_event, now, channeling.range);
             blind_registry.add(zone);
 
-            // `prepare_heaven_gate_settlement` 已把 qi_current 与 staging_buffer
-            // 一并提交到同一份 ledger，避免旧路径的重复 audit-only 转账。
+            // `prepare_heaven_gate_settlement` 已把 qi_current 与真实 bond owner 余额
+            // 一并提交；staging_buffer 只影响伤害，不参与真元账本。
             let _outcome = compute_heaven_gate_shatter(channeling.qi_max, channeling.stored_qi);
 
             // Release AV（一剑开天 flash / release 动画）
@@ -939,10 +943,10 @@ fn zone_settlement_target(
 ) -> Option<ZoneSettlementTarget> {
     registry
         .and_then(|registry| registry.find_zone(DimensionKind::Overworld, position))
-        .filter(|zone| zone.spirit_qi.is_finite() && zone.spirit_qi >= 0.0)
+        .filter(|zone| zone.spirit_qi.is_finite())
         .map(|zone| ZoneSettlementTarget {
             name: zone.name.clone(),
-            current: zone.spirit_qi.clamp(0.0, 1.0) * QI_ZONE_UNIT_CAPACITY,
+            current: zone.spirit_qi.min(1.0) * QI_ZONE_UNIT_CAPACITY,
         })
 }
 
@@ -977,7 +981,7 @@ fn append_zone_release(
             ledger,
             transfers,
             from,
-            pending_inflow_account(),
+            qi_flow_overflow_account(),
             amount,
             QiTransferReason::ReleaseToZone,
         );
@@ -986,31 +990,82 @@ fn append_zone_release(
     let current = zone_current
         .as_mut()
         .expect("zone settlement target must have a mutable current balance");
-    let zone_account = QiAccountId::zone(target.name.clone());
     let outcome = qi_release_to_zone(
         amount,
         from.clone(),
-        zone_account.clone(),
+        QiAccountId::zone(target.name.clone()),
         *current,
         QI_ZONE_UNIT_CAPACITY,
     )?;
-    append_external_transfer(
-        ledger,
-        transfers,
-        from.clone(),
-        zone_account,
-        outcome.accepted,
-        QiTransferReason::ReleaseToZone,
-    )?;
+    if let Some(transfer) = outcome.transfer {
+        ledger.push_transfer_audit(transfer.clone());
+        transfers.push(transfer);
+    }
     append_external_transfer(
         ledger,
         transfers,
         from,
-        pending_inflow_account(),
+        qi_flow_overflow_account(),
         outcome.overflow,
         QiTransferReason::ReleaseToZone,
     )?;
     *current = outcome.zone_after;
+    Ok(())
+}
+
+fn append_ledger_zone_release(
+    ledger: &mut WorldQiAccount,
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    target: Option<&ZoneSettlementTarget>,
+    zone_current: &mut Option<f64>,
+) -> Result<(), QiPhysicsError> {
+    if amount == 0.0 {
+        return Ok(());
+    }
+
+    let Some(target) = target else {
+        let transfer = QiTransfer::new(
+            from,
+            qi_flow_overflow_account(),
+            amount,
+            QiTransferReason::ReleaseToZone,
+        )?;
+        ledger.transfer(transfer.clone())?;
+        transfers.push(transfer);
+        return Ok(());
+    };
+
+    let current = zone_current
+        .as_mut()
+        .expect("zone settlement target must have a mutable current balance");
+    let mut normalized_zone = *current / QI_ZONE_UNIT_CAPACITY;
+    let accepted = transfer_ledger_qi_to_zone(
+        ledger,
+        from.clone(),
+        target.name.as_str(),
+        &mut normalized_zone,
+        amount,
+        1.0,
+        QiTransferReason::ReleaseToZone,
+    )?;
+    let accepted_amount = accepted.as_ref().map(|transfer| transfer.amount).unwrap_or(0.0);
+    if let Some(transfer) = accepted {
+        transfers.push(transfer);
+    }
+    let overflow = amount - accepted_amount;
+    if overflow > 0.0 {
+        let transfer = QiTransfer::new(
+            from,
+            qi_flow_overflow_account(),
+            overflow,
+            QiTransferReason::ReleaseToZone,
+        )?;
+        ledger.transfer(transfer.clone())?;
+        transfers.push(transfer);
+    }
+    *current = normalized_zone * QI_ZONE_UNIT_CAPACITY;
     Ok(())
 }
 
@@ -1065,15 +1120,6 @@ fn settle_skill_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: 
         .get_resource::<WorldQiAccount>()
         .cloned()
         .unwrap_or_default();
-    if let Some(target) = target.as_ref() {
-        ledger
-            .set_balance(QiAccountId::zone(target.name.clone()), target.current)
-            .is_ok()
-            .then_some(())
-            .ok_or(())
-            .unwrap_or(());
-    }
-
     let settlement = (|| -> Result<(QiSettlementPlan, f64), QiPhysicsError> {
         let injected = bond_snapshot
             .as_ref()
@@ -1175,30 +1221,26 @@ fn prepare_heaven_gate_settlement(
     position: DVec3,
     player_id: &str,
     qi_current: f64,
-    staging_buffer: f64,
+    stored_qi: f64,
     zone_registry: Option<&ZoneRegistry>,
 ) -> Result<QiSettlementPlan, QiPhysicsError> {
     let target = zone_settlement_target(zone_registry, position);
     let mut zone_current = target.as_ref().map(|target| target.current);
     let mut ledger = ledger.clone();
-    if let Some(target) = target.as_ref() {
-        ledger.set_balance(QiAccountId::zone(target.name.clone()), target.current)?;
-    }
     let mut transfers = Vec::new();
-    let player_account = QiAccountId::player(player_id.to_string());
     append_zone_release(
         &mut ledger,
         &mut transfers,
-        player_account.clone(),
+        QiAccountId::player(player_id.to_string()),
         qi_current,
         target.as_ref(),
         &mut zone_current,
     )?;
-    append_zone_release(
+    append_ledger_zone_release(
         &mut ledger,
         &mut transfers,
-        player_account,
-        staging_buffer,
+        QiAccountId::container(format!("sword_bond:{player_id}")),
+        stored_qi,
         target.as_ref(),
         &mut zone_current,
     )?;
@@ -1217,7 +1259,7 @@ fn settle_heaven_gate_player(
     )>,
     caster: Entity,
     qi_max_snapshot: f64,
-    staging_stored_qi: f64,
+    settled_stored_qi: f64,
     plan: QiSettlementPlan,
     ledger: &mut WorldQiAccount,
     zone_registry: Option<&mut ZoneRegistry>,
@@ -1226,16 +1268,22 @@ fn settle_heaven_gate_player(
     let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) else {
         return false;
     };
+    let live_stored_qi = bond_opt
+        .as_ref()
+        .map(|bond| bond.stored_qi)
+        .unwrap_or(0.0);
+    if !live_stored_qi.is_finite()
+        || (live_stored_qi - settled_stored_qi).abs() > QI_EPSILON
+    {
+        return false;
+    }
     cultivation.qi_max = (qi_max_snapshot * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
     cultivation.qi_current = 0.0;
     cultivation.realm = Realm::Solidify;
     if let Some(mut bond) = bond_opt {
         bond.stored_qi = 0.0;
     }
-    let transfers = plan.transfers.clone();
     apply_qi_settlement_plan(ledger, zone_registry, qi_transfers, plan);
-    let _ = staging_stored_qi;
-    let _ = transfers;
     true
 }
 
@@ -1267,6 +1315,7 @@ mod tests {
         app.add_event::<QiTransfer>();
         app.add_event::<SwordPathSkillCastEvent>();
         app.init_resource::<TiandaoBlindZoneRegistry>();
+        app.init_resource::<WorldQiAccount>();
 
         let mut deps = app.world_mut().resource_mut::<SkillMeridianDependencies>();
         declare_meridian_dependencies(&mut deps);
@@ -1287,6 +1336,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Position::default(),
+                Username("Azure".to_string()),
                 Weapon {
                     slot: EquipSlot::MainHand,
                     instance_id: 1,
@@ -2403,12 +2453,18 @@ mod tests {
                 stored_qi: 100.0,
                 grade: SwordGrade::Void,
             });
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(QiAccountId::container("sword_bond:offline:Azure"), 100.0)
+            .expect("bond stored qi must have a stable ledger owner");
         // 范围内随便放个目标
         let _target = app.world_mut().spawn(Position::new([10.0, 0.0, 0.0])).id();
 
         // §D：phase_system 替代旧 heaven_gate_cast_system。
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_systems(Update, heaven_gate_phase_system);
+
+        let before = summarize_world_qi(app.world_mut());
 
         // cast 阶段：插入 HeavenGateChanneling（start_tick = 100 来自 CombatClock）。
         let cast_result = cast_heaven_gate(app.world_mut(), caster, 0, None);
@@ -2450,33 +2506,66 @@ mod tests {
             "化虚一击必须注册一个天道盲区，agent 才会屏蔽 caster"
         );
 
-        // QiTransfer 守恒：化虚应有 2 笔 ReleaseToZone：
-        //   1. qi_current 归零补归 zone（守恒修复 #qi-sweep-heaven-gate-drain）
-        //   2. staging_buffer = qi_max_snapshot(5000) + stored_qi(100) = 5100（bond 账目 audit）
-        // 两笔独立，不是双重结算——qi_current 与 staging_buffer 是不同来源。
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("化虚 aftermath 只能搬运真实 qi_current + stored_qi");
+
         let release_events: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
             .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
             .collect();
+        let player_releases: f64 = release_events
+            .iter()
+            .filter(|transfer| transfer.from == QiAccountId::player("offline:Azure"))
+            .map(|transfer| transfer.amount)
+            .sum();
+        let bond_releases: f64 = release_events
+            .iter()
+            .filter(|transfer| {
+                transfer.from == QiAccountId::container("sword_bond:offline:Azure")
+            })
+            .map(|transfer| transfer.amount)
+            .sum();
         assert_eq!(
-            release_events.len(),
-            2,
-            "化虚一击应有恰好 2 笔 ReleaseToZone（qi_current + staging_buffer），实际 {} 笔",
-            release_events.len()
+            player_releases, 5000.0,
+            "player ReleaseToZone 必须只搬运 qi_current=5000，不得搬运 qi_max capacity"
         );
-        let mut amounts: Vec<f64> = release_events.iter().map(|t| t.amount).collect();
-        amounts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert!(
-            (amounts[0] - 5000.0).abs() < 1e-6,
-            "第 1 笔应为 qi_current(5000.0)，实际 {}",
-            amounts[0]
+        assert_eq!(
+            bond_releases, 100.0,
+            "bond ReleaseToZone 必须只搬运 canonical bond owner 的 stored_qi=100"
+        );
+        assert_eq!(
+            player_releases + bond_releases,
+            5100.0,
+            "release 总额必须恰为两个真实 owner 的质量之和"
         );
         assert!(
-            (amounts[1] - 5100.0).abs() < 1e-6,
-            "第 2 笔应为 staging_buffer(5100.0)，实际 {}",
-            amounts[1]
+            release_events
+                .iter()
+                .all(|transfer| (transfer.amount - 4500.0).abs() > QI_EPSILON),
+            "qi_max 5000→500 的 4500 容量损失绝不能生成 QiTransfer"
+        );
+        assert_eq!(
+            release_events
+                .iter()
+                .filter(|transfer| transfer.from.kind == crate::qi_physics::QiAccountKind::Player)
+                .map(|transfer| transfer.amount)
+                .sum::<f64>(),
+            5000.0,
+            "capacity loss must not be folded into player release"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let bond_account = QiAccountId::container("sword_bond:offline:Azure");
+        assert_eq!(
+            ledger.balance(&bond_account),
+            0.0,
+            "bond.stored_qi 必须从其稳定 owner 真正扣账，不能只清 ECS 字段"
+        );
+        assert!(
+            !ledger.has_account(&QiAccountId::zone("spawn")),
+            "Zone.spirit_qi 是唯一 owner，不得留下 zone:* ledger mirror"
         );
     }
 
@@ -2494,6 +2583,7 @@ mod tests {
         registry.find_zone_mut("spawn").unwrap().spirit_qi = zone_before;
         app.world_mut().insert_resource(registry);
 
+        let total_before = summarize_world_qi(app.world_mut());
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
@@ -2538,6 +2628,50 @@ mod tests {
             zone_after > zone_before,
             "zone.spirit_qi 应在剑气斩后上升（守恒），实际 {zone_before} → {zone_after}"
         );
+        let total_after = summarize_world_qi(app.world_mut());
+        assert_conservation(&total_before, &total_after, 0.0)
+            .expect("剑气斩结算必须保持 total_observed");
+        assert!(
+            !app.world()
+                .resource::<WorldQiAccount>()
+                .has_account(&QiAccountId::zone("spawn")),
+            "外部 zone owner 不得在 ledger 留长期镜像"
+        );
+    }
+
+    #[test]
+    fn qi_slash_full_zone_routes_to_stable_overflow_without_shadow() {
+        let (mut app, caster) = setup_app();
+        let qi_slash = technique_definition(&app, SWORD_PATH_QI_SLASH_ID);
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.world_mut().insert_resource(registry);
+
+        let before = summarize_world_qi(app.world_mut());
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("满 zone 时 qi_cost 必须完整落入稳定 overflow owner");
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&qi_flow_overflow_account()),
+            qi_slash.qi_cost,
+            "满 zone 无法接收的真元必须完整进入固定 qi_flow_overflow"
+        );
+        assert!(
+            !ledger.has_account(&QiAccountId::zone("spawn")),
+            "满 zone 也不得创建 zone:* ledger shadow"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .map(|zone| zone.spirit_qi),
+            Some(1.0),
+            "满 zone 不得越过上界"
+        );
     }
 
     /// QP-002 — 有凝脉灵剑时 10% 注入 bond、90% 归还 zone（守恒不漏）。
@@ -2560,6 +2694,7 @@ mod tests {
                 grade: SwordGrade::Condensed,
             });
 
+        let total_before = summarize_world_qi(app.world_mut());
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
 
@@ -2612,6 +2747,16 @@ mod tests {
             "bond.stored_qi 应等于注入量 {expected_injected:.2}，实际 {}",
             bond.stored_qi,
         );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&QiAccountId::container("sword_bond:offline:Azure")),
+            expected_injected,
+            "bond component 与稳定 ledger owner 必须同步"
+        );
+        assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
+        let total_after = summarize_world_qi(app.world_mut());
+        assert_conservation(&total_before, &total_after, 0.0)
+            .expect("注入 bond + 释放 zone 的 split settlement 必须守恒");
     }
 
     /// QP-002 — 凝脉以下灵剑（Mortal）：bond 不存储，全部 cost 归还 zone（与无 bond 相同）。
@@ -3088,10 +3233,8 @@ mod tests {
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
         app.world_mut().insert_resource(registry);
 
-        // 坑 (c): staging_buffer = qi_max + stored_qi = 5000 + 0 = 5000；若 qi_current 也为 5000，
-        // 则两笔 ReleaseToZone amount 相同，filter 撞出 2 笔导致 assert_eq!(len, 1) 红。
-        // 令 qi_current = 3000 < qi_max=5000（天门无 qi_cost，cast 不扣真元），
-        // 使"qi_current 归还 zone"事件(amount=3000)与"staging_buffer 释放"事件(amount=5000)可区分。
+        // 令 qi_current = 3000 < qi_max=5000，明确证明 aftermath 只搬运当前真元，
+        // 不会把剩余容量 2000 或容量损失 4500 转成 QiTransfer。
         app.world_mut()
             .get_mut::<Cultivation>(caster)
             .unwrap()
@@ -3125,23 +3268,27 @@ mod tests {
              修复前此值为 0.0，代表真元蒸发），实际 {zone_spirit_qi}"
         );
 
-        // qi_drained 的 ReleaseToZone QiTransfer（audit entry）必须发出。
+        let player_account = QiAccountId::player("offline:Azure");
         let qi_drained_events: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
-            .filter(|t| {
-                matches!(t.reason, QiTransferReason::ReleaseToZone)
-                    && (t.amount - qi_before).abs() < 1e-6
+            .filter(|transfer| {
+                matches!(transfer.reason, QiTransferReason::ReleaseToZone)
+                    && transfer.from == player_account
             })
             .collect();
         assert_eq!(
-            qi_drained_events.len(),
-            1,
-            "应有 1 笔 amount=qi_current({qi_before}) 的 ReleaseToZone（qi_current 归还 zone），\
-             实际 {} 笔",
-            qi_drained_events.len()
+            qi_drained_events.iter().map(|transfer| transfer.amount).sum::<f64>(),
+            qi_before,
+            "zone 接收与 overflow 分流之和必须等于真实 qi_current"
         );
+        assert!(qi_drained_events
+            .iter()
+            .any(|transfer| transfer.to == QiAccountId::zone("spawn")));
+        assert!(qi_drained_events
+            .iter()
+            .any(|transfer| transfer.to == qi_flow_overflow_account()));
     }
 
     /// 守恒修复 happy path — 旧 heaven_gate_cast_system（legacy path，由 HeavenGateCastEvent 触发）
@@ -3159,10 +3306,10 @@ mod tests {
 
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         let qi_max_before = app.world().get::<Cultivation>(caster).unwrap().qi_max;
+        let before = summarize_world_qi(app.world_mut());
 
-        // 手动 send HeavenGateCastEvent（模拟 legacy cast path）。
-        // 注：stored_qi 用 137.0（非零）使 staging_buffer = qi_max + 137.0 = 5137.0，
-        // 与 qi_current(5000.0) 区分，避免两笔 ReleaseToZone amount 碰撞导致 filter 撞出 2 笔。
+        // legacy event payload 里的 stored_qi 不是物理 owner；没有 live bond/component +
+        // canonical ledger owner 时必须忽略，绝不能凭 event 快照铸造 137 真元。
         app.world_mut()
             .resource_mut::<Events<HeavenGateCastEvent>>()
             .send(HeavenGateCastEvent {
@@ -3193,42 +3340,43 @@ mod tests {
             "legacy heaven_gate_cast_system 必须将 qi_current 补归 zone.spirit_qi，实际 {zone_spirit_qi}"
         );
 
-        // qi_drained ReleaseToZone audit 事件
-        let qi_drained_events: Vec<_> = app
+        let player_account = QiAccountId::player("offline:Azure");
+        let release_total: f64 = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
-            .filter(|t| {
-                matches!(t.reason, QiTransferReason::ReleaseToZone)
-                    && (t.amount - qi_before).abs() < 1e-6
+            .filter(|transfer| {
+                matches!(transfer.reason, QiTransferReason::ReleaseToZone)
+                    && transfer.from == player_account
             })
-            .collect();
+            .map(|transfer| transfer.amount)
+            .sum();
         assert_eq!(
-            qi_drained_events.len(),
-            1,
-            "legacy path 应有 1 笔 amount=qi_current({qi_before}) 的 ReleaseToZone，实际 {} 笔",
-            qi_drained_events.len()
+            release_total, qi_before,
+            "没有 live bond owner 时 event.stored_qi=137 不得被铸造成真元"
         );
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("legacy aftermath must conserve only live qi_current");
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&qi_flow_overflow_account()), qi_before);
+        assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
     }
 
-    /// 守恒修复边界：无 ZoneRegistry 时不 panic，QiTransfer audit 仍然发出。
-    ///
-    /// 场景：测试/启动期 ZoneRegistry 尚未插入 → zone.spirit_qi 写跳过，
-    /// 但 QiTransfer 事件仍应落到默认 spawn zone 账户供 summarize_world_qi 统计。
+    /// 守恒修复边界：无 ZoneRegistry 时不 panic，真实 qi_current 进入固定 overflow owner。
     #[test]
     fn heaven_gate_aftermath_no_zone_registry_no_panic_audit_still_emitted() {
         let (mut app, caster) = setup_phase_app();
         // 故意不插入 ZoneRegistry。
 
-        // 坑 (c): staging_buffer = qi_max + stored_qi = 5000 + 0 = 5000；若 qi_current 也为 5000，
-        // 则两笔 ReleaseToZone amount 相同，filter 撞出 2 笔。
-        // 令 qi_current = 3000，使"qi_current 归还"事件(amount=3000)与"staging_buffer"事件(amount=5000)可区分。
+        // 无 zone 时仅真实 qi_current=3000 进入固定 qi_flow_overflow；qi_max 不动账本。
         app.world_mut()
             .get_mut::<Cultivation>(caster)
             .unwrap()
             .qi_current = 3000.0;
 
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let before = summarize_world_qi(app.world_mut());
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
 
@@ -3242,7 +3390,7 @@ mod tests {
             "无 ZoneRegistry 时 qi_current 仍必须归零，实际 {qi_after}"
         );
 
-        // qi_drained 的 audit QiTransfer 仍应发出（zone_name = spawn 作为账户 fallback）
+        // qi_drained 的 transfer 落固定持久化 overflow，而不是伪造 zone:* mirror。
         let qi_drained_events: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
@@ -3255,8 +3403,19 @@ mod tests {
         assert_eq!(
             qi_drained_events.len(),
             1,
-            "无 ZoneRegistry 时 qi_drained QiTransfer 仍应发出（audit），实际 {} 笔",
+            "无 ZoneRegistry 时 qi_drained 仍应落真实稳定账户，实际 {} 笔",
             qi_drained_events.len()
         );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&qi_flow_overflow_account()), qi_before);
+        assert!(
+            ledger
+                .iter_balances()
+                .all(|(account, _)| account.kind != crate::qi_physics::QiAccountKind::Zone),
+            "无 zone 时不得创建任何 zone:* shadow"
+        );
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0)
+            .expect("no-zone aftermath must conserve real qi_current into overflow");
     }
 }

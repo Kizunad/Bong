@@ -72,7 +72,7 @@ fn build_techniques_snapshot(
                             min_health: required.min_health,
                         })
                         .collect(),
-                    qi_cost: definition.qi_cost,
+                    qi_cost: definition.qi_cost as f32,
                     stamina_cost: definition.stamina_cost,
                     cast_ticks: definition.cast_ticks,
                     cooldown_ticks: definition.cooldown_ticks,
@@ -148,11 +148,10 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_qi_cost_preserves_f64_precision_boundary() {
-        // registry 的 f64 成本必须原样进入快照，避免服务端扣费与客户端展示不一致。
+    fn snapshot_qi_cost_uses_legacy_f32_wire_value() {
         let registry =
             TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
-                definition.qi_cost = 16_777_217.0;
+                definition.qi_cost = 0.4;
             });
         let known = KnownTechniques {
             entries: vec![KnownTechnique {
@@ -164,42 +163,8 @@ mod tests {
         let snapshot = build_techniques_snapshot(&registry, &known);
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(
-            snapshot.entries[0].qi_cost, 16_777_217.0,
-            "快照必须保留 registry 的 f64 真元成本，不能窄化成 16777216"
-        );
-    }
-
-    #[test]
-    fn snapshot_qi_cost_survives_above_f32_max() {
-        // M14：wire 真值是 f64/double——finite f64 成本即使超过 f32::MAX
-        // （~3.4e38，旧 f32 窄化会溢出成 infinity）也必须原样进入快照，
-        // 不能出现无限大成本或服务端扣费与客户端展示分裂。
-        let above_f32_max = 1.0e40_f64;
-        assert!(
-            above_f32_max > f64::from(f32::MAX),
-            "fixture must exceed f32::MAX"
-        );
-        assert!(above_f32_max.is_finite());
-        let registry =
-            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
-                definition.qi_cost = above_f32_max;
-            });
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let snapshot = build_techniques_snapshot(&registry, &known);
-        assert_eq!(snapshot.entries.len(), 1);
-        assert_eq!(
-            snapshot.entries[0].qi_cost, above_f32_max,
-            "快照必须携带超过 f32::MAX 的 finite f64 成本，不能窄化成 infinity"
-        );
-        assert!(
-            snapshot.entries[0].qi_cost.is_finite(),
-            "over-f32::MAX 成本不得以 infinity 出现在 wire 上"
+            snapshot.entries[0].qi_cost, 0.4_f32,
+            "TechniqueEntry tag 10 remains the legacy float/fixed32 contract"
         );
     }
 

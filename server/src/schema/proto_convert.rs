@@ -4426,7 +4426,7 @@ mod tests {
     }
 
     #[test]
-    fn s2c_techniques_snapshot_preserves_f64_qi_cost() {
+    fn s2c_techniques_snapshot_preserves_legacy_f32_qi_cost() {
         use super::super::combat_hud::{TechniqueEntryV1, TechniquesSnapshotV1};
         use super::super::server_data::ServerDataPayloadV1;
         use bong::server_data_envelope::Payload;
@@ -4442,7 +4442,7 @@ mod tests {
                 description: String::new(),
                 required_realm: "Awaken".to_string(),
                 required_meridians: vec![],
-                qi_cost: 16_777_217.0,
+                qi_cost: 0.4,
                 stamina_cost: 0.0,
                 cast_ticks: 1,
                 cooldown_ticks: 1,
@@ -4458,7 +4458,7 @@ mod tests {
             .expect("techniques snapshot proto decode should succeed");
         match decoded.payload {
             Some(Payload::TechniquesSnapshot(snapshot)) => {
-                assert_eq!(snapshot.entries[0].qi_cost, 16_777_217.0);
+                assert_eq!(snapshot.entries[0].qi_cost, 0.4_f32);
             }
             other => panic!("expected TechniquesSnapshot payload, got {other:?}"),
         }

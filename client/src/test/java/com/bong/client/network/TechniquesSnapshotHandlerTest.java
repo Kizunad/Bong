@@ -51,17 +51,17 @@ class TechniquesSnapshotHandlerTest {
     }
 
     @Test
-    void preservesLargeQiCostWithoutFloatRounding() {
+    void preservesLegacyFloatQiCost() {
         ServerDataDispatch dispatch = new TechniquesSnapshotHandler().handle(parseEnvelope("""
             {"v":1,"type":"techniques_snapshot","entries":[{
               "id":"sword.cleave","display_name":"劈","grade":"common",
               "proficiency":0.5,"active":true,"description":"","required_realm":"Awaken",
-              "required_meridians":[],"qi_cost":16777217.0,"cast_ticks":1,
+              "required_meridians":[],"qi_cost":0.4,"cast_ticks":1,
               "cooldown_ticks":1,"range":1.0
             }]}"""));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
-        assertEquals(16_777_217.0, TechniquesListPanel.snapshot().get(0).qiCost());
+        assertEquals(0.4f, TechniquesListPanel.snapshot().get(0).qiCost());
     }
 
     @Test
