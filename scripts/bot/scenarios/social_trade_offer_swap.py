@@ -12,11 +12,13 @@
 
 from __future__ import annotations
 
+import time
+
 from bot.scenarios._inventory_helpers import (
     find_item,
+    inventory_instance_map,
     latest_inventory_snapshot,
     require_item,
-    wait_inventory_contains,
     wait_inventory_revision_after_matching,
     wait_join_and_inventory,
 )
@@ -37,20 +39,59 @@ def run(env) -> None:
 
             # 清包归一化：server data dir 跨 run 持久化，复跑时上一轮的 give 物品
             # 会污染断言（背包已满给不进 / find_item 误判），先清 pack 再发。
+            alice_join_revision = int(latest_inventory_snapshot(alice)["revision"])
+            bob_join_revision = int(latest_inventory_snapshot(bob)["revision"])
             alice.cmd("clearinv naked")
             alice.expect_chat("[dev] clearinv All revision=", timeout=10.0)
             bob.cmd("clearinv naked")
             bob.expect_chat("[dev] clearinv All revision=", timeout=10.0)
+
+            alice_cleared = wait_inventory_revision_after_matching(
+                alice,
+                alice_join_revision,
+                lambda snap: not inventory_instance_map(snap),
+                description="clearinv 后 authoritative inventory 为空",
+                timeout=10.0,
+            )
+            bob_cleared = wait_inventory_revision_after_matching(
+                bob,
+                bob_join_revision,
+                lambda snap: not inventory_instance_map(snap),
+                description="clearinv 后 authoritative inventory 为空",
+                timeout=10.0,
+            )
 
             alice.cmd(f"give {OFFER_ITEM_ID} 1")
             alice.expect_chat(f"[dev] gave {OFFER_ITEM_ID} x1", timeout=10.0)
             bob.cmd(f"give {REQUEST_ITEM_ID} 1")
             bob.expect_chat(f"[dev] gave {REQUEST_ITEM_ID} x1", timeout=10.0)
 
-            alice_snapshot = wait_inventory_contains(alice, OFFER_ITEM_ID, timeout=10.0)
+            alice_snapshot = wait_inventory_revision_after_matching(
+                alice,
+                int(alice_cleared["revision"]),
+                lambda snap: find_item(snap, OFFER_ITEM_ID) is not None,
+                description=f"清包后新发的 {OFFER_ITEM_ID} 已进入 authoritative inventory",
+                timeout=10.0,
+            )
             talisman = require_item(alice_snapshot, OFFER_ITEM_ID)
-            bob_snapshot = wait_inventory_contains(bob, REQUEST_ITEM_ID, timeout=10.0)
+            bob_snapshot = wait_inventory_revision_after_matching(
+                bob,
+                int(bob_cleared["revision"]),
+                lambda snap: find_item(snap, REQUEST_ITEM_ID) is not None,
+                description=f"清包后新发的 {REQUEST_ITEM_ID} 已进入 authoritative inventory",
+                timeout=10.0,
+            )
             pill = require_item(bob_snapshot, REQUEST_ITEM_ID)
+            before_by_owner = {
+                "alice": inventory_instance_map(alice_snapshot),
+                "bob": inventory_instance_map(bob_snapshot),
+            }
+            before_all = {**before_by_owner["alice"], **before_by_owner["bob"]}
+            assert len(before_all) == sum(len(items) for items in before_by_owner.values()), (
+                "交易前双方 authoritative snapshot 出现重复 instance_id，"
+                f"无法证明唯一所有权：alice={sorted(before_by_owner['alice'])} "
+                f"bob={sorted(before_by_owner['bob'])}"
+            )
 
             # game_join 的 entity_id 恒为 0（valence 保留给客户端自身），不能当
             # target；真实 protocol id 由 PlayerSpawnS2c 下发，bob 加入后由 alice 视野捕获。
@@ -102,6 +143,10 @@ def run(env) -> None:
 
             alice_prev_rev = int(latest_inventory_snapshot(alice)["revision"])
             bob_prev_rev = int(latest_inventory_snapshot(bob)["revision"])
+            response_anchor = {
+                "alice": max((event.t for event in alice.events), default=0.0),
+                "bob": max((event.t for event in bob.events), default=0.0),
+            }
             bob.intent(
                 {
                     "type": "trade_offer_response",
@@ -112,7 +157,7 @@ def run(env) -> None:
                 }
             )
 
-            wait_inventory_revision_after_matching(
+            alice_final = wait_inventory_revision_after_matching(
                 alice,
                 alice_prev_rev,
                 lambda snap: find_item(snap, REQUEST_ITEM_ID) is not None
@@ -123,7 +168,7 @@ def run(env) -> None:
                 ),
                 timeout=10.0,
             )
-            wait_inventory_revision_after_matching(
+            bob_final = wait_inventory_revision_after_matching(
                 bob,
                 bob_prev_rev,
                 lambda snap: find_item(snap, OFFER_ITEM_ID) is not None
@@ -134,6 +179,77 @@ def run(env) -> None:
                 ),
                 timeout=10.0,
             )
+
+            # 覆盖成功响应后的完整有界窗口，抓住显式 send + Changed emitter 的延迟双发。
+            time.sleep(3.0)
+            after_events = {
+                "alice": [
+                    event
+                    for event in alice.events_of("server_data")
+                    if event.t > response_anchor["alice"]
+                    and event.data.get("payload_type") == "inventory_snapshot"
+                ],
+                "bob": [
+                    event
+                    for event in bob.events_of("server_data")
+                    if event.t > response_anchor["bob"]
+                    and event.data.get("payload_type") == "inventory_snapshot"
+                ],
+            }
+            assert len(after_events["alice"]) == 1, (
+                "成功交易后的完整 3 秒窗口内 alice 必须恰好收到一条最终 inventory_snapshot，"
+                f"实际 {len(after_events['alice'])} 条"
+            )
+            assert len(after_events["bob"]) == 1, (
+                "成功交易后的完整 3 秒窗口内 bob 必须恰好收到一条最终 inventory_snapshot，"
+                f"实际 {len(after_events['bob'])} 条"
+            )
+            assert after_events["alice"][0].data["payload"] == alice_final
+            assert after_events["bob"][0].data["payload"] == bob_final
+
+            after_by_owner = {
+                "alice": inventory_instance_map(alice_final),
+                "bob": inventory_instance_map(bob_final),
+            }
+            after_all = {**after_by_owner["alice"], **after_by_owner["bob"]}
+            assert len(after_all) == sum(len(items) for items in after_by_owner.values()), (
+                "交易后原始 instance_id 必须在双方中唯一归属，"
+                f"实际 alice={sorted(after_by_owner['alice'])} bob={sorted(after_by_owner['bob'])}"
+            )
+            assert set(after_all) == set(before_all), (
+                "成功交易必须守恒双方 authoritative snapshot 的完整 instance multiset；"
+                f"before={sorted(before_all)} after={sorted(after_all)}"
+            )
+
+            offered_id = int(talisman["item"]["instance_id"])
+            requested_id = int(pill["item"]["instance_id"])
+            for instance_id in before_all:
+                expected_owner = (
+                    "bob"
+                    if instance_id == offered_id
+                    else "alice"
+                    if instance_id == requested_id
+                    else "alice"
+                    if instance_id in before_by_owner["alice"]
+                    else "bob"
+                )
+                assert instance_id in after_by_owner[expected_owner], (
+                    f"instance_id={instance_id} 交易后 owner 应为 {expected_owner}，"
+                    f"实际 alice={sorted(after_by_owner['alice'])} bob={sorted(after_by_owner['bob'])}"
+                )
+                for field in (
+                    "item_id",
+                    "stack_count",
+                    "durability",
+                    "spirit_quality",
+                    "forge_quality",
+                    "freshness",
+                ):
+                    assert after_all[instance_id].get(field) == before_all[instance_id].get(field), (
+                        f"instance_id={instance_id} 的 {field} 必须跨交易保真；"
+                        f"before={before_all[instance_id].get(field)!r} "
+                        f"after={after_all[instance_id].get(field)!r}"
+                    )
 
             alice.assert_alive("交易换包后")
             bob.assert_alive("交易换包后")

@@ -421,6 +421,7 @@ def _item_view(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
         "stack_count": _varint(fields, 9),
         "spirit_quality": _double(fields, 10),
         "durability": _double(fields, 11),
+        "forge_quality": _optional_float32(fields, 17),
         "freshness": _inventory_freshness(_message(fields, 22)) if _has(fields, 22) else None,
     }
 

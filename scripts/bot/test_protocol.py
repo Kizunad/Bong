@@ -3751,6 +3751,20 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
         self.assertIsNone(decoded["drops"][0]["item"]["freshness"])
 
+    def test_inventory_item_decodes_forge_quality_for_trade_identity_evidence(self):
+        forge_quality = struct.unpack("<f", struct.pack("<I", 0x3F666667))[0]
+        item = (
+            _pb_varint(1, 77)
+            + _pb_string(2, "forged_blade")
+            + _pb_varint(9, 1)
+            + _pb_fixed32(17, forge_quality)
+        )
+        entry = _pb_varint(1, 77) + _pb_message(8, item)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(81, _pb_message(1, entry))
+        )
+        self.assertEqual(decoded["drops"][0]["item"]["forge_quality"], forge_quality)
+
     def test_lumber_progress_tag29_decodes_terminal_contract(self):
         progress = (
             _pb_string(1, "offline:wood")

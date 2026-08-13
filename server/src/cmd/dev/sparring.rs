@@ -7,7 +7,7 @@ use valence::prelude::{
     App, Client, Entity, EventReader, EventWriter, Query, Res, Update, Username,
 };
 
-use crate::cultivation::tick::CultivationClock;
+use crate::combat::CombatClock;
 use crate::social::events::SparringInviteRequest;
 
 /// dev-only `/sparring invite <username>`：从执行者向指定用户名玩家发起切磋邀请。
@@ -46,7 +46,7 @@ pub fn register(app: &mut App) {
 
 pub fn handle_sparring_invite(
     mut events: EventReader<CommandResultEvent<SparringCmd>>,
-    clock: Option<Res<CultivationClock>>,
+    clock: Option<Res<CombatClock>>,
     mut invites: EventWriter<SparringInviteRequest>,
     usernames: Query<(Entity, &Username)>,
     mut clients: Query<&mut Client>,
@@ -80,5 +80,51 @@ pub fn handle_sparring_invite(
         if let Ok(mut client) = clients.get_mut(event.executor) {
             client.send_chat_message(format!("[dev] sparring invite → {target}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cultivation::tick::CultivationClock;
+    use valence::prelude::Events;
+    use valence::testing::create_mock_client;
+
+    #[test]
+    fn invite_uses_combat_clock_when_cultivation_clock_has_diverged() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 700 });
+        app.insert_resource(CultivationClock { tick: 9 });
+        app.add_event::<CommandResultEvent<SparringCmd>>();
+        app.add_event::<SparringInviteRequest>();
+        app.add_systems(Update, handle_sparring_invite);
+
+        let (initiator_bundle, _initiator_helper) = create_mock_client("Initiator");
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        let (target_bundle, _target_helper) = create_mock_client("Target");
+        let target = app.world_mut().spawn(target_bundle).id();
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<SparringCmd>>>()
+            .send(CommandResultEvent {
+                result: SparringCmd::Invite {
+                    target: "Target".to_string(),
+                },
+                executor: initiator,
+                modifiers: Default::default(),
+            });
+
+        app.update();
+
+        let requests = app.world().resource::<Events<SparringInviteRequest>>();
+        let request = requests
+            .iter_current_update_events()
+            .next()
+            .expect("valid dev invite should emit one SparringInviteRequest");
+        assert_eq!(request.initiator, initiator);
+        assert_eq!(request.target, target);
+        assert_eq!(
+            request.tick, 700,
+            "invite creation must use CombatClock, not diverged CultivationClock"
+        );
     }
 }
