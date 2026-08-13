@@ -679,7 +679,6 @@ pub fn heaven_gate_phase_system(
 
         // ── 阶段 3: aftermath（elapsed >= AOE_END = 140）────────────────────────
         if elapsed >= HEAVEN_GATE_AOE_END {
-            let staging_buffer = channeling.qi_max + channeling.stored_qi;
             let caster = channeling.caster;
 
             let (qi_current, stored_qi) = players
