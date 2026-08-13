@@ -26,11 +26,17 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
 import core_anim as A  # noqa: E402
+import fragment_anim as FA  # noqa: E402
 from anim_rig import Pose, Rig, rotmat  # noqa: E402
 from render_bbmodel import render  # noqa: E402
 
 VIEWS = {"side": (90.0, 6.0), "34": (145.0, 18.0), "front": (180.0, 6.0), "top": (90.0, 78.0)}
 OUT = HERE / "renders" / "3_core_anim"
+OUT_SHARD = HERE / "renders" / "5_shard_anim"
+
+# 渲哪一套：核心（母体）还是碎片。两边接口一样（MODEL / ANIMS / sample），
+# 所以整个渲染流程一行不用改，只换模块。
+MOD = A
 
 
 def focus_box(rig: Rig, pad: float = 1.12):
@@ -66,12 +72,12 @@ def screen_row(pt, view: str, size: int, focus) -> float:
 
 def frame(rig: Rig, name: str, t: float, view: str, size: int, focus,
           world: bool = False) -> Image.Image:
-    pose = A.sample(rig, name, t)
-    if world and name == "core_crawl":
+    pose = MOD.sample(rig, name, t)
+    if world and name.endswith("crawl"):
         # 把每周期净位移加回去：验的是真实轨迹，不是循环曲线
         pose["root"].pos = list(pose["root"].pos)
-        pose["root"].pos[2] -= A.CRAWL_D * t
-    im, _ = render(A.MODEL, yaw=VIEWS[view][0], pitch=VIEWS[view][1], size=size,
+        pose["root"].pos[2] -= MOD.CRAWL_D * t
+    im, _ = render(MOD.MODEL, yaw=VIEWS[view][0], pitch=VIEWS[view][1], size=size,
                    xform=rig.element_xform(pose), focus=focus)
     gy = screen_row((0.0, 0.0, 0.0), view, size, focus)
     d = ImageDraw.Draw(im)
@@ -82,7 +88,7 @@ def frame(rig: Rig, name: str, t: float, view: str, size: int, focus,
 
 def contact_sheet(rig: Rig, name: str, view: str, cols: int, size: int, focus,
                   world: bool) -> Image.Image:
-    loop = A.ANIMS[name][1]
+    loop = MOD.ANIMS[name][1]
     tiles = [frame(rig, name, i / cols if loop else i / (cols - 1), view, size, focus, world)
              for i in range(cols)]
     gap = 4
@@ -101,16 +107,21 @@ def main() -> int:
     ap.add_argument("--size", type=int, default=240)
     ap.add_argument("--gif", action="store_true")
     ap.add_argument("--world", action="store_true", help="蠕动加回每周期净位移（看真实前进）")
+    ap.add_argument("--shard", action="store_true", help="改渲碎片那一套动画")
     args = ap.parse_args()
 
-    if not A.MODEL.exists():
-        print(f"缺 {A.MODEL}，先跑 gen_core.py")
+    global MOD, OUT
+    if args.shard:
+        MOD, OUT = FA, OUT_SHARD
+
+    if not MOD.MODEL.exists():
+        print(f"缺 {MOD.MODEL}，先跑 gen_core.py")
         return 1
-    rig = Rig(A.MODEL)
+    rig = Rig(MOD.MODEL)
     focus = focus_box(rig)
     OUT.mkdir(parents=True, exist_ok=True)
     tag = "_world" if args.world else ""
-    for name in (args.only or list(A.ANIMS)):
+    for name in (args.only or list(MOD.ANIMS)):
         contact_sheet(rig, name, args.view, args.cols, args.size, focus,
                       args.world).save(OUT / f"{name}_{args.view}{tag}.png")
         print(f"→ {name}_{args.view}{tag}.png")
@@ -120,7 +131,7 @@ def main() -> int:
             h = max(f.height for f in fr)
             fr = [f.crop((0, 0, f.width, h)) for f in fr]
             fr[0].save(OUT / f"{name}_{args.view}{tag}.gif", save_all=True, append_images=fr[1:],
-                       duration=int(1000 * A.ANIMS[name][0] / n), loop=0)
+                       duration=int(1000 * MOD.ANIMS[name][0] / n), loop=0)
             print(f"→ {name}_{args.view}{tag}.gif")
     return 0
 

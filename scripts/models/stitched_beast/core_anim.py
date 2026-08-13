@@ -51,7 +51,8 @@ import core as C  # noqa: E402
 import gen_core as G  # noqa: E402
 from functools import lru_cache  # noqa: E402
 
-from anim_rig import Pose, Rig, build_tracks, smooth, wrap, write_bbmodel, write_geckolib  # noqa: E402
+from anim_rig import (Pose, Rig, build_tracks, euler_of, smooth, wrap,  # noqa: E402
+                      write_bbmodel, write_geckolib)
 
 MODEL = G.OUT
 OUT_ANIM = G.OUT_DIR / "StitchedBeastCoreRig.bbmodel"
@@ -79,7 +80,9 @@ LOBES_MAIN = ("core_fore", "core_mid", "core_hind", "core_sag")
 LOBES_LUMP = ("lump_l", "lump_dorsal", "nodule_r")
 BUDS = tuple(f"bud_{n}" for n in C.sockets())
 BUD_DORMANT = 0.10        # 未嫁接时芽的缩放。几何按满尺寸建，休眠态靠 scale 压下去
-GRAFT_SOCKET = "limb_fl"  # core_graft 演示用的槽；运行时由服务端直接驱动任意 bud_<槽>
+GRAFT_SOCKET = "limb_fl"  # 组织合成速率的锚定槽（见 graft_length）
+GRAFT_REF_LEN = 3.00      # 锚定槽长满所需秒数；其余槽按用料等比推
+GRAFT_MIN = 0.50          # 嫁接时长下限：五段推进/停滞 × 每段至少两 tick
 
 
 def place_world(rig: Rig, pose: Pose, name: str, offset) -> None:
@@ -127,13 +130,15 @@ def breathe(t: float, hz: float, phase: float, length: float) -> float:
     return math.sin(2.0 * math.pi * (n * t + phase))
 
 
-def crawl_world(u: float) -> tuple[float, float, float, float]:
+def crawl_world(u: float, d: float = CRAWL_D) -> tuple[float, float, float, float]:
     """蠕动周期相位 u∈[0,1) 处的（前段世界 z, 后段世界 z, 前段抓地, 后段抓地）。
 
     世界 z 单调不增（朝 -z 前进）。锚着的那一段在自己的相位内**严格常量**——这是
     不滑步的定义，自检直接按它断言。
+
+    `d` 是每周期净前进量。碎片用自己的锚段间距算出来的那个（见 fragment_anim）——
+    同一条相位曲线，换一个行程，因为约束是同一条。
     """
-    d = CRAWL_D
     if u < 0.5:                       # 相 A：后段锚地，前段前伸
         s = smooth(u / 0.5)
         return -d * s, 0.0, 1.0 - s, 1.0
@@ -208,6 +213,143 @@ def anim_idle(rig: Rig, t: float, length: float) -> Pose:
     return p
 
 
+# ---------------------------------------------------------------- 芽的运动学
+#
+# 一条芽能动多快，由**整只兽做得到的最快速度**封顶：没有哪个部位能比它扑击时更快。
+# 扑击的爆发段是全模型速度的上界（见 anim_lunge），于是
+#
+#     尖端线速度 = 摆角 × 力臂 ≤ V_max     ⇒     频率 ≤ V_max·ATTACK / (摆角 × 力臂)
+#
+# 力臂就是那条芽伸出去多长。**短茬甩得快、长条甩得慢**——和肢体的复摆律
+# （locomotion.natural_hz，f ∝ 1/√L）是同一件事的两种极限，这里是被速度封顶而不是
+# 被重力回复，所以指数是 1/L 不是 1/√L。
+#
+# **但频率并不散**，这点得说清楚：17 个挂载点的 girth 大多挤在 3.2–4.0，力臂跟着挤在
+# 4.4–5.7px，算出来的次数因此集中在 5 上下，只有 `vest_dr`（girth 1.40）是个例外。
+# 拉长循环时长提高整数分辨率也没用——实测 0.9s/1.4s/1.8s/2.4s 四档下不同值分别只有
+# 4/4/5/6 个。所以别写"17 个各不相同的频率"，那是想当然。
+#
+# 集体之所以找不出节律，真正的来源是**相位**：每个槽的相位取自槽名的确定性噪声，
+# 铺满 [0,1)。同一个抽动速率下 17 个互不相同的相位，意味着任何时刻都有几条在甩、
+# 几条在落，且没有两条同时开始。自检里不靠这段说明，直接量两两轨迹的互相关。
+LUNGE_PUSH = 21.0         # 扑击爆发段 root 前冲的位移（见 anim_lunge）
+LUNGE_FORE = 11.4         # 爆发段前段再甩出去的位移
+FLICK_ATTACK = 0.18       # 一次抽搐里"甩出去"占的比例，其余是回落
+FLICK_KEYS = 2            # 起手段至少落几帧：两帧（起点+峰值）就够表达"猛地一甩"，
+                          # 再多只是把线性斜坡采得更密。要三帧的话采样数直接翻半倍
+THRASH_LEN = 0.90         # 乱抽循环时长（秒）。短是有原因的：抽得最快的那条定采样
+                          # 密度，时长越长采样数越多。0.9s 已经足够长到看不出在循环
+
+
+def strike_speed() -> float:
+    """这具身体做得到的**最快尖端速度**（px/s）：扑击爆发段的峰值。
+
+    smoothstep 的峰值速度是平均速度的 1.5 倍。不采样动画、直接从 anim_lunge 的常数
+    推——采样要建 Rig，而这个数在建 Rig 之前就要用。
+    """
+    dur = (1.0 - LUNGE_WINDUP) * ANIMS["core_lunge"][0]
+    return 1.5 * (LUNGE_PUSH + LUNGE_FORE) / dur
+
+
+def bud_reach(name: str, scale: float = 1.0) -> float:
+    """芽尖离根部的距离（px）—— 摆动的力臂。"""
+    s = C.sockets()[name]
+    return scale * max(float(np.linalg.norm(c - s.pos)) + r
+                       for c, r, _m in C.bud_shape(s, 1.0))
+
+
+@lru_cache(maxsize=8)
+def bud_flicks(scale: float, length: float) -> dict[str, tuple[int, float]]:
+    """每个槽在一条 `length` 秒的循环里抽几下，以及它的相位。
+
+    整数次数是**循环闭合的硬要求**（非整数会在首末帧之间炸出跳变，拟态灰烬蛛的触肢
+    微颤就是这么翻的车）。取整只准**往下**走：往上会超过速度上限，那是这具身体做不到的。
+
+    次数**不要求两两不同**。本来写成互不相同，理由是"次数一样的两条会被眼睛配成一对"
+    ——但 17 条要互不相同的整数就得占满 17 个整数格，而速度上限给出的频率跨度只有
+    2.8 倍，凑够 17 格得把循环拉到 5 秒以上，采样数随之爆掉。实际上配成对的前提是
+    **同频且同相**，而相位逐槽取自确定性噪声，本来就各不相同。所以只保留真正必要的
+    那条：全体最大公约数为 1，否则集体图案会在 length/gcd 处重复，比循环本身还早。
+    """
+    amp = math.radians(C.BUD_FOLD_DEG)
+    vmax = strike_speed()
+    count: dict[str, int] = {}
+    for n in sorted(C.sockets()):
+        count[n] = max(1, int(vmax * FLICK_ATTACK / (amp * bud_reach(n, scale)) * length))
+    g = 0
+    for k in count.values():
+        g = math.gcd(g, k)
+    if g != 1:                            # 把最大的那条减 1 打散，集体周期回到整条循环
+        top = max(count, key=lambda n: count[n])
+        count[top] -= 1
+
+    # 相位**构造**出来，不是掷出来的。这是全篇唯一一处不从物理推的量，说明白：
+    # 频率既然挤在一起（见上面那段），"各抽各的"就全压在相位上；而按噪声取相位是
+    # 会撞的——实测 head_l 与 head_dorsal 撞到轨迹互相关 0.90，看上去就是一对在
+    # 打拍子。所以把同频的那几条在一个周期里**均匀铺开**，任意两条不同时起手。
+    # 组间再各自错开一点，免得不同频的几组在 t=0 一起甩。
+    out: dict[str, tuple[int, float]] = {}
+    groups: dict[int, list[str]] = {}
+    for n, k in count.items():
+        groups.setdefault(k, []).append(n)
+    for k, members in groups.items():
+        for j, n in enumerate(sorted(members)):
+            out[n] = (k, (j / len(members) + C._noise(k, "grp") * 0.5) % 1.0)
+    return out
+
+
+@lru_cache(maxsize=32)
+def _flick_frame(name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """芽的（外法向, 切向 1, 切向 2）。摆动平面由**挂载点自己的法向**定——
+    17 个槽朝 17 个方向，于是 17 条芽各在各的平面里抽，不需要外加随机方向。"""
+    s = C.sockets()[name]
+    t1, t2 = C._tangent_basis(s.normal)
+    return s.normal, t1, t2
+
+
+FLICK_DUTY = 0.62         # 每一拍真的抽出去的概率。1.0 = 节拍器，太规整；太低则大半
+                          # 时间不动，读成"死了"
+
+
+@lru_cache(maxsize=64)
+def _fires(name: str, count: int) -> tuple[bool, ...]:
+    """这条芽在一个循环的第 k 拍发不发。按槽名确定性生成，所以可复现。
+
+    至少保证发一次——一条整条循环都不动的芽，在"所有触手都在摆"里就是没在摆。
+    """
+    hits = tuple(C._noise(name, k, "fire") < FLICK_DUTY for k in range(max(1, count)))
+    return hits if any(hits) else (True,) + hits[1:]
+
+
+def flick(name: str, u: float, count: int, phase: float) -> np.ndarray:
+    """一条芽在归一化时刻 u 的**抽搐**姿态（返回旋转矩阵）。
+
+    不是正弦。正弦读成"水草在飘"——那是被介质推着的被动运动。这团东西没有神经支配
+    （正典：不是一条被神经支配的肢体，是别人的组织被强行编织进来），它只会痉挛：
+    **猛地甩出去，然后松掉**。所以波形是快起慢落的脉冲串。
+
+    每一下甩的方向按黄金角在切平面上转，同一条芽连着两下不往同一边倒；方向序列按
+    `count` 取模，所以整条循环严丝合缝地首尾相接。
+
+    **每一拍发不发是各自的事**（`_fires`）。这一条是必须的：17 个挂载点的几何几乎
+    一样，从几何推出来的节律就几乎一样，15 条会挤在同一个次数上。把相位均匀铺开也
+    救不了——同频信号相邻相位只差一个周期的十五分之一，在 5Hz 下就是 12 毫秒，眼睛
+    看到的是一圈茬依次抽过去的**行波**，那是有节律的，不是乱的。痉挛本来也不是
+    节拍器：同一个最快节律之下，每一拍发不发各自决定，整体才真的找不出拍子。
+    """
+    k = int((u * count + phase) // 1.0) % max(1, count)
+    if not _fires(name, count)[k]:
+        return np.eye(3)
+    x = (u * count + phase) % 1.0
+    # 快起慢落，且两端严格为 0 —— 循环接缝由波形本身保证，不靠首末帧对齐去补
+    env = (smooth(x / FLICK_ATTACK) if x < FLICK_ATTACK
+           else 1.0 - smooth((x - FLICK_ATTACK) / (1.0 - FLICK_ATTACK)))
+    n, t1, t2 = _flick_frame(name)
+    a = 2.0 * math.pi * ((k * 0.6180339887) % 1.0)      # 黄金角：连着几下不重方向
+    d = math.cos(a) * t1 + math.sin(a) * t2
+    return C.axis_angle(np.cross(n, d), math.radians(C.BUD_FOLD_DEG) * env)
+
+
 LUNGE_WINDUP = 0.72       # 蓄力占整条动画的比例；剩下的是爆发段
 
 
@@ -268,24 +410,104 @@ def anim_engulf(rig: Rig, t: float, length: float) -> Pose:
     return p
 
 
-def anim_graft(rig: Rig, t: float, length: float) -> Pose:
-    """嫁接：芽在挂载点上鼓起来。
+GRAFT_TWITCH = 0.22       # 嫁接抽搐相对乱抽的幅度：同一套痉挛，收着来
+
+
+def graft_length(name: str) -> float:
+    """长满**这一个**槽要多久（秒）。
+
+    组织合成速度是整只兽的代谢属性，是一个常数（px³/s）；所以长一条芽要多久，正比于
+    这条芽的**用料**。用料差别很大——`vest_dr` 的挂载面只有 girth 1.40，`limb_mr`
+    有 4.01，两者的组织量差一个数量级。于是「每一支都有自己的生长动画」不是复制 17 份，
+    是 17 条**长度各不相同**的动画。
+
+    速率由 `GRAFT_SOCKET` 那条锚定（它就是原来那条 3 秒的），其余按用料等比推。
+
+    下限 `GRAFT_MIN` 不是保险丝，是**可读性的物理下限**：这条动画的内容是"推进—停滞—
+    推进"共五段，每段至少要活过两个 tick（0.1s）才看得出来。`vest_dr` 的挂载面只有
+    girth 1.40，按用料算出来 0.11 秒——比例没错，但那已经短到根本不是一段动画了。
+    """
+    rate = C.bud_tissue(C.sockets()[GRAFT_SOCKET], 1.0) / GRAFT_REF_LEN
+    return round(max(GRAFT_MIN, C.bud_tissue(C.sockets()[name], 1.0) / rate), 2)
+
+
+def anim_graft_at(name: str, rig: Rig, t: float, length: float) -> Pose:
+    """嫁接：芽在**某一个**挂载点上鼓起来。
 
     正典里这个过程要**七日**。动画只能给一段压缩表现，所以重点不是"长大"而是
-    "长得不顺"：鼓胀是阶梯式的（三次推进夹两次停滞），中间还抽搐——那不是一条
-    被神经支配的肢体，是一团正在被强行编织进来的别人的组织。
+    "长得不顺"：鼓胀是阶梯式的（推进夹停滞），中间还抽搐——那不是一条被神经支配的
+    肢体，是一团正在被强行编织进来的别人的组织。
+
+    停滞的位置逐槽不同（按槽名的确定性噪声挪），抽搐用的是和乱抽同一套痉挛，只是
+    收着来。所以 17 条动画彼此**看得出不一样**，而不是同一条改个骨名。
+
+    这一条**不缩本体**：嫁接的料来自尸体（正典：从野狗尸体上"借"的第四条腿），
+    不是从自己身上抽。乱抽才缩（见 anim_thrash）——料的来源不同，结果就不同。
     """
     p = Pose()
-    steps = (0.0, 0.34, 0.38, 0.72, 0.76, 1.0)       # 推进/停滞交替
+    j = C._noise(name, "graft") * 0.10 - 0.05
+    steps = (0.0, 0.34 + j, 0.38 + j, 0.72 + j, 0.76 + j, 1.0)
     v = float(np.interp(t, steps, (0.0, 0.45, 0.45, 0.82, 0.82, 1.0)))
-    tgt = f"bud_{GRAFT_SOCKET}"
+    tgt = f"bud_{name}"
     dormant_buds(p, active=tgt)
     p[tgt].scale = [BUD_DORMANT + (1.0 - BUD_DORMANT) * v] * 3
-    # 抽搐：高频小幅，且只在推进段有——停滞时它是死的，更瘆人
-    moving = 1.0 if t < 0.34 or 0.38 < t < 0.72 or t > 0.76 else 0.0
-    p[tgt].rot = [9.0 * moving * math.sin(t * 61.0),
-                  6.0 * moving * math.sin(t * 47.0 + 1.1), 0.0]
+    # 抽搐只在推进段有——停滞时它是死的，更瘆人
+    moving = 1.0 if (t < steps[1] or steps[2] < t < steps[3] or t > steps[4]) else 0.0
+    if moving:
+        count, phase = bud_flicks(1.0, length)[name]
+        R = flick(name, wrap(t), count, phase)
+        p[tgt].rot = [a * GRAFT_TWITCH for a in euler_of(R)]
     p["core_mid"].scale = [1.0 + 0.04 * v] * 3
+    return p
+
+
+@lru_cache(maxsize=1)
+def thrash_scale() -> float:
+    """乱抽时每条芽的骨缩放。
+
+    组织不是凭空来的。同时能持有的未分化组织只有**一条部件的量**（`core.graft_budget`
+    从正典"一次一条、每条七日"反推）。要 17 个槽同时冒芽，那一份料就得摊到 17 处——
+    于是全身冒出来的只能是**短茬**，不是触手。
+
+    这不是妥协，是这段动画的内容：它把自己能调动的组织全推到体表去试探，一处都不肯
+    落下，代价是每一处都只够冒出一小截。而短茬的力臂小，按速度上限反而抽得更快
+    （见 bud_flicks）——"又短又急"是同一个预算推出来的两件事。
+    """
+    return C.spread_scale(tuple(C.sockets().values()), C.graft_budget())
+
+
+def anim_thrash(rig: Rig, t: float, length: float) -> Pose:
+    """乱抽：每个挂载点都冒出一小截，同时朝各自的方向急抽。
+
+    要读成"诡异"而不是"水草"，靠的是三件事，全部是推出来的：
+
+      · **各抽各的**：频率由各自的力臂定（f ∝ 1/L），17 条长短不一 ⇒ 17 个频率，
+        且循环次数两两不同、最大公约数为 1 ⇒ 整条循环里集体图案不重复
+      · **痉挛不是波动**：快甩慢落的脉冲串，不是正弦（无神经支配的组织不会平滑运动）
+      · **本体几乎不动**：主体只有极缓的一点起伏。一堆东西在抽、而载体是静的，
+        才瘆人；本体跟着一起晃就读成"整只在抖"
+
+    本体还要**变小**：摊出去的料是从自己身上抽的，等体积守恒（自检直接断言）。
+    """
+    p = Pose()
+    sc = thrash_scale()
+    flicks = bud_flicks(sc, length)
+    for n in C.sockets():
+        b = f"bud_{n}"
+        p[b].scale = [sc] * 3          # 茬已经在外面了：顶出来那一段属于嫁接，不在这里
+        count, phase = flicks[n]
+        p[b].rot = euler_of(flick(n, wrap(t), count, phase))
+
+    # 抽出去的组织从本体来：芽的总增量体积 = 本体的减少量。整条动画里茬的尺寸不变，
+    # 所以这是个常数——本体在这条动画里**一动不动**，只是比平时小一圈。
+    #
+    # 静止是刻意的。一堆东西在抽、而载体纹丝不动，才瘆人；载体跟着一起起伏就读成
+    # "整只在抖"，抽搐反而被稀释掉了。顺带把本体的通道压成两帧常量，整条动画的
+    # 关键帧于是只剩芽的旋转。
+    gained = sum(C.bud_tissue(s, 1.0) for s in C.sockets().values()) * sc ** 3
+    shrink = (1.0 - gained / (sum(C.lobe_mass().values()) * C.VOX ** 3)) ** (1.0 / 3.0)
+    for n in LOBES_MAIN + LOBES_LUMP:
+        p[n].scale = [shrink, shrink, shrink]
     return p
 
 
@@ -443,18 +665,36 @@ def anim_death(rig: Rig, t: float, length: float) -> Pose:
     return p
 
 
+def _thrash_samples(length: float) -> int:
+    """乱抽的采样数：由**最快的那条芽**定，不是拍一个数。
+
+    脉冲的起手段只占一个周期的 FLICK_ATTACK，要让它在导出后还是"猛地一甩"而不是被
+    插值抹平，起手段至少要落上 3 帧。抽最快的那条决定了整条动画的采样密度。
+    """
+    top = max(k for k, _ph in bud_flicks(thrash_scale(), length).values())
+    return int(math.ceil(top / FLICK_ATTACK * FLICK_KEYS))
+
+
 # (名字, 时长秒, 是否循环, 采样数, 函数)
 ANIMS: dict[str, tuple[float, bool, int, object]] = {
     "core_idle": (5.0, True, 40, anim_idle),
     "core_crawl": (1.0 / CRAWL_HZ, True, 36, anim_crawl),
     "core_lunge": (0.75, False, 24, anim_lunge),
     "core_engulf": (1.40, False, 30, anim_engulf),
-    "core_graft": (3.00, False, 44, anim_graft),
     "core_burst": (1.60, False, 34, anim_burst),
     "core_split": (2.60, False, 36, anim_split),
     "core_hurt": (0.45, False, 20, anim_hurt),
     "core_death": (2.20, False, 36, anim_death),
 }
+
+# 乱抽：循环。采样密度由最快的那条芽反推
+ANIMS["core_thrash"] = (THRASH_LEN, True, _thrash_samples(THRASH_LEN), anim_thrash)
+
+# 每个挂载点一条嫁接动画。时长各不相同（正比于该处的组织用料，见 graft_length），
+# 停滞点与抽搐节奏也各不相同——「每一支都有生长动画」指的是 17 条真的不一样的动画。
+for _n in C.sockets():
+    ANIMS[f"graft_{_n}"] = (graft_length(_n), False, 44,
+                            lambda rig, t, ln, nm=_n: anim_graft_at(nm, rig, t, ln))
 
 
 def sample(rig: Rig, name: str, t: float) -> Pose:

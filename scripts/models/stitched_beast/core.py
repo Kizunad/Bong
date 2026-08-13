@@ -630,18 +630,27 @@ def bud_shape(sock: Socket, growth: float) -> list[tuple[np.ndarray, float, str]
     growth=0 也**不是没有东西**：挂载点本身就是皮上一处微隆，是这具身体"这里可以再长
     点什么"的记号。0 → 1 的过程是这团东西沿法向鼓出、变粗、末端开始分叉。
 
-    分三节而不是一个球：单球放大只是"变大"，三节沿法向排开且末节最细，才读得出
+    分节而不是一个球：单球放大只是"变大"，多节沿法向排开且逐节收细，才读得出
     **方向性**——它在朝外长，而不是在肿。
+
+    节数与收细曲线（四节、末节收到根部的 0.28）是**为"够得着"服务的**，不是为"变大"：
+    这团组织的用处是往外试探，细长才有意义。先做过三节、收到 0.50 的粗胖版本，
+    乱抽动画渲出来每条都读成贴在皮上的鳞片或木片，不是触手（round 2 侧视实测）。
+    长细比从 2.7:1 提到 3.4:1、末节半径减半之后才读得出"一根"。
+
+    嫁接时它照样是芽——粗细由 `growth` 从微隆一路长到挂载面满径，只是长的过程里
+    始终是有指向的一条，而不是一个瘤。
     """
     g = float(np.clip(growth, 0.0, 1.0))
     r0 = 0.8 + (sock.girth - 0.8) * g          # 根部：从微隆长到挂载面满径
     out = []
     for k, (frac, shrink, mat) in enumerate(((0.0, 1.00, "bud_base"),
-                                             (0.55, 0.78, "bud_mid"),
-                                             (1.05, 0.50, "bud_tip"))):
+                                             (0.62, 0.70, "bud_mid"),
+                                             (1.20, 0.46, "bud_mid"),
+                                             (1.72, 0.28, "bud_tip"))):
         if k > 0 and g < 0.18:
             break                               # 太早，还只是一处微隆，没有节
-        d = r0 * frac * (0.5 + 1.6 * g)
+        d = r0 * frac * (0.45 + 1.35 * g)
         out.append((sock.pos + sock.normal * d, r0 * shrink * (0.55 + 0.45 * g), mat))
     return out
 
@@ -676,6 +685,32 @@ def bud_tissue(sock: Socket, growth: float) -> float:
     return float((f < ISO).sum()) * _TISSUE_STEP ** 3
 
 
+def _tangent_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    ref = np.array([0.0, 1.0, 0.0]) if abs(n[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    t1 = np.cross(n, ref)
+    t1 /= np.linalg.norm(t1)
+    return t1, np.cross(n, t1)
+
+
+def axis_angle(axis: np.ndarray, rad: float) -> np.ndarray:
+    """轴角 → 旋转矩阵（Rodrigues）。"""
+    a = np.asarray(axis, float)
+    a = a / max(float(np.linalg.norm(a)), 1e-9)
+    K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    return np.eye(3) + math.sin(rad) * K + (1 - math.cos(rad)) * (K @ K)
+
+
+# 芽能摆多大角度：**由芽自己决定，与它长在哪儿无关**。
+#
+# 本来想按"周围哪边最空"逐槽推——芽往一侧倒时尖端会朝表皮压过去，凸出去的地方
+# 倒得开、凹进去的地方一倒就顶进肉里。写完实测：17 个槽在满长、七成、短茬三档下
+# **全部**顶到 78° 的折返上限，一个受表皮限制的都没有。原因是几何上必然的：核心
+# 整体是凸的，而挂载点的法向朝外，绕根部转不到 90° 的方向都在切平面外侧。
+#
+# 所以这里没有可推的东西，留一个诚实的常数：茬能倒到接近贴皮，再多就是往回折了。
+# 别再写一个逐槽的版本——那只会算出 17 个一样的数，看着像推导，其实是常数。
+BUD_FOLD_DEG = 78.0
+
 @lru_cache(maxsize=1)
 def graft_budget() -> float:
     """一次能摊出去的未分化组织总量（px³）= **一条芽长满所需的料**。
@@ -707,6 +742,21 @@ def spread_growth(socks: tuple[Socket, ...], budget: float) -> float:
         else:
             hi = mid
     return lo        # 取下界而非中点：中点可能落在预算之上，超支 3% 也是超支
+
+
+def spread_scale(socks: tuple[Socket, ...], budget: float) -> float:
+    """同一份预算摊到这些槽上时，动画该把芽骨**缩放**到多少。
+
+    和 `spread_growth` 是同一件事的两种参数化，用在两个层：几何层调的是 `bud_shape`
+    的 growth（节距与半径各按自己的式子变），动画层能调的只有骨骼的**等比缩放**。
+    等比缩放下体积按 s³ 走，于是有闭式解 s = (预算 / 满长总用料)^(1/3)，不用二分。
+
+    两个数不相等是对的——它们是同一个预算在两套形变下的解。
+    """
+    total = sum(bud_tissue(s, 1.0) for s in socks)
+    if total <= 0:
+        return 0.0
+    return min(1.0, (budget / total) ** (1.0 / 3.0))
 
 
 @lru_cache(maxsize=1)

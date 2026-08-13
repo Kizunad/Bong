@@ -84,13 +84,21 @@ def main() -> int:
         bad.append(f"蠕动体积不守恒，波动 {spread:.3e}——拉长时没等比变细")
 
     # ---- ④ 循环接缝
-    for name, (length, loop, _n, _f) in A.ANIMS.items():
+    #
+    # 判据是**相对**的，不是绝对阈值：导出时末帧被强制等于首帧，所以真正会被看见的
+    # 是"末帧前一帧 → 首帧"这一跳比正常帧间步子大多少。绝对阈值在这里不成立——
+    # 乱抽里最快的那条芽一帧就要转几十度，接缝处 0.02° 的差是采样误差不是跳变，
+    # 而慢动画里 0.02 的位移可能已经是明显一跳。同一个数字在两条动画里含义不同。
+    for name, (length, loop, n, _f) in A.ANIMS.items():
         if not loop:
             continue
-        d = pose_delta(rig, A.sample(rig, name, 0.0), A.sample(rig, name, 0.99999))
-        print(f"[循环] {name} 接缝差 {d:.4f}")
-        if d > 0.02:
-            bad.append(f"{name} 循环接缝跳变 {d:.3f}")
+        step = max(pose_delta(rig, A.sample(rig, name, k / n), A.sample(rig, name, (k + 1) / n))
+                   for k in range(n))
+        d = pose_delta(rig, A.sample(rig, name, 0.0), A.sample(rig, name, 1.0 - 1.0 / n))
+        print(f"[循环] {name} 接缝差 {d:.4f}（正常帧间步 {step:.4f}）")
+        if d > step * 1.5 + 1e-6:
+            bad.append(f"{name} 循环接缝跳变 {d:.3f}，是正常帧间步 {step:.3f} 的 "
+                       f"{d / max(step, 1e-9):.1f} 倍")
 
     # ---- ⑤ idle：各 lobe 必须**不同频**
     def series(bone):
@@ -111,18 +119,7 @@ def main() -> int:
     if amp < 0.03:
         bad.append(f"idle 搏动幅度仅 {amp:.3f}，看不出来在动")
 
-    # ---- ⑥ 嫁接：单调不减、终值满、且确有停滞
-    vs = [A.sample(rig, "core_graft", k / 120)[A.BUDS[0]].scale[0] for k in range(121)]
-    if any(b < a - 1e-6 for a, b in zip(vs, vs[1:])):
-        bad.append("嫁接进度出现回退——组织长回去了？")
-    if abs(vs[-1] - 1.0) > 0.02:
-        bad.append(f"嫁接终值 {vs[-1]:.3f} ≠ 1.0，芽没长满")
-    steps = [b - a for a, b in zip(vs, vs[1:])]
-    stalls = sum(1 for s in steps if s < 1e-6)
-    print(f"[嫁接] 终值 {vs[-1]:.3f}  停滞帧 {stalls}/{len(steps)}")
-    if stalls < 4:
-        bad.append(f"嫁接只有 {stalls} 帧停滞——匀速长大读成'技能特效'，"
-                   f"要的是阶梯式推进（正典说这过程要七日）")
+    # （嫁接的检查见 ⑦e —— 现在每个挂载点各有一条，不再是单独一条 core_graft）
 
     # ---- ⑦ 死亡：下沉单调、终段静止、赘生物先瘪
     ys = [A.sample(rig, "core_death", k / 60)["root"].pos[1] for k in range(61)]
@@ -160,6 +157,95 @@ def main() -> int:
     mid1 = A.sample(rig, "core_engulf", 1.0)["core_mid"].scale[0]
     if mid1 <= mid0 + 0.10:
         bad.append(f"包裹结束时主体未变大（{mid0:.2f}→{mid1:.2f}）——吃进去的东西凭空消失了")
+
+    # ---- ⑦d 乱抽：这条动画的三条主张，逐条量，不靠注释自称
+    import core as C
+    sc = A.thrash_scale()
+    N = 160
+
+    names = list(C.sockets())
+    # 力臂取**满长**：骨骼缩放由 rig 自己作用在几何上，这里再乘一次 sc 就是缩两次，
+    # 量出来的摆幅会平白小掉一个 sc 倍（实测 0.45 被量成 0.19，误判成"没在摆"）
+    local = {n: rig.bones[f"bud_{n}"].origin + C.sockets()[n].normal * A.bud_reach(n, 1.0)
+             for n in names}
+    # 量**轨迹**不量角度：欧拉三元组对同一个姿态有多种写法，直接比会把等价姿态判成不同。
+    # 每帧只做一次正解，17 条芽共用——逐芽各解一次的话这一段要跑十分钟。
+    trk = {n: [] for n in names}
+    for k in range(N):
+        W = rig.world(A.sample(rig, "core_thrash", k / N))
+        for n in names:
+            M = W[f"bud_{n}"]
+            trk[n].append(M[:3, :3] @ local[n] + M[:3, 3])
+    trk = {n: np.array(v) for n, v in trk.items()}
+
+    # 摆幅按**各自的长度**归一化：短茬摆得少是对的（力臂就那么长），错的是相对自己
+    # 都不怎么动。绝对阈值会把 vest_dr 这种 girth 1.40 的小槽误判成"没在摆"。
+    rel = {n: float(np.linalg.norm(v - v.mean(axis=0), axis=1).max()) / A.bud_reach(n, sc)
+           for n, v in trk.items()}
+    absol = {n: float(np.linalg.norm(v - v.mean(axis=0), axis=1).max()) for n, v in trk.items()}
+    print(f"[乱抽] 芽尖摆幅 {min(absol.values()):.2f}..{max(absol.values()):.2f} px"
+          f"（相对自身长度 {min(rel.values()):.2f}..{max(rel.values()):.2f}）")
+    if min(rel.values()) < 0.80:
+        still = min(rel, key=lambda n: rel[n])
+        bad.append(f"芽 {still} 尖端位移只有自身长度的 {rel[still]:.2f}——「所有触手都在摆」里它没在摆（摆满 0）")
+
+    # 两两互相关：同步的两条会被眼睛立刻配成一对，"各抽各的"就破了
+    worst, pair = 0.0, ("", "")
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            x = trk[a] - trk[a].mean(axis=0)
+            y = trk[b] - trk[b].mean(axis=0)
+            den = np.linalg.norm(x) * np.linalg.norm(y)
+            c = abs(float((x * y).sum() / den)) if den > 1e-9 else 1.0
+            if c > worst:
+                worst, pair = c, (a, b)
+    print(f"[乱抽] 两两轨迹最大互相关 {worst:.3f}（{pair[0]} / {pair[1]}）")
+    if worst > 0.55:
+        bad.append(f"{pair[0]} 与 {pair[1]} 摆得太同步（相关 {worst:.2f}）——"
+                   f"会被看成一对在打拍子；相位取自槽名噪声，检查 bud_flicks")
+
+    # 载体必须**一动不动**：一堆东西在抽而载体是静的才瘆人，一起晃就读成整只在抖
+    body = [A.sample(rig, "core_thrash", k / 24)["core_mid"].scale[0] for k in range(25)]
+    if max(body) - min(body) > 1e-6:
+        bad.append(f"乱抽时本体在动（core_mid 缩放 {min(body):.3f}..{max(body):.3f}）——"
+                   f"载体一起晃会把抽搐稀释掉")
+    # 摊出去的组织从自己身上来：体积守恒
+    gained = sum(C.bud_tissue(s, 1.0) for s in C.sockets().values()) * sc ** 3
+    whole = sum(C.lobe_mass().values()) * C.VOX ** 3
+    lost = whole * (1.0 - body[0] ** 3)
+    print(f"[乱抽] 芽增 {gained:.0f} px³ / 本体减 {lost:.0f} px³")
+    if abs(gained - lost) > max(1.0, gained * 0.02):
+        bad.append(f"乱抽体积不守恒：芽增 {gained:.0f} 本体减 {lost:.0f}——"
+                   f"摊出去的料得从自己身上出，不能凭空长")
+
+    # ---- ⑦e 每个挂载点都有自己的生长动画，且**真的各不相同**
+    grafts = [n for n in A.ANIMS if n.startswith("graft_")]
+    if len(grafts) != len(C.sockets()):
+        bad.append(f"只有 {len(grafts)} 条嫁接动画，挂载点有 {len(C.sockets())} 个——"
+                   f"「每一支都有生长动画」没做全")
+    lens = {n: A.ANIMS[n][0] for n in grafts}
+    print(f"[嫁接] {len(grafts)} 条，时长 {min(lens.values()):.2f}..{max(lens.values()):.2f}s，"
+          f"不同值 {len(set(lens.values()))} 个")
+    if len(set(lens.values())) < len(grafts) * 0.6:
+        bad.append(f"嫁接时长只有 {len(set(lens.values()))} 种——时长该正比于该处用料，"
+                   f"清一色说明 graft_length 没起作用")
+    for n in grafts:
+        sock = n[len("graft_"):]
+        vs = [A.sample(rig, n, k / 160)[f"bud_{sock}"].scale[0] for k in range(161)]
+        if any(b < a - 1e-6 for a, b in zip(vs, vs[1:])):
+            bad.append(f"{n} 生长出现回退")
+        if abs(vs[-1] - 1.0) > 0.02:
+            bad.append(f"{n} 终值 {vs[-1]:.3f} ≠ 1.0，没长满")
+        # 停滞段各占 4% 时长，采样必须密到能落进去：41 帧时每段只摊到一帧，
+        # 会把本来有停滞的动画全判成匀速（实测 17 条全红）
+        if sum(1 for a, b in zip(vs, vs[1:]) if b - a < 1e-6) < 4:
+            bad.append(f"{n} 没有停滞段——匀速长大读成技能特效")
+        # 只准动自己那一条：动画名指定哪个槽就只长哪个槽
+        others = [m for m in C.sockets() if m != sock]
+        mid = A.sample(rig, n, 0.5)
+        wrong = [m for m in others if abs(mid[f"bud_{m}"].scale[0] - A.BUD_DORMANT) > 1e-6]
+        if wrong:
+            bad.append(f"{n} 顺带长了别的槽 {wrong[:3]}")
 
     # ---- ⑧ 受击：必须衰减回近似静止
     h = pose_delta(rig, A.sample(rig, "core_hurt", 1.0), A.sample(rig, "core_hurt", 0.0))
