@@ -67,9 +67,9 @@ def _close_request(session_id: int) -> dict:
 # central-review 1993 #2：close 拒绝断言需要**强制**一笔请求后的背包观察 —— 未知/已关闭
 # token 的 close 在服务端是干净 no-op（handle_external_container_close 对 session 缺失的
 # 提前 return，不回推任何 resync）。give 一个本场景从未 give 过的探针物品（fan_tie），其
-# 因果快照（revision 递增 + 探针总数超锚点）就是请求后的权威背包状态：把探针物品剥掉、
-# revision 复位到请求前，再与请求前快照比对 —— close 自身若产生任何 mutation（如把容器
-# 物品移回背包）必然指纹不同。
+# 因果快照（revision 递增 + 探针总数超锚点）就是请求后的权威背包状态：revision 必须
+# 精确为请求前 +1；再把探针物品剥掉，用内容指纹与请求前快照比对 —— close 自身若产生
+# 任何内容 mutation（如把容器物品移回背包）必然指纹不同。
 PROBE_ITEM_ID = "fan_tie"
 
 # central-review 1993 #3：放置搜索整体有界（批量发出后单次等待），不再逐候选各等 0.8s。
@@ -122,6 +122,15 @@ def _without_probe_item(snapshot: dict, item_id: str) -> dict:
         if item is None or item["item_id"] != item_id
     ]
     return cleaned
+
+
+def _inventory_content_fingerprint(snapshot: dict) -> str:
+    """返回不含 revision 的背包内容指纹，供已独立校验 revision 的断言使用。"""
+    from ._rejection_helpers import inventory_fingerprint
+
+    normalized = dict(snapshot)
+    normalized["revision"] = None
+    return inventory_fingerprint(normalized)
 
 
 def _placement_candidates(bot) -> list[tuple[int, int, int]]:
@@ -525,8 +534,9 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
     零 mutation 会假通过。故同步点之后 give 一个本场景从未 give 过的探针物品
     （fan_tie），其**因果快照**（revision 递增 + 探针总数 > give 前锚点，
     `wait_inventory_revision_after_matching` 唯一命中）就是请求后的权威背包状态：把
-    探针物品从两侧（请求前 / 请求后）同等剥掉、revision 复位到请求前，再比指纹 ——
-    close 自身若产生任何 mutation（如把容器物品移回背包）必然不同。
+    探针物品从两侧（请求前 / 请求后）同等剥掉，再用不含 revision 的内容指纹比对 ——
+    close 自身若产生任何内容 mutation（如把容器物品移回背包）必然不同；revision 则由
+    独立的精确 ``pre+1`` 门校验。
     """
     from ._inventory_helpers import (
         latest_inventory_snapshot,
@@ -535,7 +545,6 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
     from ._rejection_helpers import (
         assert_no_server_data_payload_since,
         assert_valid_request_still_works,
-        inventory_fingerprint,
     )
 
     pre = latest_inventory_snapshot(bot)
@@ -558,10 +567,9 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
 
     # **revision 精确过渡（central-review 1993 #2）**：give 的因果快照 revision 必须是
     # pre+1 —— add_item_to_player_inventory_inner 每次 give 恰好 bump 一次 revision，
-    # 干净的 close no-op 不 bump。旧实现把两侧 revision 复位到请求前再比指纹，删掉了
-    # 唯一可观测差异：只改 revision 不改内容、随即发快照的坏 close handler 会被后续
-    # give 的快照 + 内容同化掩盖（revision 归一化抹掉 +1），假通过。断言精确 +1 后：
-    # 坏 close 若 spurious bump，give 后为 pre+2 ≠ pre+1，必红。
+    # 干净的 close no-op 不 bump。只改 revision 不改内容、随即发快照的坏 close handler
+    # 会让 give 后变成 pre+2，精确门必红；内容比较则必须忽略这个合法的 give +1，不能
+    # 再把 probe 的 R+1 完整指纹和 pre 的 R 完整指纹直接比较。
     pre_clean = _without_probe_item(pre, PROBE_ITEM_ID)
     probe_clean = _without_probe_item(probe, PROBE_ITEM_ID)
     if probe["revision"] != pre["revision"] + 1:
@@ -570,12 +578,14 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
             f"give 恰好 bump 一次），实际 pre_rev={pre['revision']} "
             f"probe_rev={probe['revision']}"
         )
-    # 剥掉探针物品后指纹必须相等 —— 指纹差异只归属 close 处理本身（内容级 mutation）。
-    if inventory_fingerprint(probe_clean) != inventory_fingerprint(pre_clean):
+    # 剥掉探针物品后只比较内容。probe 的 revision 合法地比 pre 高 1，若继续使用包含
+    # revision 的完整指纹，正确 no-op 也必然失败并截断后续 forged move/close 覆盖。
+    pre_content = _inventory_content_fingerprint(pre_clean)
+    probe_content = _inventory_content_fingerprint(probe_clean)
+    if probe_content != pre_content:
         raise BotAssertionError(
-            f"{label}：期望 close 干净 no-op 且背包零 mutation，"
-            f"实际 pre={inventory_fingerprint(pre_clean)} "
-            f"probe={inventory_fingerprint(probe_clean)}"
+            f"{label}：期望 close 干净 no-op 且背包内容零 mutation，"
+            f"实际 pre_content={pre_content} probe_content={probe_content}"
         )
     bot.assert_alive(f"{label} 后")
 

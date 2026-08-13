@@ -36,6 +36,7 @@ from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
+from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
@@ -1904,6 +1905,7 @@ class _RejectionFakeBot(_FakeBot):
         self.disconnect_reason = "服务器主动断开" if disconnected else None
         self._reader_thread = _ReaderAlive(reader_alive)
         self.intents: list[dict] = []
+        self.commands: list[str] = []
 
     @property
     def t0(self) -> float:
@@ -1938,6 +1940,9 @@ class _RejectionFakeBot(_FakeBot):
 
     def intent(self, request: dict) -> None:
         self.intents.append(request)
+
+    def cmd(self, command: str) -> None:
+        self.commands.append(command)
 
     def expect_chat(self, substring: str, timeout: float = 5.0) -> _FakeEvent:
         return self.wait_for(
@@ -2400,6 +2405,218 @@ class RejectionHelperTest(unittest.TestCase):
                     assert_no_gameplay_side_effect_since(
                         bot, since_t=1.0, label="测试", baseline_snapshot=baseline
                     )
+
+
+def _stale_session_snapshot(
+    revision: int, *, probe_count: int = 0, bone_coins: int = 0
+) -> dict:
+    placed_items = []
+    if probe_count:
+        placed_items.append(
+            {
+                "container_id": "body_pocket",
+                "row": 0,
+                "col": 0,
+                "item": {
+                    "instance_id": 99,
+                    "item_id": stale_session_scenario.PROBE_ITEM_ID,
+                    "stack_count": probe_count,
+                },
+            }
+        )
+    return {
+        "type": "inventory_snapshot",
+        "revision": revision,
+        "containers": [],
+        "placed_items": placed_items,
+        "equipped": {},
+        "hotbar": [],
+        "bone_coins": bone_coins,
+    }
+
+
+def _stale_session_close_bot(probe_snapshot: dict) -> _RejectionFakeBot:
+    pre = _stale_session_snapshot(7)
+    return _RejectionFakeBot(
+        [
+            _FakeEvent(
+                2.0,
+                "server_data",
+                {"payload_type": "inventory_snapshot", "payload": pre},
+            )
+        ],
+        pending=[
+            _FakeEvent(3.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"}),
+            _FakeEvent(
+                4.0,
+                "chat",
+                {"text": f"[dev] gave {stale_session_scenario.PROBE_ITEM_ID} x1"},
+            ),
+            _FakeEvent(
+                5.0,
+                "server_data",
+                {"payload_type": "inventory_snapshot", "payload": probe_snapshot},
+            ),
+        ],
+    )
+
+
+class StaleSessionScenarioTest(unittest.TestCase):
+    def test_content_fingerprint_ignores_revision_but_detects_content(self):
+        before = _stale_session_snapshot(7)
+        after_give = _stale_session_snapshot(8)
+        self.assertEqual(
+            stale_session_scenario._inventory_content_fingerprint(before),
+            stale_session_scenario._inventory_content_fingerprint(after_give),
+            "close 已独立钉住 revision=R+1 后，内容指纹必须忽略该合法 revision 差异",
+        )
+        mutated = _stale_session_snapshot(8, bone_coins=1)
+        self.assertNotEqual(
+            stale_session_scenario._inventory_content_fingerprint(before),
+            stale_session_scenario._inventory_content_fingerprint(mutated),
+            "内容指纹必须继续覆盖真实背包 mutation",
+        )
+
+    def test_stale_close_accepts_exact_probe_revision_and_equal_content(self):
+        bot = _stale_session_close_bot(
+            _stale_session_snapshot(8, probe_count=1)
+        )
+
+        stale_session_scenario._assert_stale_close_rejected(bot, 41, "closed token")
+
+        self.assertEqual(bot.commands, [f"give {stale_session_scenario.PROBE_ITEM_ID} 1"])
+        self.assertEqual(
+            bot.intents,
+            [
+                {"v": 1, "type": "external_container_close", "session_id": 41},
+                {"v": 1, "type": "set_meridian_target", "meridian": "lung"},
+            ],
+            "helper 必须先发 stale close，再用合法请求建立处理屏障",
+        )
+
+    def test_stale_close_rejects_spurious_revision_bump(self):
+        bot = _stale_session_close_bot(
+            _stale_session_snapshot(9, probe_count=1)
+        )
+        with self.assertRaisesRegex(BotAssertionError, "revision 恰好 \\+1"):
+            stale_session_scenario._assert_stale_close_rejected(
+                bot, 41, "closed token"
+            )
+
+    def test_stale_close_rejects_content_mutation_after_probe_removed(self):
+        bot = _stale_session_close_bot(
+            _stale_session_snapshot(8, probe_count=1, bone_coins=1)
+        )
+        with self.assertRaisesRegex(BotAssertionError, "背包内容零 mutation"):
+            stale_session_scenario._assert_stale_close_rejected(
+                bot, 41, "closed token"
+            )
+
+    def test_run_reaches_all_stale_and_forged_paths(self):
+        real_move = {
+            "session_id": 41,
+            "instance_id": 501,
+            "from": {
+                "kind": "container",
+                "container_id": "ext_41",
+                "row": 0,
+                "col": 0,
+            },
+            "to": {
+                "kind": "container",
+                "container_id": "body_pocket",
+                "row": 0,
+                "col": 0,
+            },
+            "placed_pos": (1, 64, 1),
+        }
+        snapshot = _stale_session_snapshot(7)
+        close_event = _FakeEvent(
+            3.0,
+            "server_data",
+            {"payload_type": "loot_container_close", "payload": {"session_id": 41}},
+        )
+        bot = mock.MagicMock()
+        bot.t0 = 0.0
+        # MagicMock 保留 assert_* 名字给自身断言 API，场景的 Bot.assert_alive 必须显式安装。
+        bot.assert_alive = mock.Mock()
+        bot.expect_server_data.return_value = close_event
+        context = mock.MagicMock()
+        context.__enter__.return_value = bot
+        context.__exit__.return_value = False
+        env = mock.MagicMock()
+        env.new_bot.return_value = context
+
+        with (
+            mock.patch.object(stale_session_scenario.time, "sleep"),
+            mock.patch.object(
+                stale_session_scenario, "_open_real_session", return_value=real_move
+            ),
+            mock.patch.object(
+                stale_session_scenario, "_assert_stale_move_rejected_zero_mutation"
+            ) as move_rejected,
+            mock.patch.object(
+                stale_session_scenario, "_assert_stale_close_rejected"
+            ) as close_rejected,
+            mock.patch.object(
+                stale_session_scenario, "_teardown_placed_crate"
+            ) as teardown,
+            mock.patch(
+                "bot.scenarios._inventory_helpers.latest_inventory_snapshot",
+                return_value=snapshot,
+            ),
+            mock.patch("bot.scenarios._inventory_helpers.drain_inventory_snapshots"),
+            mock.patch(
+                "bot.scenarios._inventory_helpers.wait_inventory_snapshot_after",
+                return_value=snapshot,
+            ),
+            mock.patch(
+                "bot.scenarios._rejection_helpers.inventory_fingerprint",
+                return_value="same",
+            ),
+            mock.patch(
+                "bot.scenarios._rejection_helpers.fire_probes_and_keep_connection"
+            ) as fire_probes,
+            mock.patch(
+                "bot.scenarios._rejection_helpers.assert_valid_request_still_works"
+            ) as valid_request,
+        ):
+            stale_session_scenario.run(env)
+
+        self.assertEqual(
+            move_rejected.call_args_list,
+            [
+                mock.call(bot, 41, "replay 已关闭 session 的 move", real_move),
+                mock.call(
+                    bot,
+                    stale_session_scenario.FORGED_SESSION_ID,
+                    "stale move #1（forged token）",
+                    real_move,
+                ),
+                mock.call(
+                    bot,
+                    stale_session_scenario.FORGED_SESSION_ID,
+                    "stale move #2（重放 forged token）",
+                    real_move,
+                ),
+            ],
+            "真实 stale move 与两轮 forged move 必须全部执行",
+        )
+        self.assertEqual(
+            close_rejected.call_args_list,
+            [
+                mock.call(bot, 41, "replay 已关闭 session 的 close"),
+                mock.call(
+                    bot,
+                    stale_session_scenario.FORGED_SESSION_ID,
+                    "stale close（forged token）",
+                ),
+            ],
+            "真实 stale close 通过后必须继续执行 forged close",
+        )
+        fire_probes.assert_called_once()
+        valid_request.assert_called_once_with(bot)
+        teardown.assert_called_once_with(bot, (1, 64, 1), 501)
 
 
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
