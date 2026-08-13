@@ -128,8 +128,8 @@ def main() -> int:
     parser.add_argument(
         "--run-tag",
         default=(
-            os.environ.get("NORTH_RIFT_RUN_TAG")
-            or os.environ.get("BOT_E2E_RUN_TAG", str(os.getpid() % 100000))
+            os.environ.get("BOT_E2E_RUN_TAG")
+            or os.environ.get("NORTH_RIFT_RUN_TAG", str(os.getpid() % 100000))
         ),
         help="用户名区分段（同一 server 反复跑时避免脏状态叠加），≤5 字符",
     )

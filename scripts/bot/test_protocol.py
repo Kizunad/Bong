@@ -2579,6 +2579,23 @@ class FallbackScenarioPinTest(unittest.TestCase):
             )
 
 
+class LawEngineSmokeHarnessContractTest(unittest.TestCase):
+    def test_server_binary_launches_from_server_working_directory(self):
+        source = (
+            pathlib.Path(__file__).parents[2] / "scripts/smoke-law-engine.sh"
+        ).read_text(encoding="utf-8")
+        launch_start = source.index('echo "[run][server-start] timeout 20s')
+        launch_end = source.index('echo "[server-start] exit=', launch_start)
+        launch = source[launch_start:launch_end]
+
+        self.assertIn('cd "$ROOT/server"', launch)
+        self.assertLess(
+            launch.index('cd "$ROOT/server"'),
+            launch.index('timeout 20s "$server_binary"'),
+            "law-engine server 必须先进入 server/ 再启动，避免相对 data 路径污染仓库根目录",
+        )
+
+
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -3669,6 +3686,41 @@ class FrameParseTest(unittest.TestCase):
 
 
 class RunnerLogicTest(unittest.TestCase):
+    def test_fallback_run_tag_wins_when_north_rift_tag_is_also_present(self):
+        observed_run_tags: list[str] = []
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="tag precedence probe",
+            MODULES=["terrain"],
+            run=lambda env: observed_run_tags.append(env.run_tag),
+        )
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"tag_precedence_probe": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(
+                os.environ,
+                {"BOT_E2E_RUN_TAG": "ci", "NORTH_RIFT_RUN_TAG": "nr123"},
+                clear=False,
+            ),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["run_scenarios.py", "--scenario", "tag_precedence_probe"],
+            ),
+            redirect_stdout(io.StringIO()),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            observed_run_tags,
+            ["ci"],
+            "显式 fallback witness BOT_E2E_RUN_TAG 必须覆盖遗留 NORTH_RIFT_RUN_TAG",
+        )
+
     def test_new_bot_rejects_long_username(self):
         env = ScenarioEnv("127.0.0.1", 1, run_tag="12345678901234")
         with self.assertRaises(ValueError, msg="用户名超 16 字符必须在连接前报错"):

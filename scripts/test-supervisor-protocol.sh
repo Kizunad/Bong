@@ -227,13 +227,21 @@ assert_parent_unpublished() {
         || fail "failed startup must close and clear protocol descriptors"
 }
 
+# The removed two-argument protocol must fail before spawning any supervisor.
+if BONG_E2E_BUILD_TOKEN="$ROOT/scripts/build-token.sh" \
+    start_server_process_group "$TEST_ROOT/parent-obsolete-build-token.log" 0; then
+    fail "parent accepted obsolete BONG_E2E_BUILD_TOKEN override"
+fi
+assert_parent_unpublished
+
 # Happy path uses the production supervisor and publishes only after exact ACK.
 rm -f -- "$cargo_pid_file" "$descendant_pid_file"
 SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
 SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$SUPERVISOR" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
-start_server_process_group "$TEST_ROOT/parent-normal.log" 0 \
+start_server_process_group "$TEST_ROOT/parent-normal.log" 0 1 \
     || fail "parent rejected the production READY -> C -> COMMITTED protocol"
 [ "$SERVER_AUTHORITY_UNCERTAIN" -eq 0 ] \
     || fail "successful startup must publish certain authority"
@@ -264,6 +272,10 @@ import signal
 import sys
 import time
 
+if len(sys.argv) != 2:
+    print("usage: fake-supervisor.py SERVER_DIRECTORY", file=sys.stderr)
+    raise SystemExit(2)
+
 os.setsid()
 for signal_number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
     signal.signal(signal_number, signal.SIG_IGN)
@@ -290,16 +302,26 @@ chmod +x "$fake_supervisor"
 fake_pid_file="$TEST_ROOT/fake-supervisor.pid"
 bong_server_port_is_open() { return 1; }
 
+# The strict fake accepts the same single SERVER_DIRECTORY argument as production.
+# An accidental second argv must fail before READY so caller/supervisor drift cannot hide.
+if python3 "$fake_supervisor" "$fixture_server" "$ROOT/scripts/build-token.sh" \
+    >"$TEST_ROOT/fake-extra-argv.out" 2>"$TEST_ROOT/fake-extra-argv.err"; then
+    fail "strict fake supervisor accepted an obsolete second argument"
+fi
+grep -Fq "usage: fake-supervisor.py SERVER_DIRECTORY" "$TEST_ROOT/fake-extra-argv.err" \
+    || fail "strict fake supervisor did not reject extra argv with its one-argument usage"
+
 run_failed_parent_mode() {
     local mode="$1" after_commit_hook="${2:-}" after_ack_hook="${3:-}" owner wait_status=0
     rm -f -- "$fake_pid_file"
     if FAKE_SUPERVISOR_MODE="$mode" \
         FAKE_SUPERVISOR_PID_FILE="$fake_pid_file" \
+        BONG_E2E_SUPERVISOR_TEST_MODE=1 \
         BONG_E2E_SUPERVISOR="$fake_supervisor" \
         BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
         BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$after_commit_hook" \
         BONG_E2E_TEST_AFTER_ACK_HOOK="$after_ack_hook" \
-        start_server_process_group "$TEST_ROOT/parent-$mode.log" 0; then
+        start_server_process_group "$TEST_ROOT/parent-$mode.log" 0 1; then
         fail "parent unexpectedly accepted failed supervisor mode $mode"
     fi
     assert_parent_unpublished
@@ -348,11 +370,12 @@ chmod +x "$no_ack_supervisor"
 rm -f -- "$fake_pid_file"
 stop_marker="$TEST_ROOT/fake-supervisor.stopped"
 FAKE_SUPERVISOR_PID_FILE="$fake_pid_file" \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$no_ack_supervisor" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
 BONG_TEST_STOP_MARKER="$stop_marker" \
 BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$stop_before_commit_hook" \
-start_server_process_group "$TEST_ROOT/parent-stopped.log" 0 &
+start_server_process_group "$TEST_ROOT/parent-stopped.log" 0 1 &
 stopped_parent_pid=$!
 wait_for_file "$stop_marker" || fail "SIGSTOP fixture did not stop the supervisor after C write"
 wait_for_file "$fake_pid_file" || fail "SIGSTOP fixture did not publish owner PID"

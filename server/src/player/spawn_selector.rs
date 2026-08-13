@@ -214,7 +214,7 @@ impl<'a> PlayerSpawnSelector<'a> {
                                 zone.name
                             )
                         });
-                return [free_x as f64, fallback.y, free_z as f64];
+                return [free_x, fallback.y, free_z];
             }
             return [fallback.x, fallback.y, fallback.z];
         }
@@ -224,11 +224,12 @@ impl<'a> PlayerSpawnSelector<'a> {
 }
 
 /// 在 zone AABB 的 floor-tile 范围内从 `start` 螺旋向外扫描，返回最近未被
-/// `blocked` 排除的 tile。扫描半径从 zone AABB 推导（`start` 到最远角落的 Chebyshev
-/// 距离），保证覆盖 zone 内全部候选 tile —— 固定半径会把「AABB 更大、空闲 tile 在
-/// 固定圈之外」的 zone 误判成全 blocked 而 panic（review finding）。zone 内全部 tile
-/// 均被 `blocked` 排除时返回 `None`，由调用方 fail-closed。扫描结果严格限制在 zone
-/// 内，绝不越界。
+/// `blocked` 排除的 tile 内实际坐标。通常返回 tile center；当边缘 tile center 落在
+/// 分数 AABB 外时钳制到 AABB 边界，绝不返回可能越界的整数 tile 原点。扫描半径从
+/// zone AABB 推导（`start` 到最远角落的 Chebyshev 距离），保证覆盖 zone 内全部候选
+/// tile —— 固定半径会把「AABB 更大、空闲 tile 在固定圈之外」的 zone 误判成全 blocked
+/// 而 panic（review finding）。zone 内全部 tile 均被 `blocked` 排除时返回 `None`，由
+/// 调用方 fail-closed。
 ///
 /// `work_budget` 是本次扫描允许的 tile 谓词求值次数上限（review finding：大 zone +
 /// 稀疏空闲 tile 时扫描工作量随 AABB 面积增长，无界扫描会同步卡住每次受影响的登录）。
@@ -241,7 +242,7 @@ fn nearest_unblocked_tile(
     start: (i32, i32),
     blocked: &impl Fn(DVec3) -> bool,
     work_budget: usize,
-) -> Option<(i32, i32)> {
+) -> Option<(f64, f64)> {
     let (min, max) = zone.bounds;
     let (min_tx, max_tx) = (min.x.floor() as i32, max.x.floor() as i32);
     let (min_tz, max_tz) = (min.z.floor() as i32, max.z.floor() as i32);
@@ -263,7 +264,7 @@ fn nearest_unblocked_tile(
     // Cell：visit 闭包独占 work_left 的可变借用，环循环需要共享读取"预算是否已耗尽"
     // —— Cell 让闭包写、循环读互不冲突。
     let exhausted = std::cell::Cell::new(false);
-    let mut visit = |tx: i64, tz: i64| -> Option<(i32, i32)> {
+    let mut visit = |tx: i64, tz: i64| -> Option<(f64, f64)> {
         if work_left == 0 {
             // 预算耗尽：不再求值谓词，fail-closed。置 exhausted 标志让外层环循环立即
             // 终止（review finding：只返回 None 不终止循环的话，CPU 迭代数仍随 zone
@@ -275,9 +276,13 @@ fn nearest_unblocked_tile(
         if tx < min_tx_i || tx > max_tx_i || tz < min_tz_i || tz > max_tz_i {
             return None;
         }
-        let pos = DVec3::new(tx as f64 + 0.5, 0.0, tz as f64 + 0.5);
+        let pos = zone.clamp_position(DVec3::new(
+            tx as f64 + 0.5,
+            min.y,
+            tz as f64 + 0.5,
+        ));
         if !blocked(pos) {
-            return Some((tx as i32, tz as i32));
+            return Some((pos.x, pos.z));
         }
         None
     };
@@ -822,8 +827,8 @@ mod tests {
         );
         assert_eq!(
             found,
-            Some(free),
-            "唯一空闲 tile 恰在最大扫描圈（Chebyshev 半径 128）上时必须被闭区间扫描命中"
+            Some((128.0, 0.5)),
+            "唯一空闲 tile 恰在最大扫描圈（Chebyshev 半径 128）上时必须被闭区间扫描命中；边缘 tile center 应钳制到 zone max"
         );
     }
 
@@ -855,8 +860,8 @@ mod tests {
         );
         assert_eq!(
             found,
-            Some(near),
-            "多个空闲 tile 时最近者（Chebyshev 距离 1）必须胜出，不得返回远处 (40,40)"
+            Some((1.5, 0.5)),
+            "多个空闲 tile 时最近者（Chebyshev 距离 1）的 tile center 必须胜出，不得返回远处 (40,40)"
         );
     }
 
@@ -972,9 +977,8 @@ mod tests {
         let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 5);
         assert_eq!(
             found,
-            Some(free),
-            "唯一空闲 tile 恰在第 5 次（=预算上限）求值时命中，必须被接受：预算耗尽检查 \
-             发生在 decrement 前/后的 off-by-one 实现在此必红"
+            Some((-0.5, 1.5)),
+            "唯一空闲 tile 恰在第 5 次（=预算上限）求值时命中，必须返回其 tile center：预算耗尽检查发生在 decrement 前/后的 off-by-one 实现在此必红"
         );
     }
 
@@ -1005,8 +1009,37 @@ mod tests {
         );
         assert_eq!(
             found,
-            Some(free),
-            "zone AABB 内、但超出旧固定半径 128 的空闲 tile 必须被 AABB 推导半径命中"
+            Some((200.0, 0.5)),
+            "zone AABB 内、但超出旧固定半径 128 的空闲 tile 必须被 AABB 推导半径命中并钳制到 zone max"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_returns_in_bounds_point_for_fractional_min_tile() {
+        let registry = synthetic_registry(
+            (
+                DVec3::new(8.75, -64.0, -3.25),
+                DVec3::new(10.25, 320.0, -1.25),
+            ),
+            Vec::new(),
+        );
+        let zone = &registry.zones[0];
+        let found = nearest_unblocked_tile(zone, (8, -4), &|_pos: DVec3| false, 1)
+            .expect("fractional-min tile is free and must be found");
+
+        assert_eq!(
+            found,
+            (8.75, -3.25),
+            "边缘 tile center 落在分数下界外时必须钳制到 AABB min，不得返回界外 tile 原点"
+        );
+        assert!(
+            zone.contains(DVec3::new(found.0, 72.0, found.1)),
+            "扫描返回的实际坐标必须位于 fractional AABB 内（found={found:?}）"
+        );
+        assert_eq!(
+            (found.0.floor() as i32, found.1.floor() as i32),
+            (8, -4),
+            "钳制后的实际坐标仍必须属于被判定为空闲的同一 tile"
         );
     }
 

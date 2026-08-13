@@ -856,13 +856,16 @@ port_open() {
 start_server_process_group() {
   local log_file="$1" preview_mode="$2" test_override_mode="${3:-0}"
   local actual_pgid="" cargo_target owner_pid=""
-  local owner_starttime="" owner_executable_identity="" supervisor="" build_token="" ready_line="" committed_line=""
+  local owner_starttime="" owner_executable_identity="" supervisor="" ready_line="" committed_line=""
   local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
   cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
-  build_token="$ROOT/scripts/build-token.sh"
   local server_directory="$ROOT/server"
+  if [ -n "${BONG_E2E_BUILD_TOKEN:-}" ]; then
+    echo "FAIL: BONG_E2E_BUILD_TOKEN is obsolete; supervisor accepts only SERVER_DIRECTORY" >&2
+    return 2
+  fi
   # Only the in-repo supervisor protocol fixture may opt into replacement binaries.
   if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
     [ "$test_override_mode" = "1" ] || {
@@ -870,9 +873,8 @@ start_server_process_group() {
       return 2
     }
     supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"
-    build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"
     server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"
-  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_BUILD_TOKEN:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
+  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
     echo "FAIL: e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1" >&2
     return 2
   fi
@@ -890,7 +892,7 @@ start_server_process_group() {
       BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
       BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
       BONG_PREVIEW_MODE="$preview_mode" \
-      python3 "$supervisor" "$server_directory" "$build_token" \
+      python3 "$supervisor" "$server_directory" \
       2>"$log_file"
   }
   owner_pid=""
