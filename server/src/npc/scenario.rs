@@ -27,6 +27,14 @@ const PASSIVE_TARGET_HEALTH: f32 = 32.0;
 #[derive(Clone, Copy, Debug, Component)]
 pub struct ScenarioNpc;
 
+/// Production contract for `/npc_scenario passive_target` entities.
+///
+/// A passive target may receive normal combat damage and feedback, but it never
+/// owns movement. Movement, knockback, and navigation systems all consume this
+/// marker so the scenario remains stationary even when hit by real combat code.
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct PassiveTarget;
+
 /// Scenario types available via `/npc_scenario`.
 #[derive(Clone, Copy, Debug)]
 pub enum ScenarioType {
@@ -111,7 +119,13 @@ fn process_pending_scenarios(
     let mut spawned_entities = Vec::new();
 
     for i in 0..spawn_count {
-        let offset = scenario_offset(i, spawn_count);
+        let offset = if matches!(scenario, ScenarioType::PassiveTarget) {
+            // Keep the target inside the real player melee reach so the dev command
+            // can be exercised immediately by a protocol client.
+            DVec3::new(1.0, 0.0, 0.0)
+        } else {
+            scenario_offset(i, spawn_count)
+        };
         let spawn_pos = player_pos + offset;
 
         let loadout = scenario_combat_loadout(&scenario, i);
@@ -140,6 +154,10 @@ fn process_pending_scenarios(
                 ScenarioNpc,
             ))
             .id();
+
+        if matches!(scenario, ScenarioType::PassiveTarget) {
+            commands.entity(entity).insert(PassiveTarget);
+        }
 
         let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Zombie, Realm::Awaken);
         if matches!(scenario, ScenarioType::PassiveTarget) {
@@ -255,9 +273,29 @@ mod tests {
     use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
     use crate::npc::brain::canonical_npc_id;
     use crate::npc::lifecycle::NpcLifespan;
+    use crate::cmd::dev::npc_scenario::{handle_npc_scenario, NpcScenarioAction, NpcScenarioCmd};
+    use crate::combat::events::{AttackIntent, CombatEvent, DeathEvent};
+    use crate::combat::lifecycle::death_arbiter_tick;
+    use crate::combat::player_attack::{handle_player_attack, PlayerAttackCooldown};
+    use crate::combat::resolve::resolve_attack_intents;
+    use crate::combat::CombatClock;
+    use crate::cultivation::death_hooks::PlayerTerminated;
+    use crate::inventory::InventoryDurabilityChangedEvent;
+    use crate::network::combat_event_emit::emit_combat_event_to_client;
+    use crate::npc::lifecycle::{NpcTerminalSystemSet, NpcTerminalSettlementSucceeded};
+    use crate::npc::movement::PendingKnockback;
     use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
+    use crate::persistence::{bootstrap_sqlite, PersistenceSettings};
+    use crate::player::state::{canonical_player_id, PlayerState};
+    use crate::qi_physics::WorldQiAccount;
     use big_brain::prelude::ThinkerBuilder;
-    use valence::prelude::{Entity, FixedUpdate, Update, With};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use valence::command::handler::CommandResultEvent;
+    use valence::prelude::{
+        bevy_ecs, Client, Entity, EntityInteraction, Events, FixedUpdate, GameMode,
+        IntoSystemConfigs, InteractEntityEvent, Position, Update, With,
+    };
+    use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::ScenarioSingleClient;
 
     #[test]
@@ -335,6 +373,7 @@ mod tests {
         });
         app.add_systems(Update, process_pending_scenarios);
         crate::npc::patrol::register(&mut app);
+        crate::npc::movement::register(&mut app);
         crate::npc::navigator::register(&mut app);
 
         app.update();
@@ -377,11 +416,19 @@ mod tests {
             assert!(entity_ref.get::<NpcMarker>().is_some());
             assert!(entity_ref.get::<Lifecycle>().is_some());
             assert!(entity_ref.get::<Cultivation>().is_some());
+            assert!(entity_ref.get::<PassiveTarget>().is_some());
             entity_ref
                 .get::<Position>()
                 .expect("passive target must expose authoritative Position")
                 .get()
         };
+
+        app.world_mut().entity_mut(npc).insert(PendingKnockback::from_distance(
+            DVec3::new(1.0, 0.0, 0.0),
+            6.0,
+            70.0,
+            3,
+        ));
 
         for _ in 0..8 {
             app.world_mut().run_schedule(FixedUpdate);
@@ -402,6 +449,238 @@ mod tests {
                 .is_idle(),
             "real patrol and navigator schedules must not move a passive target"
         );
+    }
+
+    #[test]
+    fn passive_target_command_attack_feedback_damage_and_terminal_lifecycle_are_production_path() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bong-passive-target-production-path-{}-{unique}",
+            std::process::id()
+        ));
+        let db_path = root.join("data").join("bong.db");
+        let deceased_dir = root.join("deceased");
+        bootstrap_sqlite(&db_path, "passive-target-production-path")
+            .expect("terminal lifecycle test database should bootstrap");
+
+        let scenario = ScenarioSingleClient::new();
+        let valence::testing::ScenarioSingleClient {
+            mut app,
+            client: attacker,
+            mut helper,
+            ..
+        } = scenario;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(PendingScenario::default());
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            &deceased_dir,
+            "passive-target-production-path",
+        ));
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry::default());
+
+        app.add_event::<CommandResultEvent<NpcScenarioCmd>>();
+        app.add_event::<InteractEntityEvent>();
+        app.add_event::<AttackIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::events::ApplyStatusEffectIntent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<PlayerTerminated>();
+
+        crate::npc::lifecycle::register(&mut app);
+        crate::npc::movement::register(&mut app);
+        crate::npc::navigator::register(&mut app);
+        app.add_systems(Update, handle_npc_scenario);
+        app.add_systems(
+            Update,
+            process_pending_scenarios.after(handle_npc_scenario),
+        );
+        app.add_systems(Update, handle_player_attack);
+        app.add_systems(Update, resolve_attack_intents.after(handle_player_attack));
+        app.add_systems(
+            Update,
+            emit_combat_event_to_client.after(resolve_attack_intents),
+        );
+        app.add_systems(
+            Update,
+            death_arbiter_tick
+                .in_set(NpcTerminalSystemSet::Stage)
+                .after(resolve_attack_intents),
+        );
+
+        // Use the production command handler to queue the exact scenario spawn.
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<NpcScenarioCmd>>>()
+            .send(CommandResultEvent {
+                result: NpcScenarioCmd::Run {
+                    scenario: NpcScenarioAction::PassiveTarget,
+                },
+                executor: attacker,
+                modifiers: Default::default(),
+            });
+
+        // The command queues the request; the next Update runs the production spawn path.
+        app.update();
+        let target = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<ScenarioNpc>>();
+            query
+                .iter(world)
+                .next()
+                .expect("production command should spawn a passive scenario target")
+        };
+        assert!(app.world().get::<PassiveTarget>(target).is_some());
+        assert_eq!(
+            app.world().get::<Wounds>(target).unwrap().health_current,
+            PASSIVE_TARGET_HEALTH,
+            "command-spawned passive target must start with the production scenario health"
+        );
+
+        // Complete the player-side production combat prerequisites. The target remains a real
+        // runtime NPC bundle; the first ordinary fist attack proves nonlethal damage and feedback.
+        app.world_mut().entity_mut(attacker).insert((
+            Cultivation::default(),
+            MeridianSystem::default(),
+            PlayerState {
+                karma: 0.0,
+                inventory_score: 0.0,
+            },
+            Lifecycle {
+                character_id: canonical_player_id("test"),
+                ..Default::default()
+            },
+            Stamina::default(),
+            PlayerAttackCooldown::default(),
+            GameMode::Survival,
+        ));
+        app.world_mut()
+            .get_mut::<Wounds>(target)
+            .expect("scenario target must carry production Wounds")
+            .health_current = PASSIVE_TARGET_HEALTH;
+
+        // First hit proves the target is attackable, deals damage, emits a typed outgoing
+        // combat_event to the client, and does not retaliate.
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let first_hit_health = app.world().get::<Wounds>(target).unwrap().health_current;
+        assert!(
+            first_hit_health < PASSIVE_TARGET_HEALTH,
+            "InteractEntityEvent::Attack must damage a passive target; before={PASSIVE_TARGET_HEALTH}, after={first_hit_health}"
+        );
+        assert!(
+            app.world().get::<PendingKnockback>(target).is_none(),
+            "passive target attack resolution must not queue PendingKnockback"
+        );
+        let attack_events = app.world().resource::<Events<AttackIntent>>();
+        let attack_events = attack_events.iter_current_update_events().collect::<Vec<_>>();
+        assert_eq!(attack_events.len(), 1, "one player attack should resolve");
+        assert_eq!(attack_events[0].attacker, attacker);
+        assert_eq!(attack_events[0].target, Some(target));
+        assert!(
+            !attack_events.iter().any(|event| event.attacker == target),
+            "passive target must not retaliate with an NPC attack intent"
+        );
+
+        {
+            let world = app.world_mut();
+            let mut clients = world.query::<&mut Client>();
+            for mut client_component in clients.iter_mut(world) {
+                client_component
+                    .flush_packets()
+                    .expect("mock client should flush combat feedback packets");
+            }
+        }
+        let combat_payloads = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| frame.decode::<CustomPayloadS2c>().ok())
+            .filter(|packet| packet.channel.as_str() == crate::network::agent_bridge::SERVER_DATA_CHANNEL)
+            .filter_map(|packet| serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(packet.data.0 .0).ok())
+            .filter_map(|payload| match payload.payload {
+                crate::schema::server_data::ServerDataPayloadV1::CombatEventFloater(floater) => {
+                    Some(floater)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            combat_payloads.iter().any(|floater| floater.events.iter().any(|event| {
+                event.outgoing && event.amount > 0.0
+            })),
+            "a real CombatEvent must produce a typed outgoing combat_event payload"
+        );
+
+        // Exercise the real movement systems with a forced movement request. The marker contract
+        // must preserve the exact authoritative position even if another production producer
+        // leaves a PendingKnockback on the entity.
+        let position_before_knockback = app.world().get::<Position>(target).unwrap().get();
+        app.world_mut().entity_mut(target).insert(PendingKnockback::from_distance(
+            DVec3::new(1.0, 0.0, 0.0),
+            6.0,
+            70.0,
+            3,
+        ));
+        for _ in 0..4 {
+            app.world_mut().run_schedule(FixedUpdate);
+            app.update();
+        }
+        assert_eq!(
+            app.world().get::<Position>(target).unwrap().get(),
+            position_before_knockback,
+            "real movement and navigator systems must not displace a passive target"
+        );
+        assert!(app.world().get::<PendingKnockback>(target).is_none());
+
+        // Make the second ordinary attack lethal and drive the complete NPC terminal path.
+        app.world_mut()
+            .resource_mut::<CombatClock>()
+            .tick = 111;
+        app.world_mut()
+            .get_mut::<Wounds>(target)
+            .expect("target remains alive before lethal attack")
+            .health_current = 1.0;
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let settlements = app
+            .world()
+            .resource::<Events<NpcTerminalSettlementSucceeded>>();
+        let settlement = settlements
+            .iter_current_update_events()
+            .find(|event| event.entity == target)
+            .expect("lethal real attack must complete the NPC terminal settlement");
+        assert_eq!(settlement.attacker, Some(attacker));
+        assert_eq!(
+            settlement.reason,
+            crate::npc::lifecycle::NpcDeathReason::Combat
+        );
+        assert!(
+            app.world().get_entity(target).is_none(),
+            "Valence Last schedule must physically despawn the terminal passive target"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

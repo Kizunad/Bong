@@ -34,6 +34,7 @@ use crate::combat::body_mass::BodyMass;
 use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
 use crate::combat::events::AttackSource;
 use crate::combat::knockback::KnockbackEvent;
+use crate::npc::scenario::PassiveTarget;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
     entity_collision, wall_collision, EntityCollisionInput, KnockbackResult, WallCollisionInput,
@@ -429,17 +430,24 @@ type StalePendingKnockbackFilter = (
     Without<Client>,
 );
 
+type PassivePendingKnockbackFilter = (With<PendingKnockback>, With<PassiveTarget>);
+
 fn apply_pending_knockback_system(
     mut commands: Commands,
-    mut controllable: Query<(
-        Entity,
-        &Position,
-        &PendingKnockback,
-        &mut MovementController,
-    )>,
+    mut controllable: Query<
+        (Entity, &Position, &PendingKnockback, &mut MovementController),
+        (With<MovementController>, Without<PassiveTarget>),
+    >,
+    passive_targets: Query<Entity, PassivePendingKnockbackFilter>,
     stale: Query<Entity, StalePendingKnockbackFilter>,
 ) {
-    // Apply knockback to entities that have a MovementController (NPCs).
+    // Passive scenario targets are damageable but deliberately have no forced movement.
+    // Remove the request at the production movement boundary so direct attack knockback
+    // and collision-chain knockback obey the same contract.
+    for entity in &passive_targets {
+        commands.entity(entity).remove::<PendingKnockback>();
+    }
+    // Apply knockback to other entities that have a MovementController (NPCs).
     for (entity, position, knockback, mut ctrl) in &mut controllable {
         activate_knockback(&mut ctrl, knockback, position.get().y);
         commands.entity(entity).remove::<PendingKnockback>();
@@ -492,6 +500,7 @@ fn movement_ability_tick_system(
                 Option<&BodyMass>,
                 Option<&mut Wounds>,
                 Option<&EntityLayerId>,
+                Option<&PassiveTarget>,
             ),
             With<NpcMarker>,
         >,
@@ -526,8 +535,14 @@ fn movement_ability_tick_system(
         body_mass,
         mut wounds,
         npc_layer,
+        passive_target,
     ) in &mut npcs.p0()
     {
+        if passive_target.is_some() {
+            ctrl.reset_to_ground();
+            continue;
+        }
+
         let mut layer = npc_layer.and_then(|layer_id| layers.get_mut(layer_id.0).ok());
         match &mut ctrl.mode {
             MovementMode::GroundNav => {
