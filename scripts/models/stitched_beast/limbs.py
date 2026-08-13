@@ -1,0 +1,656 @@
+#!/usr/bin/env python3
+"""异变缝合兽 —— 部件层·肢体：一条捡来的腿在这具身体上会长成什么样。
+
+**肢体的粗细不是画出来的，是称出来的。** 基因组只给了每条肢的**节段长度**和它是从
+哪只野兽身上拆的；那是死掉的供体留下的全部信息。剩下的一切——每一节多粗、怎么弯、
+脚掌多大、哪一段还看得出原主人——都由这具身体的重量和这条肢在站姿里的位置决定。
+
+推导链（每一步都能单独核验，见 `check_limbs.py`）：
+
+  ① **体重**从核心的实心体素数来（ρ=1000 kg/m³，肉的密度）。1.38 m³ → 1381 kg。
+  ② **每条肢分到多少载荷**由静力平衡解，不是按条数平摊。三点着地时竖直反力是
+     **静定**的（ΣF=W、绕两轴的力矩为零，三个未知数三个方程）；着地多于三只时取
+     最小范数解并把负反力（脚在往下拽地）逐轮剔除。结果是**离质心近的短肢扛大头**
+     （实测某只兽的 13 px 腹肢独扛 71%），而远远撑出去的长肢主要在维持平衡（26%）。
+     按 W/n 平摊会把这个反过来算。
+  ③ **支撑相内的峰值**再乘 π/2：一条肢的地面反力在自己的支撑相里是半个正弦，
+     均值必须等于②解出的准静态份额，于是峰值 = 均值 × π/2。这个因子是推出来的，
+     不是拍的安全余量。
+  ④ **姿态**由「够到 locomotion 解出的落点」唯一确定。整条链绕根部旋转是刚体运动，
+     不改变首尾距离，所以折叠量 φ 与朝向 θ₀ 可以分开解：先二分 φ 让链的首尾距离
+     等于 |髋−脚|，再一步算出 θ₀。弯的**方向**是供体的事实（兽腿膝前肘后、禽腿踝
+     反折、蛛足先抬后落），写在 `BEND` 里。
+  ⑤ **骨半径**取三条失效判据的上界：轴压屈服、欧拉屈曲、**弯曲**。实测弯曲永远
+     主导（另两条小一个数量级）——腿是被掰断的，不是被压扁的。力矩臂是该关节到
+     地面接触点的**水平**距离，所以站得越开、腿越粗。
+  ⑥ **肉的粗细**由肌肉截面给：抗重力肌必须产生 τ/a 的力，a 是肌肉力臂（取相邻较长
+     一节的 ARM_RATIO）。肌腹长在关节**近端**那一节上，更远的关节只有腱穿过——腱比
+     肌肉强两百倍，所以远端细。这就是腿为什么上粗下细，不是造型偏好。而根部那一节
+     还要额外背上**嫁接关节自己的肌肉**：脊椎动物把髋伸肌放在骨盆上，这东西的核心是
+     个没有骨架的肉囊，锚不住任何东西。肌腹粗不过它所在那一节长度的一半（再粗就不是
+     肌肉是个球），**装不下的那份只能长在体内**——蜘蛛的基节肌本来就在体腔里。
+  ⑦ **材质分界**同样是算的：一节的横截面里本体新长的肌腹与供体原有的骨+腱谁占多数，
+     外面就露谁。于是**脚永远是别人的**（那一节按定义没有肌腹），一眼看得出供体物种。
+  ⑧ **脚掌**面积 = 峰值载荷 / 地面承载力。载荷大的脚自然大。
+  ⑨ **不承重的肢**（触手 / 退化残肢 / 够不着地的）载荷为零，粗细改由**组织预算**定
+     （`core.graft_budget`，和芽同一份料）：同样一份料，36 px 的触手摊成一条细绳，
+     6.9 px 的残肢缩成一个肉疙瘩。垂下来的姿态分两种——有骨的自由铰在第一个关节硬折
+     后笔直垂下，无骨的软梁按悬臂自重挠度连续弯；垂到地面的就摊在地上拖着。
+
+**粗细跟"它原来多粗"完全无关**——供体的粗细信息一次都没进过公式。进公式的只有两样：
+它在这具身体的站姿里分到多少载荷（跟种类无关），和它的节长比例给出多大的肌肉杠杆
+（种类的事）。所以：
+
+  · 同一种类内部粗细差 2–4 倍（位置说了算）
+  · 但种类仍然解释了约一半的粗细方差（37 条肢实测 49%），因为杠杆比例是种类带来的
+
+最刺眼的一条由此掉出来：**蛛足要的肌肉这具身体给不起**。它的基节只有 2.5 px 长、肌肉
+力臂小得可怜，同时腿又最长、地面反力的力矩最大，算出来根部需求 9–19 px（兽腿只要
+4–9 px）。而肌腹粗不过基节长度的一半 ⇒ 96% 的驱动肌只能塞在体腔里。所以一条蛛足在
+外面看是**细的**，鼓起来的是它旁边那团核心。捡到蛛足是坏事，这是算出来的，不是设定的。
+
+用法:
+  python3 scripts/models/stitched_beast/limbs.py --seed 7
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE))
+
+import core as C  # noqa: E402
+import genome as GN  # noqa: E402
+import locomotion as LM  # noqa: E402
+
+# ---------------------------------------------------------------- 物性常数
+# 全部是**量出来的真实值**，不是可以拧的旋钮。改这里等于改物理，不是改风格。
+PX = 1.0 / 16.0            # 一像素多少米（16 px = 1 格 = 1 m）
+RHO = 1000.0               # 肉的密度 kg/m³（≈水）
+G = 9.81
+SIGMA_BONE = 170e6         # 皮质骨抗压/抗弯强度 Pa
+E_BONE = 18e9              # 皮质骨杨氏模量 Pa
+SIGMA_MUSCLE = 0.3e6       # 肌肉最大等长应力 Pa（生理横截面积 × 30 N/cm²）
+SIGMA_TENDON = 70e6        # 腱的工作应力 Pa
+SIGMA_SOFT = 0.5e6         # 无骨软组织（触手）的抗拉强度 Pa
+E_SOFT = 0.5e6             # 无骨软组织杨氏模量 Pa
+ARM_RATIO = 0.12           # 肌肉力臂 / 相邻较长一节的长度
+BEARING = 1.0e5            # 地面承载力 Pa（松散废土，≈松砂）
+PEAK_SHAPE = math.pi / 2   # 支撑相半正弦的峰值/均值比——推出来的，见模块 docstring ③
+SAFETY = 2.0               # 骨的安全系数。活体实测普遍 2–4（Biewener），这东西是
+                           # 捡来的废件拼的，取区间下沿
+
+# 关节弯折方向。这是**供体的解剖事实**，不是造型选择：兽腿膝向前肘向后所以逐节交替、
+# 禽腿的"反折膝"其实是踝、蛛足先把腿节抬到身体之上再落下去。
+# 数值是各关节在肢体平面内的折叠权重（正 = 向前进方向折）。
+BEND: dict[str, tuple[float, ...]] = {
+    "mammal": (1.0, -1.0, 1.0),
+    "bird": (-1.0, 1.0, -1.0),
+    "spider": (-1.6, 1.0, 0.4),
+    "tentacle": (1.0,) * 5,
+    "vestigial": (1.0,),
+}
+
+# 供体的体表。捡来的那截还看得出是从谁身上拆的——这是观察不是设计。
+DONOR_MAT: dict[str, str] = {
+    "spider": "chitin",
+    "mammal": "hide",
+    "bird": "scute",
+    "tentacle": "flesh_deep",
+    "vestigial": "necro",
+}
+
+LIMB_MATS: dict[str, tuple[int, int, int]] = {
+    "chitin": (48, 42, 46),      # 蛛甲：几乎黑，有蜡质高光
+    "hide": (86, 70, 58),        # 兽皮：脏褐
+    "scute": (122, 110, 78),     # 禽腿鳞片：土黄
+    "necro": (74, 68, 62),       # 干掉的残肢
+    "graft": (146, 116, 108),    # 本体长上去的新肉（比核心 flesh_pale 略红）
+    "graft_deep": (96, 72, 74),
+    "collar": (108, 64, 62),     # 根部癒合环
+}
+
+
+# ---------------------------------------------------------------- 体重与载荷
+def body_weight() -> float:
+    """这具身体的重量（N）。从核心的**实心**体素数来——表层壳算的是面积不是体积。"""
+    return len(C.solid_grid()) * C.VOX ** 3 * PX ** 3 * RHO * G
+
+
+def contact_forces(P: np.ndarray, com2: np.ndarray, W: float) -> np.ndarray:
+    """给定着地点与质心投影，解各脚的竖直反力（N）。
+
+    平衡方程只有三条（ΣR = W、绕 x 与 z 的力矩为零），所以三点着地是**静定**的，
+    多于三点是超静定，要另加一条准则。约束是硬的：**地面只能推不能拉**，R ≥ 0。
+
+    做法是枚举所有支撑子集，各自求最小范数解，取满足 R≥0 且平衡残差为零的解里范数
+    最小的那个（等价于 Lawson–Hanson 主动集，但脚数 ≤6 时直接枚举更短更不会错）。
+
+    不能用"先取全体最小范数解、见负就剔"的贪心：剔掉一只脚会改变支撑多边形，剩下
+    三点可能已经包不住质心，于是解出 111% 体重压在一条腿上这种不可能值（实测撞过）。
+    质心在全体着地点凸包内时非负解一定存在——存在性由 locomotion 的稳定余量保证。
+    """
+    n = len(P)
+    A = np.vstack([np.ones(n), P[:, 0] - com2[0], P[:, 1] - com2[1]])
+    b = np.array([W, 0.0, 0.0])
+    best: np.ndarray | None = None
+    for mask in range(1, 1 << n):
+        idx = [i for i in range(n) if mask >> i & 1]
+        if len(idx) < 3:
+            continue
+        r, *_ = np.linalg.lstsq(A[:, idx], b, rcond=None)
+        if r.min() < -1e-6 or np.linalg.norm(A[:, idx] @ r - b) > 1e-6 * W:
+            continue
+        R = np.zeros(n)
+        R[idx] = r
+        if best is None or np.linalg.norm(R) < np.linalg.norm(best):
+            best = R
+    if best is None:
+        raise ValueError("质心落在支撑多边形外：任何非负反力组合都撑不住")
+    return best
+
+
+def foot_loads(gait: LM.Gait, *, samples: int = 48) -> dict[str, float]:
+    """每条承重肢在整个步态周期里分到的**峰值**竖直载荷（N）。
+
+    这一步是整层的地基：按 W/条数 平摊会得到完全相反的结论。实测远远撑出去的长肢只
+    分到两三成，而缩在质心下面的短肢扛到八九成——**扛重的是短腿，长腿在扶着**。
+    """
+    W = body_weight()
+    com2 = np.array([gait.com[0], gait.com[2]])
+    peak = {lg.gene.socket: 0.0 for lg in gait.limbs}
+    for k in range(samples):
+        t = k / samples
+        on = [lg for lg in gait.limbs if lg.in_stance(t)]
+        if len(on) < 3:
+            continue
+        P = np.array([lg.foot_at(t) for lg in on])[:, [0, 2]]
+        R = contact_forces(P, com2, W)
+        for lg, f in zip(on, R):
+            s = lg.gene.socket
+            peak[s] = max(peak[s], float(f))
+    # 支撑相内不是恒力：半正弦的均值等于准静态份额 ⇒ 峰值 = 均值 × π/2
+    return {k: v * PEAK_SHAPE for k, v in peak.items()}
+
+
+# ---------------------------------------------------------------- 姿态
+def _chain(segs: tuple[float, ...], bends: np.ndarray) -> np.ndarray:
+    """链在自身平面里的各节端点（首节沿 −y，起点在原点）。bends 是各关节的**折角**。
+
+    整条绕根部转是刚体运动、不改变首尾距离——所以"折多少"和"朝哪"可以分开解，
+    调用方先用折角凑够首尾距离，再一步把整条转到目标方向上。
+    """
+    pts = [np.zeros(2)]
+    th = 0.0
+    for i, L in enumerate(segs):
+        if i > 0:
+            th += float(bends[i - 1])
+        pts.append(pts[-1] + L * np.array([math.sin(th), -math.cos(th)]))
+    return np.array(pts)
+
+
+def _spans(segs: np.ndarray, cw: np.ndarray, phis: np.ndarray) -> np.ndarray:
+    """一批折叠量各自对应的首尾距离。整批一次算完——这是姿态搜索里唯一的热点。"""
+    th = phis[:, None] * cw[None, :]
+    x = (segs * np.sin(th)).sum(axis=1)
+    y = (segs * np.cos(th)).sum(axis=1)
+    return np.hypot(x, y)
+
+
+def _fit_span(segs: tuple[float, ...], w: np.ndarray, target: float) -> np.ndarray | None:
+    """按权重 w 分配折角，求总折叠量使首尾距离等于 target。返回各关节折角。
+
+    **不能直接二分**：折角同号时首尾距离随折叠量单调收缩，但兽腿是交替折的（+−+），
+    Z 形链的首尾距离先缩后涨，二分会收到一个假根上去。所以先粗扫找第一个跨越点，
+    再在那一段里二分。找不到跨越点说明这个分配折不到位，返回 None。
+    """
+    S = np.asarray(segs, float)
+    cw = np.concatenate([[0.0], np.cumsum(w)])
+    grid = np.linspace(0.0, math.radians(170.0), 96)
+    span = _spans(S, cw, grid)
+    hit = np.nonzero((span[:-1] >= target) & (span[1:] < target))[0]
+    if not len(hit):
+        return None
+    lo, hi = grid[hit[0]], grid[hit[0] + 1]
+    for _ in range(30):
+        mid = 0.5 * (lo + hi)
+        if float(_spans(S, cw, np.array([mid]))[0]) > target:
+            lo = mid
+        else:
+            hi = mid
+    return w * (0.5 * (lo + hi))
+
+
+def _simplex(n: int, div: int = 8):
+    """n 维单纯形上的均匀格点（各分量非负、和为 1）——即把 div 拆成 n 份的所有整数组合。"""
+    def rec(k: int, rem: int):
+        if k == 1:
+            yield (rem,)
+            return
+        for i in range(rem + 1):
+            for rest in rec(k - 1, rem - i):
+                yield (i,) + rest
+
+    for comb in rec(n, div):
+        yield np.array(comb, float) / div
+
+
+def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
+               kind: str, clearance: list[float] | None = None
+               ) -> tuple[list[np.ndarray], bool]:
+    """站姿：**最省肌肉**的那个折法。世界坐标的各关节点。
+
+    "折到够着落点"有无穷多解——把折叠量摊给哪个关节是自由的。选哪一个不该我挑：
+    动物站着不动时采取的姿态是**让抗重力肌出力最小**的那个，因为那份力要一直出下去。
+    关节 j 要出的肌力正比于 d_j/a_j（d_j = 该关节到地面接触点的水平距离，a_j = 肌肉
+    力臂），所以目标函数就是 Σ d_j/a_j——**把关节尽量挪到载荷线上**。
+
+    这条判据同时管住了造型：先前用一组手挑的折叠权重（蛛足 −1.6/1/0.4 那种），折出来的
+    关节忽左忽右，肌肉截面跟着忽粗忽细，渲出来是一串珠子。改成最小化肌力之后关节自己
+    贴住载荷线，腿从根到梢顺着收——**上粗下细不是造型偏好，是省力的结果**。
+
+    `clearance` 是逐关节的**最低高度**：省力的解会把某个关节甩到地面以下（膝盖穿地，
+    实测蛛足深到 −8.5 px），那是数学上更省但物理上不存在的姿态。第一轮不知道肉多厚，
+    先只要求关节本身不低于地面；量出粗细后第二轮再要求"连肉都不许压进地里"。
+
+    留给供体的只剩**折的方向**（`BEND` 的符号）：兽腿膝前肘后所以逐节交替，禽腿的
+    "反折膝"其实是踝，蛛足先把腿节抬到身体之上再落下去。方向是解剖事实，幅度是算的。
+    """
+    d = foot - hip
+    horiz = np.array([d[0], 0.0, d[2]])
+    n = float(np.linalg.norm(horiz))
+    u = horiz / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
+    target = float(np.linalg.norm(d))
+    nj = max(1, len(segs) - 1)
+    signs = np.sign(np.array(BEND.get(kind, (1.0,) * nj)[:nj], float))
+    arm = np.array([ARM_RATIO * max(segs[j - 1], segs[j]) for j in range(1, len(segs))])
+    floor = np.array(clearance if clearance is not None else [0.0] * (len(segs) + 1))
+    want = math.atan2(n, max(-d[1], 1e-9))
+
+    def search(sg: np.ndarray, lift: float):
+        best, best_cost, slack = None, 1e18, None
+        for w in _simplex(nj):
+            bends = _fit_span(segs, w * sg, target)
+            if bends is None:
+                continue                 # 这个分配折不到位（全压在一个关节上时会这样）
+            P = _chain(segs, bends)
+            # 目标函数只需要**水平**距离，而整条即将被转到目标方向上，所以先转再量
+            rot = want - math.atan2(P[-1][0], -P[-1][1])
+            c, s = math.cos(rot), math.sin(rot)
+            x = c * P[:, 0] - s * P[:, 1]
+            y = hip[1] + s * P[:, 0] + c * P[:, 1]
+            cost = float((np.abs(x[1:-1] - x[-1]) / arm).sum())
+            if (y[:-1] < floor[:len(y) - 1] * lift - 1e-6).any():
+                if slack is None or cost < slack[2]:
+                    slack = (bends, rot, cost)   # 压地的兜底解，只在全无可行解时用
+                continue
+            if cost < best_cost:
+                best, best_cost = (bends, rot), cost
+        return best, best_cost, slack
+
+    # 净空**逐级放宽**：要求"连肉都不许压地"最理想，但腿蹲得深时可能一个候选都没有；
+    # 一刀切地判无解会退回那个膝盖插进地里的兜底姿态（实测 −7.2 px）。所以先要满净空，
+    # 不行就退到六成、三成，最后只要求关节本身不低于地面——尽量多留一点，而不是全丢。
+    best = slack = None
+    forced = False
+    for lift in (1.0, 0.6, 0.3, 0.0):
+        best, best_cost, sl = search(signs, lift)
+        slack = slack or sl
+        if best is not None:
+            break
+    if best is None:
+        # 供体自己的折法在这具身体上站不住（关节怎么摆都会戳进地里）。这条肢只能**按
+        # 不属于它的方式折**——捡来的部件装在不匹配的身体上本来就会这样。逐个试其它
+        # 折向，取仍然最省肌肉的那个。
+        for bits in range(1, 1 << nj):
+            alt = signs * np.array([-1.0 if bits >> i & 1 else 1.0 for i in range(nj)])
+            for lift in (1.0, 0.6, 0.3, 0.0):
+                cand, cost, sl = search(alt, lift)
+                slack = slack or sl
+                if cand is not None:
+                    if best is None or cost < best_cost:
+                        best, best_cost, forced = cand, cost, True
+                    break
+    if best is None:
+        best = (slack[0], slack[1]) if slack else (np.zeros(nj), want)
+        forced = True
+
+    P = _chain(segs, best[0])
+    c, s = math.cos(best[1]), math.sin(best[1])
+    pts = [hip + u * (c * p[0] - s * p[1]) + np.array([0.0, s * p[0] + c * p[1], 0.0])
+           for p in P]
+    return pts, forced
+
+
+def hang_pose(sock: C.Socket, segs: tuple[float, ...], radii: list[float],
+              *, jointed: bool) -> list[np.ndarray]:
+    """不承重的肢：从挂载点沿法向长出来，然后被自己的重量拽下去。
+
+    **根部那一节的朝向不是自由的**——芽就是沿挂载点法向长出去的，那道癒合把它焊死在
+    这个角度上。往下才轮到重力说话，而重力怎么说取决于这条肢里有没有关节：
+
+    · **有关节的**（捡来的腿萎缩了、或够不着地被踢出承重集）：关节没有肌肉张力就是个
+      自由铰，自由铰链在重力下的平衡姿态是**每一节都指着正下方**。所以它像提线木偶
+      一样，在第一个关节处硬折一下，然后笔直垂下去。这不是近似，是零刚度铰链的精确解。
+    · **无骨的**（触手）：它是一根连续的软梁，没有铰，弯要靠自身抗弯刚度扛。等截面
+      悬臂自重端部转角 θ = wL³/(6EI)，代入 w = ρgπr²、I = πr⁴/4 得
+      **θ = 2ρgL³/(3Er²)** —— 只跟长度与粗细有关。长而细的算出来远超 90°（小挠度理论
+      在这里已经失效，钳到竖直：它就是整条垂下去了），短而粗的只有十几度、几乎还翘着。
+
+    于是"死腿硬折、触手软垂"这两种读法不用分别造型，是两种组织结构各自的平衡解。
+    """
+    d = np.array([0.0, -1.0, 0.0])
+    out = [np.asarray(sock.pos, float)]
+    dirv = np.asarray(sock.normal, float).copy()
+    for i, (L, r) in enumerate(zip(segs, radii)):
+        if i > 0:
+            if jointed:
+                dirv = d.copy()
+            else:
+                Lm, rm = L * PX, max(r * PX, 1e-4)
+                th = 2.0 * RHO * G * Lm ** 3 / (3.0 * E_SOFT * rm * rm)
+                cur = math.acos(float(np.clip(np.dot(dirv, d), -1.0, 1.0)))
+                th = min(th, cur)          # 转不过"已经指着正下方"
+                axis = np.cross(dirv, d)
+                na = float(np.linalg.norm(axis))
+                if na > 1e-9 and th > 1e-6:
+                    dirv = C.axis_angle(axis / na, th) @ dirv
+                    dirv /= max(float(np.linalg.norm(dirv)), 1e-9)
+        # 垂下去会撞上自己的身体：背上、肩上那些槽的法向是朝上的，一节沿法向长出去、
+        # 后面直接垂下来，就会从核心里穿过去（实测 vest_dl 的第 2 个关节 f=1.02，埋在
+        # 肉里）。真实的答案不是穿过去也不是停住，是**贴着身体滑下去**——所以撞到就把
+        # 朝向往外法向掰一点重试，节长不变。
+        nxt = out[-1] + dirv * L
+        for _ in range(12):
+            if C.fld(nxt - C.CORE_CENTER) < C.ISO:
+                break
+            g = -C.grad(nxt - C.CORE_CENTER)
+            g = g / max(float(np.linalg.norm(g)), 1e-9)
+            dirv = dirv + 0.6 * g
+            dirv /= max(float(np.linalg.norm(dirv)), 1e-9)
+            nxt = out[-1] + dirv * L
+
+        # 垂到地面就**摊在地上**：地面撑住了它，这一节之后只能沿地面铺开（长触手拖在
+        # 地上是这么来的，不是造型）。铺的方向取当前朝向的水平分量；正垂直下来时没有
+        # 水平分量，用挂载点法向的水平分量代替——那是它长出来的方向。
+        if nxt[1] < r:
+            flat = np.array([dirv[0], 0.0, dirv[2]])
+            if float(np.linalg.norm(flat)) < 1e-6:
+                flat = np.array([sock.normal[0], 0.0, sock.normal[2]])
+            if float(np.linalg.norm(flat)) < 1e-6:
+                flat = np.array([1.0, 0.0, 0.0])
+            dirv = flat / float(np.linalg.norm(flat))
+            nxt = np.array([out[-1][0], r, out[-1][2]]) + dirv * L
+        out.append(nxt)
+    return out
+
+
+# ---------------------------------------------------------------- 截面
+def bone_radius(L_px: float, arm_px: float, F: float) -> tuple[float, tuple[float, ...]]:
+    """一节骨该多粗（px），取三条失效判据的上界。
+
+    · 轴压屈服 r = √(F/πσ)
+    · 欧拉屈曲 r = (4k²L²F/π³E)^(1/4)（两端铰接 k=1）
+    · **弯曲** r = (4Fa/πσ)^(1/3)，a = 该关节到地面接触点的水平距离
+
+    实测第三条永远主导，另两条小一个数量级——四足动物的腿是被掰断的，不是被压扁的。
+    """
+    if F <= 0.0:
+        return 0.0, (0.0, 0.0, 0.0)
+    Fs = F * SAFETY
+    Lm, am = L_px * PX, arm_px * PX
+    ax = math.sqrt(Fs / (math.pi * SIGMA_BONE))
+    bk = (4.0 * Lm * Lm * Fs / (math.pi ** 3 * E_BONE)) ** 0.25
+    bd = (4.0 * Fs * am / (math.pi * SIGMA_BONE)) ** (1.0 / 3.0)
+    return max(ax, bk, bd) / PX, (ax / PX, bk / PX, bd / PX)
+
+
+def budget_radii(segs: tuple[float, ...], budget: float, girth: float) -> list[float]:
+    """不承重的肢的粗细：**有多少料就多粗**，形状由自重弯矩收细。
+
+    强度在这里根本不是约束——闲肢只要扛住自己，按强度反推出来的半径不到十分之一像素
+    （初版实测全部算成 0.00）。决定一条闲肢多粗的是**这具身体愿意在它身上放多少肉**，
+    而那个量已经在核心层推过了：`core.graft_budget` = 同时能持有的未分化组织，等于
+    一条部件的用料（正典"一次一条、每条七日"反推的）。芽用的是同一份预算，闲肢就是
+    芽长歪了的结果，用同一份是自洽的。
+
+    于是**长度反过来决定粗细**：同样一份料，36 px 的触手摊成 2.0 px 半径的一条绳，
+    6.9 px 的退化残肢缩成 4.6 px 半径的一个肉疙瘩。"触手细、残肢粗"不用分别造型。
+
+    形状仍是推的：第 i 节根部承的弯矩 = 它以远所有肉的重量 × 力臂（按水平甩出去的最坏
+    姿态算，乱抽正是这么甩的），抗弯所需半径 ∝ M^{1/3}；均匀杆 M ∝ 剩余长度²，于是
+    r ∝ 剩余长度^{2/3}，梢部收成尖而不是一根等粗的棍。比例与绝对粗细无关（M ∝ r²
+    同倍缩放），所以先迭代出形状再一次性缩放到预算体积。
+
+    根部封顶在 girth：挂载面接不下更粗的东西（`core._girth` 量的就是这个），多出来的
+    料就留在体内没长出去。
+    """
+    n = len(segs)
+    shape = [1.0] * n
+    for _ in range(6):
+        M = []
+        for i in range(n):
+            m, arm = 0.0, 0.0
+            for k in range(i, n):
+                Lk = segs[k]
+                m += shape[k] ** 2 * Lk * (arm + 0.5 * Lk)
+                arm += Lk
+            M.append(m)
+        shape = [(M[i] / M[0]) ** (1.0 / 3.0) if M[0] > 0 else 1.0 for i in range(n)]
+    vol = sum(math.pi * shape[i] ** 2 * segs[i] for i in range(n))
+    k = math.sqrt(budget / vol) if vol > 0 else 1.0
+    k = min(k, girth / max(shape[0], 1e-9))
+    return [s * k for s in shape]
+
+
+# ---------------------------------------------------------------- 一条肢
+@dataclass
+class Limb:
+    gene: GN.LimbGene
+    sock: C.Socket
+    load: float                     # 峰值竖直载荷 N（0 = 不承重）
+    joints: list[np.ndarray]        # 各关节世界坐标，[0]=髋，[-1]=尖/脚
+    radius: list[float]             # 每节的可见半径 px
+    bone_r: list[float]             # 每节的骨半径 px
+    muscle: list[float]             # 每节的肌肉截面 m²
+    arms: list[float]               # 每个关节到地面接触点的水平距离 px（= 地面反力的力臂）
+    mats: list[str]                 # 每节的材质
+    forced: bool                    # 供体自己的折法在这具身体上站不住，被迫改折向
+    weld_r: float                   # 接合痕半径 px（剪切传力所需，从来不是瓶颈）
+    root_need: float                # 根部**需要**的半径（未被 girth 钳过），自检用
+    pad: tuple[float, float]        # 脚掌 (半宽 px, 半长 px)；不承重为 (0,0)
+
+    @property
+    def name(self) -> str:
+        return self.sock.name
+
+    @property
+    def bearing(self) -> bool:
+        return self.load > 0.0
+
+    @property
+    def length(self) -> float:
+        return sum(float(np.linalg.norm(b - a))
+                   for a, b in zip(self.joints, self.joints[1:]))
+
+    @property
+    def root_r(self) -> float:
+        return self.radius[0]
+
+    @property
+    def tip(self) -> np.ndarray:
+        return self.joints[-1]
+
+    @property
+    def buried(self) -> float:
+        """根部肌肉里**装不下、只能长在体内**的那一份（占需求的比例）。
+
+        蛛足这类基节极短的肢，这个数会很高——它的驱动肌本来就在体腔里，不在腿上。
+        """
+        return max(0.0, 1.0 - self.radius[0] ** 2 / max(self.root_need ** 2, 1e-9))
+
+    @property
+    def arm1(self) -> float:
+        """根部那一节要抗的力矩臂——决定根部粗细的就是它乘载荷。"""
+        return self.arms[1] if len(self.arms) > 1 else 0.0
+
+
+def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
+               foot: np.ndarray | None = None, ride: float = 0.0) -> Limb:
+    """一条肢的完整几何。承重的按落点解站姿，其余的垂下来。"""
+    segs = gene.segments
+    n = len(segs)
+    boneless = gene.kind == "tentacle"
+
+    if load > 0.0 and foot is not None:
+        hip = sock.pos.copy()
+        hip[1] += ride
+        # 两轮：第一轮只禁止关节本身穿地，量出粗细后第二轮连肉一起禁（见 stand_pose）
+        clear: list[float] | None = None
+        forced = False
+        for _ in range(3):
+            joints, forced = stand_pose(hip, np.asarray(foot, float), segs,
+                                        gene.kind, clear)
+            ground = joints[-1]
+            # 力臂 = 该关节到地面接触点的水平距离
+            arms = [float(np.hypot(*(ground - p)[[0, 2]])) for p in joints]
+            bone_r = [bone_radius(segs[i], arms[i], load)[0] for i in range(n)]
+
+            # 肌肉：关节 j 的肌腹长在第 j−1 节上，更远的关节只有腱穿过（腱强两百倍
+            # ⇒ 远端细）。**根部那一节还要额外背上嫁接关节（j=0）自己的肌肉**：脊椎
+            # 动物把髋伸肌的肌腹放在骨盆上，而这东西的核心是个没有骨架的肉囊，锚不住
+            # 任何东西——驱动那道接合的肌肉只能长在肢这一侧。腿根鼓成一坨是这么来的。
+            #
+            # 这里**不乘安全系数**：安全系数是防结构断裂的，而肌肉不会"断"——它只是
+            # 出不出得了那么大力。要多少力就得长多少肌肉，没有余量一说。
+            muscle, sinew = [], []
+            for i in range(n):
+                A = B = 0.0
+                for j in ([0] if i == 0 else []) + list(range(i + 1, n)):
+                    tau = load * arms[j] * PX
+                    a = ARM_RATIO * max(segs[max(j - 1, 0)], segs[min(j, n - 1)]) * PX
+                    if j <= i + 1:
+                        A += tau / (a * SIGMA_MUSCLE)      # 长在这一节上的肌腹
+                    else:
+                        B += tau / (a * SIGMA_TENDON)      # 只是穿过去的腱
+                muscle.append(A)
+                sinew.append(B)
+            radius = [math.sqrt((bone_r[i] * PX) ** 2
+                                + (muscle[i] + sinew[i]) / math.pi) / PX
+                      for i in range(n)]
+            # 净空要**几何上可能**：越靠近脚的关节，离地高度天然受限于它到脚尖还剩多长
+            # 链。照搬半径会要求一个 2.2 px 长的末节把踝抬到 3.0 px 高——无解，于是所有
+            # 候选被否、退回那个穿地的兜底解（实测蛛足关节深到 −7.3 px）。
+            rest = np.cumsum(list(segs)[::-1])[::-1]
+            clear = [min(max(radius[max(i - 1, 0)], radius[min(i, n - 1)]), float(rest[i]))
+                     for i in range(n)] + [0.0]     # 脚就是要落在地上
+        # 脚掌：面积 = 载荷 / 地面承载力。踩不住就陷进灰里
+        side = math.sqrt(load / BEARING) / PX
+        pad = (side * 0.5, side * 0.62)
+    else:
+        arms = [0.0] * (n + 1)
+        sinew = [0.0] * n
+        forced = False
+        radius = budget_radii(segs, C.graft_budget(), sock.girth)
+        # 无骨的（触手）里没有硬芯；有骨的闲肢里那根骨还在，只是外面的肌肉萎缩掉了
+        bone_r = [0.0] * n if boneless else [r * 0.35 for r in radius]
+        muscle = [0.0] * n
+        joints = hang_pose(sock, segs, radius, jointed=not boneless)
+        pad = (0.0, 0.0)
+
+    # 材质分界是**算出来的**：一节的横截面里，本体长上去的新肉（肌腹）与供体原有的
+    # 组织（骨 + 只是穿过去的腱）谁占多数，外面就露谁。近端全是新长的肌腹 ⇒ 一片本体
+    # 的肉色；越往远端肌腹越少、只剩腱和骨 ⇒ 露出供体自己的皮/甲/鳞。
+    #
+    # 于是**脚永远是别人的**——那一节按定义没有肌腹。玩家看得出这条腿是从哪种野兽
+    # 身上拆的，靠的就是脚那一截，而不是靠整条腿刷成一个颜色。
+    donor = DONOR_MAT.get(gene.kind, "hide")
+    mats = []
+    for i in range(n):
+        own = muscle[i]
+        theirs = sinew[i] + math.pi * (bone_r[i] * PX) ** 2
+        mats.append("graft" if own > theirs else donor)
+
+    # 肌腹粗不过它所在那一节长。**先前写成"超过挂载面 girth 就长一圈癒合环把载荷摊
+    # 开"是错的**：肌肉根本不从接合面里穿过去，它堆在体外，接合面只负责传力（传力需要
+    # 的面积由剪切给出，见 weld_r，只有一两像素）。按那个错模型渲出来是几块半径 9 px
+    # 的板贴在身上，侧视图里整个剪影都被吃掉了。
+    #
+    # 真正的界限是解剖比例：一段肌腹的粗细不会超过它所附着那一节长度的一半，再粗就
+    # 不是肌肉是个球了。**装不下的那部分只能长在体内**——蜘蛛驱动基节的肌肉本来就在
+    # 体腔里，不在腿上。于是短基节的蛛足根部反而是细的，鼓起来的是它旁边那团核心；
+    # 长股骨的兽腿则真的有一条看得见的粗大腿。这条同时解释了两种腿看起来为什么不一样。
+    need = radius[0]
+    radius = [min(r, 0.5 * segs[i]) for i, r in enumerate(radius)]
+    # 接合面传力靠剪切，需要的面积 A = F/σ：软组织 0.5 MPa 下只要一两像素半径，
+    # 所以**接合从来不是瓶颈**，它只是皮上一圈看得见的痕。
+    weld_r = math.sqrt((bone_r[0] * PX) ** 2 + load / (math.pi * SIGMA_SOFT)) / PX
+    weld_r = max(weld_r, 0.6)
+    return Limb(gene, sock, load, joints, radius, bone_r, muscle, arms, mats,
+                forced, weld_r, need, pad)
+
+
+def build(seed: int, *, socks: dict[str, C.Socket] | None = None
+          ) -> tuple[GN.Genome, LM.Gait, dict[str, Limb]]:
+    """一只站得住的兽的全部肢体几何。"""
+    socks = socks or C.sockets()
+    gen, gait = LM.sample_standing(seed, socks=socks)
+    loads = foot_loads(gait)
+    feet = {lg.gene.socket: lg.foot for lg in gait.limbs}
+    out: dict[str, Limb] = {}
+    for gene in gen.limbs:
+        out[gene.socket] = solve_limb(
+            gene, socks[gene.socket],
+            load=loads.get(gene.socket, 0.0),
+            foot=feet.get(gene.socket),
+            ride=gait.ride,
+        )
+    return gen, gait, out
+
+
+def report_table(limbs: dict[str, Limb], W: float) -> str:
+    """逐肢一行。载荷那一列是**支撑相峰值**，除以体重可以大于 100%——半正弦的峰值
+    高过均值，而均值才是准静态份额（见 PEAK_SHAPE）。"""
+    rows = [f"  {'槽':<10}{'类型':<10}{'供体':<11}{'总长':>6}{'峰值N':>8}{'/体重':>7}"
+            f"{'根粗':>6}{'梢粗':>6}{'接合痕':>7}{'埋在体内':>9}{'脚掌':>9}  材质"]
+    for lb in sorted(limbs.values(), key=lambda x: -x.load):
+        pad = f"{lb.pad[0] * 2:.1f}×{lb.pad[1] * 2:.1f}" if lb.bearing else "—"
+        col = f"{lb.weld_r:.1f}" if lb.weld_r else "—"
+        rows.append(f"  {lb.name:<10}{lb.gene.kind:<10}{lb.gene.source:<11}"
+                    f"{lb.gene.length:>6.1f}{lb.load:>8.0f}{lb.load / W * 100:>6.0f}%"
+                    f"{lb.radius[0]:>6.2f}{lb.radius[-1]:>6.2f}{col:>7}"
+                    f"{lb.buried:>8.0%}{pad:>9}"
+                    f"  {'/'.join(lb.mats)}{'  ← 被迫改折向' if lb.forced else ''}")
+    return "\n".join(rows)
+
+
+def report(seed: int) -> str:
+    _gen, gait, limbs = build(seed)
+    W = body_weight()
+    head = (f"肢体 seed={seed}   体重 {W:.0f} N（{W / G:.0f} kg）  "
+            f"骑乘 {gait.ride:+.1f} px")
+    return head + "\n" + report_table(limbs, W)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--count", type=int, default=3)
+    args = ap.parse_args()
+    seeds = [args.seed] if args.seed is not None else list(range(1, args.count + 1))
+    for s in seeds:
+        print(report(s))
+        print()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

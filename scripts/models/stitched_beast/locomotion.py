@@ -88,6 +88,8 @@ RIDE_CLEAR = 3.0          # 骑乘高度下限留给髋的离地余量；上限�
 RIDE_UP = 6.0             # 骑乘高度上限（相对核心设计高度）
 SAMPLES = 48              # 稳定性采样点数
 PHASE_GRID = 16           # 相位候选格点数；SAMPLES 必须是它的整数倍（相位平移 = 数组滚动）
+MARGIN_OK = 0.5           # 认定"站得住"的稳定余量下限（px）。solve 用它决定要不要把
+                          # 落点放回可达极限，sample_standing 用它筛个体——同一个门槛
 
 
 # ---------------------------------------------------------------- 摆动频率
@@ -356,6 +358,39 @@ def feasible(limbs: list[LimbGait], com2: np.ndarray) -> float:
     return support_margin(feet, com2)
 
 
+def stance_radius(lg: LimbGait) -> float:
+    """中立落点离髋的**水平**距离。
+
+    取「舒适伸展度」那个距离，不是可达极限。`solve_ride_height` 通篇在把髋高/有效肢长
+    往 COMFORT 上凑，落点却推到 reach（= 伸展度 100%），两处对同一个词的用法是矛盾的。
+
+    撑到极限的代价不在这一层，在部件层：地面反力对每个关节的力矩正比于该关节到落点的
+    **水平**距离，而肌肉力臂只有节长的一成，于是肌肉截面按这个距离线性放大。实测撑到
+    可达极限时根部要粗到挂载面的两倍，收到舒适伸展度只要六成。
+
+    收窄**不换稳定性**——实测把落点收到极限的一半，全周期最小余量从 +3.26 只掉到
+    +3.13（seed 3 反而从 +0.52 涨到 +0.66）：支撑多边形是绕各自的髋收缩的，质心本来就
+    在中间，收缩不会把它挤出去。所以这是净赚。真掉了余量的个体由 `place_feet` 放回去。
+
+    下限来自摆动：脚要沿 z 走 ±excursion/2，整段都得留在可达球内，于是
+    r² ≤ reach² − (excursion/2)²。
+    """
+    h = float(lg.hip[1])
+    eff = lg.gene.length * EXTEND
+    want = max(COMFORT * eff, h)          # 比舒适还短就不必再收——腿已经够不着了
+    r = math.sqrt(max(0.0, want * want - h * h))
+    cap = math.sqrt(max(0.0, lg.reach ** 2 - (0.5 * lg.excursion) ** 2))
+    return min(r, cap)
+
+
+def place_feet(limbs: list[LimbGait], k: float) -> None:
+    """按 k 摆中立落点：0 = 舒适伸展度（见 `stance_radius`），1 = 可达极限。"""
+    for lg in limbs:
+        r0 = stance_radius(lg)
+        lg.foot = (np.array([lg.hip[0], 0.0, lg.hip[2]])
+                   + lg.out_dir * (r0 + (lg.reach - r0) * k))
+
+
 def optimize_phases(limbs: list[LimbGait], com2: np.ndarray, *, seed: int,
                     restarts: int = 8, sweeps: int = 3) -> tuple[float, int]:
     """求相位。随机重启 + 逐肢坐标下降——相位空间小（每肢一维、周期性），不需要更重的方法。
@@ -428,7 +463,6 @@ def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None,
         lg.steps = int(np.clip(round(lg.hz / body_hz), 1, 4))
         # 步数多的肢单步时间短，占空比给低些；步数少的要长时间撑着
         lg.duty = float(np.clip(0.80 - 0.06 * (lg.steps - 1), 0.55, 0.85))
-        # 中立落点：髋垂直投到地面，再沿水平外展方向推出可达半径
         lg.foot = np.array([lg.hip[0], 0.0, lg.hip[2]]) + lg.out_dir * lg.reach
 
     # 速度取各肢"自己舒服的速度"的**中位数**，再让跟不上的肢碎步追。迭代两轮即收敛：
@@ -450,10 +484,27 @@ def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None,
 
     # 拖行的肢不提供支撑：它没在踩地，是被拽着蹭过去的
     limbs = [lg for lg in limbs if not lg.dragged]
-    if feasible(limbs, com2) <= 0.0:
-        raise ValueError("全脚着地都包不住质心，任何相位都站不住")
 
-    margin, fewest = optimize_phases(limbs, com2, seed=g.seed)
+    # 中立落点先收到舒适伸展度（省下部件层一半的肢体粗细，见 stance_radius），够稳就
+    # 收工；不够稳再放回可达极限重解一次相位，取好的那个。判据必须是**相位优化之后**
+    # 的余量：feasible 是全着地的上界，收窄可能保住上界却在摆动相塌掉（实测 seed 12
+    # 就是这么从"能站"变成"站不住"的）。
+    best: tuple | None = None
+    for k in (0.0, 1.0):
+        place_feet(limbs, k)
+        if feasible(limbs, com2) <= 0.0:
+            continue
+        m, few = optimize_phases(limbs, com2, seed=g.seed)
+        if best is None or m > best[0]:
+            best = (m, few, k, [lg.phase for lg in limbs])
+        if m >= MARGIN_OK:
+            break
+    if best is None:
+        raise ValueError("全脚着地都包不住质心，任何相位都站不住")
+    margin, fewest, k, phases = best
+    place_feet(limbs, k)
+    for lg, ph in zip(limbs, phases):
+        lg.phase = ph
     return Gait(g, tuple(limbs), com, ride, body_hz, speed, margin, fewest)
 
 
@@ -472,7 +523,7 @@ def sample_standing(seed: int, *, tries: int = 60,
             gait = solve(g, socks)
         except ValueError:
             continue
-        if gait.margin > 0.5 and gait.min_support >= MIN_SUPPORT:
+        if gait.margin > MARGIN_OK and gait.min_support >= MIN_SUPPORT:
             return g, gait
     raise ValueError(f"seed={seed} 试了 {tries} 次没采到站得住的配置")
 
