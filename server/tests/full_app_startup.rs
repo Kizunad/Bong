@@ -90,7 +90,7 @@ fn full_app_startup_smoke_initializes_core_resources_and_ticks_once() {
 }
 
 #[test]
-fn full_app_startup_smoke_accepts_data_only_technique_extension() {
+fn full_app_startup_smoke_rejects_consumerless_direct_generic_extension() {
     let assets_root = copied_assets_root("technique-extension");
     let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
     let mut techniques =
@@ -99,7 +99,7 @@ fn full_app_startup_smoke_accepts_data_only_technique_extension() {
         r#"
 
 [[techniques]]
-id = "test.data_only_startup_smoke"
+id = "test.consumerless_direct_generic_startup_smoke"
 display_name = "数据扩展探针"
 grade = "common"
 description = "仅由 TOML 增加，用于证明完整 App 启动不钉死历史功法集合。"
@@ -121,7 +121,18 @@ dispatch = "direct_generic"
     let output = run_full_app_startup(&assets_root);
     fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
 
-    assert_startup_succeeds(&output);
+    assert!(
+        !output.status.success(),
+        "consumerless direct_generic metadata must fail full startup; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("test.consumerless_direct_generic_startup_smoke")
+            && stderr.contains("no registered completion consumer"),
+        "startup failure must identify the consumerless technique and contract; stderr:\n{stderr}"
+    );
 }
 
 #[test]

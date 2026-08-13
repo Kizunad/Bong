@@ -84,7 +84,7 @@ cooldown_ticks = 40
 range = 2.8
 icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
 category = "attack"
-dispatch = "direct_generic"
+dispatch = "dedicated_input"
 
 [[techniques]]
 id = "shield_block"
@@ -101,7 +101,7 @@ cooldown_ticks = 0
 range = 0.0
 icon_texture = "bong-client:textures/gui/items/skill_scroll_shield_block.png"
 category = "defense"
-dispatch = "direct_generic"
+dispatch = "dedicated_input"
 
 [[techniques]]
 id = "burst_meridian.beng_quan"

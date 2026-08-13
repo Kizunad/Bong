@@ -4,7 +4,8 @@ pub mod spawn_selector;
 pub mod state;
 
 use self::state::{
-    canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
+    canonical_player_id, load_player_slices_with_technique_registry, save_player_core_slice,
+    save_player_inventory_slice,
     save_player_known_techniques_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
     save_player_slices_with_coffin, save_player_slow_slice, LoadedKnownTechniques, PlayerState,
@@ -19,7 +20,9 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
-use crate::cultivation::known_techniques::{KnownTechniques, KnownTechniquesLoadFailed};
+use crate::cultivation::known_techniques::{
+    KnownTechniques, KnownTechniquesLoadFailed, TechniqueRegistry,
+};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -214,6 +217,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
     dimension_layers: Option<Res<DimensionLayers>>,
     mut skill_config_store: Option<ResMut<SkillConfigStore>>,
     skill_config_schemas: Option<Res<SkillConfigSchemas>>,
+    technique_registry: Option<Res<TechniqueRegistry>>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -229,7 +233,11 @@ pub(crate) fn attach_player_state_to_joined_clients(
         flags,
     ) in &mut joined_clients
     {
-        let persisted = load_player_slices(&persistence, username.0.as_str());
+        let persisted = load_player_slices_with_technique_registry(
+            &persistence,
+            username.0.as_str(),
+            technique_registry.as_deref(),
+        );
         let restored_inventory = persisted.inventory.is_some();
         let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
@@ -1908,6 +1916,50 @@ mod tests {
             (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.58).abs() < 1e-6,
             "新玩家会话内的功法变更应照常经 Changed flush 落盘"
         );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn fresh_player_join_uses_the_injected_registry_for_feature_gated_grants() {
+        let (persistence, data_dir, _db_path) =
+            sqlite_persistence("known-techniques-registry-aware-join");
+        crate::player::state::save_player_state(
+            &persistence,
+            "Azure",
+            &PlayerState::default(),
+        )
+        .expect("baseline player state should persist without creating a techniques row");
+        let registry = TechniqueRegistry::load_for_tests();
+        let expected_dev = KnownTechniques::dev_default(&registry);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(registry);
+        app.add_systems(Update, attach_player_state_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        app.update();
+
+        let actual = app
+            .world()
+            .get::<KnownTechniques>(entity)
+            .expect("join must attach KnownTechniques");
+        #[cfg(feature = "dev-techniques")]
+        assert_eq!(
+            actual, &expected_dev,
+            "dev-techniques fresh-player grant must use the injected runtime registry"
+        );
+        #[cfg(not(feature = "dev-techniques"))]
+        {
+            let _ = expected_dev;
+            assert_eq!(
+                actual,
+                &KnownTechniques::default(),
+                "normal builds must keep fresh-player grants disabled"
+            );
+        }
 
         let _ = fs::remove_dir_all(&data_dir);
     }

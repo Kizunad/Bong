@@ -16,6 +16,7 @@ use crate::body_plan::{RaceGateOwned, RaceRegistry};
 use crate::cultivation::components::Realm;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::SkillRegistry;
+use crate::qi_physics::constants::QI_EPSILON;
 
 /// 相对 server assets 根目录的功法 metadata 文件。
 pub const DEFAULT_TECHNIQUES_PATH: &str = "assets/cultivation/techniques.toml";
@@ -68,13 +69,15 @@ pub enum SkillCategory {
     Defense,
 }
 
-/// metadata 与 resolver 的接线分类。`MetadataBacked` 由 `SkillRegistry` resolver
-/// 执行；`DirectGeneric` 则走通用 skill-bar cast 生命周期。
+/// metadata 与执行入口的接线分类。`MetadataBacked` 由 `SkillRegistry` resolver
+/// 执行；`DirectGeneric` 走通用 skill-bar cast 生命周期且必须登记自然完成消费者；
+/// `DedicatedInput` 由独立 C2S intent 驱动，禁止绑定或施放到 skill bar。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TechniqueDispatch {
     MetadataBacked,
     DirectGeneric,
+    DedicatedInput,
 }
 
 /// 运行时 owned metadata。所有字符串与经脉列表均来自启动期 TOML，不能借用临时解析缓冲区。
@@ -375,6 +378,16 @@ fn validate_and_convert(
             ));
         }
     }
+    if raw.qi_cost != 0.0 && f64::from(raw.qi_cost) <= QI_EPSILON {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "qi_cost must be exactly zero or greater than QI_EPSILON ({QI_EPSILON}), got {}",
+                raw.qi_cost
+            ),
+        ));
+    }
 
     let mut seen_meridians = HashSet::new();
     let mut required_meridians = Vec::with_capacity(raw.required_meridians.len());
@@ -537,6 +550,29 @@ pub fn validate_startup_wiring(
                         definition.id
                     )));
                 }
+                if !crate::network::cast_emit::has_direct_generic_completion_consumer(
+                    &definition.id,
+                ) {
+                    return Err(TechniqueWiringError(format!(
+                        "direct_generic technique {:?} has no registered completion consumer",
+                        definition.id
+                    )));
+                }
+            }
+            TechniqueDispatch::DedicatedInput => {
+                if skills.lookup(&definition.id).is_some() {
+                    return Err(TechniqueWiringError(format!(
+                        "dedicated_input technique {:?} unexpectedly has a SkillRegistry resolver",
+                        definition.id
+                    )));
+                }
+                if crate::network::cast_emit::has_direct_generic_completion_consumer(&definition.id)
+                {
+                    return Err(TechniqueWiringError(format!(
+                        "dedicated_input technique {:?} unexpectedly has a generic completion consumer",
+                        definition.id
+                    )));
+                }
             }
         }
     }
@@ -614,7 +650,7 @@ dispatch = "metadata_backed"
             "new metadata may be inserted, but historical entries must retain relative order"
         );
 
-        let historical_direct_generic = ["movement.dash", "shield_block", "body.guangbo_ticao"];
+        let historical_dedicated_input = ["movement.dash", "shield_block"];
         for legacy in LEGACY_TECHNIQUE_DEFINITIONS {
             let actual = registry
                 .get(legacy.id)
@@ -703,7 +739,9 @@ dispatch = "metadata_backed"
                     legacy.id
                 );
             }
-            let expected_dispatch = if historical_direct_generic.contains(&legacy.id) {
+            let expected_dispatch = if historical_dedicated_input.contains(&legacy.id) {
+                TechniqueDispatch::DedicatedInput
+            } else if legacy.id == "body.guangbo_ticao" {
                 TechniqueDispatch::DirectGeneric
             } else {
                 TechniqueDispatch::MetadataBacked
@@ -881,21 +919,59 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn arbitrary_direct_generic_metadata_is_data_owned() {
-        let registry = load(&minimal_toml().replace(
+    fn qi_cost_accepts_only_exact_zero_or_values_above_epsilon() {
+        let zero = load(&minimal_toml()).expect("exact zero is a legal free technique");
+        assert_eq!(zero.get("test.skill").unwrap().qi_cost, 0.0);
+
+        let at = QI_EPSILON as f32;
+        let below = f32::from_bits(at.to_bits() - 1);
+        let above = f32::from_bits(at.to_bits() + 1);
+        for (label, value) in [("below", below), ("at", at)] {
+            let error = load(&minimal_toml().replace(
+                "qi_cost = 0.0",
+                &format!("qi_cost = {value}"),
+            ))
+            .expect_err("positive qi dust that settlement would omit must be rejected");
+            assert!(
+                error.to_string().contains("exactly zero or greater"),
+                "{label} threshold rejection should explain the atomic qi contract: {error}"
+            );
+        }
+        let accepted = load(&minimal_toml().replace(
+            "qi_cost = 0.0",
+            &format!("qi_cost = {above}"),
+        ))
+        .expect("the first representable f32 above QI_EPSILON must load");
+        assert!(f64::from(accepted.get("test.skill").unwrap().qi_cost) > QI_EPSILON);
+    }
+
+    #[test]
+    fn consumerless_direct_generic_is_rejected_but_dedicated_input_is_admitted() {
+        let direct_generic = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"direct_generic\"",
         ))
-        .expect("an arbitrary valid id may opt into the generic cast path");
-        let skills = SkillRegistry::default();
+        .expect("dispatch syntax is valid before cross-registry wiring validation");
+        let error = validate_startup_wiring(
+            &direct_generic,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("consumerless direct_generic must fail startup");
+        assert!(error.to_string().contains("test.skill"));
+        assert!(error.to_string().contains("no registered completion consumer"));
 
-        validate_startup_wiring(&registry, &skills, &SkillMeridianDependencies::default())
-            .expect("direct_generic does not require a dependency declaration");
-
-        let mut dependencies = SkillMeridianDependencies::default();
-        dependencies.declare("test.skill", Vec::new());
-        validate_startup_wiring(&registry, &skills, &dependencies)
-            .expect("direct_generic may also have an explicit dependency declaration");
+        let dedicated_input = load(&minimal_toml().replace(
+            "dispatch = \"metadata_backed\"",
+            "dispatch = \"dedicated_input\"",
+        ))
+        .expect("dedicated input metadata loads");
+        validate_startup_wiring(
+            &dedicated_input,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect("dedicated input is intentionally outside the generic cast lifecycle");
     }
 
     #[test]

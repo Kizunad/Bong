@@ -47,7 +47,7 @@ use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{
-    KnownTechniques, TechniqueDefinition, TechniqueRegistry,
+    KnownTechniques, TechniqueDefinition, TechniqueDispatch, TechniqueRegistry,
 };
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian::severed::{
@@ -14019,6 +14019,65 @@ mod tests {
         assert!(matches!(bindings.slots[0], SkillSlot::Empty));
     }
 
+    #[test]
+    fn dedicated_input_technique_is_unbindable_and_uncastable_through_skillbar() {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            SkillBarBindings::default(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            known(&[crate::movement::dash_proficiency::DASH_TECHNIQUE_ID]),
+        ));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"movement.dash"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(matches!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().slots[0],
+            SkillSlot::Empty
+        ));
+
+        // 防御旧存档/人工构造的残留绑定：cast 入口必须独立重验 dispatch。
+        app.world_mut()
+            .get_mut::<SkillBarBindings>(entity)
+            .unwrap()
+            .set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: crate::movement::dash_proficiency::DASH_TECHNIQUE_ID.to_string(),
+                },
+            );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "dedicated movement input must never degrade into a generic Completed skillbar cast"
+        );
+    }
+
     /// bughunt skillbar-rebind-cooldown-reset 返工共用：一个只要不在冷却中就一定能
     /// 把 `burst_meridian.beng_quan` 放出去的实体（Cultivation Induce+100 真元 +
     /// RIGHT_ARM_MERIDIANS opened + Position + 已学会两条技能），镜像
@@ -15282,6 +15341,12 @@ fn handle_skill_bar_cast(
         );
         return;
     };
+    if definition.dispatch == TechniqueDispatch::DedicatedInput {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} rejected: technique `{skill_id}` requires its dedicated input contract"
+        );
+        return;
+    }
     // Ownership gate: reject if the player has not learned this technique.
     let player_has_technique = known_techniques
         .get(entity)
@@ -16182,9 +16247,15 @@ fn handle_skill_bar_bind(
             SkillSlot::Item { instance_id }
         }
         Some(SkillBarBindingV1::Skill { skill_id }) => {
-            if technique_registry.get(skill_id).is_none() {
+            let Some(definition) = technique_registry.get(skill_id) else {
                 tracing::warn!(
                     "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
+                );
+                return;
+            };
+            if definition.dispatch == TechniqueDispatch::DedicatedInput {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: technique `{skill_id}` requires its dedicated input contract"
                 );
                 return;
             }

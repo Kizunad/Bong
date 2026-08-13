@@ -241,6 +241,12 @@ pub fn register(app: &mut App) {
             .unwrap_or_else(|error| {
                 panic!("[bong][cultivation] startup rejected technique wiring: {error}")
             });
+        crate::network::techniques_snapshot_emit::validate_techniques_snapshot_budget(&techniques)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "[bong][cultivation] startup rejected learned-technique snapshot budget: {error:?}"
+                )
+            });
         (techniques, skills, dependencies)
     };
 

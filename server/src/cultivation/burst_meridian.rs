@@ -274,7 +274,7 @@ pub fn resolve_beng_quan(
     }
 
     let cost = cultivation.qi_current * BENG_QUAN_QI_COST_RATIO;
-    if cultivation.qi_current + f64::EPSILON < cost || cost <= f64::EPSILON {
+    if cultivation.qi_current < cost || cost <= QI_EPSILON {
         return rejected(CastRejectReason::QiInsufficient);
     }
 
@@ -760,8 +760,8 @@ fn check_realm_gate(
     }
 }
 
-/// 真元门：flat cost。`cost <= ε`（误配 0 成本招）或 `qi_current < cost` 均拒绝，
-/// 不在此处扣减（扣减由 `spend_qi` 在所有门通过后执行，保证拒绝路径零突变）。
+/// 真元门：flat cost。精确零成本是合法免费招；正数 dust（`0 < cost <= ε`）、
+/// 非有限/负成本或 `qi_current < cost` 均拒绝。此处不扣减。
 fn check_qi_gate(
     world: &bevy_ecs::world::World,
     caster: Entity,
@@ -770,7 +770,11 @@ fn check_qi_gate(
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return Some(CastRejectReason::RealmTooLow);
     };
-    if cost <= f64::EPSILON || cultivation.qi_current + f64::EPSILON < cost {
+    if !cost.is_finite()
+        || cost < 0.0
+        || (cost > 0.0 && cost <= QI_EPSILON)
+        || cultivation.qi_current < cost
+    {
         return Some(CastRejectReason::QiInsufficient);
     }
     None
@@ -833,16 +837,26 @@ fn cast_timing(
 /// 扣真元（玩家私有池）并将消耗的真元释放回区域灵气池，维持 qi_physics 守恒。
 /// 与 baomai_v3 / tuike_v2 的 spend_qi + emit_spent_qi_release 模式对齐。
 fn spend_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) {
-    if cost <= f64::EPSILON {
+    if cost <= QI_EPSILON || !cost.is_finite() {
         return;
     }
-    if !cost.is_finite() {
-        return;
+    let debited = if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
+        if cultivation.qi_current < cost {
+            false
+        } else {
+            cultivation.qi_current = if cultivation.qi_current == cost {
+                0.0
+            } else {
+                cultivation.qi_current - cost
+            };
+            true
+        }
+    } else {
+        false
+    };
+    if debited {
+        emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
     }
-    if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
-        cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
-    }
-    emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
 }
 
 /// 把消耗的真元释放回 ZoneRegistry，走 qi_release_to_zone 守恒路径；区域满时路由至 overflow。
@@ -885,7 +899,7 @@ fn emit_spent_qi_release(
                         if let Some(transfer) = outcome.transfer {
                             transfers.push(transfer);
                         }
-                        if outcome.overflow > QI_EPSILON {
+                        if outcome.overflow > 0.0 {
                             push_spent_qi_overflow(
                                 &mut transfers,
                                 from.clone(),
@@ -928,7 +942,7 @@ fn push_spent_qi_overflow(
     sink: &'static str,
     caster: Entity,
 ) {
-    if amount <= QI_EPSILON {
+    if amount <= 0.0 {
         return;
     }
     match QiTransfer::new(
@@ -2179,6 +2193,72 @@ mod tests {
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
             .count()
+    }
+
+    #[test]
+    fn qi_cost_threshold_never_debits_without_complete_settlement() {
+        let costs = [
+            ("zero", 0.0),
+            ("below", QI_EPSILON / 2.0),
+            ("at", QI_EPSILON),
+            // f32 metadata 的第一可表示边界，和 loader 用例对齐。
+            (
+                "above",
+                f64::from(f32::from_bits((QI_EPSILON as f32).to_bits() + 1)),
+            ),
+        ];
+        for (label, cost) in costs {
+            let mut app = app_with_zone();
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi = 0.0;
+            let caster =
+                spawn_caster(&mut app, Realm::Condense, 1.0, DVec3::new(0.0, 70.0, 0.0));
+            let qi_before = qi(&app, caster);
+            let zone_before = zone_spirit_qi(&app);
+
+            let gate = check_qi_gate(app.world(), caster, cost);
+            if cost == 0.0 || cost > QI_EPSILON {
+                assert_eq!(gate, None, "{label}: legal cost must pass the qi gate");
+            } else {
+                assert_eq!(
+                    gate,
+                    Some(CastRejectReason::QiInsufficient),
+                    "{label}: positive dust must fail the qi gate"
+                );
+            }
+            spend_qi(app.world_mut(), caster, cost);
+
+            let debited = qi_before - qi(&app, caster);
+            let zone_credited =
+                (zone_spirit_qi(&app) - zone_before) * QI_ZONE_UNIT_CAPACITY;
+            if cost <= QI_EPSILON {
+                assert_eq!(debited, 0.0, "{label}: free/dust cost must not be deducted");
+                assert_eq!(
+                    zone_credited, 0.0,
+                    "{label}: free/dust cost must not credit the zone"
+                );
+                assert_eq!(qi_transfer_count(&app), 0, "{label}: no audit for no-op");
+            } else {
+                assert!(
+                    (debited - cost).abs() <= f64::EPSILON,
+                    "{label}: accepted cost must be deducted within machine precision; cost={cost}, debited={debited}"
+                );
+                assert!(
+                    (zone_credited - cost).abs() <= f64::EPSILON,
+                    "{label}: every deducted unit must be credited within machine precision; cost={cost}, credited={zone_credited}"
+                );
+                let transfers: Vec<_> = app
+                    .world()
+                    .resource::<Events<QiTransfer>>()
+                    .iter_current_update_events()
+                    .collect();
+                assert_eq!(transfers.len(), 1, "{label}: one complete settlement audit");
+                assert_eq!(transfers[0].amount, cost, "{label}: audit amount is exact");
+            }
+        }
     }
 
     /// beng_quan 施法后区域 spirit_qi 必须升高（消耗的真元返还区域）。

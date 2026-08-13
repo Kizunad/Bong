@@ -13,7 +13,7 @@ use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
@@ -435,6 +435,16 @@ pub fn load_player_slices(
     persistence: &PlayerStatePersistence,
     username: &str,
 ) -> LoadedPlayerSlices {
+    load_player_slices_with_technique_registry(persistence, username, None)
+}
+
+/// Join 路径注入启动期权威功法目录；`dev-techniques` 只在确认数据库无功法行时
+/// 用该目录授予新玩家全集。离线调用方可继续使用 `load_player_slices`，不会自行重读资产。
+pub fn load_player_slices_with_technique_registry(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    technique_registry: Option<&TechniqueRegistry>,
+) -> LoadedPlayerSlices {
     let state = load_player_state(persistence, username);
     let connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
@@ -535,7 +545,11 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
-    let known_techniques = match load_player_known_techniques_from_sqlite(&connection, username) {
+    let known_techniques = match load_player_known_techniques_from_sqlite(
+        &connection,
+        username,
+        technique_registry,
+    ) {
         Ok(known_techniques) => LoadedKnownTechniques::Loaded(known_techniques),
         Err(error) => {
             tracing::error!(
@@ -1919,6 +1933,8 @@ fn load_player_skill_set_from_sqlite(
 fn load_player_known_techniques_from_sqlite(
     connection: &Connection,
     username: &str,
+    #[cfg_attr(not(feature = "dev-techniques"), allow(unused_variables))]
+    technique_registry: Option<&TechniqueRegistry>,
 ) -> io::Result<KnownTechniques> {
     let known_techniques_json: Option<String> = connection
         .query_row(
@@ -1934,6 +1950,10 @@ fn load_player_known_techniques_from_sqlite(
         .map_err(io::Error::other)?;
 
     let Some(known_techniques_json) = known_techniques_json else {
+        #[cfg(feature = "dev-techniques")]
+        if let Some(registry) = technique_registry {
+            return Ok(KnownTechniques::dev_default(registry));
+        }
         return Ok(KnownTechniques::default());
     };
 
@@ -2326,7 +2346,6 @@ fn persist_player_slices_in_sqlite(
     let [pos_x, pos_y, pos_z] = position;
     let inventory_json = serialize_inventory_json(inventory)?;
     let skill_set_json = serialize_skill_set_json(skill_set)?;
-    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
     let craft_session_json = craft_session
@@ -2447,24 +2466,6 @@ fn persist_player_slices_in_sqlite(
             params![
                 username,
                 skill_set_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
-            INSERT OR IGNORE INTO player_known_techniques (
-                username,
-                known_techniques_json,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ",
-            params![
-                username,
-                known_techniques_json,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -2622,8 +2623,6 @@ fn insert_default_player_slice_rows(
         crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin);
     let skill_set_json = serialize_skill_set_json(&SkillSet::default())
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
     transaction.execute(
         "
@@ -2675,22 +2674,6 @@ fn insert_default_player_slice_rows(
         params![
             username,
             skill_set_json,
-            PLAYER_ROW_SCHEMA_VERSION,
-            last_updated_wall
-        ],
-    )?;
-    transaction.execute(
-        "
-        INSERT OR IGNORE INTO player_known_techniques (
-            username,
-            known_techniques_json,
-            schema_version,
-            last_updated_wall
-        ) VALUES (?1, ?2, ?3, ?4)
-        ",
-        params![
-            username,
-            known_techniques_json,
             PLAYER_ROW_SCHEMA_VERSION,
             last_updated_wall
         ],
@@ -4950,13 +4933,33 @@ mod player_state_tests {
         save_player_state(&persistence, "Azure", &PlayerState::default())
             .expect("baseline player state should persist");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let row_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("known-techniques row count should be readable");
+        assert_eq!(
+            row_count, 0,
+            "default slice initialization must preserve missing-row semantics for fresh-player grants"
+        );
+
+        let registry = TechniqueRegistry::load_for_tests();
+        let loaded = load_player_slices_with_technique_registry(
+            &persistence,
+            "Azure",
+            Some(&registry),
+        );
+        #[cfg(feature = "dev-techniques")]
+        let expected = LoadedKnownTechniques::Loaded(KnownTechniques::dev_default(&registry));
+        #[cfg(not(feature = "dev-techniques"))]
+        let expected = LoadedKnownTechniques::Loaded(KnownTechniques::default());
 
         assert_eq!(
-            loaded.known_techniques,
-            LoadedKnownTechniques::Loaded(KnownTechniques::default()),
-            "DB 无行 = 真新玩家，应返回 Loaded(default) 并允许后续正常落盘，\
-             不得与「有行但读取失败」混为一谈"
+            loaded.known_techniques, expected,
+            "fresh-player grants must be feature-gated and derived from the injected registry"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
