@@ -1,14 +1,110 @@
-# Bong
+# Bong — 末法残土
 
-AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
+> **AI-Native 修仙沙盒**：一个灵气接近枯竭的末世修仙世界，运行在 Minecraft 之上。
+> 天道不是脚本——它是 LLM Agent，实时推演这个世界的灾劫、变化与命运。
+>
+> 天地不仁，灵气已薄如纸。你醒来时，身处一片灵脉将枯的荒土。
+> 这里没有宗门收你，没有前辈指路，连一株像样的灵草都要和野兽抢。
+> 你唯一的优势是——你会死很多次，而每一次死亡都不是白死的。
 
-- **server/** — Rust 无头 MC 服务器（Valence on Bevy 0.14 ECS，MC 1.20.1 协议 763）
-- **client/** — Fabric 1.20.1 微端（Java 17，owo-lib UI）
-- **agent/** — LLM "天道" agent 层（TypeScript，三 Agent 并发推演）
-- **worldgen/** — Python 地形生成流水线
-- **library-web/** — 末法残土图书馆前端（Astro）
+---
 
-详见 [`CLAUDE.md`](CLAUDE.md)。
+## 这是什么
+
+Bong 是一个以「**末法时代**」为核心的 AI-Native 修仙沙盒：
+
+- **修仙不是数值堆叠，而是经脉拓扑的物理进化** —— 六境界（醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚）对应体内经脉的逐条贯通，境界可以掉落，突破需要触发性事件，化虚是服务器内仅容一两人的天花板。
+- **灵气是守恒的** —— 全服灵气总量恒定（`SPIRIT_QI_TOTAL`），你修炼消耗的灵气就是别人少掉的灵气。灵气按压强法则从高浓度流向低浓度，所有流动都走统一账本 `qi_physics::ledger`，没有凭空产生、也没有凭空消失。
+- **天道是活的** —— 三路 LLM Agent 并发推演世界（灾劫 / 变化 / 演绎时代），经 Arbiter 仲裁后通过 Redis 向游戏世界下达指令：降天劫、设伪灵脉陷阱、发动兽潮、垂青顿悟、更迭时代。玩家在聊天栏里看到的天道叙事，就是这套推演的实时输出。
+- **末法残土的生存逻辑** —— 匮乏、算计、信息差、搜打撤。苟得住才活得久，但苟太久会被天道盯上。
+
+世界观正典见 [`docs/worldview.md`](docs/worldview.md)（唯一权威，所有玩法/命名/经济的锚点）。
+
+## 核心玩法
+
+### 修炼：经脉与突破
+静坐冲击 / 丹药辅助 / 强行爆冲三条修炼途径；突破需「经脉数达标 + 触发事件」双条件。真元长期不足会灵脉萎缩、境界跌落。天劫（渡虚劫 / 域崩 / 定向天罚）与化虚名额由天道按世界灵气预算动态调控。
+
+### 战斗：多血条与流派
+体表 16 部位 × 6 档伤口、经脉 20 条 × 4 档损伤、真元池三层级联的死亡判定；距离衰减让末法战斗变成"拼刺刀"；过载撕裂是赌命的爆发。
+
+已实装流派：**体修·爆脉流**、**器修·暗器流**、**地师·阵法流**（诡雷 / 警戒场 / 陷阱阵旗）、**毒蛊流**（凝针与经脉永久损伤）、**黑无室剑道**、**截脉震爆流**、**绝灵涡流**、**替尸蜕壳**（伪装）、**医道**（接续经脉 / 续命）。每招都有独立的动画、粒子、音效、HUD 反馈与图标。
+
+### 生产与经济
+炼丹（火候三系统 + 丹毒节拍 + 副作用识别）、炼器（四步状态机）、锻造台配方、野生植物采集生态、灵田（季节 / 天气 / 二级加工）、矿物体系、灵木采伐、通用保质期（三路径衰减）。**骨币是唯一真货币**（异变兽骨 + 阵法锁真元），灵石只是劣质燃料，金银是废土。
+
+### 坍缩渊（TSY）：搜打撤秘境
+上古大能透支天地而陨落之处，灵压极低（-1.2）。类塔科夫的搜打撤循环：5 档容器搜刮、四档敌对 NPC（道伥 / 执念 / 守灵 / 畸变体）、撤离点倒计时、秘境塌缩。负灵域也是战术空间——通灵境修士可以躲入逃避天劫，低境界也能靠灵压差极限反杀高境界。
+
+### 世界与 NPC
+灵压三态环境（馈赠区 / 死域 / 负灵域）、伪灵脉陷阱、游离风暴、兽潮迁徙、垂死大能遭遇、派系战争。NPC 由 big-brain Utility AI 驱动：老化、渡劫、散修日常，离屏时进入 Dormant 虚拟化批量推演——但任何离屏战死，残余真元都会守恒地归还世界。
+
+### 社会与死亡
+匿名社会 + 声名（SocialRenown）、灵龛守家、切磋交易、多世人生：死亡不是终点，遗念、碑刻与亡者博物馆让每一世留下痕迹。
+
+## 技术架构
+
+五层架构，跨层契约以 TypeBox schema 为唯一 source of truth（TS → JSON Schema → serde），Redis 承载 server ↔ agent IPC：
+
+```
+┌─────────────┐    CustomPayload     ┌──────────────────────┐
+│  client/    │ ◄──────────────────► │  server/             │
+│  Fabric 微端 │    MC 1.20.1 协议 763 │  Rust 无头服务器      │
+│  Java 17     │                      │  Valence + Bevy ECS  │
+│  owo-lib UI  │                      └──────────┬───────────┘
+└─────────────┘                                 │ Redis IPC
+                                  ┌──────────────▼───────────┐
+                                  │  agent/ 天道 Agent       │
+                                  │  TypeScript 三 Agent 并发 │
+                                  │  灾劫 / 变化 / 演绎 → 仲裁 │
+                                  └──────────────────────────┘
+```
+
+| 目录 | 技术栈 | 职责 |
+|------|--------|------|
+| `server/` | Rust · Valence · Bevy 0.14 ECS | 无头 MC 服务器（协议 763）。修炼 / 战斗 / 生产 / 经济 / NPC / 灵气守恒账本 `qi_physics` |
+| `client/` | Java 17 · Fabric 1.20.1 · owo-lib | 微端：HUD、技能条、动画（PlayerAnimator）、粒子 VFX、交易/炼丹/炼器等全部 UI |
+| `agent/` | TypeScript · openai · ioredis | "天道" LLM Agent 层：三 Agent 并发推演 + Arbiter 仲裁 + WorldModel 持久化 |
+| `schema/`（agent/packages） | TypeBox | IPC schema 唯一真源，双端生成 + sample 对拍 |
+| `worldgen/` | Python | blueprint 驱动的 16 层地形生成流水线（LAYER_REGISTRY），导出 mmap-friendly raster 供运行时按需生成 chunk |
+| `library-web/` | Astro | 末法残土图书馆前端（静态站点） |
+| `scripts/` | bash / Python | dev harness：构建、e2e、bot 场景回归、视觉资产工具链 |
+
+## 快速开始
+
+```bash
+# Server（offline mode，监听 :25565）
+scripts/build-token.sh cargo run
+
+# Client（Fabric 微端，经 WSLg 启动）
+scripts/build-token.sh gradle runClient
+
+# 天道 Agent（需真实 LLM key，或 mock 模式）
+cd agent/packages/tiandao && npm start
+cd agent/packages/tiandao && npm run start:mock     # 无 key 跑通全链路
+
+# 地形生成
+cd worldgen && python -m scripts.terrain_gen
+
+# 一键开发重载（regen + validate + rebuild + restart）
+bash scripts/dev-reload.sh
+
+# 完整冒烟测试
+bash scripts/smoke-test.sh
+```
+
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| [`docs/worldview.md`](docs/worldview.md) | 世界观正典（唯一权威：境界 / 经济 / 命名 / 区域表） |
+| [`docs/CLAUDE.md`](docs/CLAUDE.md) | 开发工作流：Plan 体系、接入面 checklist、孤岛红旗清单 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 里程碑路线图 |
+| [`docs/finished_plans/`](docs/finished_plans/) | 已落地玩法 plan（100+ 份，含各系统接口面） |
+| [`docs/server-architecture.md`](docs/server-architecture.md) | 服务端架构设计 |
+| [`docs/player-animation-conventions.md`](docs/player-animation-conventions.md) | 动画约定（PlayerAnimator 四大坑） |
+
+<!-- BEGIN:PLANS_PROGRESS -->
 
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
