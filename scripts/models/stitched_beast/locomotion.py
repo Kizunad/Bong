@@ -217,10 +217,10 @@ def solve_ride_height(genes, socks) -> float:
         for gene in genes:
             if not gene.load_bearing:
                 continue
-            h = float(socks[gene.socket].pos[1]) + dy
-            eff = gene.length * EXTEND
+            h = float(socks[gene.socket].pos[1]) + dy - gene.ankle_lift
+            eff = gene.leg_len * EXTEND
             if h <= 1.0 or h >= eff:
-                continue                       # 够不着地，或髋已经压到地面以下
+                continue                       # 够不着地，或髋已经压到踝位以下
             n += 1
             comfort -= abs(h / eff - COMFORT)
         if (n, comfort) > best:
@@ -238,12 +238,21 @@ def hip_geometry(sock: C.Socket, gene: GN.LimbGene, ride: float = 0.0
     """
     hip = sock.pos.copy()
     hip[1] += ride
-    h = float(hip[1])
+    # **腿连到踝，不连到地面**：蹄行动物的踝抬到掌骨全长那么高（羊/牛的"管骨"），
+    # 趾行的抬掌骨的八成，跖行几乎贴地。按总长和髋高算勾股会以为羊腿够得到远得多的
+    # 地方——实际那一截长度是竖着用掉的，不能折算成水平可达（腿谱实测：按老算法摆出来
+    # 的羊腿股骨横着支出去，像条断腿）。
+    h = float(hip[1]) - gene.ankle_lift
     horiz = np.array([sock.normal[0], 0.0, sock.normal[2]])
     n = float(np.linalg.norm(horiz))
     out = horiz / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
-    eff = gene.length * EXTEND
-    reach = math.sqrt(max(0.0, eff * eff - h * h)) if eff > h else 0.0
+    eff = gene.leg_len * EXTEND
+    # 够不够得着要按**踝**判：踝就算落在髋的正下方，也还在身后 ankle_back 那么远。
+    # 只比 h 的话会把"其实够不着"的肢放进承重集，到部件层才发现腿伸不到踝（IK 退回
+    # 直链，末端偏离 8 px）。这里排除掉，运动层的重采样自然会换一个配置。
+    if math.hypot(h, gene.ankle_back) >= eff:
+        return hip, out, 0.0
+    reach = math.sqrt(max(0.0, eff * eff - h * h))
     return hip, out, reach
 
 
@@ -358,6 +367,20 @@ def feasible(limbs: list[LimbGait], com2: np.ndarray) -> float:
     return support_margin(feet, com2)
 
 
+def _radius_for(lg: LimbGait, want: float) -> float:
+    """解"落点摆在哪，踝正好离髋 want"——关于径向距离 r 的二次方程。
+
+    踝在落点正上方 `ankle_lift`、再往身后 `ankle_back`；身后方向与径向外展不正交，
+    所以交叉项带 out·ẑ。无解（want 太小）时返回 0。
+    """
+    h = float(lg.hip[1]) - lg.gene.ankle_lift
+    ab = lg.gene.ankle_back
+    b = 2.0 * float(lg.out_dir[2]) * ab
+    c = ab * ab + h * h - want * want
+    disc = b * b - 4.0 * c
+    return max(0.0, 0.5 * (-b + math.sqrt(disc))) if disc > 0.0 else 0.0
+
+
 def stance_radius(lg: LimbGait) -> float:
     """中立落点离髋的**水平**距离。
 
@@ -375,20 +398,25 @@ def stance_radius(lg: LimbGait) -> float:
     下限来自摆动：脚要沿 z 走 ±excursion/2，整段都得留在可达球内，于是
     r² ≤ reach² − (excursion/2)²。
     """
-    h = float(lg.hip[1])
-    eff = lg.gene.length * EXTEND
-    want = max(COMFORT * eff, h)          # 比舒适还短就不必再收——腿已经够不着了
-    r = math.sqrt(max(0.0, want * want - h * h))
+    # 摆的是**落点**，但腿够的是**踝**。两条更简单的写法都试过、都不行：① 忽略踝的
+    # 身后偏移 ⇒ 腿够不着自己的踝，IK 无解退回直链、关节落到地面以下（y=−4.13）；
+    # ② 把落点整体前移 ⇒ 支撑多边形跟着前移，质心落到多边形外，seed 12 站不住。
+    h = float(lg.hip[1]) - lg.gene.ankle_lift
+    eff = lg.gene.leg_len * EXTEND
+    want = max(COMFORT * eff, math.hypot(h, lg.gene.ankle_back))
     cap = math.sqrt(max(0.0, lg.reach ** 2 - (0.5 * lg.excursion) ** 2))
-    return min(r, cap)
+    return min(_radius_for(lg, want), cap)
 
 
 def place_feet(limbs: list[LimbGait], k: float) -> None:
     """按 k 摆中立落点：0 = 舒适伸展度（见 `stance_radius`），1 = 可达极限。"""
     for lg in limbs:
         r0 = stance_radius(lg)
+        # 上界也得按**踝**算，不能用 lg.reach：那个数没把踝的身后偏移算进去，撑到它
+        # 就等于要求腿够到够不着的地方，IK 退回直链、腿的末端偏离踝位 8 px（实测）。
+        r1 = min(_radius_for(lg, lg.gene.leg_len * EXTEND), lg.reach)
         lg.foot = (np.array([lg.hip[0], 0.0, lg.hip[2]])
-                   + lg.out_dir * (r0 + (lg.reach - r0) * k))
+                   + lg.out_dir * (r0 + (max(r1, r0) - r0) * k))
 
 
 def optimize_phases(limbs: list[LimbGait], com2: np.ndarray, *, seed: int,

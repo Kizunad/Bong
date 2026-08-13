@@ -70,10 +70,11 @@ def check_gait(g: GN.Genome, gt: L.Gait, socks) -> list[str]:
         if not (1 <= lg.steps <= L.MAX_STEPS):
             bad.append(f"{tag} {lg.gene.socket} 步数 {lg.steps} 越界 [1,{L.MAX_STEPS}]")
         # ③ 够得着地（骑乘高度解完之后）
-        eff = lg.gene.length * L.EXTEND
-        if lg.hip[1] >= eff:
-            bad.append(f"{tag} {lg.gene.socket} 髋高 {lg.hip[1]:.1f} ≥ 有效肢长 "
-                       f"{eff:.1f}，根本踩不到地却在承重集里")
+        eff = lg.gene.leg_len * L.EXTEND
+        if lg.hip[1] - lg.gene.ankle_lift >= eff:
+            bad.append(f"{tag} {lg.gene.socket} 髋到踝 "
+                       f"{lg.hip[1] - lg.gene.ankle_lift:.1f} ≥ 有效腿长 {eff:.1f}，"
+                       f"根本踩不到地却在承重集里")
         # ④ **支撑相不滑步**：世界系里脚必须静止。
         #    世界位置 = 体坐标位置 + 身体位移（身体朝 -z 前进）。
         T = 1.0 / gt.body_hz
