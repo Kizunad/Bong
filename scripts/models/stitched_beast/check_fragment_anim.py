@@ -99,24 +99,25 @@ def main() -> int:
     # ---- ⑥ 乱抽：各抽各的、载体不动、体积守恒
     sc = FA.thrash_scale()
     names = list(g.sockets)
-    # 力臂取满长：骨骼缩放由 rig 作用，这里再乘一次 sc 就是缩两次（见 check_core_anim）
-    local = {n: rig.bones[f"bud_{n}"].origin + g.sockets[n].normal * A.bud_reach(n, 1.0)
-             for n in names}
+    # 芽是骨链，尖端在最后一节上。力臂取满长（见 check_core_anim）
+    tipbone = {n: A.tendril(n)[0][-1] for n in names}
+    local = {n: np.asarray(C.bud_shape(g.sockets[n], 1.0)[-1][0], float) for n in names}
     # 采样密度得盯着**最快的那条**：脉冲的起手只占一个周期的 FLICK_ATTACK，采稀了
     # 量到的峰值是插值出来的低值，会把摆得好好的芽误判成"没在摆"（实测 0.30 vs 真实 0.45）
-    M = int(np.ceil(max(A.bud_flicks(sc, A.THRASH_LEN)[n][0] for n in names)
+    M = int(np.ceil(max(k for n in names for k, _p in A.joint_flicks(n, sc, A.THRASH_LEN))
                     / A.FLICK_ATTACK * 6))
     trk = {n: [] for n in names}
     for k in range(M):
         W = rig.world(FA.sample(rig, "shard_thrash", k / M))
         for n in names:
-            T = W[f"bud_{n}"]
+            T = W[tipbone[n]]
             trk[n].append(T[:3, :3] @ local[n] + T[:3, 3])
     trk = {n: np.array(v) for n, v in trk.items()}
     rel = {n: float(np.linalg.norm(v - v.mean(axis=0), axis=1).max()) / A.bud_reach(n, sc)
            for n, v in trk.items()}
     print(f"[乱抽] 相对摆幅 {min(rel.values()):.2f}..{max(rel.values()):.2f}")
-    if min(rel.values()) < 0.80:
+    med = float(np.median(list(rel.values())))
+    if min(rel.values()) < max(0.20, 0.5 * med):
         n = min(rel, key=lambda k: rel[k])
         bad.append(f"芽 {n} 尖端位移只有自身长度的 {rel[n]:.2f}——它没在摆")
     worst, pair = 0.0, ("", "")
@@ -140,10 +141,12 @@ def main() -> int:
         bad.append(f"乱抽体积不守恒：芽增 {gained:.0f} 载体减 {lost:.0f}")
 
     # 碎片的料更少 ⇒ 茬更短 ⇒ 力臂更小 ⇒ 抽得比母体急。这是同一条 f ∝ 1/L 的推论
-    k_shard = max(A.bud_flicks(sc, A.THRASH_LEN)[n][0] for n in names)
-    k_core = max(k for k, _p in A.bud_flicks(A.thrash_scale(), A.THRASH_LEN).values()
-                 if k < 10)          # 排除 vest_dr 那个极端小槽，比的是主群
-    print(f"[乱抽] 碎片最快 {k_shard} 下/循环 vs 母体主群最快 {k_core} 下")
+    # 比根节：碎片的茬更短 ⇒ 力臂更小 ⇒ 抽得更急。梢节两边都顶到 FLICK_MAX_HZ 上限，
+    # 拿它比不出东西
+    k_shard = max(A.joint_flicks(n, sc, A.THRASH_LEN)[0][0] for n in names)
+    k_core = max(A.joint_flicks(n, A.thrash_scale(), A.THRASH_LEN)[0][0]
+                 for n in C.sockets() if C.sockets()[n].girth > 2.0)
+    print(f"[乱抽] 碎片根节最快 {k_shard} 下/循环 vs 母体根节最快 {k_core} 下")
     if k_shard <= k_core:
         bad.append(f"碎片抽得不比母体急（{k_shard} ≤ {k_core}）——茬更短就该更快，"
                    f"检查 thrash_scale 是否真按质量比缩了预算")

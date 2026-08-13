@@ -235,10 +235,19 @@ def anim_idle(rig: Rig, t: float, length: float) -> Pose:
 LUNGE_PUSH = 21.0         # 扑击爆发段 root 前冲的位移（见 anim_lunge）
 LUNGE_FORE = 11.4         # 爆发段前段再甩出去的位移
 FLICK_ATTACK = 0.18       # 一次抽搐里"甩出去"占的比例，其余是回落
+FLICK_MAX_HZ = 12.0       # 单节抽搐频率上限。**这条是渲染/知觉的界，不是物理的界**，
+                          # 别把它说成推导：梢节的力臂只有零点几像素，按速度上限反推
+                          # 出来是 69 Hz，那已经不是"抽"是"振"，而且采样数会直接爆到
+                          # 689。真正的物理上界该来自组织的最大应变率，但仓库里那个
+                          # STRAIN_RATE=0.286/s 是整体蠕动的慢速率，拿来当肌肉快抽的
+                          # 上界会把整条动画压死（算出 0.42 Hz）。缺一个像样的模型，
+                          # 所以这里明写成常数。
 FLICK_KEYS = 2            # 起手段至少落几帧：两帧（起点+峰值）就够表达"猛地一甩"，
                           # 再多只是把线性斜坡采得更密。要三帧的话采样数直接翻半倍
-THRASH_LEN = 0.90         # 乱抽循环时长（秒）。短是有原因的：抽得最快的那条定采样
-                          # 密度，时长越长采样数越多。0.9s 已经足够长到看不出在循环
+THRASH_LEN = 0.70         # 乱抽循环时长（秒）。短是有原因的：抽得最快的那一节定
+                          # 采样密度，而现在每条芽有四节独立驱动，关键帧是
+                          # 骨数 × 采样数。0.9s + 18Hz 上限实测 12220 帧 / 8.2MB，
+                          # 对一条动画太重。68 个各自发火的关节，0.7s 已经够乱
 
 
 def strike_speed() -> float:
@@ -307,6 +316,67 @@ def _flick_frame(name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return s.normal, t1, t2
 
 
+SWAY_DEG = 7.0            # 每节常驻的漂移幅度（度）。抽搐之间**不许冻住**——一条
+                          # 只在发火那一瞬间动、其余时间纹丝不动的触手读成机械臂
+
+
+@lru_cache(maxsize=1)
+def _sock_order() -> tuple[str, ...]:
+    return tuple(C.sockets())
+
+
+def _sock_index(name: str) -> int:
+    return _sock_order().index(name)
+
+
+@lru_cache(maxsize=32)
+def tendril(name: str) -> tuple[tuple[str, ...], tuple[float, ...], tuple[float, ...]]:
+    """一条芽的骨链：（骨名, 各节剩余力臂 px, 各节自然摆频 Hz）。
+
+    **每一节各自被驱动，不是整条一起转，也不是一节带一节。**
+
+    先写成"根部驱动、每节滞后四分之一周期"的鞭子模型，算出来不成立：这些节的自然摆频
+    只有 0.7–1.4 Hz，而抽搐频率在 5 Hz 以上——远高于共振点的受迫振子，响应又小又乱，
+    "末端跟着根部甩"这个图景根本不适用。实测滞后累积到 0.99 秒，比整条循环还长，末端
+    响应的是两拍之前的驱动，看着不是拖尾是脱节。
+
+    正解来自正典本身：**这东西没有神经**（"不是一条被神经支配的肢体，是别人的组织被
+    强行编织进来"）。没有神经就没有沿肢体传导的激活波，每一节只能被局部激发——所以
+    每节有**自己的节律、自己的方向序列、自己的发火图案**，彼此不协调。整条于是不是
+    圆弧也不是鞭子，是一条不断改变形状的 S 形，这恰恰是最瘆人的读法。
+
+    每节的节律仍走同一条速度上限（见本节开头），只是力臂换成**这一节以外那一截**的
+    长度：越靠梢剩得越短、抽得越快。实测根部约 2 下/循环、梢部约 9 下。
+    """
+    import locomotion as L                       # 只用一条式子，放这儿避免顶层耦合
+
+    s = C.sockets()[name]
+    segs = C.bud_segments(s)
+    chain = tuple(f"bud_{name}" if j == 0 else f"bud_{name}_{j}" for j in range(len(segs)))
+    arm = tuple(float(sum(segs[j:])) for j in range(len(segs)))
+    hz = tuple(max(L.natural_hz(tuple(segs[j:])), 1e-3) for j in range(len(segs)))
+    return chain, arm, hz
+
+
+def joint_flicks(name: str, scale: float, length: float) -> list[tuple[int, float]]:
+    """骨链上每一节在一条 `length` 秒循环里抽几下、相位多少。
+
+    速度上限按节数均分（四节各分四分之一的尖端速度预算），弯角也均分——没有理由认为
+    哪一节更该弯，均分之下四节各自的节律差异就已经把形状搅乱了。
+    """
+    _chain, arm, _hz = tendril(name)
+    amp = math.radians(C.BUD_FOLD_DEG) / len(arm)
+    budget = strike_speed() / len(arm)
+    # 上限**逐槽错开**：所有被顶到同一个整数的关节会共享节律，于是又同步了
+    # （实测速率互相关被顶回 0.59）。不同整数周期在整条循环上正交，错开就散了。
+    cap = max(1, int(FLICK_MAX_HZ * length) - _sock_index(name) % 3)
+    out = []
+    for j, a in enumerate(arm):
+        k = max(1, min(cap, int(budget * FLICK_ATTACK / (amp * a * scale) * length)))
+        out.append((k, C._noise(name, j, "jph")))
+    return out
+
+
 FLICK_DUTY = 0.62         # 每一拍真的抽出去的概率。1.0 = 节拍器，太规整；太低则大半
                           # 时间不动，读成"死了"
 
@@ -321,8 +391,13 @@ def _fires(name: str, count: int) -> tuple[bool, ...]:
     return hits if any(hits) else (True,) + hits[1:]
 
 
-def flick(name: str, u: float, count: int, phase: float) -> np.ndarray:
-    """一条芽在归一化时刻 u 的**抽搐**姿态（返回旋转矩阵）。
+def flick(name: str, u: float, count: int, phase: float,
+          j: int = 0) -> tuple[np.ndarray, float]:
+    """一条芽在归一化时刻 u 的**抽搐驱动**：返回（旋转轴, 归一化幅度 0..1）。
+
+    只给驱动不给最终姿态：骨链上每一节各有自己的节律与方向序列（见 tendril_pose），
+    所以这里不能替整条把旋转算死。`j` 是节序号——发火图案与方向序列都按 (槽, 节) 取，
+    于是同一条芽的四节彼此不协调。
 
     不是正弦。正弦读成"水草在飘"——那是被介质推着的被动运动。这团东西没有神经支配
     （正典：不是一条被神经支配的肢体，是别人的组织被强行编织进来），它只会痉挛：
@@ -338,16 +413,64 @@ def flick(name: str, u: float, count: int, phase: float) -> np.ndarray:
     节拍器：同一个最快节律之下，每一拍发不发各自决定，整体才真的找不出拍子。
     """
     k = int((u * count + phase) // 1.0) % max(1, count)
-    if not _fires(name, count)[k]:
-        return np.eye(3)
+    if not _fires(f"{name}#{j}", count)[k]:
+        return np.zeros(3), 0.0
     x = (u * count + phase) % 1.0
     # 快起慢落，且两端严格为 0 —— 循环接缝由波形本身保证，不靠首末帧对齐去补
     env = (smooth(x / FLICK_ATTACK) if x < FLICK_ATTACK
            else 1.0 - smooth((x - FLICK_ATTACK) / (1.0 - FLICK_ATTACK)))
     n, t1, t2 = _flick_frame(name)
-    a = 2.0 * math.pi * ((k * 0.6180339887) % 1.0)      # 黄金角：连着几下不重方向
+    # 黄金角：连着几下不重方向；加上节序号的偏置，同一条芽各节也不往同一边倒
+    a = 2.0 * math.pi * (((k + j * 0.37) * 0.6180339887) % 1.0)
     d = math.cos(a) * t1 + math.sin(a) * t2
-    return C.axis_angle(np.cross(n, d), math.radians(C.BUD_FOLD_DEG) * env)
+    return np.cross(n, d), env
+
+
+def tendril_pose(p: Pose, name: str, u: float, length: float,
+                 joints: list[tuple[int, float]], *, gain: float = 1.0,
+                 sway: float = 1.0) -> list[np.ndarray]:
+    """把一条芽的骨链摆到 u 时刻，返回各节**累积**的世界旋转（落地钳制要用）。
+
+    每节 = 自己那一拍的抽搐 × gain + 常驻漂移。两者都写在同一根骨上，所以"没在抽的
+    时候"也不是静止的——那一刻它在按自己这一节的自然摆频慢慢晃。只在发火瞬间动、
+    其余时间冻住，眼睛立刻读成机械臂而不是活物，这是"机械感"的主要来源。
+
+    各节的旋转是**相对父节**的，所以世界角度沿链累积——四节各转各的，整条就成了一条
+    不断改变形状的 S 形，而不是一根绕根部倾倒的棍子。
+    """
+    chain, _arm, hz = tendril(name)
+    n, t1, t2 = _flick_frame(name)
+    acc = np.eye(3)
+    out = []
+    amp = math.radians(C.BUD_FOLD_DEG) / len(chain)
+    for j, bone in enumerate(chain):
+        count, phase = joints[j]
+        axis, env = flick(name, u, count, phase, j)
+        R = np.eye(3)
+        if env > 1e-6:
+            R = C.axis_angle(axis, amp * env * gain)
+        if sway > 1e-6:
+            # 常驻漂移：两条切向各一个相位，尖端于是画小椭圆而不是来回摆。
+            #
+            # 周期数与相位都是**构造**的，不是取噪声。本来按各节自己的自然摆频取，
+            # 但循环闭合要求整数周期，而 0.66–2.39 Hz 乘上 0.7 秒四舍五入之后只剩
+            # 1 和 2 两种——十七条芽的漂移于是同频，再配上随机相位，总有几对撞在一起：
+            # 实测只留漂移时两两互相关高达 0.970。
+            # 现在：周期数按节序递增（越靠梢自然频率越高，这个序是真的），相位按槽序
+            # 在整条循环里均匀铺开，任意两条芽的同序节都不同相。
+            # 周期数必须**逐槽也不同**，不能只逐节不同：同频正弦无论相位怎么铺，相邻
+            # 两条的相关都下不来（十七条均匀铺开，相邻差 1/17 周期 = 42°，相关 0.74）。
+            # 而**不同整数周期的正弦在整条循环上正交**，相关严格为零。所以周期数同时
+            # 吃节序与槽序。
+            cyc = 1 + j + (_sock_index(name) % 4)
+            base = (_sock_index(name) + 0.37 * j) / max(1, len(C.sockets()))
+            a1 = math.radians(SWAY_DEG * sway) * breathe(u, cyc / length, base, length)
+            a2 = math.radians(SWAY_DEG * sway) * breathe(u, cyc / length, base + 0.27, length)
+            R = R @ C.axis_angle(np.cross(n, t1), a1) @ C.axis_angle(np.cross(n, t2), a2)
+        p[bone].rot = euler_of(R)
+        acc = acc @ R
+        out.append(acc.copy())
+    return out
 
 
 LUNGE_WINDUP = 0.72       # 蓄力占整条动画的比例；剩下的是爆发段
@@ -452,11 +575,10 @@ def anim_graft_at(name: str, rig: Rig, t: float, length: float) -> Pose:
     dormant_buds(p, active=tgt)
     p[tgt].scale = [BUD_DORMANT + (1.0 - BUD_DORMANT) * v] * 3
     # 抽搐只在推进段有——停滞时它是死的，更瘆人
+    # 推进段才抽搐；停滞段只剩常驻漂移——它没死，只是长不动了，这比完全冻住瘆人
     moving = 1.0 if (t < steps[1] or steps[2] < t < steps[3] or t > steps[4]) else 0.0
-    if moving:
-        count, phase = bud_flicks(1.0, length)[name]
-        R = flick(name, wrap(t), count, phase)
-        p[tgt].rot = [a * GRAFT_TWITCH for a in euler_of(R)]
+    tendril_pose(p, name, wrap(t), length, joint_flicks(name, 1.0, length),
+                 gain=GRAFT_TWITCH * moving, sway=0.55)
     p["core_mid"].scale = [1.0 + 0.04 * v] * 3
     return p
 
@@ -491,12 +613,9 @@ def anim_thrash(rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     sc = thrash_scale()
-    flicks = bud_flicks(sc, length)
     for n in C.sockets():
-        b = f"bud_{n}"
-        p[b].scale = [sc] * 3          # 茬已经在外面了：顶出来那一段属于嫁接，不在这里
-        count, phase = flicks[n]
-        p[b].rot = euler_of(flick(n, wrap(t), count, phase))
+        p[f"bud_{n}"].scale = [sc] * 3   # 茬已经在外面了：顶出来那一段属于嫁接，不在这里
+        tendril_pose(p, n, wrap(t), length, joint_flicks(n, sc, length))
 
     # 抽出去的组织从本体来：芽的总增量体积 = 本体的减少量。整条动画里茬的尺寸不变，
     # 所以这是个常数——本体在这条动画里**一动不动**，只是比平时小一圈。
@@ -666,12 +785,13 @@ def anim_death(rig: Rig, t: float, length: float) -> Pose:
 
 
 def _thrash_samples(length: float) -> int:
-    """乱抽的采样数：由**最快的那条芽**定，不是拍一个数。
+    """乱抽的采样数：由**最快的那一节**定，不是拍一个数。
 
     脉冲的起手段只占一个周期的 FLICK_ATTACK，要让它在导出后还是"猛地一甩"而不是被
     插值抹平，起手段至少要落上 3 帧。抽最快的那条决定了整条动画的采样密度。
     """
-    top = max(k for k, _ph in bud_flicks(thrash_scale(), length).values())
+    sc = thrash_scale()
+    top = max(k for n in C.sockets() for k, _ph in joint_flicks(n, sc, length))
     return int(math.ceil(top / FLICK_ATTACK * FLICK_KEYS))
 
 

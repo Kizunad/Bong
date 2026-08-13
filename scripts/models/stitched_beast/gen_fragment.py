@@ -51,8 +51,13 @@ DRIP_MAX = 4          # 碎片最多挂几条垂滴；实际条数按质量比�
 def _bone_tree(rig: Rig, g: FR.FragGeom) -> None:
     for b in g.bones:
         rig.bone(b.name, tuple(b.pivot), b.parent)
+    # 骨链，同 gen_core：一节一根骨，整条才弯得起来
     for s in g.sockets.values():
-        rig.bone(f"bud_{s.name}", tuple(s.pos), s.bone)
+        parent = s.bone
+        for j, piv in enumerate(C.bud_joints(s)):
+            name = f"bud_{s.name}" if j == 0 else f"bud_{s.name}_{j}"
+            rig.bone(name, tuple(piv), parent)
+            parent = name
 
 
 def part_mass(rig: Rig, g: FR.FragGeom) -> int:
@@ -133,7 +138,8 @@ def part_buds(rig: Rig, g: FR.FragGeom, shift: np.ndarray, growth: float = 1.0) 
     n = 0
     for s in g.sockets.values():
         for k, (ctr, r, mat) in enumerate(C.bud_shape(s, growth)):
-            rig.cube(f"bud_{s.name}", f"bud_{s.name}_{k}",
+            bone = f"bud_{s.name}" if k == 0 else f"bud_{s.name}_{k}"
+            rig.cube(bone, f"budc_{s.name}_{k}",
                      tuple(ctr - r + shift), tuple(ctr + r + shift), mat=mat)
             n += 1
     return n
@@ -170,7 +176,7 @@ def build(lobes: tuple[str, ...], growth: float | None = None) -> tuple[Rig, FR.
 
 # ---------------------------------------------------------------- 自检
 def body_bounds(rig: Rig) -> tuple[list[float], list[float]]:
-    body = [e for e in rig.elements if not e["name"].startswith(("drip_", "bud_"))]
+    body = [e for e in rig.elements if not e["name"].startswith(("drip_", "budc_"))]
     lo = [min(min(c[i] for c in Rig.corners(e)) for e in body) for i in range(3)]
     hi = [max(max(c[i] for c in Rig.corners(e)) for e in body) for i in range(3)]
     return lo, hi

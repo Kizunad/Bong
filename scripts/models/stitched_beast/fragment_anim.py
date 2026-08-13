@@ -172,39 +172,41 @@ def anim_thrash(rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     sc = thrash_scale()
-    flicks = A.bud_flicks(sc, length)
     for n in GEOM.sockets:
-        b = f"bud_{n}"
-        p[b].scale = [sc] * 3
-        count, phase = flicks[n]
-        p[b].rot = euler_of(A.flick(n, wrap(t), count, phase))
+        p[f"bud_{n}"].scale = [sc] * 3
+        A.tendril_pose(p, n, wrap(t), length, A.joint_flicks(n, sc, length))
     gained = sum(C.bud_tissue(s, 1.0) for s in GEOM.sockets.values()) * sc ** 3
     shrink = (1.0 - gained / (GEOM.mass * C.VOX ** 3)) ** (1.0 / 3.0)
     for b in (GEOM.fore, GEOM.mid, GEOM.hind):
         p[b].scale = [shrink, shrink, shrink]
+    # 底下那几条茬往下抽时会顶到地——碎片肚子本来就贴着地。于是它被自己的茬**撑着
+    # 一颠一颠**，这不是穿模钳制，是同一条"拿地面撑自己"（见 ground_lift）。母体腹底
+    # 离地 13.7px 没有这个问题，所以只有碎片这条要抬。
+    p["root"].pos = [0.0, ground_lift(rig, p, list(GEOM.sockets)), 0.0]
     return p
 
 
-def graft_lift(rig: Rig, name: str, scale: float, rot: np.ndarray | None = None) -> float:
+def ground_lift(rig: Rig, pose: Pose, names) -> float:
     """朝下长的那条芽把身体顶起来多少（px）。
 
-    碎片肚子贴着地，而 `limb_fl` 这类槽的法向朝下——芽一长出来就会插进地里（实测
-    最深 −4.9px）。这不是要钳掉的穿模，是**长出承重肢的过程本身**：脚一落地，身体
-    就得离地。运动层早就把这件事当成解出来的量（`locomotion.solve_ride_height`），
-    这里是它在无肢阶段的边界情形——只有一条腿的时候，抬起来的高度正好等于那条腿
-    伸到地面以下的深度。
+    碎片肚子贴着地，而 `limb_fl` 这类槽的法向朝下——芽一长出来、或者乱抽时往下弯，
+    就会插进地里（嫁接实测最深 −4.9px，乱抽 −0.69px）。这不是要钳掉的穿模，是
+    **拿地面撑自己**：朝下的那条顶到地，身体就得抬起来。运动层早就把这件事当成解出来的量（`locomotion.solve_ride_height`），
+    这里是它在无肢阶段的边界情形——只有一条腿时，抬起来的高度正好等于那条腿伸到
+    地面以下的深度。
 
-    芽的几何按 growth=1 建、绕挂载点缩放并旋转，所以逐节精确算最低点即可，不用估界。
-    抽搐那一下也得算进去：只按不旋转的姿态抬，抽搐把芽甩下去时照样扎地（实测 −0.68）。
+    直接对**骨链做正解**再取最低点，不再闭式估：芽现在是四节各自旋转的链，闭式解要
+    把四层变换重新推一遍，而这里本来就有 rig。root 的平移是最后叠加的纯位移，所以
+    先按 root=0 量、再把量出来的值写回 root，两者不打架。
     """
-    sock = GEOM.sockets[name]
-    # 枢轴高度必须从 **rig** 读：FragGeom 的坐标还在母体系里，落地平移是 gen_fragment
-    # 建完之后才做的。拿母体系的 y 去算，抬升量会差整整一个平移量（实测仍扎地 4.5px）。
-    piv_y = float(rig.bones[f"bud_{name}"].origin[1])
-    R = np.eye(3) if rot is None else rot
-    rel_low = min(float((R @ (np.asarray(c, float) - sock.pos))[1] - r)
-                  for c, r, _m in C.bud_shape(sock, 1.0))
-    return max(0.0, -(piv_y + scale * rel_low))
+    W = rig.world(pose)
+    lo = 1e9
+    for name in ([names] if isinstance(names, str) else names):
+        for bone in A.tendril(name)[0]:
+            pts = rig.bone_points(bone)
+            if len(pts):
+                lo = min(lo, float((pts @ W[bone][:3, :3].T + W[bone][:3, 3])[:, 1].min()))
+    return max(0.0, -lo)
 
 
 def anim_graft_at(name: str, rig: Rig, t: float, length: float) -> Pose:
@@ -217,14 +219,11 @@ def anim_graft_at(name: str, rig: Rig, t: float, length: float) -> Pose:
     sc = A.BUD_DORMANT + (1.0 - A.BUD_DORMANT) * v
     dormant(p, active=name)
     p[tgt].scale = [sc] * 3
-    R = np.eye(3)
-    if t < steps[1] or steps[2] < t < steps[3] or t > steps[4]:
-        count, phase = A.bud_flicks(1.0, length)[name]
-        rot = [a * A.GRAFT_TWITCH for a in euler_of(A.flick(name, wrap(t), count, phase))]
-        p[tgt].rot = rot
-        R = euler(rot)
+    moving = 1.0 if (t < steps[1] or steps[2] < t < steps[3] or t > steps[4]) else 0.0
+    A.tendril_pose(p, name, wrap(t), length, A.joint_flicks(name, 1.0, length),
+                   gain=A.GRAFT_TWITCH * moving, sway=0.55)
     p[GEOM.mid].scale = [1.0 + 0.04 * v] * 3
-    p["root"].pos = [0.0, graft_lift(rig, name, sc, R), 0.0]
+    p["root"].pos = [0.0, ground_lift(rig, p, name), 0.0]
     return p
 
 
@@ -260,7 +259,8 @@ def anim_death(rig: Rig, t: float, length: float) -> Pose:
 
 
 def _thrash_samples(length: float) -> int:
-    top = max(A.bud_flicks(thrash_scale(), length)[n][0] for n in GEOM.sockets)
+    sc = thrash_scale()
+    top = max(k for n in GEOM.sockets for k, _p in A.joint_flicks(n, sc, length))
     return int(math.ceil(top / A.FLICK_ATTACK * A.FLICK_KEYS))
 
 

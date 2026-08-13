@@ -68,8 +68,15 @@ def _bone_tree(rig: Rig) -> None:
     for lb in C.LOBES:
         pivot = tuple(np.array(lb.center) + C.CORE_CENTER)
         rig.bone(lb.name, pivot, lb.parent or "root")
+    # 每条芽是一条**骨链**（一节一根骨），不是一根骨。整条绑一根骨的话它只能像棍子
+    # 一样绕根部倾倒，末端和根部永远共线——乱抽渲出来是机械的（用户实测反馈）。
+    # 链上父子相接，所以对根节做缩放会整条一起缩，休眠/生长那套不用改。
     for s in C.sockets().values():
-        rig.bone(f"bud_{s.name}", tuple(s.pos), s.bone)
+        parent = s.bone
+        for j, piv in enumerate(C.bud_joints(s)):
+            name = f"bud_{s.name}" if j == 0 else f"bud_{s.name}_{j}"
+            rig.bone(name, tuple(piv), parent)
+            parent = name
 
 
 def part_mass(rig: Rig) -> int:
@@ -161,7 +168,9 @@ def part_buds(rig: Rig, growth: dict[str, float]) -> int:
     n = 0
     for s in C.sockets().values():
         for k, (ctr, r, mat) in enumerate(C.bud_shape(s, growth.get(s.name, 1.0))):
-            rig.cube(f"bud_{s.name}", f"bud_{s.name}_{k}",
+            # 第 k 节挂到第 k 根骨上——每节各自能转，整条才弯得起来
+            bone = f"bud_{s.name}" if k == 0 else f"bud_{s.name}_{k}"
+            rig.cube(bone, f"budc_{s.name}_{k}",
                      tuple(ctr - r), tuple(ctr + r), mat=mat)
             n += 1
     return n
@@ -186,7 +195,7 @@ def body_bounds(rig: Rig) -> tuple[list[float], list[float]]:
     量测与自检必须同一口径，否则打印值和断言值对不上。芽的尺寸另有专门断言（⑧）。
     """
     body = [e for e in rig.elements
-            if not e["name"].startswith(("drip_", "bud_"))]
+            if not e["name"].startswith(("drip_", "budc_"))]
     lo = [min(min(c[i] for c in Rig.corners(e)) for e in body) for i in range(3)]
     hi = [max(max(c[i] for c in Rig.corners(e)) for e in body) for i in range(3)]
     return lo, hi

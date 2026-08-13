@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import math
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
@@ -164,42 +165,88 @@ def main() -> int:
     N = 160
 
     names = list(C.sockets())
-    # 力臂取**满长**：骨骼缩放由 rig 自己作用在几何上，这里再乘一次 sc 就是缩两次，
+    # 芽现在是**骨链**，尖端挂在最后一节上，不再是根骨上的一个偏移点。
+    # 力臂取满长（模型坐标）：骨骼缩放由 rig 自己作用，这里再乘一次 sc 就是缩两次，
     # 量出来的摆幅会平白小掉一个 sc 倍（实测 0.45 被量成 0.19，误判成"没在摆"）
-    local = {n: rig.bones[f"bud_{n}"].origin + C.sockets()[n].normal * A.bud_reach(n, 1.0)
-             for n in names}
+    tipbone = {n: A.tendril(n)[0][-1] for n in names}
+    local = {n: np.asarray(C.bud_shape(C.sockets()[n], 1.0)[-1][0], float) for n in names}
     # 量**轨迹**不量角度：欧拉三元组对同一个姿态有多种写法，直接比会把等价姿态判成不同。
     # 每帧只做一次正解，17 条芽共用——逐芽各解一次的话这一段要跑十分钟。
-    trk = {n: [] for n in names}
-    for k in range(N):
-        W = rig.world(A.sample(rig, "core_thrash", k / N))
-        for n in names:
-            M = W[f"bud_{n}"]
-            trk[n].append(M[:3, :3] @ local[n] + M[:3, 3])
-    trk = {n: np.array(v) for n, v in trk.items()}
+    # 一次采样，三处复用（尖端轨迹 / 弯折 / 静止段）。分开各采一遍的话这一节要跑
+    # 二十多分钟——同样的正解算三遍。
+    frames = [A.sample(rig, "core_thrash", k / N) for k in range(N)]
+    worlds = [rig.world(f) for f in frames]
+    trk = {n: np.array([W[tipbone[n]][:3, :3] @ local[n] + W[tipbone[n]][:3, 3]
+                        for W in worlds]) for n in names}
 
     # 摆幅按**各自的长度**归一化：短茬摆得少是对的（力臂就那么长），错的是相对自己
     # 都不怎么动。绝对阈值会把 vest_dr 这种 girth 1.40 的小槽误判成"没在摆"。
+    # 门槛取**相对中位数**而不是写死：整条一根骨时尖端一次能扫过 1.26 倍自身长度
+    # （78° 一把倒过去），改成四节各 19.5°、各自发火之后，同向对齐才有那么大，平时
+    # 只有 0.3–0.6 倍。驱动模型一改绝对门槛就得跟着调，而这条真正想抓的是"有一条
+    # 明显比同伴不动"——那是相对量。再兜一个 0.20 的绝对下限防整体退化。
     rel = {n: float(np.linalg.norm(v - v.mean(axis=0), axis=1).max()) / A.bud_reach(n, sc)
            for n, v in trk.items()}
     absol = {n: float(np.linalg.norm(v - v.mean(axis=0), axis=1).max()) for n, v in trk.items()}
     print(f"[乱抽] 芽尖摆幅 {min(absol.values()):.2f}..{max(absol.values()):.2f} px"
           f"（相对自身长度 {min(rel.values()):.2f}..{max(rel.values()):.2f}）")
-    if min(rel.values()) < 0.80:
+    med = float(np.median(list(rel.values())))
+    if min(rel.values()) < max(0.20, 0.5 * med):
         still = min(rel, key=lambda n: rel[n])
         bad.append(f"芽 {still} 尖端位移只有自身长度的 {rel[still]:.2f}——「所有触手都在摆」里它没在摆（摆满 0）")
 
-    # 两两互相关：同步的两条会被眼睛立刻配成一对，"各抽各的"就破了
+    # 骨链必须**真的弯**：整条一根骨时它只能绕根部倾倒，末节与根节永远共线，
+    # 渲出来是机械的（用户实测反馈）。量根节与末节的朝向夹角，直着就是没弯。
+    worst_bend = 0.0
+    for W in worlds[::3]:
+        for n in names:
+            ch = A.tendril(n)[0]
+            d0 = W[ch[0]][:3, :3] @ C.sockets()[n].normal
+            d1 = W[ch[-1]][:3, :3] @ C.sockets()[n].normal
+            ang = math.degrees(math.acos(float(np.clip(np.dot(d0, d1) /
+                  (np.linalg.norm(d0) * np.linalg.norm(d1)), -1, 1))))
+            worst_bend = max(worst_bend, ang)
+    print(f"[乱抽] 骨链最大弯折（根节 vs 末节朝向）{worst_bend:.1f}°")
+    if worst_bend < 25.0:
+        bad.append(f"骨链最大只弯了 {worst_bend:.1f}°——四节几乎共线，等于还是一根刚体棍子；"
+                   f"检查 tendril_pose 是否给每节各自的驱动")
+
+    # 抽搐之间**不许冻住**：一条只在发火那一瞬动、其余时间纹丝不动的触手读成机械臂。
+    # 逐骨量帧间最大静止连续帧数（常驻漂移应当让它永远在动）。
+    worst_frozen, frozen_bone = 0, ""
+    for n in names:
+        for b in A.tendril(n)[0]:
+            run = best = 0
+            for f0, f1 in zip(frames, frames[1:] + frames[:1]):
+                if max(abs(x - y) for x, y in zip(f0[b].rot, f1[b].rot)) < 1e-4:
+                    run += 1
+                    best = max(best, run)
+                else:
+                    run = 0
+            if best > worst_frozen:
+                worst_frozen, frozen_bone = best, b
+    print(f"[乱抽] 最长静止段 {worst_frozen}/{N} 帧（{frozen_bone}）")
+    if worst_frozen > N * 0.25:
+        bad.append(f"{frozen_bone} 有 {worst_frozen}/{N} 帧完全静止——"
+                   f"抽搐之间该有常驻漂移（SWAY_DEG），冻住会读成机械臂")
+
+    # 两两相关：同步的两条会被眼睛立刻配成一对，"各抽各的"就破了。
+    #
+    # 相关要算在**速率**上，不能算在位置上。位置是三维有符号量，相邻两个挂载点的法向
+    # 本来就接近（比如 limb_ml 与 limb_hl 都在左肋），轨迹落在相近的平面里，光是方向
+    # 相似就能把相关顶到 0.65——那衡量的是"朝向像不像"，不是"是不是一起动"。眼睛配对
+    # 靠的是**同时动**，所以取速率序列。
+    spd = {n: np.linalg.norm(np.diff(v, axis=0, append=v[:1]), axis=1) for n, v in trk.items()}
     worst, pair = 0.0, ("", "")
     for i, a in enumerate(names):
         for b in names[i + 1:]:
-            x = trk[a] - trk[a].mean(axis=0)
-            y = trk[b] - trk[b].mean(axis=0)
+            x = spd[a] - spd[a].mean()
+            y = spd[b] - spd[b].mean()
             den = np.linalg.norm(x) * np.linalg.norm(y)
             c = abs(float((x * y).sum() / den)) if den > 1e-9 else 1.0
             if c > worst:
                 worst, pair = c, (a, b)
-    print(f"[乱抽] 两两轨迹最大互相关 {worst:.3f}（{pair[0]} / {pair[1]}）")
+    print(f"[乱抽] 两两速率最大互相关 {worst:.3f}（{pair[0]} / {pair[1]}）")
     if worst > 0.55:
         bad.append(f"{pair[0]} 与 {pair[1]} 摆得太同步（相关 {worst:.2f}）——"
                    f"会被看成一对在打拍子；相位取自槽名噪声，检查 bud_flicks")

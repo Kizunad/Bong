@@ -536,8 +536,14 @@ _SLOTS: tuple[tuple[str, str, float, float, float], ...] = (
 )
 
 
+@lru_cache(maxsize=1)
 def sockets() -> dict[str, Socket]:
-    """全部候选挂载点。基因组只从这里选，不自己造坐标。"""
+    """全部候选挂载点。基因组只从这里选，不自己造坐标。
+
+    必须缓存：一次要打 17×9 = 153 条射线（每个槽一条定位 + 八条量局部平坦度），每条
+    又是粗扫加二分。动画层每采一帧就问一次，实测把自检从几分钟拖到十几分钟。返回的
+    Socket 一律当只读用——碎片层是另建新对象，没有人改这里的。
+    """
     out: dict[str, Socket] = {}
     for name, kind, az, el, oz in _SLOTS:
         o = np.array([0.0, 0.0, oz])
@@ -652,6 +658,33 @@ def bud_shape(sock: Socket, growth: float) -> list[tuple[np.ndarray, float, str]
             break                               # 太早，还只是一处微隆，没有节
         d = r0 * frac * (0.45 + 1.35 * g)
         out.append((sock.pos + sock.normal * d, r0 * shrink * (0.55 + 0.45 * g), mat))
+    return out
+
+
+def bud_joints(sock: Socket) -> list[np.ndarray]:
+    """芽各节的**枢轴**——每一节一根骨，不是整条一根骨。
+
+    整条芽绑在一根骨上，它就只能像一根棍子那样绕根部倾倒：末端和根部永远同相、
+    永远共线。渲出来是机械的，因为它本来就是刚体。真实的触手是一条**能弯的链**，
+    末端滞后于根部、甩起来才有鞭子的样子。
+
+    节 0 的枢轴取挂载点本身（生长与休眠的缩放都绕它做），其余各节取相邻两节中心的
+    **中点**：相邻两节的球本来就大幅重叠，绕中点转不会在关节处裂开。
+    """
+    nodes = bud_shape(sock, 1.0)
+    piv = [np.asarray(sock.pos, float)]
+    for a, b in zip(nodes, nodes[1:]):
+        piv.append(0.5 * (a[0] + b[0]))
+    return piv
+
+
+def bud_segments(sock: Socket) -> list[float]:
+    """芽从根到梢各节的长度（px）。喂给 `locomotion.natural_hz` 求每一节自己的摆频——
+    越靠梢的一段越短、转动惯量越小，摆得越快。这就是"每一层有自己的动能"。"""
+    piv = bud_joints(sock)
+    nodes = bud_shape(sock, 1.0)
+    out = [float(np.linalg.norm(b - a)) for a, b in zip(piv, piv[1:])]
+    out.append(float(np.linalg.norm(nodes[-1][0] - piv[-1])) + nodes[-1][1])
     return out
 
 
