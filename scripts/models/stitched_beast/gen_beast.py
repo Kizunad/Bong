@@ -77,13 +77,6 @@ def part_limbs(rig: Rig, limbs: dict[str, LB.Limb]) -> int:
     for lb in limbs.values():
         s = lb.sock
         base = f"limb_{s.name}_0"
-        # 接合痕：皮上一圈看得见的隆起，半径由**剪切传力**所需的面积给出（一两像素）。
-        # 这里曾经画的是一个"把载荷摊开"的大癒合环（半径到 9 px），那个模型是错的——
-        # 肌肉不从接合面穿过去，接合面只传力。渲出来是几块贴在身上的板。
-        rig.shaft(base, f"weld_{s.name}",
-                  tuple(s.pos - s.normal * 0.7), tuple(s.pos + s.normal * 0.5),
-                  lb.weld_r, mat="collar")
-        n += 1
         for i, (p, q) in enumerate(zip(lb.joints, lb.joints[1:])):
             r = max(lb.radius[i], RENDER_MIN_R)
             # 肌腹是**纺锤形**的：算出来的那个半径是所需生理横截面的**峰值**，出现在
@@ -106,6 +99,7 @@ def part_limbs(rig: Rig, limbs: dict[str, LB.Limb]) -> int:
         if lb.bearing:
             n += part_foot(rig, lb)
         n += part_coat(rig, lb)
+        n += part_scars(rig, lb)
     return n
 
 
@@ -183,44 +177,102 @@ def part_foot(rig: Rig, lb: LB.Limb) -> int:
     return n
 
 
+# 各种体表的做法：(几圈, 每圈几束, 束长/半径, 束粗, 覆盖到第几节, 材质)。
+# 数量是**看得见**换来的：毛稀了在这个尺度上等于没有，用户第一眼的评价是"这么秃"。
+COAT_SPEC: dict[str, tuple[int, int, float, float, int, str]] = {
+    "fur":     (4, 7, 0.85, 0.34, 3, "fur"),      # 兽毛：细密，一直盖到掌骨
+    "wool":    (4, 8, 1.15, 0.72, 2, "wool"),     # 羊毛：又粗又密，只在上段结团
+    "bristle": (5, 4, 1.30, 0.26, 2, "bristle"),  # 猪鬃：稀、硬、长
+    "plume":   (3, 7, 1.05, 0.52, 1, "plume"),    # 禽的覆羽：只到大腿，跗跖骨是裸鳞
+}
+
+
 def part_coat(rig: Rig, lb: LB.Limb) -> int:
-    """体表：毛 / 羊毛 / 鬃。**只有长毛的才加几何**——鳞、甲、皮、裸靠材质本身就够。
+    """体表：毛 / 羊毛 / 鬃 / 覆羽。**只有长毛的才加几何**——鳞、甲、皮、裸靠材质就够。
 
     毛不是贴图能解决的：MC 这个尺度上"毛茸茸"读的是**轮廓**，光把颜色调浅还是一根
-    光柱子。所以沿近端两节的表面撒一圈小块，超出柱面一点点，把剪影打毛。羊毛块更大
-    更亮更密（羊腿远看是一团白），猪鬃是稀疏的短刺。
+    光柱子。但第一版把毛做成了随机撒在柱面上的小方块，用户的评价是"好乱，没有规律"
+    ——那是**碎石**不是毛。毛有两条真实结构，缺哪条都不像：
+
+    · **有毛流。** 每一根都顺着肢体往远端躺（外加一点点翘起才离得开皮），不是朝四面
+      八方戳。所以这里出的是沿轴向的短柱（`shaft`）不是方块。
+    · **成排交错。** 一圈一圈往下排，相邻两圈错开半个间距，像瓦片一样互相压住——
+      规律感来自这个，随机偏移只负责让它不呆板。
+
+    抖动只加在长度和翘角上，位置严格按环排。羊毛把束加粗加密到结团，猪鬃反过来又稀
+    又硬又长，禽的覆羽只盖到大腿（跗跖骨是裸鳞的）。
     """
     sk = lb.gene.skeleton
-    if sk is None or sk.coat not in ("fur", "wool", "bristle", "plume"):
+    if sk is None or sk.coat not in COAT_SPEC:
         return 0
-    # 块数是**看得见**换来的：毛稀了在 MC 这个尺度上等于没有（round 1 实测 8 块 0.55 的
-    # 小方块渲出来只是几个噪点，腿还是一根光柱子）。加密到轮廓真的毛了为止。
-    spec = {"fur": (15, 0.72, 1.16, "fur"), "wool": (15, 1.25, 1.42, "wool"),
-            "bristle": (9, 0.32, 1.30, "bristle"),
-            "plume": (11, 0.90, 1.18, "plume")}[sk.coat]
-    count, size, reach, mat = spec
+    rings, per, tuft, thick, span, mat = COAT_SPEC[sk.coat]
     n = 0
-    span = 1 if sk.coat == "plume" else 2      # 禽的跗跖骨是裸鳞的，覆羽只到大腿
-    for i in range(min(span, len(lb.joints) - 2)):   # 只长在近端：远端是腱和骨
+    for i in range(min(span, len(lb.joints) - 2)):
         a, b = lb.joints[i], lb.joints[i + 1]
         axis = b - a
         L = float(np.linalg.norm(axis)) or 1.0
         axis = axis / L
         t1, t2 = C._tangent_basis(axis)
         r = max(lb.radius[i], RENDER_MIN_R)
-        for k in range(count):
-            u = C._noise(lb.name, i, k, "u")
-            ang = 2 * math.pi * (k / count + 0.13 * C._noise(lb.name, i, k, "a"))
-            radial = math.cos(ang) * t1 + math.sin(ang) * t2
-            ctr = a + axis * (L * (0.12 + 0.76 * u)) + radial * (r * reach)
-            s = size * (0.7 + 0.6 * C._noise(lb.name, i, k, "s"))
-            if sk.coat == "bristle":
-                half = np.abs(radial * s * 2.2) + np.array([0.28, 0.28, 0.28])
-            else:
-                half = np.array([s, s, s])
-            rig.cube(f"limb_{lb.name}_{i}", f"coat_{lb.name}_{i}_{k}",
-                     tuple(ctr - half), tuple(ctr + half), mat=mat)
+        for ring in range(rings):
+            t = (ring + 0.6) / (rings + 0.4)
+            for k in range(per):
+                # 相邻两圈错开半个间距：瓦片式咬合，规律就是从这儿来的
+                ang = 2 * math.pi * (k + 0.5 * (ring % 2)) / per
+                radial = math.cos(ang) * t1 + math.sin(ang) * t2
+                base = a + axis * (L * t) + radial * (r * 0.82)
+                # 毛流：顺着肢体往远端躺 + 一点翘起。抖动只动长度和翘角，不动排布
+                j = C._noise(lb.name, i, ring, k, "j")
+                lay = axis * (0.80 + 0.14 * j) + radial * (0.34 + 0.22 * j)
+                lay /= float(np.linalg.norm(lay))
+                tip = base + lay * (r * tuft * (0.75 + 0.5 * j))
+                rig.shaft(f"limb_{lb.name}_{i}", f"coat_{lb.name}_{i}_{ring}_{k}",
+                          tuple(base), tuple(tip), max(thick * r * 0.6, 0.32), mat=mat)
+                n += 1
+    return n
+
+
+def part_scars(rig: Rig, lb: LB.Limb) -> int:
+    """缝上去留下的疤。**位置不是画的，是算出来的**——两处，各有各的来历：
+
+    · **接合痕**：这条肢焊在挂载点上的那一圈。
+    · **交界痕**：本体新长的肉与供体原有组织的分界。那个分界点材质表已经算过了
+      （`Limb.mats` 里 graft 变成 hide/scute/chitin 的那一节），疤就长在那儿——
+      肉长到哪儿为止，痕就在哪儿。
+
+    做法沿用核心那身癒合痕的读法（`gen_core.part_welds`）：**不是外科缝合**，没有线、
+    没有等距横扣，是自体融合留下的不规则隆起——粗细逐段变、约一成断开（融合彻底处
+    无痕）、偶尔堆成一个肉瘤。等粗等距的环会立刻读成焊接件。
+    """
+    n = 0
+    rings = [(0, lb.weld_r * 1.15)]
+    for i in range(1, len(lb.mats)):
+        if lb.mats[i] != lb.mats[i - 1]:
+            rings.append((i, max(lb.radius[i - 1], lb.radius[i]) * 1.12))
+    for i, rad in rings:
+        p = lb.joints[i]
+        axis = lb.joints[min(i + 1, len(lb.joints) - 1)] - p
+        na = float(np.linalg.norm(axis))
+        if na < 1e-6:
+            continue
+        axis /= na
+        t1, t2 = C._tangent_basis(axis)
+        seg = 9
+        for k in range(seg):
+            if C._noise(lb.name, i, k, "gap") < 0.12:
+                continue                      # 融合彻底处直接没有痕
+            a0, a1 = 2 * math.pi * k / seg, 2 * math.pi * (k + 1.05) / seg
+            e0 = p + (math.cos(a0) * t1 + math.sin(a0) * t2) * rad
+            e1 = p + (math.cos(a1) * t1 + math.sin(a1) * t2) * rad
+            w = 0.34 + 0.30 * C._noise(lb.name, i, k, "w")
+            rig.shaft(f"limb_{lb.name}_{max(i - 1, 0)}", f"scar_{lb.name}_{i}_{k}",
+                      tuple(e0), tuple(e1), w, mat="scar")
             n += 1
+            if C._noise(lb.name, i, k, "b") < 0.11:      # 融合失控处堆出的肉瘤
+                c, s = 0.5 * (e0 + e1), w * 1.7
+                rig.cube(f"limb_{lb.name}_{max(i - 1, 0)}", f"snarl_{lb.name}_{i}_{k}",
+                         tuple(c - s), tuple(c + s), mat="weld_dark")
+                n += 1
     return n
 
 
@@ -409,8 +461,8 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
     # ⑩ 块数预算
     # 预算从 560 提到 760：脚（每条 4–8 块）和毛（每条 13–15 块）是这一轮加的，都是
     # "看得见才算数"的东西。参照：拟态灰烬蛛整只约 200 块，这只兽有 6–9 条肢。
-    if len(rig.elements) > 760:
-        bad.append(f"块数 {len(rig.elements)} 超预算 760")
+    if len(rig.elements) > 900:
+        bad.append(f"块数 {len(rig.elements)} 超预算 900")
     return bad
 
 
