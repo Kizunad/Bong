@@ -90,25 +90,136 @@ def part_limbs(rig: Rig, limbs: dict[str, LB.Limb]) -> int:
             # 腹的中段，两端收进腱里。整节渲成一根等粗的柱子就成了一块方砖——round 2
             # 的图上六条腿的大腿全是大方块，读不出是肉。分三段按 SPINDLE 收，两端收细
             # 还顺带把关节处的方角削掉了。细到只剩腱骨的节（末节）没有腹，不分段。
+            # 分几段要看**长细比**：一节粗腿分成三段，每一段比它自己还宽，渲出来是
+            # 一摞板子（round 2 整只兽实测，六条腿全是木板）。只有细长到分得开的才分。
+            L = float(np.linalg.norm(q - p))
+            prof = (SPINDLE if L >= 6.0 * r else
+                    (SPINDLE[1:] if L >= 3.0 * r else (1.0,)))
             if r <= RENDER_MIN_R * 2.0 or lb.muscle[i] <= 0.0:
-                rig.shaft(f"limb_{s.name}_{i}", f"seg_{s.name}_{i}",
-                          tuple(p), tuple(q), r, mat=lb.mats[i])
-                n += 1
-                continue
-            for k, f in enumerate(SPINDLE):
-                a = p + (q - p) * (k / len(SPINDLE))
-                b = p + (q - p) * ((k + 1) / len(SPINDLE))
+                prof = (1.0,)
+            for k, f in enumerate(prof):
+                a = p + (q - p) * (k / len(prof))
+                b = p + (q - p) * ((k + 1) / len(prof))
                 rig.shaft(f"limb_{s.name}_{i}", f"seg_{s.name}_{i}_{k}",
                           tuple(a), tuple(b), max(r * f, RENDER_MIN_R), mat=lb.mats[i])
                 n += 1
         if lb.bearing:
-            # 脚掌：面积 = 峰值载荷 / 地面承载力。压强超了就陷进灰里，所以载荷大的脚大。
-            t = lb.joints[-1]
-            hw, hl = lb.pad
-            h = max(1.0, lb.radius[-1] * 2.0)
-            rig.cube(f"limb_{s.name}_{len(lb.joints) - 2}", f"pad_{s.name}",
-                     (t[0] - hw, 0.0, t[2] - hl), (t[0] + hw, h, t[2] + hl),
-                     mat=lb.mats[-1])
+            n += part_foot(rig, lb)
+        n += part_coat(rig, lb)
+    return n
+
+
+def part_foot(rig: Rig, lb: LB.Limb) -> int:
+    """脚：按**站姿 + 足型**出真几何，不是一块方板。
+
+    这是"哪条腿是从谁身上拆的"最主要的读法——上一版所有脚都是同一块按承载力算大小的
+    方板，用户第一句话就是"这棍子是什么腿，看不出来"。现在蹄是蹄、爪是爪、人足有脚跟。
+
+    接触面积仍然恒等于 载荷/地面承载力（`lb.pad`），只是分配到各自的形状里：偶蹄劈成
+    两半、肉垫是一块掌垫加三根趾、人足摊成一整片脚底、禽爪三前一后、蛛钩摊一片甲板。
+    """
+    sk = lb.gene.skeleton
+    if sk is None:
+        return 0
+    j = lb.joints
+    hw, hl = lb.pad
+    bone = f"limb_{lb.name}_{len(j) - 2}"
+    prev = f"limb_{lb.name}_{max(len(j) - 3, 0)}"
+    tip, ball = j[-1], j[-2]
+    n = 0
+
+    def box(b, name, ctr, half, mat):
+        nonlocal n
+        rig.cube(b, f"{name}_{lb.name}_{n}",
+                 tuple(np.asarray(ctr) - np.asarray(half)),
+                 tuple(np.asarray(ctr) + np.asarray(half)), mat=mat)
+        n += 1
+
+    if sk.foot == "cloven":
+        # 偶蹄：两瓣角质从系部压到地面，中间留一条缝——远看就是"羊/牛的腿"
+        for sgn in (-1.0, 1.0):
+            c = np.array([ball[0] + sgn * hw * 0.5, hl * 0.30, ball[2]])
+            box(bone, "hoof", c, (hw * 0.42, hl * 0.30 + 0.1, hl * 0.55), "hoof")
+    elif sk.foot == "paw":
+        # 肉垫爪：一块掌垫 + 三根趾 + 爪尖
+        box(bone, "pad", (ball[0], 0.7, ball[2] - hl * 0.15),
+            (hw * 0.9, 0.7, hl * 0.6), "pad")
+        d = tip - ball
+        run = float(np.linalg.norm(d[[0, 2]])) or 1.0
+        for k, sgn in enumerate((-1.0, 0.0, 1.0)):
+            c = np.array([ball[0] + sgn * hw * 0.62 + d[0] * 0.55,
+                          0.6, ball[2] + d[2] * 0.55 - abs(sgn) * run * 0.12])
+            box(bone, "toe", c, (hw * 0.28, 0.6, run * 0.5), "hide")
+            box(bone, "claw", c + np.array([0.0, 0.0, -run * 0.55]),
+                (hw * 0.16, 0.35, run * 0.22), "claw")
+    elif sk.foot == "human":
+        # 人足：整片脚底 + 向后支出来的脚跟 + 三枚趾。跖行的读法全在这块脚跟上
+        heel, sole = j[-2], j[-1]
+        mid = 0.5 * (heel + sole)
+        run = max(float(np.linalg.norm((sole - heel)[[0, 2]])), 1.0)
+        box(bone, "sole", (mid[0], 0.8, mid[2]), (hw * 0.72, 0.8, run * 0.5 + hl * 0.3),
+            "hide")
+        box(prev, "heel", (heel[0], 1.1, heel[2] + run * 0.28),
+            (hw * 0.62, 1.1, run * 0.30), "hide")
+        for sgn in (-1.0, 0.0, 1.0):
+            box(bone, "toe", (sole[0] + sgn * hw * 0.46, 0.6, sole[2] - hl * 0.35),
+                (hw * 0.2, 0.6, hl * 0.4), "hide")
+    elif sk.foot == "bird":
+        # 禽爪：三前一后。后趾是禽腿最好认的特征，别省
+        run = max(float(np.linalg.norm((tip - ball)[[0, 2]])), 1.0)
+        for sgn, fwd in ((-1.0, 1.0), (0.0, 1.0), (1.0, 1.0), (0.0, -0.55)):
+            c = np.array([ball[0] + sgn * hw * 0.7, 0.55,
+                          ball[2] - fwd * run * 0.55])
+            box(bone, "toe", c, (hw * 0.22, 0.55, run * 0.55 * abs(fwd)), "scute")
+            box(bone, "claw", c + np.array([0.0, 0.0, -np.sign(fwd) * run * 0.6]),
+                (hw * 0.14, 0.3, run * 0.18), "claw")
+    else:                       # claw —— 蛛钩
+        # 蛛足本来只有一个点着地，在松散废土上会直接扎进去。本体只能在钩下面长一片
+        # 甲板把压强摊开——面积照样是 载荷/承载力，形状是它自己长的，不是原装的。
+        box(bone, "plate", (tip[0], 0.5, tip[2]), (hw * 0.8, 0.5, hl * 0.8), "chitin")
+        for sgn in (-1.0, 1.0):
+            box(bone, "hook", (tip[0] + sgn * hw * 0.55, 1.2, tip[2] - hl * 0.5),
+                (0.4, 1.0, hl * 0.45), "claw")
+    return n
+
+
+def part_coat(rig: Rig, lb: LB.Limb) -> int:
+    """体表：毛 / 羊毛 / 鬃。**只有长毛的才加几何**——鳞、甲、皮、裸靠材质本身就够。
+
+    毛不是贴图能解决的：MC 这个尺度上"毛茸茸"读的是**轮廓**，光把颜色调浅还是一根
+    光柱子。所以沿近端两节的表面撒一圈小块，超出柱面一点点，把剪影打毛。羊毛块更大
+    更亮更密（羊腿远看是一团白），猪鬃是稀疏的短刺。
+    """
+    sk = lb.gene.skeleton
+    if sk is None or sk.coat not in ("fur", "wool", "bristle", "plume"):
+        return 0
+    # 块数是**看得见**换来的：毛稀了在 MC 这个尺度上等于没有（round 1 实测 8 块 0.55 的
+    # 小方块渲出来只是几个噪点，腿还是一根光柱子）。加密到轮廓真的毛了为止。
+    spec = {"fur": (15, 0.72, 1.16, "fur"), "wool": (15, 1.25, 1.42, "wool"),
+            "bristle": (9, 0.32, 1.30, "bristle"),
+            "plume": (11, 0.90, 1.18, "plume")}[sk.coat]
+    count, size, reach, mat = spec
+    n = 0
+    span = 1 if sk.coat == "plume" else 2      # 禽的跗跖骨是裸鳞的，覆羽只到大腿
+    for i in range(min(span, len(lb.joints) - 2)):   # 只长在近端：远端是腱和骨
+        a, b = lb.joints[i], lb.joints[i + 1]
+        axis = b - a
+        L = float(np.linalg.norm(axis)) or 1.0
+        axis = axis / L
+        t1, t2 = C._tangent_basis(axis)
+        r = max(lb.radius[i], RENDER_MIN_R)
+        for k in range(count):
+            u = C._noise(lb.name, i, k, "u")
+            ang = 2 * math.pi * (k / count + 0.13 * C._noise(lb.name, i, k, "a"))
+            radial = math.cos(ang) * t1 + math.sin(ang) * t2
+            ctr = a + axis * (L * (0.12 + 0.76 * u)) + radial * (r * reach)
+            s = size * (0.7 + 0.6 * C._noise(lb.name, i, k, "s"))
+            if sk.coat == "bristle":
+                half = np.abs(radial * s * 2.2) + np.array([0.28, 0.28, 0.28])
+            else:
+                half = np.array([s, s, s])
+            rig.cube(f"limb_{lb.name}_{i}", f"coat_{lb.name}_{i}_{k}",
+                     tuple(ctr - half), tuple(ctr + half), mat=mat)
             n += 1
     return n
 
@@ -135,6 +246,41 @@ def build(seed: int, *, bud_growth: float = 1.0
             rig.cube(bone, f"budc_{s.name}_{k}", tuple(ctr - r), tuple(ctr + r), mat=mat)
     part_limbs(rig, limbs)
     return rig, gait, limbs
+
+
+def gallery(stance: str = "") -> Rig:
+    """各物种的腿**并排一条一条看**——回答"这是什么腿"只能靠单件预览，混在整只兽上
+    看永远是一团。每条都给同一个载荷、同一个髋高，所以差别全部来自骨架与站姿本身。
+
+    看这张图该看出来：蹄行的（羊/牛/猪）小腿以下是一根竖管加一枚劈开的蹄；趾行的
+    （狼/狐/兔/禽）脚跟吊在半空、踮着趾；跖行的（人/鼠）整只脚掌拍在地上还支出个
+    脚跟；蛛足是斜插下去的一根细杆。毛/羊毛/鬃/鳞/甲也各是各的。
+    """
+    import genome as GN
+    rig = Rig(Palette(MATS, swatch=8, size=64))
+    rig.bone("root", (0.0, 0.0, 0.0))
+    load = LB.body_weight() / 4.0
+    names = sorted((n for n, sk in GN.SKELETONS.items()
+                    if not stance or sk.stance == stance),
+                   key=lambda k: GN.SKELETONS[k].total)
+    for i, sp in enumerate(names):
+        sk = GN.SKELETONS[sp]
+        x = (i - len(names) / 2) * 26.0
+        gene = GN.LimbGene(f"g{i}", sk.cls, 1.0, sp)
+        # 髋高按**这条腿自己的自然站姿**摆：踝的高度由站姿定，髋再在踝之上留出
+        # 八成的腿长。统一给一个高度是错的——蹄行的踝本来就比跖行高一大截，硬摆同一个
+        # 髋高会逼股骨横着支出去（round 2 腿谱实测，像条断腿）。
+        hip = np.array([x, gene.ankle_lift + gene.leg_len * 0.80, 0.0])
+        sock = C.Socket(name=sp, kind="limb", pos=hip,
+                        normal=np.array([0.0, -1.0, 0.0]), bone="root", girth=4.0)
+        lb = LB.solve_limb(gene, sock, load=load,
+                           foot=np.array([x + gene.leg_len * 0.22, 0.0, 0.0]))
+        parent = "root"
+        for j, piv in enumerate(lb.joints[:-1]):
+            rig.bone(f"limb_{sp}_{j}", tuple(piv), parent)
+            parent = f"limb_{sp}_{j}"
+        part_limbs(rig, {sp: lb})
+    return rig
 
 
 # ---------------------------------------------------------------- 自检
@@ -184,16 +330,24 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
         if not lb.bearing:
             continue
         r = lb.radius
-        if min(r) != r[-1]:
+        # 卡的是**渲染出来的**粗细：半个像素以下模型表达不出差别（0.36 与 0.40 渲出来
+        # 是同一根柱子），拿原始值断言等于在噪声上较真。
+        rr = [max(x, RENDER_MIN_R) for x in r]
+        # 容差 0.1 px：趾骨的力臂量到接触点，而趾尖本来就在接触点前面一截，所以它的
+        # 抗弯半径可能比掌骨大那么零点零几像素。这是真的，但在模型精度之下。
+        if rr[-1] > min(rr) + 0.1:
             bad.append(f"{lb.name} 末节不是最细的 {[round(x, 2) for x in r]}——"
                        f"末节只有腱穿过，它必须是最细的一节")
         if r.index(max(r)) > (len(r) - 1) // 2 and lb.buried < 0.02:
             bad.append(f"{lb.name} 最粗的一节在远端 {[round(x, 2) for x in r]} 且没有"
                        f"埋没截断（buried={lb.buried:.0%}）——抗重力肌都长在近端，"
                        f"远端鼓起来说明力矩臂算反了")
-        if lb.root_need / max(r[-1], 1e-9) < 3.0:
-            bad.append(f"{lb.name} 根部需求/梢粗只差 "
-                       f"{lb.root_need / max(r[-1], 1e-9):.1f}×——腿该显著收细，"
+        # 看得见的收细是**大腿 vs 管骨**，不是大腿 vs 趾节——趾节已经归脚的几何管了，
+        # 拿它当基准会把"脚大"误判成"腿不收细"。
+        cannon = r[max(len(r) - lb.gene.foot_bones, 1)]
+        if lb.root_need / max(cannon, 1e-9) < 2.0:
+            bad.append(f"{lb.name} 根部需求 {lb.root_need:.1f} / 管骨 {cannon:.2f} 只差 "
+                       f"{lb.root_need / max(cannon, 1e-9):.1f}×——腿该显著收细，"
                        f"等粗说明力矩没进公式")
 
     # ⑤ 载荷守恒：任一时刻所有着地脚的反力之和必须等于体重。这是整层的地基，
@@ -253,8 +407,10 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
         bad.append("左右承重肢镜像对称——缝合兽不该对称")
 
     # ⑩ 块数预算
-    if len(rig.elements) > 560:
-        bad.append(f"块数 {len(rig.elements)} 超预算 560")
+    # 预算从 560 提到 760：脚（每条 4–8 块）和毛（每条 13–15 块）是这一轮加的，都是
+    # "看得见才算数"的东西。参照：拟态灰烬蛛整只约 200 块，这只兽有 6–9 条肢。
+    if len(rig.elements) > 760:
+        bad.append(f"块数 {len(rig.elements)} 超预算 760")
     return bad
 
 
@@ -264,7 +420,16 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bud-growth", type=float, default=1.0,
                     help="没长肢的槽画多大；出图看真实样子传 0.1（见 build）")
+    ap.add_argument("--gallery", action="store_true", help="各物种的腿并排出一张")
     args = ap.parse_args()
+
+    if args.gallery:
+        import genome as GN
+        for st in sorted({sk.stance for sk in GN.SKELETONS.values()}):
+            rig = gallery(st)
+            p = rig.save(OUT_DIR / f"Legs_{st}.bbmodel", f"Legs_{st}")
+            print(f"腿谱 {st}：{len(rig.elements)} 块 → {p}")
+        return 0
 
     rig, gait, limbs = build(args.seed, bud_growth=args.bud_growth)
     W = LB.body_weight()

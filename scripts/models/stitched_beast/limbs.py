@@ -87,10 +87,11 @@ BEARING = 1.0e5            # 地面承载力 Pa（松散废土，≈松砂）
 PEAK_SHAPE = math.pi / 2   # 支撑相半正弦的峰值/均值比——推出来的，见模块 docstring ③
 SAFETY = 2.0               # 骨的安全系数。活体实测普遍 2–4（Biewener），这东西是
                            # 捡来的废件拼的，取区间下沿
+PENALTY = 400.0            # 姿态求解里"每穿模一像素"折算成多少肌肉代价。取到足以压过
+                           # 肌肉项的量级即可——它表达的是"宁可多长肉也不要穿模"
 
-# 关节弯折方向。这是**供体的解剖事实**，不是造型选择：兽腿膝向前肘向后所以逐节交替、
-# 禽腿的"反折膝"其实是踝、蛛足先把腿节抬到身体之上再落下去。
-# 数值是各关节在肢体平面内的折叠权重（正 = 向前进方向折）。
+# 关节弯折方向。这是**供体的解剖事实**，不是造型选择：兽腿的膝向前折、禽腿的膝藏在
+# 体羽里而外面看到的"反折膝"其实是踝、蛛足先把腿节抬到身体之上再落下去。
 BEND: dict[str, tuple[float, ...]] = {
     "mammal": (1.0, -1.0, 1.0),
     "bird": (-1.0, 1.0, -1.0),
@@ -98,6 +99,15 @@ BEND: dict[str, tuple[float, ...]] = {
     "tentacle": (1.0,) * 5,
     "vestigial": (1.0,),
 }
+
+# **掌骨相对地面的倾角**——这一个数字就把三类腿分开了，是解剖学分类不是造型选择：
+#   · 蹄行（羊/牛/猪）掌骨竖成一根管，只有蹄尖着地 ⇒ 踝抬得最高，小腿以下是一根细杆
+#   · 趾行（狼/狐/兔/禽）脚跟离地、踮着趾走 ⇒ 中间那个"向后折的关节"其实是踝
+#   · 跖行（人/鼠）整个脚掌贴地 ⇒ 踝低、脚后跟支出来一块
+# 同样四根骨、同样的载荷，站姿一换剪影就完全不同。上一版没有这一层，六条腿一个样。
+META_DEG = GN.META_DEG          # 解剖数据，和 locomotion 共用一份（见 genome）
+FWD = np.array([0.0, 0.0, -1.0])     # 前进方向：脚趾一律朝前，不管这条腿从哪边支出去
+UP = np.array([0.0, 1.0, 0.0])
 
 # 供体的体表。捡来的那截还看得出是从谁身上拆的——这是观察不是设计。
 DONOR_MAT: dict[str, str] = {
@@ -116,6 +126,13 @@ LIMB_MATS: dict[str, tuple[int, int, int]] = {
     "graft": (146, 116, 108),    # 本体长上去的新肉（比核心 flesh_pale 略红）
     "graft_deep": (96, 72, 74),
     "collar": (108, 64, 62),     # 根部癒合环
+    "hoof": (58, 50, 44),        # 蹄：角质，最暗
+    "claw": (40, 36, 34),        # 爪/钩
+    "pad": (92, 74, 72),         # 肉垫
+    "fur": (104, 88, 74),        # 兽毛（比 hide 亮一档才看得出蓬松边缘）
+    "wool": (168, 158, 140),     # 羊毛：全身最亮的一处，扎眼是对的
+    "bristle": (70, 60, 52),     # 猪鬃
+    "plume": (118, 104, 92),     # 禽腿上段的覆羽——鳞只长在跗跖骨上，大腿是有毛的
 }
 
 
@@ -244,8 +261,8 @@ def _simplex(n: int, div: int = 8):
 
 
 def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
-               kind: str, clearance: list[float] | None = None
-               ) -> tuple[list[np.ndarray], bool]:
+               kind: str, clearance: list[float] | None = None,
+               descend: bool = True) -> tuple[list[np.ndarray], bool]:
     """站姿：**最省肌肉**的那个折法。世界坐标的各关节点。
 
     "折到够着落点"有无穷多解——把折叠量摊给哪个关节是自由的。选哪一个不该我挑：
@@ -275,8 +292,25 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
     floor = np.array(clearance if clearance is not None else [0.0] * (len(segs) + 1))
     want = math.atan2(n, max(-d[1], 1e-9))
 
-    def search(sg: np.ndarray, lift: float):
-        best, best_cost, slack = None, 1e18, None
+    def penetration(pt: np.ndarray) -> float:
+        """这一点扎进核心多深（px）。场在体内光滑，用 (f−ISO)/|∇f| 换算成距离。"""
+        q = pt - C.CORE_CENTER
+        f = C.fld(q)
+        if f < C.ISO:
+            return 0.0
+        g = float(np.linalg.norm(C.grad(q)))
+        return (f - C.ISO) / max(g, 1e-6)
+
+    def search(sg: np.ndarray):
+        """在这一组折向下取**总代价最小**的姿态。
+
+        代价 = 肌肉需求 + 穿地深度 + 扎进自己身体的深度，后两项按 PENALTY 计价。
+        先前是"硬拒不合格的候选、一个都没有就退回兜底解"，那条级联很脆：净空要求稍微
+        提一点就全军覆没，退回来的偏偏是膝盖插进地里那个（实测 −7.2 px），而且换个
+        seed 又变成膝盖埋进肚子（f=1.32）。改成惩罚项之后永远有最优解，而且"宁可多长
+        点肌肉也不要穿模"这个取舍是显式的。
+        """
+        best, best_cost = None, 1e18
         for w in _simplex(nj):
             bends = _fit_span(segs, w * sg, target)
             if bends is None:
@@ -288,39 +322,34 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
             x = c * P[:, 0] - s * P[:, 1]
             y = hip[1] + s * P[:, 0] + c * P[:, 1]
             cost = float((np.abs(x[1:-1] - x[-1]) / arm).sum())
-            if (y[:-1] < floor[:len(y) - 1] * lift - 1e-6).any():
-                if slack is None or cost < slack[2]:
-                    slack = (bends, rot, cost)   # 压地的兜底解，只在全无可行解时用
-                continue
+            # 站着的兽腿，关节该**从髋一路往下降**。折叠量一大，"把膝盖抬到髋以上"
+            # 也能凑够首尾距离而且更省肌肉，于是解出来股骨朝天支出去——腿谱上四条蹄行
+            # 腿全长成了钩子。蛛足不受此限：它本来就是先抬后落，那正是它的读法。
+            #
+            # 和穿模一样记成**惩罚**不是硬拒：关节只有一个时（兽腿/禽腿的膝）候选就
+            # 那么一两个，硬拒会把它们全毙掉、退回一条够不着踝的直链（实测末端偏离
+            # 8.15 px）。宁可要一条膝盖略微抬起来的腿，也不要一条伸不到脚的腿。
+            if descend:
+                cost += PENALTY * float(np.clip(np.diff(y) + 0.4, 0, None).sum())
+            cost += PENALTY * float(np.clip(floor[:len(y) - 1] - y[:-1], 0, None).sum())
+            for k in range(1, len(y)):
+                pt = hip + u * x[k] + np.array([0.0, y[k] - hip[1], 0.0])
+                cost += PENALTY * penetration(pt)
             if cost < best_cost:
                 best, best_cost = (bends, rot), cost
-        return best, best_cost, slack
+        return best, best_cost
 
-    # 净空**逐级放宽**：要求"连肉都不许压地"最理想，但腿蹲得深时可能一个候选都没有；
-    # 一刀切地判无解会退回那个膝盖插进地里的兜底姿态（实测 −7.2 px）。所以先要满净空，
-    # 不行就退到六成、三成，最后只要求关节本身不低于地面——尽量多留一点，而不是全丢。
-    best = slack = None
+    best, best_cost = search(signs)
     forced = False
-    for lift in (1.0, 0.6, 0.3, 0.0):
-        best, best_cost, sl = search(signs, lift)
-        slack = slack or sl
-        if best is not None:
-            break
+    # 供体自己的折法可能在这具身体上怎么摆都要穿模。那就**按不属于它的方式折**——
+    # 捡来的部件装在不匹配的身体上本来就会这样。逐个试其它折向，取总代价最小的。
+    for bits in range(1, 1 << nj):
+        alt = signs * np.array([-1.0 if bits >> i & 1 else 1.0 for i in range(nj)])
+        cand, cost = search(alt)
+        if cand is not None and (best is None or cost < best_cost * 0.9):
+            best, best_cost, forced = cand, cost, True
     if best is None:
-        # 供体自己的折法在这具身体上站不住（关节怎么摆都会戳进地里）。这条肢只能**按
-        # 不属于它的方式折**——捡来的部件装在不匹配的身体上本来就会这样。逐个试其它
-        # 折向，取仍然最省肌肉的那个。
-        for bits in range(1, 1 << nj):
-            alt = signs * np.array([-1.0 if bits >> i & 1 else 1.0 for i in range(nj)])
-            for lift in (1.0, 0.6, 0.3, 0.0):
-                cand, cost, sl = search(alt, lift)
-                slack = slack or sl
-                if cand is not None:
-                    if best is None or cost < best_cost:
-                        best, best_cost, forced = cand, cost, True
-                    break
-    if best is None:
-        best = (slack[0], slack[1]) if slack else (np.zeros(nj), want)
+        best = (np.zeros(nj), want)
         forced = True
 
     P = _chain(segs, best[0])
@@ -328,6 +357,42 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
     pts = [hip + u * (c * p[0] - s * p[1]) + np.array([0.0, s * p[0] + c * p[1], 0.0])
            for p in P]
     return pts, forced
+
+
+def foot_chain(stance: str, contact: np.ndarray, lens: tuple[float, ...],
+               out: np.ndarray, deg: float | None = None) -> list[np.ndarray]:
+    """脚：从**踝**到趾尖的各关节点。腿的 IK 只解到踝，脚由站姿摆。
+
+    上一版把脚当成链的最后两节一起 IK，于是"脚"只是两根越来越细的杆——狼爪、羊蹄、
+    人足全是同一个东西。真实的差别在**哪几根骨着地**：
+
+      · 蹄行 —— 蹄尖着地，掌骨近乎竖直（80°）。小腿以下是一根细长的管骨加一枚蹄。
+      · 趾行 —— 趾节平铺地面，掌骨抬起 52°。所以狼的"后弯的膝"其实是它的踝。
+      · 跖行 —— 整个掌骨平贴地面，踝低、脚后跟向后支出来一块。人和鼠是这一类。
+      · 外展 —— 跗节斜插地面，只有尖端一点接触（蛛足）。
+
+    接触点 `contact` 是 locomotion 解出的落点，其含义随站姿变：蹄行是蹄尖，趾行是
+    掌趾关节（脚掌前掌那一点），跖行是整个脚底的形心，外展是钩尖。地面反力永远作用
+    在这一点上——所以力矩臂量到它，不是量到趾尖。
+    """
+    th = math.radians(META_DEG[stance] if deg is None else deg)
+    back = -FWD
+    if stance == "sprawling":
+        (tar,) = lens
+        return [contact + UP * (tar * math.sin(th)) - out * (tar * math.cos(th)), contact]
+    meta, toes = lens
+    if stance == "unguligrade":
+        pastern = contact + UP * toes                       # 蹄从接触点竖起来
+        return [pastern + UP * (meta * math.sin(th)) + back * (meta * math.cos(th)),
+                pastern, contact]
+    if stance == "digitigrade":
+        ball = contact                                       # 掌趾关节就压在地上
+        return [ball + UP * (meta * math.sin(th)) + back * (meta * math.cos(th)),
+                ball, ball + FWD * toes]
+    heel = contact + back * (meta * 0.5)                     # 跖行：脚底整片贴地
+    ball = contact + FWD * (meta * 0.5)
+    ankle = heel + UP * (meta * math.sin(th) + 0.6) + FWD * (meta * 0.25)
+    return [ankle, ball, ball + FWD * toes]
 
 
 def hang_pose(sock: C.Socket, segs: tuple[float, ...], radii: list[float],
@@ -462,6 +527,7 @@ class Limb:
     bone_r: list[float]             # 每节的骨半径 px
     muscle: list[float]             # 每节的肌肉截面 m²
     arms: list[float]               # 每个关节到地面接触点的水平距离 px（= 地面反力的力臂）
+    ankle: np.ndarray               # 站姿要求的踝位（IK 的目标）；不承重时为零向量
     mats: list[str]                 # 每节的材质
     forced: bool                    # 供体自己的折法在这具身体上站不住，被迫改折向
     weld_r: float                   # 接合痕半径 px（剪切传力所需，从来不是瓶颈）
@@ -498,14 +564,25 @@ class Limb:
         return max(0.0, 1.0 - self.radius[0] ** 2 / max(self.root_need ** 2, 1e-9))
 
     @property
+    def arm0(self) -> float:
+        """髋到地面接触点的水平距离——这条肢在整只兽的支撑几何里站得多开。"""
+        return self.arms[0] if self.arms else 0.0
+
+    @property
     def arm1(self) -> float:
         """根部那一节要抗的力矩臂——决定根部粗细的就是它乘载荷。"""
         return self.arms[1] if len(self.arms) > 1 else 0.0
 
 
 def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
-               foot: np.ndarray | None = None, ride: float = 0.0) -> Limb:
-    """一条肢的完整几何。承重的按落点解站姿，其余的垂下来。"""
+               foot: np.ndarray | None = None, ride: float = 0.0,
+               territory: float = 1e9) -> Limb:
+    """一条肢的完整几何。承重的按落点解站姿，其余的垂下来。
+
+    `territory` 是到**最近的另一个已占用挂载点**的距离：两条肢的肌腹不能占同一块空间，
+    所以根部还要再封一道顶（半个间距）。不封的话相邻两条腿的大腿会互相穿进去——用户
+    在 round 2 的图上看到的穿模就是这个。多出来的肌肉和基节太短时一样，只能长在体内。
+    """
     segs = gene.segments
     n = len(segs)
     boneless = gene.kind == "tentacle"
@@ -513,14 +590,38 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
     if load > 0.0 and foot is not None:
         hip = sock.pos.copy()
         hip[1] += ride
+        ground = np.asarray(foot, float)
+        # **腿只解到踝，脚由站姿摆**（见 foot_chain）。上一版整条一起 IK，于是"脚"只是
+        # 两根越来越细的杆，狼爪羊蹄人足全一个样。现在最后一两根骨归站姿管，IK 的目标
+        # 变成踝——蹄行的踝因此抬得比趾行高一大截，剪影自己就分开了。
+        nfoot = 1 if gene.stance == "sprawling" else 2
+        nleg = n - nfoot
+        horiz = np.array([ground[0] - hip[0], 0.0, ground[2] - hip[2]])
+        hn = float(np.linalg.norm(horiz))
+        out = horiz / hn if hn > 1e-6 else np.array([1.0, 0.0, 0.0])
+        # 掌骨立得多直是**可达性反过来定的**：站姿给一个标称倾角，但脚把踝往身后推
+        # （趾行推 0.62 个掌骨长），推远了腿就够不着——够不着时 IK 无解、退回一条直链，
+        # 于是关节落到地面以下（实测 y=−4.13）。腿短的动物真实的应对就是把脚立起来：
+        # 掌骨越竖，踝越近也越高，两头都省。所以从标称角往上加，取第一个够得着的。
+        span = sum(segs[:nleg])
+        base = META_DEG[gene.stance]
+        paw = foot_chain(gene.stance, ground, segs[nleg:], out)
+        for extra in range(0, 40, 4):
+            paw = foot_chain(gene.stance, ground, segs[nleg:], out,
+                             min(base + extra, 88.0))
+            if float(np.linalg.norm(paw[0] - hip)) <= 0.97 * span:
+                break
+        ankle = paw[0]
+
         # 两轮：第一轮只禁止关节本身穿地，量出粗细后第二轮连肉一起禁（见 stand_pose）
         clear: list[float] | None = None
         forced = False
         for _ in range(3):
-            joints, forced = stand_pose(hip, np.asarray(foot, float), segs,
-                                        gene.kind, clear)
-            ground = joints[-1]
-            # 力臂 = 该关节到地面接触点的水平距离
+            leg, forced = stand_pose(hip, paw[0], segs[:nleg], gene.kind, clear,
+                                     descend=gene.kind != "spider")
+            joints = leg + paw[1:]
+            # 力臂 = 该关节到**地面接触点**的水平距离。接触点是 `ground` 不是趾尖——
+            # 跖行/趾行的趾节还往前伸一截，地面反力不在那儿。
             arms = [float(np.hypot(*(ground - p)[[0, 2]])) for p in joints]
             bone_r = [bone_radius(segs[i], arms[i], load)[0] for i in range(n)]
 
@@ -537,7 +638,10 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
                 for j in ([0] if i == 0 else []) + list(range(i + 1, n)):
                     tau = load * arms[j] * PX
                     a = ARM_RATIO * max(segs[max(j - 1, 0)], segs[min(j, n - 1)]) * PX
-                    if j <= i + 1:
+                    # **脚上没有肌腹**——掌骨与趾骨那几节只有腱和角质穿过（马的管骨、
+                    # 羊的蹄都是这样）。不这么分的话，趾尖比接触点还靠前会让力臂反过来
+                    # 变大，肌肉截面从根往梢反而涨（实测 0.096 → 0.161）。
+                    if j <= i + 1 and i < nleg:
                         A += tau / (a * SIGMA_MUSCLE)      # 长在这一节上的肌腹
                     else:
                         B += tau / (a * SIGMA_TENDON)      # 只是穿过去的腱
@@ -551,13 +655,14 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
             # 候选被否、退回那个穿地的兜底解（实测蛛足关节深到 −7.3 px）。
             rest = np.cumsum(list(segs)[::-1])[::-1]
             clear = [min(max(radius[max(i - 1, 0)], radius[min(i, n - 1)]), float(rest[i]))
-                     for i in range(n)] + [0.0]     # 脚就是要落在地上
+                     for i in range(nleg)] + [0.0]   # 末项是踝，由站姿定高不受此约束
         # 脚掌：面积 = 载荷 / 地面承载力。踩不住就陷进灰里
         side = math.sqrt(load / BEARING) / PX
         pad = (side * 0.5, side * 0.62)
     else:
         arms = [0.0] * (n + 1)
         sinew = [0.0] * n
+        ankle = np.zeros(3)
         forced = False
         radius = budget_radii(segs, C.graft_budget(), sock.girth)
         # 无骨的（触手）里没有硬芯；有骨的闲肢里那根骨还在，只是外面的肌肉萎缩掉了
@@ -589,13 +694,15 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
     # 体腔里，不在腿上。于是短基节的蛛足根部反而是细的，鼓起来的是它旁边那团核心；
     # 长股骨的兽腿则真的有一条看得见的粗大腿。这条同时解释了两种腿看起来为什么不一样。
     need = radius[0]
-    radius = [min(r, 0.5 * segs[i]) for i, r in enumerate(radius)]
+    cap = [0.5 * segs[i] for i in range(n)]
+    cap[0] = min(cap[0], 0.5 * territory)
+    radius = [min(r, cap[i]) for i, r in enumerate(radius)]
     # 接合面传力靠剪切，需要的面积 A = F/σ：软组织 0.5 MPa 下只要一两像素半径，
     # 所以**接合从来不是瓶颈**，它只是皮上一圈看得见的痕。
     weld_r = math.sqrt((bone_r[0] * PX) ** 2 + load / (math.pi * SIGMA_SOFT)) / PX
     weld_r = max(weld_r, 0.6)
-    return Limb(gene, sock, load, joints, radius, bone_r, muscle, arms, mats,
-                forced, weld_r, need, pad)
+    return Limb(gene, sock, load, joints, radius, bone_r, muscle, arms, ankle,
+                mats, forced, weld_r, need, pad)
 
 
 def build(seed: int, *, socks: dict[str, C.Socket] | None = None
@@ -605,13 +712,18 @@ def build(seed: int, *, socks: dict[str, C.Socket] | None = None
     gen, gait = LM.sample_standing(seed, socks=socks)
     loads = foot_loads(gait)
     feet = {lg.gene.socket: lg.foot for lg in gait.limbs}
+    used = [socks[g.socket].pos for g in gen.limbs]
     out: dict[str, Limb] = {}
     for gene in gen.limbs:
+        me = socks[gene.socket].pos
+        near = min((float(np.linalg.norm(me - q)) for q in used
+                    if float(np.linalg.norm(me - q)) > 1e-6), default=1e9)
         out[gene.socket] = solve_limb(
             gene, socks[gene.socket],
             load=loads.get(gene.socket, 0.0),
             foot=feet.get(gene.socket),
             ride=gait.ride,
+            territory=near,
         )
     return gen, gait, out
 
