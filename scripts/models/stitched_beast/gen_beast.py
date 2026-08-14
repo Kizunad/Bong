@@ -146,25 +146,39 @@ def part_foot(rig: Rig, lb: LB.Limb) -> int:
             box(bone, "claw", c + np.array([0.0, 0.0, -run * 0.55]),
                 (hw * 0.16, 0.35, run * 0.22), "claw")
     elif sk.foot == "human":
-        # 人足：整片脚底 + 向后支出来的脚跟 + **五枚趾，拇趾最粗、往小趾递减**。
+        # 人足：**跟 → 跖球 一整片贴地的脚底** + 托住踝的跗骨块 + 五枚趾。
         #
-        # "我好像没看见人腿"——它一直在（seed 5 的左后腿就是），只是读不出来。这个
-        # 尺度上人腿的辨识全在脚上：跟骨支出去那一块 + 五枚不等长的趾。三枚等大的趾
-        # 是"某种爪"，五枚递减的趾才是人。趾长按真实比例递减（拇趾最粗但不最长，
-        # 第二趾最长），这几个数是量的不是编的。
-        heel, sole = j[-2], j[-1]
-        mid = 0.5 * (heel + sole)
-        run = max(float(np.linalg.norm((sole - heel)[[0, 2]])), 1.0)
-        box(bone, "sole", (mid[0], 0.8, mid[2]), (hw * 0.72, 0.8, run * 0.5 + hl * 0.3),
-            "hide")
-        box(prev, "heel", (heel[0], 1.1, heel[2] + run * 0.28),
-            (hw * 0.62, 1.1, run * 0.30), "hide")
-        # (横向位置, 趾粗, 趾长)：拇趾在内侧最粗，第二趾最长
-        for off, wide, long in ((-0.78, 0.26, 0.34), (-0.32, 0.17, 0.42),
-                                (0.06, 0.16, 0.38), (0.40, 0.15, 0.32),
-                                (0.70, 0.13, 0.25)):
-            box(bone, "toe", (sole[0] + off * hw, 0.6, sole[2] - hl * long),
-                (hw * wide, 0.6, hl * long * 1.15), "hide")
+        # 上一版把整只脚画在了踝的**前面**：链上只有 [踝, 跖球, 趾尖]，没有跟，代码
+        # 又把 `j[-2]` 当成跟来用，于是脚底从跖球起步、一路铺到趾尖之外。实测那条腿
+        # 踝的地面投影在 z=+1.75、地面反力作用点在 z=0，而画出来的脚底是 −2.95…−7.55
+        # ——连受力点都没盖住，看上去像"用前脚掌的位置支着一根杆"。跟不在链上是对的
+        # （跟骨和掌骨是同一块刚体，不是一节），但渲染必须另外把它取回来。
+        ankle, ball, tip = j[-3], j[-2], j[-1]
+        heel = lb.heel if lb.heel is not None else ball
+        fwd = (ball - heel) * np.array([1.0, 0.0, 1.0])
+        run = max(float(np.linalg.norm(fwd)), 1.0)
+        u = fwd / run
+        # 脚底的**长**由解剖定（跟到跖球），**宽**取"解剖宽"与"压强要求的宽"中的大者
+        # ——人足本来就比踩住所需的面积大，多出来的那部分只是压强更低而已。
+        wide = max(hw, run * 0.19)
+        mid = 0.5 * (heel + ball)
+        box(bone, "sole", (mid[0], 0.7, mid[2]), (wide, 0.7, run * 0.5), "hide")
+        # 跗骨块：踝正下方那一坨，把胫骨接到脚底上。没有它，踝和脚底之间隔着一段空的，
+        # 整条腿看着像插在脚上而不是站在脚上。
+        back = 0.5 * (heel + ankle)
+        top = max(float(ankle[1]), 1.4)
+        box(prev, "tarsal", (back[0], top * 0.5, back[2]),
+            (wide * 0.82, top * 0.5,
+             float(np.linalg.norm((ankle - heel)[[0, 2]])) * 0.5 + wide * 0.30), "hide")
+        # 五趾：(横向位置, 趾粗, 趾长占比)。拇趾在内侧最粗，**第二趾最长**（顶到趾尖
+        # 那个关节），往小趾递减——这几个比例是量的不是编的。
+        toe_run = max(float(np.linalg.norm((tip - ball)[[0, 2]])), 1.0)
+        for off, thick, frac in ((-0.78, 0.26, 0.81), (-0.32, 0.17, 1.00),
+                                 (0.06, 0.16, 0.90), (0.40, 0.15, 0.76),
+                                 (0.70, 0.13, 0.60)):
+            c = ball + u * (toe_run * frac * 0.5)
+            box(bone, "toe", (c[0] + off * wide, 0.6, c[2]),
+                (wide * thick, 0.6, toe_run * frac * 0.5), "hide")
     elif sk.foot == "bird":
         # 禽爪：三前一后。后趾是禽腿最好认的特征，别省
         run = max(float(np.linalg.norm((tip - ball)[[0, 2]])), 1.0)
@@ -560,6 +574,23 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
                     bad.append(f"{lb.name} 第 {i}/{i + 1} 节交界处粗细跳了 {jump:.2f} px"
                                f"——关节两边必须是同一个包络")
 
+    # ⑬ 跖行的脚必须**托住踝**：踝的地面投影落在跟与跖球之间。"跖行"这个词的定义就是
+    #    整片脚底承重、踝压在脚底上方；踝投影跑到脚底外面，那条腿就是踩着前脚掌站的。
+    #    上一版实测：踝投影 z=+1.75，而脚底从 −2.95 起——整只脚画在了踝的前面。
+    for lb in limbs.values():
+        if not lb.bearing or lb.gene.stance != "plantigrade":
+            continue
+        if lb.heel is None:
+            bad.append(f"{lb.name} 是跖行却没有跟——脚跟不在链上，得单独取（foot_heel）")
+            continue
+        ankle, ball = lb.joints[-3], lb.joints[-2]
+        seg = (ball - lb.heel)[[0, 2]]
+        L2 = float(seg @ seg)
+        s = float((ankle - lb.heel)[[0, 2]] @ seg) / max(L2, 1e-9)
+        if not -0.02 <= s <= 1.02:
+            bad.append(f"{lb.name} 踝的地面投影落在脚底之外（跟→跖球的 {s:+.2f} 处）"
+                       f"——跖行必须整片脚底托住踝")
+
     # ⑫ 裂口方向：裂缝一律**垂直于把它拉开的方向**，所以两族互相垂直。
     #    关节的皮被沿肢轴拉 ⇒ 横裂；蹄甲失水沿周向收缩 ⇒ 纵裂。撒歪了这里红。
     for lb in limbs.values():
@@ -621,7 +652,7 @@ def main() -> int:
             print(f"   {x}")
         return 1
     print("✓ 触地 / 不埋进核心 / 根部不互穿 / 粗细单调 / 载荷守恒 / 不陷地 / "
-          "骨骼 / 站高 / 不对称 / 不露骨 / 裂口方向 / 块数 全部通过")
+          "骨骼 / 站高 / 不对称 / 不露骨 / 脚托住踝 / 裂口方向 / 块数 全部通过")
     if not args.check:
         p = rig.save(OUT_DIR / f"StitchedBeast_{args.seed}.bbmodel",
                      f"StitchedBeast_{args.seed}")

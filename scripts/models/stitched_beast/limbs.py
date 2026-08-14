@@ -409,6 +409,21 @@ def foot_chain(stance: str, contact: np.ndarray, lens: tuple[float, ...],
     return [ankle, ball, ball + FWD * toes]
 
 
+def foot_heel(stance: str, contact: np.ndarray,
+              lens: tuple[float, ...]) -> np.ndarray | None:
+    """跖行足向后支出去的**跟**在哪儿。
+
+    跟不在 `foot_chain` 的链上，因为它不是一节——跟骨和掌骨是**同一块刚体**，只是
+    往踝的后下方支出一块。链上没有它，渲染就得另外拿；上一版没拿，于是整只脚画在了
+    踝的前面：踝的地面投影在 z=+1.75，而画出来的脚底从 −2.95 起步，连地面反力作用点
+    （z=0）都没盖住。看上去就是"用脚前掌的位置支着一根杆"。
+    """
+    if stance != "plantigrade":
+        return None
+    meta = lens[0]
+    return contact - FWD * (meta * 0.5)
+
+
 def hang_pose(sock: C.Socket, segs: tuple[float, ...], radii: list[float],
               *, jointed: bool) -> list[np.ndarray]:
     """不承重的肢：从挂载点沿法向长出来，然后被自己的重量拽下去。
@@ -548,6 +563,7 @@ class Limb:
     root_need: float                # 根部**需要**的半径（未被 girth 钳过），自检用
     pad: tuple[float, float]        # 脚掌 (半宽 px, 半长 px)；不承重为 (0,0)
     node_r: list[float]             # 每个**关节处**的包络半径 px（len = len(joints)）
+    heel: np.ndarray | None = None  # 跖行足的跟（不在链上，见 foot_heel）；其余为 None
 
     @property
     def name(self) -> str:
@@ -648,6 +664,7 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
             if float(np.linalg.norm(paw[0] - hip)) <= 0.97 * span:
                 break
         ankle = paw[0]
+        heel = foot_heel(gene.stance, ground, segs[nleg:])
 
         # 脚掌：面积 = 载荷 / 地面承载力。踩不住就陷进灰里。**这一步得在算粗细之前**
         # ——脚掌的长度就是脚里那几根骨头的等效力臂（见下面 eff）。
@@ -725,6 +742,7 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
         muscle = [0.0] * n
         joints = hang_pose(sock, segs, radius, jointed=not boneless)
         pad = (0.0, 0.0)
+        heel = None
 
     # 材质分界是**算出来的**：一节的横截面里，本体长上去的新肉（肌腹）与供体原有的
     # 组织（骨 + 只是穿过去的腱）谁占多数，外面就露谁。近端全是新长的肌腹 ⇒ 一片本体
@@ -774,7 +792,7 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
     weld_r = math.sqrt((bone_r[0] * PX) ** 2 + load / (math.pi * SIGMA_SOFT)) / PX
     weld_r = max(weld_r, 0.6)
     return Limb(gene, sock, load, joints, radius, bone_r, muscle, arms, ankle,
-                mats, forced, weld_r, need, pad, node_r)
+                mats, forced, weld_r, need, pad, node_r, heel)
 
 
 def build(seed: int, *, socks: dict[str, C.Socket] | None = None

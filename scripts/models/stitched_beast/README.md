@@ -341,6 +341,21 @@ W_parent · (o + pos) = o_world_rest + offset   ⇒   pos = W_parent⁻¹·目�
 尺度上人腿的辨识全在脚上：三枚等大的趾是"某种爪"，**五枚递减的趾**才是人。现在按真实
 比例出五趾（拇趾最粗、第二趾最长），配上跟骨支出去那一块，跖行才认得出来。
 
+### 跟不在链上，但它必须被画出来
+
+单件看人腿时（`HumanLeg` 三视图）露出一个更硬的错：**整只脚画在了踝的前面**。链上只有
+`[踝, 跖球, 趾尖]`，渲染又把 `j[-2]`（其实是跖球）当成跟来用，于是脚底从跖球起步一路铺
+到趾尖之外。实测那条腿踝的地面投影在 z=+1.75、地面反力作用点在 z=0，而画出来的脚底是
+−2.95…−7.55——**连受力点都没盖住**，看上去像用前脚掌的位置支着一根杆。
+
+跟不在链上是对的：**跟骨和掌骨是同一块刚体**，不是一节，硬塞进链里会多出一个假关节。
+所以另开 `foot_heel()` 把它单独取回来（跖行专有，其余站姿返回 None），渲染时补两件东西：
+跟到跖球的整片脚底、以及踝正下方那一坨**跗骨块**（没有它，踝和脚底之间隔着一段空的，
+整条腿像插在脚上而不是站在脚上）。修完踝正好落在跟→跖球的 **25%** 处——真人也是这个位置。
+
+自检 ⑬ 把这条焊死：**跖行的脚必须托住踝**（踝的地面投影落在跟与跖球之间）。"跖行"这个
+词的定义就是整片脚底承重、踝压在脚底上方；踝投影跑到脚底外面，那条腿就是踩着前脚掌站的。
+
 ### 顺带修掉的运动层三处真错
 
 落点原本推到**可达极限**（`reach`），而同一层的 `solve_ride_height` 通篇在把伸展度往
@@ -393,7 +408,7 @@ python3 scripts/models/stitched_beast/check_fragment_anim.py  # 碎片动画自�
 python3 scripts/models/stitched_beast/render_core_anim.py --shard --only shard_crawl --world
 
 python3 scripts/models/stitched_beast/limbs.py --seed 7        # 逐肢载荷/粗细/姿态报告
-python3 scripts/models/stitched_beast/gen_beast.py --seed 7    # 整只兽 → bbmodel + 十二项自检
+python3 scripts/models/stitched_beast/gen_beast.py --seed 7    # 整只兽 → bbmodel + 十三项自检
 python3 scripts/models/stitched_beast/gen_beast.py --seed 7 --bud-growth 0.12   # 出图用
 python3 scripts/models/stitched_beast/check_limbs.py --seeds 1,2,3,4,7,8,9      # 肢体力学自检
 python3 scripts/models/stitched_beast/gen_beast.py --gallery    # 按站姿分四张腿谱，单件看
@@ -429,7 +444,7 @@ python3 scripts/models/render_bbmodel.py local_models/StitchedBeast_7.bbmodel --
 | `render_core_anim.py` | 连拍图 / GIF；`--world` 看蠕动真实前进，`--shard` 换碎片那套 |
 | `genome.py` | 一只兽的配方 + **十五副物种骨架**（骨长比例 / 站姿 / 足型 / 体表）|
 | `limbs.py` | 肢体力学：载荷分配 / 站姿求解 / 骨与肌肉截面 / 按站姿摆脚 / 垂姿 |
-| `gen_beast.py` | 核心 + 逐肢几何 → 整只兽 `.bbmodel` + 十二项自检 |
+| `gen_beast.py` | 核心 + 逐肢几何 → 整只兽 `.bbmodel` + 十三项自检 |
 | `check_limbs.py` | 肢体层九项力学自检 |
 
 ## 当前数字
