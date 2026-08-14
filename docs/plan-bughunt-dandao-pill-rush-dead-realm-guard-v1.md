@@ -59,3 +59,25 @@
 
 1. P1 是否需要源码形态 lint？推荐不为单个恒假比较引入源码字符串测试；六境界矩阵只锁行为契约，代码形态由 clippy 与实施 diff review 负责，验收证据不得把两者混称。
 2. `RealmTooLow` 用于“缺 `Cultivation`”是否需要另拆更精确拒绝原因？推荐本 plan 不改 wire/UI 枚举，避免把纯死代码清理扩大成协议变更。
+
+以上问题全部已在 §8.1 收口；实施时以 §8.1 决议为准。
+
+## §8.1 决议（pre-P0 收口，2026-08-14）
+
+### #1 不增加源码形态 lint
+
+**决议**：
+1. 不为单个恒假比较新增源码字符串测试；代码形态由删除该分支的 diff review 与 clippy 共同核验。
+2. 六境界矩阵只声明并锁定外部行为：所有合法 `Realm` 均继续进入既有经脉与真元门。
+3. 验收证据分别陈述行为测试与静态门禁，不把六境界矩阵误称为死代码回归 lint。
+
+**落点**：`server/src/dandao/skills.rs:209-248`；plan P0、P1。
+
+### #2 保留既有 RealmTooLow wire 语义
+
+**决议**：
+1. 缺 `Cultivation` 时继续返回 `CastRejectReason::RealmTooLow`。
+2. 不新增拒绝枚举、不调整 `CastOutcomeV1` 映射，也不触碰 client/agent 协议。
+3. 用 production registry dispatch 的缺组件用例锁住现有 server 契约。
+
+**落点**：`server/src/dandao/skills.rs:215-225`、`server/src/cultivation/skill_registry.rs:104-122`；plan P0、P1。

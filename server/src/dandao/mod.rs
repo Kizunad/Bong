@@ -26,6 +26,8 @@ pub mod visual_sync;
 mod tests;
 
 pub use skills::{DANDAO_PILL_BOMB_SKILL_ID, DANDAO_PILL_MIST_SKILL_ID, DANDAO_PILL_RUSH_SKILL_ID};
+#[cfg(test)]
+pub(crate) use skills::dandao_qi_cost_base;
 
 use valence::prelude::*;
 
