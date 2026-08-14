@@ -89,8 +89,9 @@ DT_SKIN = 8.0              # 耳表面与空气的温差 K
 KLEIBER = 3.4              # 基础代谢 P = 3.4·M^0.75 W
 V_NASAL = 10.0             # 鼻道内气流速度 m/s（安静呼吸 3–5，剧烈时 10–15）
 VENT_PEAK = 12.0           # 剧烈活动时分钟通气量是静息的多少倍
-SCROLL_PACK = 6.0          # 鼻甲卷占的截面 / 自由气道截面。嗅觉发达的兽鼻腔里几乎全是
-                           # 卷曲的骨片，气流只从缝隙里过
+SCROLL_PACK = 9.0          # 鼻甲卷占的截面 / 自由气道截面。嗅觉发达的兽鼻腔里几乎全是
+                           # 卷曲的骨片，气流只从缝隙里过（狼的鼻腔横截面实测 15–20 cm²，
+                           # 自由气道不到 2 cm²）
 
 # 食物的断裂应力 Pa。**咬合力不是想咬多重，是把这口东西弄断需要的应力乘接触面积。**
 FOOD_SIGMA: dict[str, float] = {
@@ -108,6 +109,7 @@ FOOD_SIGMA: dict[str, float] = {
 TOOTH_W_RATIO = 0.035      # 臼齿宽 / 头骨全长。牛 20/600、羊 12/300、狼 8/280、鼠 2/45
 CHEW_FRAC = 0.15           # 磨牙时同时受力的那一段占齿列的比例。食草兽**单侧咀嚼**，
                            # 一个冲程里真正咬合的只有两三颗牙，接触区还在齿列上来回扫
+EAR_FILL = 0.7             # 耳廓面积 / 它的外接矩形。耳廓是圆角三角形不是方板
 EAR_ASPECT = 1.7           # 耳廓长宽比。实测：狼 11/7、狐 9/6、兔 11/6、牛 25/12、
                            # 猪 20/15 —— 都在 1.3–2.1，取 1.7。初版写 2.6，耳朵窄到只有
                            # 1.8 px 宽而 4.8 px 长，渲出来是两根天线不是耳朵
@@ -115,6 +117,9 @@ JAW_ASPECT = 2.2           # 下颌体 深/宽
 ARCH_MIN = 0.08            # 颧弓外张的下限 / 头长——再省也得让肌腱通过
 ARCH_COST = 3.0            # 把头**加宽**一格相当于把矢状嵴**加高**几格。嵴是一片薄骨，
                            # 加宽却要连整条颧弓一起加粗——所以颞窝是竖长的不是方的
+FRONTAL = 0.25             # 脑颅前缘到眶前缘那一段（额区）占**脸**的比例。脑腔只装脑，
+                           # 而额区装的是颞窝、眶和鼻腔后段——它属于颅不属于吻。漏掉它
+                           # （round 1）狼吻占了头长的 71%（实测 ~55%），头读成一根管
 ARCH_REACH = 0.20          # 颧弓前根伸到脸的哪里（占脸长）。咬肌就挂在这一段下面，
                            # 它的力臂由此定——上一版误取"脑颅前缘"，力臂小了三倍，
                            # 反推出来的咬肌横截面 957 cm²，颧弓外张 31 px（头才 10 px 长）
@@ -211,15 +216,28 @@ class HornStyle:
     hit_frac: float    # 撞击点在弧长的哪一处（力臂按基部到该点的**弦长**算，不是弧长）
 
 
+# 生长速率是**成年后的**速率（实测：公盘羊角弧长 0.75–0.9 m / 8 年；山羊 0.3–0.5 m /
+# 9 年；牛 0.2–0.3 m / 12 年）。round 1 给牛写了 0.05 m/yr，算出 0.6 m 的角——13 px 的
+# 头上伸出 13 px 的角，两边张开比整颗头还宽，渲出来是一对机翼。
+# 卷曲的转轴（右侧那只；左侧按 (a_x, −a_y, −a_z) 镜像）。
+HORN_AXIS: dict[str, tuple[float, float, float]] = {
+    "ram":   (1.0, 0.0, 0.25),
+    "spike": (1.0, 0.0, 0.0),
+    "hook":  (0.0, 1.0, 0.0),
+}
+
 HORN_STYLE: dict[str, HornStyle] = {
     "ram":   HornStyle(4.5, 0.100, 0.55, 28.0, 10.0, 0.35),
-    "spike": HornStyle(3.0, 0.060, 0.88, 12.0, 55.0, 0.60),
-    "hook":  HornStyle(2.0, 0.050, 0.95, 62.0, 5.0, 0.55),
+    "spike": HornStyle(3.0, 0.045, 0.88, 12.0, 55.0, 0.60),
+    "hook":  HornStyle(2.0, 0.022, 0.95, 62.0, 5.0, 0.55),
 }
 
 HEAD_MATS: dict[str, tuple[int, int, int]] = {
     "skull": (108, 96, 84),      # 头骨外面那层薄皮：比躯干 hide 亮，因为绷在骨上
-    "jowl": (126, 92, 84),       # 咀嚼肌鼓出来的那块腮——它是算出来的，不是画上去的
+    "jowl": (114, 90, 78),       # 咀嚼肌鼓出来的那块腮——它是算出来的，不是画上去的。
+                                 # 颜色只比 skull 暗一档：**肌肉本身是看不见的**，看见的
+                                 # 是绷在它上面的同一张皮，差别只在形状。round 1 给了它
+                                 # 一个明显偏红的色，两块肌肉读成贴在头两侧的粉色垫子
     "muzzle": (74, 62, 56),      # 鼻端/唇周的裸皮
     "tooth": (198, 190, 168),    # 齿：全头最亮
     "horn": (92, 84, 70),        # 角质角
@@ -269,6 +287,11 @@ class Piece:
     r1: float
     r2: float
     mat: str
+    soft: bool = False   # **算出来比渲染下限还薄就整块不画**，而不是撑到下限。
+                         # 撑是撒谎：鸡的颊肌算出来单侧只有 0.23 px，撑到 0.5 px 之后两侧
+                         # 加起来占掉 2.9 px 宽的头的七成——推导说"这只兽的腮不鼓"，画出来
+                         # 却是满脸腮。结构件（脑颅/脸/下颌/癒合环/眼/耳/角/喙）不适用：
+                         # 它们缺了就不成其为头，那才是真正该被下限托住的东西
 
 
 @dataclass
@@ -337,6 +360,7 @@ class Head:
 
     eye_el: float = 0.0             # 眼的仰角 °（蛙的眼长在头顶）
     eye_pos: list = field(default_factory=list)   # 两只眼的局部坐标
+    dropped: list = field(default_factory=list)   # 薄过渲染下限、整块没画的东西（见 Piece.soft）
 
 
 # ---------------------------------------------------------------- 标架
@@ -411,19 +435,20 @@ def bite_force(d: Donor, diet: Diet) -> tuple[float, float]:
     return sig * area, at
 
 
-def nasal_depth(d: Donor, face_w: float) -> float:
-    """鼻腔在腭以上占多深 m。**大兽的长脸里装的是鼻子，不是牙。**
+def nasal_side(d: Donor) -> float:
+    """鼻腔的边长 m（截面取方，宽与深同一个数）。**大兽的长脸里装的是鼻子，不是牙。**
 
     自由气道截面 = 剧烈活动时的分钟通气量 / 气流速度；而嗅觉发达的兽鼻腔里几乎全是
-    卷曲的鼻甲骨片，气流只从缝里过 ⇒ 整个鼻腔截面 = 自由气道 × SCROLL_PACK。截面除以
-    脸宽就是腭以上要留出的深度。
+    卷曲的鼻甲骨片，气流只从缝里过 ⇒ 整个鼻腔截面 = 自由气道 × SCROLL_PACK。
 
-    没有这一项时（上一版）脸的深度只由牙根撑，推出来的牛头高 11 px 而齿列以上几乎是
-    扁的——那是"把脸当成一排牙"。加上鼻腔以后狼头高算出 0.102 m，实测狼颅高 0.10 m。
+    **宽和深必须一起由它定，不能只定深。** round 1 拿"截面 ÷ 脸宽"当深度、脸宽另由齿列
+    定，于是狼的吻只有 1.16 px 宽而 2.6 px 深——渲出来是一块竖着的板，不是口鼻。齿列
+    只是宽度的**下限**（两条齿列加中间的腭总得放得下），真正撑开吻的是鼻腔。
+
+    狼算出边长 4.2 cm、牛 12.3 cm，实测狼吻宽 4–5 cm、牛 ~12 cm。
     """
     vent = 0.5 * d.mass ** 0.8 / 60.0 / 1000.0 * VENT_PEAK   # m³/s
-    a = vent / V_NASAL * SCROLL_PACK
-    return a / max(face_w, 1e-4)
+    return math.sqrt(vent / V_NASAL * SCROLL_PACK)
 
 
 def tmj_lift(d: Donor, diet: Diet) -> float:
@@ -493,8 +518,10 @@ def ear_plate(d: Donor) -> tuple[float, float]:
     p = KLEIBER * d.mass ** 0.75
     a = d.ear_share * p / (H_CONV * DT_SKIN) / 4.0   # 双耳 → 单耳 → 单面
     a = max(a, (0.25 * d.head_m) ** 2 / EAR_ASPECT)   # 再小也得是个能拢声的漏斗
-    h = math.sqrt(a * EAR_ASPECT)
-    return h, a / h
+    # 耳廓是个**圆角三角形**，不是矩形：同样的面积要摊得更长。实测填充率约 0.7（外接
+    # 矩形的七成），狼按这条算出 11.6 cm，实测 11 cm；按矩形算只有 9.8 cm。
+    h = math.sqrt(a * EAR_ASPECT / EAR_FILL)
+    return h, h / EAR_ASPECT
 
 
 def horn_axis(d: Donor, st: HornStyle) -> tuple[list[tuple[float, float]], float, float]:
@@ -593,9 +620,11 @@ def solve_head(gene: GN.HeadGene, sock: C.Socket) -> Head:
     hd.bite_N = bite_N
     hd.bite_px = P(bite_at)
 
-    # 脸的宽度由**两条齿列 + 中间的腭**定：磨的那一类要给舌头留出翻食团的地方，腭就宽。
+    # 脸的宽度：**鼻腔撑开的**，齿列只是下限。两条齿列加中间的腭总得放得下（磨的那一类
+    # 要给舌头留出翻食团的地方，腭就宽），但真正决定吻有多粗的是里面那个鼻腔。
     w_tooth = TOOTH_W_RATIO * d.head_m
-    face_w = (2.0 + diet.palate) * w_tooth
+    nasal = nasal_side(d)
+    face_w = max((2.0 + diet.palate) * w_tooth, nasal)
     if diet.occlusion == "gulp":          # 整只吞的，口裂必须比猎物粗
         face_w = max(face_w, 2.0 * sphere_r(diet.prey_frac * d.mass))
 
@@ -611,7 +640,7 @@ def solve_head(gene: GN.HeadGene, sock: C.Socket) -> Head:
     # 起）——这正是两者侧影最直观的差别，而它不是画出来的。
     crown = diet.wear * 1e-3 * d.lifespan
     u_occ = u_bot - P(crown * 1.5)         # 咬合面（齿列所在的高度）
-    u_face = u_occ + P(crown * 1.5 + nasal_depth(d, face_w))   # 吻背
+    u_face = u_occ + P(crown * 1.5 + nasal)                    # 吻背
 
     # ③ 颌关节 -----------------------------------------------------------
     f_tmj = P(0.12 * d.head_m)
@@ -717,7 +746,13 @@ def _assemble(hd: Head, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_ro
     """把推导结果摊成一堆可渲染的块。这里只做**摆放**，不再做任何力学决定。"""
     d, diet = hd.donor, hd.diet
     L, px = hd.L, hd.px_m
-    add = hd.pieces.append
+
+    def add(p: Piece) -> None:
+        # 可省的块：算出来薄过渲染下限的一半就整块丢掉，不撑到下限（见 Piece.soft）
+        if p.soft and min(p.r1, p.r2) < RENDER_MIN * 0.55:
+            hd.dropped.append(p.name)
+            return
+        hd.pieces.append(p)
     bl, bh, bw = hd.brain_px
 
     # —— 脑颅：一个盒子，顶上按需要加矢状嵴
@@ -726,17 +761,27 @@ def _assemble(hd: Head, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_ro
     if hd.crest > RENDER_MIN:
         add(Piece("skull", "crest", (0.0, u_top, bl * 0.15),
                   (0.0, u_top + hd.crest, bl * 0.95),
-                  max(bw * 0.10, RENDER_MIN), hd.crest / 2.0, "skull"))
+                  max(bw * 0.10, RENDER_MIN), hd.crest / 2.0, "skull", soft=True))
+
+    # —— 额区：脑腔前缘到眶前缘。它装的是颞窝、眶和鼻腔后段，属于颅不属于吻——**把它
+    #    算进吻里，狼的口鼻会占掉头长的七成**（实测约五成半），整颗头读成一根管。
+    f_orbit = f_brain + FRONTAL * max(L - f_brain, 0.0)
+    if f_orbit - f_brain > 0.2:
+        add(Piece("skull", "frontal", (0.0, (u_top + u_occ) * 0.5, f_brain),
+                  (0.0, (u_top + u_occ) * 0.5, f_orbit),
+                  max(bw / 2.0 * 0.92, RENDER_MIN),
+                  max((u_top - u_occ) / 2.0 * 0.9, RENDER_MIN), "skull"))
 
     # —— 脸：一根**等应力悬臂**。吻端受咬合反力，根部弯矩最大 ⇒ 等强度截面 h ∝ √x，
     #    所以侧面看是个抛物线收细的口鼻，不是一根等粗的管。分三段够了（再细超过模型精度）。
-    face = max(L - f_brain, 0.5)
+    f_muzzle = f_orbit                    # 吻从眶前缘起，不从脑腔前缘起
+    face = max(L - f_muzzle, 0.5)
     h_face = max(u_face - u_occ, RENDER_MIN)      # 腭到吻背：脸的全高
     w_face = max(hd.face_w, RENDER_MIN * 2)
     ns = 3
     for i in range(ns):
         t0, t1 = i / ns, (i + 1) / ns
-        f0, f1 = f_brain + face * t0, f_brain + face * t1
+        f0, f1 = f_muzzle + face * t0, f_muzzle + face * t1
         # 从吻端往回量的距离越大截面越深：x = 1-t
         s0, s1 = math.sqrt(1.0 - t0) if t0 < 1 else 0.0, math.sqrt(max(1.0 - t1, 0.0))
         k = 0.5 * (s0 + s1)
@@ -746,30 +791,58 @@ def _assemble(hd: Head, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_ro
         add(Piece("skull", f"face_{i}", (0.0, mid_u, f0), (0.0, mid_u, f1),
                   ww, hh, "skull"))
 
-    # —— 颧弓 + 咬肌：算出来的那块腮帮子。**这是推导直接变成的可见物**
-    arch_out = hd.arch
-    if arch_out > bw / 2.0 + RENDER_MIN * 0.5:
-        for sgn, tag in ((-1.0, "l"), (1.0, "r")):
-            cx = sgn * (bw / 2.0 + (arch_out - bw / 2.0) / 2.0)
-            th = max((arch_out - bw / 2.0) / 2.0, RENDER_MIN)
-            add(Piece("skull", f"jowl_{tag}", (cx, u_tmj + hd.jaw_depth * 0.4, f_tmj),
-                      (cx, u_tmj + hd.jaw_depth * 0.4, f_row_end), th,
-                      max(hd.jaw_depth * 0.55, RENDER_MIN), "jowl"))
+    # —— 两块咀嚼肌：**这是整层推导直接变成的可见物**，不是贴上去的装饰。
+    #    颞肌填在脑颅侧面与颧弓之间、从关节高度一直到嵴顶；咬肌挂在颧弓下面、从关节
+    #    往前到弓的前根。两块的横截面就是前面解出来的 PCSA，摆在它们各自该在的地方。
+    #    round 1 只画了一条 1 px 高的"腮"，等于把算出来的东西又扔了。
+    stand = max(hd.arch - bw / 2.0, RENDER_MIN)      # 颧弓离脑颅多远 = 肌肉的厚度
+    f_arch = f_orbit + (L - f_orbit) * 0.20
+    j_bot = u_occ - hd.jaw_depth                      # 下颌下缘：咬肌的下界
+    for sgn, tag in ((-1.0, "l"), (1.0, "r")):
+        cx = sgn * (bw / 2.0 + stand / 2.0)
+        # 颞肌：从关节高度一直填到嵴顶，前后占满枕到眶的那一段（就是颞窝本身）
+        # 竖直范围就是推导里那个"可用窝高"：脑腔底到嵴顶。用关节高度当下界是错的——
+        # 颧弓以下归咬肌，颞肌是从弓的内侧穿过去的。
+        h_t = max(u_top + hd.crest - u_bot, RENDER_MIN * 2)
+        add(Piece("skull", f"temporalis_{tag}", (cx, u_bot, f_orbit * 0.5),
+                  (cx, u_bot + h_t, f_orbit * 0.5 + h_t * 0.10),
+                  stand / 2.0, max(f_orbit * 0.45, RENDER_MIN), "jowl", soft=True))
+        # 咬肌：**上界是颧弓、下界是下颌下缘**，不能自己再往下垂一截（round 1 的牛头就是
+        # 这样在下颌以下挂了一大块）
+        cu = 0.5 * (u_tmj + j_bot)
+        add(Piece("skull", f"masseter_{tag}", (cx, cu, f_tmj), (cx, cu, f_arch),
+                  stand / 2.0, max((u_tmj - j_bot) / 2.0, RENDER_MIN), "jowl", soft=True))
 
-    # —— 下颌：体（沿齿列） + 升支（到关节） + 冠状突（顶到颅顶）
+    # —— 下颌：**左右两条梁** + 联合 + 升支 + 冠状突。
+    #    梁的截面是解出来的（深宽比 2.2，深 = 抗弯要的深度），两条分别贴在齿列外侧。
+    #    round 1 画成一整块 2.1 px 宽 × 1.0 px 深的板——比它自己还宽，那不是下颌是托盘。
     j_u = u_occ - hd.jaw_depth / 2.0
     w_jaw = max(hd.jaw_depth / JAW_ASPECT / 2.0, RENDER_MIN)
     tip = L * (1.0 - 0.02)
-    add(Piece("jaw", "corpus", (0.0, j_u, f_tmj + (f_row_end - f_tmj) * 0.15),
-              (0.0, j_u, tip), max(bw * 0.42, RENDER_MIN),
-              max(hd.jaw_depth / 2.0, RENDER_MIN), "skull"))
-    add(Piece("jaw", "ramus", (0.0, j_u, f_tmj), (0.0, u_tmj, f_tmj),
-              max(bw * 0.34, RENDER_MIN), w_jaw, "skull"))
-    cor = u_top - u_tmj
-    if cor > RENDER_MIN:
-        add(Piece("jaw", "coronoid", (0.0, u_tmj, f_tmj + w_jaw * 1.2),
-                  (0.0, u_tmj + cor, f_tmj + w_jaw * 2.4),
-                  max(bw * 0.20, RENDER_MIN), max(w_jaw * 0.8, RENDER_MIN), "skull"))
+    jx = max(hd.face_w / 2.0 - w_jaw, w_jaw)
+    f_back = f_tmj + (f_row_end - f_tmj) * 0.15
+    for sgn, tag in ((-1.0, "l"), (1.0, "r")):
+        add(Piece("jaw", f"corpus_{tag}", (sgn * jx, j_u, f_back),
+                  (sgn * jx, j_u, tip - hd.face_w * 0.4), w_jaw,
+                  max(hd.jaw_depth / 2.0, RENDER_MIN), "skull"))
+        add(Piece("jaw", f"ramus_{tag}", (sgn * jx, j_u, f_tmj),
+                  (sgn * jx, u_tmj, f_tmj), w_jaw,
+                  max(hd.jaw_depth / 2.0, RENDER_MIN), "skull"))
+        cor = u_top - u_tmj
+        if cor > RENDER_MIN:
+            add(Piece("jaw", f"coronoid_{tag}", (sgn * jx, u_tmj, f_tmj + w_jaw * 1.2),
+                      (sgn * jx, u_tmj + cor, f_tmj + w_jaw * 2.4),
+                      w_jaw, max(w_jaw * 0.8, RENDER_MIN), "skull"))
+    # 下颌联合：两条梁在颏部合成一块，这是下颌能整体转的原因
+    add(Piece("jaw", "symphysis", (0.0, j_u, tip - hd.face_w * 0.55), (0.0, j_u, tip),
+              max(hd.face_w / 2.0, RENDER_MIN), max(hd.jaw_depth / 2.0, RENDER_MIN),
+              "skull"))
+    # 颌间的那一团：舌、舌骨、二腹肌。它不是装饰——**两条下颌梁之间本来就是实心的**，
+    # 空着的话侧面看下巴是两根悬空的杆。上界是咬合面（舌顶着腭），下界是下颌下缘。
+    if hd.face_w > w_jaw * 2.2:
+        add(Piece("jaw", "throat", (0.0, j_u, f_back), (0.0, j_u, tip - hd.face_w * 0.5),
+                  max(hd.face_w / 2.0 - w_jaw, RENDER_MIN),
+                  max(hd.jaw_depth / 2.0, RENDER_MIN), "muzzle"))
 
     # —— 齿：每种咬合模式露出来的是不同的东西
     _teeth(hd, u_occ, j_u, tip, bw)
@@ -778,7 +851,7 @@ def _assemble(hd: Head, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_ro
     _snout_end(hd, u_occ, tip, bw, h_face)
 
     # —— 眼：眶位由 φ 定，眼球嵌在脸的侧上方
-    _eyes(hd, f_brain, max(u_top, u_face), u_occ, max(bw, hd.face_w))
+    _eyes(hd, f_orbit, max(u_top, u_face), u_occ, max(bw, hd.face_w))
 
     # —— 耳 / 鼓膜
     _ears(hd, bl, bh, bw, u_top)
@@ -805,13 +878,17 @@ def _teeth(hd: Head, u_occ, j_u, tip, bw) -> None:
         r = max(w * 0.55, RENDER_MIN)
         fl = 0.20 * hd.bite_N
         lm = SIGMA_DENTIN * math.pi * (r / hd.px_m) ** 3 / (4.0 * max(fl, 1e-6))
-        ln = min(hd.px_m * lm, hd.L * 0.16)
+        ln = min(hd.px_m * lm, hd.L * 0.10)
+        # 闭口时**下犬齿在上犬齿的前面、上犬齿在下颌的外侧**——这是剪切类咬合的定式，
+        # 也是几何必需：round 1 把两者放在同一个横位、下齿还排在上齿之后，上犬齿直接
+        # 穿过下颌体。
+        half = hd.face_w / 2.0
         for sgn, tag in ((-1.0, "l"), (1.0, "r")):
-            cx = sgn * bw * 0.30
-            add(Piece("skull", f"canine_u{tag}", (cx, u_occ, tip * 0.86),
-                      (cx, u_occ - ln, tip * 0.86), r, r, "tooth"))
-            add(Piece("jaw", f"canine_d{tag}", (cx, j_u, tip * 0.80),
-                      (cx, j_u + ln, tip * 0.80), r, r, "tooth"))
+            xu, xd = sgn * (half + r * 0.6), sgn * max(half - r * 0.6, r)
+            add(Piece("skull", f"canine_u{tag}", (xu, u_occ, tip * 0.84),
+                      (xu, u_occ - ln, tip * 0.84), r, r, "tooth", soft=True))
+            add(Piece("jaw", f"canine_d{tag}", (xd, j_u, tip * 0.90),
+                      (xd, j_u + ln, tip * 0.90), r, r, "tooth", soft=True))
     elif diet.occlusion == "gnaw":
         # 门齿是一把**终生生长的凿子**：磨掉多少长回多少，露在外面的那一截由唇线定。
         for sgn, tag in ((-1.0, "l"), (1.0, "r")):
@@ -872,7 +949,7 @@ def _snout_end(hd: Head, u_occ, tip, bw, h_face) -> None:
         add(Piece("skull", f"nostril_{tag}",
                   (sgn * bw * 0.16, u_occ + h_face * 0.44, tip - hd.L * 0.01),
                   (sgn * bw * 0.16, u_occ + h_face * 0.44, tip + hd.L * 0.015),
-                  RENDER_MIN * 0.8, RENDER_MIN * 0.8, "nostril"))
+                  RENDER_MIN * 0.8, RENDER_MIN * 0.8, "nostril", soft=True))
 
 
 def _eyes(hd: Head, f_brain, u_top, u_occ, bw) -> None:
@@ -913,15 +990,23 @@ def _ears(hd: Head, bl, bh, bw, u_top) -> None:
     eh, ew = hd.ear_plate
     if eh < RENDER_MIN * 2:
         return
-    # 耳廓向后上方立起来（听身后——身前有眼睛管）。开口朝外。
+    # 耳廓从颅顶后角立起来，稍稍朝外（听身后——身前有眼睛管）。开口朝前外。
+    #
+    # **分两段收细**：耳廓是个三角形的漏斗，一根等宽的板渲出来是一片桨。长度已经在
+    # `ear_plate` 里按填充率补过了（同样的散热面积，三角形要摊得更长）。
     for sgn, tag in ((-1.0, "l"), (1.0, "r")):
-        base = (sgn * bw * 0.40, u_top * 0.9, bl * 0.18)
-        tipp = (sgn * (bw * 0.40 + eh * 0.42), u_top * 0.9 + eh * 0.86, bl * 0.18 - eh * 0.20)
-        add(Piece(f"ear_{tag}", f"pinna_{tag}", base, tipp,
-                  max(ew / 2.0, RENDER_MIN), max(ew * 0.16, RENDER_MIN), "skull"))
-        inner = (sgn * (bw * 0.40 + ew * 0.20), u_top * 0.9 + eh * 0.30, bl * 0.18 - eh * 0.06)
-        add(Piece(f"ear_{tag}", f"conch_{tag}", base, inner,
-                  max(ew * 0.34, RENDER_MIN), max(ew * 0.12, RENDER_MIN), "ear_in"))
+        # 耳根接在**外耳道**的位置：脑颅后段的侧面、颧弓上方，不是颅顶。接在颅顶上
+        # 长角的那三种就会变成角在下、耳在上，正好反了。
+        x0, y0, z0 = sgn * bw * 0.42, u_top * 0.55, bl * 0.30
+        dx, dy, dz = sgn * eh * 0.20, eh * 0.80, -eh * 0.12
+        for k, wk in ((0, 1.0), (1, 0.58)):
+            a = (x0 + dx * k * 0.5, y0 + dy * k * 0.5, z0 + dz * k * 0.5)
+            b = (x0 + dx * (k + 1) * 0.5, y0 + dy * (k + 1) * 0.5, z0 + dz * (k + 1) * 0.5)
+            add(Piece(f"ear_{tag}", f"pinna_{tag}{k}", a, b,
+                      max(ew * 0.5 * wk, RENDER_MIN), max(ew * 0.16, RENDER_MIN), "skull"))
+        inner = (x0 + dx * 0.35, y0 + dy * 0.35, z0 + dz * 0.35)
+        add(Piece(f"ear_{tag}", f"conch_{tag}", (x0, y0, z0), inner,
+                  max(ew * 0.28, RENDER_MIN), max(ew * 0.12, RENDER_MIN), "ear_in"))
 
 
 def _horns(hd: Head, bl, bw, u_top) -> None:
@@ -937,10 +1022,15 @@ def _horns(hd: Head, bl, bw, u_top) -> None:
         dirv = np.array([sgn * math.sin(ao), math.cos(ao) * math.cos(ab),
                          -math.sin(ab)], float)
         dirv = dirv / np.linalg.norm(dirv)
-        # 卷曲平面：绕"外侧方向 × 中轴"转。盘角在近矢状面里卷，钩角在近水平面里卷。
-        axis = np.array([sgn * math.cos(ao) * 0.35, 0.0, -1.0], float)
-        if d.horn == "hook":
-            axis = np.array([0.0, -1.0, 0.0], float)
+        # 卷曲平面。**镜像不是把轴的 x 取反**：向量 v 镜像成 Mv 之后，绕 a 转 θ 对应绕
+        # (a_x, −a_y, −a_z) 转同一个 θ。把 x 取反（round 1 的写法）会让左右两只角朝相反
+        # 的方向卷——盘羊一只往后盘、另一只往前盘，整对角在正面看是散开的两片。
+        #   · 盘角绕**横轴**转 ⇒ 在近矢状面里盘：上 → 后 → 下 → 前 → 上
+        #   · 直角同样绕横轴，只是转得少
+        #   · 钩角绕**竖轴**转 ⇒ 先横着支出去，再往前钩
+        axis = np.array(HORN_AXIS[d.horn], float)
+        if sgn < 0:
+            axis = np.array([axis[0], -axis[1], -axis[2]])
         axis = axis / np.linalg.norm(axis)
         p = np.array([sgn * bw * 0.34, u_top, bl * 0.30], float)
         for i in range(n_seg):
