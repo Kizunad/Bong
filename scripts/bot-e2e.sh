@@ -28,6 +28,7 @@ BOT_E2E_OPERATOR_TAGS=(
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
   Zlb Zre Alc Bob
   QiH QiV FpH DhH MPH WbH
+  Rein Term NewCh
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do

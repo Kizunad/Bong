@@ -936,6 +936,9 @@ mod tests {
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，毒蛊 qi 扣减在 release 中止后才执行。
+                LifeRecord::new(canonical_player_id("dugu-infuse-exposure")),
             ))
             .id();
 
@@ -1213,6 +1216,7 @@ mod tests {
     /// This validates the system degrades gracefully rather than panicking.
     #[test]
     fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = test_app();
@@ -1245,6 +1249,10 @@ mod tests {
                 },
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity）。无 CurrentDimension 的
+                // 溢出路由场景仍需身份成立——补上与生产一致的 canonical 身份。
+                LifeRecord::new(canonical_player_id("dugu-infuse-nodim")),
                 // No CurrentDimension intentionally.
             ))
             .id();
@@ -1787,6 +1795,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 扣减在事务内被中止。
+                LifeRecord::new(canonical_player_id("dugu-antidote-success")),
                 inventory,
             ))
             .id();
@@ -1914,6 +1925,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 契约（#1931）：release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity），扣减与 zone 入账均不产生。
+                LifeRecord::new(canonical_player_id("dugu-antidote-zone")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -1969,6 +1983,7 @@ mod tests {
     /// QS-003 boundary: antidote with qi_current exactly at cost (boundary, should succeed).
     #[test]
     fn antidote_qi_exactly_at_cost_deducts_correctly_with_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -2006,6 +2021,9 @@ mod tests {
                     loss_per_tick: 0.5,
                 },
                 Lifecycle::default(),
+                // R5 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，缺省会
+                // fail closed 于 InvalidActorIdentity，antidote 永远不会扣费生效。
+                LifeRecord::new(canonical_player_id("dugu-qi-exact-cost-boundary")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
