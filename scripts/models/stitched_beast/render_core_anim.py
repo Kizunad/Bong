@@ -26,6 +26,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
 import core_anim as A  # noqa: E402
+import head_anim as HA  # noqa: E402
 import fragment_anim as FA  # noqa: E402
 from anim_rig import Pose, Rig, rotmat  # noqa: E402
 from render_bbmodel import render  # noqa: E402
@@ -108,11 +109,17 @@ def main() -> int:
     ap.add_argument("--gif", action="store_true")
     ap.add_argument("--world", action="store_true", help="蠕动加回每周期净位移（看真实前进）")
     ap.add_argument("--shard", action="store_true", help="改渲碎片那一套动画")
+    ap.add_argument("--head", default="", help="改渲某个供体的头颅动画")
     args = ap.parse_args()
 
     global MOD, OUT
     if args.shard:
         MOD, OUT = FA, OUT_SHARD
+    if args.head:
+        HA.use(args.head)
+        # 一个供体一个子目录：不然渲第二个供体会把第一个的同名连拍覆盖掉
+        MOD, OUT = HA, HERE / "renders" / "head" / args.head
+        OUT.mkdir(parents=True, exist_ok=True)
 
     if not MOD.MODEL.exists():
         print(f"缺 {MOD.MODEL}，先跑 gen_core.py")
