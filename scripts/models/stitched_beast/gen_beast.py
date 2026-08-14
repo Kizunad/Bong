@@ -491,15 +491,20 @@ def gallery(stance: str = "") -> Rig:
     return rig
 
 
-def head_rig(names: list[str], *, pitch: float = 22.0) -> Rig:
-    """把若干供体的头摆成一排（`pitch` = 间距 px）。只给一个名字就是单件预览——头这么
-    小，混排的三视图里根本看不清哪是哪，得一颗一颗过。"""
+def head_rig(names: list[str], *, pitch: float = 26.0, per_row: int = 5) -> Rig:
+    """把若干供体的头摆成方阵（`pitch` = 间距 px，`per_row` = 每行几颗）。
+
+    只给一个名字就是单件预览——头这么小，混排的三视图里根本看不清哪是哪，得一颗一颗过。
+    十颗排成一条长队同样看不清：相机要框住 10:1 的长条，每颗只剩十分之一的画幅。分行。
+    """
     rig = Rig(Palette(MATS, swatch=8, size=64))
     rig.bone("root", (0.0, 0.0, 0.0))
     heads = {}
     for i, sp in enumerate(names):
-        x = (i - len(names) / 2) * pitch
-        sock = C.Socket(name=sp, kind="head", pos=np.array([x, 20.0, 12.0]),
+        col, row = i % per_row, i // per_row
+        x = (col - min(per_row, len(names)) / 2) * pitch
+        z = 12.0 + row * pitch * 1.6
+        sock = C.Socket(name=sp, kind="head", pos=np.array([x, 20.0, z]),
                         normal=np.array([0.0, 0.0, -1.0]), bone="root", girth=4.0)
         heads[sp] = HD.solve_head(GN.HeadGene(sp, sp, 1.0), sock)
     for hd in heads.values():
