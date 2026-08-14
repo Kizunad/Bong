@@ -28,6 +28,8 @@ sys.path.insert(0, str(HERE))
 
 import core as C  # noqa: E402
 import gen_core as GC  # noqa: E402
+import genome as GN  # noqa: E402
+import heads as HD  # noqa: E402
 import limbs as LB  # noqa: E402
 from voxel_rig import Palette, Rig  # noqa: E402
 
@@ -35,6 +37,7 @@ OUT_DIR = HERE.parent / "local_models"
 
 MATS = dict(GC.MATS)
 MATS.update(LB.LIMB_MATS)
+MATS.update(HD.HEAD_MATS)
 
 # 可见半径的**渲染**下限（px）。远端那一节按力学算出来只有零点二三像素——它本来就该是
 # 一根腱包着的细骨（马的管骨就是这样），但 MC 的模型精度到不了亚像素，半个像素以下的
@@ -42,19 +45,45 @@ MATS.update(LB.LIMB_MATS)
 RENDER_MIN_R = 0.5
 
 
-def bone_tree(rig: Rig, limbs: dict[str, LB.Limb]) -> None:
-    """core 的骨树 + 逐肢骨链。
+HEAD_BONE = {"skull": "head", "jaw": "jaw",
+             "ear_l": "earl", "ear_r": "earr",
+             "horn_l": "hornl", "horn_r": "hornr"}
+
+
+def head_bone(hd: HD.Head, part: str) -> str:
+    return f"{HEAD_BONE[part]}_{hd.name}"
+
+
+def bone_tree(rig: Rig, limbs: dict[str, LB.Limb],
+              heads: dict[str, HD.Head] | None = None) -> None:
+    """core 的骨树 + 逐肢骨链 + 逐头骨链。
 
     肢骨挂在该槽骑着的那根核心骨上（`sock.bone`），不是一律挂 core_mid——挂错父骨的话
     核心一分节，肢就会被甩出去（核心动画那边踩过）。每节一根骨，pivot 取该节的近端
     关节：将来步态动画驱动的就是这条链。
+
+    头也一样：**下颌、耳、角各是独立的骨**。这不是为了好看——嚼、耳朵抖、顶角是三套
+    互不相干的动作，合成一根骨就永远做不了。下颌的 pivot 必须落在颌关节上（推出来的
+    那个 `Head.tmj`），落错地方张嘴时下巴会平移而不是转。
     """
+    heads = heads or {}
     rig.bone("root", (0.0, 0.0, 0.0))
     for lb in C.LOBES:
         rig.bone(lb.name, tuple(np.array(lb.center) + C.CORE_CENTER), lb.parent or "root")
+    for hd in heads.values():
+        rig.bone(head_bone(hd, "skull"), tuple(hd.org), hd.sock.bone)
+        rig.bone(head_bone(hd, "jaw"),
+                 tuple(hd.world((0.0, hd.tmj[0], hd.tmj[1]))), head_bone(hd, "skull"))
+        for part in ("ear_l", "ear_r", "horn_l", "horn_r"):
+            base = next((p.a for p in hd.pieces if p.part == part), None)
+            if base is not None:
+                rig.bone(head_bone(hd, part), tuple(hd.world(base)),
+                         head_bone(hd, "skull"))
     for s in C.sockets().values():
         limb = limbs.get(s.name)
         if limb is None:
+            if s.name in heads:      # 头的骨在上面建过了，这个槽不再是芽
+                continue
             parent = s.bone
             for j, piv in enumerate(C.bud_joints(s)):
                 name = f"bud_{s.name}" if j == 0 else f"bud_{s.name}_{j}"
@@ -376,28 +405,52 @@ def part_cracks(rig: Rig, lb: LB.Limb) -> int:
     return len(lines)
 
 
+def part_heads(rig: Rig, heads: dict[str, HD.Head]) -> int:
+    """逐头几何。**这一层不做任何决定**——摆什么、多大全在 `heads.solve_head` 里推完了，
+    这里只把局部坐标搬到世界坐标、按 part 分到对应的骨上。
+
+    每块都走 `Rig.shaft`：头的标架是零滚转的（`heads.head_frame`），而 shaft 解出来的
+    方块宽度轴恒水平——两者正好对上，所以任意朝向的头都能用它表达，不需要自己写旋转。
+    """
+    n = 0
+    for hd in heads.values():
+        for p in hd.pieces:
+            a, b = hd.world(p.a), hd.world(p.b)
+            d = float(np.linalg.norm(b - a))
+            if d < 1e-3:                       # 退化成一点的块：给它一丝厚度再画
+                b = a + hd.e_f * 1e-2
+            rig.shaft(head_bone(hd, p.part), f"{p.name}_{hd.name}",
+                      tuple(a), tuple(b), max(p.r1, HD.RENDER_MIN),
+                      max(p.r2, HD.RENDER_MIN), mat=p.mat)
+            n += 1
+    return n
+
+
 def build(seed: int, *, bud_growth: float = 1.0
-          ) -> tuple[Rig, LB.LM.Gait, dict[str, LB.Limb]]:
+          ) -> tuple[Rig, LB.LM.Gait, dict[str, LB.Limb], dict[str, HD.Head]]:
     """`bud_growth` 只影响**没长肢的那些槽**画多大。
 
     默认 1.0 是几何契约：芽按满尺寸建，当前生长度由动画的 bone scale 表达（见
     `gen_core.part_buds`）。想看这只兽平时的样子，出图时传 `core_anim.BUD_DORMANT`
     ——否则十几个满长的芽会把整只兽埋掉，腿一条都看不见（round 1 实测）。
     """
-    gen, gait, limbs = LB.build(seed)
+    socks = C.sockets()
+    gen, gait, limbs = LB.build(seed, socks=socks)
+    heads = {hg.socket: HD.solve_head(hg, socks[hg.socket]) for hg in gen.heads}
     rig = Rig(Palette(MATS, swatch=8, size=64))
-    bone_tree(rig, limbs)
+    bone_tree(rig, limbs, heads)
     GC.part_mass(rig)
     GC.part_welds(rig)
     GC.part_drips(rig)
-    for s in C.sockets().values():           # 没长肢的槽仍然只是一个芽
-        if s.name in limbs:
+    for s in socks.values():                 # 没长肢也没长头的槽仍然只是一个芽
+        if s.name in limbs or s.name in heads:
             continue
         for k, (ctr, r, mat) in enumerate(C.bud_shape(s, bud_growth)):
             bone = f"bud_{s.name}" if k == 0 else f"bud_{s.name}_{k}"
             rig.cube(bone, f"budc_{s.name}_{k}", tuple(ctr - r), tuple(ctr + r), mat=mat)
     part_limbs(rig, limbs)
-    return rig, gait, limbs
+    part_heads(rig, heads)
+    return rig, gait, limbs, heads
 
 
 def gallery(stance: str = "") -> Rig:
@@ -408,7 +461,6 @@ def gallery(stance: str = "") -> Rig:
     （狼/狐/兔/禽）脚跟吊在半空、踮着趾；跖行的（人/鼠）整只脚掌拍在地上还支出个
     脚跟；蛛足是斜插下去的一根细杆。毛/羊毛/鬃/鳞/甲也各是各的。
     """
-    import genome as GN
     rig = Rig(Palette(MATS, swatch=8, size=64))
     rig.bone("root", (0.0, 0.0, 0.0))
     load = LB.body_weight() / 4.0
@@ -439,9 +491,45 @@ def gallery(stance: str = "") -> Rig:
     return rig
 
 
+def head_rig(names: list[str], *, pitch: float = 22.0) -> Rig:
+    """把若干供体的头摆成一排（`pitch` = 间距 px）。只给一个名字就是单件预览——头这么
+    小，混排的三视图里根本看不清哪是哪，得一颗一颗过。"""
+    rig = Rig(Palette(MATS, swatch=8, size=64))
+    rig.bone("root", (0.0, 0.0, 0.0))
+    heads = {}
+    for i, sp in enumerate(names):
+        x = (i - len(names) / 2) * pitch
+        sock = C.Socket(name=sp, kind="head", pos=np.array([x, 20.0, 12.0]),
+                        normal=np.array([0.0, 0.0, -1.0]), bone="root", girth=4.0)
+        heads[sp] = HD.solve_head(GN.HeadGene(sp, sp, 1.0), sock)
+    for hd in heads.values():
+        rig.bone(head_bone(hd, "skull"), tuple(hd.org), "root")
+        rig.bone(head_bone(hd, "jaw"),
+                 tuple(hd.world((0.0, hd.tmj[0], hd.tmj[1]))), head_bone(hd, "skull"))
+        for part in ("ear_l", "ear_r", "horn_l", "horn_r"):
+            base = next((p.a for p in hd.pieces if p.part == part), None)
+            if base is not None:
+                rig.bone(head_bone(hd, part), tuple(hd.world(base)),
+                         head_bone(hd, "skull"))
+    part_heads(rig, heads)
+    return rig
+
+
+def head_gallery() -> Rig:
+    """十种供体的头**并排一颗一颗看**。和腿谱同一个理由：混在整只兽上永远看成一团。
+
+    每颗都朝正前方、挂同一个虚拟槽，所以差别全部来自供体的食性与体型本身。该看出来的：
+    食肉的短吻、颌关节压在齿列平面上、颅顶有矢状嵴；食草的长脸、关节抬得老高、颧弓
+    往外撑出一对大腮帮子；啮齿的门齿凿；禽的喙；蛙的眼睛长在头顶。
+    """
+    return head_rig(sorted(GN.HEAD_TEMPLATES, key=lambda k: HD.DONOR[k].head_m))
+
+
 # ---------------------------------------------------------------- 自检
-def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
+def check(rig: Rig, gait, limbs: dict[str, LB.Limb],
+          heads: dict[str, HD.Head] | None = None) -> list[str]:
     bad: list[str] = []
+    heads = heads or {}
     W = LB.body_weight()
 
     # ① 承重的脚必须**踩在地上**：站姿是按落点解的，脚离地或穿地都说明 IK 没收敛
@@ -648,6 +736,97 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
                 bad.append(f"{lb.name} 蹄甲裂口没顺着生长方向（cos={cos:.2f}）——"
                            f"角质是周向收缩裂的，缝必须竖着走")
 
+    # ⑮ 头不许埋进核心。头是**缝在表皮上**的：枕髁那一圈骑在等值面上（癒合环就画在
+    #    那里），但从脑颅往前的每一块都必须在核心之外。埋进去 = 这颗头长反了方向。
+    for hd in heads.values():
+        for p in hd.pieces:
+            for e in (p.a, p.b):
+                if e[2] < hd.L * 0.10:       # 癒合环那一段允许骑在表皮上
+                    continue
+                f = C.fld(hd.world(e) - C.CORE_CENTER)
+                if f >= C.ISO:
+                    bad.append(f"{hd.name} 的 {p.name} 埋在核心里（f={f:.2f}）——"
+                               f"头是缝在表皮上的，只有枕髁那一圈能骑上去")
+                    break
+            else:
+                continue
+            break
+
+    # ⑯ 头与头、头与肢不许互穿。缝合兽的槽间距只保证 ≥4 px，而头的尺寸由供体定，
+    #    完全可能大到把邻居吃掉——那时该换槽或换供体，不是硬塞。
+    hs = sorted(heads)
+    for i, a in enumerate(hs):
+        for b in hs[i + 1:]:
+            ha, hb = heads[a], heads[b]
+            d = float(np.linalg.norm(ha.org - hb.org))
+            need = (ha.pred_W + hb.pred_W) / 2.0
+            if d < need * 0.60:
+                bad.append(f"{a} 与 {b} 两颗头相距 {d:.1f} px，合起来宽 {need:.1f} px"
+                           f"——挤在一起了")
+    for hn, hd in heads.items():
+        for ln, lb in limbs.items():
+            d = float(np.linalg.norm(hd.org - lb.sock.pos))
+            need = hd.pred_W / 2.0 + lb.root_r
+            if d < need * 0.60:
+                bad.append(f"{hn} 与 {ln} 相距 {d:.1f} px，头半宽加肢根 {need:.1f} px"
+                           f"——头压在肢的根上")
+
+    # ⑰ 下颌必须**咬得上**：闭合时下齿列的高度要贴着上齿列（咬合面），不能穿过去，
+    #    也不能悬空一截。这条卡的是颌关节的位置——`tmj_lift` 算错了这里立刻红。
+    for hd in heads.values():
+        u_occ = hd.occ
+        low = [p for p in hd.pieces if p.part == "jaw" and p.name.startswith("corpus")]
+        for p in low:
+            top = max(p.a[1], p.b[1]) + p.r2
+            gap = top - u_occ
+            if gap > max(hd.L * 0.06, 0.6):
+                bad.append(f"{hd.name} 闭口时下颌体顶面高出咬合面 {gap:.2f} px——"
+                           f"下颌穿进上颌了")
+            if gap < -max(hd.L * 0.12, 1.0):
+                bad.append(f"{hd.name} 闭口时下颌体离咬合面还差 {-gap:.2f} px——"
+                           f"这颗头咬不上东西")
+
+    # ⑱ 眼必须看得出去：视轴不能一出眼球就撞回自己的脑袋。侧眼的猎物有一只眼被自己的
+    #    身体挡住是**这只兽的属性**（多头正是拿来补视野的，见 HD.vision），不算错；
+    #    但视轴穿回自己的头骨是几何错。
+    for hd in heads.values():
+        for c, dv in zip(hd.eye_pos, hd.eye_dirs()):
+            p0 = hd.world(c)
+            for t in (0.6, 1.2, 2.0):
+                q = p0 + dv * (t * max(hd.eye_r, 0.5) + hd.eye_r)
+                loc = np.array([float((q - hd.org) @ hd.e_r),
+                                float((q - hd.org) @ hd.e_u),
+                                float((q - hd.org) @ hd.e_f)])
+                if abs(loc[0]) < hd.pred_W * 0.30 and 0.0 < loc[2] < hd.L * 0.9:
+                    bad.append(f"{hd.name} 的视轴一出眼球就穿回自己的头骨"
+                               f"（局部 {loc.round(2)}）——眶位算错了")
+                    break
+
+    # ⑲ 角基必须扛得住一次对撞。**卡的是储能不是抗弯**——按抗弯算角可以细一半（见
+    #    heads.horn_base_r），拿抗弯当判据等于把真正的失效模式漏掉。
+    for hd in heads.values():
+        if not hd.donor.horn:
+            continue
+        seg = [p for p in hd.pieces if p.part == "horn_r"]
+        if not seg:
+            bad.append(f"{hd.name} 有角但一块也没画出来")
+            continue
+        if hd.horn_r < hd.horn_bend:
+            bad.append(f"{hd.name} 角基 {hd.horn_r:.2f} px 连抗弯需要的 "
+                       f"{hd.horn_bend:.2f} px 都不到——储能判据反倒比抗弯松，"
+                       f"说明其中一条算反了")
+        if max(seg[0].r1, seg[0].r2) < hd.horn_r * 0.9:
+            bad.append(f"{hd.name} 画出来的角基 {max(seg[0].r1, seg[0].r2):.2f} px "
+                       f"细于推出来的 {hd.horn_r:.2f} px")
+
+    # ⑳ 咀嚼肌得装得下：颧弓外张必须至少容下算出来的那块肌肉，否则"腮帮子"是假的。
+    for hd in heads.values():
+        stand = hd.arch - hd.brain_px[2] / 2.0
+        need = (hd.pcsa[1] / 2.0) / max((hd.L - hd.tmj[1]) * 0.3 / hd.px_m, 1e-6) * hd.px_m
+        if stand < need * 0.5:
+            bad.append(f"{hd.name} 颧弓只外张 {stand:.2f} px，咬肌要 {need:.2f} px"
+                       f"——肌肉装不进去，那块腮是画上去的")
+
     # ⑩ 块数预算
     # 预算从 560 提到 760：脚（每条 4–8 块）和毛（每条 13–15 块）是这一轮加的，都是
     # "看得见才算数"的东西。参照：拟态灰烬蛛整只约 200 块，这只兽有 6–9 条肢。
@@ -663,35 +842,53 @@ def main() -> int:
     ap.add_argument("--bud-growth", type=float, default=1.0,
                     help="没长肢的槽画多大；出图看真实样子传 0.1（见 build）")
     ap.add_argument("--gallery", action="store_true", help="各物种的腿并排出一张")
+    ap.add_argument("--heads", action="store_true", help="各供体的头并排出一张")
+    ap.add_argument("--head", default="", help="只出某一个供体的头（单件预览）")
     args = ap.parse_args()
 
+    if args.head:
+        rig = head_rig([args.head])
+        p = rig.save(OUT_DIR / f"Head_{args.head}.bbmodel", f"Head_{args.head}")
+        print(f"{args.head} 头：{len(rig.elements)} 块 → {p}")
+        return 0
+
+    if args.heads:
+        rig = head_gallery()
+        p = rig.save(OUT_DIR / "Heads.bbmodel", "Heads")
+        print(f"头谱：{len(rig.elements)} 块 → {p}")
+        print(HD.report())
+        return 0
+
     if args.gallery:
-        import genome as GN
         for st in sorted({sk.stance for sk in GN.SKELETONS.values()}):
             rig = gallery(st)
             p = rig.save(OUT_DIR / f"Legs_{st}.bbmodel", f"Legs_{st}")
             print(f"腿谱 {st}：{len(rig.elements)} 块 → {p}")
         return 0
 
-    rig, gait, limbs = build(args.seed, bud_growth=args.bud_growth)
+    rig, gait, limbs, heads = build(args.seed, bud_growth=args.bud_growth)
     W = LB.body_weight()
     nb = sum(1 for lb in limbs.values() if lb.bearing)
     print(f"缝合兽 seed={args.seed}：{len(rig.elements)} 块 / {len(rig.bones)} 骨 / "
-          f"{len(limbs)} 肢（承重 {nb}）  体重 {W / LB.G:.0f} kg")
+          f"{len(limbs)} 肢（承重 {nb}） / {len(heads)} 头  体重 {W / LB.G:.0f} kg")
     print(LB.report_table(limbs, W))
+    print(HD.report(heads))
+    cov, blind = HD.vision(heads)
+    print(f"[视野] 合眼水平覆盖 {cov:.0f}°，最大连续盲区 {blind:.0f}°")
     lo, hi = rig.bounds()
     print(f"整体 {(hi[0] - lo[0]) / 16:.2f} × {(hi[1] - lo[1]) / 16:.2f} × "
           f"{(hi[2] - lo[2]) / 16:.2f} 格   骑乘 {gait.ride:+.1f} px   "
           f"行走 {gait.blocks_per_sec:.2f} 格/s")
 
-    bad = check(rig, gait, limbs)
+    bad = check(rig, gait, limbs, heads)
     if bad:
         print(f"\n✗ {len(bad)} 处问题：")
         for x in bad:
             print(f"   {x}")
         return 1
     print("✓ 触地 / 不埋进核心 / 根部不互穿 / 粗细单调 / 载荷守恒 / 不陷地 / 骨骼 / "
-          "站高 / 不对称 / 不露骨 / 脚托住踝 / 膝朝前 / 裂口方向 / 块数 全部通过")
+          "站高 / 不对称 / 不露骨 / 脚托住踝 / 膝朝前 / 裂口方向 / 头不埋 / 头不互穿 / "
+          "咬得上 / 看得出去 / 角扛得住 / 咬肌装得下 / 块数 全部通过")
     if not args.check:
         p = rig.save(OUT_DIR / f"StitchedBeast_{args.seed}.bbmodel",
                      f"StitchedBeast_{args.seed}")
