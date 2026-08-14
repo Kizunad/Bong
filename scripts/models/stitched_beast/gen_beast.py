@@ -417,7 +417,11 @@ def gallery(stance: str = "") -> Rig:
                    key=lambda k: GN.SKELETONS[k].total)
     for i, sp in enumerate(names):
         sk = GN.SKELETONS[sp]
-        x = (i - len(names) / 2) * 26.0
+        # 整排**挪离核心**：姿态求解会躲开核心的场（那是对的，腿不该折进肚子里），
+        # 而腿谱里核心并不渲出来。原来第一条腿的髋正好落在 (0, 24, 0) 附近，也就是
+        # 核心内部，于是它的膝被一团看不见的东西顶到反方向去——同为兽腿，狼的膝朝前
+        # 人的膝朝后。腿谱要看的是骨架本身，不该带上这份偏置。
+        x = (i - len(names) / 2) * 26.0 + 200.0
         gene = GN.LimbGene(f"g{i}", sk.cls, 1.0, sp)
         # 髋高按**这条腿自己的自然站姿**摆：踝的高度由站姿定，髋再在踝之上留出
         # 八成的腿长。统一给一个高度是错的——蹄行的踝本来就比跖行高一大截，硬摆同一个
@@ -496,10 +500,17 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
                        f"远端鼓起来说明力矩臂算反了")
         # 看得见的收细是**大腿 vs 管骨**，不是大腿 vs 趾节——趾节已经归脚的几何管了，
         # 拿它当基准会把"脚大"误判成"腿不收细"。
-        cannon = r[max(len(r) - lb.gene.foot_bones, 1)]
+        #
+        # 两边都得是**力学要的粗细**，不能拿渲染半径当分母：管骨那一节的渲染半径经常由
+        # 软组织下限（`SOFT_OVER_BONE`）顶着，那是"骨外面总还有一层"，不是力矩算出来的。
+        # 拿它作分母，轻载的腿会被误判——实测四只兽的低载肢 root_need 1.4 / 渲染 0.90
+        # 报"只差 1.6×"，而它们的力学需求其实差 3.1×。管骨那一节没有肌腹，力学需求就是
+        # 骨半径本身。
+        idx = max(len(r) - lb.gene.foot_bones, 1)
+        cannon = lb.bone_r[idx]
         if lb.root_need / max(cannon, 1e-9) < 2.0:
-            bad.append(f"{lb.name} 根部需求 {lb.root_need:.1f} / 管骨 {cannon:.2f} 只差 "
-                       f"{lb.root_need / max(cannon, 1e-9):.1f}×——腿该显著收细，"
+            bad.append(f"{lb.name} 根部需求 {lb.root_need:.1f} / 管骨需求 {cannon:.2f} "
+                       f"只差 {lb.root_need / max(cannon, 1e-9):.1f}×——腿该显著收细，"
                        f"等粗说明力矩没进公式")
 
     # ⑤ 载荷守恒：任一时刻所有着地脚的反力之和必须等于体重。这是整层的地基，
@@ -591,6 +602,34 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb]) -> list[str]:
             bad.append(f"{lb.name} 踝的地面投影落在脚底之外（跟→跖球的 {s:+.2f} 处）"
                        f"——跖行必须整片脚底托住踝")
 
+    # ⑭ 折弯平面：兽腿禽腿的膝是**横轴铰链**，只能前后折。脚落到侧面去靠的是髋把整条腿
+    #    外展出去，膝仍旧朝前。所以膝相对"髋→踝"连线的偏移必须**主要是前后向**，而且
+    #    朝前（除非这条肢被迫改了折向）。上一版把折弯平面取成"髋与脚的竖直面"，脚一落
+    #    在侧面膝就朝侧面折——用户看单件图一眼认出来："大腿怎么在小腿上方的侧面？"
+    for lb in limbs.values():
+        if not lb.bearing or lb.gene.kind == "spider" or len(lb.joints) < 3:
+            continue
+        h, k, a = lb.joints[0], lb.joints[1], lb.joints[2]
+        ax = a - h
+        na = float(np.linalg.norm(ax))
+        if na < 1e-6:
+            continue
+        ax = ax / na
+        off = (k - h) - float((k - h) @ ax) * ax
+        # 卡的是**折弯平面必须含前后方向**，不是"膝的侧向偏移要小"。后者是错的判据：
+        # 一条往斜后方伸出去的腿（实测 seed 10 的兔腿 e_d=(+0.60,−0.22,+0.77)），平面
+        # 里那条垂线本来就带很大的侧向分量（+4.40），可平面照样含前后方向、膝照样朝前。
+        # 按侧向大小去卡会把这条正确的腿判红。
+        nrm = np.cross(ax, off)
+        nn = float(np.linalg.norm(nrm))
+        if nn > 1e-6 and abs(float(nrm / nn @ LB.FWD)) > 0.15:
+            bad.append(f"{lb.name} 折弯平面不含前后方向（法向·前后="
+                       f"{abs(float(nrm / nn @ LB.FWD)):.2f}）——膝是横轴铰链，"
+                       f"只能在含前后的平面里折；脚落到侧面该由髋外展承担")
+        elif off[2] > 0.3 and not lb.forced:
+            bad.append(f"{lb.name} 膝朝后折（{off[2]:+.2f}）却没标被迫改折向——"
+                       f"兽腿禽腿的膝一律朝前，反折的是踝")
+
     # ⑫ 裂口方向：裂缝一律**垂直于把它拉开的方向**，所以两族互相垂直。
     #    关节的皮被沿肢轴拉 ⇒ 横裂；蹄甲失水沿周向收缩 ⇒ 纵裂。撒歪了这里红。
     for lb in limbs.values():
@@ -651,8 +690,8 @@ def main() -> int:
         for x in bad:
             print(f"   {x}")
         return 1
-    print("✓ 触地 / 不埋进核心 / 根部不互穿 / 粗细单调 / 载荷守恒 / 不陷地 / "
-          "骨骼 / 站高 / 不对称 / 不露骨 / 脚托住踝 / 裂口方向 / 块数 全部通过")
+    print("✓ 触地 / 不埋进核心 / 根部不互穿 / 粗细单调 / 载荷守恒 / 不陷地 / 骨骼 / "
+          "站高 / 不对称 / 不露骨 / 脚托住踝 / 膝朝前 / 裂口方向 / 块数 全部通过")
     if not args.check:
         p = rig.save(OUT_DIR / f"StitchedBeast_{args.seed}.bbmodel",
                      f"StitchedBeast_{args.seed}")

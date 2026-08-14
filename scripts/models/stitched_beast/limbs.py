@@ -105,10 +105,18 @@ SOFT_OVER_BONE = 2.0
 
 # 关节弯折方向。这是**供体的解剖事实**，不是造型选择：兽腿的膝向前折、禽腿的膝藏在
 # 体羽里而外面看到的"反折膝"其实是踝、蛛足先把腿节抬到身体之上再落下去。
+#
+# **符号约定**（只取正负，幅度不用）：`+` = 这个关节朝参考方向鼓出去。参考方向由铰链
+# 轴决定，见 `stand_pose`：兽/禽的膝是横轴铰链 ⇒ 参考方向是**正前方**；蛛足是外展类，
+# 折在通过径向的竖直面里 ⇒ 参考方向是**正上方**。
+#
+# 这三行原先是按旧的（径向、且正负相反的）平面调出来的，换成上面这套约定之后，禽和蛛
+# 的符号与本注释描述的解剖事实正好相反——实测表现为**每一条禽腿蛛足都被判"被迫改折向"**
+# （力学解一律把它们翻回来）。既然力学和注释一致、只有表和它们不一致，那就是表错了。
 BEND: dict[str, tuple[float, ...]] = {
-    "mammal": (1.0, -1.0, 1.0),
-    "bird": (-1.0, 1.0, -1.0),
-    "spider": (-1.6, 1.0, 0.4),
+    "mammal": (1.0, -1.0, 1.0),      # 膝朝前，其后逐节交替
+    "bird": (1.0, -1.0, 1.0),        # 膝同样朝前——反折的是踝，由 foot_chain 摆
+    "spider": (1.6, 1.0, -0.4),      # 腿节先抬到身体之上，再落下去（第三项用不到）
     "tentacle": (1.0,) * 5,
     "vestigial": (1.0,),
 }
@@ -276,7 +284,8 @@ def _simplex(n: int, div: int = 8):
 
 def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
                kind: str, clearance: list[float] | None = None,
-               descend: bool = True) -> tuple[list[np.ndarray], bool]:
+               descend: bool = True,
+               load_pt: np.ndarray | None = None) -> tuple[list[np.ndarray], bool]:
     """站姿：**最省肌肉**的那个折法。世界坐标的各关节点。
 
     "折到够着落点"有无穷多解——把折叠量摊给哪个关节是自由的。选哪一个不该我挑：
@@ -296,15 +305,43 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
     "反折膝"其实是踝，蛛足先把腿节抬到身体之上再落下去。方向是解剖事实，幅度是算的。
     """
     d = foot - hip
-    horiz = np.array([d[0], 0.0, d[2]])
-    n = float(np.linalg.norm(horiz))
-    u = horiz / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
     target = float(np.linalg.norm(d))
+    e_d = d / max(target, 1e-9)
+    # 力臂量到**地面反力的作用点**，不是量到链的末端。这两个点不是一回事：链解到踝，
+    # 而踝在落点**后面**（趾行退 0.62 个掌骨长）。拿踝当受力点，代价函数就会一路把膝
+    # 往后推——实测所有兽腿都被判成"往后折更省力"并触发改折向，膝全朝后。
+    load = np.asarray(load_pt if load_pt is not None else foot, float)
+    # 折弯**平面**由关节的铰链轴定，不是由脚落在哪儿定。膝是横轴铰链 ⇒ 腿只能在前后
+    # 方向上折；脚要落到侧面去，靠的是髋（球窝关节）把整条腿**外展**出去，而膝依旧
+    # 朝前。上一版把平面取成"髋与脚所构成的竖直面"，脚一落在侧面，膝就跟着朝侧面折
+    # ——那是外展类（蛛足）的折法，兽腿禽腿这么折等于把膝当成了髋。用户看单件图一眼
+    # 认出来："大腿怎么在小腿上方的侧面？"
+    #
+    # 所以平面 = 张成(髋→脚, 前后方向)：既穿过落点（不然够不着），又让膝朝前。
+    ref = UP if kind == "spider" else FWD
+    e_b = ref - float(ref @ e_d) * e_d
+    nb = float(np.linalg.norm(e_b))
+    if nb < 1e-6:                     # 参考方向与腿共线：退回竖直面
+        alt = np.array([1.0, 0.0, 0.0]) if kind == "spider" else UP
+        e_b = alt - float(alt @ e_d) * e_d
+        nb = float(np.linalg.norm(e_b))
+    e_b = e_b / max(nb, 1e-9)
     nj = max(1, len(segs) - 1)
     signs = np.sign(np.array(BEND.get(kind, (1.0,) * nj)[:nj], float))
     arm = np.array([ARM_RATIO * max(segs[j - 1], segs[j]) for j in range(1, len(segs))])
     floor = np.array(clearance if clearance is not None else [0.0] * (len(segs) + 1))
-    want = math.atan2(n, max(-d[1], 1e-9))
+
+    def place(bends: np.ndarray, rot: float) -> list[np.ndarray]:
+        """平面内的链 → 世界坐标。平面基底是 (弯向, 髋→脚)，不再是 (水平, 竖直)。"""
+        P = _chain(segs, bends)
+        c, s = math.cos(rot), math.sin(rot)
+        return [hip - e_b * (c * p[0] - s * p[1]) - e_d * (s * p[0] + c * p[1])
+                for p in P]
+
+    def aim(bends: np.ndarray) -> float:
+        """把整条链转到末端正对落点。整条绕根部转是刚体运动，不改变首尾距离。"""
+        P = _chain(segs, bends)
+        return -math.atan2(P[-1][0], -P[-1][1])
 
     def penetration(pt: np.ndarray) -> float:
         """这一点扎进核心多深（px）。场在体内光滑，用 (f−ISO)/|∇f| 换算成距离。"""
@@ -329,13 +366,13 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
             bends = _fit_span(segs, w * sg, target)
             if bends is None:
                 continue                 # 这个分配折不到位（全压在一个关节上时会这样）
-            P = _chain(segs, bends)
-            # 目标函数只需要**水平**距离，而整条即将被转到目标方向上，所以先转再量
-            rot = want - math.atan2(P[-1][0], -P[-1][1])
-            c, s = math.cos(rot), math.sin(rot)
-            x = c * P[:, 0] - s * P[:, 1]
-            y = hip[1] + s * P[:, 0] + c * P[:, 1]
-            cost = float((np.abs(x[1:-1] - x[-1]) / arm).sum())
+            rot = aim(bends)
+            pts = place(bends, rot)
+            y = np.array([float(p[1]) for p in pts])
+            # 力臂是**世界系的水平**距离，不是平面内的：外展之后腿的平面本来就不竖直，
+            # 拿平面内坐标当水平距离会把外展那一份算漏。
+            armh = np.array([float(np.hypot(*(p - load)[[0, 2]])) for p in pts])
+            cost = float((armh[1:-1] / arm).sum())
             # 站着的兽腿，关节该**从髋一路往下降**。折叠量一大，"把膝盖抬到髋以上"
             # 也能凑够首尾距离而且更省肌肉，于是解出来股骨朝天支出去——腿谱上四条蹄行
             # 腿全长成了钩子。蛛足不受此限：它本来就是先抬后落，那正是它的读法。
@@ -346,8 +383,7 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
             if descend:
                 cost += PENALTY * float(np.clip(np.diff(y) + 0.4, 0, None).sum())
             cost += PENALTY * float(np.clip(floor[:len(y) - 1] - y[:-1], 0, None).sum())
-            for k in range(1, len(y)):
-                pt = hip + u * x[k] + np.array([0.0, y[k] - hip[1], 0.0])
+            for pt in pts[1:]:
                 cost += PENALTY * penetration(pt)
             if cost < best_cost:
                 best, best_cost = (bends, rot), cost
@@ -363,14 +399,10 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
         if cand is not None and (best is None or cost < best_cost * 0.9):
             best, best_cost, forced = cand, cost, True
     if best is None:
-        best = (np.zeros(nj), want)
+        best = (np.zeros(nj), 0.0)
         forced = True
 
-    P = _chain(segs, best[0])
-    c, s = math.cos(best[1]), math.sin(best[1])
-    pts = [hip + u * (c * p[0] - s * p[1]) + np.array([0.0, s * p[0] + c * p[1], 0.0])
-           for p in P]
-    return pts, forced
+    return place(best[0], best[1]), forced
 
 
 def foot_chain(stance: str, contact: np.ndarray, lens: tuple[float, ...],
@@ -676,7 +708,7 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
         forced = False
         for _ in range(3):
             leg, forced = stand_pose(hip, paw[0], segs[:nleg], gene.kind, clear,
-                                     descend=gene.kind != "spider")
+                                     descend=gene.kind != "spider", load_pt=ground)
             joints = leg + paw[1:]
             # 力臂 = 该关节到**地面接触点**的水平距离。接触点是 `ground` 不是趾尖——
             # 跖行/趾行的趾节还往前伸一截，地面反力不在那儿。
