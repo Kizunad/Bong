@@ -70,6 +70,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import genome as GN  # noqa: E402
 import locomotion as LM  # noqa: E402
+import voxel_rig as VR  # noqa: E402
 
 # ---------------------------------------------------------------- 物性常数
 # 全部是**量出来的真实值**，不是可以拧的旋钮。改这里等于改物理，不是改风格。
@@ -89,6 +90,11 @@ SAFETY = 2.0               # 骨的安全系数。活体实测普遍 2–4（Bie
                            # 捡来的废件拼的，取区间下沿
 PENALTY = 400.0            # 姿态求解里"每穿模一像素"折算成多少肌肉代价。取到足以压过
                            # 肌肉项的量级即可——它表达的是"宁可多长肉也不要穿模"
+CORE_PENALTY = 1.0 * PENALTY   # 穿核心与穿邻居**同权**。两个方向都试过，都更糟：给核心
+                           # 2.5 倍 ⇒ 互穿从 0 反弹回 4.24 px；给邻居的罚项封顶 ⇒ 同样
+                           # 反弹。两条罚项争的是同一个**无解**的局面，谁重谁就全赢，
+                           # 调权重只是在两种错之间搬家。真正能动的自由度是**落点**
+                           # （见 `_splay`）——姿态只能改折法，改不了这条腿要伸到哪去。
 
 # 骨外面那层软组织的厚度。**这一条不是推出来的，是量出来的**，得说清楚：上面每个
 # 半径都是"某样东西必须扛住某个力"解出来的，而腱鞘、筋膜、皮下、血管、皮这几层不扛
@@ -285,7 +291,9 @@ def _simplex(n: int, div: int = 8):
 def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
                kind: str, clearance: list[float] | None = None,
                descend: bool = True,
-               load_pt: np.ndarray | None = None) -> tuple[list[np.ndarray], bool]:
+               load_pt: np.ndarray | None = None,
+               avoid: list | None = None,
+               own_r: list[float] | None = None) -> tuple[list[np.ndarray], bool]:
     """站姿：**最省肌肉**的那个折法。世界坐标的各关节点。
 
     "折到够着落点"有无穷多解——把折叠量摊给哪个关节是自由的。选哪一个不该我挑：
@@ -384,7 +392,19 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
                 cost += PENALTY * float(np.clip(np.diff(y) + 0.4, 0, None).sum())
             cost += PENALTY * float(np.clip(floor[:len(y) - 1] - y[:-1], 0, None).sum())
             for pt in pts[1:]:
-                cost += PENALTY * penetration(pt)
+                cost += CORE_PENALTY * penetration(pt)
+            # **别折进邻居身上。** 和"别折进核心"是同一条约束的另一半：核心是它自己的
+            # 身体，邻肢是别人的身体，两者都不该被这条腿占掉。少了这一项，实测 8/12 只
+            # 兽有腿穿腿，最深 4.24 px——省力的解会毫不犹豫地把小腿折进旁边那条腿里，
+            # 因为在它的目标函数里那块空间是免费的。
+            if avoid:
+                for i, (aa, bb) in enumerate(zip(pts, pts[1:])):
+                    rr = own_r[i] if own_r and i < len(own_r) else 0.0
+                    for (q0, q1, rq) in avoid:
+                        dd, _mid = VR.seg_dist(aa, bb, q0, q1)
+                        ov = rq + rr - dd
+                        if ov > 0.0:
+                            cost += PENALTY * ov
             if cost < best_cost:
                 best, best_cost = (bends, rot), cost
         return best, best_cost
@@ -457,7 +477,7 @@ def foot_heel(stance: str, contact: np.ndarray,
 
 
 def hang_pose(sock: C.Socket, segs: tuple[float, ...], radii: list[float],
-              *, jointed: bool) -> list[np.ndarray]:
+              *, jointed: bool, avoid: list | None = None) -> list[np.ndarray]:
     """不承重的肢：从挂载点沿法向长出来，然后被自己的重量拽下去。
 
     **根部那一节的朝向不是自由的**——芽就是沿挂载点法向长出去的，那道癒合把它焊死在
@@ -503,6 +523,30 @@ def hang_pose(sock: C.Socket, segs: tuple[float, ...], radii: list[float],
             dirv = dirv + 0.6 * g
             dirv /= max(float(np.linalg.norm(dirv)), 1e-9)
             nxt = out[-1] + dirv * L
+
+        # 撞上**邻居**也一样：贴着滑开。垂肢完全在步态之外（它没有落点、不参与承重），
+        # 所以承重肢那套避让和掰落点一个都作用不到它身上——实测有一只兽的垂肢直接从
+        # 旁边那条承重腿的中段里穿过去 5.82 px，是全部十二只里最深的一处。死腿挂在
+        # 别的东西上会滑开，这和上面"贴着身体滑下去"是同一件事。
+        if avoid:
+            for _ in range(12):
+                worst, at = 0.0, None
+                for (q0, q1, rq) in avoid:
+                    dd, mid = VR.seg_dist(out[-1], nxt, q0, q1)
+                    ov = rq + r - dd
+                    if ov > worst:
+                        worst, at = ov, mid
+                if worst <= 0.0 or at is None:
+                    break
+                away = nxt - at
+                na = float(np.linalg.norm(away))
+                if na < 1e-9:
+                    break
+                dirv = dirv + 0.5 * away / na
+                dirv /= max(float(np.linalg.norm(dirv)), 1e-9)
+                nxt = out[-1] + dirv * L
+                if C.fld(nxt - C.CORE_CENTER) >= C.ISO:   # 别滑进自己身体里
+                    break
 
         # 垂到地面就**摊在地上**：地面撑住了它，这一节之后只能沿地面铺开（长触手拖在
         # 地上是这么来的，不是造型）。铺的方向取当前朝向的水平分量；正垂直下来时没有
@@ -660,7 +704,8 @@ class Limb:
 
 def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
                foot: np.ndarray | None = None, ride: float = 0.0,
-               territory: float = 1e9) -> Limb:
+               territory: float = 1e9,
+               avoid: list | None = None) -> Limb:
     """一条肢的完整几何。承重的按落点解站姿，其余的垂下来。
 
     `territory` 是到**最近的另一个已占用挂载点**的距离：两条肢的肌腹不能占同一块空间，
@@ -705,10 +750,12 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
 
         # 两轮：第一轮只禁止关节本身穿地，量出粗细后第二轮连肉一起禁（见 stand_pose）
         clear: list[float] | None = None
+        mine: list[float] | None = None
         forced = False
         for _ in range(3):
             leg, forced = stand_pose(hip, paw[0], segs[:nleg], gene.kind, clear,
-                                     descend=gene.kind != "spider", load_pt=ground)
+                                     descend=gene.kind != "spider", load_pt=ground,
+                                     avoid=avoid, own_r=mine)
             joints = leg + paw[1:]
             # 力臂 = 该关节到**地面接触点**的水平距离。接触点是 `ground` 不是趾尖——
             # 跖行/趾行的趾节还往前伸一截，地面反力不在那儿。
@@ -763,6 +810,8 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
             rest = np.cumsum(list(segs)[::-1])[::-1]
             clear = [min(max(radius[max(i - 1, 0)], radius[min(i, n - 1)]), float(rest[i]))
                      for i in range(nleg)] + [0.0]   # 末项是踝，由站姿定高不受此约束
+            # 下一轮解姿态时"我自己有多粗"也知道了，避让邻居才能按肉算而不是按中轴算
+            mine = [radius[min(i, n - 1)] for i in range(nleg)]
     else:
         arms = [0.0] * (n + 1)
         sinew = [0.0] * n
@@ -772,7 +821,8 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
         # 无骨的（触手）里没有硬芯；有骨的闲肢里那根骨还在，只是外面的肌肉萎缩掉了
         bone_r = [0.0] * n if boneless else [r * 0.35 for r in radius]
         muscle = [0.0] * n
-        joints = hang_pose(sock, segs, radius, jointed=not boneless)
+        joints = hang_pose(sock, segs, radius, jointed=not boneless,
+                           avoid=avoid)
         pad = (0.0, 0.0)
         heel = None
 
@@ -836,7 +886,11 @@ def build(seed: int, *, socks: dict[str, C.Socket] | None = None
     feet = {lg.gene.socket: lg.foot for lg in gait.limbs}
     used = [socks[g.socket].pos for g in gen.limbs]
     out: dict[str, Limb] = {}
-    for gene in gen.limbs:
+    # **按载荷从大到小依次解。** 避让是贪心的（后解的躲开先解的），所以顺序不是随意的：
+    # 扛得最重的那条肢自由度最小（它的关节必须压在载荷线上，挪一点就要多长一截肌肉），
+    # 该让它先占位置。反过来先摆闲肢，重载肢会被逼出很别扭的折法。
+    avoid: list = []
+    for gene in sorted(gen.limbs, key=lambda g: -loads.get(g.socket, 0.0)):
         me = socks[gene.socket].pos
         near = min((float(np.linalg.norm(me - q)) for q in used
                     if float(np.linalg.norm(me - q)) > 1e-6), default=1e9)
@@ -846,8 +900,156 @@ def build(seed: int, *, socks: dict[str, C.Socket] | None = None
             foot=feet.get(gene.socket),
             ride=gait.ride,
             territory=near,
+            avoid=avoid,
         )
+        lb = out[gene.socket]
+        avoid += [(np.asarray(a, float), np.asarray(b, float),
+                   max(lb.profile(i, 0.5), 0.5))
+                  for i, (a, b) in enumerate(zip(lb.joints, lb.joints[1:]))]
+
+    out = _splay(gen, gait, socks, loads, feet, out)
     return gen, gait, out
+
+
+def limb_caps(lb: Limb) -> list[tuple[np.ndarray, np.ndarray, float]]:
+    """一条肢的各节，近似成胶囊（轴 + 中段半径）。碰撞检测与避让共用。"""
+    return [(np.asarray(a, float), np.asarray(b, float), max(lb.profile(i, 0.5), 0.5))
+            for i, (a, b) in enumerate(zip(lb.joints, lb.joints[1:]))]
+
+
+def _worst_pair(a: Limb, b: Limb) -> float:
+    w = 0.0
+    for (a0, a1, ra) in limb_caps(a):
+        for (b0, b1, rb) in limb_caps(b):
+            dd, _m = VR.seg_dist(a0, a1, b0, b1)
+            w = max(w, ra + rb - dd)
+    return w
+
+
+def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Limb]:
+    """**把还在打架的两条腿的落点侧向掰开，再解一次姿态。**
+
+    姿态求解器只能改折法，改不了落点——而落点是 `locomotion.place_feet` 定的，那一层
+    按可达半径、舒适伸展度与静态稳定摆点，**从头到尾不知道腿有多粗**。实测最坏的一对：
+    挂载点相距 8.6 px、落点相距 8.8 px，可两条腿的中段各有 3.2 与 3.4 px 粗，需要
+    6.6 px 净空——并排放不下，怎么折都要穿。这是层间的信息缺口，不是求解器的毛病。
+
+    这里补的正是那条缺口：**绕各自的髋在地平面上转开**，到髋的距离一分不动（可达半径
+    与舒适伸展度因此完全不变），只动方位角。转开会改变支撑多边形，所以每次都重新量
+    静态稳定余量：掉得太多就退回原样，把这一对留给自检去报——宁可报出来，也不要为了
+    让自检变绿把兽摆成站不住的。
+
+    locomotion 不能反过来 import 这一层（会成环），所以这一步只能在有了粗细之后做。
+    """
+    load_names = [g.socket for g in gen.limbs if g.socket in feet]
+    if len(load_names) < 2:
+        return out
+
+    def worst_all(sol: dict[str, Limb]) -> float:
+        """这一版布局里最深的一处互穿（px）。
+
+        **只算互穿，不把"关节埋进核心"也算进来。** 试过合并计分：结果是既治不好埋，
+        又把本来能修好的互穿一起卡住（实测同一只兽从"只剩埋" 变成"埋 + 2.45 px 互穿"）。
+        原因是两者不同源——互穿能靠挪落点修，埋是姿态层两条无解约束的残留，把它塞进
+        同一个贪心的接受判据里，只会让能修的那件也不敢动。
+        """
+        m = 0.0
+        for i, a in enumerate(load_names):
+            for b in load_names[i + 1:]:
+                if a in sol and b in sol:
+                    m = max(m, _worst_pair(sol[a], sol[b]))
+        return m
+    lgs = {lg.gene.socket: lg for lg in gait.limbs}
+    com2 = np.array([gait.com[0], gait.com[2]])
+    base_margin = LM.feasible(gait.limbs, com2)
+    moved = False
+    for _ in range(8):
+        pairs = []
+        for i, a in enumerate(load_names):
+            for b in load_names[i + 1:]:
+                if a in out and b in out:
+                    w = _worst_pair(out[a], out[b])
+                    if w > 0.5:
+                        pairs.append((w, a, b))
+        if not pairs:
+            break
+        pairs.sort(reverse=True)
+        w, a, b = pairs[0]
+        ok = False
+        # 注意：一轮只处理最深的那一对，处理完**整条腿都会重解**，其余各对的几何随之
+        # 变化，所以下一轮必须重新找而不是沿用这一轮的名单。
+        for extra in (0.7, 1.2, 1.8, 2.6):
+            trial = {}
+            for name, other in ((a, b), (b, a)):
+                lg = lgs.get(name)
+                if lg is None or lg.foot is None:
+                    continue
+                hip = np.array([lg.hip[0], 0.0, lg.hip[2]])
+                # **平移，不是旋转。** 绕髋转对垂直下垂的肢完全无效——腹肢的落点就在髋
+                # 的正下方，力臂是 0.0（实测），转多少度它都不动。改成沿"背离对方落点"
+                # 的方向在地平面上推出去，再夹回自己的可达半径里。
+                away = (np.asarray(out[name].tip, float)
+                        - np.asarray(out[other].tip, float))
+                away[1] = 0.0
+                nn = float(np.linalg.norm(away))
+                if nn < 1e-6:
+                    continue
+                cand = np.asarray(lg.foot, float) + away / nn * (w * extra * 0.5)
+                v = cand - hip
+                r = float(np.hypot(v[0], v[2]))
+                lim = float(lg.reach)
+                if r > lim:                       # 够不着就贴着可达边界放
+                    cand = hip + v / max(r, 1e-9) * lim
+                cand[1] = 0.0
+                trial[name] = cand
+            if not trial:
+                break
+            old_feet = {n: np.array(lgs[n].foot, float) for n in trial}
+            for n, f in trial.items():
+                lgs[n].foot = f
+            margin = LM.feasible(gait.limbs, com2)
+            if margin < base_margin * 0.6:          # 掰开会站不住 ⇒ 退回去
+                for n, f in old_feet.items():
+                    lgs[n].foot = f
+                continue
+            for n in trial:
+                feet[n] = lgs[n].foot
+            ok, moved = True, True
+            break
+        if not ok:
+            # 这一对掰不开（掰开就站不住）——换下一对试，别整个放弃
+            done = {(a, b)}
+            nxt = next(((w2, a2, b2) for w2, a2, b2 in pairs
+                        if (a2, b2) not in done), None)
+            if nxt is None:
+                break
+            w, a, b = nxt
+            continue
+        # 用新落点把全部承重肢重解一遍（避让顺序仍按载荷从大到小）
+        before = worst_all(out)
+        keep = dict(out)
+        avoid2: list = []
+        for gene in sorted(gen.limbs, key=lambda g: -loads.get(g.socket, 0.0)):
+            me = socks[gene.socket].pos
+            near = min((float(np.linalg.norm(me - socks[g.socket].pos))
+                        for g in gen.limbs if g.socket != gene.socket), default=1e9)
+            out[gene.socket] = solve_limb(
+                gene, socks[gene.socket], load=loads.get(gene.socket, 0.0),
+                foot=feet.get(gene.socket), ride=gait.ride, territory=near,
+                avoid=avoid2)
+            avoid2 += limb_caps(out[gene.socket])
+        # **只有全局最深的那处穿插真的变浅了才收下这一步。** 掰开一对会把所有腿重解，
+        # 完全可能把另一对挤得更死——实测有一只兽因此从 2.65 px 恶化到 5.82 px。
+        # 贪心必须带这条守卫，否则它会一路"改进"到更糟。
+        if worst_all(out) >= before - 1e-3:
+            out = keep
+            for n, f in old_feet.items():
+                lgs[n].foot = f
+                feet[n] = f
+            break
+    if moved:
+        LM.optimize_phases(gait.limbs, com2, seed=gen.seed)
+    return out
 
 
 def report_table(limbs: dict[str, Limb], W: float) -> str:

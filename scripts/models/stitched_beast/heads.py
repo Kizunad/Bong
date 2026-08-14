@@ -5,14 +5,27 @@
 吃什么的**。头骨是一台取食机器，它的每一处形状都是某个取食动作留下的痕迹；把这些
 痕迹算出来，狼头就自己长成狼头，牛头就自己长成牛头，不需要一张"狼头长这样"的表。
 
-先说一个把整层压扁的尺度事实：**1 px = 6.25 cm**。脸上的软组织（皮、皮下、腮腺、
-唇）在中等兽类身上是 5–15 mm，连四分之一像素都不到。所以在这个分辨率下，
+**这一层最初的那句总纲是错的，先把它写在最前面。**
 
-    一颗头 = 它的头骨 + 它的咀嚼肌
+初版写的是：1 px = 6.25 cm，脸上的软组织只有 5–15 mm，连四分之一像素都不到，所以
+"一颗头 = 它的头骨 + 它的咀嚼肌"，再没有第三样东西能被看见。据此我把毛、唇、鼻头、
+眼睑全删了，只把颅骨、颧弓、下颌和常年露在外面的犬齿逐块涂色画出来。用户看了一眼就
+问："你这是什么头颅？是头骨吗？"——是的，那就是头骨，是解剖标本的画法。
 
-再没有第三样东西能被看见。这不是偷懒，是把 `SOFT_OVER_BONE` 那条结论用到头上：皮
-在这个尺度上不是厚度而是表面。好处是，凡是算出来的东西都直接是看得见的东西——推出
-"这块咬肌需要 12 cm² 横截面"，那 12 cm² 就是渲出来的那块腮帮子。
+错在一个我没查的换算：**6.25 cm/px 是这只兽的世界尺度，不是头的尺度。** 头是被养大过
+的（px_per_m = 模板长 ÷ 供体真实头长），按供体自己量，1 px 只值 0.6–4.6 cm。毛在十种
+供体里有七种是 0.8–1.9 px——兔子的毛占它整颗头宽的三分之一。那句"看不见"错了 2.5–10 倍，
+而且恰恰错在最需要它的那几种身上。
+
+改过来之后这一层的总纲是：
+
+    一颗头 = 它的头骨 + 它的咀嚼肌 + 绷在外面的那层皮毛
+
+前两项决定**形状**，第三项决定**能不能读成一只活兽**。所以推导照旧全落在头骨与肌肉上
+（凡是算出来的都直接是看得见的形状——推出"这块咬肌要 167 cm² 横截面"，那就是渲出来的
+那块腮帮子），但渲染时整个头骨按体表厚度外扩一圈、统一涂成供体自己的皮毛，眼/鼻/唇/
+角/露在外面的齿再长到毛的外面去。嘴默认是**闭着的**：活兽闭嘴时能看见的只有一道唇缝，
+露在外面的齿是例外，而例外有明确条件（见 `_teeth`）。
 
 推导链（每一步都能被下一步用上，不是各推各的）：
 
@@ -70,6 +83,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import genome as GN  # noqa: E402
 import limbs as LB  # noqa: E402
+import voxel_rig as VR  # noqa: E402
 
 PX = LB.PX
 G = LB.G
@@ -176,6 +190,11 @@ class Donor:
     lifespan: float    # yr 寿命——角长多长、齿冠磨掉多少，都是"长了多少年"
     diet: str
     ear_share: float   # 代谢产热里由耳廓散掉的那一份。会喘息/出汗/打滚的低，都不会的高
+    coat: str = "fur"  # 体表：fur 毛 / wool 羊毛 / bristle 鬃 / plume 羽 / hide 裸皮
+    coat_cm: float = 0.0   # **头上那层毛有多厚（cm，观察值）**，见 coat_px 的注释。
+                           # 注意量的是**头**不是身体：头恰恰是大多数兽毛最短的地方
+                           # （兔颈背 2.5 cm，脸上只有 1.0；狼颈鬃 6–8，吻上 1.5）。
+                           # 拿体毛顶替会让兔头凭空高出三分之二
     nocturnal: bool = False
     horn: str = ""     # "" / ram 盘角 / hook 弯角 / spike 直角
     pinna: bool = True  # 有没有外耳廓（禽类与两栖类没有）
@@ -185,22 +204,22 @@ class Donor:
 
 DONOR: dict[str, Donor] = {
     # 食肉：剪切
-    "wolf":    Donor(40.0, 0.280, 150.0, 12.0, "carnivore", 0.05),
-    "fox":     Donor(6.0, 0.150, 50.0, 8.0, "carnivore", 0.12, nocturnal=True),
+    "wolf":    Donor(40.0, 0.280, 150.0, 12.0, "carnivore", 0.05, "fur", 1.5),
+    "fox":     Donor(6.0, 0.150, 50.0, 8.0, "carnivore", 0.12, "fur", 1.5, nocturnal=True),
     # 食草：磨
-    "cow":     Donor(600.0, 0.600, 450.0, 20.0, "grazer", 0.03, horn="hook"),
-    "sheep":   Donor(70.0, 0.300, 130.0, 12.0, "grazer", 0.06, horn="ram"),
-    "goat":    Donor(60.0, 0.270, 130.0, 15.0, "browser", 0.06, horn="spike"),
-    "rabbit":  Donor(2.0, 0.085, 11.0, 9.0, "browser", 0.35, nocturnal=True),
+    "cow":     Donor(600.0, 0.600, 450.0, 20.0, "grazer", 0.03, "hide", 0.8, horn="hook"),
+    "sheep":   Donor(70.0, 0.300, 130.0, 12.0, "grazer", 0.06, "wool", 2.5, horn="ram"),
+    "goat":    Donor(60.0, 0.270, 130.0, 15.0, "browser", 0.06, "fur", 2.0, horn="spike"),
+    "rabbit":  Donor(2.0, 0.085, 11.0, 9.0, "browser", 0.35, "fur", 1.0, nocturnal=True),
     # 杂食：压
-    "pig":     Donor(90.0, 0.400, 180.0, 15.0, "omnivore", 0.15),
+    "pig":     Donor(90.0, 0.400, 180.0, 15.0, "omnivore", 0.15, "bristle", 0.2),
     # 鼠的散热主要走**尾**不走耳（无毛、血管密），所以 ear_share 低——它的耳朵才不会
     # 被算成兔耳。这一条是观察，不是为了凑形状
-    "rat":     Donor(0.35, 0.045, 2.0, 3.0, "gnawer", 0.10, nocturnal=True),
+    "rat":     Donor(0.35, 0.045, 2.0, 3.0, "gnawer", 0.10, "fur", 0.3, nocturnal=True),
     # 禽：喙，无耳廓
-    "chicken": Donor(2.5, 0.080, 4.0, 8.0, "omnivore", 0.10, pinna=False, beak=True),
+    "chicken": Donor(2.5, 0.080, 4.0, 8.0, "omnivore", 0.10, "plume", 1.0, pinna=False, beak=True),
     # 两栖：吞，无耳廓（只有鼓膜），脑腔松
-    "frog":    Donor(0.15, 0.050, 0.10, 8.0, "insectivore", 0.02,
+    "frog":    Donor(0.15, 0.050, 0.10, 8.0, "insectivore", 0.02, "hide", 0.0,
                      pinna=False, brain_fill=0.45),
 }
 
@@ -232,6 +251,18 @@ HORN_STYLE: dict[str, HornStyle] = {
     "hook":  HornStyle(2.0, 0.022, 0.95, 62.0, 5.0, 0.55),
 }
 
+# 体表材质直接借肢体层那套（`limbs.LIMB_MATS` 的 fur / wool / bristle / plume / hide）
+# ——同一个供体的头和腿必须是同一张皮，各起一套颜色就等于告诉玩家这是两只兽的零件。
+COAT_MAT = {"fur": "fur", "wool": "wool", "bristle": "bristle",
+            "plume": "plume", "hide": "hide"}
+
+# 这些是**露在毛外面的特征**：不按体表厚度外扩、也不涂成体表材质。其余每一块都属于头的
+# 肉身。按名字判而不是逐块标记——加一块新几何时忘记标记的默认后果是"它被毛盖住"，
+# 那比"它凭空露出一块骨头"安全。
+FEATURE_PARTS = ("eye", "sclera", "canine", "incisor", "tusk", "dental_pad", "horn",
+                 "beak", "nostril", "rhinarium", "rooting_disc", "tympan", "conch",
+                 "collar", "lip")
+
 HEAD_MATS: dict[str, tuple[int, int, int]] = {
     "skull": (108, 96, 84),      # 头骨外面那层薄皮：比躯干 hide 亮，因为绷在骨上
     "jowl": (114, 90, 78),       # 咀嚼肌鼓出来的那块腮——它是算出来的，不是画上去的。
@@ -247,6 +278,7 @@ HEAD_MATS: dict[str, tuple[int, int, int]] = {
     "ear_in": (128, 92, 90),     # 耳廓内面
     "tympan": (96, 88, 72),      # 蛙的鼓膜
     "nostril": (40, 34, 32),
+    "lip": (52, 42, 40),         # 唇线：闭着的嘴在这个分辨率下就是一道暗缝
 }
 
 FWD = LB.FWD
@@ -361,10 +393,12 @@ class Head:
     eye_el: float = 0.0             # 眼的仰角 °（蛙的眼长在头顶）
     eye_pos: list = field(default_factory=list)   # 两只眼的局部坐标
     dropped: list = field(default_factory=list)   # 薄过渲染下限、整块没画的东西（见 Piece.soft）
+    standoff: float = 0.0           # 枕髁离表皮多远 px —— 融合基座的高度，见 _standoff
 
 
 # ---------------------------------------------------------------- 标架
-def head_frame(sock: C.Socket) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def head_frame(sock: C.Socket, *, aim: np.ndarray | None = None
+               ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """头的朝向。**轴由它长出来的地方定，滚转由重力定。**
 
     e_f 直接取挂载点法向——头是从那个方向长出去的，没有颈子去把它扳回来（这只兽的头
@@ -376,7 +410,8 @@ def head_frame(sock: C.Socket) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     这样定出来的 e_r 必然水平，而 `Rig.shaft` 解出来的方块 roll 恒为 0、宽度轴恒水平
     ——两者正好对上，头上的每一块都能用 shaft 表达。
     """
-    e_f = _n(np.asarray(sock.normal, float))
+    # `aim` 是被邻居顶开之后的朝向（见 separate）；没有邻居冲突时它就是法向本身
+    e_f = _n(np.asarray(aim if aim is not None else sock.normal, float))
     ref = UP
     if abs(float(ref @ e_f)) > 0.999:          # 正朝天或正朝地：拿前后向当参考
         ref = FWD
@@ -548,6 +583,27 @@ def horn_axis(d: Donor, st: HornStyle) -> tuple[list[tuple[float, float]], float
     return pts, s_tot, turn
 
 
+def coat_px(hd: "Head") -> float:
+    """体表那一层有多厚（px）。**这一条是量出来的，不是推的**，得说清楚为什么。
+
+    先按热平衡推过一遍：毛要挡住的是代谢产热往外漏，d = k·ΔT·体表面积 / 产热，
+    取 k=0.04 W/mK（毛里滞留的空气）、ΔT=25 K、体表面积按 Meeh 式 0.1·M^0.65。
+    狼解出 2.0 cm（实测 3）、兔 2.7 cm（实测 2.5）——这两个对得上。但**鼠解出 3.2 cm
+    而实测只有 0.5**，牛解出 7.7 cm 而实测 1.2。两头都错六倍，方向还相反：
+    小兽根本不靠毛保温（钻洞 + 抬高单位质量代谢），大兽的问题是散热不是保温。也就是说
+    毛厚由**气候与行为**主导，不由这一条平衡式主导，硬推等于给自己编一个假的因果。
+
+    所以这一列走观察值（`Donor.coat_cm`）。
+
+    换算这里有个我自己踩过的坑：**1 px = 6.25 cm 是这只兽的世界尺度，不是头的尺度。**
+    头是被养大过的（px_per_m = 模板长 / 供体真实头长），按供体自己量，1 px 只值
+    0.6–4.6 cm。于是毛在十种供体里有七种是 0.8–1.9 px——兔子的毛占它整颗头宽的三分之一。
+    初版按 6.25 cm 判成"连四分之一像素都不到"，据此把毛、唇、鼻头、眼睑全删了，
+    只把颅骨、颧弓、下颌、犬齿逐块涂色画出来：那是解剖标本，不是活物。
+    """
+    return hd.donor.coat_cm / 100.0 * hd.px_m
+
+
 def horn_impact(d: Donor, st: HornStyle) -> tuple[float, float]:
     """一次对撞的 (动能 J, 峰值力 N)。峰值力按 HORN_STOP 的减速行程折算（角变形 +
     颅窦 + 颈 + 躯干一起让出来的那一段）。公羊 70 kg / 4.5 m/s / 0.20 m 算出 3.5 kN，
@@ -589,7 +645,79 @@ def horn_bend_r(d: Donor, st: HornStyle) -> float:
 
 
 # ---------------------------------------------------------------- 装配
-def solve_head(gene: GN.HeadGene, sock: C.Socket) -> Head:
+# 线段最短距离在公共底座里（`voxel_rig.seg_dist`）——肢体层的姿态求解也用同一份。
+seg_dist = VR.seg_dist
+
+
+def head_capsules(hd: "Head"):
+    """这颗头渲染出来的每一块，近似成胶囊（轴 + 半径）。半径取两个半尺寸的几何平均。"""
+    return [(hd.world(p.a), hd.world(p.b),
+             math.sqrt(max(p.r1, 1e-3) * max(p.r2, 1e-3)), p.name)
+            for p in hd.pieces]
+
+
+def head_overlap(a: "Head", b: "Head"):
+    """两颗头之间最深的互穿：(深度 px, 接触点)。"""
+    worst, at = 0.0, None
+    for (a0, a1, ra, _an) in head_capsules(a):
+        for (b0, b1, rb, _bn) in head_capsules(b):
+            dd, mid = seg_dist(a0, a1, b0, b1)
+            if ra + rb - dd > worst:
+                worst, at = ra + rb - dd, mid
+    return worst, at
+
+
+def separate(heads: dict[str, "Head"], *, rounds: int = 12,
+             max_deg: float = 40.0) -> dict[str, "Head"]:
+    """**挤在一起的两颗头互相把对方顶开。**
+
+    朝向本来取挂载点法向（头是从那儿长出去的）。但两颗头挨着长的时候，法向并不保证
+    它们不打架——实测三头的个体里，两块颞肌互穿 1.18 px、一只耳朵插进隔壁的脑颅。
+
+    顶开是有依据的，不是为了好看：**两团同时在长的组织彼此挤压，只能朝还有空的那边
+    长**。所以让每颗头的朝向沿"背离对方"的方向偏一点，反复几轮直到不再互穿。偏转量
+    封顶 `max_deg`——超过这个角度就不是"挤开"而是"长到别处去了"，那种情况保留互穿并
+    交给自检报出来，说明这个基因组本来就该换槽。
+    """
+    names = sorted(heads)
+    aim = {n: np.asarray(heads[n].e_f, float) for n in names}
+    base = {n: _n(np.asarray(heads[n].sock.normal, float)) for n in names}
+    for _ in range(rounds):
+        push = {n: np.zeros(3) for n in names}
+        hot = False
+        for i, na in enumerate(names):
+            for nb in names[i + 1:]:
+                ov, at = head_overlap(heads[na], heads[nb])
+                if ov <= 0.25:
+                    continue
+                hot = True
+                # 顶开的方向取**接触点**相对各自枕髁的方位，不是两个枕髁的连线：打架的
+                # 常常是伸出去的角和耳，沿枕髁连线推根本推不到它们身上（实测一只耳插进
+                # 隔壁的角里，按枕髁连线推了十二轮还剩 1.42 px）。
+                for me, other in ((na, nb), (nb, na)):
+                    v = heads[me].org - at
+                    nn = float(np.linalg.norm(v))
+                    v = v / nn if nn > 1e-6 else base[me]
+                    push[me] += v * min(ov, 3.0) * 0.16
+        if not hot:
+            break
+        for n in names:
+            if not push[n].any():
+                continue
+            v = _n(aim[n] + push[n])
+            # 封顶：偏离挂载点法向不得超过 max_deg
+            c = float(np.clip(v @ base[n], -1.0, 1.0))
+            lim = math.cos(math.radians(max_deg))
+            if c < lim:
+                perp = _n(v - c * base[n])
+                v = _n(base[n] * lim + perp * math.sqrt(max(1.0 - lim * lim, 0.0)))
+            aim[n] = v
+            heads[n] = solve_head(heads[n].gene, heads[n].sock, aim=v)
+    return heads
+
+
+def solve_head(gene: GN.HeadGene, sock: C.Socket, *,
+               aim: np.ndarray | None = None) -> Head:
     """把上面每一步串起来，长出一颗头。
 
     顺序不能乱：脑颅 → 齿列 → 咬合力 → 颌关节 → 肌肉 → 骨头往哪长 → 眼耳角。后面每
@@ -598,7 +726,7 @@ def solve_head(gene: GN.HeadGene, sock: C.Socket) -> Head:
     """
     d = DONOR[gene.kind]
     diet = DIETS[d.diet]
-    e_r, e_u, e_f = head_frame(sock)
+    e_r, e_u, e_f = head_frame(sock, aim=aim)
     L_px = GN.HEAD_TEMPLATES[gene.kind][0] * gene.scale
     px_m = L_px / d.head_m
     hd = Head(gene=gene, sock=sock, donor=d, diet=diet,
@@ -708,10 +836,41 @@ def solve_head(gene: GN.HeadGene, sock: C.Socket) -> Head:
 
     # ⑩ 几何 -------------------------------------------------------------
     _assemble(hd, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_row_end)
+    hd.standoff = _standoff(hd)
+    hd.org = hd.org + hd.e_f * hd.standoff
     lo, hi = piece_bounds(hd, {"skull", "jaw"})
     hd.pred_H, hd.pred_W = hi[1] - lo[1], hi[0] - lo[0]
     hd.gape = _gape(hd)
     return hd
+
+
+def _standoff(hd: Head) -> float:
+    """这颗头得从表皮上**坐起来**多高（px）。
+
+    头贴着表皮放的时候，凡是比枕髁宽的部位（腮帮子、颧弓、下颌角）都会陷进核心里——
+    表皮是弯的，头是往两侧长的，这是几何必然，不是摆错了。真实的移植体也不是贴上去的：
+    融合处会堆起一圈组织，头骑在那个基座上。
+
+    高度不是拍的，是**解出来的最小值**：沿自己的朝向往外挪，挪到癒合区以外再没有一块
+    压在等值面里为止。挪多了就成了长脖子（这东西没有颈），所以取最小。
+    """
+    fuse = max(hd.brain_px) * 0.7
+    for k in range(25):
+        t = k * 0.25
+        ok = True
+        for p in hd.pieces:
+            for e in (p.a, p.b):
+                q = hd.org + hd.e_f * t + hd.e_r * e[0] + hd.e_u * e[1] + hd.e_f * e[2]
+                if float(np.linalg.norm(q - (hd.org + hd.e_f * t))) < fuse:
+                    continue
+                if C.fld(q - C.CORE_CENTER) >= C.ISO:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if ok:
+            return t
+    return 6.0
 
 
 def _gape(hd: Head) -> float:
@@ -747,11 +906,21 @@ def _assemble(hd: Head, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_ro
     d, diet = hd.donor, hd.diet
     L, px = hd.L, hd.px_m
 
+    coat = coat_px(hd)
+    cmat = COAT_MAT[d.coat]
+
     def add(p: Piece) -> None:
         # 可省的块：算出来薄过渲染下限的一半就整块丢掉，不撑到下限（见 Piece.soft）
         if p.soft and min(p.r1, p.r2) < RENDER_MIN * 0.55:
             hd.dropped.append(p.name)
             return
+        if not p.name.startswith(FEATURE_PARTS):
+            # **头的肉身**：按体表厚度整圈外扩，并统一涂成供体自己的体表材质。
+            # 这一步是把"头骨"变成"头"的全部：外扩把颅骨、颧弓、下颌那些台阶填成一个
+            # 连续的体，统一材质把"解剖标本"变回"一只兽的脑袋"。
+            k = 0.4 if p.name.startswith("pinna") else 1.0   # 耳廓是薄片，毛也薄
+            p = Piece(p.part, p.name, p.a, p.b,
+                      p.r1 + coat * k, p.r2 + coat * k, cmat, p.soft)
         hd.pieces.append(p)
     bl, bh, bw = hd.brain_px
 
@@ -844,32 +1013,61 @@ def _assemble(hd: Head, f_brain, u_top, u_bot, u_occ, u_face, f_tmj, u_tmj, f_ro
                   max(hd.face_w / 2.0 - w_jaw, RENDER_MIN),
                   max(hd.jaw_depth / 2.0, RENDER_MIN), "muzzle"))
 
-    # —— 齿：每种咬合模式露出来的是不同的东西
+    # —— 齿：每种咬合模式露出来的是不同的东西（默认在嘴里，见 _teeth）
     _teeth(hd, u_occ, j_u, tip, bw)
 
+    # —— 唇缝：**闭着的嘴在这个分辨率下就是一道暗缝**，别的什么都看不见。没有它，
+    #    整颗头是一坨没有开口的肉；有了它，同一坨肉立刻读成"这是个脑袋，那是嘴"。
+    #    缝从口角走到吻端；口角的位置是推出来的——下颌能张开的那一段的前端，也就是
+    #    颊齿列的后端。
+    if not d.beak:
+        mouth_x = max(hd.face_w / 2.0 + coat * 0.6, RENDER_MIN)
+        for sgn, tag in ((-1.0, "l"), (1.0, "r")):
+            add(Piece("skull", f"lip_{tag}", (sgn * mouth_x, u_occ, f_row_end),
+                      (sgn * mouth_x, u_occ, tip), RENDER_MIN * 0.5,
+                      max(coat * 0.5, RENDER_MIN * 0.7), "lip"))
+
     # —— 鼻 / 喙 / 鼻盘
-    _snout_end(hd, u_occ, tip, bw, h_face)
+    _snout_end(hd, u_occ, tip, bw, h_face, coat)
 
     # —— 眼：眶位由 φ 定，眼球嵌在脸的侧上方
-    _eyes(hd, f_orbit, max(u_top, u_face), u_occ, max(bw, hd.face_w))
+    # 眶所在那一段的**真实外表面**是颧弓（它一直伸到眶前缘之前），不是脑颅侧壁。
+    # 拿脑颅宽定眼位，眼会被埋进腮帮子里——实测狼眼在 ±1.57 而那一处的皮在 ±2.81。
+    _eyes(hd, f_orbit, max(u_top, u_face), u_occ,
+          2.0 * max(bw / 2.0, hd.arch, hd.face_w / 2.0), coat)
 
     # —— 耳 / 鼓膜
-    _ears(hd, bl, bh, bw, u_top)
+    _ears(hd, bl, bh, bw, u_top, coat)
 
     # —— 角
     if d.horn:
-        _horns(hd, bl, bw, u_top)
+        _horns(hd, bl, bw, u_top + coat)
 
     # —— 缝：这颗头是**缝上去**的，根部得有一圈癒合环
-    add(Piece("skull", "collar", (0.0, 0.0, -L * 0.06), (0.0, 0.0, L * 0.05),
+    # 癒合环：这颗头是**缝上去**的。它同时要把基座那一段填上（见 _standoff），所以
+    # 往后延伸的长度是基座高度加一点余量——否则头会浮在离表皮几像素的地方。
+    add(Piece("skull", "collar", (0.0, 0.0, -L * 0.06 - hd.standoff),
+              (0.0, 0.0, L * 0.05),
               max(bw * 0.58, RENDER_MIN), max(bh * 0.56, RENDER_MIN), "collar"))
 
 
 def _teeth(hd: Head, u_occ, j_u, tip, bw) -> None:
+    """齿。**默认在嘴里，不在外面。**
+
+    初版把每一颗都画出来了，于是狼永远呲着四颗白牙、羊永远露着一排门齿——那是把标本
+    当活物画。活兽闭着嘴的时候能看见的只有一道唇缝；露在外面的齿是**例外**，而例外有
+    明确的条件：
+
+      · **终生生长的齿按定义长过唇**——啮齿的门齿、猪的獠牙磨多少长多少，唇包不住。
+        （啮齿的唇还在门齿**之后**闭合，那正是它能一边啃一边不吃进碎屑的原因。）
+      · 其余的齿只有齿冠长过唇厚（毛 + 皮）才露出个尖。狼的犬齿冠算出 1.1 px、唇厚
+        0.9 px，露 0.2 px——在模型精度以下，所以它闭着嘴时看不见牙。真狼也是这样。
+    """
     add = hd.pieces.append
     diet = hd.diet
     if hd.donor.beak:            # 喙就是它的齿，另见 _snout_end
         return
+    lip = coat_px(hd) + 0.3      # 唇：毛 + 皮
     w = TOOTH_W_RATIO * hd.donor.head_m * hd.px_m
     t = max(w * 0.5, RENDER_MIN)
     if diet.occlusion == "shear":
@@ -882,13 +1080,17 @@ def _teeth(hd: Head, u_occ, j_u, tip, bw) -> None:
         # 闭口时**下犬齿在上犬齿的前面、上犬齿在下颌的外侧**——这是剪切类咬合的定式，
         # 也是几何必需：round 1 把两者放在同一个横位、下齿还排在上齿之后，上犬齿直接
         # 穿过下颌体。
+        show = ln - lip                      # 露在唇外的那一截
+        if show < 0.35:                      # 包得住 ⇒ 闭嘴时根本看不见
+            hd.dropped.append("canine（唇包住了）")
+            return
         half = hd.face_w / 2.0
         for sgn, tag in ((-1.0, "l"), (1.0, "r")):
             xu, xd = sgn * (half + r * 0.6), sgn * max(half - r * 0.6, r)
-            add(Piece("skull", f"canine_u{tag}", (xu, u_occ, tip * 0.84),
-                      (xu, u_occ - ln, tip * 0.84), r, r, "tooth", soft=True))
-            add(Piece("jaw", f"canine_d{tag}", (xd, j_u, tip * 0.90),
-                      (xd, j_u + ln, tip * 0.90), r, r, "tooth", soft=True))
+            add(Piece("skull", f"canine_u{tag}", (xu, u_occ - lip, tip * 0.84),
+                      (xu, u_occ - lip - show, tip * 0.84), r, r, "tooth", soft=True))
+            add(Piece("jaw", f"canine_d{tag}", (xd, j_u + lip, tip * 0.90),
+                      (xd, j_u + lip + show, tip * 0.90), r, r, "tooth", soft=True))
     elif diet.occlusion == "gnaw":
         # 门齿是一把**终生生长的凿子**：磨掉多少长回多少，露在外面的那一截由唇线定。
         for sgn, tag in ((-1.0, "l"), (1.0, "r")):
@@ -901,13 +1103,9 @@ def _teeth(hd: Head, u_occ, j_u, tip, bw) -> None:
         # 食草兽上颌没有门齿，只有一块角质垫；下门齿顶着它把草切断。
         add(Piece("skull", "dental_pad", (0.0, u_occ, tip - hd.L * 0.05),
                   (0.0, u_occ, tip), max(bw * 0.34, RENDER_MIN), t * 0.6, "muzzle"))
-        add(Piece("jaw", "incisors", (0.0, j_u + hd.jaw_depth * 0.4, tip - hd.L * 0.05),
-                  (0.0, j_u + hd.jaw_depth * 0.4, tip),
-                  max(bw * 0.30, RENDER_MIN), t * 0.7, "tooth"))
+        # 下门齿在唇后面顶着角质垫切草，闭嘴时看不见——不画
     elif diet.occlusion == "crush":
         # 杂食：门齿铲 + 露出来的下犬齿（獠牙）。獠牙也终生生长，所以按寿命算长度。
-        add(Piece("skull", "incisors", (0.0, u_occ, tip - hd.L * 0.04),
-                  (0.0, u_occ, tip), max(bw * 0.30, RENDER_MIN), t * 0.7, "tooth"))
         tu = hd.L * 0.05 * (hd.donor.lifespan / 15.0)
         if tu > RENDER_MIN:
             for sgn, tag in ((-1.0, "l"), (1.0, "r")):
@@ -916,10 +1114,11 @@ def _teeth(hd: Head, u_occ, j_u, tip, bw) -> None:
                           (cx, j_u + tu, tip * 0.72 - tu * 0.4), t, t, "tooth"))
 
 
-def _snout_end(hd: Head, u_occ, tip, bw, h_face) -> None:
+def _snout_end(hd: Head, u_occ, tip, bw, h_face, coat) -> None:
     """吻端：喙 / 鼻盘 / 鼻镜。三种都是**功能件**，不是装饰。"""
     add = hd.pieces.append
     d, diet = hd.donor, hd.diet
+    tip = tip + coat            # 吻端的特征同样要长到毛外面去
     if d.beak:                                          # 禽：喙
         # 喙是一把角质钳。没有牙，全部咬合力集中在喙尖 ⇒ 它是一根短悬臂，按抗弯定粗细。
         r, _ = LB.bone_radius(hd.L * 0.22, hd.L * 0.22, hd.bite_N)
@@ -952,7 +1151,7 @@ def _snout_end(hd: Head, u_occ, tip, bw, h_face) -> None:
                   RENDER_MIN * 0.8, RENDER_MIN * 0.8, "nostril", soft=True))
 
 
-def _eyes(hd: Head, f_brain, u_top, u_occ, bw) -> None:
+def _eyes(hd: Head, f_brain, u_top, u_occ, bw, coat) -> None:
     """眼球摆在眶里。φ 是视轴离中线的角，眼球沿这个方向从脸侧凸出来。"""
     add = hd.pieces.append
     r = max(hd.eye_r, RENDER_MIN)
@@ -961,10 +1160,13 @@ def _eyes(hd: Head, f_brain, u_top, u_occ, bw) -> None:
     f_eye = f_brain * 0.92
     # 眶的高度：在颅底与颅顶之间，按视轴仰角抬。蛙的 70° 仰角把它直接顶到颅顶。
     u_eye = u_occ + (u_top - u_occ) * (0.62 + 0.38 * math.sin(el))
-    half_w = max(bw / 2.0, r)
+    # **眼长在毛的外面**：眶是骨上的窝，可眼睑与睫毛在体表那一层。不把眼往外推一个毛厚，
+    # 加上体表包络之后整张脸会变成一块没有五官的板——实测狼头的眼和鼻都被埋掉，正视图
+    # 是一整块平板。
+    half_w = max(bw / 2.0, r) + coat
     for sgn, tag in ((-1.0, "l"), (1.0, "r")):
         # 眼球**嵌在**眶里，只鼓出去小半个：眶缘是骨，眼球比它退一点才有眼皮的位置。
-        cx = sgn * half_w * 0.80
+        cx = sgn * half_w * 0.92
         c = (cx, u_eye, f_eye)
         out = (cx + sgn * r * 0.55 * math.sin(a), u_eye + r * 0.55 * math.sin(el),
                f_eye + r * 0.55 * math.cos(a) * math.cos(el))
@@ -976,14 +1178,14 @@ def _eyes(hd: Head, f_brain, u_top, u_occ, bw) -> None:
         add(Piece("skull", f"eye_{tag}", c, out, r, r, "eye"))
 
 
-def _ears(hd: Head, bl, bh, bw, u_top) -> None:
+def _ears(hd: Head, bl, bh, bw, u_top, coat) -> None:
     add = hd.pieces.append
     d = hd.donor
     if not d.pinna:
         if d.diet == "insectivore":     # 蛙：鼓膜贴在体表，直径由听的频段定
             rr = max(hd.eye_r * 0.8, RENDER_MIN)
             for sgn, tag in ((-1.0, "l"), (1.0, "r")):
-                cx = sgn * bw / 2.0 * 0.9
+                cx = sgn * (bw / 2.0 * 0.9 + coat)
                 add(Piece("skull", f"tympan_{tag}", (cx, 0.0, bl * 0.55),
                           (cx + sgn * rr * 0.4, 0.0, bl * 0.55), rr, rr, "tympan"))
         return
@@ -1065,7 +1267,7 @@ def _rot(v: np.ndarray, axis: np.ndarray, th: float) -> np.ndarray:
 def build(seed: int, *, socks: dict[str, C.Socket] | None = None) -> dict[str, Head]:
     socks = socks or C.sockets()
     gen = GN.sample(seed, socks=socks)
-    return {hg.socket: solve_head(hg, socks[hg.socket]) for hg in gen.heads}
+    return separate({hg.socket: solve_head(hg, socks[hg.socket]) for hg in gen.heads})
 
 
 def vision(heads: dict[str, Head]) -> tuple[float, float]:

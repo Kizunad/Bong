@@ -436,7 +436,8 @@ def build(seed: int, *, bud_growth: float = 1.0
     """
     socks = C.sockets()
     gen, gait, limbs = LB.build(seed, socks=socks)
-    heads = {hg.socket: HD.solve_head(hg, socks[hg.socket]) for hg in gen.heads}
+    heads = HD.separate({hg.socket: HD.solve_head(hg, socks[hg.socket])
+                         for hg in gen.heads})
     rig = Rig(Palette(MATS, swatch=8, size=64))
     bone_tree(rig, limbs, heads)
     GC.part_mass(rig)
@@ -528,6 +529,62 @@ def head_gallery() -> Rig:
     往外撑出一对大腮帮子；啮齿的门齿凿；禽的喙；蛙的眼睛长在头顶。
     """
     return head_rig(sorted(GN.HEAD_TEMPLATES, key=lambda k: HD.DONOR[k].head_m))
+
+
+# ---------------------------------------------------------------- 碰撞
+def capsules(limbs, heads):
+    """把渲染出来的体近似成胶囊，按**部件**分组。
+
+    分组的粒度是"一条肢 / 一颗头"，不是一块几何——同一条肢内部相邻两节当然会接触，
+    那不是穿模。每组带一个癒合区（原点 + 半径）：根部的肉长在一起是对的。
+    """
+    out = []
+    for n, lb in limbs.items():
+        caps = []
+        for i, (p, q) in enumerate(zip(lb.joints, lb.joints[1:])):
+            r = max(lb.profile(i, 0.5), RENDER_MIN_R)
+            caps.append((np.asarray(p, float), np.asarray(q, float), r, f"seg{i}"))
+        out.append((f"肢 {n}", caps, np.asarray(lb.sock.pos, float), lb.root_r * 1.6))
+    for n, hd in heads.items():
+        out.append((f"头 {n}", HD.head_capsules(hd), np.asarray(hd.org, float),
+                    max(hd.brain_px) * 0.7))
+    return out
+
+
+def overlaps(limbs, heads, *, tol: float = 0.75):
+    """所有跨部件的深度互穿。`tol` 取 0.75 px——四分之三格，肉眼一定看得见。"""
+    items = capsules(limbs, heads)
+    bad = []
+    for i in range(len(items)):
+        na, ca, oa, ma = items[i]
+        for j in range(i + 1, len(items)):
+            nb, cb, ob, mb = items[j]
+            worst, wa, wb = 0.0, "", ""
+            for (a0, a1, ra, an) in ca:
+                for (b0, b1, rb, bn) in cb:
+                    dd, mid = HD.seg_dist(a0, a1, b0, b1)
+                    ov = ra + rb - dd
+                    if ov <= worst:
+                        continue
+                    # **癒合区豁免按"离表皮多远"算，不按根部半径算。**
+                    #
+                    # 这东西是几团肉长到一起的：贴着躯干那一圈，两条肢的肉本来就该连成
+                    # 一片。但"贴着"的尺度不是根部半径——肌腹被埋进体腔的肢根部反而最细
+                    # （腹肢实测根粗 1.0 而中段 3.2），拿根粗当尺度会把真正的融合判成穿模。
+                    #
+                    # 尺度应该是**那一处两块肉的厚度**：接触点离表皮不到 ra+rb，说明两边
+                    # 的肉都还搭在躯干上，那是融合。实测两类的差别极干净——一对的接触点
+                    # 离表皮 +1.38 px 而两半径和 4.38（融合），另一对 +25.88 px（半空中
+                    # 交叉，货真价实的穿模）。
+                    q = mid - C.CORE_CENTER
+                    g = float(np.linalg.norm(C.grad(q)))
+                    if (C.ISO - C.fld(q)) / max(g, 1e-6) < ra + rb:
+                        continue
+                    worst, wa, wb = ov, an, bn
+            if worst > tol:
+                bad.append((na, nb, worst, wa, wb))
+    bad.sort(key=lambda x: -x[2])
+    return bad
 
 
 # ---------------------------------------------------------------- 自检
@@ -746,9 +803,13 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb],
     for hd in heads.values():
         for p in hd.pieces:
             for e in (p.a, p.b):
-                if e[2] < hd.L * 0.10:       # 癒合环那一段允许骑在表皮上
+                q = hd.world(e)
+                # 癒合区允许骑在表皮上：那一圈头与核心本来就是一团肉。范围取和碰撞检测
+                # 同一个尺度（脑颅最大轴的 0.7），别再另定一个"头长的一成"——加上体表
+                # 包络之后，咬肌那一块正好落在两者之间，被误判成"头埋进核心"。
+                if float(np.linalg.norm(q - hd.org)) < max(hd.brain_px) * 0.7:
                     continue
-                f = C.fld(hd.world(e) - C.CORE_CENTER)
+                f = C.fld(q - C.CORE_CENTER)
                 if f >= C.ISO:
                     bad.append(f"{hd.name} 的 {p.name} 埋在核心里（f={f:.2f}）——"
                                f"头是缝在表皮上的，只有枕髁那一圈能骑上去")
@@ -757,32 +818,30 @@ def check(rig: Rig, gait, limbs: dict[str, LB.Limb],
                 continue
             break
 
-    # ⑯ 头与头、头与肢不许互穿。缝合兽的槽间距只保证 ≥4 px，而头的尺寸由供体定，
-    #    完全可能大到把邻居吃掉——那时该换槽或换供体，不是硬塞。
-    hs = sorted(heads)
-    for i, a in enumerate(hs):
-        for b in hs[i + 1:]:
-            ha, hb = heads[a], heads[b]
-            d = float(np.linalg.norm(ha.org - hb.org))
-            need = (ha.pred_W + hb.pred_W) / 2.0
-            if d < need * 0.60:
-                bad.append(f"{a} 与 {b} 两颗头相距 {d:.1f} px，合起来宽 {need:.1f} px"
-                           f"——挤在一起了")
-    for hn, hd in heads.items():
-        for ln, lb in limbs.items():
-            d = float(np.linalg.norm(hd.org - lb.sock.pos))
-            need = hd.pred_W / 2.0 + lb.root_r
-            if d < need * 0.60:
-                bad.append(f"{hn} 与 {ln} 相距 {d:.1f} px，头半宽加肢根 {need:.1f} px"
-                           f"——头压在肢的根上")
+    # ⑯ **真正的碰撞检测**：部件与部件之间不许深度互穿。
+    #
+    #    上一版这一条只比"两个挂载点之间的直线距离"和半个头宽，根本没碰真几何——实测
+    #    12 只兽里有 17 处穿插超过半格、最深 4.35 px（腿穿腿）、角穿过另一颗头的癒合环、
+    #    耳朵插进另一颗头的脑颅，全部被放过。所以改成对**渲染出来的那些体**逐对求距离。
+    #
+    #    每一块近似成胶囊（轴 a→b、半径取两个半尺寸的几何平均），两条轴求最短距离，
+    #    重叠 = 两半径之和 − 距离。
+    #
+    #    **癒合区是允许互穿的**：这东西是几团肉长到一起的，根部的肉本来就该连成一片，
+    #    所以接触点同时落在两边根部的癒合半径内时不算错。跑到半空中还交叉的才算。
+    for gna, gnb, ov, wa, wb in overlaps(limbs, heads):
+        bad.append(f"{gna}.{wa} 与 {gnb}.{wb} 互穿 {ov:.2f} px——"
+                   f"两者都已离开根部的癒合区，那就是穿模不是长在一起")
 
     # ⑰ 下颌必须**咬得上**：闭合时下齿列的高度要贴着上齿列（咬合面），不能穿过去，
     #    也不能悬空一截。这条卡的是颌关节的位置——`tmj_lift` 算错了这里立刻红。
     for hd in heads.values():
         u_occ = hd.occ
         low = [p for p in hd.pieces if p.part == "jaw" and p.name.startswith("corpus")]
-        for p in low:
-            top = max(p.a[1], p.b[1]) + p.r2
+        # 量的是**骨**不是肉：体表那一层当然会盖过咬合面（那正是唇），扣掉它再比。
+        coat = HD.coat_px(hd)
+        for p in low[:1]:
+            top = max(p.a[1], p.b[1]) + p.r2 - coat
             gap = top - u_occ
             if gap > max(hd.L * 0.06, 0.6):
                 bad.append(f"{hd.name} 闭口时下颌体顶面高出咬合面 {gap:.2f} px——"
