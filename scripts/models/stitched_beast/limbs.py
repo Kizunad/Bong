@@ -425,6 +425,117 @@ def stand_pose(hip: np.ndarray, foot: np.ndarray, segs: tuple[float, ...],
     return place(best[0], best[1]), forced
 
 
+def bend_plane(hip, target, kind: str,
+               normal: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, float]:
+    """折弯平面的基底 (e_b, e_d) 与首尾距离——和 `stand_pose` 用的是同一套构造。
+
+    抽出来是给动画层用的：走一步只是把同一条腿折到另一个距离上，平面的定法必须和解
+    站姿时一模一样，否则动画的第一帧就和静止模型对不上。
+
+    `normal` 是**已知的平面法向**（站姿解出来的那个）。给了它就直接用，因为默认那套
+    构造在肢体接近竖直时是病态的：蛛足的参考方向是 UP，而它的腿本来就几乎竖直，
+    `UP − (UP·e_d)e_d` 的模只有 0.004，方向由舍入误差决定——逐帧解就会翻面。实测
+    limb_ml 的膝在相邻两帧之间从 z=−0.62 跳到 +2.69，一帧 11.71 px，而它一步才走 9.18。
+    法向本身是良态的（它按定义垂直于腿），所以拿它反推平面既连续又和站姿一致。
+    """
+    d = np.asarray(target, float) - np.asarray(hip, float)
+    L = float(np.linalg.norm(d))
+    e_d = d / max(L, 1e-9)
+    if normal is not None:
+        e_b = np.cross(e_d, np.asarray(normal, float))
+        nb = float(np.linalg.norm(e_b))
+        if nb > 1e-6:
+            return e_b / nb, e_d, L
+    ref = UP if kind == "spider" else FWD
+    e_b = ref - float(ref @ e_d) * e_d
+    nb = float(np.linalg.norm(e_b))
+    if nb < 1e-6:
+        alt = np.array([1.0, 0.0, 0.0]) if kind == "spider" else UP
+        e_b = alt - float(alt @ e_d) * e_d
+        nb = float(np.linalg.norm(e_b))
+    return e_b / max(nb, 1e-9), e_d, L
+
+
+def synergy(joints: list[np.ndarray], kind: str) -> tuple[np.ndarray, float]:
+    """从已解出的站姿里**读回**这条腿的折叠协同：(各关节折角的分配 w, 总折叠量 φ)。
+
+    动画层需要它是因为**走一步不该重解一次姿态**。`stand_pose` 是在一族折法里挑总代价
+    最小的那个；逐帧重跑，代价面一变，解就可能跳到另一个局部最优上去——渲出来是膝盖
+    凭空翻一下。动物也不是这么走路的：站姿定下来的是"折叠量怎么在关节间分配"这个协同，
+    迈一步只是沿着同一个协同伸缩。
+
+    所以这里只把站姿解里已经含着的分配比例量出来，`refold` 再沿着它伸缩。折角在平面内
+    量：站姿本来就是在 `bend_plane` 那个平面里解的，投影是精确的，不是近似。
+    """
+    e_b, e_d, _L = bend_plane(joints[0], joints[-1], kind)
+    hip = np.asarray(joints[0], float)
+    # 平面坐标（与 stand_pose.place 互逆；整条链的刚体转角不影响折角，不必解出来）
+    pts = [np.array([-float((np.asarray(p, float) - hip) @ e_b),
+                     -float((np.asarray(p, float) - hip) @ e_d)]) for p in joints]
+    segs = [b - a for a, b in zip(pts, pts[1:])]
+    bends = []
+    for a, b in zip(segs, segs[1:]):
+        cross = float(a[0] * b[1] - a[1] * b[0])
+        bends.append(math.atan2(cross, float(a @ b)))
+    bends = np.array(bends, float)
+    total = float(np.abs(bends).sum())
+    if total < 1e-6:                     # 站姿解出来是一根直棍：没有协同可读，退回折向
+        nj = max(1, len(joints) - 2)
+        sg = np.sign(np.array(BEND.get(kind, (1.0,) * nj)[:nj], float))
+        return sg / max(np.abs(sg).sum(), 1e-9), 0.0
+    return bends / total, total
+
+
+def fold_phi(segs: tuple[float, ...], w: np.ndarray, target: float,
+             hint: float) -> float:
+    """沿协同 w 折到首尾距离 `target` 所需的总折叠量，取**离 hint 最近**的那个解支。
+
+    不能像 `_fit_span` 那样取第一个跨越点。Z 形链（兽腿 +−+）的首尾距离随折叠量先缩
+    后涨，同一个 target 有好几个解，而"第一个"在相邻两帧之间是会跳的——腿走着走着突然
+    换一种折法。动画要的是**连续**，所以拿上一帧的解当锚，每帧只在自己那一支上滑动。
+    """
+    S = np.asarray(segs, float)
+    cw = np.concatenate([[0.0], np.cumsum(w)])
+    grid = np.linspace(0.0, math.radians(178.0), 256)
+    span = _spans(S, cw, grid)
+    diff = span - target
+    idx = np.nonzero(diff[:-1] * diff[1:] <= 0.0)[0]
+    if not len(idx):                     # 够不着/收不拢：取最接近的那个折叠量
+        return float(grid[int(np.argmin(np.abs(diff)))])
+    best, bestd = 0.0, 1e18
+    for i in idx:
+        lo, hi = float(grid[i]), float(grid[i + 1])
+        for _ in range(34):
+            mid = 0.5 * (lo + hi)
+            if float(_spans(S, cw, np.array([mid]))[0]) > target:
+                lo = mid
+            else:
+                hi = mid
+        phi = 0.5 * (lo + hi)
+        if abs(phi - hint) < bestd:
+            best, bestd = phi, abs(phi - hint)
+    return best
+
+
+def refold(hip, target, segs: tuple[float, ...], kind: str, w: np.ndarray,
+           hint: float, normal: np.ndarray | None = None
+           ) -> tuple[list[np.ndarray], float]:
+    """把链按协同 w 折到 hip→target，返回 (各关节世界坐标, 本次的总折叠量)。
+
+    返回折叠量是给下一帧当 hint 用的——连续性靠它维持，见 `fold_phi`。
+    `normal` 是站姿那个折弯平面的法向，逐帧解务必传，理由见 `bend_plane`。
+    """
+    e_b, e_d, L = bend_plane(hip, target, kind, normal)
+    phi = fold_phi(segs, w, L, hint)
+    bends = w * phi
+    P = _chain(segs, bends)
+    rot = -math.atan2(P[-1][0], -P[-1][1])          # 整条转到末端正对目标
+    c, s = math.cos(rot), math.sin(rot)
+    hip = np.asarray(hip, float)
+    pts = [hip - e_b * (c * p[0] - s * p[1]) - e_d * (s * p[0] + c * p[1]) for p in P]
+    return pts, phi
+
+
 def foot_chain(stance: str, contact: np.ndarray, lens: tuple[float, ...],
                out: np.ndarray, deg: float | None = None) -> list[np.ndarray]:
     """脚：从**踝**到趾尖的各关节点。腿的 IK 只解到踝，脚由站姿摆。
@@ -877,11 +988,86 @@ def solve_limb(gene: GN.LimbGene, sock: C.Socket, *, load: float = 0.0,
                 mats, forced, weld_r, need, pad, node_r, heel)
 
 
-def build(seed: int, *, socks: dict[str, C.Socket] | None = None
-          ) -> tuple[GN.Genome, LM.Gait, dict[str, Limb]]:
-    """一只站得住的兽的全部肢体几何。"""
+FIT_TRIES = 18         # "腿装得下"这道门最多回头要几只兽。互穿在候选里很常见（seed 3
+                       # 前十二只里有九只超过 0.75 px），10 只不够——它第 11 只才干净
+FIT_SCAN = 600         # 为凑够那几只，最多扫多少个基因组。稳定性那道门本身已经很挑
+                       # （seed 4 在 200 个里只有两只站得住），扫窄了就只剩一两只可选
+FIT_TOL = 0.75         # 与自检 ⑯ 同一个互穿阈值
+
+
+def build(seed: int, *, socks: dict[str, C.Socket] | None = None,
+          veto=None) -> tuple[GN.Genome, LM.Gait, dict[str, Limb]]:
+    """一只站得住、而且**装得下自己这些腿**的兽的全部肢体几何。
+
+    第二道门是这里新加的。站得住只是运动层那一关，而"这具身体塞不塞得下这么多这么粗
+    的腿"要解完粗细才知道——两条肢的挂载点只隔 8 px，各自中段却有 3.5 px 粗，需要 7 px
+    净空，**落点怎么摆都要穿**（`_splay` 的 docstring 记的就是这一例）。这跟"三条腿全
+    在左边所以站不住"是同一类事实：不是求解器没解好，是这个基因组不成立。所以处理方式
+    也一样——回头跟运动层要下一只。
+
+    `veto(gen, gait, limbs) -> px`：本层看不见的那部分互穿（头），由上层算好报进来。
+    """
     socks = socks or C.sockets()
-    gen, gait = LM.sample_standing(seed, socks=socks)
+    best: tuple | None = None
+    for attempt, (gen, gait) in enumerate(
+            LM.iter_standing(seed, tries=FIT_SCAN, socks=socks)):
+        if attempt >= FIT_TRIES:
+            break
+        got = _build_one(gen, gait, socks)
+        lgs = {lg.gene.socket: lg for lg in got[1].limbs}
+        # 这一层看不见头。头由 `gen_beast` 解，而腿会扫进头里（seed 9 实测一条腿从一颗头
+        # 的眼球里穿过去 1.52 px）——所以留一个钩子让上层把它那一份也报进来，判据仍是同
+        # 一条：装不下就回头要下一只。
+        extra = 0.0 if veto is None else float(veto(*got))
+        # 两件事一起判：**腿之间塞不塞得下**，以及**腿折起来会不会陷进自己肚子里**。
+        # 后者原本只由 `stand_pose` 的惩罚项软性压制，压不住时就留给自检报红（历史上
+        # seed 2/4 长期挂在这一条上）。它和前者是同一类事实——这个基因组在这具身体上
+        # 摆不下——所以处理方式也该一样：回头要下一只，而不是硬摆一个穿模的姿势。
+        # 两条阈值不一样，因为两条自检的判据不一样：互穿允许 0.75 px（和自检 ⑯ 同一个
+        # 阈值，肉长在一起是对的），而"关节埋进核心"（自检 ②）是**一点都不许**。
+        ov = max(_worst_overlap(got[2], lgs), extra)
+        bu = _worst_burial(got[2])
+        if ov <= FIT_TOL and bu <= 0.0:
+            return got
+        score = max(ov - FIT_TOL, bu)
+        if best is None or score < best[0]:
+            best = (score, got)
+    if best is None:
+        raise ValueError(f"seed={seed} 没采到装得下自己腿的配置")
+    return best[1]
+
+
+def _worst_burial(limbs: dict[str, Limb]) -> float:
+    """最深的一处"关节埋进核心"（px）。判据与自检 ② 一致：根部那一节骑在表皮上是对的，
+    从第二个关节起才算。返回的是**距离**不是场值，好和互穿用同一个阈值比。"""
+    w = 0.0
+    for lb in limbs.values():
+        for p in lb.joints[1:]:
+            q = np.asarray(p, float) - C.CORE_CENTER
+            f = C.fld(q)
+            if f < C.ISO:
+                continue
+            g = float(np.linalg.norm(C.grad(q)))
+            w = max(w, (f - C.ISO) / max(g, 1e-6))
+    return w
+
+
+def _worst_overlap(limbs: dict[str, Limb], lgs: dict | None = None) -> float:
+    """全身最深的一处互穿。给了 `lgs` 就按**整个步态周期**量，不只量静止姿。
+
+    门必须和自检量的是同一件事。只量静止姿的话，seed 7 这种"站着 0.46 px、走到 t=0.17
+    穿 1.06 px"的配置会被放行——而它一动起来就露馅。
+    """
+    names = list(limbs)
+    w = 0.0
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            w = max(w, _worst_pair(limbs[a], limbs[b], lgs))
+    return w
+
+
+def _build_one(gen: GN.Genome, gait: LM.Gait, socks: dict[str, C.Socket]
+               ) -> tuple[GN.Genome, LM.Gait, dict[str, Limb]]:
     loads = foot_loads(gait)
     feet = {lg.gene.socket: lg.foot for lg in gait.limbs}
     used = [socks[g.socket].pos for g in gen.limbs]
@@ -917,13 +1103,99 @@ def limb_caps(lb: Limb) -> list[tuple[np.ndarray, np.ndarray, float]]:
             for i, (a, b) in enumerate(zip(lb.joints, lb.joints[1:]))]
 
 
-def _worst_pair(a: Limb, b: Limb) -> float:
+def meta_angle(stance: str, contact, hip, out, foot_segs, span: float) -> float:
+    """掌骨立多陡——**由可达性反解**，和 `solve_limb` 同一条判据，只是改成连续二分。
+
+    `solve_limb` 解静止姿时按 4° 阶梯往上试，取第一个够得着的。逐帧解要连续（阶梯会
+    一格一格跳），而且**逐帧解它就自动给出抬跟**：落点钉在地上、髋越过去之后腿够不着
+    踝，掌骨只好再立起来一点。抬跟不是画的，是同一条约束在时间上的展开。
+
+    碰撞检测与动画必须调同一个函数：各写一份的话，掰落点掰的是另一条腿。
+    """
+    def ok(d: float) -> bool:
+        paw = foot_chain(stance, contact, foot_segs, out, d)
+        return float(np.linalg.norm(paw[0] - hip)) <= 0.97 * span
+
+    base = META_DEG[stance]
+    if ok(base):
+        return base
+    if not ok(88.0):
+        return 88.0
+    lo, hi = base, 88.0
+    for _ in range(18):
+        mid = 0.5 * (lo + hi)
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def cycle_caps(lb: Limb, lg, k: int = 16) -> list[list[tuple[np.ndarray, np.ndarray, float]]]:
+    """这条肢在**整个步态周期**里扫过的一串姿态，各自近似成胶囊。
+
+    静止姿不打架不代表走起来不打架——腿在一个周期里扫过的体积比它站着时占的大得多。
+    实测 seed 7 的 limb_fl 与 limb_ml 静止姿完全不碰，走到 t=0.40 却互穿 2.06 px。
+
+    只重折不重解姿态：折叠协同是站姿定死的（见 `synergy`），走一步只是沿它伸缩。落点
+    走 `LimbGait.foot_at`——和动画用的是同一条轨迹，这是必须的：两边各写一份的话，掰
+    落点掰的是另一条腿（实测这里只看到 1.12 px，而动画真穿 1.97 px）。
+    """
+    cached = getattr(lb, "_sweep", None)
+    if cached is not None and cached[0] == k:
+        return cached[1]
+    if lg is None or lg.foot is None:
+        return [limb_caps(lb)]
+    nfoot = 1 if lb.gene.stance == "sprawling" else 2
+    nleg = len(lb.gene.segments) - nfoot
+    if nleg < 1:
+        return [limb_caps(lb)]
+    leg_segs = lb.gene.segments[:nleg]
+    foot_segs = lb.gene.segments[nleg:]
+    w, phi = synergy(lb.joints[:nleg + 1], lb.gene.kind)
+    e_b, e_d, _L = bend_plane(lb.joints[0], lb.joints[nleg], lb.gene.kind)
+    nrm = np.cross(e_b, e_d)
+    nrm = nrm / max(float(np.linalg.norm(nrm)), 1e-9)
+    hip = np.asarray(lb.joints[0], float)
+    d0 = np.asarray(lg.foot, float) - hip
+    d0[1] = 0.0
+    out = d0 / max(float(np.linalg.norm(d0)), 1e-9)
+    rad = [max(lb.profile(i, 0.5), 0.5) for i in range(len(lb.gene.segments))]
+    # **静止姿必须也在这一串里**：模型是按中立落点建的，它是渲染出来的那一帧，不许穿。
+    # 而它未必落在任何一个采样相位上（中立落点是支撑相的中点，不是 j/k 里的某个）。
+    poses = [limb_caps(lb)]
+    for j in range(k):
+        con = lg.foot_at(j / k)
+        deg = meta_angle(lb.gene.stance, con, hip, out, foot_segs, sum(leg_segs))
+        paw = foot_chain(lb.gene.stance, con, foot_segs, out, deg)
+        leg, phi = refold(hip, paw[0], leg_segs, lb.gene.kind, w, phi, nrm)
+        pts = leg + paw[1:]
+        poses.append([(np.asarray(a, float), np.asarray(b, float), rad[i])
+                      for i, (a, b) in enumerate(zip(pts, pts[1:]))])
+    # 挂在这条肢自己身上。`solve_limb` 每次都造新对象，所以缓存天然随几何一起作废——
+    # 不这么做的话 n 条肢两两比较会把同一条的扫掠算 n−1 遍（6 条肢就是 5 倍白工）。
+    lb._sweep = (k, poses)
+    return poses
+
+
+def _caps_worst(ca, cb) -> float:
     w = 0.0
-    for (a0, a1, ra) in limb_caps(a):
-        for (b0, b1, rb) in limb_caps(b):
+    for (a0, a1, ra) in ca:
+        for (b0, b1, rb) in cb:
             dd, _m = VR.seg_dist(a0, a1, b0, b1)
             w = max(w, ra + rb - dd)
     return w
+
+
+def _worst_pair(a: Limb, b: Limb, lgs: dict | None = None) -> float:
+    """两条肢最深的一处互穿。给了 `lgs` 就按**整个周期扫过的姿态**逐相位比，不只比站姿。"""
+    if lgs is None:
+        return _caps_worst(limb_caps(a), limb_caps(b))
+    pa = cycle_caps(a, lgs.get(a.sock.name))
+    pb = cycle_caps(b, lgs.get(b.sock.name))
+    # 同一相位才可能真的撞上——两条腿在不同时刻各自占过同一块空间不算穿模
+    n = max(len(pa), len(pb))
+    return max(_caps_worst(pa[i % len(pa)], pb[i % len(pb)]) for i in range(n))
 
 
 def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Limb]:
@@ -945,6 +1217,8 @@ def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Lim
     if len(load_names) < 2:
         return out
 
+    lgs_all = {lg.gene.socket: lg for lg in gait.limbs}
+
     def worst_all(sol: dict[str, Limb]) -> float:
         """这一版布局里最深的一处互穿（px）。
 
@@ -957,9 +1231,9 @@ def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Lim
         for i, a in enumerate(load_names):
             for b in load_names[i + 1:]:
                 if a in sol and b in sol:
-                    m = max(m, _worst_pair(sol[a], sol[b]))
+                    m = max(m, _worst_pair(sol[a], sol[b], lgs_all))
         return m
-    lgs = {lg.gene.socket: lg for lg in gait.limbs}
+    lgs = lgs_all
     com2 = np.array([gait.com[0], gait.com[2]])
     base_margin = LM.feasible(gait.limbs, com2)
     moved = False
@@ -968,7 +1242,7 @@ def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Lim
         for i, a in enumerate(load_names):
             for b in load_names[i + 1:]:
                 if a in out and b in out:
-                    w = _worst_pair(out[a], out[b])
+                    w = _worst_pair(out[a], out[b], lgs)
                     if w > 0.5:
                         pairs.append((w, a, b))
         if not pairs:

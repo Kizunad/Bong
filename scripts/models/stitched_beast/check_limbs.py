@@ -129,9 +129,20 @@ def check_seed(seed: int, socks) -> tuple[list[str], list[tuple]]:
                     bad.append(f"{tag} {lb.name} 触手只在一处折了一下——"
                                f"无骨软梁该逐节连续弯")
             if gene.kind != "tentacle" and len(turns) >= 2:
-                if max(turns[1:]) > 1.0:
-                    bad.append(f"{tag} {lb.name} 有骨闲肢在第一个关节之后还在弯——"
-                               f"自由铰的平衡姿态是每一节都指着正下方")
+                # **除非它撑在什么东西上。** "每一节都指着正下方"是**自由**铰的平衡解，
+                # 而这条肢未必自由：够得着地的垂肢会摊在地上，贴着躯干垂的会沿表皮滑开
+                # ——两者都是接触力，`hang_pose` 本来就照这个解。所以判据不是"弯了就错"，
+                # 而是**掰直了看它会不会插进地里或身体里**：会，这个弯就是撑出来的。
+                straight = [np.asarray(lb.joints[1], float)]
+                for L in gene.segments[1:]:
+                    straight.append(straight[-1] + np.array([0.0, -L, 0.0]))
+                held = any(float(p[1]) < 0.6 for p in straight[1:]) or any(
+                    C.fld(np.asarray(p, float) - C.CORE_CENTER) >= C.ISO
+                    for p in straight[1:])
+                if max(turns[1:]) > 1.0 and not held:
+                    bad.append(f"{tag} {lb.name} 有骨闲肢在第一个关节之后还在弯，"
+                               f"而掰直了既不碰地也不碰身体——自由铰的平衡姿态是"
+                               f"每一节都指着正下方")
     return bad, rows
 
 
@@ -156,15 +167,24 @@ def cross_seed(rows: list[tuple]) -> list[str]:
         return bad
 
     for kind in sorted({x.gene.kind for _s, x in bear}):
-        rs = [x.root_need for _s, x in bear if x.gene.kind == kind]
-        if len(rs) < 3:
+        sub = [x for _s, x in bear if x.gene.kind == kind]
+        if len(sub) < 3:
             continue
+        rs = [x.root_need for x in sub]
+        dv = [math.sqrt(x.load * max(x.arm1, 1e-6) / max(x.gene.segments[0], 1e-9))
+              for x in sub]
+        r_ratio = max(rs) / max(min(rs), 1e-9)
+        d_ratio = max(dv) / max(min(dv), 1e-9)
         print(f"[粗细] {kind} 类内 {min(rs):.2f}..{max(rs):.2f} px "
-              f"（{max(rs) / min(rs):.2f}×，{len(rs)} 条）")
-        if max(rs) / min(rs) < 1.35:
-            bad.append(f"{kind} 类内部的粗细跨度只有 {max(rs) / min(rs):.2f}×——"
-                       f"同一种类的肢挂在不同位置该差出好几倍，挤成一团说明载荷"
-                       f"没进公式，粗细退化成了按种类查表")
+              f"（{r_ratio:.2f}×，力学量跨度 {d_ratio:.2f}×，{len(rs)} 条）")
+        # **和力学量的跨度比，不和一个固定倍数比。** 写死"类内必须差 ≥1.35×"是在赌抽样：
+        # 同一类的肢**恰好**都挂在受力相近的位置时，粗细本来就该差不多，那不是退化成
+        # 查表。实测默认的 4 个 seed 里 bird 只抽到几条、力学量本身只差 1.2×，于是这条
+        # 断言假红；把 seed 加到 7 个，同样的代码跨度就是 2.41×。真正该锁的是**跟不跟得上**：
+        # 力学量差多少，粗细就得差多少。
+        if d_ratio > 1.05 and r_ratio < d_ratio * 0.70:
+            bad.append(f"{kind} 类内力学量差 {d_ratio:.2f}× 而粗细只差 {r_ratio:.2f}×"
+                       f"——粗细没跟上载荷×力臂，退化成了按种类查表")
 
     # ---- ② 扛重的是短近腿：载荷份额与"落点离质心的距离"负相关。
     #

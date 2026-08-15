@@ -86,7 +86,13 @@ MAX_STEPS = 6             # 单肢每身体周期最多迈几步；再多也跟�
 RUN_TEMPO = 2.2           # 奔跑相对自然摆频的倍率（肌肉强驱，越界即耗真元）
 RIDE_CLEAR = 3.0          # 骑乘高度下限留给髋的离地余量；上限见 RIDE_UP
 RIDE_UP = 6.0             # 骑乘高度上限（相对核心设计高度）
-SAMPLES = 48              # 稳定性采样点数
+SAMPLES = 240             # 支撑多边形余量的采样点数（每点要跑一次凸包，不能太密）。
+                          # 240 而不是 48：一只脚抬起时多边形会突然缩小，而缩小的窗口
+                          # 完全可能整个落在格点之间——48 点下相位搜索报"站得住"，下游
+                          # 按自己的网格一采就采到质心在多边形外（`contact_forces` 直接
+                          # 抛异常，seed 1 实测）。240 同时是 40 与 48 的倍数，于是下游
+                          # 各处自检的采样点都是它的子集，两边不可能各说各话。
+SUPPORT_FINE = 2          # 着地脚数另用 SAMPLES×这个倍数的细网格。理由见 `_tables`
 PHASE_GRID = 16           # 相位候选格点数；SAMPLES 必须是它的整数倍（相位平移 = 数组滚动）
 MARGIN_OK = 0.5           # 认定"站得住"的稳定余量下限（px）。solve 用它决定要不要把
                           # 落点放回可达极限，sample_standing 用它筛个体——同一个门槛
@@ -133,6 +139,17 @@ class LimbGait:
         """身体周期相位 t ∈[0,1) 时这条肢是否着地。"""
         return ((t - self.phase) * self.steps) % 1.0 < self.duty
 
+    def stance_over(self, a: float, w: float) -> bool:
+        """整段 [a, a+w) 里**一直**着地才算数。
+
+        相位搜索按采样点数着地脚数，而着地与否是一段一段的区间——采样格点完全可能跨过
+        一个"抬起来了又放下"的窗口，于是解出来的步态在格点上永远有 3 只脚，格点之间却
+        只剩 1 只。实测 seed 7 有 1.8% 的时间少于 3 只脚着地（最少到 1），而解里记的
+        `min_support` 是 3。改成"整段都得着地"之后，表里数出来的就是全周期的真下界。
+        """
+        u = ((a - self.phase) * self.steps) % 1.0
+        return u < self.duty and u + w * self.steps <= self.duty
+
     @property
     def excursion(self) -> float:
         """支撑相脚在**体坐标系**里走过的距离。
@@ -143,21 +160,39 @@ class LimbGait:
         """
         return self.stride * self.duty
 
-    def foot_at(self, t: float) -> np.ndarray:
-        """t 时刻脚在**体坐标系**的位置（支撑相后移，摆动相前甩）。
+    @property
+    def swing_lift(self) -> float:
+        """摆动相脚要抬多高（px）。**一条定长的腿荡过去会扎进地里多深，就得抬多高。**
+
+        髋高 h、支撑相脚走过 e，两个极点处腿长 √(h²+(e/2)²)，中点只要 h。所以一条不
+        缩回的腿从后极点荡到前极点，会在中点低于地面 √(h²+(e/2)²) − h。抬升取这个数：
+        不是"看着差不多抬这么高"，是几何上非抬不可的那个下限。
+        """
+        h = float(self.hip[1])
+        return math.hypot(h, 0.5 * self.excursion) - h
+
+    def foot_at(self, t: float, extra_lift: float = 0.0) -> np.ndarray:
+        """t 时刻脚在**体坐标系**的位置（支撑相后移，摆动相前甩并抬起）。
 
         体坐标系而非世界系：支撑多边形要和质心比，而质心在体坐标系里是不动的。
+
+        摆动相走**简谐**而不是匀速：这一层判定摆动是被动复摆（`natural_hz` 那条推导的
+        全部前提），而复摆在两端角速度为零。匀速插值对稳定性评估无所谓（摆动脚本来就
+        被踢出支撑多边形），但它同时是碰撞与动画共用的轨迹——匀速的话脚在离地和落地的
+        瞬间还有横向速度，读作蹭地。
+
+        `extra_lift` 留给躯干自己也在起伏的情形：那时摆动腿还要多让出一份。
         """
         u = ((t - self.phase) * self.steps) % 1.0
         e = self.excursion
+        assert self.foot is not None
         if u < self.duty:
             s = u / self.duty                      # 支撑：从前极点匀速走到后极点
-            off = e * (0.5 - s)
-        else:
-            s = (u - self.duty) / (1.0 - self.duty)
-            off = e * (-0.5 + s)                   # 摆动：抬回前极点
-        assert self.foot is not None
-        return self.foot + np.array([0.0, 0.0, -off])
+            return self.foot + np.array([0.0, 0.0, -e * (0.5 - s)])
+        s = (u - self.duty) / (1.0 - self.duty)
+        off = e * (-0.5 + 0.5 * (1.0 - math.cos(math.pi * s)))
+        lift = (self.swing_lift + extra_lift) * math.sin(math.pi * s)
+        return self.foot + np.array([0.0, lift, -off])
 
 
 @dataclass
@@ -258,16 +293,29 @@ def hip_geometry(sock: C.Socket, gene: GN.LimbGene, ride: float = 0.0
 
 # ---------------------------------------------------------------- 稳定性
 def _hull(pts: np.ndarray) -> np.ndarray:
-    """2D 凸包（Andrew monotone chain），逆时针。"""
-    p = np.unique(np.round(pts, 6), axis=0)
-    if len(p) <= 2:
-        return p
-    p = p[np.lexsort((p[:, 1], p[:, 0]))]
+    """2D 凸包（Andrew monotone chain），逆时针。
+
+    去重与排序**不走 numpy**：点只有三到六个，而 `np.unique(..., axis=0)` + `np.lexsort`
+    在这个规模上全是调用开销。相位搜索一次要跑几十万个凸包，这里省下的是主要开销。
+    """
+    seen: dict[tuple[float, float], None] = {}
+    for q in pts:
+        seen[(round(float(q[0]), 6), round(float(q[1]), 6))] = None
+    if len(seen) <= 2:
+        return np.array(list(seen), float).reshape(-1, 2)
+    p = np.array(sorted(seen), float)
 
     def half(seq):
+        # 二维叉积手写成标量运算。`np.cross` 对 2 维输入要绕 moveaxis/normalize_axis_tuple
+        # 一大圈，实测它一家占了相位搜索总时间的一半（48 万次调用）——这里的向量只有两个
+        # 分量，一行乘减就够了。
         out: list = []
         for q in seq:
-            while len(out) >= 2 and np.cross(out[-1] - out[-2], q - out[-2]) <= 0:
+            while len(out) >= 2:
+                ax, ay = out[-1][0] - out[-2][0], out[-1][1] - out[-2][1]
+                bx, by = q[0] - out[-2][0], q[1] - out[-2][1]
+                if ax * by - ay * bx > 0:
+                    break
                 out.pop()
             out.append(q)
         return out
@@ -285,49 +333,73 @@ def support_margin(feet: np.ndarray, com: np.ndarray) -> float:
         return -1e3
     best = 1e9
     inside = True
-    for a, b in zip(h, np.roll(h, -1, axis=0)):
-        e = b - a
-        ln = float(np.linalg.norm(e))
-        if ln < 1e-9:
+    cx, cy = float(com[0]), float(com[1])
+    n = len(h)
+    for i in range(n):
+        ax, ay = float(h[i][0]), float(h[i][1])
+        bx, by = float(h[(i + 1) % n][0]), float(h[(i + 1) % n][1])
+        ex, ey = bx - ax, by - ay
+        l2 = ex * ex + ey * ey
+        if l2 < 1e-18:
             continue
-        cr = float(np.cross(e, com - a)) / ln         # 逆时针凸包：正 = 在内侧
-        inside &= cr >= 0
-        t = float(np.dot(com - a, e)) / (ln * ln)
-        d = float(np.linalg.norm(com - (a + e * np.clip(t, 0.0, 1.0))))
-        best = min(best, d)
+        ln = math.sqrt(l2)
+        wx, wy = cx - ax, cy - ay
+        inside &= (ex * wy - ey * wx) / ln >= 0.0     # 逆时针凸包：正 = 在内侧
+        t = min(1.0, max(0.0, (wx * ex + wy * ey) / l2))
+        best = min(best, math.hypot(wx - ex * t, wy - ey * t))
     return best if inside else -best
 
 
-def _tables(limbs: list[LimbGait]) -> tuple[np.ndarray, np.ndarray]:
-    """预算每条肢在**相位 0** 下、全周期各采样点的着地掩码与脚 xz。
+def _tables(limbs: list[LimbGait]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """预算每条肢在**相位 0** 下、全周期的着地掩码（细网格）、余量用掩码与脚 xz（粗网格）。
 
-    相位取在 PHASE_GRID 格点上时，改相位等价于把这两张表沿采样轴**滚动**
-    （u = ((t-φ)·steps)%1，t=k/SAMPLES、φ=j/PHASE_GRID ⇒ 索引平移 j·SAMPLES/PHASE_GRID）。
+    相位取在 PHASE_GRID 格点上时，改相位等价于把这些表沿采样轴**滚动**
+    （u = ((t-φ)·steps)%1，t=k/S、φ=j/PHASE_GRID ⇒ 索引平移 j·S/PHASE_GRID）。
     于是相位搜索里不再有任何三角/取模运算，只剩 np.roll 和凸包。
+
+    **着地脚数必须用细网格数**。着地与否是一段一段的区间，48 个格点完全可能整个跨过
+    一个"抬起来了又放下"的窗口——实测 seed 7 在格点上永远有 3 只脚，格点之间却掉到
+    1 只，占全周期的 1.8%。细网格只做布尔求和（纯 numpy，几乎不要钱），凸包那一步照旧
+    留在粗网格上，它才是开销所在。
+
+    细网格上用 `stance_over` 而不是 `in_stance`：要的是**整段都着地**，数出来才是真下界。
+    在 1/1200 的窗口下这点保守可以忽略；换到 48 点上就过头了（5/12 的 seed 直接判站不住，
+    而它们其实站得住——一条腿落地的同一瞬间另一条抬起，脚数从头到尾没掉过）。
     """
     n, S = len(limbs), SAMPLES
+    F = S * SUPPORT_FINE
+    fine = np.zeros((n, F), bool)
     mask = np.zeros((n, S), bool)
     xz = np.zeros((n, S, 2))
+    tf = np.arange(F) / F
     for i, lg in enumerate(limbs):
         keep = lg.phase
         lg.phase = 0.0
+        # 细网格整条一次算完。逐点调 `stance_over` 是纯 Python 的 1200×n 次循环，
+        # 相位搜索每评估一个候选就要重来一遍——实测把 `sample_standing` 从 2 秒拖到 32 秒
+        u = (tf * lg.steps) % 1.0
+        fine[i] = (u < lg.duty) & (u + lg.steps / F <= lg.duty)
         for k in range(S):
             tt = k / S
             mask[i, k] = lg.in_stance(tt)
             f = lg.foot_at(tt)
             xz[i, k] = (f[0], f[2])
         lg.phase = keep
-    return mask, xz
+    return fine, mask, xz
 
 
-def evaluate_tab(mask: np.ndarray, xz: np.ndarray, shifts: list[int],
-                 com2: np.ndarray, floor: float = -1e18) -> tuple[float, int]:
+def evaluate_tab(fine: np.ndarray, mask: np.ndarray, xz: np.ndarray,
+                 shifts: list[int], com2: np.ndarray,
+                 floor: float = -1e18) -> tuple[float, int]:
     """按整数相位偏移查表求全周期最小稳定余量与最少着地脚数。
 
     floor 是分支限界：调用方已知的当前最好分数。一旦某个采样点的余量已经低于它，
     这个候选不可能更优，立刻放弃剩下的采样点——相位搜索里绝大多数候选都是烂的，
     这一刀砍掉的是主要开销。
     """
+    # 先跑便宜的：粗网格脚数 → 支撑多边形余量（带分支限界）。**细网格留到最后**——
+    # 它是这里唯一按 SAMPLES×SUPPORT_FINE 算的东西，而相位搜索里绝大多数候选在余量
+    # 那一步就被剪掉了，没必要为它们算真下界。实测放在最前面时一次 solve 要 800 ms。
     m = np.stack([np.roll(mask[i], s) for i, s in enumerate(shifts)])
     fewest = int(m.sum(axis=0).min())
     if fewest < MIN_SUPPORT:
@@ -337,17 +409,31 @@ def evaluate_tab(mask: np.ndarray, xz: np.ndarray, shifts: list[int],
     for k in range(SAMPLES):
         worst = min(worst, support_margin(p[m[:, k], k], com2))
         if worst <= floor:
-            break
+            return worst, fewest       # 已经赢不了了，不必再验细网格
+    q = SUPPORT_FINE
+    fw = np.stack([np.roll(fine[i], s * q) for i, s in enumerate(shifts)])
+    fewest = int(fw.sum(axis=0).min())
+    if fewest < MIN_SUPPORT:
+        return -1e3, fewest
     return worst, fewest
 
 
 def evaluate(limbs: list[LimbGait], com2: np.ndarray) -> tuple[float, int]:
     """全周期最小稳定余量与最少着地脚数（直接按当前相位算，供报告与自检用）。"""
-    worst, fewest = 1e9, 99
+    F = SAMPLES * SUPPORT_FINE
+    tf = np.arange(F) / F
+    on = np.zeros(F, int)
+    for lg in limbs:
+        u = ((tf - lg.phase) * lg.steps) % 1.0
+        on += ((u < lg.duty) & (u + lg.steps / F <= lg.duty)).astype(int)
+    fewest = int(on.min())
+    worst = 1e9
+    # 余量的网格必须和相位搜索用的**同一个**（`SAMPLES`）：搜索优化的是哪个网格上的
+    # 余量，验收就只能验哪个网格——两边不一致的话，搜索交出的最优解在验收那里全军覆没
+    # （实测把这里加密到 480 而搜索仍是 48，seed 1 的 200 个候选一个都过不了）。
     for k in range(SAMPLES):
         t = k / SAMPLES
         grounded = [lg for lg in limbs if lg.in_stance(t)]
-        fewest = min(fewest, len(grounded))
         if len(grounded) < MIN_SUPPORT:
             worst = min(worst, -1e3)
             continue
@@ -395,8 +481,18 @@ def stance_radius(lg: LimbGait) -> float:
     +3.13（seed 3 反而从 +0.52 涨到 +0.66）：支撑多边形是绕各自的髋收缩的，质心本来就
     在中间，收缩不会把它挤出去。所以这是净赚。真掉了余量的个体由 `place_feet` 放回去。
 
-    下限来自摆动：脚要沿 z 走 ±excursion/2，整段都得留在可达球内，于是
-    r² ≤ reach² − (excursion/2)²。
+    上限来自行程：脚要沿 z 走 ±e/2，**整段**都得留在可达半径内。落点在 out·r 上，位移在
+    ẑ 上，两者一般不正交：
+
+        |out·r − ẑ·off|² = r² + off² − 2·r·off·(out·ẑ)
+
+    对 off ∈ [−e/2, e/2] 取最大（off 取 −sign(out·ẑ)·e/2），令其 ≤ reach²，解得
+
+        r ≤ −(e/2)|out_z| + √( (e/2)²·out_z² − (e/2)² + reach² )
+
+    原来写的是 √(reach² − (e/2)²)，那是 out ⊥ ẑ 的特例。**前后向劈开的那条肢因此被放到
+    了它够不着的地方**：支撑相走到极点时连水平距离都超过可达半径，动画层只能把整只兽
+    往下压去够（实测 seed 1 有一帧压了 9.57 px，下一帧又弹回 0）。
     """
     # 摆的是**落点**，但腿够的是**踝**。两条更简单的写法都试过、都不行：① 忽略踝的
     # 身后偏移 ⇒ 腿够不着自己的踝，IK 无解退回直链、关节落到地面以下（y=−4.13）；
@@ -404,8 +500,27 @@ def stance_radius(lg: LimbGait) -> float:
     h = float(lg.hip[1]) - lg.gene.ankle_lift
     eff = lg.gene.leg_len * EXTEND
     want = max(COMFORT * eff, math.hypot(h, lg.gene.ankle_back))
-    cap = math.sqrt(max(0.0, lg.reach ** 2 - (0.5 * lg.excursion) ** 2))
-    return min(_radius_for(lg, want), cap)
+    return min(_radius_for(lg, want), travel_cap(lg))
+
+
+def travel_cap(lg: LimbGait) -> float:
+    """中立落点最远能摆多远，才能保证**整个支撑相**都留在可达半径内。
+
+        |out·r − ẑ·off|² = r² + off² − 2·r·off·(out·ẑ)
+
+    对 off ∈ [−e/2, e/2] 取最大（off 取 −sign(out·ẑ)·e/2），令其 ≤ reach²，解得
+
+        r ≤ −(e/2)|out_z| + √( (e/2)²·out_z² − (e/2)² + reach² )
+
+    原来只在舒适落点那一支写了 √(reach² − (e/2)²)，那是 out ⊥ ẑ 的特例；而**可达极限那
+    一支根本没有这道帽**。于是"收窄站不住、放回可达极限"的个体，其前后向劈开的那条肢
+    在支撑相极点连水平距离都超出可达半径——动画层只能把整只兽往下压去够（seed 1 实测
+    压了 9.57 px，下一帧又弹回 0）。两支现在共用这一个上限。
+    """
+    half = 0.5 * lg.excursion
+    oz = abs(float(lg.out_dir[2]))
+    disc = half * half * oz * oz - half * half + lg.reach ** 2
+    return max(0.0, -half * oz + math.sqrt(disc)) if disc > 0.0 else 0.0
 
 
 def place_feet(limbs: list[LimbGait], k: float) -> None:
@@ -414,7 +529,7 @@ def place_feet(limbs: list[LimbGait], k: float) -> None:
         r0 = stance_radius(lg)
         # 上界也得按**踝**算，不能用 lg.reach：那个数没把踝的身后偏移算进去，撑到它
         # 就等于要求腿够到够不着的地方，IK 退回直链、腿的末端偏离踝位 8 px（实测）。
-        r1 = min(_radius_for(lg, lg.gene.leg_len * EXTEND), lg.reach)
+        r1 = min(_radius_for(lg, lg.gene.leg_len * EXTEND), lg.reach, travel_cap(lg))
         lg.foot = (np.array([lg.hip[0], 0.0, lg.hip[2]])
                    + lg.out_dir * (r0 + (max(r1, r0) - r0) * k))
 
@@ -429,10 +544,10 @@ def optimize_phases(limbs: list[LimbGait], com2: np.ndarray, *, seed: int,
     rng = np.random.default_rng(seed)
     n = len(limbs)
     step = SAMPLES // PHASE_GRID
-    mask, xz = _tables(limbs)
+    fine, mask, xz = _tables(limbs)
 
     best_sh = [0] * n
-    best = evaluate_tab(mask, xz, best_sh, com2)
+    best = evaluate_tab(fine, mask, xz, best_sh, com2)
     for r in range(restarts):
         if r == 0:   # 经典多足均分相位。肢体分布不对称时它往往正是摔倒的那个解
             sh = [int(round(i * PHASE_GRID / n)) % PHASE_GRID * step for i in range(n)]
@@ -441,17 +556,17 @@ def optimize_phases(limbs: list[LimbGait], com2: np.ndarray, *, seed: int,
         for _ in range(sweeps):
             improved = False
             for i in range(n):
-                cur = evaluate_tab(mask, xz, sh, com2)
+                cur = evaluate_tab(fine, mask, xz, sh, com2)
                 keep = sh[i]
                 for j in range(PHASE_GRID):
                     sh[i] = j * step
-                    sc = evaluate_tab(mask, xz, sh, com2, floor=cur[0])
+                    sc = evaluate_tab(fine, mask, xz, sh, com2, floor=cur[0])
                     if sc > cur:
                         cur, keep, improved = sc, j * step, True
                 sh[i] = keep
             if not improved:
                 break
-        sc = evaluate_tab(mask, xz, sh, com2, floor=best[0])
+        sc = evaluate_tab(fine, mask, xz, sh, com2, floor=best[0])
         if sc > best:
             best, best_sh = sc, list(sh)
 
@@ -536,13 +651,39 @@ def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None,
     return Gait(g, tuple(limbs), com, ride, body_hz, speed, margin, fewest)
 
 
-def sample_standing(seed: int, *, tries: int = 60,
+def sample_standing(seed: int, *, tries: int = 200, skip: int = 0,
                     socks: dict[str, C.Socket] | None = None) -> tuple[GN.Genome, Gait]:
     """采一只**站得住**的兽。
 
     基因组随机挑槽，完全可能挑出"三条腿全在左边"这种站不住的配置。合法性（genome
     .validate）管的是"是不是缝合兽"，站不站得住得靠力学算——所以在这里重采样，
     而不是把稳定性塞进 genome 去猜。
+
+    预算从 60 提到 200：着地脚数改成细网格真下界之后（见 `_tables`），过去靠采样格点
+    对齐蒙混过关的那些配置被否掉了，合格率跟着降。seed 12 在 60 次内采不到，200 次内
+    采得到（余量 +1.73）。这是搜索预算，不是物理常数。
+
+    `skip` 跳过前若干个合格候选，取下一个。给 `limbs.build` 用：站得住只是第一道门，
+    "这具身体塞不塞得下这么多这么粗的腿"是第二道，而后者要解完粗细才知道——那一层
+    发现塞不下时，就回来要下一只。
+    """
+    it = iter_standing(seed, tries=tries, socks=socks)
+    for _ in range(skip):
+        if next(it, None) is None:
+            break
+    got = next(it, None)
+    if got is None:
+        raise ValueError(f"seed={seed} 试了 {tries} 次没采到站得住的配置")
+    return got
+
+
+def iter_standing(seed: int, *, tries: int = 200,
+                  socks: dict[str, C.Socket] | None = None):
+    """依次吐出这个 seed 下**所有**站得住的配置。
+
+    下游（`limbs.build`）要连着看好几只才能挑出"腿也装得下"的那只，而一只一只重来会把
+    前面的候选反复重解——seed 4 在 200 次里只有两只站得住，靠 `skip` 取第二只就得把第一只
+    再解一遍。生成器一遍扫完。
     """
     for k in range(tries):
         s = seed * 1000 + k
@@ -552,8 +693,7 @@ def sample_standing(seed: int, *, tries: int = 60,
         except ValueError:
             continue
         if gait.margin > MARGIN_OK and gait.min_support >= MIN_SUPPORT:
-            return g, gait
-    raise ValueError(f"seed={seed} 试了 {tries} 次没采到站得住的配置")
+            yield g, gait
 
 
 def main() -> int:
