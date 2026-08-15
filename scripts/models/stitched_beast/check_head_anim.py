@@ -5,7 +5,7 @@
 速率、顶角速度 = 角基储能推导的输入）。**派生关系一旦断了，动画看上去还是会动**——
 所以必须逐条量回去，而不是"渲一眼觉得挺像"。
 
-十条：
+十一条：
 
   ① 下颌不许穿进上颌（只能张不能反折），静止即闭合
   ② 循环动画首末帧必须接得上
@@ -17,6 +17,12 @@
   ⑧ 死亡单调：下颌只垂不回弹（没人拉着了，不是在开合）
   ⑨ 顶角的挥击角速度对得上 `HornStyle.speed`
   ⑩ 每条动作都真的动了东西（防空动画）
+  ⑪ **导出产物里的周期数等于推导出来的周期数**
+
+⑪ 是补的，因为前十条集体漏掉了一个真错：这些函数原先按**秒**写曲线，而导出与渲染都
+按**归一化相位**喂进来，于是牛的三周期咀嚼实际只嚼了 0.93 下就跳回起点。前十条查不到，
+是因为它们自己按秒去调函数——查的是一条从没被导出过的曲线。所以 ⑪ 不重算曲线，它直接
+读 `build_tracks` 的输出，也就是**真正写进 .animation.json 的那串关键帧**。
 
 用法:
   python3 scripts/models/stitched_beast/check_head_anim.py
@@ -37,13 +43,27 @@ sys.path.insert(0, str(HERE))
 import genome as GN  # noqa: E402
 import head_anim as HA  # noqa: E402
 import heads as HD  # noqa: E402
+from anim_rig import Rig, build_tracks  # noqa: E402
 
 N = 48
 
 
 def _track(hd, fn, length: float, n: int = N):
-    """采一条动作，返回 [(t, Pose)]。"""
-    return [(i / n * length, fn(hd, None, i / n * length, length)) for i in range(n + 1)]
+    """采一条动作，返回 [(秒, Pose)]。
+
+    **喂进去的是归一化相位**（和 `build_tracks` 一致），返回的时间戳是秒（角速度一类的
+    检查要真秒）。两者混用正是 ⑪ 要防的那个错。
+    """
+    return [(i / n * length, fn(hd, None, i / n, length)) for i in range(n + 1)]
+
+
+def _peaks(v: list[float]) -> int:
+    """一条曲线走了几个来回——数**严格**极大值，平台不重复计数。"""
+    n = 0
+    for i in range(1, len(v) - 1):
+        if v[i] >= v[i - 1] and v[i] > v[i + 1]:
+            n += 1
+    return n
 
 
 def _rot(pose, bone: str, idx: int = 0) -> float:
@@ -53,9 +73,27 @@ def _rot(pose, bone: str, idx: int = 0) -> float:
 
 def check(kind: str) -> list[str]:
     bad: list[str] = []
-    hd, _path = HA.build_head(kind)
+    hd, path = HA.build_head(kind)
     b = HA.bones(hd)
     table = HA.anims(hd)
+
+    # ⑪ 读**导出产物本身**：把 build_tracks 跑一遍，数关键帧序列里的周期数。
+    # 循环动画的周期数是推出来的（咀嚼频率 × 时长、呼吸频率 × 时长），导出的曲线必须
+    # 一模一样地走那么多个来回。
+    rig = Rig(path)
+    for name, hz in (("head_chew", HA.chew_hz(hd)), ("head_idle", HA.breath_hz(hd))):
+        if name not in table:
+            continue
+        length, loop, n, fn = table[name]
+        tracks = build_tracks(rig, lambda t, f=fn, ln=length: f(hd, rig, t, ln),
+                              length, loop, n)
+        want = int(HA.cycles(hz, length))
+        bone = b["jaw"] if name == "head_chew" else b["head"]
+        got = _peaks([v[0] for _t, v in tracks.get(bone, {}).get("rotation", [])])
+        if got != want:
+            bad.append(f"{name} 导出的曲线走了 {got} 个周期，推出来的是 {want} 个"
+                       f"（{hz:.2f} Hz × {length:.2f} s）——写进 .animation.json 的"
+                       f"和推导对不上")
 
     for name, (length, loop, _n, fn) in table.items():
         tr = _track(hd, fn, length)
@@ -75,7 +113,7 @@ def check(kind: str) -> list[str]:
         if loop:
             for bone in set(b.values()):
                 a0 = tr[0][1].get(bone)
-                a1 = fn(hd, None, length, length).get(bone)
+                a1 = fn(hd, None, 1.0, length).get(bone)
                 if a0 is None and a1 is None:
                     continue
                 r0 = a0.rot if a0 else [0.0] * 3

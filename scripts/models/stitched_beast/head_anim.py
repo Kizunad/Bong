@@ -22,6 +22,12 @@
 七条动作，和核心层那七条同一个思路：每条都由**这颗头自己的解剖**决定，而不是套模板。
 没有耳廓的（禽、蛙）就没有耳朵动作，没有角的就没有顶角，蛙的"嚼"是一次整吞。
 
+**时间的量纲**：每条 `anim_*` 收到的 `t` 是**归一化相位 ∈[0,1]**，秒数要自己乘
+`length`。这和 `core_anim` / `fragment_anim` 一致，也正是 `build_tracks` 喂进来的东西。
+初版这里按秒写，而导出与渲染都喂归一化值——牛的三周期咀嚼于是只嚼了 0.93 下就跳回起点，
+十个供体的 `.animation.json` 全错。自检当时是按秒调用的，所以查的是一条从没被导出过的
+曲线。现在自检改走 `sample()`，和导出同一个入口，这类错不会再各说各话。
+
 用法:
   python3 scripts/models/stitched_beast/head_anim.py --donor wolf
   python3 scripts/models/stitched_beast/head_anim.py --donor cow --list
@@ -121,6 +127,15 @@ def _ears(p: Pose, b: dict[str, str], pitch: float, yaw: float = 0.0) -> None:
             p[b[k]].rot = [pitch, sgn * yaw, 0.0]
 
 
+def cycles(hz: float, length: float) -> float:
+    """循环动画在 length 秒里该走几个周期——**取整**，否则首末帧差半个冲程。
+
+    和 `core_anim.breathe` 是同一条纪律。`anims()` 那边已经把时长摆成整数个周期了，
+    这里再取一次整是防第二道：时长被 `max(..., 下限)` 钳过之后就不再是整数倍了。
+    """
+    return float(max(1, round(hz * max(length, 1e-6))))
+
+
 # ---------------------------------------------------------------- 七条动作
 def anim_idle(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """静息：呼吸 + 耳朵的细微游移 + 偶尔一次咬合。
@@ -131,8 +146,8 @@ def anim_idle(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     b = bones(hd)
-    u = t / max(length, 1e-6)
-    br = math.sin(2.0 * math.pi * breath_hz(hd) * t)
+    u = t
+    br = math.sin(2.0 * math.pi * cycles(breath_hz(hd), length) * u)
     p[b["head"]].rot = [0.8 * br, 0.0, 0.0]
     p[b["jaw"]].rot = [max(0.0, 1.6 * br), 0.0, 0.0]
     # 耳朵各转各的：两只耳同步会读成"一个开关在拨"，真兽的耳是各自独立扫的
@@ -155,8 +170,7 @@ def anim_chew(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     b = bones(hd)
-    hz = chew_hz(hd)
-    ph = 2.0 * math.pi * hz * t
+    ph = 2.0 * math.pi * cycles(chew_hz(hd), length) * t
     open_deg = hd.diet.chew_deg * 0.5 * (1.0 - math.cos(ph))
     sx, sz = chew_shift(hd)
     # 横滑落后开合四分之一周期：牙分开时滑过去，合上时碾回来——碾磨发生在闭合相，
@@ -179,12 +193,13 @@ def anim_bite(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     p = Pose()
     b = bones(hd)
     tc = close_time(hd)
+    sec = t * length                             # 张口/合颌都是**秒**的量，得先换算回去
     open_s = max(length - tc, 1e-3) * 0.55
-    if t < open_s:
-        s = smooth(t / open_s)
+    if sec < open_s:
+        s = smooth(sec / open_s)
         deg = hd.gape * s
-    elif t < open_s + tc:
-        s = (t - open_s) / tc
+    elif sec < open_s + tc:
+        s = (sec - open_s) / tc
         deg = hd.gape * (1.0 - s * s)            # 合颌是加速的：肌肉一路在缩
     else:
         deg = 0.0
@@ -204,7 +219,7 @@ def anim_alert(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     b = bones(hd)
-    u = t / max(length, 1e-6)
+    u = t
     s = smooth(min(u / (EAR_FLICK_S / max(length, 1e-6)), 1.0)) if length > 0 else 1.0
     hold = 1.0 if u < 0.75 else smooth(max(0.0, 1.0 - (u - 0.75) / 0.25))
     if "ear_l" in b or "ear_r" in b:
@@ -224,7 +239,7 @@ def anim_threat(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     b = bones(hd)
-    u = t / max(length, 1e-6)
+    u = t
     s = smooth(min(u * 3.0, 1.0)) * (1.0 if u < 0.7 else smooth(max(0.0, 1.0 - (u - 0.7) / 0.3)))
     _ears(p, b, -78.0 * s, -14.0 * s)
     p[b["head"]].rot = [14.0 * s, 0.0, 0.0]
@@ -253,17 +268,18 @@ def anim_butt(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     swing = 2.0 * arc * r_tip / max(st.speed, 1e-6)
     swing = min(max(swing, 0.06), length * 0.45)
     wind = length * 0.45
-    if t < wind:
-        p[b["head"]].rot = [-34.0 * smooth(t / wind), 0.0, 0.0]
-    elif t < wind + swing:
-        s = (t - wind) / swing
+    sec = t * length                             # 蓄力/挥击/回弹全是**秒**的量
+    if sec < wind:
+        p[b["head"]].rot = [-34.0 * smooth(sec / wind), 0.0, 0.0]
+    elif sec < wind + swing:
+        s = (sec - wind) / swing
         p[b["head"]].rot = [-34.0 + 70.0 * s * s, 0.0, 0.0]     # 加速挥下
     else:
         # 回弹必须**从挥击的末值接上**（+36°），否则两段之间跳一下——那一跳在采样里
         # 是一个无穷大的角速度，自检量出角尖 17 m/s 而角基是按 4.5 m/s 推的。
         # 节律锚在挥击时长上：以挥击为单位的衰减振荡，峰值角速度恒为挥击末速的 0.74 倍，
         # 撞完不会抖得比撞还快。
-        s = (t - wind - swing) / max(swing, 1e-6)
+        s = (sec - wind - swing) / max(swing, 1e-6)
         p[b["head"]].rot = [36.0 * math.exp(-1.6 * s) * math.cos(2.4 * s), 0.0, 0.0]
     _ears(p, b, -60.0)                            # 撞之前先把耳朵收起来
     return p
@@ -277,7 +293,7 @@ def anim_death(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     b = bones(hd)
-    u = min(t / max(length, 1e-6), 1.0)
+    u = min(t, 1.0)
     s = 1.0 - (1.0 - u) ** 2
     p[b["jaw"]].rot = [hd.gape * 0.55 * s, 0.0, 0.0]
     _ears(p, b, -34.0 * s, 6.0 * s)
@@ -292,12 +308,11 @@ def anim_graze(hd: HD.Head, rig: Rig, t: float, length: float) -> Pose:
     """
     p = Pose()
     b = bones(hd)
-    u = t / max(length, 1e-6)
+    u = t
     down = smooth(min(u / 0.3, 1.0)) * (1.0 if u < 0.75 else smooth(max(0.0, 1.0 - (u - 0.75) / 0.25)))
     p[b["head"]].rot = [46.0 * down, 3.0 * math.sin(2.0 * math.pi * u * 2.0) * down, 0.0]
     if hd.diet.occlusion in ("grind", "crush", "gnaw") and 0.3 < u < 0.75:
-        hz = chew_hz(hd)
-        ph = 2.0 * math.pi * hz * t
+        ph = 2.0 * math.pi * chew_hz(hd) * (u * length)
         p[b["jaw"]].rot = [hd.diet.chew_deg * 0.5 * (1.0 - math.cos(ph)), 0.0, 0.0]
         sx, _sz = chew_shift(hd)
         p[b["jaw"]].pos = [sx * 0.5 * (math.sin(ph - math.pi / 2.0) + 1.0), 0.0, 0.0]
