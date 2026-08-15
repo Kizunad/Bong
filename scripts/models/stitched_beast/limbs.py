@@ -1029,7 +1029,12 @@ def build(seed: int, *, socks: dict[str, C.Socket] | None = None,
         bu = max(_worst_burial(got[2]), _worst_ground(got[2], lgs))
         if ov <= FIT_TOL and bu <= 0.0:
             return got
-        score = max(ov - FIT_TOL, bu)
+        # 都不合格时怎么挑最不差的那只？**先看静止姿**。静止姿是真正被写进 .bbmodel 的
+        # 那份几何——动画只是它的一个视图。把两者同权比较的话，门会为了修一处只在某个
+        # 相位出现的问题而换掉一只静止姿完全合格的兽（实测 seed 5 的静止互穿因此从 0
+        # 变成 1.61 px）。所以按字典序：静止的违规量优先，周期的排第二。
+        st = max(_worst_overlap(got[2]) - FIT_TOL, _worst_burial(got[2]))
+        score = (max(st, 0.0), max(ov - FIT_TOL, bu))
         if best is None or score < best[0]:
             best = (score, got)
     if best is None:
@@ -1049,9 +1054,20 @@ def _worst_ground(limbs: dict[str, Limb], lgs: dict) -> float:
         lg = lgs.get(n)
         if lg is None:
             continue
+        # 净空的定义**照抄 `stand_pose` 的 `clearance`**：逐关节取两侧包络的大者，再被
+        # "它到脚尖还剩多长链"钳住（够不着的净空要求本来就无解，静态解算器就是这么写的）。
+        # 拿中段最粗那个半径去要求端点比静态解算器本身还严——门于是把静态完全合格的候选
+        # 也否掉，退而取一个更差的（seed 5 实测静态互穿从 0 变成 1.61 px）。
+        n_seg = len(lb.gene.segments)
+        nfoot = 1 if lb.gene.stance == "sprawling" else 2
+        nleg = n_seg - nfoot
+        rest = np.cumsum(list(lb.gene.segments)[::-1])[::-1]
+        need = [min(max(lb.node_r[max(i - 1, 0)], lb.node_r[min(i, n_seg)]),
+                    float(rest[i])) for i in range(nleg)]
         for caps in cycle_caps(lb, lg):
-            for a, b, r in caps[:-1]:          # 末节是脚，它本来就该贴着地
-                w = max(w, r - float(min(a[1], b[1])))
+            pts = [caps[0][0]] + [c[1] for c in caps]
+            for i in range(1, nleg):           # 髋骑在表皮上、脚本来就贴地，都不算
+                w = max(w, need[i] - float(pts[i][1]))
     return w
 
 
@@ -1262,7 +1278,12 @@ def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Lim
         return m
     lgs = lgs_all
     com2 = np.array([gait.com[0], gait.com[2]])
-    base_margin = LM.feasible(gait.limbs, com2)
+    # **量的必须是全周期的真余量，不是 `feasible` 那个"全脚着地"的上界。** 掰落点会改变
+    # 支撑多边形，而 `feasible` 只看所有脚都在地上的那一刻——摆动相里少一只脚时多边形
+    # 更小，正是它可能包不住质心的时候。用上界当判据的后果实测得很清楚：seed 9 掰完之后
+    # 某个相位的质心落到多边形外，下游 `contact_forces` 直接抛异常（"任何非负反力组合都
+    # 撑不住"），整只兽建不出来。
+    base_margin = LM.evaluate(gait.limbs, com2)[0]
     moved = False
     for _ in range(8):
         pairs = []
@@ -1308,8 +1329,8 @@ def _splay(gen, gait, socks, loads, feet, out: dict[str, Limb]) -> dict[str, Lim
             old_feet = {n: np.array(lgs[n].foot, float) for n in trial}
             for n, f in trial.items():
                 lgs[n].foot = f
-            margin = LM.feasible(gait.limbs, com2)
-            if margin < base_margin * 0.6:          # 掰开会站不住 ⇒ 退回去
+            margin = LM.evaluate(gait.limbs, com2)[0]
+            if margin < max(base_margin * 0.6, LM.MARGIN_OK):   # 掰开会站不住 ⇒ 退回去
                 for n, f in old_feet.items():
                     lgs[n].foot = f
                 continue
