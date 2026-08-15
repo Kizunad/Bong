@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import math
 import sys
 from pathlib import Path
@@ -426,6 +427,35 @@ def part_heads(rig: Rig, heads: dict[str, HD.Head]) -> int:
     return n
 
 
+def head_sweep(gen, gait, limbs, socks, k: int = 12) -> float:
+    """腿在**整个步态周期**里扫过头的最深一处（px）。给 `limbs.build` 的否决钩子。
+
+    肢体层看不见头——头是这一层解的，而腿摆起来会扫进头里：seed 9 实测一条腿从一颗头的
+    眼球里穿过去 1.52 px，静止姿完全不碰。判据与静态自检 ⑯ 共用 `overlaps`（含那条按
+    "离表皮多远"算的癒合豁免），只是把肢换成逐相位重折之后的姿态。
+
+    只比**含头的那些对**：肢与肢之间由肢体层自己那道门管，这里再算一遍是白工。
+    """
+    heads = HD.separate({hg.socket: HD.solve_head(hg, socks[hg.socket])
+                         for hg in gen.heads})
+    if not heads:
+        return 0.0
+    lgs = {lg.gene.socket: lg for lg in gait.limbs}
+    sweeps = {n: LB.cycle_caps(lb, lgs.get(n), k) for n, lb in limbs.items()}
+    worst = 0.0
+    for i in range(k):
+        moved = {}
+        for n, lb in limbs.items():
+            caps = sweeps[n][i % len(sweeps[n])]
+            clone = copy.copy(lb)
+            clone.joints = [caps[0][0]] + [c[1] for c in caps]
+            moved[n] = clone
+        for _na, _nb, d, _wa, _wb in overlaps(moved, heads, tol=0.0):
+            if _na.startswith("头") or _nb.startswith("头"):
+                worst = max(worst, d)
+    return worst
+
+
 def build(seed: int, *, bud_growth: float = 1.0
           ) -> tuple[Rig, LB.LM.Gait, dict[str, LB.Limb], dict[str, HD.Head]]:
     """`bud_growth` 只影响**没长肢的那些槽**画多大。
@@ -435,7 +465,8 @@ def build(seed: int, *, bud_growth: float = 1.0
     ——否则十几个满长的芽会把整只兽埋掉，腿一条都看不见（round 1 实测）。
     """
     socks = C.sockets()
-    gen, gait, limbs = LB.build(seed, socks=socks)
+    gen, gait, limbs = LB.build(seed, socks=socks,
+                                veto=lambda g, ga, lm: head_sweep(g, ga, lm, socks))
     heads = HD.separate({hg.socket: HD.solve_head(hg, socks[hg.socket])
                          for hg in gen.heads})
     rig = Rig(Palette(MATS, swatch=8, size=64))
