@@ -427,7 +427,7 @@ def part_heads(rig: Rig, heads: dict[str, HD.Head]) -> int:
     return n
 
 
-def head_sweep(gen, gait, limbs, socks, k: int = 12) -> float:
+def head_sweep(gen, gait, limbs, socks, k: int = 40) -> float:
     """腿在**整个步态周期**里扫过头的最深一处（px）。给 `limbs.build` 的否决钩子。
 
     肢体层看不见头——头是这一层解的，而腿摆起来会扫进头里：seed 9 实测一条腿从一颗头的

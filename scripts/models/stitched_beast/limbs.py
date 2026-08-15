@@ -1024,9 +1024,9 @@ def build(seed: int, *, socks: dict[str, C.Socket] | None = None,
         # seed 2/4 长期挂在这一条上）。它和前者是同一类事实——这个基因组在这具身体上
         # 摆不下——所以处理方式也该一样：回头要下一只，而不是硬摆一个穿模的姿势。
         # 两条阈值不一样，因为两条自检的判据不一样：互穿允许 0.75 px（和自检 ⑯ 同一个
-        # 阈值，肉长在一起是对的），而"关节埋进核心"（自检 ②）是**一点都不许**。
+        # 阈值，肉长在一起是对的），而"埋进核心 / 压进地面"是**一点都不许**。
         ov = max(_worst_overlap(got[2], lgs), extra)
-        bu = _worst_burial(got[2])
+        bu = max(_worst_burial(got[2]), _worst_ground(got[2], lgs))
         if ov <= FIT_TOL and bu <= 0.0:
             return got
         score = max(ov - FIT_TOL, bu)
@@ -1035,6 +1035,24 @@ def build(seed: int, *, socks: dict[str, C.Socket] | None = None,
     if best is None:
         raise ValueError(f"seed={seed} 没采到装得下自己腿的配置")
     return best[1]
+
+
+def _worst_ground(limbs: dict[str, Limb], lgs: dict) -> float:
+    """整个周期里，肢体的**肉**最深压进地面多少（px）。
+
+    `stand_pose` 解静止姿时逐关节封了离地净空（`clearance`），可 `refold` 沿着定好的
+    协同伸缩，管不了这个——走到某些相位膝盖就会往下探（seed 11 实测压到地面以下 0.66 px）。
+    和"塞不下"一样，这也是"这个基因组在这具身体上走不了"的证据，交给同一道门去重采。
+    """
+    w = 0.0
+    for n, lb in limbs.items():
+        lg = lgs.get(n)
+        if lg is None:
+            continue
+        for caps in cycle_caps(lb, lg):
+            for a, b, r in caps[:-1]:          # 末节是脚，它本来就该贴着地
+                w = max(w, r - float(min(a[1], b[1])))
+    return w
 
 
 def _worst_burial(limbs: dict[str, Limb]) -> float:
@@ -1131,7 +1149,7 @@ def meta_angle(stance: str, contact, hip, out, foot_segs, span: float) -> float:
     return hi
 
 
-def cycle_caps(lb: Limb, lg, k: int = 16) -> list[list[tuple[np.ndarray, np.ndarray, float]]]:
+def cycle_caps(lb: Limb, lg, k: int = 40) -> list[list[tuple[np.ndarray, np.ndarray, float]]]:
     """这条肢在**整个步态周期**里扫过的一串姿态，各自近似成胶囊。
 
     静止姿不打架不代表走起来不打架——腿在一个周期里扫过的体积比它站着时占的大得多。
@@ -1140,6 +1158,10 @@ def cycle_caps(lb: Limb, lg, k: int = 16) -> list[list[tuple[np.ndarray, np.ndar
     只重折不重解姿态：折叠协同是站姿定死的（见 `synergy`），走一步只是沿它伸缩。落点
     走 `LimbGait.foot_at`——和动画用的是同一条轨迹，这是必须的：两边各写一份的话，掰
     落点掰的是另一条腿（实测这里只看到 1.12 px，而动画真穿 1.97 px）。
+
+    `k` 默认 40，和 `check_beast_anim.N` 一样。**门与自检必须在同一组相位上比**：门只采
+    16 个相位时，峰值落在两个采样点之间就漏掉了（seed 2 实测门看到 ≤0.75 而自检量出
+    0.85）。和 `locomotion.SAMPLES` 取 40/48 的公倍数是同一条纪律。
     """
     cached = getattr(lb, "_sweep", None)
     if cached is not None and cached[0] == k:
@@ -1164,14 +1186,19 @@ def cycle_caps(lb: Limb, lg, k: int = 16) -> list[list[tuple[np.ndarray, np.ndar
     # **静止姿必须也在这一串里**：模型是按中立落点建的，它是渲染出来的那一帧，不许穿。
     # 而它未必落在任何一个采样相位上（中立落点是支撑相的中点，不是 j/k 里的某个）。
     poses = [limb_caps(lb)]
-    for j in range(k):
-        con = lg.foot_at(j / k)
-        deg = meta_angle(lb.gene.stance, con, hip, out, foot_segs, sum(leg_segs))
-        paw = foot_chain(lb.gene.stance, con, foot_segs, out, deg)
-        leg, phi = refold(hip, paw[0], leg_segs, lb.gene.kind, w, phi, nrm)
-        pts = leg + paw[1:]
-        poses.append([(np.asarray(a, float), np.asarray(b, float), rad[i])
-                      for i, (a, b) in enumerate(zip(pts, pts[1:]))])
+    # **两圈**：第一圈把折叠量 φ 接力算到绕回起点，第二圈才留下几何。动画层的 `_march`
+    # 也是两圈——两边必须选到同一个解支，否则门比的是另一条腿。
+    for rnd in range(2):
+        if rnd:
+            poses = [limb_caps(lb)]
+        for j in range(k):
+            con = lg.foot_at(j / k)
+            deg = meta_angle(lb.gene.stance, con, hip, out, foot_segs, sum(leg_segs))
+            paw = foot_chain(lb.gene.stance, con, foot_segs, out, deg)
+            leg, phi = refold(hip, paw[0], leg_segs, lb.gene.kind, w, phi, nrm)
+            pts = leg + paw[1:]
+            poses.append([(np.asarray(a, float), np.asarray(b, float), rad[i])
+                          for i, (a, b) in enumerate(zip(pts, pts[1:]))])
     # 挂在这条肢自己身上。`solve_limb` 每次都造新对象，所以缓存天然随几何一起作废——
     # 不这么做的话 n 条肢两两比较会把同一条的扫掠算 n−1 遍（6 条肢就是 5 倍白工）。
     lb._sweep = (k, poses)
