@@ -66,6 +66,9 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
+    _wait_keepalive_after,
+)
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
 )
@@ -1838,6 +1841,46 @@ class _CommandFakeBot(_FakeBot):
             if not self.pending:
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
+
+
+class DoubleLoginScenarioTest(unittest.TestCase):
+    def test_keepalive_probe_rejects_historical_and_boundary_events(self):
+        marker = 2.0
+        bot = _FakeBot(
+            [
+                _FakeEvent(1.0, "keepalive", {"id": 1}),
+                _FakeEvent(marker, "keepalive", {"id": 2}),
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"t>2\.000s",
+            msg=(
+                "join/cleanup phase marker 之前或恰好 marker 时收到的 KeepAlive"
+                " 不得冒充该阶段的 surviving-connection 连续性证据"
+            ),
+        ):
+            _wait_keepalive_after(bot, marker, "重复登录阶段")
+
+    def test_keepalive_probe_returns_only_a_strictly_new_event(self):
+        marker = 2.0
+        new_event = _FakeEvent(2.001, "keepalive", {"id": 3})
+        bot = _FakeBot(
+            [
+                _FakeEvent(1.0, "keepalive", {"id": 1}),
+                _FakeEvent(marker, "keepalive", {"id": 2}),
+                new_event,
+            ]
+        )
+
+        observed = _wait_keepalive_after(bot, marker, "重复登录阶段")
+
+        self.assertIs(
+            observed,
+            new_event,
+            "KeepAlive 断言必须返回严格晚于 marker 的新事件，而不是历史/边界事件",
+        )
 
 
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
