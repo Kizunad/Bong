@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
-use valence::prelude::DVec3;
+use valence::prelude::{ChunkPos, ChunkView, DVec3};
 
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -22,6 +23,7 @@ pub enum SpawnPurpose {
 pub struct PlayerSpawnSelector<'a> {
     registry: Option<&'a ZoneRegistry>,
     distribution: Vec<SpawnDistributionAnchor>,
+    materialized_chunks: BTreeSet<ChunkPos>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,12 +79,18 @@ struct SpawnDistributionAnchorConfig {
 
 impl<'a> PlayerSpawnSelector<'a> {
     pub fn new(registry: &'a ZoneRegistry) -> Self {
+        let distribution = distribution_from_zone_patrol_anchors(registry);
         Self {
             registry: Some(registry),
-            distribution: distribution_from_zone_patrol_anchors(registry),
+            materialized_chunks: crate::world::materialized_fallback_chunks(
+                registry,
+                &distribution,
+            ),
+            distribution,
         }
     }
 
+    #[cfg(test)]
     fn with_distribution(
         registry: &'a ZoneRegistry,
         distribution: Vec<SpawnDistributionAnchor>,
@@ -94,6 +102,10 @@ impl<'a> PlayerSpawnSelector<'a> {
         };
         Self {
             registry: Some(registry),
+            materialized_chunks: crate::world::materialized_fallback_chunks(
+                registry,
+                &distribution,
+            ),
             distribution,
         }
     }
@@ -103,6 +115,15 @@ impl<'a> PlayerSpawnSelector<'a> {
         Self {
             registry: None,
             distribution: Vec::new(),
+            materialized_chunks: BTreeSet::new(),
+        }
+    }
+
+    fn from_snapshot(snapshot: &'a FallbackSpawnSnapshot) -> Self {
+        Self {
+            registry: Some(&snapshot.registry),
+            distribution: snapshot.distribution.clone(),
+            materialized_chunks: snapshot.materialized_chunks.clone(),
         }
     }
 
@@ -169,27 +190,45 @@ impl<'a> PlayerSpawnSelector<'a> {
             let tz = pos.z.floor() as i32;
             blocked_tile_index.contains(&(tx, tz))
         };
+        // fallback bootstrap 只物化出生分布的本地视域 union，并额外覆盖固定
+        // emergency view。一个结果 chunk 只有在自己的完整运行时视域也被 producer
+        // 物化时才安全；扫描会反复命中同一 chunk，因此缓存这个 expensive decision，
+        // 避免每个 tile 都重新做约 2,025 次 BTreeSet 查询。
+        let full_view_cache = RefCell::new(BTreeMap::<ChunkPos, bool>::new());
+        let fully_materialized_at = |chunk: ChunkPos| {
+            let cached = full_view_cache.borrow().get(&chunk).copied();
+            if let Some(covered) = cached {
+                return covered;
+            }
+            let covered = ChunkView::new(chunk, crate::world::FALLBACK_VIEW_DISTANCE_CHUNKS)
+                .iter()
+                .all(|view_chunk| self.materialized_chunks.contains(&view_chunk));
+            full_view_cache.borrow_mut().insert(chunk, covered);
+            covered
+        };
+        // 把 producer 返回的 exact chunk set 与 blocked tile 合并为同一个拒绝谓词，
+        // 保证候选、簇中心、emergency 直返和螺旋扫描都不会把玩家送进未物化的
+        // fallback 世界或其视域边缘之外。
+        let unavailable_at =
+            |pos: DVec3| blocked_at(pos) || !fully_materialized_at(ChunkPos::from(pos));
 
         let clamped = zone.clamp_position(candidate);
-        if blocked_at(clamped) {
+        if unavailable_at(clamped) {
             let fallback = zone.clamp_position(DVec3::new(
                 selected.anchor.x,
                 selected.safe_y,
                 selected.anchor.z,
             ));
-            // review finding：钳制后的簇中心必须再过一遍同一 blocked_tiles 谓词 ——
-            // clamp_position 只保证 AABB 内、不清除 blocked 状态，中心本身撞上 blocked
-            // tile 时回退到已知有效 emergency 位置，绝不把玩家生到 zone 显式排除的坐标。
-            if blocked_at(fallback) {
-                // review finding：emergency 位置本身也可能被 blocked_tiles 显式排除 ——
-                // 必须先过同一 clamp_position 与 blocked_at 谓词，否则会把玩家生到 zone
-                // 禁止的坐标上。clamp_position 只保证 AABB 内、不清除 blocked 状态。
+            // clamp_position 只保证 AABB 内；簇中心仍须同时满足 blocked_tiles 与
+            // materialized union，避免配置中的分布簇与实际 eager chunk 集漂移。
+            if unavailable_at(fallback) {
+                // emergency 位置本身也可能被 blocked_tiles 排除，或不在本轮 fallback
+                // union 内；只有通过同一拒绝谓词才允许直接返回。
                 let emergency = zone.clamp_position(DVec3::from_array(EMERGENCY_SPAWN_POSITION));
-                if !blocked_at(emergency) {
+                if !unavailable_at(emergency) {
                     tracing::warn!(
-                        "[bong][player] blocked-tile fallback 的簇中心 ({}, {}) 本身也在 \
-                         blocked_tiles 上；emergency tile ({}, {}) 空闲，回退到 emergency \
-                         spawn（钳制后）",
+                        "[bong][player] blocked/未物化的簇中心 ({}, {}) 回退到可用 emergency \
+                         tile ({}, {})（钳制后）",
                         fallback.x.floor() as i32,
                         fallback.z.floor() as i32,
                         emergency.x.floor() as i32,
@@ -197,23 +236,28 @@ impl<'a> PlayerSpawnSelector<'a> {
                     );
                     return [emergency.x, emergency.y, emergency.z];
                 }
-                // emergency tile 也被排除：在 zone AABB 内螺旋扫描最近空闲 tile。
+                // emergency tile 也不可用：在 zone AABB 内扫描最近的、同时属于已物化
+                // fallback union 且未被 blocked_tiles 排除的 tile。
                 tracing::warn!(
-                    "[bong][player] 候选、簇中心与 emergency tile ({}, {}) 均在 \
-                     blocked_tiles 上；扫描 zone 内最近空闲 tile 作为最后回退",
+                    "[bong][player] 候选、簇中心与 emergency tile ({}, {}) 均不可用；\
+                     扫描已物化 fallback union 内最近空闲 tile 作为最后回退",
                     emergency.x.floor() as i32,
                     emergency.z.floor() as i32,
                 );
                 let start = (emergency.x.floor() as i32, emergency.z.floor() as i32);
-                let (free_x, free_z) =
-                    nearest_unblocked_tile(zone, start, &blocked_at, EMERGENCY_SCAN_WORK_BUDGET)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "[bong][player] spawn zone `{}` 在扫描预算内没有可用空闲 \
-                                 tile （全部被 blocked_tiles 排除或预算耗尽），无法生成出生点",
-                                zone.name
-                            )
-                        });
+                let (free_x, free_z) = nearest_unblocked_tile(
+                    zone,
+                    start,
+                    &unavailable_at,
+                    EMERGENCY_SCAN_WORK_BUDGET,
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "[bong][player] spawn zone `{}` 在扫描预算内没有可用空闲 \
+                         tile （blocked、未物化或预算耗尽），无法生成出生点",
+                        zone.name
+                    )
+                });
                 return [free_x, fallback.y, free_z];
             }
             return [fallback.x, fallback.y, fallback.z];
@@ -276,11 +320,7 @@ fn nearest_unblocked_tile(
         if tx < min_tx_i || tx > max_tx_i || tz < min_tz_i || tz > max_tz_i {
             return None;
         }
-        let pos = zone.clamp_position(DVec3::new(
-            tx as f64 + 0.5,
-            min.y,
-            tz as f64 + 0.5,
-        ));
+        let pos = zone.clamp_position(DVec3::new(tx as f64 + 0.5, min.y, tz as f64 + 0.5));
         if !blocked(pos) {
             return Some((pos.x, pos.z));
         }
@@ -340,6 +380,7 @@ fn stable_hash(seed: &str, purpose: SpawnPurpose) -> u64 {
 pub(crate) struct FallbackSpawnSnapshot {
     pub(crate) registry: ZoneRegistry,
     pub(crate) distribution: Vec<SpawnDistributionAnchor>,
+    pub(crate) materialized_chunks: BTreeSet<ChunkPos>,
 }
 
 static FALLBACK_SPAWN_SNAPSHOT: OnceLock<FallbackSpawnSnapshot> = OnceLock::new();
@@ -355,9 +396,12 @@ impl FallbackSpawnSnapshot {
             &registry,
             effective_default_spawn_distribution(&registry),
         );
+        let materialized_chunks =
+            crate::world::materialized_fallback_chunks(&registry, &distribution);
         Self {
             registry,
             distribution,
+            materialized_chunks,
         }
     }
 }
@@ -402,8 +446,7 @@ fn clamp_distribution_to_spawn_zone(
 
 pub fn fallback_spawn(seed: &str, purpose: SpawnPurpose) -> [f64; 3] {
     let snapshot = fallback_spawn_snapshot();
-    PlayerSpawnSelector::with_distribution(&snapshot.registry, snapshot.distribution.clone())
-        .select(seed, purpose)
+    PlayerSpawnSelector::from_snapshot(snapshot).select(seed, purpose)
 }
 
 pub fn emergency_spawn_position() -> [f64; 3] {
@@ -715,6 +758,130 @@ mod tests {
     }
 
     #[test]
+    fn remote_distribution_blocked_fallback_stays_in_exact_materialized_union() {
+        // 交叉配置回归：emergency 位于 chunk (0,0)，额外 zero-radius 分布簇位于
+        // 正西一块。两者的 producer 矩形 union 横向扩展到 -23..22；扫描从 (8,8)
+        // 出发时会先遇到 +1 chunk 中「已 materialize 但 full view 不安全」的 tile，
+        // 再到达 -1 chunk 中 full-view-safe 的 tile。只检查 center chunk membership
+        // 的实现会错误地停在 +1 chunk，无法通过这个 fixture。
+        let view_distance = crate::world::FALLBACK_VIEW_DISTANCE_CHUNKS;
+        let emergency_chunk = ChunkPos::from(DVec3::from_array(EMERGENCY_SPAWN_POSITION));
+        assert_eq!(emergency_chunk, ChunkPos::new(0, 0));
+        let safe_chunk = ChunkPos::new(-1, 0);
+        let unsafe_edge_chunk = ChunkPos::new(1, 0);
+        let anchor = DVec3::new(-8.0, 72.0, 8.0);
+        let anchor_tile = (anchor.x.floor() as i32, anchor.z.floor() as i32);
+        let emergency_tile = (
+            EMERGENCY_SPAWN_POSITION[0].floor() as i32,
+            EMERGENCY_SPAWN_POSITION[2].floor() as i32,
+        );
+        let representative_unsafe_tile = (16, emergency_tile.1);
+        let representative_safe_tile = (-1, emergency_tile.1);
+        assert_eq!(
+            ChunkPos::from(DVec3::new(
+                representative_unsafe_tile.0 as f64 + 0.5,
+                72.0,
+                representative_unsafe_tile.1 as f64 + 0.5,
+            )),
+            unsafe_edge_chunk,
+            "representative +1 tile must map to the intended unsafe adjacent chunk"
+        );
+        assert_eq!(
+            ChunkPos::from(DVec3::new(
+                representative_safe_tile.0 as f64 + 0.5,
+                72.0,
+                representative_safe_tile.1 as f64 + 0.5,
+            )),
+            safe_chunk,
+            "representative -1 tile must map to the intended safe adjacent chunk"
+        );
+        assert_eq!(
+            (representative_unsafe_tile.0 - emergency_tile.0)
+                .abs()
+                .max((representative_unsafe_tile.1 - emergency_tile.1).abs()),
+            8,
+            "representative +1 tile must be reached on ring 8"
+        );
+        assert_eq!(
+            (representative_safe_tile.0 - emergency_tile.0)
+                .abs()
+                .max((representative_safe_tile.1 - emergency_tile.1).abs()),
+            9,
+            "representative -1 tile must be reached on ring 9"
+        );
+
+        // The complete emergency center chunk is blocked. The anchor/candidate tile is also
+        // blocked, forcing the selector through the emergency scan. No large synthetic overlay
+        // is needed: the spiral reaches the representative +1 tile on ring 8, then the -1
+        // adjacent chunk on ring 9, far below EMERGENCY_SCAN_WORK_BUDGET.
+        let mut blocked_tiles = Vec::with_capacity(257);
+        for tile_x in 0..16 {
+            for tile_z in 0..16 {
+                blocked_tiles.push((tile_x, tile_z));
+            }
+        }
+        blocked_tiles.push(anchor_tile);
+
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-20_000.0, -64.0, -20_000.0),
+                DVec3::new(20_000.0, 320.0, 20_000.0),
+            ),
+            blocked_tiles,
+        );
+        let selector = PlayerSpawnSelector::with_distribution(
+            &registry,
+            vec![SpawnDistributionAnchor {
+                anchor,
+                radius: 0.0,
+                weight: 1,
+                safe_y: 72.0,
+            }],
+        );
+        let expected_union =
+            crate::world::materialized_fallback_chunks(&registry, &selector.distribution);
+        let full_view_is_materialized = |chunk: ChunkPos| {
+            ChunkView::new(chunk, view_distance)
+                .iter()
+                .all(|view_chunk| expected_union.contains(&view_chunk))
+        };
+
+        assert_eq!(
+            selector.materialized_chunks, expected_union,
+            "selector 必须保存同一 producer 计算出的 exact fallback union"
+        );
+        assert!(
+            expected_union.contains(&unsafe_edge_chunk),
+            "+1 adjacent chunk must be part of the materialized producer union"
+        );
+        assert!(
+            !full_view_is_materialized(unsafe_edge_chunk),
+            "+1 adjacent chunk must be materialized but not full-view-safe"
+        );
+        assert!(
+            full_view_is_materialized(safe_chunk),
+            "-1 distribution chunk must have a fully materialized view"
+        );
+
+        let pos = selector.select("remote-union", SpawnPurpose::InitialLogin);
+        let result = DVec3::from(pos);
+        let result_tile = (result.x.floor() as i32, result.z.floor() as i32);
+        let result_chunk = ChunkPos::from(result);
+        assert_eq!(
+            result_chunk, safe_chunk,
+            "full-view-safe scan must skip +1 and reach the full-view-safe -1 chunk"
+        );
+        assert!(
+            !registry.zones[0].blocked_tiles.contains(&result_tile),
+            "selected scan result must be unblocked (pos={pos:?})"
+        );
+        assert!(
+            full_view_is_materialized(result_chunk),
+            "selected scan result must have its complete runtime view in the producer union"
+        );
+    }
+
+    #[test]
     fn blocked_tile_fallback_uses_emergency_when_cluster_center_also_blocked() {
         // review finding：候选点 (10000,72,0) 钳制到 (750,72,0) 后撞上 blocked tile
         // (750,0)，而簇中心钳制后仍在同一 (750,0) 上 —— 旧实现直接返回这块被 zone 显式
@@ -740,8 +907,7 @@ mod tests {
         let pos = selector.select("blocked-edge", SpawnPurpose::InitialLogin);
 
         assert_eq!(
-            pos,
-            EMERGENCY_SPAWN_POSITION,
+            pos, EMERGENCY_SPAWN_POSITION,
             "候选与簇中心都在 blocked tile (750,0) 上时，回退必须落到 emergency spawn"
         );
         assert!(
@@ -749,10 +915,9 @@ mod tests {
             "blocked-tile 回退必须落在出生 zone 内，绝不返回界外原始锚点"
         );
         assert!(
-            !registry.zones[0].blocked_tiles.contains(&(
-                pos[0].floor() as i32,
-                pos[2].floor() as i32
-            )),
+            !registry.zones[0]
+                .blocked_tiles
+                .contains(&(pos[0].floor() as i32, pos[2].floor() as i32)),
             "回退位置不得仍是 blocked tile"
         );
     }
@@ -886,8 +1051,7 @@ mod tests {
         };
         let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 1_000);
         assert_eq!(
-            found,
-            None,
+            found, None,
             "空闲 tile 在扫描预算之外时必须 fail-closed 返回 None，不得无界扫完整个 zone"
         );
     }
@@ -913,8 +1077,7 @@ mod tests {
         };
         let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 1_000);
         assert_eq!(
-            found,
-            None,
+            found, None,
             "病态 zone 下预算耗尽必须 fail-closed 返回 None"
         );
         assert_eq!(
@@ -942,11 +1105,7 @@ mod tests {
             false
         };
         let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 0);
-        assert_eq!(
-            found,
-            None,
-            "work_budget=0 必须直接 fail-closed 返回 None"
-        );
+        assert_eq!(found, None, "work_budget=0 必须直接 fail-closed 返回 None");
         assert_eq!(
             evaluations.get(),
             0,
@@ -956,11 +1115,9 @@ mod tests {
 
     #[test]
     fn emergency_scan_accepts_free_tile_on_the_final_permitted_evaluation() {
-        // review finding：预算边界只有「空闲 tile 远在预算外」的粗粒度测试，区分不了
-        // 「预算=N 只允许 N-1 次求值」的 off-by-one 实现。本测试把唯一空闲 tile 精确
-        // 放在第 5 次（=预算上限）求值的枚举位置：预算 5 下 ring0 消耗 1 次、(0,0)
-        // blocked，ring1 前 4 个枚举点 (-1,-1)(0,-1)(1,-1)(-1,1) 中第 4 个 (-1,1)
-        // 恰好是第 5 次求值——恰在最后一次允许的求值上命中的空闲 tile 必须被接受。
+        // 预算边界必须钉死到真实螺旋枚举顺序，而不是只写一个看似位于第五圈的
+        // 坐标：ring0 的 (0,0) 是第 1 次；ring1 依次访问 (-1,-1)、(-1,1)、
+        // (0,-1)、(0,1)，所以 (0,1) 才是第 5 次 predicate evaluation。
         let registry = synthetic_registry(
             (
                 DVec3::new(-64.0, -64.0, -64.0),
@@ -968,17 +1125,24 @@ mod tests {
             ),
             Vec::new(),
         );
-        let free = (-1, 1);
+        let free = (0, 1);
+        let evaluations = std::cell::Cell::new(0usize);
         let blocked = |pos: DVec3| {
-            let tx = pos.x.floor() as i32;
-            let tz = pos.z.floor() as i32;
-            tx != free.0 || tz != free.1
+            evaluations.set(evaluations.get() + 1);
+            let tile = (pos.x.floor() as i32, pos.z.floor() as i32);
+            tile != free
         };
         let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 5);
         assert_eq!(
             found,
-            Some((-0.5, 1.5)),
-            "唯一空闲 tile 恰在第 5 次（=预算上限）求值时命中，必须返回其 tile center：预算耗尽检查发生在 decrement 前/后的 off-by-one 实现在此必红"
+            Some((0.5, 1.5)),
+            "唯一空闲 tile 恰在第 5 次（=预算上限）求值时命中，必须返回其 tile center"
+        );
+        assert_eq!(
+            evaluations.get(),
+            5,
+            "第五次 predicate evaluation 命中后不得继续扫描或提前停止（actual={})",
+            evaluations.get()
         );
     }
 
@@ -1061,8 +1225,7 @@ mod tests {
             EMERGENCY_SCAN_WORK_BUDGET,
         );
         assert_eq!(
-            found,
-            None,
+            found, None,
             "zone 全部 tile 均被 blocked 排除时，扫描必须 fail-closed 返回 None"
         );
     }
@@ -1231,15 +1394,15 @@ mod tests {
         );
         // (输入 anchor, 输入 safe_y, 期望 anchor, 期望 safe_y)
         let cases: [([f64; 3], f64, [f64; 3], f64); 9] = [
-            ([10_000.0, 72.0, 0.0], 72.0, [750.0, 72.0, 0.0], 72.0),   // +X 越界
+            ([10_000.0, 72.0, 0.0], 72.0, [750.0, 72.0, 0.0], 72.0), // +X 越界
             ([-10_000.0, 72.0, 0.0], 72.0, [-750.0, 72.0, 0.0], 72.0), // -X 越界
-            ([0.0, 72.0, 10_000.0], 72.0, [0.0, 72.0, 750.0], 72.0),   // +Z 越界
+            ([0.0, 72.0, 10_000.0], 72.0, [0.0, 72.0, 750.0], 72.0), // +Z 越界
             ([0.0, 72.0, -10_000.0], 72.0, [0.0, 72.0, -750.0], 72.0), // -Z 越界
-            ([0.0, 1_000.0, 0.0], 72.0, [0.0, 320.0, 0.0], 72.0),      // +Y 越界
-            ([0.0, -500.0, 0.0], 72.0, [0.0, -64.0, 0.0], 72.0),       // -Y 越界
-            ([0.0, 72.0, 0.0], 1_000.0, [0.0, 72.0, 0.0], 320.0),      // safe_y 上界
-            ([0.0, 72.0, 0.0], -1_000.0, [0.0, 72.0, 0.0], -64.0),     // safe_y 下界
-            ([100.0, 72.0, 200.0], 72.0, [100.0, 72.0, 200.0], 72.0),  // 界内 no-op
+            ([0.0, 1_000.0, 0.0], 72.0, [0.0, 320.0, 0.0], 72.0),    // +Y 越界
+            ([0.0, -500.0, 0.0], 72.0, [0.0, -64.0, 0.0], 72.0),     // -Y 越界
+            ([0.0, 72.0, 0.0], 1_000.0, [0.0, 72.0, 0.0], 320.0),    // safe_y 上界
+            ([0.0, 72.0, 0.0], -1_000.0, [0.0, 72.0, 0.0], -64.0),   // safe_y 下界
+            ([100.0, 72.0, 200.0], 72.0, [100.0, 72.0, 200.0], 72.0), // 界内 no-op
         ];
         let distribution: Vec<SpawnDistributionAnchor> = cases
             .iter()

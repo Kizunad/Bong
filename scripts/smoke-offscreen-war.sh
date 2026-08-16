@@ -13,6 +13,8 @@ set -euo pipefail
 # exec "$SERVER_BINARY" 启动（不是 cargo run）。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/smoke-owned-artifacts.sh
+source "$ROOT/scripts/lib/smoke-owned-artifacts.sh"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="offscreen-war-p0"
 SCRIPT_TAG="smoke-offscreen-war"
@@ -25,7 +27,10 @@ ERROR_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-error.log"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
-SERVER_BINARY="$RUN_DIR/bong-server"
+# Owned paths stay empty until the exact canonical run directory exists and the
+# server build stage assigns its run-private target/binary.
+SERVER_BINARY=""
+CARGO_TARGET_ROOT=""
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -45,6 +50,15 @@ DOCKER_CONTAINER_NAME="bong-${TASK_ID}-smoke-redis-${RUN_ID}"
 DOCKER_REDIS_STARTED=0
 
 mkdir -p "$EVIDENCE_DIR" "$RUN_DIR"
+EVIDENCE_DIR="$(realpath -e -- "$EVIDENCE_DIR")"
+RUN_DIR="$(realpath -e -- "$RUN_DIR")"
+case "$RUN_DIR" in
+  "$EVIDENCE_DIR"/*) ;;
+  *) echo "[smoke-cleanup] run directory escaped evidence root: $RUN_DIR" >&2; exit 1 ;;
+esac
+REDIS_LOG="$RUN_DIR/redis.log"
+SERVER_LOG="$RUN_DIR/server.log"
+OBSERVE_LOG="$RUN_DIR/observe.log"
 touch "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -145,9 +159,33 @@ ensure_redis() {
 }
 
 cleanup() {
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi
-  if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then kill "$REDIS_PID" 2>/dev/null || true; wait "$REDIS_PID" 2>/dev/null || true; fi
-  if [ "$DOCKER_REDIS_STARTED" -eq 1 ]; then docker rm -f "$DOCKER_CONTAINER_NAME" >/dev/null 2>&1 || true; fi
+  local original_status=$?
+  local cleanup_status=0
+  local final_status
+  trap - EXIT
+  set +e
+
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
+    kill "$REDIS_PID" 2>/dev/null || true
+    wait "$REDIS_PID" 2>/dev/null || true
+  fi
+  if [ "$DOCKER_REDIS_STARTED" -eq 1 ]; then
+    docker rm -f "$DOCKER_CONTAINER_NAME" >/dev/null 2>&1 || true
+  fi
+  if ! smoke_cleanup_owned_artifacts "$RUN_DIR" "$CARGO_TARGET_ROOT" "$SERVER_BINARY"; then
+    cleanup_status=1
+    echo "[smoke-cleanup] refusing or failing run-private artifact cleanup; logs retained" >&2
+  fi
+
+  final_status=$original_status
+  if [ "$final_status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+    final_status=1
+  fi
+  exit "$final_status"
 }
 trap cleanup EXIT
 
@@ -168,6 +206,8 @@ clear_dormant_key >>"$OBSERVE_LOG" 2>&1 || finalize_failure "seed" "clear dorman
 pass "cleared bong:npc/dormant (server default-seeds factioned rogues)"
 
 CURRENT_STAGE="server"
+CARGO_TARGET_ROOT="$RUN_DIR/bong-target"
+SERVER_BINARY="$RUN_DIR/bong-server"
 if ! (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   # review finding：build-token 只锁 cargo 子进程，机器共享 /tmp/bong-target 的

@@ -2,7 +2,9 @@
 # Bot e2e 编排：起 server（headless offline）→ 跑 scripts/bot/ 协议级黑盒场景 → 收尾。
 #
 # CI（.github/workflows/e2e.yml「Bot e2e stage」）在 release 二进制已构建、redis 已起的
-# job 里调用本脚本，经构建令牌 wrapper cargo run --release 复用缓存。
+# job 里调用本脚本。CI 通过 BONG_E2E_PREBUILT_SERVER_MANIFEST 传入一次构建、
+# SHA-256 + checkout HEAD 对拍的 release artifact；每个顺序 stage 复制到自己的 run 目录。
+# 未提供 manifest 的本地调用仍走本轮 run-private build 路径。
 #
 # 本地用法：
 #   bash scripts/bot-e2e.sh                          # 自动起 server（release）
@@ -16,6 +18,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/smoke-owned-artifacts.sh
+source "$ROOT/scripts/lib/smoke-owned-artifacts.sh"
 HOST="${BOT_E2E_HOST:-127.0.0.1}"
 PORT="${BOT_E2E_PORT:-25565}"
 PROFILE="${BOT_E2E_PROFILE:-release}"
@@ -91,6 +95,7 @@ BOT_RASTER_READY_PAYLOAD=""
 # 中途失败时 rm 掉调用方任意可写文件 / 无界累积 target 树）。先赋空值切断继承。
 SERVER_BINARY=""
 CARGO_TARGET_ROOT=""
+BONG_E2E_PREBUILT_SERVER_MANIFEST="${BONG_E2E_PREBUILT_SERVER_MANIFEST:-}"
 BOT_FALLBACK_READY_PATTERN='^([[:cntrl:]]\[[0-9;]*m)*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[^[:space:][:cntrl:]]+([[:cntrl:]]\[[0-9;]*m)*[[:space:]]+([[:cntrl:]]\[[0-9;]*m)*[[:space:]]*INFO([[:cntrl:]]\[[0-9;]*m)*[[:space:]]+\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*$'
 
 # ownership 只能由本轮 self-start server 的 exact ready marker 授予；拒绝继承调用方
@@ -267,6 +272,12 @@ kill_tree() {
 }
 
 cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  local final_status
+  trap - EXIT
+  set +e
+
   if [ -n "${WATCH_PID:-}" ] && kill -0 "$WATCH_PID" 2>/dev/null; then
     kill "$WATCH_PID" 2>/dev/null || true
     wait "$WATCH_PID" 2>/dev/null || true
@@ -288,26 +299,22 @@ cleanup() {
   if [ -n "$BOT_NOVICE_RASTER_DIR" ] && [ -d "$BOT_NOVICE_RASTER_DIR" ]; then
     rm -rf "$BOT_NOVICE_RASTER_DIR"
   fi
-  # 每次自起都会向 evidence 目录 install 一份完整 server 可执行文件；server 已终止后
-  # 在这里移除，避免每个本地 run 都永久保留一份整二进制（evidence 目录只留 log/场景证据）。
-  # 删除前必须做证据目录包含性校验：SERVER_BINARY 只允许是本轮
-  # "$EVIDENCE_DIR/bong-server-*" install 路径（review finding：继承自调用方环境的
-  # SERVER_BINARY 若直接 rm，中途失败会删掉调用方任意可写文件）。
-  if [ -n "$SERVER_BINARY" ] \
-    && [[ "$SERVER_BINARY" == "$EVIDENCE_DIR/bong-server-"* ]] \
-    && [ -f "$SERVER_BINARY" ]; then
-    rm -f "$SERVER_BINARY"
-  fi
-  # run-private Cargo target（$EVIDENCE_DIR/bong-target）每轮自起都会留下整棵依赖/
-  # 增量产物树；evidence 目录有意保留 log/场景证据，但这棵树只服务于本轮构建，server
-  # 已终止后必须整棵移除（review finding：不删则每次本地 run 无界累积 target 树）。
-  if [ -n "$CARGO_TARGET_ROOT" ] && [ -d "$CARGO_TARGET_ROOT" ]; then
-    rm -rf "$CARGO_TARGET_ROOT"
+  # Retain logs/evidence, but remove only the exact run-private target and binary.
+  # The shared helper validates the canonical run root and both candidates before
+  # either deletion, then revalidates each immediately before rm.
+  if ! smoke_cleanup_owned_artifacts "$EVIDENCE_DIR" "$CARGO_TARGET_ROOT" "$SERVER_BINARY"; then
+    cleanup_status=1
+    echo "[bot-e2e] refusing or failing run-private artifact cleanup; logs retained" >&2
   fi
   if [ "$OWNED_WORLD_MODE" != "1" ] && [ -n "$SPIRITWOOD_STATE_DIR" ]; then
     rm -f "$SPIRITWOOD_STATE_DIR/harvested.json" "$SPIRITWOOD_STATE_DIR/harvested.tmp"
     rmdir "$SPIRITWOOD_STATE_DIR" 2>/dev/null || true
   fi
+  final_status=$original_status
+  if [ "$final_status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+    final_status=1
+  fi
+  exit "$final_status"
 }
 trap cleanup EXIT
 
@@ -361,24 +368,35 @@ else
     PROFILE_FLAG=(--release)
     TARGET_PROFILE=release
   fi
-  echo "[bot-e2e] 构建并启动本轮 immutable server（profile=$PROFILE，log: $SERVER_LOG）"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
-  # review finding：build-token 只锁 cargo 子进程；从共享 target 读产物时，build
-  # 返回后、install 前的 bong-server 会被并发 job 替换（stale-read TOCTOU）。build
-  # 到 run-private target（EVIDENCE_DIR 每轮唯一），源产物不可能被并发替换。
-  CARGO_TARGET_ROOT="$EVIDENCE_DIR/bong-target"
-  export CARGO_TARGET_DIR="$CARGO_TARGET_ROOT"
-  if ! (
-    cd "$ROOT/server"
-    "$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"
-  ) >>"$SERVER_LOG" 2>&1; then
-    echo "[bot-e2e] server build failed" >&2
-    tail -n 40 "$SERVER_LOG" >&2
-    exit 1
+  if [ -n "$BONG_E2E_PREBUILT_SERVER_MANIFEST" ]; then
+    SERVER_BINARY="$EVIDENCE_DIR/bong-server-release"
+    if ! python3 "$ROOT/scripts/lib/bong_server_provenance.py" copy \
+      "$BONG_E2E_PREBUILT_SERVER_MANIFEST" "$ROOT" "$SERVER_BINARY" \
+      >>"$SERVER_LOG" 2>&1; then
+      echo "[bot-e2e] provenance-checked prebuilt server rejected" >&2
+      tail -n 40 "$SERVER_LOG" >&2
+      exit 1
+    fi
+    echo "[bot-e2e] reused one provenance-checked release artifact via run-owned copy: $SERVER_BINARY" >>"$SERVER_LOG"
+  else
+    echo "[bot-e2e] 构建并启动本轮 immutable server（profile=$PROFILE，log: $SERVER_LOG）"
+    # Local fallback: build into a unique run-private target so no shared artifact
+    # can be replaced between cargo build and install.
+    CARGO_TARGET_ROOT="$(realpath -e -- "$EVIDENCE_DIR")/bong-target"
+    export CARGO_TARGET_DIR="$CARGO_TARGET_ROOT"
+    if ! (
+      cd "$ROOT/server"
+      "$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"
+    ) >>"$SERVER_LOG" 2>&1; then
+      echo "[bot-e2e] server build failed" >&2
+      tail -n 40 "$SERVER_LOG" >&2
+      exit 1
+    fi
+    SERVER_BINARY="$EVIDENCE_DIR/bong-server-$TARGET_PROFILE"
+    install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"
   fi
-  SERVER_BINARY="$EVIDENCE_DIR/bong-server-$TARGET_PROFILE"
-  install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"
   (
     if [ "$OWNED_WORLD_MODE" = "1" ]; then
       cd "$SERVER_RUNTIME_DIR/server"
