@@ -32,6 +32,16 @@ def _wait_keepalive_after(bot, after: float, description: str):
     )
 
 
+def _assert_surviving_connection(bot, context: str) -> None:
+    """把 socket 存活与 reader 侧 connection_lost 观察一起钉住。"""
+    bot.assert_alive(context)
+    lost = bot.events_of("connection_lost")
+    assert not lost, (
+        f"{context} 后 surviving connection 不得出现 connection_lost，"
+        f"实际 loss_events={lost!r}"
+    )
+
+
 def run(env) -> None:
     # 第一连接
     with env.new_bot("Dup") as first:
@@ -59,7 +69,16 @@ def run(env) -> None:
                 first_survives_join_marker,
                 "第二连接 join 后第一连接仍持续心跳",
             )
-            first.assert_alive("第二连接 join 后，第一连接仍存活（双开互不干扰）")
+            # 关键的交叉观察：第一连接这一等待不能掩盖第二连接在它自己的
+            # KeepAlive 之后稍晚才被 server 清理的情况。
+            _assert_surviving_connection(
+                second,
+                "第二连接 join 后第一连接收到新 KeepAlive",
+            )
+            _assert_surviving_connection(
+                first,
+                "第二连接 join 后第一连接仍存活（双开互不干扰）",
+            )
 
         # 第二连接退出（with 块结束即断线）；给 server 清理路径一个短暂的
         # 观察窗口，再用新的 marker 只接受清理完成后的第一连接心跳。
@@ -70,8 +89,9 @@ def run(env) -> None:
             first_cleanup_marker,
             "第二连接清理后第一连接仍持续心跳",
         )
-        first.assert_alive(
-            "第二连接断线后收到新 KeepAlive，第一连接仍存活（清理不误伤同身份另一连接）"
+        _assert_surviving_connection(
+            first,
+            "第二连接断线后收到新 KeepAlive，第一连接仍存活（清理不误伤同身份另一连接）",
         )
 
     # 第一连接也退出
@@ -82,4 +102,7 @@ def run(env) -> None:
         wait_join_and_inventory(third)
         third_join_marker = last_event_time(third)
         _wait_keepalive_after(third, third_join_marker, "双开全分散后第三连接 join 后仍持续心跳")
-        third.assert_alive("双开全分散后同身份重连，收到新 KeepAlive 并保持连接")
+        _assert_surviving_connection(
+            third,
+            "双开全分散后第三连接收到新 KeepAlive 并保持连接",
+        )

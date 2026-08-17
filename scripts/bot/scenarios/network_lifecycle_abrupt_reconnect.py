@@ -13,9 +13,11 @@ server 必须：
 """
 
 import math
+import re
 import time
 
 from bot.bot import BotAssertionError
+from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
     find_item,
     wait_inventory_contains,
@@ -44,24 +46,80 @@ def _horizontal_distance(a: tuple, b: tuple) -> float:
 DISCONNECT_PERSIST_GRACE = 1.5
 
 
+def _position_from_authoritative_event(event, context: str) -> tuple[float, float, float]:
+    if event.kind != "pos_look":
+        raise BotAssertionError(
+            f"{context} 必须来自 server PositionLook，实际 kind={event.kind!r}"
+        )
+    relative_xyz_flags = int(event.data.get("flags", 0)) & 0x07
+    if relative_xyz_flags != 0:
+        raise BotAssertionError(
+            f"{context} 必须携带绝对 XYZ；实际 flags={event.data.get('flags')!r}"
+        )
+    return tuple(float(event.data[axis]) for axis in ("x", "y", "z"))
+
+
+def _join_authoritative_position(bot, context: str) -> tuple[float, float, float]:
+    events = bot.events_of("pos_look")
+    if not events:
+        raise BotAssertionError(f"{context} 前未收到 server-authoritative PositionLook")
+    # wait_join_and_inventory 已经等待过首个 pos_look；固定取首帧，避免任何
+    # 后续同步帧改变「join position」这个位移基线。
+    return _position_from_authoritative_event(events[0], context)
+
+
+def _wait_authoritative_position_after(
+    bot, after: float, context: str, timeout: float = 10.0
+) -> tuple[float, float, float]:
+    event = bot.wait_for(
+        lambda candidate: candidate.kind == "pos_look" and candidate.t > after,
+        timeout=timeout,
+        description=f"{context}（t>{after:.3f}s 的新 server PositionLook）",
+    )
+    return _position_from_authoritative_event(event, context)
+
+
 def _move_and_record(bot):
-    if bot.position is None:
-        raise BotAssertionError("move_to 前需要已知 bot.position，实际 None")
-    start = tuple(bot.position)
+    # `Bot.move_to` 是客户端动作模拟：每个 C2S movement 包都会立即覆盖
+    # `bot.position`，因此不能把该镜像当作位移已被 server 接受的证据。
+    start = _join_authoritative_position(bot, "移动前 join 坐标")
+    bot.position = start
     x, y, z = start
     bot.move_to(x + MOVE_DISTANCE, y, z, speed=4.0)
     time.sleep(0.3)
-    if bot.position is None:
-        raise BotAssertionError("move_to 后 bot.position 仍为 None")
-    moved = tuple(bot.position)
+
+    # `/top` 只改 server 侧当前 Position 的 Y，X/Z 仍来自 server 已接受的移动；
+    # 它会产生协议可见的绝对 PositionLook，既避免读取本地镜像，也不引入新的
+    # gameplay API。若 server 只接受了部分移动，下面的 5m 前置断言必须失败。
+    probe_anchor = last_event_time(bot)
+    bot.cmd("top")
+    top_feedback = bot.expect_chat("Teleported to top", timeout=10.0)
+    top_y_match = re.search(r"Y=(-?\\d+(?:\\.\\d+)?)", top_feedback.data["text"])
+    if top_y_match is None:
+        raise BotAssertionError(
+            f"/top feedback 必须携带 server 计算的目标 Y，实际 {top_feedback.data['text']!r}"
+        )
+    expected_top_y = float(top_y_match.group(1))
+    top_position_event = bot.wait_for(
+        lambda candidate: candidate.kind == "pos_look"
+        and candidate.t > probe_anchor
+        and math.isclose(
+            float(candidate.data["y"]), expected_top_y, rel_tol=0.0, abs_tol=1.0e-6
+        ),
+        timeout=10.0,
+        description=(
+            f"移动后 server /top PositionLook（t>{probe_anchor:.3f}s，"
+            f"y={expected_top_y:g}）"
+        ),
+    )
+    moved = _position_from_authoritative_event(top_position_event, "移动后权威坐标")
     moved_distance = _horizontal_distance(start, moved)
-    # 动作前置：位移必须实际发生（≈MOVE_DISTANCE）。若 move_to 被忽略/原地不动，
-    # 记录下的「断连前坐标」实为出生点，重连回出生点也能通过 4m 断言，测不出位置持久化。
-    # 只比水平位移：move_to 目标是 (x+MOVE_DISTANCE, y, z)，纯 X 轴向；权威 Y 抬升
-    # （~8s 一步 +10）是正交漂移，算进 3D 距离会把正确移动误判成位移 10.3m≠5m。
+    # 动作前置：必须从 join 时的 server 坐标实际位移约 5m。若 move_to 被忽略或
+    # server 只接受了 1m，而本地镜像走到 5m，不能把伪造的本地目标当作断连锚点。
+    # 只比水平位移：权威 Y 抬升是正交漂移，不能让正确的 X/Z 移动误红。
     assert abs(moved_distance - MOVE_DISTANCE) <= MOVE_VERIFY_TOLERANCE, (
-        f"move_to 应产生 {MOVE_DISTANCE}m 位移以确立动作前置，"
-        f"实际位移 {moved_distance:.2f}m（start={start}，moved={moved}）"
+        f"server 权威移动应产生 {MOVE_DISTANCE}m 位移以确立动作前置，"
+        f"实际位移 {moved_distance:.2f}m（join={start}，authoritative={moved}）"
     )
     return moved
 

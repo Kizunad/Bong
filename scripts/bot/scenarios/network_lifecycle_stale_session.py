@@ -86,6 +86,21 @@ def _assert_session_identity(restored: dict, context: str) -> None:
     )
 
 
+def _assert_inactive_session_state(state: dict, context: str) -> None:
+    """最终重连必须从 durable store 观察到已清空的 craft session。"""
+    assert state.get("active") is False, (
+        f"{context} 必须收到 active=false craft_session_state，实际 {state!r}"
+    )
+    assert state.get("recipe_id") in (None, ""), (
+        f"{context} 的 inactive craft_session_state 必须清除 recipe_id，实际 {state!r}"
+    )
+    for field in ("elapsed_ticks", "total_ticks", "completed_count", "total_count"):
+        assert state.get(field) == 0, (
+            f"{context} 的 inactive craft_session_state 必须清除 {field}，"
+            f"实际 {state!r}"
+        )
+
+
 def _expect_restored_session_frozen(
     bot, elapsed_before: int, completed_before: int, context: str
 ) -> dict:
@@ -232,6 +247,16 @@ def run(env) -> None:
     # ---- 第四段连接：验证退款恰好一次（再次重连不重复退）----
     with env.new_bot("Stale") as bot:
         final_inventory = wait_join_and_inventory(bot)
+        final_session = bot.wait_for(
+            lambda event: event.kind == "server_data"
+            and event.data["payload_type"] == "craft_session_state",
+            timeout=10.0,
+            description="取消退款后的最终 join-time craft_session_state",
+        ).data["payload"]
+        _assert_inactive_session_state(
+            final_session,
+            "取消退款后的最终重连",
+        )
         assert find_item(final_inventory, "stone_chunk") is not None, (
             f"最终应持有 stone_chunk，实际 {final_inventory!r}"
         )

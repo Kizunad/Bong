@@ -66,8 +66,16 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
+    _move_and_record,
+    _position_from_authoritative_event,
+)
 from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
+    _assert_surviving_connection,
     _wait_keepalive_after,
+)
+from bot.scenarios.network_lifecycle_stale_session import (  # noqa: E402
+    _assert_inactive_session_state,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -1841,6 +1849,141 @@ class _CommandFakeBot(_FakeBot):
             if not self.pending:
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
+
+
+class LifecycleReviewContractTest(unittest.TestCase):
+    def test_move_probe_rejects_partial_server_movement_even_when_local_mirror_reaches_target(self):
+        class MoveProbeFakeBot:
+            def __init__(self, authoritative_x: float):
+                self.authoritative_x = authoritative_x
+                self.events = [
+                    _FakeEvent(
+                        1.0,
+                        "pos_look",
+                        {"x": 100.0, "y": 72.0, "z": 8.0, "flags": 0},
+                    )
+                ]
+                self.position = (100.0, 72.0, 8.0)
+
+            def events_of(self, kind: str):
+                return [event for event in self.events if event.kind == kind]
+
+            def move_to(self, x: float, y: float, z: float, **_kwargs):
+                # Model the local client mirror reaching x+5 even though the server
+                # later reports only x+1 through the authoritative probe.
+                self.position = (x, y, z)
+
+            def cmd(self, command: str):
+                assert command == "top"
+                self.events.extend(
+                    [
+                        _FakeEvent(2.0, "chat", {"text": "Teleported to top at Y=90."}),
+                        _FakeEvent(
+                            2.1,
+                            "pos_look",
+                            {
+                                "x": self.authoritative_x,
+                                "y": 90.0,
+                                "z": 8.0,
+                                "flags": 0,
+                            },
+                        ),
+                    ]
+                )
+
+            def expect_chat(self, substring: str, timeout: float = 5.0):
+                return self.wait_for(
+                    lambda event: event.kind == "chat"
+                    and substring in event.data["text"],
+                    timeout,
+                    f"chat/{substring}",
+                )
+
+            def wait_for(self, predicate, timeout: float, description: str):
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"
+        ), self.assertRaisesRegex(AssertionError, "server 权威移动"):
+            _move_and_record(MoveProbeFakeBot(authoritative_x=101.0))
+
+        with mock.patch("bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"):
+            moved = _move_and_record(MoveProbeFakeBot(authoritative_x=105.0))
+        self.assertEqual(
+            moved,
+            (105.0, 90.0, 8.0),
+            "断连锚点必须使用 server PositionLook 的坐标，而不是客户端本地 mirror",
+        )
+
+    def test_authoritative_position_requires_absolute_xyz_position_look(self):
+        event = _FakeEvent(
+            3.0,
+            "pos_look",
+            {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 0},
+        )
+        self.assertEqual(
+            _position_from_authoritative_event(event, "移动后"),
+            (105.0, 72.0, 8.0),
+        )
+        with self.assertRaisesRegex(BotAssertionError, "绝对 XYZ"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "pos_look", {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 1}),
+                "移动后",
+            )
+        with self.assertRaisesRegex(BotAssertionError, "PositionLook"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "keepalive", {"id": 1}),
+                "移动后",
+            )
+
+    def test_inactive_craft_session_requires_cleared_join_state(self):
+        _assert_inactive_session_state(
+            {
+                "active": False,
+                "recipe_id": None,
+                "elapsed_ticks": 0,
+                "total_ticks": 0,
+                "completed_count": 0,
+                "total_count": 0,
+            },
+            "最终重连",
+        )
+        with self.assertRaisesRegex(AssertionError, "active=false"):
+            _assert_inactive_session_state(
+                {
+                    "active": True,
+                    "recipe_id": "workbench.weapon.stone_knife",
+                    "elapsed_ticks": 1,
+                    "total_ticks": 10,
+                    "completed_count": 0,
+                    "total_count": 2,
+                },
+                "最终重连",
+            )
+        with self.assertRaisesRegex(AssertionError, "recipe_id"):
+            _assert_inactive_session_state(
+                {
+                    "active": False,
+                    "recipe_id": "stale",
+                    "elapsed_ticks": 0,
+                    "total_ticks": 0,
+                    "completed_count": 0,
+                    "total_count": 0,
+                },
+                "最终重连",
+            )
+
+    def test_double_login_cross_connection_liveness_rejects_lost_peer(self):
+        class ProbeBot(_FakeBot):
+            def assert_alive(self, _context: str) -> None:
+                return None
+
+        bot = ProbeBot([_FakeEvent(4.0, "connection_lost", {})])
+        with self.assertRaisesRegex(AssertionError, "connection_lost"):
+            _assert_surviving_connection(bot, "并发阶段")
 
 
 class DoubleLoginScenarioTest(unittest.TestCase):
