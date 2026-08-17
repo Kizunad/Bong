@@ -81,20 +81,16 @@ pub enum TechniqueDispatch {
     DirectGeneric,
 }
 
-/// `direct_generic` 招式 id 的严格白名单（M11 契约）。
+/// `direct_generic` 的动态接线契约（M11）。
 ///
-/// `DirectGeneric` 只提供 skill-bar cast 生命周期、没有任何 gameplay handler——
-/// 任意新 id 会被呈现为"可施放"却没有实际消费者，等于把 data-only 占位符静默
-/// 变成玩家可见的假招式。白名单内三个 id 都有真实 gameplay 消费者：
-/// `movement.dash` → dash_proficiency/首战自学，`shield_block` → 格挡结算，
-/// `body.guangbo_ticao` → 广播体操 practice 事件。新增直通招式必须先有消费者，
-/// 再进白名单，不能只加 metadata。
-pub const DIRECT_GENERIC_ALLOWLIST: &[&str] =
-    &["movement.dash", "shield_block", "body.guangbo_ticao"];
+/// 该 dispatch 由通用 skill-bar cast 生命周期消费，因此新 metadata 可以只通过 TOML
+/// 加入；同一 ID 不能再注册 `SkillRegistry` resolver，否则会产生两个互斥的运行时
+/// 消费者。具有额外 per-ID 完成/被动消费者的旧条目仍由各自模块通过稳定 ID 读取
+/// metadata，但这些历史 ID 不应变成新的启动期 allowlist。
 
 /// Metadata that production systems dereference after startup and therefore cannot be deleted
-/// independently of their runtime consumers. Direct-generic entries are included because their
-/// allowlist is also a positive runtime contract, not merely a dispatch filter.
+/// independently of their runtime consumers. Specialized direct-generic consumers are included
+/// here so their metadata still fails closed if it disappears.
 pub const RUNTIME_REQUIRED_TECHNIQUE_IDS: &[&str] = &[
     "movement.dash",
     "shield_block",
@@ -256,10 +252,12 @@ impl TechniqueRegistry {
                             min_health: 1.0,
                         })
                         .collect(),
+                    // Loader bounds qi_cost to f32::MAX; narrow at the unchanged legacy
+                    // TechniqueEntryV1/fixed32 wire boundary just like the live emitter.
                     qi_cost: if definition.qi_cost == 0.0 {
                         1.0
                     } else {
-                        definition.qi_cost
+                        definition.qi_cost as f32
                     },
                     stamina_cost: if definition.stamina_cost == 0.0 {
                         1.0
@@ -842,14 +840,8 @@ fn validate_startup_relationships(
                 }
             }
             TechniqueDispatch::DirectGeneric => {
-                if !DIRECT_GENERIC_ALLOWLIST.contains(&definition.id.as_str()) {
-                    return Err(TechniqueWiringError(format!(
-                        "direct_generic technique {:?} has no gameplay consumer; \
-                         direct_generic is restricted to the allowlist {}",
-                        definition.id,
-                        DIRECT_GENERIC_ALLOWLIST.join(", ")
-                    )));
-                }
+                // The generic skill-bar lifecycle is the dynamic consumer for this dispatch.
+                // A resolver would create an ambiguous second consumer and must fail closed.
                 if skills.lookup(&definition.id).is_some() {
                     return Err(TechniqueWiringError(format!(
                         "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
@@ -1447,59 +1439,33 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn arbitrary_direct_generic_metadata_is_rejected_at_startup_wiring() {
-        // M11：DirectGeneric 只有 cast 生命周期、没有 gameplay handler——任意新 id
-        // 若被启动期放行，会呈现为"可施放"却没有实际消费者。白名单契约要求拒绝
-        // 不在 `DIRECT_GENERIC_ALLOWLIST` 的 direct_generic，无论有没有依赖声明。
+    fn arbitrary_direct_generic_metadata_is_admitted_by_the_dynamic_consumer_contract() {
+        // DirectGeneric is consumed by the ID-agnostic skill-bar lifecycle. A valid new
+        // metadata id therefore must not require a Rust allowlist entry or resolver pin.
         let registry = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"direct_generic\"",
         ))
         .expect("an arbitrary valid id may parse as direct_generic metadata");
-        let skills = SkillRegistry::default();
+        validate_startup_relationships(
+            &registry,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect("new direct_generic ids must use the generic skill-bar consumer");
 
+        let mut skills = SkillRegistry::default();
+        skills.register("test.skill", noop_skill);
         let error = validate_startup_relationships(
             &registry,
             &skills,
             &SkillMeridianDependencies::default(),
         )
-                .expect_err(
-                    "arbitrary direct_generic without a gameplay consumer must be rejected",
-                );
+        .expect_err("a direct_generic id with a resolver must fail closed");
         assert!(error.to_string().contains("test.skill"));
-        assert!(error.to_string().contains("no gameplay consumer"));
-
-        let mut dependencies = SkillMeridianDependencies::default();
-        dependencies.declare("test.skill", Vec::new());
-        let error = validate_startup_relationships(&registry, &skills, &dependencies)
-            .expect_err("dependency declaration must not bypass the direct_generic allowlist");
-        assert!(error.to_string().contains("no gameplay consumer"));
-
-        // 白名单内的 id 不受影响：movement.dash 只有 resolver 冲突会被拒绝，
-        // 无 resolver 时通过。
-        let allowlisted = load(
-            &minimal_toml()
-                .replace("id = \"test.skill\"", "id = \"movement.dash\"")
-                .replace(
-                    "dispatch = \"metadata_backed\"",
-                    "dispatch = \"direct_generic\"",
-                ),
-        )
-        .expect("allowlisted id parses as direct_generic");
-        validate_startup_relationships(
-            &allowlisted,
-            &SkillRegistry::default(),
-            &SkillMeridianDependencies::default(),
-        )
-        .expect("allowlisted direct_generic without resolver must pass");
-        let mut skills = SkillRegistry::default();
-        skills.register("movement.dash", noop_skill);
-        validate_startup_relationships(
-            &allowlisted,
-            &skills,
-            &SkillMeridianDependencies::default(),
-        )
-            .expect_err("allowlisted direct_generic with a resolver must still fail");
+        assert!(error
+            .to_string()
+            .contains("unexpectedly has a SkillRegistry resolver"));
     }
 
     #[test]
@@ -1544,24 +1510,19 @@ dispatch = "metadata_backed"
             .to_string()
             .contains("explicit meridian dependency declaration"));
 
-        // resolver 冲突用白名单内 id（movement.dash），避免先撞 M11 的 no-consumer 拒绝。
-        let direct_generic = load(
-            &minimal_toml()
-                .replace("id = \"test.skill\"", "id = \"movement.dash\"")
-                .replace(
-                    "dispatch = \"metadata_backed\"",
-                    "dispatch = \"direct_generic\"",
-                ),
-        )
-        .expect("direct_generic metadata loads");
-        skills.register("movement.dash", noop_skill);
+        // A resolver conflict remains rejected independently of the historical ID.
+        let direct_generic = load(&minimal_toml().replace(
+            "dispatch = \"metadata_backed\"",
+            "dispatch = \"direct_generic\"",
+        ))
+        .expect("direct_generic fixture must load");
         let resolver_conflict = validate_startup_relationships(
             &direct_generic,
             &skills,
             &SkillMeridianDependencies::default(),
         )
         .expect_err("direct_generic with a resolver must fail");
-        assert!(resolver_conflict.to_string().contains("movement.dash"));
+        assert!(resolver_conflict.to_string().contains("test.skill"));
         assert!(resolver_conflict
             .to_string()
             .contains("unexpectedly has a SkillRegistry resolver"));
@@ -1777,6 +1738,18 @@ dispatch = "direct_generic"
             &SkillMeridianDependencies::default(),
         )
         .expect("a catalog whose protobuf snapshot fits must pass startup wiring");
+    }
+
+    #[test]
+    fn aggregate_snapshot_narrows_nonzero_f64_qi_cost_at_legacy_wire_boundary() {
+        let techniques = TechniqueRegistry::load_for_tests_with_override("sword.cleave", |def| {
+            def.qi_cost = 0.4_f64;
+        });
+        let aggregate = techniques.aggregate_snapshot_size();
+        assert!(
+            aggregate > 0,
+            "aggregate snapshot with a nonzero f64 qi_cost must encode through the f32 wire field"
+        );
     }
 
     #[test]

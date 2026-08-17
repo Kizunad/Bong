@@ -90,9 +90,10 @@ fn full_app_startup_smoke_initializes_core_resources_and_ticks_once() {
 }
 
 #[test]
-fn full_app_startup_smoke_rejects_arbitrary_data_only_technique_extension() {
-    // M11：direct_generic 只有 cast 生命周期、没有 gameplay handler——任意新 id 必须
-    // 被启动期 wiring 门拒绝（白名单契约），不能静默变成可施放的假招式。
+fn full_app_startup_smoke_admits_new_direct_generic_asset_extension() {
+    // DirectGeneric is consumed by the ID-agnostic skill-bar lifecycle. A copied deployment
+    // asset with a new valid id must therefore pass the real production startup wiring path
+    // without a Rust allowlist edit.
     let assets_root = copied_assets_root("technique-extension");
     let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
     let mut techniques =
@@ -104,7 +105,7 @@ fn full_app_startup_smoke_rejects_arbitrary_data_only_technique_extension() {
 id = "test.data_only_startup_smoke"
 display_name = "数据扩展探针"
 grade = "common"
-description = "仅由 TOML 增加、无任何 gameplay 消费者，必须被启动期 wiring 门拒绝。"
+description = "仅由 TOML 增加、由通用 skill-bar 生命周期消费。"
 required_realm = "Awaken"
 required_meridians = []
 required_race = { kind = "any" }
@@ -122,23 +123,7 @@ dispatch = "direct_generic"
 
     let output = run_full_app_startup(&assets_root);
     fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
-
-    assert!(
-        !output.status.success(),
-        "startup must reject arbitrary direct_generic without a gameplay consumer; status={:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        combined.contains("no gameplay consumer"),
-        "startup failure must identify the direct_generic allowlist; output:\n{combined}"
-    );
+    assert_startup_succeeds(&output);
 }
 
 #[test]

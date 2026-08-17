@@ -19,7 +19,7 @@ use crate::body_plan::RaceId;
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
     parse_required_realm, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
-    TechniqueDispatch, TechniqueRegistry,
+    TechniqueRegistry,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -211,8 +211,12 @@ pub fn assign_npc_techniques_for_identity(
     let available: Vec<&TechniqueDefinition> = technique_registry
         .iter()
         .filter(|def| {
-            def.dispatch == TechniqueDispatch::MetadataBacked
-                && def.required_race.allows(race, is_humanoid)
+            // Preserve the pre-datafication candidate population and source order. The NPC
+            // assignment algorithm is index-sensitive; dispatch describes the player cast
+            // route, not NPC eligibility. Specialized NPC consumers may filter at action time,
+            // but this source-only migration must not reseed existing loadouts or drop the live
+            // body.guangbo_ticao conditioning passive.
+            def.required_race.allows(race, is_humanoid)
                 && technique_realm_satisfied(def, realm)
                 && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
         })
@@ -1044,6 +1048,7 @@ fn set_action_state(
 mod tests {
     use super::*;
     use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem};
+    use crate::combat::body_conditioning::apply_guangbo_ticao_bonuses;
     use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
     use crate::cultivation::meridian::severed::{
         MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
@@ -1444,25 +1449,36 @@ mod tests {
             "matching whale identity must admit whale-only metadata"
         );
 
-        for seed in 0..200 {
-            let assigned = super::assign_npc_techniques(
-                &registry,
-                NpcArchetype::GuardianRelic,
-                Realm::Void,
-                &full_all_meridians(),
-                &deps,
-                None,
-                seed,
-            );
-            assert!(
-                assigned.entries.iter().all(|entry| {
-                    registry.get(&entry.id).is_some_and(|definition| {
-                        definition.dispatch == TechniqueDispatch::MetadataBacked
-                    })
-                }),
-                "NPC loadout must never contain direct_generic entries (seed={seed})"
-            );
-        }
+        // DirectGeneric is a player cast-route classification, not an NPC candidate filter.
+        // The NPC path must preserve the legacy population/order and may retain the live
+        // body-conditioning passive.
+        let assigned = super::assign_npc_techniques(
+            &registry,
+            NpcArchetype::Rogue,
+            Realm::Awaken,
+            &full_regular_meridians(),
+            &deps,
+            None,
+            6,
+        );
+        assert_eq!(
+            assigned.entries.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(),
+            vec!["woliu.burst", "zhenmai.sever_chain", "body.guangbo_ticao"],
+            "merge-base NPC oracle must retain source order and same-seed Fisher-Yates output"
+        );
+        let guangbo = assigned
+            .entries
+            .iter()
+            .find(|entry| entry.id == "body.guangbo_ticao")
+            .expect("legacy same-seed NPC oracle must retain body.guangbo_ticao");
+        let mut attrs = crate::combat::components::DerivedAttrs::default();
+        apply_guangbo_ticao_bonuses(&mut attrs, &KnownTechniques {
+            entries: vec![guangbo.clone()],
+        });
+        assert!(
+            attrs.move_speed_multiplier > 1.0 && attrs.jump_height_multiplier > 1.0,
+            "body.guangbo_ticao must remain a live NPC passive, attrs={attrs:?}"
+        );
     }
 
     // === assign_npc_techniques: realm gating ===
