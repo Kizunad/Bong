@@ -19,6 +19,8 @@ import time
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
+    find_instance_by_id,
+    find_item,
     require_item,
     wait_inventory_contains,
 )
@@ -155,13 +157,64 @@ def _slot_entries(slots: list) -> list:
     ]
 
 
+def _give_fresh_pill_and_bind(
+    bot, previous_instance_id: int, slot: int, request_id: str
+) -> tuple[dict, int]:
+    """补一枚全新固元丹，证明上一枚已消费，再把新实例绑定到 ``slot``。
+
+    QuickSlot 按 instance_id 绑定；仅重新发送 bind 而不补给会命中服务端的
+    ``inventory_has_instance`` 早退。谓词同时要求新实例存在、旧实例消失，故
+    「cast 完成只发 complete 但没有消费」或「give 合并/错误复用旧实例」都会红。
+    """
+    anchor = last_event_time(bot)
+    bot.cmd(f"give {PILL} 1")
+    time.sleep(0.5)  # chat→command 给物品先落地，再等 Changed<PlayerInventory> 快照
+    event = bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.data.get("payload_type") == "inventory_snapshot"
+            and e.t > anchor
+            and (found := find_item(e.data["payload"], PILL)) is not None
+            and found["location"]["kind"] != "equip"
+            and int(found["item"]["instance_id"]) != previous_instance_id
+            and find_instance_by_id(e.data["payload"], previous_instance_id) is None
+        ),
+        timeout=10.0,
+        description=(
+            f"补给 {PILL} 后新实例出现且旧实例 {previous_instance_id} 已消费"
+        ),
+    )
+    snapshot = event.data["payload"]
+    fresh = require_item(snapshot, PILL)
+    fresh_instance_id = int(fresh["item"]["instance_id"])
+    assert fresh_instance_id != previous_instance_id, (
+        f"补给后的 {PILL} 必须是新实例，旧={previous_instance_id} 新={fresh_instance_id}"
+    )
+    assert find_instance_by_id(snapshot, previous_instance_id) is None, (
+        f"上一枚 {PILL} 实例 {previous_instance_id} 应在 cast 完成后被消费，"
+        f"实际仍存在于 inventory_snapshot"
+    )
+    bot.intent(
+        {
+            "type": "quick_slot_bind",
+            "v": 1,
+            "slot": slot,
+            "item_id": PILL,
+            "request_id": request_id,
+        }
+    )
+    _expect_bind_response(bot, request_id, True, slot)
+    return snapshot, fresh_instance_id
+
+
 def run(env) -> None:
     with env.new_bot("Quickslot") as bot:
         wait_for_ready(bot)
         # 不清包：guyuan_pill 是起手包常驻（assets/inventory/loadouts/default.toml）；
         # clearinv all 会把它清掉，bind 反被拒「not in inventory」。
         snapshot = wait_inventory_contains(bot, PILL, timeout=10.0)
-        require_item(snapshot, PILL)
+        initial_pill = require_item(snapshot, PILL)
+        initial_pill_instance = int(initial_pill["item"]["instance_id"])
 
         # ── 1. bind 正路径：回执 ack 回显 + accepted=true + 槽含物品 ──
         bot.intent(
@@ -351,6 +404,28 @@ def run(env) -> None:
             description=f"slot={BIND_SLOT} 第一次 cast 的 cast_sync(complete)",
         )
         complete_t = complete_event.t
+        consumed_snapshot = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "inventory_snapshot"
+                and e.t > complete_t
+                and find_instance_by_id(e.data["payload"], initial_pill_instance) is None
+            ),
+            timeout=10.0,
+            description=(
+                f"首枚 {PILL} 实例 {initial_pill_instance} 在 cast complete 后被消费"
+            ),
+        ).data["payload"]
+        assert find_instance_by_id(consumed_snapshot, initial_pill_instance) is None, (
+            f"首枚 {PILL} 实例 {initial_pill_instance} 应在首次 cast 完成后消失"
+        )
+
+        # 首枚实例已消费：立即补给并重绑新实例，随后 immediate/+1400ms 探针仍
+        # 使用原 slot 的原有 cooldown。若在探针前才补给，stale-instance early return
+        # 会让两个负探针失去对 cooldown 的覆盖。
+        _, cooldown_pill_instance = _give_fresh_pill_and_bind(
+            bot, initial_pill_instance, BIND_SLOT, "gap10-bind-6b-fresh"
+        )
 
         # ── 6b. use 冷却分支 + 1500ms 边界钉死（review finding [5] + central-review
         #     31438252846 finding [7] + 31442475206 finding [6]）。冷却从 cast 完成
@@ -370,22 +445,31 @@ def run(env) -> None:
         #           无 casting 即被抓）。
         #     两探针把冷却钉在 (1400, 1500]ms 观测值上（= 契约 1500ms ± 已文档化的
         #     transport 偏差 <100ms），取代旧 (1100, 1900]ms 带。
+        # fresh rebind 本身耗时约 0.5s+，所以先定义真实 +1400ms 探针时刻；
+        # immediate 负窗口必须落在重绑之后、且在 +1400ms 之前，不能引用已经过去的
+        # complete_t+400ms 空区间。
+        before_probe_t = complete_t + (COOLDOWN_MS - COOLDOWN_TRANSPORT_SKEW_MS) / 1000.0
         cooldown_anchor = last_event_time(bot)
-        bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
-        # (a) 立刻重按必须静默（无冷却的实现会立即开火）。
-        _assert_no_cast_sync_until(
-            bot, cooldown_anchor, complete_t + COOLDOWN_TOLERANCE_MS / 1000.0
+        assert cooldown_anchor < before_probe_t, (
+            f"fresh rebind 后 cooldown anchor={cooldown_anchor:.3f} 必须早于 "
+            f"+1400ms probe={before_probe_t:.3f}，否则边界探针没有有效间隔"
         )
+        bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
+        # (a) fresh binding 的 immediate 重按必须静默（无冷却的实现会立即开火）。
+        immediate_until = min(cooldown_anchor + 0.2, before_probe_t - 0.1)
+        assert immediate_until > cooldown_anchor, (
+            f"immediate probe interval must be non-empty: {cooldown_anchor:.3f}..{immediate_until:.3f}"
+        )
+        _assert_no_cast_sync_until(bot, cooldown_anchor, immediate_until)
         # (b) 边界前探针：仍须静默（冷却尚未过期）。窗口尾部只留探针意图的处理延迟
         #     （PROBE_TRAILING_WINDOW_MS），必须在 (c) 的 +1500ms 探针之前收口。
-        before_probe_t = complete_t + (COOLDOWN_MS - COOLDOWN_TRANSPORT_SKEW_MS) / 1000.0
         _sleep_until_event_time(bot, before_probe_t)
         before_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
         _assert_no_cast_sync_until(
             bot, before_anchor, before_probe_t + PROBE_TRAILING_WINDOW_MS / 1000.0
         )
-        # (c) 边界后探针：必须新开 cast（冷却已过期）。
+        # (c) 边界后探针：冷却已过期时使用上方已补给并重绑的新实例。
         after_probe_t = complete_t + COOLDOWN_MS / 1000.0
         _sleep_until_event_time(bot, after_probe_t)
         after_anchor = last_event_time(bot)
@@ -400,7 +484,7 @@ def run(env) -> None:
             ),
             timeout=10.0,
             description=(
-                f"冷却边界（complete_t+{COOLDOWN_MS + COOLDOWN_TOLERANCE_MS}ms）后 "
+                f"冷却边界（complete_t+{COOLDOWN_MS}ms）后 "
                 f"slot={BIND_SLOT} 重新施放的 cast_sync(casting)"
             ),
         ).data["payload"]
@@ -426,16 +510,9 @@ def run(env) -> None:
         # ── 7. 最大合法槽 8 的绑定 + 使用（review finding [4]）──
         #    契约定义 0..=8 合法；旧场景只 bind slot 1、拒 slot 9，从未触达最大
         #    合法值——`slot < 8` 的 off-by-one 实现会通过。必须 bind 且 use slot 8。
-        bot.intent(
-            {
-                "type": "quick_slot_bind",
-                "v": 1,
-                "slot": 8,
-                "item_id": PILL,
-                "request_id": "gap10-bind-8",
-            }
+        _, slot8_pill_instance = _give_fresh_pill_and_bind(
+            bot, cooldown_pill_instance, 8, "gap10-bind-8"
         )
-        _expect_bind_response(bot, "gap10-bind-8", True, 8)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 8})
         cast8 = bot.wait_for(
             lambda e: (
@@ -475,16 +552,9 @@ def run(env) -> None:
         #    契约定义 0..=8 合法；旧场景只 bind slot 1、slot 8、拒 slot 9，下边界 0
         #    从未触达——把 0 当非法的 `1..=8` 实现（或把 0 静默丢弃）会通过全部现有
         #    断言。必须 bind 且 use slot 0（use 推 cast_sync{phase=casting, slot=0}）。
-        bot.intent(
-            {
-                "type": "quick_slot_bind",
-                "v": 1,
-                "slot": 0,
-                "item_id": PILL,
-                "request_id": "gap10-bind-0",
-            }
+        _, slot0_pill_instance = _give_fresh_pill_and_bind(
+            bot, slot8_pill_instance, 0, "gap10-bind-0"
         )
-        _expect_bind_response(bot, "gap10-bind-0", True, 0)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 0})
         cast0 = bot.wait_for(
             lambda e: (

@@ -39,8 +39,7 @@ from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
-    _periodic_flush_events,
-    drain_inventory_quiet,
+    inventory_signature,
     latest_inventory_snapshot,
     wait_inventory_revision_after,
     wait_inventory_revision_after_matching,
@@ -876,175 +875,34 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
 
 
 class InventoryHelperTest(unittest.TestCase):
-    def test_periodic_flush_events_excludes_revision_bumping_snapshots(self):
-        # central-review 31438252846 finding [1]：周期 flush 是 revision 与前一快照
-        # 相同的快照；mutation（give/move/forge）revision 单调递增且不重置服务器的
-        # 周期定时器，必须从 drain 的相位锚定中排除。
-        # central-review 31442475206 finding [2]：相位锚只认 5.0s 网格对齐的同
-        # revision 快照——旧 fixture 用 t=1.0/5.0（仅 4.0s 间距，不落 5.0s 网格）
-        # 建模两条「周期 flush」，在网格判定下不成对；改落真网格（5.0/10.0）。
-        bot = _FakeBot(
-            [
-                _snapshot_event(0.2, 5, "join"),
-                _snapshot_event(5.0, 5, "periodic"),
-                _snapshot_event(6.5, 6, "mutation"),
-                _snapshot_event(10.0, 6, "periodic"),
-                _snapshot_event(11.5, 7, "mutation"),
-            ]
+    def test_inventory_signature_retains_complete_item_metadata(self):
+        baseline = {
+            "containers": [{"id": "body_pocket", "rows": 2, "cols": 3}],
+            "placed_items": [
+                {
+                    "container_id": "body_pocket",
+                    "row": 0,
+                    "col": 1,
+                    "item": {
+                        "instance_id": 7,
+                        "item_id": "guyuan_pill",
+                        "durability": 0.61,
+                        "freshness": {"current_qi": 0.4},
+                        "forge_quality": 0.8,
+                    },
+                }
+            ],
+            "equipped": {"chest_worn": []},
+            "hotbar": [None] * 9,
+            "bone_coins": 12,
+        }
+        changed = json.loads(json.dumps(baseline))
+        changed["placed_items"][0]["item"]["durability"] = 0.60
+        self.assertNotEqual(
+            inventory_signature(baseline),
+            inventory_signature(changed),
+            "拒绝路径签名必须捕获 durability/NBT-like metadata 的细微篡改",
         )
-
-        periodic = _periodic_flush_events(bot)
-
-        self.assertEqual(
-            [e.t for e in periodic],
-            [5.0, 10.0],
-            "只有网格对齐（5.0s 相位、≥2 条确认）且 revision 与前一快照相同的"
-            "快照才能作为相位锚；首条 join（无前驱可判）、两条 mutation（revision "
-            "bump）与网格外的同 revision 快照必须排除",
-        )
-
-    def test_periodic_flush_events_excludes_off_grid_rejection_pushback(self):
-        # central-review 31442475206 finding [1] 的精确序列：真 flush t=0 → mutation
-        # t=1 bump revision → 拒绝回推 t=2（revision 与 mutation 相同、在请求时刻
-        # 下发，离 5.0s 网格 2.0s）→ 真 flush t=5、t=10。旧实现把三条同 revision
-        # 快照全当周期 flush，drain 锚在回推 t=2 上，age=2.0 时返回而真 flush 5.0
-        # 只剩 1.0s——周期 flush 落进接受窗口冒充权威回推。网格判定把 t=2 排除：
-        # 相位 5.0 覆盖 {5.0, 10.0}（2 条确认），相位 2.0 只覆盖 1 条。
-        bot = _FakeBot(
-            [
-                _snapshot_event(0.0, 5, "flush"),
-                _snapshot_event(1.0, 6, "mutation"),
-                _snapshot_event(2.0, 6, "rejection_pushback"),
-                _snapshot_event(5.0, 6, "flush"),
-                _snapshot_event(10.0, 6, "flush"),
-            ]
-        )
-
-        periodic = _periodic_flush_events(bot)
-
-        self.assertEqual(
-            [e.t for e in periodic],
-            [5.0, 10.0],
-            "同 revision 的拒绝回推（t=2，不落 5.0s 网格）不得被当作周期 flush；"
-            "锚必须落在真 flush 网格 {5.0, 10.0} 上",
-        )
-
-    def test_periodic_flush_events_requires_two_events_to_confirm_grid(self):
-        # central-review 31442475206 finding [1] 的歧义情形：只有一条（或两两异相）
-        # 同 revision 事件时无法确认网格相位——把回推当锚会把「距下一 flush 的剩余
-        # 时间」高估到 ≥ quiet，静默前提被破坏。必须保守返回空，等第二条真 flush
-        # 补齐网格。（注意：列表首条快照无前驱可判、天然不进同 revision 集，网格
-        # 确认必须由 ≥2 条**有前驱**的同 revision 事件完成。）
-        ambiguous = _FakeBot(
-            [
-                _snapshot_event(0.0, 5, "join"),
-                _snapshot_event(5.0, 5, "flush"),
-                _snapshot_event(7.0, 5, "rejection_pushback"),
-            ]
-        )
-        self.assertEqual(
-            _periodic_flush_events(ambiguous),
-            [],
-            "两条同 revision 事件各自成相位（5.0 与 7.0），无 2 事件网格确认时"
-            "不得锚定任一（歧义保守等待）",
-        )
-
-        confirmed = _FakeBot(
-            [
-                _snapshot_event(0.0, 5, "join"),
-                _snapshot_event(5.0, 5, "flush"),
-                _snapshot_event(7.0, 5, "rejection_pushback"),
-                _snapshot_event(10.0, 5, "flush"),
-            ]
-        )
-        self.assertEqual(
-            [e.t for e in _periodic_flush_events(confirmed)],
-            [5.0, 10.0],
-            "第三条 flush 补齐 5.0s 网格（{5.0, 10.0} 两事件），回推 t=7 仍被排除",
-        )
-
-    def test_drain_ignores_rejection_pushback_anchor(self):
-        # central-review 31442475206 finding [1][2] 的 drain 级攻击序列（事件随时间
-        # 到达，模拟真实时序）：flush t=0 → mutation t=1 → 拒绝回推 t=2（同 revision）
-        # → flush t=5、t=10。旧实现锚在回推 t=2 上：now=4.25 时 age=2.25∈[2,3] 立即
-        # 返回，而真 flush 5.0 在 0.75s 后到达——周期 flush 落进接受窗口冒充权威回推。
-        # 网格修复后 t=2 不落 5.0s 网格、t=5 单条也不足确认：{pushback@2, flush@5}
-        # 两两异相继续等；flush 10.0 补齐 {5.0, 10.0} 网格后锚 10.0，age∈[2,3]
-        # （now=12.0）才返回，下一 flush 15.0 到，≥quiet 保障成立。
-        bot = _FakeBot(
-            [
-                _snapshot_event(0.0, 5, "flush"),
-                _snapshot_event(1.0, 6, "mutation"),
-                _snapshot_event(2.0, 6, "rejection_pushback"),
-            ]
-        )
-        bot.t0 = 0.0
-        nows = iter(
-            [4.0, 4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.25, 6.5, 6.75, 7.0,
-             7.25, 7.5, 7.75, 8.0, 8.25, 8.5, 8.75, 9.0, 9.25, 9.5, 9.75, 10.0,
-             10.25, 10.5, 10.75, 11.0, 11.25, 11.5, 11.75, 12.0]
-        )
-
-        def fake_monotonic() -> float:
-            now = next(nows)
-            # 模拟事件随时间到达：flush 在其真实时刻进入 bot 历史（网格判定只
-            # 能看见此刻之前的事件，这正是 review 攻击序列的时序前提）。
-            if now >= 5.0 and not any(
-                e.data["payload"].get("marker") == "flush@5" for e in bot.events
-            ):
-                bot.events.append(_snapshot_event(5.0, 6, "flush@5"))
-            if now >= 10.0 and not any(
-                e.data["payload"].get("marker") == "flush@10" for e in bot.events
-            ):
-                bot.events.append(_snapshot_event(10.0, 6, "flush@10"))
-            return now
-
-        with mock.patch.object(time, "monotonic", side_effect=fake_monotonic), mock.patch.object(
-            time, "sleep"
-        ) as fake_sleep:
-            drain_inventory_quiet(bot, quiet=2.0, max_wait=12.0)
-
-        # 返回点 now=12.0 意味着从未在 now=4.25 处（回推锚的 age=2.25 窗口）误返；
-        # 锚在网格确认的 flush 10.0 上，返回后下一 flush 15.0 至少 3.0s 后才到
-        # （≥ quiet）。
-        self.assertGreater(fake_sleep.call_count, 0, "drain 应经过多次轮询后才返回")
-
-    def test_drain_inventory_quiet_waits_for_periodic_flush_after_mutation(self):
-        # central-review 31438252846 finding [1] 的精确序列：周期 flush t=0 → give
-        # mutation t=2.5。旧实现锚 mutation，在 t=4.5 处 age=2.0∈[2,3] 直接返回，
-        # 而真周期 flush 5.0s 才到（0.5s 后就到，静默前提被破坏）。修复后锚只落在
-        # 网格确认的周期 flush 上：mutation 被 revision 过滤排除，{flush@5, flush@10}
-        # 确认网格后锚 10.0，age∈[2,3]（now=12.25）才返回，下一 flush 15.0 到，
-        # ≥quiet 保障成立（fixture 补 flush@10：列表首条 flush@0 无前驱可判、单条
-        # flush@5 不足确认网格）。
-        bot = _FakeBot(
-            [
-                _snapshot_event(0.0, 5, "periodic"),
-                _snapshot_event(2.5, 6, "mutation"),
-                _snapshot_event(5.0, 6, "periodic"),
-                _snapshot_event(10.0, 6, "periodic"),
-            ]
-        )
-        bot.t0 = 0.0
-        # monotonic 序列：call1=deadline(4.5)，之后每次循环取一个 now；走到
-        # now=12.25（age=12.25−10.0=2.25，落在 [2,3]）返回。
-        nows = iter(
-            [4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.25, 6.5, 6.75, 7.0, 7.25,
-             7.5, 7.75, 8.0, 8.25, 8.5, 8.75, 9.0, 9.25, 9.5, 9.75, 10.0, 10.25,
-             10.5, 10.75, 11.0, 11.25, 11.5, 11.75, 12.0, 12.25]
-        )
-
-        def fake_monotonic() -> float:
-            return next(nows)
-
-        with mock.patch.object(time, "monotonic", side_effect=fake_monotonic), mock.patch.object(
-            time, "sleep"
-        ) as fake_sleep:
-            drain_inventory_quiet(bot, quiet=2.0, max_wait=12.0)
-
-        # 在 now=12.25 返回意味着从未在 t=4.5 处（mutation 锚的 age=2.0 窗口）误返；
-        # 返回后最后一次检查的 age=2.25（对网格确认的 flush 10.0）。
-        self.assertGreater(fake_sleep.call_count, 0, "drain 应经过多次轮询后才返回")
 
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(

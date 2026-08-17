@@ -5,13 +5,12 @@
   成功 → 扣材料（ash_spider_silk×1）+ 扣真元（qi_cost=5.0，走 zone ledger）+
   产出 tuike_false_skin_silk 入包 + revision bump（Changed<PlayerInventory> 推快照）；
   失败（RealmTooLow 先于 NotEnoughQi 先于 MissingMaterial）→ 仅 warn log，
-  库存/灵气均不动、revision 不变（负断言用「窗口内无更高 revision 的快照」——
-  服务端每 100 tick 周期 flush 会推 revision 不变的当前状态快照，必须容忍）。
+  库存/灵气均不动、revision 不变（负断言锚在 intent 后的有限窗口）。
   SpiderSilk min_realm=Induce（Awaken → RealmTooLow）。
 - `equip_false_skin` → 忽略请求里的 slot（plan-layered-equip-v1 P0.1 伪皮归
   Chest/Worn 层），恒走 handle_inventory_move 到 Equip{Chest, Worn}：
   伪皮物品进胸槽受境界门控（can_equip_false_skin）；境界不足 →
-  `inventory_move_rejected`{reason=RealmTooLow, required_realm=Induce} + 权威回推
+  `inventory_move_rejected`{reason=RealmTooLow, required_realm=Induce} + 因果权威回推
   （revision 不变、物品保留）；境界够 → 物品移入 equipped.chest_worn + revision bump；
   instance 不存在 → warn + revision 不变（负断言同上）。
 """
@@ -22,9 +21,10 @@ import time
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
-    drain_inventory_quiet,
+    assert_no_inventory_change,
     equip_location,
     find_instance_by_id,
+    inventory_signature,
     find_item,
     latest_inventory_snapshot,
     require_item,
@@ -48,11 +48,8 @@ QI_ZONE_UNIT_CAPACITY = 50.0
 # zone qi 可能被 NPC regen drain / skill cast 在两次探针读之间轻微扰动；但「直接扣
 # qi_current 却完全不入账」的绕过（delta=0）与错额入账都远超此容差，仍被抓红。
 ZONE_QI_DELTA_TOLERANCE = 0.01
-# 拒绝回执之后的因果窗口：拒绝处理在**同一 tick** 同步 emit rejection + resync
-# 回推（毫秒级到达），而 revision 不变的周期 flush 约 5s 一条。把回推快照限定在
-# rejected_t 之后 1.0s 内。单靠 5s 周期假设不能排除 flush 恰好落在窗口里
-# （review finding [2]），所以拒绝意图锚定前必须排干到 quiet=2.0s 静默
-# （window 1.0 < quiet 2.0）——排干后下一次 flush 至少 2.0s 才可能到，窗口内不可能。
+# 结构化装备拒绝后，服务端应立即发 inventory_snapshot；只接受拒绝回执
+# 之后的实际快照，避免把 intent 前的历史快照当成因果回推。
 ROLLBACK_WINDOW = 1.0
 
 
@@ -78,127 +75,8 @@ def _give_and_wait(bot, item_id: str) -> dict:
     return event.data["payload"]
 
 
-def _inventory_signature(snapshot: dict) -> tuple:
-    """背包占用字段的规范投影：placed/equipped/hotbar/resource 等会随 forge 消耗
-    而变的字段。排除推导字段（weight/body_level/qi_*/realm/revision）——周期 flush
-    与拒绝回推共享同一份当前状态，推导字段可能被无关系统漂移，占用字段则不会
-    在没有 mutation 的情况下变化。"""
-    placed = sorted(
-        (
-            p["container_id"],
-            p["row"],
-            p["col"],
-            p["item"]["instance_id"],
-            p["item"].get("count", 1),
-            p["item"]["item_id"],
-        )
-        for p in snapshot.get("placed_items", [])
-    )
-    equipped = {
-        slot: [
-            (i["instance_id"], i.get("count", 1), i["item_id"])
-            for i in (items if isinstance(items, list) else ([items] if items else []))
-        ]
-        for slot, items in snapshot.get("equipped", {}).items()
-    }
-    hotbar = [
-        None
-        if slot is None
-        else (slot["instance_id"], slot.get("count", 1), slot["item_id"])
-        for slot in snapshot.get("hotbar", [])
-    ]
-    return (placed, equipped, hotbar, snapshot.get("bone_coins"))
-
-
 def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
-    """失败路径负断言：窗口内不得出现 inventory 变更（revision bump **或**占用字段漂移）。
-
-    服务端每 100 tick 会周期 flush 一次「revision 不变的当前状态快照」（实测 ~5s
-    一条），负判据必须容忍它；拒绝路径（RealmTooLow/NotEnoughQi/instance 不存在）
-    从不 bump revision，所以「窗口内无更高 revision」通常等价于「无变更」。
-    但 review finding [8]：revision 不动不代表内容不动——错误实现可直接改容器/装备
-    字段而不走 bump_revision API（绕过 revision 感知的写路径），仍产生一条 revision
-    不变的快照。故在 revision 检查之外再对权威快照做占用字段签名比对：基线捕获在
-    intent 前、期间无任何 inventory 命令，签名任何漂移都是拒绝路径违规。
-    review finding [5]（round 10）：签名比对必须拿 **e.t > anchor_t** 的权威快照——
-    错误实现不 bump revision 也不立即发快照时，NEGATIVE_WINDOW 内可能没有新快照，
-    `latest_inventory_snapshot` 仍指向 intent 前的基线，签名比对落空。本实现 wait_for
-    下一条 > anchor_t 的快照（拒绝路径无回推，唯一来源是周期 flush ~5s 一条），
-    其携带的才是请求后的权威状态。"""
-    baseline_revision = int(baseline["revision"])
-    time.sleep(NEGATIVE_WINDOW)
-    stray = [
-        e
-        for e in bot.events_of("server_data")
-        if e.data.get("payload_type") == "inventory_snapshot"
-        and e.t > anchor_t
-        and int(e.data["payload"].get("revision", -1)) > baseline_revision
-    ]
-    if stray:
-        raise BotAssertionError(
-            f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无 revision 变更"
-            f"（>{baseline_revision}），实际收到 {len(stray)} 条"
-        )
-    # central-review 31438252846 finding [3]：warn-only 拒绝路径（forge 境界/灵气/材料
-    # 拒绝 + equip instance 不存在）不得下发任何**用户可见拒绝回执**。旧实现只断
-    # 库存/qi 守恒，一个「保留库存与灵气、却在每步误发 inventory_move_rejected」的
-    # 服务端实现也能全过，违背场景声明的 wire 契约。inventory_move_rejected 是本组
-    # 唯一的拒绝 payload 类型（realm-gated equip 正路径同管线下发，见
-    # _wait_move_rejected——那一步走正向断言、不经本 helper），窗口内出现即红。
-    stray_rejected = [
-        e
-        for e in bot.events_of("server_data")
-        if e.data.get("payload_type") == "inventory_move_rejected" and e.t > anchor_t
-    ]
-    if stray_rejected:
-        raise BotAssertionError(
-            f"[{bot.username}] 期望 warn-only 拒绝路径不发送 inventory_move_rejected"
-            f"（无用户可见回执），实际收到 {len(stray_rejected)} 条"
-        )
-    # review finding [5]：签名比对必须拿 **e.t > anchor_t** 的权威快照。拒绝路径
-    # （RealmTooLow/NotEnoughQi/MissingMaterial/instance 不存在）从不主动回推，唯一
-    # > anchor_t 的快照来源是周期 flush（~5s 一条，revision 不变）——等到下一条
-    # （若窗口内已到达则立即返回），其携带的才是请求后的权威状态。
-    post = bot.wait_for(
-        lambda e: (
-            e.kind == "server_data"
-            and e.data.get("payload_type") == "inventory_snapshot"
-            and e.t > anchor_t
-        ),
-        timeout=10.0,
-        description=f"请求后（t>{anchor_t:.2f}）的权威 inventory_snapshot（周期 flush）",
-    ).data["payload"]
-    # central-review 2012 #5 回归：post 快照本身必须保持基线 revision——旧实现只比对
-    # 占用字段签名，错误实现「只 bump revision、不改任何物品位置/数量」发出一条签名
-    # 不变的快照就能通过。revision 单调递增，post 是窗口内第一条 post-anchor 快照；
-    # 若等待期间已有 bump，post 必然携带 > 基线的 revision，此处直接抓红。
-    if int(post["revision"]) != baseline_revision:
-        raise BotAssertionError(
-            f"[{bot.username}] 拒绝后 revision 应保持 {baseline_revision}（无 bump），"
-            f"实际 {post['revision']}"
-        )
-    if _inventory_signature(post) != _inventory_signature(baseline):
-        raise BotAssertionError(
-            f"[{bot.username}] 拒绝后背包占用字段应保持不变（基线 revision="
-            f"{baseline_revision}），实际内容漂移"
-        )
-    # central-review 2012 #5 回归（续）：wait_for 取的是窗口内**第一条** post-anchor
-    # 快照——若它是 bump 前到达的周期 flush，而 bump 快照在其后到达，上面 post 断言
-    # 已放过。此刻 bump 事件已进入事件列表，全量重扫补漏（含等待 post 期间到达的
-    # revision bump，旧实现从不在取到 post 后再扫）。
-    stray_late = [
-        e
-        for e in bot.events_of("server_data")
-        if e.data.get("payload_type") == "inventory_snapshot"
-        and e.t > anchor_t
-        and int(e.data["payload"].get("revision", -1)) > baseline_revision
-    ]
-    if stray_late:
-        raise BotAssertionError(
-            f"[{bot.username}] 期望窗口内无 revision 变更（>{baseline_revision}），"
-            f"实际 wait_for 之后重扫仍发现 {len(stray_late)} 条"
-        )
-
+    assert_no_inventory_change(bot, anchor_t, baseline, window=NEGATIVE_WINDOW)
 
 def _assert_qi_unchanged_after_rejection(bot, expected_qi: float, realm_id: str) -> None:
     """拒绝路径 qi 守恒：warn-only 拒绝不改 Cultivation，player_state 不会自动重发。
@@ -285,19 +163,14 @@ def run(env) -> None:
         bot.cmd("reset")
         bot.expect_chat("[dev] reset self", timeout=10.0)
         time.sleep(1.0)  # 命令通道冷却：reset 后 0.6s 内 give 仍会被静默丢弃（实测坑，1.0s 稳）
-        # 首个 drain 在会话早期（reset mutation 不落 5.0s 网格、其与 flush@5 不成对），
-        # 网格确认需等第二条真 flush（flush@5 + flush@10，~11.25s 处 age=1.25 返回）；
-        # max_wait 8.0（deadline ≈9.5s）会在确认前误超时，放 14.0（review finding
-        # [1][2]：回推不可锚，确认前只能等）。
-        drain_inventory_quiet(bot, quiet=1.2, max_wait=14.0)
 
         # ── 1. forge 拒绝-境界：fresh Awaken → RealmTooLow，无回推 ──
         # central-review 2012 #3：qi=0 时扣 qi 不可观测（0−5 被 clamp 回 0），先抬到
         # 1 让「拒绝时误扣真元」的错误实现可被探针读到差异。
         bot.cmd("qi set 1")
         bot.expect_chat("[dev] qi set", timeout=10.0)
-        anchor = last_event_time(bot)
         baseline = latest_inventory_snapshot(bot)
+        anchor = time.monotonic() - bot.t0
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
         # reset 归零 realm=Awaken（见上方 reset 注释）；realm-set 探针同值写不改变境界。
@@ -307,8 +180,8 @@ def run(env) -> None:
         bot.cmd("realm set induce")
         bot.expect_chat("[dev] realm set", timeout=10.0)
         # qi 仍是 1（上步 realm-set 探针为同值写，未改 qi_current）；拒绝路径同样断言 qi 守恒。
-        anchor = last_event_time(bot)
         baseline = latest_inventory_snapshot(bot)
+        anchor = time.monotonic() - bot.t0
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
         # 当前境界为 Induce（本步开头 realm set induce）；探针同值写不改变境界。
@@ -324,8 +197,8 @@ def run(env) -> None:
         # 该分支并验证文档化契约：qi 不变 + 库存占用不变 + revision 不变（无回推）。
         bot.cmd("qi set 5")
         bot.expect_chat("[dev] qi set", timeout=10.0)
-        anchor = last_event_time(bot)
         baseline = latest_inventory_snapshot(bot)
+        anchor = time.monotonic() - bot.t0
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
         # 当前境界为 Induce（step 2 开头 realm set induce）；qi 已抬到 5——qi>=qi_cost
@@ -418,12 +291,9 @@ def run(env) -> None:
         spare_snapshot = _give_and_wait(bot, FALSE_SKIN)
         spare = require_item(spare_snapshot, FALSE_SKIN)
         spare_instance = int(spare["item"]["instance_id"])
-        # review finding [2]：周期 flush（~5s 一条，revision 不变）可落进
-        # ROLLBACK_WINDOW 冒充拒绝回推。锚定前排干到 quiet=2.0s——下一次
-        # flush 至少 2.0s 后才可能到，而回推窗口只有 1.0s（window < quiet）。
-        drain_inventory_quiet(bot, quiet=2.0)
-        reject_anchor = last_event_time(bot)
-        reject_revision = int(latest_inventory_snapshot(bot)["revision"])
+        # 请求发出时刻是拒绝链的起点；回推快照随后严格锚到 rejection 事件。
+        reject_anchor = time.monotonic() - bot.t0
+        reject_revision = int(spare_snapshot["revision"])
         # central-review 2012 #2：请求 slot 同样用非规范值 "off_hand"——境界拒绝
         # 与 slot 无关（realm 门控先于槽位解析），但错误实现若 honor 请求字段并落
         # off_hand，realm 门控下同样拒绝——此处验证拒绝仍按 Chest/Worn 契约发生
@@ -445,13 +315,8 @@ def run(env) -> None:
             f"inventory_move_rejected.required_realm 应为 Induce，实际 "
             f"{rejected.get('required_realm')!r}"
         )
-        # central-review 2012 #3 回归：回推快照必须因果锚在拒绝回执**之后**
-        # （rejected_t），不是 intent 前水位——否则请求与拒绝之间任意周期性 flush
-        # 的「revision 不变」快照都能冒充权威回推，拒绝停发回推时断言仍过。
-        # 服务端 emit_inventory_move_rejected 先于 resync_snapshot 下发，rejected_t
-        # 之后必有真实回推快照。再加 ROLLBACK_WINDOW 上限：拒绝处理在同一 tick 同步
-        # 回推（毫秒级到达），周期 flush ~5s 一条，窗口把「回执之后较晚的无关 flush」
-        # 也排除——回推必须是对拒绝回执的即时后果。
+        # 服务端 emit_inventory_move_rejected 先于 resync_snapshot；只有 rejection
+        # 之后实际收到的快照才可作为这次拒绝的因果回推。
         kept = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
@@ -468,6 +333,10 @@ def run(env) -> None:
         assert int(kept["revision"]) == reject_revision, (
             f"境界拒绝不得移动物品：revision 应保持 {reject_revision}，实际 {kept['revision']}"
         )
+        assert inventory_signature(kept) == inventory_signature(spare_snapshot), (
+            "境界拒绝后的完整 inventory_snapshot 必须逐字段保持请求前内容，"
+            "包括 durability/freshness/forge/alchemy 等物品元数据"
+        )
         # central-review 2012 #2：第 4 步已装备一件同模板伪皮，模板级 require_item
         # 会被旧装备件满足——错误的拒绝实现「丢失新给 spare_instance 却不动旧件」
         # 也能过。必须 pin 到被拒实例本身 + 非 equipped 原位。
@@ -482,7 +351,7 @@ def run(env) -> None:
         )
 
         # ── 6. equip 静默：instance 不存在 → warn + revision 无变更 ──
-        anchor = last_event_time(bot)
+        anchor = time.monotonic() - bot.t0
         baseline = latest_inventory_snapshot(bot)
         bot.intent(
             {
