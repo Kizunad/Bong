@@ -94,7 +94,7 @@ def _move_and_record(bot):
     probe_anchor = last_event_time(bot)
     bot.cmd("top")
     top_feedback = bot.expect_chat("Teleported to top", timeout=10.0)
-    top_y_match = re.search(r"Y=(-?\\d+(?:\\.\\d+)?)", top_feedback.data["text"])
+    top_y_match = re.search(r"Y=(-?\d+(?:\.\d+)?)", top_feedback.data["text"])
     if top_y_match is None:
         raise BotAssertionError(
             f"/top feedback 必须携带 server 计算的目标 Y，实际 {top_feedback.data['text']!r}"
