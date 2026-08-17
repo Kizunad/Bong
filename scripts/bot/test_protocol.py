@@ -1861,7 +1861,14 @@ class LifecycleReviewContractTest(unittest.TestCase):
                         1.0,
                         "pos_look",
                         {"x": 100.0, "y": 72.0, "z": 8.0, "flags": 0},
-                    )
+                    ),
+                    # Same Y as the /top response, but received before its chat
+                    # watermark; this stale frame must not be consumed as the probe.
+                    _FakeEvent(
+                        1.9,
+                        "pos_look",
+                        {"x": 101.0, "y": 90.0, "z": 8.0, "flags": 0},
+                    ),
                 ]
                 self.position = (100.0, 72.0, 8.0)
 
@@ -1877,6 +1884,14 @@ class LifecycleReviewContractTest(unittest.TestCase):
                 assert command == "top"
                 self.events.extend(
                     [
+                        # This same-Y frame arrives after the old pre-command
+                        # watermark but before the command feedback. A probe
+                        # anchored before the chat would incorrectly consume it.
+                        _FakeEvent(
+                            1.9,
+                            "pos_look",
+                            {"x": 105.0, "y": 90.0, "z": 8.0, "flags": 0},
+                        ),
                         _FakeEvent(2.0, "chat", {"text": "Teleported to top at Y=90."}),
                         _FakeEvent(
                             2.1,

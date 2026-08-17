@@ -17,7 +17,6 @@ import re
 import time
 
 from bot.bot import BotAssertionError
-from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
     find_item,
     wait_inventory_contains,
@@ -91,7 +90,6 @@ def _move_and_record(bot):
     # `/top` 只改 server 侧当前 Position 的 Y，X/Z 仍来自 server 已接受的移动；
     # 它会产生协议可见的绝对 PositionLook，既避免读取本地镜像，也不引入新的
     # gameplay API。若 server 只接受了部分移动，下面的 5m 前置断言必须失败。
-    probe_anchor = last_event_time(bot)
     bot.cmd("top")
     top_feedback = bot.expect_chat("Teleported to top", timeout=10.0)
     top_y_match = re.search(r"Y=(-?\d+(?:\.\d+)?)", top_feedback.data["text"])
@@ -102,13 +100,13 @@ def _move_and_record(bot):
     expected_top_y = float(top_y_match.group(1))
     top_position_event = bot.wait_for(
         lambda candidate: candidate.kind == "pos_look"
-        and candidate.t > probe_anchor
+        and candidate.t > top_feedback.t
         and math.isclose(
             float(candidate.data["y"]), expected_top_y, rel_tol=0.0, abs_tol=1.0e-6
         ),
         timeout=10.0,
         description=(
-            f"移动后 server /top PositionLook（t>{probe_anchor:.3f}s，"
+            f"移动后 server /top PositionLook（t>{top_feedback.t:.3f}s，"
             f"y={expected_top_y:g}）"
         ),
     )
