@@ -6,8 +6,8 @@
 //!
 //! 两表都只装 **非 `Any`** 条目——`Any` 是默认，client 缺省即 `Any`（省流量）：
 //! - `item_wearer_race`：从 [`ItemRegistry`] 全模板取 `wearer_race != Any`。
-//! - `technique_required_race`：从 49 条 [`TechniqueRegistry`] 定义取
-//!   `required_race != Any`（当前 28 条 Humanoid + 21 条 Any → 表恰 28 条）。
+//! - `technique_required_race`：从 [`TechniqueRegistry`] 当前定义动态取
+//!   `required_race != Any`；Any 仍由 client 缺省语义表达，不进入表。
 //!
 //! 内容与玩家身份无关（静态），因此易形 / RaceChange **不需重发**——client 用
 //! `PlayerRaceIdentityStore` 的最新身份对同一张表重判即可。故下发时机只需
@@ -101,59 +101,82 @@ mod tests {
     use super::*;
     use crate::body_plan::RaceGateOwned;
 
-    /// TechniqueRegistry 当前构成：28 条 Humanoid + 21 条 Any（共 49）。
-    /// 表恰含 28 条非-Any 条目（Any 不进表），且全部 kind == "humanoid"。
+    /// TechniqueRegistry 的当前投影必须完整、排序稳定且不维护一份 Rust 人口计数。
+    /// 预期集合从 registry 派生；每条 wire gate 再与 owned metadata 对拍，避免只测数量。
     #[test]
-    fn technique_table_holds_exactly_28_non_any_entries() {
+    fn technique_table_projects_current_non_any_registry_entries() {
         let registry = ItemRegistry::from_map(std::collections::HashMap::new());
-        let meta = build_race_gate_meta(&registry, &TechniqueRegistry::load_for_tests());
+        let techniques = TechniqueRegistry::load_for_tests();
+        let meta = build_race_gate_meta(&registry, &techniques);
 
+        let mut expected = techniques
+            .iter()
+            .filter(|definition| !matches!(definition.required_race, RaceGateOwned::Any))
+            .map(|definition| {
+                (
+                    definition.id.clone(),
+                    RaceGateWireV1::from_owned(&definition.required_race),
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let actual = meta
+            .technique_required_race
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.gate.clone()))
+            .collect::<Vec<_>>();
         assert_eq!(
-            meta.technique_required_race.len(),
-            28,
-            "49 条功法定义中 28 条 Humanoid 应进表，21 条 Any 不进表；\
-             实际非-Any 条目数={}",
-            meta.technique_required_race.len()
+            actual, expected,
+            "technique race-gate payload must be the sorted non-Any registry projection"
         );
-        for entry in &meta.technique_required_race {
-            assert_eq!(
-                entry.gate.kind, "humanoid",
-                "technique {} 的门应为 humanoid（当前 49 条无 species 档），实际 {:?}",
-                entry.id, entry.gate.kind
-            );
+        assert!(
+            actual.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "technique race-gate payload IDs must be strictly sorted"
+        );
+    }
+
+    /// Any 档功法绝不进表——client 缺省即放行；条目数由当前 registry 派生。
+    #[test]
+    fn any_techniques_are_absent_from_table() {
+        let registry = ItemRegistry::from_map(std::collections::HashMap::new());
+        let techniques = TechniqueRegistry::load_for_tests();
+        let meta = build_race_gate_meta(&registry, &techniques);
+
+        for definition in techniques
+            .iter()
+            .filter(|definition| matches!(definition.required_race, RaceGateOwned::Any))
+        {
             assert!(
-                entry.gate.species.is_empty(),
-                "humanoid 门不得携带 species 名单，technique {} 携带了 {:?}",
-                entry.id,
-                entry.gate.species
+                !meta
+                    .technique_required_race
+                    .iter()
+                    .any(|entry| entry.id == definition.id),
+                "Any 档功法 {} 不应出现在种族门表里（Any 是默认，靠 client 缺省放行）",
+                definition.id
             );
         }
     }
 
-    /// Any 档功法（如 flying_sword 类神识/真元驱动）绝不进表——client 缺省即放行。
+    /// Species gate 也必须按同一 projection 接线，不能被当前 catalog 的 Humanoid 构成
+    /// 假设挡住；这里通过测试覆盖构造未来合法数据扩展的 wire 形状。
     #[test]
-    fn any_techniques_are_absent_from_table() {
+    fn technique_species_gate_is_projected_with_wire_species() {
         let registry = ItemRegistry::from_map(std::collections::HashMap::new());
-        let meta = build_race_gate_meta(&registry, &TechniqueRegistry::load_for_tests());
+        let techniques = TechniqueRegistry::load_for_tests_with_override("movement.dash", |definition| {
+            definition.required_race = RaceGateOwned::Species {
+                species: vec![crate::body_plan::RaceId::new("whale".to_string())],
+            };
+        });
+        let meta = build_race_gate_meta(&registry, &techniques);
 
-        let techniques = TechniqueRegistry::load_for_tests();
-        let any_ids: Vec<&str> = techniques
+        let entry = meta
+            .technique_required_race
             .iter()
-            .filter(|d| matches!(d.required_race, RaceGateOwned::Any))
-            .map(|d| d.id.as_str())
-            .collect();
-        assert_eq!(
-            any_ids.len(),
-            21,
-            "预期 21 条 Any 功法（含 P4 morph.yixing）"
-        );
-
-        for any_id in &any_ids {
-            assert!(
-                !meta.technique_required_race.iter().any(|e| e.id == *any_id),
-                "Any 档功法 {any_id} 不应出现在种族门表里（Any 是默认，靠 client 缺省放行）"
-            );
-        }
+            .find(|entry| entry.id == "movement.dash")
+            .expect("overridden species technique must enter non-Any table");
+        assert_eq!(entry.gate.kind, "species");
+        assert_eq!(entry.gate.species, vec!["whale".to_string()]);
     }
 
     /// item 表当前为空（assets/items/*.toml 全部 wearer_race=Any）——P5 回填数据后

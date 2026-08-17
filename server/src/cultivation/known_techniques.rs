@@ -80,6 +80,20 @@ pub enum TechniqueDispatch {
     DedicatedInput,
 }
 
+/// 由真正拥有独立 C2S / gameplay 入口的模块声明的 dedicated-input 功法。
+///
+/// 这不是历史 catalog 的数量白名单：它是 code-owned consumer registry。新增独立输入
+/// 入口时，必须在其 owner 模块导出稳定 ID 并把它接入这里；启动校验会同时保证 registry
+/// 中的每个 ID 都有 TOML metadata，且 metadata 明确标成 `dedicated_input`。
+pub const DEDICATED_INPUT_CONSUMER_IDS: &[&str] = &[
+    crate::movement::dash_proficiency::DASH_TECHNIQUE_ID,
+    crate::combat::shield_block::SHIELD_BLOCK_TECHNIQUE_ID,
+];
+
+pub fn has_dedicated_input_consumer(skill_id: &str) -> bool {
+    DEDICATED_INPUT_CONSUMER_IDS.contains(&skill_id)
+}
+
 /// 运行时 owned metadata。所有字符串与经脉列表均来自启动期 TOML，不能借用临时解析缓冲区。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TechniqueDefinition {
@@ -519,9 +533,9 @@ impl std::fmt::Display for TechniqueWiringError {
 
 impl std::error::Error for TechniqueWiringError {}
 
-/// 验证当前 metadata、resolver 与经脉依赖表的逐条关系。只有三份候选都完整构造后才可
-/// 调用；调用者必须在成功后才把它们 insert 为 Bevy resources。resolver-only 与
-/// dependency-only 条目有意合法，不强迫非 metadata 内容反向补表。
+/// 验证当前 metadata、resolver、独立输入消费者与经脉依赖表的逐条关系。只有四份候选
+/// 都完整构造后才可调用；调用者必须在成功后才把它们 insert 为 Bevy resources。
+/// resolver-only 与 dependency-only 条目有意合法，不强迫非 metadata 内容反向补表。
 pub fn validate_startup_wiring(
     techniques: &TechniqueRegistry,
     skills: &SkillRegistry,
@@ -560,6 +574,12 @@ pub fn validate_startup_wiring(
                 }
             }
             TechniqueDispatch::DedicatedInput => {
+                if !has_dedicated_input_consumer(&definition.id) {
+                    return Err(TechniqueWiringError(format!(
+                        "dedicated_input technique {:?} has no registered dedicated input consumer",
+                        definition.id
+                    )));
+                }
                 if skills.lookup(&definition.id).is_some() {
                     return Err(TechniqueWiringError(format!(
                         "dedicated_input technique {:?} unexpectedly has a SkillRegistry resolver",
@@ -574,6 +594,21 @@ pub fn validate_startup_wiring(
                     )));
                 }
             }
+        }
+    }
+
+    for &consumer_id in DEDICATED_INPUT_CONSUMER_IDS {
+        let Some(definition) = techniques.get(consumer_id) else {
+            return Err(TechniqueWiringError(format!(
+                "dedicated input consumer {:?} has no technique metadata",
+                consumer_id
+            )));
+        };
+        if definition.dispatch != TechniqueDispatch::DedicatedInput {
+            return Err(TechniqueWiringError(format!(
+                "dedicated input consumer {:?} is declared as {:?}, expected dedicated_input",
+                consumer_id, definition.dispatch
+            )));
         }
     }
 
@@ -946,7 +981,7 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn consumerless_direct_generic_is_rejected_but_dedicated_input_is_admitted() {
+    fn consumerless_dispatches_are_rejected_and_code_owned_consumers_are_admitted() {
         let direct_generic = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"direct_generic\"",
@@ -961,17 +996,53 @@ dispatch = "metadata_backed"
         assert!(error.to_string().contains("test.skill"));
         assert!(error.to_string().contains("no registered completion consumer"));
 
-        let dedicated_input = load(&minimal_toml().replace(
+        let arbitrary_dedicated_input = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"dedicated_input\"",
         ))
-        .expect("dedicated input metadata loads");
-        validate_startup_wiring(
-            &dedicated_input,
+        .expect("dedicated input syntax is valid before cross-registry wiring validation");
+        let error = validate_startup_wiring(
+            &arbitrary_dedicated_input,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),
         )
-        .expect("dedicated input is intentionally outside the generic cast lifecycle");
+        .expect_err("arbitrary dedicated_input metadata must fail startup");
+        assert!(error.to_string().contains("test.skill"));
+        assert!(error
+            .to_string()
+            .contains("no registered dedicated input consumer"));
+
+        let production = production_registry();
+        validate_startup_wiring(
+            &production,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("production metadata without runtime wiring must not be admitted");
+        let skills = crate::cultivation::skill_registry::init_registry();
+        let dependencies = crate::cultivation::skill_registry::init_meridian_dependencies();
+        validate_startup_wiring(&production, &skills, &dependencies)
+            .expect("code-owned dedicated inputs must have a positive startup admission path");
+
+        let missing_consumer_metadata = load(
+            &minimal_toml()
+                .replace("id = \"test.skill\"", "id = \"shield_block\"")
+                .replace(
+                    "dispatch = \"metadata_backed\"",
+                    "dispatch = \"dedicated_input\"",
+                ),
+        )
+        .expect("a partial dedicated-input catalog is syntactically valid");
+        let error = validate_startup_wiring(
+            &missing_consumer_metadata,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("every code-owned dedicated input must have metadata");
+        assert!(error.to_string().contains("movement.dash"));
+        assert!(error
+            .to_string()
+            .contains("has no technique metadata"));
     }
 
     #[test]

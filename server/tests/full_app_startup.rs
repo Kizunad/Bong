@@ -90,8 +90,42 @@ fn full_app_startup_smoke_initializes_core_resources_and_ticks_once() {
 }
 
 #[test]
+fn full_app_startup_smoke_accepts_resolver_backed_technique_extension() {
+    let assets_root = copied_assets_root("resolver-backed-technique-extension");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    techniques.push_str(
+        r#"
+
+[[techniques]]
+id = "dugu.eclipse"
+display_name = "蚀针"
+grade = "yellow"
+description = "由既有蛊道 resolver 接管的新增 metadata 条目。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Liver", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 20
+range = 8.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#,
+    );
+    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+    assert_startup_succeeds(&output);
+}
+
+#[test]
 fn full_app_startup_smoke_rejects_consumerless_direct_generic_extension() {
-    let assets_root = copied_assets_root("technique-extension");
+    let assets_root = copied_assets_root("consumerless-direct-generic-technique");
     let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
     let mut techniques =
         fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
@@ -102,7 +136,7 @@ fn full_app_startup_smoke_rejects_consumerless_direct_generic_extension() {
 id = "test.consumerless_direct_generic_startup_smoke"
 display_name = "数据扩展探针"
 grade = "common"
-description = "仅由 TOML 增加，用于证明完整 App 启动不钉死历史功法集合。"
+description = "没有真实完成消费者的 generic cast 条目必须被完整启动拒绝。"
 required_realm = "Awaken"
 required_meridians = []
 required_race = { kind = "any" }
