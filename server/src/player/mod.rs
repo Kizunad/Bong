@@ -5,7 +5,7 @@ pub mod state;
 
 use self::state::{
     canonical_player_id, load_player_slices_with_technique_registry, save_player_core_slice,
-    save_player_inventory_slice,
+    save_player_inventory_slice, update_player_ui_prefs,
     save_player_known_techniques_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
     save_player_slices_with_coffin, save_player_slow_slice, LoadedKnownTechniques, PlayerState,
