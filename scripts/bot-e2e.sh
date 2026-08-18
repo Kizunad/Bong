@@ -21,15 +21,48 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # 自起模式并发安全：BOT_E2E_PORT 未指定时 bind :0 由内核在临时端口段原子分配——
 # 两个 worker 同一瞬间各自 probe 会像 connect 探测一样都看到「空闲」，而 bind 分配
-# 拿到即独占；close 到 server bind 之间若有第三方抢入，走既有的
-# "failed to start TCP listener" 快速失败路径，不会退化成 600s 假超时。
+# 拿到即独占。用 0.0.0.0 探测，覆盖 server 的 wildcard listener，避免仅绑定 loopback
+# 漏掉第三方占用；close 到 server bind 之间若有第三方抢入，则在下方 bounded retry
+# 中换一个端口重启，不把一次可恢复的端口碰撞变成整轮失败。
 allocate_free_port() {
   python3 - <<'EOF'
 import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("0.0.0.0", 0))
+    print(sock.getsockname()[1])
+EOF
+}
+
+# 环境变量允许首尾空白，但进入 ss、Python runner 与 BONG_SERVER_PORT 前必须只保留
+# 一个 canonical 十进制端口。0 会让 server 绑定不可发现的 OS ephemeral port，必须
+# 在启动前 fail closed，不能把错误拖成 600s readiness 假超时。
+canonicalize_port() {
+  python3 - "$1" <<'EOF'
+import sys
+
+raw = sys.argv[1]
+value = raw.strip()
+if not value or any(char < "0" or char > "9" for char in value):
+    print(
+        f"[bot-e2e] BOT_E2E_PORT 必须是 1-65535 的十进制整数（可带首尾空白），实际为 {raw!r}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+try:
+    port = int(value)
+except ValueError:
+    print(
+        f"[bot-e2e] BOT_E2E_PORT 必须是 1-65535 的十进制整数（可带首尾空白），实际为 {raw!r}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+if not 1 <= port <= 65535:
+    print(
+        f"[bot-e2e] BOT_E2E_PORT 必须是 1-65535 的十进制整数（可带首尾空白），实际为 {raw!r}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+print(port)
 EOF
 }
 
@@ -60,15 +93,25 @@ if [ "$REUSE" = "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && {
 fi
 
 # 端口决策必须在 REUSE 可能被上方 roster 守卫降级之后做，否则 REUSE=1 被降级为
-# 自起时仍会拿 25565 去抢。
+# 自起时仍会拿 25565 去抢。显式端口 0/非法值在这里拒绝；自动分配的端口也经过同一
+# canonicalizer，后续所有 probe、server env 与 runner 只使用 PORT。
+PORT_AUTO_ALLOCATED=0
 if [ "$REUSE" = "1" ]; then
   # REUSE：显式端口或默认 25565——只连接既有 server，不分配、不起服。
-  PORT="${BOT_E2E_PORT:-25565}"
+  RAW_PORT="${BOT_E2E_PORT:-25565}"
 else
   # 自起模式：未指定端口就分配空闲端口，而不是默认争抢 25565。
-  PORT="${BOT_E2E_PORT:-$(allocate_free_port)}"
+  if [ -n "${BOT_E2E_PORT:-}" ]; then
+    RAW_PORT="$BOT_E2E_PORT"
+  else
+    RAW_PORT="$(allocate_free_port)"
+    PORT_AUTO_ALLOCATED=1
+  fi
 fi
-if [ "$REUSE" != "1" ] && [ -z "${BOT_E2E_PORT:-}" ]; then
+if ! PORT="$(canonicalize_port "$RAW_PORT")"; then
+  exit 2
+fi
+if [ "$PORT_AUTO_ALLOCATED" = "1" ]; then
   echo "[bot-e2e] BOT_E2E_PORT 未设置，自起模式分配空闲端口 $PORT（并发运行互不争抢 25565）"
 fi
 
@@ -119,6 +162,17 @@ if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-
   exit 2
 fi
 
+# 每次 harness invocation 都有独立 evidence namespace。test_protocol.py 内嵌的 fake
+# server 可通过 BOT_E2E_EVIDENCE_ROOT 直接钉住自己的 invocation 根目录；普通运行则
+# 在共享 artifact 根下创建唯一 session，避免同一 checkout 的并发 bot-e2e 互相删除/
+# 读取对方的 run 目录。
+if [ -n "${BOT_E2E_EVIDENCE_ROOT:-}" ]; then
+  EVIDENCE_ROOT="$BOT_E2E_EVIDENCE_ROOT"
+else
+  mkdir -p "$EVIDENCE_ROOT"
+  EVIDENCE_ROOT="$(mktemp -d "$EVIDENCE_ROOT/session.XXXXXXXXXX")"
+  export BOT_E2E_EVIDENCE_ROOT="$EVIDENCE_ROOT"
+fi
 mkdir -p "$EVIDENCE_ROOT"
 EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"
 RUN_ID="${EVIDENCE_DIR##*.}"
@@ -315,24 +369,27 @@ fi
 # ---- server ----
 # 自起模式绝不终止不属于本轮进程树的 listener。端口已占用即 fail-closed；CI 上游若
 # 泄漏 server，应修其 owner 的 cleanup，而不是按进程名误杀其它 worktree/用户开发服。
-if port_open "$HOST" "$PORT"; then
-  if [ "$REUSE" = "1" ]; then
-    echo "[bot-e2e] 复用已在 $HOST:$PORT 运行的 server（BOT_E2E_REUSE=1）"
-  else
-    echo "[bot-e2e] $HOST:$PORT 已被占用。要对着现有 server 跑请设 BOT_E2E_REUSE=1；" >&2
-    echo "[bot-e2e] 否则先停掉旧 server，避免测到过期二进制。" >&2
-    exit 2
+# 自动分配端口在 close(:0) 到 cargo bind 之间仍有可恢复的碰撞窗口；只针对明确的
+# listener bind 失败做有限次换端口重启，避免一次碰撞丢掉整轮，也不把编译/业务故障
+# 伪装成端口问题。
+MAX_PORT_RETRIES=3
+
+start_self_server_attempt() {
+  local attempt="$1"
+  local ready_marker_ok=0
+
+  # 清掉上一次尝试的 marker，避免失败尝试留下的日志让本轮 readiness 误判；失败日志
+  # 另存为 attempt-N，最终 evidence 仍保留每次实际启动的事实。
+  if [ -s "$SERVER_LOG" ]; then
+    cp -- "$SERVER_LOG" "$EVIDENCE_DIR/server-attempt-$((attempt - 1)).log"
   fi
-else
-  if [ "$REUSE" = "1" ]; then
-    echo "[bot-e2e] BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起" >&2
-    exit 2
-  fi
+  : >"$SERVER_LOG"
+
   PROFILE_FLAG=""
   if [ "$PROFILE" = "release" ]; then
     PROFILE_FLAG="--release"
   fi
-  echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，log: $SERVER_LOG）"
+  echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，端口 $PORT，尝试 $attempt/$MAX_PORT_RETRIES，log: $SERVER_LOG）"
   # Owned-fixture mode moves all relative persistent outputs into its evidence runtime. Generic
   # mode retains the historical checkout/server CWD for callers that rely on that contract.
   (
@@ -366,14 +423,23 @@ else
   echo "[bot-e2e] 等待 $HOST:$PORT 就绪（最长 600s，冷编译会慢）"
   for _ in $(seq 1 300); do
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      if grep -Fq "failed to start TCP listener" "$SERVER_LOG"; then
+        echo "[bot-e2e] 当前 server TCP listener 启动失败（端口 $PORT），可重试：" >&2
+        tail -n 40 "$SERVER_LOG" >&2
+        kill_tree "$SERVER_PID"
+        wait "$SERVER_PID" 2>/dev/null || true
+        return 75
+      fi
       echo "[bot-e2e] server 进程提前退出，log 尾部：" >&2
       tail -n 40 "$SERVER_LOG" >&2
-      exit 1
+      return 1
     fi
     if grep -Fq "failed to start TCP listener" "$SERVER_LOG"; then
-      echo "[bot-e2e] 当前 server TCP listener 启动失败，拒绝连接同端口的外部进程：" >&2
+      echo "[bot-e2e] 当前 server TCP listener 启动失败（端口 $PORT），可重试：" >&2
       tail -n 40 "$SERVER_LOG" >&2
-      exit 1
+      kill_tree "$SERVER_PID"
+      wait "$SERVER_PID" 2>/dev/null || true
+      return 75
     fi
     # Owned-fixture readiness requires an exact tokenized marker; generic mode retains
     # the world bootstrap + owned-listener readiness contract.
@@ -383,16 +449,15 @@ else
         if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
           export BOT_E2E_AMBIENT_FIXTURE_OWNED=1
         fi
-        break
+        return 0
       fi
     fi
     sleep 2
   done
+
   if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
-    ready_marker_ok=0
     grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
   else
-    ready_marker_ok=0
     grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && ready_marker_ok=1
   fi
   if { [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "${BOT_E2E_AMBIENT_FIXTURE_OWNED:-0}" != "1" ]; } \
@@ -404,8 +469,51 @@ else
       echo "[bot-e2e] 提示：cargo 卡在 build directory 锁——共享 CARGO_TARGET_DIR 正被其他 cargo 进程占用" >&2
     fi
     tail -n 40 "$SERVER_LOG" >&2
-    exit 1
+    return 1
   fi
+  return 0
+}
+
+server_ready=0
+for attempt in $(seq 1 "$MAX_PORT_RETRIES"); do
+  if port_open "$HOST" "$PORT"; then
+    if [ "$REUSE" = "1" ]; then
+      echo "[bot-e2e] 复用已在 $HOST:$PORT 运行的 server（BOT_E2E_REUSE=1）"
+      server_ready=1
+      break
+    fi
+    if [ "$PORT_AUTO_ALLOCATED" = "1" ] && [ "$attempt" -lt "$MAX_PORT_RETRIES" ]; then
+      old_port="$PORT"
+      PORT="$(canonicalize_port "$(allocate_free_port)")"
+      echo "[bot-e2e] 自动端口 $old_port 已被占用，改用 $PORT（预启动重试 $((attempt + 1))/$MAX_PORT_RETRIES）" >&2
+      continue
+    fi
+    echo "[bot-e2e] $HOST:$PORT 已被占用。要对着现有 server 跑请设 BOT_E2E_REUSE=1；" >&2
+    echo "[bot-e2e] 否则先停掉旧 server，避免测到过期二进制。" >&2
+    exit 2
+  fi
+
+  if [ "$REUSE" = "1" ]; then
+    echo "[bot-e2e] BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起" >&2
+    exit 2
+  fi
+  if start_self_server_attempt "$attempt"; then
+    server_ready=1
+    break
+  else
+    attempt_status=$?
+  fi
+  if [ "$attempt_status" -eq 75 ] && [ "$PORT_AUTO_ALLOCATED" = "1" ] && [ "$attempt" -lt "$MAX_PORT_RETRIES" ]; then
+    old_port="$PORT"
+    PORT="$(canonicalize_port "$(allocate_free_port)")"
+    echo "[bot-e2e] 自动端口 $old_port 与其它 listener 碰撞，改用 $PORT（启动重试 $((attempt + 1))/$MAX_PORT_RETRIES）" >&2
+    continue
+  fi
+  exit 1
+done
+if [ "$server_ready" != "1" ]; then
+  echo "[bot-e2e] 端口自动分配重试 $MAX_PORT_RETRIES 次仍未建立 server ownership" >&2
+  exit 1
 fi
 
 # ---- 场景 ----

@@ -94,11 +94,17 @@ fn server_listen_address() -> std::net::SocketAddr {
 }
 
 fn parse_server_port(raw: &str) -> u16 {
-    raw.trim().parse().unwrap_or_else(|error| {
+    let port = raw.trim().parse().unwrap_or_else(|error| {
         // 值非法直接 panic 而非静默回退：回退会让调用方（bot-e2e.sh）继续等一个
         // server 从未绑定的端口，退化为修复前的 600s 假超时。
-        panic!("BONG_SERVER_PORT 必须是 0-65535 的整数，实际 {raw:?}: {error}")
-    })
+        panic!("BONG_SERVER_PORT 必须是 1-65535 的整数，实际 {raw:?}: {error}")
+    });
+    if port == 0 {
+        // 端口 0 会让操作系统选择一个 ephemeral port，但启动方拿不到这个回填值，
+        // readiness 只能继续探测字面量 0 并最终假超时。
+        panic!("BONG_SERVER_PORT 必须是 1-65535 的整数，实际 {raw:?}")
+    }
+    port
 }
 
 fn build_server_app() -> App {
@@ -761,18 +767,23 @@ mod cli_tests {
     fn parse_server_port_accepts_trimmed_valid_values() {
         assert_eq!(parse_server_port("25565"), 25565);
         assert_eq!(parse_server_port(" 34567 "), 34567);
-        assert_eq!(parse_server_port("0"), 0);
         assert_eq!(parse_server_port("65535"), 65535);
     }
 
     #[test]
-    #[should_panic(expected = "BONG_SERVER_PORT 必须是 0-65535 的整数")]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 1-65535 的整数")]
+    fn parse_server_port_panics_on_zero() {
+        parse_server_port("0");
+    }
+
+    #[test]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 1-65535 的整数")]
     fn parse_server_port_panics_on_garbage() {
         parse_server_port("not-a-port");
     }
 
     #[test]
-    #[should_panic(expected = "BONG_SERVER_PORT 必须是 0-65535 的整数")]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 1-65535 的整数")]
     fn parse_server_port_panics_on_out_of_range() {
         parse_server_port("65536");
     }
