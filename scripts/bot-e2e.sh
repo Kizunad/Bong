@@ -133,8 +133,19 @@ if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; t
   exit 2
 fi
 
+# 回退平世界是钉死 BciJ1/BciJ2/BciFC 用户名的 CI 见证，terrain_join_chunk_delivery
+# 簇断言只接受 ci；默认 PID 派生 run tag 会等首个 join 完成才撞断言晚失败，
+# 必须在构建/启动前显式拒绝（review finding：fallback 默认自调用自不兼容）。
+if [ "$FALLBACK_MODE" = "1" ] && [ "$BOT_E2E_RUN_TAG" != "ci" ]; then
+  echo "[bot-e2e] fallback mode 的 terrain_join_chunk_delivery 簇断言只接受 BOT_E2E_RUN_TAG=ci；" >&2
+  echo "[bot-e2e] 默认 PID 派生 run tag 与 fallback 见证不兼容，请显式设置 BOT_E2E_RUN_TAG=ci" >&2
+  exit 2
+fi
+
 mkdir -p "$EVIDENCE_ROOT"
 EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"
+# mktemp 返回的文本路径可能带符号链接 checkout 的别名祖先；smoke_cleanup_owned_artifacts 要求 run dir 与 realpath 精确相等，立即归一化。
+EVIDENCE_DIR="$(realpath -e -- "$EVIDENCE_DIR")"
 RUN_ID="${EVIDENCE_DIR##*.}"
 SERVER_LOG="$EVIDENCE_DIR/server.log"
 if [ "$OWNED_WORLD_MODE" = "1" ]; then
