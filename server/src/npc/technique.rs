@@ -19,7 +19,7 @@ use crate::body_plan::RaceId;
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
     parse_required_realm, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
-    TechniqueRegistry,
+    TechniqueDispatch, TechniqueRegistry, NPC_PASSIVE_TECHNIQUE_IDS,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -207,16 +207,25 @@ pub fn assign_npc_techniques_for_identity(
     race: &RaceId,
     is_humanoid: bool,
 ) -> KnownTechniques {
-    // 收集所有 realm + 经脉可用的功法
+    // NPC 主动功法池只收 resolver-backed 条目。`direct_generic` 只有玩家 skill-bar
+    // 生命周期，并不等于 NPC 有可调用的 SkillFn；若把它们混入候选，评分器会给出高分，
+    // action 随后 lookup 失败且不更新冷却/last_tick，最终反复抢占 NPC 的 melee 回合。
+    // `body.guangbo_ticao` 是有意保留的 direct-generic 被动，走下方独立 passive 注入，
+    // 不进入主动池。
     let available: Vec<&TechniqueDefinition> = technique_registry
         .iter()
         .filter(|def| {
-            // Preserve the pre-datafication candidate population and source order. The NPC
-            // assignment algorithm is index-sensitive; dispatch describes the player cast
-            // route, not NPC eligibility. Specialized NPC consumers may filter at action time,
-            // but this source-only migration must not reseed existing loadouts or drop the live
-            // body.guangbo_ticao conditioning passive.
-            def.required_race.allows(race, is_humanoid)
+            def.dispatch == TechniqueDispatch::MetadataBacked
+                && def.required_race.allows(race, is_humanoid)
+                && technique_realm_satisfied(def, realm)
+                && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
+        })
+        .collect();
+    let passive_available: Vec<&TechniqueDefinition> = technique_registry
+        .iter()
+        .filter(|def| {
+            NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+                && def.required_race.allows(race, is_humanoid)
                 && technique_realm_satisfied(def, realm)
                 && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
         })
@@ -245,18 +254,22 @@ pub fn assign_npc_techniques_for_identity(
         NpcArchetype::Zhinian => (2, 3, 0.3, 0.6),
     };
 
-    if available.is_empty() {
+    if available.is_empty() && passive_available.is_empty() {
         return KnownTechniques {
             entries: Vec::new(),
         };
     }
 
-    // 决定功法数量
+    // 决定基础功法总数量。被动条目走独立注入路径，但占用同一基础配额；这样 NPC
+    // 仍保持既有 1-3/2-4/3-5 等 KnownTechniques 数量，同时不会把 passive 当成可施法招式。
     let range = (count_max - count_min + 1) as u32;
-    let count = count_min + splitmix64_range(entity_seed, range) as usize;
-    let count = count.min(available.len());
+    let total_count = count_min + splitmix64_range(entity_seed, range) as usize;
+    let passive_count = passive_available.len().min(total_count);
+    let active_count = total_count
+        .saturating_sub(passive_count)
+        .min(available.len());
 
-    // Fisher-Yates shuffle 选前 count 个
+    // Fisher-Yates shuffle 选前 active_count 个
     let mut indices: Vec<usize> = (0..available.len()).collect();
     for i in (1..indices.len()).rev() {
         let j = splitmix64_range(
@@ -268,7 +281,7 @@ pub fn assign_npc_techniques_for_identity(
 
     let mut entries: Vec<KnownTechnique> = indices
         .iter()
-        .take(count)
+        .take(active_count)
         .enumerate()
         .map(|(idx, &orig_idx)| {
             let def = available[orig_idx];
@@ -282,6 +295,13 @@ pub fn assign_npc_techniques_for_identity(
         })
         .collect();
 
+    inject_npc_passive_skills(
+        &mut entries,
+        &passive_available,
+        prof_min,
+        prof_max,
+        entity_seed,
+    );
     inject_npc_utility_skills(
         &mut entries,
         realm,
@@ -292,6 +312,28 @@ pub fn assign_npc_techniques_for_identity(
     );
 
     KnownTechniques { entries }
+}
+
+fn inject_npc_passive_skills(
+    entries: &mut Vec<KnownTechnique>,
+    available: &[&TechniqueDefinition],
+    prof_min: f32,
+    prof_max: f32,
+    seed: u64,
+) {
+    for (index, definition) in available.iter().enumerate() {
+        if entries.iter().any(|entry| entry.id == definition.id) {
+            continue;
+        }
+        let proficiency = prof_min
+            + splitmix64_unit(seed.wrapping_add(index as u64 * 0xD1B5_4A32))
+                * (prof_max - prof_min);
+        entries.push(KnownTechnique {
+            id: definition.id.clone(),
+            proficiency: proficiency.clamp(prof_min, prof_max),
+            active: true,
+        });
+    }
 }
 
 fn inject_npc_utility_skills(
@@ -441,6 +483,11 @@ pub fn select_technique(
         let Some(def) = technique_registry.get(&entry.id) else {
             continue;
         };
+        if def.dispatch != TechniqueDispatch::MetadataBacked
+            || NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+        {
+            continue;
+        }
         if let Some(filter) = category_filter {
             if def.category != filter {
                 continue;
@@ -669,7 +716,10 @@ pub fn npc_heal_scorer_system(
                 let Some(def) = technique_registry.get(&entry.id) else {
                     return false;
                 };
-                if def.category != SkillCategory::Heal {
+                if def.dispatch != TechniqueDispatch::MetadataBacked
+                    || NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+                    || def.category != SkillCategory::Heal
+                {
                     return false;
                 }
                 let entry_deps = deps.lookup(&entry.id);
@@ -728,7 +778,10 @@ pub fn has_usable_heal_technique(
         let Some(def) = technique_registry.get(&entry.id) else {
             return false;
         };
-        if def.category != SkillCategory::Heal {
+        if def.dispatch != TechniqueDispatch::MetadataBacked
+            || NPC_PASSIVE_TECHNIQUE_IDS.contains(&def.id.as_str())
+            || def.category != SkillCategory::Heal
+        {
             return false;
         }
         let entry_deps = deps.lookup(&entry.id);
@@ -1449,9 +1502,9 @@ mod tests {
             "matching whale identity must admit whale-only metadata"
         );
 
-        // DirectGeneric is a player cast-route classification, not an NPC candidate filter.
-        // The NPC path must preserve the legacy population/order and may retain the live
-        // body-conditioning passive.
+        // DirectGeneric is a player cast-route classification, not an NPC active-candidate
+        // filter. Active loadouts must contain only resolver-backed entries; the specialized
+        // body-conditioning passive is retained through its separate passive path.
         let assigned = super::assign_npc_techniques(
             &registry,
             NpcArchetype::Rogue,
@@ -1461,10 +1514,17 @@ mod tests {
             None,
             6,
         );
-        assert_eq!(
-            assigned.entries.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(),
-            vec!["woliu.burst", "zhenmai.sever_chain", "body.guangbo_ticao"],
-            "merge-base NPC oracle must retain source order and same-seed Fisher-Yates output"
+        assert!(
+            assigned.entries.iter().all(|entry| {
+                registry
+                    .get(&entry.id)
+                    .is_some_and(|definition| {
+                        definition.dispatch == TechniqueDispatch::MetadataBacked
+                            || entry.id == "body.guangbo_ticao"
+                    })
+            }),
+            "NPC active loadout must exclude resolver-less direct_generic entries: {:?}",
+            assigned.entries
         );
         let guangbo = assigned
             .entries
@@ -1478,6 +1538,49 @@ mod tests {
         assert!(
             attrs.move_speed_multiplier > 1.0 && attrs.jump_height_multiplier > 1.0,
             "body.guangbo_ticao must remain a live NPC passive, attrs={attrs:?}"
+        );
+    }
+
+    #[test]
+    fn assignment_excludes_resolverless_direct_generic_from_active_pool_but_keeps_passive() {
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "test.direct_generic_noop".to_string(),
+            display_name: "无消费者探针".to_string(),
+            grade: "common".to_string(),
+            description: "NPC 不得主动选择 resolver-less direct_generic".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 0.0,
+            stamina_cost: 0.0,
+            cast_ticks: 1,
+            cooldown_ticks: 1,
+            range: 1.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+                .to_string(),
+            category: SkillCategory::Attack,
+            dispatch: TechniqueDispatch::DirectGeneric,
+        });
+        let assigned = super::assign_npc_techniques(
+            &registry,
+            NpcArchetype::Rogue,
+            Realm::Awaken,
+            &full_regular_meridians(),
+            &empty_deps(),
+            None,
+            6,
+        );
+        assert!(
+            assigned
+                .entries
+                .iter()
+                .all(|entry| entry.id != "test.direct_generic_noop"),
+            "resolver-less direct_generic must never enter the NPC active loadout: {:?}",
+            assigned.entries
+        );
+        assert!(
+            assigned.entries.iter().any(|entry| entry.id == "body.guangbo_ticao"),
+            "the specialized body.guangbo_ticao passive must remain available through its passive path"
         );
     }
 
@@ -3223,6 +3326,82 @@ mod tests {
             map.len(),
             1,
             "removing unknown entity should not affect existing entries"
+        );
+    }
+
+    #[test]
+    fn technique_scorer_ignores_resolverless_direct_generic_entries() {
+        use big_brain::prelude::{Actor, Score};
+        use valence::prelude::{App, Update};
+
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "test.direct_generic_noop".to_string(),
+            display_name: "无消费者探针".to_string(),
+            grade: "common".to_string(),
+            description: "NPC scorer must ignore resolver-less direct_generic".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 0.0,
+            stamina_cost: 0.0,
+            cast_ticks: 1,
+            cooldown_ticks: 1,
+            range: 10.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+                .to_string(),
+            category: SkillCategory::Attack,
+            dispatch: TechniqueDispatch::DirectGeneric,
+        });
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.insert_resource(NpcCooldownMap::default());
+        app.insert_resource(SkillMeridianDependencies::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
+        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
+        app.insert_resource(crate::npc::lod::NpcLodTick(0));
+        app.add_systems(Update, npc_technique_scorer_system);
+
+        let target = app.world_mut().spawn_empty().id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "test.direct_generic_noop".to_string(),
+                        proficiency: 1.0,
+                        active: true,
+                    }],
+                },
+                crate::npc::spawn::NpcMarker,
+                crate::npc::lod::NpcLodTier::Near,
+            ))
+            .id();
+        let scorer_entity = app
+            .world_mut()
+            .spawn((NpcTechniqueScorer, Actor(npc), Score::default()))
+            .id();
+
+        app.update();
+
+        let score = app
+            .world()
+            .get::<Score>(scorer_entity)
+            .map(|score| score.get())
+            .unwrap();
+        assert_eq!(
+            score, 0.0,
+            "resolver-less direct_generic must not produce an active NPC technique score"
         );
     }
 

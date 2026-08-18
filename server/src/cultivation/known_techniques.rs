@@ -81,16 +81,38 @@ pub enum TechniqueDispatch {
     DirectGeneric,
 }
 
-/// `direct_generic` 的动态接线契约（M11）。
+/// `direct_generic` 招式 id 的严格白名单（M11 契约）。
 ///
-/// 该 dispatch 由通用 skill-bar cast 生命周期消费，因此新 metadata 可以只通过 TOML
-/// 加入；同一 ID 不能再注册 `SkillRegistry` resolver，否则会产生两个互斥的运行时
-/// 消费者。具有额外 per-ID 完成/被动消费者的旧条目仍由各自模块通过稳定 ID 读取
-/// metadata，但这些历史 ID 不应变成新的启动期 allowlist。
+/// `DirectGeneric` 只有通用 skill-bar cast 生命周期；任意新 id 会被呈现为“可施放”却
+/// 没有 gameplay 消费者，等于把 data-only 占位符静默变成玩家可见的假招式。白名单内
+/// 三个 id 都有独立的真实消费者：`movement.dash` 由闪身/首击学习路径消费，
+/// `shield_block` 由举盾与格挡结算消费，`body.guangbo_ticao` 由广播体操练习与
+/// 身体 conditioning 消费。新增直通招式必须先接入消费者，再进白名单，不能只加 TOML。
+pub const DIRECT_GENERIC_ALLOWLIST: &[&str] = &[
+    "movement.dash",
+    "shield_block",
+    "body.guangbo_ticao",
+];
+
+/// NPC 明确允许保留、但不应进入主动施法池的 direct-generic 被动功法。
+///
+/// 这些条目由各自的被动 gameplay consumer 读取；它们必须走独立的 NPC passive 注入
+/// 路径，不能因为出现在 `TechniqueRegistry` 就被当成可由 `SkillRegistry` 施放的招式。
+pub const NPC_PASSIVE_TECHNIQUE_IDS: &[&str] = &["body.guangbo_ticao"];
+
+/// Resolver-backed metadata promotion is intentionally blocked for these IDs until their
+/// resolver consumes the corresponding `TechniqueRegistry` fields. The current dandao
+/// resolvers use static realm/meridian/cost/timing rules, so advertising a TOML override would
+/// make the snapshot and ingress contract disagree with execution.
+pub const RESOLVER_STATIC_METADATA_IDS: &[&str] = &[
+    "dandao.pill_rush",
+    "dandao.pill_bomb",
+    "dandao.pill_mist",
+];
 
 /// Metadata that production systems dereference after startup and therefore cannot be deleted
-/// independently of their runtime consumers. Specialized direct-generic consumers are included
-/// here so their metadata still fails closed if it disappears.
+/// independently of their runtime consumers. Direct-generic entries are included because their
+/// allowlist is also a positive runtime contract, not merely a dispatch filter.
 pub const RUNTIME_REQUIRED_TECHNIQUE_IDS: &[&str] = &[
     "movement.dash",
     "shield_block",
@@ -799,6 +821,12 @@ fn validate_startup_relationships(
     for definition in techniques.iter() {
         match definition.dispatch {
             TechniqueDispatch::MetadataBacked => {
+                if RESOLVER_STATIC_METADATA_IDS.contains(&definition.id.as_str()) {
+                    return Err(TechniqueWiringError(format!(
+                        "metadata_backed technique {:?} is resolver-static and cannot advertise TOML metadata overrides; datafy the resolver before promoting this id",
+                        definition.id
+                    )));
+                }
                 if skills.lookup(&definition.id).is_none() {
                     return Err(TechniqueWiringError(format!(
                         "metadata_backed technique {:?} has no SkillRegistry resolver",
@@ -840,8 +868,16 @@ fn validate_startup_relationships(
                 }
             }
             TechniqueDispatch::DirectGeneric => {
-                // The generic skill-bar lifecycle is the dynamic consumer for this dispatch.
-                // A resolver would create an ambiguous second consumer and must fail closed.
+                if !DIRECT_GENERIC_ALLOWLIST.contains(&definition.id.as_str()) {
+                    return Err(TechniqueWiringError(format!(
+                        "direct_generic technique {:?} has no gameplay consumer; direct_generic is restricted to the allowlist {}",
+                        definition.id,
+                        DIRECT_GENERIC_ALLOWLIST.join(", ")
+                    )));
+                }
+                // The generic skill-bar lifecycle is only one part of each allowlisted skill's
+                // contract; a resolver would create an ambiguous second consumer and must fail
+                // closed. The allowlist itself documents the specialized gameplay consumers.
                 if skills.lookup(&definition.id).is_some() {
                     return Err(TechniqueWiringError(format!(
                         "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
@@ -1439,30 +1475,57 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn arbitrary_direct_generic_metadata_is_admitted_by_the_dynamic_consumer_contract() {
-        // DirectGeneric is consumed by the ID-agnostic skill-bar lifecycle. A valid new
-        // metadata id therefore must not require a Rust allowlist entry or resolver pin.
+    fn arbitrary_direct_generic_metadata_is_rejected_without_a_gameplay_consumer() {
+        // DirectGeneric 的通用 cast 生命周期不会替代 gameplay consumer；任意新 id
+        // 若启动期放行，会呈现为“可施放”却只产生空的计时动画。
         let registry = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"direct_generic\"",
         ))
         .expect("an arbitrary valid id may parse as direct_generic metadata");
-        validate_startup_relationships(
+        let error = validate_startup_relationships(
             &registry,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),
         )
-        .expect("new direct_generic ids must use the generic skill-bar consumer");
+        .expect_err("arbitrary direct_generic without a gameplay consumer must be rejected");
+        assert!(error.to_string().contains("test.skill"));
+        assert!(error.to_string().contains("no gameplay consumer"));
 
-        let mut skills = SkillRegistry::default();
-        skills.register("test.skill", noop_skill);
+        // 即使声明了 resolver-less empty dependency，也不能绕过消费者白名单。
+        let mut dependencies = SkillMeridianDependencies::default();
+        dependencies.declare("test.skill", Vec::new());
         let error = validate_startup_relationships(
             &registry,
+            &SkillRegistry::default(),
+            &dependencies,
+        )
+        .expect_err("dependency declaration must not admit a fake direct_generic skill");
+        assert!(error.to_string().contains("no gameplay consumer"));
+
+        // 真实 allowlisted direct_generic 仍可通过，但 resolver 冲突必须继续失败。
+        let allowlisted = load(&minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+            .replace(
+                "dispatch = \"metadata_backed\"",
+                "dispatch = \"direct_generic\"",
+            ))
+        .expect("allowlisted direct_generic id must parse");
+        validate_startup_relationships(
+            &allowlisted,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect("allowlisted direct_generic without resolver must pass");
+        let mut skills = SkillRegistry::default();
+        skills.register("movement.dash", noop_skill);
+        let error = validate_startup_relationships(
+            &allowlisted,
             &skills,
             &SkillMeridianDependencies::default(),
         )
-        .expect_err("a direct_generic id with a resolver must fail closed");
-        assert!(error.to_string().contains("test.skill"));
+        .expect_err("allowlisted direct_generic with a resolver must fail closed");
+        assert!(error.to_string().contains("movement.dash"));
         assert!(error
             .to_string()
             .contains("unexpectedly has a SkillRegistry resolver"));
@@ -1481,6 +1544,31 @@ dispatch = "metadata_backed"
         validate_startup_relationships(&registry, &skills, &dependencies).expect(
             "existing resolver plus explicit empty dependency must admit metadata without Rust allowlists",
         );
+    }
+
+    #[test]
+    fn resolver_static_dandao_metadata_is_rejected_before_wiring_can_admit_it() {
+        // dandao resolvers currently use static realm/meridian/cost/timing semantics. Every
+        // promoted dandao ID must therefore fail closed instead of advertising fields the
+        // resolver ignores.
+        for &id in RESOLVER_STATIC_METADATA_IDS {
+            let registry = load(&minimal_toml().replace("id = \"test.skill\"", id))
+                .expect("dandao metadata probe must parse before startup wiring validation");
+            let mut skills = SkillRegistry::default();
+            skills.register(id, noop_skill);
+            let mut dependencies = SkillMeridianDependencies::default();
+            dependencies.declare(id, Vec::new());
+            let error = validate_startup_relationships(&registry, &skills, &dependencies)
+                .expect_err("resolver-static dandao metadata must not be admitted");
+            assert!(
+                error.to_string().contains(id),
+                "static resolver rejection must identify the exact technique {id}: {error}"
+            );
+            assert!(
+                error.to_string().contains("resolver-static"),
+                "static resolver rejection must explain that metadata would be ignored: {error}"
+            );
+        }
     }
 
     #[test]
@@ -1510,19 +1598,24 @@ dispatch = "metadata_backed"
             .to_string()
             .contains("explicit meridian dependency declaration"));
 
-        // A resolver conflict remains rejected independently of the historical ID.
-        let direct_generic = load(&minimal_toml().replace(
-            "dispatch = \"metadata_backed\"",
-            "dispatch = \"direct_generic\"",
-        ))
+        // A resolver conflict remains rejected independently of the historical ID. Use an
+        // allowlisted direct_generic so the resolver conflict, rather than the consumer gate,
+        // is the first failure.
+        let direct_generic = load(&minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+            .replace(
+                "dispatch = \"metadata_backed\"",
+                "dispatch = \"direct_generic\"",
+            ))
         .expect("direct_generic fixture must load");
+        skills.register("movement.dash", noop_skill);
         let resolver_conflict = validate_startup_relationships(
             &direct_generic,
             &skills,
             &SkillMeridianDependencies::default(),
         )
         .expect_err("direct_generic with a resolver must fail");
-        assert!(resolver_conflict.to_string().contains("test.skill"));
+        assert!(resolver_conflict.to_string().contains("movement.dash"));
         assert!(resolver_conflict
             .to_string()
             .contains("unexpectedly has a SkillRegistry resolver"));
@@ -1702,7 +1795,7 @@ dispatch = "direct_generic"
     }
 
     #[test]
-    fn protobuf_sized_short_catalog_is_accepted_at_startup_wiring() {
+    fn protobuf_sized_short_catalog_encodes_within_wire_limit() {
         let mut catalog = String::new();
         for index in 0..102 {
             catalog.push_str(&format!(
@@ -1732,12 +1825,9 @@ dispatch = "direct_generic"
             aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
             "protobuf-sized short catalog must fit the wire limit, aggregate={aggregate}"
         );
-        validate_startup_relationships(
-            &registry,
-            &SkillRegistry::default(),
-            &SkillMeridianDependencies::default(),
-        )
-        .expect("a catalog whose protobuf snapshot fits must pass startup wiring");
+        // This fixture intentionally contains synthetic IDs, so the gameplay-wiring gate is
+        // not the subject under test. The startup validator has a separate direct-generic
+        // consumer contract; this assertion only pins the protobuf size calculation.
     }
 
     #[test]
