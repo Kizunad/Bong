@@ -2430,9 +2430,11 @@ mod tests {
         assert_eq!(
             cultivation.realm,
             Realm::Spirit,
-            "方案要求 1/tick 拆批的第二条请求消费连续 r2 并成功进阶 Spirit；             若 roll 仍每 Update 重建（= 修复前），第二条请求会再消费 r1 而失败，境界停 Solidify"
+            "方案要求 1/tick 拆批的第二条请求消费连续 r2 并成功进阶 Spirit；"
+            "若 roll 仍每 Update 重建（= 修复前），第二条请求会再消费 r1 而失败，境界停 Solidify"
         );
     }
+
 
     /// 确定性 control（review finding major-1）——同 Update 双连发：两条请求在同一 tick
     /// 消费 r1（败）、r2（胜），Solidify→Spirit 收敛。锁住"连续消费"的原有语义。
@@ -2485,9 +2487,11 @@ mod tests {
         assert_eq!(
             cultivation.realm,
             Realm::Spirit,
-            "同 Update 双连发应连续消费 r1(败)/r2(胜) 并进阶 Spirit；             若 roll 不随每笔请求推进，两条请求都消费 r1 而双败，境界停在 Solidify"
+            "同 Update 双连发应连续消费 r1(败)/r2(胜) 并进阶 Spirit；"
+            "若 roll 不随每笔请求推进，两条请求都消费 r1 而双败，境界停在 Solidify"
         );
     }
+
     #[test]
     fn guyuan_requires_high_qi_or_spirit_eye() {
         let mut zones = ZoneRegistry::fallback();
