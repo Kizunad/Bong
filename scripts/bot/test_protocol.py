@@ -4210,6 +4210,42 @@ class RedisPubSubTest(unittest.TestCase):
             server.close()
             client.close()
 
+    def test_producer_fence_waits_for_matching_server_ack(self):
+        # The fence must invoke a producer-side request and accept only the
+        # matching ack; this is intentionally independent of socket timing.
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._host = "127.0.0.1"
+        pubsub._port = 6379
+        pubsub._username = None
+        pubsub._password = None
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._events = []
+        pubsub._oldest_retained_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        called = {}
+
+        def fake_request(token, timeout):
+            called["token"] = token
+            called["timeout"] = timeout
+            payload = json.dumps({"v": 1, "ok": True, "token": token}).encode()
+            pubsub._handle_frame(
+                [
+                    b"message",
+                    _redis_helpers.DELIVERY_FENCE_ACK_CHANNEL.encode(),
+                    payload,
+                ]
+            )
+
+        pubsub._publish_fence_request = fake_request
+        ack = pubsub.producer_fence(timeout=1.0)
+        self.assertTrue(ack["ok"])
+        self.assertEqual(ack["token"], called["token"])
+        self.assertEqual(called["timeout"], 1.0)
+
     def test_resp_frames_partial_feeds(self):
         frames = _redis_helpers.RespFrames()
         frames.feed(b"*3\r\n$9\r\nsub")
