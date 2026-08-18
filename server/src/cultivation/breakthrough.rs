@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Commands, Component, Entity, Event, EventReader, EventWriter,
-    Events, Position, Query, Res, ResMut, Username,
+    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Commands, Component, Entity, Event,
+    EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
 };
 
 use crate::combat::components::StatusEffects;
@@ -1080,7 +1080,9 @@ pub fn breakthrough_system(
     // 把每个实体本 Update 消费后的 roll 流状态写回组件（deferred Commands 可见性：
     // 同 Update 内靠 roll_streams 续接，下一 Update 靠组件续接）。
     for (entity, roll_state) in roll_streams.drain() {
-        commands.entity(entity).insert(BreakthroughRollState(roll_state));
+        commands
+            .entity(entity)
+            .insert(BreakthroughRollState(roll_state));
     }
 }
 
@@ -1252,7 +1254,10 @@ mod tests {
     }
 
     fn open_all_meridians(meridians: &mut MeridianSystem) {
-        for id in MeridianId::REGULAR.iter().chain(MeridianId::EXTRAORDINARY.iter()) {
+        for id in MeridianId::REGULAR
+            .iter()
+            .chain(MeridianId::EXTRAORDINARY.iter())
+        {
             meridians.get_mut(*id).opened = true;
         }
     }
@@ -2367,7 +2372,6 @@ mod tests {
         }
     }
 
-
     /// 确定性 control（review finding major-1）——1/tick 拆批：两条请求分属两个 Update，
     /// 消费**连续**的 roll 值（r1 失败 → r2 必胜），Solidify→Spirit 拆批双连发收敛。
     /// 这是修复前的必死路径：per-Update 重建 XorshiftRoll 时，两条请求各自消费 r1=0.8597…，
@@ -2434,7 +2438,6 @@ mod tests {
             "若 roll 仍每 Update 重建（= 修复前），第二条请求会再消费 r1 而失败，境界停 Solidify"
         );
     }
-
 
     /// 确定性 control（review finding major-1）——同 Update 双连发：两条请求在同一 tick
     /// 消费 r1（败）、r2（胜），Solidify→Spirit 收敛。锁住"连续消费"的原有语义。

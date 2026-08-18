@@ -5179,7 +5179,6 @@ mod tests {
         assert_eq!(emitted[0].waves_total, 3);
     }
 
-
     #[test]
     fn full_progress_boundary_35999_keeps_three_waves() {
         // review finding major-6：差一 tick 侧必须用**字面 35999** 锁死（不能用符号常量
@@ -5223,8 +5222,7 @@ mod tests {
             requested_at_tick,
         });
         app.update();
-        let events =
-            app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
         let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].waves_total, 3);
@@ -5271,8 +5269,7 @@ mod tests {
             requested_at_tick,
         });
         app.update();
-        let events =
-            app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
         let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].waves_total, 5);
@@ -6272,7 +6269,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn heart_demon_decision_dedup_same_update_identical_obsession() {
         // review finding major-4：同 Update 两条 Obsession 决策只允许首条生效——30% 惩罚
@@ -6327,10 +6323,7 @@ mod tests {
         });
         app.update();
 
-        let cultivation = app
-            .world()
-            .get::<Cultivation>(entity)
-            .unwrap();
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
         let expected_qi = 500.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO);
         assert!(
             (cultivation.qi_current - expected_qi).abs() < 1e-9,
@@ -6350,7 +6343,11 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, BiographyEntry::HeartDemonRecord { .. }))
             .collect();
-        assert_eq!(records.len(), 1, "重复决策只应落一条 HeartDemonRecord biography");
+        assert_eq!(
+            records.len(),
+            1,
+            "重复决策只应落一条 HeartDemonRecord biography"
+        );
     }
 
     #[test]
@@ -6410,10 +6407,7 @@ mod tests {
 
         // effective_qi_max = 200；desired_grant = min(20, 80) = 20 → qi 120 + 20 = 140；
         // 后续 Obsession 30% 不得生效（否则再 drain 42 → 98）。
-        let cultivation = app
-            .world()
-            .get::<Cultivation>(entity)
-            .unwrap();
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
         assert!(
             (cultivation.qi_current - 140.0).abs() < 1e-9,
             "首个 Steadfast 授予 20（120→140），后续 Obsession 不得再扣：实际 {}",
@@ -6476,13 +6470,10 @@ mod tests {
             submitted_at_tick: 2110,
         });
         app.update();
-        let after_first = app
-            .world()
-            .get::<Cultivation>(entity)
-            .unwrap()
-            .qi_current;
+        let after_first = app.world().get::<Cultivation>(entity).unwrap().qi_current;
         assert!(
-            (after_first - 500.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO)).abs() < 1e-9
+            (after_first - 500.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO)).abs()
+                < 1e-9
         );
 
         // Update 2：重复 Obsession 包（跨 Update，解析组件已存在）→ 不得再扣。
@@ -6492,19 +6483,12 @@ mod tests {
             submitted_at_tick: 2115,
         });
         app.update();
-        let after_second = app
-            .world()
-            .get::<Cultivation>(entity)
-            .unwrap()
-            .qi_current;
+        let after_second = app.world().get::<Cultivation>(entity).unwrap().qi_current;
         assert!(
             (after_second - after_first).abs() < 1e-9,
             "跨 Update 重复决策不得二次扣减：首条后 {after_first}，次条后 {after_second}"
         );
-        let resolution = app
-            .world()
-            .get::<HeartDemonResolution>(entity)
-            .unwrap();
+        let resolution = app.world().get::<HeartDemonResolution>(entity).unwrap();
         assert_eq!(resolution.choice_idx, Some(1));
         assert_eq!(resolution.tick, 2110);
     }
