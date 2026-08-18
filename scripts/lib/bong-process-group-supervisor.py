@@ -119,13 +119,20 @@ def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
     return True
 
 
-def build_server_binary(server_directory: Path, build_token: Path) -> Path:
+def build_server_binary(
+    server_directory: Path, build_token: Path, timeout: float = 1200.0
+) -> Path:
     environment = os.environ.copy()
     target_root = Path(
         environment.get("CARGO_TARGET_DIR", str(server_directory / "target"))
     )
     if not target_root.is_absolute():
         target_root = server_directory / target_root
+    # The build/token phase is an explicit bounded lifecycle. A cold release
+    # build or build-token lock contention must terminate (TimeoutExpired ->
+    # rollback) instead of leaving an unpinned build alive after the parent's
+    # readiness deadline. If the deadline itself expires first, the parent has
+    # already pinned this supervisor and stops the whole private group.
     subprocess.run(
         [str(build_token), "cargo", "build", "--release"],
         cwd=server_directory,
@@ -135,6 +142,7 @@ def build_server_binary(server_directory: Path, build_token: Path) -> Path:
         stderr=sys.stderr,
         check=True,
         close_fds=True,
+        timeout=timeout,
     )
     built_binary = target_root / "release" / "bong-server"
     if not built_binary.is_file():
@@ -193,12 +201,33 @@ def main() -> int:
     for signal_number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
         signal.signal(signal_number, ignore_signal)
 
+    server_directory = Path(sys.argv[1]).resolve(strict=True)
+    build_token = Path(sys.argv[2]).resolve(strict=True)
+
+    # Publish the owner pin BEFORE the build/token phase. READY no longer means
+    # "server running" (COMMITTED is that ack); it lets the parent pin this PID,
+    # starttime, executable identity, and PGID immediately so an overrunning or
+    # stuck build can never leave an unpinned, orphaned supervisor. When the
+    # parent's readiness deadline expires it stops this pinned private group.
+    try:
+        sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
+        sys.stdout.buffer.flush()
+    except (OSError, BrokenPipeError) as error:
+        print(f"failed to publish startup owner pin: {error}", file=sys.stderr)
+        return abort_startup(None, None)
+
     server: subprocess.Popen[bytes] | None = None
     artifact: Path | None = None
     try:
-        server_directory = Path(sys.argv[1]).resolve(strict=True)
-        build_token = Path(sys.argv[2]).resolve(strict=True)
-        artifact = build_server_binary(server_directory, build_token)
+        build_timeout = float(os.environ.get("BONG_E2E_BUILD_TIMEOUT", "1200"))
+    except ValueError:
+        build_timeout = 1200.0
+    if build_timeout <= 0:
+        build_timeout = 1200.0
+    try:
+        artifact = build_server_binary(
+            server_directory, build_token, timeout=build_timeout
+        )
         server = subprocess.Popen(
             [str(artifact)],
             cwd=server_directory,
@@ -207,10 +236,8 @@ def main() -> int:
             stdout=sys.stderr,
             stderr=sys.stderr,
         )
-        sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
-        sys.stdout.buffer.flush()
-    except (OSError, RuntimeError, subprocess.CalledProcessError, BrokenPipeError) as error:
-        print(f"failed to build, launch, or publish release server readiness: {error}", file=sys.stderr)
+    except (OSError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        print(f"failed to build or launch release server: {error}", file=sys.stderr)
         return abort_startup(artifact, server)
 
     # Authority is not committed until the parent has pinned this PID, starttime,

@@ -862,6 +862,18 @@ start_server_process_group() {
   supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
   build_token="$ROOT/scripts/build-token.sh"
   local server_directory="$ROOT/server"
+  # The supervisor's build/token phase is an explicit bounded lifecycle that the
+  # readiness deadline must cover: the supervisor publishes its owner pin before
+  # the build, so the parent pins it immediately and the post-commit COMMITTED
+  # wait below spans the bounded build. If that deadline expires (build overrun
+  # or hang) the parent stops the already-pinned private group.
+  build_timeout="${BONG_E2E_BUILD_TIMEOUT:-1200}"
+  ready_timeout="${BONG_E2E_READY_TIMEOUT:-5}"
+  commit_timeout="${BONG_E2E_COMMIT_TIMEOUT:-$((build_timeout + 120))}"
+  [[ "$ready_timeout" =~ ^[0-9]+$ ]] && [[ "$commit_timeout" =~ ^[0-9]+$ ]] || {
+    echo "FAIL: e2e supervisor readiness timeouts must be non-negative integers" >&2
+    return 2
+  }
   # Only the in-repo supervisor protocol fixture may opt into replacement binaries.
   if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
     [ "$test_override_mode" = "1" ] || {
@@ -886,6 +898,7 @@ start_server_process_group() {
     exec env \
       PATH="$RUST_PATH" \
       CARGO_TARGET_DIR="$cargo_target" \
+      BONG_E2E_BUILD_TIMEOUT="$build_timeout" \
       BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
       BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
       BONG_PREVIEW_MODE="$preview_mode" \
@@ -898,7 +911,9 @@ start_server_process_group() {
   SERVER_STARTUP_READY_FD="$ready_fd"
   SERVER_STARTUP_CONTROL_FD="$control_fd"
 
-  if ! IFS= read -r -t 5 -u "$ready_fd" ready_line \
+  # READY is now published before the build/token phase, so this deadline only
+  # has to cover supervisor session startup (setsid + owner pin), not the build.
+  if ! IFS= read -r -t "$ready_timeout" -u "$ready_fd" ready_line \
     || [[ "$ready_line" != 'READY pid='[0-9]* ]]; then
     exec {control_fd}>&-
     exec {ready_fd}<&-
@@ -947,7 +962,9 @@ start_server_process_group() {
           if [ -n "${BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK:-}" ]; then
             "$BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK" "$owner_pid"
           fi
-          if IFS= read -r -t 5 -u "$ready_fd" committed_line \
+          # This wait spans the supervisor's bounded build/token phase; the owner
+          # was pinned at READY, so expiry stops the pinned private group.
+          if IFS= read -r -t "$commit_timeout" -u "$ready_fd" committed_line \
             && [ "$committed_line" = COMMITTED ]; then
             if [ -n "${BONG_E2E_TEST_AFTER_ACK_HOOK:-}" ]; then
               "$BONG_E2E_TEST_AFTER_ACK_HOOK" "$owner_pid"
