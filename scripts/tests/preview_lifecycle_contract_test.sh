@@ -278,6 +278,20 @@ exec "$REAL_STAT" "\$@"
 EOF
 chmod 700 "$TMP_ROOT/bin/stat"
 
+# Install the pidfd seam before the process-status=2 regression so that its
+# identity-safe rollback is forced into the bounded direct-child fallback. The
+# later python3 shim extends this same seam with listener-owner injection.
+cat >"$TMP_ROOT/bin/python3" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${FAKE_PIDFD_SIGNAL_FAIL:-0}" = "1" ] \
+    && [[ "\$*" == *"bong-pidfd-signal.py"* ]]; then
+  exit 2
+fi
+exec "$REAL_PYTHON" "\$@"
+EOF
+chmod 700 "$TMP_ROOT/bin/python3"
+
 # process inspection is tri-state: kill -0 success plus an unavailable ps
 # metadata read means status 2 (the PID is live but uncertain), not absence.
 # Keep the seam narrow so listener-owner and process-group probes still use the
