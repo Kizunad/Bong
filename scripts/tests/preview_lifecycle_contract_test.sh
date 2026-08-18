@@ -277,6 +277,53 @@ fi
 exec "$REAL_STAT" "\$@"
 EOF
 chmod 700 "$TMP_ROOT/bin/stat"
+
+# process inspection is tri-state: kill -0 success plus an unavailable ps
+# metadata read means status 2 (the PID is live but uncertain), not absence.
+# Keep the seam narrow so listener-owner and process-group probes still use the
+# real ps implementation.
+REAL_PS="$(command -v ps)"
+cat >"$TMP_ROOT/bin/ps" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${FAKE_PROCESS_STATUS_UNCERTAIN:-0}" = "1" ] \
+    && [ -e "$TMP_ROOT/runtime/server.pid" ] \
+    && [[ "\$*" == "-o stat= -p "* ]]; then
+  exit 1
+fi
+exec "$REAL_PS" "\$@"
+EOF
+chmod 700 "$TMP_ROOT/bin/ps"
+
+# review finding [1]：process-status=2 must be treated as a live direct child.
+# Inject uncertainty only after the authority record is published, so readiness
+# reaches the post-publication rollback and its bounded direct-child fallback.
+# The old `if ! process_is_running` path treated it as gone and waited forever;
+# the regression is bounded and proves both the process and listener are gone.
+export FAKE_PROCESS_STATUS_UNCERTAIN=1
+export FAKE_PIDFD_SIGNAL_FAIL=1
+if timeout 20 bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 2 \
+    >"$TMP_ROOT/process-status2.log" 2>&1; then
+  unset FAKE_PROCESS_STATUS_UNCERTAIN FAKE_PIDFD_SIGNAL_FAIL
+  echo "process-status=2 preview unexpectedly succeeded" >&2
+  exit 1
+else
+  rc=$?
+fi
+unset FAKE_PROCESS_STATUS_UNCERTAIN FAKE_PIDFD_SIGNAL_FAIL
+[ "$rc" -ne 124 ] || {
+  echo "process-status=2 preview hung instead of bounded cleanup" >&2
+  exit 1
+}
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "process-status=2 preview left an authority record" >&2
+  exit 1
+}
+if listener_on_25565; then
+  echo "process-status=2 preview left the direct child holding 25565" >&2
+  exit 1
+fi
+
 export FAKE_STAT_IDENTITY_FAILURE=1
 if run_preview 2 >"$TMP_ROOT/identity.log" 2>&1; then
   echo "identity-inspection failure unexpectedly succeeded" >&2
@@ -377,6 +424,70 @@ if listener_on_25565; then
   echo "pre-publication cancellation left an untracked server holding 25565" >&2
   exit 1
 fi
+
+# review finding [3]：记录已发布后、disown/trap-clear 完成前收到的 TERM/HUP 必须
+# 走 post-publication rollback，而不是沿用「无记录」的 pre-publication 分支。显式
+# delay 把窗口扩大到可确定观测的范围；每个信号都断言 launcher、server、记录和
+# listener 四路终态，避免只测到 launcher 自己退出。
+run_post_publication_signal_case() {
+  local signal="$1" launch_pid="" recorded_pid="" launcher_gone=0 remaining
+
+  BONG_PREVIEW_POST_PUBLICATION_DELAY_SECONDS=3 \
+    bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 30 \
+    >"$TMP_ROOT/post-publication-${signal}.log" 2>&1 &
+  launch_pid=$!
+  for _ in $(seq 1 200); do
+    if [ -f "$BONG_PREVIEW_PID_FILE" ]; then
+      break
+    fi
+    sleep 0.05
+  done
+  [ -f "$BONG_PREVIEW_PID_FILE" ] || {
+    echo "post-publication $signal test: authority record was not published" >&2
+    kill "$launch_pid" 2>/dev/null || true
+    return 1
+  }
+  recorded_pid="$(sed -n 's/^pid=//p' "$BONG_PREVIEW_PID_FILE")"
+  [ -n "$recorded_pid" ] || {
+    echo "post-publication $signal test: published record has no PID" >&2
+    kill -KILL "$launch_pid" 2>/dev/null || true
+    return 1
+  }
+  kill -"$signal" "$launch_pid" 2>/dev/null || {
+    echo "post-publication $signal test: failed to signal launcher" >&2
+    kill -KILL "$launch_pid" 2>/dev/null || true
+    return 1
+  }
+  for _ in $(seq 1 200); do
+    if ! kill -0 "$launch_pid" 2>/dev/null; then
+      launcher_gone=1
+      break
+    fi
+    sleep 0.05
+  done
+  [ "$launcher_gone" -eq 1 ] || {
+    echo "post-publication $signal test: launcher did not exit" >&2
+    kill -KILL "$launch_pid" 2>/dev/null || true
+    return 1
+  }
+  wait "$launch_pid" 2>/dev/null || true
+  [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+    echo "post-publication $signal test: authority record survived rollback" >&2
+    return 1
+  }
+  remaining="$(fake_server_pids)"
+  [ -z "$remaining" ] || {
+    echo "post-publication $signal test: server survived rollback: $remaining" >&2
+    kill -KILL $remaining 2>/dev/null || true
+    return 1
+  }
+  if listener_on_25565; then
+    echo "post-publication $signal test: listener survived rollback" >&2
+    return 1
+  fi
+}
+run_post_publication_signal_case TERM
+run_post_publication_signal_case HUP
 
 cat >"$TMP_ROOT/bin/python3" <<EOF
 #!/usr/bin/env bash
@@ -710,19 +821,14 @@ if listener_on_25565; then
 fi
 rm -f "$BONG_PREVIEW_PID_FILE"
 
-# review finding 31436388638 [major]：stop 在 start 的构建窗口内运行——旧实现 start 的
-# refuse 与 launch 各自独立取锁，refuse 释放锁后到 launch 重新取锁之间是裸露的构建
-# 区间；stop 在锁外先看 PID 文件，构建期间记录尚未发布 → 看到无文件 → exit 0 静默
-# 成功，随后 start 完成构建照常启动出 server：stop 报了成功但 server 事后出现并持续
-# 运行。修复：整个 start（refuse→build→launch）在单一生命周期锁内原子执行；stop 的
-# 「无记录 → 无事可做」判定也在锁内做。
+# review finding 31436388638 [major]：start 与 stop / start 的整个构建窗口必须由同一
+# lifecycle lock 串行化。两个竞速 oracle 都必须严格区分「预期 lock timeout」与任何
+# 其它失败：非零但没有 timeout 证据不是 PASS。
 #
-# 测试：FAKE_SLOW_BUILD_SECONDS 拉宽构建窗口，后台启动 start，等 cargo stub 记下
-# build 调用（= 进入构建窗口：锁被 start 持有、记录未发布）后调 stop。契约：stop
-# 返回 0 时 server 必须真实停止（无 fake server 进程 / 无记录 / 25565 无监听）——
-# 若 stop 在构建窗口返回 0 而后 start 又启动出 server，即本 finding 的回归。
+# 第一组：两个 start 同时进入构建窗口。第二个 start 必须在显式 1s lock timeout 后
+# 失败，且不得执行第二次 build、覆盖记录或占用 listener。
 : >"$TMP_ROOT/cargo-invocations.log"
-FAKE_SLOW_BUILD_SECONDS=2 \
+FAKE_SLOW_BUILD_SECONDS=5 \
   bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 30 \
   >"$TMP_ROOT/race-start.log" 2>&1 &
 race_start_pid=$!
@@ -735,45 +841,89 @@ for _ in $(seq 1 200); do
   sleep 0.05
 done
 [ "$race_in_build" -eq 1 ] || {
-  echo "concurrent-stop race: start did not enter the build window" >&2
+  echo "concurrent-start race: first start did not enter the build window" >&2
   kill "$race_start_pid" 2>/dev/null || true
   exit 1
 }
-# 窗口前提：此刻记录必须尚未发布（start 仍在持锁构建）。
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
-  echo "concurrent-stop race: record already published before stop (build window missed)" >&2
+  echo "concurrent-start race: first start published before the build-window oracle" >&2
   kill "$race_start_pid" 2>/dev/null || true
   exit 1
 }
+first_build_count="$(wc -l <"$TMP_ROOT/cargo-invocations.log")"
+race_second_rc=0
+if BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=1 \
+    bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 30 \
+    >"$TMP_ROOT/race-second-start.log" 2>&1; then
+  race_second_rc=0
+else
+  race_second_rc=$?
+fi
+[ "$race_second_rc" -ne 0 ] || {
+  echo "concurrent-start race: second start unexpectedly succeeded" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+grep -q "timed out after 1s waiting for lifecycle lock" "$TMP_ROOT/race-second-start.log" || {
+  echo "concurrent-start race: second start failed without the expected lock-timeout oracle" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+[ "$(wc -l <"$TMP_ROOT/cargo-invocations.log")" -eq "$first_build_count" ] || {
+  echo "concurrent-start race: timed-out second start still ran a build" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+
+# 第二组：stop 在同一构建窗口内必须 also fail honestly when its explicit lock
+# timeout is shorter than the build. A bare nonzero or a swallowed no-op is not an
+# acceptable substitute for the timeout evidence.
 race_stop_rc=0
-if bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" >"$TMP_ROOT/race-stop.log" 2>&1; then
+if BONG_SERVER_LIFECYCLE_LOCK_TIMEOUT_SECONDS=1 \
+    bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
+    >"$TMP_ROOT/race-stop-timeout.log" 2>&1; then
   race_stop_rc=0
 else
   race_stop_rc=$?
 fi
-# 等 start 结束（无论 stop 是否打断了它的 readiness）再核对终态。
+[ "$race_stop_rc" -ne 0 ] || {
+  echo "concurrent-stop race: stop unexpectedly reported success during a locked build" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+grep -q "timed out after 1s waiting for lifecycle lock" "$TMP_ROOT/race-stop-timeout.log" || {
+  echo "concurrent-stop race: stop failed without the expected lock-timeout oracle" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+
+# Once the first start releases the lock, ordinary stop must still clean the
+# server it actually started. This also proves the timeout probes did not leave
+# a hidden second authority or listener.
 wait "$race_start_pid" 2>/dev/null || true
-if [ "$race_stop_rc" -eq 0 ]; then
-  # stop 声称成功停服——必须证明 server 真的没了（进程 / 记录 / 25565 三路）。
-  # 若 stop 返回 0 但 server 事后仍启动，正是本 finding 的回归。
-  race_remaining="$(fake_server_pids)"
-  [ -z "$race_remaining" ] || {
-    echo "concurrent-stop race: stop succeeded but server(s) still alive: $race_remaining" >&2
-    kill -KILL $race_remaining 2>/dev/null || true
-    exit 1
-  }
-  [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
-    echo "concurrent-stop race: stop succeeded but an authority record remains" >&2
-    exit 1
-  }
-  if listener_on_25565; then
-    echo "concurrent-stop race: stop succeeded but 25565 still has a listener" >&2
-    exit 1
-  fi
-else
-  # stop 锁超时（start 构建 > 锁超时）是诚实的失败：stop 明确报错而非虚假成功。
-  # 此刻 start 可能仍在持锁构建或已启动 server——留待 start 自行收尾，不在此判定。
-  echo "concurrent-stop race: stop failed (rc=$race_stop_rc) during build — honest lock timeout, not spurious success" >&2
+[ -f "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "concurrent-start race: first start did not publish its authority record" >&2
+  exit 1
+}
+if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
+    >"$TMP_ROOT/race-stop-final.log" 2>&1; then
+  echo "concurrent-stop race: final stop failed after the first start completed" >&2
+  cat "$TMP_ROOT/race-stop-final.log" >&2
+  exit 1
+fi
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "concurrent-stop race: final stop left an authority record" >&2
+  exit 1
+}
+race_remaining="$(fake_server_pids)"
+[ -z "$race_remaining" ] || {
+  echo "concurrent-stop race: final stop left server(s) alive: $race_remaining" >&2
+  kill -KILL $race_remaining 2>/dev/null || true
+  exit 1
+}
+if listener_on_25565; then
+  echo "concurrent-stop race: final stop left 25565 occupied" >&2
+  exit 1
 fi
 
 echo "preview lifecycle harness: PASS"
