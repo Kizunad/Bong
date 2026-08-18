@@ -210,6 +210,12 @@ def run(env) -> None:
         # ── 3. forge 正路径：补灵气后产出 + 扣材料 + revision bump ──
         bot.cmd("qi set 5")
         bot.expect_chat("[dev] qi set", timeout=10.0)
+        # 将当前 zone (spawn) 重置到未饱和基线 (0.80)，确保有足够空间容纳 forge 的 0.10 增量
+        # 即使在 --all 全量运行（cultivation_breakthrough 曾将 spawn 置为 1.00 饱和态）下也能确定性断言
+        bot.cmd("zone_qi set spawn 0.80")
+        bot.expect_chat("[dev] zone_qi `spawn`", timeout=10.0)
+        # 稍微 sleep 确保 server 完成 zone_qi 状态处理
+        time.sleep(0.5)
         silk_snapshot = _give_and_wait(bot, SILK)
         forge_revision = int(silk_snapshot["revision"])
         # central-review 2012 #2：forge 正路径必须同时验证「扣真元走 zone ledger」的

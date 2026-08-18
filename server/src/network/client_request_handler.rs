@@ -9620,6 +9620,101 @@ mod tests {
     }
 
     #[test]
+    fn quick_slot_bind_accepts_128_cjk_request_id_and_rejects_129() {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        // 128 个 '界' 字符（每个 3 字节，共 384 字节）必须被视为合法长度并接受
+        let rid128 = "界".repeat(128);
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), &rid128);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(88)
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(configs.iter().any(|c| {
+            c.ack_request_id.as_deref() == Some(&rid128) && c.bind_accepted == Some(true)
+        }));
+
+        // 129 个 '界' 字符必须被静默拒绝且不产生状态变异
+        let rid129 = "界".repeat(129);
+        send_quick_slot_bind_request(&mut app, entity, 4, Some("earth_crumb"), &rid129);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(4),
+            None
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_rejects_empty_string_item_id_without_unbinding() {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(3, Some(88)));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                quick_slots,
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        // 发送 raw JSON item_id=""（非 null），必须被拒绝（bind_accepted=false）且已有绑定保持原样
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"","request_id":"empty-item-id"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        // 槽 3 上的已有绑定 88 必须保持，不得被清空
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(88),
+            "item_id=\"\" 畸形请求不得清空既有绑定"
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(
+            configs.iter().any(|c| {
+                c.ack_request_id.as_deref() == Some("empty-item-id") && c.bind_accepted == Some(false)
+            }),
+            "item_id=\"\" 请求应下发 bind_accepted=false 的 quickslot_config 回执"
+        );
+    }
+
+    #[test]
     fn inventory_instance_id_by_template_prefers_containers_hotbar_then_equipped() {
         let mut inventory = inventory_with_item(inventory_test_item(11, "bone_whistle", 1));
         inventory.hotbar[0] = Some(inventory_test_item(22, "bone_whistle", 1));
@@ -15433,10 +15528,10 @@ fn handle_quick_slot_bind(
 ) {
     let (entity, slot, item_id, request_id) = request;
     let (item_registry, persistence, combat_clock) = runtime;
-    if request_id.is_empty() || request_id.len() > 128 {
+    if request_id.chars().count() == 0 || request_id.chars().count() > 128 {
         tracing::warn!(
-            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id length={}",
-            request_id.len()
+            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id chars={}",
+            request_id.chars().count()
         );
         return;
     }
@@ -15465,7 +15560,26 @@ fn handle_quick_slot_bind(
             return;
         }
     };
-    let requested_template = item_id.as_deref().filter(|item_id| !item_id.is_empty());
+    let requested_template = match item_id.as_deref() {
+        Some("") => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: empty item_id string"
+            );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
+        }
+        Some(template) => Some(template),
+        None => None,
+    };
     let instance_id = match requested_template {
         None => None,
         Some(template) => {

@@ -313,11 +313,10 @@ def run(env) -> None:
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 3})
         _assert_no_cast_sync(bot, anchor)
 
-        # ── 4d. 最大合法 request_id 长度 128 必须接受（review finding [6]）──
-        #     schema maxLength=128、handler len()>128 双拒；旧场景只测空串与 129
-        #     超长，一个把 len>=128 当非法的实现会拒绝恰好 128 的合法 id——等价
-        #     边界缺失。合法 128 必须绑定成功（accepted + 槽含物品）。
-        rid128 = "r" * 128
+        # ── 4d. 最大合法 request_id 长度 128 必须接受（review finding [6] / Unicode 契约对齐）──
+        #     schema maxLength=128、handler chars().count()>128 双拒；
+        #     合法 128 个非 ASCII 字符（如 '界'，UTF-8 384 字节）必须绑定成功（accepted + 槽含物品）。
+        rid128 = "界" * 128
         bot.intent(
             {
                 "type": "quick_slot_bind",
@@ -328,6 +327,26 @@ def run(env) -> None:
             }
         )
         _expect_bind_response(bot, rid128, True, 4)
+
+        # ── 4e. 畸形 item_id="" 拒绝且既有绑定不变 ──
+        #     schema 契约仅允许 null 或 minLength:1 字符串，item_id="" 为畸形输入。
+        #     服务端应回推 bind_accepted=false，不得将其当成 null 解绑清空槽 4。
+        empty_item_rid = "gap10-empty-item-4e"
+        bot.intent(
+            {
+                "type": "quick_slot_bind",
+                "v": 1,
+                "slot": 4,
+                "item_id": "",
+                "request_id": empty_item_rid,
+            }
+        )
+        _expect_bind_response(bot, empty_item_rid, False, 4)
+        # 槽 4 必须保持槽含物品（未被清空）
+        slots_after_empty = _authoritative_slots(bot, "gap10-probe-4e")
+        assert slots_after_empty[4] is not None, (
+            f"item_id='' 拒绝后槽 4 必须保持绑定，实际被清空为 None: {slots_after_empty[4]!r}"
+        )
 
         # ── 5. bind 解绑：item_id=null → accepted=true + 槽清空 ──
         bot.intent(

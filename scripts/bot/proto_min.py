@@ -736,7 +736,7 @@ SKILL_ID_NAMES = {
 
 
 def _skill_id_name(value: int) -> str:
-    return SKILL_ID_NAMES.get(value, "unspecified")
+    return SKILL_ID_NAMES.get(value, f"unknown_{value}")
 
 
 def _skill_xp_gain(data: bytes) -> dict[str, Any]:
@@ -1401,8 +1401,6 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     37: _techniques_snapshot,
     51: _combat_event_floater,
     54: _skill_config_snapshot,
-    66: _tribulation_state,
-    51: _combat_event_floater,
     66: _tribulation_state,
     SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
     72: _death_screen,

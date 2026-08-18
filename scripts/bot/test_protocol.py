@@ -2872,6 +2872,13 @@ class ProtoMinTest(unittest.TestCase):
         # 由 decoded payload 的 type 回退，与 decoder 保持一致，而不是退回 field_34。
         envelope = _pb_len_field(34, b"")
         self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+        # 验证未在 SERVER_DATA_PAYLOAD_NAMES 注册但在 DECODERS 注册时的回退机制
+        saved = proto_min.SERVER_DATA_PAYLOAD_NAMES.pop(34, None)
+        try:
+            self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+        finally:
+            if saved is not None:
+                proto_min.SERVER_DATA_PAYLOAD_NAMES[34] = saved
 
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
@@ -4594,6 +4601,14 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
             _pb_message(30, _pb_varint(5, 7))
         )
         self.assertEqual(gathering["target_type"], "unknown_7")
+        xp_gain = proto_min.decode_server_data_envelope(
+            _pb_message(7, _pb_varint(2, 99))
+        )
+        self.assertEqual(xp_gain["skill"], "unknown_99")
+        scroll_used = proto_min.decode_server_data_envelope(
+            _pb_message(97, _pb_varint(3, 99))
+        )
+        self.assertEqual(scroll_used["skill"], "unknown_99")
 
     def test_new_registry_tags_dispatch_to_named_decoders(self):
         for field, expected_type in (
