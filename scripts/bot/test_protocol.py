@@ -682,26 +682,105 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["result"], "ascended")
         self.assertEqual(decoded["wave_current"], 5)
 
+    def test_proto_tribulation_state_asymmetric_failed_only(self):
+        # review finding major-7：failed=true / half_step_on_success=false 必须落各自独
+        # 立 wire 号——字段 13/14 互换的解码器在此撞红。
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="wave",
+                wave_current=3,
+                wave_total=5,
+                result=None,
+                failed=True,
+                half_step_on_success=False,
+            )
+        )
+        self.assertTrue(decoded["failed"])
+        self.assertFalse(decoded["half_step_on_success"])
+
+    def test_proto_tribulation_state_asymmetric_half_step_only(self):
+        # reverse 组合：failed=false / half_step_on_success=true，把两字段双向锁死。
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="wave",
+                wave_current=3,
+                wave_total=5,
+                result=None,
+                failed=False,
+                half_step_on_success=True,
+            )
+        )
+        self.assertFalse(decoded["failed"])
+        self.assertTrue(decoded["half_step_on_success"])
+
+    def test_proto_tribulation_state_ignores_wrong_wire_participant(self):
+        # review finding minor：participants 是 repeated string（wire 2）。误编码的 fixed64
+        # (wire 1) field 15 必须被忽略，不得解成参与者文本。
+        payload = _pb_message(
+            66,
+            _pb_string(5, "wave") + _pb_fixed64(15, 3.25),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertEqual(decoded["participants"], [])
+
+    def test_proto_heart_demon_offer_ignores_wrong_wire_choice(self):
+        # review finding minor：choices 是 repeated message（wire 2）。误编码的 fixed64
+        # (wire 1) field 9 必须被忽略（不得喂给嵌套解析器抛 ProtoDecodeError、丢观测）；
+        # 合法 wire 2 choice 仍正常解码。
+        choice = _pb_string(1, "heart_demon_choice_0") + _pb_string(2, "Composure")
+        payload = _pb_message(
+            69,
+            _pb_string(3, "心魔劫临身") + _pb_fixed64(9, 1.5) + _pb_message(9, choice),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "heart_demon_offer")
+        self.assertEqual(decoded["choices"], [{"choice_id": "heart_demon_choice_0", "category": "Composure", "title": "", "effect_summary": "", "flavor": "", "style_hint": ""}])
+
     def test_proto_heart_demon_offer_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_heart_demon_offer_bytes())
 
         self.assertEqual(decoded["type"], "heart_demon_offer")
+        # 非对称 fixture 全字段精确断言（review finding major-7）：offer_id != trigger_id、
+        # 配额不等、每个标量/嵌套字段独立 pin 到 wire 号。
+        self.assertEqual(decoded["offer_id"], "heart_demon:7:1000")
+        self.assertEqual(decoded["trigger_id"], "heart_demon:7:1111")
+        self.assertNotEqual(decoded["offer_id"], decoded["trigger_id"])
         self.assertEqual(decoded["trigger_label"], "心魔劫临身")
         self.assertEqual(decoded["realm_label"], "渡虚劫 · 心魔")
-        self.assertTrue(decoded["offer_id"].startswith("heart_demon:"))
-        self.assertEqual(decoded["expires_at_ms"] > 0, True)
+        self.assertEqual(decoded["composure"], 0.85)
+        self.assertEqual(decoded["quota_remaining"], 2)
+        self.assertEqual(decoded["quota_total"], 3)
+        self.assertNotEqual(decoded["quota_remaining"], decoded["quota_total"])
+        self.assertEqual(decoded["expires_at_ms"], 1700000050000)
         self.assertEqual(
-            [(c["choice_id"], c["category"]) for c in decoded["choices"]],
+            [(c["choice_id"], c["category"], c["title"]) for c in decoded["choices"]],
             [
-                ("heart_demon_choice_0", "Composure"),
-                ("heart_demon_choice_1", "Breakthrough"),
-                ("heart_demon_choice_2", "Perception"),
+                ("heart_demon_choice_0", "Composure", "守本心"),
+                ("heart_demon_choice_1", "Breakthrough", "斩执念"),
+                ("heart_demon_choice_2", "Perception", "无解"),
             ],
         )
         self.assertEqual(
-            [c["title"] for c in decoded["choices"]],
-            ["守本心", "斩执念", "无解"],
+            [c["effect_summary"] for c in decoded["choices"]],
+            [
+                "稳住心神，回复少量当前真元",
+                "若斩错心魔，将损当前真元并强化下一道开天雷",
+                "承认无解，不得增益也不受真元惩罚",
+            ],
         )
+        self.assertEqual(
+            [c["flavor"] for c in decoded["choices"]],
+            ["心若磐石，外物不侵。", "抽刀断水，一念斩魔。", "心魔无解，人间一二。"],
+        )
+        self.assertEqual(
+            [c["style_hint"] for c in decoded["choices"]],
+            ["calm-blue", "edge-orange", "calm-grey"],
+        )
+        # 每个 choice 的嵌套字段必须各自可辨（不是同一串复读）。
+        self.assertEqual(len({c["effect_summary"] for c in decoded["choices"]}), 3)
+        self.assertEqual(len({c["flavor"] for c in decoded["choices"]}), 3)
+        self.assertEqual(len({c["style_hint"] for c in decoded["choices"]}), 3)
 
     def test_bot_dispatch_emits_decoded_tribulation_state_event(self):
         bot = _bare_bot()
@@ -2644,27 +2723,62 @@ def _server_data_tribulation_state_bytes(
 
 
 def _server_data_heart_demon_offer_bytes() -> bytes:
-    """field 69 `heart_demon_offer`（见 proto/bong/envelope.proto `HeartDemonOffer`）。"""
-    choice = lambda choice_id, category, title: (  # noqa: E731
+    """field 69 `heart_demon_offer`（见 proto/bong/envelope.proto `HeartDemonOffer`）。
+
+    全部**非对称**值（review finding major-7）：offer_id != trigger_id、quota_remaining !=
+    quota_total、每个 choice 的 effect_summary/flavor/style_hint 各自可辨——把字段 13/14
+    互换、读错 trigger_id、配额钞等错误解码器立刻撞红。
+    """
+    choice = lambda choice_id, category, title, effect, flavor, style: (  # noqa: E731
         _pb_string(1, choice_id)
         + _pb_string(2, category)
         + _pb_string(3, title)
-        + _pb_string(4, "effect")
-        + _pb_string(5, "flavor")
-        + _pb_string(6, "style")
+        + _pb_string(4, effect)
+        + _pb_string(5, flavor)
+        + _pb_string(6, style)
     )
     body = (
         _pb_string(1, "heart_demon:7:1000")
-        + _pb_string(2, "heart_demon:7:1000")
+        + _pb_string(2, "heart_demon:7:1111")
         + _pb_string(3, "心魔劫临身")
         + _pb_string(4, "渡虚劫 · 心魔")
-        + _pb_fixed64(5, 0.5)
-        + _pb_varint(6, 1)
-        + _pb_varint(7, 1)
-        + _pb_varint(8, 1234567890123)
-        + _pb_message(9, choice("heart_demon_choice_0", "Composure", "守本心"))
-        + _pb_message(9, choice("heart_demon_choice_1", "Breakthrough", "斩执念"))
-        + _pb_message(9, choice("heart_demon_choice_2", "Perception", "无解"))
+        + _pb_fixed64(5, 0.85)
+        + _pb_varint(6, 2)  # quota_remaining
+        + _pb_varint(7, 3)  # quota_total（≠ remaining，锁独立映射）
+        + _pb_varint(8, 1700000050000)  # expires_at_ms
+        + _pb_message(
+            9,
+            choice(
+                "heart_demon_choice_0",
+                "Composure",
+                "守本心",
+                "稳住心神，回复少量当前真元",
+                "心若磐石，外物不侵。",
+                "calm-blue",
+            ),
+        )
+        + _pb_message(
+            9,
+            choice(
+                "heart_demon_choice_1",
+                "Breakthrough",
+                "斩执念",
+                "若斩错心魔，将损当前真元并强化下一道开天雷",
+                "抽刀断水，一念斩魔。",
+                "edge-orange",
+            ),
+        )
+        + _pb_message(
+            9,
+            choice(
+                "heart_demon_choice_2",
+                "Perception",
+                "无解",
+                "承认无解，不得增益也不受真元惩罚",
+                "心魔无解，人间一二。",
+                "calm-grey",
+            ),
+        )
     )
     return _pb_message(69, body)
 
@@ -2954,6 +3068,67 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertEqual(result, 0)
         run.assert_not_called()
         self.assertIn("SKIP", output.getvalue())
+
+    def test_heart_demon_decision_scenario_declares_optin_env_hook(self):
+        # review finding major-2：主链路场景必须声明 RUN_IN_ALL_WHEN_ENV（且不默认开启），
+        # 由专用工作流下发该 env 才纳入 --all —— 没这个 hook 常规 CI 的 --all 永远跳过它。
+        scenario = discover_scenarios()["cultivation_heart_demon_decision"]
+        self.assertFalse(
+            scenario.DEFAULT_ENABLED,
+            "heart_demon_decision 是 30 分钟满进度门槛的长场景，不得进入常规 --all",
+        )
+        self.assertEqual(
+            getattr(scenario, "RUN_IN_ALL_WHEN_ENV", None),
+            "BONG_RUN_LONG_SCENARIOS",
+            "场景必须声明统一的 RUN_IN_ALL_WHEN_ENV；bot-heart-demon-nightly 工作流下发它",
+        )
+
+    def test_heart_demon_decision_all_runs_only_when_optin_env_set(self):
+        # pin runner 语义：env 未设/0 → SKIP（run 不被调用）；env=1 → 纳入 --all（run 被调）。
+        run_env = "BONG_RUN_LONG_SCENARIOS"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated heart-demon",
+            MODULES=["cultivation"],
+            DEFAULT_ENABLED=False,
+            RUN_IN_ALL_WHEN_ENV=run_env,
+            run=mock.Mock(),
+        )
+        for value, expected_included in (("1", True), ("0", False), ("", False)):
+            scenario.run.reset_mock()
+            output = io.StringIO()
+            with (
+                mock.patch.object(
+                    scenario_runner,
+                    "discover_scenarios",
+                    return_value={"cultivation_heart_demon_decision": scenario},
+                ),
+                mock.patch.object(
+                    scenario_runner, "check_server_reachable", return_value=True
+                ),
+                mock.patch.dict(os.environ, {run_env: value}, clear=False),
+                mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+                redirect_stdout(output),
+            ):
+                result = scenario_runner.main()
+            self.assertEqual(result, 0)
+            if expected_included:
+                scenario.run.assert_called_once()
+                self.assertIn("pass=1", output.getvalue())
+            else:
+                scenario.run.assert_not_called()
+                self.assertIn("skip=1", output.getvalue())
+
+    def test_heart_demon_nightly_workflow_actually_sets_optin_env(self):
+        # review finding major-2：pin「opt-in --all 环境钩子 + 工作流真正下发」的电线。
+        # 工作流必须把 BONG_RUN_LONG_SCENARIOS 设为 1 并调用 bot-e2e.sh（--all），
+        # 否则场景声明的 RUN_IN_ALL_WHEN_ENV 只是死钩子。
+        wf_path = pathlib.Path(__file__).parent.parent.parent / ".github" / "workflows" / "bot-heart-demon-nightly.yml"
+        text = wf_path.read_text(encoding="utf-8")
+        self.assertIn("BONG_RUN_LONG_SCENARIOS", text)
+        self.assertIn("BONG_RUN_LONG_SCENARIOS: \"1\"", text)
+        self.assertIn("scripts/bot-e2e.sh", text)
+        self.assertIn("on:", text)
+        self.assertIn("workflow_dispatch", text)
 
     def test_explicit_scenario_without_required_env_fails_closed(self):
         run = mock.Mock()

@@ -2874,7 +2874,15 @@ pub fn heart_demon_choice_system(
     mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
+    // review finding major-4：一个 Update 内每个实体只消费**首个**决策，后续（含同 tick
+    // 双发包）一律拒绝。此前 HeartDemonResolution 经 deferred Commands 插入，同一 system
+    // 调用内对后续事件不可见，两条 Obsession 包会把 30% 真元惩罚叠两次、混合包会留下
+    // 最后一条的结局与倍率——自相矛盾的 biography/状态。
+    let mut processed: HashSet<Entity> = HashSet::new();
     for choice in choices.read() {
+        if !processed.insert(choice.entity) {
+            continue;
+        }
         let Ok((
             mut cultivation,
             state,
@@ -5171,6 +5179,104 @@ mod tests {
         assert_eq!(emitted[0].waves_total, 3);
     }
 
+
+    #[test]
+    fn full_progress_boundary_35999_keeps_three_waves() {
+        // review finding major-6：差一 tick 侧必须用**字面 35999** 锁死（不能用符号常量
+        // 配"差一历史"的旧写法——把门槛改成 35999 或谓词改成 > MIN 会让旧测试全绿）。
+        let spirit_tick = 100u64;
+        let final_meridian_tick = 500u64;
+        let record = full_progress_life_record(spirit_tick, final_meridian_tick);
+        // du_xu_full_progress_ticks = requested - max(spirit, final_meridian) = requested - 500
+        let requested_at_tick = DUXU_FULL_PROGRESS_MIN_TICKS + final_meridian_tick - 1; // = 36499
+        assert_eq!(
+            du_xu_full_progress_ticks(&record, requested_at_tick),
+            35_999,
+            "满进度 ticks 必须恰为 35999（差一 tick 不到 36000 门槛）"
+        );
+        assert_eq!(
+            du_xu_waves_total(requested_at_tick, Some(&record)),
+            DUXU_DEFAULT_WAVES,
+            "35999 ticks 未过门槛，必须是默认 3 波"
+        );
+
+        // 经真实 system 走同一字面输入，锁系流程级语义。
+        let mut app = qi_test_app();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                full_progress_life_record(spirit_tick, final_meridian_tick),
+            ))
+            .id();
+        app.world_mut().send_event(StartDuXuRequest {
+            entity,
+            requested_at_tick,
+        });
+        app.update();
+        let events =
+            app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].waves_total, 3);
+    }
+
+    #[test]
+    fn full_progress_boundary_36000_adds_five_waves() {
+        // review finding major-6：门限侧用**字面 36000** 锁死，谓词/常量若被放宽成
+        // <= 35999 或 > 35999，本字面断言立刻撞红。
+        let spirit_tick = 100u64;
+        let final_meridian_tick = 500u64;
+        let record = full_progress_life_record(spirit_tick, final_meridian_tick);
+        let requested_at_tick = DUXU_FULL_PROGRESS_MIN_TICKS + final_meridian_tick; // = 36500
+        assert_eq!(
+            du_xu_full_progress_ticks(&record, requested_at_tick),
+            36_000,
+            "满进度 ticks 必须恰为 36000（恰好触及 36000 门槛）"
+        );
+        assert_eq!(
+            du_xu_waves_total(requested_at_tick, Some(&record)),
+            DUXU_MAX_WAVES,
+            "36000 ticks 恰达门槛，必须是 5 波（含心魔相）"
+        );
+
+        let mut app = qi_test_app();
+        app.add_event::<StartDuXuRequest>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        app.add_systems(Update, start_du_xu_request_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 210.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                full_progress_life_record(spirit_tick, final_meridian_tick),
+            ))
+            .id();
+        app.world_mut().send_event(StartDuXuRequest {
+            entity,
+            requested_at_tick,
+        });
+        app.update();
+        let events =
+            app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let emitted: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].waves_total, 5);
+    }
     #[test]
     fn start_du_xu_request_rejects_non_spirit_or_incomplete_meridians() {
         let mut app = qi_test_app();
@@ -6166,6 +6272,242 @@ mod tests {
         ));
     }
 
+
+    #[test]
+    fn heart_demon_decision_dedup_same_update_identical_obsession() {
+        // review finding major-4：同 Update 两条 Obsession 决策只允许首条生效——30% 惩罚
+        // 只扣一次（500→350），绝不叠成 500→350→245。
+        let mut app = qi_test_app();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, heart_demon_choice_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 500.0,
+                    qi_max: 500.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        // 同 tick 发两条 Obsession 决策（修复前两条都因 deferred Commands 不可见而各自生效）。
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(1),
+            submitted_at_tick: 2110,
+        });
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(1),
+            submitted_at_tick: 2111,
+        });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .unwrap();
+        let expected_qi = 500.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO);
+        assert!(
+            (cultivation.qi_current - expected_qi).abs() < 1e-9,
+            "同 Update 两条 Obsession 决策只扣一次 30%：期望 qi_current={expected_qi}，实际 {}",
+            cultivation.qi_current
+        );
+        let resolution = app
+            .world()
+            .get::<HeartDemonResolution>(entity)
+            .expect("resolution should be recorded");
+        assert_eq!(resolution.outcome, HeartDemonOutcome::Obsession);
+        assert_eq!(resolution.choice_idx, Some(1));
+        // 只记一条 biography。
+        let life = app.world().get::<LifeRecord>(entity).unwrap();
+        let records: Vec<_> = life
+            .biography
+            .iter()
+            .filter(|e| matches!(e, BiographyEntry::HeartDemonRecord { .. }))
+            .collect();
+        assert_eq!(records.len(), 1, "重复决策只应落一条 HeartDemonRecord biography");
+    }
+
+    #[test]
+    fn heart_demon_decision_dedup_same_update_mixed_first_wins() {
+        // review finding major-4：同 Update 混合包（先 Steadfast 后 Obsession）只保留
+        // **首个**（Steadfast 回真元），后续 Obsession 不得再扣——修复前的"最后一条取胜"
+        // 会同时 grant 又 drain、multipler 交代不清。
+        let mut app = qi_test_app();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.5; // 足够授予
+        app.insert_resource(zones);
+        app.add_systems(Update, heart_demon_choice_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 70.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 120.0,
+                    qi_max: 210.0,
+                    qi_max_frozen: Some(10.0),
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(0), // Steadfast（首个）
+            submitted_at_tick: 2110,
+        });
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(1), // Obsession（同 Update 后续，应被拒绝）
+            submitted_at_tick: 2111,
+        });
+        app.update();
+
+        // effective_qi_max = 200；desired_grant = min(20, 80) = 20 → qi 120 + 20 = 140；
+        // 后续 Obsession 30% 不得生效（否则再 drain 42 → 98）。
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .unwrap();
+        assert!(
+            (cultivation.qi_current - 140.0).abs() < 1e-9,
+            "首个 Steadfast 授予 20（120→140），后续 Obsession 不得再扣：实际 {}",
+            cultivation.qi_current
+        );
+        let resolution = app
+            .world()
+            .get::<HeartDemonResolution>(entity)
+            .expect("resolution should be recorded");
+        assert_eq!(resolution.outcome, HeartDemonOutcome::Steadfast);
+        assert_eq!(resolution.choice_idx, Some(0));
+        assert_eq!(resolution.next_wave_multiplier, 1.0);
+    }
+
+    #[test]
+    fn heart_demon_decision_dedup_later_delivery_second_ignored() {
+        // review finding major-4：跨 Update 的重复决策——首个 Update 生效并落解析组件；
+        // 下一 Update 再发的包被已有解析拒绝（首条保留）。
+        let mut app = qi_test_app();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, heart_demon_choice_system);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 500.0,
+                    qi_max: 500.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        // Update 1：首条 Obsession 生效。
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(1),
+            submitted_at_tick: 2110,
+        });
+        app.update();
+        let after_first = app
+            .world()
+            .get::<Cultivation>(entity)
+            .unwrap()
+            .qi_current;
+        assert!(
+            (after_first - 500.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO)).abs() < 1e-9
+        );
+
+        // Update 2：重复 Obsession 包（跨 Update，解析组件已存在）→ 不得再扣。
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(1),
+            submitted_at_tick: 2115,
+        });
+        app.update();
+        let after_second = app
+            .world()
+            .get::<Cultivation>(entity)
+            .unwrap()
+            .qi_current;
+        assert!(
+            (after_second - after_first).abs() < 1e-9,
+            "跨 Update 重复决策不得二次扣减：首条后 {after_first}，次条后 {after_second}"
+        );
+        let resolution = app
+            .world()
+            .get::<HeartDemonResolution>(entity)
+            .unwrap();
+        assert_eq!(resolution.choice_idx, Some(1));
+        assert_eq!(resolution.tick, 2110);
+    }
     #[test]
     fn heart_demon_resolution_advances_to_kaitian_without_republishing_fourth_wave() {
         let mut app = qi_test_app();

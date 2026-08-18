@@ -574,7 +574,14 @@ def _message(fields: list[tuple[int, int, Any]], field: int) -> list[tuple[int, 
 
 
 def _messages(fields: list[tuple[int, int, Any]], field: int) -> list[bytes]:
-    return [value for value in _values(fields, field) if isinstance(value, bytes)]
+    """重复 message/string 字段：只收 wire type 2（length-delimited）。
+
+    review finding minor：此前 `isinstance(value, bytes)` 会把 fixed64(wire 1)/fixed32
+    (wire 5) 也当成消息字节——TribulationState.participants 会把误编码的 fixed64 field 15
+    解成参与者文本；HeartDemonOffer.choices 则把 fixed64 field 9 喂给嵌套解析器抛
+    ProtoDecodeError、丢掉 offer 观测。与单值 `_message`（显式要求 wire==2）对齐。
+    """
+    return [value for existing, wire, value in fields if existing == field and wire == 2]
 
 
 def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:

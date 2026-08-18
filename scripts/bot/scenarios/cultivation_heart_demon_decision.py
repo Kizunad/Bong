@@ -27,15 +27,17 @@
 前置（dev 铺垫，与 cultivation_breakthrough.py 同风格）：
 - realm set awaken → meridian open_all → qi max/set 500 → zone_qi set spawn 1.00，
   随后**逐级双连发** breakthrough_request 突破（醒灵→引气→凝液→固元→灵台）。
-  机制（breakthrough.rs breakthrough_system）：roll 资源每 tick 以同一常量种子重建
-  （XorshiftRoll(0x9e3779b97f4a7c15)，r1..r6=0.8598/0.3943/0.4806/0.1890/…），每 tick
-  首条请求取 r1。r1 只过 醒灵→引气/引气→凝液（低阶成功率 ≥0.86），r2 过 凝液→固元/
+  机制（breakthrough.rs breakthrough_system）：roll 流按实体持久（BreakthroughRollState
+  组件，跨 Update 续接；本次 review finding major-1 修复，此前每 Update 重建固定种子
+  XorshiftRoll(0x9e3779b97f4a7c15) 会让拆批的两条请求都消费 r1）。r1..r6=0.8598/0.3943/
+  0.4806/0.1890/…：r1 只过 醒灵→引气/引气→凝液（低阶成功率 ≥0.86），r2 过 凝液→固元/
   固元→灵台。**release 上网络读批会随机拆批**（实测 2/4 分片），故每级只发 2 条：
-  同 tick 落地则 r1/r2 连过、拆成 1/1 则首条 r1 失败（耗 qi/跌 composure/积冻结）但次条
-  r2 仍必过——任意拆批都只需"2 条落同一 tick"，且每级用 player_state.realm 帧确认
-  （Changed<Cultivation> 广播，wire 解码境界名），失败则「qi max 清冻结 + qi set 回满 +
-  meridian open_all 补脉 + 等 composure 回升」后重试，逐级独立收敛，不依赖单 tick 六连发
-  的 ≥4-in-tick 批运（原 review finding #8）。环境前置（breakthrough_environment_error）：
+  同 tick 落地则 r1/r2 连过；拆成 1/1 则首条 r1 失败（耗 qi/跌 composure/积冻结）、次条
+  因 roll 流跨 Update 续接消费 r2 仍必过——任意拆批都消费到**连续**的 r1/r2，逐级独立收敛，
+  不依赖单 tick 六连发的 ≥4-in-tick 批运（原 review finding #8）。每级用 player_state.realm
+  帧确认（Changed<Cultivation> 广播，wire 解码境界名），失败则「qi max 清冻结 + qi set
+  回满 + meridian open_all 补脉 + 等 composure 回升」后重试。环境前置
+  （breakthrough_environment_error）：
   固元要求 zone 灵气 ≥ 0.8，须先 `zone_qi set spawn 1.00`。每级双连发后立即回满 qi，
   防 qi_zero_decay（qi≤1%×qi_max 持续 600 ticks 触发降境+闭脉）。
   **release 走火入魔死亡**：failure severity≥0.7（breakthrough.rs:1017）直发死亡触发，
@@ -68,22 +70,34 @@ DESCRIPTION = (
 MODULES = ["cultivation", "tribulation", "network", "cmd", "multibot"]
 
 DEFAULT_ENABLED = False  # 专用场景：30 分钟进度门槛，常规 --all 不执行（需显式 --scenario）
+# review finding major-2：opt-in --all 环境钩子——常规 CI 的 `run_scenarios.py --all` 不设
+# 本环境变量则跳过；专用的 .github/workflows/bot-heart-demon-nightly.yml 下发
+# BONG_RUN_LONG_SCENARIOS=1 才纳入。runner 已原生支持 RUN_IN_ALL_WHEN_ENV（见
+# run_scenarios.py），此处声明与该工作流接线相绑定，并由 test_protocol 契约测试 pin 住。
+RUN_IN_ALL_WHEN_ENV = "BONG_RUN_LONG_SCENARIOS"
 
 BREAKTHROUGH_REQUEST = {"type": "breakthrough_request", "v": 1}
 START_DU_XU = {"type": "start_du_xu", "v": 1}
 HEART_DEMON_DECISION = {"type": "heart_demon_decision", "v": 1}
 
-# 逐级双连发：release 读批把 burst 拆到多个 tick 时，每个新 tick 的**首条**请求取 r1
-# （XorshiftRoll(0x9e3779b97f4a7c15)，r1..r6=0.8598/0.3943/…，breakthrough.rs:700 每 tick 重建）。
+# 决策生效侧效——须在**远低于** server 超时 600 ticks（=30s）的窗口内出现，才能区分
+# 「提交的存货决策」与「超时兜底（600 ticks 后 choice_idx=None 同走 Obsession）」。
+# fix review finding major-3：Bot B（choice_idx=1）与 Bot D（省略 choice_idx）的真元扣减
+# 断言都必须用此短窗口锁死——超时（30s）永远低于 600 ticks 的那一侧不会在 8s 内扣减。
+DECISION_APPLY_DEADLINE = 8.0
+
+# 逐级双连发：release 读批把 burst 拆到多个 tick 时，roll 流按实体持久（BreakthroughRollState，
+# 跨 Update 续接——fix review finding major-1，此前每 Update 重建种子导致拆批两条请求都取 r1、
+# 固元→灵台永不收敛）。r1..r6=0.8598/0.3943/0.4806/0.1890/…（breakthrough.rs XorshiftRoll seed）。
 # 成功率 = base×integrity×composure×completeness×…（breakthrough.rs:251）。completeness=
 # 1.0+0.05×(全开−need) 钳 [0.8,1.3]（breakthrough.rs:530），**全脉开 →1.3**：
 # - 引气→凝液：0.80×1.3×(composure≥0.9)=0.936 ≥ r1 → 首发必过；
 # - 凝液→固元：req1 0.70×1.3×0.8=0.73<r1 失败、req2 0.70×1.3×0.5=0.455≥r2=0.3943 过；
 # - 固元→灵台：需要 pair 起始 composure≥0.85（req2=0.55×1.3×(C−0.3)×integrity≥r2），
 #   而链上前一步把 composure 扣到 ~0.4，故灵台步首发前先 _rearm_breakthrough 恢复满。
-# 所以每级只发 2 条：同 tick 落地 r1/r2 连过，拆成 1/1 则首条（r1）失败消耗代价、次条（r2）
-# 仍过——任意拆批都只需"2 条落同一 tick"，且每级独立收敛。相比单 tick 六连发一次冲顶
-# （≥4 条须落同一 tick，run 实测 2/4 拆批必坏），本设计不依赖 socket 批的运气（finding #8）。
+# 所以每级只发 2 条：同 tick 或拆成 1/1 都消费到**连续**的 r1/r2（下方单测锁定同 Update 与
+# 1/tick 拆批两种确定性控制），逐级独立收敛。相比单 tick 六连发一次冲顶（≥4 条须落同一 tick，
+# run 实测 2/4 拆批必坏），本设计不依赖 socket 批的运气（finding #8）。
 BREAKTHROUGH_PAIR = 2
 BREAKTHROUGH_STEP_RETRIES = 10  # 每级双连发重试上限（拆成 1/1 连续 10 轮才放弃）
 BREAKTHROUGH_STEP_CONFIRM_TIMEOUT = 12.0  # player_state.realm 前进确认窗（< 30s 的 qi_zero_decay 触发线）
@@ -575,10 +589,15 @@ def _spirit_qi_after(bot: Bot, after: float) -> float:
 
 
 def _expect_qi_drain(bot: Bot, after: float, full: float, timeout: float) -> None:
-    """心魔（Obsession，缺失 choice_idx）：抉择后真元必须显著低于 full（30% 当前真元惩罚）。
+    """心魔（Obsession，缺失/斩执念 choice_idx）：抉择后真元必须显著低于 full（30% 惩罚）。
 
     full=500 时扣 150 → 350 ≤ 500×0.75=375。若实现把缺失 choice 当无解/忽略，真元保持
     满值，断言超时。低于有效上限（0.8×500=400）也决定了第 5 波满资源检查必失败。
+
+    调用方必须传**严格低于** server 超时 600 ticks（=30s）的 timeout（见
+    DECISION_APPLY_DEADLINE）：心魔相决策被 server 真实消费时扣减发生在抉择当下（tick
+    级，<1s），而超时兜底（choice_idx=None）要等满 600 ticks 才扣——短窗口据此把
+    「已提交的决策」与「timeout 兜底」区分开（review finding major-3）。
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -638,7 +657,15 @@ def run(env) -> None:
                     # bot B：斩执念（Breakthrough）→ 心魔 → 30% 真元惩罚 →
                     # 第 5 波开天雷满资源检查必失败 → failed 结算（不死，止步第 5 波、存活 4 波）。
                     _fleet_rearm(fleet)
-                    obsessed_anchor, _ = _run_duxu_common(obsessed, choice_idx=1, fleet=fleet)
+                    obsessed_anchor, obsessed_decision_after = _run_duxu_common(
+                        obsessed, choice_idx=1, fleet=fleet
+                    )
+                    # 决策特异性：斩执念扣 30% 必须在 DECISION_APPLY_DEADLINE（<600 ticks
+                    # 超时）内出现——这样 timeout 兜底（30s 后才结算）无法满足该断言，
+                    # 证明结算的结局确由「已提交的 Some(1) 决策」而非超时兜底产生。
+                    _expect_qi_drain(
+                        obsessed, obsessed_decision_after, full=500.0, timeout=DECISION_APPLY_DEADLINE
+                    )
                     _expect_settle_result(
                         obsessed, ("failed",), wave_current=4, after=obsessed_anchor
                     )
@@ -665,7 +692,11 @@ def run(env) -> None:
                     # → 低于有效上限 → 第 5 波满资源检查失败 → failed 结算。
                     _fleet_rearm(fleet)
                     omit_anchor, omit_decision_after = _run_duxu_common(omit, choice_idx=None, fleet=fleet)
-                    _expect_qi_drain(omit, omit_decision_after, full=500.0, timeout=30.0)
+                    # 与 Bot B 同理：省略 choice 的 Obsession 扣 30% 也须在短窗口内出现，
+                    # 证明由「已提交的缺失决策」而非 600-tick 超时兜底产生。
+                    _expect_qi_drain(
+                        omit, omit_decision_after, full=500.0, timeout=DECISION_APPLY_DEADLINE
+                    )
                     _expect_settle_result(
                         omit, ("failed",), wave_current=4, after=omit_anchor
                     )
