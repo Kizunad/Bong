@@ -145,7 +145,6 @@ pub struct RedisDeliveryReceipt {
 
 #[derive(Debug, Clone)]
 pub enum RedisInbound {
-    BotDeliveryFenceRequest(String),
     AgentCommand(AgentCommandV1),
     AgentNarration(NarrationV1),
     AgentWorldModel(AgentWorldModelEnvelopeV1),
@@ -2424,7 +2423,6 @@ async fn run_subscriber_task(
         match parse_inbound_message(channel.as_str(), payload.as_str()) {
             Ok(Some(inbound)) => {
                 match &inbound {
-                    RedisInbound::BotDeliveryFenceRequest(_) => {}
                     RedisInbound::AgentCommand(command) => tracing::info!(
                         "[bong][redis] received agent command: {} ({} cmds)",
                         command.id,
