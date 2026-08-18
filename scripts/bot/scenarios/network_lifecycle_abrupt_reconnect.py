@@ -36,11 +36,30 @@ GIVE_COUNT = 2
 # 算进 3D 距离会把正确实现误判成「动作没发生/位置没恢复」。
 MOVE_DISTANCE = 5.0
 MOVE_VERIFY_TOLERANCE = 1.0
-POSITION_TOLERANCE = 4.0
+# Keep the restore window strictly below the movement acceptance window's lower
+# bound: a 4m partial move followed by a reset to the join origin must not satisfy
+# both assertions and masquerade as a successfully persisted position.
+POSITION_TOLERANCE = 3.0
 
 
 def _horizontal_distance(a: tuple, b: tuple) -> float:
     return math.dist((a[0], a[2]), (b[0], b[2]))
+
+
+def _assert_restored_position(
+    pre_disconnect_position: tuple, restored_position: tuple
+) -> None:
+    distance = _horizontal_distance(pre_disconnect_position, restored_position)
+    # The restore window is intentionally narrower than the movement probe's
+    # accepted lower bound. A partial 4m move followed by a reset to the join
+    # origin must therefore fail instead of satisfying both lifecycle checks.
+    assert distance <= POSITION_TOLERANCE, (
+        "重连位置应从持久化恢复（贴近断连前最后坐标），而不是回出生点或丢失；"
+        f"断连前 {pre_disconnect_position}，重连后 {restored_position}，"
+        f"水平偏差 {distance:.1f}m > 容忍 {POSITION_TOLERANCE}m"
+    )
+
+
 # 掐断 socket 后给 server 1~2 tick 检测断连并落盘，避免重连抢在清理前读到旧切片
 DISCONNECT_PERSIST_GRACE = 1.5
 
@@ -152,13 +171,8 @@ def run(env) -> None:
 
         restored_position = bot.position
         assert restored_position is not None, "重连后应收到 pos_look 恢复坐标"
-        distance = _horizontal_distance(pre_disconnect_position, restored_position)
         # 只比水平位移：断连间隙 server 照常 tick，权威 Y 抬升（~8s 一步 +10）会让
         # 3D 偏差凭空 +10 而误红正确实现；回出生点则在 XZ 平面上有巨大偏移，水平
         # 距离照常能抓住。
-        assert distance <= POSITION_TOLERANCE, (
-            "重连位置应从持久化恢复（贴近断连前最后坐标），而不是回出生点或丢失；"
-            f"断连前 {pre_disconnect_position}，重连后 {restored_position}，"
-            f"水平偏差 {distance:.1f}m > 容忍 {POSITION_TOLERANCE}m"
-        )
+        _assert_restored_position(pre_disconnect_position, restored_position)
         bot.assert_alive("同身份重连并恢复状态后连接保持")

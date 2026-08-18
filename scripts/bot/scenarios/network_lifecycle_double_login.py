@@ -71,6 +71,10 @@ def run(env) -> None:
             )
             # 关键的交叉观察：第一连接这一等待不能掩盖第二连接在它自己的
             # KeepAlive 之后稍晚才被 server 清理的情况。
+            # The first cross-probe only proves first is alive at that instant. Require
+            # a strictly newer heartbeat from second afterwards so a cleanup race that
+            # removes second immediately after first's heartbeat cannot hide behind the
+            # second connection's intentional context exit.
             _assert_surviving_connection(
                 second,
                 "第二连接 join 后第一连接收到新 KeepAlive",
@@ -78,6 +82,16 @@ def run(env) -> None:
             _assert_surviving_connection(
                 first,
                 "第二连接 join 后第一连接仍存活（双开互不干扰）",
+            )
+            second_cross_probe_marker = last_event_time(second)
+            _wait_keepalive_after(
+                second,
+                second_cross_probe_marker,
+                "第一连接 cross-probe 后第二连接仍持续心跳",
+            )
+            _assert_surviving_connection(
+                second,
+                "第一连接 cross-probe 后第二连接仍存活（双开互不干扰）",
             )
 
         # 第二连接退出（with 块结束即断线）；给 server 清理路径一个短暂的

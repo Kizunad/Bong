@@ -67,12 +67,19 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     _assert_raster_fixture_contract,
 )
 from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
+    MOVE_DISTANCE,
+    MOVE_VERIFY_TOLERANCE,
+    POSITION_TOLERANCE,
+    _assert_restored_position,
     _move_and_record,
     _position_from_authoritative_event,
 )
 from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
     _assert_surviving_connection,
     _wait_keepalive_after,
+)
+from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
+    _wait_before_deadline,
 )
 from bot.scenarios.network_lifecycle_stale_session import (  # noqa: E402
     _assert_inactive_session_state,
@@ -1933,6 +1940,22 @@ class LifecycleReviewContractTest(unittest.TestCase):
             "断连锚点必须使用 server PositionLook 的坐标，而不是客户端本地 mirror",
         )
 
+    def test_restore_window_rejects_four_meter_reset_after_minimum_accepted_move(self):
+        # A 4m authoritative move is exactly the lower edge accepted by the
+        # 5m ±1m movement oracle. The restored-origin distance must nevertheless
+        # exceed the narrower restore window, so this boundary cannot false-pass.
+        partial_move = MOVE_DISTANCE - MOVE_VERIFY_TOLERANCE
+        self.assertEqual(partial_move, 4.0)
+        with self.assertRaisesRegex(AssertionError, "水平偏差"):
+            _assert_restored_position(
+                (100.0 + partial_move, 72.0, 8.0),
+                (100.0, 90.0, 8.0),
+            )
+        _assert_restored_position(
+            (100.0 + POSITION_TOLERANCE, 72.0, 8.0),
+            (100.0, 90.0, 8.0),
+        )
+
     def test_authoritative_position_requires_absolute_xyz_position_look(self):
         event = _FakeEvent(
             3.0,
@@ -2038,6 +2061,47 @@ class DoubleLoginScenarioTest(unittest.TestCase):
             observed,
             new_event,
             "KeepAlive 断言必须返回严格晚于 marker 的新事件，而不是历史/边界事件",
+        )
+
+    def test_post_cross_probe_requires_second_connection_heartbeat(self):
+        # The second connection had a heartbeat before first's cross-probe, then
+        # was removed. A second heartbeat after the probe is the only observation
+        # that closes that race; the stricter phase must reject this event stream.
+        bot = _FakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(3.0, "connection_lost", {}),
+            ]
+        )
+        with self.assertRaisesRegex(AssertionError, r"t>2\.500s"):
+            _wait_keepalive_after(bot, 2.5, "第一连接 cross-probe 后第二连接")
+
+
+class IdleTimeoutScenarioTest(unittest.TestCase):
+    def test_idle_waits_share_one_absolute_deadline(self):
+        class TimeoutCaptureBot:
+            def __init__(self):
+                self.timeouts = []
+
+            def wait_for(self, _predicate, timeout: float, description: str):
+                self.timeouts.append((timeout, description))
+                raise AssertionError("测试 fake 不提供事件")
+
+        bot = TimeoutCaptureBot()
+        deadline = 130.0
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_idle_timeout.time.monotonic",
+            side_effect=[100.0, 112.0],
+        ):
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "首个等待")
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "第二个等待")
+
+        self.assertEqual(
+            [timeout for timeout, _description in bot.timeouts],
+            [30.0, 18.0],
+            "第二个 idle 等待必须消费同一 absolute deadline 的剩余预算，不能重置为 30s",
         )
 
 
