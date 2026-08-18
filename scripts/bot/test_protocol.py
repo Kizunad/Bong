@@ -1355,7 +1355,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
                 "    pass\n"
                 "PY\n"
-                "    lsof -nP -iTCP:\"$BOT_E2E_PORT\" -sTCP:LISTEN -Fp 2>/dev/null | grep -q \"p$1\"\n"
+                "    ss -4 -H -ltnp \"sport = :$BOT_E2E_PORT\" 2>/dev/null | grep -qE \"pid=$1([,)]|$)\"\n"
                 "  }\n"
                 "  case \"$FAKE_RUNNER_MODE\" in\n"
                 "    success) printf 'runner-complete\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 0 ;;\n"
