@@ -294,7 +294,10 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
         # denial_reason 匹配、其余结果静默丢弃，会放走批内额外发出的 denied/其他理由
         # 或 found 响应——realm 优先边界契约就没锁住。
         results = _collect_probe_results(bot, sent_at)
-        settled = bool(results)
+        # Only a complete batch is settled. A non-empty short batch can still have
+        # delayed responses in flight; drain before retrying so they cannot be
+        # combined with the next request batch (VRFY PR2029 major finding).
+        settled = len(results) == expected
         if len(results) != expected:
             # 基数不符（central-review 2029 #8）：既可能是权威位置在批间 +10 移档
             # （y 带整体平移，期望数随之改变），也可能是实现在范围内请求被静默丢弃。

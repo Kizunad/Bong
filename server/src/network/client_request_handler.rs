@@ -14,7 +14,7 @@ use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
     bevy_ecs, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter, Events,
-    Query, Res, ResMut, Resource, UniqueId, Username, With,
+    Query, Res, ResMut, Resource, UniqueId, Username, With, Without,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -221,6 +221,16 @@ pub struct CombatRequestParams<'w, 's> {
     pub bindings_q: Query<'w, 's, &'static mut QuickSlotBindings>,
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
+    pub dying_elder_targets: Query<
+        'w,
+        's,
+        (
+            &'static crate::fauna::dying_elder::DyingElderState,
+            &'static NpcArchetype,
+        ),
+        (With<NpcMarker>, Without<Client>),
+    >,
     pub unique_ids: Query<'w, 's, &'static UniqueId>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
     pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
@@ -462,6 +472,7 @@ const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
 const QI_COLOR_INSPECT_MAX_DISTANCE: f64 = 6.0;
 const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
+const GIVE_DAN_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
@@ -2794,6 +2805,9 @@ pub fn handle_client_request_payloads(
                     combat_params.entity_manager.as_deref(),
                     &mut clients,
                     dispatch.give_dan_to_elder_tx.as_deref_mut(),
+                    &combat_params.positions,
+                    &combat_params.dimensions,
+                    &combat_params.dying_elder_targets,
                 );
             }
             // ─── plan-shield-block-v1 P1：盾牌举盾 intent ─────────────────────
@@ -10363,6 +10377,51 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn give_dan_target_state_gate_accepts_only_live_receiving_states() {
+        use crate::fauna::dying_elder::{DyingElderState, DYING_ELDER_DAN_THRESHOLD};
+
+        assert!(dying_elder_can_receive_dan(&DyingElderState::Plea));
+        assert!(dying_elder_can_receive_dan(&DyingElderState::Recovering {
+            dan_received: DYING_ELDER_DAN_THRESHOLD - 1,
+        }));
+        assert!(!dying_elder_can_receive_dan(&DyingElderState::Recovering {
+            dan_received: DYING_ELDER_DAN_THRESHOLD,
+        }));
+        assert!(!dying_elder_can_receive_dan(&DyingElderState::Betrayal));
+        assert!(!dying_elder_can_receive_dan(&DyingElderState::Dead {
+            dead_by_betrayal: false,
+        }));
+    }
+
+    #[test]
+    fn give_dan_target_scope_requires_same_dimension_and_six_block_boundary() {
+        assert!(is_give_dan_target_in_scope(
+            DVec3::ZERO,
+            DVec3::new(GIVE_DAN_MAX_DISTANCE, 0.0, 0.0),
+            DimensionKind::Overworld,
+            DimensionKind::Overworld,
+        ));
+        assert!(!is_give_dan_target_in_scope(
+            DVec3::ZERO,
+            DVec3::new(GIVE_DAN_MAX_DISTANCE + 0.01, 0.0, 0.0),
+            DimensionKind::Overworld,
+            DimensionKind::Overworld,
+        ));
+        assert!(!is_give_dan_target_in_scope(
+            DVec3::ZERO,
+            DVec3::ZERO,
+            DimensionKind::Overworld,
+            DimensionKind::Tsy,
+        ));
+        assert!(!is_give_dan_target_in_scope(
+            DVec3::new(f64::NAN, 0.0, 0.0),
+            DVec3::ZERO,
+            DimensionKind::Overworld,
+            DimensionKind::Overworld,
+        ));
+    }
+
     fn production_scroll_request_app() -> App {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -15692,6 +15751,40 @@ fn dimension_kind_for(dimensions: &Query<&CurrentDimension>, entity: Entity) -> 
         .unwrap_or_default()
 }
 
+fn dying_elder_can_receive_dan(
+    state: &crate::fauna::dying_elder::DyingElderState,
+) -> bool {
+    match state {
+        crate::fauna::dying_elder::DyingElderState::Plea => true,
+        crate::fauna::dying_elder::DyingElderState::Recovering { dan_received } => {
+            *dan_received < crate::fauna::dying_elder::DYING_ELDER_DAN_THRESHOLD
+        }
+        crate::fauna::dying_elder::DyingElderState::Betrayal
+        | crate::fauna::dying_elder::DyingElderState::Dead { .. } => false,
+    }
+}
+
+fn is_give_dan_target_in_scope(
+    player_position: DVec3,
+    elder_position: DVec3,
+    player_dimension: DimensionKind,
+    elder_dimension: DimensionKind,
+) -> bool {
+    player_dimension == elder_dimension
+        && player_position.distance_squared(elder_position)
+            <= GIVE_DAN_MAX_DISTANCE * GIVE_DAN_MAX_DISTANCE
+}
+
+fn reject_give_dan_target(
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_entity: Entity,
+    message: &'static str,
+) {
+    if let Ok((_username, mut client)) = clients.get_mut(player_entity) {
+        client.send_chat_message(message);
+    }
+}
+
 fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
     let raw = raw.trim();
     if raw.is_empty() || raw.starts_with("entity_bits:") {
@@ -19794,8 +19887,17 @@ fn handle_give_dan_to_elder(
     elder_entity_id: i32,
     inventories: &mut Query<&mut PlayerInventory>,
     entity_manager: Option<&valence::prelude::EntityManager>,
-    clients: &mut Query<(&Username, &mut Client)>,
+    mut clients: &mut Query<(&Username, &mut Client)>,
     give_dan_tx: Option<&mut Events<crate::fauna::dying_elder::GiveDanToElderIntent>>,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+    dying_elder_targets: &Query<
+        (
+            &crate::fauna::dying_elder::DyingElderState,
+            &NpcArchetype,
+        ),
+        (With<NpcMarker>, Without<Client>),
+    >,
 ) {
     use crate::fauna::dying_elder::GiveDanToElderIntent;
 
@@ -19832,7 +19934,7 @@ fn handle_give_dan_to_elder(
         return;
     }
 
-    // ── 解析大能 entity ────────────────────────────────────────────────────
+    // ── 解析并授权大能 entity ───────────────────────────────────────────────
     let Some(entity_manager) = entity_manager else {
         tracing::warn!("[bong][dying_elder] give_dan: EntityManager resource missing");
         return;
@@ -19846,6 +19948,63 @@ fn handle_give_dan_to_elder(
         }
         return;
     };
+
+    // A resolved protocol entity is not sufficient authority: the target must still be
+    // the live DyingElder encounter, in an accepting state, nearby, and in the same
+    // logical dimension. These checks deliberately run before emitting the intent, so
+    // the downstream transaction cannot consume a pill for a stale/forged target.
+    let Ok((elder_state, elder_archetype)) = dying_elder_targets.get(elder_entity) else {
+        reject_give_dan_target(
+            &mut clients,
+            player_entity,
+            "§c[垂死大能] 目标不是可交互的大能。",
+        );
+        return;
+    };
+    if *elder_archetype != NpcArchetype::DyingElder
+        || !dying_elder_can_receive_dan(elder_state)
+    {
+        reject_give_dan_target(
+            &mut clients,
+            player_entity,
+            "§c[垂死大能] 目标当前不接受回元丹。",
+        );
+        return;
+    }
+
+    let (Ok(player_position), Ok(elder_position)) =
+        (positions.get(player_entity), positions.get(elder_entity))
+    else {
+        reject_give_dan_target(
+            &mut clients,
+            player_entity,
+            "§c[垂死大能] 无法确认玩家与目标位置。",
+        );
+        return;
+    };
+    let (Ok(player_dimension), Ok(elder_dimension)) =
+        (dimensions.get(player_entity), dimensions.get(elder_entity))
+    else {
+        reject_give_dan_target(
+            &mut clients,
+            player_entity,
+            "§c[垂死大能] 无法确认目标位面。",
+        );
+        return;
+    };
+    if !is_give_dan_target_in_scope(
+        player_position.get(),
+        elder_position.get(),
+        player_dimension.0,
+        elder_dimension.0,
+    ) {
+        reject_give_dan_target(
+            &mut clients,
+            player_entity,
+            "§c[垂死大能] 目标不在当前位面或交互范围内。",
+        );
+        return;
+    }
 
     // ── 只 emit intent；权威消费在 give_dan_system 内按顺序执行 ─────────────
     let Some(tx) = give_dan_tx else {

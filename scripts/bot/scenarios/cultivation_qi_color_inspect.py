@@ -171,13 +171,13 @@ def run(env) -> None:
         host.cmd("realm set solidify")
         host.expect_chat("[dev] realm set ", timeout=10.0)
 
+        # Bot.__init__ performs login and starts the reader synchronously. Capture the
+        # host watermark immediately before construction, otherwise the victim's one-shot
+        # PlayerSpawn can arrive before new_bot returns and be excluded by the predicate.
+        spawn_watermark = host.events[-1].t if host.events else 0.0
         with env.new_bot("QiV") as victim:
-            # 事件水位必须取在 victim join **之前**：PlayerSpawn 可在 join 期间的
-            # 任意时刻到达 host。只匹配 e.kind=="player_spawn" 会选中历史或并发
-            # PlayerSpawn（central-review 2029 #4）——水位 + canonical username 双
-            # 锚定到 victim 本人。username 来自 host 的 player_names（S2C_PLAYER_LIST
-            # 在 PlayerSpawn 同包之前推送，Valence 标准顺序）。
-            spawn_watermark = host.events[-1].t if host.events else 0.0
+            # 水位 + canonical username 双锚定到 victim 本人；username 来自 host 的
+            # PlayerList（标准顺序在 PlayerSpawn 前到达）。
             wait_join_and_inventory(victim)
 
             spawn = host.wait_for(

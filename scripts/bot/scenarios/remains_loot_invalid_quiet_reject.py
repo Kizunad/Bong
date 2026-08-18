@@ -18,6 +18,7 @@ fresh bot 无 cultivation/meridian 等系统，周期环境 payload 仅 `carrier
 
 import time
 
+from bot import proto_min
 from bot.bot import BotAssertionError
 
 from ._inventory_helpers import wait_join_and_inventory
@@ -77,6 +78,16 @@ def _scan_quiet_violations(bot, sent_at: float, description: str) -> None:
                 f"[{bot.username}] {description}，"
                 f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
             )
+    for e in bot.events_of("server_data_raw"):
+        if e.t <= sent_at:
+            continue
+        raw_payload_name = proto_min.server_data_payload_name(e.data["data"])
+        if raw_payload_name in AMBIENT_PERIODIC_PAYLOAD_TYPES:
+            continue
+        raise BotAssertionError(
+            f"[{bot.username}] {description}，实际窗口内收到 raw bong:server_data"
+            f"/{raw_payload_name or 'unknown'}（{len(e.data['data'])} bytes，t={e.t:.3f}）"
+        )
     for e in bot.events_of("chat"):
         if e.t > sent_at:
             raise BotAssertionError(

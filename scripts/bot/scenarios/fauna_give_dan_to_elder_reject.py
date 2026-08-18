@@ -20,10 +20,12 @@ _assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发�
 （central-review 2029 #5）。
 """
 
+import math
 import time
 
 from bot.bot import BotAssertionError
 
+from ._combat_helpers import last_event_time
 from ._inventory_helpers import (
     require_item,
     wait_inventory_contains,
@@ -31,12 +33,11 @@ from ._inventory_helpers import (
     wait_join_and_inventory,
 )
 
-DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→目标大能不存在，逐条聊天拒绝"
+DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→有效 pill 的目标门禁，逐条拒绝"
 MODULES = ["fauna", "network"]
 
 DAN_REQUEST = {"type": "give_dan_to_elder", "v": 1}
 MEAT_ITEM = "food.mundane.cooked_meat"
-ELDER_ID = 1
 NO_SUCH_ELDER_ID = 987654321
 SILENT_WINDOW = 4.0
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
@@ -54,7 +55,9 @@ def run(env) -> None:
 
         # 1. instance_id 不在背包 → 背包中未找到该回元丹。
         sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent({**DAN_REQUEST, "pill_instance_id": 999999999999, "elder_entity_id": ELDER_ID})
+        bot.intent(
+            {**DAN_REQUEST, "pill_instance_id": 999999999999, "elder_entity_id": NO_SUCH_ELDER_ID}
+        )
         reject = bot.expect_chat("背包中未找到该回元丹。", timeout=10.0)
         _assert_chat_only_response(
             bot, sent_at, "背包缺失拒收应只回 chat（无 S2C 响应）", allowed_chat_ts=(reject.t,)
@@ -68,7 +71,7 @@ def run(env) -> None:
         meat = require_item(snapshot, MEAT_ITEM)
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent(
-            {**DAN_REQUEST, "pill_instance_id": meat["item"]["instance_id"], "elder_entity_id": ELDER_ID}
+            {**DAN_REQUEST, "pill_instance_id": meat["item"]["instance_id"], "elder_entity_id": NO_SUCH_ELDER_ID}
         )
         reject = bot.expect_chat("只接受回元丹。", timeout=10.0)
         _assert_chat_only_response(
@@ -76,7 +79,7 @@ def run(env) -> None:
         )
         bot.assert_alive("非回元丹拒收后")
 
-        # 3. 回元丹在背包、大能实体不存在 → 找不到目标大能。
+        # 3. 回元丹在背包、目标协议实体不存在 → 找不到目标大能。
         revision = snapshot["revision"]
         bot.cmd("give huiyuan_pill 1")
         bot.expect_chat("[dev] gave huiyuan_pill x1", timeout=10.0)
@@ -109,7 +112,134 @@ def run(env) -> None:
                 f"[{bot.username}] 拒收「找不到目标大能」后 huiyuan_pill 应保留原实例 "
                 f"{pill['item']['instance_id']}，实际丢失或替换"
             )
+
+        # 4. Exercise the resolved-target authorization path with a real NPC. The
+        # scenario command creates a valid non-elder target beyond the give-dan
+        # gate; a valid pill must remain in the same instance after rejection.
+        anchor = last_event_time(bot)
+        bot.cmd("npc_scenario fight")
+        bot.expect_chat("Scenario queued.", timeout=10.0)
+        target = bot.wait_for(
+            lambda event: (
+                event.kind == "entity_spawn"
+                and event.t > anchor
+                and event.data.get("entity_id") != bot.entity_id
+            ),
+            timeout=15.0,
+            description="npc_scenario fight 后出现可解析的非大能 entity",
+        )
+        sent_at = last_event_time(bot)
+        bot.intent(
+            {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": target.data["entity_id"]}
+        )
+        reject = bot.expect_chat("目标不是可交互的大能。", timeout=10.0)
+        _assert_chat_only_response(
+            bot, sent_at, "解析到非大能目标时应在消费前拒绝", allowed_chat_ts=(reject.t,)
+        )
+        bot.cmd(f"give {MEAT_ITEM} 1")
+        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
+            raise BotAssertionError(
+                f"[{bot.username}] 解析到非大能目标后 huiyuan_pill 应保留原实例 "
+                f"{pill['item']['instance_id']}，实际丢失或替换"
+            )
+        # 5. Spawn a real production DyingElder, then exercise the resolved-target
+        # range gate and the cross-dimension gate with the same valid pill instance.
+        elder_id = _spawn_real_elder(bot)
+        sent_at = last_event_time(bot)
+        bot.intent(
+            {
+                **DAN_REQUEST,
+                "pill_instance_id": pill["item"]["instance_id"],
+                "elder_entity_id": elder_id,
+            }
+        )
+        reject = bot.expect_chat("目标不在当前位面或交互范围内。", timeout=10.0)
+        _assert_chat_only_response(
+            bot,
+            sent_at,
+            "真实 Plea 大能超出 6 格时应在消费前拒绝",
+            allowed_chat_ts=(reject.t,),
+        )
+        bot.cmd(f"give {MEAT_ITEM} 1")
+        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
+            raise BotAssertionError(
+                f"[{bot.username}] 超距真实大能拒绝后 huiyuan_pill 应保留原实例 "
+                f"{pill['item']['instance_id']}，实际丢失或替换"
+            )
+
+        _transfer_dimension(bot, "overworld")
+        sent_at = last_event_time(bot)
+        bot.intent(
+            {
+                **DAN_REQUEST,
+                "pill_instance_id": pill["item"]["instance_id"],
+                "elder_entity_id": elder_id,
+            }
+        )
+        reject = bot.expect_chat("目标不在当前位面或交互范围内。", timeout=10.0)
+        _assert_chat_only_response(
+            bot,
+            sent_at,
+            "跨维真实大能请求应在消费前拒绝",
+            allowed_chat_ts=(reject.t,),
+        )
+        bot.cmd(f"give {MEAT_ITEM} 1")
+        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
+            raise BotAssertionError(
+                f"[{bot.username}] 跨维真实大能拒绝后 huiyuan_pill 应保留原实例 "
+                f"{pill['item']['instance_id']}，实际丢失或替换"
+            )
         bot.assert_alive("give_dan_to_elder 拒收链全程")
+
+
+def _spawn_real_elder(bot) -> int:
+    """Spawn one production DyingElder and return its MC protocol entity id."""
+    _transfer_dimension(bot, "tsy")
+    bot.cmd("tpzone tsy_lingxu_01_mid")
+    bot.expect_chat("Teleported to zone `tsy_lingxu_01_mid`.", timeout=10.0)
+    anchor = last_event_time(bot)
+    bot.cmd("time advance 720000")
+    bot.expect_chat("[dev] time advanced 720000", timeout=10.0)
+    elder = bot.wait_for(
+        lambda event: (
+            event.kind == "entity_spawn"
+            and event.t > anchor
+            and event.data.get("type") == 120
+        ),
+        timeout=15.0,
+        description="time advance 后出现 production DyingElder entity_spawn",
+    )
+    entity_id = elder.data.get("entity_id")
+    if not isinstance(entity_id, int) or entity_id <= 0:
+        raise BotAssertionError(
+            f"DyingElder entity_spawn 必须携带正数 protocol id，实际 {entity_id!r}"
+        )
+    return entity_id
+
+
+def _transfer_dimension(bot, target: str) -> None:
+    anchor = last_event_time(bot)
+    bot.cmd(f"tpdim {target}")
+    bot.wait_for(
+        lambda event: (
+            event.kind == "chat"
+            and event.t > anchor
+            and f"Queued /tpdim {target} within current XYZ gate." in event.data.get("text", "")
+        ),
+        timeout=10.0,
+        description=f"/tpdim {target} 权威 transfer 排队确认",
+    )
+    bot.wait_for(
+        lambda event: event.kind == "respawn" and event.t > anchor,
+        timeout=10.0,
+        description=f"/tpdim {target} 真实 Respawn",
+    )
 
 
 def _assert_chat_only_response(

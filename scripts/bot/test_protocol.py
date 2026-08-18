@@ -4716,7 +4716,7 @@ class ProbePayloadDecodeTest(unittest.TestCase):
     def test_qi_color_observed_field_74_decodes_unspecified_default(self):
         # central-review 2029 #1：ColorKind 是 protobuf enum，field3 合法地可以缺省
         # （默认值 0）或显式编码为 0。`_varint(fields, 3)` 缺省时返回 0，
-        # COLOR_KIND_PASCAL_NAMES 无 0 键 → 一律映射 "unspecified"。穷举 1..=10
+        # ColorKind=0 是合法默认值，映射为 "unspecified"；穷举 1..=10
         # 只 pin 非默认 gameplay 色，会放走「0 也映射成某种玩法色 / 大小写错误 /
         # 直接 raise」的坏解码器——合法 default-valued 载荷会产出错误的
         # qi_color_observed.main。两个子形都要 pin：显式 0 与字段缺省。
@@ -4753,8 +4753,8 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         # （如 11）是合法载荷。只 pin 1..=10 与 0/缺省，会放走「特殊处理 0 但对非零
         # 未知值用 COLOR_KIND_PASCAL_NAMES[raw] 直取/raise」的坏解码器——它 decode 到
         # 未知枚举值时崩溃，qi_color_observed 事件根本送不到。main/secondary 两个槽位
-        # 的未知值兜底都要 pin；secondary 携带未知值应映射 "unspecified" 而非 None
-        # （None 只留给字段缺省，proto_min.py 同款兜底）。
+        # 的未知值身份都要 pin；secondary 携带未知值应映射 "unknown_N" 而非 None
+        # （None 只留给字段缺省，proto_min.py 同款 presence 约定）。
         inner = (
             _pb_string(1, "offline:BGD9QiH")
             + _pb_string(2, "offline:BGD9QiV")
@@ -4767,8 +4767,8 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "qi_color_observed")
         self.assertEqual(
             decoded["main"],
-            "unspecified",
-            "未知 main ColorKind 应兜底为 unspecified",
+            "unknown_11",
+            "未知 main ColorKind 应保留 unknown_N 身份，实际值不可伪装成默认 unspecified",
         )
         self.assertNotIn(
             "secondary",
@@ -4790,8 +4790,26 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["main"], "Mellow")
         self.assertEqual(
             decoded["secondary"],
-            "unspecified",
-            "未知 secondary ColorKind 应兜底为 unspecified（None 只留给缺省）",
+            "unknown_11",
+            "未知 secondary ColorKind 应保留 unknown_N 身份（None 只留给缺省）",
+        )
+
+    def test_qi_color_observed_field_74_wrong_wire_optional_secondary_is_absent(self):
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)
+            + _pb_string(4, "wrong-wire-secondary")
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "wrong-wire optional secondary must be ignored, not fabricated as unspecified",
         )
 
     def test_qi_color_observed_field_74_decodes_present_secondary(self):
@@ -4864,7 +4882,7 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         )
         decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
         self.assertEqual(decoded["type"], "event_alert")
-        self.assertEqual(decoded["event"], 0)
+        self.assertEqual(decoded["event"], "unspecified")
         self.assertIn("神识未及", decoded["message"])
         self.assertIsNone(decoded["zone"], "未携带 zone 时保持 None")
         self.assertEqual(decoded["duration_ticks"], 70)
@@ -4895,6 +4913,44 @@ class ProbePayloadDecodeTest(unittest.TestCase):
             "携带 field4=0 时应解码为 duration_ticks=0（区别于缺省 None）",
         )
 
+    def test_event_alert_field_77_unknown_event_kind_preserves_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_varint_field(1, 99))
+        )
+        self.assertEqual(
+            decoded["event"],
+            "unknown_99",
+            "未知 EventKind 必须保留诊断身份，不能伪装成 unspecified",
+        )
+
+    def test_event_alert_field_77_wrong_wire_optional_fields_are_absent(self):
+        # field 1/4 are varint and field 3 is length-delimited; malformed wire
+        # values must not fabricate presence or default values.
+        inner = (
+            _pb_string(2, "告警")
+            + _pb_string(1, "wrong-wire-event")
+            + _pb_varint_field(3, 7)
+            + _pb_string(4, "wrong-wire-duration")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIsNone(decoded["zone"])
+        self.assertIsNone(decoded["duration_ticks"])
+
+    def test_mineral_probe_result_field_129_wrong_wire_optional_fields_are_absent(self):
+        inner = (
+            _pb_string(1, "denied")
+            + _pb_varint_field(2, 7)
+            + _pb_string(3, "wrong-wire-count")
+            + _pb_varint_field(4, 8)
+            + _pb_varint_field(5, 9)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+        self.assertIsNone(decoded["denial_reason"])
+
     def test_event_alert_field_77_decodes_event_kind_and_zone(self):
         inner = (
             _pb_varint_field(1, 1)  # EVENT_KIND_THUNDER_TRIBULATION
@@ -4904,7 +4960,11 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         )
         decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
         self.assertEqual(decoded["type"], "event_alert")
-        self.assertEqual(decoded["event"], 1, "event kind 应从 field 1 非零值还原")
+        self.assertEqual(
+            decoded["event"],
+            "thunder_tribulation",
+            "event kind 应映射为 server/agent 契约的 snake_case canonical name",
+        )
         self.assertIn("雷劫将至", decoded["message"])
         self.assertEqual(decoded["zone"], "jiuzong_taichu_ruin", "present-zone 应还原 field 3")
         self.assertEqual(decoded["duration_ticks"], 120)
