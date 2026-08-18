@@ -291,12 +291,25 @@ class SupervisorBuildArtifactContractTest(unittest.TestCase):
             tempfile.mkdtemp(prefix="bong-supervisor-unit-")
         )
         self.addCleanup(shutil.rmtree, server_directory, ignore_errors=True)
+        # This fixture targets the repository-default relative target (the fake
+        # binary lives under server_directory/target), but build_server_binary
+        # resolves the expected binary from the ambient CARGO_TARGET_DIR when one
+        # is set (CI sets /tmp/bong-target at job level). Isolate the copy-failure
+        # cleanup branch from that ambient value so the test exercises the mocked
+        # copy error instead of raising RuntimeError before reaching the cleanup
+        # assertion (finding: run the moved signal-boundary suite in CI).
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key != "CARGO_TARGET_DIR"
+        }
         self._fake_built_binary(server_directory, "target")
         artifact_parent = pathlib.Path(
             tempfile.mkdtemp(prefix="bong-e2e-server-unit-")
         )
 
         with (
+            mock.patch.object(supervisor.os, "environ", environment),
             mock.patch.object(supervisor.subprocess, "run"),
             mock.patch.object(
                 supervisor.tempfile, "mkdtemp", return_value=str(artifact_parent)

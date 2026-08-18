@@ -2306,6 +2306,14 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
+
+# The moved S3 signal-boundary contract lives as a checked-in Python suite. The
+# lifecycle entrypoint is where the real CI path reaches it: smoke-test-e2e.sh ->
+# this script -> the delegated Python suite. The suite is CARGO_TARGET_DIR safe
+# (the copy-failure fixture pins its own environment); wiring it here means the
+# rollback / signal / target-resolution / artifact-cleanup contracts can no
+# longer regress while the normal CI entrypoint stays green.
+python3 "$ROOT/scripts/tests/s3_lifecycle_signal_boundary_contract_test.py"
 if [ "${GITHUB_ACTIONS:-}" = true ]; then
     # CI 必须显式启用真实的 tmux 关停顺序契约：默认 CI 运行不得静默跳过它。
     # 若 workflow 忘记设置 opt-in，这里直接 fail 而不是打印 SKIP，保住覆盖。
