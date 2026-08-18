@@ -161,6 +161,15 @@ cat > "$fixture_bin/cargo" <<'FIXTURE'
 set -euo pipefail
 [ "$#" -eq 2 ] && [ "$1" = build ] && [ "$2" = --release ] || exit 43
 : "${CARGO_TARGET_DIR:?}"
+if [ -n "${SUPERVISOR_FIXTURE_SUPERVISOR_PID:-}" ]; then
+    printf '%s\n' "$PPID" > "$SUPERVISOR_FIXTURE_SUPERVISOR_PID"
+fi
+# The bounded-build control slows this fixture cargo so the parent's READY->C->
+# COMMITTED window must span the build (finding: cover the sync build before
+# expiring READY). Delay defaults to 0 so every other control stays fast.
+if [ -n "${SUPERVISOR_FIXTURE_BUILD_DELAY:-}" ] && (( SUPERVISOR_FIXTURE_BUILD_DELAY > 0 )); then
+    sleep "$SUPERVISOR_FIXTURE_BUILD_DELAY"
+fi
 mkdir -p "$CARGO_TARGET_DIR/release"
 cat > "$CARGO_TARGET_DIR/release/bong-server" <<'SERVER'
 #!/usr/bin/env bash
@@ -347,6 +356,70 @@ bong_server_stop_owned_process_group_and_release_port \
     || fail "parent-published authority did not support teardown"
 unset -f bong_server_port_is_open
 clear_active_owner
+
+# The build/token phase must not expire the parent's readiness deadline.
+# Finding: the supervisor used to build synchronously before READY while the
+# parent gave READY five seconds, so a cold or contended build failed startup
+# with no pinned owner to clean up. READY is now published before the build and
+# the parent's COMMITTED wait spans the bounded build. A build that outlasts the
+# old five-second budget must publish authority instead of failing.
+rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
+CARGO_TARGET_DIR="$fixture_target" \
+SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
+SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
+SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+SUPERVISOR_FIXTURE_BUILD_DELAY="${BONG_E2E_FIXTURE_BUILD_DELAY:-6}" \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
+BONG_E2E_SUPERVISOR="$SUPERVISOR" \
+BONG_E2E_BUILD_TOKEN="$build_token" \
+BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
+start_server_process_group "$TEST_ROOT/parent-slow-build.log" 0 1 \
+    || fail "parent must wait out a slow build within the bounded build lifecycle"
+[ "$SERVER_AUTHORITY_UNCERTAIN" -eq 0 ] \
+    || fail "slow build within the bounded lifecycle must still publish certain authority"
+[ "$SERVER_PID" = "$SERVER_PGID" ] \
+    || fail "slow-build supervisor must remain process-group owner"
+wait_for_file "$descendant_pid_file" || fail "slow-build fixture did not spawn its descendant"
+assert_dev_null_fd0 "$(<"$cargo_pid_file")" "slow-build server artifact after commit"
+bong_server_port_is_open() { return 1; }
+bong_server_stop_owned_process_group_and_release_port \
+    "$SERVER_PID" "$SERVER_OWNER_STARTTIME" "$SERVER_OWNER_EXECUTABLE_IDENTITY" \
+    "$SERVER_PGID" 25565 \
+    || fail "slow-build published authority did not support teardown"
+unset -f bong_server_port_is_open
+clear_active_owner
+
+# When the readiness deadline truly expires (build overrun beyond the bounded
+# window), the parent must still stop the ALREADY-PINNED supervisor group instead
+# of leaving an orphaned build alive after returning.
+supervisor_pid_file="$TEST_ROOT/slow-build-supervisor.pid"
+rm -f -- "$supervisor_pid_file" "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
+bong_server_port_is_open() { return 1; }
+CARGO_TARGET_DIR="$fixture_target" \
+SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
+SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
+SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+SUPERVISOR_FIXTURE_SUPERVISOR_PID="$supervisor_pid_file" \
+SUPERVISOR_FIXTURE_BUILD_DELAY="${BONG_E2E_FIXTURE_BUILD_DELAY_EXPIRY:-8}" \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
+BONG_E2E_SUPERVISOR="$SUPERVISOR" \
+BONG_E2E_BUILD_TOKEN="$build_token" \
+BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
+BONG_E2E_COMMIT_TIMEOUT="${BONG_E2E_FIXTURE_COMMIT_TIMEOUT:-1}" \
+start_server_process_group "$TEST_ROOT/parent-slow-build-expiry.log" 0 1 \
+    && fail "parent must fail when the readiness deadline expires during the build"
+assert_parent_unpublished
+wait_for_file "$supervisor_pid_file" || fail "delayed build did not publish its supervisor owner"
+expired_owner="$(<"$supervisor_pid_file")"
+for _ in $(seq 1 300); do
+    if ! kill -0 "$expired_owner" 2>/dev/null; then
+        break
+    fi
+    sleep 0.05
+done
+kill -0 "$expired_owner" 2>/dev/null \
+    && fail "expired readiness deadline left the pinned supervisor group alive"
+unset -f bong_server_port_is_open
 
 fake_supervisor="$TEST_ROOT/fake-supervisor.py"
 cat > "$fake_supervisor" <<'PY'
