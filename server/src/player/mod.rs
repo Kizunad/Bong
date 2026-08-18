@@ -262,19 +262,33 @@ pub(crate) fn attach_player_state_to_joined_clients(
             }
         }
 
-        let quick_slot_bindings = persisted
-            .ui_prefs
-            .quick_slot_bindings(persisted.inventory.as_ref());
-        let skill_bar_bindings = persisted
-            .ui_prefs
-            .skill_bar_bindings(persisted.inventory.as_ref());
+        let mut ui_prefs = persisted.ui_prefs.clone();
+        let skill_bar_prefs_sanitized = technique_registry
+            .as_deref()
+            .is_some_and(|registry| ui_prefs.sanitize_skill_bar_bindings(registry));
+        if skill_bar_prefs_sanitized {
+            let sanitized_skill_bar = ui_prefs.skill_bar.clone();
+            if let Err(error) = update_player_ui_prefs(
+                &persistence,
+                username.0.as_str(),
+                |prefs| prefs.skill_bar = sanitized_skill_bar,
+            ) {
+                tracing::warn!(
+                    "[bong][player] failed to persist sanitized skill-bar bindings for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
+        let quick_slot_bindings = ui_prefs.quick_slot_bindings(persisted.inventory.as_ref());
+        let skill_bar_bindings = ui_prefs
+            .skill_bar_bindings(persisted.inventory.as_ref(), technique_registry.as_deref());
         if let (Some(store), Some(schemas)) = (
             skill_config_store.as_deref_mut(),
             skill_config_schemas.as_deref(),
         ) {
             store.replace_player_configs(
                 canonical_player_id(username.0.as_str()).as_str(),
-                persisted.ui_prefs.skill_configs.clone(),
+                ui_prefs.skill_configs.clone(),
                 schemas,
             );
         }
@@ -1915,6 +1929,60 @@ mod tests {
         assert!(
             (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.58).abs() < 1e-6,
             "新玩家会话内的功法变更应照常经 Changed flush 落盘"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn reconnect_sanitizes_persisted_dedicated_skill_bar_bindings() {
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("skillbar-dedicated-reconnect-sanitize");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        crate::player::state::update_player_ui_prefs(&persistence, "Azure", |prefs| {
+            prefs.skill_bar[0] = crate::player::state::SkillSlotPersist::Skill {
+                skill_id: "movement.dash".to_string(),
+            };
+            prefs.skill_bar[1] = crate::player::state::SkillSlotPersist::Skill {
+                skill_id: "shield_block".to_string(),
+            };
+            prefs.skill_bar[2] = crate::player::state::SkillSlotPersist::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            };
+        })
+        .expect("legacy skill-bar bindings should persist for reconnect fixture");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(TechniqueRegistry::load_for_tests());
+        app.add_systems(Update, attach_player_state_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let skill_bar = app
+            .world()
+            .get::<crate::combat::components::SkillBarBindings>(entity)
+            .expect("reconnect should attach SkillBarBindings");
+        assert!(matches!(&skill_bar.slots[0], crate::combat::components::SkillSlot::Empty));
+        assert!(matches!(&skill_bar.slots[1], crate::combat::components::SkillSlot::Empty));
+        assert!(matches!(
+            &skill_bar.slots[2],
+            crate::combat::components::SkillSlot::Skill { skill_id }
+                if skill_id == "burst_meridian.beng_quan"
+        ));
+
+        let persisted: serde_json::Value =
+            serde_json::from_str(&read_ui_prefs_json(&db_path))
+                .expect("sanitized UI prefs should remain valid JSON");
+        assert_eq!(persisted["skill_bar"][0]["kind"], "empty");
+        assert_eq!(persisted["skill_bar"][1]["kind"], "empty");
+        assert_eq!(persisted["skill_bar"][2]["kind"], "skill");
+        assert_eq!(
+            persisted["skill_bar"][2]["skill_id"],
+            "burst_meridian.beng_quan"
         );
 
         let _ = fs::remove_dir_all(&data_dir);

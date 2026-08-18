@@ -57,6 +57,21 @@ impl KnownTechniques {
                 .collect(),
         }
     }
+
+    /// Construct the progression-reset value from the same runtime catalog that the server
+    /// injected at startup. Development builds intentionally preserve their historical
+    /// "grant the full catalog" behavior; production builds keep the empty progression reset.
+    pub fn progression_reset(registry: &TechniqueRegistry) -> Self {
+        #[cfg(feature = "dev-techniques")]
+        {
+            Self::dev_default(registry)
+        }
+        #[cfg(not(feature = "dev-techniques"))]
+        {
+            let _ = registry;
+            Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -158,6 +173,20 @@ impl TechniqueRegistry {
             .get(id)
             .unwrap_or_else(|| panic!("test override references unknown technique {id:?}"));
         override_definition(&mut registry.definitions[index]);
+        registry
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_for_tests_with_definition(definition: TechniqueDefinition) -> Self {
+        let mut registry = Self::load_for_tests();
+        assert!(
+            registry.get(&definition.id).is_none(),
+            "test definition must use an id absent from the checked-in catalog: {}",
+            definition.id
+        );
+        let index = registry.definitions.len();
+        registry.id_to_index.insert(definition.id.clone(), index);
+        registry.definitions.push(definition);
         registry
     }
 
