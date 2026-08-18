@@ -32,16 +32,18 @@ GAP11 排第一的判据（处理不当复制/双授道具腐坏账本）。
    a 不得复现 / b 不得双授。若二次回收被误处理，第一个快照就已返料翻倍（多即
    双授、少即吞料），必然被窗口扫描捕获。
 
-**G 菜单 [回收] 生产者驱动（review finding [1]）**：成功回收 leg 不再冷注入
-`bot.intent({"type":"coffin_menu_reclaim",...})`——改经 `_g_menu_reclaim` 驱动生产
-G 菜单交互的可观测前置与端点：① 派发前置（`CoffinEnterIntentHandler.candidate`
-黑盒镜像）——目标 marker 渲染实体（kind=160 @ marker 位）必须存在且 live，marker
-不 spawn / G 无对象的构建在此红；② 交互半径（candidate
-`MAX_INTERACT_DISTANCE_SQ=36` 黑盒镜像）——玩家必须落在 marker 的 6 格交互半径内；
-③ 菜单 [回收] 端点——发送 `_reclaim_payload` 的钉死字节（黑盒镜像
-`ClientRequestProtocol.encodeCoffinMenuReclaim`；client golden test
-`ClientRequestProtocolTest.encodesCoffinMenuReclaim` 钉死相同 JSON，菜单 emit 错
-payload 的实现被 client 侧红）。远程/边界外拒绝 leg 与二次回收 leg 是**伪造请求的
+**G 菜单 [回收] 生产者 / 消费者分离（review finding [1]）**：headless bot 无法开 Java
+GUI，本场景**不再宣称**自己在 Java 客户端里跑通了 G 键→菜单→按钮 UI 全链，也不再把
+「server 端点镜像」冒充端到端。本场景只驱动 G 菜单回收的**消费端**（与 server 契约对
+齐）：① 派发前置投影（`CoffinEnterIntentHandler.candidate` 的消费侧）——目标 marker
+渲染实体（kind=160 @ marker 位）必须存在且 live，marker 不 spawn / G 无对象的构建红；
+② 交互半径（candidate `MAX_INTERACT_DISTANCE_SQ=36`）——玩家必须落在 marker 的 6 格
+交互半径内；
+③ 菜单 [回收] 端点——发送 `_reclaim_payload` 的生产派生 <b>upper</b> 字节（与
+`ClientRequestProtocol.encodeCoffinMenuReclaim` 同契约，字段由 client golden test
+`ClientRequestProtocolTest.encodesCoffinMenuReclaim` 钉死同 JSON；Java 生产者链 payload
+由 `CoffinGMenuProducerChainTest` 端到端钉死 upper 坐标）。远程/边界外拒绝 leg 与二次
+回收 leg 是**伪造请求的
 防御性测试**：真实 G 交互在那些位置/时刻根本无法产生（candidate 距离检查返回
 empty、主回收后 marker 已 despawn），它们钉的是服务端对异常请求的拒绝路径，与
 生产者驱动的成功 leg 互补——「G 菜单 [回收] 全链路」由 client 生产者测试（G 派发
@@ -52,12 +54,16 @@ give 各得独立实例（a=放置、b=未放置对照）。成功放置后断�
 永久消失；回收/二次回收后同样按实例断言（a 不返、b 恒在）——「删除整堆 / 按模板
 删全部 mundane_coffin」与「回收复制道具」的错误实现在此红。
 
-**原子结算（review finding [3]）**：放置循环的 wait 超时只说明「没等到该给的因果
-快照」，不代表 coffin_place 已被处理——请求可能仍在途。超时后先 `_drain_settle`
-（barrier give 的同连接包序因果快照必然排在 coffin_place 之后）在该快照上判定
-终态，绝不在未结算时换位；`_coffin_consumed_after` 的窗口扫描只观察状态、不建立
-请求已结束（迟到成功快照会被下一候选的 >probe_before 谓词误认、placed_at 记错），
-已移除。
+**请求特定完成回执（review finding [2] 修复 / finding [3] 收口）**：放置完成的判定
+不再依赖 /give 包序快照（`handle_give` / `emit_changed_inventory_snapshots` /
+`handle_coffin_place_requests` 之间没有 Bevy 依赖链，give→snapshot→coffin handler 的
+合法顺序会让「a 仍在」的快照提前出现、把正确放置误判失败，或让下一候选复用已消耗
+id 的快照被误判成功）。改为等该请求自己的回执：**接受** = 快照中放置实例 a 消失
+（a 只在放置成功时被消费，server 同步推 `coffin_place_consumed` 快照＝确定性的成功
+回执）；**拒绝** = server 对被拒放棺同步推 chat 回执「[棺] 放置被拒」（请求特定、
+被拒即发）。二者互斥、先到定论，STAGE_TIMEOUT 内都不出现 = 请求未处理/卡死，直接
+报错、绝不换位（杜绝 finding 3 的攻击面）。旧 `_coffin_consumed_after` / `_drain_settle`
+窗口扫描逻辑已移除。
 
 **精确数量 = 全部堆叠求和**：返料断言一律枚举 item_id 的**所有**匹配条目（容器/
 装备/快捷栏）并对其 stack_count 求和，再逐条校验 location 为容器槽位——单条目
@@ -85,10 +91,9 @@ give 各得独立实例（a=放置、b=未放置对照）。成功放置后断�
 的库存快照钉在窗口里断言返料恒为 0。
 probe 快照识别一律用**总数递增**谓词（give 前总数 → 快照总数 > 之），不用
 `find_item(...) is not None`：probe item 经此前若干次 probe give 已存在于背包，
-存在性谓词匹配无关周期快照、会把验证窗口提前截断（review #2）。放棺判负同用 probe
-give 的包序终态（coffin_place 之后按包序处理 give，其快照即放置终态）——被拒候选
-~1s 换位而非空等 45s×2（review #1）；wait 超时先 `_drain_settle` 原子结算
-（finding [3]），绝不在请求未结束时换位。
+存在性谓词匹配无关周期快照、会把验证窗口提前截断（review #2）。**放置完成判定不放
+probe give**（review finding [2]）：只等请求特定回执（放置接受快照 / 放置拒绝 chat），
+probe give 仅用于（已由拒绝回执确认的）负面用例读被拒后库存快照。
 
 **位置稳定性**：bot 在出生点高空初始化（[8,150,8]），spawn_selector 按
 （seed, InitialLogin）稳定哈希到 safe_y 高度的出生点，随后**下落**到平坦地表
@@ -121,6 +126,9 @@ PROBE_ITEM_ID = "fan_tie"
 
 # mundane_coffin marker 渲染实体 kind（server 侧 entity kind，S2C_ENTITY_SPAWN type）。
 COFFIN_MARKER_ENTITY_KIND = 160
+# server 对放置被拒的显式 chat 回执固定子串（COFFIN_PLACE_REJECTION_MESSAGE_PREFIX 去色后）。
+# review finding [2]：放置完成判定的请求特定回执，取代「/give 包序快照屏障」。
+PLACE_REJECT_CHAT_SUBSTR = "放置被拒"
 # G 菜单派发交互半径平方（CoffinEnterIntentHandler.MAX_INTERACT_DISTANCE_SQ = 6² 黑盒镜像）。
 COFFIN_INTERACT_MAX_DISTANCE_SQ = 36.0
 
@@ -262,21 +270,32 @@ def _wait_position_stable(bot, window: float = STABLE_POSITION_WINDOW, timeout: 
 
 
 def _assert_place_rejected(bot, request, probe_item_id, still_present, label):
-    """发送放棺请求并确证被拒：用 probe give 把一张排在请求之后的库存快照钉在
-    窗口里，断言 `still_present`（(item_id, 期望总数) 列表）未被消耗。
+    """发送放棺请求并确证被拒：等待该请求的<em>特定拒绝回执</em>（chat「[棺] 放置被拒」），
+    随后读一张库存快照断言 `still_present`（(item_id, 期望总数) 列表）未被消耗。
 
-    服务端对被拒放棺不推任何快照（只 warn）；probe give 在请求之后按包序处理，
-    其快照反映「请求被处理之后」的库存。被拒放棺不得消耗任何实例，故各物品总数
-    必须保持原值——伪造 instance / 非棺模板的错误实现若真去消耗，总数必然偏离。
+    review finding [2]：不再用 /give 的包序快照当「请求已被处理」的完成屏障——
+    `handle_give` / `emit_changed_inventory_snapshots` / `handle_coffin_place_requests`
+    之间没有 Bevy 依赖链，give→snapshot→coffin handler 的合法顺序会让放置结果晚于
+    probe 快照出现。server 对被拒放棺<em>同步推 chat 回执</em>（请求特定、被拒即发，
+    COFFIN_PLACE_REJECTION_MESSAGE_PREFIX），bot 等到该回执 = 该放置请求已被处理且被拒
+    的确定性信号；随后 probe give 只用于取一张反映被拒后库存的快照做数量断言（被拒
+    放棺不得消耗任何实例，总数必须保持原值——伪造 instance / 非棺模板的错误实现若真
+    去消耗，总数必然偏离）。
     """
     anchor = last_event_time(bot)
     bot.intent(request)
+    bot.wait_for(
+        lambda e: e.kind == "chat" and e.t > anchor and PLACE_REJECT_CHAT_SUBSTR in e.data["text"],
+        timeout=STAGE_TIMEOUT,
+        description=f"{label} 的放置拒绝回执（{PLACE_REJECT_CHAT_SUBSTR}）",
+    )
+    probe_before = _stack_total_now(bot, probe_item_id)
     bot.cmd(f"give {probe_item_id} 1")
     post = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
         and e.t > anchor
-        and find_item(e.data["payload"], probe_item_id) is not None,
+        and _total_stack_count(e.data["payload"], probe_item_id) > probe_before,
         timeout=STAGE_TIMEOUT,
         description=f"probe give {probe_item_id} 后快照（{label} 被拒验证）",
     )
@@ -289,8 +308,8 @@ def _assert_place_rejected(bot, request, probe_item_id, still_present, label):
         )
 
 
-def _probe_total_now(bot) -> int:
-    """当前 probe item（fan_tie）的已知总数——最新一条 inventory_snapshot 的堆叠求和。
+def _stack_total_now(bot, item_id) -> int:
+    """当前 item_id 的已知总数——最新一条 inventory_snapshot 的堆叠求和。
 
     give 因果快照的谓词必须是「总数 > 本函数返回值」而非 find_item 存在性：probe
     item 经此前若干次 probe give 已存在于背包，存在性谓词会匹配任何无关周期快照、
@@ -302,7 +321,12 @@ def _probe_total_now(bot) -> int:
         if e.kind == "server_data" and e.data["payload_type"] == "inventory_snapshot":
             payload = e.data["payload"]
             break
-    return _total_stack_count(payload, PROBE_ITEM_ID) if payload is not None else 0
+    return _total_stack_count(payload, item_id) if payload is not None else 0
+
+
+def _probe_total_now(bot) -> int:
+    """当前 probe item（fan_tie）的已知总数（见 _stack_total_now）。"""
+    return _stack_total_now(bot, PROBE_ITEM_ID)
 
 
 def _find_coffin_instance(snapshot, instance_id) -> dict | None:
@@ -318,35 +342,20 @@ def _find_coffin_instance(snapshot, instance_id) -> dict | None:
     return None
 
 
-def _drain_settle(bot, cpos, description) -> dict:
-    """超时候选的原子结算（finding [3]）：barrier give 的同连接包序因果快照。
-
-    wait_for 超时只说明「没等到该给的因果快照」，不代表 coffin_place 已被处理——
-    请求可能仍在途。绝不在未结算时换位（旧 _coffin_consumed_after 窗口扫描只观察
-    状态、不能建立请求已结束，迟到成功快照会被下一候选的 >probe_before 谓词误认、
-    placed_at 记错，正是 finding 3 的攻击面）。再发一个 barrier give：同连接按包序
-    处理，其因果快照（fan_tie 总数 > 现值）必然排在 coffin_place **之后**，在该
-    快照上判定放置实例是否被消费即为该候选的确定性终态。barrier 也超时（服务端
-    全面停摆）直接报错，不静默扫描、不换位。
-    """
-    barrier_before = _probe_total_now(bot)
-    bot.cmd(f"give {PROBE_ITEM_ID} 1")
-    barrier_ev = bot.wait_for(
-        lambda e: e.kind == "server_data"
-        and e.data["payload_type"] == "inventory_snapshot"
-        and _total_stack_count(e.data["payload"], PROBE_ITEM_ID) > barrier_before,
-        timeout=STAGE_TIMEOUT,
-        description=(
-            f"候选 {cpos} 结算 barrier give {PROBE_ITEM_ID} 因果快照"
-            f"（总数 > {barrier_before}）"
-        ),
-    )
-    return barrier_ev.data["payload"]
 
 
 def _coffin_marker_pos(lower) -> tuple[float, float, float]:
     """mundane_coffin marker 渲染实体位置（server coffin/mod.rs coffin_marker_position）。"""
     return (lower[0] + 1.0, float(lower[1]), lower[2] + 0.5)
+
+
+def _coffin_upper(lower) -> tuple[int, int, int]:
+    """棺 upper 格（server coffin_upper_half：lower.x+1）。真实 G 菜单 [回收] 生产者——
+    Java CoffinEnterIntentHandler.dispatch 对 marker 实体坐标 floor（marker 在棺两格中心
+    lower+(1,0,0.5)）——发出去的是 <b>upper</b> 坐标；本场景统一发 upper，与生产派生同走
+    该索引路径（review finding [1]：此前固定发 lower，upper-index 处理器路径被跳过）。
+    """
+    return (lower[0] + 1, lower[1], lower[2])
 
 
 def _near(pos, x, y, z, tol: float = 0.01) -> bool:
@@ -375,31 +384,40 @@ def _marker_live(bot, entity_id) -> bool:
 
 
 def _reclaim_payload(lower) -> dict:
-    """G 菜单 [回收] 的生产 payload 契约。
+    """G 菜单 [回收] 的生产 payload 契约（review finding [1]）。
 
-    黑盒镜像 client `ClientRequestProtocol.encodeCoffinMenuReclaim` 的字节——client/
-    src/test/.../ClientRequestProtocolTest.encodesCoffinMenuReclaim 钉死相同 JSON
-    （{"type":"coffin_menu_reclaim","v":1,x,y,z}）。本场景发送同一字节即消费与生产
-    菜单相同的 wire 契约；「菜单 emit 错 payload」的实现被 client golden test 红。
+    与 client `ClientRequestProtocol.encodeCoffinMenuReclaim` 同字节：本场景按生产派生
+    发送 <b>upper</b> 坐标（_coffin_upper），即真实 Java 生产者（CoffinEnterIntentHandler
+    -> marker floor 派生）发出的坐标——不是固定 lower 冷注入。client 侧生产链自身由
+    CoffinGMenuProducerChainTest 驱动（candidate 门控 / dispatch marker floor 派生 /
+    CoffinMenuScreen [回收] 按钮 / ClientRequestSender payload），断言 Java 产出 upper-
+    coordinate；本场景消费端发送同一 upper 字节，同走 server 的 upper-index 归一路径。
     """
+    upper = _coffin_upper(lower)
     return {
         "type": "coffin_menu_reclaim",
         "v": 1,
-        "x": lower[0],
-        "y": lower[1],
-        "z": lower[2],
+        "x": upper[0],
+        "y": upper[1],
+        "z": upper[2],
     }
 
 
 def _g_menu_reclaim(bot, lower, description) -> int:
-    """驱动生产 G 菜单 [回收] 交互（headless bot 无 Java GUI，驱动该交互的可观测
-    前置与端点，而非冷注入）：
+    """驱动 G 菜单 [回收] 的 server 消费端（review finding [1] 如实表述，不再宣称
+    「本场景跑通了 Java G 菜单 UI 全链」——headless bot 无法开 Java GUI）：
 
-    1. 派发前置（CoffinEnterIntentHandler.candidate 黑盒镜像）：目标 marker 实体
-       （kind=160 @ marker 位）必须存在且 live——marker 不 spawn / G 无对象的构建红；
-    2. 交互半径（candidate MAX_INTERACT_DISTANCE_SQ=36 黑盒镜像）：玩家必须落在
-       marker 的 6 格交互半径内，否则 G 派发返回 empty、菜单根本打不开；
-    3. 菜单 [回收] 端点：发送 _reclaim_payload 的钉死字节（生产 encoder 契约）。
+    本场景不是 G-menu 生产链本身；它只驱动该交互的<em>可观测前置</em>与<em>消费端</em>：
+    1. 派发前置（CoffinEnterIntentHandler.candidate 距离/kind 门控的消费侧投影）：目标
+       marker 实体（kind=160 @ marker 位）必须存在且 live——marker 不 spawn / G 无对象红；
+    2. 交互半径（candidate MAX_INTERACT_DISTANCE_SQ=36）：玩家必须落在 marker 6 格内，
+       否则 G 派发返回 empty、真实菜单根本打不开；
+    3. 消费端发送生产派生的 upper 字节（_reclaim_payload）。
+
+    G-menu 生产链（G 键 -> InteractKeyRouter -> candidate -> dispatch -> CoffinMenuScreen
+    -> [回收] 按钮 -> ClientRequestSender）由 client 侧 CoffinGMenuProducerChainTest +
+    CoffinEnterIntentHandlerTest + DefaultInteractionHandlersTest 端到端钉死；本场景与
+    它共享同一 upper wire 字节，构成「生产者(Java 测试) + 消费者(本场景)」双端闭环。
 
     返回 marker entity_id 供主回收后 despawn 断言复用。
     """
@@ -501,9 +519,11 @@ def run(env) -> None:
         assert a_id != b_id, "两发 give 必须产生不同 instance_id（双实例 fixture）"
 
         # ── 负面校验：黑盒契约的 instance 校验面必须被真负面用例按压 ──────
-        # 服务端对被拒的放棺不推任何快照（只 warn），故负面断言以「状态不变」为
-        # 判据：被拒不消耗任何实例。用 (px,py,pz)（玩家脚下）作目标，确保走到的是
-        # instance 校验分支而不是近距校验分支。
+        # review finding [2]：对放置被拒，server 推请求特定的 chat 回执「[棺] 放置被拒」
+        # （COFFIN_PLACE_REJECTION_MESSAGE_PREFIX），负面用例先等该回执（= 该放置请求
+        # 已被处理且被拒的确定性信号），再读被拒后库存断言「状态不变」：被拒不消耗任何
+        # 实例。用 (px,py,pz)（玩家脚下）作目标，确保走到的是 instance 校验分支而不是
+        # 近距校验分支。
 
         # (a) 伪造/陈旧的 item_instance_id：不存在的实例必须被拒
         #     （inventory_item_by_instance 落空）——棺材不得被消耗。
@@ -563,14 +583,19 @@ def run(env) -> None:
         # 地表 y≈73-74 平坦，但出生点附近仍有 POI 结构/树（实测东侧 px+2 被占、
         # 「not empty」被拒），故逐候选尝试。成功判定绑定到**放置实例 a**：放置成功
         # = a 从背包消失（_find_coffin_instance is None），未放置实例 b 恒在
-        # （finding [2]）。probe give 的同连接包序因果快照（fan_tie 总数 > 放置前）
-        # 即放置终态；wait 超时先 _drain_settle 原子结算（finding [3]），绝不在请求
-        # 未结束时换位。被拒的放棺服务端不推任何快照。
-        # review #1：被拒候选不再空等 45s 的「成功快照」——服务端对被拒放棺不推任何
-        # 快照，旧实现每个被拒候选等满 45s、再经 _coffin_consumed_after 又 45s（八个
-        # 候选全被拒约 12min）。probe give 判终态：give 与 coffin_place 同连接按包序
-        # 处理，give 的因果快照反映「coffin_place 处理之后」的库存——a 消失 = 放置成功
-        # （消耗恰好一次），a 仍在 = 放置被拒（立即换位，~1s/候选）。
+        # （finding [2]）。
+        # review finding [2]：完成判定全部走**请求特定的接受/拒绝回执**，绝不再用
+        # /give 包序快照当放置完成屏障（handle_give / emit_changed_inventory_snapshots /
+        # handle_coffin_place_requests 无 Bevy 依赖链，give→snapshot→coffin handler 的
+        # 合法顺序会让「a 仍在」的快照早于放置处理出现，把正确放置误判失败、或把下一
+        # 候选复用已消耗 id 的快照误判成功）。收口：
+        #   接受 = 快照中 a 已消失（a 只在放置成功时被消费，server 同步推
+        #          coffin_place_consumed 快照；a_id 在 all 快照中首次消失即接受）；
+        #   拒绝 = server 对放置被拒同步推 chat 回执「[棺] 放置被拒」（请求特定、被拒
+        #          即发），是「该候选已被处理且被拒」的确定性信号，立即换位（~1s/候选，
+        #          不再空等 45s×8）。
+        # 二者互斥，先到即定论；STAGE_TIMEOUT 内两者都不出现 = 请求未处理/卡死，直接
+        # 报错，绝不在未收口时换位（杜绝 finding 3 的攻击面）。
         placed_at = None
         placed_snapshot = None
         for cpos in (
@@ -584,7 +609,6 @@ def run(env) -> None:
             (px, py + 2, pz),
         ):
             anchor = last_event_time(bot)
-            probe_before = _probe_total_now(bot)
             bot.intent(
                 {
                     "type": "coffin_place",
@@ -595,33 +619,35 @@ def run(env) -> None:
                     "item_instance_id": a_id,
                 }
             )
-            bot.cmd(f"give {PROBE_ITEM_ID} 1")
             try:
-                probe_ev = bot.wait_for(
-                    lambda e: e.kind == "server_data"
-                    and e.data["payload_type"] == "inventory_snapshot"
-                    and e.t > anchor
-                    and _total_stack_count(e.data["payload"], PROBE_ITEM_ID) > probe_before,
+                outcome = bot.wait_for(
+                    lambda e: (
+                        (e.kind == "server_data"
+                         and e.data["payload_type"] == "inventory_snapshot"
+                         and e.t > anchor
+                         and _find_coffin_instance(e.data["payload"], a_id) is None)
+                        or (e.kind == "chat"
+                            and e.t > anchor
+                            and PLACE_REJECT_CHAT_SUBSTR in e.data["text"])
+                    ),
                     timeout=STAGE_TIMEOUT,
-                    description=f"coffin_place@{cpos} 后 probe give 因果快照（放置终态）",
+                    description=(
+                        f"coffin_place@{cpos} 接受回执（实例 #{a_id} 被消费）或拒绝回执"
+                        f"（{PLACE_REJECT_CHAT_SUBSTR}）"
+                    ),
                 )
             except BotAssertionError:
-                # finding [3]：等待超时 ≠ 请求已处理——原子结算该候选（barrier give
-                # 因果快照排在 coffin_place 之后），按该快照判定终态；barrier 也超时
-                # 直接报错，绝不在未结算时换位（旧 _coffin_consumed_after 窗口扫描
-                # 不建立请求已结束，迟到成功快照会被下一候选误认）。
-                settle_snapshot = _drain_settle(
-                    bot, cpos, description=f"coffin_place@{cpos} 等待超时"
-                )
-                if _find_coffin_instance(settle_snapshot, a_id) is None:
-                    placed_at = cpos
-                    placed_snapshot = settle_snapshot
-                    break
-                continue
-            if _find_coffin_instance(probe_ev.data["payload"], a_id) is None:
+                raise BotAssertionError(
+                    f"coffin_place@{cpos} 在 {STAGE_TIMEOUT:.0f}s 内既无接受回执（实例被"
+                    f"消费）也无拒绝回执（{PLACE_REJECT_CHAT_SUBSTR}）——放置请求未处理/"
+                    "卡死，不做包序猜测换位"
+                ) from None
+            if outcome.kind == "server_data":
+                # 接受：a 已被消费（放置成功一次）。placed_snapshot 取该快照供后续断言。
                 placed_at = cpos
-                placed_snapshot = probe_ev.data["payload"]
+                placed_snapshot = outcome.data["payload"]
                 break
+            # chat = 拒绝回执：该候选被拒，立即换下一候选。
             continue
         assert placed_at is not None, (
             "coffin_place 在所有候选格均被拒（出生点地形全占/异常），无法完成放置 leg"
@@ -648,15 +674,7 @@ def run(env) -> None:
         bot.move_to(*far_pos, speed=5.5)
         time.sleep(0.8)
         far_anchor = last_event_time(bot)
-        bot.intent(
-            {
-                "type": "coffin_menu_reclaim",
-                "v": 1,
-                "x": placed_at[0],
-                "y": placed_at[1],
-                "z": placed_at[2],
-            }
-        )
+        bot.intent(_reclaim_payload(placed_at))
         # review #2：probe 快照谓词必须用「总数 > give 前」而非 find_item 存在性——
         # fan_tie 经此前若干次 probe give 已存在于背包，存在性谓词匹配无关周期快照，
         # 会把 (far_anchor, far_post.t] 验证窗口提前截断（回收结果落在窗口外被漏掉）。
@@ -714,15 +732,7 @@ def run(env) -> None:
         _stand_at(bot, just_out)
 
         out_anchor = last_event_time(bot)
-        bot.intent(
-            {
-                "type": "coffin_menu_reclaim",
-                "v": 1,
-                "x": placed_at[0],
-                "y": placed_at[1],
-                "z": placed_at[2],
-            }
-        )
+        bot.intent(_reclaim_payload(placed_at))
         out_probe_before = _probe_total_now(bot)
         bot.cmd(f"give {PROBE_ITEM_ID} 1")
         out_post = bot.wait_for(
