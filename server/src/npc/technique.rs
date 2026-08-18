@@ -3330,6 +3330,63 @@ mod tests {
     }
 
     #[test]
+    fn action_falls_back_when_only_resolverless_direct_generic_is_known() {
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "test.direct_generic_noop".to_string(),
+            display_name: "无消费者探针".to_string(),
+            grade: "common".to_string(),
+            description: "NPC action must fail rather than consume a melee turn".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 0.0,
+            stamina_cost: 0.0,
+            cast_ticks: 1,
+            cooldown_ticks: 1,
+            range: 10.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+                .to_string(),
+            category: SkillCategory::Attack,
+            dispatch: TechniqueDispatch::DirectGeneric,
+        });
+        let mut world = valence::prelude::bevy_ecs::world::World::new();
+        world.insert_resource(registry);
+        world.insert_resource(NpcCooldownMap::default());
+        let actor = world
+            .spawn((
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "test.direct_generic_noop".to_string(),
+                        proficiency: 1.0,
+                        active: true,
+                    }],
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let action = world
+            .spawn((
+                NpcTechniqueAction,
+                Actor(actor),
+                big_brain::prelude::ActionState::Requested,
+            ))
+            .id();
+
+        super::run_technique_action::<NpcTechniqueAction>(&mut world, None);
+
+        assert_eq!(
+            world.get::<big_brain::prelude::ActionState>(action),
+            Some(&big_brain::prelude::ActionState::Failure),
+            "resolver-less direct_generic must fail the NPC action and leave melee fallback available"
+        );
+    }
+
+    #[test]
     fn technique_scorer_ignores_resolverless_direct_generic_entries() {
         use big_brain::prelude::{Actor, Score};
         use valence::prelude::{App, Update};
