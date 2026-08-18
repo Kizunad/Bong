@@ -22,7 +22,7 @@ from typing import Optional
 
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import wait_join_and_inventory
-from bot._redis_helpers import RedisPubSub
+from bot._redis_helpers import DELIVERY_FENCE_ACK_CHANNEL, RedisPubSub
 from bot._server_log import ServerLogScanner
 
 DESCRIPTION = "暗器战斗容器切换：显式切换/轮换/拒收 fenglinghe/同目标静默"
@@ -92,6 +92,20 @@ def _wait_swap(
     assert int(evt.get("switching_until_tick", 0)) == int(evt["tick"]) + 10, (
         f"{context}：暴露窗口应为 tick+10，实际 {evt!r}"
     )
+    # The first matching event is not enough: a duplicate can otherwise be
+    # hidden by advancing the next anchor immediately.  A producer-side fence
+    # flushes the server bridge queue before the interval is counted.
+    pubsub.producer_fence(timeout=5.0)
+    pubsub.settle(grace=2.0)
+    owned = [
+        event
+        for event in pubsub.window_events(CH_SWAP, after=after)
+        if event.get("carrier") == carrier
+    ]
+    assert len(owned) == 1, (
+        f"{context}：每个正向切换窗口必须恰好一个本 bot container_swap，"
+        f"实际 {len(owned)} 条：{owned!r}"
+    )
     return evt
 
 
@@ -102,6 +116,7 @@ def _expect_silent(pubsub, carrier: str, anchor: int, window_s: float, context: 
     # settle 的 PING/PONG 屏障证明；max_ts 取屏障返回时刻而非窗口截止——后者
     # 会把窗口内发布、迟到入队的事件排除出扫描，负向断言照样 miss（保留原缺陷）。
     time.sleep(window_s)
+    pubsub.producer_fence(timeout=5.0)
     pubsub.settle(grace=2.0)
     scan_ts = time.monotonic()
     ours = [
@@ -118,7 +133,7 @@ def _expect_silent(pubsub, carrier: str, anchor: int, window_s: float, context: 
 def run(env) -> None:
     pubsub = RedisPubSub.from_env()
     try:
-        pubsub.subscribe(CH_SWAP)
+        pubsub.subscribe(CH_SWAP, DELIVERY_FENCE_ACK_CHANNEL)
         with env.new_bot("Switch") as bot:
             wait_join_and_inventory(bot)
             bot.assert_alive("连接后")

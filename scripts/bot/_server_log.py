@@ -13,6 +13,7 @@ user 子串误归因）。
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from typing import Optional
@@ -40,6 +41,8 @@ class ServerLogScanner:
         # 会跳过新文件 N 之前的全部行——包括 guard 标记（review finding
         # [minor]：log rotation skips guard evidence）。
         self._file_id: Optional[tuple[int, int]] = None
+        self._prefix_fingerprint: bytes | None = None
+        self._fingerprint_length = 0
         self._guards: list[tuple[str, str]] = []  # (carrier, reason)
         self._deserialize_failed_users: list[str] = []
 
@@ -52,12 +55,28 @@ class ServerLogScanner:
             return []
         size = st.st_size
         file_id = (st.st_dev, st.st_ino)
-        if file_id != self._file_id or self._offset > size:
-            # 文件被替换（dev/inode 变化）或截断（偏移越过新大小）：偏移失效，
-            # 从新文件头重读。只比大小不够：替换文件已长到 >= 旧偏移时条件为假，
-            # 直接 seek 旧偏移会跳过新文件头部的证据行。
+        reset = file_id != self._file_id or self._offset > size
+        # copytruncate can rewrite the same inode to an equal-or-larger file.
+        # Compare a bounded prefix before seeking the old offset so a rewritten
+        # head cannot silently hide a guard marker.
+        stored_prefix_len = self._fingerprint_length
+        if self._prefix_fingerprint is not None and size < stored_prefix_len:
+            reset = True
+        prefix_len = min(size, stored_prefix_len) if self._prefix_fingerprint is not None else min(size, 4096)
+        with open(self._path, "rb") as fh:
+            prefix = fh.read(prefix_len)
+        fingerprint = hashlib.blake2b(prefix, digest_size=16).digest()
+        if self._prefix_fingerprint is not None and fingerprint != self._prefix_fingerprint:
+            reset = True
+        if reset:
             self._offset = 0
             self._file_id = file_id
+            prefix_len = min(size, 4096)
+            with open(self._path, "rb") as fh:
+                prefix = fh.read(prefix_len)
+            fingerprint = hashlib.blake2b(prefix, digest_size=16).digest()
+        self._prefix_fingerprint = fingerprint
+        self._fingerprint_length = prefix_len
         with open(self._path, "rb") as fh:
             fh.seek(self._offset)
             data = fh.read()

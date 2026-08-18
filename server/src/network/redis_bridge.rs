@@ -25,6 +25,7 @@ use crate::schema::baomai_v4::{
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_UI_CMD, CH_AGENT_UI_RESPONSE,
+    CH_BOT_DELIVERY_FENCE_ACK, CH_BOT_DELIVERY_FENCE_REQUEST,
     CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT, CH_ALCHEMY_INTERVENTION_RESULT,
     CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START, CH_ANQI_CARRIER_ABRASION,
     CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL,
@@ -144,6 +145,7 @@ pub struct RedisDeliveryReceipt {
 
 #[derive(Debug, Clone)]
 pub enum RedisInbound {
+    BotDeliveryFenceRequest(String),
     AgentCommand(AgentCommandV1),
     AgentNarration(NarrationV1),
     AgentWorldModel(AgentWorldModelEnvelopeV1),
@@ -320,6 +322,7 @@ pub enum RedisOutbound {
     // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
     /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
     AgentUiResponse(AgentUiResponsePayloadV1),
+    BotDeliveryFenceAck { token: String },
     // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────
     /// 半步化虚重渡触发（bong:tribulation/halfstep_rechallenge），agent narration 用。
     HalfStepRechallengeTrigger(
@@ -376,6 +379,11 @@ enum BridgeLoopControl {
 enum SubscriberTaskExit {
     StreamEnded,
     GameChannelClosed,
+}
+
+#[derive(Debug, Clone)]
+struct BotDeliveryFenceRequest {
+    token: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +472,7 @@ pub fn spawn_redis_bridge(
 ) {
     let (tx_to_game, rx_inbound) = crossbeam_channel::unbounded::<RedisInbound>();
     let (tx_outbound, rx_from_game) = crossbeam_channel::unbounded::<RedisOutbound>();
+    let (tx_fence, rx_fence) = crossbeam_channel::unbounded::<BotDeliveryFenceRequest>();
 
     let url = redis_url.to_string();
 
@@ -488,12 +497,13 @@ pub fn spawn_redis_bridge(
             let mut pending_command = None;
 
             loop {
-                match connect_bridge_session(&client, url.as_str(), &tx_to_game).await {
+                match connect_bridge_session(&client, url.as_str(), &tx_to_game, &tx_fence).await {
                     Ok((pub_conn, sub_task)) => {
                         backoff.reset();
 
                         match run_bridge_session(
                             &rx_from_game,
+                            &rx_fence,
                             &mut pending_command,
                             pub_conn,
                             sub_task,
@@ -575,6 +585,13 @@ async fn drain_outbound_messages(
 
 fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, ValidationError> {
     match message {
+        RedisOutbound::BotDeliveryFenceAck { token } => {
+            let payload = serde_json::json!({"v": 1, "ok": true, "token": token});
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BOT_DELIVERY_FENCE_ACK,
+                payload: payload.to_string(),
+            })
+        }
         RedisOutbound::WorldState(state) => {
             validate_world_state(&state)?;
 
@@ -2154,6 +2171,7 @@ async fn connect_bridge_session(
     client: &redis::Client,
     redis_url: &str,
     tx_to_game: &Sender<RedisInbound>,
+    tx_fence: &Sender<BotDeliveryFenceRequest>,
 ) -> Result<
     (
         redis::aio::MultiplexedConnection,
@@ -2182,7 +2200,10 @@ async fn connect_bridge_session(
     );
 
     let tx_to_game_clone = tx_to_game.clone();
-    let sub_task = tokio::spawn(async move { run_subscriber_task(pubsub, tx_to_game_clone).await });
+    let tx_fence_clone = tx_fence.clone();
+    let sub_task = tokio::spawn(async move {
+        run_subscriber_task(pubsub, tx_to_game_clone, tx_fence_clone).await
+    });
 
     Ok((pub_conn, sub_task))
 }
@@ -2226,11 +2247,19 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
         .await
         .map_err(|error| format!("failed to subscribe to {CH_AGENT_UI_CMD}: {error}"))?;
 
+    pubsub
+        .subscribe(CH_BOT_DELIVERY_FENCE_REQUEST)
+        .await
+        .map_err(|error| {
+            format!("failed to subscribe to {CH_BOT_DELIVERY_FENCE_REQUEST}: {error}")
+        })?;
+
     Ok(())
 }
 
 async fn run_bridge_session(
     rx_from_game: &Receiver<RedisOutbound>,
+    rx_fence: &Receiver<BotDeliveryFenceRequest>,
     pending_command: &mut Option<RedisIoCommand>,
     mut pub_conn: redis::aio::MultiplexedConnection,
     sub_task: tokio::task::JoinHandle<SubscriberTaskExit>,
@@ -2253,10 +2282,48 @@ async fn run_bridge_session(
             }
         }
 
+        while let Ok(request) = rx_fence.try_recv() {
+            if let Err(control) = flush_and_ack_delivery_fence(
+                rx_from_game,
+                pending_command,
+                &mut pub_conn,
+                request,
+            )
+            .await
+            {
+                abort_subscriber_task(sub_task).await;
+                return control;
+            }
+        }
+
         if sub_task.is_finished() {
             return handle_finished_subscriber_task(sub_task).await;
         }
     }
+}
+
+async fn flush_and_ack_delivery_fence(
+    rx_from_game: &Receiver<RedisOutbound>,
+    pending_command: &mut Option<RedisIoCommand>,
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    request: BotDeliveryFenceRequest,
+) -> Result<(), BridgeLoopControl> {
+    loop {
+        match drain_outbound_messages(rx_from_game, pub_conn, pending_command).await {
+            DrainOutcome::Healthy if pending_command.is_none() && rx_from_game.is_empty() => break,
+            DrainOutcome::Healthy => continue,
+            DrainOutcome::Reconnect { reason } => {
+                return Err(BridgeLoopControl::Reconnect { reason });
+            }
+            DrainOutcome::Stop => return Err(BridgeLoopControl::Stop),
+        }
+    }
+    let payload = serde_json::json!({"v": 1, "ok": true, "token": request.token});
+    execute_publish(pub_conn, CH_BOT_DELIVERY_FENCE_ACK, payload.to_string().as_str())
+        .await
+        .map_err(|error| BridgeLoopControl::Reconnect {
+            reason: format!("delivery_fence_ack_failed: {error}"),
+        })
 }
 
 async fn abort_subscriber_task(sub_task: tokio::task::JoinHandle<SubscriberTaskExit>) {
@@ -2304,6 +2371,7 @@ fn map_subscriber_join_result(
 async fn run_subscriber_task(
     mut pubsub: redis::aio::PubSub,
     tx_to_game: Sender<RedisInbound>,
+    tx_fence: Sender<BotDeliveryFenceRequest>,
 ) -> SubscriberTaskExit {
     use futures_util::StreamExt;
 
@@ -2325,9 +2393,40 @@ async fn run_subscriber_task(
             }
         };
 
+        if channel == CH_BOT_DELIVERY_FENCE_REQUEST {
+            let request = match serde_json::from_str::<serde_json::Value>(payload.as_str()) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::warn!("[bong][redis] dropped invalid delivery fence request: {error}");
+                    continue;
+                }
+            };
+            let Some(token) = request.get("token").and_then(Value::as_str) else {
+                tracing::warn!("[bong][redis] dropped delivery fence request without token");
+                continue;
+            };
+            if token.is_empty() || token.len() > 128 {
+                tracing::warn!("[bong][redis] dropped delivery fence request with invalid token length");
+                continue;
+            }
+            if tx_fence
+                .send(BotDeliveryFenceRequest {
+                    token: token.to_string(),
+                })
+                .is_err()
+            {
+                tracing::warn!("[bong][redis] delivery fence channel closed; stopping subscriber task");
+                return SubscriberTaskExit::GameChannelClosed;
+            }
+            continue;
+        }
+
         match parse_inbound_message(channel.as_str(), payload.as_str()) {
             Ok(Some(inbound)) => {
                 match &inbound {
+                    RedisInbound::BotDeliveryFenceRequest(token) => tracing::debug!(
+                        "[bong][redis] received bot delivery fence request token={token}"
+                    ),
                     RedisInbound::AgentCommand(command) => tracing::info!(
                         "[bong][redis] received agent command: {} ({} cmds)",
                         command.id,

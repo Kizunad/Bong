@@ -66,7 +66,12 @@ def run(env) -> None:
         # 移位/改堆叠」的坏实现（review finding [major]：拒收未验证不变库存
         # 契约）。
         bot.assert_alive("装弹护栏拒绝后")
-        post = wait_inventory_contains(bot, CARRIER_ID, timeout=10.0)
+        post = wait_inventory_contains(
+            bot,
+            CARRIER_ID,
+            timeout=10.0,
+            after_t=rejected.t,
+        )
         assert int(post["revision"]) == int(snapshot["revision"]), (
             f"拒绝不应 bump inventory revision: {snapshot['revision']} -> {post['revision']}"
         )

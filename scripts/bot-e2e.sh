@@ -59,6 +59,7 @@ EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"
 EVIDENCE_DIR=""
 RUN_ID=""
 SERVER_LOG=""
+CALLER_SERVER_LOG="${BONG_SERVER_LOG:-}"
 SERVER_RUNTIME_DIR=""
 BOT_NOVICE_RASTER_DIR=""
 BOT_RASTER_READY_PAYLOAD=""
@@ -376,6 +377,28 @@ else
     tail -n 40 "$SERVER_LOG" >&2
     exit 1
   fi
+fi
+
+# Reuse mode does not start a child server, so keep the caller-owned log as the
+# evidence source. Never overwrite it with this run's unwritten evidence path;
+# without a readable caller log, the log-backed anqi scenarios remain disabled.
+if [ "$REUSE" = "1" ]; then
+  if [ -n "$CALLER_SERVER_LOG" ] && [ -r "$CALLER_SERVER_LOG" ]; then
+    SERVER_LOG="$CALLER_SERVER_LOG"
+  else
+    SERVER_LOG=""
+  fi
+fi
+
+# The anqi scenarios are part of --all when this harness owns both prerequisites:
+# Redis is reachable and a readable server log is available for consumer guards.
+# CI sets the same gate explicitly; this local guard prevents reuse mode without
+# an external log from pretending its negative evidence is covered.
+if [ -n "$SERVER_LOG" ] && [ -r "$SERVER_LOG" ] \
+  && { [ -n "${REDIS_URL:-}" ] || port_open 127.0.0.1 6379; }; then
+  export BOT_E2E_ANQI_REDIS=1
+else
+  unset BOT_E2E_ANQI_REDIS
 fi
 
 # ---- 场景 ----

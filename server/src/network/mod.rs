@@ -2637,6 +2637,11 @@ fn process_redis_inbound(
         drained_messages += 1;
 
         match msg {
+            RedisInbound::BotDeliveryFenceRequest(token) => {
+                let _ = redis
+                    .tx_outbound
+                    .send(RedisOutbound::BotDeliveryFenceAck { token });
+            }
             RedisInbound::AgentCommand(cmd) => {
                 let command_count = cmd.commands.len();
                 let batch_id = cmd.id.clone();

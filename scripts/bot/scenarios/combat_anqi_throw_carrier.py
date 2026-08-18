@@ -34,7 +34,7 @@ from bot.scenarios._inventory_helpers import (
     latest_inventory_snapshot,
     wait_join_and_inventory,
 )
-from bot._redis_helpers import RedisPubSub
+from bot._redis_helpers import DELIVERY_FENCE_ACK_CHANNEL, RedisPubSub
 from bot._server_log import ServerLogScanner
 
 DESCRIPTION = "抛射护栏：无持载体发出 throw_carrier → 静默 no-op（无 despawn 事件 / 无库存改动 / 存活）"
@@ -83,7 +83,7 @@ _GUARD_REASONS = ("no_carrier_item", "no_anqi_imprint")
 def run(env) -> None:
     pubsub = RedisPubSub.from_env()
     try:
-        pubsub.subscribe(DESPAWN_CH)
+        pubsub.subscribe(DESPAWN_CH, DELIVERY_FENCE_ACK_CHANNEL)
         with env.new_bot("Throw") as bot:
             wait_join_and_inventory(bot)
             carrier = _self_carrier(bot)
@@ -195,6 +195,11 @@ def run(env) -> None:
                 if time.monotonic() >= guard_deadline:
                     break
                 time.sleep(0.2)
+
+            # Producer-side fence drains the server's crossbeam outbound queue before
+            # the subscriber PING/PONG barrier. A subscriber-only PING cannot order
+            # events still waiting in that queue.
+            pubsub.producer_fence(timeout=5.0)
 
             # 观察窗截止后的投递屏障 + 最终窗口化扫描：截止判定与 pump 的
             # recv/入队异步，server 在截止前发布的 despawn 可能仍滞留在 socket/

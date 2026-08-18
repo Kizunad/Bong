@@ -27,6 +27,7 @@ import os
 import socket
 import threading
 import time
+import uuid
 from typing import Any, Callable, Optional
 from urllib.parse import unquote, urlsplit
 
@@ -52,6 +53,13 @@ MAX_EVENT_BYTES = 8 << 20  # 8 MiB
 # （review finding [major]：unbounded RESP array complexity）。
 MAX_RESP_DEPTH = 8
 MAX_RESP_ARRAY_ITEMS = 4096
+
+# Producer-side delivery fence.  A subscribed RESP2 connection cannot issue
+# PUBLISH itself, so producer_fence() uses a short-lived command connection to
+# ask the server bridge to drain its outbound queue and publish an acknowledged
+# marker on the subscriber connection.
+DELIVERY_FENCE_REQUEST_CHANNEL = "bong:bot/delivery_fence/request"
+DELIVERY_FENCE_ACK_CHANNEL = "bong:bot/delivery_fence/ack"
 
 
 def _frame_command(args: list[str]) -> bytes:
@@ -213,6 +221,10 @@ class RedisPubSub:
         password: Optional[str] = None,
         max_event_bytes: int = MAX_EVENT_BYTES,
     ):
+        self._host = host
+        self._port = port
+        self._username = username
+        self._password = password
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._frames = RespFrames()
         if password is not None:
@@ -232,9 +244,14 @@ class RedisPubSub:
         # 数千条 × 1 MiB 的保留会耗尽进程内存（review finding [major]）。
         self._events: list[tuple[int, str, dict[str, Any], float, int]] = []
         self._event_seq = 0
+        # Sequence before this watermark has been evicted from the bounded
+        # history.  Windowed evidence must fail closed rather than treating a
+        # missing event as proof of silence.
+        self._oldest_retained_seq = 0
         self._max_events = max_events
         self._max_event_bytes = max_event_bytes
         self._event_bytes = 0
+        self._last_eviction_seq: Optional[int] = None
         self._lock = threading.Lock()
         # _frames（_buf/_parse_items）由 pump 线程与 settle() 的投递屏障共同
         # 消费：next_frame/feed/_drain_frames 必须互斥，否则两线程并发切片 _buf
@@ -400,7 +417,15 @@ class RedisPubSub:
             self._handle_frame(frame)
 
     def _handle_frame(self, frame: Any) -> None:
-        if frame == "PONG":
+        # Redis RESP2 has two PONG shapes: a simple +PONG response on an
+        # ordinary connection, and ["pong", ""] while the client is subscribed.
+        # The latter is a pubsub array, not a three-element message frame.
+        if frame == "PONG" or (
+            isinstance(frame, list)
+            and len(frame) == 2
+            and frame[0] in (b"pong", "pong")
+            and frame[1] in (b"", "")
+        ):
             self._pong_seen.set()
             return
         if not isinstance(frame, list) or len(frame) != 3 or frame[0] != b"message":
@@ -438,8 +463,12 @@ class RedisPubSub:
                 if not self._events:
                     self._event_bytes = 0
                     break
-                _, _, _, _, b = self._events.pop(0)
+                evicted_seq, _, _, _, b = self._events.pop(0)
+                self._last_eviction_seq = evicted_seq
                 self._event_bytes -= b
+            self._oldest_retained_seq = (
+                self._events[0][0] if self._events else self._event_seq
+            )
 
     def events_for(self, channel: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -470,6 +499,12 @@ class RedisPubSub:
                     f"redis 连接已因协议异常终止: {self._fatal_error}"
                 )
             start = self._event_seq if after is None else after
+            oldest = getattr(self, "_oldest_retained_seq", 0)
+            if start < oldest:
+                raise AssertionError(
+                    "redis 证据窗口已被有界事件历史淘汰，拒绝把不完整窗口当作"
+                    f"完整证据: after={start}, oldest_retained_seq={oldest}"
+                )
             return [
                 e
                 for seq, c, e, ts, _ in self._events
@@ -477,6 +512,94 @@ class RedisPubSub:
                 and c == channel
                 and (max_ts is None or ts <= max_ts)
             ]
+
+    def _read_command_frame(
+        self, sock: socket.socket, frames: RespFrames, deadline: float
+    ) -> Any:
+        """Read one RESP frame from a short-lived non-pubsub command socket."""
+        while time.monotonic() < deadline:
+            frame = frames.next_frame()
+            if frame is not None:
+                return frame
+            remaining = max(0.01, min(0.5, deadline - time.monotonic()))
+            sock.settimeout(remaining)
+            data = sock.recv(4096)
+            if not data:
+                raise RuntimeError("redis fence command connection EOF")
+            frames.feed(data)
+        raise RuntimeError("redis fence command response timeout")
+
+    def _publish_fence_request(self, token: str, timeout: float) -> None:
+        """Publish a bridge fence request from a regular Redis connection.
+
+        RESP2 forbids arbitrary commands on a subscribed connection.  The
+        separate command socket is deliberately short-lived and authenticated
+        with the same credentials as the subscriber.
+        """
+        sock = socket.create_connection((self._host, self._port), timeout=timeout)
+        frames = RespFrames()
+        deadline = time.monotonic() + timeout
+        try:
+            if self._password is not None:
+                auth_args = ["AUTH"] + (
+                    [self._username] if self._username else []
+                ) + [self._password]
+                sock.sendall(_frame_command(auth_args))
+                auth_reply = self._read_command_frame(sock, frames, deadline)
+                if auth_reply != "OK":
+                    raise RuntimeError(f"redis fence AUTH 失败: {auth_reply!r}")
+            payload = json.dumps({"v": 1, "token": token}, separators=(",", ":"))
+            sock.sendall(
+                _frame_command(
+                    ["PUBLISH", DELIVERY_FENCE_REQUEST_CHANNEL, payload]
+                )
+            )
+            reply = self._read_command_frame(sock, frames, deadline)
+            if not isinstance(reply, int):
+                raise RuntimeError(f"redis fence PUBLISH 失败: {reply!r}")
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def producer_fence(self, timeout: float = 5.0) -> dict[str, Any]:
+        """Await an acknowledged server-side producer/bridge delivery fence.
+
+        A subscriber PING only orders bytes already handled by Redis; it cannot
+        order gameplay events still waiting in the server's crossbeam outbound
+        queue.  The server bridge receives this request, drains that queue and
+        publishes the token on its publisher connection.  Because the ack is a
+        pubsub message on that same connection, consuming it orders all earlier
+        producer publishes before the ack.  Missing/evicted/negative evidence
+        fails closed.
+        """
+        with self._lock:
+            if self._fatal_error is not None:
+                raise AssertionError(
+                    "redis 连接已因协议异常终止，生产者屏障不可信: "
+                    f"{self._fatal_error}"
+                )
+            start_seq = self._event_seq
+        token = uuid.uuid4().hex
+        try:
+            self._publish_fence_request(token, timeout=min(timeout, 5.0))
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise AssertionError(f"生产者屏障请求发送失败: {exc}") from exc
+        # The bridge publishes the acknowledgement directly on the Redis
+        # pubsub connection after draining its producer queue.  The request is
+        # not itself a gameplay event and therefore is not routed through the
+        # server ECS inbound path.
+        ack = self.wait_event(
+            DELIVERY_FENCE_ACK_CHANNEL,
+            lambda event: event.get("token") == token,
+            timeout=timeout,
+            description=f"server producer fence ack token={token}",
+            after=start_seq,
+        )
+        if ack.get("ok") is not True:
+            raise AssertionError(f"server producer fence rejected: {ack!r}")
+        return ack
 
     def settle(self, grace: float = 0.5) -> None:
         """投递屏障：PING/PONG 正同步，证明截止前发布的事件已全部可见。

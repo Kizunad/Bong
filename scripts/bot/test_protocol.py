@@ -643,7 +643,7 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(
             _server_data_carrier_state_bytes(
                 carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
-                phase=2,
+                phase=3,
                 progress=0.5,
                 sealed_qi=30.0,
                 sealed_qi_initial=60.0,
@@ -665,7 +665,13 @@ class ServerDataDecodeTest(unittest.TestCase):
         # CARRIER_CHARGE_PHASE_NAMES 是本次引入的完整 wire→domain 契约：每个 phase
         # 值都必须解出正确名称，未知值回退 unspecified（findings：原测试只覆盖 phase=2，
         # idle/charging 映射错或未知值不回退都测不出来）。
-        cases = {0: "idle", 1: "charging", 2: "charged", 9: "unspecified"}
+        cases = {
+            0: "unspecified",
+            1: "idle",
+            2: "charging",
+            3: "charged",
+            9: "unspecified",
+        }
         for phase, expected in cases.items():
             with self.subTest(phase=phase):
                 decoded = decode_server_data_payload(
@@ -1101,6 +1107,24 @@ class BotE2eDevModeContractTest(unittest.TestCase):
     def test_ci_selects_explicit_ambient_fixture_mode(self):
         bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
+
+    def test_anqi_all_gate_is_wired_and_reuse_log_is_preserved(self):
+        # The three anqi scenarios are dedicated because they need Redis plus
+        # a server log.  The harness must export the gate only after those
+        # prerequisites are owned/available, and reuse mode must not overwrite
+        # a caller-provided BONG_SERVER_LOG.
+        self.assertIn('export BOT_E2E_ANQI_REDIS=1', self.source)
+        self.assertIn('CALLER_SERVER_LOG="${BONG_SERVER_LOG:-}"', self.source)
+        self.assertIn('SERVER_LOG="$CALLER_SERVER_LOG"', self.source)
+        self.assertIn('unset BOT_E2E_ANQI_REDIS', self.source)
+        for name in (
+            "combat_anqi_charge_carrier",
+            "combat_anqi_container_switch",
+            "combat_anqi_throw_carrier",
+        ):
+            module = discover_scenarios()[name]
+            self.assertFalse(module.DEFAULT_ENABLED)
+            self.assertEqual(module.RUN_IN_ALL_WHEN_ENV, "BOT_E2E_ANQI_REDIS")
 
     def test_self_started_server_builds_unique_exact_fixture_identity(self):
         fixture_start = self.source.index('# Owned-fixture mode generates')
@@ -4153,6 +4177,39 @@ class RedisPubSubTest(unittest.TestCase):
         self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
         self.assertIsNone(frames.next_frame())
 
+    def test_resp_frames_subscribed_pong_shape(self):
+        # RESP2 subscribed PING replies as the two-element pubsub array
+        # ["pong", ""], not the ordinary +PONG simple string.
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+        self.assertEqual(frames.next_frame(), [b"pong", b""])
+        self.assertIsNone(frames.next_frame())
+
+    def test_subscribed_pong_establishes_delivery_barrier(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def server_loop():
+                try:
+                    while True:
+                        data = server.recv(4096)
+                        if not data:
+                            return
+                        server.sendall(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+                except OSError:
+                    return
+
+            thread = threading.Thread(target=server_loop, daemon=True)
+            thread.start()
+            pubsub.settle(0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
     def test_resp_frames_partial_feeds(self):
         frames = _redis_helpers.RespFrames()
         frames.feed(b"*3\r\n$9\r\nsub")
@@ -4614,6 +4671,9 @@ class RedisPubSubTest(unittest.TestCase):
             got = [e["seq"] for e in pubsub.events_for("my_chan")]
             self.assertEqual(len(got), 2)
             self.assertNotIn(0, got, "max_events 裁剪应丢弃最旧条目")
+            with self.assertRaises(AssertionError) as ctx:
+                pubsub.window_events("my_chan", after=0)
+            self.assertIn("淘汰", str(ctx.exception))
         finally:
             pubsub.stop()
             server.close()
@@ -5110,6 +5170,31 @@ class ServerLogScannerTest(unittest.TestCase):
             "Throw 不得被 Throw2 的 user= 字段子串命中",
         )
         self.assertEqual(scanner.deserialize_failed("Throw2"), 1)
+
+    def test_same_inode_equal_or_larger_rewrite_resets_to_new_head(self):
+        path = self._write_log(["old line A", "old line B"])
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        with open(path, "r+b") as fh:
+            fh.seek(0)
+            replacement = (
+                "throw_carrier guard carrier=player:same slot=MainHand "
+                "reason=no_carrier_item\n" + "x" * 80 + "\n"
+            ).encode()
+            fh.write(replacement)
+            fh.truncate()
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("player:same"),
+            ["no_carrier_item"],
+            "同 inode 且新内容不短于旧偏移时也必须识别 copytruncate/rewrite 并从头扫描",
+        )
 
     def test_rotation_to_larger_replacement_resets_to_new_head(self):
         # 回归：review finding [minor]——日志被替换成更大的新文件（轮转）时，旧

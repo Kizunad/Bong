@@ -359,10 +359,15 @@ def _container_state(data: bytes) -> dict[str, Any]:
     }
 
 
+# proto/bong/envelope.proto:1890-1893 reserves zero for UNSPECIFIED.
+# Keep the generated protobuf enum values here; do not compress away the
+# unspecified slot because live CarrierState payloads use IDLE=1,
+# CHARGING=2, and CHARGED=3.
 CARRIER_CHARGE_PHASE_NAMES = {
-    0: "idle",
-    1: "charging",
-    2: "charged",
+    0: "unspecified",
+    1: "idle",
+    2: "charging",
+    3: "charged",
 }
 
 
