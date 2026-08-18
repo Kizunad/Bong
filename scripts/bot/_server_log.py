@@ -62,7 +62,10 @@ class ServerLogScanner:
         stored_prefix_len = self._fingerprint_length
         if self._prefix_fingerprint is not None and size < stored_prefix_len:
             reset = True
-        prefix_len = min(size, stored_prefix_len) if self._prefix_fingerprint is not None else min(size, 4096)
+        if self._prefix_fingerprint is None or (stored_prefix_len == 0 and size > 0):
+            prefix_len = min(size, 4096)
+        else:
+            prefix_len = min(size, stored_prefix_len)
         with open(self._path, "rb") as fh:
             prefix = fh.read(prefix_len)
         fingerprint = hashlib.blake2b(prefix, digest_size=16).digest()
