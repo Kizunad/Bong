@@ -4,16 +4,17 @@ handle_give_dan_to_elder（client_request_handler.rs:19791）前置检查顺序�
 1. pill_instance_id 不在背包 → 聊天「§c[垂死大能] 背包中未找到该回元丹。」
 2. 物品非 huiyuan_pill → 聊天「§c[垂死大能] 只接受回元丹。」
 3. elder_entity_id 无对应实体 → 聊天「§c[垂死大能] 找不到目标大能。」
+4. 已解析实体不是 DyingElder / 状态不可接丹 → 目标门禁拒绝；
+5. 已解析 Plea 大能超距或跨维 → 空间门禁拒绝。
 
-happy path（大能收丹 → Plea→Recovering）不可黑盒构造：垂死大能 spawn 要求
-tsy zone spirit_qi < -0.4 且间隔 30 游戏日（dying_elder.rs:62 DYING_ELDER_
-SPAWN_INTERVAL_TICKS = 30 * 24000 ≈ 10h 实墙钟），fixture 运行不可达；dev
-命令层也无 elder/大能 spawn 命令。故本场景按拒收链逐条断言聊天反馈，并验证
-请求失败不中断连接（大能未收丹、玩家无损失）。
+本场景先覆盖前三条拒收链，再用 `/npc_scenario fight` 构造真实非 elder
+protocol target，最后以 `/time advance 720000` 触发 production DyingElder，在真实
+protocol entity id 上分别验证距离与维度门。每条拒收都断言聊天-only、连接保持和
+回元丹同实例未被消费。
 
 拒收无损契约：每条拒收后，被拒物品的**同实例**必须仍在背包（拒绝分支只回 chat、
-不消费物品）。第一拒（非回元丹）断在下一张快照；第二拒（找不到目标大能）用一次
-无害 give 触发新快照后验证——防「先吞物品再回拒收文案」的单边损耗实现。
+不消费物品）。每次拒收后用无害 give 触发新快照验证——防「先吞物品再回拒收文案」的
+单边损耗实现。
 
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。chat-only 契约由
 _assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何非周期 S2C 响应
