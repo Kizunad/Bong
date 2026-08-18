@@ -145,7 +145,6 @@ pub struct RedisDeliveryReceipt {
 
 #[derive(Debug, Clone)]
 pub enum RedisInbound {
-    BotDeliveryFenceRequest(String),
     AgentCommand(AgentCommandV1),
     AgentNarration(NarrationV1),
     AgentWorldModel(AgentWorldModelEnvelopeV1),
@@ -322,7 +321,6 @@ pub enum RedisOutbound {
     // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
     /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
     AgentUiResponse(AgentUiResponsePayloadV1),
-    BotDeliveryFenceAck { token: String },
     // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────
     /// 半步化虚重渡触发（bong:tribulation/halfstep_rechallenge），agent narration 用。
     HalfStepRechallengeTrigger(
@@ -585,13 +583,6 @@ async fn drain_outbound_messages(
 
 fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, ValidationError> {
     match message {
-        RedisOutbound::BotDeliveryFenceAck { token } => {
-            let payload = serde_json::json!({"v": 1, "ok": true, "token": token});
-            Ok(RedisIoCommand::Publish {
-                channel: CH_BOT_DELIVERY_FENCE_ACK,
-                payload: payload.to_string(),
-            })
-        }
         RedisOutbound::WorldState(state) => {
             validate_world_state(&state)?;
 
