@@ -19,6 +19,11 @@ DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
 FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
+# CI can have a slower SQLite/Redis shutdown path after the 100-NPC proof. Keep
+# the default lifecycle helper contract at 10s, but give this disposable E2E
+# transaction a bounded 30s graceful window before identity-safe KILL fallback.
+E2E_SERVER_STOP_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_GRACE_SECONDS:-30}"
+E2E_SERVER_STOP_KILL_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -1072,8 +1077,11 @@ stop_server() {
       echo "FAIL: incomplete server process-group authority (pid=${pid:-missing}, pgid=${pgid:-missing})" >&2
       return 1
     fi
+    local graceful_stop_seconds="${E2E_SERVER_STOP_GRACE_SECONDS:-30}"
+    local kill_stop_seconds="${E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
     if bong_server_stop_owned_process_group_and_release_port \
-        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565; then
+        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565 \
+        "$graceful_stop_seconds" "$kill_stop_seconds"; then
       SERVER_PID=""
       SERVER_PGID=""
       SERVER_OWNER_STARTTIME=""
@@ -1083,6 +1091,7 @@ stop_server() {
     else
       stop_status=$?
     fi
+    echo "FAIL: server process group stop did not complete (status=$stop_status, graceful=${graceful_stop_seconds}s, kill=${kill_stop_seconds}s)" >&2
     return "$stop_status"
   fi
   # Outside a READY transaction there are no stashed developer bytes to expose:
