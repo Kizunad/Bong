@@ -1783,39 +1783,6 @@ impl ItemRegistry {
     }
 }
 
-/// 在 technique metadata registry 可用后，校验所有功法卷轴的跨表引用。
-///
-/// ItemRegistry 先于 cultivation 注册，因此 item TOML 的 leaf parser 只校验字段语法；
-/// 完整引用闭包在启动期由 cultivation::register 一次性执行。错误按 item id 排序汇总，
-/// 保证同一坏数据集产生稳定、可操作的诊断。
-pub(crate) fn validate_technique_scroll_references(
-    items: &ItemRegistry,
-    techniques: &crate::cultivation::known_techniques::TechniqueRegistry,
-) -> Result<(), String> {
-    let mut missing = items
-        .iter_templates()
-        .filter_map(|template| {
-            let scroll = template.technique_scroll_spec.as_ref()?;
-            techniques.get(&scroll.skill_id).is_none().then(|| {
-                format!(
-                    "item `{}` references unknown technique_scroll.skill_id `{}`",
-                    template.id, scroll.skill_id
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    missing.sort();
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "invalid technique scroll references:\n- {}",
-            missing.join("\n- ")
-        ))
-    }
-}
-
 pub fn add_item_to_player_inventory(
     inventory: &mut PlayerInventory,
     registry: &ItemRegistry,
@@ -2891,6 +2858,12 @@ pub fn parse_technique_scroll_spec(
         source_path,
         &format!("item `{item_id}` technique_scroll.skill_id"),
     )?;
+    if crate::cultivation::known_techniques::technique_definition(skill_id.as_str()).is_none() {
+        return Err(format!(
+            "{} item `{item_id}` references unknown technique_scroll.skill_id `{skill_id}`",
+            source_path.display()
+        ));
+    }
     Ok(TechniqueScrollSpec { kind, skill_id })
 }
 
@@ -7631,10 +7604,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids.iter().filter(|id| id.starts_with("woliu.")).count(), 11);
-        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
         for id in ids {
             assert!(
-                techniques.get(id).is_some(),
+                crate::cultivation::known_techniques::technique_definition(id).is_some(),
                 "technique scroll references unknown id `{id}`"
             );
         }
@@ -18123,45 +18095,10 @@ cols = 4
     }
 
     #[test]
-    fn technique_scroll_reference_validation_accepts_checked_in_items() {
-        let items = load_item_registry().expect("checked-in item registry should load");
-        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
-
-        validate_technique_scroll_references(&items, &techniques)
-            .expect("all checked-in technique scroll ids must resolve at startup");
-    }
-
-    #[test]
-    fn technique_scroll_reference_validation_aggregates_unknown_ids_deterministically() {
-        let mut first = make_misc_template("z_scroll");
-        first.technique_scroll_spec = Some(TechniqueScrollSpec {
-            kind: "combat_technique".to_string(),
-            skill_id: "missing.z".to_string(),
-        });
-        let mut second = make_misc_template("a_scroll");
-        second.technique_scroll_spec = Some(TechniqueScrollSpec {
-            kind: "combat_technique".to_string(),
-            skill_id: "missing.a".to_string(),
-        });
-        let items = ItemRegistry::from_map(HashMap::from([
-            (first.id.clone(), first),
-            (second.id.clone(), second),
-        ]));
-        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
-
-        let error = validate_technique_scroll_references(&items, &techniques)
-            .expect_err("dangling technique scroll references must reject startup");
-        assert_eq!(
-            error,
-            "invalid technique scroll references:\n- item `a_scroll` references unknown technique_scroll.skill_id `missing.a`\n- item `z_scroll` references unknown technique_scroll.skill_id `missing.z`"
-        );
-    }
-
-    #[test]
     fn scroll_sword_cleave_skill_id_matches_definition() {
-        // Verify that the skill_id in the scroll matches a valid registry definition.
-        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
-        let def = techniques.get("sword.cleave");
+        // Verify that the skill_id in the scroll matches a valid technique_definition
+        use crate::cultivation::known_techniques::technique_definition;
+        let def = technique_definition("sword.cleave");
         assert!(
             def.is_some(),
             "sword.cleave should be a registered technique definition"

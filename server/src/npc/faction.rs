@@ -986,14 +986,12 @@ pub fn register(app: &mut App) {
         );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn spawn_named_faction_leaders_on_startup(
     mut commands: Commands,
     registry: Option<Res<NamedFactionRegistry>>,
     claims: Option<Res<FactionZoneClaims>>,
     zones: Option<Res<ZoneRegistry>>,
     layers: Query<Entity, With<OverworldLayer>>,
-    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     leaders: Query<&NamedFactionLeader>,
     mut done: valence::prelude::Local<bool>,
 ) {
@@ -1043,7 +1041,6 @@ fn spawn_named_faction_leaders_on_startup(
         let spawn_position = zone.patrol_target(0);
         let entity = spawn_disciple_npc_at(
             &mut commands,
-            &technique_registry,
             NpcSkinSpawnContext::new(None, skin_policy),
             layer,
             zone.name.as_str(),
@@ -2832,9 +2829,6 @@ mod tests {
     #[test]
     fn leader_spawn_creates_active_faction_leaders_and_skips_headless() {
         let mut app = App::new();
-        app.insert_resource(
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
-        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
@@ -2909,9 +2903,6 @@ mod tests {
         // Cultivation.realm 必须等于 leader_realm_for(faction)（三档全覆盖），
         // 而不是被 npc_runtime_bundle 恒吞成 Realm::Awaken（修复前的 bug）。
         let mut app = App::new();
-        app.insert_resource(
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
-        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
@@ -2956,9 +2947,6 @@ mod tests {
     #[test]
     fn leader_spawn_is_idempotent_after_startup_runs_twice() {
         let mut app = App::new();
-        app.insert_resource(
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
-        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
@@ -2981,9 +2969,6 @@ mod tests {
     #[test]
     fn leader_spawn_waits_for_zone_registry_before_marking_done() {
         let mut app = App::new();
-        app.insert_resource(
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
-        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());

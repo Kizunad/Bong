@@ -1,7 +1,7 @@
 //! plan-skill-av-relink-v1 P3 —— technique 图标快照单向同步 + 映射约束测试（图标链）。
 //!
 //! 快照文件 `client/src/test/resources/bong/technique_icon_snapshot.json` 是
-//! `TechniqueRegistry` 的 `skill_id → icon_texture` 单向导出（BTreeMap 排序 +
+//! `TECHNIQUE_DEFINITIONS` 的 `skill_id → icon_texture` 单向导出（BTreeMap 排序 +
 //! pretty-print，稳定 diff），双端消费：
 //! - server（本文件）：经 `CARGO_MANIFEST_DIR/../client` 路径读盘，断言快照与定义表
 //!   完全一致——无缺失、无多余、无漂移、无字节级格式手改；
@@ -14,9 +14,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use super::known_techniques::TechniqueRegistry;
+use super::known_techniques::TECHNIQUE_DEFINITIONS;
 
-const REGEN_HINT: &str = "快照由 TechniqueRegistry 单向生成、禁止手改；重生成：\
+const REGEN_HINT: &str = "快照由 TECHNIQUE_DEFINITIONS 单向生成、禁止手改；重生成：\
     BONG_REGEN_ICON_SNAPSHOT=1 scripts/build-token.sh cargo test technique_icon_snapshot";
 
 /// 图标允许的命名空间集合（plan-skill-av-relink-v1 P0 决议：skill_scroll 单一真相源
@@ -89,7 +89,7 @@ fn snapshot_path() -> PathBuf {
 }
 
 fn definitions_icon_map() -> BTreeMap<String, String> {
-    TechniqueRegistry::load_for_tests()
+    TECHNIQUE_DEFINITIONS
         .iter()
         .map(|def| (def.id.to_string(), def.icon_texture.to_string()))
         .collect()
@@ -108,8 +108,8 @@ fn technique_icon_snapshot_matches_definitions_exactly() {
     let expected = definitions_icon_map();
     assert_eq!(
         expected.len(),
-        TechniqueRegistry::load_for_tests().len(),
-        "TechniqueRegistry 出现重复 id 会让快照吞条目——先修定义表再谈快照"
+        TECHNIQUE_DEFINITIONS.len(),
+        "TECHNIQUE_DEFINITIONS 出现重复 id 会让快照吞条目——先修定义表再谈快照"
     );
 
     let path = snapshot_path();
@@ -174,7 +174,7 @@ fn technique_icon_snapshot_matches_definitions_exactly() {
 
 #[test]
 fn every_technique_icon_texture_is_non_empty() {
-    for def in TechniqueRegistry::load_for_tests().iter() {
+    for def in &TECHNIQUE_DEFINITIONS {
         assert!(
             !def.icon_texture.is_empty(),
             "technique `{}` 的 icon_texture 为空串——Skill 槽发射契约要求每条 technique \
@@ -186,7 +186,7 @@ fn every_technique_icon_texture_is_non_empty() {
 
 #[test]
 fn every_technique_icon_texture_uses_allowed_namespace_and_png_path() {
-    for def in TechniqueRegistry::load_for_tests().iter() {
+    for def in &TECHNIQUE_DEFINITIONS {
         let (namespace, path) = def.icon_texture.split_once(':').unwrap_or_else(|| {
             panic!(
                 "technique `{}` 的 icon_texture `{}` 缺少 `namespace:path` 形态的冒号分隔",
@@ -234,7 +234,7 @@ fn every_technique_icon_texture_uses_allowed_namespace_and_png_path() {
             .iter()
             .find(|(id, _)| *id == def.id)
             .map(|(_, texture)| (*texture).to_string())
-            .unwrap_or_else(|| canonical_icon_texture(def.id.as_str()));
+            .unwrap_or_else(|| canonical_icon_texture(def.id));
         assert_eq!(
             def.icon_texture, expected_icon,
             "technique `{}` 的 icon_texture 偏离 P0 命名约定：期望 `{expected_icon}`\
@@ -245,14 +245,12 @@ fn every_technique_icon_texture_uses_allowed_namespace_and_png_path() {
         );
     }
 
-    // 例外映射表防僵尸：每条例外 id 必须仍存在于 TechniqueRegistry（技能改名/
+    // 例外映射表防僵尸：每条例外 id 必须仍存在于 TECHNIQUE_DEFINITIONS（技能改名/
     // 删除后条目不得残留，例外集只许缩小）。
     for (id, _) in &ICON_TEXTURE_EXCEPTIONS {
         assert!(
-            TechniqueRegistry::load_for_tests()
-                .iter()
-                .any(|def| def.id == *id),
-            "ICON_TEXTURE_EXCEPTIONS 僵尸条目 `{id}`：TechniqueRegistry 里已无\
+            TECHNIQUE_DEFINITIONS.iter().any(|def| def.id == *id),
+            "ICON_TEXTURE_EXCEPTIONS 僵尸条目 `{id}`：TECHNIQUE_DEFINITIONS 里已无\
              此 technique，删掉该例外条目"
         );
     }
@@ -261,12 +259,8 @@ fn every_technique_icon_texture_uses_allowed_namespace_and_png_path() {
 #[test]
 fn no_two_techniques_share_one_icon_texture() {
     let mut by_texture: HashMap<&str, Vec<&str>> = HashMap::new();
-    let registry = TechniqueRegistry::load_for_tests();
-    for def in registry.iter() {
-        by_texture
-            .entry(def.icon_texture.as_str())
-            .or_default()
-            .push(def.id.as_str());
+    for def in &TECHNIQUE_DEFINITIONS {
+        by_texture.entry(def.icon_texture).or_default().push(def.id);
     }
     let duplicated: Vec<String> = by_texture
         .iter()

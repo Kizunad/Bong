@@ -2862,22 +2862,18 @@ mod tests {
         );
     }
 
-    // ── KnownTechniques 含 "shield_block" 注册（cultivation registry 断言）────
+    // ── KnownTechniques 含 "shield_block" 注册（cultivation 全局注册断言）────
+    // 确保 known_techniques.rs 中 TECHNIQUE_IDS 包含 "shield_block"（通过 dev_default 验证）。
     #[test]
     fn known_techniques_registry_contains_shield_block() {
-        use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
-        let registry = TechniqueRegistry::load_for_tests();
-        let default = KnownTechniques::dev_default(&registry);
+        use crate::cultivation::known_techniques::KnownTechniques;
+        let default = KnownTechniques::dev_default();
         let found = default.entries.iter().any(|e| e.id == "shield_block");
         assert!(
             found,
-            "KnownTechniques::dev_default(&registry) 应含 \"shield_block\" 条目（plan-shield-block-v1 P4 注册）；\
+            "KnownTechniques::dev_default() 应含 \"shield_block\" 条目（plan-shield-block-v1 P4 注册）；\
              实际 entries: {:?}",
-            default
-                .entries
-                .iter()
-                .map(|e| e.id.as_str())
-                .collect::<Vec<_>>()
+            default.entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>()
         );
     }
 }

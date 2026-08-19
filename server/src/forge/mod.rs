@@ -1342,9 +1342,6 @@ mod tests {
 
     fn forge_c2s_test_app_with_registry(registry: BlueprintRegistry) -> App {
         let mut app = App::new();
-        app.insert_resource(
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
-        );
         add_minimal_client_request_resources(&mut app);
         add_forge_c2s_events(&mut app);
         app.insert_resource(registry);

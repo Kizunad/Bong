@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity, Events, Position};
 
 use crate::cultivation::components::{Cultivation, MeridianSystem};
-use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tick::CultivationClock;
@@ -60,7 +59,8 @@ impl MorphState {
 }
 
 /// 「易形」类技能的本体经脉门判据表——P4 只有 `morph.yixing` 一条，未来新增易形技能
-/// 加进这里即可，不必改通用 metadata 结构体。
+/// 加进这里即可，不必改 `TechniqueDefinition` 结构体形状（该结构体是 48 条 `const`
+/// 数组字面量，加一个字段要动全部既有条目，代价远大于这张小白名单）。
 pub fn technique_requires_form_anchor(technique_id: &str) -> bool {
     technique_id == "morph.yixing"
 }
@@ -89,8 +89,16 @@ pub fn form_anchors_open(
         })
 }
 
-/// `morph.yixing` 技能 id——`TechniqueRegistry` 与 `SkillRegistry` 的共享键。
+/// `morph.yixing` 技能 id——`known_techniques::TECHNIQUE_DEFINITIONS` 与
+/// `SkillRegistry` 的共享真源，避免字符串字面量在两处漂移。
 pub const YIXING_SKILL_ID: &str = "morph.yixing";
+
+/// 一次易形 cast 的默认冷却/演出时长（tick，20 TPS）——与
+/// `TechniqueDefinition{id:"morph.yixing"}` 的 `cast_ticks`/`cooldown_ticks` 字段
+/// 数值同步，本处只是 `CastResult::Started` 回填给 client 的演出参数，非权威真源
+/// （权威真源仍是 `TechniqueDefinition`，改一处需同步改另一处，两条 pin 测试互相锁定）。
+const YIXING_CAST_TICKS: u32 = 60;
+const YIXING_COOLDOWN_TICKS: u64 = 600;
 
 pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(YIXING_SKILL_ID, cast_morph_yixing);
@@ -103,16 +111,6 @@ pub fn declare_meridian_dependencies(
     // （`technique_requires_form_anchor` 白名单命中，由 cast/学习两处收拢点消费），
     // 不是这张通用表；显式声明空 deps 满足 `SkillRegistry` 审计完整性不变量。
     dependencies.declare(YIXING_SKILL_ID, Vec::new());
-}
-
-fn yixing_cast_timing(world: &bevy_ecs::world::World) -> (u64, u32) {
-    let techniques = world
-        .get_resource::<TechniqueRegistry>()
-        .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-    let definition = techniques
-        .get(YIXING_SKILL_ID)
-        .expect("validated TechniqueRegistry must contain morph.yixing");
-    (u64::from(definition.cooldown_ticks), definition.cast_ticks)
 }
 
 /// `morph.yixing` 的 `SkillFn` resolver——手动易形/解除的**唯一**落点（决议 §1
@@ -129,12 +127,11 @@ fn cast_morph_yixing(
     _target: Option<Entity>,
 ) -> CastResult {
     if world.get::<MorphState>(caster).is_some() {
-        let (cooldown_ticks, anim_duration_ticks) = yixing_cast_timing(world);
         release_morph_state(world, caster);
         emit_yixing_av(world, caster, YixingAvDirection::Release);
         return CastResult::Started {
-            cooldown_ticks,
-            anim_duration_ticks,
+            cooldown_ticks: YIXING_COOLDOWN_TICKS,
+            anim_duration_ticks: YIXING_CAST_TICKS,
         };
     }
 
@@ -162,19 +159,11 @@ fn cast_morph_yixing(
         };
     };
 
-    let (qi_cost, cooldown_ticks, anim_duration_ticks) = {
-        let techniques = world
-            .get_resource::<TechniqueRegistry>()
-            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-        let definition = techniques
-            .get(YIXING_SKILL_ID)
-            .expect("validated TechniqueRegistry must contain morph.yixing");
-        (
-            f64::from(definition.qi_cost),
-            u64::from(definition.cooldown_ticks),
-            definition.cast_ticks,
-        )
-    };
+    let qi_cost = f64::from(
+        crate::cultivation::known_techniques::technique_definition(YIXING_SKILL_ID)
+            .map(|def| def.qi_cost)
+            .unwrap_or(40.0),
+    );
     if !drain_qi_to_zone(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -191,8 +180,8 @@ fn cast_morph_yixing(
     emit_yixing_av(world, caster, YixingAvDirection::Morph);
 
     CastResult::Started {
-        cooldown_ticks,
-        anim_duration_ticks,
+        cooldown_ticks: YIXING_COOLDOWN_TICKS,
+        anim_duration_ticks: YIXING_CAST_TICKS,
     }
 }
 
@@ -242,7 +231,7 @@ fn emit_yixing_av(
         ));
         if let Some(target_player) = unique_id.clone() {
             // `morph_cast.json`：P3 重制为瞬发结算型 20t（resolver 双分支立即变形，
-            // 无 Casting/引导窗，TechniqueRegistry.cast_ticks 纯元数据——strike 顶点=tick 0
+            // 无 Casting/引导窗，YIXING_CAST_TICKS=60 纯元数据——strike 顶点=tick 0
             // 塌形瞬间与结算同帧），endTick=20 与上面的粒子 lifetime 对齐。
             events.send(VfxEventRequest::new(
                 origin,
@@ -698,14 +687,12 @@ mod tests {
 
         /// 带 ZoneRegistry + Position（spawn zone 内，[14,66,14]）+ Cultivation 的
         /// world——镜像 `dandao::skills::make_world_with_zone`。
-        fn make_world_with_caster_and_zone_and_registry(
+        fn make_world_with_caster_and_zone(
             qi_current: f64,
             qi_max: f64,
             races: RaceRegistry,
-            techniques: TechniqueRegistry,
         ) -> (bevy_ecs::world::World, Entity) {
             let mut world = bevy_ecs::world::World::new();
-            world.insert_resource(techniques);
             world.init_resource::<Events<QiTransfer>>();
             world.insert_resource(ZoneRegistry::default());
             world.insert_resource(CultivationClock { tick: 1234 });
@@ -724,33 +711,13 @@ mod tests {
             (world, entity)
         }
 
-        fn make_world_with_caster_and_zone(
-            qi_current: f64,
-            qi_max: f64,
-            races: RaceRegistry,
-        ) -> (bevy_ecs::world::World, Entity) {
-            make_world_with_caster_and_zone_and_registry(
-                qi_current,
-                qi_max,
-                races,
-                TechniqueRegistry::load_for_tests(),
-            )
-        }
-
-        fn yixing_qi_cost() -> f64 {
-            f64::from(
-                TechniqueRegistry::load_for_tests()
-                    .get(YIXING_SKILL_ID)
-                    .expect("checked-in TechniqueRegistry must contain morph.yixing")
-                    .qi_cost,
-            )
-        }
+        const YIXING_QI_COST: f64 = 40.0; // 与 known_techniques::TECHNIQUE_DEFINITIONS["morph.yixing"].qi_cost 同步的镜像常量。
 
         #[test]
         fn cast_succeeds_inserts_morph_state_deducts_qi_and_credits_zone() {
             let races = human_to_whale_registry();
             let (mut world, caster) =
-                make_world_with_caster_and_zone(yixing_qi_cost() + 10.0, 100.0, races);
+                make_world_with_caster_and_zone(YIXING_QI_COST + 10.0, 100.0, races);
             let initial_zone_spirit_qi = world
                 .resource::<ZoneRegistry>()
                 .find_zone_by_name("spawn")
@@ -775,7 +742,7 @@ mod tests {
             let cultivation = world.get::<Cultivation>(caster).unwrap();
             assert!(
                 (cultivation.qi_current - 10.0).abs() < 1e-9,
-                "qi_current 应恰好扣去 technique registry 中的 qi_cost（当前 40.0），实际 {}",
+                "qi_current 应恰好扣去 qi_cost={YIXING_QI_COST}（10.0+40.0-40.0=10.0），实际 {}",
                 cultivation.qi_current
             );
 
@@ -795,59 +762,9 @@ mod tests {
             assert!(!transfers.is_empty(), "应 emit QiTransfer 事件（守恒审计）");
             let total_amount: f64 = transfers.iter().map(|t| t.amount).sum();
             assert!(
-                (total_amount - yixing_qi_cost()).abs() < f64::EPSILON,
-                "QiTransfer 总金额应恰好等于 technique registry 中的 qi_cost（不多不少，守恒\
+                (total_amount - YIXING_QI_COST).abs() < f64::EPSILON,
+                "QiTransfer 总金额应恰好等于 qi_cost={YIXING_QI_COST}（不多不少，守恒\
                  金额一次性记账），实际 {total_amount}"
-            );
-        }
-
-        #[test]
-        fn cast_and_release_timing_consume_overridden_registry_metadata() {
-            let configured_cost = 2.5_f32;
-            let configured_cooldown = 73;
-            let configured_cast_ticks = 19;
-            let techniques =
-                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
-                    definition.qi_cost = configured_cost;
-                    definition.cooldown_ticks = configured_cooldown;
-                    definition.cast_ticks = configured_cast_ticks;
-                });
-            let races = human_to_whale_registry();
-            let (mut world, caster) =
-                make_world_with_caster_and_zone_and_registry(10.0, 100.0, races, techniques);
-
-            let morph = cast_morph_yixing(&mut world, caster, 0, None);
-            assert_eq!(
-                morph,
-                CastResult::Started {
-                    cooldown_ticks: u64::from(configured_cooldown),
-                    anim_duration_ticks: configured_cast_ticks,
-                },
-                "morph timing must come from the injected TechniqueRegistry"
-            );
-            assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current
-                    - (10.0 - f64::from(configured_cost)))
-                .abs()
-                    < 1e-9,
-                "morph charge must use overridden registry qi_cost"
-            );
-
-            let release = cast_morph_yixing(&mut world, caster, 0, None);
-            assert_eq!(
-                release,
-                CastResult::Started {
-                    cooldown_ticks: u64::from(configured_cooldown),
-                    anim_duration_ticks: configured_cast_ticks,
-                },
-                "release timing must use the same registry metadata rather than Rust constants"
-            );
-            assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current
-                    - (10.0 - f64::from(configured_cost)))
-                .abs()
-                    < 1e-9,
-                "release branch remains free and must not charge metadata qi_cost twice"
             );
         }
 
@@ -896,7 +813,7 @@ mod tests {
         fn cast_rejects_invalid_target_when_no_morph_pair_no_state_change() {
             let races = no_morph_pairs_registry();
             let (mut world, caster) =
-                make_world_with_caster_and_zone(yixing_qi_cost() + 10.0, 100.0, races);
+                make_world_with_caster_and_zone(YIXING_QI_COST + 10.0, 100.0, races);
 
             let result = cast_morph_yixing(&mut world, caster, 0, None);
             assert_eq!(
@@ -913,7 +830,7 @@ mod tests {
             );
             let cultivation = world.get::<Cultivation>(caster).unwrap();
             assert!(
-                (cultivation.qi_current - (yixing_qi_cost() + 10.0)).abs() < 1e-9,
+                (cultivation.qi_current - (YIXING_QI_COST + 10.0)).abs() < 1e-9,
                 "InvalidTarget 不应扣减 qi_current（在 drain_qi_to_zone 之前就已提前返回），\
                  实际 {}",
                 cultivation.qi_current
@@ -923,7 +840,6 @@ mod tests {
         #[test]
         fn cast_rejects_invalid_target_when_no_cultivation_component() {
             let mut world = bevy_ecs::world::World::new();
-            world.insert_resource(TechniqueRegistry::load_for_tests());
             world.insert_resource(human_to_whale_registry());
             let caster = world.spawn_empty().id();
 
@@ -945,7 +861,7 @@ mod tests {
             // 只有"解除"分支不扣费。
             let races = human_to_whale_registry();
             let (mut world, caster) =
-                make_world_with_caster_and_zone(yixing_qi_cost() * 2.0 + 10.0, 100.0, races);
+                make_world_with_caster_and_zone(YIXING_QI_COST * 2.0 + 10.0, 100.0, races);
 
             let first = cast_morph_yixing(&mut world, caster, 0, None);
             assert!(matches!(first, CastResult::Started { .. }));
@@ -981,7 +897,6 @@ mod tests {
         fn release_morph_state_is_noop_and_returns_false_when_not_morphed() {
             // 状态转换 A→A（未易形态调用 release）：不 panic，返回 false，不产生副作用。
             let mut world = bevy_ecs::world::World::new();
-            world.insert_resource(TechniqueRegistry::load_for_tests());
             let caster = world.spawn(Cultivation::default()).id();
 
             let released = release_morph_state(&mut world, caster);
@@ -995,7 +910,6 @@ mod tests {
         #[test]
         fn release_morph_state_removes_component_and_returns_true_when_morphed() {
             let mut world = bevy_ecs::world::World::new();
-            world.insert_resource(TechniqueRegistry::load_for_tests());
             let caster = world
                 .spawn((
                     Cultivation::default(),
@@ -1019,7 +933,7 @@ mod tests {
         // 锁住「cast 成功 → 三件套都发」「cast 失败/无 Position → 什么都不发」的契约。
         // 嵌套在 `cast_and_conservation_tests` 内部（而非同级 sibling）——需要复用其
         // 私有 helper（`make_world_with_caster_and_zone` / `human_to_whale_registry` /
-        // `no_morph_pairs_registry` / `yixing_qi_cost`），Rust 私有可见性只对**后代**
+        // `no_morph_pairs_registry` / `YIXING_QI_COST`），Rust 私有可见性只对**后代**
         // 模块开放，同级 sibling 看不到，故必须嵌套而非并列。
         mod av_emission_tests {
             use super::*;
@@ -1047,7 +961,7 @@ mod tests {
             fn successful_morph_cast_emits_vfx_audio_and_zone_narration() {
                 let races = human_to_whale_registry();
                 let (mut world, caster) =
-                    world_with_av_resources(yixing_qi_cost() + 10.0, 100.0, races);
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
 
                 let result = cast_morph_yixing(&mut world, caster, 0, None);
                 assert!(matches!(result, CastResult::Started { .. }));
@@ -1108,7 +1022,7 @@ mod tests {
                 // （anim_id="bong:morph_cast"，对应 player_animation/morph_cast.json）。
                 let races = human_to_whale_registry();
                 let (mut world, caster) =
-                    world_with_av_resources(yixing_qi_cost() + 10.0, 100.0, races);
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
                 let uuid = uuid::Uuid::from_u128(0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10);
                 world
                     .entity_mut(caster)
@@ -1149,7 +1063,7 @@ mod tests {
             fn toggle_off_release_cast_emits_reverse_narration() {
                 let races = human_to_whale_registry();
                 let (mut world, caster) =
-                    world_with_av_resources(yixing_qi_cost() + 10.0, 100.0, races);
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
 
                 // 第一次 cast：易形（消费第一条粒子/音效/narration，不污染下面的断言）。
                 let first = cast_morph_yixing(&mut world, caster, 0, None);
@@ -1175,7 +1089,7 @@ mod tests {
                 // InvalidTarget（无正向 morph_pair）不应触碰任何视听资源。
                 let races = no_morph_pairs_registry();
                 let (mut world, caster) =
-                    world_with_av_resources(yixing_qi_cost() + 10.0, 100.0, races);
+                    world_with_av_resources(YIXING_QI_COST + 10.0, 100.0, races);
 
                 let result = cast_morph_yixing(&mut world, caster, 0, None);
                 assert_eq!(
@@ -1213,7 +1127,6 @@ mod tests {
                 // caster 无 Position 组件（防御性场景）：emit_yixing_av 应静默跳过，不 panic。
                 let races = human_to_whale_registry();
                 let mut world = bevy_ecs::world::World::new();
-                world.insert_resource(TechniqueRegistry::load_for_tests());
                 world.init_resource::<Events<QiTransfer>>();
                 world.init_resource::<Events<VfxEventRequest>>();
                 world.init_resource::<Events<PlaySoundRecipeRequest>>();
@@ -1223,7 +1136,7 @@ mod tests {
                 world.insert_resource(races);
                 let caster = world
                     .spawn(Cultivation {
-                        qi_current: yixing_qi_cost() + 10.0,
+                        qi_current: YIXING_QI_COST + 10.0,
                         qi_max: 100.0,
                         ..Default::default()
                     })

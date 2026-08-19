@@ -5,7 +5,7 @@ use valence::prelude::Entity;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianSystem, QiColor};
 use crate::cultivation::insight_apply::InsightModifiers;
-use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
+use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::technique_scroll::{can_learn_technique, ScrollReadOutcome};
 
@@ -88,7 +88,6 @@ pub fn observe_learn_chance(
 
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_observe_attempt(
-    registry: &TechniqueRegistry,
     known: &KnownTechniques,
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
@@ -106,15 +105,14 @@ pub fn evaluate_observe_attempt(
     if !ctx.cooldown_ready {
         return ObserveOutcome::OnCooldown;
     }
-    let Some(definition) = registry.get(ctx.technique_id) else {
+    let Some(definition) = technique_definition(ctx.technique_id) else {
         return ObserveOutcome::UnknownTechnique;
     };
-    let grade = parse_grade(&definition.grade);
+    let grade = parse_grade(definition.grade);
     if grade == TechniqueGrade::Earth {
         return ObserveOutcome::EarthGradeBlocked;
     }
     let learn = can_learn_technique(
-        registry,
         known,
         cultivation,
         meridians,
@@ -253,7 +251,6 @@ mod tests {
     #[test]
     fn observe_requires_line_of_sight() {
         let outcome = evaluate_observe_attempt(
-            &TechniqueRegistry::load_for_tests(),
             &KnownTechniques::default(),
             &Cultivation::default(),
             &MeridianSystem::default(),
@@ -281,7 +278,6 @@ mod tests {
         meridians.get_mut(MeridianId::Lung).integrity = 1.0;
 
         let outcome = evaluate_observe_attempt(
-            &TechniqueRegistry::load_for_tests(),
             &KnownTechniques::default(),
             &Cultivation {
                 realm: Realm::Awaken,
@@ -317,7 +313,6 @@ mod tests {
         meridians.get_mut(MeridianId::Lung).integrity = 1.0;
 
         let outcome = evaluate_observe_attempt(
-            &TechniqueRegistry::load_for_tests(),
             &KnownTechniques::default(),
             &Cultivation {
                 realm: Realm::Condense,

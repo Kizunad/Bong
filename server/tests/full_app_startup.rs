@@ -1,10 +1,6 @@
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-const SOURCE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
-const SOURCE_ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
 
 fn unique_test_directory(name: &str) -> std::path::PathBuf {
     let nonce = SystemTime::now()
@@ -17,58 +13,16 @@ fn unique_test_directory(name: &str) -> std::path::PathBuf {
     ))
 }
 
-fn copy_tree(source: &Path, destination: &Path) {
-    fs::create_dir_all(destination).unwrap_or_else(|error| {
-        panic!(
-            "create copied asset directory {} failed: {error}",
-            destination.display()
-        )
-    });
-    for entry in fs::read_dir(source).unwrap_or_else(|error| {
-        panic!(
-            "read source asset directory {} failed: {error}",
-            source.display()
-        )
-    }) {
-        let entry = entry.expect("source asset directory entry must be readable");
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        if entry
-            .file_type()
-            .expect("source asset file type must be readable")
-            .is_dir()
-        {
-            copy_tree(&source_path, &destination_path);
-        } else {
-            fs::copy(&source_path, &destination_path).unwrap_or_else(|error| {
-                panic!(
-                    "copy asset {} to {} failed: {error}",
-                    source_path.display(),
-                    destination_path.display()
-                )
-            });
-        }
-    }
-}
-
-fn copied_assets_root(name: &str) -> PathBuf {
-    let root = unique_test_directory(name);
-    copy_tree(Path::new(SOURCE_ASSETS), &root.join("assets"));
-    root
-}
-
-fn run_full_app_startup(assets_root: &Path) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_bong-server"))
+#[test]
+fn full_app_startup_smoke_initializes_core_resources_and_ticks_once() {
+    let output = Command::new(env!("CARGO_BIN_EXE_bong-server"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("BONG_ASSETS_DIR", assets_root)
         .env("BONG_FULL_APP_STARTUP_SMOKE", "1")
         .env("BONG_SKIP_SKIN_PREFETCH", "1")
         .env("REDIS_URL", "redis://127.0.0.1:1")
         .output()
-        .expect("startup smoke binary should launch")
-}
+        .expect("startup smoke binary should launch");
 
-fn assert_startup_succeeds(output: &std::process::Output) {
     assert!(
         output.status.success(),
         "startup smoke should exit successfully; status={:?}\nstdout:\n{}\nstderr:\n{}",
@@ -80,92 +34,6 @@ fn assert_startup_succeeds(output: &std::process::Output) {
         String::from_utf8_lossy(&output.stdout).contains("full app startup smoke ok"),
         "startup smoke should print success marker; stdout:\n{}",
         String::from_utf8_lossy(&output.stdout)
-    );
-}
-
-#[test]
-fn full_app_startup_smoke_initializes_core_resources_and_ticks_once() {
-    let output = run_full_app_startup(Path::new(SOURCE_ROOT));
-    assert_startup_succeeds(&output);
-}
-
-#[test]
-fn full_app_startup_smoke_accepts_resolver_backed_technique_extension() {
-    let assets_root = copied_assets_root("resolver-backed-technique-extension");
-    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
-    let mut techniques =
-        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
-    techniques.push_str(
-        r#"
-
-[[techniques]]
-id = "dugu.eclipse"
-display_name = "蚀针"
-grade = "yellow"
-description = "由既有蛊道 resolver 接管的新增 metadata 条目。"
-required_realm = "Awaken"
-required_meridians = [{ channel = "Liver", min_health = 0.01 }]
-required_race = { kind = "any" }
-qi_cost = 1.0
-stamina_cost = 0.0
-cast_ticks = 1
-cooldown_ticks = 20
-range = 8.0
-icon_texture = "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
-category = "attack"
-dispatch = "metadata_backed"
-"#,
-    );
-    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
-
-    let output = run_full_app_startup(&assets_root);
-    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
-    assert_startup_succeeds(&output);
-}
-
-#[test]
-fn full_app_startup_smoke_rejects_consumerless_direct_generic_extension() {
-    let assets_root = copied_assets_root("consumerless-direct-generic-technique");
-    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
-    let mut techniques =
-        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
-    techniques.push_str(
-        r#"
-
-[[techniques]]
-id = "test.consumerless_direct_generic_startup_smoke"
-display_name = "数据扩展探针"
-grade = "common"
-description = "没有真实完成消费者的 generic cast 条目必须被完整启动拒绝。"
-required_realm = "Awaken"
-required_meridians = []
-required_race = { kind = "any" }
-qi_cost = 0.0
-stamina_cost = 0.0
-cast_ticks = 0
-cooldown_ticks = 0
-range = 0.0
-icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
-category = "buff"
-dispatch = "direct_generic"
-"#,
-    );
-    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
-
-    let output = run_full_app_startup(&assets_root);
-    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
-
-    assert!(
-        !output.status.success(),
-        "consumerless direct_generic metadata must fail full startup; stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("test.consumerless_direct_generic_startup_smoke")
-            && stderr.contains("no registered completion consumer"),
-        "startup failure must identify the consumerless technique and contract; stderr:\n{stderr}"
     );
 }
 

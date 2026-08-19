@@ -13,7 +13,7 @@ use crate::combat::status::{has_active_status, upsert_status_effect};
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
-use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
+use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
@@ -1177,12 +1177,9 @@ fn rejected(reason: CastRejectReason) -> CastResult {
 /// 与 `sword_path::skill_register::build_cast_context` 的插入位置镜像一致：拥有门
 /// （`known_active_proficiency` 返回 `Some`）之后，其余门禁（体力/境界/经脉）之前。
 fn race_gate_allows(world: &bevy_ecs::world::World, caster: Entity, skill_id: &str) -> bool {
-    let techniques = world
-        .get_resource::<TechniqueRegistry>()
-        .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-    let Some(definition) = techniques.get(skill_id) else {
-        // 未知 skill_id 不在本函数职责——调用点各自已有 metadata 校验，
-        // 本 gate 缺 definition 时不拦截，交由后续逻辑处理。
+    let Some(definition) = technique_definition(skill_id) else {
+        // 未知 skill_id 不在本函数职责——调用点各自已有 technique_definition 校验
+        // （或压根不需要，本 gate 缺 definition 时不拦截，交由后续逻辑处理）。
         return true;
     };
     let cultivation_race = world
@@ -1239,7 +1236,6 @@ mod tests {
     #[test]
     fn sword_qi_store_leaks_to_zone_and_expires() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock {
             tick: SWORD_QI_STORE_TICK_INTERVAL,
         });
@@ -1271,7 +1267,6 @@ mod tests {
     fn sword_qi_store_expiry_credits_remaining_qi_to_zone() {
         let stored = 10.0_f64;
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         // Set clock to the last tick (remaining_ticks will hit 0 after one interval).
         app.insert_resource(CombatClock {
             tick: SWORD_QI_STORE_TICK_INTERVAL,
@@ -1324,7 +1319,6 @@ mod tests {
     #[test]
     fn sword_hit_credits_qi_to_zone() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<QiTransfer>();
         app.insert_resource(make_zone_registry_empty());
         let container_account = QiAccountId::container("test_sword_zone_credit");
@@ -1399,7 +1393,6 @@ mod tests {
     fn sword_hit_saturated_zone_routes_overflow_no_evaporation() {
         use crate::qi_physics::ledger::QiAccountKind;
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<QiTransfer>();
         // zone 接近满：spirit_qi=0.96 → zone_current=48, room=(50-48)=2
         let mut reg = make_zone_registry_empty();
@@ -1472,7 +1465,6 @@ mod tests {
     #[test]
     fn sword_hit_releases_spent_stored_qi_to_zone() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<QiTransfer>();
         app.insert_resource(make_zone_registry_empty());
         let container_account = QiAccountId::container("test_sword_hit");
@@ -1509,7 +1501,6 @@ mod tests {
     #[test]
     fn drain_hit_returns_zero_without_store() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<QiTransfer>();
         app.insert_resource(make_zone_registry_empty());
         let entity = app.world_mut().spawn_empty().id();
@@ -1539,7 +1530,6 @@ mod tests {
     #[test]
     fn sword_qi_store_excretion_credits_zone() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock {
             tick: SWORD_QI_STORE_TICK_INTERVAL,
         });
@@ -1606,7 +1596,6 @@ mod tests {
     #[test]
     fn hit_events_raise_matching_sword_proficiency() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<crate::combat::events::CombatEvent>();
         app.add_systems(Update, track_sword_proficiency_from_hits);
         let attacker = app
@@ -1647,7 +1636,6 @@ mod tests {
         // → 应拒绝 NoWeapon（专用「缺武器」原因），而非旧的笼统 InvalidTarget。
         // 让通用警示 HUD 能显示「缺少武器」区别于「目标无效」。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         let target = app.world_mut().spawn_empty().id();
         let caster = app
             .world_mut()
@@ -1678,7 +1666,6 @@ mod tests {
         // 此 caster 无剑 → 现在落到更后的 NoWeapon 门，证明 no-target 门已彻底移除
         // （而非仍把"准星没对准"当目标无效拦下）。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         let caster = app
             .world_mut()
             .spawn(known(SWORD_CLEAVE_SKILL_ID, 0.5))
@@ -1710,7 +1697,6 @@ mod tests {
         use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
 
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<AttackIntent>();
         let caster = app
             .world_mut()
@@ -1754,7 +1740,6 @@ mod tests {
         // 无 Weapon → 直达 NoWeapon。pin 住「无剑格挡 → NoWeapon 而非笼统拒绝」，
         // 让通用警示 HUD 对格挡也显示「缺少武器」。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         let caster = app.world_mut().spawn(known(SWORD_PARRY_SKILL_ID, 0.5)).id();
 
         let result = cast_sword_parry(app.world_mut(), caster, 0, None);
@@ -1781,7 +1766,6 @@ mod tests {
         // （Cultivation 存在且 realm≠Awaken）才能抵达 has_sword，故给 Condense 境界 +
         // 不挂 Weapon → 直达 NoWeapon。pin 住「够境界但无剑 → NoWeapon 而非 RealmTooLow」。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         let caster = app
             .world_mut()
             .spawn((
@@ -1881,7 +1865,6 @@ mod tests {
             (SwordTechnique::Thrust, "sword_thrust_swing"),
         ] {
             let mut app = App::new();
-            app.insert_resource(TechniqueRegistry::load_for_tests());
             app.add_event::<PlaySoundRecipeRequest>();
             let origin = DVec3::new(10.0, 64.0, -3.0);
             let caster = app.world_mut().spawn(Position::new(origin)).id();
@@ -1917,7 +1900,6 @@ mod tests {
         // Parry/Infuse 不走挥动音（各有专属 AV 路径）；缺 Position 静默跳过不 panic。
         for technique in [SwordTechnique::Parry, SwordTechnique::Infuse] {
             let mut app = App::new();
-            app.insert_resource(TechniqueRegistry::load_for_tests());
             app.add_event::<PlaySoundRecipeRequest>();
             let caster = app.world_mut().spawn(Position::new(DVec3::ZERO)).id();
             emit_swing_audio(app.world_mut(), caster, technique);
@@ -1928,7 +1910,6 @@ mod tests {
         }
 
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<PlaySoundRecipeRequest>();
         let no_position = app.world_mut().spawn_empty().id();
         emit_swing_audio(app.world_mut(), no_position, SwordTechnique::Cleave);
@@ -1941,7 +1922,6 @@ mod tests {
     #[test]
     fn emit_attack_particle_sends_cleave_trail_at_caster() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<VfxEventRequest>();
         let caster = app
             .world_mut()
@@ -1983,7 +1963,6 @@ mod tests {
     #[test]
     fn emit_attack_particle_sends_thrust_hit_at_caster() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<VfxEventRequest>();
         let caster = app
             .world_mut()
@@ -2011,7 +1990,6 @@ mod tests {
     #[test]
     fn emit_attack_particle_skips_when_caster_has_no_position() {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<VfxEventRequest>();
         let caster = app.world_mut().spawn_empty().id();
 
@@ -2029,7 +2007,6 @@ mod tests {
         // emit_self_visuals 双重发粒子。此函数对这两招必须不发。
         for technique in [SwordTechnique::Parry, SwordTechnique::Infuse] {
             let mut app = App::new();
-            app.insert_resource(TechniqueRegistry::load_for_tests());
             app.add_event::<VfxEventRequest>();
             let caster = app
                 .world_mut()
@@ -2137,7 +2114,6 @@ mod tests {
         // （race="test_whale"）持剑、已激活技能，但必须在 `cast_sword_attack` 里的
         // race gate（line 493）被拒绝，AttackIntent 从不发出、qi_current 分毫不动。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<AttackIntent>();
         insert_non_humanoid_race_fixture(&mut app, "test_whale");
         let caster = app
@@ -2178,7 +2154,6 @@ mod tests {
         // sword.parry 同表 RaceGate::Humanoid。断言拒绝原因 + StatusEffects 未被写入
         // SwordParrying（证明 resolver 在 race gate 就返回，未继续执行格挡逻辑）。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         insert_non_humanoid_race_fixture(&mut app, "test_whale");
         let caster = app
             .world_mut()
@@ -2213,7 +2188,6 @@ mod tests {
         // RealmTooLow 门掩盖 RaceMismatch），qi_current 给足以证明 race gate 拒绝
         // 不扣真元、也不插入 PendingSwordInfuse（灌注从未真正发生）。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         insert_non_humanoid_race_fixture(&mut app, "test_whale");
         let caster = app
             .world_mut()
@@ -2257,7 +2231,6 @@ mod tests {
         // humanoid 单例，race 默认 "human"）施放 sword.cleave 不应被 race gate 拦下,
         // 必须真正 Started 并发出 AttackIntent。与上面的非人形拒绝测试对照。
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<AttackIntent>();
         let caster = app
             .world_mut()
@@ -2289,7 +2262,6 @@ mod tests {
 
     fn infuse_completion_app() -> App {
         let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock { tick: 40 });
         app.add_event::<QiTransfer>();
         app.add_event::<VfxEventRequest>();

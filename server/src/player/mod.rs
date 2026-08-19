@@ -7,8 +7,8 @@ use self::state::{
     canonical_player_id, load_player_slices_for_canonical_techniques, save_player_core_slice,
     save_player_inventory_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
-    save_player_slices_with_coffin, save_player_slow_slice, update_player_ui_prefs, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_slices_with_coffin, save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer,
+    PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{Lifecycle, UnlockedStyles, TICKS_PER_SECOND};
@@ -19,7 +19,6 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
-use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -33,7 +32,6 @@ use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
 use valence::entity::entity::Flags;
 use valence::message::SendMessage;
-use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::Despawned;
 use valence::prelude::{
     bevy_ecs, Added, App, AppExit, Changed, Client, Commands, Component, Entity, EntityLayerId,
@@ -87,14 +85,6 @@ type JoinedClientsWithoutStateQueryFilter = (
     Without<PlayerState>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
-
-#[derive(SystemParam)]
-pub(crate) struct PlayerAttachResources<'w> {
-    skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
-    skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
-    technique_registry: Option<Res<'w, TechniqueRegistry>>,
-}
-
 #[derive(Component, Default)]
 struct InventoryPersistenceDirty;
 
@@ -229,7 +219,8 @@ pub(crate) fn attach_player_state_to_joined_clients(
     persistence: Res<PlayerStatePersistence>,
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
-    mut resources: PlayerAttachResources<'_>,
+    mut skill_config_store: Option<ResMut<SkillConfigStore>>,
+    skill_config_schemas: Option<Res<SkillConfigSchemas>>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -266,30 +257,15 @@ pub(crate) fn attach_player_state_to_joined_clients(
             }
         }
 
-        let mut ui_prefs = persisted.ui_prefs.clone();
-        let skill_bar_prefs_sanitized = resources
-            .technique_registry
-            .as_deref()
-            .is_some_and(|registry| ui_prefs.sanitize_skill_bar_bindings(registry));
-        if skill_bar_prefs_sanitized {
-            let sanitized_skill_bar = ui_prefs.skill_bar.clone();
-            if let Err(error) = update_player_ui_prefs(&persistence, username.0.as_str(), |prefs| {
-                prefs.skill_bar = sanitized_skill_bar
-            }) {
-                tracing::warn!(
-                    "[bong][player] failed to persist sanitized skill-bar bindings for `{}`: {error}",
-                    username.0
-                );
-            }
-        }
-        let quick_slot_bindings = ui_prefs.quick_slot_bindings(persisted.inventory.as_ref());
-        let skill_bar_bindings = ui_prefs.skill_bar_bindings(
-            persisted.inventory.as_ref(),
-            resources.technique_registry.as_deref(),
-        );
+        let quick_slot_bindings = persisted
+            .ui_prefs
+            .quick_slot_bindings(persisted.inventory.as_ref());
+        let skill_bar_bindings = persisted
+            .ui_prefs
+            .skill_bar_bindings(persisted.inventory.as_ref());
         if let (Some(store), Some(schemas)) = (
-            resources.skill_config_store.as_deref_mut(),
-            resources.skill_config_schemas.as_deref(),
+            skill_config_store.as_deref_mut(),
+            skill_config_schemas.as_deref(),
         ) {
             store.replace_player_configs(
                 canonical_player_id(username.0.as_str()).as_str(),

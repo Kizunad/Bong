@@ -5,7 +5,7 @@ mod tests {
     use crate::combat::components::{DerivedAttrs, Wounds};
     use crate::cultivation::components::{Cultivation, Realm};
     use crate::cultivation::known_techniques::{
-        KnownTechnique, KnownTechniques, SkillCategory, TechniqueRegistry,
+        technique_definition, KnownTechnique, KnownTechniques, SkillCategory,
     };
     use crate::cultivation::meridian::severed::SkillMeridianDependencies;
     use crate::npc::combat_power::compute_combat_power;
@@ -14,10 +14,6 @@ mod tests {
         assign_npc_techniques, category_weight, has_usable_heal_technique,
         npc_meridian_system_for_realm, select_technique, NpcCooldownMap, NpcSkillScoringContext,
     };
-
-    fn registry() -> TechniqueRegistry {
-        TechniqueRegistry::load_for_tests()
-    }
 
     fn empty_deps() -> SkillMeridianDependencies {
         SkillMeridianDependencies::default()
@@ -44,21 +40,13 @@ mod tests {
         let meridian_sys =
             npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let technique_registry = registry();
 
         let mut attack_selected = 0u32;
         let mut heal_selected = 0u32;
 
         for seed in 0..50u64 {
-            let techniques = assign_npc_techniques(
-                &technique_registry,
-                NpcArchetype::Rogue,
-                realm,
-                &meridian_sys,
-                &deps,
-                None,
-                seed,
-            );
+            let techniques =
+                assign_npc_techniques(NpcArchetype::Rogue, realm, &meridian_sys, &deps, None, seed);
 
             let cultivation = Cultivation {
                 realm,
@@ -80,7 +68,6 @@ mod tests {
 
             for tick in 0..100u64 {
                 if let Some(sel) = select_technique(
-                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -93,7 +80,7 @@ mod tests {
                     &ctx,
                     None,
                 ) {
-                    let def = technique_registry.get(&sel.technique_id);
+                    let def = technique_definition(&sel.technique_id);
                     if let Some(d) = def {
                         match d.category {
                             SkillCategory::Attack | SkillCategory::Control => attack_selected += 1,
@@ -118,21 +105,13 @@ mod tests {
         let meridian_sys =
             npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let technique_registry = registry();
 
         let mut heal_count = 0u32;
         let total_trials = 200u32;
 
         for seed in 0..total_trials as u64 {
-            let techniques = assign_npc_techniques(
-                &technique_registry,
-                NpcArchetype::Rogue,
-                realm,
-                &meridian_sys,
-                &deps,
-                None,
-                seed,
-            );
+            let techniques =
+                assign_npc_techniques(NpcArchetype::Rogue, realm, &meridian_sys, &deps, None, seed);
 
             let cultivation = Cultivation {
                 realm,
@@ -145,7 +124,6 @@ mod tests {
 
             let hp_ratio = 0.2;
             let has_heal = has_usable_heal_technique(
-                &technique_registry,
                 &techniques,
                 &cultivation,
                 &deps,
@@ -167,7 +145,6 @@ mod tests {
                 };
 
                 if let Some(sel) = select_technique(
-                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -180,7 +157,7 @@ mod tests {
                     &ctx,
                     Some(SkillCategory::Heal),
                 ) {
-                    let def = technique_registry.get(&sel.technique_id);
+                    let def = technique_definition(&sel.technique_id);
                     if def.is_some_and(|d| d.category == SkillCategory::Heal) {
                         heal_count += 1;
                     }
@@ -233,20 +210,12 @@ mod tests {
         let meridian_sys =
             npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let technique_registry = registry();
 
         let mut buff_ever_selected = false;
 
         for seed in 0..200u64 {
-            let techniques = assign_npc_techniques(
-                &technique_registry,
-                NpcArchetype::Rogue,
-                realm,
-                &meridian_sys,
-                &deps,
-                None,
-                seed,
-            );
+            let techniques =
+                assign_npc_techniques(NpcArchetype::Rogue, realm, &meridian_sys, &deps, None, seed);
 
             let cultivation = Cultivation {
                 realm,
@@ -268,7 +237,6 @@ mod tests {
 
             for tick in 0..500u64 {
                 if let Some(sel) = select_technique(
-                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -281,7 +249,7 @@ mod tests {
                     &ctx,
                     None,
                 ) {
-                    let def = technique_registry.get(&sel.technique_id);
+                    let def = technique_definition(&sel.technique_id);
                     if def.is_some_and(|d| d.category == SkillCategory::Buff) {
                         buff_ever_selected = true;
                     }
@@ -605,17 +573,16 @@ mod tests {
 
     #[test]
     fn calibration_buff_duration_200_ticks() {
-        let technique_registry = registry();
-        let def_speed = technique_registry.get("npc.buff_speed");
-        let def_defense = technique_registry.get("npc.buff_defense");
+        let def_speed = technique_definition("npc.buff_speed");
+        let def_defense = technique_definition("npc.buff_defense");
 
         assert!(
             def_speed.is_some(),
-            "npc.buff_speed should exist in TechniqueRegistry"
+            "npc.buff_speed should exist in TECHNIQUE_DEFINITIONS"
         );
         assert!(
             def_defense.is_some(),
-            "npc.buff_defense should exist in TechniqueRegistry"
+            "npc.buff_defense should exist in TECHNIQUE_DEFINITIONS"
         );
     }
 
@@ -686,12 +653,10 @@ mod tests {
         let meridian_sys =
             npc_meridian_system_for_realm(realm, crate::body_plan::humanoid_plan_static());
         let deps = empty_deps();
-        let technique_registry = registry();
 
         let mut categories_seen = std::collections::HashSet::new();
         for seed in 0..50u64 {
             let techniques = assign_npc_techniques(
-                &technique_registry,
                 NpcArchetype::Disciple,
                 realm,
                 &meridian_sys,
@@ -720,7 +685,6 @@ mod tests {
                 };
 
                 if let Some(sel) = select_technique(
-                    &technique_registry,
                     &techniques,
                     &cultivation,
                     &deps,
@@ -733,7 +697,7 @@ mod tests {
                     &ctx,
                     None,
                 ) {
-                    if let Some(def) = technique_registry.get(&sel.technique_id) {
+                    if let Some(def) = technique_definition(&sel.technique_id) {
                         categories_seen.insert(format!("{:?}", def.category));
                     }
                 }

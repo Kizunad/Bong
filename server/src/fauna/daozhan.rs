@@ -1112,7 +1112,6 @@ pub(crate) fn daozhan_condense_spawn_system(
     mut spawn_requests: EventReader<SpawnDaoZhangFromCondenseRequest>,
     zones: Option<Res<ZoneRegistry>>,
     layers: Option<Res<crate::world::dimension::DimensionLayers>>,
-    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     mut commands: Commands,
 ) {
     let Some(zones) = zones else {
@@ -1136,7 +1135,6 @@ pub(crate) fn daozhan_condense_spawn_system(
 
         let entity = spawn_tsy_daoxiang_at(
             &mut commands,
-            &technique_registry,
             layer,
             &format!("condense:{}", req.zone_name),
             req.zone_name.as_str(),

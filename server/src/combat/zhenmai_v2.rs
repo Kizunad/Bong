@@ -369,6 +369,16 @@ pub struct ZhenmaiSkillCastEvent {
 }
 
 pub fn register(app: &mut App) {
+    if let Some(mut dependencies) = app
+        .world_mut()
+        .get_resource_mut::<SkillMeridianDependencies>()
+    {
+        declare_meridian_dependencies(&mut dependencies);
+    } else {
+        let mut dependencies = SkillMeridianDependencies::default();
+        declare_meridian_dependencies(&mut dependencies);
+        app.insert_resource(dependencies);
+    }
     app.add_event::<LocalNeutralizeEvent>();
     app.add_event::<MultiPointBackfireEvent>();
     app.add_event::<MeridianHardenEvent>();

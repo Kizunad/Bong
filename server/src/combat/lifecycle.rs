@@ -17,7 +17,7 @@ use crate::cultivation::death_hooks::{
     apply_revive_penalty, CultivationDeathCause, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
 };
-use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     calculate_rebirth_chance, lifespan_tick_rate_multiplier, tribulation_rebirth_chance,
@@ -1237,7 +1237,6 @@ pub fn handle_revival_action_intents(
     default_loadout: Option<Res<DefaultLoadout>>,
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
-    technique_registry: Option<Res<TechniqueRegistry>>,
     mut intents: EventReader<RevivalActionIntent>,
     mut qi: RevivalQiResources,
     mut events: RevivalEventWriters,
@@ -1429,7 +1428,6 @@ pub fn handle_revival_action_intents(
                     default_loadout.as_deref(),
                     item_registry.as_deref(),
                     inventory_allocator.as_deref_mut(),
-                    technique_registry.as_deref(),
                     coffin_registry.as_deref_mut(),
                     &mut events.coffin_state_events,
                 );
@@ -2181,7 +2179,6 @@ fn reset_for_new_character(
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
-    technique_registry: Option<&TechniqueRegistry>,
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
@@ -2308,13 +2305,10 @@ fn reset_for_new_character(
         AntiCheatCounter::default(),
         QuickSlotBindings::default(),
     ));
-    let fresh_known_techniques = technique_registry
-        .map(KnownTechniques::progression_reset)
-        .unwrap_or_default();
     entity_commands.insert((
         SkillBarBindings::default(),
         UnlockedStyles::default(),
-        fresh_known_techniques,
+        KnownTechniques::default(),
         learned_recipes,
     ));
     commands
@@ -5497,7 +5491,6 @@ mod tests {
         // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
         app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
-        app.insert_resource(TechniqueRegistry::load_for_tests());
 
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
@@ -5619,9 +5612,6 @@ mod tests {
         let meridians = entity_ref
             .get::<MeridianSystem>()
             .expect("meridians should be reattached for new character");
-        let known_techniques = entity_ref
-            .get::<KnownTechniques>()
-            .expect("new character should receive a KnownTechniques component");
         let learned = entity_ref
             .get::<LearnedRecipes>()
             .expect("learned recipes should be reattached for new character");
@@ -5663,17 +5653,6 @@ mod tests {
         assert_eq!(cultivation.qi_current, 0.0);
         assert_eq!(cultivation.qi_max, 10.0);
         assert_eq!(meridians.opened_count(), 0);
-        #[cfg(feature = "dev-techniques")]
-        assert_eq!(
-            known_techniques.entries.len(),
-            app.world().resource::<TechniqueRegistry>().len(),
-            "dev-techniques new-character reset must preserve full catalog grants"
-        );
-        #[cfg(not(feature = "dev-techniques"))]
-        assert!(
-            known_techniques.entries.is_empty(),
-            "production new-character reset must keep technique progression empty"
-        );
         assert_eq!(learned.ids, vec!["kai_mai_pill_v0".to_string()]);
         assert!(inventory.revision.0 >= 1);
         assert_eq!(anticheat_counter.reach_violations, 0);

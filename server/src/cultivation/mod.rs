@@ -146,7 +146,7 @@ use self::lifespan::{
 };
 use self::meridian::severed::{
     apply_severed_event_system, meridian_severed_detection_tick, MeridianSeveredEvent,
-    MeridianSeveredPermanent,
+    MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use self::meridian_open::{meridian_open_tick, MeridianOpenedEvent};
 use self::neg_pressure::tick_neg_pressure;
@@ -217,46 +217,43 @@ use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tic
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
-    let (technique_registry, skill_registry, skill_meridian_dependencies) = {
-        let races = app
-            .world()
-            .get_resource::<crate::body_plan::RaceRegistry>()
-            .expect("body_plan::register must insert RaceRegistry before cultivation::register");
-        let techniques =
-            known_techniques::TechniqueRegistry::load_default(races).unwrap_or_else(|error| {
-                panic!("[bong][cultivation] startup rejected technique metadata: {error}")
-            });
-        let items = app
-            .world()
-            .get_resource::<crate::inventory::ItemRegistry>()
-            .expect("inventory::register must insert ItemRegistry before cultivation::register");
-        crate::inventory::validate_technique_scroll_references(items, &techniques).unwrap_or_else(
-            |error| {
-                panic!("[bong][cultivation] startup rejected technique scroll references: {error}")
-            },
-        );
-        let skills = skill_registry::init_registry();
-        let dependencies = skill_registry::init_meridian_dependencies();
-        known_techniques::validate_startup_wiring(&techniques, &skills, &dependencies)
-            .unwrap_or_else(|error| {
-                panic!("[bong][cultivation] startup rejected technique wiring: {error}")
-            });
-        crate::network::techniques_snapshot_emit::validate_techniques_snapshot_budget(&techniques)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "[bong][cultivation] startup rejected learned-technique snapshot budget: {error:?}"
-                )
-            });
-        (techniques, skills, dependencies)
-    };
+    let mut skill_meridian_dependencies = SkillMeridianDependencies::default();
+    crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::dugu_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::tuike_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::sword_basics::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // plan-shield-block-v1 P4：盾牌格挡不依赖任何经脉（凡人物理防御）。
+    crate::combat::shield_block::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::sword_path::skill_register::declare_meridian_dependencies(
+        &mut skill_meridian_dependencies,
+    );
+    crate::movement::dash_proficiency::declare_dash_meridian_dependencies(
+        &mut skill_meridian_dependencies,
+    );
+    crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut skill_meridian_dependencies);
+    // GAP-1 fix: woliu.vortex 依赖 Lung（手太阴肺经），resolver 同步加 check gate。
+    crate::combat::woliu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // GAP-2 fix: burst_meridian.beng_quan 依赖手三阳（LargeIntestine/SmallIntestine/TripleEnergizer）。
+    crate::cultivation::burst_meridian::declare_meridian_dependencies(
+        &mut skill_meridian_dependencies,
+    );
+    // GAP-3 fix: yidao 五招补入审计表（功能门已在 resolver 内部实现，此处补完整性声明）。
+    crate::combat::yidao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // GAP-4 fix: dandao 三招补入审计表（功能门已在 resolver 内部实现，此处补完整性声明）。
+    crate::dandao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
+    crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // plan-race-system-v1 P4：morph.yixing 无经脉前置表条目（专属 form_anchors_open
+    // 门在别处判定），显式声明空 deps 以满足审计完整性不变量。
+    crate::body_plan::morph::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
     // plan-race-system-v1 P1b：`MeridianTopology` 不再是全局单例 Resource——拓扑数据
     // 按实体解析出的 BodyPlan 现场派生（见 `body_plan::resolve_meridian_topology_for_target`）。
     app.insert_resource(CultivationClock::default());
     app.init_resource::<CultivationSessionPracticeAccumulator>();
     app.insert_resource(DeadZoneTickHandler::default());
-    app.insert_resource(technique_registry);
-    app.insert_resource(skill_registry);
+    app.insert_resource(skill_registry::init_registry());
     app.insert_resource(skill_meridian_dependencies);
     app.insert_resource(InsightTriggerRegistry::with_defaults());
     app.insert_resource(DuoSheCooldowns::default());

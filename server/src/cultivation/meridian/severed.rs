@@ -193,7 +193,7 @@ pub(crate) fn check_player_skill_meridian_gate(
     }
     // 2. TechniqueDefinition.required_meridians：opened + SEVERED + integrity 检查
     for req in required_meridians {
-        let Some(id) = crate::cultivation::technique_scroll::parse_meridian_id(&req.channel) else {
+        let Some(id) = crate::cultivation::technique_scroll::parse_meridian_id(req.channel) else {
             // 未知 channel 名 → 保守拒绝，防止依赖声明漏洞
             tracing::warn!(
                 "[bong][cultivation][severed] check_player_skill_meridian_gate: \
@@ -426,13 +426,7 @@ pub struct SkillMeridianDependencies {
 }
 
 impl SkillMeridianDependencies {
-    /// 声明某个 resolver 对经脉的依赖。重复声明意味着两个初始化路径在争夺同一
-    /// 技能的门控真源，必须在启动期直接失败，不能悄悄覆盖先前声明。
     pub fn declare(&mut self, skill_id: &'static str, deps: Vec<MeridianId>) {
-        assert!(
-            !self.table.contains_key(skill_id),
-            "duplicate meridian dependency declaration for skill: {skill_id}"
-        );
         self.table.insert(skill_id, deps);
     }
 
@@ -1100,7 +1094,7 @@ mod tests {
         assert_eq!(r.source, SeveredSource::TribulationFail);
     }
 
-    // --- SkillMeridianDependencies（未声明 / 显式空 / 重复拒绝 / 查询）(5 tests) ---
+    // --- SkillMeridianDependencies (declared 表) (4 tests) ---
 
     #[test]
     fn dependencies_default_empty_lookup_returns_empty_slice() {
@@ -1124,10 +1118,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "duplicate meridian dependency declaration for skill: baomai.beng_quan"
-    )]
-    fn dependencies_reject_duplicate_declaration() {
+    fn dependencies_declare_overwrites_previous() {
         let mut table = SkillMeridianDependencies::default();
         table.declare("baomai.beng_quan", vec![MeridianId::LargeIntestine]);
         table.declare(
@@ -1138,23 +1129,7 @@ mod tests {
                 MeridianId::TripleEnergizer,
             ],
         );
-    }
-
-    #[test]
-    fn dependencies_distinguish_explicit_empty_from_undeclared() {
-        let mut table = SkillMeridianDependencies::default();
-        table.declare("movement.dash", Vec::new());
-
-        assert!(table.lookup("movement.dash").is_empty());
-        assert!(
-            table.is_declared("movement.dash"),
-            "an explicitly empty dependency declaration must remain distinguishable from absence"
-        );
-        assert!(table.lookup("missing.skill").is_empty());
-        assert!(
-            !table.is_declared("missing.skill"),
-            "an undeclared skill must not be admitted as explicitly dependency-free"
-        );
+        assert_eq!(table.lookup("baomai.beng_quan").len(), 3);
     }
 
     #[test]

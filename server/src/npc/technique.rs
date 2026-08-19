@@ -17,8 +17,8 @@ use valence::prelude::{bevy_ecs, Commands, Component, Entity, Query, Res, Resour
 
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
-    parse_required_realm, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
-    TechniqueRegistry,
+    technique_definition, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
+    TECHNIQUE_DEFINITIONS,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -46,6 +46,20 @@ fn splitmix64_range(seed: u64, n: u32) -> u32 {
         return 0;
     }
     (splitmix64_unit(seed) * n as f32) as u32 % n
+}
+
+// ─── Realm parsing helper ────────────────────────────────────────────────────
+
+fn parse_realm(raw: &str) -> Option<Realm> {
+    match raw {
+        "Awaken" => Some(Realm::Awaken),
+        "Induce" => Some(Realm::Induce),
+        "Condense" => Some(Realm::Condense),
+        "Solidify" => Some(Realm::Solidify),
+        "Spirit" => Some(Realm::Spirit),
+        "Void" => Some(Realm::Void),
+        _ => None,
+    }
 }
 
 // ─── NpcCooldownMap Resource ─────────────────────────────────────────────────
@@ -131,7 +145,7 @@ pub fn npc_meridian_system_for_realm(
 /// 跨模块 audit 测试（验证任意 spawn 路径产出的 NPC 不持有超出自身
 /// `Cultivation.realm` 的功法）共用同一比较口径，避免两处各写一份、日后跑偏。
 pub(crate) fn technique_realm_satisfied(def: &TechniqueDefinition, realm: Realm) -> bool {
-    let Some(required) = parse_required_realm(&def.required_realm) else {
+    let Some(required) = parse_realm(def.required_realm) else {
         return false;
     };
     realm_rank(required) <= realm_rank(realm)
@@ -144,7 +158,7 @@ fn meridian_deps_satisfied(
     meridian_deps: &SkillMeridianDependencies,
 ) -> bool {
     // 1. 检查 SkillMeridianDependencies 表中的依赖
-    let deps = meridian_deps.lookup(&definition.id);
+    let deps = meridian_deps.lookup(definition.id);
     for dep_id in deps {
         let m = meridian_sys.get(*dep_id);
         if !m.opened {
@@ -152,8 +166,8 @@ fn meridian_deps_satisfied(
         }
     }
     // 2. 检查 TechniqueDefinition.required_meridians 中的依赖
-    for required in &definition.required_meridians {
-        let Some(channel) = parse_meridian_id(&required.channel) else {
+    for required in definition.required_meridians {
+        let Some(channel) = parse_meridian_id(required.channel) else {
             return false;
         };
         let m = meridian_sys.get(channel);
@@ -167,13 +181,12 @@ fn meridian_deps_satisfied(
 /// 根据 archetype / realm / 经脉拓扑分配 NPC 功法（spawn 时调用）。
 ///
 /// 分配的功法必须同时满足：
-/// 1. `realm_rank(parse_required_realm(&def.required_realm)) <= realm_rank(npc_realm)`
+/// 1. `realm_rank(parse_realm(def.required_realm)) <= realm_rank(npc_realm)`
 /// 2. 经脉依赖满足（`meridian_deps.lookup` + `MeridianSystem` 已开）
 ///
 /// NPC 功法 proficiency spawn 时固定，不随战斗增长（§8.1 #2 决议）。
 /// 各 archetype 功法分配见 plan §P1.1 表格。
 pub fn assign_npc_techniques(
-    technique_registry: &TechniqueRegistry,
     archetype: NpcArchetype,
     realm: Realm,
     meridian_sys: &MeridianSystem,
@@ -182,7 +195,7 @@ pub fn assign_npc_techniques(
     entity_seed: u64,
 ) -> KnownTechniques {
     // 收集所有 realm + 经脉可用的功法
-    let available: Vec<&TechniqueDefinition> = technique_registry
+    let available: Vec<&TechniqueDefinition> = TECHNIQUE_DEFINITIONS
         .iter()
         .filter(|def| {
             technique_realm_satisfied(def, realm)
@@ -387,7 +400,6 @@ pub struct SelectedTechnique {
 /// MeridianSeveredPermanent 的场景）。
 #[allow(clippy::too_many_arguments)]
 pub fn select_technique(
-    technique_registry: &TechniqueRegistry,
     known: &KnownTechniques,
     cultivation: &Cultivation,
     meridian_deps: &SkillMeridianDependencies,
@@ -406,7 +418,7 @@ pub fn select_technique(
         if !entry.active {
             continue;
         }
-        let Some(def) = technique_registry.get(&entry.id) else {
+        let Some(def) = technique_definition(&entry.id) else {
             continue;
         };
         if let Some(filter) = category_filter {
@@ -573,7 +585,7 @@ impl ActionBuilder for NpcHealAction {
 // ─── NpcHealScorer system ────────────────────────────────────────────────────
 
 /// hp_ratio < 0.3 + has Heal-category technique + heal not on cooldown -> 0.9.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::type_complexity)]
 pub fn npc_heal_scorer_system(
     npcs: Query<
         (
@@ -587,7 +599,6 @@ pub fn npc_heal_scorer_system(
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
-    technique_registry: Res<TechniqueRegistry>,
     cooldowns: Option<Res<NpcCooldownMap>>,
     meridian_deps: Option<Res<SkillMeridianDependencies>>,
     mut scorers: Query<(&Actor, &mut Score), With<NpcHealScorer>>,
@@ -634,7 +645,7 @@ pub fn npc_heal_scorer_system(
                 if !entry.active {
                     return false;
                 }
-                let Some(def) = technique_registry.get(&entry.id) else {
+                let Some(def) = technique_definition(&entry.id) else {
                     return false;
                 };
                 if def.category != SkillCategory::Heal {
@@ -679,7 +690,6 @@ pub fn npc_heal_scorer_system(
 /// 的实时 opened 检查，防止 dugu 毒关脉后仍释放治疗功法）。
 #[allow(clippy::too_many_arguments)]
 pub fn has_usable_heal_technique(
-    technique_registry: &TechniqueRegistry,
     known: &KnownTechniques,
     cultivation: &Cultivation,
     deps: &SkillMeridianDependencies,
@@ -693,7 +703,7 @@ pub fn has_usable_heal_technique(
         if !entry.active {
             return false;
         }
-        let Some(def) = technique_registry.get(&entry.id) else {
+        let Some(def) = technique_definition(&entry.id) else {
             return false;
         };
         if def.category != SkillCategory::Heal {
@@ -750,7 +760,7 @@ pub fn build_npc_skill_scoring_context(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::type_complexity)]
 pub fn npc_technique_scorer_system(
     npcs: Query<
         (
@@ -765,7 +775,6 @@ pub fn npc_technique_scorer_system(
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
-    technique_registry: Res<TechniqueRegistry>,
     cooldowns: Option<Res<NpcCooldownMap>>,
     meridian_deps: Option<Res<SkillMeridianDependencies>>,
     mut scorers: Query<(&Actor, &mut Score), With<NpcTechniqueScorer>>,
@@ -819,7 +828,6 @@ pub fn npc_technique_scorer_system(
             let ctx = build_npc_skill_scoring_context(cultivation, wounds_opt, bb);
 
             let has_usable = select_technique(
-                &technique_registry,
                 known,
                 cultivation,
                 deps,
@@ -893,11 +901,6 @@ fn run_technique_action<T: Component>(
                     let severed = world.get::<MeridianSeveredPermanent>(actor_entity);
                     let meridian_sys = world.get::<MeridianSystem>(actor_entity);
 
-                    let technique_registry = world
-                        .get_resource::<TechniqueRegistry>()
-                        .expect(
-                            "cultivation::register must insert TechniqueRegistry before NPC skill selection",
-                        );
                     let empty_deps = SkillMeridianDependencies::default();
                     let deps = world
                         .get_resource::<SkillMeridianDependencies>()
@@ -918,7 +921,6 @@ fn run_technique_action<T: Component>(
                     let ctx = build_npc_skill_scoring_context(cultivation, wounds, bb_ref);
 
                     match select_technique(
-                        technique_registry,
                         known,
                         cultivation,
                         deps,
@@ -1021,87 +1023,6 @@ mod tests {
         MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
     };
     use crate::npc::lifecycle::NpcArchetype;
-
-    fn registry() -> TechniqueRegistry {
-        TechniqueRegistry::load_for_tests()
-    }
-
-    fn technique_definition_for_test(id: &str) -> Option<TechniqueDefinition> {
-        registry().get(id).cloned()
-    }
-
-    fn assign_npc_techniques(
-        archetype: NpcArchetype,
-        realm: Realm,
-        meridian_sys: &MeridianSystem,
-        meridian_deps: &SkillMeridianDependencies,
-        qi_color_hint: Option<&str>,
-        entity_seed: u64,
-    ) -> KnownTechniques {
-        super::assign_npc_techniques(
-            &registry(),
-            archetype,
-            realm,
-            meridian_sys,
-            meridian_deps,
-            qi_color_hint,
-            entity_seed,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn select_technique(
-        known: &KnownTechniques,
-        cultivation: &Cultivation,
-        meridian_deps: &SkillMeridianDependencies,
-        severed: Option<&MeridianSeveredPermanent>,
-        meridian_sys: Option<&MeridianSystem>,
-        cooldowns: &NpcCooldownMap,
-        npc_entity: Entity,
-        target_distance: f32,
-        current_tick: u64,
-        ctx: &NpcSkillScoringContext,
-        category_filter: Option<SkillCategory>,
-    ) -> Option<SelectedTechnique> {
-        super::select_technique(
-            &registry(),
-            known,
-            cultivation,
-            meridian_deps,
-            severed,
-            meridian_sys,
-            cooldowns,
-            npc_entity,
-            target_distance,
-            current_tick,
-            ctx,
-            category_filter,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn has_usable_heal_technique(
-        known: &KnownTechniques,
-        cultivation: &Cultivation,
-        deps: &SkillMeridianDependencies,
-        severed: Option<&MeridianSeveredPermanent>,
-        meridian_sys: Option<&MeridianSystem>,
-        cooldowns: &NpcCooldownMap,
-        npc_entity: Entity,
-        current_tick: u64,
-    ) -> bool {
-        super::has_usable_heal_technique(
-            &registry(),
-            known,
-            cultivation,
-            deps,
-            severed,
-            meridian_sys,
-            cooldowns,
-            npc_entity,
-            current_tick,
-        )
-    }
 
     /// 创建一个有 N 条经脉已开的 MeridianSystem（方便测试）。
     fn meridian_sys_with_opened(ids: &[MeridianId]) -> MeridianSystem {
@@ -1377,8 +1298,8 @@ mod tests {
             let kt =
                 assign_npc_techniques(NpcArchetype::Rogue, Realm::Awaken, &sys, &deps, None, seed);
             for entry in &kt.entries {
-                let def = technique_definition_for_test(&entry.id).expect("valid technique");
-                let required = parse_required_realm(&def.required_realm).unwrap();
+                let def = technique_definition(&entry.id).expect("valid technique");
+                let required = parse_realm(def.required_realm).unwrap();
                 assert!(
                     realm_rank(required) <= realm_rank(Realm::Awaken),
                     "Awaken NPC should not have technique {} requiring {:?}",
@@ -1397,7 +1318,7 @@ mod tests {
         // Even Induce rogue — techniques requiring meridians should be excluded
         let kt = assign_npc_techniques(NpcArchetype::Rogue, Realm::Induce, &sys, &deps, None, 42);
         for entry in &kt.entries {
-            let def = technique_definition_for_test(&entry.id).expect("valid technique");
+            let def = technique_definition(&entry.id).expect("valid technique");
             assert!(
                 def.required_meridians.is_empty(),
                 "technique {} requires meridians but NPC has none opened — should have been filtered",
@@ -1769,7 +1690,7 @@ mod tests {
         // category_weight(Heal) 即便为 0 也被 .max(0.001) 抬成非零权重，NPC 满血时
         // 仍有概率用「通用功法回合」self-cast 治疗，抢占进攻。Defense 早已被排除，Heal 此前漏排。
         assert_eq!(
-            technique_definition_for_test("npc.heal_basic").map(|d| d.category),
+            technique_definition("npc.heal_basic").map(|d| d.category),
             Some(SkillCategory::Heal),
             "前置假设：npc.heal_basic 必须是 Heal 类别"
         );
@@ -2398,33 +2319,33 @@ mod tests {
 
     #[test]
     fn meridian_deps_satisfied_no_deps() {
-        let def = technique_definition_for_test("sword.cleave").unwrap();
+        let def = technique_definition("sword.cleave").unwrap();
         let sys = MeridianSystem::default();
         let deps = empty_deps();
         assert!(
-            meridian_deps_satisfied(&def, &sys, &deps),
+            meridian_deps_satisfied(def, &sys, &deps),
             "technique with no meridian deps should pass"
         );
     }
 
     #[test]
     fn meridian_deps_satisfied_with_opened() {
-        let def = technique_definition_for_test("zhenmai.parry").unwrap(); // requires Lung
+        let def = technique_definition("zhenmai.parry").unwrap(); // requires Lung
         let sys = meridian_sys_with_opened(&[MeridianId::Lung]);
         let deps = empty_deps();
         assert!(
-            meridian_deps_satisfied(&def, &sys, &deps),
+            meridian_deps_satisfied(def, &sys, &deps),
             "technique with opened required meridian should pass"
         );
     }
 
     #[test]
     fn meridian_deps_not_satisfied_when_closed() {
-        let def = technique_definition_for_test("zhenmai.parry").unwrap(); // requires Lung
+        let def = technique_definition("zhenmai.parry").unwrap(); // requires Lung
         let sys = MeridianSystem::default(); // all closed
         let deps = empty_deps();
         assert!(
-            !meridian_deps_satisfied(&def, &sys, &deps),
+            !meridian_deps_satisfied(def, &sys, &deps),
             "technique with closed required meridian should fail"
         );
     }
@@ -2470,15 +2391,15 @@ mod tests {
                     assert!(entry.active);
                     // Verify technique exists
                     assert!(
-                        technique_definition_for_test(&entry.id).is_some(),
+                        technique_definition(&entry.id).is_some(),
                         "{:?} x {:?}: technique {} not found in definitions",
                         archetype,
                         realm,
                         entry.id
                     );
                     // Verify realm requirement met
-                    let def = technique_definition_for_test(&entry.id).unwrap();
-                    if let Some(required) = parse_required_realm(&def.required_realm) {
+                    let def = technique_definition(&entry.id).unwrap();
+                    if let Some(required) = parse_realm(def.required_realm) {
                         assert!(
                             realm_rank(required) <= realm_rank(realm),
                             "{:?} x {:?}: technique {} requires {:?} but NPC is {:?}",
@@ -2498,14 +2419,14 @@ mod tests {
 
     #[test]
     fn parse_realm_all_variants() {
-        assert_eq!(parse_required_realm("Awaken"), Some(Realm::Awaken));
-        assert_eq!(parse_required_realm("Induce"), Some(Realm::Induce));
-        assert_eq!(parse_required_realm("Condense"), Some(Realm::Condense));
-        assert_eq!(parse_required_realm("Solidify"), Some(Realm::Solidify));
-        assert_eq!(parse_required_realm("Spirit"), Some(Realm::Spirit));
-        assert_eq!(parse_required_realm("Void"), Some(Realm::Void));
-        assert_eq!(parse_required_realm("invalid"), None);
-        assert_eq!(parse_required_realm(""), None);
+        assert_eq!(parse_realm("Awaken"), Some(Realm::Awaken));
+        assert_eq!(parse_realm("Induce"), Some(Realm::Induce));
+        assert_eq!(parse_realm("Condense"), Some(Realm::Condense));
+        assert_eq!(parse_realm("Solidify"), Some(Realm::Solidify));
+        assert_eq!(parse_realm("Spirit"), Some(Realm::Spirit));
+        assert_eq!(parse_realm("Void"), Some(Realm::Void));
+        assert_eq!(parse_realm("invalid"), None);
+        assert_eq!(parse_realm(""), None);
     }
 
     // === category_weight ===
@@ -3003,7 +2924,7 @@ mod tests {
         let deps = empty_deps();
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
-        let def = technique_definition_for_test("zhenmai.neutralize").unwrap();
+        let def = technique_definition("zhenmai.neutralize").unwrap();
         if def.qi_cost > 0.0 {
             assert!(
                 !has_usable_heal_technique(

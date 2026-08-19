@@ -4,7 +4,7 @@ use valence::prelude::{Changed, Client, Entity, Query, Res, Username, With};
 
 use crate::combat::components::{SkillBarBindings, SkillSlot};
 use crate::combat::CombatClock;
-use crate::cultivation::known_techniques::TechniqueRegistry;
+use crate::cultivation::known_techniques::technique_definition;
 use crate::inventory::{
     ItemRegistry, PlayerInventory, DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
@@ -23,7 +23,6 @@ type SkillBarEmitFilter = (With<Client>, Changed<SkillBarBindings>);
 pub fn emit_skillbar_config_payloads(
     clock: Res<CombatClock>,
     item_registry: Res<ItemRegistry>,
-    technique_registry: Res<TechniqueRegistry>,
     mut clients: Query<
         (
             Entity,
@@ -68,15 +67,13 @@ pub fn emit_skillbar_config_payloads(
                     })
                 }),
                 SkillSlot::Skill { skill_id } => {
-                    technique_registry
-                        .get(skill_id)
-                        .map(|definition| SkillBarEntryV1::Skill {
-                            skill_id: skill_id.clone(),
-                            display_name: definition.display_name.to_string(),
-                            cast_duration_ms: definition.cast_ticks.saturating_mul(TICK_MS as u32),
-                            cooldown_ms: definition.cooldown_ticks.saturating_mul(TICK_MS as u32),
-                            icon_texture: definition.icon_texture.to_string(),
-                        })
+                    technique_definition(skill_id).map(|definition| SkillBarEntryV1::Skill {
+                        skill_id: skill_id.clone(),
+                        display_name: definition.display_name.to_string(),
+                        cast_duration_ms: definition.cast_ticks.saturating_mul(TICK_MS as u32),
+                        cooldown_ms: definition.cooldown_ticks.saturating_mul(TICK_MS as u32),
+                        icon_texture: definition.icon_texture.to_string(),
+                    })
                 }
             };
             slots.push(entry);

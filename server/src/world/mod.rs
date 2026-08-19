@@ -211,7 +211,6 @@ pub fn setup_world(
         WorldBootstrap::FallbackFlat(fallback) => {
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
-            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_fallback_flat_world(&mut commands, &server, &dimensions, &biomes)
         }
         WorldBootstrap::TerrainRaster(config) => {
@@ -239,7 +238,6 @@ pub fn setup_world(
                 anvil.world_path.display(),
                 anvil.region_dir.display()
             );
-            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_anvil_world(&mut commands, &server, &dimensions, &biomes, anvil)
         }
     };

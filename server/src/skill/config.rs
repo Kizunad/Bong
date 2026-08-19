@@ -6,7 +6,7 @@ use valence::prelude::{bevy_ecs, Resource};
 
 use crate::combat::components::Casting;
 use crate::cultivation::components::MeridianId;
-use crate::cultivation::known_techniques::TechniqueRegistry;
+use crate::cultivation::known_techniques::technique_definition;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -224,7 +224,6 @@ pub fn validate_skill_config(
 }
 
 pub fn handle_config_intent(
-    techniques: &TechniqueRegistry,
     player_id: &str,
     skill_id: &str,
     config: BTreeMap<String, Value>,
@@ -232,7 +231,7 @@ pub fn handle_config_intent(
     store: &mut SkillConfigStore,
     schemas: &SkillConfigSchemas,
 ) -> Result<SkillConfigSnapshot, SkillConfigRejectReason> {
-    if techniques.get(skill_id).is_none() {
+    if technique_definition(skill_id).is_none() {
         return Err(SkillConfigRejectReason::UnknownSkill);
     }
     if current_casting
@@ -488,7 +487,6 @@ mod tests {
         config.insert("meridian_id".to_string(), json!("Pericardium"));
 
         let snapshot = handle_config_intent(
-            &TechniqueRegistry::load_for_tests(),
             "offline:Azure",
             "burst_meridian.beng_quan",
             config,
@@ -520,7 +518,6 @@ mod tests {
         };
         assert_eq!(
             handle_config_intent(
-                &TechniqueRegistry::load_for_tests(),
                 "offline:Azure",
                 "burst_meridian.beng_quan",
                 BTreeMap::from([("stance".to_string(), json!("long"))]),
@@ -533,7 +530,6 @@ mod tests {
         );
 
         let snapshot = handle_config_intent(
-            &TechniqueRegistry::load_for_tests(),
             "offline:Azure",
             "burst_meridian.beng_quan",
             BTreeMap::new(),
@@ -619,7 +615,6 @@ mod tests {
         let schemas = SkillConfigSchemas::default();
         let mut store = SkillConfigStore::default();
         let snapshot = handle_config_intent(
-            &TechniqueRegistry::load_for_tests(),
             "offline:Azure",
             "zhenmai.sever_chain",
             BTreeMap::from([

@@ -1,7 +1,7 @@
 //! skillbar_config 发射契约测试。
 //!
 //! plan-skill-av-relink-v1 P3（图标链）追加：Skill 槽下发的 icon_texture 必须严格
-//! 等于 `TechniqueRegistry` 中该 id 的 icon_texture 且非空；Item 槽 icon_texture 恒空串
+//! 等于 `technique_definition(id).icon_texture` 且非空；Item 槽 icon_texture 恒空串
 //! （P0 显式契约：client 按 template_id 走 ItemIconRegistry 富解析）；未知
 //! technique id / 解析不到的 Item instance / 无 inventory 一律下发 None 槽。
 
@@ -14,7 +14,7 @@ use valence::testing::create_mock_client;
 use super::skillbar_config_emit::emit_skillbar_config_payloads;
 use crate::combat::components::{SkillBarBindings, SkillSlot};
 use crate::combat::CombatClock;
-use crate::cultivation::known_techniques::TechniqueRegistry;
+use crate::cultivation::known_techniques::{technique_definition, TECHNIQUE_DEFINITIONS};
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
     ItemTemplate, PlacedItemState, PlayerInventory,
@@ -108,7 +108,6 @@ fn emit_and_collect_skillbar_config(
     inventory: Option<PlayerInventory>,
 ) -> SkillBarConfigV1 {
     let mut app = App::new();
-    app.insert_resource(TechniqueRegistry::load_for_tests());
     app.insert_resource(CombatClock { tick });
     app.insert_resource(registry);
     app.add_systems(Update, emit_skillbar_config_payloads);
@@ -178,12 +177,9 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
         Some(inventory),
     );
 
-    let technique_registry = TechniqueRegistry::load_for_tests();
-    let expected_icon = technique_registry
-        .get("burst_meridian.beng_quan")
+    let expected_icon = technique_definition("burst_meridian.beng_quan")
         .expect("burst_meridian.beng_quan must be registered")
-        .icon_texture
-        .as_str();
+        .icon_texture;
     assert_eq!(skillbar.slots.len(), 9);
     assert!(matches!(
         &skillbar.slots[0],
@@ -262,14 +258,12 @@ fn skillbar_config_emit_same_skill_bound_to_two_slots_reports_identical_cooldown
 }
 
 /// plan-skill-av-relink-v1 P3 —— 全部 technique 逐条对拍：Skill 槽下发的
-/// icon_texture 必须严格等于 `TechniqueRegistry` 对应定义且非空。
+/// icon_texture 必须严格等于 `technique_definition(id).icon_texture` 且非空。
 /// SkillBar 只有 9 槽，按 9 条一批分批绑定跑 emit，保证 49 条全覆盖。
 #[test]
 fn skillbar_skill_slots_emit_definition_icon_texture_for_every_technique() {
-    let technique_registry = TechniqueRegistry::load_for_tests();
-    let definitions: Vec<_> = technique_registry.iter().collect();
     let mut covered = 0usize;
-    for chunk in definitions.chunks(SkillBarBindings::SLOT_COUNT) {
+    for chunk in TECHNIQUE_DEFINITIONS.chunks(SkillBarBindings::SLOT_COUNT) {
         let mut bindings = SkillBarBindings::default();
         for (slot, def) in chunk.iter().enumerate() {
             assert!(bindings.set(
@@ -307,7 +301,7 @@ fn skillbar_skill_slots_emit_definition_icon_texture_for_every_technique() {
                         icon_texture.as_str(),
                         def.icon_texture,
                         "Skill 槽 `{}` 下发的 icon_texture 必须严格等于 \
-                         TechniqueRegistry 定义值 `{}`——漂移意味着 emit 路径没走 registry",
+                         technique_definition 定义值 `{}`——漂移意味着 emit 路径没走定义表",
                         def.id,
                         def.icon_texture
                     );
@@ -334,7 +328,7 @@ fn skillbar_skill_slots_emit_definition_icon_texture_for_every_technique() {
     }
     assert_eq!(
         covered,
-        definitions.len(),
+        TECHNIQUE_DEFINITIONS.len(),
         "分批循环必须遍历全部 technique 定义"
     );
 }
@@ -361,7 +355,7 @@ fn skillbar_unknown_skill_id_and_unresolvable_item_emit_none() {
 
     assert!(
         config.slots[0].is_none(),
-        "未注册的 technique id 不应下发条目（TechniqueRegistry 返回 None），实际 {:?}",
+        "未注册的 technique id 不应下发条目（technique_definition 返回 None），实际 {:?}",
         config.slots[0]
     );
     assert!(

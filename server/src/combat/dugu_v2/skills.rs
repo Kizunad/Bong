@@ -7,7 +7,6 @@ use crate::combat::events::{emit_death_event_if_lethal, DeathEvent, DeathEventIf
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
-use crate::cultivation::known_techniques::TechniqueDefinition;
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
@@ -37,8 +36,8 @@ use super::events::{
 };
 use super::physics::{
     defender_resistance, dirty_qi_collision, eclipse_effect, fake_qi_color_for_realm,
-    penetrate_spec, reveal_probability, self_cure_gain_percent, shroud_spec,
-    skill_spec_with_definition, SELF_CURE_REVEAL_THRESHOLD_PERCENT, SELF_CURE_SOFT_CAP_PERCENT,
+    penetrate_spec, reveal_probability, self_cure_gain_percent, shroud_spec, skill_spec,
+    SELF_CURE_REVEAL_THRESHOLD_PERCENT, SELF_CURE_SOFT_CAP_PERCENT,
 };
 use super::state::{DuguState, ReverseAftermathCloud, ShroudActive, TaintMark};
 
@@ -133,18 +132,7 @@ pub fn resolve_dugu_v2_skill(
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
         return rejected(CastRejectReason::QiInsufficient);
     };
-    let definition = world
-        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
-        .and_then(|registry| registry.get(skill.as_str()))
-        .cloned();
-    if let Some(definition) = definition.as_ref() {
-        if crate::cultivation::technique_scroll::realm_rank(cultivation.realm)
-            < crate::cultivation::technique_scroll::realm_rank(definition.required_realm_value())
-        {
-            return rejected(CastRejectReason::RealmTooLow);
-        }
-    }
-    let spec = skill_spec_with_definition(skill, definition.as_ref());
+    let spec = skill_spec(skill);
     if cultivation.qi_current + f64::EPSILON < spec.qi_cost {
         return rejected(CastRejectReason::QiInsufficient);
     }
@@ -153,33 +141,11 @@ pub fn resolve_dugu_v2_skill(
     }
 
     let result = match skill {
-        DuguSkillId::Eclipse => apply_eclipse(
-            world,
-            caster,
-            target,
-            &cultivation,
-            definition.as_ref(),
-            now_tick,
-        ),
+        DuguSkillId::Eclipse => apply_eclipse(world, caster, target, &cultivation, now_tick),
         DuguSkillId::SelfCure => apply_self_cure(world, caster, &cultivation, now_tick),
-        DuguSkillId::Penetrate => apply_penetrate(
-            world,
-            caster,
-            target,
-            &cultivation,
-            definition.as_ref(),
-            now_tick,
-        ),
+        DuguSkillId::Penetrate => apply_penetrate(world, caster, target, &cultivation, now_tick),
         DuguSkillId::Shroud => apply_shroud(world, caster, &cultivation, now_tick),
-        DuguSkillId::Reverse => apply_reverse(
-            world,
-            caster,
-            target,
-            &cultivation,
-            spec.qi_cost,
-            definition.as_ref(),
-            now_tick,
-        ),
+        DuguSkillId::Reverse => apply_reverse(world, caster, target, &cultivation, now_tick),
     };
 
     if let Err(reason) = result {
@@ -207,7 +173,6 @@ fn apply_eclipse(
     caster: Entity,
     target: Option<Entity>,
     _caster_cultivation: &Cultivation,
-    definition: Option<&TechniqueDefinition>,
     now_tick: u64,
 ) -> Result<(), CastRejectReason> {
     let Some(target) = target else {
@@ -216,11 +181,6 @@ fn apply_eclipse(
     let Some(target_cultivation) = world.get::<Cultivation>(target).cloned() else {
         return Err(CastRejectReason::InvalidTarget);
     };
-    if let Some(definition) = definition {
-        if distance_between(world, caster, target) > f64::from(definition.range) {
-            return Err(CastRejectReason::InvalidTarget);
-        }
-    }
     // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）：
     // 杂色时 insidious_color_percent 加成不传入 eclipse_effect
     let is_caster_chaotic = world.get::<QiColor>(caster).is_some_and(|c| c.is_chaotic);
@@ -388,17 +348,11 @@ fn apply_penetrate(
     caster: Entity,
     target: Option<Entity>,
     cultivation: &Cultivation,
-    definition: Option<&TechniqueDefinition>,
     now_tick: u64,
 ) -> Result<(), CastRejectReason> {
     let Some(target) = target else {
         return Err(CastRejectReason::InvalidTarget);
     };
-    if let Some(definition) = definition {
-        if distance_between(world, caster, target) > f64::from(definition.range) {
-            return Err(CastRejectReason::InvalidTarget);
-        }
-    }
     let Some(mark) = world.get::<TaintMark>(target).cloned() else {
         return Err(CastRejectReason::InvalidTarget);
     };
@@ -503,17 +457,10 @@ fn apply_reverse(
     caster: Entity,
     target: Option<Entity>,
     cultivation: &Cultivation,
-    base_qi_cost: f64,
-    definition: Option<&TechniqueDefinition>,
     now_tick: u64,
 ) -> Result<(), CastRejectReason> {
     if cultivation.realm != Realm::Void {
         return Err(CastRejectReason::RealmTooLow);
-    }
-    if let (Some(target), Some(definition)) = (target, definition) {
-        if distance_between(world, caster, target) > f64::from(definition.range) {
-            return Err(CastRejectReason::InvalidTarget);
-        }
     }
     let targets = match target {
         Some(target) => affected_taint_targets(world, caster, target, 0.0, true),
@@ -523,7 +470,9 @@ fn apply_reverse(
         return Err(CastRejectReason::InvalidTarget);
     }
     let extra_qi_cost = REVERSE_QI_PER_TARGET * targets.len() as f64;
-    if cultivation.qi_current + f64::EPSILON < base_qi_cost + extra_qi_cost {
+    if cultivation.qi_current + f64::EPSILON
+        < skill_spec(DuguSkillId::Reverse).qi_cost + extra_qi_cost
+    {
         return Err(CastRejectReason::QiInsufficient);
     }
     let intensities: Vec<f64> = targets

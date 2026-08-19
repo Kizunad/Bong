@@ -6,13 +6,13 @@ use serde::{Deserialize, Serialize};
 use valence::entity::entity::NameVisible;
 use valence::entity::EntityId;
 use valence::prelude::{
-    bevy_ecs, ident, Client, DVec3, Entity, EventWriter, Position, Query, Res, ResMut, Resource,
-    With, Without,
+    bevy_ecs, ident, Client, DVec3, Entity, EventWriter, Position, Query, ResMut, Resource, With,
+    Without,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState, Wounds};
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::fauna::mimic_spider::SpiderDisguiseState;
 use crate::identity::PlayerIdentities;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
@@ -128,7 +128,6 @@ type NpcMetadataItem<'a> = (
 #[allow(clippy::type_complexity)]
 pub fn emit_npc_metadata_payloads(
     mut state: ResMut<NpcMetadataSyncState>,
-    technique_registry: Res<TechniqueRegistry>,
     mut clients: Query<ClientMetadataItem<'_>, With<Client>>,
     npcs: Query<NpcMetadataItem<'_>, (With<NpcMarker>, Without<Client>)>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
@@ -169,7 +168,6 @@ pub fn emit_npc_metadata_payloads(
 
             let metadata = build_npc_metadata(NpcMetadataBuildInput {
                 entity_id: entity_id.get(),
-                technique_registry: &technique_registry,
                 archetype: *archetype,
                 cultivation: npc_cultivation,
                 membership,
@@ -219,7 +217,6 @@ pub fn emit_npc_metadata_payloads(
 
 pub struct NpcMetadataBuildInput<'a> {
     pub entity_id: i32,
-    pub technique_registry: &'a TechniqueRegistry,
     pub archetype: NpcArchetype,
     pub cultivation: Option<&'a Cultivation>,
     pub membership: Option<&'a FactionMembership>,
@@ -237,7 +234,6 @@ pub struct NpcMetadataBuildInput<'a> {
 pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
     let NpcMetadataBuildInput {
         entity_id,
-        technique_registry,
         archetype,
         cultivation,
         membership,
@@ -304,13 +300,13 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
                 .iter()
                 .filter(|entry| entry.active)
                 .map(|entry| {
-                    let def_name = technique_registry
-                        .get(&entry.id)
-                        .map(|def| def.display_name.clone())
-                        .unwrap_or_else(|| "未知功法".to_string());
+                    let def_name =
+                        crate::cultivation::known_techniques::technique_definition(&entry.id)
+                            .map(|def| def.display_name)
+                            .unwrap_or("未知功法");
                     NpcTechniqueS2c {
                         id: entry.id.clone(),
-                        display_name: def_name,
+                        display_name: def_name.to_string(),
                         proficiency: entry.proficiency,
                     }
                 })
@@ -524,7 +520,6 @@ mod tests {
     fn npc_metadata_packet_serializes() {
         let membership = membership(0.75);
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 42,
             archetype: NpcArchetype::Disciple,
             cultivation: Some(&Cultivation {
@@ -588,7 +583,6 @@ mod tests {
                 let membership = membership_with(faction_id, rank, 0.9);
                 let payload = build_npc_metadata(NpcMetadataBuildInput {
                     entity_id: 42,
-                    technique_registry: &TechniqueRegistry::load_for_tests(),
                     archetype: NpcArchetype::Disciple,
                     cultivation: Some(&Cultivation {
                         realm: Realm::Condense,
@@ -636,7 +630,6 @@ mod tests {
 
     fn ratio_payload(wounds: Option<&Wounds>, cultivation: Option<&Cultivation>) -> NpcMetadataS2c {
         build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 42,
             archetype: NpcArchetype::Beast,
             cultivation,
@@ -658,7 +651,6 @@ mod tests {
         let hidden = NameVisible(false);
         let state = SpiderDisguiseState::Disguised;
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 42,
             archetype: NpcArchetype::Beast,
             cultivation: None,
@@ -690,7 +682,6 @@ mod tests {
     fn npc_metadata_does_not_hide_non_disguised_entities_by_default() {
         let hidden = NameVisible(false);
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 43,
             archetype: NpcArchetype::Beast,
             cultivation: None,
@@ -795,7 +786,6 @@ mod tests {
         identities.active_mut().unwrap().renown.notoriety = 80;
 
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 42,
             archetype: NpcArchetype::Rogue,
             cultivation: None,
@@ -855,7 +845,6 @@ mod tests {
             ..Default::default()
         };
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 99,
             archetype: NpcArchetype::Rogue,
             cultivation: None,
@@ -901,7 +890,6 @@ mod tests {
             ],
         };
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 99,
             archetype: NpcArchetype::Rogue,
             cultivation: None,
@@ -940,7 +928,6 @@ mod tests {
             }],
         };
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 99,
             archetype: NpcArchetype::Rogue,
             cultivation: None,
@@ -964,7 +951,6 @@ mod tests {
     #[test]
     fn npc_metadata_empty_equipment_not_in_json() {
         let payload = build_npc_metadata(NpcMetadataBuildInput {
-            technique_registry: &TechniqueRegistry::load_for_tests(),
             entity_id: 99,
             archetype: NpcArchetype::Beast,
             cultivation: None,

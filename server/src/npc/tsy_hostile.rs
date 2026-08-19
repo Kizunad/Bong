@@ -565,7 +565,6 @@ pub fn load_tsy_drop_table_registry_from_path(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_tsy_hostiles_for_family(
     commands: &mut Commands,
-    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     family_id: &str,
     registry: &TsySpawnPoolRegistry,
@@ -612,7 +611,6 @@ pub fn spawn_tsy_hostiles_for_family(
             commands,
             layer,
             family_id,
-            technique_registry,
             depth,
             zone,
             counts,
@@ -673,7 +671,6 @@ fn spawn_layer_hostiles(
     commands: &mut Commands,
     layer: Entity,
     family_id: &str,
-    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     depth: TsyDepth,
     zone: &Zone,
     counts: TsyLayerSpawnCounts,
@@ -688,7 +685,6 @@ fn spawn_layer_hostiles(
         if let Some(pos) = sample_hostile_position(zone, family_id, depth, "daoxiang", i, tick) {
             spawn_tsy_daoxiang_at(
                 commands,
-                technique_registry,
                 layer,
                 family_id,
                 &zone.name,
@@ -706,7 +702,6 @@ fn spawn_layer_hostiles(
         if let Some(pos) = sample_hostile_position(zone, family_id, depth, "zhinian", i, tick) {
             spawn_tsy_zhinian_at(
                 commands,
-                technique_registry,
                 layer,
                 family_id,
                 &zone.name,
@@ -755,7 +750,6 @@ fn spawn_layer_hostiles(
 
 pub fn spawn_tsy_daoxiang_at(
     commands: &mut Commands,
-    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     family_id: &str,
     home_zone: &str,
@@ -793,7 +787,6 @@ pub fn spawn_tsy_daoxiang_at(
     );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = crate::npc::technique::assign_npc_techniques(
-        technique_registry,
         NpcArchetype::Daoxiang,
         daoxiang_realm,
         &meridian_sys,
@@ -905,7 +898,6 @@ impl TsyHostileSpawnedSummary {
 
 pub fn spawn_tsy_zhinian_at(
     commands: &mut Commands,
-    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     family_id: &str,
     home_zone: &str,
@@ -944,7 +936,6 @@ pub fn spawn_tsy_zhinian_at(
     );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = crate::npc::technique::assign_npc_techniques(
-        technique_registry,
         NpcArchetype::Zhinian,
         zhinian_realm,
         &meridian_sys,
@@ -2253,15 +2244,12 @@ mod tests {
 
     #[test]
     fn tsy_hostile_spawns_use_custom_visual_entity_kinds() {
-        let technique_registry =
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
         let scenario = valence::testing::ScenarioSingleClient::new();
         let layer = scenario.layer;
         let mut app = scenario.app;
 
         let daoxiang = spawn_tsy_daoxiang_at(
             &mut app.world_mut().commands(),
-            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_shallow",
@@ -2270,7 +2258,6 @@ mod tests {
         );
         let zhinian = spawn_tsy_zhinian_at(
             &mut app.world_mut().commands(),
-            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_mid",
@@ -2352,8 +2339,6 @@ mod tests {
 
     #[test]
     fn tsy_hostile_spawns_write_expected_realm_into_cultivation() {
-        let technique_registry =
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
         // plan-npc-realm-distribution-v1 P0 R1 pin：这 5 处身份站点均实测走
         // 2-arg `npc_runtime_bundle`（非 `_with_age`），修复前 Cultivation.realm
         // 恒被吞成 Realm::Awaken，即使各自局部变量/字面量已定义了非默认境界。
@@ -2363,7 +2348,6 @@ mod tests {
 
         let daoxiang = spawn_tsy_daoxiang_at(
             &mut app.world_mut().commands(),
-            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_shallow",
@@ -2372,7 +2356,6 @@ mod tests {
         );
         let zhinian = spawn_tsy_zhinian_at(
             &mut app.world_mut().commands(),
-            &technique_registry,
             layer,
             "tsy_zongmen_01",
             "tsy_zongmen_01_mid",
