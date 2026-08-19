@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, Despawned, Entity, EntityInteraction,
     EntityLayerId, Hand, InteractEntityEvent, IntoSystemConfigs, Or, Position, Query, Res, ResMut,
-    Resource, Startup, Update, Username, Without,
+    Resource, Startup, Update, Username, With, Without,
 };
 
 use crate::body_plan::race_registry::HUMAN_RACE_ID;
@@ -122,7 +122,9 @@ type JoinedClientsWithoutInventoryFilter = (
     Or<(
         Added<Client>,
         Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        Added<crate::player::state::PlayerState>,
     )>,
+    With<crate::player::state::PlayerState>,
     Without<PlayerInventory>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );

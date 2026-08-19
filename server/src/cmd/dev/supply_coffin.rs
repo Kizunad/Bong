@@ -26,8 +26,8 @@ use valence::entity::entity::NoGravity;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, EntityLayerId, EventReader, EventWriter, IntoSystemConfigs,
-    Look, Position, Query, ResMut, Update,
+    bevy_ecs, App, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter,
+    IntoSystemConfigs, Look, Position, Query, ResMut, Update,
 };
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
@@ -69,9 +69,10 @@ pub enum SupplyCoffinCmd {
 }
 
 #[derive(bevy_ecs::event::Event, Debug, Clone, Copy, PartialEq, Eq)]
-struct SupplyCoffinBarrierRequested {
-    executor: valence::prelude::Entity,
-}
+struct SupplyCoffinBarrierRequested;
+
+#[derive(bevy_ecs::component::Component, Debug, Default)]
+struct SupplyCoffinBarrierPending;
 
 impl Command for SupplyCoffinCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
@@ -141,12 +142,16 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             Update,
-            flush_supply_coffin_barriers
+            queue_supply_coffin_barriers
                 .after(handle_supply_coffin_cmd)
                 .after(crate::network::client_request_handler::handle_client_request_payloads)
                 .after(crate::supply_coffin::interact::handle_supply_coffin_interact)
                 .after(crate::supply_coffin::lifecycle::external_container_lifecycle_tick),
         );
+    app.add_systems(
+        Update,
+        flush_supply_coffin_barriers.after(queue_supply_coffin_barriers),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -362,25 +367,37 @@ pub fn handle_supply_coffin_cmd(
                 );
             }
             SupplyCoffinCmd::Barrier => {
-                // Events are visible to the ordered flush system in this same Update pass. This
-                // avoids using a deferred ECS marker as a cross-system watermark, which could be
-                // missed when a reconnecting/late observer is queried on the next frame.
-                barriers.send(SupplyCoffinBarrierRequested {
-                    executor: event.executor,
-                });
+                // Queue a typed request; the queue system adds a deferred marker and the flush
+                // system broadcasts it on the next Update so every observer gets a local marker.
+                barriers.send(SupplyCoffinBarrierRequested);
             }
         }
     }
 }
 
-fn flush_supply_coffin_barriers(
+fn queue_supply_coffin_barriers(
     mut barriers: EventReader<SupplyCoffinBarrierRequested>,
-    mut clients: Query<&mut Client>,
+    mut commands: Commands,
+    clients: Query<Entity, bevy_ecs::query::With<Client>>,
 ) {
-    for barrier in barriers.read() {
-        if let Ok(mut client) = clients.get_mut(barrier.executor) {
-            client.send_chat_message("[dev] supply_coffin barrier passed");
+    for _ in barriers.read() {
+        for entity in &clients {
+            commands.entity(entity).insert(SupplyCoffinBarrierPending);
         }
+    }
+}
+
+fn flush_supply_coffin_barriers(
+    mut commands: Commands,
+    mut clients: Query<(Entity, &mut Client), bevy_ecs::query::Added<SupplyCoffinBarrierPending>>,
+) {
+    // The marker is deferred by the queue system, so this runs in the next Update. Broadcasting
+    // then gives every socket its own local timestamp for a reliable cross-connection watermark.
+    for (entity, mut client) in &mut clients {
+        client.send_chat_message("[dev] supply_coffin barrier passed");
+        commands
+            .entity(entity)
+            .remove::<SupplyCoffinBarrierPending>();
     }
 }
 
@@ -529,7 +546,11 @@ mod tests {
             "barrier command must enqueue one typed request for the ordered flush system"
         );
 
-        app.add_systems(Update, flush_supply_coffin_barriers);
+        app.add_systems(
+            Update,
+            (queue_supply_coffin_barriers, flush_supply_coffin_barriers),
+        );
+        run_update(&mut app);
         run_update(&mut app);
         let world = app.world_mut();
         let mut clients = world.query::<&mut Client>();
@@ -683,6 +704,7 @@ mod tests {
         // 用与 cmd::tests 同型的最小化 App：不 insert SupplyCoffinRegistry
         let mut app = App::new();
         app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        app.add_event::<SupplyCoffinBarrierRequested>();
         // 不 insert SupplyCoffinRegistry —— 模拟 cmd::register 早于运行时 register 的窗口
         app.add_systems(Update, handle_supply_coffin_cmd);
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);

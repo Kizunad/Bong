@@ -357,23 +357,29 @@ def run(env) -> None:
             )
             _assert_outcome(outcome.data["payload"])
 
-            # Bystander is intentionally a non-operator observer. Use the already-authorized
-            # brewer to create the server watermark, then inspect the bystander's event stream up
-            # to that watermark; asking the observer to run a dev command would be rejected by the
-            # operator gate and could be misdiagnosed as a barrier scheduling failure.
+            # Bystander is intentionally a non-operator observer. The server broadcasts the
+            # authorized brewer's barrier marker to every socket on the next ordered Update pass;
+            # use the bystander's own marker timestamp because Event.t clocks are per connection.
             barrier_anchor = last_event_time(bot)
             bot.cmd("supply_coffin barrier")
-            barrier = bot.wait_for(
+            bot.wait_for(
                 lambda event: event.kind == "chat"
                 and event.t > barrier_anchor
                 and "[dev] supply_coffin barrier passed" in event.data["text"],
                 timeout=10.0,
                 description="结算后的 server-authoritative tick barrier",
             )
+            bystander_barrier = bystander.wait_for(
+                lambda event: event.kind == "chat"
+                and event.t > bystander_anchor
+                and "[dev] supply_coffin barrier passed" in event.data["text"],
+                timeout=10.0,
+                description="旁观 Bot 收到同一 server-authoritative tick barrier",
+            )
             leaked = [
                 event
                 for event in bystander.events_of("server_data")
-                if bystander_anchor < event.t <= barrier.t
+                if bystander_anchor < event.t <= bystander_barrier.t
                 and event.data["payload_type"] == "alchemy_outcome_resolved"
             ]
             assert leaked == [], (
