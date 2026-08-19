@@ -82,7 +82,7 @@ const MAIN_HAND_SLOT: &str = "main_hand";
 
 #[cfg(test)]
 #[derive(Resource, Default)]
-struct StartHandlerPlotScanCount {
+pub(crate) struct StartHandlerPlotScanCount {
     index_builds: usize,
     scanned_plots: usize,
 }
@@ -5303,7 +5303,8 @@ mod tests {
                     );
                 } else {
                     assert_eq!(
-                        count, 0,
+                        count,
+                        0,
                         "update {}: `{name}` must NOT dispatch on the `{action}` tick \
                          (exactly one action per tick), got {count}",
                         turn + 1

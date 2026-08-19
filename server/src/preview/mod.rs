@@ -126,7 +126,9 @@ mod tests {
 
     impl ScopedPreviewMode {
         fn set() -> Self {
-            let guard = PREVIEW_MODE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = PREVIEW_MODE_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             let previous = std::env::var_os("BONG_PREVIEW_MODE");
             // SAFETY: 锁内独占，与 preview_mode_enabled_reads_env 互斥
             unsafe {
@@ -346,7 +348,9 @@ mod tests {
     fn preview_mode_enabled_reads_env() {
         // 与 ScopedPreviewMode 同一把锁：进程级 env 的写必须串行，否则并行测试交错
         // 会让本测试的 set("0")→assert false 读到别的测试刚写入的 "1"（或反之）。
-        let _guard = PREVIEW_MODE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = PREVIEW_MODE_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         // 锁内独占，set/unset 不与其他 preview 测试交错
         // SAFETY: 锁内独占
         unsafe {

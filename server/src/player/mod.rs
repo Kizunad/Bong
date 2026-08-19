@@ -2271,13 +2271,61 @@ mod tests {
     }
 
     #[test]
+    fn production_register_places_restored_position_attach_in_authoritative_commit_set() {
+        use crate::world::movement_commit::AuthoritativePositionCommitSet;
+        use valence::prelude::SystemSet;
+
+        let mut app = App::new();
+        crate::player::register(&mut app);
+
+        let schedule = app
+            .get_schedule(Update)
+            .expect("player::register 必须创建 Update 调度");
+        let graph = schedule.graph();
+        let attach_name = std::any::type_name_of_val(&attach_player_state_to_joined_clients);
+        let attach_nodes: Vec<_> = graph
+            .systems()
+            .filter_map(|(node, system, _)| (system.name().as_ref() == attach_name).then_some(node))
+            .collect();
+        assert_eq!(
+            attach_nodes.len(),
+            1,
+            "生产 Update 调度必须恰好注册一次 `{attach_name}`，实际 {} 次",
+            attach_nodes.len()
+        );
+
+        let commit_set_nodes: Vec<_> = graph
+            .system_sets()
+            .filter_map(|(node, set, _)| {
+                set.as_dyn_eq()
+                    .dyn_eq(AuthoritativePositionCommitSet.as_dyn_eq())
+                    .then_some(node)
+            })
+            .collect();
+        assert_eq!(
+            commit_set_nodes.len(),
+            1,
+            "生产 Update 调度必须恰好包含一个 AuthoritativePositionCommitSet，实际 {} 个",
+            commit_set_nodes.len()
+        );
+        assert!(
+            graph
+                .hierarchy()
+                .graph()
+                .contains_edge(commit_set_nodes[0], attach_nodes[0]),
+            "player::register 必须把 `{attach_name}` 直接放入 AuthoritativePositionCommitSet；\
+             仅靠运行时 sibling 调度顺序不能保证重连位置先于灵田验证提交"
+        );
+    }
+
+    #[test]
     fn reconnecting_restored_position_commits_before_lingtian_post_transfer_validation() {
         // fix-spec-1901-v2 #10：生产注册把 attach_player_state_to_joined_clients 放进
         // AuthoritativePositionCommitSet，灵田 post-transfer validator 排在 set 之后。
         // 本测试通过生产注册入口 player::register 获得 attach 的 set 会员，不在此地
-        // 重建；validator 先注册、attach 后注册且不写 .after(attach) —— 顺序只能由
-        // set 边提供。生产 register 一旦丢失 membership，validator 先读到远处位置 →
-        // 拒绝 → 本测试即红（central review 1984-31447628937 finding [2]）。
+        // 重建；attach 先注册、validator 后注册且不写 .after(attach)。未声明依赖的
+        // sibling 系统执行顺序不受注册顺序保证，因此上方结构测试直接锁定 set 会员边，
+        // 本测试只负责锁定完整重连行为（central review 1984-31447628937 finding [2]）。
         use crate::lingtian::events::{
             StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
             StartReplenishRequest, StartTillRequest,
