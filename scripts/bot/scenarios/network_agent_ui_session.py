@@ -48,12 +48,13 @@ def _new_session(bot, redis, target_player, run_tag, phase: str, **overrides):
         target_player=target_player,
         **overrides,
     )
-    payload = expect_agent_ui_request(bot, request_id, after=mark, timeout=15.0)
-    if payload["target_player"] != target_player:
-        raise AssertionError(
-            f"request_id={request_id} 的 target_player 应为 {target_player!r}，"
-            f"实际 {payload['target_player']!r}"
-        )
+    payload = expect_agent_ui_request(
+        bot,
+        request_id,
+        after=mark,
+        timeout=15.0,
+        expected_cmd=cmd,
+    )
     return request_id, cmd
 
 

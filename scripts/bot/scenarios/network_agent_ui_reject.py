@@ -43,13 +43,15 @@ def _mark(bot) -> float:
 def _invalid_button_id(bot, redis, target_player, run_tag) -> None:
     request_id = f"gap3_{run_tag}_badbtn"
     mark = _mark(bot)
-    publish_cmd(
+    cmd = publish_cmd(
         redis,
         request_id=request_id,
         target_player=target_player,
         allowed_button_ids=("ok",),
     )
-    expect_agent_ui_request(bot, request_id, after=mark, timeout=15.0)
+    expect_agent_ui_request(
+        bot, request_id, after=mark, timeout=15.0, expected_cmd=cmd
+    )
     bot.intent(
         {
             "type": "agent_ui_response",
@@ -71,8 +73,10 @@ def _invalid_button_id(bot, redis, target_player, run_tag) -> None:
 def _stale_request_id(bot, redis, target_player, run_tag) -> None:
     request_id = f"gap3_{run_tag}_stale"
     mark = _mark(bot)
-    publish_cmd(redis, request_id=request_id, target_player=target_player)
-    expect_agent_ui_request(bot, request_id, after=mark, timeout=15.0)
+    cmd = publish_cmd(redis, request_id=request_id, target_player=target_player)
+    expect_agent_ui_request(
+        bot, request_id, after=mark, timeout=15.0, expected_cmd=cmd
+    )
 
     stale_id = f"gap3_{run_tag}_stale_no_such_session"
     bot.intent(
@@ -138,13 +142,15 @@ def _realm_gate_equal_allowed(bot, redis, target_player, run_tag) -> None:
     # gate=1 钉死 1>=1 的最小放行面，区分 >= 与 > 的 off-by-one。
     request_id = f"gap3_{run_tag}_gateeq"
     mark = _mark(bot)
-    publish_cmd(
+    cmd = publish_cmd(
         redis,
         request_id=request_id,
         target_player=target_player,
         realm_gate=1,
     )
-    expect_agent_ui_request(bot, request_id, after=mark, timeout=15.0)
+    expect_agent_ui_request(
+        bot, request_id, after=mark, timeout=15.0, expected_cmd=cmd
+    )
     # 立即关闭该 session（dismissed），避免残留拖住后续探针。
     bot.intent(
         {
@@ -160,6 +166,7 @@ def _realm_gate_equal_allowed(bot, redis, target_player, run_tag) -> None:
 def _player_offline(bot, redis, run_tag) -> None:
     request_id = f"gap3_{run_tag}_offline"
     ghost = f"offline:B{run_tag}GHOST"
+    mark = _mark(bot)
     publish_cmd(redis, request_id=request_id, target_player=ghost)
     expect_redis_response(
         redis,
@@ -167,6 +174,8 @@ def _player_offline(bot, redis, run_tag) -> None:
         action="error",
         params_subset={"reason": "player_offline"},
     )
+    # 离线拒绝只能给 agent 回 error，不能把 panel 路由给当前连接的 client。
+    expect_agent_ui_request(bot, request_id, after=mark, timeout=2.0, expect=False)
 
 
 def _invalid_command(bot, redis, target_player, run_tag) -> None:
@@ -191,13 +200,15 @@ def _invalid_command(bot, redis, target_player, run_tag) -> None:
         expect_agent_ui_request(bot, request_id, after=mark, timeout=2.0, expect=False)
     ok_id = f"gap3_{run_tag}_cmd2400"
     mark = _mark(bot)
-    publish_cmd(
+    ok_cmd = publish_cmd(
         redis,
         request_id=ok_id,
         target_player=target_player,
         timeout_ticks=2400,  # 文档化上界：应通过 validate()，建 session 并下发
     )
-    expect_agent_ui_request(bot, ok_id, after=mark, timeout=15.0)
+    expect_agent_ui_request(
+        bot, ok_id, after=mark, timeout=15.0, expected_cmd=ok_cmd
+    )
     # 立即关闭该 session（dismissed），避免 2400 ticks 长会话残留拖住后续探针。
     bot.intent(
         {

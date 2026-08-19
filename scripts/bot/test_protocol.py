@@ -38,10 +38,14 @@ from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot._agent_ui_helpers import (  # noqa: E402
     DEFAULT_UI_XML,
+    REQUEST_TIMEOUT_MAX,
+    REQUEST_TIMEOUT_MIN,
+    REQUEST_XML_MAX_BYTES,
     assert_request_shape,
     build_cmd,
     expect_agent_ui_close,
     expect_agent_ui_request,
+    expect_redis_response,
     response_matches,
 )
 from bot._redis_client_helpers import (  # noqa: E402
@@ -5178,6 +5182,81 @@ class AgentUiHelperTest(unittest.TestCase):
             assert_request_shape({**base, "timeout_ticks": "600"}, "req_1")
         with self.assertRaises(BotAssertionError):
             assert_request_shape({**base, "timeout_ticks": True}, "req_1")
+
+    def test_assert_request_shape_pins_closed_fields_and_boundaries(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": REQUEST_TIMEOUT_MIN,
+        }
+        assert_request_shape(base, "req_1")
+        assert_request_shape(
+            {**base, "timeout_ticks": REQUEST_TIMEOUT_MAX}, "req_1"
+        )
+        for bad_ticks in (REQUEST_TIMEOUT_MIN - 1, REQUEST_TIMEOUT_MAX + 1):
+            with self.subTest(timeout_ticks=bad_ticks), self.assertRaisesRegex(
+                BotAssertionError, "timeout_ticks"
+            ):
+                assert_request_shape({**base, "timeout_ticks": bad_ticks}, "req_1")
+
+        assert_request_shape(
+            {**base, "xml": "x" * REQUEST_XML_MAX_BYTES}, "req_1"
+        )
+        with self.assertRaisesRegex(BotAssertionError, "UTF-8 字节数"):
+            assert_request_shape(
+                {**base, "xml": "x" * (REQUEST_XML_MAX_BYTES + 1)}, "req_1"
+            )
+        with self.assertRaisesRegex(BotAssertionError, "额外"):
+            assert_request_shape({**base, "unexpected": True}, "req_1")
+
+    def test_assert_request_shape_compares_published_command_values(self):
+        cmd = build_cmd(
+            "req_cmd",
+            "offline:Expected",
+            timeout_ticks=2400,
+            xml="<owo-ui><label>expected</label></owo-ui>",
+        )
+        payload = {field: cmd[field] for field in (
+            "request_id",
+            "target_player",
+            "xml",
+            "timeout_ticks",
+        )}
+        assert_request_shape(payload, "req_cmd", expected_cmd=cmd)
+        for field, wrong in (
+            ("target_player", "offline:Other"),
+            ("xml", "<owo-ui><label>wrong</label></owo-ui>"),
+            ("timeout_ticks", 20),
+        ):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                BotAssertionError, field
+            ):
+                assert_request_shape(
+                    {**payload, field: wrong}, "req_cmd", expected_cmd=cmd
+                )
+
+    def test_expect_redis_response_rejects_wrong_same_request_before_expected(self):
+        class FakeRedis:
+            def wait_message(self, _channel, predicate, **_kwargs):
+                for payload in (
+                    {
+                        "request_id": "req_same",
+                        "action": "dismissed",
+                        "params": {},
+                    },
+                    {
+                        "request_id": "req_same",
+                        "action": "timeout",
+                        "params": {},
+                    },
+                ):
+                    if predicate(payload):
+                        return payload
+                return None
+
+        with self.assertRaisesRegex(BotAssertionError, "不匹配的同请求回执"):
+            expect_redis_response(FakeRedis(), "req_same", action="timeout")
 
     def test_response_matches_action_and_params(self):
         self.assertTrue(

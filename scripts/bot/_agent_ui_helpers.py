@@ -32,6 +32,11 @@ RESP_CHANNEL = "bong:agent_ui_response"
 
 # C2S 请求的固定骨架；params 因 action 而异。
 C2S_VERSION = 1
+REQUEST_FIELDS = frozenset({"request_id", "target_player", "xml", "timeout_ticks"})
+REQUEST_ID_MAX_LENGTH = 128
+REQUEST_XML_MAX_BYTES = 8192
+REQUEST_TIMEOUT_MIN = 20
+REQUEST_TIMEOUT_MAX = 2400
 
 
 def build_cmd(
@@ -60,22 +65,59 @@ def publish_cmd(redis: RedisClient, **cmd_fields) -> dict:
     return cmd
 
 
-def assert_request_shape(payload: dict, request_id: str) -> None:
-    """断言 S2C AgentUiRequestPayloadV1 形状 + 安全字段绝不下发。"""
+def assert_request_shape(
+    payload: dict, request_id: str, expected_cmd: dict | None = None
+) -> None:
+    """断言 S2C AgentUiRequestPayloadV1 形状，并可对拍已发布的 cmd。"""
+    if not isinstance(payload, dict):
+        raise BotAssertionError(
+            f"bong:agent_ui_request 必须是 JSON 对象，实际 {type(payload).__name__}"
+        )
     if payload.get("request_id") != request_id:
         raise BotAssertionError(
             f"bong:agent_ui_request request_id 应为 {request_id!r}，实际 {payload.get('request_id')!r}"
         )
+    request_id_value = payload.get("request_id")
+    if (
+        not isinstance(request_id_value, str)
+        or not 1 <= len(request_id_value) <= REQUEST_ID_MAX_LENGTH
+    ):
+        raise BotAssertionError(
+            f"bong:agent_ui_request request_id 长度必须为 1..{REQUEST_ID_MAX_LENGTH}，"
+            f"实际 {request_id_value!r}"
+        )
     if (
         not isinstance(payload.get("target_player"), str)
-        or not payload["target_player"]
+        or not 1 <= len(payload["target_player"]) <= REQUEST_ID_MAX_LENGTH
     ):
-        raise BotAssertionError(f"bong:agent_ui_request 缺 target_player：{payload!r}")
-    if not isinstance(payload.get("xml"), str) or not payload["xml"]:
+        raise BotAssertionError(
+            f"bong:agent_ui_request target_player 长度必须为 1..{REQUEST_ID_MAX_LENGTH}，"
+            f"实际 {payload.get('target_player')!r}"
+        )
+    xml = payload.get("xml")
+    if not isinstance(xml, str) or not xml:
         raise BotAssertionError(f"bong:agent_ui_request 缺 xml：{payload!r}")
+    try:
+        xml_bytes = len(xml.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise BotAssertionError(
+            f"bong:agent_ui_request xml 含非法 Unicode：{error!r}"
+        ) from error
+    if xml_bytes > REQUEST_XML_MAX_BYTES:
+        raise BotAssertionError(
+            f"bong:agent_ui_request xml UTF-8 字节数不得超过 {REQUEST_XML_MAX_BYTES}，"
+            f"实际 {xml_bytes}"
+        )
     timeout_ticks = payload.get("timeout_ticks")
-    if not isinstance(timeout_ticks, int) or isinstance(timeout_ticks, bool):
-        raise BotAssertionError(f"bong:agent_ui_request 缺 timeout_ticks：{payload!r}")
+    if (
+        not isinstance(timeout_ticks, int)
+        or isinstance(timeout_ticks, bool)
+        or not REQUEST_TIMEOUT_MIN <= timeout_ticks <= REQUEST_TIMEOUT_MAX
+    ):
+        raise BotAssertionError(
+            f"bong:agent_ui_request timeout_ticks 必须为 {REQUEST_TIMEOUT_MIN}..="
+            f"{REQUEST_TIMEOUT_MAX} 的整数，实际 {timeout_ticks!r}"
+        )
     if "realm_gate" in payload:
         raise BotAssertionError(
             "realm_gate 是 server 内部安全字段，绝不下发给 client（实际下发）"
@@ -84,6 +126,22 @@ def assert_request_shape(payload: dict, request_id: str) -> None:
         raise BotAssertionError(
             "allowed_button_ids 是 server 内部安全字段，绝不下发给 client（实际下发）"
         )
+    extra_fields = set(payload) - REQUEST_FIELDS
+    missing_fields = REQUEST_FIELDS - set(payload)
+    if extra_fields or missing_fields:
+        raise BotAssertionError(
+            "bong:agent_ui_request 必须严格匹配四字段裸 payload；"
+            f"缺少={sorted(missing_fields)!r}，额外={sorted(extra_fields)!r}，实际={payload!r}"
+        )
+    if expected_cmd is not None:
+        for field in ("request_id", "target_player", "xml", "timeout_ticks"):
+            expected = expected_cmd[field]
+            actual = payload[field]
+            if actual != expected:
+                raise BotAssertionError(
+                    f"bong:agent_ui_request {field} 必须与已发布 cmd 一致，"
+                    f"期望 {expected!r}，实际 {actual!r}"
+                )
 
 
 def response_matches(
@@ -154,6 +212,7 @@ def expect_agent_ui_request(
     after: float | None = None,
     timeout: float = 15.0,
     expect: bool = True,
+    expected_cmd: dict | None = None,
 ) -> dict | None:
     """等 request_id 匹配的 bong:agent_ui_request payload 并断言形状。
 
@@ -195,7 +254,7 @@ def expect_agent_ui_request(
         matches, timeout, f"request_id={request_id} 的 {REQ_CHANNEL} payload"
     )
     payload = _payload_of(event)
-    assert_request_shape(payload, request_id)
+    assert_request_shape(payload, request_id, expected_cmd=expected_cmd)
     return payload
 
 
@@ -256,9 +315,14 @@ def expect_redis_response(
     """等 bong:agent_ui_response 上 request_id 匹配的消息；断言 action/params（子集或精确）。"""
 
     def matches(payload: dict) -> bool:
-        return payload.get("request_id") == request_id and response_matches(
-            payload, **want
-        )
+        if payload.get("request_id") != request_id:
+            return False
+        if not response_matches(payload, **want):
+            raise BotAssertionError(
+                f"request_id={request_id} 收到不匹配的同请求回执；"
+                f"期望 {want!r}，实际 {payload!r}"
+            )
+        return True
 
     got = redis.wait_message(RESP_CHANNEL, matches, timeout=timeout, expect=expect)
     if got is None and expect:
