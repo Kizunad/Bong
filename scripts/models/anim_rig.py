@@ -52,6 +52,25 @@ def euler(rot) -> np.ndarray:
     return rotmat(rot[2], 2) @ rotmat(rot[1], 1) @ rotmat(rot[0], 0)
 
 
+def euler_of(R: np.ndarray) -> list[float]:
+    """`euler()` 的逆：旋转矩阵 → Blockbench 顺序（Rz·Ry·Rx）的三个角（度）。
+
+    需要它是因为有些姿态**天然是用轴角描述的**（绕某条切向倒过去多少度），而骨骼
+    通道只吃欧拉角。自己按分量反解，别拿三个角去凑——凑出来的解在万向锁附近会跳。
+
+    R = Rz(c)·Ry(b)·Rx(a) 展开后第三行是 (−sb, sa·cb, ca·cb)，第一列是
+    (cb·cc, cb·sc, −sb)，于是 b = −asin(R₂₀)、a = atan2(R₂₁, R₂₂)、c = atan2(R₁₀, R₀₀)。
+    cb→0 时（俯仰 ±90°）a 与 c 简并，退化为把整个旋转记在 a 上。
+    """
+    sb = float(np.clip(-R[2, 0], -1.0, 1.0))
+    b = math.asin(sb)
+    if abs(math.cos(b)) < 1e-7:
+        return [math.degrees(math.atan2(-R[1, 2], R[1, 1])), math.degrees(b), 0.0]
+    return [math.degrees(math.atan2(R[2, 1], R[2, 2])),
+            math.degrees(b),
+            math.degrees(math.atan2(R[1, 0], R[0, 0]))]
+
+
 def affine(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     M = np.eye(4)
     M[:3, :3] = R
@@ -488,6 +507,15 @@ def build_tracks(rig: Rig, sampler, length: float, loop: bool, n: int):
             vals = [(tt, list(getattr(pz[bone], attr)) if bone in pz else [default] * 3) for tt, pz in frames]
             if all(abs(v[k] - default) < 1e-4 for _, v in vals for k in range(3)):
                 continue
+            # 恒定但非默认的通道只留首末两帧。整条动画都是同一个值的通道（典型是"其余
+            # 骨保持某个非静止姿"）逐帧写没有任何信息量，却按采样数线性吃关键帧——
+            # 缝合兽有 17 条芽，每条嫁接动画里另外 16 条都恒定压在休眠尺寸，不收的话
+            # 光这一项就是 16×采样数。留两帧而不是一帧：单帧在部分动画运行时会被当成
+            # 只在该时刻生效，两帧则任何插值方式下都恒定。
+            first = vals[0][1]
+            if len(vals) > 2 and all(all(abs(v[k] - first[k]) < 1e-4 for k in range(3))
+                                     for _, v in vals):
+                vals = [vals[0], vals[-1]]
             tracks.setdefault(bone, {})[chan] = vals
     return tracks
 

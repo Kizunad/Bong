@@ -557,9 +557,11 @@ type CultivationAttachFilter = (
     Or<(
         Added<Client>,
         Added<CurrentDimension>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
         With<CultivationAttachPending>,
     )>,
     Without<Cultivation>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 type CultivationAttachQueryItem<'a> = (
     Entity,
