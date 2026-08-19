@@ -922,6 +922,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         runtime = self.source[runtime_start:runtime_end]
         self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
         self.assertIn('ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"', runtime)
+        self.assertIn('export BONG_SERVER_DB="$SERVER_RUNTIME_DIR/server/data/bong.db"', runtime)
 
         readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
         readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
