@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -10,15 +11,20 @@ use rusqlite::{params, types::Type, Connection, OptionalExtension, TransactionBe
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
+use valence::prelude::bevy_ecs::event::{Events, ManualEventReader};
 use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
-    App, AppExit, Client, Commands, Component, DVec3, Entity, EntityKind, EventReader,
-    IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource, Startup, Update, Username,
-    With,
+    Added, App, AppExit, Changed, Client, Commands, Component, DVec3, Despawned, Entity,
+    EntityKind, EventReader, IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource,
+    Startup, Update, Username, With, Without, World,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::known_techniques::{
+    KnownTechniques, KnownTechniquesLoadFailed, KnownTechniquesReconnectBlocked,
+    KnownTechniquesReconnectFailed, KnownTechniquesReconnectReady,
+};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
@@ -27,7 +33,10 @@ use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, M
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
-use crate::player::state::canonical_player_id;
+use crate::player::state::{
+    canonical_player_id, load_player_known_techniques_slice, open_player_connection,
+    player_username_from_character_id, PlayerStatePersistence, PLAYER_ROW_SCHEMA_VERSION,
+};
 #[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 #[cfg(test)]
@@ -54,6 +63,17 @@ use crate::world::heartbeat::{
 
 #[allow(dead_code)]
 pub mod identity;
+#[allow(dead_code)]
+pub mod slice;
+
+use slice::{
+    dispatch_reconnect_handoff, reconnect_handoff_token, AutosavePolicy, DirtyAcknowledgement,
+    DirtyRevision, DirtyTracker, GuardedSlice, LoadFailurePolicy, PersistedRevisionFence,
+    PersistenceSlice, PersistenceSliceRegistry, ReconnectHandoffReport, ShutdownFlushRequest,
+    SliceClock, SliceDescriptor, SliceId, SliceLoad, SliceRunContext, SliceRunError,
+    SliceRunOutcome, SliceRunReason, SliceRunResult, SliceScope, TimeBasis, WriteAuthority,
+    WriteBinding, WriteDomain, WriteOrdering, WriteOutlet,
+};
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
@@ -161,6 +181,193 @@ struct ZoneInfluenceSnapshotState {
 }
 
 impl Resource for ZoneInfluenceSnapshotState {}
+
+#[derive(Debug, Default)]
+struct PersistenceShutdownReader(ManualEventReader<AppExit>);
+
+impl Resource for PersistenceShutdownReader {}
+
+#[derive(Debug, Clone, Copy)]
+struct ProductionSliceClock {
+    runtime_tick: u64,
+    wall_unix_millis: u64,
+}
+
+impl SliceClock for ProductionSliceClock {
+    fn runtime_tick(&self) -> u64 {
+        self.runtime_tick
+    }
+
+    fn wall_unix_millis(&self) -> u64 {
+        self.wall_unix_millis
+    }
+}
+
+struct ZoneRuntimePersistenceSlice;
+
+impl PersistenceSlice for ZoneRuntimePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &ZONE_RUNTIME_SLICE_DESCRIPTOR
+    }
+}
+
+const ZONE_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.zone_runtime"),
+    scope: SliceScope::WorldResource,
+    order: 100,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.zone_runtime"),
+        WriteAuthority::new("persistence.zone_runtime"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_zone_runtime_slice),
+};
+
+struct KnownTechniquesPersistenceSlice;
+
+impl PersistenceSlice for KnownTechniquesPersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR
+    }
+}
+
+const KNOWN_TECHNIQUES_SLICE_ID: SliceId = SliceId::new("player.known_techniques");
+const KNOWN_TECHNIQUES_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: KNOWN_TECHNIQUES_SLICE_ID,
+    scope: SliceScope::PlayerEntity,
+    order: 10,
+    load_failure: LoadFailurePolicy::BlockWrites,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("player.known_techniques"),
+        WriteAuthority::new("persistence.known_techniques"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: Some(hydrate_known_techniques_slice),
+    reconnect_preflight: Some(preflight_known_techniques_slice),
+    reconnect_cleanup: Some(cleanup_known_techniques_slice),
+    rebase: None,
+    disconnect_save: Some(save_known_techniques_disconnect_slice),
+    shutdown_flush: Some(flush_known_techniques_shutdown_slice),
+};
+
+#[derive(Debug)]
+struct KnownTechniquesActivation {
+    entity: Entity,
+    guarded: GuardedSlice<KnownTechniques, String>,
+    tracker: DirtyTracker,
+    fence: PersistedRevisionFence,
+}
+
+#[derive(Debug, Default)]
+struct KnownTechniquesActivations(HashMap<String, KnownTechniquesActivation>);
+
+impl Resource for KnownTechniquesActivations {}
+
+#[derive(Debug, Default)]
+struct PendingKnownTechniquesHandoffs(HashMap<String, Entity>);
+
+impl Resource for PendingKnownTechniquesHandoffs {}
+
+#[derive(Debug, Default)]
+struct PendingKnownTechniquesCandidates(HashMap<String, Vec<Entity>>);
+
+impl Resource for PendingKnownTechniquesCandidates {}
+
+#[derive(Debug, Default)]
+struct KnownTechniquesRetryEntry {
+    attempts: u8,
+    next_attempt_frame: u64,
+    next_log_frame: u64,
+}
+
+#[derive(Debug, Default)]
+struct KnownTechniquesReconnectState {
+    frame: u64,
+    retries: HashMap<String, KnownTechniquesRetryEntry>,
+    preflight_loads: Mutex<HashMap<String, Result<Option<KnownTechniques>, String>>>,
+}
+
+impl Resource for KnownTechniquesReconnectState {}
+
+const KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS: u8 = 8;
+const KNOWN_TECHNIQUES_RETRY_MAX_BACKOFF_FRAMES: u64 = 64;
+const KNOWN_TECHNIQUES_RETRY_LOG_INTERVAL_FRAMES: u64 = 64;
+
+fn begin_known_techniques_retry(
+    state: &mut KnownTechniquesReconnectState,
+    subject: &str,
+    frame: u64,
+) -> bool {
+    let entry = state.retries.entry(subject.to_string()).or_default();
+    if frame < entry.next_attempt_frame {
+        return false;
+    }
+    entry.attempts = entry
+        .attempts
+        .saturating_add(1)
+        .min(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS);
+    true
+}
+
+fn record_known_techniques_retry_failure(
+    state: &mut KnownTechniquesReconnectState,
+    subject: &str,
+    frame: u64,
+) -> bool {
+    let entry = state.retries.entry(subject.to_string()).or_default();
+    let capped = entry.attempts >= KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS;
+    if capped {
+        entry.attempts = KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS;
+    }
+    let backoff_shift = entry.attempts.saturating_sub(1).min(6);
+    let backoff = 1_u64 << backoff_shift;
+    entry.next_attempt_frame =
+        frame.saturating_add(backoff.min(KNOWN_TECHNIQUES_RETRY_MAX_BACKOFF_FRAMES));
+    capped
+}
+
+fn known_techniques_retry_log_allowed(
+    state: &mut KnownTechniquesReconnectState,
+    subject: &str,
+    frame: u64,
+) -> bool {
+    let entry = state.retries.entry(subject.to_string()).or_default();
+    if frame < entry.next_log_frame {
+        return false;
+    }
+    entry.next_log_frame = frame.saturating_add(KNOWN_TECHNIQUES_RETRY_LOG_INTERVAL_FRAMES);
+    true
+}
+
+fn clear_known_techniques_retry(state: &mut KnownTechniquesReconnectState, subject: &str) {
+    state.retries.remove(subject);
+}
+
+fn known_techniques_live_activation(world: &World, subject: &str) -> Option<Entity> {
+    world
+        .resource::<KnownTechniquesActivations>()
+        .0
+        .get(subject)
+        .filter(|activation| world.get::<Client>(activation.entity).is_some())
+        .map(|activation| activation.entity)
+}
+
+fn reconnect_report_is_live_duplicate(report: &ReconnectHandoffReport) -> bool {
+    report.failures.iter().any(|failure| {
+        failure.reason == SliceRunReason::ReconnectPreflight
+            && failure.error.message() == "known techniques subject already has a live activation"
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub(crate) struct PersistenceBootstrapSet;
@@ -291,9 +498,16 @@ impl StagedDeceasedExport {
         self.relative_snapshot_path.as_str()
     }
 
-    fn rollback(&self) {
-        rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
-        rollback_file(&self.index_path, self.previous_index.as_deref());
+    fn rollback(&self) -> io::Result<()> {
+        let snapshot_result = rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
+        let index_result = rollback_file(&self.index_path, self.previous_index.as_deref());
+        match (snapshot_result, index_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(snapshot_error), Err(index_error)) => Err(io::Error::other(format!(
+                "deceased export rollback failed for snapshot and index: {snapshot_error}; {index_error}"
+            ))),
+        }
     }
 }
 
@@ -706,8 +920,842 @@ pub struct SocialPersistenceBundle {
     pub spirit_niches: Vec<SocialSpiritNicheRecord>,
 }
 
+const KNOWN_TECHNIQUES_UPSERT: &str = "
+    INSERT INTO player_known_techniques (
+        username,
+        known_techniques_json,
+        schema_version,
+        last_updated_wall
+    ) VALUES (?1, ?2, ?3, ?4)
+    ON CONFLICT(username) DO UPDATE SET
+        known_techniques_json = excluded.known_techniques_json,
+        schema_version = excluded.schema_version,
+        last_updated_wall = excluded.last_updated_wall
+";
+
+fn persist_known_techniques_activation(
+    activation: &mut KnownTechniquesActivation,
+    persistence: &PlayerStatePersistence,
+    outlet: WriteOutlet,
+) -> Result<SliceRunOutcome, SliceRunError> {
+    let permit = activation
+        .guarded
+        .write_permit(outlet)
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    let Some(snapshot) = activation
+        .tracker
+        .begin_snapshot(permit, Clone::clone)
+        .map_err(|error| SliceRunError::new(error.to_string()))?
+    else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    let username = player_username_from_character_id(snapshot.subject_key().as_str())
+        .ok_or_else(|| SliceRunError::new("known techniques subject is not a player identity"))?
+        .to_string();
+    let known_techniques_json = serde_json::to_string(snapshot.payload())
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    let mut connection = open_player_connection(persistence)
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    let receipt = activation
+        .fence
+        .commit(&mut connection, snapshot, |request| {
+            request.execute_serialized(
+                KNOWN_TECHNIQUES_UPSERT,
+                params![
+                    username,
+                    known_techniques_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    current_unix_seconds()
+                ],
+            )
+        })
+        .map_err(|error| SliceRunError::new(format!("{error:?}")))?;
+    match activation.tracker.acknowledge(receipt) {
+        DirtyAcknowledgement::Acknowledged => Ok(SliceRunOutcome::Flushed),
+        acknowledgement => Err(SliceRunError::new(format!(
+            "known techniques durable receipt was not acknowledged: {acknowledgement:?}"
+        ))),
+    }
+}
+
+fn sync_known_techniques_activation(
+    world: &World,
+    subject: &str,
+    activation: &mut KnownTechniquesActivation,
+) -> Result<(), SliceRunError> {
+    let Some(current) = world.get::<KnownTechniques>(activation.entity) else {
+        return Ok(());
+    };
+    if current != activation.guarded.value() {
+        activation
+            .guarded
+            .mutate(&mut activation.tracker, |value| *value = current.clone())
+            .map_err(|error| SliceRunError::new(format!("{subject}: {error}")))?;
+    }
+    Ok(())
+}
+
+fn hydrate_known_techniques_slice(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+    let subject = context
+        .handoff_key
+        .as_deref()
+        .ok_or_else(|| SliceRunError::new("known techniques hydrate has no subject"))?;
+    let entity = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .get(subject)
+        .copied()
+        .ok_or_else(|| SliceRunError::new("known techniques reconnect target is unavailable"))?;
+    if world.get_entity(entity).is_none() {
+        cleanup_stale_known_techniques_pending(world);
+        return Err(SliceRunError::new(
+            "known techniques reconnect target entity is gone",
+        ));
+    }
+    validate_known_techniques_reconnect_target(world, subject, entity)?;
+    let loaded = world
+        .resource::<KnownTechniquesReconnectState>()
+        .preflight_loads
+        .lock()
+        .map_err(|_| SliceRunError::new("known techniques preflight cache is poisoned"))?
+        .remove(subject)
+        .ok_or_else(|| SliceRunError::new("known techniques preflight load is unavailable"))?;
+    let load = match loaded {
+        Ok(Some(value)) => SliceLoad::loaded(value),
+        Ok(None) => SliceLoad::missing(),
+        Err(error) => SliceLoad::failed(error),
+    };
+    let activation = context.reconnect_activation()?;
+    let mut guarded = world
+        .resource_scope(
+            |_, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                registry.activate(
+                    load,
+                    KNOWN_TECHNIQUES_SLICE_ID,
+                    activation,
+                    DirtyRevision::default(),
+                    KnownTechniques::default,
+                    |_| KnownTechniques::default(),
+                )
+            },
+        )
+        .map_err(|error| SliceRunError::new(format!("activation failed: {error:?}")))?;
+    let failed = guarded.load_status() == slice::SliceLoadStatus::Failed;
+    let value = guarded.value().clone();
+    let (tracker, fence) = guarded
+        .restore_persistence_state()
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    {
+        let Some(mut target) = world.get_entity_mut(entity) else {
+            cleanup_stale_known_techniques_pending(world);
+            return Err(SliceRunError::new(
+                "known techniques reconnect target entity disappeared during hydrate",
+            ));
+        };
+        target.insert(value);
+        if failed {
+            target.insert(KnownTechniquesLoadFailed);
+        } else {
+            target.remove::<KnownTechniquesLoadFailed>();
+        }
+    }
+    world.resource_mut::<KnownTechniquesActivations>().0.insert(
+        subject.to_string(),
+        KnownTechniquesActivation {
+            entity,
+            guarded,
+            tracker,
+            fence,
+        },
+    );
+    world
+        .resource_mut::<PendingKnownTechniquesHandoffs>()
+        .0
+        .remove(subject);
+    Ok(SliceRunOutcome::Clean)
+}
+
+fn cleanup_stale_known_techniques_pending(world: &mut World) {
+    let pending_subjects = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let stale_subjects = pending_subjects
+        .iter()
+        .filter(|subject| {
+            let Some(entity) = world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(*subject)
+                .copied()
+            else {
+                return true;
+            };
+            !known_techniques_reconnect_candidate_is_live(world, subject, entity)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in stale_subjects {
+        let entity = world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .remove(&subject);
+        if let Some(entity) = entity {
+            if let Some(mut target) = world.get_entity_mut(entity) {
+                target.remove::<KnownTechniquesReconnectBlocked>();
+                target.remove::<KnownTechniquesReconnectFailed>();
+                target.remove::<KnownTechniquesReconnectReady>();
+            }
+        }
+        let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+        state.retries.remove(&subject);
+        if let Ok(mut loads) = state.preflight_loads.lock() {
+            loads.remove(&subject);
+        };
+    }
+
+    let subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut stale_candidates = Vec::new();
+    for subject in subjects {
+        let candidates = world
+            .resource::<PendingKnownTechniquesCandidates>()
+            .0
+            .get(&subject)
+            .cloned()
+            .unwrap_or_default();
+        let live = candidates
+            .into_iter()
+            .filter(|entity| known_techniques_reconnect_candidate_is_live(world, &subject, *entity))
+            .collect::<Vec<_>>();
+        if live.is_empty() {
+            stale_candidates.push(subject);
+        } else {
+            world
+                .resource_mut::<PendingKnownTechniquesCandidates>()
+                .0
+                .insert(subject, live);
+        }
+    }
+    for subject in stale_candidates {
+        world
+            .resource_mut::<PendingKnownTechniquesCandidates>()
+            .0
+            .remove(&subject);
+    }
+}
+
+fn known_techniques_reconnect_candidate_is_live(
+    world: &World,
+    subject: &str,
+    entity: Entity,
+) -> bool {
+    let Some(target) = world.get_entity(entity) else {
+        return false;
+    };
+    let Some(username) = target.get::<Username>() else {
+        return false;
+    };
+    target.get::<Client>().is_some()
+        && target.get::<Despawned>().is_none()
+        && player_username_from_character_id(subject).is_some_and(|expected| username.0 == expected)
+}
+
+fn promote_known_techniques_candidate(world: &mut World, subject: &str) {
+    if world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .contains_key(subject)
+        || world
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .contains_key(subject)
+    {
+        return;
+    }
+    let candidate = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .get(subject)
+        .and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .min_by_key(|entity| entity.index())
+        });
+    let Some(entity) = candidate else {
+        return;
+    };
+    world
+        .resource_mut::<PendingKnownTechniquesCandidates>()
+        .0
+        .entry(subject.to_string())
+        .and_modify(|candidates| candidates.retain(|candidate| *candidate != entity));
+    if let Some(mut target) = world.get_entity_mut(entity) {
+        target.remove::<KnownTechniquesReconnectBlocked>();
+        target.remove::<KnownTechniquesReconnectFailed>();
+    }
+    world
+        .resource_mut::<PendingKnownTechniquesHandoffs>()
+        .0
+        .insert(subject.to_string(), entity);
+}
+
+fn validate_known_techniques_reconnect_target(
+    world: &World,
+    subject: &str,
+    entity: Entity,
+) -> Result<(), SliceRunError> {
+    let Some(target) = world.get_entity(entity) else {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target entity is gone",
+        ));
+    };
+    let Some(client) = target.get::<Client>() else {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target is disconnected",
+        ));
+    };
+    let username = target
+        .get::<Username>()
+        .ok_or_else(|| SliceRunError::new("known techniques reconnect target has no username"))?;
+    let expected = player_username_from_character_id(subject)
+        .ok_or_else(|| SliceRunError::new("known techniques subject is not a player identity"))?;
+    if username.0 != expected {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target identity mismatch",
+        ));
+    }
+    let _ = client;
+    if target.get::<Despawned>().is_some() {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target is despawned",
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_known_techniques_slice(
+    world: &mut World,
+    context: &SliceRunContext,
+) -> SliceRunResult {
+    let subject = context
+        .handoff_key
+        .as_deref()
+        .ok_or_else(|| SliceRunError::new("known techniques preflight has no subject"))?;
+    let target = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .get(subject)
+        .copied()
+        .ok_or_else(|| SliceRunError::new("known techniques reconnect target is unavailable"))?;
+    validate_known_techniques_reconnect_target(world, subject, target)?;
+    if known_techniques_live_activation(world, subject).is_some() {
+        return Err(SliceRunError::new(
+            "known techniques subject already has a live activation",
+        ));
+    }
+    let has_activation = world
+        .resource::<KnownTechniquesActivations>()
+        .0
+        .contains_key(subject);
+    let persistence = world
+        .get_resource::<PlayerStatePersistence>()
+        .cloned()
+        .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
+    let username = player_username_from_character_id(subject)
+        .ok_or_else(|| SliceRunError::new("known techniques subject is not a player identity"))?;
+    let loaded = load_player_known_techniques_slice(&persistence, username);
+    let cached = match loaded {
+        Ok(value) => Ok(value),
+        Err(error) if !has_activation => Err(error.to_string()),
+        Err(error) => return Err(SliceRunError::new(error.to_string())),
+    };
+    world
+        .resource::<KnownTechniquesReconnectState>()
+        .preflight_loads
+        .lock()
+        .map_err(|_| SliceRunError::new("known techniques preflight cache is poisoned"))?
+        .insert(subject.to_string(), cached);
+    Ok(SliceRunOutcome::Clean)
+}
+
+fn cleanup_known_techniques_slice(world: &mut World, context: &SliceRunContext) {
+    let Some(subject) = context.handoff_key.as_deref() else {
+        return;
+    };
+    if let Some(activation) = world
+        .resource_mut::<KnownTechniquesActivations>()
+        .0
+        .remove(subject)
+    {
+        if let Some(mut entity) = world.get_entity_mut(activation.entity) {
+            entity.remove::<KnownTechniques>();
+            entity.remove::<KnownTechniquesLoadFailed>();
+        }
+    }
+}
+
+fn save_known_techniques_disconnect_slice(
+    world: &mut World,
+    context: &SliceRunContext,
+) -> SliceRunResult {
+    let subject = context
+        .handoff_key
+        .as_deref()
+        .ok_or_else(|| SliceRunError::new("known techniques disconnect save has no subject"))?;
+    let persistence = world
+        .get_resource::<PlayerStatePersistence>()
+        .cloned()
+        .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
+    world.resource_scope(
+        |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+            let Some(activation) = activations.0.get_mut(subject) else {
+                return Ok(SliceRunOutcome::Clean);
+            };
+            if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
+                return Ok(SliceRunOutcome::Clean);
+            }
+            sync_known_techniques_activation(world, subject, activation)?;
+            persist_known_techniques_activation(activation, &persistence, WriteOutlet::Disconnect)
+        },
+    )
+}
+
+fn flush_known_techniques_shutdown_slice(
+    world: &mut World,
+    _context: &SliceRunContext,
+) -> SliceRunResult {
+    let persistence = world
+        .get_resource::<PlayerStatePersistence>()
+        .cloned()
+        .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
+    world.resource_scope(
+        |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+            let mut subjects = activations.0.keys().cloned().collect::<Vec<_>>();
+            subjects.sort();
+            let mut flushed = false;
+            let mut failures = Vec::new();
+            for subject in subjects {
+                let Some(activation) = activations.0.get_mut(&subject) else {
+                    continue;
+                };
+                if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
+                    continue;
+                }
+                let result = (|| -> Result<SliceRunOutcome, SliceRunError> {
+                    sync_known_techniques_activation(world, &subject, activation)?;
+                    persist_known_techniques_activation(
+                        activation,
+                        &persistence,
+                        WriteOutlet::Shutdown,
+                    )
+                })();
+                match result {
+                    Ok(SliceRunOutcome::Flushed) => flushed = true,
+                    Ok(SliceRunOutcome::Clean | SliceRunOutcome::SkippedBlocked) => {}
+                    Err(error) => failures.push(format!("{subject}: {error}")),
+                }
+            }
+            if failures.is_empty() {
+                Ok(if flushed {
+                    SliceRunOutcome::Flushed
+                } else {
+                    SliceRunOutcome::Clean
+                })
+            } else {
+                Err(SliceRunError::new(format!(
+                    "known techniques shutdown flush failed: {}",
+                    failures.join("; ")
+                )))
+            }
+        },
+    )
+}
+
+fn production_slice_clock(world: &World) -> ProductionSliceClock {
+    ProductionSliceClock {
+        runtime_tick: world
+            .get_resource::<CultivationClock>()
+            .map_or(0, |clock| clock.tick),
+        wall_unix_millis: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_millis() as u64),
+    }
+}
+
+pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
+    let frame = {
+        let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+        state.frame = state.frame.saturating_add(1);
+        state.frame
+    };
+
+    cleanup_stale_known_techniques_pending(world);
+
+    let mut added_query = world.query_filtered::<(Entity, &Username), Added<Client>>();
+    let added = added_query
+        .iter(world)
+        .map(|(entity, username)| (canonical_player_id(username.0.as_str()), entity))
+        .collect::<Vec<_>>();
+    for (subject, entity) in added {
+        let already_pending = world
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .contains_key(&subject);
+        if already_pending {
+            world
+                .entity_mut(entity)
+                .insert(KnownTechniquesReconnectBlocked);
+            world
+                .resource_mut::<PendingKnownTechniquesCandidates>()
+                .0
+                .entry(subject.clone())
+                .or_default()
+                .push(entity);
+            tracing::warn!(
+                "[bong][persistence] rejecting duplicate known techniques reconnect target for `{subject}`"
+            );
+            continue;
+        }
+        world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .insert(subject, entity);
+    }
+
+    let candidate_subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in candidate_subjects {
+        promote_known_techniques_candidate(world, &subject);
+    }
+
+    let disconnected_subjects = world
+        .resource::<KnownTechniquesActivations>()
+        .0
+        .iter()
+        .filter(|(_, activation)| world.get::<Client>(activation.entity).is_none())
+        .map(|(subject, _)| subject.clone())
+        .collect::<Vec<_>>();
+
+    let persistence = world.get_resource::<PlayerStatePersistence>().cloned();
+    let save_subjects = disconnected_subjects
+        .into_iter()
+        .filter(|subject| {
+            !world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key(subject)
+        })
+        .collect::<Vec<_>>();
+    for subject in save_subjects {
+        let should_attempt = {
+            let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+            begin_known_techniques_retry(&mut state, &subject, frame)
+        };
+        if !should_attempt {
+            continue;
+        }
+        let result = persistence.as_ref().map_or_else(
+            || Err(SliceRunError::new("PlayerStatePersistence is unavailable")),
+            |persistence| {
+                world.resource_scope(
+                    |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+                        let Some(activation) = activations.0.get_mut(&subject) else {
+                            return Ok(SliceRunOutcome::Clean);
+                        };
+                        if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
+                            return Ok(SliceRunOutcome::Clean);
+                        }
+                        sync_known_techniques_activation(world, &subject, activation)?;
+                        persist_known_techniques_activation(
+                            activation,
+                            persistence,
+                            WriteOutlet::Disconnect,
+                        )
+                    },
+                )
+            },
+        );
+        match result {
+            Ok(_) => {
+                world
+                    .resource_mut::<KnownTechniquesActivations>()
+                    .0
+                    .remove(&subject);
+                clear_known_techniques_retry(
+                    &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                    &subject,
+                );
+            }
+            Err(error) => {
+                let (at_retry_cap, should_log) = {
+                    let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+                    let at_retry_cap =
+                        record_known_techniques_retry_failure(&mut state, &subject, frame);
+                    let should_log =
+                        known_techniques_retry_log_allowed(&mut state, &subject, frame);
+                    (at_retry_cap, should_log)
+                };
+                if should_log {
+                    if at_retry_cap {
+                        tracing::error!(
+                            "[bong][persistence] known techniques disconnect flush remains unavailable at the retry cap for `{subject}`; retry scheduled: {error}"
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[bong][persistence] known techniques disconnect flush failed for `{subject}`; retry scheduled: {error}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let candidate_subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in candidate_subjects {
+        promote_known_techniques_candidate(world, &subject);
+    }
+    let pending_subjects = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // A subject that is still pending reconnect is saved by the handoff dispatcher below;
+    // keeping its retry entry here would double-count attempts and alter the handoff gate.
+    for subject in &pending_subjects {
+        if !world
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .contains_key(subject)
+        {
+            clear_known_techniques_retry(
+                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                subject,
+            );
+        }
+    }
+
+    for subject in pending_subjects {
+        if !world
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .contains_key(&subject)
+        {
+            continue;
+        }
+        if known_techniques_live_activation(world, &subject).is_some() {
+            if let Some(entity) = world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(&subject)
+                .copied()
+            {
+                let was_blocked = world
+                    .get::<KnownTechniquesReconnectBlocked>(entity)
+                    .is_some();
+                world
+                    .entity_mut(entity)
+                    .insert(KnownTechniquesReconnectBlocked);
+                if !was_blocked {
+                    tracing::warn!(
+                        "[bong][persistence] rejecting live duplicate known techniques reconnect target for `{subject}`"
+                    );
+                }
+            }
+            clear_known_techniques_retry(
+                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                &subject,
+            );
+            continue;
+        }
+
+        let should_attempt = {
+            let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+            begin_known_techniques_retry(&mut state, &subject, frame)
+        };
+        if !should_attempt {
+            continue;
+        }
+
+        let clock = production_slice_clock(world);
+        let (succeeded, stable_live_duplicate) = match dispatch_reconnect_handoff(
+            world,
+            reconnect_handoff_token(subject.clone()),
+            &clock,
+        ) {
+            Ok(report)
+                if report.failures.is_empty()
+                    && report.blocked_saves.is_empty()
+                    && report.blocked_loads.is_empty()
+                    && report.blocked_preflights.is_empty()
+                    && report.blocked_rebases.is_empty() =>
+            {
+                (true, false)
+            }
+            Ok(report) => {
+                let stable_live_duplicate = reconnect_report_is_live_duplicate(&report);
+                let pending_entity = world
+                    .resource::<PendingKnownTechniquesHandoffs>()
+                    .0
+                    .get(&subject)
+                    .copied();
+                if let Some(entity) = pending_entity {
+                    world
+                        .entity_mut(entity)
+                        .insert(KnownTechniquesReconnectFailed);
+                }
+                let should_log = known_techniques_retry_log_allowed(
+                    &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                    &subject,
+                    frame,
+                );
+                if should_log {
+                    tracing::error!(
+                        "[bong][persistence] known techniques reconnect handoff failed closed for `{subject}`: {report:?}"
+                    );
+                }
+                (false, stable_live_duplicate)
+            }
+            Err(error) => {
+                if let Some(entity) = world
+                    .resource::<PendingKnownTechniquesHandoffs>()
+                    .0
+                    .get(&subject)
+                    .copied()
+                {
+                    world
+                        .entity_mut(entity)
+                        .insert(KnownTechniquesReconnectFailed);
+                }
+                let should_log = known_techniques_retry_log_allowed(
+                    &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                    &subject,
+                    frame,
+                );
+                if should_log {
+                    tracing::error!(
+                        "[bong][persistence] known techniques reconnect dispatch failed for `{subject}`: {error}"
+                    );
+                }
+                (false, false)
+            }
+        };
+        if succeeded {
+            if let Some(entity) = world
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity)
+            {
+                let load_failed = world
+                    .resource::<KnownTechniquesActivations>()
+                    .0
+                    .get(&subject)
+                    .is_some_and(|activation| {
+                        activation.guarded.load_status() == slice::SliceLoadStatus::Failed
+                    });
+                if let Some(mut target) = world.get_entity_mut(entity) {
+                    target.remove::<KnownTechniquesReconnectBlocked>();
+                    if load_failed {
+                        target.remove::<KnownTechniquesReconnectReady>();
+                        target.insert(KnownTechniquesReconnectFailed);
+                    } else {
+                        target.remove::<KnownTechniquesReconnectFailed>();
+                        target.insert(KnownTechniquesReconnectReady);
+                    }
+                }
+            }
+            world
+                .resource_mut::<KnownTechniquesReconnectState>()
+                .retries
+                .remove(&subject);
+        } else if stable_live_duplicate {
+            clear_known_techniques_retry(
+                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                &subject,
+            );
+        } else {
+            let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+            record_known_techniques_retry_failure(&mut state, &subject, frame);
+        }
+    }
+}
+
+fn flush_changed_known_techniques_slices(world: &mut World) {
+    let mut query = world.query_filtered::<(Entity, &Username, &KnownTechniques), (
+        With<Client>,
+        Changed<KnownTechniques>,
+        Without<KnownTechniquesLoadFailed>,
+    )>();
+    let changed = query
+        .iter(world)
+        .map(|(entity, username, value)| {
+            (
+                entity,
+                canonical_player_id(username.0.as_str()),
+                value.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let Some(persistence) = world.get_resource::<PlayerStatePersistence>().cloned() else {
+        return;
+    };
+    for (entity, subject, value) in changed {
+        let result = world.resource_scope(
+            |_, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+                let Some(activation) = activations.0.get_mut(&subject) else {
+                    return Ok(SliceRunOutcome::Clean);
+                };
+                if activation.entity != entity || activation.guarded.value() == &value {
+                    return Ok(SliceRunOutcome::Clean);
+                }
+                activation
+                    .guarded
+                    .mutate(&mut activation.tracker, |guarded| *guarded = value)
+                    .map_err(|error| SliceRunError::new(error.to_string()))?;
+                persist_known_techniques_activation(activation, &persistence, WriteOutlet::Changed)
+            },
+        );
+        if let Err(error) = result {
+            tracing::warn!(
+                "[bong][persistence] immediate known techniques flush failed for `{subject}`: {error}"
+            );
+        }
+    }
+}
+
 pub fn register(app: &mut App) {
-    app.init_resource::<PersistenceSettings>()
+    let mut slice_registry = PersistenceSliceRegistry::empty();
+    slice_registry
+        .register_slice::<ZoneRuntimePersistenceSlice>()
+        .and_then(|()| slice_registry.register_slice::<KnownTechniquesPersistenceSlice>())
+        .expect("production persistence slice descriptors must be valid");
+
+    app.insert_resource(slice_registry)
+        .init_resource::<PersistenceShutdownReader>()
+        .init_resource::<KnownTechniquesActivations>()
+        .init_resource::<PendingKnownTechniquesHandoffs>()
+        .init_resource::<PendingKnownTechniquesCandidates>()
+        .init_resource::<KnownTechniquesReconnectState>()
+        .init_resource::<PersistenceSettings>()
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DormantRelicSweepState>()
@@ -723,6 +1771,11 @@ pub fn register(app: &mut App) {
         .add_systems(
             Update,
             (
+                dispatch_known_techniques_reconnects
+                    .before(crate::player::init_clients)
+                    .before(crate::player::attach_player_state_to_joined_clients),
+                flush_changed_known_techniques_slices
+                    .after(crate::player::attach_player_state_to_joined_clients),
                 persist_npc_runtime_state_system,
                 sweep_npc_digest_retention_system,
                 persist_pending_dormant_relics_system,
@@ -732,7 +1785,7 @@ pub fn register(app: &mut App) {
                 persist_zone_influence_system,
             ),
         )
-        .add_systems(Last, persist_zone_runtime_on_shutdown_system);
+        .add_systems(Last, dispatch_persistence_shutdown_flushes);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -929,32 +1982,74 @@ fn persist_zone_runtime_system(
     }
 }
 
-fn persist_zone_runtime_on_shutdown_system(
-    settings: Res<PersistenceSettings>,
-    mut app_exit: EventReader<AppExit>,
-    zones: Option<Res<crate::world::zone::ZoneRegistry>>,
-    heartbeat: Option<Res<WorldHeartbeat>>,
-    qi_ledger: Res<WorldQiAccount>,
-    clock: Res<CultivationClock>,
-) {
-    if app_exit.read().next().is_none() {
-        return;
+fn flush_zone_runtime_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    if !world.contains_resource::<crate::world::zone::ZoneRegistry>() {
+        return Ok(SliceRunOutcome::Clean);
     }
-    let Some(zone_registry) = zones else {
-        return;
+    if !world.contains_resource::<PersistenceSettings>() {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    }
+    world.resource_scope(
+        |world, settings: valence::prelude::Mut<PersistenceSettings>| {
+            world.resource_scope(
+                |world, zones: valence::prelude::Mut<crate::world::zone::ZoneRegistry>| {
+                    let heartbeat = world.get_resource::<WorldHeartbeat>();
+                    let qi_ledger = world
+                        .get_resource::<WorldQiAccount>()
+                        .ok_or_else(|| SliceRunError::new("WorldQiAccount is unavailable"))?;
+                    let clock_tick = world
+                        .get_resource::<CultivationClock>()
+                        .ok_or_else(|| SliceRunError::new("CultivationClock is unavailable"))?
+                        .tick;
+
+                    persist_zone_runtime_snapshot_with_heartbeat_at_tick(
+                        &settings, &zones, heartbeat, qi_ledger, clock_tick,
+                    )
+                    .map(|_| SliceRunOutcome::Flushed)
+                    .map_err(|error| SliceRunError::new(error.to_string()))
+                },
+            )
+        },
+    )
+}
+
+fn dispatch_persistence_shutdown_flushes(world: &mut World) {
+    let requested = world.resource_scope(
+        |world, mut reader: valence::prelude::Mut<PersistenceShutdownReader>| {
+            world
+                .get_resource::<Events<AppExit>>()
+                .is_some_and(|events| reader.0.read(events).next().is_some())
+        },
+    );
+    let request = if requested {
+        ShutdownFlushRequest::Requested
+    } else {
+        ShutdownFlushRequest::NotRequested
+    };
+    let runtime_tick = world
+        .get_resource::<CultivationClock>()
+        .map_or(0, |clock| clock.tick);
+    let wall_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64);
+    let clock = ProductionSliceClock {
+        runtime_tick,
+        wall_unix_millis,
     };
 
-    if let Err(error) = persist_zone_runtime_snapshot_with_heartbeat_at_tick(
-        &settings,
-        &zone_registry,
-        heartbeat.as_deref(),
-        &qi_ledger,
-        clock.tick,
-    ) {
-        tracing::warn!(
-            "[bong][persistence] failed to flush zone runtime on shutdown at {}: {error}",
-            settings.db_path().display()
-        );
+    match slice::dispatch_shutdown_flushes(world, request, &clock) {
+        Ok(report) => {
+            for failure in report.failures {
+                tracing::warn!(
+                    "[bong][persistence] shutdown slice `{}` failed: {}",
+                    failure.slice_id,
+                    failure.error
+                );
+            }
+        }
+        Err(error) => {
+            tracing::error!("[bong][persistence] shutdown slice dispatch failed closed: {error}")
+        }
     }
 }
 
@@ -4703,13 +5798,19 @@ fn persist_termination_transition_inner(
         transaction.commit().map_err(io::Error::other)
     })();
 
-    if persisted.is_err() {
-        if let Some(export) = staged_export.as_ref() {
-            export.rollback();
+    match persisted {
+        Err(error) => {
+            if let Some(export) = staged_export.as_ref() {
+                if let Err(rollback_error) = export.rollback() {
+                    return Err(io::Error::other(format!(
+                        "deceased persistence failed: {error}; rollback failed: {rollback_error}"
+                    )));
+                }
+            }
+            Err(error)
         }
+        Ok(()) => Ok(()),
     }
-
-    persisted
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4844,6 +5945,23 @@ pub fn persist_npc_deceased_archive(
     settings: &PersistenceSettings,
     archive: &NpcDeceasedArchiveRecord,
 ) -> io::Result<()> {
+    persist_npc_deceased_archive_with_connection(settings, archive, open_persistence_connection)
+}
+
+fn persist_npc_deceased_archive_with_connection(
+    settings: &PersistenceSettings,
+    archive: &NpcDeceasedArchiveRecord,
+    open_connection: impl FnOnce(&PersistenceSettings) -> io::Result<Connection>,
+) -> io::Result<()> {
+    persist_npc_deceased_archive_with_hooks(settings, archive, open_connection, write_zstd_bundle)
+}
+
+fn persist_npc_deceased_archive_with_hooks(
+    settings: &PersistenceSettings,
+    archive: &NpcDeceasedArchiveRecord,
+    open_connection: impl FnOnce(&PersistenceSettings) -> io::Result<Connection>,
+    write_bundle: impl FnOnce(&Path, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     let archive_path = npc_deceased_archive_absolute_path(
         settings,
         archive.char_id.as_str(),
@@ -4851,14 +5969,21 @@ pub fn persist_npc_deceased_archive(
     );
     let relative_path =
         npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall);
-    let previous_archive = fs::read(&archive_path).ok();
+    let previous_archive = read_optional_file(&archive_path)?;
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    write_zstd_bundle(&archive_path, &archive_json)?;
+    if let Err(error) = write_bundle(&archive_path, &archive_json) {
+        return match rollback_file(&archive_path, previous_archive.as_deref()) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "npc archive replacement failed: {error}; rollback failed: {rollback_error}"
+            ))),
+        };
+    }
 
-    let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
     let persisted = (|| -> io::Result<()> {
+        let mut connection = open_connection(settings)?;
+        let transaction = connection.transaction().map_err(io::Error::other)?;
         upsert_npc_deceased_index(
             &transaction,
             &NpcDeceasedIndexRecord {
@@ -4873,11 +5998,15 @@ pub fn persist_npc_deceased_archive(
         transaction.commit().map_err(io::Error::other)
     })();
 
-    if persisted.is_err() {
-        rollback_file(&archive_path, previous_archive.as_deref());
+    match persisted {
+        Ok(()) => Ok(()),
+        Err(error) => match rollback_file(&archive_path, previous_archive.as_deref()) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "npc archive persistence failed: {error}; rollback failed: {rollback_error}"
+            ))),
+        },
     }
-
-    persisted
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -4917,12 +6046,16 @@ pub fn sweep_stale_npc_digests(
     for digest in &stale_digests {
         let archive_path =
             npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall);
-        let previous_archive = fs::read(&archive_path).ok();
+        let previous_archive = read_optional_file(&archive_path)?;
         let archive_json = serde_json::to_vec_pretty(digest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         if let Err(error) = write_zstd_bundle(&archive_path, &archive_json) {
-            rollback_file(&archive_path, previous_archive.as_deref());
-            return Err(error);
+            return match rollback_file(&archive_path, previous_archive.as_deref()) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(io::Error::other(format!(
+                    "npc digest archive replacement failed: {error}; rollback failed: {rollback_error}"
+                ))),
+            };
         }
     }
 
@@ -8243,8 +9376,8 @@ fn stage_public_deceased_export(
         .deceased_public_dir()
         .join(format!("{snapshot_stem}.json"));
     let index_path = settings.deceased_public_dir().join("_index.json");
-    let previous_snapshot = fs::read(&snapshot_path).ok();
-    let previous_index = fs::read(&index_path).ok();
+    let previous_snapshot = read_optional_file(&snapshot_path)?;
+    let previous_index = read_optional_file(&index_path)?;
     let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
     let staged = StagedDeceasedExport {
         snapshot_path,
@@ -8275,7 +9408,11 @@ fn stage_public_deceased_export(
         fs::write(&staged.index_path, index_json.as_bytes())
     })();
     if let Err(error) = write_result {
-        staged.rollback();
+        if let Err(rollback_error) = staged.rollback() {
+            return Err(io::Error::other(format!(
+                "deceased export write failed: {error}; rollback failed: {rollback_error}"
+            )));
+        }
         return Err(error);
     }
 
@@ -8291,14 +9428,22 @@ fn read_deceased_index(index_path: &Path) -> io::Result<Vec<DeceasedIndexEntry>>
     }
 }
 
-fn rollback_file(path: &Path, previous: Option<&[u8]>) {
+fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
     match previous {
-        Some(contents) => {
-            let _ = fs::write(path, contents);
-        }
-        None => {
-            let _ = fs::remove_file(path);
-        }
+        Some(contents) => fs::write(path, contents),
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
     }
 }
 
@@ -8524,11 +9669,42 @@ fn resolve_persistence_relative_path(
 }
 
 fn write_zstd_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
+    write_zstd_bundle_with_writer(path, payload, |file, compressed| file.write_all(compressed))
+}
+
+fn write_zstd_bundle_with_writer(
+    path: &Path,
+    payload: &[u8],
+    write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let compressed = zstd::stream::encode_all(payload, 3).map_err(io::Error::other)?;
-    fs::write(path, compressed)
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "bundle".to_string());
+    let temp_path = path.with_file_name(format!(
+        ".{filename}.tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut temp_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    let result = (|| {
+        write_temp(&mut temp_file, &compressed)?;
+        temp_file.sync_all()?;
+        drop(temp_file);
+        fs::rename(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -8724,9 +9900,14 @@ mod persistence_tests {
     use crate::cultivation::components::{
         ColorKind, ContamSource, Contamination, Cultivation, Karma, MeridianSystem, QiColor, Realm,
     };
+    use crate::cultivation::known_techniques::KnownTechnique;
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
+    use crate::persistence::slice::{
+        dispatch_shutdown_flushes, DirtyRevision, PersistenceSubjectKey, ShutdownFlushReport,
+        SliceLoad,
+    };
     use crate::player::state::{
         save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
     };
@@ -8736,7 +9917,961 @@ mod persistence_tests {
     use serde_json::Value;
     use std::sync::{Arc, Barrier};
     use std::time::Instant;
-    use valence::prelude::{App, DVec3, EntityKind, Position, Update};
+    use valence::prelude::{App, AppExit, DVec3, EntityKind, Events, Position, PostUpdate, Update};
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::create_mock_client;
+
+    fn known_techniques_fixture(id: &str, proficiency: f32) -> KnownTechniques {
+        KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: id.to_string(),
+                proficiency,
+                active: true,
+            }],
+        }
+    }
+
+    fn flush_mock_client_packets(mut clients: Query<&mut Client>) {
+        for mut client in &mut clients {
+            let _ = client.flush_packets();
+        }
+    }
+
+    fn known_techniques_app(
+        test_name: &str,
+    ) -> (App, PlayerStatePersistence, PersistenceSettings, PathBuf) {
+        let (settings, root) = persistence_settings(test_name);
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("known techniques fixture database should bootstrap");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let mut app = App::new();
+        app.add_event::<AppExit>();
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        let overworld_layer = app.world_mut().spawn_empty().id();
+        let tsy_layer = app.world_mut().spawn_empty().id();
+        app.insert_resource(crate::world::dimension::DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer,
+        });
+        register(&mut app);
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        app.add_systems(
+            Update,
+            (
+                crate::player::init_clients,
+                crate::player::attach_player_state_to_joined_clients
+                    .after(crate::player::init_clients),
+            ),
+        );
+        app.add_systems(PostUpdate, flush_mock_client_packets);
+        (app, player_persistence, settings, root)
+    }
+
+    fn persisted_known_techniques(
+        persistence: &PlayerStatePersistence,
+        username: &str,
+    ) -> Option<KnownTechniques> {
+        load_player_known_techniques_slice(persistence, username)
+            .expect("known techniques row should decode")
+    }
+
+    #[test]
+    fn known_techniques_retry_uses_bounded_backoff_capped_attempts_and_log_coalescing() {
+        let subject = "offline:retry-boundaries";
+        let mut state = KnownTechniquesReconnectState::default();
+
+        let retry_frames = [0_u64, 1, 3, 7, 15, 31, 63, 127];
+        for (index, frame) in retry_frames.into_iter().enumerate() {
+            assert!(
+                begin_known_techniques_retry(&mut state, subject, frame),
+                "attempt {} should run at its scheduled frame",
+                index + 1
+            );
+            assert_eq!(
+                state.retries.get(subject).map(|entry| entry.attempts),
+                Some(((index + 1) as u8).min(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS)),
+                "retry attempts must count actual attempts, not skipped frames"
+            );
+            let at_cap = index >= retry_frames.len() - 1;
+            assert_eq!(
+                record_known_techniques_retry_failure(&mut state, subject, frame),
+                at_cap,
+                "only the retry cap reports back to the caller"
+            );
+            assert!(
+                state
+                    .retries
+                    .get(subject)
+                    .map(|entry| entry.next_attempt_frame > frame)
+                    .unwrap_or(false),
+                "every failure must schedule a later retry frame, never a terminal one"
+            );
+            if !at_cap {
+                assert_eq!(
+                    state
+                        .retries
+                        .get(subject)
+                        .map(|entry| entry.next_attempt_frame),
+                    Some(retry_frames[index + 1]),
+                    "failure must schedule the documented exponential backoff"
+                );
+            }
+        }
+
+        // 8 次瞬态失败后不得永久终止：attempts 停在 cap，backoff 继续按 64 帧上限调度。
+        let entry = state.retries.get(subject).expect("retry entry");
+        assert_eq!(entry.attempts, KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS);
+        let next_frame = entry.next_attempt_frame;
+        assert!(!begin_known_techniques_retry(
+            &mut state,
+            subject,
+            next_frame - 1
+        ));
+        assert!(begin_known_techniques_retry(
+            &mut state, subject, next_frame
+        ));
+        assert_eq!(
+            state.retries.get(subject).map(|entry| entry.attempts),
+            Some(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS),
+            "attempts must stay capped at the retry limit, not grow"
+        );
+        assert!(record_known_techniques_retry_failure(
+            &mut state, subject, next_frame
+        ));
+        assert!(
+            state
+                .retries
+                .get(subject)
+                .map(|entry| entry.next_attempt_frame > next_frame)
+                .unwrap_or(false),
+            "post-cap failures must keep scheduling retries"
+        );
+
+        assert!(known_techniques_retry_log_allowed(&mut state, subject, 0));
+        assert!(!known_techniques_retry_log_allowed(&mut state, subject, 1));
+        assert!(!known_techniques_retry_log_allowed(&mut state, subject, 63));
+        assert!(known_techniques_retry_log_allowed(&mut state, subject, 64));
+
+        clear_known_techniques_retry(&mut state, subject);
+        assert!(!state.retries.contains_key(subject));
+    }
+
+    #[test]
+    fn known_techniques_descriptor_pins_canonical_slice_contract() {
+        let descriptor = &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR;
+        assert_eq!(descriptor.id, KNOWN_TECHNIQUES_SLICE_ID);
+        assert_eq!(descriptor.scope, SliceScope::PlayerEntity);
+        assert_eq!(descriptor.order, 10);
+        assert_eq!(descriptor.load_failure, LoadFailurePolicy::BlockWrites);
+        assert_eq!(descriptor.time_basis, TimeBasis::None);
+        assert_eq!(
+            descriptor.write_binding,
+            WriteBinding::new(
+                WriteDomain::new("player.known_techniques"),
+                WriteAuthority::new("persistence.known_techniques"),
+            )
+        );
+        assert_eq!(descriptor.write_ordering, WriteOrdering::Serialized);
+        assert_eq!(descriptor.autosave, AutosavePolicy::Disabled);
+        assert!(descriptor.hydrate.is_some());
+        assert!(descriptor.reconnect_preflight.is_some());
+        assert!(descriptor.reconnect_cleanup.is_some());
+        assert!(descriptor.rebase.is_none());
+        assert!(descriptor.disconnect_save.is_some());
+        assert!(descriptor.shutdown_flush.is_some());
+    }
+
+    #[test]
+    fn hydrate_known_techniques_cleans_pending_entry_when_target_is_gone() {
+        let mut world = World::new();
+        world.insert_resource(PendingKnownTechniquesHandoffs::default());
+        world.insert_resource(PendingKnownTechniquesCandidates::default());
+        world.insert_resource(KnownTechniquesReconnectState::default());
+        let entity = world.spawn_empty().id();
+        world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .insert("player:Azure".to_string(), entity);
+        world.despawn(entity);
+
+        let context = SliceRunContext {
+            reason: SliceRunReason::ReconnectLoad,
+            runtime_tick: 0,
+            wall_unix_millis: 0,
+            handoff_key: Some("player:Azure".to_string()),
+            reconnect_activation: None,
+        };
+        let error = hydrate_known_techniques_slice(&mut world, &context)
+            .expect_err("a vanished target must fail without panicking");
+        assert!(error.message().contains("entity is gone"));
+        assert!(
+            !world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key("player:Azure"),
+            "stale pending handoffs must be removed after the target disappears"
+        );
+    }
+
+    #[test]
+    fn production_known_techniques_join_and_changed_write_use_canonical_activation() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-changed");
+        let initial = known_techniques_fixture("movement.dash", 0.25);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(player),
+            Some(&initial),
+            "Added<Client> must hydrate KnownTechniques through the production dispatcher"
+        );
+        let subject = canonical_player_id("Azure");
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&subject)
+            .expect("join must create the canonical activation");
+        assert_eq!(activation.entity, player);
+        assert_eq!(
+            activation.guarded.load_status(),
+            slice::SliceLoadStatus::Loaded
+        );
+        assert!(!activation.tracker.is_dirty());
+
+        let changed = known_techniques_fixture("movement.dash", 0.75);
+        app.world_mut().entity_mut(player).insert(changed.clone());
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed),
+            "Changed<KnownTechniques> must commit through the production durable fence"
+        );
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&subject)
+            .expect("changed write must retain the activation");
+        assert!(!activation.tracker.is_dirty());
+        assert_eq!(
+            activation.fence.persisted_revision(),
+            activation.tracker.current_revision(),
+            "durable receipt acknowledgement must align fence and tracker revisions"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_connection_outage_stays_read_only_until_reconnect_rehydrates() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-connection-outage");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+        app.update();
+
+        let backup_path = root.join("known-techniques-outage-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should make player connection unavailable");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(old_player)
+            .is_some());
+        assert!(
+            app.world().get::<PlayerState>(old_player).is_some(),
+            "known-techniques DB outage must not prevent the ordinary PlayerState bundle from attaching"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectFailed>(old_player)
+                .is_some(),
+            "a transient known-techniques outage must mark only that slice as degraded"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(old_player)
+                .is_none(),
+            "a load failure must not use the duplicate-login block marker"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&canonical_player_id("Azure"))
+                .map(|activation| activation.guarded.load_status()),
+            Some(slice::SliceLoadStatus::Failed),
+            "a production connection-open failure must retain Failed provenance"
+        );
+
+        let during_outage = known_techniques_fixture("movement.dash", 0.8);
+        app.world_mut().entity_mut(old_player).insert(during_outage);
+        app.update();
+
+        fs::remove_dir(settings.db_path())
+            .expect("database outage placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("the durable database should be restored after the outage");
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(initial.clone()),
+            "an outage Changed event must not overwrite the existing durable row"
+        );
+
+        let before_reconnect = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(before_reconnect);
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(initial.clone()),
+            "database recovery alone must not make the failed activation writable"
+        );
+
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&initial),
+            "reconnect must rehydrate the durable row before reopening writes"
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(new_player)
+            .is_none());
+
+        let after_reconnect = known_techniques_fixture("movement.dash", 1.0);
+        app.world_mut()
+            .entity_mut(new_player)
+            .insert(after_reconnect.clone());
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(after_reconnect),
+            "only the rehydrated activation may resume Changed writes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_missing_known_techniques_row_can_persist_first_change() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-missing");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.guarded.load_status()),
+            Some(slice::SliceLoadStatus::Missing),
+            "an absent durable row must preserve Missing provenance"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(player),
+            Some(&KnownTechniques::default())
+        );
+
+        let first = known_techniques_fixture("movement.dash", 0.1);
+        app.world_mut().entity_mut(player).insert(first.clone());
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(first),
+            "Missing provenance must allow the first Changed write"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_disconnect_releases_activation() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-disconnect");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        let changed = known_techniques_fixture("movement.dash", 0.4);
+        app.world_mut().entity_mut(player).insert(changed.clone());
+        app.world_mut().entity_mut(player).remove::<Client>();
+
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed)
+        );
+        assert!(
+            !app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .contains_key(&canonical_player_id("Azure")),
+            "ordinary disconnect must release the durable-subject activation"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_same_tick_reconnect_saves_before_hydrate() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-reconnect");
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+        let unsaved = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved),
+            "same-tick reconnect must hydrate the row written from the old activation"
+        );
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(unsaved)
+        );
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&canonical_player_id("Azure"))
+            .expect("new activation should replace the old one");
+        assert_eq!(activation.entity, new_player);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_reconnect_retries_after_save_failure() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-reconnect-retry");
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let unsaved = known_techniques_fixture("movement.dash", 0.85);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        let backup_path = root.join("retry-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should force the disconnect save to fail");
+
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(old_player),
+            "failed save must retain the old activation for a later retry"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(&subject),
+            Some(&new_player),
+            "failed handoff must retain the reconnect target"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(new_player).is_none(),
+            "hydrate must not run after the old activation failed to save"
+        );
+
+        fs::remove_dir(settings.db_path()).expect("directory placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("fixture database should return to the production path");
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(unsaved.clone()),
+            "retry must durably save the old activation before hydrating"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved)
+        );
+        assert!(
+            !app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key(&subject),
+            "successful retry must consume the pending reconnect target"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(new_player),
+            "successful retry must replace the old activation exactly once"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reconnect_ready_client_reruns_init_clients_welcome() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-reconnect-ready-init");
+        let initial = known_techniques_fixture("movement.dash", 0.85);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let unsaved = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, mut new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        let backup_path = root.join("reconnect-ready-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should force the disconnect save to fail");
+
+        app.update();
+        new_helper.clear_received();
+
+        fs::remove_dir(settings.db_path()).expect("directory placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("fixture database should return to the production path");
+        app.update();
+
+        let messages: Vec<String> = new_helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|message| message.chat.to_legacy_lossy())
+            })
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains(crate::player::welcome_message())),
+            "the Ready edge must rerun init_clients and deliver the welcome message; \
+             actual messages={messages:?}"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved),
+            "the delayed reconnect must still hydrate the known techniques slice"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_live_duplicate_login_fails_closed_without_activation_theft() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-live-duplicate");
+        let initial = known_techniques_fixture("movement.dash", 0.55);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        let before = {
+            let activation = app
+                .world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .expect("the first client must own the canonical activation");
+            (
+                activation.entity,
+                activation.tracker.current_revision(),
+                activation.fence.persisted_revision(),
+            )
+        };
+
+        let (replacement_bundle, _replacement_helper) = create_mock_client("Azure");
+        let replacement = app.world_mut().spawn(replacement_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(old_player),
+            Some(&initial),
+            "a live duplicate must not remove KnownTechniques from the original entity"
+        );
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&subject)
+            .expect("a live duplicate must retain the original activation");
+        assert_eq!(activation.entity, before.0);
+        assert_eq!(activation.entity, old_player);
+        assert_eq!(
+            activation.tracker.current_revision(),
+            before.1,
+            "duplicate-login preflight must not discard the original DirtyTracker"
+        );
+        assert_eq!(
+            activation.fence.persisted_revision(),
+            before.2,
+            "duplicate-login preflight must not discard the original revision fence"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(replacement)
+                .is_some(),
+            "the replacement target must fail closed when the canonical subject is still live"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(replacement)
+                .is_none(),
+            "a rejected duplicate must never enter Ready hydration"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(replacement).is_none(),
+            "a rejected duplicate must not receive a second KnownTechniques activation"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(&subject),
+            Some(&replacement),
+            "the blocked replacement remains the only pending target and cannot steal the old activation"
+        );
+
+        let changed = known_techniques_fixture("movement.dash", 0.85);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(changed.clone());
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed),
+            "the original live entity must still be writable after duplicate-login rejection"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(old_player),
+            "a duplicate login must never transfer the canonical activation"
+        );
+        assert!(
+            !app.world()
+                .resource::<KnownTechniquesReconnectState>()
+                .retries
+                .contains_key(&subject),
+            "a still-live duplicate must be a stable block, not a backoff retry"
+        );
+
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<KnownTechniquesReconnectState>()
+                .retries
+                .contains_key(&subject),
+            "repeated frames must not reintroduce retry accounting while the old client is live"
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesReconnectBlocked>(replacement)
+            .is_some());
+        assert!(app
+            .world()
+            .get::<KnownTechniquesReconnectReady>(replacement)
+            .is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_duplicate_pending_target_keeps_first_target_and_blocks_later_client() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-duplicate-pending");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (first_bundle, _first_helper) = create_mock_client("Azure");
+        let first_target = app.world_mut().spawn(first_bundle).id();
+        let (second_bundle, _second_helper) = create_mock_client("Azure");
+        let second_target = app.world_mut().spawn(second_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(first_target),
+            "the first same-tick target must own the canonical activation"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(first_target),
+            Some(&initial),
+            "the first target must complete durable hydration"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_some(),
+            "a later same-subject target must be blocked rather than replacing pending state"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(second_target)
+                .is_none(),
+            "the later duplicate must not enter Ready hydration"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(second_target).is_none(),
+            "the later duplicate must not receive the first target's durable slice"
+        );
+        assert!(
+            !app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key(&subject),
+            "successful hydration must consume the first target's pending handoff"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_blocked_duplicate_promoted_and_hydrated_after_first_target_despawns() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-duplicate-promotion");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (first_bundle, _first_helper) = create_mock_client("Azure");
+        let first_target = app.world_mut().spawn(first_bundle).id();
+        let (second_bundle, _second_helper) = create_mock_client("Azure");
+        let second_target = app.world_mut().spawn(second_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world().get::<KnownTechniques>(first_target),
+            Some(&initial),
+            "the first target must hydrate before the duplicate arrives"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_some(),
+            "the duplicate must be blocked while the first target holds the activation"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(second_target).is_none(),
+            "the blocked duplicate must not hydrate while the first target is live"
+        );
+
+        app.world_mut().entity_mut(first_target).remove::<Client>();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(second_target),
+            Some(&initial),
+            "after the first target disconnects, the blocked duplicate must be promoted and hydrated"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(second_target)
+                .is_some(),
+            "promotion must emit the Ready marker that drives hydration"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_none(),
+            "promotion must clear the block on the promoted duplicate"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(second_target),
+            "the canonical activation must transfer to the promoted duplicate"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_shutdown_flushes_dirty_activation() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-shutdown");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        let changed = known_techniques_fixture("movement.dash", 0.6);
+        app.world_mut().entity_mut(player).insert(changed.clone());
+        app.world_mut()
+            .resource_mut::<Events<AppExit>>()
+            .send(AppExit::Success);
+
+        app.world_mut().run_schedule(Last);
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed),
+            "AppExit -> Last must flush the canonical KnownTechniques activation"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_failed_load_stays_read_only_and_recovers_on_reconnect() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-load-recovery");
+        let connection = Connection::open(settings.db_path()).expect("fixture db should open");
+        connection
+            .execute(
+                "INSERT INTO player_known_techniques (username, known_techniques_json, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+                params!["Azure", "{broken-json", PLAYER_ROW_SCHEMA_VERSION, 1],
+            )
+            .expect("corrupt known techniques row should seed");
+        drop(connection);
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(old_player)
+            .is_some());
+        assert!(
+            app.world().get::<PlayerState>(old_player).is_some(),
+            "a corrupt known-techniques row must not prevent PlayerState attachment"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectFailed>(old_player)
+                .is_some(),
+            "a corrupt known-techniques row must mark only that slice as degraded"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(old_player)
+                .is_none(),
+            "a corrupt row must not be treated as a duplicate-login block"
+        );
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(known_techniques_fixture("movement.dash", 0.99));
+        app.update();
+        let connection = Connection::open(settings.db_path()).expect("fixture db should reopen");
+        let stored: String = connection
+            .query_row(
+                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("corrupt row should remain present");
+        assert_eq!(
+            stored, "{broken-json",
+            "failed provenance must block Changed writes"
+        );
+        drop(connection);
+
+        let repaired = known_techniques_fixture("movement.dash", 0.35);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &repaired)
+            .expect("operator repair should replace the corrupt row");
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&repaired)
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(new_player)
+            .is_none());
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&canonical_player_id("Azure"))
+                .map(|activation| activation.entity),
+            Some(new_player),
+            "failed activation lease must be releasable so a repaired row can hydrate"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn sanitize_deceased_snapshot_stem_replaces_windows_invalid_separators() {
@@ -12409,6 +14544,351 @@ mod persistence_tests {
     }
 
     #[test]
+    fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
+        let (settings, root) = persistence_settings("production-zone-runtime-shutdown-slice");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut app = App::new();
+        app.add_event::<AppExit>();
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.insert_resource(settings.clone());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: 0.37,
+                danger_level: 3,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+            spatial_revision: 0,
+        });
+        register(&mut app);
+        app.world_mut()
+            .resource_mut::<ZoneRuntimeSnapshotState>()
+            .last_snapshot_wall = current_unix_seconds();
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        let records = load_zone_runtime_snapshot(&settings)
+            .expect("production shutdown dispatcher should persist zone runtime");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].zone_id, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(records[0].spirit_qi, 0.37);
+        assert_eq!(records[0].danger_level, 3);
+        assert_eq!(
+            app.world()
+                .resource::<PersistenceSliceRegistry>()
+                .descriptors()
+                .map(|descriptor| descriptor.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["player.known_techniques", "world.zone_runtime"],
+            "production must install every wired production descriptor"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn production_zone_runtime_registry() -> PersistenceSliceRegistry {
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry
+            .register_slice::<ZoneRuntimePersistenceSlice>()
+            .and_then(|()| registry.register_slice::<KnownTechniquesPersistenceSlice>())
+            .expect("production slice descriptors must remain valid");
+        registry
+    }
+
+    fn dispatch_production_shutdown_flushes(world: &mut World) -> ShutdownFlushReport {
+        dispatch_shutdown_flushes(
+            world,
+            ShutdownFlushRequest::Requested,
+            &ProductionSliceClock {
+                runtime_tick: 0,
+                wall_unix_millis: 0,
+            },
+        )
+        .expect("production shutdown dispatch must not fail closed on a missing registry")
+    }
+
+    fn zone_runtime_failure_message(report: &ShutdownFlushReport) -> Option<&str> {
+        report
+            .failures
+            .iter()
+            .find(|failure| failure.slice_id.as_str() == "world.zone_runtime")
+            .map(|failure| failure.error.message())
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_registry_is_clean_noop() {
+        let (settings, root) = persistence_settings("zone-flush-no-registry");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.attempted, 2,
+            "both production descriptors must be attempted, actual {report:?}"
+        );
+        assert!(
+            report.failures.is_empty(),
+            "an absent ZoneRegistry must be a clean no-op, actual {report:?}"
+        );
+        assert_eq!(report.clean, 2, "both slices must report Clean");
+        assert!(
+            load_zone_runtime_snapshot(&settings)
+                .expect("zone snapshot load must work on a fixture database")
+                .is_empty(),
+            "an absent ZoneRegistry must not write any zone runtime rows"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_settings_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-settings");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("PersistenceSettings is unavailable"),
+            "the zone slice must fail closed without PersistenceSettings, actual {report:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_qi_account_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-qi-account");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the zone slice may fail without WorldQiAccount, actual {report:?}"
+        );
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("WorldQiAccount is unavailable"),
+            "the zone slice must fail closed without WorldQiAccount"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_clock_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-clock");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the zone slice may fail without CultivationClock, actual {report:?}"
+        );
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("CultivationClock is unavailable"),
+            "the zone slice must fail closed without CultivationClock"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_resource_failure_keeps_later_zone_flush_running() {
+        let (settings, root) = persistence_settings("zone-flush-later-descriptor");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the known-techniques slice may fail without PlayerStatePersistence, actual {report:?}"
+        );
+        assert_eq!(
+            report.failures[0].slice_id.as_str(),
+            "player.known_techniques"
+        );
+        assert!(
+            report.flushed >= 1,
+            "the zone slice must still flush, actual {report:?}"
+        );
+        let records = load_zone_runtime_snapshot(&settings)
+            .expect("the later zone descriptor must have persisted its snapshot");
+        assert!(
+            !records.is_empty(),
+            "the later zone descriptor must write rows after the earlier known-techniques failure"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_shutdown_flush_failing_subject_does_not_abort_later_subject() {
+        let (settings, root) = persistence_settings("zone-flush-per-subject-isolation");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let registry = production_zone_runtime_registry();
+        let mut world = World::new();
+
+        let failing = known_techniques_fixture("movement.dash", 0.2);
+        let mut failing_guard = registry
+            .activate_test_subject(
+                SliceLoad::<KnownTechniques, String>::loaded(failing),
+                KNOWN_TECHNIQUES_SLICE_ID,
+                PersistenceSubjectKey::new("npc:hermit"),
+                DirtyRevision::default(),
+                KnownTechniques::default,
+                |_| KnownTechniques::default(),
+            )
+            .expect("failing subject activation should succeed");
+        let (failing_tracker, failing_fence) = failing_guard
+            .restore_persistence_state()
+            .expect("failing subject tracker should issue once");
+        let failing_entity = world
+            .spawn(known_techniques_fixture("movement.dash", 0.9))
+            .id();
+
+        let later = known_techniques_fixture("movement.dash", 0.3);
+        let mut later_guard = registry
+            .activate_test_subject(
+                SliceLoad::<KnownTechniques, String>::loaded(later),
+                KNOWN_TECHNIQUES_SLICE_ID,
+                PersistenceSubjectKey::new("offline:Beta"),
+                DirtyRevision::default(),
+                KnownTechniques::default,
+                |_| KnownTechniques::default(),
+            )
+            .expect("later subject activation should succeed");
+        let (later_tracker, later_fence) = later_guard
+            .restore_persistence_state()
+            .expect("later subject tracker should issue once");
+        let later_entity = world
+            .spawn(known_techniques_fixture("movement.dash", 0.8))
+            .id();
+
+        world.insert_resource(registry);
+        world.insert_resource(settings.clone());
+        world.insert_resource(player_persistence.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations(HashMap::from([
+            (
+                "npc:hermit".to_string(),
+                KnownTechniquesActivation {
+                    entity: failing_entity,
+                    guarded: failing_guard,
+                    tracker: failing_tracker,
+                    fence: failing_fence,
+                },
+            ),
+            (
+                canonical_player_id("Beta"),
+                KnownTechniquesActivation {
+                    entity: later_entity,
+                    guarded: later_guard,
+                    tracker: later_tracker,
+                    fence: later_fence,
+                },
+            ),
+        ])));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the failing subject may report, actual {report:?}"
+        );
+        assert_eq!(
+            report.failures[0].slice_id.as_str(),
+            "player.known_techniques"
+        );
+        assert!(
+            report.failures[0].error.message().contains("npc:hermit"),
+            "the failure must identify the failing subject, actual {:?}",
+            report.failures[0].error.message()
+        );
+        assert_eq!(
+            load_player_known_techniques_slice(&player_persistence, "Beta")
+                .expect("later subject row should decode"),
+            Some(known_techniques_fixture("movement.dash", 0.8)),
+            "the later subject must still flush after the earlier subject failed"
+        );
+        assert!(
+            load_player_known_techniques_slice(&player_persistence, "hermit")
+                .expect("failing subject lookup should decode")
+                .is_none(),
+            "the failing subject must not write any row"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn persistence_can_write_deceased_snapshot_and_public_index() {
         let (settings, root) = persistence_settings("deceased-export");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -14526,6 +17006,353 @@ mod persistence_tests {
             "dead NPC should be removed from hot npc_digests table"
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_db_open_failure_restores_previous_bundle() {
+        let (settings, root) = persistence_settings("npc-archive-db-open-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_db_open_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 700,
+            archived_at_wall: 1_704_067_250,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial npc archive should persist");
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
+
+        fs::remove_file(settings.db_path()).expect("fixture database should be removable");
+        fs::create_dir(settings.db_path())
+            .expect("database path should become an invalid directory");
+        archive.death_count = 2;
+        archive.died_at_tick = 701;
+        let error = persist_npc_deceased_archive(&settings, &archive)
+            .expect_err("database open failure must abort archive persistence");
+        assert!(
+            !error.to_string().is_empty(),
+            "database open failure should retain its diagnostic"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("previous archive should be restored"),
+            previous_bundle,
+            "DB-open failure after bundle replacement must restore the previous archive bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
+        let (settings, root) = persistence_settings("npc-archive-transaction-begin-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_transaction_begin_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 710,
+            archived_at_wall: 1_704_067_260,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial npc archive should persist");
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
+
+        archive.death_count = 2;
+        archive.died_at_tick = 711;
+        let error = persist_npc_deceased_archive_with_connection(&settings, &archive, |settings| {
+            let connection = open_persistence_connection(settings)?;
+            connection
+                .execute_batch("BEGIN DEFERRED TRANSACTION")
+                .map_err(io::Error::other)?;
+            Ok(connection)
+        })
+        .expect_err("transaction begin failure must abort archive persistence");
+        assert!(
+            !error.to_string().is_empty(),
+            "transaction begin failure should retain its diagnostic"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("previous archive should be restored"),
+            previous_bundle,
+            "transaction-begin failure after bundle replacement must restore the previous archive bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_replacement_write_failure_preserves_bundle_and_index() {
+        let (settings, root) = persistence_settings("npc-archive-replacement-write-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_replacement_write_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 730,
+            archived_at_wall: 1_704_067_280,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial archive should establish the durable baseline");
+
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("baseline bundle should exist");
+        let previous_index: (String, i64, String) = {
+            let connection = Connection::open(settings.db_path()).expect("db should open");
+            connection
+                .query_row(
+                    "SELECT archetype, died_at_tick, path FROM npc_deceased_index WHERE char_id = ?1",
+                    params![archive.char_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("baseline index row should exist")
+        };
+
+        archive.death_count = 2;
+        archive.died_at_tick = 731;
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            open_persistence_connection,
+            |path, payload| {
+                write_zstd_bundle_with_writer(path, payload, |file, compressed| {
+                    let partial_len = (compressed.len() / 2).max(1).min(compressed.len());
+                    file.write_all(&compressed[..partial_len])?;
+                    Err(io::Error::other("injected replacement short write"))
+                })
+            },
+        )
+        .expect_err("a replacement short write must abort before touching the final bundle");
+        assert!(
+            error
+                .to_string()
+                .contains("injected replacement short write"),
+            "the injected write failure should remain observable"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("the previous final bundle must remain present"),
+            previous_bundle,
+            "a failed replacement write must preserve the complete previous bundle"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should reopen");
+        let current_index: (String, i64, String) = connection
+            .query_row(
+                "SELECT archetype, died_at_tick, path FROM npc_deceased_index WHERE char_id = ?1",
+                params![archive.char_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the previous index row must remain present");
+        assert_eq!(
+            current_index, previous_index,
+            "a failed replacement write must not advance npc_deceased_index"
+        );
+        drop(connection);
+
+        let loaded = load_npc_deceased_archive(&settings, archive.char_id.as_str())
+            .expect("the unchanged baseline bundle must remain readable")
+            .expect("the baseline archive should remain indexed");
+        assert_eq!(loaded.died_at_tick, 730);
+        assert_eq!(loaded.death_count, 1);
+        let temporary_files = fs::read_dir(
+            archive_path
+                .parent()
+                .expect("archive bundle should have a parent directory"),
+        )
+        .expect("archive directory should remain readable")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".npc_archive_replacement_write_rollback.json.zst.tmp-")
+        })
+        .count();
+        assert_eq!(
+            temporary_files, 0,
+            "a failed temporary replacement write must clean up its partial file"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_first_archive_failure_removes_new_bundle() {
+        let (settings, root) = persistence_settings("npc-first-archive-rollback");
+        let capture = sample_npc_capture("npc_first_archive_rollback");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 720,
+            archived_at_wall: 1_704_067_270,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        assert!(
+            !archive_path.exists(),
+            "first archive fixture must begin without previous bytes"
+        );
+
+        let error = persist_npc_deceased_archive_with_connection(&settings, &archive, |_| {
+            Err(io::Error::other("injected database open failure"))
+        })
+        .expect_err("database failure must abort first archive persistence");
+        assert!(
+            error.to_string().contains("injected database open failure"),
+            "injected open failure should remain observable"
+        );
+        assert!(
+            !archive_path.exists(),
+            "failure after writing a first archive must remove the unindexed bundle"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
+        let (settings, root) = persistence_settings("npc-archive-prior-read-error");
+        let capture = sample_npc_capture("npc_archive_prior_read_error");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 721,
+            archived_at_wall: 1_704_067_271,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        fs::create_dir_all(&archive_path).expect("directory fixture should be creatable");
+        let open_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let open_called_for_hook = open_called.clone();
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            move |_| {
+                open_called_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
+                Err(io::Error::other("database hook must not run"))
+            },
+            |_, _| panic!("write hook must not run after a prior read error"),
+        )
+        .expect_err("a non-NotFound prior read error must abort before mutation");
+        assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
+        assert!(
+            !open_called.load(std::sync::atomic::Ordering::SeqCst),
+            "prior-file read errors must not open the database or run hooks"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_file_treats_missing_cleanup_as_idempotent() {
+        let (settings, root) = persistence_settings("rollback-file-missing-cleanup");
+        let path = settings.deceased_public_dir().join("missing.json");
+        rollback_file(&path, None).expect("removing an already-missing file is idempotent");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_file_surfaces_write_and_remove_errors() {
+        let (settings, root) = persistence_settings("rollback-file-errors");
+        let write_path = settings.deceased_public_dir().join("write-error");
+        fs::create_dir_all(&write_path).expect("write-error directory should be creatable");
+        let write_error = rollback_file(&write_path, Some(b"previous"))
+            .expect_err("rollback writes must surface destination errors");
+        assert_eq!(write_error.kind(), io::ErrorKind::IsADirectory);
+
+        let remove_path = settings.deceased_public_dir().join("remove-error");
+        fs::create_dir_all(&remove_path).expect("remove-error directory should be creatable");
+        let remove_error = rollback_file(&remove_path, None)
+            .expect_err("rollback removes must surface non-NotFound errors");
+        assert_eq!(remove_error.kind(), io::ErrorKind::IsADirectory);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_reports_primary_and_rollback_failures_together() {
+        let (settings, root) = persistence_settings("npc-archive-composite-diagnostic");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        let capture = sample_npc_capture("npc_archive_composite_diagnostic");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 722,
+            archived_at_wall: 1_704_067_272,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("baseline archive should establish previous bytes");
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            |_| Err(io::Error::other("primary database failure")),
+            |path, _| {
+                fs::remove_file(path)?;
+                fs::create_dir(path)?;
+                Err(io::Error::other("primary write failure"))
+            },
+        )
+        .expect_err("primary failure with failed rollback must retain both diagnostics");
+        let message = error.to_string();
+        assert!(message.contains("primary write failure"));
+        assert!(message.contains("rollback failed"));
+        assert!(message.contains("Is a directory") || message.contains("directory"));
         let _ = fs::remove_dir_all(root);
     }
 

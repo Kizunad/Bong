@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, Despawned, Entity, EntityInteraction,
-    EntityLayerId, Hand, InteractEntityEvent, IntoSystemConfigs, Position, Query, Res, ResMut,
+    EntityLayerId, Hand, InteractEntityEvent, IntoSystemConfigs, Or, Position, Query, Res, ResMut,
     Resource, Startup, Update, Username, Without,
 };
 
@@ -118,7 +118,14 @@ pub const BODY_POCKET_COLS: u8 = 3;
 #[allow(dead_code)]
 pub const BASE_CARRY_CAPACITY: f64 = 15.0;
 
-type JoinedClientsWithoutInventoryFilter = (Added<Client>, Without<PlayerInventory>);
+type JoinedClientsWithoutInventoryFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
+    Without<PlayerInventory>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRevision(pub u64);
