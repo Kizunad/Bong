@@ -5402,7 +5402,9 @@ pub fn discard_inventory_item_to_dropped_loot(
         }
     };
 
-    let next_idx = registry.entries.len();
+    // Keep the visual spread local to the player. Using the global registry length here
+    // eventually puts a fresh drop outside the 2.5-block pickup radius during long e2e runs.
+    let next_idx = registry.entries.len().min(8);
     let dropped = DroppedLootEntry {
         instance_id,
         source_container_id,
@@ -13108,6 +13110,48 @@ cols = 4
         assert_eq!(entry.instance_id, 42);
         assert_eq!(entry.source_container_id, MAIN_PACK_CONTAINER_ID);
         let _ = owner;
+    }
+
+    #[test]
+    fn discard_inventory_item_to_dropped_loot_stays_pickable_after_registry_growth() {
+        let mut inventory = make_test_inventory_with_one_item();
+        let template_item = inventory.containers[0].items[0].instance.clone();
+        let mut registry = DroppedLootRegistry::default();
+        for index in 0..40_u64 {
+            let instance_id = 1_000 + index;
+            let mut item = template_item.clone();
+            item.instance_id = instance_id;
+            registry.entries.insert(
+                instance_id,
+                DroppedLootEntry {
+                    instance_id,
+                    source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                    source_row: 0,
+                    source_col: 0,
+                    world_pos: [0.5, 64.0, 0.5],
+                    dimension: DimensionKind::Overworld,
+                    item,
+                },
+            );
+        }
+
+        let outcome = discard_inventory_item_to_dropped_loot(
+            &mut inventory,
+            &mut registry,
+            [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
+            42,
+            &crate::schema::inventory::InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+        )
+        .expect("discard should succeed after registry growth");
+
+        pickup_dropped_loot_instance(&mut inventory, &mut registry, [0.0, 64.0, 0.0], 42)
+            .expect("a fresh drop must remain within pickup range after registry growth");
+        assert_eq!(outcome.dropped.instance_id, 42);
     }
 
     #[test]
