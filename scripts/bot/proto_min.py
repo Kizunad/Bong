@@ -421,7 +421,18 @@ def _item_view(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
         "stack_count": _varint(fields, 9),
         "spirit_quality": _double(fields, 10),
         "durability": _double(fields, 11),
+        "mineral_id": _optional_string(fields, 12),
+        "scroll_kind": _optional_string(fields, 13),
+        "scroll_skill_id": _optional_string(fields, 14),
+        "scroll_xp_grant": _optional_varint(fields, 15),
+        "charges": _optional_varint(fields, 16),
         "forge_quality": _optional_float32(fields, 17),
+        "forge_color": _optional_varint(fields, 18),
+        "forge_side_effects": _strings(fields, 19),
+        "forge_achieved_tier": _optional_varint(fields, 20),
+        "alchemy": (
+            _alchemy_item_data(_message(fields, 21)) if _has(fields, 21) else None
+        ),
         "freshness": _inventory_freshness(_message(fields, 22)) if _has(fields, 22) else None,
     }
 
@@ -434,6 +445,56 @@ def _inventory_freshness(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
         "profile": _string(fields, 4),
         "frozen_accumulated": _varint(fields, 5),
         "frozen_since_tick": _optional_varint(fields, 6),
+    }
+
+
+def _alchemy_item_data(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "kind": _string(fields, 1),
+        "recipe_id": _optional_string(fields, 2),
+        "quality_tier": _optional_varint(fields, 3),
+        "effect_multiplier": _optional_double(fields, 4),
+        "consecrated": (
+            bool(_optional_varint(fields, 5)) if _has(fields, 5) else None
+        ),
+        "side_effect": (
+            _alchemy_side_effect(_message(fields, 6)) if _has(fields, 6) else None
+        ),
+        "fragment": (
+            _alchemy_fragment(_message(fields, 7)) if _has(fields, 7) else None
+        ),
+        "hint": _alchemy_hint(_message(fields, 8)) if _has(fields, 8) else None,
+        "residue_kind": _optional_string(fields, 9),
+        "produced_at_tick": _optional_varint(fields, 10),
+        "expires_at_tick": _optional_varint(fields, 11),
+    }
+
+
+def _alchemy_side_effect(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "tag": _string(fields, 1),
+        "duration_s": _optional_varint(fields, 2),
+        "weight": _optional_varint(fields, 3),
+        "perm": bool(_optional_varint(fields, 4)) if _has(fields, 4) else None,
+        "color": _optional_varint(fields, 5),
+        "amount": _optional_double(fields, 6),
+    }
+
+
+def _alchemy_fragment(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "recipe_id": _string(fields, 1),
+        "known_stages": _uint32s(fields, 2),
+        "max_quality_tier": _varint(fields, 3),
+    }
+
+
+def _alchemy_hint(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "source_pill": _string(fields, 1),
+        "recipe_id": _optional_string(fields, 2),
+        "accuracy": _double(fields, 3),
+        "ingredients": _strings(fields, 4),
     }
 
 
@@ -555,6 +616,24 @@ def _strings(fields: list[tuple[int, int, Any]], field: int) -> list[str]:
         for existing, wire, value in fields
         if existing == field and wire == 2
     ]
+
+
+def _uint32s(fields: list[tuple[int, int, Any]], field: int) -> list[int]:
+    """Decode repeated uint32 in either packed or unpacked protobuf form."""
+    values: list[int] = []
+    for existing, wire, value in fields:
+        if existing != field:
+            continue
+        if wire == WIRE_VARINT:
+            values.append(int(value))
+            continue
+        if wire != WIRE_LEN or not isinstance(value, bytes):
+            continue
+        pos = 0
+        while pos < len(value):
+            decoded, pos = _read_varint(value, pos)
+            values.append(decoded)
+    return values
 
 
 def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:

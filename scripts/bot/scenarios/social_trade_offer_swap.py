@@ -24,11 +24,16 @@ from bot.scenarios._inventory_helpers import (
 )
 from bot.scenarios._social_helpers import wait_player_protocol_id
 
-DESCRIPTION = "双 bot 面对面交易：A 以 starter_talisman 换 B 的 huiyuan_pill，双方背包原子互换"
+DESCRIPTION = "双 bot 面对面交易：A 以带元数据矿物换 B 的另一份矿物，双方背包原子互换"
 MODULES = ["social", "trade", "network", "cmd", "multibot"]
 
-OFFER_ITEM_ID = "starter_talisman"
-REQUEST_ITEM_ID = "huiyuan_pill"
+# Bare mineral grants carry non-default `mineral_id` and `freshness` metadata;
+# this makes the preservation oracle mutation-sensitive instead of comparing
+# two default-valued fixtures.
+OFFER_COMMAND_ID = "za_gang"
+OFFER_ITEM_ID = "mineral_za_gang"
+REQUEST_COMMAND_ID = "ling_shi_zhong"
+REQUEST_ITEM_ID = "mineral_ling_shi_zhong"
 
 
 def run(env) -> None:
@@ -61,10 +66,8 @@ def run(env) -> None:
                 timeout=10.0,
             )
 
-            alice.cmd(f"give {OFFER_ITEM_ID} 1")
-            alice.expect_chat(f"[dev] gave {OFFER_ITEM_ID} x1", timeout=10.0)
-            bob.cmd(f"give {REQUEST_ITEM_ID} 1")
-            bob.expect_chat(f"[dev] gave {REQUEST_ITEM_ID} x1", timeout=10.0)
+            alice.cmd(f"give {OFFER_COMMAND_ID} 1")
+            bob.cmd(f"give {REQUEST_COMMAND_ID} 1")
 
             alice_snapshot = wait_inventory_revision_after_matching(
                 alice,
@@ -91,6 +94,15 @@ def run(env) -> None:
                 "交易前双方 authoritative snapshot 出现重复 instance_id，"
                 f"无法证明唯一所有权：alice={sorted(before_by_owner['alice'])} "
                 f"bob={sorted(before_by_owner['bob'])}"
+            )
+            for instance_id, item in before_all.items():
+                assert item.get("mineral_id"), (
+                    f"交易 fixture instance_id={instance_id} 必须携带非默认 mineral_id，"
+                    f"实际 item={item!r}"
+                )
+            assert any(item.get("freshness") is not None for item in before_all.values()), (
+                "交易 fixture 至少一件物品必须携带非默认 freshness 元数据，"
+                f"实际 items={before_all!r}"
             )
 
             # game_join 的 entity_id 恒为 0（valence 保留给客户端自身），不能当
@@ -239,10 +251,25 @@ def run(env) -> None:
                 )
                 for field in (
                     "item_id",
+                    "display_name",
+                    "grid_width",
+                    "grid_height",
+                    "weight",
+                    "rarity",
+                    "description",
                     "stack_count",
-                    "durability",
                     "spirit_quality",
+                    "durability",
+                    "mineral_id",
+                    "scroll_kind",
+                    "scroll_skill_id",
+                    "scroll_xp_grant",
+                    "charges",
                     "forge_quality",
+                    "forge_color",
+                    "forge_side_effects",
+                    "forge_achieved_tier",
+                    "alchemy",
                     "freshness",
                 ):
                     assert after_all[instance_id].get(field) == before_all[instance_id].get(field), (

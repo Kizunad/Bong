@@ -1148,10 +1148,16 @@ fn handle_trade_offer_responses(
     mut exposures: EventWriter<SocialExposureEvent>,
 ) {
     for response in responses.read() {
+        let Some(pending) = registry.pending.get(response.offer_id.as_str()).cloned() else {
+            continue;
+        };
+        if response.player != pending.target {
+            continue;
+        }
         let Some(pending) = registry.pending.remove(response.offer_id.as_str()) else {
             continue;
         };
-        if response.player != pending.target || !response.accepted {
+        if !response.accepted {
             continue;
         }
         let Some(requested_instance_id) = response.requested_instance_id else {
@@ -1187,10 +1193,12 @@ fn handle_trade_offer_responses(
             else {
                 continue;
             };
+            let mut next_initiator_inventory = initiator_inventory.clone();
+            let mut next_target_inventory = target_inventory.clone();
             if let Err(error) = exchange_inventory_items(
-                &mut initiator_inventory,
+                &mut next_initiator_inventory,
                 pending.offered_instance_id,
-                &mut target_inventory,
+                &mut next_target_inventory,
                 requested_instance_id,
             ) {
                 tracing::warn!(
@@ -1199,6 +1207,8 @@ fn handle_trade_offer_responses(
                 );
                 continue;
             }
+            *initiator_inventory = next_initiator_inventory;
+            *target_inventory = next_target_inventory;
             if let Some(mut life_record) = initiator_life_record {
                 life_record.push(BiographyEntry::TradeCompleted {
                     counterparty_id: pending.target_char_id.clone(),
@@ -5090,6 +5100,82 @@ mod tests {
     }
 
     #[test]
+    fn non_target_trade_response_does_not_consume_offer_before_target_accepts() {
+        let mut app = setup_trade_app();
+        let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+        let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+        let intruder = spawn_trade_player(&mut app, "Intruder", "char:intruder", 20.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: intruder,
+            offer_id: offer_id.clone(),
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<TradeOfferRegistry>()
+                .pending
+                .contains_key(&offer_id),
+            "非目标 responder 不得消费 pending offer，否则真实目标无法随后响应"
+        );
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(initiator).unwrap(),
+            1001
+        )
+        .is_some());
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(target).unwrap(),
+            2002
+        )
+        .is_some());
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 51,
+        });
+        app.update();
+
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(initiator).unwrap(),
+            2002
+        )
+        .is_some());
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(target).unwrap(),
+            1001
+        )
+        .is_some());
+        assert!(app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .is_empty());
+    }
+
+    #[test]
     fn successful_trade_emits_one_final_snapshot_per_player_over_bounded_window() {
         let mut app = setup_trade_app();
         let (initiator, mut initiator_helper) =
@@ -5155,6 +5241,83 @@ mod tests {
                 .iter()
                 .any(|placed| placed.item.instance_id == absent_id));
         }
+    }
+
+    #[test]
+    fn capacity_rejected_trade_does_not_emit_unchanged_inventory_snapshots() {
+        let mut app = setup_trade_app();
+        let (initiator, mut initiator_helper) =
+            spawn_trade_player_with_helper(&mut app, "Initiator", "char:initiator", 0.0);
+        let (target, mut target_helper) =
+            spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+        {
+            let mut initiator_inventory = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(initiator)
+                .unwrap();
+            initiator_inventory.containers[0].rows = 1;
+            initiator_inventory.containers[0].cols = 1;
+        }
+        app.world_mut()
+            .get_mut::<PlayerInventory>(target)
+            .unwrap()
+            .containers[0]
+            .items[0]
+            .instance
+            .grid_w = 2;
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let _ = collect_server_data_payloads(&mut initiator_helper);
+        let _ = collect_server_data_payloads(&mut target_helper);
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        for _ in 0..4 {
+            app.update();
+            flush_all_client_packets(&mut app);
+        }
+
+        for (label, helper) in [
+            ("initiator", &mut initiator_helper),
+            ("target", &mut target_helper),
+        ] {
+            let snapshots = collect_server_data_payloads(helper)
+                .into_iter()
+                .filter(|payload| {
+                    matches!(payload.payload, ServerDataPayloadV1::InventorySnapshot(_))
+                })
+                .count();
+            assert_eq!(
+                snapshots, 0,
+                "{label} 在容量拒绝后不得收到内容与 revision 均未变化的 inventory_snapshot"
+            );
+        }
+        let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+        assert_eq!(initiator_inventory.revision, InventoryRevision(0));
+        assert_eq!(target_inventory.revision, InventoryRevision(0));
+        assert!(inventory_item_by_instance(initiator_inventory, 1001).is_some());
+        assert!(inventory_item_by_instance(target_inventory, 2002).is_some());
     }
 
     #[test]

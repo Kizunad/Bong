@@ -199,15 +199,23 @@ mod tests {
             .collect_received()
             .0
             .into_iter()
-            .filter_map(|frame| frame.decode::<CustomPayloadS2c>().ok())
-            .filter(|packet| packet.channel.as_str() == "bong:server_data")
-            .filter(|packet| {
-                serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(packet.data.0 .0)
-                    .is_ok_and(|payload| {
-                        matches!(
-                            payload.payload,
-                            crate::schema::server_data::ServerDataPayloadV1::InventorySnapshot(_)
+            .filter(|frame| {
+                frame
+                    .decode::<CustomPayloadS2c>()
+                    .ok()
+                    .filter(|packet| packet.channel.as_str() == "bong:server_data")
+                    .is_some_and(|packet| {
+                        serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(
+                            packet.data.0 .0,
                         )
+                        .is_ok_and(|payload| {
+                            matches!(
+                                payload.payload,
+                                crate::schema::server_data::ServerDataPayloadV1::InventorySnapshot(
+                                    _
+                                )
+                            )
+                        })
                     })
             })
             .count()

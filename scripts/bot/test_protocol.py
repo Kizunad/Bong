@@ -378,7 +378,51 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "inventory_snapshot")
         self.assertEqual(decoded["revision"], 12)
         self.assertEqual(decoded["containers"][0]["id"], "body_pocket")
-        self.assertEqual(decoded["equipped"]["chest_worn"][0]["item_id"], "worn_grass_pouch")
+        item = decoded["equipped"]["chest_worn"][0]
+        self.assertEqual(item["item_id"], "worn_grass_pouch")
+        self.assertEqual(item["mineral_id"], "za_gang")
+        self.assertEqual(item["scroll_kind"], "skill_scroll")
+        self.assertEqual(item["scroll_skill_id"], "forging")
+        self.assertEqual(item["scroll_xp_grant"], 500)
+        self.assertEqual(item["charges"], 7)
+        self.assertAlmostEqual(item["forge_quality"], 0.75, places=6)
+        self.assertEqual(item["forge_color"], 1)
+        self.assertEqual(item["forge_side_effects"], ["brittle_edge", "qi_shear"])
+        self.assertEqual(item["forge_achieved_tier"], 3)
+        self.assertEqual(
+            item["alchemy"],
+            {
+                "kind": "pill",
+                "recipe_id": "qing_xin_dan",
+                "quality_tier": 2,
+                "effect_multiplier": 0.9,
+                "consecrated": True,
+                "side_effect": {
+                    "tag": "qi_drain_mild",
+                    "duration_s": 30,
+                    "weight": 1,
+                    "perm": False,
+                    "color": 2,
+                    "amount": 1.5,
+                },
+                "fragment": None,
+                "hint": None,
+                "residue_kind": None,
+                "produced_at_tick": None,
+                "expires_at_tick": None,
+            },
+        )
+        self.assertEqual(
+            item["freshness"],
+            {
+                "created_at_tick": 123,
+                "initial_qi": 0.5,
+                "track": "Decay",
+                "profile": "mineral_decay_v1",
+                "frozen_accumulated": 17,
+                "frozen_since_tick": 140,
+            },
+        )
 
     def test_proto_inventory_event_moved_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_inventory_event_moved_bytes())
@@ -2421,6 +2465,30 @@ def _server_data_zone_info_bytes() -> bytes:
 
 
 def _server_data_inventory_snapshot_bytes() -> bytes:
+    side_effect = (
+        _pb_string(1, "qi_drain_mild")
+        + _pb_varint(2, 30)
+        + _pb_varint(3, 1)
+        + _pb_varint(4, 0)
+        + _pb_varint(5, 2)
+        + _pb_fixed64(6, 1.5)
+    )
+    alchemy = (
+        _pb_string(1, "pill")
+        + _pb_string(2, "qing_xin_dan")
+        + _pb_varint(3, 2)
+        + _pb_fixed64(4, 0.9)
+        + _pb_varint(5, 1)
+        + _pb_message(6, side_effect)
+    )
+    freshness = (
+        _pb_varint(1, 123)
+        + _pb_fixed32(2, 0.5)
+        + _pb_string(3, "Decay")
+        + _pb_string(4, "mineral_decay_v1")
+        + _pb_varint(5, 17)
+        + _pb_varint(6, 140)
+    )
     item = (
         _pb_varint(1, 9)
         + _pb_string(2, "worn_grass_pouch")
@@ -2433,6 +2501,18 @@ def _server_data_inventory_snapshot_bytes() -> bytes:
         + _pb_varint(9, 1)
         + _pb_fixed64(10, 0.0)
         + _pb_fixed64(11, 0.3)
+        + _pb_string(12, "za_gang")
+        + _pb_string(13, "skill_scroll")
+        + _pb_string(14, "forging")
+        + _pb_varint(15, 500)
+        + _pb_varint(16, 7)
+        + _pb_fixed32(17, 0.75)
+        + _pb_varint(18, 1)
+        + _pb_string(19, "brittle_edge")
+        + _pb_string(19, "qi_shear")
+        + _pb_varint(20, 3)
+        + _pb_message(21, alchemy)
+        + _pb_message(22, freshness)
     )
     container = (
         _pb_string(1, "body_pocket")

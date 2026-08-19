@@ -17,7 +17,7 @@ from bot.scenarios._inventory_helpers import (
     find_item,
     latest_inventory_snapshot,
     require_item,
-    wait_inventory_contains,
+    wait_inventory_revision_after_matching,
     wait_join_and_inventory,
 )
 from bot.scenarios._social_helpers import wait_player_protocol_id
@@ -25,8 +25,12 @@ from bot.scenarios._social_helpers import wait_player_protocol_id
 DESCRIPTION = "面对面交易拒绝/坏 target 分支：decline 不换包，entity 不存在与 self-target 不发 offer"
 MODULES = ["social", "trade", "network", "cmd", "multibot"]
 
-OFFER_ITEM_ID = "starter_talisman"
-REQUEST_ITEM_ID = "huiyuan_pill"
+# Use bare mineral ids so the production drop path seeds authoritative metadata
+# (mineral_id + freshness) that the trade oracle can prove is preserved.
+OFFER_COMMAND_ID = "za_gang"
+OFFER_ITEM_ID = "mineral_za_gang"
+REQUEST_COMMAND_ID = "ling_shi_zhong"
+REQUEST_ITEM_ID = "mineral_ling_shi_zhong"
 MISSING_TARGET = "entity:2147483647"  # i32 max 附近，fixture 世界不存在该协议实体
 
 
@@ -50,20 +54,49 @@ def run(env) -> None:
 
             # 清包归一化：server data dir 跨 run 持久化，复跑时上一轮的 give 物品
             # 会污染断言（背包已满给不进 / find_item 误判），先清 pack 再发。
+            alice_previous_revision = int(latest_inventory_snapshot(alice)["revision"])
+            bob_previous_revision = int(latest_inventory_snapshot(bob)["revision"])
             alice.cmd("clearinv naked")
             alice.expect_chat("[dev] clearinv All revision=", timeout=10.0)
             bob.cmd("clearinv naked")
             bob.expect_chat("[dev] clearinv All revision=", timeout=10.0)
 
-            alice.cmd(f"give {OFFER_ITEM_ID} 1")
-            alice.expect_chat(f"[dev] gave {OFFER_ITEM_ID} x1", timeout=10.0)
-            bob.cmd(f"give {REQUEST_ITEM_ID} 1")
-            bob.expect_chat(f"[dev] gave {REQUEST_ITEM_ID} x1", timeout=10.0)
+            alice_cleared = wait_inventory_revision_after_matching(
+                alice,
+                alice_previous_revision,
+                lambda snap: not snap.get("placed_items")
+                and not any(snap.get("hotbar", [])),
+                description="clearinv 后 authoritative inventory 为空",
+                timeout=10.0,
+            )
+            bob_cleared = wait_inventory_revision_after_matching(
+                bob,
+                bob_previous_revision,
+                lambda snap: not snap.get("placed_items")
+                and not any(snap.get("hotbar", [])),
+                description="clearinv 后 authoritative inventory 为空",
+                timeout=10.0,
+            )
 
-            alice_snapshot = wait_inventory_contains(alice, OFFER_ITEM_ID, timeout=10.0)
+            alice.cmd(f"give {OFFER_COMMAND_ID} 1")
+            bob.cmd(f"give {REQUEST_COMMAND_ID} 1")
+
+            alice_snapshot = wait_inventory_revision_after_matching(
+                alice,
+                int(alice_cleared["revision"]),
+                lambda snap: find_item(snap, OFFER_ITEM_ID) is not None,
+                description=f"清包后新发的 {OFFER_ITEM_ID} 已进入 authoritative inventory",
+                timeout=10.0,
+            )
             talisman = require_item(alice_snapshot, OFFER_ITEM_ID)
             bob_pill = require_item(
-                wait_inventory_contains(bob, REQUEST_ITEM_ID, timeout=10.0),
+                wait_inventory_revision_after_matching(
+                    bob,
+                    int(bob_cleared["revision"]),
+                    lambda snap: find_item(snap, REQUEST_ITEM_ID) is not None,
+                    description=f"清包后新发的 {REQUEST_ITEM_ID} 已进入 authoritative inventory",
+                    timeout=10.0,
+                ),
                 REQUEST_ITEM_ID,
             )
 
