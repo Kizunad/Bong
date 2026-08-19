@@ -18,6 +18,25 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 const TICK_MS: u64 = 50;
 
+fn ticks_to_wire_ms(ticks: u32, field: &'static str) -> u32 {
+    if ticks == u32::MAX {
+        // `u32::MAX` is the catalog/protocol sentinel for a one-shot skill.
+        return u32::MAX;
+    }
+    let milliseconds = u64::from(ticks) * TICK_MS;
+    match u32::try_from(milliseconds) {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::warn!(
+                ticks,
+                field,
+                "skill timing exceeds u32 wire range; using sentinel"
+            );
+            u32::MAX
+        }
+    }
+}
+
 type SkillBarEmitFilter = (With<Client>, Changed<SkillBarBindings>);
 
 pub fn emit_skillbar_config_payloads(
@@ -106,8 +125,11 @@ fn build_skillbar_config(
                     .map(|definition| SkillBarEntryV1::Skill {
                         skill_id: skill_id.clone(),
                         display_name: definition.display_name.to_string(),
-                        cast_duration_ms: definition.cast_ticks.saturating_mul(TICK_MS as u32),
-                        cooldown_ms: definition.cooldown_ticks.saturating_mul(TICK_MS as u32),
+                        cast_duration_ms: ticks_to_wire_ms(
+                            definition.cast_ticks,
+                            "cast_duration_ms",
+                        ),
+                        cooldown_ms: ticks_to_wire_ms(definition.cooldown_ticks, "cooldown_ms"),
                         icon_texture: definition.icon_texture.to_string(),
                     })
             }
@@ -224,5 +246,26 @@ mod tests {
             }
             SkillBarEntryV1::Item { .. } => panic!("skill binding emitted as item"),
         }
+    }
+
+    #[test]
+    fn one_shot_cooldown_uses_explicit_wire_sentinel() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.cooldown_ticks = u32::MAX;
+            });
+        let mut bindings = SkillBarBindings::default();
+        bindings.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        let config =
+            build_skillbar_config(&bindings, None, &ItemRegistry::default(), &registry, 0, 0);
+        let Some(SkillBarEntryV1::Skill { cooldown_ms, .. }) = config.slots[0].as_ref() else {
+            panic!("skill binding must emit a skill entry");
+        };
+        assert_eq!(*cooldown_ms, u32::MAX);
     }
 }

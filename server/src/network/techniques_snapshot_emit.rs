@@ -48,13 +48,21 @@ pub fn emit_join_techniques_snapshot_payloads(
 fn build_techniques_snapshot(
     registry: &TechniqueRegistry,
     known: &KnownTechniques,
+    player_name: Option<&str>,
 ) -> TechniquesSnapshotV1 {
     TechniquesSnapshotV1 {
         entries: known
             .entries
             .iter()
             .filter_map(|known| {
-                let definition = registry.get(&known.id)?;
+                let Some(definition) = registry.get(&known.id) else {
+                    tracing::debug!(
+                        player = player_name.unwrap_or("<test>"),
+                        technique_id = %known.id,
+                        "known technique is absent from registry; omitting snapshot entry"
+                    );
+                    return None;
+                };
                 Some(TechniqueEntryV1 {
                     id: definition.id.to_string(),
                     display_name: definition.display_name.to_string(),
@@ -90,7 +98,7 @@ pub fn send_techniques_snapshot_to_client(
     username: &str,
     known: &KnownTechniques,
 ) {
-    let snapshot = build_techniques_snapshot(registry, known);
+    let snapshot = build_techniques_snapshot(registry, known, Some(username));
     let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -136,7 +144,7 @@ mod tests {
             ],
         };
 
-        let snapshot = build_techniques_snapshot(&registry, &known);
+        let snapshot = build_techniques_snapshot(&registry, &known, None);
 
         assert_eq!(snapshot.entries.len(), 1);
         let entry = &snapshot.entries[0];
@@ -160,12 +168,26 @@ mod tests {
                 active: true,
             }],
         };
-        let snapshot = build_techniques_snapshot(&registry, &known);
+        let snapshot = build_techniques_snapshot(&registry, &known, None);
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(
             snapshot.entries[0].qi_cost, 0.4_f32,
             "TechniqueEntry tag 10 remains the legacy float/fixed32 contract"
         );
+    }
+
+    #[test]
+    fn snapshot_clamps_negative_proficiency_to_zero() {
+        let registry = TechniqueRegistry::load_for_tests();
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: -0.1,
+                active: true,
+            }],
+        };
+        let snapshot = build_techniques_snapshot(&registry, &known, None);
+        assert_eq!(snapshot.entries[0].proficiency, 0.0);
     }
 
     #[test]
@@ -261,7 +283,7 @@ dispatch = "direct_generic"
                 .collect(),
         };
         let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(
-            build_techniques_snapshot(&registry, &known),
+            build_techniques_snapshot(&registry, &known, None),
         ));
         let actual_proto = payload.to_proto_bytes();
         assert!(

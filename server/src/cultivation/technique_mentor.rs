@@ -85,10 +85,11 @@ pub fn mentor_teaches_technique(
     let Some(definition) = registry.get(ctx.technique_id) else {
         return MentorOutcome::UnknownTechnique;
     };
-    if parse_grade(&definition.grade) == TechniqueGrade::Earth {
+    let grade = parse_grade(&definition.grade);
+    if grade == TechniqueGrade::Earth {
         return MentorOutcome::EarthGradeRefused;
     }
-    let cost = mentor_cost_for_grade(parse_grade(&definition.grade));
+    let cost = mentor_cost_for_grade(grade);
     if inventory.bone_coins < cost {
         return MentorOutcome::NotEnoughBoneCoins {
             required: cost,
@@ -336,6 +337,66 @@ mod tests {
         );
 
         assert_eq!(outcome, MentorOutcome::EarthGradeRefused);
+    }
+
+    #[test]
+    fn mentor_rejects_unknown_technique() {
+        let mut inventory = inventory(100);
+        let mut known = KnownTechniques::default();
+        let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 60,
+                technique_id: "missing.technique",
+            },
+            true,
+        );
+        assert_eq!(outcome, MentorOutcome::UnknownTechnique);
+    }
+
+    #[test]
+    fn mentor_reports_bone_coin_shortfall() {
+        let mut inventory = inventory(0);
+        let mut known = KnownTechniques::default();
+        let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 60,
+                technique_id: "woliu.burst",
+            },
+            true,
+        );
+        assert_eq!(
+            outcome,
+            MentorOutcome::NotEnoughBoneCoins {
+                required: 20,
+                current: 0
+            }
+        );
     }
 
     #[test]

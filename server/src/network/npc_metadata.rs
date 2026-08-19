@@ -914,7 +914,10 @@ mod tests {
             spider_disguise_state: None,
         });
 
-        assert_eq!(payload.techniques[0].display_name, "覆写劈击");
+        let json: serde_json::Value =
+            serde_json::from_slice(&payload.to_json_bytes_checked().expect("serialize"))
+                .expect("metadata JSON should parse");
+        assert_eq!(json["techniques"][0]["display_name"], "覆写劈击");
     }
 
     #[test]

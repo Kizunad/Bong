@@ -760,6 +760,7 @@ required_race = { kind = "humanoid" }
 qi_cost = 0.0
 stamina_cost = 0.0
 cast_ticks = 80
+# u32::MAX is the protocol sentinel for a one-shot cooldown.
 cooldown_ticks = 4294967295
 range = 100.0
 icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_heaven_gate.png"

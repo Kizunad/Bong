@@ -1564,7 +1564,10 @@ mod tests {
         let attack = attack_events.iter_current_update_events().next().unwrap();
         assert_eq!(attack.target, Some(target));
         assert_eq!(attack.source, AttackSource::BurstMeridian);
-        assert_eq!(attack.reach, FIST_REACH, "2.6 reach must retain base 2.0 and step bonus 0.6");
+        assert_eq!(
+            attack.reach, FIST_REACH,
+            "2.6 reach must retain base 2.0 and step bonus 0.6"
+        );
         assert_eq!(attack.qi_invest, 60.0);
         assert_eq!(attack.wound_kind, WoundKind::Blunt);
 
@@ -3053,10 +3056,22 @@ mod tests {
 
         let mut deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
         declare_meridian_dependencies(&mut deps);
-        assert_eq!(deps.lookup(BENG_QUAN_SKILL_ID), RIGHT_ARM_MERIDIANS.as_slice());
-        assert_eq!(deps.lookup(TIE_SHAN_KAO_SKILL_ID), TIE_SHAN_KAO_MERIDIANS.as_slice());
-        assert_eq!(deps.lookup(XUE_BENG_BU_SKILL_ID), XUE_BENG_BU_MERIDIANS.as_slice());
-        assert_eq!(deps.lookup(NI_MAI_HU_TI_SKILL_ID), NI_MAI_HU_TI_MERIDIANS.as_slice());
+        assert_eq!(
+            deps.lookup(BENG_QUAN_SKILL_ID),
+            RIGHT_ARM_MERIDIANS.as_slice()
+        );
+        assert_eq!(
+            deps.lookup(TIE_SHAN_KAO_SKILL_ID),
+            TIE_SHAN_KAO_MERIDIANS.as_slice()
+        );
+        assert_eq!(
+            deps.lookup(XUE_BENG_BU_SKILL_ID),
+            XUE_BENG_BU_MERIDIANS.as_slice()
+        );
+        assert_eq!(
+            deps.lookup(NI_MAI_HU_TI_SKILL_ID),
+            NI_MAI_HU_TI_MERIDIANS.as_slice()
+        );
     }
 
     #[test]
@@ -3118,10 +3133,7 @@ mod tests {
         let mut app = app_with_zone();
         // 在 spawn zone AABB 内（y=70）生成施法者。
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let target = spawn_target(
-            &mut app,
-            DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)),
-        );
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
 
         let initial_spirit_qi = zone_spirit_qi(&app);
 
@@ -3257,10 +3269,7 @@ mod tests {
             .spirit_qi = 1.0;
 
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let target = spawn_target(
-            &mut app,
-            DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)),
-        );
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 

@@ -287,7 +287,7 @@ dispatch = "metadata_backed"
 }
 
 #[test]
-fn full_app_startup_smoke_rejects_metadata_backed_without_dependency_declaration() {
+fn full_app_startup_smoke_rejects_metadata_backed_without_resolver_when_dependency_declared() {
     // 「有 resolver、无依赖」负例在 full-app 层不可构造：生产 `init_registry` 的所有
     // resolver id 都在 `init_meridian_dependencies` 有声明（checked-in wiring 测试锁住），
     // 而 full-app 无法注入新 resolver。该分支的拒绝语义已由单元测试

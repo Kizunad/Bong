@@ -294,9 +294,9 @@ fn emit_npc_skill_av(
 }
 
 pub fn register_npc_skills(registry: &mut SkillRegistry) {
-    registry.register("npc.heal_basic", npc_heal_basic);
-    registry.register("npc.buff_speed", npc_buff_speed);
-    registry.register("npc.buff_defense", npc_buff_defense);
+    registry.register(NPC_HEAL_SKILL_ID, npc_heal_basic);
+    registry.register(NPC_BUFF_SPEED_SKILL_ID, npc_buff_speed);
+    registry.register(NPC_BUFF_DEFENSE_SKILL_ID, npc_buff_defense);
 }
 
 pub fn declare_npc_skill_meridian_deps(deps: &mut SkillMeridianDependencies) {

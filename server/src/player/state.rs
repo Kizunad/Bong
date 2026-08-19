@@ -1958,7 +1958,11 @@ fn load_player_known_techniques_from_sqlite(
                 path,
                 &crate::body_plan::RaceRegistry::default(),
             )
-            .expect("dev-techniques catalog must load for fresh players");
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "dev-techniques catalog load failed for fresh player `{username}`: {error}"
+                ))
+            })?;
             return Ok(
                 crate::cultivation::known_techniques::KnownTechniques::dev_default(&registry),
             );

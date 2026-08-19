@@ -1100,8 +1100,8 @@ fn set_action_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem};
     use crate::combat::body_conditioning::apply_guangbo_ticao_bonuses;
+    use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem};
     use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
     use crate::cultivation::meridian::severed::{
         MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
@@ -1516,12 +1516,10 @@ mod tests {
         );
         assert!(
             assigned.entries.iter().all(|entry| {
-                registry
-                    .get(&entry.id)
-                    .is_some_and(|definition| {
-                        definition.dispatch == TechniqueDispatch::MetadataBacked
-                            || entry.id == "body.guangbo_ticao"
-                    })
+                registry.get(&entry.id).is_some_and(|definition| {
+                    definition.dispatch == TechniqueDispatch::MetadataBacked
+                        || entry.id == "body.guangbo_ticao"
+                })
             }),
             "NPC active loadout must exclude resolver-less direct_generic entries: {:?}",
             assigned.entries
@@ -1532,9 +1530,12 @@ mod tests {
             .find(|entry| entry.id == "body.guangbo_ticao")
             .expect("legacy same-seed NPC oracle must retain body.guangbo_ticao");
         let mut attrs = crate::combat::components::DerivedAttrs::default();
-        apply_guangbo_ticao_bonuses(&mut attrs, &KnownTechniques {
-            entries: vec![guangbo.clone()],
-        });
+        apply_guangbo_ticao_bonuses(
+            &mut attrs,
+            &KnownTechniques {
+                entries: vec![guangbo.clone()],
+            },
+        );
         assert!(
             attrs.move_speed_multiplier > 1.0 && attrs.jump_height_multiplier > 1.0,
             "body.guangbo_ticao must remain a live NPC passive, attrs={attrs:?}"

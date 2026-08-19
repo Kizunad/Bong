@@ -42,12 +42,12 @@ use crate::cultivation::technique_scroll::realm_rank;
 use crate::network::cast_emit::current_unix_millis;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+#[cfg(test)]
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
 use crate::qi_physics::ledger::{
     qi_flow_overflow_account, transfer_external_qi_to_ledger, transfer_ledger_qi_to_zone,
     QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
-#[cfg(test)]
-use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::qi_physics::QiPhysicsError;
 use crate::world::dimension::DimensionKind;
@@ -1049,7 +1049,10 @@ fn append_ledger_zone_release(
         1.0,
         QiTransferReason::ReleaseToZone,
     )?;
-    let accepted_amount = accepted.as_ref().map(|transfer| transfer.amount).unwrap_or(0.0);
+    let accepted_amount = accepted
+        .as_ref()
+        .map(|transfer| transfer.amount)
+        .unwrap_or(0.0);
     if let Some(transfer) = accepted {
         transfers.push(transfer);
     }
@@ -1251,6 +1254,7 @@ fn prepare_heaven_gate_settlement(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle_heaven_gate_player(
     players: &mut Query<(
         &mut crate::cultivation::components::Cultivation,
@@ -1267,13 +1271,8 @@ fn settle_heaven_gate_player(
     let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) else {
         return false;
     };
-    let live_stored_qi = bond_opt
-        .as_ref()
-        .map(|bond| bond.stored_qi)
-        .unwrap_or(0.0);
-    if !live_stored_qi.is_finite()
-        || (live_stored_qi - settled_stored_qi).abs() > QI_EPSILON
-    {
+    let live_stored_qi = bond_opt.as_ref().map(|bond| bond.stored_qi).unwrap_or(0.0);
+    if !live_stored_qi.is_finite() || (live_stored_qi - settled_stored_qi).abs() > QI_EPSILON {
         return false;
     }
     cultivation.qi_max = (qi_max_snapshot * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
@@ -2522,9 +2521,7 @@ mod tests {
             .sum();
         let bond_releases: f64 = release_events
             .iter()
-            .filter(|transfer| {
-                transfer.from == QiAccountId::container("sword_bond:offline:Azure")
-            })
+            .filter(|transfer| transfer.from == QiAccountId::container("sword_bond:offline:Azure"))
             .map(|transfer| transfer.amount)
             .sum();
         assert_eq!(
@@ -3278,7 +3275,10 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            qi_drained_events.iter().map(|transfer| transfer.amount).sum::<f64>(),
+            qi_drained_events
+                .iter()
+                .map(|transfer| transfer.amount)
+                .sum::<f64>(),
             qi_before,
             "zone 接收与 overflow 分流之和必须等于真实 qi_current"
         );

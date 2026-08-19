@@ -88,11 +88,8 @@ pub enum TechniqueDispatch {
 /// 三个 id 都有独立的真实消费者：`movement.dash` 由闪身/首击学习路径消费，
 /// `shield_block` 由举盾与格挡结算消费，`body.guangbo_ticao` 由广播体操练习与
 /// 身体 conditioning 消费。新增直通招式必须先接入消费者，再进白名单，不能只加 TOML。
-pub const DIRECT_GENERIC_ALLOWLIST: &[&str] = &[
-    "movement.dash",
-    "shield_block",
-    "body.guangbo_ticao",
-];
+pub const DIRECT_GENERIC_ALLOWLIST: &[&str] =
+    &["movement.dash", "shield_block", "body.guangbo_ticao"];
 
 /// NPC 明确允许保留、但不应进入主动施法池的 direct-generic 被动功法。
 ///
@@ -104,11 +101,8 @@ pub const NPC_PASSIVE_TECHNIQUE_IDS: &[&str] = &["body.guangbo_ticao"];
 /// resolver consumes the corresponding `TechniqueRegistry` fields. The current dandao
 /// resolvers use static realm/meridian/cost/timing rules, so advertising a TOML override would
 /// make the snapshot and ingress contract disagree with execution.
-pub const RESOLVER_STATIC_METADATA_IDS: &[&str] = &[
-    "dandao.pill_rush",
-    "dandao.pill_bomb",
-    "dandao.pill_mist",
-];
+pub const RESOLVER_STATIC_METADATA_IDS: &[&str] =
+    &["dandao.pill_rush", "dandao.pill_bomb", "dandao.pill_mist"];
 
 /// Metadata that production systems dereference after startup and therefore cannot be deleted
 /// independently of their runtime consumers. Direct-generic entries are included because their
@@ -717,6 +711,9 @@ fn is_valid_icon_texture(value: &str) -> bool {
         && path.chars().all(|c| {
             c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '/' | '.')
         })
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
 fn validate_race_gate(
@@ -855,11 +852,16 @@ fn validate_startup_relationships(
                     .iter()
                     .map(|required| {
                         crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
-                            .expect("loaded technique metadata must contain known meridian channels")
+                            .expect(
+                                "loaded technique metadata must contain known meridian channels",
+                            )
                     })
                     .collect();
-                let declared_meridians: HashSet<_> =
-                    dependencies.lookup(&definition.id).iter().copied().collect();
+                let declared_meridians: HashSet<_> = dependencies
+                    .lookup(&definition.id)
+                    .iter()
+                    .copied()
+                    .collect();
                 if metadata_meridians != declared_meridians {
                     return Err(TechniqueWiringError(format!(
                         "technique {:?} required_meridians mismatch: metadata={metadata_meridians:?}, declared={declared_meridians:?}",
@@ -1378,6 +1380,35 @@ dispatch = "metadata_backed"
     }
 
     #[test]
+    fn rejects_gui_icon_path_traversal_and_empty_segments() {
+        for icon in [
+            "bong:textures/gui/../secret.png",
+            "bong:textures/gui/./secret.png",
+            "bong:textures/gui//secret.png",
+        ] {
+            let input = minimal_toml().replace(
+                "bong-client:textures/gui/items/skill_scroll_test_skill.png",
+                icon,
+            );
+            let error = load(&input).expect_err("unsafe GUI icon path must reject catalog");
+            assert!(
+                error.to_string().contains("icon_texture"),
+                "error must identify icon_texture, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_catalog_file_surfaces_io_error_with_path() {
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/cultivation/__absent_for_review__.toml");
+        let error = TechniqueRegistry::load_from_path(&missing, &RaceRegistry::default())
+            .expect_err("missing catalog file must fail to load");
+        assert!(matches!(error, TechniqueLoadError::Io { .. }));
+        assert!(error.to_string().contains("__absent_for_review__.toml"));
+    }
+
+    #[test]
     fn rejects_sub_epsilon_qi_costs_but_accepts_zero_and_above_epsilon() {
         // M01 blocker 边界：`release_qi_amount_to_zone` 对 `amount <= QI_EPSILON` 直接
         // 返回，接受 `0 < qi_cost <= QI_EPSILON` 会造成扣玩家却不落目的账户的单边销毁。
@@ -1495,21 +1526,20 @@ dispatch = "metadata_backed"
         // 即使声明了 resolver-less empty dependency，也不能绕过消费者白名单。
         let mut dependencies = SkillMeridianDependencies::default();
         dependencies.declare("test.skill", Vec::new());
-        let error = validate_startup_relationships(
-            &registry,
-            &SkillRegistry::default(),
-            &dependencies,
-        )
-        .expect_err("dependency declaration must not admit a fake direct_generic skill");
+        let error =
+            validate_startup_relationships(&registry, &SkillRegistry::default(), &dependencies)
+                .expect_err("dependency declaration must not admit a fake direct_generic skill");
         assert!(error.to_string().contains("no gameplay consumer"));
 
         // 真实 allowlisted direct_generic 仍可通过，但 resolver 冲突必须继续失败。
-        let allowlisted = load(&minimal_toml()
-            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
-            .replace(
-                "dispatch = \"metadata_backed\"",
-                "dispatch = \"direct_generic\"",
-            ))
+        let allowlisted = load(
+            &minimal_toml()
+                .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+                .replace(
+                    "dispatch = \"metadata_backed\"",
+                    "dispatch = \"direct_generic\"",
+                ),
+        )
         .expect("allowlisted direct_generic id must parse");
         validate_startup_relationships(
             &allowlisted,
@@ -1552,8 +1582,9 @@ dispatch = "metadata_backed"
         // promoted dandao ID must therefore fail closed instead of advertising fields the
         // resolver ignores.
         for &id in RESOLVER_STATIC_METADATA_IDS {
-            let registry = load(&minimal_toml().replace("id = \"test.skill\"", id))
-                .expect("dandao metadata probe must parse before startup wiring validation");
+            let registry =
+                load(&minimal_toml().replace("id = \"test.skill\"", &format!("id = \"{id}\"")))
+                    .expect("dandao metadata probe must parse before startup wiring validation");
             let mut skills = SkillRegistry::default();
             skills.register(id, noop_skill);
             let mut dependencies = SkillMeridianDependencies::default();
@@ -1579,7 +1610,7 @@ dispatch = "metadata_backed"
         declared.declare("test.skill", Vec::new());
         let missing_resolver =
             validate_startup_relationships(&metadata_backed, &no_skills, &declared)
-            .expect_err("metadata_backed without resolver must fail");
+                .expect_err("metadata_backed without resolver must fail");
         assert!(missing_resolver.to_string().contains("test.skill"));
         assert!(missing_resolver
             .to_string()
@@ -1601,12 +1632,14 @@ dispatch = "metadata_backed"
         // A resolver conflict remains rejected independently of the historical ID. Use an
         // allowlisted direct_generic so the resolver conflict, rather than the consumer gate,
         // is the first failure.
-        let direct_generic = load(&minimal_toml()
-            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
-            .replace(
-                "dispatch = \"metadata_backed\"",
-                "dispatch = \"direct_generic\"",
-            ))
+        let direct_generic = load(
+            &minimal_toml()
+                .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+                .replace(
+                    "dispatch = \"metadata_backed\"",
+                    "dispatch = \"direct_generic\"",
+                ),
+        )
         .expect("direct_generic fixture must load");
         skills.register("movement.dash", noop_skill);
         let resolver_conflict = validate_startup_relationships(
@@ -1623,7 +1656,9 @@ dispatch = "metadata_backed"
 
     fn production_registry_without(id: &str) -> TechniqueRegistry {
         let mut registry = production_registry();
-        registry.definitions.retain(|definition| definition.id != id);
+        registry
+            .definitions
+            .retain(|definition| definition.id != id);
         registry.id_to_index = registry
             .definitions
             .iter()
@@ -1675,21 +1710,20 @@ dispatch = "metadata_backed"
         skills.register("test.skill", noop_skill);
         let mut declared_empty = SkillMeridianDependencies::default();
         declared_empty.declare("test.skill", Vec::new());
-        let error = validate_startup_relationships(
-            &metadata_requires_lung,
-            &skills,
-            &declared_empty,
-        )
-        .expect_err("metadata-only Lung dependency must be rejected");
+        let error =
+            validate_startup_relationships(&metadata_requires_lung, &skills, &declared_empty)
+                .expect_err("metadata-only Lung dependency must be rejected");
         assert!(error.to_string().contains("required_meridians mismatch"));
         assert!(error.to_string().contains("test.skill"));
 
         let metadata_empty = load(&minimal_toml()).expect("empty metadata must load");
         let mut declared_lung = SkillMeridianDependencies::default();
-        declared_lung.declare("test.skill", vec![crate::cultivation::components::MeridianId::Lung]);
-        let error =
-            validate_startup_relationships(&metadata_empty, &skills, &declared_lung)
-                .expect_err("declaration-only Lung dependency must be rejected");
+        declared_lung.declare(
+            "test.skill",
+            vec![crate::cultivation::components::MeridianId::Lung],
+        );
+        let error = validate_startup_relationships(&metadata_empty, &skills, &declared_lung)
+            .expect_err("declaration-only Lung dependency must be rejected");
         assert!(error.to_string().contains("required_meridians mismatch"));
         assert!(error.to_string().contains("test.skill"));
     }
@@ -1715,20 +1749,20 @@ dispatch = "metadata_backed"
 
     #[test]
     fn startup_wiring_rejects_nonempty_runtime_only_metadata_gate() {
-        let techniques = TechniqueRegistry::load_for_tests_with_override(
-            "zhenmai.multipoint",
-            |definition| {
+        let techniques =
+            TechniqueRegistry::load_for_tests_with_override("zhenmai.multipoint", |definition| {
                 definition.required_meridians = vec![TechniqueRequiredMeridian {
                     channel: "Lung".to_string(),
                     min_health: 0.5,
                 }];
-            },
-        );
+            });
         let (skills, dependencies) = production_wiring_for();
         let error = validate_startup_wiring(&techniques, &skills, &dependencies)
             .expect_err("runtime-only exceptions must keep TOML required_meridians empty");
         assert!(error.to_string().contains("zhenmai.multipoint"));
-        assert!(error.to_string().contains("must keep TOML required_meridians empty"));
+        assert!(error
+            .to_string()
+            .contains("must keep TOML required_meridians empty"));
     }
 
     #[test]

@@ -1122,6 +1122,31 @@ mod tests {
 
     #[test]
     fn spawned_relic_guard_loadout_uses_injected_registry() {
+        let mut baseline = App::new();
+        baseline.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
+        baseline.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        baseline.update();
+        baseline.update();
+        let baseline_guard = only_spawned_npc(&mut baseline);
+        assert!(
+            baseline
+                .world()
+                .get::<crate::cultivation::known_techniques::KnownTechniques>(baseline_guard)
+                .expect("baseline relic guard must carry a technique loadout")
+                .entries
+                .iter()
+                .any(|entry| entry.id == "npc.heal_basic"),
+            "默认 registry 下守卫必须持有 npc.heal_basic，否则排除断言恒真"
+        );
+
         let registry =
             crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
                 "npc.heal_basic",
