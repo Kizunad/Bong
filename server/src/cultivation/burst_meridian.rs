@@ -276,7 +276,8 @@ pub fn resolve_beng_quan(
             else {
                 return rejected(CastRejectReason::InvalidTarget);
             };
-            if caster_position.distance(target_position) > effective_reach + f64::EPSILON {
+            if caster_position.distance(target_position) > effective_reach + f64::from(f32::EPSILON)
+            {
                 return rejected(CastRejectReason::InvalidTarget);
             }
             Some(target_position)
@@ -931,18 +932,17 @@ fn check_beng_quan_meridian_gate(
     if required.is_empty() {
         return Err(CastRejectReason::MeridianSevered(None));
     }
-    if let Some(severed) = world.get::<MeridianSeveredPermanent>(caster) {
-        if let Some((id, _)) = required.iter().find(|(id, _)| severed.is_severed(*id)) {
-            return Err(CastRejectReason::MeridianSevered(Some(*id)));
+    let severed = world.get::<MeridianSeveredPermanent>(caster);
+    for (id, min_health) in required {
+        let meridian = meridians.get(id);
+        if severed.is_some_and(|severed| severed.is_severed(id))
+            || !meridian.opened
+            || meridian.integrity < min_health
+        {
+            return Err(CastRejectReason::MeridianSevered(Some(id)));
         }
     }
-    if required.iter().any(|(id, min_health)| {
-        let meridian = meridians.get(*id);
-        meridian.opened && meridian.integrity >= *min_health
-    }) {
-        return Ok(());
-    }
-    Err(CastRejectReason::MeridianSevered(Some(required[0].0)))
+    Ok(())
 }
 
 fn check_definition_meridian_gate(
@@ -1686,7 +1686,7 @@ mod tests {
     }
 
     #[test]
-    fn beng_quan_allows_one_remaining_right_arm_meridian() {
+    fn beng_quan_rejects_when_any_right_arm_meridian_is_unavailable() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
         app.world_mut()
@@ -1703,7 +1703,31 @@ mod tests {
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(
+                MeridianId::SmallIntestine
+            )))
+        );
+        assert_eq!(qi(&app, caster), 100.0, "拒绝路径不得扣真元");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::LargeIntestine),
+            1.0
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::SmallIntestine),
+            0.0
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::TripleEnergizer),
+            0.0
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app.world().resource::<Events<AttackIntent>>().is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
     }
 
     #[test]

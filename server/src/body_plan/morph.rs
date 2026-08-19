@@ -178,7 +178,10 @@ fn cast_morph_yixing(
         )
     };
     if let Some(stamina) = world.get::<Stamina>(caster) {
-        if stamina_cost > 0.0 && (stamina.current < stamina_cost || stamina.current <= 0.0) {
+        if stamina.state == StaminaState::Exhausted
+            || stamina.current <= 0.0
+            || (stamina_cost > 0.0 && stamina.current < stamina_cost)
+        {
             return CastResult::Rejected {
                 reason: CastRejectReason::InRecovery,
             };
@@ -1063,6 +1066,44 @@ mod tests {
                     .spirit_qi,
                 zone_before
             );
+        }
+
+        #[test]
+        fn cast_rejects_exhausted_stamina_after_partial_recovery() {
+            let techniques =
+                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
+                    definition.stamina_cost = 1.0;
+                });
+            let races = human_to_whale_registry();
+            let (mut world, caster) = make_world_with_caster_and_zone_and_registry(
+                yixing_qi_cost() + 10.0,
+                100.0,
+                races,
+                techniques,
+            );
+            world.entity_mut(caster).insert(Stamina {
+                current: 2.0,
+                max: 20.0,
+                state: StaminaState::Exhausted,
+                ..Default::default()
+            });
+            let qi_before = world.get::<Cultivation>(caster).unwrap().qi_current;
+
+            let result = cast_morph_yixing(&mut world, caster, 0, None);
+
+            assert_eq!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::InRecovery
+                },
+                "Exhausted 状态即使恢复了少量 current 也必须继续拒绝易形"
+            );
+            assert_eq!(
+                world.get::<Cultivation>(caster).unwrap().qi_current,
+                qi_before,
+                "衰竭门禁拒绝不得扣真元"
+            );
+            assert!(world.get::<MorphState>(caster).is_none());
         }
 
         #[test]

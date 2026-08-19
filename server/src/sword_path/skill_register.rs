@@ -450,16 +450,6 @@ pub fn heaven_gate_cast_system(
     for event in pending {
         let staging_buffer = event.qi_max + event.stored_qi;
 
-        // 释放阶段 AV：一剑开天的 flash / shockwave / release 动画（纯 cosmetic，
-        // 在 caster 当前位置触发）。蓄力阶段 AV 已在 cast_heaven_gate emit。
-        av_events.send(SwordPathSkillCastEvent {
-            skill: SwordPathSkillId::HeavenGateRelease,
-            caster: event.caster,
-            center: event.position,
-            direction: None,
-            tick: clock.tick,
-        });
-
         // 100 格 AoE：每个范围内目标按距离衰减伤害。已死 / 无 Position 的略过。
         let center = event.position;
         let radius_sq = heaven_gate_range.powi(2);
@@ -509,34 +499,62 @@ pub fn heaven_gate_cast_system(
             .get(event.caster)
             .map(|username| canonical_player_id(username.0.as_str()))
             .unwrap_or_else(|_| format!("entity:{}", event.caster.to_bits()));
-        let mut settlement_ledger = qi_ledger.as_deref().cloned().unwrap_or_default();
-        if let Ok(plan) = prepare_heaven_gate_settlement(
-            &settlement_ledger,
-            event.position,
-            &player_id,
-            qi_current,
-            stored_qi,
-            zone_registry.as_deref(),
-        ) {
-            if settle_heaven_gate_player(
-                &mut players,
-                event.caster,
-                event.qi_max,
+        let settlement_succeeded = if qi_ledger.is_none()
+            && (qi_current > QI_EPSILON || stored_qi > QI_EPSILON)
+        {
+            tracing::error!(caster = ?event.caster, "heaven-gate settlement ledger missing");
+            false
+        } else {
+            let mut settlement_ledger = qi_ledger.as_deref().cloned().unwrap_or_default();
+            if let Err(error) =
+                sync_sword_bond_ledger(&mut settlement_ledger, &player_id, stored_qi)
+            {
+                tracing::error!(caster = ?event.caster, %error, "heaven-gate bond ledger sync failed");
+                false
+            } else if let Ok(plan) = prepare_heaven_gate_settlement(
+                &settlement_ledger,
+                event.position,
+                &player_id,
+                qi_current,
                 stored_qi,
-                plan,
-                &mut settlement_ledger,
-                zone_registry.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
+                zone_registry.as_deref(),
             ) {
-                if let Some(ledger) = qi_ledger.as_deref_mut() {
-                    *ledger = settlement_ledger;
+                if settle_heaven_gate_player(
+                    &mut players,
+                    event.caster,
+                    event.qi_max,
+                    stored_qi,
+                    plan,
+                    &mut settlement_ledger,
+                    zone_registry.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                ) {
+                    if let Some(ledger) = qi_ledger.as_deref_mut() {
+                        *ledger = settlement_ledger;
+                    }
+                    true
+                } else {
+                    tracing::error!(caster = ?event.caster, "heaven-gate settlement commit failed");
+                    false
                 }
+            } else {
+                tracing::error!(caster = ?event.caster, "heaven-gate settlement preparation failed");
+                false
             }
-        }
+        };
 
-        // 盲区注册：把 caster 藏 5 min，agent world_state 不再推送其 snapshot。
-        let zone = create_blind_zone_from_cast(&event, clock.tick, heaven_gate_range);
-        blind_registry.add(zone);
+        if settlement_succeeded {
+            // 盲区注册：把 caster 藏 5 min，agent world_state 不再推送其 snapshot。
+            let zone = create_blind_zone_from_cast(&event, clock.tick, heaven_gate_range);
+            blind_registry.add(zone);
+            av_events.send(SwordPathSkillCastEvent {
+                skill: SwordPathSkillId::HeavenGateRelease,
+                caster: event.caster,
+                center: event.position,
+                direction: None,
+                tick: clock.tick,
+            });
+        }
 
         // 保留旧 helper 的计算调用，供 legacy path 的 aftermath 数值契约继续 pin。
         let _outcome = compute_heaven_gate_shatter(event.qi_max, event.stored_qi);
@@ -694,29 +712,52 @@ pub fn heaven_gate_phase_system(
                 .get(caster)
                 .map(|username| canonical_player_id(username.0.as_str()))
                 .unwrap_or_else(|_| format!("entity:{}", caster.to_bits()));
-            let mut settlement_ledger = qi_ledger.as_deref().cloned().unwrap_or_default();
-            if let Ok(plan) = prepare_heaven_gate_settlement(
-                &settlement_ledger,
-                origin,
-                &player_id,
-                qi_current,
-                stored_qi,
-                zone_registry.as_deref(),
-            ) {
-                if settle_heaven_gate_player(
-                    &mut players,
-                    caster,
-                    channeling.qi_max,
+            let settlement_succeeded = if qi_ledger.is_none()
+                && (qi_current > QI_EPSILON || stored_qi > QI_EPSILON)
+            {
+                tracing::error!(caster = ?caster, "heaven-gate settlement ledger missing; retaining channeling");
+                false
+            } else {
+                let mut settlement_ledger = qi_ledger.as_deref().cloned().unwrap_or_default();
+                if let Err(error) =
+                    sync_sword_bond_ledger(&mut settlement_ledger, &player_id, stored_qi)
+                {
+                    tracing::error!(caster = ?caster, %error, "heaven-gate bond ledger sync failed; retaining channeling");
+                    false
+                } else if let Ok(plan) = prepare_heaven_gate_settlement(
+                    &settlement_ledger,
+                    origin,
+                    &player_id,
+                    qi_current,
                     stored_qi,
-                    plan,
-                    &mut settlement_ledger,
-                    zone_registry.as_deref_mut(),
-                    qi_transfers.as_deref_mut(),
+                    zone_registry.as_deref(),
                 ) {
-                    if let Some(ledger) = qi_ledger.as_deref_mut() {
-                        *ledger = settlement_ledger;
+                    if settle_heaven_gate_player(
+                        &mut players,
+                        caster,
+                        channeling.qi_max,
+                        stored_qi,
+                        plan,
+                        &mut settlement_ledger,
+                        zone_registry.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
+                    ) {
+                        if let Some(ledger) = qi_ledger.as_deref_mut() {
+                            *ledger = settlement_ledger;
+                        }
+                        true
+                    } else {
+                        tracing::error!(caster = ?caster, "heaven-gate settlement commit failed; retaining channeling");
+                        false
                     }
+                } else {
+                    tracing::error!(caster = ?caster, "heaven-gate settlement preparation failed; retaining channeling");
+                    false
                 }
+            };
+
+            if !settlement_succeeded {
+                continue;
             }
 
             // 盲区注册
@@ -1252,6 +1293,37 @@ fn prepare_heaven_gate_settlement(
         zone_name: target.as_ref().map(|target| target.name.clone()),
         zone_after: zone_current,
     })
+}
+
+fn sync_sword_bond_ledger(
+    ledger: &mut WorldQiAccount,
+    player_id: &str,
+    stored_qi: f64,
+) -> Result<(), QiPhysicsError> {
+    if !stored_qi.is_finite() || stored_qi < 0.0 {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "bond.stored_qi",
+            value: stored_qi,
+        });
+    }
+    if stored_qi == 0.0 {
+        return Ok(());
+    }
+
+    let account = QiAccountId::container(format!("sword_bond:{player_id}"));
+    if !ledger.has_account(&account) {
+        return ledger.set_balance(account, stored_qi);
+    }
+
+    let actual = ledger.balance(&account);
+    if (actual - stored_qi).abs() > QI_EPSILON {
+        return Err(QiPhysicsError::ConservationDrift {
+            expected: stored_qi,
+            actual,
+            tolerance: QI_EPSILON,
+        });
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2565,6 +2637,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn heaven_gate_syncs_missing_bond_ledger_owner_without_overwriting_mismatch() {
+        let mut ledger = WorldQiAccount::default();
+        sync_sword_bond_ledger(&mut ledger, "offline:Azure", 100.0)
+            .expect("missing bond account should initialize from the live component");
+        let account = QiAccountId::container("sword_bond:offline:Azure");
+        assert_eq!(ledger.balance(&account), 100.0);
+
+        ledger
+            .set_balance(account.clone(), 1.0)
+            .expect("test mismatch balance is finite and non-negative");
+        assert!(matches!(
+            sync_sword_bond_ledger(&mut ledger, "offline:Azure", 100.0),
+            Err(QiPhysicsError::ConservationDrift { .. })
+        ));
+        assert_eq!(
+            ledger.balance(&account),
+            1.0,
+            "existing mismatched ledger state must remain untouched"
+        );
+    }
+
+    #[test]
+    fn heaven_gate_settlement_failure_retains_channeling_and_release_state() {
+        let (mut app, caster) = setup_phase_app();
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(SwordBondComponent {
+                bonded_weapon_entity: Entity::from_raw(7),
+                bond_strength: 1.0,
+                stored_qi: 100.0,
+                grade: SwordGrade::Void,
+            });
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(QiAccountId::container("sword_bond:offline:Azure"), 1.0)
+            .expect("mismatch fixture must be finite");
+
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(matches!(
+            cast_heaven_gate(app.world_mut(), caster, 0, None),
+            CastResult::Started { .. }
+        ));
+        app.world_mut().resource_mut::<CombatClock>().tick = 240;
+        app.update();
+
+        assert!(
+            app.world().get::<HeavenGateChanneling>(caster).is_some(),
+            "结算失败必须保留 channeling，等待账本恢复后重试"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            qi_before,
+            "结算失败不得清空玩家真元"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<TiandaoBlindZoneRegistry>()
+                .active_count(),
+            0,
+            "结算失败不得注册天道盲区"
+        );
+        assert!(!app
+            .world()
+            .resource::<Events<SwordPathSkillCastEvent>>()
+            .iter_current_update_events()
+            .any(|event| event.skill == SwordPathSkillId::HeavenGateRelease));
+    }
+
     // ─── QP-002 守恒修复测试 ──────────────────────────────────────────────────────
 
     /// QP-002 happy path — 无灵剑时 QI_SLASH 全部消耗应归还 zone（100% = qi_cost）。
@@ -3224,6 +3365,9 @@ mod tests {
     #[test]
     fn heaven_gate_phase_system_credits_qi_current_to_zone() {
         let (mut app, caster) = setup_phase_app();
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(Position::new([0.0, 70.0, 0.0]));
         // 坑 (a): 置空 zone，保证全量 qi_drained 都能入 zone（不被近满截断）。
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
@@ -3313,7 +3457,7 @@ mod tests {
             .resource_mut::<Events<HeavenGateCastEvent>>()
             .send(HeavenGateCastEvent {
                 caster,
-                position: DVec3::ZERO,
+                position: DVec3::new(0.0, 70.0, 0.0),
                 qi_max: qi_max_before,
                 stored_qi: 137.0,
             });
@@ -3358,7 +3502,11 @@ mod tests {
         assert_conservation(&before, &after, 0.0)
             .expect("legacy aftermath must conserve only live qi_current");
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&qi_flow_overflow_account()), qi_before);
+        assert_eq!(
+            ledger.balance(&qi_flow_overflow_account()),
+            qi_before - QI_ZONE_UNIT_CAPACITY,
+            "spawn zone 为空但容量只有 QI_ZONE_UNIT_CAPACITY，剩余真元应进入 overflow"
+        );
         assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
     }
 

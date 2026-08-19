@@ -371,7 +371,7 @@ fn npc_heal_basic(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(definition.cooldown_ticks).max(1),
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 20,
     }
 }
@@ -439,7 +439,7 @@ fn npc_buff_speed(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(definition.cooldown_ticks).max(1),
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 10,
     }
 }
@@ -507,7 +507,7 @@ fn npc_buff_defense(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(definition.cooldown_ticks).max(1),
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 10,
     }
 }
@@ -1628,6 +1628,54 @@ mod tests {
             "DamageReduction intent must fire on success"
         );
         assert_eq!(intents[0].kind, StatusEffectKind::DamageReduction);
+    }
+
+    #[test]
+    fn npc_resolvers_preserve_zero_registry_cooldown() {
+        let mut heal_world = world_with_override(NPC_HEAL_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let heal_entity = heal_world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        assert!(matches!(
+            npc_heal_basic(&mut heal_world, heal_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
+
+        let mut speed_world = world_with_override(NPC_BUFF_SPEED_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let speed_entity = speed_world
+            .spawn((make_cultivation(Realm::Induce, 50.0),))
+            .id();
+        assert!(matches!(
+            npc_buff_speed(&mut speed_world, speed_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
+
+        let mut defense_world = world_with_override(NPC_BUFF_DEFENSE_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let defense_entity = defense_world
+            .spawn((make_cultivation(Realm::Induce, 50.0),))
+            .id();
+        assert!(matches!(
+            npc_buff_defense(&mut defense_world, defense_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
     }
 
     #[test]
