@@ -2,7 +2,7 @@ use valence::prelude::{bevy_ecs, Entity, Event};
 
 use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechnique, KnownTechniques, TechniqueDefinition,
+    parse_required_realm, KnownTechnique, KnownTechniques, TechniqueDefinition, TechniqueRegistry,
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::inventory::ItemTemplate;
@@ -68,7 +68,9 @@ pub enum ScrollReadOutcome {
     InvalidScroll,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn read_combat_technique_scroll(
+    registry: &TechniqueRegistry,
     known: &mut KnownTechniques,
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
@@ -84,6 +86,7 @@ pub fn read_combat_technique_scroll(
         return ScrollReadOutcome::InvalidScroll;
     }
     learn_technique_if_allowed(
+        registry,
         known,
         cultivation,
         meridians,
@@ -100,6 +103,7 @@ pub fn read_combat_technique_scroll(
 /// 签名，不依赖 Bevy `Query`/`Res`，方便单测直接构造。
 #[allow(clippy::too_many_arguments)]
 pub fn learn_technique_if_allowed(
+    registry: &TechniqueRegistry,
     known: &mut KnownTechniques,
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
@@ -112,7 +116,7 @@ pub fn learn_technique_if_allowed(
     // 其余技能不消费本字段，既有调用点可安全传 `None`。
     meridian_profile: Option<&crate::body_plan::MeridianProfile>,
 ) -> ScrollReadOutcome {
-    let Some(definition) = technique_definition(technique_id) else {
+    let Some(definition) = registry.get(technique_id) else {
         return ScrollReadOutcome::InvalidScroll;
     };
     if known.entries.iter().any(|entry| entry.id == technique_id) {
@@ -154,7 +158,9 @@ pub fn learn_technique_if_allowed(
     ScrollReadOutcome::Learned
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn can_learn_technique(
+    registry: &TechniqueRegistry,
     known: &KnownTechniques,
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
@@ -165,6 +171,7 @@ pub fn can_learn_technique(
 ) -> ScrollReadOutcome {
     let mut probe = known.clone();
     learn_technique_if_allowed(
+        registry,
         &mut probe,
         cultivation,
         meridians,
@@ -181,8 +188,8 @@ fn check_required_meridians(
     meridians: &MeridianSystem,
     severed: Option<&MeridianSeveredPermanent>,
 ) -> Result<(), ScrollReadOutcome> {
-    for required in definition.required_meridians {
-        let Some(channel) = parse_meridian_id(required.channel) else {
+    for required in &definition.required_meridians {
+        let Some(channel) = parse_meridian_id(&required.channel) else {
             return Err(ScrollReadOutcome::InvalidScroll);
         };
         if severed.is_some_and(|severed| severed.is_severed(channel)) {
@@ -197,15 +204,7 @@ fn check_required_meridians(
 }
 
 fn required_realm(definition: &TechniqueDefinition) -> Option<Realm> {
-    match definition.required_realm {
-        "Awaken" => Some(Realm::Awaken),
-        "Induce" => Some(Realm::Induce),
-        "Condense" => Some(Realm::Condense),
-        "Solidify" => Some(Realm::Solidify),
-        "Spirit" => Some(Realm::Spirit),
-        "Void" => Some(Realm::Void),
-        _ => None,
-    }
+    parse_required_realm(&definition.required_realm)
 }
 
 pub fn realm_rank(realm: Realm) -> u8 {
@@ -287,10 +286,14 @@ mod tests {
         }
     }
 
-    fn open_required_meridians(meridians: &mut MeridianSystem, skill_id: &str) {
-        let definition = technique_definition(skill_id).unwrap();
-        for required in definition.required_meridians {
-            let id = parse_meridian_id(required.channel).unwrap();
+    fn open_required_meridians(
+        registry: &TechniqueRegistry,
+        meridians: &mut MeridianSystem,
+        skill_id: &str,
+    ) {
+        let definition = registry.get(skill_id).unwrap();
+        for required in &definition.required_meridians {
+            let id = parse_meridian_id(&required.channel).unwrap();
             let channel = meridians.get_mut(id);
             channel.opened = true;
             channel.integrity = 1.0;
@@ -299,15 +302,17 @@ mod tests {
 
     #[test]
     fn read_scroll_success() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation {
             realm: Realm::Condense,
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -326,12 +331,14 @@ mod tests {
 
     #[test]
     fn read_scroll_realm_too_low() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation::default();
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -353,19 +360,21 @@ mod tests {
 
     #[test]
     fn read_scroll_meridian_severed() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation {
             realm: Realm::Condense,
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
         let mut severed = MeridianSeveredPermanent::default();
         severed
             .severed_meridians
             .insert(MeridianId::Lung.channel_id());
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -386,6 +395,7 @@ mod tests {
 
     #[test]
     fn read_scroll_meridian_missing() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation {
             realm: Realm::Condense,
@@ -393,6 +403,7 @@ mod tests {
         };
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &cultivation,
             &MeridianSystem::default(),
@@ -413,6 +424,7 @@ mod tests {
 
     #[test]
     fn read_scroll_already_known() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques {
             entries: vec![KnownTechnique {
                 id: "woliu.vortex".to_string(),
@@ -425,9 +437,10 @@ mod tests {
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -444,11 +457,13 @@ mod tests {
 
     #[test]
     fn read_scroll_invalid() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let mut invalid = template("scroll_bad", "woliu.vortex");
         invalid.technique_scroll_spec = None;
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &Cultivation::default(),
             &MeridianSystem::default(),
@@ -468,6 +483,7 @@ mod tests {
 
     #[test]
     fn learn_humanoid_gated_technique_rejects_non_humanoid_intrinsic() {
+        let registry = TechniqueRegistry::load_for_tests();
         // woliu.vortex 是 RaceGate::Humanoid；is_humanoid=false 必须拒绝，即便境界/经脉
         // 全部满足。
         let mut known = KnownTechniques::default();
@@ -476,9 +492,10 @@ mod tests {
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = learn_technique_if_allowed(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -499,15 +516,17 @@ mod tests {
 
     #[test]
     fn learn_humanoid_gated_technique_allows_humanoid_intrinsic() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation {
             realm: Realm::Condense,
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = learn_technique_if_allowed(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -523,12 +542,14 @@ mod tests {
 
     #[test]
     fn learn_any_gated_technique_ignores_is_humanoid() {
+        let registry = TechniqueRegistry::load_for_tests();
         // movement.dash 是 RaceGate::Any——is_humanoid=false（如飞鲸种族）也必须放行。
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation::default();
         let meridians = MeridianSystem::default();
 
         let outcome = learn_technique_if_allowed(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -548,6 +569,7 @@ mod tests {
 
     #[test]
     fn race_gate_checked_after_realm_gate_before_meridian_gate() {
+        let registry = TechniqueRegistry::load_for_tests();
         // 境界不足时优先报 RealmTooLow，即便种族也不合格——验证门的顺序（境界门先于
         // race gate）。
         let mut known = KnownTechniques::default();
@@ -555,6 +577,7 @@ mod tests {
         let meridians = MeridianSystem::default();
 
         let outcome = learn_technique_if_allowed(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -581,6 +604,7 @@ mod tests {
             ..Default::default()
         };
         let outcome2 = learn_technique_if_allowed(
+            &registry,
             &mut known,
             &cultivation_ok_realm,
             &meridians,
@@ -599,6 +623,7 @@ mod tests {
 
     #[test]
     fn already_known_short_circuits_before_race_gate() {
+        let registry = TechniqueRegistry::load_for_tests();
         // AlreadyKnown 判定在 race gate 之前——已学会的功法不该因为易形/换种族后
         // is_humanoid 变化而报错误的 RaceMismatch（幂等：已知即返回 AlreadyKnown）。
         let mut known = KnownTechniques {
@@ -615,6 +640,7 @@ mod tests {
         let meridians = MeridianSystem::default();
 
         let outcome = learn_technique_if_allowed(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,
@@ -630,15 +656,17 @@ mod tests {
 
     #[test]
     fn can_learn_technique_respects_race_gate_without_mutating_known() {
+        let registry = TechniqueRegistry::load_for_tests();
         let known = KnownTechniques::default();
         let cultivation = Cultivation {
             realm: Realm::Condense,
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = can_learn_technique(
+            &registry,
             &known,
             &cultivation,
             &meridians,
@@ -654,6 +682,7 @@ mod tests {
         );
 
         let outcome_ok = can_learn_technique(
+            &registry,
             &known,
             &cultivation,
             &meridians,
@@ -668,15 +697,17 @@ mod tests {
 
     #[test]
     fn read_combat_technique_scroll_propagates_race_mismatch() {
+        let registry = TechniqueRegistry::load_for_tests();
         let mut known = KnownTechniques::default();
         let cultivation = Cultivation {
             realm: Realm::Condense,
             ..Default::default()
         };
         let mut meridians = MeridianSystem::default();
-        open_required_meridians(&mut meridians, "woliu.vortex");
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
 
         let outcome = read_combat_technique_scroll(
+            &registry,
             &mut known,
             &cultivation,
             &meridians,

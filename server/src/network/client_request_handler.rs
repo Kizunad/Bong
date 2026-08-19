@@ -47,7 +47,7 @@ use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechniques, TechniqueDefinition,
+    KnownTechniques, TechniqueDefinition, TechniqueDispatch, TechniqueRegistry,
 };
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian::severed::{
@@ -223,6 +223,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub unique_ids: Query<'w, 's, &'static UniqueId>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
+    pub technique_registry: Res<'w, TechniqueRegistry>,
     pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
     pub skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
     pub entity_manager: Option<Res<'w, EntityManager>>,
@@ -407,7 +408,8 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub inscription_scroll_tx: Option<ResMut<'w, Events<InscriptionScrollSubmit>>>,
     pub forge_sessions: Option<Res<'w, ForgeSessions>>,
     pub item_registry: Res<'w, ItemRegistry>,
-    /// plan-forge-session-entry-wiring-v1 §4.1#3 — station_pos → Entity 寻址（对齐
+    pub technique_registry: Res<'w, TechniqueRegistry>,
+    /// forge station 查找：station_pos → Entity 寻址（对齐
     /// `with_owned_furnace_mut` 的 BlockPos 寻址模式）。
     pub forge_stations: Query<'w, 's, (Entity, &'static WeaponForgeStation)>,
     /// plan-forge-session-entry-wiring-v1 §4.1#2 — 翻页后回推 `forge_blueprint_book` 需要
@@ -2273,6 +2275,7 @@ pub fn handle_client_request_payloads(
                     &inventories,
                     &clients,
                     persistence.as_deref(),
+                    &skill_scroll_params.technique_registry,
                     &skill_scroll_params.known_techniques,
                 );
             }
@@ -3240,6 +3243,7 @@ fn handle_learn_technique_scroll(
             skill_scroll_params.race_registry.as_deref(),
         );
         can_learn_technique(
+            &skill_scroll_params.technique_registry,
             known,
             cultivation,
             &meridians,
@@ -3288,6 +3292,7 @@ fn handle_learn_technique_scroll(
             );
             matches!(
                 learn_technique_if_allowed(
+                    &skill_scroll_params.technique_registry,
                     &mut known,
                     cultivation,
                     &meridians,
@@ -3370,7 +3375,13 @@ fn resync_technique_scroll_use(
         );
     }
     if let Ok(known) = skill_scroll_params.known_techniques.get(entity) {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &skill_scroll_params.technique_registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
@@ -6123,6 +6134,7 @@ mod tests {
     fn register_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
         app.insert_resource(SkillMeridianDependencies::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -8418,6 +8430,7 @@ mod tests {
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedBreakthroughRequests::default());
         app.insert_resource(CapturedForgeRequests::default());
@@ -9784,6 +9797,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_emits_probe_intent() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
@@ -9852,6 +9866,7 @@ mod tests {
     #[test]
     fn spirit_niche_place_request_emits_place_intent() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedSpiritNichePlaces::default());
         app.insert_resource(CombatClock { tick: 88 });
@@ -10089,6 +10104,7 @@ mod tests {
     #[test]
     fn spirit_niche_coordinate_requests_emit_reveal_intents() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedSpiritNicheCoordinateReveals::default());
         app.insert_resource(CombatClock { tick: 89 });
@@ -10175,6 +10191,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_out_of_range_is_rejected() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
@@ -10237,6 +10254,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_uses_player_dimension() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
@@ -10725,6 +10743,7 @@ mod tests {
     #[test]
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10815,6 +10834,7 @@ mod tests {
     #[test]
     fn learn_skill_scroll_duplicate_does_not_consume_item() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10907,6 +10927,7 @@ mod tests {
     #[test]
     fn learn_blueprint_consumes_scroll_item() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11465,6 +11486,7 @@ mod tests {
     #[test]
     fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
@@ -11546,6 +11568,7 @@ mod tests {
     #[test]
     fn forge_inscription_scroll_rejects_invalid_session_before_consuming_item() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
@@ -11619,6 +11642,7 @@ mod tests {
     #[test]
     fn forge_tempering_hit_emits_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
@@ -11683,6 +11707,7 @@ mod tests {
     #[test]
     fn forge_tempering_hit_rejects_unknown_beat() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
@@ -11743,6 +11768,7 @@ mod tests {
     #[test]
     fn forge_consecration_inject_emits_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
@@ -11807,6 +11833,7 @@ mod tests {
     #[test]
     fn forge_consecration_inject_rejects_negative_qi() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
@@ -11867,6 +11894,7 @@ mod tests {
     #[test]
     fn forge_step_advance_emits_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedStepAdvances::default());
         app.insert_resource(CombatClock::default());
@@ -11930,6 +11958,7 @@ mod tests {
     #[test]
     fn forge_session_inputs_reject_wrong_caster() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CapturedConsecrationInjects::default());
@@ -13621,7 +13650,7 @@ mod tests {
             1,
         );
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result =
@@ -13645,7 +13674,7 @@ mod tests {
             lung.integrity = 0.3;
         }
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -13697,7 +13726,7 @@ mod tests {
         ms.get_mut(crate::cultivation::components::MeridianId::Lung)
             .integrity = 1.0;
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -13742,7 +13771,7 @@ mod tests {
             lung.integrity = 0.8; // ≥ min_health=0.5
         }
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -13988,6 +14017,65 @@ mod tests {
 
         let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
         assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+    }
+
+    #[test]
+    fn dedicated_input_technique_is_unbindable_and_uncastable_through_skillbar() {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            SkillBarBindings::default(),
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            known(&[crate::movement::dash_proficiency::DASH_TECHNIQUE_ID]),
+        ));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"movement.dash"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(matches!(
+            app.world().get::<SkillBarBindings>(entity).unwrap().slots[0],
+            SkillSlot::Empty
+        ));
+
+        // 防御旧存档/人工构造的残留绑定：cast 入口必须独立重验 dispatch。
+        app.world_mut()
+            .get_mut::<SkillBarBindings>(entity)
+            .unwrap()
+            .set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: crate::movement::dash_proficiency::DASH_TECHNIQUE_ID.to_string(),
+                },
+            );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "dedicated movement input must never degrade into a generic Completed skillbar cast"
+        );
     }
 
     /// bughunt skillbar-rebind-cooldown-reset 返工共用：一个只要不在冷却中就一定能
@@ -15247,12 +15335,18 @@ fn handle_skill_bar_cast(
         );
         return;
     };
-    let Some(definition) = technique_definition(&skill_id) else {
+    let Some(definition) = combat_params.technique_registry.get(&skill_id).cloned() else {
         tracing::warn!(
             "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: unknown skill `{skill_id}`"
         );
         return;
     };
+    if definition.dispatch == TechniqueDispatch::DedicatedInput {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} rejected: technique `{skill_id}` requires its dedicated input contract"
+        );
+        return;
+    }
     // Ownership gate: reject if the player has not learned this technique.
     let player_has_technique = known_techniques
         .get(entity)
@@ -15394,7 +15488,7 @@ fn handle_skill_bar_cast(
         if let Some(meridians) = meridians_ok {
             if let Err(blocked) = check_player_skill_meridian_gate(
                 &skill_id,
-                definition.required_meridians,
+                &definition.required_meridians,
                 meridians,
                 severed,
                 deps_table,
@@ -15479,7 +15573,7 @@ fn handle_skill_bar_cast(
             entity,
             slot,
             &skill_id,
-            definition,
+            &definition,
             clock,
             commands,
             clients,
@@ -16068,6 +16162,7 @@ fn handle_skill_config_intent_request(
         return;
     };
     let snapshot = match handle_config_intent(
+        &combat_params.technique_registry,
         player_id.as_str(),
         skill_id.as_str(),
         config,
@@ -16129,6 +16224,7 @@ fn handle_skill_bar_bind(
     inventories: &Query<&mut PlayerInventory>,
     clients: &Query<(&Username, &mut Client)>,
     persistence: Option<&PlayerStatePersistence>,
+    technique_registry: &TechniqueRegistry,
     known_techniques: &Query<&mut KnownTechniques>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
@@ -16151,9 +16247,15 @@ fn handle_skill_bar_bind(
             SkillSlot::Item { instance_id }
         }
         Some(SkillBarBindingV1::Skill { skill_id }) => {
-            if technique_definition(skill_id).is_none() {
+            let Some(definition) = technique_registry.get(skill_id) else {
                 tracing::warn!(
                     "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
+                );
+                return;
+            };
+            if definition.dispatch == TechniqueDispatch::DedicatedInput {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: technique `{skill_id}` requires its dedicated input contract"
                 );
                 return;
             }
@@ -20681,6 +20783,7 @@ mod freshness_probe_handler_tests {
     /// 镜像 mineral_probe_request_emits_probe_intent 的 app 构造模式。
     fn setup_freshness_probe_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedFreshnessProbes::default());
         app.insert_resource(CombatClock { tick: 42 });
@@ -21034,6 +21137,7 @@ mod freshness_probe_handler_tests {
 
     fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedRaiseShieldIntents::default());
         app.insert_resource(CapturedLowerShieldIntents::default());

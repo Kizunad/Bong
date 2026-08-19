@@ -3801,6 +3801,9 @@ mod tests {
             let (tx_outbound, rx_outbound) = unbounded();
             let (_tx_inbound, rx_inbound) = unbounded();
             let mut app = App::new();
+            app.insert_resource(
+                crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+            );
 
             crate::npc::faction::register(&mut app);
 
