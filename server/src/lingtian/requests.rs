@@ -137,16 +137,22 @@ impl PendingLingtianRequests {
         mut requests: std::collections::VecDeque<PendingLingtianRequest>,
     ) {
         requests.append(&mut self.inbox);
-        requests.truncate(QUEUE_CAP);
-        self.inbox = requests;
-        // 计数必须反映合并后的 inbox；被截掉的尾部请求一并从计数中消失。
-        self.actor_counts.clear();
-        for request in &self.inbox {
-            *self
-                .actor_counts
-                .entry(request.actor_and_pos().0)
-                .or_insert(0) += 1;
+        let mut merged = std::collections::VecDeque::with_capacity(requests.len().min(QUEUE_CAP));
+        let mut actor_counts = std::collections::HashMap::new();
+        for request in requests {
+            if merged.len() >= QUEUE_CAP {
+                break;
+            }
+            let actor = request.actor_and_pos().0;
+            let actor_occupancy = actor_counts.entry(actor).or_insert(0);
+            if *actor_occupancy >= PER_ACTOR_CAP {
+                continue;
+            }
+            *actor_occupancy += 1;
+            merged.push_back(request);
         }
+        self.inbox = merged;
+        self.actor_counts = actor_counts;
     }
 
     /// 取走当前批次快照；本 tick 后续 push 留到下一批。
@@ -298,5 +304,39 @@ mod tests {
             Some(&((PER_ACTOR_CAP - 1) as i32)),
             "prepend 后配额仍应挡住该 actor 的下一跳"
         );
+    }
+
+    #[test]
+    fn prepend_batch_reapplies_per_actor_quota_without_starving_later_actors() {
+        let attacker = Entity::from_raw(1);
+        let victim = Entity::from_raw(2);
+        let mut queue = PendingLingtianRequests::default();
+        for x in 0..PER_ACTOR_CAP as i32 {
+            queue.push(request(attacker, x));
+        }
+
+        let deferred = queue.take_batch();
+        for x in 100..(100 + PER_ACTOR_CAP as i32) {
+            queue.push(request(attacker, x));
+        }
+        queue.push(request(victim, 9000));
+        queue.prepend_batch(deferred);
+
+        assert_eq!(
+            positions(&queue),
+            (0..PER_ACTOR_CAP as i32)
+                .chain(std::iter::once(9000))
+                .collect::<Vec<_>>(),
+            "prepend 必须保留攻击者较早的 deferred FIFO、丢弃其超额新请求，并继续准入后续其他 actor"
+        );
+
+        queue.push(request(attacker, 9998));
+        queue.push(request(victim, 9999));
+        assert_eq!(
+            positions(&queue).last(),
+            Some(&9999),
+            "合并后计数必须只包含实际保留项：攻击者仍受 cap 限制，victim 可继续入队"
+        );
+        assert_eq!(queue.len(), PER_ACTOR_CAP + 2);
     }
 }
