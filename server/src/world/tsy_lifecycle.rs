@@ -271,14 +271,13 @@ pub fn compute_layer_spirit_qi(layer: TsyDepth, skeleton_ratio: f64, is_collapsi
     };
     let ratio = skeleton_ratio.clamp(0.0, 1.0);
     let after_decay = base + depth_factor * (1.0 - ratio);
-    let result = if is_collapsing {
+    // `Zone.spirit_qi` 是 signed 灵压；坍缩渊按正典可低于 -1.0，不能用通用
+    // normalized clamp 抹掉深层负压（plan-refactor-qi-ledger-v1 §7.1 #2）。
+    if is_collapsing {
         after_decay * 2.0
     } else {
         after_decay
-    };
-    // `Zone.spirit_qi` 是 signed 灵压；坍缩渊按正典可低于 -1.0，不能用通用
-    // normalized clamp 抹掉深层负压（plan-refactor-qi-ledger-v1 §7.1 #2）。
-    result
+    }
 }
 
 /// plan §1.4 — 状态机推进 + remaining_skeleton 同步。
