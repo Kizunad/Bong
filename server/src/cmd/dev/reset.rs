@@ -25,7 +25,7 @@ use crate::cultivation::full_power_strike::{ChargingState, FullPowerChargeRateOv
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::insight_flow::PendingInsightOffer;
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -248,6 +248,7 @@ type ProgressionResetItem<'a> = (
 
 fn reset_progression_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
+    registry: Res<TechniqueRegistry>,
     mut players: Query<ProgressionResetItem<'_>>,
 ) {
     for event in events.read() {
@@ -288,7 +289,7 @@ fn reset_progression_state(
             *dugu = DuguPractice::default();
         }
         if let Some(mut techniques) = techniques {
-            *techniques = KnownTechniques::default();
+            *techniques = KnownTechniques::progression_reset(&registry);
         }
         if let Some(mut skill_set) = skill_set {
             *skill_set = SkillSet::default();
@@ -427,6 +428,7 @@ mod tests {
         app.insert_resource(
             crate::inventory::load_item_registry().expect("real item registry should load"),
         );
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         register_systems(&mut app);
         app
     }
@@ -613,6 +615,13 @@ mod tests {
             dirty_inventory(),
             quick_slots,
             skill_bar,
+            KnownTechniques {
+                entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                    id: "burst_meridian.beng_quan".to_string(),
+                    proficiency: 0.8,
+                    active: true,
+                }],
+            },
         ));
         player
     }
@@ -744,6 +753,22 @@ mod tests {
             .slots
             .iter()
             .all(|slot| matches!(slot, SkillSlot::Empty)));
+
+        let techniques = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .expect("reset should preserve the KnownTechniques component");
+        #[cfg(feature = "dev-techniques")]
+        assert_eq!(
+            techniques.entries.len(),
+            app.world().resource::<TechniqueRegistry>().len(),
+            "dev-techniques /reset must restore the complete injected catalog"
+        );
+        #[cfg(not(feature = "dev-techniques"))]
+        assert!(
+            techniques.entries.is_empty(),
+            "production /reset must keep the progression reset empty"
+        );
     }
 
     #[test]

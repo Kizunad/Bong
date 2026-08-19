@@ -23,7 +23,7 @@ use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
     KnownTechniques, KnownTechniquesLoadFailed, KnownTechniquesReconnectBlocked,
-    KnownTechniquesReconnectFailed, KnownTechniquesReconnectReady,
+    KnownTechniquesReconnectFailed, KnownTechniquesReconnectReady, TechniqueRegistry,
 };
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::cultivation::tick::CultivationClock;
@@ -1026,6 +1026,10 @@ fn hydrate_known_techniques_slice(world: &mut World, context: &SliceRunContext) 
         Err(error) => SliceLoad::failed(error),
     };
     let activation = context.reconnect_activation()?;
+    let missing_default = world
+        .get_resource::<TechniqueRegistry>()
+        .map_or_else(KnownTechniques::default, KnownTechniques::progression_reset);
+    let missing_default_for_rebase = missing_default.clone();
     let mut guarded = world
         .resource_scope(
             |_, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
@@ -1034,8 +1038,8 @@ fn hydrate_known_techniques_slice(world: &mut World, context: &SliceRunContext) 
                     KNOWN_TECHNIQUES_SLICE_ID,
                     activation,
                     DirtyRevision::default(),
-                    KnownTechniques::default,
-                    |_| KnownTechniques::default(),
+                    || missing_default,
+                    |_| missing_default_for_rebase,
                 )
             },
         )
@@ -10279,9 +10283,12 @@ mod persistence_tests {
     }
 
     #[test]
-    fn production_missing_known_techniques_row_can_persist_first_change() {
+    fn production_missing_known_techniques_row_uses_injected_registry_and_persists_first_change() {
         let (mut app, persistence, _settings, root) =
             known_techniques_app("known-techniques-production-missing");
+        let registry = TechniqueRegistry::load_for_tests();
+        let expected_reset = KnownTechniques::progression_reset(&registry);
+        app.insert_resource(registry);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let player = app.world_mut().spawn(client_bundle).id();
 
@@ -10299,7 +10306,8 @@ mod persistence_tests {
         );
         assert_eq!(
             app.world().get::<KnownTechniques>(player),
-            Some(&KnownTechniques::default())
+            Some(&expected_reset),
+            "a missing row must derive its progression reset from the injected runtime registry"
         );
 
         let first = known_techniques_fixture("movement.dash", 0.1);
