@@ -25,7 +25,8 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    qi_release_to_zone, MediumKind, QiAccountId, QiTransfer, QiTransferReason, StyleAttack,
+    proportional_qi_cost, qi_release_to_zone, MediumKind, QiAccountId, QiTransfer,
+    QiTransferReason, StyleAttack,
 };
 use crate::schema::server_data::{BurstMeridianEventV1, ServerDataPayloadV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -290,12 +291,17 @@ pub fn resolve_beng_quan(
         None => None,
     };
 
-    let Some(cultivation) = world.get::<Cultivation>(caster) else {
+    let Some(qi_current) = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| cultivation.qi_current)
+    else {
         return rejected(CastRejectReason::RealmTooLow);
     };
-    // 崩拳的 qi_cost=0.4 是比例配置的历史语义：当前真元越高，投入越高，
-    // 才能保留 qi_invest、过载和区域回灌的原有行为。它与其它爆脉招式的 flat cost 不同。
-    let cost = cultivation.qi_current * BENG_QUAN_QI_COST_RATIO;
+    // 比例参数属于招式配置，成本公式和输入校验统一由 qi_physics 负责。
+    let cost = match proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO) {
+        Ok(cost) => cost,
+        Err(_) => return rejected(CastRejectReason::QiInsufficient),
+    };
 
     if let Some(reason) = check_realm_gate(world, caster, required_realm) {
         return rejected(reason);
@@ -1207,7 +1213,8 @@ mod tests {
     }
 
     fn beng_quan_cost(qi_current: f64) -> f64 {
-        qi_current * BENG_QUAN_QI_COST_RATIO
+        proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO)
+            .expect("beng_quan ratio cost must be valid")
     }
 
     fn assert_no_mutation(app: &App, caster: Entity, qi: f64, integrity: f64) {
