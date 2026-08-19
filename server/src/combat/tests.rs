@@ -232,6 +232,14 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         .as_secs() as i64;
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_last_updated_wall: i64 = connection
+        .query_row(
+            "SELECT last_updated_wall FROM player_lifecycle WHERE username = ?1",
+            params!["Alice"],
+            |row| row.get(0),
+        )
+        .expect("saved lifecycle row should expose its persistence timestamp");
 
     let mut app = App::new();
     app.insert_resource(persistence);
@@ -265,7 +273,15 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
         .as_secs() as i64;
-    let max_elapsed_ticks = after_load_wall.saturating_sub(before_save_wall).max(0) as u64
+    // 生产折算锚点是落盘行的 last_updated_wall（translate_lifecycle_deadline_tick_across_restart），
+    // 断言必须与生产同锚点；保存前采样仅作 fixture 顺序不变量。
+    assert!(
+        before_save_wall <= persisted_last_updated_wall,
+        "fixture 前置：落盘时间戳不得早于保存前采样；before_save {before_save_wall}，persisted {persisted_last_updated_wall}"
+    );
+    let max_elapsed_ticks = after_load_wall
+        .saturating_sub(persisted_last_updated_wall)
+        .max(0) as u64
         * crate::combat::components::TICKS_PER_SECOND;
     let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     let loaded_deadline = lifecycle
@@ -273,7 +289,7 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         .expect("awaiting revival deadline should survive hydration");
     assert!(
         (earliest_valid_deadline..=9_999).contains(&loaded_deadline),
-        "重连应保留决策窗口并只扣除落盘后的真实墙钟流逝；实际 {loaded_deadline}，有效区间 {earliest_valid_deadline}..=9999",
+        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {loaded_deadline}，有效区间 {earliest_valid_deadline}..=9999",
     );
     let elapsed_ticks = 9_999_u64
         .checked_sub(loaded_deadline)

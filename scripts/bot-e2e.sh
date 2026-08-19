@@ -28,7 +28,9 @@ export BOT_E2E_RUN_TAG
 BOT_E2E_OPERATOR_TAGS=(
   RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
-  Zlb Zre Alc Bob Rein Term NewCh
+  Zlb Zre Alc Bob
+  Rein Term NewCh BR1 BR2 RW1 RW2 OO1 OO2 NRift
+  GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
@@ -131,6 +133,7 @@ BOT_FALLBACK_READY_PATTERN='^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]
 if [ "$OWNED_WORLD_MODE" = "1" ]; then
   SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"
   mkdir -p "$SERVER_RUNTIME_DIR/server/data" "$SERVER_RUNTIME_DIR/library-web/public/deceased"
+  export BONG_SERVER_DB="$SERVER_RUNTIME_DIR/server/data/bong.db"
   # Dedicated world evidence must not inherit checkout persistence. Production loaders that still
   # use cwd-relative assets receive a read-only bridge to this exact checkout; all writes remain
   # inside the per-run evidence runtime.

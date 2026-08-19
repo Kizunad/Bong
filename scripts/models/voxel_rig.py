@@ -109,6 +109,48 @@ def shaft_box(a: Vec, b: Vec, rx: float, rz: float, extend: float = 0.0):
     )
 
 
+def seg_dist(p0, p1, q0, q1):
+    """两条线段的最短距离 + 最近点。碰撞检测的底座——肢体层的姿态求解、头颅层的互相
+    顶开、整只兽的自检，三处共用这一份，别各写各的。
+
+    标准解法：把参数域 [0,1]² 上的二次型求极小，再把越界的解夹回边界。
+    """
+    import numpy as np
+    p0, p1, q0, q1 = (np.asarray(x, float) for x in (p0, p1, q0, q1))
+    u, v, w = p1 - p0, q1 - q0, p0 - q0
+    a, b, c, d, e = u @ u, u @ v, v @ v, u @ w, v @ w
+    den = a * c - b * b
+    if den < 1e-9:
+        sN, sD, tN, tD = 0.0, 1.0, e, (c if c > 1e-9 else 1.0)
+    else:
+        sN, sD, tN, tD = (b * e - c * d), den, (a * e - b * d), den
+        if sN < 0:
+            sN, tN, tD = 0.0, e, (c if c > 1e-9 else 1.0)
+        elif sN > sD:
+            sN = sD
+            tN, tD = e + b, (c if c > 1e-9 else 1.0)
+    if tN < 0:
+        tN = 0.0
+        if -d < 0:
+            sN = 0.0
+        elif -d > a:
+            sN = sD
+        else:
+            sN, sD = -d, (a if a > 1e-9 else 1.0)
+    elif tN > tD:
+        tN = tD
+        if (-d + b) < 0:
+            sN = 0.0
+        elif (-d + b) > a:
+            sN = sD
+        else:
+            sN, sD = (-d + b), (a if a > 1e-9 else 1.0)
+    sc = 0.0 if abs(sD) < 1e-9 else sN / sD
+    tc = 0.0 if abs(tD) < 1e-9 else tN / tD
+    pa, pb = p0 + sc * u, q0 + tc * v
+    return float(np.linalg.norm(pa - pb)), (pa + pb) * 0.5
+
+
 # ---------------------------------------------------------------- 调色板贴图
 class Palette:
     """材质名 → 一块纯色 swatch。整张贴图就是个色块表，uv 直接查表。
