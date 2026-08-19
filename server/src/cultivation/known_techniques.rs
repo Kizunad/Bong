@@ -1076,7 +1076,21 @@ dispatch = "metadata_backed"
 
     #[test]
     fn metadata_backed_accepts_data_only_metadata_when_runtime_wiring_exists() {
-        let registry = load(&minimal_toml()).expect("minimal metadata loads");
+        let dedicated_input = |id: &str| {
+            minimal_toml()
+                .replace("id = \"test.skill\"", &format!("id = \"{id}\""))
+                .replace(
+                    "dispatch = \"metadata_backed\"",
+                    "dispatch = \"dedicated_input\"",
+                )
+        };
+        let registry_source = format!(
+            "{}\n{}\n{}",
+            minimal_toml(),
+            dedicated_input("movement.dash"),
+            dedicated_input("shield_block")
+        );
+        let registry = load(&registry_source).expect("minimal metadata loads");
         let mut skills = SkillRegistry::default();
         skills.register("test.skill", noop_skill);
         skills.register("resolver.only", noop_skill);
