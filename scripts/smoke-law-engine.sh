@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 LOG_FILE="$EVIDENCE_DIR/task-26-smoke.log"
 ERROR_FILE="$EVIDENCE_DIR/task-26-smoke-error.txt"
@@ -128,11 +130,8 @@ run_or_fail "schema" "npm run build" bash -lc "cd '$ROOT/agent/packages/schema' 
 run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agent/packages/schema' && npm test -- tests/schema.test.ts"
 
 stage "4/10" "Server entrypoint startup"
-run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
-server_target_root="${CARGO_TARGET_DIR:-$ROOT/server/target}"
-if [[ "$server_target_root" != /* ]]; then
-  server_target_root="$ROOT/server/$server_target_root"
-fi
+run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && CARGO_TARGET_DIR='$SERVER_CARGO_TARGET' '$ROOT/scripts/build-token.sh' cargo build"
+server_target_root="$SERVER_CARGO_TARGET"
 server_binary="$server_target_root/debug/bong-server"
 [[ -x "$server_binary" ]] || fail_stage "server-start" "successful cargo build did not produce $server_binary"
 server_start_exit=0

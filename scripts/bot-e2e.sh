@@ -16,6 +16,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
 HOST="${BOT_E2E_HOST:-127.0.0.1}"
 PORT="${BOT_E2E_PORT:-25565}"
 PROFILE="${BOT_E2E_PROFILE:-release}"
@@ -343,11 +344,9 @@ else
   echo "[bot-e2e] 构建并启动本轮 immutable server（profile=$PROFILE，log: $SERVER_LOG）"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
-  CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT/server/target}"
-  if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
-    CARGO_TARGET_ROOT="$ROOT/server/$CARGO_TARGET_ROOT"
-  fi
+  CARGO_TARGET_ROOT="$(bong_scoped_cargo_target "$ROOT/server")"
   if ! (
+    export CARGO_TARGET_DIR="$CARGO_TARGET_ROOT"
     cd "$ROOT/server"
     "$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"
   ) >>"$SERVER_LOG" 2>&1; then

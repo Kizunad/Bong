@@ -9,6 +9,8 @@
 # vite + three.js viewer is started separately:
 #   cd worldgen/console && npm install && npm run dev
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/bong-server-lifecycle.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$(git rev-parse --show-toplevel)/server")" \
+    || { echo "FAIL: unable to resolve checkout-scoped Cargo target" >&2; exit 1; }
 background_job_is_running() {
     local pid="${1:-}"
     local running_pid
@@ -296,7 +298,7 @@ launch_detached_job() {
 
 run_bong_server() {
     local workdir="${BONG_SERVER_WORKDIR:-server}"
-    local executable="${BONG_SERVER_EXECUTABLE:-./target/debug/bong-server}"
+    local executable="${BONG_SERVER_EXECUTABLE:-$SERVER_CARGO_TARGET/debug/bong-server}"
     local log_path="${BONG_SERVER_LOG:-/tmp/bong-server.log}"
     local -a env_args=()
 
@@ -314,7 +316,7 @@ run_bong_server() {
 launch_bong_server() {
     local startup_grace="${BONG_SERVER_STARTUP_GRACE_SECONDS:-2}"
     local workdir="${BONG_SERVER_WORKDIR:-server}"
-    local executable="${BONG_SERVER_EXECUTABLE:-./target/debug/bong-server}"
+    local executable="${BONG_SERVER_EXECUTABLE:-$SERVER_CARGO_TARGET/debug/bong-server}"
     local expected_executable="${1:-}"
     local resolved_executable
     local resolved_expected_executable
@@ -509,7 +511,7 @@ stop_managed_server_before_reload || return $?
 
 # --- Step 4: Rebuild server ---
 echo "==> [4/5] Building server..."
-(cd server && "$ROOT/scripts/build-token.sh" cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
+(cd server && CARGO_TARGET_DIR="$SERVER_CARGO_TARGET" "$ROOT/scripts/build-token.sh" cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
 echo "    OK"
 
 # --- Step 5: Launch server ---

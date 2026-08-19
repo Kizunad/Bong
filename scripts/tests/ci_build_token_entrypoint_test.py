@@ -99,7 +99,7 @@ SPECS = {
     "scripts/smoke-law-engine.sh": {
         "required": [
             "'$ROOT/scripts/build-token.sh' cargo build",
-            'server_target_root="${CARGO_TARGET_DIR:-$ROOT/server/target}"',
+            'server_target_root="$SERVER_CARGO_TARGET"',
             'timeout 20s "$server_binary"',
         ],
         "forbid": [r"build-token\.sh' cargo run", r'exec \./target/debug/bong-server'],
@@ -107,7 +107,7 @@ SPECS = {
     "scripts/dev-reload.sh": {
         "required": [
             'ROOT="$(git rev-parse --show-toplevel)"',
-            '(cd server && "$ROOT/scripts/build-token.sh" cargo build',
+            'CARGO_TARGET_DIR="$SERVER_CARGO_TARGET" "$ROOT/scripts/build-token.sh" cargo build',
         ],
         "forbid": [r'\(cd server && "\$PWD/scripts/build-token\.sh"'],
     },

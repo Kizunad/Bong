@@ -39,6 +39,8 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$REPO_ROOT/scripts/lib/bong-server-lifecycle.sh"
+TARGET_ROOT="$(bong_scoped_cargo_target "$REPO_ROOT/server")" \
+  || { echo "❌ 无法解析 checkout-scoped Cargo target" >&2; exit 1; }
 PID_FILE="${BONG_PREVIEW_PID_FILE:-$(bong_server_runtime_dir)/bong-preview-server.pid}"
 export BONG_SERVER_PID_FILE="$PID_FILE"
 
@@ -162,14 +164,11 @@ if [ -n "$PROFILE_FLAG" ]; then
 fi
 echo "[run-server-headless] 构建 server (profile=$TARGET_PROFILE)..."
 (
+  export CARGO_TARGET_DIR="$TARGET_ROOT"
   cd "$REPO_ROOT/server"
   "$REPO_ROOT/scripts/build-token.sh" cargo "${BUILD_ARGS[@]}"
 )
 
-TARGET_ROOT="${CARGO_TARGET_DIR:-$REPO_ROOT/server/target}"
-if [[ "$TARGET_ROOT" != /* ]]; then
-  TARGET_ROOT="$REPO_ROOT/server/$TARGET_ROOT"
-fi
 SERVER_BINARY="$(readlink -f -- "$TARGET_ROOT/$TARGET_PROFILE/bong-server")" \
   || { echo "❌ 找不到构建后的 server binary" >&2; exit 1; }
 [ -x "$SERVER_BINARY" ] \

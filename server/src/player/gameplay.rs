@@ -400,7 +400,7 @@ fn gather_qi_from_zone(
     let Some(zone) = zone_registry.find_zone_mut(zone_name) else {
         return 0.0;
     };
-    let room = (cultivation.qi_max.max(1.0) - cultivation.qi_current).max(0.0);
+    let room = cultivation.qi_room();
     let available = (zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY).max(0.0);
     let gain = QI_GATHER_REWARD.min(room).min(available);
     if gain <= 0.0 {
@@ -724,6 +724,40 @@ mod tests {
         assert_eq!(gained, 0.1 * QI_ZONE_UNIT_CAPACITY);
         assert_eq!(cultivation.qi_current, 75.0);
         assert_eq!(zone_after, 0.0);
+    }
+
+    #[test]
+    fn gather_reward_respects_frozen_effective_qi_cap() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
+        let zone_before = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        let mut cultivation = Cultivation {
+            qi_current: 50.0,
+            qi_max: 100.0,
+            qi_max_frozen: Some(40.0),
+            ..Cultivation::default()
+        };
+
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
+
+        let zone_after = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        assert_eq!(gained, 10.0, "frozen cap leaves exactly 10 qi of room");
+        assert_eq!(cultivation.qi_current, 60.0);
+        assert_eq!(cultivation.qi_current, cultivation.effective_qi_max());
+        assert!((zone_before - zone_after - gained / QI_ZONE_UNIT_CAPACITY).abs() < 1e-9);
+        assert_eq!(qi_ledger.transfers().len(), 1);
     }
 
     #[test]

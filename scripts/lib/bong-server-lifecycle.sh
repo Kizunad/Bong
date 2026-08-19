@@ -3,6 +3,7 @@
 # Capture the library directory while this file is sourced. Function-time
 # BASH_SOURCE may point at a test/caller frame after declare/eval replacement.
 BONG_SERVER_LIFECYCLE_LIBRARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$BONG_SERVER_LIFECYCLE_LIBRARY_DIR/bong-cargo-target.sh"
 
 # Environment values are not lock authority. Sourcing this library resets the
 # private reentrancy state; only bong_server_with_lock may populate it after a

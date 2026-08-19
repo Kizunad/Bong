@@ -63,6 +63,8 @@ set -euo pipefail
 # ioredis subscriber + wait_for_pattern + cleanup trap。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="offscreen-war-p0"
 SCRIPT_TAG="e2e-offscreen-war"
@@ -1579,7 +1581,7 @@ start_server() {
   local seed_count="$2"
   (
     export PATH="$RUST_PATH"
-    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+    export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
     # 默认 seed N 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。小值避免
     # 1000 条全量 bong:npc/dormant HASH 替换触发 redis 3s 超时（实测 1000 必超时、8 秒级完成）。
     export BONG_DORMANT_ROGUE_SEED_COUNT="$seed_count"
@@ -1958,7 +1960,7 @@ fi
 # 起 P7 专属 server：1000 Dormant 自种
 (
   export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   export BONG_DORMANT_ROGUE_SEED_COUNT=1000
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_SIM_SEED="$SIM_SEED"

@@ -12,6 +12,9 @@ trap cleanup EXIT
 
 mkdir -p "$TMP_ROOT/runtime" "$TMP_ROOT/target/release" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
 chmod 700 "$TMP_ROOT/runtime" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
+source "$REPO_ROOT/scripts/lib/bong-cargo-target.sh"
+SCOPED_TARGET="$(CARGO_TARGET_DIR="$TMP_ROOT/target" bong_scoped_cargo_target "$REPO_ROOT/server")"
+mkdir -p "$SCOPED_TARGET/release"
 cat >"$TMP_ROOT/fake-src/server.c" <<'EOF'
 #include <arpa/inet.h>
 #include <signal.h>
@@ -38,7 +41,7 @@ int main(void) {
 }
 EOF
 # Compile a native executable so /proc/<pid>/exe matches the selected artifact.
-gcc "$TMP_ROOT/fake-src/server.c" -o "$TMP_ROOT/target/release/bong-server"
+gcc "$TMP_ROOT/fake-src/server.c" -o "$SCOPED_TARGET/release/bong-server"
 cat >"$TMP_ROOT/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

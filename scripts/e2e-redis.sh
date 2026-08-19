@@ -854,12 +854,7 @@ port_open() {
 }
 
 resolve_server_cargo_target() {
-  local server_directory cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  server_directory="$(readlink -f -- "$1")" || return 1
-  if [[ "$cargo_target" != /* ]]; then
-    cargo_target="$server_directory/$cargo_target"
-  fi
-  readlink -m -- "$cargo_target"
+  bong_scoped_cargo_target "$1"
 }
 
 start_server_process_group() {

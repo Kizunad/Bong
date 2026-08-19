@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 
 SMOKE_LOG="$EVIDENCE_DIR/task-24-final-matrix.log"
@@ -232,7 +234,7 @@ CURRENT_STAGE="server"
 echo "=== [3/11] server -> fmt/clippy/test + persistence/progression/payload proofs ==="
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo fmt --check
 ) >"$SERVER_FMT_LOG" 2>&1; then
@@ -242,7 +244,7 @@ else
 fi
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo clippy --all-targets -- -D warnings
 ) >"$SERVER_CLIPPY_LOG" 2>&1; then
@@ -252,7 +254,7 @@ else
 fi
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
@@ -263,7 +265,7 @@ fi
 
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test save_and_load_roundtrip_by_uuid -- --nocapture
   "$ROOT/scripts/build-token.sh" cargo test player::progression:: -- --nocapture
@@ -362,7 +364,7 @@ fi
 FULLSTACK_SERVER_BINARY="$RUN_DIR/bong-server"
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo build
   install -m 700 "$CARGO_TARGET_DIR/debug/bong-server" "$FULLSTACK_SERVER_BINARY"

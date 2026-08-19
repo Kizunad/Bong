@@ -297,6 +297,7 @@ end = text.index("\n}\n\nstop_server() {", start) + 2
 print(text[start:end])
 PY
 # shellcheck source=/dev/null
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
 source "$parent_fixture"
 RUST_PATH="$fixture_bin:$PATH"
 SERVER_PID=""
@@ -307,13 +308,18 @@ SERVER_AUTHORITY_UNCERTAIN=1
 SERVER_STARTUP_CONTROL_FD=""
 SERVER_STARTUP_READY_FD=""
 
+expected_default_target="$(env -u CARGO_TARGET_DIR bash -c \
+    'source "$1"; bong_scoped_cargo_target "$2"' _ \
+    "$ROOT/scripts/lib/bong-cargo-target.sh" "$fixture_server")"
 [ "$(env -u CARGO_TARGET_DIR bash -c \
-    'source "$1"; resolve_server_cargo_target "$2"' _ \
-    "$parent_fixture" "$fixture_server")" = /tmp/bong-target ] \
-    || fail "unset CARGO_TARGET_DIR must resolve to /tmp/bong-target"
+    'source "$1"; source "$2"; resolve_server_cargo_target "$3"' _ \
+    "$ROOT/scripts/lib/bong-cargo-target.sh" "$parent_fixture" "$fixture_server")" \
+    = "$expected_default_target" ] \
+    || fail "unset CARGO_TARGET_DIR must resolve to a checkout-scoped target"
+expected_relative_target="$(CARGO_TARGET_DIR=relative-target bong_scoped_cargo_target "$fixture_server")"
 [ "$(CARGO_TARGET_DIR=relative-target resolve_server_cargo_target "$fixture_server")" \
-    = "$fixture_server/relative-target" ] \
-    || fail "relative CARGO_TARGET_DIR must resolve against the server directory"
+    = "$expected_relative_target" ] \
+    || fail "relative CARGO_TARGET_DIR must resolve to a checkout-scoped target"
 
 default_target_probe="$fixture_dir/default-target-probe.sh"
 default_target_record="$fixture_dir/default-target.record"
@@ -335,8 +341,8 @@ if (
 ); then
     fail "default-target build probe unexpectedly succeeded"
 fi
-[ "$(<"$default_target_record")" = /tmp/bong-target ] \
-    || fail "unset CARGO_TARGET_DIR was not explicitly passed to build-token as /tmp/bong-target"
+[ "$(<"$default_target_record")" = "$expected_default_target" ] \
+    || fail "unset CARGO_TARGET_DIR was not explicitly passed as the checkout-scoped target"
 
 assert_parent_unpublished() {
     [ "$SERVER_AUTHORITY_UNCERTAIN" -eq 1 ] \
