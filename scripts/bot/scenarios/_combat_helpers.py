@@ -46,6 +46,23 @@ def queue_fight_target(bot: Bot) -> Event:
     return spawn
 
 
+def queue_passive_target(bot: Bot) -> Event:
+    if bot.position is None:
+        raise BotAssertionError("期望已有 bot.position 后再生成被动靶，实际 position=None")
+
+    anchor = last_event_time(bot)
+    queue_npc_scenario(bot, "passive_target")
+
+    return bot.wait_for(
+        lambda e: e.kind == "entity_spawn"
+        and e.t > anchor
+        and e.data.get("entity_id") != bot.entity_id
+        and _distance(bot.position, _event_position(e)) <= 40.0,
+        timeout=15.0,
+        description="/npc_scenario passive_target 后 40 格内出现被动靶 entity_spawn",
+    )
+
+
 def move_to_melee_range(bot: Bot, spawn: Event, distance: float = 1.8) -> None:
     if bot.position is None:
         raise BotAssertionError("move_to_melee_range 需要 bot.position，实际 None")

@@ -432,10 +432,16 @@ type StalePendingKnockbackFilter = (
 
 type PassivePendingKnockbackFilter = (With<PendingKnockback>, With<PassiveTarget>);
 
+#[allow(clippy::type_complexity)]
 fn apply_pending_knockback_system(
     mut commands: Commands,
     mut controllable: Query<
-        (Entity, &Position, &PendingKnockback, &mut MovementController),
+        (
+            Entity,
+            &Position,
+            &PendingKnockback,
+            &mut MovementController,
+        ),
         (With<MovementController>, Without<PassiveTarget>),
     >,
     passive_targets: Query<Entity, PassivePendingKnockbackFilter>,

@@ -3,10 +3,11 @@ use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EntityKind, EntityLayerId,
-    Position, Query, ResMut, Resource, Update, With,
+    Events, Position, Query, ResMut, Resource, Update, With,
 };
 
-use crate::cultivation::components::Realm;
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation, Realm};
+use crate::cultivation::life_record::LifeRecord;
 use crate::npc::brain::{
     ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction, MeleeAttackAction,
     MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
@@ -18,6 +19,9 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{
     DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype,
 };
+use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
 const PASSIVE_TARGET_HEALTH: f32 = 32.0;
@@ -85,11 +89,24 @@ pub fn register(app: &mut App) {
         .add_systems(Update, process_pending_scenarios);
 }
 
+#[allow(clippy::type_complexity)]
 fn process_pending_scenarios(
     mut commands: Commands,
     mut pending: ResMut<PendingScenario>,
     layers: Query<Entity, With<crate::world::dimension::OverworldLayer>>,
-    scenario_npcs: Query<Entity, With<ScenarioNpc>>,
+    mut scenario_npcs: Query<
+        (
+            Entity,
+            Option<&mut Cultivation>,
+            Option<&Position>,
+            Option<&CurrentDimension>,
+            Option<&LifeRecord>,
+        ),
+        With<ScenarioNpc>,
+    >,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let Some((scenario, player_pos)) = pending.request.take() else {
         return;
@@ -101,7 +118,60 @@ fn process_pending_scenarios(
     };
 
     // Always clear existing scenario NPCs first.
-    for entity in &scenario_npcs {
+    for (entity, mut cultivation, position, dimension, life_record) in &mut scenario_npcs {
+        if let Some(cultivation) = cultivation.as_deref_mut() {
+            let amount = cultivation.qi_current;
+            if amount > f64::EPSILON {
+                let Some(life_record) = life_record else {
+                    tracing::warn!(?entity, "[bong][npc] refusing to clear scenario NPC without LifeRecord for qi release");
+                    continue;
+                };
+                let Some(ledger) = qi_ledger.as_deref_mut() else {
+                    tracing::warn!(
+                        ?entity,
+                        "[bong][npc] refusing to clear scenario NPC without qi ledger"
+                    );
+                    continue;
+                };
+                let Ok(actor) = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+                else {
+                    tracing::warn!(
+                        ?entity,
+                        "[bong][npc] refusing to clear scenario NPC with invalid qi identity"
+                    );
+                    continue;
+                };
+                let zone_name = position.zip(dimension).and_then(|(position, dimension)| {
+                    zones
+                        .as_deref()
+                        .and_then(|zones| zones.find_zone(dimension.0, position.get()))
+                        .map(|zone| zone.name.clone())
+                });
+                let zone = zone_name.as_deref().and_then(|name| {
+                    zones
+                        .as_deref_mut()
+                        .and_then(|zones| zones.find_zone_mut(name))
+                });
+                let Ok(outcome) = cultivation.release_to_zone(
+                    zone,
+                    ledger,
+                    &actor,
+                    amount,
+                    crate::qi_physics::QiTransferReason::ReleaseToZone,
+                ) else {
+                    tracing::warn!(
+                        ?entity,
+                        "[bong][npc] refusing to clear scenario NPC after qi release failed"
+                    );
+                    continue;
+                };
+                if let Some(events) = qi_transfers.as_deref_mut() {
+                    for transfer in outcome.transfers {
+                        events.send(transfer);
+                    }
+                }
+            }
+        }
         commands.entity(entity).insert(Despawned);
     }
 
@@ -269,20 +339,20 @@ fn scenario_combat_loadout(scenario: &ScenarioType, index: usize) -> NpcCombatLo
 mod tests {
     use super::*;
 
-    use crate::combat::components::{Lifecycle, Stamina, StatusEffects, Wounds};
-    use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
-    use crate::npc::brain::canonical_npc_id;
-    use crate::npc::lifecycle::NpcLifespan;
     use crate::cmd::dev::npc_scenario::{handle_npc_scenario, NpcScenarioAction, NpcScenarioCmd};
+    use crate::combat::components::{Lifecycle, Stamina, StatusEffects, Wounds};
     use crate::combat::events::{AttackIntent, CombatEvent, DeathEvent};
     use crate::combat::lifecycle::death_arbiter_tick;
     use crate::combat::player_attack::{handle_player_attack, PlayerAttackCooldown};
     use crate::combat::resolve::resolve_attack_intents;
     use crate::combat::CombatClock;
+    use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
     use crate::cultivation::death_hooks::PlayerTerminated;
     use crate::inventory::InventoryDurabilityChangedEvent;
     use crate::network::combat_event_emit::emit_combat_event_to_client;
-    use crate::npc::lifecycle::{NpcTerminalSystemSet, NpcTerminalSettlementSucceeded};
+    use crate::npc::brain::canonical_npc_id;
+    use crate::npc::lifecycle::NpcLifespan;
+    use crate::npc::lifecycle::{NpcTerminalSettlementSucceeded, NpcTerminalSystemSet};
     use crate::npc::movement::PendingKnockback;
     use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
     use crate::persistence::{bootstrap_sqlite, PersistenceSettings};
@@ -292,8 +362,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::command::handler::CommandResultEvent;
     use valence::prelude::{
-        bevy_ecs, Client, Entity, EntityInteraction, Events, FixedUpdate, GameMode,
-        IntoSystemConfigs, InteractEntityEvent, Position, Update, With,
+        Client, Entity, EntityInteraction, Events, FixedUpdate, GameMode, InteractEntityEvent,
+        IntoSystemConfigs, Position, Update, With,
     };
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::ScenarioSingleClient;
@@ -364,6 +434,92 @@ mod tests {
     }
 
     #[test]
+    fn clear_releases_scenario_qi_before_marking_entity_despawned() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(PendingScenario {
+            request: Some((ScenarioType::Clear, DVec3::ZERO)),
+        });
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, process_pending_scenarios);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                ScenarioNpc,
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension::default(),
+                LifeRecord::new("scenario_qi_release"),
+                Cultivation {
+                    qi_current: 12.0,
+                    qi_max: 12.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().run_schedule(Update);
+
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            0.0
+        );
+        assert!(app.world().get::<Despawned>(entity).is_some());
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.transfers().len(), 1);
+        assert_eq!(ledger.transfers()[0].amount, 12.0);
+        assert_eq!(
+            ledger.transfers()[0].reason,
+            crate::qi_physics::QiTransferReason::ReleaseToZone
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .count(),
+            1,
+            "successful clear settlement must expose the same committed transfer as an event"
+        );
+    }
+
+    #[test]
+    fn clear_fails_closed_when_scenario_qi_cannot_be_settled() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(PendingScenario {
+            request: Some((ScenarioType::Clear, DVec3::ZERO)),
+        });
+        app.add_systems(Update, process_pending_scenarios);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                ScenarioNpc,
+                LifeRecord::new("scenario_qi_retry"),
+                Cultivation {
+                    qi_current: 7.0,
+                    qi_max: 7.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            7.0
+        );
+        assert!(
+            app.world().get::<Despawned>(entity).is_none(),
+            "missing ledger must preserve the live scenario NPC for a later settlement retry"
+        );
+    }
+
+    #[test]
     fn passive_target_is_stationary_non_retaliating_real_combat_npc() {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
@@ -371,6 +527,7 @@ mod tests {
         app.insert_resource(PendingScenario {
             request: Some((ScenarioType::PassiveTarget, DVec3::new(8.0, 66.0, 8.0))),
         });
+        app.add_event::<crate::combat::knockback::KnockbackEvent>();
         app.add_systems(Update, process_pending_scenarios);
         crate::npc::patrol::register(&mut app);
         crate::npc::movement::register(&mut app);
@@ -423,12 +580,14 @@ mod tests {
                 .get()
         };
 
-        app.world_mut().entity_mut(npc).insert(PendingKnockback::from_distance(
-            DVec3::new(1.0, 0.0, 0.0),
-            6.0,
-            70.0,
-            3,
-        ));
+        app.world_mut()
+            .entity_mut(npc)
+            .insert(PendingKnockback::from_distance(
+                DVec3::new(1.0, 0.0, 0.0),
+                6.0,
+                70.0,
+                3,
+            ));
 
         for _ in 0..8 {
             app.world_mut().run_schedule(FixedUpdate);
@@ -474,6 +633,7 @@ mod tests {
             ..
         } = scenario;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.init_schedule(FixedUpdate);
         app.insert_resource(PendingScenario::default());
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(PersistenceSettings::with_paths(
@@ -487,6 +647,7 @@ mod tests {
         app.add_event::<CommandResultEvent<NpcScenarioCmd>>();
         app.add_event::<InteractEntityEvent>();
         app.add_event::<AttackIntent>();
+        app.add_event::<crate::combat::knockback::KnockbackEvent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::events::ApplyStatusEffectIntent>();
@@ -500,10 +661,7 @@ mod tests {
         crate::npc::movement::register(&mut app);
         crate::npc::navigator::register(&mut app);
         app.add_systems(Update, handle_npc_scenario);
-        app.add_systems(
-            Update,
-            process_pending_scenarios.after(handle_npc_scenario),
-        );
+        app.add_systems(Update, process_pending_scenarios.after(handle_npc_scenario));
         app.add_systems(Update, handle_player_attack);
         app.add_systems(Update, resolve_attack_intents.after(handle_player_attack));
         app.add_systems(
@@ -587,7 +745,9 @@ mod tests {
             "passive target attack resolution must not queue PendingKnockback"
         );
         let attack_events = app.world().resource::<Events<AttackIntent>>();
-        let attack_events = attack_events.iter_current_update_events().collect::<Vec<_>>();
+        let attack_events = attack_events
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
         assert_eq!(attack_events.len(), 1, "one player attack should resolve");
         assert_eq!(attack_events[0].attacker, attacker);
         assert_eq!(attack_events[0].target, Some(target));
@@ -609,20 +769,28 @@ mod tests {
             .collect_received()
             .0
             .into_iter()
-            .filter_map(|frame| frame.decode::<CustomPayloadS2c>().ok())
-            .filter(|packet| packet.channel.as_str() == crate::network::agent_bridge::SERVER_DATA_CHANNEL)
-            .filter_map(|packet| serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(packet.data.0 .0).ok())
-            .filter_map(|payload| match payload.payload {
-                crate::schema::server_data::ServerDataPayloadV1::CombatEventFloater(floater) => {
-                    Some(floater)
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != crate::network::agent_bridge::SERVER_DATA_CHANNEL {
+                    return None;
                 }
-                _ => None,
+                let payload = serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(
+                    packet.data.0 .0,
+                )
+                .ok()?;
+                match payload.payload {
+                    crate::schema::server_data::ServerDataPayloadV1::CombatEventFloater(
+                        floater,
+                    ) => Some(floater),
+                    _ => None,
+                }
             })
             .collect::<Vec<_>>();
         assert!(
-            combat_payloads.iter().any(|floater| floater.events.iter().any(|event| {
-                event.outgoing && event.amount > 0.0
-            })),
+            combat_payloads.iter().any(|floater| floater
+                .events
+                .iter()
+                .any(|event| { event.outgoing && event.amount > 0.0 })),
             "a real CombatEvent must produce a typed outgoing combat_event payload"
         );
 
@@ -630,12 +798,14 @@ mod tests {
         // must preserve the exact authoritative position even if another production producer
         // leaves a PendingKnockback on the entity.
         let position_before_knockback = app.world().get::<Position>(target).unwrap().get();
-        app.world_mut().entity_mut(target).insert(PendingKnockback::from_distance(
-            DVec3::new(1.0, 0.0, 0.0),
-            6.0,
-            70.0,
-            3,
-        ));
+        app.world_mut()
+            .entity_mut(target)
+            .insert(PendingKnockback::from_distance(
+                DVec3::new(1.0, 0.0, 0.0),
+                6.0,
+                70.0,
+                3,
+            ));
         for _ in 0..4 {
             app.world_mut().run_schedule(FixedUpdate);
             app.update();
@@ -648,9 +818,7 @@ mod tests {
         assert!(app.world().get::<PendingKnockback>(target).is_none());
 
         // Make the second ordinary attack lethal and drive the complete NPC terminal path.
-        app.world_mut()
-            .resource_mut::<CombatClock>()
-            .tick = 111;
+        app.world_mut().resource_mut::<CombatClock>().tick = 111;
         app.world_mut()
             .get_mut::<Wounds>(target)
             .expect("target remains alive before lethal attack")

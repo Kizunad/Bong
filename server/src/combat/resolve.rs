@@ -829,13 +829,15 @@ pub fn resolve_attack_intents(
                 if knockback.is_actionable() {
                     let direction = target_position - attacker_position;
                     if direction.length() > f64::EPSILON {
-                        commands.entity(target_entity).insert(PendingKnockback::from_result(
-                            intent.attacker,
-                            intent.source,
-                            direction,
-                            knockback,
-                            DEFAULT_CHAIN_DEPTH,
-                        ));
+                        commands
+                            .entity(target_entity)
+                            .insert(PendingKnockback::from_result(
+                                intent.attacker,
+                                intent.source,
+                                direction,
+                                knockback,
+                                DEFAULT_CHAIN_DEPTH,
+                            ));
                         if let Some(events) = event_writers.knockback_events.as_deref_mut() {
                             events.send(KnockbackEvent {
                                 attacker: intent.attacker,
