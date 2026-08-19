@@ -105,8 +105,6 @@ bash scripts/smoke-test.sh
 | [`docs/player-animation-conventions.md`](docs/player-animation-conventions.md) | 动画约定（PlayerAnimator 四大坑） |
 
 <!-- BEGIN:PLANS_PROGRESS -->
-
-<!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
 _自动生成于 2026-07-27 · 共 170 份 plan_
