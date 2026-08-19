@@ -42,6 +42,21 @@ pub struct KnownTechnique {
 #[derive(Debug, Component)]
 pub struct KnownTechniquesLoadFailed;
 
+/// Canonical persistence reconnect gate: while a duplicate or in-flight handoff is being
+/// resolved, gameplay systems must wait before attaching the rest of the player bundle.
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectBlocked;
+
+/// Reconnect handoff failed after the retry policy exhausted its current attempt.  The marker
+/// is deliberately separate from `KnownTechniquesLoadFailed`: the latter protects a durable
+/// row from being overwritten, while this one records a reconnect state for the dispatcher.
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectFailed;
+
+/// Reconnect handoff completed and the remaining player systems may attach their bundles.
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectReady;
+
 impl KnownTechniques {
     /// 开发命令的“授予全部”集合。顺序严格复用数据文件的声明顺序，保证 NPC deterministic
     /// selection、命令展示和 dev grants 不会因数据化而重排。
@@ -991,21 +1006,17 @@ dispatch = "metadata_backed"
         let below = f32::from_bits(at.to_bits() - 1);
         let above = f32::from_bits(at.to_bits() + 1);
         for (label, value) in [("below", below), ("at", at)] {
-            let error = load(&minimal_toml().replace(
-                "qi_cost = 0.0",
-                &format!("qi_cost = {value}"),
-            ))
-            .expect_err("positive qi dust that settlement would omit must be rejected");
+            let error =
+                load(&minimal_toml().replace("qi_cost = 0.0", &format!("qi_cost = {value}")))
+                    .expect_err("positive qi dust that settlement would omit must be rejected");
             assert!(
                 error.to_string().contains("exactly zero or greater"),
                 "{label} threshold rejection should explain the atomic qi contract: {error}"
             );
         }
-        let accepted = load(&minimal_toml().replace(
-            "qi_cost = 0.0",
-            &format!("qi_cost = {above}"),
-        ))
-        .expect("the first representable f32 above QI_EPSILON must load");
+        let accepted =
+            load(&minimal_toml().replace("qi_cost = 0.0", &format!("qi_cost = {above}")))
+                .expect("the first representable f32 above QI_EPSILON must load");
         assert!(f64::from(accepted.get("test.skill").unwrap().qi_cost) > QI_EPSILON);
     }
 
@@ -1023,7 +1034,9 @@ dispatch = "metadata_backed"
         )
         .expect_err("consumerless direct_generic must fail startup");
         assert!(error.to_string().contains("test.skill"));
-        assert!(error.to_string().contains("no registered completion consumer"));
+        assert!(error
+            .to_string()
+            .contains("no registered completion consumer"));
 
         let arbitrary_dedicated_input = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
@@ -1069,9 +1082,7 @@ dispatch = "metadata_backed"
         )
         .expect_err("every code-owned dedicated input must have metadata");
         assert!(error.to_string().contains("movement.dash"));
-        assert!(error
-            .to_string()
-            .contains("has no technique metadata"));
+        assert!(error.to_string().contains("has no technique metadata"));
     }
 
     #[test]

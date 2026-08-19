@@ -21,13 +21,13 @@ use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
-use crate::cultivation::life_record::LifeRecord;
-use crate::cultivation::meridian::severed::{
-    MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
-};
 use crate::cultivation::known_techniques::{
     SkillCategory, TechniqueDefinition, TechniqueDispatch, TechniqueRegistry,
     TechniqueRequiredMeridian,
+};
+use crate::cultivation::life_record::LifeRecord;
+use crate::cultivation::meridian::severed::{
+    MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};

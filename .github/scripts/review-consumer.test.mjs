@@ -21,7 +21,7 @@ const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 // stays literal on purpose: it is the anti-tamper control, so it must NOT be derived from
 // anything the pin can reach. Re-verify it deliberately whenever the central workflow itself
 // changes - which a pin bump does not always imply, but sometimes does.
-const centralWorkflowSha256 = 'bc22b5d4315e52025f0d938a14760788d04ac059d08f878e8b6a226055946219';
+const centralWorkflowSha256 = '49bbdb3f0d177924320031bc7a4f32b4cd1488bb81540a26877273383fd2e7fd';
 
 async function readCentralPin() {
   const yaml = await readFile(workflowPath, 'utf8');

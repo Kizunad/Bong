@@ -2361,8 +2361,7 @@ mod tests {
                 .find_zone_mut("spawn")
                 .expect("spawn zone must exist")
                 .spirit_qi = 0.0;
-            let caster =
-                spawn_caster(&mut app, Realm::Condense, 1.0, DVec3::new(0.0, 70.0, 0.0));
+            let caster = spawn_caster(&mut app, Realm::Condense, 1.0, DVec3::new(0.0, 70.0, 0.0));
             let qi_before = qi(&app, caster);
             let zone_before = zone_spirit_qi(&app);
 
@@ -2379,8 +2378,7 @@ mod tests {
             spend_qi(app.world_mut(), caster, cost);
 
             let debited = qi_before - qi(&app, caster);
-            let zone_credited =
-                (zone_spirit_qi(&app) - zone_before) * QI_ZONE_UNIT_CAPACITY;
+            let zone_credited = (zone_spirit_qi(&app) - zone_before) * QI_ZONE_UNIT_CAPACITY;
             if cost <= QI_EPSILON {
                 assert_eq!(debited, 0.0, "{label}: free/dust cost must not be deducted");
                 assert_eq!(

@@ -2,9 +2,7 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{
-    App, Client, Commands, EventReader, IntoSystemConfigs, Query, Res, Update,
-};
+use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Res, Update};
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::body_mass::{BodyMass, Stance};

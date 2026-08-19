@@ -99,11 +99,13 @@ pub fn validate_techniques_snapshot_budget(
     let known = KnownTechniques {
         entries: registry
             .iter()
-            .map(|definition| crate::cultivation::known_techniques::KnownTechnique {
-                id: definition.id.clone(),
-                proficiency: 1.0,
-                active: true,
-            })
+            .map(
+                |definition| crate::cultivation::known_techniques::KnownTechnique {
+                    id: definition.id.clone(),
+                    proficiency: 1.0,
+                    active: true,
+                },
+            )
             .collect(),
     };
     serialize_server_data_payload_proto(&techniques_snapshot_payload(registry, &known))
@@ -196,14 +198,16 @@ mod tests {
         let registry = TechniqueRegistry::load_for_tests();
         let size = validate_techniques_snapshot_budget(&registry)
             .expect("checked-in full learned-technique snapshot must fit");
-        assert!(size <= MAX_PAYLOAD_BYTES, "full catalog encoded to {size} bytes");
+        assert!(
+            size <= MAX_PAYLOAD_BYTES,
+            "full catalog encoded to {size} bytes"
+        );
     }
 
     #[test]
     fn exact_protobuf_budget_is_accepted_and_one_byte_over_is_rejected() {
-        let exact_registry = registry_with_description_len(description_len_for_payload_size(
-            MAX_PAYLOAD_BYTES,
-        ));
+        let exact_registry =
+            registry_with_description_len(description_len_for_payload_size(MAX_PAYLOAD_BYTES));
         assert_eq!(raw_full_snapshot_len(&exact_registry), MAX_PAYLOAD_BYTES);
         assert_eq!(
             validate_techniques_snapshot_budget(&exact_registry)
@@ -211,9 +215,8 @@ mod tests {
             MAX_PAYLOAD_BYTES
         );
 
-        let over_registry = registry_with_description_len(description_len_for_payload_size(
-            MAX_PAYLOAD_BYTES + 1,
-        ));
+        let over_registry =
+            registry_with_description_len(description_len_for_payload_size(MAX_PAYLOAD_BYTES + 1));
         assert_eq!(raw_full_snapshot_len(&over_registry), MAX_PAYLOAD_BYTES + 1);
         let error = validate_techniques_snapshot_budget(&over_registry)
             .expect_err("one-byte-over full snapshot must fail startup validation");

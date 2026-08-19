@@ -26,6 +26,9 @@ export BOT_E2E_RUN_TAG
 BOT_E2E_OPERATOR_TAGS=(
   RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
+  Zlb Zre Alc Bob
+  Rein Term NewCh BR1 BR2 RW1 RW2 OO1 OO2 NRift
+  GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
@@ -96,6 +99,7 @@ SERVER_LOG="$EVIDENCE_DIR/server.log"
 if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
   SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"
   mkdir -p "$SERVER_RUNTIME_DIR/server/data" "$SERVER_RUNTIME_DIR/library-web/public/deceased"
+  export BONG_SERVER_DB="$SERVER_RUNTIME_DIR/server/data/bong.db"
   # botany / forge 的生产 loader 仍从 cwd-relative assets/... 读取；只桥接 checkout
   # 的资产输入，持久化输出继续全部落在本轮私有 runtime。
   ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"

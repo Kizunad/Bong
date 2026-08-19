@@ -2531,7 +2531,9 @@ mod tests {
         assert!(has_direct_generic_completion_consumer(GUANGBO_TICAO_ID));
         assert!(!has_direct_generic_completion_consumer("movement.dash"));
         assert!(!has_direct_generic_completion_consumer("shield_block"));
-        assert!(!has_direct_generic_completion_consumer("unknown.consumerless"));
+        assert!(!has_direct_generic_completion_consumer(
+            "unknown.consumerless"
+        ));
     }
 
     #[test]

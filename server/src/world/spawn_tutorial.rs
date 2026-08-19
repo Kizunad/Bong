@@ -199,6 +199,7 @@ type JoinedTutorialClientFilter = (
     With<Client>,
     With<CultivationBundleTutorialHandoff>,
     Without<TutorialState>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 /// F9 跨层修复 — 还没收到 `tutorial_coffin_pos` 广播的 client entity。
 type UnsentTutorialCoffinPosQueryItem<'a> = (Entity, &'a mut Client);
@@ -226,6 +227,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_tutorial_state_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients)
                 .after(crate::cultivation::attach_cultivation_to_joined_clients),
             send_tutorial_coffin_pos_on_join,
             grant_meridian_primer_on_join,
@@ -1098,6 +1100,7 @@ mod tests {
         PlacedItemState, MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::HashMap;
+    use valence::testing::create_mock_client;
 
     fn registry_with_spirit_niche_base() -> ItemRegistry {
         let mut templates = HashMap::new();
@@ -1441,6 +1444,62 @@ mod tests {
         let fresh = tutorial_state_for_join(None, 220, &mut telemetry);
         assert_eq!(fresh.entered_at_tick, 220);
         assert_eq!(telemetry.started, 1);
+    }
+
+    #[test]
+    fn client_with_handoff_gets_tutorial_state_and_removes_handoff() {
+        let mut app = App::new();
+        app.init_resource::<TutorialTelemetry>();
+        app.add_systems(Update, attach_tutorial_state_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(CultivationBundleTutorialHandoff {
+                accepted_bundle: None,
+            });
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<TutorialState>(entity)
+            .expect("a joined client with a tutorial handoff must receive TutorialState");
+        assert_eq!(state.entered_at_tick, 0, "no CombatClock means tick 0");
+        assert!(
+            app.world()
+                .get::<CultivationBundleTutorialHandoff>(entity)
+                .is_none(),
+            "the tutorial handoff must be consumed after attachment"
+        );
+    }
+
+    #[test]
+    fn reconnect_blocked_client_keeps_handoff_pending() {
+        let mut app = App::new();
+        app.init_resource::<TutorialTelemetry>();
+        app.add_systems(Update, attach_tutorial_state_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            CultivationBundleTutorialHandoff {
+                accepted_bundle: None,
+            },
+            crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked,
+        ));
+
+        app.update();
+
+        assert!(
+            app.world().get::<TutorialState>(entity).is_none(),
+            "blocked reconnect targets must not receive TutorialState"
+        );
+        assert!(
+            app.world()
+                .get::<CultivationBundleTutorialHandoff>(entity)
+                .is_some(),
+            "the tutorial handoff must remain pending for the later ReconnectReady frame"
+        );
     }
 
     #[test]

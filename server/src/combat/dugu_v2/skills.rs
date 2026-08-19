@@ -6,8 +6,8 @@ use crate::combat::components::{
 use crate::combat::events::{emit_death_event_if_lethal, DeathEvent, DeathEventIfLethal};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
-use crate::cultivation::known_techniques::TechniqueDefinition;
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::known_techniques::TechniqueDefinition;
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
@@ -153,9 +153,14 @@ pub fn resolve_dugu_v2_skill(
     }
 
     let result = match skill {
-        DuguSkillId::Eclipse => {
-            apply_eclipse(world, caster, target, &cultivation, definition.as_ref(), now_tick)
-        }
+        DuguSkillId::Eclipse => apply_eclipse(
+            world,
+            caster,
+            target,
+            &cultivation,
+            definition.as_ref(),
+            now_tick,
+        ),
         DuguSkillId::SelfCure => apply_self_cure(world, caster, &cultivation, now_tick),
         DuguSkillId::Penetrate => apply_penetrate(
             world,

@@ -163,11 +163,12 @@ mod tests {
     #[test]
     fn technique_species_gate_is_projected_with_wire_species() {
         let registry = ItemRegistry::from_map(std::collections::HashMap::new());
-        let techniques = TechniqueRegistry::load_for_tests_with_override("movement.dash", |definition| {
-            definition.required_race = RaceGateOwned::Species {
-                species: vec![crate::body_plan::RaceId::new("whale".to_string())],
-            };
-        });
+        let techniques =
+            TechniqueRegistry::load_for_tests_with_override("movement.dash", |definition| {
+                definition.required_race = RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale".to_string())],
+                };
+            });
         let meta = build_race_gate_meta(&registry, &techniques);
 
         let entry = meta
