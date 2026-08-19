@@ -141,7 +141,9 @@ pub fn register(app: &mut App) {
                 .after(attach_inventory_to_joined_clients)
                 .after(flush_changed_player_skills)
                 .after(crate::network::craft_emit::persist_dirty_craft_sessions),
-            despawn_disconnected_clients.after(flush_changed_player_inventories),
+            despawn_disconnected_clients
+                .after(flush_changed_player_inventories)
+                .after(crate::persistence::dispatch_known_techniques_reconnects),
         ),
     );
     app.add_systems(Last, flush_connected_players_on_shutdown);

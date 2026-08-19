@@ -162,7 +162,7 @@ pub struct SliceRunContext {
     pub wall_unix_millis: u64,
     /// Stable persisted subject (for example a player identity) during handoff.
     pub handoff_key: Option<String>,
-    reconnect_activation: Option<ReconnectActivationCapability>,
+    pub(in crate::persistence) reconnect_activation: Option<ReconnectActivationCapability>,
 }
 
 impl SliceRunContext {
@@ -4201,6 +4201,16 @@ mod tests {
             );
             assert!(state.old_first.is_none() && state.old_second.is_none());
             assert!(state.new_first.is_none() && state.new_second.is_none());
+            let subject = subject_key("player:atomic");
+            let registry = world.resource::<PersistenceSliceRegistry>();
+            assert!(
+                !registry.active_subject_domain(&subject, first.write_binding.domain()),
+                "rebase failure/block must release the first attempted reconnect lease"
+            );
+            assert!(
+                !registry.active_subject_domain(&subject, second.write_binding.domain()),
+                "rebase failure/block must release the second attempted reconnect lease"
+            );
         }
     }
 

@@ -23,7 +23,7 @@ use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
     KnownTechniques, KnownTechniquesLoadFailed, KnownTechniquesReconnectBlocked,
-    KnownTechniquesReconnectReady,
+    KnownTechniquesReconnectFailed, KnownTechniquesReconnectReady,
 };
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::cultivation::tick::CultivationClock;
@@ -1006,6 +1006,12 @@ fn hydrate_known_techniques_slice(world: &mut World, context: &SliceRunContext) 
         .get(subject)
         .copied()
         .ok_or_else(|| SliceRunError::new("known techniques reconnect target is unavailable"))?;
+    if world.get_entity(entity).is_none() {
+        cleanup_stale_known_techniques_pending(world);
+        return Err(SliceRunError::new(
+            "known techniques reconnect target entity is gone",
+        ));
+    }
     validate_known_techniques_reconnect_target(world, subject, entity)?;
     let loaded = world
         .resource::<KnownTechniquesReconnectState>()
@@ -1039,13 +1045,19 @@ fn hydrate_known_techniques_slice(world: &mut World, context: &SliceRunContext) 
     let (tracker, fence) = guarded
         .restore_persistence_state()
         .map_err(|error| SliceRunError::new(error.to_string()))?;
-    world.entity_mut(entity).insert(value);
-    if failed {
-        world.entity_mut(entity).insert(KnownTechniquesLoadFailed);
-    } else {
-        world
-            .entity_mut(entity)
-            .remove::<KnownTechniquesLoadFailed>();
+    {
+        let Some(mut target) = world.get_entity_mut(entity) else {
+            cleanup_stale_known_techniques_pending(world);
+            return Err(SliceRunError::new(
+                "known techniques reconnect target entity disappeared during hydrate",
+            ));
+        };
+        target.insert(value);
+        if failed {
+            target.insert(KnownTechniquesLoadFailed);
+        } else {
+            target.remove::<KnownTechniquesLoadFailed>();
+        }
     }
     world.resource_mut::<KnownTechniquesActivations>().0.insert(
         subject.to_string(),
@@ -1093,6 +1105,7 @@ fn cleanup_stale_known_techniques_pending(world: &mut World) {
         if let Some(entity) = entity {
             if let Some(mut target) = world.get_entity_mut(entity) {
                 target.remove::<KnownTechniquesReconnectBlocked>();
+                target.remove::<KnownTechniquesReconnectFailed>();
                 target.remove::<KnownTechniquesReconnectReady>();
             }
         }
@@ -1186,6 +1199,7 @@ fn promote_known_techniques_candidate(world: &mut World, subject: &str) {
         .and_modify(|candidates| candidates.retain(|candidate| *candidate != entity));
     if let Some(mut target) = world.get_entity_mut(entity) {
         target.remove::<KnownTechniquesReconnectBlocked>();
+        target.remove::<KnownTechniquesReconnectFailed>();
     }
     world
         .resource_mut::<PendingKnownTechniquesHandoffs>()
@@ -1606,7 +1620,7 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
                 if let Some(entity) = pending_entity {
                     world
                         .entity_mut(entity)
-                        .insert(KnownTechniquesReconnectBlocked);
+                        .insert(KnownTechniquesReconnectFailed);
                 }
                 let should_log = known_techniques_retry_log_allowed(
                     &mut world.resource_mut::<KnownTechniquesReconnectState>(),
@@ -1629,7 +1643,7 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
                 {
                     world
                         .entity_mut(entity)
-                        .insert(KnownTechniquesReconnectBlocked);
+                        .insert(KnownTechniquesReconnectFailed);
                 }
                 let should_log = known_techniques_retry_log_allowed(
                     &mut world.resource_mut::<KnownTechniquesReconnectState>(),
@@ -1651,9 +1665,22 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
                 .get(&subject)
                 .map(|activation| activation.entity)
             {
+                let load_failed = world
+                    .resource::<KnownTechniquesActivations>()
+                    .0
+                    .get(&subject)
+                    .is_some_and(|activation| {
+                        activation.guarded.load_status() == slice::SliceLoadStatus::Failed
+                    });
                 if let Some(mut target) = world.get_entity_mut(entity) {
                     target.remove::<KnownTechniquesReconnectBlocked>();
-                    target.insert(KnownTechniquesReconnectReady);
+                    if load_failed {
+                        target.remove::<KnownTechniquesReconnectReady>();
+                        target.insert(KnownTechniquesReconnectFailed);
+                    } else {
+                        target.remove::<KnownTechniquesReconnectFailed>();
+                        target.insert(KnownTechniquesReconnectReady);
+                    }
                 }
             }
             world
@@ -10036,6 +10063,63 @@ mod persistence_tests {
     }
 
     #[test]
+    fn known_techniques_descriptor_pins_canonical_slice_contract() {
+        let descriptor = &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR;
+        assert_eq!(descriptor.id, KNOWN_TECHNIQUES_SLICE_ID);
+        assert_eq!(descriptor.scope, SliceScope::PlayerEntity);
+        assert_eq!(descriptor.order, 10);
+        assert_eq!(descriptor.load_failure, LoadFailurePolicy::BlockWrites);
+        assert_eq!(descriptor.time_basis, TimeBasis::None);
+        assert_eq!(
+            descriptor.write_binding,
+            WriteBinding::new(
+                WriteDomain::new("player.known_techniques"),
+                WriteAuthority::new("persistence.known_techniques"),
+            )
+        );
+        assert_eq!(descriptor.write_ordering, WriteOrdering::Serialized);
+        assert_eq!(descriptor.autosave, AutosavePolicy::Disabled);
+        assert!(descriptor.hydrate.is_some());
+        assert!(descriptor.reconnect_preflight.is_some());
+        assert!(descriptor.reconnect_cleanup.is_some());
+        assert!(descriptor.rebase.is_none());
+        assert!(descriptor.disconnect_save.is_some());
+        assert!(descriptor.shutdown_flush.is_some());
+    }
+
+    #[test]
+    fn hydrate_known_techniques_cleans_pending_entry_when_target_is_gone() {
+        let mut world = World::new();
+        world.insert_resource(PendingKnownTechniquesHandoffs::default());
+        world.insert_resource(PendingKnownTechniquesCandidates::default());
+        world.insert_resource(KnownTechniquesReconnectState::default());
+        let entity = world.spawn_empty().id();
+        world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .insert("player:Azure".to_string(), entity);
+        world.despawn(entity);
+
+        let context = SliceRunContext {
+            reason: SliceRunReason::ReconnectLoad,
+            runtime_tick: 0,
+            wall_unix_millis: 0,
+            handoff_key: Some("player:Azure".to_string()),
+            reconnect_activation: None,
+        };
+        let error = hydrate_known_techniques_slice(&mut world, &context)
+            .expect_err("a vanished target must fail without panicking");
+        assert!(error.message().contains("entity is gone"));
+        assert!(
+            !world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key("player:Azure"),
+            "stale pending handoffs must be removed after the target disappears"
+        );
+    }
+
+    #[test]
     fn production_known_techniques_join_and_changed_write_use_canonical_activation() {
         let (mut app, persistence, _settings, root) =
             known_techniques_app("known-techniques-production-changed");
@@ -10114,6 +10198,22 @@ mod persistence_tests {
             .world()
             .get::<KnownTechniquesLoadFailed>(old_player)
             .is_some());
+        assert!(
+            app.world().get::<PlayerState>(old_player).is_some(),
+            "known-techniques DB outage must not prevent the ordinary PlayerState bundle from attaching"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectFailed>(old_player)
+                .is_some(),
+            "a transient known-techniques outage must mark only that slice as degraded"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(old_player)
+                .is_none(),
+            "a load failure must not use the duplicate-login block marker"
+        );
         assert_eq!(
             app.world()
                 .resource::<KnownTechniquesActivations>()
@@ -10710,6 +10810,22 @@ mod persistence_tests {
             .world()
             .get::<KnownTechniquesLoadFailed>(old_player)
             .is_some());
+        assert!(
+            app.world().get::<PlayerState>(old_player).is_some(),
+            "a corrupt known-techniques row must not prevent PlayerState attachment"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectFailed>(old_player)
+                .is_some(),
+            "a corrupt known-techniques row must mark only that slice as degraded"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(old_player)
+                .is_none(),
+            "a corrupt row must not be treated as a duplicate-login block"
+        );
         app.world_mut()
             .entity_mut(old_player)
             .insert(known_techniques_fixture("movement.dash", 0.99));

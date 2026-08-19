@@ -45,6 +45,12 @@ pub struct KnownTechniquesLoadFailed;
 #[derive(Debug, Component)]
 pub struct KnownTechniquesReconnectBlocked;
 
+/// 功法重连/载入失败标记。
+///
+/// 该状态只阻断功法 slice 的写入与重试，不应阻断玩家其它持久化 bundle 的附挂。
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectFailed;
+
 #[derive(Debug, Component)]
 pub struct KnownTechniquesReconnectReady;
 

@@ -181,6 +181,9 @@ pub struct LoadedPlayerSlices {
 pub enum LoadedKnownTechniques {
     Loaded(KnownTechniques),
     LoadFailed,
+    /// 本次聚合加载主动跳过功法；canonical persistence slice 负责独立加载。
+    /// 该状态不携带可写回的数据，调用方不得将其解释为空功法表。
+    NotLoaded,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,6 +442,10 @@ pub fn load_player_slices(
     load_player_slices_inner(persistence, username, true)
 }
 
+/// 加载玩家其它切片，但跳过功法读取。
+///
+/// 功法由 canonical persistence slice 独立加载并管理写保护，因此该路径返回
+/// [`LoadedKnownTechniques::NotLoaded`]，调用方不得据此写回功法。
 pub(crate) fn load_player_slices_for_canonical_techniques(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -566,7 +573,7 @@ fn load_player_slices_inner(
             }
         }
     } else {
-        LoadedKnownTechniques::Loaded(KnownTechniques::default())
+        LoadedKnownTechniques::NotLoaded
     };
     let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
         Ok(ui_prefs) => ui_prefs,
@@ -5038,6 +5045,28 @@ mod player_state_tests {
             LoadedKnownTechniques::Loaded(KnownTechniques::default()),
             "DB 无行 = 真新玩家，应返回 Loaded(default) 并允许后续正常落盘，\
              不得与「有行但读取失败」混为一谈"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn canonical_techniques_load_skips_known_techniques_without_fabricating_default() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-canonical-skip");
+        let expected = seed_dash_known_techniques_row(&persistence);
+
+        let loaded = load_player_slices_for_canonical_techniques(&persistence, "Azure");
+
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::NotLoaded,
+            "the aggregate loader must leave canonical known-techniques ownership to its slice"
+        );
+        assert_eq!(
+            load_player_known_techniques_slice(&persistence, "Azure")
+                .expect("canonical loader should still read the durable row"),
+            Some(expected),
+            "skipping the aggregate read must not remove or alter the durable techniques row"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
