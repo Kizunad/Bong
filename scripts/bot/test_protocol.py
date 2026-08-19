@@ -3207,6 +3207,16 @@ class CombatSkillCastScenarioTest(unittest.TestCase):
             complete,
         )
 
+    def test_successful_cast_accepts_same_timestamp_batch_in_event_order(self):
+        casting = self._cast_sync(3.0, "casting", "none")
+        complete = self._cast_sync(3.0, "complete", "completed")
+
+        self.assertIs(
+            _wait_successful_cast_sequence(_FakeBot([casting, complete]), 1.0),
+            complete,
+            "同一网络批次可共享时间戳，顺序应由事件列表中的 phase 转换确定",
+        )
+
     def test_successful_cast_rejects_wrong_slot_or_outcome_identity(self):
         cases = (
             (self._cast_sync(2.0, "casting", "none"), "slot", 1),

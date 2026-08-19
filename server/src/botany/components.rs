@@ -216,8 +216,10 @@ impl HarvestSessionStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn upsert_session(&mut self, session: HarvestSession) {
-        let _ = self.try_insert_session(session);
+        self.try_insert_session(session)
+            .expect("test fixture must not silently overwrite another player's target reservation");
     }
 
     pub fn remove_session(&mut self, player_id: &str) -> Option<HarvestSession> {

@@ -346,6 +346,68 @@ else
   fail "锁域覆写拒绝缺少修复线索"
 fi
 
+artifact_target="$SANDBOX/artifact-target"
+artifact_output_dir="$SANDBOX/artifact-output"
+mkdir -p "$artifact_target/release" "$artifact_output_dir"
+chmod 700 "$artifact_output_dir"
+printf 'exact-build-artifact\n' >"$artifact_target/release/bong-server"
+chmod 700 "$artifact_target/release/bong-server"
+
+for name in artifact_reader_a artifact_reader_b; do
+  (
+    cd "$SANDBOX"
+    CARGO_TARGET_DIR="$artifact_target" "$TOKEN" cargo "$name"
+  ) >"$SANDBOX/$name.out" 2>"$SANDBOX/$name.err" &
+  PIDS+=("$!")
+done
+if wait_file "$SANDBOX/artifact_reader_a.started" \
+  && wait_file "$SANDBOX/artifact_reader_b.started"; then
+  (
+    cd "$SANDBOX"
+    CARGO_TARGET_DIR="$artifact_target" \
+      BONG_BUILD_TOKEN_SERVER_ARTIFACT="$artifact_output_dir/bong-server" \
+      "$TOKEN" cargo artifact_export
+  ) >"$SANDBOX/artifact_export.out" 2>"$SANDBOX/artifact_export.err" &
+  PIDS+=("$!")
+  if not_started_briefly "$SANDBOX/artifact_export.started"; then
+    pass "artifact 构建以 target 独占锁等待同 target 普通构建退出"
+  else
+    fail "artifact 构建未隔离同 target 并发写入"
+  fi
+  touch "$SANDBOX/artifact_reader_a.release" "$SANDBOX/artifact_reader_b.release"
+  if wait_file "$SANDBOX/artifact_export.started"; then
+    touch "$SANDBOX/artifact_export.release"
+  else
+    fail "同 target 普通构建退出后 artifact 构建未获得独占锁"
+  fi
+else
+  fail "同 target 普通 cargo 构建未保持共享锁并发"
+fi
+for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
+PIDS=()
+if [ "$(cat "$artifact_output_dir/bong-server" 2>/dev/null || true)" = exact-build-artifact ] \
+  && [ "$(stat -c %a "$artifact_output_dir/bong-server" 2>/dev/null || true)" = 700 ]; then
+  pass "artifact 在 target 独占锁内原子复制为私有可执行文件"
+else
+  fail "artifact 构建未输出精确的私有可执行副本"
+fi
+
+chmod 755 "$artifact_output_dir"
+CARGO_TARGET_DIR="$artifact_target" \
+  BONG_BUILD_TOKEN_SERVER_ARTIFACT="$artifact_output_dir/rejected" \
+  "$TOKEN" cargo artifact_bad_dir >"$SANDBOX/artifact_bad_dir.out" 2>"$SANDBOX/artifact_bad_dir.err" &
+bad_artifact_pid=$!
+wait_file "$SANDBOX/artifact_bad_dir.started" || true
+touch "$SANDBOX/artifact_bad_dir.release"
+if wait "$bad_artifact_pid"; then
+  fail "宽权限 artifact 目录必须 fail closed"
+elif [ ! -e "$artifact_output_dir/rejected" ]; then
+  pass "artifact 拒绝写入非 0700 目标目录"
+else
+  fail "artifact 目录校验失败后仍产生了输出"
+fi
+chmod 700 "$artifact_output_dir"
+
 symlink_root="$SANDBOX/symlink-locks"
 ln -s "$SANDBOX/locks" "$symlink_root"
 if BONG_BUILD_TOKEN_DIR="$symlink_root" "$TOKEN" cargo invalid >"$SANDBOX/symlink.out" 2>"$SANDBOX/symlink.err"; then

@@ -190,7 +190,11 @@ set -euo pipefail
 printf '%s\n' "$@" > "$SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS"
 [ "$#" -ge 1 ] && [ "$1" = cargo ] || exit 42
 shift
-exec cargo "$@"
+cargo "$@"
+if [ -n "${BONG_BUILD_TOKEN_SERVER_ARTIFACT:-}" ]; then
+    install -m 700 -- "$CARGO_TARGET_DIR/release/bong-server" \
+        "$BONG_BUILD_TOKEN_SERVER_ARTIFACT"
+fi
 FIXTURE
 chmod +x "$build_token"
 

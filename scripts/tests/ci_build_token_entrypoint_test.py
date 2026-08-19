@@ -67,7 +67,7 @@ SPECS = {
             'server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"',
             "e2e supervisor test overrides require an explicit harness mode",
             'python3 "$build_helper"',
-            '"$server_directory" "$cargo_target" "$build_token" "$build_timeout"',
+            '"$server_directory" "$cargo_target" "$build_token" "$build_timeout" "$built_binary"',
             'python3 "$supervisor" "$server_directory" "$built_binary"',
             '2>>"$log_file"',
         ],
@@ -78,6 +78,7 @@ SPECS = {
     "scripts/lib/bong-pre-handshake-build.py": {
         "required": [
             '[str(build_token), "cargo", "build", "--release"]',
+            'environment["BONG_BUILD_TOKEN_SERVER_ARTIFACT"] = str(server_artifact)',
             "stdin=subprocess.DEVNULL",
             "close_fds=True",
             "start_new_session=True",

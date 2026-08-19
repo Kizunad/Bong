@@ -294,6 +294,11 @@ fn apply_gather_action(
 
     if let Ok(plant_id) = canonicalize_herb_id(resource_name) {
         let Some(harvest_sessions) = harvest_sessions else {
+            pending_narrations.push_player(
+                canonical_player,
+                "采集暂不可用，请稍后重试。",
+                NarrationStyle::Narration,
+            );
             return;
         };
         let target_entity = match action.target_entity {
@@ -307,9 +312,14 @@ fn apply_gather_action(
             None => resolve_nearest_harvestable_plant(plants, plant_id, zone_name, player_position),
         };
         let Some(target_entity) = target_entity else {
+            pending_narrations.push_player(
+                canonical_player,
+                "附近没有可采集的目标灵草。",
+                NarrationStyle::Narration,
+            );
             return;
         };
-        start_or_resume_harvest(
+        if !start_or_resume_harvest(
             harvest_sessions,
             canonical_player.trim_start_matches("offline:"),
             player_entity,
@@ -318,7 +328,13 @@ fn apply_gather_action(
             action.mode.unwrap_or(BotanyHarvestMode::Manual),
             [player_position.x, player_position.y, player_position.z],
             event_tick,
-        );
+        ) {
+            pending_narrations.push_player(
+                canonical_player,
+                "无法开始采集：你已有采集进度，或目标正被他人占用。",
+                NarrationStyle::Narration,
+            );
+        }
         return;
     }
 
@@ -332,7 +348,7 @@ fn apply_gather_action(
         zone_registry,
         qi_ledger,
         active_events,
-        pending_narrations,
+        Some(pending_narrations),
     );
 }
 
@@ -347,7 +363,7 @@ pub(crate) fn settle_gather_reward(
     zone_registry: Option<&mut ZoneRegistry>,
     qi_ledger: Option<&mut WorldQiAccount>,
     active_events: Option<&mut ActiveEventsResource>,
-    pending_narrations: &mut PendingGameplayNarrations,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
 ) -> f64 {
     let qi_gain = gather_qi_from_zone(
         zone_registry,
@@ -376,11 +392,13 @@ pub(crate) fn settle_gather_reward(
         });
     }
 
-    pending_narrations.push_player(
-        canonical_player,
-        format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
-        NarrationStyle::Narration,
-    );
+    if let Some(pending_narrations) = pending_narrations {
+        pending_narrations.push_player(
+            canonical_player,
+            format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
+            NarrationStyle::Narration,
+        );
+    }
     qi_gain
 }
 
@@ -933,12 +951,19 @@ mod tests {
                 .is_empty(),
             "{context}: rejected gather must not record a success event"
         );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "{context}: rejected gather must emit exactly one actionable player narration"
+        );
         assert!(
-            app.world_mut()
-                .resource_mut::<PendingGameplayNarrations>()
-                .drain()
-                .is_empty(),
-            "{context}: rejected gather must not emit success narration"
+            narrations[0].text.contains("没有可采集"),
+            "{context}: rejection narration must explain that no valid target was found: {:?}",
+            narrations[0]
         );
     }
 
@@ -1100,11 +1125,12 @@ mod tests {
             .resource::<ActiveEventsResource>()
             .recent_events_snapshot()
             .is_empty());
-        assert!(app
+        let narrations = app
             .world_mut()
             .resource_mut::<PendingGameplayNarrations>()
-            .drain()
-            .is_empty());
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert!(narrations[0].text.contains("暂不可用"));
         let plant = app.world().entity(target).get::<Plant>().unwrap();
         assert!(!plant.harvested && !plant.trampled);
     }
@@ -1201,6 +1227,49 @@ mod tests {
                 label,
             );
         }
+    }
+
+    #[test]
+    fn gather_reserved_by_another_player_emits_rejection_without_stealing_reservation() {
+        let mut app = setup_gather_action_test_app();
+        spawn_gather_action_test_player(&mut app, PlayerState::default(), Cultivation::default());
+        let target = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            DEFAULT_SPAWN_ZONE_NAME,
+            [1.0, 66.0, 0.0],
+            false,
+            false,
+        );
+        assert!(start_or_resume_harvest(
+            &mut app.world_mut().resource_mut::<HarvestSessionStore>(),
+            "Breeze",
+            Entity::from_raw(99),
+            Some(target),
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            BotanyHarvestMode::Manual,
+            [1.0, 66.0, 0.0],
+            0,
+        ));
+        enqueue_spirit_grass_gather(&mut app, Some(target));
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(store.session_for("offline:Azure").is_none());
+        assert_eq!(
+            store
+                .session_for("offline:Breeze")
+                .and_then(|session| session.target_entity),
+            Some(target),
+            "rejected gather must preserve the existing target owner"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert!(narrations[0].text.contains("正被他人占用"));
     }
 
     #[test]

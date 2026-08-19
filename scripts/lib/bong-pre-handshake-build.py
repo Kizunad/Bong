@@ -61,10 +61,10 @@ def stop_build_group(process: subprocess.Popen[bytes]) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 6:
         print(
             "usage: bong-pre-handshake-build.py SERVER_DIRECTORY CARGO_TARGET_DIR "
-            "BUILD_TOKEN TIMEOUT_SECONDS",
+            "BUILD_TOKEN TIMEOUT_SECONDS SERVER_ARTIFACT",
             file=sys.stderr,
         )
         return 2
@@ -74,15 +74,24 @@ def main() -> int:
         cargo_target = Path(sys.argv[2])
         build_token = Path(sys.argv[3]).resolve(strict=True)
         timeout_seconds = int(sys.argv[4])
+        server_artifact = Path(sys.argv[5])
     except (OSError, ValueError) as error:
         print(f"invalid pre-handshake build input: {error}", file=sys.stderr)
         return 2
-    if timeout_seconds <= 0 or not cargo_target.is_absolute():
-        print("build timeout and cargo target must be positive/absolute", file=sys.stderr)
+    if (
+        timeout_seconds <= 0
+        or not cargo_target.is_absolute()
+        or not server_artifact.is_absolute()
+    ):
+        print(
+            "build timeout, cargo target, and server artifact must be positive/absolute",
+            file=sys.stderr,
+        )
         return 2
 
     environment = os.environ.copy()
     environment["CARGO_TARGET_DIR"] = str(cargo_target)
+    environment["BONG_BUILD_TOKEN_SERVER_ARTIFACT"] = str(server_artifact)
     try:
         process = subprocess.Popen(
             [str(build_token), "cargo", "build", "--release"],

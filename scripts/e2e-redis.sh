@@ -859,7 +859,7 @@ resolve_server_cargo_target() {
 
 start_server_process_group() {
   local log_file="$1" preview_mode="$2" test_override_mode="${3:-0}"
-  local actual_pgid="" build_helper="" built_binary="" build_timeout="" cargo_target owner_pid=""
+  local actual_pgid="" artifact_dir="" build_helper="" built_binary="" build_timeout="" cargo_target owner_pid=""
   local owner_starttime="" owner_executable_identity="" supervisor="" build_token="" ready_line="" committed_line=""
   local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
@@ -907,16 +907,22 @@ start_server_process_group() {
     echo "FAIL: BONG_E2E_BUILD_TIMEOUT_SECONDS must be a positive integer" >&2
     return 2
   }
+  artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/bong-e2e-prebuilt.XXXXXXXX")" || return 1
+  chmod 700 -- "$artifact_dir"
+  built_binary="$artifact_dir/bong-server"
   if ! env \
     PATH="$RUST_PATH" \
     python3 "$build_helper" \
-      "$server_directory" "$cargo_target" "$build_token" "$build_timeout" \
+      "$server_directory" "$cargo_target" "$build_token" "$build_timeout" "$built_binary" \
       >>"$log_file" 2>&1; then
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
     echo "FAIL: release server build failed or exceeded ${build_timeout}s" >&2
     return 1
   fi
-  built_binary="$cargo_target/release/bong-server"
   [ -f "$built_binary" ] || {
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
     echo "FAIL: successful release build did not produce $built_binary" >&2
     return 1
   }
@@ -942,6 +948,8 @@ start_server_process_group() {
 
   if ! IFS= read -r -t 5 -u "$ready_fd" ready_line \
     || [[ "$ready_line" != 'READY pid='[0-9]* ]]; then
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
     exec {control_fd}>&-
     exec {ready_fd}<&-
     # Do not wait on an unpinned startup PID: it can outlive a failed protocol
@@ -952,6 +960,9 @@ start_server_process_group() {
     echo "FAIL: server supervisor did not publish startup rollback readiness" >&2
     return 1
   fi
+  # READY means the supervisor has copied the token-pinned private artifact.
+  rm -f -- "$built_binary"
+  rmdir -- "$artifact_dir" 2>/dev/null || true
   # READY is emitted by the post-setsid supervisor itself and carries that exact
   # PID, avoiding Bash coproc wrapper ambiguity. The following identity snapshot
   # still pins starttime, executable inode, and PGID before C is sent.

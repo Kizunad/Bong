@@ -554,6 +554,10 @@ fn spawn_fallback_flat_world(
                 limit = FALLBACK_FLAT_MAX_CHUNKS,
                 "[bong][world] fallback spawn chunk union exceeded safety limit during construction; refusing eager world allocation"
             );
+            // 这里必须 fail closed，而不是静默截断 union：spawn_selector 仍会按
+            // zones.json 的完整分布选点，部分物化会把玩家送进不存在的 chunk。
+            // 当前 zones.json 的上限约束由 fallback_flat_chunk_count_guard_* 回归测试钉住；
+            // 超限属于需要修正配置/拆分出生簇的启动配置错误。
             panic!(
                 "fallback spawn chunk union has at least {chunk_count} chunks, above safety limit {FALLBACK_FLAT_MAX_CHUNKS}"
             );
@@ -597,7 +601,18 @@ fn fallback_spawn_chunk_union(
     anchors: &[crate::player::spawn_selector::SpawnDistributionAnchor],
 ) -> Result<BTreeSet<ChunkPos>, usize> {
     let Some(spawn_zone) = registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) else {
-        return Ok(BTreeSet::new());
+        tracing::warn!(
+            "[bong][world] `{}` zone missing; materializing the emergency spawn view",
+            zone::DEFAULT_SPAWN_ZONE_NAME,
+        );
+        let emergency = ChunkPos::from(valence::prelude::DVec3::from(
+            crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION,
+        ));
+        return Ok(
+            valence::prelude::ChunkView::new(emergency, FALLBACK_VIEW_DISTANCE_CHUNKS)
+                .iter()
+                .collect(),
+        );
     };
     let (zone_min, zone_max) = spawn_zone.bounds;
     let mut chunks = BTreeSet::new();
@@ -1063,6 +1078,32 @@ mod tests {
             "多个小矩形的 union 累积越界也必须在第 {} 个唯一 chunk 处 fail closed",
             FALLBACK_FLAT_MAX_CHUNKS + 1
         );
+    }
+
+    #[test]
+    fn missing_spawn_zone_materializes_complete_emergency_view() {
+        let registry = ZoneRegistry {
+            zones: Vec::new(),
+            spatial_revision: 0,
+        };
+        let emergency_position =
+            DVec3::from(crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION);
+        let emergency_chunk = ChunkPos::from(emergency_position);
+        let anchors = [
+            crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+                emergency_position,
+                0.0,
+            ),
+        ];
+
+        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("missing spawn zone must degrade to a bounded emergency view");
+        let expected = ChunkView::new(emergency_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS)
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(chunks, expected);
+        assert!(chunks.contains(&emergency_chunk));
     }
 
     #[test]

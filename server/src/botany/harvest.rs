@@ -172,10 +172,10 @@ pub fn complete_harvest_for_player(
     mob_attraction_events: &mut EventWriter<BotanyAttractsMobsEvent>,
     now_tick: u64,
     dropped_loot: Option<&mut DroppedLootRegistry>,
-    zone_registry: &mut ZoneRegistry,
-    qi_ledger: &mut WorldQiAccount,
-    active_events: &mut ActiveEventsResource,
-    pending_narrations: &mut PendingGameplayNarrations,
+    zone_registry: Option<&mut ZoneRegistry>,
+    qi_ledger: Option<&mut WorldQiAccount>,
+    active_events: Option<&mut ActiveEventsResource>,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
 ) -> Result<(), String> {
     let pending_session = store
         .session_for(player_id)
@@ -400,9 +400,9 @@ pub fn complete_harvest_for_player(
         now_tick,
         &mut player_state,
         &mut cultivation,
-        Some(zone_registry),
-        Some(qi_ledger),
-        Some(active_events),
+        zone_registry,
+        qi_ledger,
+        active_events,
         pending_narrations,
     );
 
@@ -737,10 +737,10 @@ fn should_trample(seed: u64, chance_inverse: u32) -> bool {
 #[derive(SystemParam)]
 pub struct HarvestCompletionResources<'w> {
     dropped_loot: Option<ResMut<'w, DroppedLootRegistry>>,
-    zone_registry: ResMut<'w, ZoneRegistry>,
-    qi_ledger: ResMut<'w, WorldQiAccount>,
-    active_events: ResMut<'w, ActiveEventsResource>,
-    pending_narrations: ResMut<'w, PendingGameplayNarrations>,
+    zone_registry: Option<ResMut<'w, ZoneRegistry>>,
+    qi_ledger: Option<ResMut<'w, WorldQiAccount>>,
+    active_events: Option<ResMut<'w, ActiveEventsResource>>,
+    pending_narrations: Option<ResMut<'w, PendingGameplayNarrations>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -792,10 +792,10 @@ pub fn tick_harvest_sessions(
             &mut mob_attraction_events,
             now,
             completion_resources.dropped_loot.as_deref_mut(),
-            &mut completion_resources.zone_registry,
-            &mut completion_resources.qi_ledger,
-            &mut completion_resources.active_events,
-            &mut completion_resources.pending_narrations,
+            completion_resources.zone_registry.as_deref_mut(),
+            completion_resources.qi_ledger.as_deref_mut(),
+            completion_resources.active_events.as_deref_mut(),
+            completion_resources.pending_narrations.as_deref_mut(),
         ) {
             // plan-bughunt-botany-disconnect-session P1：文案与实际状态一致——session
             // 已取消（不会自动 retry），植物保持未收获，玩家需重新发起采集。
@@ -2202,6 +2202,66 @@ mod tests {
             crate::schema::common::NarrationStyle::Narration
         );
         assert!(narrations[0].text.contains("ci_she_hao"));
+    }
+
+    #[test]
+    fn harvest_completion_without_optional_feedback_resources_still_completes() {
+        let mut app = make_app_with_combat_events();
+        app.world_mut().remove_resource::<ZoneRegistry>();
+        app.world_mut().remove_resource::<WorldQiAccount>();
+        app.world_mut().remove_resource::<ActiveEventsResource>();
+        app.world_mut()
+            .remove_resource::<PendingGameplayNarrations>();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation {
+                qi_current: 70.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            })
+            .insert(PlayerState::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        assert!(app.world().entity(target).get::<Plant>().unwrap().harvested);
+        let player = app.world().entity(client_entity);
+        let cultivation = player.get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 70.0,
+            "missing zone/ledger pair must skip qi transfer rather than minting qi"
+        );
+        let state = player.get::<PlayerState>().unwrap();
+        assert_eq!(
+            state.inventory_score,
+            crate::player::gameplay::GATHER_INVENTORY_REWARD
+        );
+        assert_eq!(state.karma, crate::player::gameplay::GATHER_KARMA_REWARD);
+        let inventory = player.get::<PlayerInventory>().unwrap();
+        assert!(inventory
+            .containers
+            .iter()
+            .flat_map(|container| &container.items)
+            .any(|placed| placed.instance.template_id == "ci_she_hao"));
+        let frames = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].completed && !frames[0].interrupted);
     }
 
     #[test]

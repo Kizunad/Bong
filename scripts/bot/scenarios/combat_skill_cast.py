@@ -68,13 +68,25 @@ def _wait_successful_cast_sequence(bot, anchor: float):
         timeout=10.0,
         description="凝针施放须先收到 slot=0 phase=casting outcome=none 的 typed cast_sync",
     )
+
+    seen_casting = False
+
+    def is_complete_after_casting(event) -> bool:
+        nonlocal seen_casting
+        if event is casting:
+            seen_casting = True
+            return False
+        return (
+            seen_casting
+            and event.kind == "server_data"
+            and event.data.get("payload_type") == "cast_sync"
+            and event.data.get("payload", {}).get("slot") == SLOT
+            and event.data.get("payload", {}).get("phase") == "complete"
+            and event.data.get("payload", {}).get("outcome") == "completed"
+        )
+
     return bot.wait_for(
-        lambda event: event.kind == "server_data"
-        and event.t > casting.t
-        and event.data.get("payload_type") == "cast_sync"
-        and event.data.get("payload", {}).get("slot") == SLOT
-        and event.data.get("payload", {}).get("phase") == "complete"
-        and event.data.get("payload", {}).get("outcome") == "completed",
+        is_complete_after_casting,
         timeout=10.0,
         description="凝针施放须终止于 slot=0 phase=complete outcome=completed",
     )
