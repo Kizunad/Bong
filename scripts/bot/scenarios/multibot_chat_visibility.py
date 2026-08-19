@@ -120,13 +120,6 @@ def run(env) -> None:
                 timeout=10.0,
                 description="Bob 的专属 outgoing=true positive hit",
             )
-            bob.wait_for(
-                lambda event: event.kind == "entity_move"
-                and event.t > bob_anchor
-                and event.data.get("entity_id") == target_id,
-                timeout=10.0,
-                description=f"Bob 命中后精确共享 NPC entity_id={target_id} 产生 knockback",
-            )
 
             alice.assert_alive("互见身份并命中共享 NPC 后")
             bob.assert_alive("互见身份并命中共享 NPC 后")

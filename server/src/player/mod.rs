@@ -81,12 +81,18 @@ type JoinedClientsWithoutStateQueryFilter = (
     Or<(
         Added<Client>,
         Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        Added<ReconnectPersistencePending>,
     )>,
     Without<PlayerState>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 #[derive(Component, Default)]
 struct InventoryPersistenceDirty;
+
+/// Same-username reconnects wait one frame while the old disconnected entity's final persistence
+/// checkpoint runs. This marker is consumed by the normal join attach system on the next frame.
+#[derive(Component, Default)]
+pub(crate) struct ReconnectPersistencePending;
 
 type ChangedInventoryClientsQueryItem<'a> = (Entity, &'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (
@@ -221,6 +227,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
     dimension_layers: Option<Res<DimensionLayers>>,
     mut skill_config_store: Option<ResMut<SkillConfigStore>>,
     skill_config_schemas: Option<Res<SkillConfigSchemas>>,
+    pending_disconnects: Query<&Username, (Without<Client>, Without<Despawned>)>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -236,6 +243,17 @@ pub(crate) fn attach_player_state_to_joined_clients(
         flags,
     ) in &mut joined_clients
     {
+        if pending_disconnects
+            .iter()
+            .any(|disconnected| disconnected.0 == username.0)
+        {
+            commands.entity(entity).insert(ReconnectPersistencePending);
+            continue;
+        }
+
+        commands
+            .entity(entity)
+            .remove::<ReconnectPersistencePending>();
         let persisted =
             load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();

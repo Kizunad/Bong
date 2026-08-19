@@ -357,9 +357,13 @@ def run(env) -> None:
             )
             _assert_outcome(outcome.data["payload"])
 
-            barrier_anchor = last_event_time(bystander)
-            bystander.cmd("supply_coffin barrier")
-            barrier = bystander.wait_for(
+            # Bystander is intentionally a non-operator observer. Use the already-authorized
+            # brewer to create the server watermark, then inspect the bystander's event stream up
+            # to that watermark; asking the observer to run a dev command would be rejected by the
+            # operator gate and could be misdiagnosed as a barrier scheduling failure.
+            barrier_anchor = last_event_time(bot)
+            bot.cmd("supply_coffin barrier")
+            barrier = bot.wait_for(
                 lambda event: event.kind == "chat"
                 and event.t > barrier_anchor
                 and "[dev] supply_coffin barrier passed" in event.data["text"],

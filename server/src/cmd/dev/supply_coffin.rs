@@ -26,8 +26,8 @@ use valence::entity::entity::NoGravity;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, EntityLayerId, EventReader, IntoSystemConfigs,
-    Look, Position, Query, ResMut, Update, With,
+    bevy_ecs, App, Client, Commands, EntityLayerId, EventReader, EventWriter, IntoSystemConfigs,
+    Look, Position, Query, ResMut, Update,
 };
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
@@ -68,8 +68,10 @@ pub enum SupplyCoffinCmd {
     Barrier,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-struct SupplyCoffinBarrierPending;
+#[derive(bevy_ecs::event::Event, Debug, Clone, Copy, PartialEq, Eq)]
+struct SupplyCoffinBarrierRequested {
+    executor: valence::prelude::Entity,
+}
 
 impl Command for SupplyCoffinCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
@@ -131,6 +133,7 @@ impl Command for SupplyCoffinCmd {
 
 pub fn register(app: &mut App) {
     app.add_command::<SupplyCoffinCmd>()
+        .add_event::<SupplyCoffinBarrierRequested>()
         .add_systems(
             Update,
             handle_supply_coffin_cmd
@@ -150,6 +153,7 @@ pub fn register(app: &mut App) {
 pub fn handle_supply_coffin_cmd(
     mut commands: Commands,
     mut events: EventReader<CommandResultEvent<SupplyCoffinCmd>>,
+    mut barriers: EventWriter<SupplyCoffinBarrierRequested>,
     registry: Option<ResMut<SupplyCoffinRegistry>>,
     mut clients: Query<&mut Client>,
     layers: Option<valence::prelude::Res<crate::world::dimension::DimensionLayers>>,
@@ -358,26 +362,25 @@ pub fn handle_supply_coffin_cmd(
                 );
             }
             SupplyCoffinCmd::Barrier => {
-                // The marker is applied at the end of this schedule pass. The flush system runs
-                // after request/open/lifecycle systems, so its chat reply on the next pass is a
-                // deterministic black-box watermark for every earlier packet from this client.
-                commands
-                    .entity(event.executor)
-                    .insert(SupplyCoffinBarrierPending);
+                // Events are visible to the ordered flush system in this same Update pass. This
+                // avoids using a deferred ECS marker as a cross-system watermark, which could be
+                // missed when a reconnecting/late observer is queried on the next frame.
+                barriers.send(SupplyCoffinBarrierRequested {
+                    executor: event.executor,
+                });
             }
         }
     }
 }
 
 fn flush_supply_coffin_barriers(
-    mut commands: Commands,
-    mut pending: Query<(valence::prelude::Entity, &mut Client), With<SupplyCoffinBarrierPending>>,
+    mut barriers: EventReader<SupplyCoffinBarrierRequested>,
+    mut clients: Query<&mut Client>,
 ) {
-    for (entity, mut client) in &mut pending {
-        client.send_chat_message("[dev] supply_coffin barrier passed");
-        commands
-            .entity(entity)
-            .remove::<SupplyCoffinBarrierPending>();
+    for barrier in barriers.read() {
+        if let Ok(mut client) = clients.get_mut(barrier.executor) {
+            client.send_chat_message("[dev] supply_coffin barrier passed");
+        }
     }
 }
 
@@ -402,6 +405,7 @@ mod tests {
     fn setup_app(with_layers: bool) -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        app.add_event::<SupplyCoffinBarrierRequested>();
         app.insert_resource(SupplyCoffinRegistry::new(
             (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
             65.0,
@@ -505,26 +509,63 @@ mod tests {
     }
 
     #[test]
-    fn barrier_command_defers_reply_marker_until_flush_system() {
+    fn barrier_command_queues_typed_request_for_flush_system() {
+        use valence::protocol::packets::play::GameMessageS2c;
+        use valence::testing::create_mock_client;
+
         let mut app = setup_app(false);
-        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        let (mut bundle, mut helper) = create_mock_client("Alice");
+        bundle.player.position = valence::prelude::Position::new([0.0, 0.0, 0.0]);
+        let player = app.world_mut().spawn(bundle).id();
 
         send(&mut app, player, SupplyCoffinCmd::Barrier);
         run_update(&mut app);
-        assert!(
-            app.world()
-                .get::<SupplyCoffinBarrierPending>(player)
-                .is_some(),
-            "barrier command must persist a marker into the next schedule pass"
+        let requested = app
+            .world()
+            .resource::<Events<SupplyCoffinBarrierRequested>>();
+        assert_eq!(
+            requested.len(),
+            1,
+            "barrier command must enqueue one typed request for the ordered flush system"
         );
 
         app.add_systems(Update, flush_supply_coffin_barriers);
         run_update(&mut app);
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("barrier chat should flush to the mock client");
+        }
+        let chat = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            chat,
+            vec!["[dev] supply_coffin barrier passed"],
+            "typed barrier request must produce exactly one authoritative chat watermark"
+        );
+
+        run_update(&mut app);
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("second barrier flush should succeed");
+        }
         assert!(
-            app.world()
-                .get::<SupplyCoffinBarrierPending>(player)
-                .is_none(),
-            "barrier flush must acknowledge once and remove the pending marker"
+            helper.collect_received().0.is_empty(),
+            "one barrier request must not produce duplicate acknowledgements"
         );
     }
 
