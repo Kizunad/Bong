@@ -66,6 +66,10 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
+    DISCONNECT_SETTLE_SECONDS,
+    _reconnectable_session,
+)
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
 )
@@ -2675,6 +2679,72 @@ class FrameParseTest(unittest.TestCase):
 
 
 class RunnerLogicTest(unittest.TestCase):
+    def test_craft_reconnect_session_closes_before_settle_window(self):
+        events = []
+
+        class FakeBot:
+            def __enter__(self):
+                events.append("enter")
+                return self
+
+            def __exit__(self, *_exc):
+                events.append("close")
+
+        class FakeEnv:
+            def new_bot(self, tag):
+                events.append(("new_bot", tag))
+                return FakeBot()
+
+        with mock.patch(
+            "bot.scenarios.production_craft_disconnect_resume.time.sleep",
+            side_effect=lambda seconds: events.append(("sleep", seconds)),
+        ):
+            with _reconnectable_session(FakeEnv()):
+                events.append("body")
+
+        self.assertEqual(
+            events,
+            [
+                ("new_bot", "Resume"),
+                "enter",
+                "body",
+                "close",
+                ("sleep", DISCONNECT_SETTLE_SECONDS),
+            ],
+            "同用户名重连前必须先关闭旧连接，再给 server cleanup 留出窗口",
+        )
+
+    def test_craft_reconnect_session_settles_after_body_failure(self):
+        events = []
+
+        class FakeBot:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                events.append("close")
+
+        class FakeEnv:
+            def new_bot(self, tag):
+                self.tag = tag
+                return FakeBot()
+
+        with (
+            mock.patch(
+                "bot.scenarios.production_craft_disconnect_resume.time.sleep",
+                side_effect=lambda seconds: events.append(("sleep", seconds)),
+            ),
+            self.assertRaisesRegex(RuntimeError, "scenario failed"),
+        ):
+            with _reconnectable_session(FakeEnv()):
+                raise RuntimeError("scenario failed")
+
+        self.assertEqual(
+            events,
+            ["close", ("sleep", DISCONNECT_SETTLE_SECONDS)],
+            "场景异常也必须先释放旧连接并完成 cleanup 窗口",
+        )
+
     def test_new_bot_rejects_long_username(self):
         env = ScenarioEnv("127.0.0.1", 1, run_tag="12345678901234")
         with self.assertRaises(ValueError, msg="用户名超 16 字符必须在连接前报错"):
