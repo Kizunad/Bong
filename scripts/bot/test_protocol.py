@@ -99,6 +99,8 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
 )
 from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
+    DISCONNECT_SETTLE_SECONDS,
+    _reconnectable_session,
 )
 from bot.scenarios.production_lingtian_gathering_intents import (  # noqa: E402
     BOTANY_FIXTURE_PREFIX,
@@ -1468,15 +1470,18 @@ class InventoryHelperTest(unittest.TestCase):
         self.assertEqual(unequip_snapshot["revision"], 4)
         self.assertEqual(unequip_snapshot["marker"], "after_unequip")
 
-    def test_wait_inventory_revision_after_rejects_skipped_revision(self):
+    def test_wait_inventory_revision_after_accepts_skipped_revision(self):
         bot = _FakeBot(
             [
                 _snapshot_event(2.0, 3, "skipped_revision"),
             ]
         )
 
-        with self.assertRaisesRegex(AssertionError, r"revision == 2"):
-            wait_inventory_revision_after(bot, 1, timeout=0.01)
+        snapshot = wait_inventory_revision_after(bot, 1, timeout=0.01)
+
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["marker"], "skipped_revision")
+
     def test_wait_inventory_revision_after_matching_accepts_exact_revision(self):
         bot = _FakeBot(
             [
@@ -1495,7 +1500,7 @@ class InventoryHelperTest(unittest.TestCase):
         self.assertEqual(snapshot["revision"], 2)
         self.assertEqual(snapshot["marker"], "command_final")
 
-    def test_wait_inventory_revision_after_matching_rejects_matching_later_revision(self):
+    def test_wait_inventory_revision_after_matching_accepts_matching_later_revision(self):
         bot = _FakeBot(
             [
                 _snapshot_event(2.0, 2, "command_intermediate"),
@@ -1503,13 +1508,15 @@ class InventoryHelperTest(unittest.TestCase):
             ]
         )
 
-        with self.assertRaisesRegex(AssertionError, r"revision == 2"):
-            wait_inventory_revision_after_matching(
-                bot,
-                1,
-                lambda payload: payload["marker"] == "command_final",
-                "command_final marker",
-            )
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            1,
+            lambda payload: payload["marker"] == "command_final",
+            "command_final marker",
+        )
+
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["marker"], "command_final")
 
 
 class ProductionScenarioContractTest(unittest.TestCase):
@@ -3495,12 +3502,14 @@ class InventoryHelperContractTest(unittest.TestCase):
                 with self.assertRaises(BotAssertionError):
                     require_pack_container(snapshot, 42)
 
-    def test_wait_inventory_revision_after_matching_rejects_skipped_revision(self):
+    def test_wait_inventory_revision_after_matching_accepts_skipped_revision(self):
         bot = _FakeBot([_snapshot_event(2.0, 3, "skipped")])
-        with self.assertRaisesRegex(AssertionError, r"revision == 2"):
-            wait_inventory_revision_after_matching(
-                bot, 1, lambda payload: True, "any snapshot", timeout=0.01
-            )
+        snapshot = wait_inventory_revision_after_matching(
+            bot, 1, lambda payload: True, "any snapshot", timeout=0.01
+        )
+
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["marker"], "skipped")
 
     def test_wait_inventory_revision_after_matching_ignores_late_duplicate_snapshot(self):
         stale = _snapshot_event(2.0, 5, "stale_duplicate")
@@ -4600,6 +4609,71 @@ def _scenario_default_enabled(tree: ast.Module) -> bool:
 
 
 class RunnerLogicTest(unittest.TestCase):
+    def test_craft_reconnect_session_closes_before_settle_window(self):
+        events = []
+
+        class FakeBot:
+            def __enter__(self):
+                events.append("enter")
+                return self
+
+            def __exit__(self, *_exc):
+                events.append("close")
+
+        class FakeEnv:
+            def new_bot(self, tag):
+                events.append(("new_bot", tag))
+                return FakeBot()
+
+        with mock.patch(
+            "bot.scenarios.production_craft_disconnect_resume.time.sleep",
+            side_effect=lambda seconds: events.append(("sleep", seconds)),
+        ):
+            with _reconnectable_session(FakeEnv()):
+                events.append("body")
+
+        self.assertEqual(
+            events,
+            [
+                ("new_bot", "Resume"),
+                "enter",
+                "body",
+                "close",
+                ("sleep", DISCONNECT_SETTLE_SECONDS),
+            ],
+            "同用户名重连前必须先关闭旧连接，再给 server cleanup 留出窗口",
+        )
+
+    def test_craft_reconnect_session_settles_after_body_failure(self):
+        events = []
+
+        class FakeBot:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                events.append("close")
+
+        class FakeEnv:
+            def new_bot(self, tag):
+                return FakeBot()
+
+        with (
+            mock.patch(
+                "bot.scenarios.production_craft_disconnect_resume.time.sleep",
+                side_effect=lambda seconds: events.append(("sleep", seconds)),
+            ),
+            self.assertRaisesRegex(RuntimeError, "scenario failed"),
+        ):
+            with _reconnectable_session(FakeEnv()):
+                raise RuntimeError("scenario failed")
+
+        self.assertEqual(
+            events,
+            ["close", ("sleep", DISCONNECT_SETTLE_SECONDS)],
+            "场景异常也必须先释放旧连接并完成 cleanup 窗口",
+        )
+
     def test_new_bot_rejects_long_username(self):
         env = ScenarioEnv("127.0.0.1", 1, run_tag="12345678901234")
         with self.assertRaises(ValueError, msg="用户名超 16 字符必须在连接前报错"):

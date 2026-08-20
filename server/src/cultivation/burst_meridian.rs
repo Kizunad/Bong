@@ -25,7 +25,8 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    qi_release_to_zone, MediumKind, QiAccountId, QiTransfer, QiTransferReason, StyleAttack,
+    proportional_qi_cost, qi_release_to_zone, MediumKind, QiAccountId, QiTransfer,
+    QiTransferReason, StyleAttack,
 };
 use crate::schema::server_data::{BurstMeridianEventV1, ServerDataPayloadV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -42,6 +43,9 @@ pub(crate) const BURST_MERIDIAN_FAMILY_COLOR: &str = "#C58B3F";
 
 pub const BENG_QUAN_SKILL_ID: &str = "burst_meridian.beng_quan";
 pub const BENG_QUAN_EVENT_SKILL: &str = "beng_quan";
+/// 崩拳沿用历史语义：按施法者当前真元的比例消耗，而不是把 catalog 的
+/// `qi_cost` 当作固定点数。catalog 的该字段保留用于客户端展示/兼容快照。
+pub const BENG_QUAN_QI_COST_RATIO: f64 = 0.4;
 pub const BENG_QUAN_OVERLOAD_RATIO: f64 = 1.5;
 pub const BENG_QUAN_INTEGRITY_MULTIPLIER: f64 = 0.7;
 
@@ -253,19 +257,15 @@ pub fn resolve_beng_quan(
         return rejected(CastRejectReason::InvalidTarget);
     };
 
-    let (cost, cast_ticks, cooldown_ticks, reach, required_realm) = {
+    let (cast_ticks, cooldown_ticks, reach, required_realm) = {
         let techniques = world
             .get_resource::<TechniqueRegistry>()
             .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
         let Some(definition) = techniques.get(BENG_QUAN_SKILL_ID) else {
             return rejected(CastRejectReason::InvalidTarget);
         };
-        let Some(cost) = flat_qi_cost(techniques, BENG_QUAN_SKILL_ID) else {
-            return rejected(CastRejectReason::InvalidTarget);
-        };
         let (cast_ticks, cooldown_ticks) = cast_timing(Some(definition), 1, 1);
         (
-            cost,
             cast_ticks,
             cooldown_ticks,
             attack_reach(definition),
@@ -291,8 +291,25 @@ pub fn resolve_beng_quan(
         None => None,
     };
 
+    let Some(qi_current) = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| cultivation.qi_current)
+    else {
+        return rejected(CastRejectReason::RealmTooLow);
+    };
+    // 比例参数属于招式配置，成本公式和输入校验统一由 qi_physics 负责。
+    let cost = match proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO) {
+        Ok(cost) => cost,
+        Err(_) => return rejected(CastRejectReason::QiInsufficient),
+    };
+
     if let Some(reason) = check_realm_gate(world, caster, required_realm) {
         return rejected(reason);
+    }
+    // 旧路径对零/极小真元拒绝施法；通用门对真正的免费技能允许零成本，
+    // 因此这里显式保留崩拳的非零成本门禁后再复用统一校验。
+    if !cost.is_finite() || cost <= QI_EPSILON {
+        return rejected(CastRejectReason::QiInsufficient);
     }
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -1195,12 +1212,9 @@ mod tests {
         )
     }
 
-    fn beng_quan_cost(app: &App) -> f64 {
-        flat_qi_cost(
-            app.world().resource::<TechniqueRegistry>(),
-            BENG_QUAN_SKILL_ID,
-        )
-        .expect("checked-in catalog must define beng_quan qi_cost")
+    fn beng_quan_cost(qi_current: f64) -> f64 {
+        proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO)
+            .expect("beng_quan ratio cost must be valid")
     }
 
     fn assert_no_mutation(app: &App, caster: Entity, qi: f64, integrity: f64) {
@@ -1231,7 +1245,7 @@ mod tests {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
         let reach = beng_quan_reach(&app).max;
-        let cost = beng_quan_cost(&app);
+        let cost = beng_quan_cost(100.0);
         let target = spawn_target(&mut app, DVec3::new(f64::from(reach), 0.0, 0.0));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
@@ -1246,7 +1260,7 @@ mod tests {
         assert!(
             (app.world().get::<Cultivation>(caster).unwrap().qi_current - (100.0 - cost)).abs()
                 <= f64::EPSILON,
-            "beng_quan must deduct the exact registry qi_cost"
+            "beng_quan must deduct 40% of the caster's current qi"
         );
         for id in RIGHT_ARM_MERIDIANS {
             assert_eq!(
@@ -1307,6 +1321,8 @@ mod tests {
             BENG_QUAN_SKILL_ID,
             |definition| {
                 definition.required_realm = "Condense".to_string();
+                // Deliberately diverge the display/catalog value: Beng Quan's
+                // runtime contract remains a percentage of current qi.
                 definition.qi_cost = 7.25;
                 definition.cast_ticks = 3;
                 definition.cooldown_ticks = 17;
@@ -1333,8 +1349,8 @@ mod tests {
         );
         assert_eq!(
             app.world().get::<Cultivation>(caster).unwrap().qi_current,
-            12.75,
-            "beng_quan must deduct the registry's flat qi_cost, not a percentage of current qi"
+            12.0,
+            "beng_quan must keep its current-qi percentage cost even when catalog qi_cost changes"
         );
         assert_eq!(
             app.world().get::<Casting>(caster).unwrap().duration_ticks,
@@ -1348,7 +1364,7 @@ mod tests {
             .next()
             .expect("metadata-backed beng_quan must emit an attack");
         assert_eq!(attack.reach, AttackReach::new(0.75, 0.0));
-        assert_eq!(attack.qi_invest, 10.875);
+        assert_eq!(attack.qi_invest, 12.0);
         let particle = app
             .world()
             .resource::<Events<VfxEventRequest>>()
@@ -1442,6 +1458,22 @@ mod tests {
 
         assert_eq!(result, rejected(CastRejectReason::RealmTooLow));
         assert_no_mutation(&app, caster, 100.0, 1.0);
+    }
+
+    #[test]
+    fn beng_quan_rejects_zero_or_dust_qi_without_mutation() {
+        for qi_current in [0.0, QI_EPSILON / BENG_QUAN_QI_COST_RATIO / 2.0] {
+            let mut app = app();
+            let caster = spawn_caster(&mut app, Realm::Induce, qi_current, DVec3::ZERO);
+            let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+            assert_eq!(
+                resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
+                rejected(CastRejectReason::QiInsufficient),
+                "non-positive effective Beng Quan cost must reject without casting"
+            );
+            assert_no_mutation(&app, caster, qi_current, 1.0);
+        }
     }
 
     #[test]
@@ -1622,8 +1654,8 @@ mod tests {
     #[test]
     fn beng_quan_preserves_float_precision_and_pre_mutation_snapshot() {
         let mut app = app();
-        let cost = beng_quan_cost(&app);
         let caster = spawn_caster(&mut app, Realm::Induce, 99.9, DVec3::ZERO);
+        let cost = beng_quan_cost(99.9);
         app.world_mut()
             .get_mut::<MeridianSystem>(caster)
             .unwrap()
@@ -1637,7 +1669,7 @@ mod tests {
         let qi = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
             (qi - (99.9 - cost)).abs() <= f64::EPSILON,
-            "beng_quan must preserve the exact f32 metadata cost after f64 conversion"
+            "beng_quan must preserve the exact current-qi percentage cost"
         );
         let li = app
             .world()

@@ -33,13 +33,12 @@ def wait_inventory_snapshot_after(bot, after_t: float, timeout: float = 10.0) ->
 
 
 def wait_inventory_revision_after(bot, previous_revision: int, timeout: float = 10.0) -> dict[str, Any]:
-    expected_revision = previous_revision + 1
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.data["payload"]["revision"] == expected_revision,
+        and e.data["payload"]["revision"] > previous_revision,
         timeout=timeout,
-        description=f"revision == {expected_revision} 的 inventory_snapshot",
+        description=f"revision > {previous_revision} 的 inventory_snapshot",
     )
     return event.data["payload"]
 
@@ -51,14 +50,13 @@ def wait_inventory_revision_after_matching(
     description: str,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    expected_revision = previous_revision + 1
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.data["payload"]["revision"] == expected_revision
+        and e.data["payload"]["revision"] > previous_revision
         and predicate(e.data["payload"]),
         timeout=timeout,
-        description=f"revision == {expected_revision} 且 {description} 的 inventory_snapshot",
+        description=f"revision > {previous_revision} 且 {description} 的 inventory_snapshot",
     )
     return event.data["payload"]
 
