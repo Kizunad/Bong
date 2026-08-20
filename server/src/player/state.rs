@@ -4019,9 +4019,8 @@ mod player_state_tests {
             reloaded.craft_session.is_none(),
             "failed checkpoint must not leave an active session beside the old inventory"
         );
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             persistence.db_path(),
-            data_dir.join("deceased"),
             "craft-checkpoint-rollback",
         );
         assert!(
@@ -4070,9 +4069,8 @@ mod player_state_tests {
             std::slice::from_ref(&drop),
         )
         .expect("craft drop should commit with terminal inventory");
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             persistence.db_path(),
-            data_dir.join("deceased"),
             "durable-craft-drop-roundtrip",
         );
         let first_hydrate = crate::persistence::load_durable_dropped_loot(&settings)
@@ -4172,9 +4170,8 @@ mod player_state_tests {
             "failure should retain the injected repair hint, actual={error}"
         );
 
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             persistence.db_path(),
-            data_dir.join("deceased"),
             "pickup-checkpoint-zone-rollback",
         );
         assert_eq!(

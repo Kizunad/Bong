@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
@@ -77,15 +77,15 @@ use slice::{
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
-const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
 /// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池；
 /// v39 新增 `player_lifecycle`（bughunt player-lifecycle-relog-death-consequence-wipe：
 /// 断线重连此前从未持久化 `Lifecycle` 死亡/复活状态机，`fortune_remaining`/
 /// `awaiting_decision`/`state` 全部被 `Lifecycle::default()` 抹回满状态新角色）；
 /// v40 持久化 R5 真元事务固定 overflow 池；v41 持久化坍缩渊 drain 固定池；
-/// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放。
-const CURRENT_USER_VERSION: i32 = 42;
+/// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放；
+/// v43 移除已退役亡者公开站点的 `deceased_snapshots.public_path` 投影字段。
+const CURRENT_USER_VERSION: i32 = 43;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -132,7 +132,6 @@ const STARTUP_BACKUP_KEEP_COUNT: usize = 7;
 #[derive(Debug, Clone)]
 pub struct PersistenceSettings {
     db_path: PathBuf,
-    deceased_public_dir: PathBuf,
     server_run_id: String,
 }
 
@@ -382,31 +381,21 @@ impl Default for PersistenceSettings {
     fn default() -> Self {
         Self {
             db_path: PathBuf::from(DEFAULT_DATABASE_PATH),
-            deceased_public_dir: PathBuf::from(DEFAULT_DECEASED_PUBLIC_DIR),
             server_run_id: Uuid::now_v7().to_string(),
         }
     }
 }
 
 impl PersistenceSettings {
-    pub fn with_paths(
-        db_path: impl Into<PathBuf>,
-        deceased_public_dir: impl Into<PathBuf>,
-        server_run_id: impl Into<String>,
-    ) -> Self {
+    pub fn with_db_path(db_path: impl Into<PathBuf>, server_run_id: impl Into<String>) -> Self {
         Self {
             db_path: db_path.into(),
-            deceased_public_dir: deceased_public_dir.into(),
             server_run_id: server_run_id.into(),
         }
     }
 
     pub fn db_path(&self) -> &Path {
         self.db_path.as_path()
-    }
-
-    pub fn deceased_public_dir(&self) -> &Path {
-        self.deceased_public_dir.as_path()
     }
 
     pub fn server_run_id(&self) -> &str {
@@ -420,15 +409,6 @@ pub struct LifespanEventRecord {
     pub kind: String,
     pub delta_years: i64,
     pub source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DeceasedIndexEntry {
-    pub char_id: String,
-    pub died_at_tick: u64,
-    pub path: String,
-    #[serde(default = "default_termination_category")]
-    pub termination_category: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -481,34 +461,6 @@ struct DeathInsightEventPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LifeEventPayload {
     biography_entry: BiographyEntry,
-}
-
-#[derive(Debug)]
-struct StagedDeceasedExport {
-    snapshot_path: PathBuf,
-    index_path: PathBuf,
-    previous_snapshot: Option<Vec<u8>>,
-    previous_index: Option<Vec<u8>>,
-    relative_snapshot_path: String,
-    _guard: MutexGuard<'static, ()>,
-}
-
-impl StagedDeceasedExport {
-    fn relative_snapshot_path(&self) -> &str {
-        self.relative_snapshot_path.as_str()
-    }
-
-    fn rollback(&self) -> io::Result<()> {
-        let snapshot_result = rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
-        let index_result = rollback_file(&self.index_path, self.previous_index.as_deref());
-        match (snapshot_result, index_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-            (Err(snapshot_error), Err(index_error)) => Err(io::Error::other(format!(
-                "deceased export rollback failed for snapshot and index: {snapshot_error}; {index_error}"
-            ))),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2327,7 +2279,6 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             CREATE TABLE IF NOT EXISTS deceased_snapshots (
                 char_id TEXT PRIMARY KEY,
                 snapshot_json TEXT NOT NULL,
-                public_path TEXT,
                 died_at_tick INTEGER NOT NULL CHECK (died_at_tick >= 0),
                 schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
                 last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
@@ -3546,6 +3497,29 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 43 {
+        let transaction = connection.transaction()?;
+        assert_dormant_terminal_commits_schema_ready(&transaction)?;
+        if table_exists(&transaction, "deceased_snapshots")? {
+            let columns = table_columns(&transaction, "deceased_snapshots")?;
+            if columns.iter().any(|column| column == "public_path") {
+                transaction
+                    .execute_batch("ALTER TABLE deceased_snapshots DROP COLUMN public_path;")?;
+            }
+            assert_deceased_snapshots_schema_ready(&transaction)?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 43;")?;
+        transaction.commit()?;
+    }
+
+    let deceased_schema_transaction = connection.transaction()?;
+    if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
+        assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
+    }
+    deceased_schema_transaction.commit()?;
+
     let terminal_schema_transaction = connection.transaction()?;
     assert_dormant_terminal_commits_schema_ready(&terminal_schema_transaction)?;
     terminal_schema_transaction.commit()?;
@@ -3661,6 +3635,14 @@ fn table_columns(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn table_exists(transaction: &rusqlite::Transaction<'_>, table: &str) -> rusqlite::Result<bool> {
+    transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        params![table],
+        |row| row.get(0),
+    )
 }
 
 fn assert_spirit_treasure_schema_ready(
@@ -3848,6 +3830,37 @@ fn assert_dormant_terminal_commits_schema_ready(
             io::Error::other(format!(
                 "v42 migration completed but dormant_terminal_commits primary key mismatch: expected char_id got {primary_key:?}"
             )),
+        )));
+    }
+    Ok(())
+}
+
+fn assert_deceased_snapshots_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "deceased_snapshots")?;
+    let required = [
+        "char_id",
+        "snapshot_json",
+        "died_at_tick",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|candidate| candidate == *column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v43 migration completed but deceased_snapshots column {missing} missing"
+            )),
+        )));
+    }
+    if columns.iter().any(|column| column == "public_path") {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(
+                "v43 migration completed but retired deceased_snapshots.public_path remains",
+            ),
         )));
     }
     Ok(())
@@ -5745,76 +5758,46 @@ fn persist_termination_transition_inner(
     };
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let staged_export = if should_export_public_snapshot(life_record.character_id.as_str()) {
-        Some(stage_public_deceased_export(
-            settings,
-            life_record.character_id.as_str(),
-            snapshot_json.as_str(),
-            died_at_tick,
-            termination_category.as_str(),
-        )?)
-    } else {
-        None
-    };
 
-    let persisted = (|| -> io::Result<()> {
-        let mut connection = open_persistence_connection(settings)?;
-        let transaction = connection.transaction().map_err(io::Error::other)?;
-        upsert_life_record(&transaction, life_record, wall_clock)?;
-        append_life_event(
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    upsert_life_record(&transaction, life_record, wall_clock)?;
+    append_life_event(
+        &transaction,
+        life_record.character_id.as_str(),
+        entry,
+        wall_clock,
+    )?;
+    if let Some(death_registry_cause) = death_registry_cause {
+        upsert_death_registry(
             &transaction,
             life_record.character_id.as_str(),
-            entry,
+            lifecycle,
+            death_registry_cause,
             wall_clock,
         )?;
-        if let Some(death_registry_cause) = death_registry_cause {
-            upsert_death_registry(
-                &transaction,
-                life_record.character_id.as_str(),
-                lifecycle,
-                death_registry_cause,
-                wall_clock,
-            )?;
-        }
-        if let Some(lifespan_event) = lifespan_event {
-            append_lifespan_event(
-                &transaction,
-                life_record.character_id.as_str(),
-                lifespan_event,
-                wall_clock,
-            )?;
-        }
-        if let Some((zones, qi_ledger)) = qi_snapshot {
-            persist_zone_runtime_records(&transaction, zones, wall_clock)?;
-            upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
-        }
-        upsert_deceased_snapshot(
-            &transaction,
-            life_record.character_id.as_str(),
-            snapshot_json.as_str(),
-            staged_export
-                .as_ref()
-                .map(|export| export.relative_snapshot_path().to_string()),
-            died_at_tick,
-            wall_clock,
-        )?;
-
-        transaction.commit().map_err(io::Error::other)
-    })();
-
-    match persisted {
-        Err(error) => {
-            if let Some(export) = staged_export.as_ref() {
-                if let Err(rollback_error) = export.rollback() {
-                    return Err(io::Error::other(format!(
-                        "deceased persistence failed: {error}; rollback failed: {rollback_error}"
-                    )));
-                }
-            }
-            Err(error)
-        }
-        Ok(()) => Ok(()),
     }
+    if let Some(lifespan_event) = lifespan_event {
+        append_lifespan_event(
+            &transaction,
+            life_record.character_id.as_str(),
+            lifespan_event,
+            wall_clock,
+        )?;
+    }
+    if let Some((zones, qi_ledger)) = qi_snapshot {
+        persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+        upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+    }
+    upsert_deceased_snapshot(
+        &transaction,
+        life_record.character_id.as_str(),
+        snapshot_json.as_str(),
+        died_at_tick,
+        wall_clock,
+    )?;
+
+    transaction.commit().map_err(io::Error::other)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9033,7 +9016,6 @@ fn upsert_deceased_snapshot(
     transaction: &rusqlite::Transaction<'_>,
     char_id: &str,
     snapshot_json: &str,
-    public_path: Option<String>,
     died_at_tick: u64,
     wall_clock: i64,
 ) -> io::Result<()> {
@@ -9043,14 +9025,12 @@ fn upsert_deceased_snapshot(
             INSERT INTO deceased_snapshots (
                 char_id,
                 snapshot_json,
-                public_path,
                 died_at_tick,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(char_id) DO UPDATE SET
                 snapshot_json = excluded.snapshot_json,
-                public_path = excluded.public_path,
                 died_at_tick = excluded.died_at_tick,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -9058,7 +9038,6 @@ fn upsert_deceased_snapshot(
             params![
                 char_id,
                 snapshot_json,
-                public_path,
                 tick_to_sql(died_at_tick)?,
                 EVENT_SCHEMA_VERSION,
                 wall_clock
@@ -9319,18 +9298,23 @@ fn tick_to_sql(tick: u64) -> io::Result<i64> {
     i64::try_from(tick).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn should_export_public_snapshot(char_id: &str) -> bool {
-    char_id.starts_with("offline:")
+fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
-fn sanitize_deceased_snapshot_stem(char_id: &str) -> String {
-    char_id
-        .chars()
-        .map(|character| match character {
-            ':' | '/' | '\\' => '_',
-            _ => character,
-        })
-        .collect()
+fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
+    match previous {
+        Some(contents) => fs::write(path, contents),
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+    }
 }
 
 fn default_termination_category() -> String {
@@ -9356,99 +9340,6 @@ fn termination_category_from_entry(entry: &BiographyEntry) -> String {
         _ => "横死",
     }
     .to_string()
-}
-
-fn deceased_export_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn stage_public_deceased_export(
-    settings: &PersistenceSettings,
-    char_id: &str,
-    snapshot_json: &str,
-    died_at_tick: u64,
-    termination_category: &str,
-) -> io::Result<StagedDeceasedExport> {
-    let guard = deceased_export_lock()
-        .lock()
-        .map_err(|_| io::Error::other("deceased public export lock poisoned"))?;
-    fs::create_dir_all(settings.deceased_public_dir())?;
-
-    let snapshot_stem = sanitize_deceased_snapshot_stem(char_id);
-    let snapshot_path = settings
-        .deceased_public_dir()
-        .join(format!("{snapshot_stem}.json"));
-    let index_path = settings.deceased_public_dir().join("_index.json");
-    let previous_snapshot = read_optional_file(&snapshot_path)?;
-    let previous_index = read_optional_file(&index_path)?;
-    let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
-    let staged = StagedDeceasedExport {
-        snapshot_path,
-        index_path,
-        previous_snapshot,
-        previous_index,
-        relative_snapshot_path,
-        _guard: guard,
-    };
-
-    let write_result = (|| -> io::Result<()> {
-        fs::write(&staged.snapshot_path, snapshot_json.as_bytes())?;
-        let mut entries = read_deceased_index(&staged.index_path)?;
-        entries.retain(|entry| entry.char_id != char_id);
-        entries.push(DeceasedIndexEntry {
-            char_id: char_id.to_string(),
-            died_at_tick,
-            path: staged.relative_snapshot_path.clone(),
-            termination_category: termination_category.to_string(),
-        });
-        entries.sort_by(|left, right| {
-            left.died_at_tick
-                .cmp(&right.died_at_tick)
-                .then_with(|| left.char_id.cmp(&right.char_id))
-        });
-        let index_json = serde_json::to_string_pretty(&entries)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        fs::write(&staged.index_path, index_json.as_bytes())
-    })();
-    if let Err(error) = write_result {
-        if let Err(rollback_error) = staged.rollback() {
-            return Err(io::Error::other(format!(
-                "deceased export write failed: {error}; rollback failed: {rollback_error}"
-            )));
-        }
-        return Err(error);
-    }
-
-    Ok(staged)
-}
-
-fn read_deceased_index(index_path: &Path) -> io::Result<Vec<DeceasedIndexEntry>> {
-    match fs::read_to_string(index_path) {
-        Ok(contents) => serde_json::from_str(&contents)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error),
-    }
-}
-
-fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(contents) => Ok(Some(contents)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
-    match previous {
-        Some(contents) => fs::write(path, contents),
-        None => match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        },
-    }
 }
 
 fn build_npc_blackboard_snapshot(
@@ -9718,7 +9609,6 @@ fn read_zstd_bundle(reference: &Path, relative_path: &str) -> io::Result<Vec<u8>
     } else {
         let settings = PersistenceSettings {
             db_path: reference.to_path_buf(),
-            deceased_public_dir: PathBuf::new(),
             server_run_id: String::new(),
         };
         resolve_persistence_relative_path(&settings, relative_path)
@@ -10882,14 +10772,6 @@ mod persistence_tests {
     }
 
     #[test]
-    fn sanitize_deceased_snapshot_stem_replaces_windows_invalid_separators() {
-        assert_eq!(
-            sanitize_deceased_snapshot_stem("offline:Ancestor/Shard\\Echo"),
-            "offline_Ancestor_Shard_Echo"
-        );
-    }
-
-    #[test]
     fn pvp_biography_variants_pin_event_type_tick_and_payload_tag() {
         let encounter = BiographyEntry::PvpEncounter {
             counterparty_id: "char:bob".to_string(),
@@ -11049,9 +10931,8 @@ mod persistence_tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         (
-            PersistenceSettings::with_paths(&db_path, &deceased_dir, format!("task3-{test_name}")),
+            PersistenceSettings::with_db_path(&db_path, format!("task3-{test_name}")),
             root,
         )
     }
@@ -14897,115 +14778,36 @@ mod persistence_tests {
     }
 
     #[test]
-    fn persistence_can_write_deceased_snapshot_and_public_index() {
-        let (settings, root) = persistence_settings("deceased-export");
+    fn persist_termination_transition_stores_complete_deceased_snapshot_in_sqlite() {
+        let (settings, root) = persistence_settings("deceased-snapshot-sqlite");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
-
-        let life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
-                tick: 77,
-            }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
-            ..LifeRecord::default()
-        };
-        let lifecycle = Lifecycle {
-            character_id: life_record.character_id.clone(),
-            death_count: 3,
-            fortune_remaining: 0,
-            last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
-        };
-
-        persist_termination_transition(&settings, &lifecycle, &life_record)
-            .expect("terminated snapshot should persist");
-
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
-        )
-        .expect("snapshot json should deserialize");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        let public_path: String = connection
-            .query_row(
-                "SELECT public_path FROM deceased_snapshots WHERE char_id = ?1",
-                params!["offline:Ancestor"],
-                |row| row.get(0),
+        let tags_json = serde_json::to_string(&vec![RenownTagV1 {
+            tag: "三叛之人".to_string(),
+            weight: 20.0,
+            last_seen_tick: 70,
+            permanent: true,
+        }])
+        .expect("renown tags should serialize");
+        Connection::open(settings.db_path())
+            .expect("db should open")
+            .execute(
+                "
+                INSERT INTO social_renown (
+                    char_id, fame, notoriety, tags_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, 1, 1)
+                ",
+                params!["offline:Ancestor", 12, 80, tags_json],
             )
-            .expect("deceased snapshot row should exist");
-
-        assert_eq!(snapshot.char_id, "offline:Ancestor");
-        assert_eq!(snapshot.died_at_tick, 77);
-        assert_eq!(snapshot.termination_category, "横死");
-        assert_eq!(snapshot.lifecycle.character_id, lifecycle.character_id);
-        assert_eq!(snapshot.lifecycle.death_count, lifecycle.death_count);
-        assert_eq!(
-            snapshot.lifecycle.fortune_remaining,
-            lifecycle.fortune_remaining
-        );
-        assert_eq!(
-            snapshot.lifecycle.last_death_tick,
-            lifecycle.last_death_tick
-        );
-        assert_eq!(
-            snapshot.lifecycle.last_revive_tick,
-            lifecycle.last_revive_tick
-        );
-        assert_eq!(snapshot.lifecycle.state, lifecycle.state);
-        assert_eq!(snapshot.life_record.character_id, life_record.character_id);
-        assert_eq!(snapshot.life_record.created_at, life_record.created_at);
-        assert_eq!(
-            snapshot.life_record.biography.len(),
-            life_record.biography.len()
-        );
-        assert!(matches!(
-            snapshot.life_record.biography.last(),
-            Some(BiographyEntry::Terminated { tick: 77, .. })
-        ));
-        assert_eq!(index.len(), 1);
-        assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].died_at_tick, 77);
-        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
-        assert_eq!(index[0].termination_category, "横死");
-        assert_eq!(public_path, "deceased/offline_Ancestor.json");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_preserves_skill_milestones_and_narration_in_deceased_exports()
-    {
-        let (settings, root) = persistence_settings("deceased-export-skill-milestones");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
+            .expect("renown row should insert");
 
         let life_record = LifeRecord {
             character_id: "offline:Ancestor".to_string(),
             created_at: 11,
             biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
+                cause: "natural_end".to_string(),
                 tick: 77,
             }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
             skill_milestones: vec![crate::cultivation::life_record::SkillMilestone {
                 skill: crate::skill::components::SkillId::Alchemy,
                 new_lv: 4,
@@ -15013,7 +14815,6 @@ mod persistence_tests {
                 narration: "丹火三转，炉意已成。".to_string(),
                 total_xp_at: 1_280,
             }],
-            spirit_root_first: None,
             ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
@@ -15021,56 +14822,61 @@ mod persistence_tests {
             death_count: 3,
             fortune_remaining: 0,
             last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
         };
 
         persist_termination_transition(&settings, &lifecycle, &life_record)
             .expect("terminated snapshot should persist");
 
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let public_snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
-        )
-        .expect("public snapshot json should deserialize");
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        let sqlite_snapshot_json: String = connection
+        let (snapshot_json, died_at_tick): (String, i64) = Connection::open(settings.db_path())
+            .expect("db should reopen")
             .query_row(
-                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                "SELECT snapshot_json, died_at_tick FROM deceased_snapshots WHERE char_id = ?1",
                 params!["offline:Ancestor"],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("deceased snapshot row should exist");
-        let sqlite_snapshot: DeceasedSnapshot = serde_json::from_str(&sqlite_snapshot_json)
-            .expect("sqlite snapshot json should deserialize");
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("snapshot should decode");
 
-        for snapshot in [&public_snapshot, &sqlite_snapshot] {
-            assert_eq!(snapshot.life_record.skill_milestones.len(), 1);
-            assert_eq!(
-                snapshot.life_record.skill_milestones[0].skill,
-                crate::skill::components::SkillId::Alchemy
-            );
-            assert_eq!(snapshot.life_record.skill_milestones[0].new_lv, 4);
-            assert_eq!(snapshot.life_record.skill_milestones[0].achieved_at, 75);
-            assert_eq!(snapshot.life_record.skill_milestones[0].total_xp_at, 1_280);
-            assert_eq!(
-                snapshot.life_record.skill_milestones[0].narration,
-                "丹火三转，炉意已成。"
-            );
-        }
+        assert_eq!(died_at_tick, 77);
+        assert_eq!(snapshot.char_id, "offline:Ancestor");
+        assert_eq!(snapshot.termination_category, "善终");
+        assert_eq!(snapshot.lifecycle.character_id, lifecycle.character_id);
+        assert_eq!(snapshot.lifecycle.death_count, 3);
+        assert_eq!(snapshot.lifecycle.fortune_remaining, 0);
+        assert_eq!(snapshot.lifecycle.last_death_tick, Some(77));
+        assert_eq!(snapshot.lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(snapshot.life_record.character_id, life_record.character_id);
+        assert_eq!(snapshot.life_record.created_at, life_record.created_at);
+        assert!(matches!(
+            snapshot.life_record.biography.last(),
+            Some(BiographyEntry::Terminated { tick: 77, .. })
+        ));
+        assert_eq!(snapshot.life_record.skill_milestones.len(), 1);
+        assert_eq!(
+            snapshot.life_record.skill_milestones[0].skill,
+            crate::skill::components::SkillId::Alchemy
+        );
+        assert_eq!(snapshot.life_record.skill_milestones[0].new_lv, 4);
+        assert_eq!(snapshot.life_record.skill_milestones[0].achieved_at, 75);
+        assert_eq!(
+            snapshot.life_record.skill_milestones[0].narration,
+            "丹火三转，炉意已成。"
+        );
+        assert_eq!(snapshot.life_record.skill_milestones[0].total_xp_at, 1_280);
+        let social = snapshot.social.expect("social snapshot should persist");
+        assert_eq!(social.renown.fame, 12);
+        assert_eq!(social.renown.notoriety, 80);
+        assert_eq!(social.renown.tags[0].tag, "三叛之人");
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn persist_termination_transition_exports_public_social_snapshot() {
-        let (settings, root) = persistence_settings("deceased-export-social");
+    fn persist_termination_transition_persists_complete_social_snapshot_in_sqlite() {
+        let (settings, root) = persistence_settings("deceased-snapshot-social-sqlite");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
 
@@ -15089,7 +14895,7 @@ mod persistence_tests {
                     char_id, fame, notoriety, tags_json, schema_version, last_updated_wall
                 ) VALUES (?1, ?2, ?3, ?4, 1, 1)
                 ",
-                params!["offline:Ancestor", 12, 80, tags_json],
+                params!["offline:Social", 12, 80, tags_json],
             )
             .expect("renown row should insert");
         connection
@@ -15101,7 +14907,7 @@ mod persistence_tests {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)
                 ",
                 params![
-                    "offline:Ancestor",
+                    "offline:Social",
                     "char:rival",
                     "feud",
                     33,
@@ -15119,8 +14925,8 @@ mod persistence_tests {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)
                 ",
                 params![
-                    "exposure-death-1",
-                    "offline:Ancestor",
+                    "exposure-death-social",
+                    "offline:Social",
                     "death",
                     witnesses_json,
                     77
@@ -15135,22 +14941,18 @@ mod persistence_tests {
                     permanently_refused, schema_version, last_updated_wall
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1)
                 ",
-                params!["offline:Ancestor", "attack", 2, -10, 3, 88, 1],
+                params!["offline:Social", "attack", 2, -10, 3, 88, 1],
             )
             .expect("faction membership row should insert");
         drop(connection);
 
         let life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
+            character_id: "offline:Social".to_string(),
             created_at: 11,
             biography: vec![BiographyEntry::Terminated {
                 cause: "fortune_exhausted".to_string(),
                 tick: 77,
             }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
             ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
@@ -15158,290 +14960,52 @@ mod persistence_tests {
             death_count: 3,
             fortune_remaining: 0,
             last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
         };
 
         persist_termination_transition(&settings, &lifecycle, &life_record)
             .expect("terminated snapshot should persist");
 
-        let public_snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(settings.deceased_public_dir().join("offline_Ancestor.json"))
-                .expect("snapshot json should exist"),
-        )
-        .expect("public snapshot json should deserialize");
-        let sqlite_snapshot_json: String = Connection::open(settings.db_path())
+        let snapshot_json: String = Connection::open(settings.db_path())
             .expect("db should reopen")
             .query_row(
                 "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
-                params!["offline:Ancestor"],
+                params!["offline:Social"],
                 |row| row.get(0),
             )
             .expect("deceased snapshot row should exist");
-        let sqlite_snapshot: DeceasedSnapshot = serde_json::from_str(&sqlite_snapshot_json)
-            .expect("sqlite snapshot json should deserialize");
-
-        for snapshot in [&public_snapshot, &sqlite_snapshot] {
-            let social = snapshot.social.as_ref().expect("social should be public");
-            assert_eq!(social.renown.fame, 12);
-            assert_eq!(social.renown.notoriety, 80);
-            assert_eq!(social.renown.tags[0].tag, "三叛之人");
-            assert_eq!(social.relationships.len(), 1);
-            assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
-            assert_eq!(social.relationships[0].peer, "char:rival");
-            assert_eq!(social.relationships[0].since_tick, 33);
-            assert_eq!(social.relationships[0].metadata["cause"], "ambush");
-            assert_eq!(social.exposure_log.len(), 1);
-            assert_eq!(social.exposure_log[0].kind, ExposureKindV1::Death);
-            assert_eq!(social.exposure_log[0].tick, 77);
-            assert_eq!(social.exposure_log[0].witnesses.len(), 2);
-            let membership = social
-                .faction_membership
-                .as_ref()
-                .expect("faction membership should be public");
-            assert_eq!(membership.faction, "attack");
-            assert_eq!(membership.rank, 2);
-            assert_eq!(membership.loyalty, -10);
-            assert_eq!(membership.betrayal_count, 3);
-            assert_eq!(membership.invite_block_until_tick, Some(88));
-            assert!(membership.permanently_refused);
-        }
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("snapshot should decode");
+        let social = snapshot.social.expect("social snapshot should persist");
+        assert_eq!(social.renown.fame, 12);
+        assert_eq!(social.renown.notoriety, 80);
+        assert_eq!(social.renown.tags[0].tag, "三叛之人");
+        assert_eq!(social.relationships.len(), 1);
+        assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
+        assert_eq!(social.relationships[0].peer, "char:rival");
+        assert_eq!(social.relationships[0].since_tick, 33);
+        assert_eq!(social.relationships[0].metadata["cause"], "ambush");
+        assert_eq!(social.exposure_log.len(), 1);
+        assert_eq!(social.exposure_log[0].kind, ExposureKindV1::Death);
+        assert_eq!(social.exposure_log[0].tick, 77);
+        assert_eq!(social.exposure_log[0].witnesses.len(), 2);
+        let membership = social
+            .faction_membership
+            .expect("faction membership should persist");
+        assert_eq!(membership.faction, "attack");
+        assert_eq!(membership.rank, 2);
+        assert_eq!(membership.loyalty, -10);
+        assert_eq!(membership.betrayal_count, 3);
+        assert_eq!(membership.invite_block_until_tick, Some(88));
+        assert!(membership.permanently_refused);
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn public_deceased_staging_failure_restores_existing_files_and_skips_sqlite() {
-        let (settings, root) = persistence_settings("deceased-export-stage-rollback");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-        fs::create_dir_all(settings.deceased_public_dir())
-            .expect("deceased directory should exist");
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let previous_snapshot = b"previous snapshot";
-        let corrupt_index = b"{not-json";
-        fs::write(&snapshot_path, previous_snapshot).expect("snapshot fixture should write");
-        fs::write(&index_path, corrupt_index).expect("index fixture should write");
-
-        let life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
-                tick: 77,
-            }],
-            ..LifeRecord::default()
-        };
-        let lifecycle = Lifecycle {
-            character_id: life_record.character_id.clone(),
-            state: crate::combat::components::LifecycleState::Terminated,
-            ..Lifecycle::default()
-        };
-
-        persist_termination_transition(&settings, &lifecycle, &life_record)
-            .expect_err("corrupt public index must fail before SQLite commit");
-
-        assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
-        assert_eq!(fs::read(&index_path).unwrap(), corrupt_index);
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT COUNT(*) FROM deceased_snapshots WHERE char_id = ?1",
-                    params!["offline:Ancestor"],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            0,
-            "failed public staging must not authorize the SQLite terminal snapshot"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_rewrites_existing_public_index_entry_for_same_char() {
-        let (settings, root) = persistence_settings("deceased-export-rewrite");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-
-        let first_life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
-                tick: 77,
-            }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
-            ..LifeRecord::default()
-        };
-        let first_lifecycle = Lifecycle {
-            character_id: first_life_record.character_id.clone(),
-            death_count: 3,
-            fortune_remaining: 0,
-            last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
-        };
-        persist_termination_transition(&settings, &first_lifecycle, &first_life_record)
-            .expect("first terminated snapshot should persist");
-
-        let second_life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "tribulation_aftershock".to_string(),
-                tick: 99,
-            }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
-            ..LifeRecord::default()
-        };
-        let second_lifecycle = Lifecycle {
-            character_id: second_life_record.character_id.clone(),
-            death_count: 4,
-            fortune_remaining: 0,
-            last_death_tick: Some(99),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
-        };
-        persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
-            .expect("second terminated snapshot should overwrite export");
-
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
-        )
-        .expect("snapshot json should deserialize");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        let (died_at_tick, public_path): (i64, String) = connection
-            .query_row(
-                "SELECT died_at_tick, public_path FROM deceased_snapshots WHERE char_id = ?1",
-                params!["offline:Ancestor"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("deceased snapshot row should exist");
-
-        assert_eq!(snapshot.char_id, "offline:Ancestor");
-        assert_eq!(snapshot.died_at_tick, 99);
-        assert_eq!(snapshot.termination_category, "横死");
-        assert!(matches!(
-            snapshot.life_record.biography.last(),
-            Some(BiographyEntry::Terminated { tick: 99, .. })
-        ));
-        assert_eq!(index.len(), 1);
-        assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].died_at_tick, 99);
-        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
-        assert_eq!(index[0].termination_category, "横死");
-        assert_eq!(died_at_tick, 99);
-        assert_eq!(public_path, "deceased/offline_Ancestor.json");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_sorts_public_index_by_died_at_tick_then_char_id() {
-        let (settings, root) = persistence_settings("deceased-export-index-ordering");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-
-        let exports = [
-            ("offline:Crimson", 90_i64),
-            ("offline:Azure", 90_i64),
-            ("offline:Bronze", 77_i64),
-        ];
-
-        for (char_id, died_at_tick) in exports {
-            let life_record = LifeRecord {
-                character_id: char_id.to_string(),
-                created_at: 11,
-                biography: vec![BiographyEntry::Terminated {
-                    cause: "fortune_exhausted".to_string(),
-                    tick: died_at_tick as u64,
-                }],
-                insights_taken: Vec::new(),
-                death_insights: Vec::new(),
-                skill_milestones: Vec::new(),
-                spirit_root_first: None,
-                ..LifeRecord::default()
-            };
-            let lifecycle = Lifecycle {
-                character_id: life_record.character_id.clone(),
-                death_count: 1,
-                fortune_remaining: 0,
-                last_death_tick: Some(died_at_tick as u64),
-                last_revive_tick: None,
-                spawn_anchor: None,
-                spawn_anchor_damaged: false,
-                near_death_deadline_tick: None,
-                awaiting_decision: None,
-                revival_decision_deadline_tick: None,
-                weakened_until_tick: None,
-                state: crate::combat::components::LifecycleState::Terminated,
-            };
-
-            persist_termination_transition(&settings, &lifecycle, &life_record)
-                .expect("terminated snapshot should persist");
-        }
-
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
-
-        assert_eq!(index.len(), 3);
-        assert_eq!(index[0].char_id, "offline:Bronze");
-        assert_eq!(index[0].died_at_tick, 77);
-        assert_eq!(index[0].path, "deceased/offline_Bronze.json");
-        assert_eq!(index[0].termination_category, "横死");
-
-        assert_eq!(index[1].char_id, "offline:Azure");
-        assert_eq!(index[1].died_at_tick, 90);
-        assert_eq!(index[1].path, "deceased/offline_Azure.json");
-        assert_eq!(index[1].termination_category, "横死");
-
-        assert_eq!(index[2].char_id, "offline:Crimson");
-        assert_eq!(index[2].died_at_tick, 90);
-        assert_eq!(index[2].path, "deceased/offline_Crimson.json");
-        assert_eq!(index[2].termination_category, "横死");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_classifies_good_end_and_voluntary_retire() {
-        let (settings, root) = persistence_settings("deceased-export-category");
+    fn persist_termination_transition_updates_sqlite_snapshot_and_categories() {
+        let (settings, root) = persistence_settings("deceased-snapshot-categories");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
 
@@ -15456,57 +15020,141 @@ mod persistence_tests {
                     cause: cause.to_string(),
                     tick,
                 }],
-                insights_taken: Vec::new(),
-                death_insights: Vec::new(),
-                skill_milestones: Vec::new(),
-                spirit_root_first: None,
                 ..LifeRecord::default()
             };
             let lifecycle = Lifecycle {
-                character_id: life_record.character_id.clone(),
+                character_id: char_id.to_string(),
                 death_count: 1,
                 fortune_remaining: 0,
                 last_death_tick: Some(tick),
-                last_revive_tick: None,
-                spawn_anchor: None,
-                spawn_anchor_damaged: false,
-                near_death_deadline_tick: None,
-                awaiting_decision: None,
-                revival_decision_deadline_tick: None,
-                weakened_until_tick: None,
-                state: crate::combat::components::LifecycleState::Terminated,
+                state: LifecycleState::Terminated,
+                ..Lifecycle::default()
             };
 
             persist_termination_transition(&settings, &lifecycle, &life_record)
                 .expect("terminated snapshot should persist");
-
-            let snapshot: DeceasedSnapshot = serde_json::from_str(
-                &fs::read_to_string(
-                    settings
-                        .deceased_public_dir()
-                        .join(format!("{}.json", sanitize_deceased_snapshot_stem(char_id))),
+            let snapshot_json: String = Connection::open(settings.db_path())
+                .expect("db should reopen")
+                .query_row(
+                    "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                    params![char_id],
+                    |row| row.get(0),
                 )
-                .expect("snapshot json should exist"),
-            )
-            .expect("snapshot json should deserialize");
+                .expect("deceased snapshot row should exist");
+            let snapshot: DeceasedSnapshot =
+                serde_json::from_str(&snapshot_json).expect("snapshot should decode");
             assert_eq!(snapshot.termination_category, expected_category);
+            assert_eq!(snapshot.died_at_tick, tick);
         }
 
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
+        let (died_at_tick, snapshot_json): (i64, String) = Connection::open(settings.db_path())
+            .expect("db should reopen for overwrite")
+            .query_row(
+                "SELECT died_at_tick, snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Hermit"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("hermit snapshot row should exist");
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("overwritten snapshot should decode");
+        assert_eq!(died_at_tick, 89);
+        assert_eq!(snapshot.char_id, "offline:Hermit");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_death_peak_keeps_sqlite_life_registry_and_snapshots_consistent() {
+        let (settings, root) = persistence_settings("semantic-death-peak-sqlite");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let writer_count = 10usize;
+        let settings = Arc::new(settings);
+        let barrier = Arc::new(Barrier::new(writer_count + 1));
+        let handles = (0..writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:PeakDeath{index}");
+                    let tick = 2_000 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(100),
+                        biography: vec![BiographyEntry::Terminated {
+                            cause: "peak_death".to_string(),
+                            tick,
+                        }],
+                        ..LifeRecord::default()
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id,
+                        death_count: 1,
+                        fortune_remaining: 0,
+                        last_death_tick: Some(tick),
+                        state: LifecycleState::Terminated,
+                        ..Lifecycle::default()
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "termination".to_string(),
+                        delta_years: -999,
+                        source: "peak_death".to_string(),
+                    };
+
+                    barrier.wait();
+                    persist_termination_transition_with_death_context(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        Some("peak_death"),
+                        Some(&lifespan_event),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let errors = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("death writer should not panic"))
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
         assert!(
-            index
-                .iter()
-                .any(|entry| entry.char_id == "offline:OldOne"
-                    && entry.termination_category == "善终")
+            errors.is_empty(),
+            "concurrent termination events should persist atomically: {errors:?}"
         );
-        assert!(index
-            .iter()
-            .any(|entry| entry.char_id == "offline:Hermit"
-                && entry.termination_category == "自主归隐"));
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        for (table, expected) in [
+            ("life_records", writer_count as i64),
+            ("life_events", writer_count as i64),
+            ("death_registry", writer_count as i64),
+            ("lifespan_events", writer_count as i64),
+            ("deceased_snapshots", writer_count as i64),
+        ] {
+            let sql = format!("SELECT COUNT(*) FROM {table}");
+            let count: i64 = connection
+                .query_row(sql.as_str(), [], |row| row.get(0))
+                .expect("table count should be readable");
+            assert_eq!(count, expected, "{table} should contain all peak rows");
+        }
+        for index in 0..writer_count {
+            let char_id = format!("offline:PeakDeath{index}");
+            let snapshot_json: String = connection
+                .query_row(
+                    "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                    params![char_id],
+                    |row| row.get(0),
+                )
+                .expect("peak snapshot should exist");
+            let snapshot: DeceasedSnapshot =
+                serde_json::from_str(&snapshot_json).expect("peak snapshot should decode");
+            assert_eq!(snapshot.died_at_tick, 2_000 + index as u64);
+            assert_eq!(snapshot.termination_category, "横死");
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -15858,142 +15506,6 @@ mod persistence_tests {
         assert_eq!(life_events, writer_count as i64);
         assert_eq!(death_registry, writer_count as i64);
         assert_eq!(lifespan_events, writer_count as i64);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn semantic_death_peak_keeps_life_registry_and_public_exports_consistent() {
-        let (settings, root) = persistence_settings("semantic-death-peak");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-
-        let writer_count = 10usize;
-        let settings = Arc::new(settings);
-        let barrier = Arc::new(Barrier::new(writer_count + 1));
-        let handles = (0..writer_count)
-            .map(|index| {
-                let settings = Arc::clone(&settings);
-                let barrier = Arc::clone(&barrier);
-                std::thread::spawn(move || {
-                    let char_id = format!("offline:PeakDeath{index}");
-                    let tick = 2_000 + index as u64;
-                    let life_record = LifeRecord {
-                        character_id: char_id.clone(),
-                        created_at: tick.saturating_sub(100),
-                        biography: vec![BiographyEntry::Terminated {
-                            cause: "peak_death".to_string(),
-                            tick,
-                        }],
-                        insights_taken: Vec::new(),
-                        death_insights: Vec::new(),
-                        skill_milestones: Vec::new(),
-                        spirit_root_first: None,
-                        ..LifeRecord::default()
-                    };
-                    let lifecycle = Lifecycle {
-                        character_id: char_id,
-                        death_count: 1,
-                        fortune_remaining: 0,
-                        last_death_tick: Some(tick),
-                        last_revive_tick: None,
-                        spawn_anchor: None,
-                        spawn_anchor_damaged: false,
-                        near_death_deadline_tick: None,
-                        awaiting_decision: None,
-                        revival_decision_deadline_tick: None,
-                        weakened_until_tick: None,
-                        state: LifecycleState::Terminated,
-                    };
-                    let lifespan_event = LifespanEventRecord {
-                        at_tick: tick,
-                        kind: "termination".to_string(),
-                        delta_years: -999,
-                        source: "peak_death".to_string(),
-                    };
-
-                    barrier.wait();
-                    let started_at = Instant::now();
-                    let result = persist_termination_transition_with_death_context(
-                        settings.as_ref(),
-                        &lifecycle,
-                        &life_record,
-                        Some("peak_death"),
-                        Some(&lifespan_event),
-                    );
-                    let mut metrics = WriteBatchMetrics::default();
-                    metrics.record(started_at, result);
-                    metrics
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let batch_started = Instant::now();
-        barrier.wait();
-        let metrics = handles
-            .into_iter()
-            .map(|handle| handle.join().expect("death writer should not panic"))
-            .fold(WriteBatchMetrics::default(), WriteBatchMetrics::merge);
-        let elapsed = batch_started.elapsed();
-        let lock_failures = metrics
-            .errors
-            .iter()
-            .filter(|error| error.contains("locked") || error.contains("busy"))
-            .count();
-        eprintln!(
-            "[phase9] semantic death peak: writes={} elapsed_ms={} max_write_ms={} lock_failures={} failure_rate={:.4}",
-            metrics.writes,
-            elapsed.as_millis(),
-            metrics.max_write_ms,
-            lock_failures,
-            metrics.errors.len() as f64 / metrics.writes as f64
-        );
-        assert!(
-            metrics.errors.is_empty(),
-            "10 concurrent termination events should persist atomically: {:?}",
-            metrics.errors
-        );
-
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        for (table, expected) in [
-            ("life_records", writer_count as i64),
-            ("life_events", writer_count as i64),
-            ("death_registry", writer_count as i64),
-            ("lifespan_events", writer_count as i64),
-            ("deceased_snapshots", writer_count as i64),
-        ] {
-            let sql = format!("SELECT COUNT(*) FROM {table}");
-            let count: i64 = connection
-                .query_row(sql.as_str(), [], |row| row.get(0))
-                .expect("table count should be readable");
-            assert_eq!(count, expected, "{table} should contain all peak rows");
-        }
-
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index_entries: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            fs::read_to_string(&index_path)
-                .expect("deceased index should exist")
-                .as_str(),
-        )
-        .expect("deceased index should decode");
-        assert_eq!(index_entries.len(), writer_count);
-
-        for index in 0..writer_count {
-            let char_id = format!("offline:PeakDeath{index}");
-            assert!(
-                index_path
-                    .parent()
-                    .expect("deceased dir should exist")
-                    .join(format!("offline_PeakDeath{index}.json"))
-                    .exists(),
-                "public deceased snapshot for {char_id} should exist"
-            );
-            assert!(
-                index_entries.iter().any(|entry| entry.char_id == char_id
-                    && entry.path == format!("deceased/offline_PeakDeath{index}.json")),
-                "deceased index should contain {char_id}"
-            );
-        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -17304,22 +16816,22 @@ mod persistence_tests {
 
     #[test]
     fn rollback_file_treats_missing_cleanup_as_idempotent() {
-        let (settings, root) = persistence_settings("rollback-file-missing-cleanup");
-        let path = settings.deceased_public_dir().join("missing.json");
+        let (_, root) = persistence_settings("rollback-file-missing-cleanup");
+        let path = root.join("missing.json");
         rollback_file(&path, None).expect("removing an already-missing file is idempotent");
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn rollback_file_surfaces_write_and_remove_errors() {
-        let (settings, root) = persistence_settings("rollback-file-errors");
-        let write_path = settings.deceased_public_dir().join("write-error");
+        let (_, root) = persistence_settings("rollback-file-errors");
+        let write_path = root.join("write-error");
         fs::create_dir_all(&write_path).expect("write-error directory should be creatable");
         let write_error = rollback_file(&write_path, Some(b"previous"))
             .expect_err("rollback writes must surface destination errors");
         assert_eq!(write_error.kind(), io::ErrorKind::IsADirectory);
 
-        let remove_path = settings.deceased_public_dir().join("remove-error");
+        let remove_path = root.join("remove-error");
         fs::create_dir_all(&remove_path).expect("remove-error directory should be creatable");
         let remove_error = rollback_file(&remove_path, None)
             .expect_err("rollback removes must surface non-NotFound errors");
@@ -19484,7 +18996,7 @@ mod persistence_tests {
         );
 
         apply_migrations(&mut connection)
-            .expect("v41 rift migration and current v42 migration should succeed");
+            .expect("v41 rift migration and current v43 migration should succeed");
 
         let rift_balance: f64 = connection
             .query_row(
@@ -19513,7 +19025,7 @@ mod persistence_tests {
             .expect("user_version should query");
         assert_eq!(
             user_version, CURRENT_USER_VERSION,
-            "the v41 fixture must continue through the current v42 schema"
+            "the v41 fixture must continue through the current v43 schema"
         );
         let terminal_table_rows: i64 = connection
             .query_row(
@@ -19556,7 +19068,7 @@ mod persistence_tests {
             .expect("fixture should emulate a v40 database with existing runtime balances");
 
         apply_migrations(&mut connection)
-            .expect("v41 rift migration and current v42 migration should succeed");
+            .expect("v41 rift migration and current v43 migration should succeed");
 
         let rift_balance: f64 = connection
             .query_row(
@@ -19585,7 +19097,7 @@ mod persistence_tests {
             .expect("user_version should query");
         assert_eq!(
             user_version, CURRENT_USER_VERSION,
-            "the v41 fixture must continue through the current v42 schema"
+            "the v41 fixture must continue through the current v43 schema"
         );
         let terminal_table_rows: i64 = connection
             .query_row(
@@ -19649,6 +19161,162 @@ mod persistence_tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version should query");
         assert_eq!(user_version, CURRENT_USER_VERSION);
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v43_migration_removes_retired_deceased_public_path_without_losing_snapshot() {
+        let db_path = database_path("v43-deceased-public-path");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                ALTER TABLE deceased_snapshots ADD COLUMN public_path TEXT;
+                INSERT INTO deceased_snapshots (
+                    char_id, snapshot_json, public_path, died_at_tick, schema_version, last_updated_wall
+                ) VALUES ('offline:Legacy', '{}', 'deceased/offline_Legacy.json', 7, 1, 1);
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should emulate a v42 database with the retired column");
+
+        apply_migrations(&mut connection).expect("v43 migration should remove retired column");
+
+        let columns = table_columns(&connection.transaction().unwrap(), "deceased_snapshots")
+            .expect("deceased snapshot columns should query");
+        assert!(!columns.iter().any(|column| column == "public_path"));
+        let snapshot_json: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Legacy"],
+                |row| row.get(0),
+            )
+            .expect("legacy deceased snapshot should survive migration");
+        assert_eq!(snapshot_json, "{}");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v43_migration_tolerates_partial_fixture_without_deceased_snapshots_table() {
+        let db_path = database_path("v43-partial-fixture-without-deceased-table");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-partial-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE deceased_snapshots;
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should emulate a focused migration test without the unrelated table");
+
+        apply_migrations(&mut connection)
+            .expect("v43 should not break focused migration fixtures that omit the table");
+        assert!(
+            !table_exists(&connection.transaction().unwrap(), "deceased_snapshots")
+                .expect("table existence should query")
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v43_migration_rejects_malformed_deceased_schema_without_advancing_version() {
+        let db_path = database_path("v43-deceased-bad-schema");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-bad-schema-fixture")
+            .expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE deceased_snapshots;
+                CREATE TABLE deceased_snapshots (
+                    char_id TEXT PRIMARY KEY,
+                    public_path TEXT
+                );
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should install a malformed v42 deceased table");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v43 must reject a malformed preexisting deceased table");
+        assert!(
+            error
+                .to_string()
+                .contains("deceased_snapshots column snapshot_json missing"),
+            "schema guard should identify the missing deceased column: {error}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(
+            user_version, 42,
+            "failed v43 schema validation must not advance user_version"
+        );
+        let columns = table_columns(&connection.transaction().unwrap(), "deceased_snapshots")
+            .expect("rolled-back deceased columns should query");
+        assert!(
+            columns.iter().any(|column| column == "public_path"),
+            "the failed migration must roll back its DROP COLUMN"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn current_v43_database_rejects_retired_deceased_public_path() {
+        let db_path = database_path("v43-current-deceased-public-path");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-current-public-path-fixture")
+            .expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("ALTER TABLE deceased_snapshots ADD COLUMN public_path TEXT;")
+            .expect("fixture should add the retired column without changing user_version");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("current v43 schema must reject the retired public projection");
+        assert!(
+            error
+                .to_string()
+                .contains("retired deceased_snapshots.public_path remains"),
+            "schema guard should identify the retired column: {error}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
         drop(connection);
         let _ = fs::remove_dir_all(root);
     }
