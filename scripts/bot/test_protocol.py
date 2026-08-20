@@ -425,7 +425,7 @@ class ServerDataDecodeTest(unittest.TestCase):
         # 首条目不是 flags（index 5 = custom name visible, BOOLEAN）：flags 应为 None，
         # 不得因未知条目崩掉 dispatch。
         body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(7) + bytes(
-            [5, 7, 1, 0xFF]
+            [5, 8, 1, 0xFF]
         )
 
         bot._dispatch(body)
@@ -441,7 +441,7 @@ class ServerDataDecodeTest(unittest.TestCase):
         # 序列直到 0xFF，flags 在任意位置都能读到（review finding, run 31442491424：
         # 旧实现只读首条目，flags 非首条目即静默丢 None，invisible 状态切换读不回）。
         body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + bytes(
-            [5, 7, 1, 0, 0, 0x20, 0xFF]
+            [5, 8, 1, 0, 0, 0x20, 0xFF]
         )
 
         bot._dispatch(body)
@@ -460,7 +460,7 @@ class ServerDataDecodeTest(unittest.TestCase):
             mc.write_varint(mc.S2C_ENTITY_METADATA)
             + mc.write_varint(0)
             + bytes([1, 1, 5])  # index 1, type VARINT, 值 5
-            + bytes([2, 3])
+            + bytes([2, 4])
             + mc.mc_string("abc")  # index 2, type STRING, 值 "abc"
             + bytes([0, 0, 0x20, 0xFF])  # index 0, type BYTE, flags=0x20
         )
@@ -471,6 +471,64 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(len(metadata_events), 1)
         self.assertEqual(metadata_events[0].data["entity_id"], 0)
         self.assertEqual(metadata_events[0].data["flags"], 0x20)
+
+    def test_bot_dispatch_entity_metadata_skips_pinned_fork_types_before_flags(self):
+        # 编号与 Kizunad/valence pinned rev 的 Value::type_id() 一一对应。
+        # PARTICLE(17) 的 fork payload 不携 variant ID，无法安全跳过，故保持 fail closed。
+        nbt_with_string = (
+            b"\x0a\x00\x00"  # TAG_Compound root + 空 root name (u16-BE)
+            + b"\x08\x00\x04name"  # TAG_String + compound key
+            + b"\x00\x03abc"  # TAG_String value length is u16-BE
+            + b"\x00"  # TAG_End
+        )
+        item_stack_with_nbt = b"\x01" + mc.write_varint(1) + b"\x01" + nbt_with_string
+        cases = [
+            ("byte", 0, b"\x01"),
+            ("integer", 1, mc.write_varint(300)),
+            ("long", 2, struct.pack(">q", 123456789)),
+            ("float", 3, struct.pack(">f", 20.0)),
+            ("string", 4, mc.mc_string("abc")),
+            ("text", 5, mc.mc_string('{"text":"abc"}')),
+            ("optional_text", 6, b"\x01" + mc.mc_string('{"text":"abc"}')),
+            ("empty_item_stack", 7, b"\x00"),
+            ("item_stack_nbt", 7, item_stack_with_nbt),
+            ("boolean", 8, b"\x01"),
+            ("rotation", 9, struct.pack(">fff", 1.0, 2.0, 3.0)),
+            ("block_pos", 10, struct.pack(">Q", 0)),
+            ("optional_block_pos", 11, b"\x01" + struct.pack(">Q", 0)),
+            ("facing", 12, mc.write_varint(3)),
+            ("optional_uuid", 13, b"\x01" + bytes(range(16))),
+            ("block_state", 14, mc.write_varint(42)),
+            ("optional_block_state", 15, mc.write_varint(0)),
+            ("nbt_compound", 16, nbt_with_string),
+            ("villager_data", 18, b"\x02\x03\x04"),
+            ("optional_int", 19, mc.write_varint(8)),
+            ("entity_pose", 20, mc.write_varint(5)),
+            ("cat_variant", 21, mc.write_varint(2)),
+            ("frog_variant", 22, mc.write_varint(1)),
+            ("optional_global_pos_unit", 23, b""),
+            ("painting_variant", 24, mc.write_varint(4)),
+            ("sniffer_state", 25, mc.write_varint(2)),
+            ("vector3f", 26, struct.pack(">fff", 1.0, 2.0, 3.0)),
+            ("quaternionf", 27, struct.pack(">ffff", 1.0, 2.0, 3.0, 4.0)),
+        ]
+
+        for name, mtype, value in cases:
+            with self.subTest(name=name, mtype=mtype):
+                bot = _bare_bot()
+                body = (
+                    mc.write_varint(mc.S2C_ENTITY_METADATA)
+                    + mc.write_varint(0)
+                    + bytes([9, mtype])
+                    + value
+                    + bytes([0, 0, 0x20, 0xFF])
+                )
+
+                bot._dispatch(body)
+
+                metadata_events = bot.events_of("entity_metadata")
+                self.assertEqual(len(metadata_events), 1)
+                self.assertEqual(metadata_events[0].data["flags"], 0x20)
 
     def test_bot_dispatch_entity_metadata_empty_entries(self):
         bot = _bare_bot()
