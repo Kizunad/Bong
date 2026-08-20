@@ -181,8 +181,16 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
         self.assertNotIn("WARN", pattern)
         self.assertNotIn("BOT_FALLBACK_READY_PAYLOAD", source)
         self.assertEqual(
-            source.count('grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG"'),
-            3,
+            source.count("fallback_ready_marker_present"),
+            4,
+        )
+        self.assertEqual(
+            source.count('grep -E -- "$BOT_FALLBACK_READY_PATTERN" >/dev/null'),
+            1,
+        )
+        self.assertEqual(
+            source.count("sed -E $'s/\\x1b\\\\[[0-9;]*[[:alpha:]]//g'"),
+            1,
         )
 
     def test_owned_fallback_uses_private_redis_predicate(self) -> None:

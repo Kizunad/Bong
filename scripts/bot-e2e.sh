@@ -203,6 +203,13 @@ except OSError:
 EOF
 }
 
+fallback_ready_marker_present() {
+  # tracing-subscriber emits ANSI style codes even when stderr is redirected in CI. Strip only
+  # those terminal controls, then apply the same anchored INFO-level payload contract.
+  sed -E $'s/\x1b\\[[0-9;]*[[:alpha:]]//g' "$SERVER_LOG" \
+    | grep -E -- "$BOT_FALLBACK_READY_PATTERN" >/dev/null
+}
+
 # Port reachability is insufficient: the immutable server may still be starting while an old server
 # listens on the same port. Only a listener in this launch's process tree is authoritative.
 pid_belongs_to_tree() {
@@ -246,7 +253,7 @@ self_started_fixture_runtime_is_current() {
     && port_open "$HOST" "$PORT" \
     && port_owned_by_tree "$SERVER_PID" "$PORT" \
     && { [ "$AMBIENT_FIXTURE_MODE" != "1" ] || grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"; } \
-    && { [ "$FALLBACK_MODE" != "1" ] || grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG"; }
+    && { [ "$FALLBACK_MODE" != "1" ] || fallback_ready_marker_present; }
 }
 
 # 递归杀整棵进程树（与 e2e-redis.sh 同模式）：先子孙后父防 reparent 孤儿，
@@ -397,7 +404,7 @@ else
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
       grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
     elif [ "$FALLBACK_MODE" = "1" ]; then
-      grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG" && ready_marker_ok=1
+      fallback_ready_marker_present && ready_marker_ok=1
     else
       grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && ready_marker_ok=1
     fi
@@ -417,7 +424,7 @@ else
   if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
     grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
   elif [ "$FALLBACK_MODE" = "1" ]; then
-    grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG" && ready_marker_ok=1
+    fallback_ready_marker_present && ready_marker_ok=1
   else
     grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && ready_marker_ok=1
   fi

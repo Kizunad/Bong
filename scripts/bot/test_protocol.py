@@ -2073,7 +2073,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
         readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
         readiness = self.source[readiness_start:readiness_end]
-        marker_match = 'grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG"'
+        marker_match = "fallback_ready_marker_present"
         ownership = 'export BOT_E2E_FALLBACK_OWNED=1'
         self.assertIn(marker_match, readiness)
         self.assertIn(ownership, readiness)
@@ -2601,7 +2601,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "  sleep 0.01\n"
                 "done\n"
                 "if [ \"${BOT_E2E_FALLBACK_MODE:-0}\" = 1 ]; then\n"
-                "  printf '%s\\n' '2026-08-11T23:25:37.123456Z  INFO [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4'\n"
+                "  printf '\\033[2m%s\\033[0m \\033[32m INFO\\033[0m %s\\n' '2026-08-11T23:25:37.123456Z' '[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4'\n"
                 "else\n"
                 "  printf '%s\\n' \"2026-08-11T23:25:37.123456Z  INFO [bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
                 "fi\n"
