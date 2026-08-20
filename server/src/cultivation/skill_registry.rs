@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use valence::prelude::{Entity, Resource};
 
 use crate::cultivation::components::MeridianId;
+use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CastResult {
@@ -99,6 +100,42 @@ impl SkillRegistry {
     pub fn iter(&self) -> impl Iterator<Item = (&&'static str, &SkillFn)> {
         self.entries.iter()
     }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().copied()
+    }
+}
+
+/// 构造生产运行时完整的经脉依赖声明表。显式空声明与未声明必须保持可区分；任意重复
+/// 声明会由 [`SkillMeridianDependencies::declare`] 在启动期直接拒绝。
+pub fn init_meridian_dependencies() -> SkillMeridianDependencies {
+    let mut deps = SkillMeridianDependencies::default();
+    crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut deps);
+    crate::combat::anqi_v2::declare_meridian_dependencies(&mut deps);
+    crate::combat::dugu_v2::declare_meridian_dependencies(&mut deps);
+    crate::combat::tuike_v2::declare_meridian_dependencies(&mut deps);
+    crate::combat::sword_basics::declare_meridian_dependencies(&mut deps);
+    crate::combat::shield_block::declare_meridian_dependencies(&mut deps);
+    crate::sword_path::skill_register::declare_meridian_dependencies(&mut deps);
+    crate::movement::dash_proficiency::declare_dash_meridian_dependencies(&mut deps);
+    crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut deps);
+    crate::combat::woliu::declare_meridian_dependencies(&mut deps);
+    crate::cultivation::burst_meridian::declare_meridian_dependencies(&mut deps);
+    crate::combat::yidao::declare_meridian_dependencies(&mut deps);
+    crate::dandao::declare_meridian_dependencies(&mut deps);
+    crate::cultivation::dugu::declare_meridian_dependencies(&mut deps);
+    crate::combat::woliu_v2::skills::declare_woliu_v2_deps_direct(&mut deps);
+    crate::combat::baomai_v3::skills::declare_meridian_dependencies(&mut deps);
+    crate::body_plan::morph::declare_meridian_dependencies(&mut deps);
+    deps
 }
 
 pub fn init_registry() -> SkillRegistry {
@@ -216,42 +253,19 @@ mod tests {
 
     /// 构造与生产路径完全一致的 SkillMeridianDependencies（不走 Bevy App）。
     fn build_production_deps() -> SkillMeridianDependencies {
-        let mut deps = SkillMeridianDependencies::default();
-        crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut deps);
-        crate::combat::anqi_v2::declare_meridian_dependencies(&mut deps);
-        crate::combat::dugu_v2::declare_meridian_dependencies(&mut deps);
-        crate::combat::tuike_v2::declare_meridian_dependencies(&mut deps);
-        crate::combat::sword_basics::declare_meridian_dependencies(&mut deps);
-        crate::combat::shield_block::declare_meridian_dependencies(&mut deps);
-        crate::sword_path::skill_register::declare_meridian_dependencies(&mut deps);
-        crate::movement::dash_proficiency::declare_dash_meridian_dependencies(&mut deps);
-        crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut deps);
-        crate::combat::woliu::declare_meridian_dependencies(&mut deps);
-        crate::cultivation::burst_meridian::declare_meridian_dependencies(&mut deps);
-        crate::combat::yidao::declare_meridian_dependencies(&mut deps);
-        crate::dandao::declare_meridian_dependencies(&mut deps);
-        // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
-        crate::cultivation::dugu::declare_meridian_dependencies(&mut deps);
-        // woliu_v2 は Bevy Startup system 経由 — 無 ECS バリアントで代替。
-        crate::combat::woliu_v2::skills::declare_woliu_v2_deps_direct(&mut deps);
-        // baomai_v3 は App Resource 経由 — production declare fn を直接呼ぶ。
-        crate::combat::baomai_v3::skills::declare_meridian_dependencies(&mut deps);
-        // plan-race-system-v1 P4 — morph.yixing 无经脉前置表条目（专属 form_anchors_open
-        // 门在别处判定），显式声明空 deps 满足审计完整性不变量。
-        crate::body_plan::morph::declare_meridian_dependencies(&mut deps);
-        deps
+        init_meridian_dependencies()
     }
 
     /// 審計不変量（宣言完整性）：SkillRegistry に登録された招式のうち
-    /// TECHNIQUE_DEFINITIONS に存在するもの（プレイヤー技能バー使用可能かつ resolver が存在する）は
+    /// TechniqueRegistry metadata に存在するもの（プレイヤー技能バー使用可能かつ resolver が存在する）は
     /// すべて SkillMeridianDependencies に declare が存在しなければならない。
     ///
     /// **重要な担保範囲の制限**：
     /// - 本不変量は「宣言が存在すること」を保証するのみであり、resolver が実行時に
     ///   check_meridian_dependencies を呼び出すことは保証しない。
     ///   経脈ゲートが運行時に強制されるかどうかは P0 cast-entry 統一拦截の範疇。
-    /// - 本不変量の対象は SkillRegistry ∩ TECHNIQUE_DEFINITIONS の積集合のみ。
-    ///   TECHNIQUE_DEFINITIONS に存在するが SkillRegistry に未登録（skeleton）の招式は
+    /// - 本不変量の対象は SkillRegistry ∩ TechniqueRegistry metadata の積集合のみ。
+    ///   TechniqueRegistry metadata に存在するが SkillRegistry に未登録（skeleton）の招式は
     ///   本不変量の外であり防御できない。
     ///
     ///   burst_meridian の 3 招（tie_shan_kao / xue_beng_bu / ni_mai_hu_ti）は
@@ -262,17 +276,20 @@ mod tests {
     /// 故意に declare を削除すると本テストが赤くなり、将来の register-without-declare 漏れを防ぐ。
     #[test]
     fn every_player_castable_skill_has_meridian_dependency_declaration() {
-        use crate::cultivation::known_techniques::TECHNIQUE_DEFINITIONS;
         use std::collections::HashSet;
 
+        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH),
+            &crate::body_plan::RaceRegistry::default(),
+        )
+        .expect("checked-in technique catalog must load");
+        let player_castable: HashSet<&str> = techniques
+            .iter()
+            .map(|definition| definition.id.as_str())
+            .collect();
         let deps = build_production_deps();
         let registry = init_registry();
-
-        // 対象は SkillRegistry ∩ TECHNIQUE_DEFINITIONS の積集合。
-        // burst_meridian 3 招は登録 + declare 済みなのでここで網羅される
-        // （declare を外すと missing に乗って赤になる）。
-        let player_castable: HashSet<&str> =
-            TECHNIQUE_DEFINITIONS.iter().map(|def| def.id).collect();
 
         let mut missing: Vec<&str> = Vec::new();
         for (skill_id, _fn_ptr) in registry.iter() {
@@ -294,7 +311,7 @@ mod tests {
     }
 
     /// 証明テスト：woliu.vortex の declare を削除すると上のテストが赤くなる構造を確認する。
-    /// woliu.vortex は TECHNIQUE_DEFINITIONS にあり、deps に宣言が存在する。
+    /// woliu.vortex は TechniqueRegistry metadata にあり、deps に宣言が存在する。
     #[test]
     fn woliu_vortex_is_declared_in_production_deps() {
         let deps = build_production_deps();

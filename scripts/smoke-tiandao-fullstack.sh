@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 
 SMOKE_LOG="$EVIDENCE_DIR/task-24-final-matrix.log"
@@ -25,6 +27,7 @@ FULLSTACK_REDIS_LOG="$RUN_DIR/fullstack-redis.log"
 FULLSTACK_SERVER_LOG="$RUN_DIR/fullstack-server.log"
 FULLSTACK_REDIS_SUB_LOG="$RUN_DIR/fullstack-redis-sub.log"
 FULLSTACK_TIANDAO_LOG="$RUN_DIR/fullstack-tiandao.log"
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 PASS=0
 FAIL=0
@@ -231,7 +234,7 @@ CURRENT_STAGE="server"
 echo "=== [3/11] server -> fmt/clippy/test + persistence/progression/payload proofs ==="
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo fmt --check
 ) >"$SERVER_FMT_LOG" 2>&1; then
@@ -241,7 +244,7 @@ else
 fi
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo clippy --all-targets -- -D warnings
 ) >"$SERVER_CLIPPY_LOG" 2>&1; then
@@ -251,7 +254,7 @@ else
 fi
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
@@ -262,7 +265,7 @@ fi
 
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test save_and_load_roundtrip_by_uuid -- --nocapture
   "$ROOT/scripts/build-token.sh" cargo test player::progression:: -- --nocapture
@@ -358,15 +361,26 @@ else
   fail "redis ping"
 fi
 
-(
+FULLSTACK_SERVER_BINARY="$RUN_DIR/bong-server"
+if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
-  "$ROOT/scripts/build-token.sh" cargo run >"$FULLSTACK_SERVER_LOG" 2>&1
-) &
-SERVER_PID="$!"
+  "$ROOT/scripts/build-token.sh" cargo build
+  install -m 700 "$CARGO_TARGET_DIR/debug/bong-server" "$FULLSTACK_SERVER_BINARY"
+) >>"$FULLSTACK_SERVER_LOG" 2>&1; then
+  pass "server build"
+  (
+    cd "$ROOT/server"
+    exec "$FULLSTACK_SERVER_BINARY" >>"$FULLSTACK_SERVER_LOG" 2>&1
+  ) &
+  SERVER_PID="$!"
+else
+  fail "server build"
+  SERVER_PID=""
+fi
 
-if wait_for_pattern "$FULLSTACK_SERVER_LOG" "\[bong\]\[world\] creating overworld test area" 120; then
+if wait_for_pattern "$FULLSTACK_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 120; then
   pass "server world bootstrap"
 else
   fail "server world bootstrap"

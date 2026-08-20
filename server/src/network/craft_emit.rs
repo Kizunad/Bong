@@ -53,7 +53,7 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{
     canonical_player_id, save_player_craft_checkpoint,
-    save_player_inventory_and_craft_session_slices, PlayerStatePersistence,
+    save_player_inventory_and_craft_session_slices, PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::ledger::WorldQiAccount;
 use crate::schema::common::NarrationStyle;
@@ -886,11 +886,15 @@ pub fn emit_recipe_unlocked_payloads(
 /// P2 简化：每个在线玩家成功推一次。不能只查 `Added<Client>`，因为
 /// `Username` / inventory 等组件可能在 join 后续系统才挂上，单帧查询会漏发。
 /// 后续 unlock 增量靠 `RecipeUnlockedV1` 单条推。
+#[allow(clippy::type_complexity)]
 pub fn emit_recipe_list_on_join(
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
     mut sent: Local<HashMap<Entity, String>>,
-    mut clients: Query<(Entity, &Username, &mut Client, Option<&CraftSession>), With<Client>>,
+    mut clients: Query<
+        (Entity, &Username, &mut Client, Option<&CraftSession>),
+        (With<Client>, With<PlayerState>),
+    >,
 ) {
     let mut active_clients = HashSet::new();
     for (entity, username, mut client, session) in clients.iter_mut() {
@@ -2970,7 +2974,10 @@ mod tests {
         app.add_systems(Update, emit_recipe_list_on_join);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
-        app.world_mut().spawn(client_bundle);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(PlayerState::default());
         app.update();
         flush_client_packets(&mut app);
 
@@ -2994,7 +3001,10 @@ mod tests {
         app.add_systems(Update, emit_recipe_list_on_join);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
-        app.world_mut().spawn(client_bundle);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(PlayerState::default());
         app.update();
         flush_client_packets(&mut app);
 
@@ -3026,7 +3036,7 @@ mod tests {
     }
 
     #[test]
-    fn emit_recipe_list_on_join_sends_active_session_state_when_session_exists() {
+    fn emit_recipe_list_on_join_waits_for_hydration_then_sends_active_session_state() {
         let mut app = App::new();
         let mut registry = CraftRegistry::new();
         register_basic_processing_recipes(&mut registry).unwrap();
@@ -3037,16 +3047,30 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut().entity_mut(entity).insert(CraftSession {
-            recipe_id: RecipeId::new("basic.wood_handle"),
-            started_at_tick: 0,
-            remaining_ticks: 20,
-            total_ticks: 60,
-            owner_player_id: canonical_player_id("Azure"),
-            qi_paid: 0.0,
-            quantity_total: 3,
-            completed_count: 1,
-        });
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_recipe_lists(&mut helper).is_empty(),
+            "PlayerState hydration 完成前不得发送 recipe/session 首包并缓存 idle 状态"
+        );
+        assert!(
+            collect_craft_session_states(&mut helper).is_empty(),
+            "PlayerState hydration 完成前不得发送错误的 idle craft_session_state"
+        );
+
+        app.world_mut().entity_mut(entity).insert((
+            PlayerState::default(),
+            CraftSession {
+                recipe_id: RecipeId::new("basic.wood_handle"),
+                started_at_tick: 0,
+                remaining_ticks: 20,
+                total_ticks: 60,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 3,
+                completed_count: 1,
+            },
+        ));
         app.update();
         flush_client_packets(&mut app);
 
