@@ -1194,9 +1194,8 @@ mod tests {
     fn cultivation_bundle_flushes_periodically() {
         let (persistence, data_dir, db_path) = sqlite_persistence("cultivation-flush");
         let mut app = App::new();
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-cultivation-flush",
         ));
         app.insert_resource(PlayerStateAutosaveTimer {
@@ -1255,9 +1254,8 @@ mod tests {
         let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-autosave-flush");
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-autosave-flush",
         ));
         app.insert_resource(PlayerStateAutosaveTimer {
@@ -1312,9 +1310,8 @@ mod tests {
             sqlite_persistence("lifecycle-autosave-no-early-flush");
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-autosave-no-early-flush",
         ));
         // ticks - 1 后面还差 2 才到 INTERVAL_TICKS，tick_player_persistence_timer 的 +1
@@ -1364,9 +1361,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-disconnect-flush",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1416,9 +1412,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-morph-auto-release-disconnect",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1503,9 +1498,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-disconnect-flush",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1576,9 +1570,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-disconnect-clock-anchor",
         ));
         app.insert_resource(CombatClock { tick: 500_000 });
@@ -1624,9 +1617,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-shutdown-clock-anchor",
         ));
         app.insert_resource(CombatClock { tick: 777_000 });
@@ -1666,9 +1658,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-shutdown-flush",
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);
@@ -1721,9 +1712,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-shutdown-flush",
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);

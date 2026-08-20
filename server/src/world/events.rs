@@ -4700,11 +4700,7 @@ mod events_tests {
         let db_path = unique_test_db("realm-collapse-persists-overlay");
         std::fs::create_dir_all(db_path.parent().expect("test db should have parent"))
             .expect("test db parent should be creatable");
-        let settings = PersistenceSettings::with_paths(
-            db_path.clone(),
-            db_path.with_extension("deceased"),
-            "realm-collapse-test",
-        );
+        let settings = PersistenceSettings::with_db_path(db_path.clone(), "realm-collapse-test");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("test sqlite should bootstrap");
         app.insert_resource(settings.clone());

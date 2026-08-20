@@ -3729,11 +3729,7 @@ mod tests {
         bootstrap_sqlite(&db_path, &format!("social-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                db_path,
-                data_dir.join("deceased"),
-                format!("social-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(db_path, format!("social-{test_name}")),
             data_dir,
         )
     }

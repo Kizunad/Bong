@@ -193,9 +193,8 @@ fn run_full_app_startup_smoke() {
         "bong-full-app-startup-smoke-{}",
         std::process::id()
     ));
-    app.insert_resource(PersistenceSettings::with_paths(
+    app.insert_resource(PersistenceSettings::with_db_path(
         db_root.join("data").join("bong.db"),
-        db_root.join("deceased"),
         "full-app-startup-smoke",
     ));
 

@@ -431,11 +431,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "death-hooks-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "death-hooks-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         (settings, temp_root)
