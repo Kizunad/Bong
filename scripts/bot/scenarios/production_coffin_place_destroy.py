@@ -518,15 +518,19 @@ def _give_coffin_instance(bot, after_t, timeout=_STEP_TIMEOUT) -> int:
 
     不能用 wait_inventory_contains + latest_inventory_snapshot：wait_for 扫历史事件，
     第二次 give 会瞬间命中先前 give 的旧快照，latest 取到的仍是旧计数快照（无实例）。
-    必须 e.t > after_t 锚定「本次 give 之后」的新快照。
+    搬运回收材料本身也会产生 inventory_snapshot，因此锚点必须在搬运完成后重取，
+    并以搬运后的棺材数量 +1 作为本次 give 的水位线。调用方的 after_t 仅保留兼容签名，
+    不能作为本次 give 的事件锚点。
     """
     _park_non_coffin_items_in_body_pocket(bot)
+    give_anchor = last_event_time(bot)
+    before_count = _coffin_count(latest_inventory_snapshot(bot))
     bot.cmd(f"give {COFFIN_ID} 1")
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.t > after_t
-        and _coffin_count(e.data["payload"]) >= 1,
+        and e.t > give_anchor
+        and _coffin_count(e.data["payload"]) == before_count + 1,
         timeout=timeout,
         description=f"give {COFFIN_ID} 之后含实例的新 inventory_snapshot",
     )
@@ -1253,7 +1257,16 @@ def run(env) -> None:
         # 实例（消费 0 或 2 个都让 barrier 计数对不上而红）。(a) 的 enter 探针不消费
         # 实例，其「未偷扣」由 (b) 的 count==6 兜底断言。
 
-        # (a) 非空气坐标 enter 残留探针（对被拒坐标本身施加状态）
+        # (a) 非空气坐标 enter 残留探针（对被拒坐标本身施加状态）。必须先把玩家
+        # 临时锚到目标上方，避免深层 non_air_pos 因超过 6m 距离先被静默拒绝，导致
+        # registry 残留没有真正进入 coffin_enter 的 lookup 路径；断言后恢复边界站位。
+        bot.set_position(
+            non_air_pos[0] + 0.5,
+            non_air_pos[1] + 2.0,
+            non_air_pos[2] + 0.5,
+            on_ground=False,
+        )
+        time.sleep(0.5)
         na_anchor = last_event_time(bot)
         _send_coffin_enter(bot, non_air_pos)
         _assert_no_enter_transition_after(
@@ -1262,6 +1275,8 @@ def run(env) -> None:
             non_air_pos,
             description="非空气拒绝坐标的 enter 残留探针：正确实现应无进棺状态转变",
         )
+        bot.set_position(*boundary_origin)
+        time.sleep(1.0)
 
         # (b) 边界 pass_t 复查 + teardown
         bp_give = _give_barrier(
