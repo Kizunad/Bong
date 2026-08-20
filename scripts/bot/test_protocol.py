@@ -3502,6 +3502,27 @@ class InventoryHelperContractTest(unittest.TestCase):
                 bot, 1, lambda payload: True, "any snapshot", timeout=0.01
             )
 
+    def test_wait_inventory_revision_after_matching_ignores_late_duplicate_snapshot(self):
+        stale = _snapshot_event(2.0, 5, "stale_duplicate")
+        final = _snapshot_event(3.0, 6, "move_applied")
+        final.data["payload"]["placed_items"] = [
+            {"item": {"instance_id": 524}, "container_id": "body_pocket"}
+        ]
+        bot = _FakeBot([stale, final])
+
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            5,
+            lambda payload: any(
+                placed["item"]["instance_id"] == 524
+                for placed in payload.get("placed_items", [])
+            ),
+            "move 后实例进入玩家背包",
+        )
+
+        self.assertEqual(snapshot["revision"], 6)
+        self.assertEqual(snapshot["marker"], "move_applied")
+
 
 class InventoryContainerSourceKindTest(unittest.TestCase):
     def test_accepts_semantically_equivalent_storage_crate_json(self):
