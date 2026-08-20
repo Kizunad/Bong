@@ -88,16 +88,30 @@ import time
 
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
-from bot.scenarios._inventory_helpers import latest_inventory_snapshot
+from bot.scenarios._inventory_helpers import first_free_cell, latest_inventory_snapshot, send_move
 
 DESCRIPTION = "CoffinPlace 生命周期：放置消费→重复/非空/过远（6m边界成对）/异维/stale实例拒绝（计数不变+无实体spawn）→单发破坏+空→空重破no-op→清场重放→全量teardown"
 MODULES = ["coffin", "inventory", "dimension"]
 
 COFFIN_ID = "mundane_coffin"
 PLACE_OFFSET = -2  # 横向偏移，与 forge 放砧一致
-# 放置目标必须在 y+1（fixture 全平面 surface_y=72，y=72 是实心地面、y=73+ 才是空气）：
-# bot.position 的 y 是玩家脚下方块的顶（≈72.x，int 后=72），直接用它当 target 会命中
-# 实心地表 → not empty 拒。所有「应为空气」的 target 统一用 py+1。
+# 放置目标从 bot 当前整数 y 向上逐层探测：生产出生点可能落在 raster 覆盖外的动态
+# 地形/结构上，不能把固定 surface_y 或 py+1 当成空气保证。成功层会回写给所有后续
+# 空气、边界和 stale 探针；非空气拒绝目标同样由真实放置消费结果向下探测。
+AIR_LAYER_SEARCH_OFFSETS = range(1, 6)
+# 拒绝路径没有 server 回执；一次周期快照足以观察保持不变。每次重置位置后再探针，
+# 防止出生点处于未加载支撑面时，等待多个 5s 窗口让玩家重力下坠到放置半径外。
+# marker spawn / not-empty 判定都在同一 tick 路径完成；窗口过长会让无支撑出生点在
+# 拒绝探针之间下坠，下一层被错误归因于 too far。完整拒绝世界事件仍用 2s 窗口。
+_AIR_LAYER_PROBE_TIMEOUT = 0.4
+# marker entity spawn is emitted on a later server tick than the inventory snapshot;
+# under the Redis-loaded runtime fixture the tail reached just over one second. Give
+# temporary successful probes enough time to be observed and broken before the next
+# rejection assertion window.
+_MARKER_PROBE_TIMEOUT = 2.0
+# Spawn columns may sit above a cave or a large unsupported gap.  Exponential samples
+# reach the world floor without spending one full place/break/give cycle per air block.
+_NON_AIR_PROBE_DEPTHS = (1, 2, 4, 8, 16, 32, 64, 128)
 DISTANCE_SEARCH_RANGE = 8  # _distance_boundary_pair 的扫描半径：夹紧 6.0m 距离边界两侧的空气块
 # server 放置距离契约（coffin/mod.rs coffin_target_is_close）：bot 位置到 target 块中心
 # 平方距离 <= 36.0（6.0m 含边界）视为可放置，> 36.0 拒绝。
@@ -165,6 +179,26 @@ def _total_items(snapshot) -> int:
     return total
 
 
+def _template_counts(snapshot) -> dict[str, int]:
+    """按 item_id 汇总持有量，供 break 回收副作用做契约级差分。"""
+    counts: dict[str, int] = {}
+
+    def add(item) -> None:
+        if item:
+            item_id = item["item_id"]
+            counts[item_id] = counts.get(item_id, 0) + _stack_count(item)
+
+    for placed in snapshot.get("placed_items", []):
+        add(placed["item"])
+    for values in snapshot.get("equipped", {}).values():
+        items = values if isinstance(values, list) else [values]
+        for item in items:
+            add(item)
+    for item in snapshot.get("hotbar", []):
+        add(item)
+    return counts
+
+
 def _first_coffin_instance_id(snapshot) -> int:
     for placed in snapshot.get("placed_items", []):
         item = placed["item"]
@@ -179,6 +213,170 @@ def _first_coffin_instance_id(snapshot) -> int:
         if item and item["item_id"] == COFFIN_ID:
             return int(item["instance_id"])
     raise BotAssertionError(f"期望 inventory_snapshot 中有 {COFFIN_ID} 实例可取，实际没有")
+
+
+def _latest_coffin_instance_id(snapshot) -> int:
+    """取本轮最新 /give 产生的实例（allocator id 单调递增）。"""
+    ids = []
+    for placed in snapshot.get("placed_items", []):
+        if placed["item"]["item_id"] == COFFIN_ID:
+            ids.append(int(placed["item"]["instance_id"]))
+    for values in snapshot.get("equipped", {}).values():
+        items = values if isinstance(values, list) else [values]
+        ids.extend(
+            int(item["instance_id"])
+            for item in items
+            if item and item["item_id"] == COFFIN_ID
+        )
+    ids.extend(
+        int(item["instance_id"])
+        for item in snapshot.get("hotbar", [])
+        if item and item["item_id"] == COFFIN_ID
+    )
+    if not ids:
+        raise BotAssertionError(f"inventory_snapshot 中没有 {COFFIN_ID} 实例")
+    return max(ids)
+
+
+def _coffin_item_by_instance(snapshot, instance_id: int):
+    """按真实 instance_id 找棺材及其当前位置，避免 hotbar 多棺时取错实例。"""
+    for placed in snapshot.get("placed_items", []):
+        if placed["item"]["instance_id"] == instance_id:
+            return placed["item"], {
+                "kind": "container",
+                "container_id": placed["container_id"],
+                "row": placed["row"],
+                "col": placed["col"],
+            }
+    for slot, values in snapshot.get("equipped", {}).items():
+        items = values if isinstance(values, list) else [values]
+        for item in items:
+            if item and item["instance_id"] == instance_id:
+                state = "worn" if slot.endswith("_worn") else "held"
+                equip_slot = slot.rsplit("_", 1)[0]
+                return item, {"kind": "equip", "slot": equip_slot, "state": state}
+    for index, item in enumerate(snapshot.get("hotbar", [])):
+        if item and item["instance_id"] == instance_id:
+            return item, {"kind": "hotbar", "index": index}
+    raise BotAssertionError(
+        f"inventory_snapshot 中找不到 {COFFIN_ID} instance_id={instance_id}"
+    )
+
+
+def _park_coffin_in_hotbar(bot, instance_id: int, slot: int) -> None:
+    """把被拒棺材移到独立 hotbar 槽，给下一个真实 /give 腾出 pack。"""
+    snapshot = latest_inventory_snapshot(bot)
+    _, source = _coffin_item_by_instance(snapshot, instance_id)
+    anchor = last_event_time(bot)
+    send_move(bot, instance_id, source, {"kind": "hotbar", "index": slot})
+    bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and e.t > anchor
+        and any(
+            hotbar_item is not None
+            and hotbar_item.get("instance_id") == instance_id
+            for hotbar_item in e.data["payload"].get("hotbar", [])
+        ),
+        timeout=_STEP_TIMEOUT,
+        description=f"把棺材实例 {instance_id} 移入 hotbar[{slot}]，释放 pack 空间",
+    )
+
+
+def _park_non_coffin_items_in_body_pocket(bot) -> None:
+    """把 break 回收材料从 pack 移到 body_pocket，保留 2x3 棺材的完整 footprint。"""
+    while True:
+        snapshot = latest_inventory_snapshot(bot)
+        placed = next(
+            (
+                entry
+                for entry in snapshot.get("placed_items", [])
+                if entry.get("container_id", "").startswith("pack_")
+                and entry["item"].get("item_id") != COFFIN_ID
+            ),
+            None,
+        )
+        if placed is None:
+            return
+        item = placed["item"]
+        row, col = first_free_cell(
+            snapshot,
+            "body_pocket",
+            int(item.get("grid_width", item.get("grid_w", 1))),
+            int(item.get("grid_height", item.get("grid_h", 1))),
+        )
+        instance_id = int(item["instance_id"])
+        anchor = last_event_time(bot)
+        send_move(
+            bot,
+            instance_id,
+            {
+                "kind": "container",
+                "container_id": placed["container_id"],
+                "row": placed["row"],
+                "col": placed["col"],
+            },
+            {"kind": "container", "container_id": "body_pocket", "row": row, "col": col},
+        )
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > anchor
+            and any(
+                entry.get("container_id") == "body_pocket"
+                and entry["item"].get("instance_id") == instance_id
+                for entry in e.data["payload"].get("placed_items", [])
+            ),
+            timeout=_STEP_TIMEOUT,
+            description=f"把回收材料实例 {instance_id} 移入 body_pocket，释放棺材 footprint",
+        )
+
+
+def _clear_probe_reclaim_materials(bot) -> None:
+    """清掉临时探针 break 产生的回收材料，避免污染后续棺材 footprint。
+
+    这些材料来自仅用于寻找空气/验证 registry 的临时棺，不属于正式 break 的库存
+    断言。运行时 pack id 是 ``pack_<instance_id>``，dev 命令的 ``clearinv pack``
+    只匹配旧静态 id；这里用已验证的 ``clearinv all`` 清空携带面，再逐个恢复现有
+    棺材到 hotbar，防止误删尚未消费的测试实例。
+    """
+    snapshot = latest_inventory_snapshot(bot)
+    coffin_count = _coffin_count(snapshot)
+    pack_items = [
+        entry
+        for entry in snapshot.get("placed_items", [])
+        if entry.get("container_id", "").startswith("pack_")
+    ]
+    if not any(entry["item"].get("item_id") != COFFIN_ID for entry in pack_items):
+        return
+
+    anchor = last_event_time(bot)
+    bot.cmd("clearinv all")
+    bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and e.t > anchor
+        and _coffin_count(e.data["payload"]) == 0
+        and not e.data["payload"].get("placed_items")
+        and not any(e.data["payload"].get("hotbar", [])),
+        timeout=_STEP_TIMEOUT,
+        description="清掉临时探针 break 的携带面回收材料，准备恢复 hotbar 棺材",
+    )
+
+    for slot in range(coffin_count):
+        give_anchor = last_event_time(bot)
+        bot.cmd(f"give {COFFIN_ID} 1")
+        given = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > give_anchor
+            and _coffin_count(e.data["payload"]) >= 1,
+            timeout=_STEP_TIMEOUT,
+            description=f"恢复探针清理前的第 {slot + 1}/{coffin_count} 口棺材",
+        )
+        _park_coffin_in_hotbar(
+            bot, _latest_coffin_instance_id(given.data["payload"]), slot
+        )
 
 
 def _wait_coffin_count(bot, expected, after_t, timeout=_STEP_TIMEOUT, description=None):
@@ -214,6 +412,23 @@ def _coffin_locations(snapshot) -> str:
     return ", ".join(parts) or "∅"
 
 
+def _container_debug(snapshot) -> str:
+    """诊断容器容量/占用，定位动态探针后的 grant full。"""
+    descriptions = []
+    for container in snapshot.get("containers", []):
+        items = [
+            f"{placed['item'].get('item_id')}#{placed['item'].get('instance_id')}"
+            f"@{placed.get('row')},{placed.get('col')}"
+            for placed in snapshot.get("placed_items", [])
+            if placed.get("container_id") == container.get("id")
+        ]
+        descriptions.append(
+            f"{container.get('id')}={container.get('rows')}x{container.get('cols')}"
+            f"[{';'.join(items) or '∅'}]"
+        )
+    return ", ".join(descriptions) or "∅"
+
+
 def _give_barrier(bot, expected_count, timeout=_STEP_TIMEOUT, description=None):
     """give 一棺并以该 give 的 inventory_snapshot 作 server 权威水位线 + 断言载体。
 
@@ -237,6 +452,7 @@ def _give_barrier(bot, expected_count, timeout=_STEP_TIMEOUT, description=None):
     sleep 1.0s（≈20 tick）让 give 落在后续独立 tick，保证 give 命令**执行**且其快照
     可观测。该 sleep 是防御性措辞，不放松任何计数断言。
     """
+    _park_non_coffin_items_in_body_pocket(bot)
     time.sleep(1.0)
     give_anchor = last_event_time(bot)
     bot.cmd(f"give {COFFIN_ID} 1")
@@ -288,6 +504,7 @@ def _snapshot_debug(bot, after_t):
             f"cnt={_coffin_count(e.data['payload'])} [{_coffin_locations(e.data['payload'])}]"
             for e in snaps[-8:]
         )
+        + f"；containers: {_container_debug(snaps[-1].data['payload']) if snaps else '∅'}"
         + f"；最近 {len(raw[-10:])} 条 raw bong:server_data: "
         + "; ".join(raw_desc)
         + f"；最近 {len(chat_dev[-4:])} 条 [dev] chat: "
@@ -303,6 +520,7 @@ def _give_coffin_instance(bot, after_t, timeout=_STEP_TIMEOUT) -> int:
     第二次 give 会瞬间命中先前 give 的旧快照，latest 取到的仍是旧计数快照（无实例）。
     必须 e.t > after_t 锚定「本次 give 之后」的新快照。
     """
+    _park_non_coffin_items_in_body_pocket(bot)
     bot.cmd(f"give {COFFIN_ID} 1")
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
@@ -312,7 +530,7 @@ def _give_coffin_instance(bot, after_t, timeout=_STEP_TIMEOUT) -> int:
         timeout=timeout,
         description=f"give {COFFIN_ID} 之后含实例的新 inventory_snapshot",
     )
-    return _first_coffin_instance_id(event.data["payload"])
+    return _latest_coffin_instance_id(event.data["payload"])
 
 
 def _send_coffin_place(bot, pos, instance_id) -> None:
@@ -349,6 +567,87 @@ def _send_coffin_enter(bot, pos) -> None:
             "y": pos[1],
             "z": pos[2],
         }
+    )
+
+
+def _anchor_coffin_probe_position(bot, candidate) -> None:
+    """把玩家锚到候选棺材上方，隔离出生点下坠对距离判定的干扰。"""
+    bot.set_position(
+        candidate[0] + 0.5,
+        candidate[1] + 2.0,
+        candidate[2] + 0.5,
+        on_ground=False,
+    )
+
+
+def _place_on_first_air_layer(bot, px, py, pz, instance_id):
+    """通过真实放置消费结果找出当前列首个可放置空气层。
+
+    Bot 协议观察面没有方块查询；逐层提交同一个实例，只有服务端确认消费后才接受
+    该层。非空气层会静默拒绝并保留实例，下一层继续探测。这样既不引入测试专用
+    server API，也把实际成功坐标交给后续所有契约断言。
+    """
+    last_attempt = None
+    for offset in AIR_LAYER_SEARCH_OFFSETS:
+        candidate = (px + PLACE_OFFSET, py + offset, pz)
+        _anchor_coffin_probe_position(bot, candidate)
+        attempt_anchor = last_event_time(bot)
+        _send_coffin_place(bot, candidate, instance_id)
+        try:
+            consumed = _wait_coffin_count(
+                bot,
+                0,
+                attempt_anchor,
+                timeout=_AIR_LAYER_PROBE_TIMEOUT,
+                description=f"动态空气层探测 {candidate} 成功消费棺材实例",
+            )
+        except BotAssertionError:
+            last_attempt = candidate
+            continue
+        return candidate, attempt_anchor, consumed
+    raise BotAssertionError(
+        f"动态空气层探测失败：从 y={py} 向上尝试 {list(AIR_LAYER_SEARCH_OFFSETS)}，"
+        f"最后目标={last_attempt}；服务端未确认任何目标为空气并消费实例"
+    )
+
+
+def _find_non_air_layer(bot, px, first_air_y, pz, instance_id):
+    """从首个空气层向下找第一个真实静默拒绝层，并清理途中误放置。
+
+    玩家 Position 的整数 y 不一定等于地表 support y：出生点可能悬在多层空气中，
+    因而 ``py - 1`` 不能证明目标非空气。每个向下候选都只走 coffin_place 协议；若
+    真实 coffin marker spawn 则说明它确实放置成功，立即用 coffin_break 清场并给下一层
+    一个新实例；首个未 spawn marker 的候选在已排除距离、维度和 registry 碰撞后只能是
+    非空气拒绝。这里不能用库存 count 变化作为成功判据：inventory_snapshot 与实体事件
+    走不同的异步路径，快照可能晚到而把已消费实例误判成拒绝。
+    """
+    for depth in _NON_AIR_PROBE_DEPTHS:
+        candidate = (px, first_air_y - depth, pz)
+        _anchor_coffin_probe_position(bot, candidate)
+        attempt_anchor = last_event_time(bot)
+        _send_coffin_place(bot, candidate, instance_id)
+        try:
+            marker = _wait_coffin_marker_spawn(
+                bot,
+                candidate,
+                attempt_anchor,
+                timeout=_MARKER_PROBE_TIMEOUT,
+                description=f"向下探测 {candidate} 成功后的临时 marker",
+            )
+        except BotAssertionError:
+            return candidate, instance_id
+
+        teardown_anchor = last_event_time(bot)
+        _send_coffin_break(bot, candidate)
+        _wait_coffin_marker_destroy(bot, marker, teardown_anchor)
+        _clear_probe_reclaim_materials(bot)
+
+        give_anchor = last_event_time(bot)
+        instance_id = _give_coffin_instance(bot, give_anchor)
+
+    raise BotAssertionError(
+        f"向下探测深度 {list(_NON_AIR_PROBE_DEPTHS)} 仍未找到非空气拒绝点："
+        f"first_air_y={first_air_y}"
     )
 
 
@@ -742,21 +1041,68 @@ def _assert_no_enter_transition_after(
 def run(env) -> None:
     with env.new_bot("CoPl") as bot:
         wait_for_ready(bot)
+        # The dev fallback world materializes its flat test surface only in the loaded
+        # center chunk area, while spawn_distribution also contains out-of-area anchors.
+        # Keep the scenario black-box but anchor this lifecycle test to that loaded
+        # surface; the coffin target y is still discovered dynamically below.
+        bot.set_position(0.5, 66.0, 0.5, on_ground=True)
+        # `clearinv all` 保留有效 worn 背包，但出生剑仍占主手；先把出生剑移进
+        # body_pocket，再清第二次携带面。直接 `clearinv naked` 会留下 orphan pack_*，
+        # 之后所有 /give 都会被容器 owner 校验拒绝（对齐其它库存场景的两步清场）。
+        initial = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and isinstance(
+                e.data["payload"].get("equipped", {}).get("main_hand_held"), dict
+            )
+            and e.data["payload"]["equipped"]["main_hand_held"].get("item_id")
+            == "iron_sword",
+            timeout=_STEP_TIMEOUT,
+            description="join 后取得出生剑实例，作为清场同步前的权威快照",
+        ).data["payload"]
+        starter_item = initial["equipped"]["main_hand_held"]
         bot.cmd("clearinv all")
-        bot.expect_chat("[dev] clearinv", timeout=_STEP_TIMEOUT)
+        # clearinv handler 的成功回执是 chat，且不主动 emit snapshot；给 command 一个
+        # tick 进入 Update 后再发 move，move 自己的 inventory_snapshot 才是可靠屏障。
+        time.sleep(0.5)
+        move_anchor = last_event_time(bot)
+        send_move(
+            bot,
+            int(starter_item["instance_id"]),
+            {"kind": "equip", "slot": "main_hand", "state": "held"},
+            {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0},
+        )
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > move_anchor
+            and e.data["payload"].get("equipped", {}).get("main_hand_held") is None,
+            timeout=_STEP_TIMEOUT,
+            description="出生剑移入 body_pocket 后主手为空",
+        )
+        clear_anchor = last_event_time(bot)
+        bot.cmd("clearinv all")
+        time.sleep(0.5)
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > clear_anchor
+            and e.data["payload"].get("placed_items") == [],
+            timeout=_STEP_TIMEOUT,
+            description="二次 clearinv all 后清空携带面并保留有效 worn 背包",
+        )
 
+        # 默认 spawn_distribution 允许落在 raster 覆盖外的动态地形，出生点高度也不
+        # 固定。保留 server 发来的权威位置，再由真实放置请求向上确认首个空气层；这
+        # 仍只走 C2S coffin_place 协议，不读 server 方块状态或测试专用 API。
         assert bot.position is not None, "需要 pos_look 后的 bot.position 来定棺位"
         px, py, pz = (int(v) for v in bot.position)
-        # y+1：target 必须落在空气层（见模块顶部注释）
-        place_pos = (px + PLACE_OFFSET, py + 1, pz)
 
         # ── 正向：放置消费恰好一个实例 ──────────────────────────────────
         give_anchor = last_event_time(bot)
         first_instance = _give_coffin_instance(bot, give_anchor)
-        anchor = last_event_time(bot)
-        _send_coffin_place(bot, place_pos, first_instance)
-        consumed = _wait_coffin_count(
-            bot, 0, anchor, description="首放成功后 coffin 应彻底消费（1→0），且不产生复本"
+        place_pos, anchor, consumed = _place_on_first_air_layer(
+            bot, px, py, pz, first_instance
         )
         assert _coffin_count(consumed) == 0, "首放必须恰好消费 1 个实例"
         # 世界侧：等 mundane coffin 的 marker 渲染实体 spawn——证明世界确实获得了棺实体，
@@ -773,11 +1119,12 @@ def run(env) -> None:
         second_instance = _give_coffin_instance(bot, give_anchor)
         anchor = last_event_time(bot)
         _send_coffin_place(bot, place_pos, second_instance)
-        _give_barrier(
+        _park_coffin_in_hotbar(bot, second_instance, 0)
+        duplicate_snapshot = _give_barrier(
             bot,
             2,
             description=(
-                "双放被拒后 +1 give 应恰好 count==2（原保留 1 + 新增 1）——"
+                "双放被拒后 +1 give 应恰好 count==2（第二实例 + 新增 1）——"
                 "若 count==1 说明双放偷扣了第二实例（double-grant）"
             ),
         )
@@ -789,6 +1136,7 @@ def run(env) -> None:
             anchor,
             description="重复放置拒绝路径不得 spawn 第二个 coffin marker",
         )
+        _park_coffin_in_hotbar(bot, _latest_coffin_instance_id(duplicate_snapshot), 1)
 
         # ── 负向：registry 双键 upper-key 碰撞（review finding [major]）──
         # 已注册棺占 (lower.x, y, z)..(lower.x+1, y, z) 两格，registry 同时以 lower 与
@@ -802,11 +1150,12 @@ def run(env) -> None:
         upper_instance = _give_coffin_instance(bot, upper_give_anchor)
         upper_anchor = last_event_time(bot)
         _send_coffin_place(bot, upper_pos, upper_instance)
-        _give_barrier(
+        _park_coffin_in_hotbar(bot, upper_instance, 2)
+        upper_snapshot = _give_barrier(
             bot,
             4,
             description=(
-                "upper-key 重叠放置被拒后 +1 give 应恰好 count==4（原保留 3 + 新增 1）——"
+                "upper-key 重叠放置被拒后 +1 give 应恰好 count==4（三个拒绝实例 + 新增 1）——"
                 "若 count==3 说明实现吞掉了 upper-key 碰撞路径的实例"
             ),
         )
@@ -815,55 +1164,64 @@ def run(env) -> None:
             upper_anchor,
             description="upper-key 重叠拒绝路径不得 spawn coffin marker",
         )
+        _park_coffin_in_hotbar(bot, _latest_coffin_instance_id(upper_snapshot), 3)
         # review finding [major] round 8：upper-key 拒绝段只查「库存保留 + 无 spawn」——
         # 一个先写新棺 secondary 键（upper_pos+1x）再在 primary 键 upper_pos 处发现碰撞、
         # 不消费不 spawn 就返回的错误插入路径全过。该泄漏键 (px,py+1,pz) 永不被后续
         # break/re-place 覆盖（只碰原 place_pos 双键），残留使碰撞其格的无关放置被误拒。
         # 对**新尝试棺的另一个 registry 坐标**（upper_pos+(1,0,0)，即 place_pos+2x）做
-        # state-applying 复查：正确实现从未写该键 → 合法放置成功 + spawn marker +
-        # teardown break；泄漏实现的 already-registered 拒绝 → 超时红。
+        # state-applying 复查。该坐标在动态地形上可能是实心块，不能再用 place 复查把
+        # not-empty 混进结论；coffin_enter 直接命中 registry，正确实现静默 no-op，
+        # 泄漏实现会产生进棺状态转变并红。
         uk_leak_pos = (place_pos[0] + 2, place_pos[1], place_pos[2])
-        uk_leak_give = _give_barrier(
-            bot,
-            5,
-            description="upper-key 拒绝段（net 4）后再 give 应恰好 count==5",
-        )
-        uk_leak_instance = _first_coffin_instance_id(uk_leak_give)
         uk_leak_anchor = last_event_time(bot)
-        _send_coffin_place(bot, uk_leak_pos, uk_leak_instance)
-        uk_leak_marker = _wait_coffin_marker_spawn(
+        _send_coffin_enter(bot, uk_leak_pos)
+        _assert_no_enter_transition_after(
             bot,
-            uk_leak_pos,
             uk_leak_anchor,
+            uk_leak_pos,
             description=(
-                "upper-key 拒绝段后在被拒新棺的另一个 registry 坐标 upper_pos+(1,0,0)"
-                " 成功放置并 spawn marker——若拒绝时泄漏写入了该 secondary 键，此处"
-                " already-registered 超时红"
+                "upper-key 拒绝段后对 place_pos+2x 的 registry 残留探针：正确实现无条目"
+                " → coffin_enter 静默；若拒绝时写入 secondary 键则进棺状态转变红"
             ),
         )
-        uk_leak_teardown_anchor = last_event_time(bot)
-        _send_coffin_break(bot, uk_leak_pos)
-        _wait_coffin_marker_destroy(bot, uk_leak_marker, uk_leak_teardown_anchor)
 
         # ── 负向：非空气目标（脚下方块）+ 过远目标，各静默拒绝 ──────────
-        anchor = last_event_time(bot)
         probe_instance = _first_coffin_instance_id(latest_inventory_snapshot(bot))
-        # 非空气 probe 用 py-1（脚下实心地表，fixture 全平面 y=71/72 均为实心）；
+        # 非空气 probe 从首个成功空气层向下逐层走真实协议，找到首个静默拒绝层；
         # 过远 probe 用 fail_t（空气层、恰过 6.0m 边界），保证唯一拒绝理由是距离
         # 而非 not empty。pass_t/fail_t 把距离比较方向夹在网格可构造的最窄带
         # （review finding [3]，round 6：旧 offset=10 只测「过远必拒」，比较方向
         # 无「恰内侧 + 恰外侧」配对保护——`< 36.0` 或过松 bound 都能全绿）。
-        air_y = py + 1
+        air_y = place_pos[1]
         # 首放棺占 (place_pos)..(place_pos+1x) 两格，从边界扫描中排除——pass_t 若落
         # 在被占格会以 not_empty 拒，造成与距离无关的假红。
         coffin_cells = {
             (place_pos[0], place_pos[1], place_pos[2]),
             (place_pos[0] + 1, place_pos[1], place_pos[2]),
         }
+        boundary_origin = bot.position
+        assert boundary_origin is not None, "需要边界探针计算前的权威玩家站位"
         pass_t, fail_t = _distance_boundary_pair(bot, air_y, exclude=coffin_cells)
-        _send_coffin_place(bot, (px, py - 1, pz), probe_instance)
+        non_air_pos, probe_instance = _find_non_air_layer(
+            bot, px, air_y, pz, probe_instance
+        )
+        # _find_non_air_layer temporarily anchors the player at each lower probe layer.
+        # Restore the station used to compute pass_t/fail_t; otherwise the subsequent
+        # boundary placement is evaluated from the probe's lower y and pass_t becomes
+        # an unrelated too-far target.
+        bot.set_position(*boundary_origin)
+        time.sleep(1.0)
+        # The rejected probe remains in the runtime pack.  A mundane coffin occupies
+        # the pack's full 2x3 footprint, so park it before the next /give barrier can
+        # allocate another instance; hotbar[4] is reserved after slots 0..3 above.
+        _park_coffin_in_hotbar(bot, probe_instance, 4)
+        # Exponential search legitimately spawned and tore down temporary markers;
+        # start the rejection-only observation window after that cleanup.
+        anchor = last_event_time(bot)
+        _send_coffin_place(bot, non_air_pos, probe_instance)
         _send_coffin_place(bot, fail_t, probe_instance)
-        _give_barrier(
+        non_air_snapshot = _give_barrier(
             bot,
             5,
             description="非空气+过远双拒后 +1 give 应恰好 count==5，实例分文未扣",
@@ -875,6 +1233,7 @@ def run(env) -> None:
             anchor,
             description="非空气/过远拒绝路径不得 spawn coffin marker",
         )
+        _park_coffin_in_hotbar(bot, _latest_coffin_instance_id(non_air_snapshot), 5)
 
         # review finding [2]（round 6）：registry 残留复查此前只覆盖 stale 拒绝段——
         # 非空气/过远拒绝段的「无 spawn + 计数不变」会被「先插 registry 双键再早退
@@ -896,11 +1255,11 @@ def run(env) -> None:
 
         # (a) 非空气坐标 enter 残留探针（对被拒坐标本身施加状态）
         na_anchor = last_event_time(bot)
-        _send_coffin_enter(bot, (px, py - 1, pz))
+        _send_coffin_enter(bot, non_air_pos)
         _assert_no_enter_transition_after(
             bot,
             na_anchor,
-            (px, py - 1, pz),
+            non_air_pos,
             description="非空气拒绝坐标的 enter 残留探针：正确实现应无进棺状态转变",
         )
 
@@ -910,7 +1269,7 @@ def run(env) -> None:
             6,
             description="非空气 enter 探针（不消费）后再 give 应恰好 count==6（5→6）",
         )
-        bp_instance = _first_coffin_instance_id(bp_give)
+        bp_instance = _latest_coffin_instance_id(bp_give)
         bp_anchor = last_event_time(bot)
         _send_coffin_place(bot, pass_t, bp_instance)
         bp_marker = _wait_coffin_marker_spawn(
@@ -925,6 +1284,7 @@ def run(env) -> None:
         bp_break_anchor = last_event_time(bot)
         _send_coffin_break(bot, pass_t)
         _wait_coffin_marker_destroy(bot, bp_marker, bp_break_anchor)
+        _clear_probe_reclaim_materials(bot)
 
         # (c) 过远 fail_t 复查 + teardown（需靠近后放置才有效，故 bot 先走到
         # fail_t 正下方地面块、放完 break 再走回原位——stale 段按原站位几何判定）
@@ -933,7 +1293,7 @@ def run(env) -> None:
             6,
             description="边界 pass_t 复查恰好消费 1 个实例后再 give 应恰好 count==6",
         )
-        tf_instance = _first_coffin_instance_id(tf_give)
+        tf_instance = _latest_coffin_instance_id(tf_give)
         tf_origin = bot.position
         assert tf_origin is not None, "需要 bot.position 定 fail_t 复查站位"
         bot.move_to(fail_t[0], tf_origin[1], fail_t[2], speed=5.5)
@@ -952,6 +1312,7 @@ def run(env) -> None:
         tf_break_anchor = last_event_time(bot)
         _send_coffin_break(bot, fail_t)
         _wait_coffin_marker_destroy(bot, tf_marker, tf_break_anchor)
+        _clear_probe_reclaim_materials(bot)
         bot.move_to(tf_origin[0], tf_origin[1], tf_origin[2], speed=5.5)
         time.sleep(1.0)
 
@@ -974,7 +1335,7 @@ def run(env) -> None:
             6,
             description="fail_t 复查段（net 5）后再 give 应恰好 count==6，exact-36 探针前置",
         )
-        exact_instance = _first_coffin_instance_id(exact_give)
+        exact_instance = _latest_coffin_instance_id(exact_give)
         exact_anchor = last_event_time(bot)
         bot.set_position(*exact_bot_pos)
         time.sleep(1.0)
@@ -991,6 +1352,7 @@ def run(env) -> None:
         exact_break_anchor = last_event_time(bot)
         _send_coffin_break(bot, exact_target)
         _wait_coffin_marker_destroy(bot, exact_marker, exact_break_anchor)
+        _clear_probe_reclaim_materials(bot)
         bot.set_position(*tf_origin)
         time.sleep(1.0)
 
@@ -1000,10 +1362,10 @@ def run(env) -> None:
         # 空气层、距玩家 ≈1.4 格（≤6.0 近距）且未注册处，唯一拒绝理由是实例缺失而非
         # not empty / 距离 / already-registered。若实现无视 item_instance_id 而吞掉
         # 任一可用棺材，count 会少 1 → 红。
-        stale_pos = (px, py + 1, pz + 1)
+        stale_pos = (px, air_y, pz + 1)
         stale_anchor = last_event_time(bot)
         _send_coffin_place(bot, stale_pos, first_instance)
-        _give_barrier(
+        stale_snapshot = _give_barrier(
             bot,
             6,
             description=(
@@ -1016,6 +1378,7 @@ def run(env) -> None:
             stale_anchor,
             description="stale instance id 拒绝路径不得 spawn coffin marker",
         )
+        _park_coffin_in_hotbar(bot, _latest_coffin_instance_id(stale_snapshot), 6)
 
         # review finding [2]（round 5）：拒绝路径只断言「无 spawn + 计数不变」——一个
         # 在 stale_pos 拒绝时先插入 registry 双键（lower/upper）再早退（不消费实例、
@@ -1043,6 +1406,7 @@ def run(env) -> None:
         stale_teardown_anchor = last_event_time(bot)
         _send_coffin_break(bot, stale_pos)
         _wait_coffin_marker_destroy(bot, stale_recheck_marker, stale_teardown_anchor)
+        _clear_probe_reclaim_materials(bot)
 
         # ── 负向：异维 → 逐字 chat 拒绝，实例保留 ───────────────────────
         tp_anchor = last_event_time(bot)
@@ -1126,6 +1490,7 @@ def run(env) -> None:
         # total_baseline+1 断言照样过。此 count==7 快照（异维拒后权威状态、break
         # intent 之前）即 break 前全量基线，供 break 后 +1 give 快照与之比对。
         total_pre_break = _total_items(pre_break_snapshot)
+        _park_coffin_in_hotbar(bot, _latest_coffin_instance_id(pre_break_snapshot), 7)
 
         # ── 破坏：CoffinBreak 单发清场，同一坐标可重放 ──────────────────
         break_anchor = last_event_time(bot)
@@ -1152,16 +1517,40 @@ def run(env) -> None:
             8,
             description="首次破坏后 +1 give 应恰好 count==8（破坏只清世界实体，不碰背包实例）",
         )
-        # review finding [1]（round 5）：break 后 +1 give 的 pre_second 全量必须恰好
-        # = break 前基线 + 1（仅 give 的这口棺）。错误实现若在首次 break despawn
-        # marker 时 grant 非棺回收料，_total_items 会多出 1 → 红——这就是「break 前
-        # vs break 后立即比较」缺口补上的直接断言，且不被任何后续 give 掩盖。
-        assert _total_items(pre_second) == total_pre_break + 1, (
-            f"首次 coffin_break 不得产生库存副作用：break 前全量 {total_pre_break}，"
-            f"break 后 +1 give 应恰好 {total_pre_break + 1}（仅 give 的这口棺），"
-            f"实际 {_total_items(pre_second)}——despawn 时 grant 回收料的错误实现在此红"
+        # 首次 break 按生产契约会返还随机部分配方材料；锁定完整差分，避免把合法
+        # reclaim 误判成副作用，也避免实现额外发放任意物品。+1 give 只能新增一口棺，
+        # 非棺材新增只能来自 mundane 配方的两种材料及其配方上限。
+        pre_break_items = _template_counts(pre_break_snapshot)
+        pre_second_items = _template_counts(pre_second)
+        first_break_delta = {
+            item_id: count - pre_break_items.get(item_id, 0)
+            for item_id, count in pre_second_items.items()
+            if count != pre_break_items.get(item_id, 0)
+        }
+        assert first_break_delta.get(COFFIN_ID) == 1, (
+            f"首次 coffin_break 后 +1 give 必须恰好新增 1 口棺材，"
+            f"break 前后差分={first_break_delta}"
+        )
+        reclaim_delta = {
+            item_id: count
+            for item_id, count in first_break_delta.items()
+            if item_id != COFFIN_ID
+        }
+        assert set(reclaim_delta) <= {"ling_mu_ban", "ling_mu_gun"}, (
+            f"首次 coffin_break 的非棺新增只能是 mundane 配方材料，实际差分={reclaim_delta}"
+        )
+        assert 0 <= reclaim_delta.get("ling_mu_ban", 0) <= 6, (
+            f"ling_mu_ban 回收数量必须落在 Break 配方上限 [0,6]，实际={reclaim_delta}"
+        )
+        assert 0 <= reclaim_delta.get("ling_mu_gun", 0) <= 2, (
+            f"ling_mu_gun 回收数量必须落在 Break 配方上限 [0,2]，实际={reclaim_delta}"
+        )
+        assert _total_items(pre_second) >= total_pre_break + 1, (
+            f"首次 coffin_break 后至少应包含 +1 give 的棺材，break 前全量 {total_pre_break}，"
+            f"实际 {_total_items(pre_second)}"
         )
         total_baseline = _total_items(pre_second)
+        _park_coffin_in_hotbar(bot, _latest_coffin_instance_id(pre_second), 8)
         noop_anchor = last_event_time(bot)
         bot.intent(
             {
@@ -1172,8 +1561,8 @@ def run(env) -> None:
                 "z": place_pos[2],
             }
         )
-        # 第二次 break 处理完毕的水位线：+1 give 后 count 仍==9（无消费）——
-        # 若重复破坏再 grant 回收料，_total_items 会超过基线+1（double-grant 红）。
+        # 第二次 break 处理完毕的水位线：+1 give 后只新增一口棺——若重复破坏再
+        # grant 回收料，模板差分会暴露 double-grant。
         post_second = _give_barrier(
             bot,
             9,
@@ -1182,9 +1571,16 @@ def run(env) -> None:
                 "第二次 break 不得消费任何实例"
             ),
         )
-        assert _total_items(post_second) == total_baseline + 1, (
-            f"重复 coffin_break（空→空）必须是无副作用 no-op：全量库存仅应多出 give 的 1 个棺"
-            f"（{total_baseline} -> {_total_items(post_second)}），不得扣料/加料/重复 grant"
+        baseline_items = _template_counts(pre_second)
+        post_second_items = _template_counts(post_second)
+        second_break_delta = {
+            item_id: count - baseline_items.get(item_id, 0)
+            for item_id, count in post_second_items.items()
+            if count != baseline_items.get(item_id, 0)
+        }
+        assert second_break_delta == {COFFIN_ID: 1}, (
+            f"重复 coffin_break（空→空）必须只新增 give 的 1 个棺材，"
+            f"实际模板差分={second_break_delta}（基线全量={total_baseline}）"
         )
         _assert_no_coffin_marker_destroy(
             bot,
