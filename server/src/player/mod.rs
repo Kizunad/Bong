@@ -1452,9 +1452,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-disconnect-craft-checkpoint",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
