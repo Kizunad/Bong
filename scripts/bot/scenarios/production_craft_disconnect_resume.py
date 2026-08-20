@@ -15,6 +15,9 @@ MODULES = ["craft", "inventory", "persistence"]
 
 RECIPE_ID = "workbench.weapon.stone_knife"
 DISCONNECT_SETTLE_SECONDS = 0.5
+# craft 进度按 production Update tick 推进，状态只在全局 20-tick 边界推送。
+# 全量 gate 实测可降至 2 TPS：最坏相位要等 39 tick，再留 packet/I/O 余量。
+CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS = 25.0
 
 
 @contextmanager
@@ -92,7 +95,7 @@ def run(env) -> None:
             and event.data["payload_type"] == "craft_session_state"
             and event.data["payload"].get("active") is True
             and event.data["payload"].get("elapsed_ticks", 0) >= 20,
-            timeout=10.0,
+            timeout=CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
             description="断线前已推进至少 20 tick 的 craft session",
         ).data["payload"]
         elapsed_before_disconnect = session["elapsed_ticks"]

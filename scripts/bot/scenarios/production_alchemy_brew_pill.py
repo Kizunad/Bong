@@ -12,15 +12,11 @@
 - 投料后必须**火候干预**：`alchemy_intervention{kind:adjust_temp/inject_qi}`
   ——不调温不注真元 resolver 判 Waste 出渣（负→正对照的物理）。
 - **结算触发 = `alchemy_take_back`（收丹）**：handler 快进剩余 fire tick、
-  end_session 并 resolve → 丹经 alchemy_outcome_grant 入包（实测干预到位
-  bucket=Perfect）。
-- **观察面缺口记录（2026-07-07 实测）**：take_back 结算路径不发
-  `alchemy_outcome_resolved` payload（仅 log + inventory 变更）——玩家侧
-  「丹成几品」无专属回执，client 只能从背包变化推断，待补接线。
+  end_session 并 resolve → `alchemy_outcome_resolved` 只发给施术者，随后丹经
+  alchemy_outcome_grant 入包（干预到位时 bucket=Perfect）。
 """
 
 import math
-import time
 
 from bot.scenarios._inventory_helpers import (
     find_item,
@@ -77,6 +73,28 @@ def _assert_recipe_guidance(
         "completed": stage_completed,
         "missed": False,
     }, f"投料 stage 必须完整且状态准确，实际 {stage}"
+
+
+def _assert_outcome(payload: dict) -> None:
+    expected = {
+        "v": 1,
+        "type": "alchemy_outcome_resolved",
+        "bucket": "perfect",
+        "recipe_id": RECIPE_ID,
+        "pill": PILL_ID,
+        "quality": 1.0,
+        "toxin_amount": 0.15,
+        "toxin_color": "gentle",
+        "qi_gain": 0.0,
+        "side_effect_tag": None,
+        "flawed_path": False,
+        "damage": None,
+        "meridian_crack": None,
+    }
+    assert payload == expected, (
+        "真实炼丹结算必须在 field 14 保留 Perfect 丹丸的全部 optional/enum 字段；"
+        f"expected={expected}, actual={payload}"
+    )
 
 
 def run(env) -> None:
@@ -312,25 +330,71 @@ def run(env) -> None:
             "调温与注气两次干预必须一起进入 session 快照"
         )
 
-        # 收丹 = 结算触发：handle_alchemy_take_back 快进剩余 fire tick、
-        # end_session 并 resolve（丹成不靠墙钟等待）
-        anchor = last_event_time(bot)
-        bot.intent(
-            {
-                "type": "alchemy_take_back",
-                "v": 1,
-                "furnace_pos": list(fpos),
-                "slot_idx": 0,
-            }
-        )
-        finished_furnace = bot.wait_for(
-            lambda e: e.kind == "server_data"
-            and e.data["payload_type"] == "alchemy_furnace"
-            and e.t > anchor
-            and e.data["payload"]["has_session"] is False,
-            timeout=15.0,
-            description="take_back 后炉快照必须显示 session 已移除",
-        )
+        with env.new_bot("Bystander") as bystander:
+            wait_join_and_inventory(bystander)
+            bystander_anchor = last_event_time(bystander)
+
+            # 收丹 = 结算触发：handle_alchemy_take_back 快进剩余 fire tick、
+            # end_session 并 resolve（丹成不靠墙钟等待）
+            anchor = last_event_time(bot)
+            bot.intent(
+                {
+                    "type": "alchemy_take_back",
+                    "v": 1,
+                    "furnace_pos": list(fpos),
+                    "slot_idx": 0,
+                }
+            )
+            outcome = bot.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "alchemy_outcome_resolved"
+                and e.t > anchor,
+                timeout=15.0,
+                description=(
+                    "take_back 结算必须向施术者发送深解码 field 14 "
+                    "alchemy_outcome_resolved"
+                ),
+            )
+            _assert_outcome(outcome.data["payload"])
+
+            # Bystander is intentionally a non-operator observer. The server broadcasts the
+            # authorized brewer's barrier marker to every socket on the next ordered Update pass;
+            # use the bystander's own marker timestamp because Event.t clocks are per connection.
+            barrier_anchor = last_event_time(bot)
+            bot.cmd("supply_coffin barrier")
+            bot.wait_for(
+                lambda event: event.kind == "chat"
+                and event.t > barrier_anchor
+                and "[dev] supply_coffin barrier passed" in event.data["text"],
+                timeout=10.0,
+                description="结算后的 server-authoritative tick barrier",
+            )
+            bystander_barrier = bystander.wait_for(
+                lambda event: event.kind == "chat"
+                and event.t > bystander_anchor
+                and "[dev] supply_coffin barrier passed" in event.data["text"],
+                timeout=10.0,
+                description="旁观 Bot 收到同一 server-authoritative tick barrier",
+            )
+            leaked = [
+                event
+                for event in bystander.events_of("server_data")
+                if bystander_anchor < event.t <= bystander_barrier.t
+                and event.data["payload_type"] == "alchemy_outcome_resolved"
+            ]
+            assert leaked == [], (
+                "炼丹结算是施术者私有回执，旁观 Bot 不得收到 field 14；"
+                f"actual={leaked}"
+            )
+
+            finished_furnace = bot.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "alchemy_furnace"
+                and e.t > anchor
+                and e.data["payload"]["has_session"] is False,
+                timeout=15.0,
+                description="take_back 后炉快照必须显示 session 已移除",
+            )
         assert finished_furnace.data["payload"]["tier"] == 1
         finished_session = bot.wait_for(
             lambda e: e.kind == "server_data"

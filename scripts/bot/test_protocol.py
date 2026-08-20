@@ -10,11 +10,13 @@ from __future__ import annotations
 import ast
 import io
 import json
+import math
 import os
 import pathlib
 import re
 import shutil
 import shlex
+import signal
 import socket
 import struct
 import subprocess
@@ -38,11 +40,36 @@ from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
+from bot.scenarios._combat_helpers import (  # noqa: E402
+    is_outgoing_positive_hit,
+    wait_for_server_data_after,
+)
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
+    require_pack_container,
     wait_inventory_revision_after,
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
+)
+from bot.scenarios.combat_skill_cast import (  # noqa: E402
+    AUDIO_FLAG,
+    AUDIO_RECIPE_ID,
+    SKILL_ICON,
+    _assert_binding_feedback,
+    _is_dugu_audio_play,
+    _wait_successful_cast_sequence,
+)
+from bot.scenarios.cultivation_breakthrough import (  # noqa: E402
+    MIN_GATE_TPS as BREAKTHROUGH_MIN_GATE_TPS,
+    PHASE_TIMEOUT_MARGIN_SECONDS,
+    PHASES as BREAKTHROUGH_PHASES,
+    _phase_timeout_seconds,
+    _wait_authoritative_realm,
+    _wait_cinematic_terminal,
+)
+from bot.scenarios.cultivation_realm_qi import (  # noqa: E402
+    _chat_after,
+    _successful_command_and_chat,
 )
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     NON_CLAMP_EXPECTED_QI,
@@ -60,6 +87,10 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _set_qi_max_and_wait,
     _snapshot_after_server_tick_fence,
 )
+from bot.scenarios.inventory_container_open_minimal import (  # noqa: E402
+    _parse_storage_crate_source_kind,
+)
+from bot.scenarios.inventory_pack_move_intents import _uncover_pack  # noqa: E402
 from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_MANIFEST_ENV,
     FIXTURE_OWNED_ENV,
@@ -67,8 +98,28 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     _assert_raster_fixture_contract,
 )
 from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
+    CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
     DISCONNECT_SETTLE_SECONDS,
     _reconnectable_session,
+)
+from bot.scenarios.production_lingtian_gathering_intents import (  # noqa: E402
+    BOTANY_FIXTURE_PREFIX,
+    HERB_ID,
+    _is_matching_gathering_terminal,
+    _is_matching_harvest,
+    _parse_botany_fixture,
+    _surface_candidates,
+    _valid_target_pos,
+    _wait_gather_progress,
+)
+from bot.scenarios.production_spiritwood_full_inventory_drop import (  # noqa: E402
+    LUMBER_TERMINAL_TIMEOUT_SECONDS,
+)
+from bot.scenarios.terrain_join_chunk_delivery import (  # noqa: E402
+    EXPECTED_CI_CLUSTERS,
+    MIN_CHUNKS_AFTER_CENTER,
+    REQUIRED_ENV as FALLBACK_OWNED_ENV,
+    _assert_expected_cluster,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -217,13 +268,17 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+            expected_tiles = (
+                make_novice_raster_fixture.spawn_fixture_tiles()
+                | make_novice_raster_fixture.SPIRITWOOD_TILES
+            )
             self.assertEqual(
                 {(tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]},
-                {(0, 0), (4, 5), (5, 5), (4, 6), (5, 6)},
+                expected_tiles,
             )
             self.assertEqual(
                 manifest["world_bounds"],
-                {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
+                make_novice_raster_fixture._world_bounds(expected_tiles),
             )
             palette = manifest["biome_palette"]
             self.assertEqual(palette[4], "minecraft:meadow")
@@ -234,8 +289,12 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
                 self.assertLess(max(biome_ids), len(palette))
 
-            self.assertEqual(set((root / "tile_0_0" / "biome_id.bin").read_bytes()), {0})
-            for tile_x, tile_z in ((4, 5), (5, 5), (4, 6), (5, 6)):
+            for tile_x, tile_z in make_novice_raster_fixture.spawn_fixture_tiles():
+                self.assertEqual(
+                    set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
+                    {0},
+                )
+            for tile_x, tile_z in make_novice_raster_fixture.SPIRITWOOD_TILES:
                 self.assertEqual(
                     set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
                     {4},
@@ -244,7 +303,284 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
             self.assertEqual(spirit_biomes[seed_index], 4)
 
-    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
+    def test_fixture_rejects_spawn_and_spiritwood_biome_overlap(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value={next(iter(make_novice_raster_fixture.SPIRITWOOD_TILES))},
+        ):
+            with self.assertRaisesRegex(ValueError, "biome ownership would be ambiguous"):
+                self._generate(pathlib.Path(temp_dir))
+
+    def test_spawn_fixture_tiles_rejects_oversized_cluster_before_expansion(self):
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": 1_000_000_000.0,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "above safety limit"):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_union_over_limit_during_construction(self):
+        clusters = []
+        for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES + 1):
+            clusters.append(
+                {
+                    "anchor": [
+                        float(index * make_novice_raster_fixture.TILE_SIZE * 10),
+                        70.0,
+                        0.0,
+                    ],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+            )
+        config = {
+            "zones": [{"name": "spawn", "spawn_distribution": clusters}]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "spawn_distribution union covers at least 65 fixture tiles"
+            ):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_fixture_rejects_total_tile_union_before_writing(self):
+        spawn_tiles = {
+            (index, 0)
+            for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES)
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value=spawn_tiles,
+        ):
+            root = pathlib.Path(temp_dir)
+            with self.assertRaisesRegex(ValueError, "total tiles, above safety limit"):
+                self._generate(root)
+            self.assertFalse(
+                any(root.iterdir()),
+                "总 tile union 越界必须在创建 tile 目录和大文件前 fail closed",
+            )
+
+    def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            generated_tiles = {
+                (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
+            }
+
+            zones = json.loads(
+                make_novice_raster_fixture.DEFAULT_ZONES_PATH.read_text(
+                    encoding="utf-8"
+                )
+            )
+            spawn_zone = next(
+                zone for zone in zones["zones"] if zone["name"] == "spawn"
+            )
+            for cluster in spawn_zone["spawn_distribution"]:
+                x, _, z = cluster["anchor"]
+                radius = cluster["radius"]
+                for point_x, point_z in (
+                    (x - radius, z),
+                    (x + radius, z),
+                    (x, z - radius),
+                    (x, z + radius),
+                ):
+                    tile = (
+                        math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
+                        math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
+                    )
+                    self.assertIn(
+                        tile,
+                        generated_tiles,
+                        f"production spawn cluster boundary {point_x, point_z} 缺 fixture tile",
+                    )
+                    self.assertEqual(
+                        set(
+                            (
+                                root
+                                / f"tile_{tile[0]}_{tile[1]}"
+                                / "surface_id.bin"
+                            ).read_bytes()
+                        ),
+                        {0},
+                        f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
+                    )
+
+            bounds = manifest["world_bounds"]
+            for tile_x, tile_z in generated_tiles:
+                self.assertLessEqual(bounds["min_x"], tile_x * 256)
+                self.assertGreaterEqual(bounds["max_x"], (tile_x + 1) * 256 - 1)
+                self.assertLessEqual(bounds["min_z"], tile_z * 256)
+                self.assertGreaterEqual(bounds["max_z"], (tile_z + 1) * 256 - 1)
+
+    def test_spawn_fixture_tiles_rejects_missing_empty_or_invalid_distribution(self):
+        cases = [
+            ({"zones": []}, "missing the spawn zone"),
+            ({"zones": [{"name": "spawn", "spawn_distribution": []}]}, "has no spawn_distribution"),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": -1.0,
+                                    "weight": 1,
+                                    "safe_y": 72.0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": make_novice_raster_fixture.SURFACE_Y + 1,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+        ]
+
+        for config, expected_error in cases:
+            with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_boolean_anchor_components(self):
+        for index in range(3):
+            anchor = [0.0, 70.0, 0.0]
+            anchor[index] = True
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": anchor,
+                                "radius": 1.0,
+                                "weight": 1,
+                                "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, re.escape("invalid spawn_distribution[0]")
+                ):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_boolean_radius(self):
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": True,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, re.escape("invalid spawn_distribution[0]")
+            ):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_matches_production_u32_weight_contract(self):
+        invalid_weights = (None, 0, -1, 1.0, True, 1 << 32)
+        for weight in invalid_weights:
+            cluster = {
+                "anchor": [0.0, 70.0, 0.0],
+                "radius": 1.0,
+                "safe_y": 72.0,
+            }
+            label = "missing"
+            if weight is not None:
+                cluster["weight"] = weight
+                label = repr(weight)
+            config = {
+                "zones": [
+                    {"name": "spawn", "spawn_distribution": [cluster]}
+                ]
+            }
+            with self.subTest(weight=label), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, re.escape("invalid spawn_distribution[0]")
+                ):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+        for weight in (1, (1 << 32) - 1):
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": [0.0, 70.0, 0.0],
+                                "radius": 1.0,
+                                "weight": weight,
+                                "safe_y": 72.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(weight=weight), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                self.assertEqual(
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path),
+                    {(-1, -1), (-1, 0), (0, -1), (0, 0)},
+                )
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
             manifest_path = self._generate(root)
@@ -376,6 +712,115 @@ class ServerDataDecodeTest(unittest.TestCase):
             "production protobuf zone_info 应完整解出标量、repeated 与 optional 字段",
         )
 
+    def test_proto_breakthrough_cinematic_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_breakthrough_cinematic_bytes())
+
+        expected = {
+            "v": 1,
+            "type": "breakthrough_cinematic",
+            "actor_id": "offline:Break",
+            "phase": "prelude",
+            "phase_tick": 0,
+            "phase_duration_ticks": 60,
+            "realm_from": "Awaken",
+            "realm_to": "Induce",
+            "result": "success",
+            "interrupted": False,
+            "world_pos": [-240.5, 72.0, -160.25],
+            "visible_radius_blocks": 96.0,
+            "global": False,
+            "distant_billboard": True,
+            "particle_density": 0.75,
+            "season_overlay": "calm",
+            "style": "awaken_induce",
+            "at_tick": 4242,
+        }
+        self.assertEqual(
+            {key: decoded[key] for key in expected},
+            expected,
+            "production protobuf field 71 必须完整解出突破 cinematic 数值与视觉身份",
+        )
+        self.assertAlmostEqual(decoded["intensity"], 0.35, places=6)
+
+    def test_breakthrough_decoder_contract_matches_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        cinematic = _proto_message_body(source, "BreakthroughCinematic")
+
+        self.assertEqual(
+            _proto_field_signature(envelope, "breakthrough_cinematic"),
+            ("BreakthroughCinematic", proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD),
+            "Bot field 71 分发常量必须与权威 ServerDataEnvelope 对齐",
+        )
+        expected_fields = {
+            "actor_id": ("string", 1),
+            "phase": ("string", 2),
+            "phase_tick": ("uint32", 3),
+            "phase_duration_ticks": ("uint32", 4),
+            "realm_from": ("string", 5),
+            "realm_to": ("string", 6),
+            "result": ("string", 7),
+            "interrupted": ("bool", 8),
+            "world_pos_x": ("double", 9),
+            "world_pos_y": ("double", 10),
+            "world_pos_z": ("double", 11),
+            "visible_radius_blocks": ("double", 12),
+            "global": ("bool", 13),
+            "distant_billboard": ("bool", 14),
+            "particle_density": ("float", 15),
+            "intensity": ("float", 16),
+            "season_overlay": ("string", 17),
+            "style": ("string", 18),
+            "at_tick": ("uint64", 19),
+        }
+        self.assertEqual(_proto_field_names(cinematic), set(expected_fields))
+        for field_name, expected in expected_fields.items():
+            with self.subTest(field=field_name):
+                self.assertEqual(
+                    _proto_field_signature(cinematic, field_name),
+                    expected,
+                    f"Bot BreakthroughCinematic.{field_name} 解码字段必须与权威 proto 对齐",
+                )
+
+    def test_bot_dispatch_emits_decoded_breakthrough_cinematic_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_breakthrough_cinematic_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(
+            decoded_events[0].data["payload_type"],
+            "breakthrough_cinematic",
+            "真实 Bot reader 必须把 envelope field 71 暴露成结构化观察事件",
+        )
+        self.assertEqual(decoded_events[0].data["payload"]["realm_to"], "Induce")
+
+    def test_breakthrough_cinematic_wrong_envelope_wire_type_is_not_dispatched(self):
+        self.assertIsNone(
+            proto_min.decode_server_data_envelope(
+                _pb_varint(proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD, 1)
+            ),
+            "oneof field 71 的 varint 不得冒充 BreakthroughCinematic message",
+        )
+
+    def test_breakthrough_cinematic_truncated_message_returns_none_publicly(self):
+        malformed = (
+            _pb_key(proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD, 2)
+            + _pb_raw_varint(4)
+            + b"ab"
+        )
+        self.assertIsNone(
+            decode_server_data_payload(malformed),
+            "截断的 field 71 必须 fail closed，而不是让 Bot reader 产出假 cinematic",
+        )
+
     def test_proto_inventory_snapshot_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_inventory_snapshot_bytes())
 
@@ -452,6 +897,263 @@ class ServerDataDecodeTest(unittest.TestCase):
             "expected reason=distance so the bot observes the server rejection cause, "
             f"actual={decoded['reason']}",
         )
+
+    def test_proto_p4_gathering_payloads_deep_decode_every_observable_field(self):
+        botany = (
+            _pb_string(1, "harvest:17")
+            + _pb_string(2, "plant:qingcao")
+            + _pb_string(3, "残青草")
+            + _pb_string(4, "qingcao")
+            + _pb_string(5, "careful")
+            + _pb_fixed64(6, 0.625)
+            + _pb_varint(7, 1)
+            + _pb_varint(8, 0)
+            + _pb_varint(9, 1)
+            + _pb_varint(10, 0)
+            + _pb_string(11, "被玩家移动打断")
+            + _pb_string(12, "toxic_spore")
+            + _pb_string(12, "sharp_leaf")
+            + _pb_fixed64(13, -12.5)
+            + _pb_fixed64(14, 73.0)
+            + _pb_fixed64(15, 38.25)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(25, botany)),
+            {
+                "v": 1,
+                "type": "botany_harvest_progress",
+                "session_id": "harvest:17",
+                "target_id": "plant:qingcao",
+                "target_name": "残青草",
+                "plant_kind": "qingcao",
+                "mode": "careful",
+                "progress": 0.625,
+                "auto_selectable": True,
+                "request_pending": False,
+                "interrupted": True,
+                "completed": False,
+                "detail": "被玩家移动打断",
+                "hazard_hints": ["toxic_spore", "sharp_leaf"],
+                "target_pos": [-12.5, 73.0, 38.25],
+            },
+        )
+
+        gathering = (
+            _pb_string(1, "gather:9")
+            + _pb_varint(2, 39)
+            + _pb_varint(3, 40)
+            + _pb_string(4, "碎铁矿")
+            + _pb_varint(5, 2)
+            + _pb_varint(6, 5)
+            + _pb_string(7, "pickaxe_iron")
+            + _pb_varint(8, 0)
+            + _pb_varint(9, 1)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(30, gathering)),
+            {
+                "v": 1,
+                "type": "gathering_session",
+                "session_id": "gather:9",
+                "progress_ticks": 39,
+                "total_ticks": 40,
+                "target_name": "碎铁矿",
+                "target_type": "ore",
+                "quality_hint": "perfect",
+                "tool_used": "pickaxe_iron",
+                "interrupted": False,
+                "completed": True,
+            },
+        )
+
+        lingtian = (
+            _pb_varint(1, 1)
+            + _pb_varint(2, 4)
+            + _pb_varint(3, (1 << 64) - 2)
+            + _pb_varint(4, 72)
+            + _pb_varint(5, 31)
+            + _pb_varint(6, 18)
+            + _pb_varint(7, 20)
+            + _pb_string(8, "qingcao")
+            + _pb_fixed32(10, 0.35)
+            + _pb_varint(11, 1)
+        )
+        decoded = decode_server_data_payload(_pb_message(31, lingtian))
+        self.assertEqual(
+            {key: decoded[key] for key in decoded if key != "dye_contamination"},
+            {
+                "v": 1,
+                "type": "lingtian_session",
+                "active": True,
+                "kind": "harvest",
+                "pos": [-2, 72, 31],
+                "elapsed_ticks": 18,
+                "target_ticks": 20,
+                "plant_id": "qingcao",
+                "source": None,
+                "dye_contamination_warning": True,
+            },
+        )
+        self.assertAlmostEqual(decoded["dye_contamination"], 0.35, places=6)
+
+    def test_optional_numeric_fields_ignore_wrong_wire_type_and_use_last_typed_value(self):
+        malformed_lingtian = _pb_varint(10, 1)
+        decoded = decode_server_data_payload(_pb_message(31, malformed_lingtian))
+        self.assertIsNone(
+            decoded["dye_contamination"],
+            "同字段号但错误 wire type 不能伪装成 optional float32=0.0",
+        )
+
+        malformed_alchemy = (
+            _pb_varint(4, 1)
+            + _pb_string(5, "not-a-double")
+            + _pb_string(6, "not-an-enum")
+        )
+        decoded = decode_server_data_payload(_pb_message(14, malformed_alchemy))
+        self.assertIsNone(
+            decoded["quality"],
+            "同字段号但错误 wire type 不能伪装成 optional double=0.0",
+        )
+        self.assertIsNone(decoded["toxin_amount"])
+        self.assertIsNone(
+            decoded["toxin_color"],
+            "同字段号但错误 wire type 不能伪装成 optional enum unspecified",
+        )
+
+        mixed_lingtian = _pb_varint(10, 1) + _pb_fixed32(10, 0.25) + _pb_fixed32(10, 0.75)
+        decoded = decode_server_data_payload(_pb_message(31, mixed_lingtian))
+        self.assertAlmostEqual(
+            decoded["dye_contamination"],
+            0.75,
+            places=6,
+            msg="错误 wire 应按 unknown field 忽略，正确 float32 取最后一个 typed value",
+        )
+
+        mixed_alchemy = _pb_string(4, "ignored") + _pb_fixed64(4, 0.2) + _pb_fixed64(4, 0.8)
+        decoded = decode_server_data_payload(_pb_message(14, mixed_alchemy))
+        self.assertAlmostEqual(
+            decoded["quality"],
+            0.8,
+            places=9,
+            msg="错误 wire 应按 unknown field 忽略，正确 double 取最后一个 typed value",
+        )
+
+    def test_proto_alchemy_outcome_preserves_optional_presence_and_enum_identity(self):
+        pill = (
+            _pb_varint(1, 3)
+            + _pb_string(2, "hui_yuan_pill_v0")
+            + _pb_string(3, "hui_yuan_pill")
+            + _pb_fixed64(4, 0.4)
+            + _pb_fixed64(5, 0.8)
+            + _pb_varint(6, 10)
+            + _pb_fixed64(7, 18.0)
+            + _pb_string(8, "qi_cap_perm_minus_1")
+            + _pb_varint(9, 1)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(14, pill)),
+            {
+                "v": 1,
+                "type": "alchemy_outcome_resolved",
+                "bucket": "flawed",
+                "recipe_id": "hui_yuan_pill_v0",
+                "pill": "hui_yuan_pill",
+                "quality": 0.4,
+                "toxin_amount": 0.8,
+                "toxin_color": "turbid",
+                "qi_gain": 18.0,
+                "side_effect_tag": "qi_cap_perm_minus_1",
+                "flawed_path": True,
+                "damage": None,
+                "meridian_crack": None,
+            },
+        )
+
+        explode = (
+            _pb_varint(1, 5)
+            + _pb_fixed64(10, 12.0)
+            + _pb_fixed64(11, 0.2)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(14, explode)),
+            {
+                "v": 1,
+                "type": "alchemy_outcome_resolved",
+                "bucket": "explode",
+                "recipe_id": None,
+                "pill": None,
+                "quality": None,
+                "toxin_amount": None,
+                "toxin_color": None,
+                "qi_gain": None,
+                "side_effect_tag": None,
+                "flawed_path": False,
+                "damage": 12.0,
+                "meridian_crack": 0.2,
+            },
+            "absent proto optionals must remain None rather than counterfeit zero/empty values",
+        )
+
+    def test_p4_decoder_contract_matches_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        expected_envelope = {
+            "botany_harvest_progress": ("BotanyHarvestProgress", 25, "single"),
+            "gathering_session": ("GatheringSession", 30, "single"),
+            "lingtian_session": ("LingtianSessionData", 31, "single"),
+            "alchemy_outcome_resolved": ("AlchemyOutcomeResolved", 14, "single"),
+        }
+        for field_name, expected in expected_envelope.items():
+            with self.subTest(envelope_field=field_name):
+                self.assertEqual(_proto_field_metadata(envelope, field_name), expected)
+
+        expected_messages = {
+            "BotanyHarvestProgress": {
+                "session_id": ("string", 1, "single"), "target_id": ("string", 2, "single"),
+                "target_name": ("string", 3, "single"), "plant_kind": ("string", 4, "single"),
+                "mode": ("string", 5, "single"), "progress": ("double", 6, "single"),
+                "auto_selectable": ("bool", 7, "single"), "request_pending": ("bool", 8, "single"),
+                "interrupted": ("bool", 9, "single"), "completed": ("bool", 10, "single"),
+                "detail": ("string", 11, "single"), "hazard_hints": ("string", 12, "repeated"),
+                "target_pos_x": ("double", 13, "optional"), "target_pos_y": ("double", 14, "optional"),
+                "target_pos_z": ("double", 15, "optional"),
+            },
+            "GatheringSession": {
+                "session_id": ("string", 1, "single"), "progress_ticks": ("uint64", 2, "single"),
+                "total_ticks": ("uint64", 3, "single"), "target_name": ("string", 4, "single"),
+                "target_type": ("GatheringTargetType", 5, "single"),
+                "quality_hint": ("GatheringQualityHint", 6, "single"),
+                "tool_used": ("string", 7, "optional"), "interrupted": ("bool", 8, "single"),
+                "completed": ("bool", 9, "single"),
+            },
+            "LingtianSessionData": {
+                "active": ("bool", 1, "single"), "kind": ("LingtianSessionKind", 2, "single"),
+                "pos_x": ("int32", 3, "single"), "pos_y": ("int32", 4, "single"),
+                "pos_z": ("int32", 5, "single"), "elapsed_ticks": ("uint32", 6, "single"),
+                "target_ticks": ("uint32", 7, "single"), "plant_id": ("string", 8, "optional"),
+                "source": ("string", 9, "optional"), "dye_contamination": ("float", 10, "optional"),
+                "dye_contamination_warning": ("bool", 11, "single"),
+            },
+            "AlchemyOutcomeResolved": {
+                "bucket": ("AlchemyOutcomeBucket", 1, "single"), "recipe_id": ("string", 2, "optional"),
+                "pill": ("string", 3, "optional"), "quality": ("double", 4, "optional"),
+                "toxin_amount": ("double", 5, "optional"), "toxin_color": ("ColorKind", 6, "optional"),
+                "qi_gain": ("double", 7, "optional"), "side_effect_tag": ("string", 8, "optional"),
+                "flawed_path": ("bool", 9, "single"), "damage": ("double", 10, "optional"),
+                "meridian_crack": ("double", 11, "optional"),
+            },
+        }
+        for message_name, fields in expected_messages.items():
+            body = _proto_message_body(source, message_name)
+            self.assertEqual(
+                _proto_field_names(body),
+                set(fields),
+                f"{message_name} 权威字段集与手写 decoder 必须精确相等",
+            )
+            for field_name, expected in fields.items():
+                with self.subTest(message=message_name, field=field_name):
+                    self.assertEqual(_proto_field_metadata(body, field_name), expected)
 
     def test_proto_morph_state_full_payload_decodes(self):
         # plan-race-system-v1 P4 — field 142，mode="full"，一条 active=true entry。
@@ -641,6 +1343,88 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertFalse(decoded["visible"])
 
 
+class CombatServerDataGateTest(unittest.TestCase):
+    def _event(self, t: float, payload_type: str, payload: dict) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "server_data",
+            {"payload_type": payload_type, "payload": payload},
+        )
+
+    def test_wait_ignores_raw_heartbeat_unknown_and_malformed_payloads(self):
+        combat = self._event(
+            6.0,
+            "combat_event",
+            {
+                "type": "combat_event",
+                "events": [{"kind": "hit", "amount": 2.0, "outgoing": True}],
+            },
+        )
+        bot = _FakeBot(
+            [
+                _FakeEvent(2.0, "payload", {"channel": "bong:server_data", "data": b"\x12\x00"}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "heartbeat", "payload": {"type": "heartbeat"}}),
+                _FakeEvent(4.0, "server_data_decode_error", {"error": "truncated"}),
+                _FakeEvent(5.0, "server_data", {"payload_type": "field_999", "payload": {"type": "field_999"}}),
+                combat,
+            ]
+        )
+
+        matched = wait_for_server_data_after(
+            bot,
+            anchor=1.0,
+            expected_types={"combat_event"},
+            timeout=0.1,
+            description="strict combat event",
+        )
+
+        self.assertIs(matched, combat)
+
+    def test_wait_ignores_matching_type_before_watermark(self):
+        old = self._event(1.0, "combat_event", {"type": "combat_event", "events": []})
+        new = self._event(3.0, "combat_event", {"type": "combat_event", "events": []})
+        matched = wait_for_server_data_after(
+            _FakeBot([old, new]),
+            anchor=2.0,
+            expected_types={"combat_event"},
+            timeout=0.1,
+            description="after-watermark combat event",
+        )
+        self.assertIs(matched, new)
+
+    def test_outgoing_positive_hit_rejects_incoming_non_hit_and_zero(self):
+        rejected = (
+            self._event(1.0, "heartbeat", {"type": "heartbeat"}),
+            self._event(
+                2.0,
+                "combat_event",
+                {"events": [{"kind": "hit", "amount": 3.0, "outgoing": False}]},
+            ),
+            self._event(
+                3.0,
+                "combat_event",
+                {"events": [{"kind": "heal", "amount": 3.0, "outgoing": True}]},
+            ),
+            self._event(
+                4.0,
+                "combat_event",
+                {"events": [{"kind": "hit", "amount": 0.0, "outgoing": True}]},
+            ),
+            self._event(
+                5.0,
+                "combat_event",
+                {"events": [{"kind": "hit", "amount": -1.0, "outgoing": True}]},
+            ),
+        )
+        self.assertTrue(all(not is_outgoing_positive_hit(event) for event in rejected))
+
+        accepted = self._event(
+            6.0,
+            "combat_event",
+            {"events": [{"kind": "hit", "amount": 0.001, "outgoing": True}]},
+        )
+        self.assertTrue(is_outgoing_positive_hit(accepted))
+
 class InventoryHelperTest(unittest.TestCase):
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(
@@ -686,7 +1470,37 @@ class InventoryHelperTest(unittest.TestCase):
         self.assertEqual(unequip_snapshot["revision"], 4)
         self.assertEqual(unequip_snapshot["marker"], "after_unequip")
 
-    def test_wait_inventory_revision_after_matching_skips_intermediate_snapshot(self):
+    def test_wait_inventory_revision_after_accepts_skipped_revision(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(2.0, 3, "skipped_revision"),
+            ]
+        )
+
+        snapshot = wait_inventory_revision_after(bot, 1, timeout=0.01)
+
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["marker"], "skipped_revision")
+
+    def test_wait_inventory_revision_after_matching_accepts_exact_revision(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(2.0, 2, "command_final"),
+                _snapshot_event(3.0, 3, "later_unrelated"),
+            ]
+        )
+
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            1,
+            lambda payload: payload["marker"] == "command_final",
+            "command_final marker",
+        )
+
+        self.assertEqual(snapshot["revision"], 2)
+        self.assertEqual(snapshot["marker"], "command_final")
+
+    def test_wait_inventory_revision_after_matching_accepts_matching_later_revision(self):
         bot = _FakeBot(
             [
                 _snapshot_event(2.0, 2, "command_intermediate"),
@@ -703,6 +1517,151 @@ class InventoryHelperTest(unittest.TestCase):
 
         self.assertEqual(snapshot["revision"], 3)
         self.assertEqual(snapshot["marker"], "command_final")
+
+
+class ProductionScenarioContractTest(unittest.TestCase):
+    @staticmethod
+    def _worn_item(instance_id: int, item_id: str) -> dict:
+        return {
+            "instance_id": instance_id,
+            "item_id": item_id,
+            "grid_width": 1,
+            "grid_height": 1,
+        }
+
+    @classmethod
+    def _pack_snapshot(cls, worn_ids: list[int]) -> dict:
+        names = {10: "worn_grass_pouch", 20: "fake_spirit_hide", 30: "cloth_wrap"}
+        return {
+            "revision": 1,
+            "containers": [{"id": "pack_10", "rows": 2, "cols": 2}],
+            "placed_items": [],
+            "equipped": {
+                "chest_worn": [
+                    cls._worn_item(instance_id, names[instance_id])
+                    for instance_id in worn_ids
+                ]
+            },
+            "hotbar": [],
+        }
+
+    def test_lingtian_surface_candidates_probe_three_support_depths(self):
+        bot = types.SimpleNamespace(position=(-0.2, 74.9, 3.8))
+
+        candidates = _surface_candidates(bot)
+
+        self.assertEqual(candidates[:3], [(-1, 73, 3), (-1, 72, 3), (-1, 71, 3)])
+        self.assertEqual(len(candidates), 39)
+        self.assertEqual(
+            len(set(candidates)),
+            39,
+            "13 个水平点各自向下三层时不应重复，否则会浪费真实 intent 等待窗口",
+        )
+
+    def test_spiritwood_terminal_timeout_covers_240_ticks_at_two_tps(self):
+        minimum_runtime = 240 / 2
+        self.assertGreaterEqual(
+            LUMBER_TERMINAL_TIMEOUT_SECONDS,
+            minimum_runtime + 30,
+            "全量 Bot gate 实测会降至 2 TPS；terminal timeout 必须覆盖 240 tick 加 stall 余量",
+        )
+
+    def test_craft_progress_timeout_covers_worst_global_emit_phase(self):
+        interval = 20
+        required_elapsed = 20
+        worst_elapsed = max(
+            next(
+                elapsed
+                for elapsed in range(required_elapsed, required_elapsed + interval)
+                if (start_phase + elapsed) % interval == 0
+            )
+            for start_phase in range(interval)
+        )
+
+        self.assertEqual(
+            worst_elapsed,
+            39,
+            "全局 20-tick emit 边界最坏要到 session 第 39 tick 才能观察 elapsed>=20",
+        )
+        self.assertGreaterEqual(
+            CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
+            40 / 2 + 5,
+            "全量 gate 的 2 TPS 下必须覆盖两段 emit cadence 并留 packet/I/O 余量",
+        )
+
+    def test_uncover_pack_moves_every_lifo_layer_in_authoritative_order(self):
+        class InventoryMoveBot:
+            username = "Fake"
+
+            def __init__(self, snapshot: dict):
+                self.snapshot = snapshot
+                self.events = []
+                self.intents = []
+
+            def intent(self, payload: dict) -> None:
+                self.intents.append(payload)
+                candidate = json.loads(json.dumps(self.snapshot))
+                worn = candidate["equipped"]["chest_worn"]
+                moved = worn.pop()
+                assert moved["instance_id"] == payload["instance_id"]
+                destination = payload["to"]
+                candidate["placed_items"].append(
+                    {
+                        "container_id": destination["container_id"],
+                        "row": destination["row"],
+                        "col": destination["col"],
+                        "item": moved,
+                    }
+                )
+                candidate["revision"] += 1
+                self.snapshot = candidate
+                self.events.append(
+                    _FakeEvent(
+                        float(candidate["revision"]),
+                        "server_data",
+                        {
+                            "payload_type": "inventory_snapshot",
+                            "payload": candidate,
+                        },
+                    )
+                )
+
+            def wait_for(self, predicate, timeout: float, description: str):
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+
+        initial = self._pack_snapshot([10, 20, 30])
+        bot = InventoryMoveBot(initial)
+
+        final = _uncover_pack(bot, initial, 10, "pack_10")
+
+        self.assertEqual([intent["instance_id"] for intent in bot.intents], [30, 20])
+        self.assertEqual(
+            [(intent["to"]["row"], intent["to"]["col"]) for intent in bot.intents],
+            [(0, 0), (0, 1)],
+        )
+        self.assertEqual(
+            [item["instance_id"] for item in final["equipped"]["chest_worn"]],
+            [10],
+        )
+        self.assertEqual(
+            sorted(item["item"]["instance_id"] for item in final["placed_items"]),
+            [20, 30],
+        )
+        self.assertEqual(final["revision"], 3)
+
+    def test_uncover_pack_is_noop_when_pack_is_already_top(self):
+        snapshot = self._pack_snapshot([20, 10])
+        bot = types.SimpleNamespace()
+
+        self.assertIs(_uncover_pack(bot, snapshot, 10, "pack_10"), snapshot)
+
+    def test_uncover_pack_rejects_snapshot_without_target_instance(self):
+        snapshot = self._pack_snapshot([20, 30])
+        with self.assertRaisesRegex(BotAssertionError, "找不到 pack instance=10"):
+            _uncover_pack(types.SimpleNamespace(), snapshot, 10, "pack_10")
 
 
 class NovicePoiScenarioParsingTest(unittest.TestCase):
@@ -892,8 +1851,14 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
         guard = self.source[:guard_end]
         self.assertIn('AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"', guard)
+        self.assertIn('FALLBACK_MODE="${BOT_E2E_FALLBACK_MODE:-0}"', guard)
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥', guard)
+        self.assertIn('BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_WORLD_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
@@ -902,10 +1867,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         fixture_start = self.source.index('# Owned-fixture mode generates')
         fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
         self.assertIn('BOT_FIXTURE_TOKEN="$(python3 -c', fixture)
         self.assertIn('--fixture-token "$BOT_FIXTURE_TOKEN"', fixture)
-        state_start = self.source.index('# Ambient-owned runs pin state')
+        state_start = self.source.index('# Dedicated world evidence pins state to its private runtime.')
         state_end = self.source.index('\nport_open() {', state_start)
         state = self.source[state_start:state_end]
         self.assertIn('elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', state)
@@ -916,12 +1881,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         redis_start = self.source.index('# ---- redis ----')
         redis_end = self.source.index('\n# ---- server ----', redis_start)
         redis = self.source[redis_start:redis_end]
-        redis_guard = 'if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        redis_guard = 'elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
         self.assertIn(redis_guard, redis)
         self.assertNotIn('export REDIS_URL=', redis[:redis.index(redis_guard)])
 
-    def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
-        runtime_start = self.source.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+    def test_dedicated_world_modes_keep_private_runtime_and_exact_marker_gate(self):
+        runtime_start = self.source.index('if [ "$OWNED_WORLD_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
         runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
         runtime = self.source[runtime_start:runtime_end]
         self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
@@ -955,6 +1920,42 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1",
             ),
             (
+                {"BOT_E2E_FALLBACK_MODE": "bogus"},
+                "BOT_E2E_FALLBACK_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                },
+                "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥",
+            ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "fallback mode 不接受 BONG_TERRAIN_RASTER_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_WORLD_PATH": "/caller/world",
+                },
+                "fallback mode 不接受 BONG_WORLD_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_SPIRITWOOD_HARVESTED_PATH": "/caller/harvested.json",
+                },
+                "fallback mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
+            ),
+            (
                 {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
                 "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥",
             ),
@@ -975,10 +1976,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         isolated = (
             "BOT_E2E_AMBIENT_FIXTURE_MODE",
+            "BOT_E2E_FALLBACK_MODE",
             "BOT_E2E_REUSE",
             "BOT_E2E_HOST",
             "BOT_E2E_PORT",
             "BONG_TERRAIN_RASTER_PATH",
+            "BONG_WORLD_PATH",
             "BONG_SPIRITWOOD_HARVESTED_PATH",
             "REDIS_URL",
         )
@@ -1027,6 +2030,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_FALLBACK_MODE",
                 "BOT_E2E_REUSE",
                 "BOT_E2E_HOST",
                 "BOT_E2E_PORT",
@@ -1036,6 +2040,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             ):
                 env.pop(name, None)
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            env["BONG_BUILD_TOKEN_DIR"] = str(pathlib.Path(temp_dir) / "build-token")
             result = subprocess.run(
                 ["bash", "scripts/bot-e2e.sh"],
                 cwd=root,
@@ -1052,6 +2058,111 @@ class BotE2eDevModeContractTest(unittest.TestCase):
     def test_ci_selects_explicit_ambient_fixture_mode(self):
         bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
+
+    def test_ci_runs_owned_rasterless_fallback_stage(self):
+        stage_start = self.workflow_source.index('Bot fallback-flat e2e stage')
+        stage_end = self.workflow_source.index(
+            'Bot chat timestamp', stage_start
+        )
+        stage = self.workflow_source[stage_start:stage_end]
+        self.assertIn('BOT_E2E_RUN_TAG: ci', stage)
+        self.assertIn('BOT_E2E_FALLBACK_MODE: "1"', stage)
+        self.assertIn('run: bash scripts/bot-e2e.sh', stage)
+
+    def test_fallback_ownership_requires_exact_marker_and_continuous_listener_watch(self):
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        marker_match = "fallback_ready_marker_present"
+        ownership = 'export BOT_E2E_FALLBACK_OWNED=1'
+        self.assertIn(marker_match, readiness)
+        self.assertIn(ownership, readiness)
+        self.assertLess(readiness.index(marker_match), readiness.index(ownership))
+
+        scenario = self.source[self.source.index('# ---- 场景 ----'):]
+        self.assertIn(
+            'if [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ "$FALLBACK_MODE" = "1" ]; then',
+            scenario,
+            "fallback 场景执行期间也必须持续盯住本轮 listener ownership",
+        )
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
+        self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
+
+    def test_fallback_harness_selects_only_dedicated_join_scenario(self):
+        scenario = self.source[self.source.index('# ---- 场景 ----'):]
+        self.assertIn('SCENARIO_ARGS=(--all)', scenario)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ]; then', scenario)
+        self.assertIn(
+            'SCENARIO_ARGS=(--scenario terrain_join_chunk_delivery)',
+            scenario,
+            "fallback CI 不得重跑 gameplay --all 或依赖 dev commands",
+        )
+        self.assertIn(
+            'elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then',
+            scenario,
+            "owned dev harness 应允许显式聚焦一组场景，避免 P2 验证被全套 P3-P5 噪声遮蔽",
+        )
+        self.assertIn('IFS=\',\' read -r -a requested_scenarios', scenario)
+        self.assertIn('[[ "$BOT_E2E_SCENARIOS" == ,*', scenario)
+        self.assertIn('"$BOT_E2E_SCENARIOS" == *,', scenario)
+        self.assertIn('"$BOT_E2E_SCENARIOS" == *,,*', scenario)
+        self.assertIn('trimmed_scenario="${scenario#', scenario)
+        self.assertIn('[ "$trimmed_scenario" != "$scenario" ]', scenario)
+        self.assertLess(
+            scenario.index('if [ "$FALLBACK_MODE" = "1" ]; then'),
+            scenario.index('elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then'),
+            "fallback dedicated selector 优先级必须高于外部 focused selector",
+        )
+        self.assertIn(
+            'python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"',
+            scenario,
+        )
+
+    def test_fallback_ci_cluster_witness_pins_exact_production_disks(self):
+        self.assertEqual(
+            EXPECTED_CI_CLUSTERS,
+            {
+                "J1": ((180.0, 140.0), 112.0, "east"),
+                "J2": ((-240.0, -160.0), 96.0, "west"),
+                "FC": ((24.0, -24.0), 80.0, "central"),
+            },
+        )
+        for tag, ((anchor_x, anchor_z), radius, expected_name) in EXPECTED_CI_CLUSTERS.items():
+            with self.subTest(tag=tag):
+                self.assertEqual(
+                    _assert_expected_cluster("ci", tag, (anchor_x + radius, anchor_z)),
+                    expected_name,
+                    "配置圆盘 inclusive 边界必须通过",
+                )
+                with self.assertRaises(BotAssertionError):
+                    _assert_expected_cluster(
+                        "ci", tag, (anchor_x + radius + 0.001, anchor_z)
+                    )
+        with self.assertRaises(BotAssertionError, msg="非 ci tag 不能冒充三簇稳定 witness"):
+            _assert_expected_cluster("local", "J1", (180.0, 140.0))
+        with self.assertRaises(BotAssertionError, msg="未知 tag 必须 fail closed"):
+            _assert_expected_cluster("ci", "XX", (180.0, 140.0))
+
+    def test_fallback_runtime_and_state_are_private(self):
+        runtime_start = self.source.index('if [ "$OWNED_WORLD_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+        runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
+        runtime = self.source[runtime_start:runtime_end]
+        self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
+
+        state_start = self.source.index('# Dedicated world evidence pins state to its private runtime.')
+        state_end = self.source.index('\nport_open() {', state_start)
+        state = self.source[state_start:state_end]
+        self.assertIn('if [ "$OWNED_WORLD_MODE" = "1" ]; then', state)
+        self.assertIn('SPIRITWOOD_STATE_DIR="$SERVER_RUNTIME_DIR/server/data/spiritwood"', state)
+
+    def test_fallback_mode_skips_novice_raster_generation(self):
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        self.assertIn(
+            'if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then',
+            fixture,
+        )
 
     def test_self_started_server_builds_unique_exact_fixture_identity(self):
         fixture_start = self.source.index('# Owned-fixture mode generates')
@@ -1091,7 +2202,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         self.assertLess(
             self.source.index(ownership, readiness_start),
-            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" --all'),
+            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"'),
             "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
         )
 
@@ -1100,7 +2211,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
         runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
-  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
+  python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
             pipeline.count(runner),
@@ -1160,7 +2271,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
         scenario_start = self.source.index("# ---- 场景 ----")
         scenario = self.source[scenario_start:]
-        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" --all'
+        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"'
         self.assertIn('while true; do', scenario)
         self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
         self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
@@ -1204,20 +2315,33 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn(rejection, server)
         self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
 
-    def test_owned_fixture_mode_uses_private_cwd_and_generic_uses_checkout_cwd(self):
-        launch_start = self.source.index('  (\n    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then')
-        launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
+    def test_owned_world_modes_use_private_cwd_and_only_ambient_enables_dev_commands(self):
+        launch_start = self.source.index('  (\n    if [ "$OWNED_WORLD_MODE" = "1" ]; then')
+        launch_end = self.source.index('  ) >>"$SERVER_LOG"', launch_start)
         launch = self.source[launch_start:launch_end]
         for required in (
             'cd "$SERVER_RUNTIME_DIR/server"',
             'cd "$ROOT/server"',
             'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
             'export BONG_ASSETS_DIR="$ROOT/server"',
+            'if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then',
             'export BONG_DEV_MODE=1',
-            'exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
+            'export BONG_OPERATORS="$BOT_E2E_OPERATORS"',
+            'exec "$SERVER_BINARY"',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, launch)
+        self.assertIn(
+            '"$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"',
+            self.source,
+        )
+        self.assertIn('install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"', self.source)
+        self.assertIn('exec "$SERVER_BINARY"', launch)
+        self.assertNotIn(
+            'exec cargo run --locked',
+            launch,
+            "bot-e2e 自起 server 必须经过全机共享 cargo counting token",
+        )
 
     def test_each_run_owns_private_evidence_and_persistent_logs(self):
         evidence_setup = self.source[:self.source.index('# Owned-fixture mode generates')]
@@ -1240,8 +2364,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
 
-        adopt_guard = 'if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then'
-        private_guard = 'elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        adopt_guard = 'if [ "$REUSE" != "1" ] && [ "$OWNED_WORLD_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then'
+        private_guard = 'elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
         self.assertIn(adopt_guard, redis)
         self.assertIn('沿用调用方默认 Redis 127.0.0.1:6379', redis)
         self.assertIn(private_guard, redis)
@@ -1277,12 +2401,17 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
             base_env = os.environ.copy()
             for name in (
-                "BOT_E2E_AMBIENT_FIXTURE_MODE", "BOT_E2E_REUSE", "BOT_E2E_HOST",
+                "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_FALLBACK_MODE",
+                "BOT_E2E_REUSE",
+                "BOT_E2E_HOST",
                 "BOT_E2E_PORT", "BONG_TERRAIN_RASTER_PATH",
                 "BONG_SPIRITWOOD_HARVESTED_PATH", "REDIS_URL",
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
+            base_env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            base_env["BONG_BUILD_TOKEN_DIR"] = str(pathlib.Path(temp_dir) / "build-token")
 
             adopted = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "0"}
             adopted_result = subprocess.run(
@@ -1313,8 +2442,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then', redis)
-        self.assertIn('elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$OWNED_WORLD_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then', redis)
+        self.assertIn('elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
         for required in (
             'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
             'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
@@ -1328,7 +2457,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn("name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source)
 
     def _run_owned_fixture_runtime_case(
-        self, runner_mode: str, *, runner_exit: int = 0, tee_exit: int | None = None
+        self,
+        runner_mode: str,
+        *,
+        runner_exit: int = 0,
+        tee_exit: int | None = None,
+        fallback_mode: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
         """Run the real bot-e2e shell path against only test-owned fake processes."""
         root = pathlib.Path(__file__).parents[2]
@@ -1346,6 +2480,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             replacement_pid_file = temp / "replacement.pid"
             replacement_ready_file = temp / "replacement-ready"
             watcher_status_file = temp / "watcher-status"
+            runner_args_file = temp / "runner-args"
             redis_port = 39999
             port = self._unused_local_port()
             fake_python = fake_bin / "python3"
@@ -1362,6 +2497,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "fi\n"
                 "if [[ \"${1:-}\" == *run_scenarios.py ]]; then\n"
                 f"  printf '%s\\n' \"$FAKE_RUNNER_MODE\" >> {shlex.quote(str(runner_log))}\n"
+                f"  printf '%s\\n' \"$*\" > {shlex.quote(str(runner_args_file))}\n"
                 "  wait_watcher_lost() {\n"
                 "    local status\n"
                 "    for _ in $(seq 1 200); do\n"
@@ -1445,7 +2581,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (fake_bin / "docker").chmod(0o755)
-            (fake_bin / "cargo").write_text(
+            fake_server = fake_bin / "fake-bong-server"
+            fake_server.write_text(
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
                 f"real_python={shlex.quote(real_python)}\n"
@@ -1463,11 +2600,59 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "PY\n"
                 "  sleep 0.01\n"
                 "done\n"
-                "printf '%s\\n' \"[bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
+                "if [ \"${BOT_E2E_FALLBACK_MODE:-0}\" = 1 ]; then\n"
+                "  printf '\\033[2m%s\\033[0m \\033[32m INFO\\033[0m %s\\n' '2026-08-11T23:25:37.123456Z' '[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4'\n"
+                "else\n"
+                "  printf '%s\\n' \"2026-08-11T23:25:37.123456Z  INFO [bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
+                "fi\n"
                 "while true; do sleep 1; done\n",
                 encoding="utf-8",
             )
+            fake_server.chmod(0o755)
+            (fake_bin / "cargo").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "test \"$1\" = build\n"
+                "profile=debug\n"
+                "for arg in \"$@\"; do test \"$arg\" != --release || profile=release; done\n"
+                "mkdir -p \"$CARGO_TARGET_DIR/$profile\"\n"
+                f"cp {shlex.quote(str(fake_server))} \"$CARGO_TARGET_DIR/$profile/bong-server\"\n",
+                encoding="utf-8",
+            )
             (fake_bin / "cargo").chmod(0o755)
+            listener_lookup = (
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "pid=''\n"
+                "for candidate_file in \"$FAKE_REPLACEMENT_READY_FILE\" \"$FAKE_LISTENER_PID_FILE\"; do\n"
+                "  if test -s \"$candidate_file\"; then\n"
+                "    candidate=$(cat \"$candidate_file\")\n"
+                "    if kill -0 \"$candidate\" 2>/dev/null; then pid=$candidate; break; fi\n"
+                "  fi\n"
+                "done\n"
+                "test -n \"$pid\" || exit 1\n"
+            )
+            (fake_bin / "ss").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "[ \"$#\" -eq 4 ] && [ \"$1\" = -4 ] && [ \"$2\" = -H ] "
+                "&& [ \"$3\" = -ltnp ] && [ \"$4\" = \"sport = :$BOT_E2E_PORT\" ] || exit 64\n"
+                + "\n".join(listener_lookup.splitlines()[2:])
+                + "\nprintf 'LISTEN 0 128 127.0.0.1:%s 0.0.0.0:* users:((\\\"python3\\\",pid=%s,fd=3))\\n' \"$BOT_E2E_PORT\" \"$pid\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "ss").chmod(0o755)
+            (fake_bin / "lsof").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "[ \"$#\" -eq 4 ] && [ \"$1\" = -nP ] "
+                "&& [ \"$2\" = \"-iTCP:$BOT_E2E_PORT\" ] "
+                "&& [ \"$3\" = -sTCP:LISTEN ] && [ \"$4\" = -Fp ] || exit 64\n"
+                + "\n".join(listener_lookup.splitlines()[2:])
+                + "\nprintf 'p%s\\n' \"$pid\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "lsof").chmod(0o755)
             if tee_exit is not None:
                 (fake_bin / "tee").write_text(
                     f"#!/usr/bin/env bash\nexit {tee_exit}\n", encoding="utf-8"
@@ -1476,15 +2661,25 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
             evidence_root = root / ".sisyphus/evidence/bot-e2e"
             env = os.environ.copy()
+            # Exercise isolation against a hostile ambient world override. The
+            # fixture must remove it before entering dedicated fallback mode.
+            env["BONG_WORLD_PATH"] = str(temp / "ambient-world-must-not-leak")
             for name in (
-                "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
-                "BONG_TERRAIN_RASTER_PATH", "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "BOT_E2E_AMBIENT_FIXTURE_MODE", "BOT_E2E_REUSE", "BOT_E2E_HOST",
+                "BOT_E2E_PORT", "BOT_E2E_FALLBACK_MODE",
+                "BONG_TERRAIN_RASTER_PATH", "BONG_WORLD_PATH",
+                "BONG_SPIRITWOOD_HARVESTED_PATH",
                 "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
+                "BOT_E2E_FALLBACK_OWNED",
             ):
                 env.pop(name, None)
             env.update(
                 {
-                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    (
+                        "BOT_E2E_FALLBACK_MODE"
+                        if fallback_mode
+                        else "BOT_E2E_AMBIENT_FIXTURE_MODE"
+                    ): "1",
                     "BOT_E2E_PORT": str(port),
                     "FAKE_RUNNER_MODE": runner_mode,
                     "FAKE_RUNNER_EXIT": str(runner_exit),
@@ -1497,19 +2692,51 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 }
             )
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["CARGO_TARGET_DIR"] = str(temp / "target")
+            env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            env["BONG_BUILD_TOKEN_DIR"] = str(temp / "build-token")
             evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
             runner_output = ""
             runner_result = ""
             watcher_status = ""
+            process: subprocess.Popen[str] | None = None
             try:
-                result = subprocess.run(
+                process = subprocess.Popen(
                     ["bash", "scripts/bot-e2e.sh"],
                     cwd=root,
                     env=env,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    check=False,
-                    timeout=30,
+                    start_new_session=True,
+                )
+                try:
+                    stdout, stderr = process.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        stdout, stderr = process.communicate(timeout=5)
+                    evidence_after = (
+                        set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
+                    )
+                    server_logs = []
+                    for evidence_dir in sorted(evidence_after - evidence_before):
+                        server_log = evidence_dir / "server.log"
+                        if server_log.exists():
+                            server_logs.append(server_log.read_text(encoding="utf-8"))
+                    self.fail(
+                        "bot-e2e fixture exceeded 30s and its process group was stopped; "
+                        f"stdout={stdout!r}; stderr={stderr!r}; "
+                        f"runner_args={runner_args_file.read_text(encoding='utf-8') if runner_args_file.exists() else 'missing'!r}; "
+                        f"server_pid={server_pid_file.read_text(encoding='utf-8') if server_pid_file.exists() else 'missing'!r}; "
+                        f"listener_pid={listener_pid_file.read_text(encoding='utf-8') if listener_pid_file.exists() else 'missing'!r}; "
+                        f"server_logs={server_logs!r}"
+                    )
+                result = subprocess.CompletedProcess(
+                    process.args, process.returncode, stdout, stderr
                 )
                 runner_output = (
                     runner_log.read_text(encoding="utf-8") if runner_log.exists() else ""
@@ -1524,11 +2751,37 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     if watcher_status_file.exists()
                     else ""
                 )
+                if fallback_mode:
+                    self.assertEqual(
+                        runner_args_file.read_text(encoding="utf-8").strip(),
+                        f"{root / 'scripts/bot/run_scenarios.py'} --scenario terrain_join_chunk_delivery",
+                    )
             finally:
+                if process is not None and process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
                 for pid_file in (server_pid_file, listener_pid_file, replacement_pid_file):
-                    if pid_file.exists():
+                    if not pid_file.exists():
+                        continue
+                    pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        continue
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
                         try:
-                            os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 15)
+                            os.kill(pid, 0)
+                        except ProcessLookupError:
+                            break
+                        time.sleep(0.01)
+                    else:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
                         except ProcessLookupError:
                             pass
                 if evidence_root.exists():
@@ -1545,6 +2798,15 @@ class BotE2eDevModeContractTest(unittest.TestCase):
     def test_owned_fixture_runtime_watcher_accepts_successful_owned_runner(self):
         result, runner_output, runner_result, watcher_status = (
             self._run_owned_fixture_runtime_case("success")
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(runner_output.strip(), "success")
+        self.assertEqual(runner_result.strip(), "runner-complete")
+        self.assertEqual(watcher_status.strip(), "complete")
+
+    def test_fallback_runtime_accepts_realistic_tracing_readiness_everywhere(self):
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("success", fallback_mode=True)
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(runner_output.strip(), "success")
@@ -1825,14 +3087,37 @@ class _FakeBot:
         raise AssertionError(f"未找到 {description}; events={self.events}")
 
 
+class _ObservableLock:
+    def __init__(self):
+        self.held = False
+
+    def __enter__(self):
+        if self.held:
+            raise AssertionError("fake lock unexpectedly re-entered")
+        self.held = True
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.held = False
+
+
 class _CommandFakeBot(_FakeBot):
-    def __init__(self, events: list[_FakeEvent], pending: list[_FakeEvent]):
+    def __init__(
+        self,
+        events: list[_FakeEvent],
+        pending: list[_FakeEvent],
+        *,
+        enforce_command_lock: bool = False,
+    ):
         super().__init__(events)
-        self._lock = threading.Lock()
+        self._lock = _ObservableLock()
+        self.enforce_command_lock = enforce_command_lock
         self.pending = list(pending)
         self.commands: list[str] = []
 
     def cmd(self, command: str) -> None:
+        if self.enforce_command_lock and not self._lock.held:
+            raise AssertionError("command dispatch must share the watermark lock")
         self.commands.append(command)
 
     def wait_for(self, predicate, timeout: float, description: str) -> _FakeEvent:
@@ -1905,6 +3190,574 @@ def _player_state_event(t: float, qi: float, qi_max: float = 100.0) -> _FakeEven
             },
         },
     )
+
+
+class CombatSkillCastScenarioTest(unittest.TestCase):
+    @staticmethod
+    def _cast_sync(t: float, phase: str, outcome: str) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "server_data",
+            {
+                "payload_type": "cast_sync",
+                "payload": {
+                    "slot": 0,
+                    "phase": phase,
+                    "outcome": outcome,
+                },
+            },
+        )
+
+    def test_successful_cast_requires_complete_after_casting(self):
+        casting = self._cast_sync(3.0, "casting", "none")
+        complete = self._cast_sync(4.0, "complete", "completed")
+
+        self.assertIs(
+            _wait_successful_cast_sequence(_FakeBot([casting, complete]), 1.0),
+            complete,
+        )
+
+    def test_successful_cast_accepts_same_timestamp_batch_in_event_order(self):
+        casting = self._cast_sync(3.0, "casting", "none")
+        complete = self._cast_sync(3.0, "complete", "completed")
+
+        self.assertIs(
+            _wait_successful_cast_sequence(_FakeBot([casting, complete]), 1.0),
+            complete,
+            "同一网络批次可共享时间戳，顺序应由事件列表中的 phase 转换确定",
+        )
+
+    def test_successful_cast_rejects_wrong_slot_or_outcome_identity(self):
+        cases = (
+            (self._cast_sync(2.0, "casting", "none"), "slot", 1),
+            (self._cast_sync(2.0, "casting", "rejected"), "outcome", "rejected"),
+            (self._cast_sync(3.0, "complete", "failed"), "outcome", "failed"),
+            (self._cast_sync(3.0, "cancelled", "completed"), "phase", "cancelled"),
+        )
+        for invalid, field, value in cases:
+            with self.subTest(field=field, value=value):
+                invalid.data["payload"][field] = value
+                events = (
+                    [invalid, self._cast_sync(3.0, "complete", "completed")]
+                    if invalid.data["payload"]["phase"] == "casting"
+                    else [self._cast_sync(2.0, "casting", "none"), invalid]
+                )
+                expected_phase = (
+                    "phase=casting"
+                    if invalid.data["payload"]["phase"] == "casting"
+                    else "phase=complete"
+                )
+                with self.assertRaisesRegex(AssertionError, expected_phase):
+                    _wait_successful_cast_sequence(_FakeBot(events), 1.0)
+
+    def test_successful_cast_rejects_complete_before_casting(self):
+        bot = _FakeBot(
+            [
+                self._cast_sync(2.0, "complete", "completed"),
+                self._cast_sync(3.0, "casting", "none"),
+            ]
+        )
+
+        with self.assertRaisesRegex(AssertionError, "phase=complete"):
+            _wait_successful_cast_sequence(bot, 1.0)
+
+    @staticmethod
+    def _audio_event(
+        t: float,
+        *,
+        recipe_id: str = AUDIO_RECIPE_ID,
+        flag: str = AUDIO_FLAG,
+        channel: str = "bong:audio/play",
+    ) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "payload",
+            {
+                "channel": channel,
+                "data": json.dumps(
+                    {"v": 1, "recipe_id": recipe_id, "flag": flag}
+                ).encode("utf-8"),
+            },
+        )
+
+    def test_dugu_audio_requires_exact_recipe_flag_channel_and_watermark(self):
+        accepted = self._audio_event(2.0)
+        self.assertTrue(_is_dugu_audio_play(accepted, 1.0))
+
+        rejected = (
+            self._audio_event(1.0),
+            self._audio_event(2.0, recipe_id="dugu_needle_hiss"),
+            self._audio_event(2.0, flag="dugu_infuse_poison"),
+            self._audio_event(2.0, channel="bong:audio/stop"),
+            _FakeEvent(
+                2.0,
+                "payload",
+                {"channel": "bong:audio/play", "data": b'{"v":1,"recipe_id":'},
+            ),
+            _FakeEvent(
+                2.0,
+                "payload",
+                {"channel": "bong:audio/play", "data": b"\xff"},
+            ),
+            _FakeEvent(
+                2.0,
+                "payload",
+                {
+                    "channel": "bong:audio/play",
+                    "data": json.dumps(
+                        {"v": 1, "recipe_id": AUDIO_RECIPE_ID}
+                    ).encode("utf-8"),
+                },
+            ),
+        )
+        for event in rejected:
+            with self.subTest(event=event):
+                self.assertFalse(_is_dugu_audio_play(event, 1.0))
+
+    def test_binding_feedback_requires_exact_dugu_icon(self):
+        slot = {
+            "kind": "skill",
+            "skill_id": "dugu.shoot_needle",
+            "icon_texture": SKILL_ICON,
+        }
+        event = _FakeEvent(
+            2.0,
+            "server_data",
+            {"payload": {"slots": [slot]}},
+        )
+        _assert_binding_feedback(_FakeBot([]), event)
+
+        event.data["payload"]["slots"][0]["icon_texture"] = "bong:wrong.png"
+        with self.assertRaisesRegex(BotAssertionError, "icon_texture 漂移"):
+            _assert_binding_feedback(_FakeBot([]), event)
+
+
+class CultivationBreakthroughScenarioTest(unittest.TestCase):
+    @staticmethod
+    def _cinematic(
+        t: float,
+        phase: str,
+        at_tick: int,
+        *,
+        actor_id: str = "offline:Break",
+        realm_from: str = "Awaken",
+        realm_to: str = "Induce",
+        result: str = "success",
+        interrupted: bool = False,
+    ) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "server_data",
+            {
+                "payload_type": "breakthrough_cinematic",
+                "payload": {
+                    "type": "breakthrough_cinematic",
+                    "actor_id": actor_id,
+                    "phase": phase,
+                    "phase_tick": 0,
+                    "phase_duration_ticks": {
+                        "prelude": 60,
+                        "charge": 200,
+                        "catalyze": 100,
+                        "apex": 40,
+                        "aftermath": 120,
+                    }[phase],
+                    "realm_from": realm_from,
+                    "realm_to": realm_to,
+                    "result": result,
+                    "interrupted": interrupted,
+                    "at_tick": at_tick,
+                },
+            },
+        )
+
+    def test_phase_timeout_covers_production_duration_at_gate_floor(self):
+        for phase, duration_ticks in {
+            "prelude": 60,
+            "charge": 200,
+            "catalyze": 100,
+            "apex": 40,
+            "aftermath": 120,
+        }.items():
+            with self.subTest(phase=phase):
+                self.assertEqual(
+                    _phase_timeout_seconds({"phase_duration_ticks": duration_ticks}),
+                    duration_ticks / BREAKTHROUGH_MIN_GATE_TPS
+                    + PHASE_TIMEOUT_MARGIN_SECONDS,
+                )
+
+        for invalid in (None, 0, -1, 2.5, True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(BotAssertionError):
+                    _phase_timeout_seconds({"phase_duration_ticks": invalid})
+
+    def test_terminal_wait_requires_same_identity_and_ordered_aftermath(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        ignored = [
+            self._cinematic(2.5, "charge", 160, actor_id="offline:Other"),
+            self._cinematic(2.6, "charge", 160, realm_to="Condense"),
+            self._cinematic(2.7, "charge", 160, result="failure"),
+        ]
+        phases = [
+            self._cinematic(float(index + 3), phase, 100 + index * 10)
+            for index, phase in enumerate(BREAKTHROUGH_PHASES[1:], 1)
+        ]
+
+        terminal = _wait_cinematic_terminal(_FakeBot(ignored + phases), initial)
+        self.assertEqual(terminal["phase"], "aftermath")
+        self.assertEqual(terminal["result"], "success")
+
+    def test_terminal_wait_rejects_identity_drift_on_remaining_chain(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        cases = (
+            {"realm_from": "Induce"},
+            {"realm_to": "Condense"},
+            {"result": "failure"},
+            {"interrupted": True},
+        )
+        for drift in cases:
+            with self.subTest(drift=drift):
+                phases = [
+                    self._cinematic(
+                        float(index + 3),
+                        phase,
+                        100 + index * 10,
+                        **(drift if phase == "charge" else {}),
+                    )
+                    for index, phase in enumerate(BREAKTHROUGH_PHASES[1:], 1)
+                ]
+                with self.assertRaisesRegex(AssertionError, "charge"):
+                    _wait_cinematic_terminal(_FakeBot(phases), initial)
+
+    def test_terminal_wait_accepts_failure_and_interrupted_identities(self):
+        for result, interrupted in (("failure", False), ("interrupted", True)):
+            with self.subTest(result=result, interrupted=interrupted):
+                initial = self._cinematic(
+                    2.0, "prelude", 100, result=result, interrupted=interrupted
+                )
+                phases = [
+                    self._cinematic(
+                        float(index + 3),
+                        phase,
+                        100 + index * 10,
+                        result=result,
+                        interrupted=interrupted,
+                    )
+                    for index, phase in enumerate(BREAKTHROUGH_PHASES[1:], 1)
+                ]
+                terminal = _wait_cinematic_terminal(_FakeBot(phases), initial)
+                self.assertEqual(terminal["result"], result)
+                self.assertIs(terminal["interrupted"], interrupted)
+
+    def test_terminal_wait_rejects_missing_or_out_of_order_phase(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        without_catalyze = [
+            self._cinematic(3.0, "charge", 110),
+            self._cinematic(4.0, "apex", 120),
+            self._cinematic(5.0, "aftermath", 130),
+        ]
+        with self.assertRaisesRegex(AssertionError, "catalyze"):
+            _wait_cinematic_terminal(_FakeBot(without_catalyze), initial)
+
+    def test_terminal_wait_rejects_non_monotonic_at_tick(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        phases = [
+            self._cinematic(3.0, "charge", 110),
+            self._cinematic(4.0, "catalyze", 110),
+            self._cinematic(5.0, "apex", 120),
+            self._cinematic(6.0, "aftermath", 130),
+        ]
+        with self.assertRaisesRegex(BotAssertionError, "at_tick 必须严格递增"):
+            _wait_cinematic_terminal(_FakeBot(phases), initial)
+
+    def test_authoritative_realm_wait_skips_old_and_wrong_realm(self):
+        old = _FakeEvent(
+            1.0,
+            "server_data",
+            {"payload_type": "player_state", "payload": {"realm": "Induce"}},
+        )
+        wrong = _FakeEvent(
+            2.0,
+            "server_data",
+            {"payload_type": "player_state", "payload": {"realm": "Awaken"}},
+        )
+        expected = _FakeEvent(
+            3.0,
+            "server_data",
+            {"payload_type": "player_state", "payload": {"realm": "Induce"}},
+        )
+        self.assertIs(
+            _wait_authoritative_realm(_FakeBot([old, wrong, expected]), 1.0, "Induce"),
+            expected,
+        )
+
+
+class InventoryHelperContractTest(unittest.TestCase):
+    def test_require_pack_container_requires_canonical_id_and_owner(self):
+        valid = {"containers": [{"id": "pack_42", "owner_instance_id": 42}]}
+        self.assertEqual(require_pack_container(valid, 42), valid["containers"][0])
+        for snapshot in (
+            {"containers": [{"id": "main", "owner_instance_id": 42}]},
+            {"containers": [{"id": "pack_42", "owner_instance_id": 7}]},
+            {"containers": [{"id": "pack_42"}]},
+        ):
+            with self.subTest(snapshot=snapshot):
+                with self.assertRaises(BotAssertionError):
+                    require_pack_container(snapshot, 42)
+
+    def test_wait_inventory_revision_after_matching_accepts_skipped_revision(self):
+        bot = _FakeBot([_snapshot_event(2.0, 3, "skipped")])
+        snapshot = wait_inventory_revision_after_matching(
+            bot, 1, lambda payload: True, "any snapshot", timeout=0.01
+        )
+
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["marker"], "skipped")
+
+    def test_wait_inventory_revision_after_matching_ignores_late_duplicate_snapshot(self):
+        stale = _snapshot_event(2.0, 5, "stale_duplicate")
+        final = _snapshot_event(3.0, 6, "move_applied")
+        final.data["payload"]["placed_items"] = [
+            {"item": {"instance_id": 524}, "container_id": "body_pocket"}
+        ]
+        bot = _FakeBot([stale, final])
+
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            5,
+            lambda payload: any(
+                placed["item"]["instance_id"] == 524
+                for placed in payload.get("placed_items", [])
+            ),
+            "move 后实例进入玩家背包",
+        )
+
+        self.assertEqual(snapshot["revision"], 6)
+        self.assertEqual(snapshot["marker"], "move_applied")
+
+
+class InventoryContainerSourceKindTest(unittest.TestCase):
+    def test_accepts_semantically_equivalent_storage_crate_json(self):
+        bot = types.SimpleNamespace(username="Fake")
+        self.assertEqual(
+            _parse_storage_crate_source_kind(
+                bot, '{ "storage_crate" : { "is_herb" : false } }'
+            ),
+            {"storage_crate": {"is_herb": False}},
+        )
+
+    def test_rejects_malformed_or_wrong_source_kind(self):
+        bot = types.SimpleNamespace(username="Fake")
+        for raw_source_kind in (
+            None,
+            "not-json",
+            '{"storage_crate":{"is_herb":true}}',
+            '{"other":{"is_herb":false}}',
+            '{"storage_crate":{}}',
+        ):
+            with self.subTest(raw_source_kind=raw_source_kind), self.assertRaises(
+                BotAssertionError
+            ):
+                _parse_storage_crate_source_kind(bot, raw_source_kind)
+
+
+class CultivationRealmQiScenarioTest(unittest.TestCase):
+    def test_exact_rejection_does_not_accept_prefixed_or_suffixed_text(self):
+        expected = "[dev] qi set rejected: value must be finite >= 0"
+        exact = _FakeEvent(2.0, "chat", {"text": expected})
+        prefixed = _FakeEvent(3.0, "chat", {"text": f"warning: {expected}"})
+        suffixed = _FakeEvent(4.0, "chat", {"text": f"{expected}; retry"})
+
+        self.assertIs(_chat_after(_FakeBot([exact]), 1.0, expected, exact=True), exact)
+        for misleading in (prefixed, suffixed):
+            with self.subTest(text=misleading.data["text"]), self.assertRaises(AssertionError):
+                _chat_after(_FakeBot([misleading]), 1.0, expected, exact=True)
+
+    def test_successful_command_rejects_matching_rejection_prefix(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "history"})],
+            [_FakeEvent(2.0, "chat", {"text": "[dev] qi set rejected: [dev] qi set"})],
+        )
+
+        with self.assertRaisesRegex(BotAssertionError, "期望成功反馈"):
+            _successful_command_and_chat(bot, "qi set 11", "[dev] qi set")
+
+    def test_command_watermark_is_read_under_bot_lock(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "history"})],
+            [_FakeEvent(2.0, "chat", {"text": "[dev] realm set Awaken -> Induce"})],
+            enforce_command_lock=True,
+        )
+
+        result = _successful_command_and_chat(
+            bot,
+            "realm set induce",
+            "[dev] realm set Awaken -> Induce",
+        )
+
+        self.assertEqual(bot.commands, ["realm set induce"])
+        self.assertEqual(result.t, 2.0)
+
+
+class LingtianScenarioFilteringTest(unittest.TestCase):
+    PLAYER_POS = (10.0, 64.0, -4.0)
+    FIXTURE_ID = "plant-42"
+    FIXTURE_POS = [11.0, 64.0, -4.0]
+
+    def test_fixture_parser_requires_exact_identity_fields(self):
+        text = (
+            f"{BOTANY_FIXTURE_PREFIX}plant-42 kind=spirit_grass "
+            "pos=[11.00000000000000000,64.00000000000000000,-4.00000000000000000] zone=spawn"
+        )
+        self.assertEqual(
+            _parse_botany_fixture(text), (self.FIXTURE_ID, self.FIXTURE_POS, "spawn")
+        )
+        with self.assertRaises(BotAssertionError):
+            _parse_botany_fixture("[dev] botany_spawn accepted: plant_id=plant-nope")
+        with self.assertRaises(BotAssertionError):
+            _parse_botany_fixture(
+                f"{BOTANY_FIXTURE_PREFIX}plant-42 kind=spirit_grass pos=[nan,64,-4] zone=spawn"
+            )
+
+    def test_harvest_predicate_requires_real_fixture_and_finite_in_range_position(self):
+        def event(payload, t=4.0):
+            return _FakeEvent(
+                t,
+                "server_data",
+                {"payload_type": "botany_harvest_progress", "payload": payload},
+            )
+
+        base = {
+            "session_id": "offline:Fake",
+            "target_id": self.FIXTURE_ID,
+            "target_name": HERB_ID,
+            "plant_kind": HERB_ID,
+            "target_pos": self.FIXTURE_POS,
+            "completed": False,
+            "interrupted": False,
+            "progress": 0.25,
+        }
+        self.assertTrue(
+            _is_matching_harvest(
+                event(base), 1.0, self.FIXTURE_ID, self.FIXTURE_POS, self.PLAYER_POS
+            )
+        )
+        for key, value in (
+            ("session_id", ""),
+            ("target_id", "plant-99"),
+            ("target_name", "other_herb"),
+            ("plant_kind", "other_herb"),
+            ("target_pos", [11.5, 64.0, -4.0]),
+            ("target_pos", [float("nan"), 64.0, -4.0]),
+            ("target_pos", [18.0, 64.0, -4.0]),
+        ):
+            rejected = dict(base)
+            rejected[key] = value
+            self.assertFalse(
+                _is_matching_harvest(
+                    event(rejected),
+                    1.0,
+                    self.FIXTURE_ID,
+                    self.FIXTURE_POS,
+                    self.PLAYER_POS,
+                ),
+                f"invalid {key} must not satisfy fixture predicate: {rejected}",
+            )
+        self.assertFalse(_valid_target_pos({"target_pos": [None, None, None]}, self.PLAYER_POS))
+
+    def test_gather_progress_skips_unrelated_session_and_herb(self):
+        target = _FakeEvent(
+            4.0,
+            "server_data",
+            {
+                "payload_type": "botany_harvest_progress",
+                "payload": {
+                    "session_id": "offline:Fake",
+                    "target_id": self.FIXTURE_ID,
+                    "target_name": HERB_ID,
+                    "plant_kind": HERB_ID,
+                    "target_pos": self.FIXTURE_POS,
+                    "progress": 0.25,
+                    "completed": False,
+                    "interrupted": False,
+                },
+            },
+        )
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    2.0,
+                    "server_data",
+                    {
+                        "payload_type": "gathering_session",
+                        "payload": {"session_id": "other", "target_type": "ore"},
+                    },
+                ),
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {
+                        "payload_type": "botany_harvest_progress",
+                        "payload": {
+                            "session_id": "other",
+                            "target_id": "plant-99",
+                            "target_name": "other_herb",
+                            "plant_kind": "other_herb",
+                            "target_pos": self.FIXTURE_POS,
+                            "progress": 0.2,
+                        },
+                    },
+                ),
+                target,
+            ]
+        )
+        self.assertEqual(
+            _wait_gather_progress(
+                bot, 1.0, self.FIXTURE_ID, self.FIXTURE_POS, self.PLAYER_POS
+            ),
+            target.data["payload"],
+        )
+
+    def test_gathering_terminal_requires_same_session_and_completed_progress(self):
+        good_payload = {
+            "session_id": "s1",
+            "target_type": "herb",
+            "target_name": HERB_ID,
+            "progress_ticks": 40,
+            "total_ticks": 40,
+            "completed": True,
+            "interrupted": False,
+        }
+        good = _FakeEvent(
+            6.0,
+            "server_data",
+            {"payload_type": "gathering_session", "payload": good_payload},
+        )
+        self.assertTrue(_is_matching_gathering_terminal(good, 1.0, "s1"))
+        self.assertFalse(_is_matching_gathering_terminal(good, 6.0, "s1"))
+        for key, value in (
+            ("session_id", "s2"),
+            ("target_type", "ore"),
+            ("target_name", "other_herb"),
+            ("completed", False),
+            ("interrupted", True),
+            ("total_ticks", 0),
+            ("total_ticks", -1),
+            ("progress_ticks", 39),
+        ):
+            wrong = dict(good_payload)
+            wrong[key] = value
+            self.assertFalse(
+                _is_matching_gathering_terminal(
+                    _FakeEvent(
+                        7.0,
+                        "server_data",
+                        {"payload_type": "gathering_session", "payload": wrong},
+                    ),
+                    1.0,
+                    "s1",
+                )
+            )
 
 
 class CultivationPillScenarioTest(unittest.TestCase):
@@ -2472,6 +4325,31 @@ def _server_data_narration_bytes() -> bytes:
     return _pb_message(3, _pb_message(1, target) + _pb_message(1, broadcast))
 
 
+def _server_data_breakthrough_cinematic_bytes() -> bytes:
+    cinematic = (
+        _pb_string(1, "offline:Break")
+        + _pb_string(2, "prelude")
+        + _pb_varint(3, 0)
+        + _pb_varint(4, 60)
+        + _pb_string(5, "Awaken")
+        + _pb_string(6, "Induce")
+        + _pb_string(7, "success")
+        + _pb_varint(8, 0)
+        + _pb_fixed64(9, -240.5)
+        + _pb_fixed64(10, 72.0)
+        + _pb_fixed64(11, -160.25)
+        + _pb_fixed64(12, 96.0)
+        + _pb_varint(13, 0)
+        + _pb_varint(14, 1)
+        + _pb_fixed32(15, 0.75)
+        + _pb_fixed32(16, 0.35)
+        + _pb_string(17, "calm")
+        + _pb_string(18, "awaken_induce")
+        + _pb_varint(19, 4242)
+    )
+    return _pb_message(proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD, cinematic)
+
+
 def _server_data_inventory_event_moved_bytes() -> bytes:
     from_location = _pb_message(
         1,
@@ -2598,6 +4476,43 @@ class ProtoMinTest(unittest.TestCase):
     def test_server_data_payload_name_reads_oneof_field(self):
         envelope = _pb_len_field(31, b"\x08\x01")
         self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(34, b"")),
+            "cast_sync",
+            "shallow payload table must not hide production field 34",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(36, b"")),
+            "skillbar_config",
+            "shallow payload table must not hide authoritative bind acknowledgement field 36",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(51, b"")),
+            "combat_event",
+            "shallow payload table must not hide production field 51",
+        )
+
+    def test_server_data_decoder_table_is_named_and_dispatches(self):
+        self.assertLessEqual(
+            set(proto_min.SERVER_DATA_PAYLOAD_DECODERS),
+            set(proto_min.SERVER_DATA_PAYLOAD_NAMES),
+            "每个深解码 field 必须共享 shallow oneof name 的单一字段键",
+        )
+        sentinel = object()
+        for field in proto_min.SERVER_DATA_PAYLOAD_DECODERS:
+            with self.subTest(
+                field=field, name=proto_min.SERVER_DATA_PAYLOAD_NAMES[field]
+            ):
+                with mock.patch.object(
+                    proto_min,
+                    "SERVER_DATA_PAYLOAD_DECODERS",
+                    {field: lambda _payload: sentinel},
+                ):
+                    self.assertIs(
+                        proto_min.decode_server_data_envelope(_pb_len_field(field, b"")),
+                        sentinel,
+                        f"field {field} 必须由 decoder table 分发",
+                    )
 
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
@@ -2678,6 +4593,24 @@ class FrameParseTest(unittest.TestCase):
         self.assertEqual(conn._try_parse_frame(), big)
 
 
+def _scenario_default_enabled(tree: ast.Module) -> bool:
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "DEFAULT_ENABLED"
+            for target in targets
+        ):
+            continue
+        if isinstance(node.value, ast.Constant) and node.value.value is False:
+            return False
+    return True
+
+
 class RunnerLogicTest(unittest.TestCase):
     def test_craft_reconnect_session_closes_before_settle_window(self):
         events = []
@@ -2726,7 +4659,6 @@ class RunnerLogicTest(unittest.TestCase):
 
         class FakeEnv:
             def new_bot(self, tag):
-                self.tag = tag
                 return FakeBot()
 
         with (
@@ -2848,6 +4780,44 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertIn("PASS", output.getvalue())
         self.assertIn("pass=1", output.getvalue())
 
+    def test_all_runs_fallback_only_when_owned_runtime_is_declared(self):
+        self.assertGreaterEqual(
+            MIN_CHUNKS_AFTER_CENTER,
+            8,
+            "fallback join gate 至少要观察 center 后 8 个真实 ChunkData",
+        )
+        scenario = discover_scenarios()["terrain_join_chunk_delivery"]
+        self.assertFalse(scenario.DEFAULT_ENABLED)
+        self.assertEqual(scenario.REQUIRED_ENV, FALLBACK_OWNED_ENV)
+        self.assertEqual(scenario.RUN_IN_ALL_WHEN_ENV, FALLBACK_OWNED_ENV)
+
+        run = mock.Mock()
+        dedicated = types.SimpleNamespace(
+            DESCRIPTION="owned fallback",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=FALLBACK_OWNED_ENV,
+            RUN_IN_ALL_WHEN_ENV=FALLBACK_OWNED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"terrain_join_chunk_delivery": dedicated},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {FALLBACK_OWNED_ENV: "1"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+
     def test_all_skips_ambient_without_fixture_ownership(self):
         run = mock.Mock()
         scenario = types.SimpleNamespace(
@@ -2950,6 +4920,95 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertIn("PASS", output.getvalue())
         self.assertIn("pass=1", output.getvalue())
 
+    def test_scenario_default_enabled_recognizes_annotated_false(self):
+        self.assertFalse(
+            _scenario_default_enabled(
+                ast.parse("DEFAULT_ENABLED: bool = False", mode="exec")
+            )
+        )
+        self.assertTrue(
+            _scenario_default_enabled(
+                ast.parse("DEFAULT_ENABLED: bool = True", mode="exec")
+            )
+        )
+        self.assertTrue(_scenario_default_enabled(ast.parse("VALUE = False", mode="exec")))
+
+    def test_default_gameplay_scenarios_do_not_assert_raw_server_data_transport(self):
+        scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
+        raw_server_data_calls = {
+            "expect_server_data_payload",
+            "server_data_payload_field",
+            "server_data_payload_name",
+        }
+        failures: list[str] = []
+
+        for path in scenarios_dir.glob("*.py"):
+            if path.name.startswith("_"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            default_enabled = _scenario_default_enabled(tree)
+            if not default_enabled:
+                continue
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                function_name = None
+                if isinstance(node.func, ast.Attribute):
+                    function_name = node.func.attr
+                elif isinstance(node.func, ast.Name):
+                    function_name = node.func.id
+                if function_name in raw_server_data_calls:
+                    failures.append(
+                        f"{path.name}:{node.lineno}: {function_name} 只识别 transport/oneof，"
+                        "玩法验收必须断言 kind=server_data 的深解码字段"
+                    )
+
+        self.assertEqual(
+            failures,
+            [],
+            "默认 gameplay 场景不得用 raw bong:server_data payload/oneof 充当行为证据：\n"
+            + "\n".join(failures),
+        )
+
+    def test_decoder_acceptance_matrix_covers_every_default_server_data_assertion_type(self):
+        scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
+        asserted_types: set[str] = set()
+
+        for path in scenarios_dir.glob("*.py"):
+            if path.name.startswith("_"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            default_enabled = _scenario_default_enabled(tree)
+            if not default_enabled:
+                continue
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Compare):
+                    continue
+                expressions = [node.left, *node.comparators]
+                for expression in expressions:
+                    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+                        if expression.value in set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()):
+                            asserted_types.add(expression.value)
+
+        deep_decoded_fields = set(proto_min.SERVER_DATA_PAYLOAD_DECODERS)
+
+        field_for_name = {
+            name: field for field, name in proto_min.SERVER_DATA_PAYLOAD_NAMES.items()
+        }
+        missing = sorted(
+            payload_type
+            for payload_type in asserted_types
+            if field_for_name.get(payload_type) not in deep_decoded_fields
+        )
+        self.assertEqual(
+            missing,
+            [],
+            "默认场景断言的 server_data 类型必须进入深解码 acceptance matrix；"
+            f"asserted={sorted(asserted_types)}, missing={missing}",
+        )
+
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}
         scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
@@ -2978,23 +5037,46 @@ class RunnerLogicTest(unittest.TestCase):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)
+        listener.settimeout(2.0)
         port = listener.getsockname()[1]
-        accepted = threading.Thread(target=lambda: listener.accept(), daemon=True)
+        accepted_connections: list[socket.socket] = []
+        accept_errors: list[OSError] = []
+
+        def accept_once() -> None:
+            try:
+                connection, _ = listener.accept()
+            except OSError as error:
+                accept_errors.append(error)
+                return
+            accepted_connections.append(connection)
+
+        accepted = threading.Thread(target=accept_once)
         accepted.start()
         try:
             self.assertTrue(check_server_reachable("127.0.0.1", port, timeout=2.0))
         finally:
+            accepted.join(timeout=2.5)
             listener.close()
+            for connection in accepted_connections:
+                connection.close()
+        self.assertFalse(accepted.is_alive(), "reachability test accept helper must terminate")
+        self.assertEqual(accept_errors, [])
         self.assertFalse(check_server_reachable("127.0.0.1", 1, timeout=0.5))
+
+    def test_check_server_reachable_converts_socket_errors_to_false(self):
+        with mock.patch("socket.create_connection", side_effect=OSError("unreachable")):
+            self.assertFalse(check_server_reachable("invalid", 25565, timeout=0.01))
 
     def test_intent_payload_is_valid_json_utf8(self):
         # intent() 的 wire 形状：channel string + UTF-8 JSON —— 锁编码不锁语义
         body = mc.mc_string("bong:client_request") + json.dumps(
-            {"v": 1, "type": "breakthrough"}
+            {"v": 1, "type": "breakthrough_request"}
         ).encode("utf-8")
         reader = mc.Reader(body)
         self.assertEqual(reader.string(), "bong:client_request")
-        self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
+        self.assertEqual(
+            json.loads(reader.rest()), {"v": 1, "type": "breakthrough_request"}
+        )
 
 
 def _bare_bot() -> Bot:
@@ -3170,23 +5252,27 @@ class EntityTrackingTest(unittest.TestCase):
     近战场景（combat_weapon_equip_damage 追击式采样）依赖 entity_pos 追活体
     NPC——拿 spawn 坐标当靶在 CI 时序下必 whiff。"""
 
+    ENTITY_UUID = "00112233-4455-6677-8899-aabbccddeeff"
+
     def _spawn(self, bot, eid=7, x=10.0, y=64.0, z=-3.0):
         body = (
             mc.write_varint(mc.S2C_ENTITY_SPAWN)
             + mc.write_varint(eid)
-            + b"\x00" * 16
+            + uuid.UUID(self.ENTITY_UUID).bytes
             + mc.write_varint(1)
             + struct.pack(">ddd", x, y, z)
         )
         bot._dispatch(body)
 
-    def test_spawn_registers_position(self):
+    def test_spawn_registers_position_and_uuid(self):
         bot = _bare_bot()
         self._spawn(bot)
         self.assertEqual(
             bot.entity_pos(7), (10.0, 64.0, -3.0),
             "entity_spawn 应把实体坐标登记进位置表（追击采样的起点）",
         )
+        self.assertEqual(bot.events[-1].data["uuid"], self.ENTITY_UUID)
+        self.assertEqual(bot.events[-1].data["type"], 1)
 
     def test_rel_move_accumulates_quarter_4096(self):
         bot = _bare_bot()
@@ -3200,6 +5286,9 @@ class EntityTrackingTest(unittest.TestCase):
         )
         bot._dispatch(body)
         x, y, z = bot.entity_pos(7)
+        self.assertEqual(bot.events[-1].kind, "entity_move")
+        self.assertEqual(bot.events[-1].data["entity_id"], 7)
+        self.assertAlmostEqual(bot.events[-1].data["x"], 11.0, places=6)
         self.assertAlmostEqual(x, 11.0, places=6, msg="dx=4096/4096 应 +1.0")
         self.assertAlmostEqual(y, 63.5, places=6, msg="dy=-2048/4096 应 -0.5")
         self.assertAlmostEqual(z, -3.0, places=6)
@@ -3229,6 +5318,11 @@ class EntityTrackingTest(unittest.TestCase):
             bot.entity_pos(7), (-100.0, 70.0, 200.0),
             "teleport 应绝对覆写位置（不叠加）",
         )
+        self.assertEqual(bot.events[-1].kind, "entity_move")
+        self.assertEqual(
+            bot.events[-1].data,
+            {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0},
+        )
 
     def test_destroy_removes_entity(self):
         bot = _bare_bot()
@@ -3236,6 +5330,398 @@ class EntityTrackingTest(unittest.TestCase):
         body = mc.write_varint(mc.S2C_ENTITIES_DESTROY) + mc.write_varint(1) + mc.write_varint(7)
         bot._dispatch(body)
         self.assertIsNone(bot.entity_pos(7), "destroy 后实体应从位置表移除（追击应停止）")
+
+
+class PlayerIdentityTrackingTest(unittest.TestCase):
+    """PlayerList + PlayerSpawn 共同提供用户名、UUID、协议 entity ID 的权威关联。"""
+
+    PLAYER_UUID = "12345678-1234-5678-9abc-def012345678"
+
+    def _player_list_add(self, bot, username="Alice"):
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + bytes([0x01])
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string(username)
+            + mc.write_varint(0)
+        )
+        bot._dispatch(body)
+
+    def _player_spawn(self, bot, entity_id=42):
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(entity_id)
+            + raw_uuid
+            + struct.pack(">ddd", 8.5, 66.0, -4.25)
+            + bytes([64, 192])
+        )
+        bot._dispatch(body)
+
+    def test_player_list_add_records_uuid_to_username(self):
+        bot = _bare_bot()
+
+        self._player_list_add(bot)
+
+        self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_list")
+        self.assertEqual(
+            event.data["entries"],
+            [{"uuid": self.PLAYER_UUID, "username": "Alice", "properties": []}],
+        )
+
+    def test_player_spawn_joins_entity_id_uuid_username_and_position(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+
+        self._player_spawn(bot)
+
+        self.assertEqual(bot.entity_pos(42), (8.5, 66.0, -4.25))
+        self.assertEqual(bot.player_entity_uuids[42], self.PLAYER_UUID)
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_spawn")
+        self.assertEqual(event.data["username"], "Alice")
+        self.assertEqual(event.data["yaw"], 64)
+        self.assertEqual(event.data["pitch"], 192)
+
+    def test_player_spawn_without_prior_list_is_still_observable(self):
+        bot = _bare_bot()
+
+        self._player_spawn(bot)
+
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_spawn")
+        self.assertIsNone(event.data["username"])
+        self.assertEqual(event.data["uuid"], self.PLAYER_UUID)
+
+    def test_destroy_removes_player_entity_identity_but_preserves_list_name(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+        self._player_spawn(bot)
+
+        bot._dispatch(
+            mc.write_varint(mc.S2C_ENTITIES_DESTROY)
+            + mc.write_varint(1)
+            + mc.write_varint(42)
+        )
+
+        self.assertIsNone(bot.entity_pos(42))
+        self.assertNotIn(42, bot.player_entity_uuids)
+        self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+
+    def test_player_remove_clears_stale_uuid_name_mapping(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+
+        bot._dispatch(
+            mc.write_varint(mc.S2C_PLAYER_REMOVE)
+            + mc.write_varint(1)
+            + raw_uuid
+        )
+
+        self.assertNotIn(self.PLAYER_UUID, bot.player_names)
+        self.assertEqual(bot.events[-1].kind, "player_remove")
+        self.assertEqual(bot.events[-1].data["uuids"], [self.PLAYER_UUID])
+
+    def test_player_remove_clears_stale_uuid_name_mapping(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+
+        bot._dispatch(
+            mc.write_varint(mc.S2C_PLAYER_REMOVE)
+            + mc.write_varint(1)
+            + raw_uuid
+        )
+
+        self.assertNotIn(self.PLAYER_UUID, bot.player_names)
+        self.assertEqual(bot.events[-1].kind, "player_remove")
+        self.assertEqual(bot.events[-1].data["uuids"], [self.PLAYER_UUID])
+
+    def test_player_remove_rejects_negative_count_without_emitting_event(self):
+        bot = _bare_bot()
+        with self.assertRaisesRegex(ValueError, "negative player remove count -1"):
+            bot._dispatch(
+                mc.write_varint(mc.S2C_PLAYER_REMOVE)
+                + mc.write_varint(-1)
+            )
+        self.assertEqual(bot.events, [])
+
+
+    def test_player_list_rejects_negative_property_count_without_partial_name(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(-1)
+        )
+        with self.assertRaisesRegex(ValueError, "property count -1"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "负 property count 不得产出 player_list 事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "完整 PlayerList entry 校验失败前不得写入 UUID→用户名映射",
+        )
+
+    def test_player_list_truncation_does_not_leave_partial_name_mapping(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(1)
+            + mc.mc_string("textures")
+        )
+        with self.assertRaises((IndexError, ValueError)):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "截断 PlayerList entry 不得产出事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "截断 PlayerList entry 不得残留 UUID→用户名映射",
+        )
+
+    def test_player_list_rejects_truncated_username_without_partial_mapping(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.write_varint(5)
+            + b"Ali"
+        )
+
+        with self.assertRaisesRegex(ValueError, "string length 5 exceeds remaining bytes 3"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "截断 username 不得产出 player_list 事件")
+        self.assertEqual(bot.player_names, {}, "截断 username 不得污染 UUID→用户名映射")
+
+    def test_player_list_rejects_negative_property_string_length(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(1)
+            + mc.write_varint(-1)
+        )
+
+        with self.assertRaisesRegex(ValueError, "string length -1 must be non-negative"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "负 property string 长度不得产出 player_list 事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "负 property string 长度不得残留 UUID→用户名映射",
+        )
+
+    def test_player_list_rejects_truncated_display_name_transactionally(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x21"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(0)
+            + b"\x01"
+            + mc.write_varint(8)
+            + b'{"text"'
+        )
+
+        with self.assertRaisesRegex(ValueError, "string length 8 exceeds remaining bytes 7"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "截断 display name 不得产出 player_list 事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "AddPlayer 同包的截断 display name 不得提前提交 UUID→用户名映射",
+        )
+
+    def test_combined_actions_follow_authoritative_valence_field_order(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        # Valence PlayerListS2c encodes every selected action for an entry in bit order:
+        # add_player → initialize_chat → game_mode → listed → latency → display_name.
+        actions = 0x3F
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + bytes([actions])
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(1)
+            + mc.mc_string("textures")
+            + mc.mc_string("base64")
+            + b"\x01"
+            + mc.mc_string("signed")
+            + b"\x01"
+            + raw_uuid
+            + struct.pack(">q", 1234)
+            + mc.write_varint(3)
+            + b"key"
+            + mc.write_varint(3)
+            + b"sig"
+            + mc.write_varint(1)
+            + b"\x01"
+            + mc.write_varint(37)
+            + b"\x01"
+            + mc.mc_string('{"text":"Alias"}')
+        )
+
+        bot._dispatch(body)
+
+        self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+        self.assertEqual(bot.events[-1].data["actions"], actions)
+        self.assertEqual(
+            bot.events[-1].data["entries"],
+            [
+                {
+                    "uuid": self.PLAYER_UUID,
+                    "username": "Alice",
+                    "properties": [
+                        {
+                            "name": "textures",
+                            "value": "base64",
+                            "signature": "signed",
+                        }
+                    ],
+                    "initialize_chat": {
+                        "has_chat_session": True,
+                        "session_id": self.PLAYER_UUID,
+                        "public_key_expiry": 1234,
+                        "public_key": b"key",
+                        "signature": b"sig",
+                    },
+                    "game_mode": 1,
+                    "listed": True,
+                    "latency": 37,
+                    "display_name": '{"text":"Alias"}',
+                }
+            ],
+        )
+
+    def _initialize_chat_body(
+        self,
+        *,
+        key_length: int,
+        key_bytes: bytes = b"",
+        signature_length: int | None = None,
+        signature_bytes: bytes = b"",
+    ) -> bytes:
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x02"
+            + mc.write_varint(1)
+            + raw_uuid
+            + b"\x01"
+            + raw_uuid
+            + struct.pack(">q", 1234)
+            + mc.write_varint(key_length)
+            + key_bytes
+        )
+        if signature_length is not None:
+            body += mc.write_varint(signature_length) + signature_bytes
+        return body
+
+    def test_initialize_chat_rejects_negative_key_length_without_emitting_entry(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat key length -1"):
+            bot._dispatch(self._initialize_chat_body(key_length=-1))
+
+        self.assertEqual(bot.events, [], "畸形 chat key 长度不得产出 player_list 事件")
+
+    def test_initialize_chat_rejects_key_length_beyond_remaining_bytes(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat key length 4"):
+            bot._dispatch(self._initialize_chat_body(key_length=4, key_bytes=b"key"))
+
+        self.assertEqual(bot.events, [], "截断 chat key 不得产出 player_list 事件")
+
+    def test_initialize_chat_rejects_negative_signature_length(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat signature length -1"):
+            bot._dispatch(
+                self._initialize_chat_body(
+                    key_length=3,
+                    key_bytes=b"key",
+                    signature_length=-1,
+                )
+            )
+
+        self.assertEqual(bot.events, [], "负 chat signature 长度不得产出 player_list 事件")
+
+    def test_initialize_chat_rejects_signature_length_beyond_remaining_bytes(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat signature length 4"):
+            bot._dispatch(
+                self._initialize_chat_body(
+                    key_length=3,
+                    key_bytes=b"key",
+                    signature_length=4,
+                    signature_bytes=b"sig",
+                )
+            )
+
+        self.assertEqual(bot.events, [], "截断 chat signature 不得产出 player_list 事件")
+
+    def test_initialize_chat_accepts_exact_key_and_signature_boundaries(self):
+        bot = _bare_bot()
+
+        bot._dispatch(
+            self._initialize_chat_body(
+                key_length=3,
+                key_bytes=b"key",
+                signature_length=3,
+                signature_bytes=b"sig",
+            )
+        )
+
+        self.assertEqual(bot.events[-1].kind, "player_list")
+        self.assertEqual(bot.events[-1].data["actions"], 0x02)
+        self.assertEqual(
+            bot.events[-1].data["entries"],
+            [
+                {
+                    "uuid": self.PLAYER_UUID,
+                    "initialize_chat": {
+                        "has_chat_session": True,
+                        "session_id": self.PLAYER_UUID,
+                        "public_key_expiry": 1234,
+                        "public_key": b"key",
+                        "signature": b"sig",
+                    },
+                }
+            ],
+        )
 
 
 def _pb_float32_field(number: int, value: float) -> bytes:
@@ -3278,6 +5764,31 @@ def _proto_field_signature(message_body: str, field_name: str) -> tuple[str, int
     if match is None:
         raise AssertionError(f"authoritative proto missing field {field_name}")
     return match.group(1), int(match.group(2))
+
+
+def _proto_field_names(message_body: str) -> set[str]:
+    return {
+        match.group(1)
+        for match in re.finditer(
+            r"^\s*(?:(?:optional|repeated)\s+)?[A-Za-z_][\w.]*\s+"
+            r"([A-Za-z_][\w]*)\s*=\s*\d+\s*;",
+            message_body,
+            flags=re.MULTILINE,
+        )
+    }
+
+
+def _proto_field_metadata(message_body: str, field_name: str) -> tuple[str, int, str]:
+    match = re.search(
+        rf"^\s*((?:optional|repeated)\s+)?([A-Za-z_][\w.]*)\s+"
+        rf"{re.escape(field_name)}\s*=\s*(\d+)\s*;",
+        message_body,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"authoritative proto missing field {field_name}")
+    cardinality = (match.group(1) or "").strip() or "single"
+    return match.group(2), int(match.group(3)), cardinality
 
 
 class ZoneInfoProtoDecodeTest(unittest.TestCase):
@@ -3537,6 +6048,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "Bot envelope 分发常量必须与权威 ServerDataEnvelope.player_state 对齐",
         )
         self.assertEqual(
+            _proto_field_signature(player_state, "realm"),
+            ("Realm", proto_min.PLAYER_STATE_REALM_FIELD),
+            "Bot realm 常量及 varint wire type 必须与权威 PlayerState 对齐",
+        )
+        self.assertEqual(
             _proto_field_signature(player_state, "spirit_qi"),
             ("double", proto_min.PLAYER_STATE_SPIRIT_QI_FIELD),
             "Bot spirit_qi 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
@@ -3547,10 +6063,56 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "Bot spirit_qi_max 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
         )
 
+    def test_player_state_realm_decoder_matches_authoritative_enum(self):
+        common_proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/common.proto"
+        common_source = common_proto_path.read_text(encoding="utf-8")
+        realm_body = re.search(
+            r"\benum\s+Realm\s*\{(?P<body>.*?)\}",
+            common_source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(realm_body, "权威 common.proto 必须声明 Realm enum")
+        authoritative = {
+            int(number): name.removeprefix("REALM_").title()
+            for name, number in re.findall(
+                r"^\s*(REALM_[A-Z_]+)\s*=\s*(\d+)\s*;",
+                realm_body.group("body"),
+                flags=re.MULTILINE,
+            )
+        }
+        self.assertEqual(
+            proto_min.PLAYER_STATE_REALM_NAMES,
+            authoritative,
+            "Bot PlayerState realm 名称映射必须完全派生自权威 Realm enum",
+        )
+        for wire_value, expected_name in authoritative.items():
+            with self.subTest(wire_value=wire_value):
+                msg = _pb_varint_field(proto_min.PLAYER_STATE_REALM_FIELD, wire_value)
+                decoded = proto_min.decode_server_data_envelope(
+                    _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+                )
+                self.assertEqual(decoded["realm"], expected_name)
+
+    def test_player_state_unknown_realm_stays_observable(self):
+        msg = _pb_varint_field(proto_min.PLAYER_STATE_REALM_FIELD, 77)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
+        self.assertEqual(decoded["realm"], "unknown_77")
+
+    def test_player_state_wrong_realm_wire_type_uses_default(self):
+        msg = _pb_len_field(proto_min.PLAYER_STATE_REALM_FIELD, b"Induce")
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
+        self.assertEqual(decoded["realm"], "Unspecified")
+
     def test_player_state_tag5_decodes_authoritative_qi(self):
-        msg = _pb_fixed64(
-            proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65.0
-        ) + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100.0)
+        msg = (
+            _pb_varint_field(proto_min.PLAYER_STATE_REALM_FIELD, 2)
+            + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65.0)
+            + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100.0)
+        )
         decoded = proto_min.decode_server_data_envelope(
             _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
         )
@@ -3562,6 +6124,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["type"],
             "player_state",
             f"envelope tag 5 应分发到 player_state，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["realm"],
+            "Induce",
+            f"PlayerState.realm 必须读取 varint field 2，实际 payload={decoded}",
         )
         self.assertEqual(
             decoded["spirit_qi"],
@@ -3581,6 +6148,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertIsNotNone(
             decoded,
             "空 player_state message 仍是合法 protobuf，实际返回 None",
+        )
+        self.assertEqual(
+            decoded["realm"],
+            "Unspecified",
+            f"缺失 varint field 2 应使用 protobuf 默认 0，实际 payload={decoded}",
         )
         self.assertEqual(
             decoded["spirit_qi"],
@@ -3639,6 +6211,9 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(
             decoded["recipe_id"], "workbench.weapon.stone_knife",
             "CraftSessionState.recipe_id 是 field 4（optional string）",
+        )
+        self.assertEqual(
+            decoded["elapsed_ticks"], 10, "CraftSessionState.elapsed_ticks 是 field 5"
         )
         self.assertEqual(
             decoded["total_ticks"], 400, "CraftSessionState.total_ticks 是 field 6"
@@ -3777,6 +6352,27 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "无 completed/failed 分支的 CraftOutcome 应兜底 outcome=unknown（防解码 crash）",
         )
 
+    def test_unknown_gameplay_enums_keep_wire_identity(self):
+        gathering = _pb_varint_field(5, 99) + _pb_varint_field(6, 98)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(30, gathering))
+        self.assertEqual(decoded["target_type"], "unknown_99")
+        self.assertEqual(decoded["quality_hint"], "unknown_98")
+
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(31, _pb_varint_field(2, 97))
+        )
+        self.assertEqual(decoded["kind"], "unknown_97")
+
+        outcome = _pb_varint_field(1, 96) + _pb_varint_field(6, 95)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(14, outcome))
+        self.assertEqual(decoded["bucket"], "unknown_96")
+        self.assertEqual(decoded["toxin_color"], "unknown_95")
+
+        missing_color = proto_min.decode_server_data_envelope(
+            _pb_len_field(14, _pb_varint_field(1, 1))
+        )
+        self.assertIsNone(missing_color["toxin_color"])
+
     def test_alchemy_furnace_tag11_and_session_tag12(self):
         furnace = (
             _pb_varint_field(4, 1)
@@ -3860,6 +6456,42 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
         self.assertEqual(
             decoded["pill"], "ling_xi_wan", "AlchemyOutcomeResolved.pill 是 field 3"
+        )
+
+    def test_skillbar_config_tag36_decodes_empty_item_skill_and_packed_cooldowns(self):
+        empty = b""
+        item = (
+            _pb_len_field(1, b"iron_sword")
+            + _pb_len_field(2, "凡铁剑".encode("utf-8"))
+            + _pb_varint_field(3, 250)
+            + _pb_varint_field(4, 500)
+            + _pb_len_field(5, b"")
+        )
+        skill = (
+            _pb_len_field(1, b"dugu.shoot_needle")
+            + _pb_len_field(2, "凝针".encode("utf-8"))
+            + _pb_varint_field(3, 50)
+            + _pb_varint_field(4, 600)
+            + _pb_len_field(5, b"bong-client:textures/gui/items/needle.png")
+        )
+        config = (
+            _pb_len_field(1, empty)
+            + _pb_len_field(1, _pb_len_field(1, _pb_len_field(1, item)))
+            + _pb_len_field(1, _pb_len_field(1, _pb_len_field(2, skill)))
+            + _pb_len_field(2, _pb_raw_varint(0) + _pb_raw_varint(42))
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(36, config))
+
+        self.assertEqual(decoded["type"], "skillbar_config")
+        self.assertIsNone(decoded["slots"][0], "OptionalSkillBarEntry 无 entry 应解为 None")
+        self.assertEqual(decoded["slots"][1]["kind"], "item")
+        self.assertEqual(decoded["slots"][1]["template_id"], "iron_sword")
+        self.assertEqual(decoded["slots"][2]["kind"], "skill")
+        self.assertEqual(decoded["slots"][2]["skill_id"], "dugu.shoot_needle")
+        self.assertEqual(
+            decoded["cooldown_until_ms"],
+            [0, 42],
+            "proto3 repeated uint64 默认 packed，最小解码器必须逐个读取",
         )
 
     def test_cast_sync_tag34_outcome_names(self):

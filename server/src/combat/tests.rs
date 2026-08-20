@@ -291,6 +291,14 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         (earliest_valid_deadline..=9_999).contains(&loaded_deadline),
         "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {loaded_deadline}，有效区间 {earliest_valid_deadline}..=9999",
     );
+    let elapsed_ticks = 9_999_u64
+        .checked_sub(loaded_deadline)
+        .expect("validated deadline should not exceed the persisted deadline");
+    assert_eq!(
+        elapsed_ticks % crate::combat::components::TICKS_PER_SECOND,
+        0,
+        "deadline 只能按完整墙钟秒 × TICKS_PER_SECOND 折算；实际扣除了 {elapsed_ticks} tick",
+    );
     assert_eq!(lifecycle.death_count, 2);
 
     let _ = std::fs::remove_dir_all(root);

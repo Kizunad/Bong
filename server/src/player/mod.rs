@@ -83,6 +83,7 @@ type JoinedClientsWithoutStateQueryFilter = (
     Or<(
         Added<Client>,
         Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        Added<ReconnectPersistencePending>,
     )>,
     Without<PlayerState>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
@@ -97,6 +98,11 @@ pub(crate) struct PlayerAttachResources<'w> {
 
 #[derive(Component, Default)]
 struct InventoryPersistenceDirty;
+
+/// Same-username reconnects wait one frame while the old disconnected entity's final persistence
+/// checkpoint runs. This marker is consumed by the normal join attach system on the next frame.
+#[derive(Component, Default)]
+pub(crate) struct ReconnectPersistencePending;
 
 type ChangedInventoryClientsQueryItem<'a> = (Entity, &'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (
@@ -230,6 +236,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut resources: PlayerAttachResources<'_>,
+    pending_disconnects: Query<&Username, (Without<Client>, Without<Despawned>)>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -245,6 +252,17 @@ pub(crate) fn attach_player_state_to_joined_clients(
         flags,
     ) in &mut joined_clients
     {
+        if pending_disconnects
+            .iter()
+            .any(|disconnected| disconnected.0 == username.0)
+        {
+            commands.entity(entity).insert(ReconnectPersistencePending);
+            continue;
+        }
+
+        commands
+            .entity(entity)
+            .remove::<ReconnectPersistencePending>();
         let persisted =
             load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();
@@ -483,6 +501,15 @@ pub(crate) fn despawn_disconnected_clients(
                     );
                 }
             }
+            // Valence detects a closed TCP connection asynchronously. During that window the
+            // stale ECS entity still has `Client`, so an active CraftSession may advance a few
+            // ticks after the bot has already disconnected. The periodic craft checkpoint is
+            // the last authoritative in-game progress; prefer it for the disconnect flush so
+            // reconnect cannot turn network-detection latency into free crafting time.
+            let durable_craft_session =
+                load_player_slices_for_canonical_techniques(&persistence, username.0.as_str())
+                    .craft_session;
+            let craft_session_for_disconnect = durable_craft_session.as_ref().or(craft_session);
             match save_player_slices_with_coffin(
                 &persistence,
                 username.0.as_str(),
@@ -493,7 +520,7 @@ pub(crate) fn despawn_disconnected_clients(
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
                 coffin.map(|c| c.grade),
-                craft_session,
+                craft_session_for_disconnect,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -1398,6 +1425,65 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "disconnect cleanup should mark entity as despawned"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn disconnect_flush_does_not_advance_craft_from_stale_ecs_session() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("disconnect-craft-checkpoint");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        let inventory = make_inventory();
+        let durable_session = CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.disconnect"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id("Azure"),
+            qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
+        };
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &persistence,
+            "Azure",
+            Some(&inventory),
+            Some(&durable_session),
+        )
+        .expect("durable craft checkpoint should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-disconnect-craft-checkpoint",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            PlayerState::default(),
+            inventory,
+            CraftSession {
+                remaining_ticks: 35,
+                ..durable_session.clone()
+            },
+        ));
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let reloaded = crate::player::state::load_player_slices(
+            app.world().resource::<PlayerStatePersistence>(),
+            "Azure",
+        );
+        assert_eq!(
+            reloaded.craft_session.as_ref(),
+            Some(&durable_session),
+            "断线检测延迟不能把 stale ECS CraftSession 的进度写成免费制作时间"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
