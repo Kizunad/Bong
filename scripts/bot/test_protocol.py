@@ -2401,7 +2401,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
             base_env = os.environ.copy()
             for name in (
-                "BOT_E2E_AMBIENT_FIXTURE_MODE", "BOT_E2E_REUSE", "BOT_E2E_HOST",
+                "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_FALLBACK_MODE",
+                "BOT_E2E_REUSE",
+                "BOT_E2E_HOST",
                 "BOT_E2E_PORT", "BONG_TERRAIN_RASTER_PATH",
                 "BONG_SPIRITWOOD_HARVESTED_PATH", "REDIS_URL",
             ):
