@@ -16,7 +16,7 @@ use valence::message::SendMessage;
 use valence::prelude::bevy_ecs::system::ParamSet;
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, DiggingEvent,
-    DiggingState, Entity, EventReader, EventWriter, Events, IntoSystemConfigs, Position, Query,
+    DiggingState, Entity, EventReader, EventWriter, Events, IntoSystemConfigs, Or, Position, Query,
     Res, ResMut, Resource, Update, Username, With, Without,
 };
 
@@ -268,7 +268,14 @@ fn attach_social_bundle_to_joined_clients(
     persistence: Option<Res<PersistenceSettings>>,
     mut joined_clients: Query<
         (valence::prelude::Entity, Option<&mut Lifecycle>),
-        (Added<Client>, Without<Anonymity>),
+        (
+            Or<(
+                Added<Client>,
+                Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+            )>,
+            Without<Anonymity>,
+            Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+        ),
     >,
 ) {
     for (entity, mut lifecycle) in &mut joined_clients {
@@ -3722,11 +3729,7 @@ mod tests {
         bootstrap_sqlite(&db_path, &format!("social-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                db_path,
-                data_dir.join("deceased"),
-                format!("social-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(db_path, format!("social-{test_name}")),
             data_dir,
         )
     }
@@ -3790,6 +3793,61 @@ mod tests {
 
         let entity_ref = app.world().entity(entity);
         assert!(entity_ref.contains::<Anonymity>());
+        assert!(entity_ref.contains::<Renown>());
+        assert!(entity_ref.contains::<FactionReputation>());
+        assert!(entity_ref.contains::<Relationships>());
+        assert!(entity_ref.contains::<ExposureLog>());
+    }
+
+    #[test]
+    fn reconnect_blocked_client_is_excluded_from_social_bundle() {
+        let mut app = qi_test_app();
+        app.add_systems(Update, attach_social_bundle_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked);
+
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        assert!(
+            !entity_ref.contains::<Anonymity>(),
+            "blocked reconnect targets must not receive the social bundle on the Added<Client> edge"
+        );
+        assert!(!entity_ref.contains::<Renown>());
+        assert!(!entity_ref.contains::<FactionReputation>());
+        assert!(!entity_ref.contains::<Relationships>());
+        assert!(!entity_ref.contains::<ExposureLog>());
+    }
+
+    #[test]
+    fn reconnect_ready_client_gets_default_social_bundle() {
+        let mut app = qi_test_app();
+        app.add_systems(Update, attach_social_bundle_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked);
+        app.update();
+        assert!(
+            !app.world().entity(entity).contains::<Anonymity>(),
+            "the blocked frame must not attach the social bundle"
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>()
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectReady);
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        assert!(
+            entity_ref.contains::<Anonymity>(),
+            "the ReconnectReady edge alone must attach the social bundle after the Added<Client> edge is consumed"
+        );
         assert!(entity_ref.contains::<Renown>());
         assert!(entity_ref.contains::<FactionReputation>());
         assert!(entity_ref.contains::<Relationships>());

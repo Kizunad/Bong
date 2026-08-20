@@ -1910,8 +1910,8 @@ mod tests {
         ///   - `cleanup_chunks_after_client_despawn` 只要求 `With<ClientMarker> +
         ///     With<Despawned>`（再加 View + VisibleChunkLayer），不需要 `Client` →
         ///     仍然对 view 内的每个 chunk 执行 dec。
-        /// 于是「chunk 已在层内、viewer_count 恒为 0、despawn 客户端 view 覆盖它」
-        /// 的 underflow 状态被确定性构造出来，全程无 mid-tick 时序依赖。
+        ///     于是「chunk 已在层内、viewer_count 恒为 0、despawn 客户端 view 覆盖它」
+        ///     的 underflow 状态被确定性构造出来，全程无 mid-tick 时序依赖。
         ///
         /// 消息丢弃：chunk 先入层，其 LOAD 消息在「无任何客户端」的 tick 里被
         /// staged→ready→unready 清空（unready 丢弃整条消息队列）→ 永不投递、计数 0。
