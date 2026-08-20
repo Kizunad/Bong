@@ -337,9 +337,10 @@ pub fn spawn_scattered_cultivator_at(
 
     let seed = skin_salt(spawn_position) ^ qi_density.to_bits();
     let temperament = FarmingTemperament::deterministic(seed);
-    commands
-        .entity(entity)
-        .insert(ScatteredCultivatorBundle::new(temperament));
+    commands.entity(entity).insert((
+        ScatteredCultivatorBundle::new(temperament),
+        assign_npc_trade_inventory(NpcArchetype::Rogue, realm, entity.index() as u64),
+    ));
 
     let runtime =
         npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, realm, initial_age_ticks);

@@ -977,6 +977,14 @@ mod tests {
                 .is_some(),
             "scattered cultivator remains a cultivating Rogue"
         );
+        let trade = app
+            .world()
+            .get::<crate::npc::trade::NpcTradeInventory>(npc)
+            .expect("scattered Rogue must expose the same trade inventory as seeded Rogue");
+        assert!(
+            !trade.offers.is_empty(),
+            "Awaken Rogue fixture should have trade offers"
+        );
     }
 
     #[test]

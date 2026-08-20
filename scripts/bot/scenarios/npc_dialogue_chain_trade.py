@@ -34,17 +34,16 @@ import os
 from bot.bot import BotAssertionError
 
 from ._npc_dialogue_helpers import (
-    CATALOG_ITEMS,
     OUT_OF_RANGE_TRADE,
     approach_entity,
     assert_rogue_stock_miss,
     is_rogue_stock_miss,
     last_event_time,
-    nearest_villager_id,
     queue_scenario_zombie,
     request_and_assert,
     request_and_assert_rogue,
     rogue_village_pos_from_tppoi,
+    wait_for_rogue_with_inventory,
 )
 
 ZOMBIE_DISPLAY = "游尸·醒灵"
@@ -103,38 +102,42 @@ def run_phase_2(bot) -> None:
 
     # 播种是 Poisson 场：出生点附近期望 ~3 个 villager（80m 激活半径）。
     # 先原地等 25s 捕获最近者；没有才向村庄走（路上顺路扫场 + 村庄 POI 聚拢）。
-    npc_id = nearest_villager_id(bot)
+    npc_id_and_offers = None
     deadline = time.monotonic() + 25.0
-    while npc_id is None and time.monotonic() < deadline:
+    while npc_id_and_offers is None and time.monotonic() < deadline:
         time.sleep(1.0)
-        npc_id = nearest_villager_id(bot)
-    if npc_id is not None:
+        try:
+            npc_id_and_offers = wait_for_rogue_with_inventory(
+                bot, timeout=0.1, description="出生点散修商贩"
+            )
+        except BotAssertionError:
+            pass
+    if npc_id_and_offers is not None:
+        npc_id, offers = npc_id_and_offers
         if not approach_entity(bot, npc_id, range_m=3.0):
-            raise BotAssertionError(f"追近 villager entity_id={npc_id} 失败（实体丢失）")
-        _run_rogue_chain(bot, npc_id)
+            raise BotAssertionError(f"追近 Rogue entity_id={npc_id} 失败（实体丢失）")
+        _run_rogue_chain(bot, npc_id, offers)
         return
 
     bot.move_to(village[0], village[1], village[2], speed=5.5)
-    npc_id = nearest_villager_id(bot)
-    if npc_id is None:
+    try:
+        npc_id, offers = wait_for_rogue_with_inventory(
+            bot, timeout=30.0, description="rogue_village 散修商贩"
+        )
+    except BotAssertionError:
         # 走到村庄后仍未见：再站 30s——玩家 80m 内激活的散修按日程
         # Trade/Patrol/Socialize 聚向 RogueVillage POI，视野内迟早出现。
-        deadline = time.monotonic() + 30.0
-        while npc_id is None and time.monotonic() < deadline:
-            time.sleep(1.0)
-            npc_id = nearest_villager_id(bot)
-    if npc_id is None:
         raise BotAssertionError(
             "出生点等待 25s、走向 rogue_village 途中及村庄等待 30s 均未捕获 "
-            "villager(108) entity_spawn；BOT_E2E_ROGUE_TRADE=1 契约要求 "
+            "带非空 trade_offers 的 archetype=rogue metadata；BOT_E2E_ROGUE_TRADE=1 契约要求 "
             "BONG_ROGUE_SEED_COUNT>0 启动 server"
         )
     if not approach_entity(bot, npc_id, range_m=3.0):
-        raise BotAssertionError(f"追近 villager entity_id={npc_id} 失败（实体丢失）")
-    _run_rogue_chain(bot, npc_id)
+        raise BotAssertionError(f"追近 Rogue entity_id={npc_id} 失败（实体丢失）")
+    _run_rogue_chain(bot, npc_id, offers)
 
 
-def _run_rogue_chain(bot, npc_id) -> None:
+def _run_rogue_chain(bot, npc_id, offers) -> None:
 
     request_and_assert_rogue(
         bot,
@@ -157,7 +160,9 @@ def _run_rogue_chain(bot, npc_id) -> None:
     )
 
     coins_short_hits = 0
-    for item_id, price in CATALOG_ITEMS:
+    if not offers:
+        raise BotAssertionError("metadata 已选择 Rogue，但 trade_offers 为空")
+    for item_id, price in offers:
         expected_short = f"§c[NPC] {COINS_SHORT}{price} 枚。"
         event = None
         for _attempt in range(5):
@@ -177,6 +182,13 @@ def _run_rogue_chain(bot, npc_id) -> None:
                     timeout=8.0,
                     description=f"目录品 {item_id} 的库存/余额二分回显",
                 )
+                if event.data["text"] == OUT_OF_RANGE_TRADE:
+                    if not approach_entity(bot, npc_id, range_m=3.0):
+                        raise BotAssertionError(
+                            f"目录品 {item_id} 重试期间 Rogue {npc_id} 丢失"
+                        )
+                    event = None
+                    continue
                 break
             except BotAssertionError:
                 with bot._lock:
@@ -190,16 +202,16 @@ def _run_rogue_chain(bot, npc_id) -> None:
                 if not out_of_range:
                     raise
                 event = out_of_range[-1]
-                break
+                if not approach_entity(bot, npc_id, range_m=3.0):
+                    raise BotAssertionError(
+                        f"目录品 {item_id} 重试期间 Rogue {npc_id} 丢失"
+                    )
+                continue
         if event is None:
             raise BotAssertionError(f"目录品 {item_id} 五次重试仍未命中二分回显")
         text = event.data["text"]
         if text == OUT_OF_RANGE_TRADE:
-            if not approach_entity(bot, npc_id, range_m=3.0):
-                raise BotAssertionError(
-                    f"目录品 {item_id} 重试期间 villager {npc_id} 丢失"
-                )
-            continue
+            raise BotAssertionError(f"目录品 {item_id} 越界重试未得到终态回显")
         if text == expected_short:
             coins_short_hits += 1
         elif is_rogue_stock_miss(text):

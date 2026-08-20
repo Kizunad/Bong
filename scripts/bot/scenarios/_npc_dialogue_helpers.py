@@ -10,8 +10,8 @@
 - /npc_scenario chase 生成 zombie（EntityKind::ZOMBIE=118，Archetype=Zombie、Realm=Awaken）
   → display_name "游尸·醒灵"，inspect greeting "游尸没有回应。"，can_trade=false；
   chase thinker 只追不咬（无 MeleeRangeScorer/MeleeAttackAction），对话场景零战斗风险。
-- BONG_ROGUE_SEED_COUNT>0 播种的散修走 villager fallback（EntityKind::VILLAGER=108），
-  但 NpcRegistry 预算封顶实际播种数（实测 300→50），fixture 世界内相遇不可确定性构造；
+- BONG_ROGUE_SEED_COUNT>0 播种的散修由 `bong:npc_metadata` 明确标注 archetype=rogue，
+  metadata 同时携带真实 `trade_offers`，避免把环境 villager 或高境界库存误认成商贩；
   display_name "散修·{醒灵|引气|凝脉|固元|通灵|化虚}"，greeting "道友，可有灵草出让？"，
   can_trade=true（fresh 玩家 rep=0 ≥ -30、FactionReputationTier::Normal）。
 - 交易判定顺序：offered_items → 目录查找（npc_trade_catalog_entry 按 archetype
@@ -20,7 +20,7 @@
   （目录查找先于 can_trade），需 Rogue/Commoner 且 rep < -30——fixture 不可构造。
 - 交易定价：fresh 玩家 rep_f32=0.5 → RepTier::Mid → 1.0x，base 价
   spirit_grass=10 / ling_xi_wan_flawed=8 / ju_ling_dan_flawed=15。
-- 散修交易库存随机 1-3/3（entity.index() 播种）：请求任意目录条目，
+- 散修交易库存随机 1-3/3（entity.index() 播种）：场景从 metadata 读取实际目录条目，
   反馈要么 "当前没有这件货"，要么（命中库存）"骨币不足，需要 N 枚。"
   —— fresh 玩家出生仅 7 骨币（assets/inventory/loadouts/default.toml），
   而 Awaken 档最低价 8，命中必报骨币不足；三件里必有一件命中（库存非空）。
@@ -28,19 +28,13 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 
 from bot.bot import Bot, BotAssertionError, Event
 
-VILLAGER_ENTITY_TYPE = 108
 ZOMBIE_ENTITY_TYPE = 118
-
-CATALOG_ITEMS = [
-    ("spirit_grass", 10),
-    ("ling_xi_wan_flawed", 8),
-    ("ju_ling_dan_flawed", 15),
-]
 
 OUT_OF_RANGE_INSPECT = "[NPC] 目标已不在附近，无法查看。"
 OUT_OF_RANGE_CHOICE = "[NPC] 目标已不在附近，无法交谈。"
@@ -52,6 +46,8 @@ ROGUE_REALMS = ("醒灵", "引气", "凝脉", "固元", "通灵", "化虚")
 
 ROGUE_TRADE_PREFIX = "§c[NPC] 散修·"
 ROGUE_TRADE_STOCK_MISS_SUFFIX = " 当前没有这件货。"
+SCENARIO_SPAWN_RADIUS = 12.0
+SCENARIO_SPAWN_TOLERANCE = 1.5
 
 
 def last_event_time(bot: Bot) -> float:
@@ -63,22 +59,52 @@ def _distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> f
     return math.dist(a, b)
 
 
+def _scenario_spawn_matches(
+    event: Event, origin: tuple[float, float, float]
+) -> bool:
+    """只接受 chase 单体固定的 +X 方向 12 格出生点，排除环境僵尸。"""
+    if event.kind != "entity_spawn" or event.data.get("type") != ZOMBIE_ENTITY_TYPE:
+        return False
+    try:
+        spawn = (float(event.data["x"]), float(event.data["y"]), float(event.data["z"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    expected = (origin[0] + SCENARIO_SPAWN_RADIUS, origin[1], origin[2])
+    return _distance(spawn, expected) <= SCENARIO_SPAWN_TOLERANCE
+
+
 def queue_scenario_zombie(bot: Bot) -> Event:
     """`/npc_scenario chase` 生成 zombie 并等 entity_spawn（12m 圆周，chase thinker 只追不咬）。"""
     if bot.position is None:
         raise BotAssertionError("期望已有 bot.position 后再生成场景 NPC，实际 position=None")
+    origin = bot.position
     anchor = last_event_time(bot)
     bot.cmd("npc_scenario chase")
     bot.expect_chat("Scenario queued.", timeout=10.0)
-    return bot.wait_for(
-        lambda e: e.kind == "entity_spawn"
-        and e.t > anchor
+    spawn = bot.wait_for(
+        lambda e: e.t > anchor
         and e.data.get("entity_id") != bot.entity_id
-        and e.data.get("type") == ZOMBIE_ENTITY_TYPE
-        and _distance(bot.position, (e.data["x"], e.data["y"], e.data["z"])) <= 40.0,
+        and _scenario_spawn_matches(e, origin),
         timeout=15.0,
-        description="/npc_scenario chase 后 40 格内出现 zombie(118) entity_spawn",
+        description="/npc_scenario chase 后固定 +X 12 格出现 zombie(118) entity_spawn",
     )
+    # 同一窗口内若有第二个候选，说明坐标绑定仍有歧义，不能把错误实体交给后续请求。
+    deadline = time.monotonic() + 0.25
+    while time.monotonic() < deadline:
+        with bot._lock:
+            candidates = [
+                e
+                for e in bot.events
+                if e.t > anchor
+                and e.data.get("entity_id") != bot.entity_id
+                and _scenario_spawn_matches(e, origin)
+            ]
+        if len(candidates) > 1:
+            raise BotAssertionError(
+                " /npc_scenario chase 出生窗口出现多个同坐标 zombie 候选，拒绝歧义绑定"
+            )
+        time.sleep(0.02)
+    return spawn
 
 
 def approach_entity(
@@ -153,37 +179,50 @@ def request_and_assert(
     )
 
 
-def wait_for_rogue_within(
+def _trade_metadata(event: Event) -> tuple[int, list[tuple[str, int]]] | None:
+    """解析 NPC metadata 中可成交的 Rogue 及其真实库存。"""
+    if event.kind != "payload" or event.data.get("channel") != "bong:npc_metadata":
+        return None
+    try:
+        payload = json.loads(event.data["data"].decode("utf-8"))
+        if payload.get("type") != "npc_metadata" or payload.get("archetype") != "rogue":
+            return None
+        entity_id = int(payload["entity_id"])
+        offers = [
+            (str(offer["template_id"]), int(offer["price_bone_coins"]))
+            for offer in payload.get("trade_offers", [])
+        ]
+    except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return (entity_id, offers) if offers else None
+
+
+def wait_for_rogue_with_inventory(
     bot: Bot, timeout: float, description: str
-) -> tuple[int, tuple[float, float, float]]:
-    """等视野内出现散修 villager（type=108）且拿到最近已知位置。"""
+) -> tuple[int, list[tuple[str, int]]]:
+    """只选择 metadata 明确声明为 Rogue 且库存非空的 NPC。"""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        best_id: int | None = None
-        best_pos: tuple[float, float, float] | None = None
+        best: tuple[int, list[tuple[str, int]], float] | None = None
         with bot._lock:
-            spawns = [
-                e
-                for e in bot.events
-                if e.kind == "entity_spawn"
-                and e.data.get("type") == VILLAGER_ENTITY_TYPE
-                and e.data.get("entity_id") != bot.entity_id
-            ]
-        for spawn in spawns:
-            entity_id = spawn.data["entity_id"]
-            pos = bot.entity_pos(entity_id)
-            if pos is None:
+            metadata_events = list(bot.events)
+        for event in metadata_events:
+            parsed = _trade_metadata(event)
+            if parsed is None:
                 continue
-            if best_pos is None or _distance(bot.position, pos) < _distance(
-                bot.position, best_pos
-            ):
-                best_id, best_pos = entity_id, pos
-        if best_id is not None:
-            return best_id, best_pos
-        time.sleep(0.5)
+            entity_id, offers = parsed
+            pos = bot.entity_pos(entity_id)
+            if pos is None or bot.position is None:
+                continue
+            candidate = (entity_id, offers, _distance(bot.position, pos))
+            if best is None or candidate[2] < best[2]:
+                best = candidate
+        if best is not None:
+            return best[0], best[1]
+        time.sleep(0.25)
     raise BotAssertionError(
-        f"{description}：{timeout:.0f}s 内未出现 villager(108) entity_spawn；"
-        "请以 BONG_ROGUE_SEED_COUNT>0 启动 server（BOT_E2E_ROGUE_TRADE=1 契约）"
+        f"{description}：{timeout:.0f}s 内未收到 archetype=rogue 且 trade_offers 非空的 npc_metadata；"
+        "请以 BONG_ROGUE_SEED_COUNT>0 启动 server"
     )
 
 
@@ -306,29 +345,6 @@ def expect_no_npc_chat_after(bot: Bot, anchor: float, window: float, description
         ]
     if stray:
         raise BotAssertionError(f"期望 {description}，实际收到 {len(stray)} 条 [NPC] chat：{stray!r}")
-
-
-def nearest_villager_id(bot: Bot) -> int | None:
-    """当前视野内最近的 villager(108) entity_id（无则 None）。"""
-    best_id: int | None = None
-    best_dist = float("inf")
-    with bot._lock:
-        spawns = [
-            e
-            for e in bot.events
-            if e.kind == "entity_spawn"
-            and e.data.get("type") == VILLAGER_ENTITY_TYPE
-            and e.data.get("entity_id") != bot.entity_id
-        ]
-    for spawn in spawns:
-        entity_id = spawn.data["entity_id"]
-        pos = bot.entity_pos(entity_id)
-        if pos is None or bot.position is None:
-            continue
-        dist = _distance(bot.position, pos)
-        if dist < best_dist:
-            best_dist, best_id = dist, entity_id
-    return best_id
 
 
 def rogue_village_pos_from_tppoi(bot: Bot) -> tuple[float, float, float]:
