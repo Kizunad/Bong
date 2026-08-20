@@ -51,6 +51,7 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios import production_forge_request  # noqa: E402
 from bot.scenarios.combat_skill_cast import (  # noqa: E402
     AUDIO_FLAG,
     AUDIO_RECIPE_ID,
@@ -4591,6 +4592,102 @@ class FrameParseTest(unittest.TestCase):
         big = b"\x24" + b"y" * 200
         conn.buf = _frame(mc.write_varint(len(big)) + zlib.compress(big))
         self.assertEqual(conn._try_parse_frame(), big)
+
+
+class ForgeSubscriberTest(unittest.TestCase):
+    @staticmethod
+    def _subscriber(sock):
+        subscriber = production_forge_request._ForgeEventSubscriber.__new__(
+            production_forge_request._ForgeEventSubscriber
+        )
+        subscriber.host = "127.0.0.1"
+        subscriber.port = 6379
+        subscriber._sock = sock
+        subscriber._buf = bytearray()
+        return subscriber
+
+    def test_idle_timeout_retries_before_deadline(self):
+        class FakeSocket:
+            def __init__(self):
+                self.calls = 0
+                self.timeouts = []
+
+            def settimeout(self, value):
+                self.timeouts.append(value)
+
+            def recv(self, _size):
+                self.calls += 1
+                if self.calls == 1:
+                    raise socket.timeout
+                return b"+ok\r\n"
+
+        sock = FakeSocket()
+        subscriber = self._subscriber(sock)
+        with mock.patch.object(
+            production_forge_request.time,
+            "monotonic",
+            side_effect=[10.0, 11.0, 12.0],
+        ):
+            frame = subscriber._recv_until_frame(20.0)
+
+        self.assertEqual(frame, "ok", "deadline 内的空闲超时不能吞掉后续 Redis 帧")
+        self.assertEqual(sock.calls, 2, "空闲超时后应继续 recv，而不是立即失败")
+        self.assertEqual(sock.timeouts, [10.0, 8.0])
+
+    def test_idle_timeout_at_deadline_raises(self):
+        class TimeoutSocket:
+            def settimeout(self, _value):
+                pass
+
+            def recv(self, _size):
+                raise socket.timeout
+
+        subscriber = self._subscriber(TimeoutSocket())
+        with (
+            mock.patch.object(
+                production_forge_request.time,
+                "monotonic",
+                side_effect=[19.0, 20.0],
+            ),
+            self.assertRaisesRegex(TimeoutError, "订阅 socket 空闲超时"),
+        ):
+            subscriber._recv_until_frame(20.0)
+
+    def test_run_closes_subscriber_after_success(self):
+        subscriber = mock.Mock()
+        env = object()
+        with (
+            mock.patch.object(
+                production_forge_request,
+                "_ForgeEventSubscriber",
+                return_value=subscriber,
+            ),
+            mock.patch.object(production_forge_request, "_run_forge_scenario") as body,
+        ):
+            production_forge_request.run(env)
+
+        body.assert_called_once_with(env, subscriber)
+        subscriber.close.assert_called_once_with()
+
+    def test_run_closes_subscriber_after_failure(self):
+        subscriber = mock.Mock()
+        env = object()
+        with (
+            mock.patch.object(
+                production_forge_request,
+                "_ForgeEventSubscriber",
+                return_value=subscriber,
+            ),
+            mock.patch.object(
+                production_forge_request,
+                "_run_forge_scenario",
+                side_effect=RuntimeError("scenario failed"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "scenario failed"),
+        ):
+            production_forge_request.run(env)
+
+        subscriber.close.assert_called_once_with()
 
 
 def _scenario_default_enabled(tree: ast.Module) -> bool:

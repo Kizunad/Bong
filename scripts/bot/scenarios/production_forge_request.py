@@ -162,7 +162,9 @@ class _ForgeEventSubscriber:
                 self._sock.settimeout(min(10.0, remaining))
                 data = self._sock.recv(4096)
             except socket.timeout:
-                raise TimeoutError("订阅 socket 空闲超时（无新帧）") from None
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("订阅 socket 空闲超时（无新帧）") from None
+                continue
             if not data:
                 raise OSError(
                     f"redis {self.host}:{self.port} 订阅连接被对端关闭"
@@ -261,8 +263,7 @@ def _expect_chat_after(bot, substring: str, after: float, timeout: float = 10.0)
     )
 
 
-def run(env) -> None:
-    subscriber = _ForgeEventSubscriber()
+def _run_forge_scenario(env, subscriber: _ForgeEventSubscriber) -> None:
     with env.new_bot("FoRq") as bot:
         try:
             subscriber.subscribe("bong:forge_event")
@@ -342,3 +343,11 @@ def run(env) -> None:
         _assert_failure_event(ev, meridian="Lung")
 
         bot.assert_alive("锻造入口全链路 + 负向四分支后")
+
+
+def run(env) -> None:
+    subscriber = _ForgeEventSubscriber()
+    try:
+        _run_forge_scenario(env, subscriber)
+    finally:
+        subscriber.close()
