@@ -6,7 +6,6 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 - **client/** — Fabric 1.20.1 微端（Java 17，owo-lib UI）
 - **agent/** — LLM "天道" agent 层（TypeScript，三 Agent 并发推演）
 - **worldgen/** — Python 地形生成流水线（blueprint 驱动，terrain_gen 模块，LAYER_REGISTRY 统一 16 层地形）
-- **library-web/** — 末法残土图书馆前端（Astro，静态站点）
 
 ## Quick commands
 
