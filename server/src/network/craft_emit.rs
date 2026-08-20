@@ -886,6 +886,7 @@ pub fn emit_recipe_unlocked_payloads(
 /// P2 简化：每个在线玩家成功推一次。不能只查 `Added<Client>`，因为
 /// `Username` / inventory 等组件可能在 join 后续系统才挂上，单帧查询会漏发。
 /// 后续 unlock 增量靠 `RecipeUnlockedV1` 单条推。
+#[allow(clippy::type_complexity)]
 pub fn emit_recipe_list_on_join(
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
