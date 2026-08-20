@@ -84,6 +84,7 @@ pub(crate) fn relic_guard_thinker() -> ThinkerBuilder {
 #[allow(dead_code)]
 pub fn spawn_disciple_npc_at(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
@@ -146,6 +147,7 @@ pub fn spawn_disciple_npc_at(
     );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = assign_npc_techniques(
+        technique_registry,
         NpcArchetype::Disciple,
         realm,
         &meridian_sys,
@@ -167,9 +169,10 @@ pub fn spawn_disciple_npc_at(
 }
 
 /// Spawn 仙家遗种守护者（绑定遗迹 ID + 警戒范围）。外观复用 Villager。
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub fn spawn_relic_guard_npc_at(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     layer: Entity,
     home_zone: &str,
     relic_center: DVec3,
@@ -225,6 +228,7 @@ pub fn spawn_relic_guard_npc_at(
     );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = assign_npc_techniques(
+        technique_registry,
         NpcArchetype::GuardianRelic,
         guard_realm,
         &meridian_sys,

@@ -58,6 +58,12 @@ const CAST_LOOP_ANIM_INTERRUPT_FADE_OUT_TICKS: u8 = 3;
 /// 自然完成分支的循环段停止淡出（release 段随各招完成系统接力播出）。
 const CAST_LOOP_ANIM_COMPLETE_FADE_OUT_TICKS: u8 = 2;
 
+/// 通用 skill-bar 生命周期的自然完成消费者。启动校验与完成分派共用此判定，
+/// 防止目录条目被允许进入 generic cast 后只上报 Completed 却没有任何 gameplay 结算。
+pub fn has_direct_generic_completion_consumer(skill_id: &str) -> bool {
+    skill_id == GUANGBO_TICAO_ID
+}
+
 /// plan-skill-anim-fidelity-v1 P2 后半（§8.1 #3）——走通用 `Casting` 状态机、
 /// 起手播**循环蓄力段**动画的招式 → 循环 anim_id 查表（最小侵入方案：按
 /// skill_id 查表，不给 `Casting` 组件加字段）。`tick_casts_or_interrupt` 的
@@ -349,7 +355,11 @@ pub fn tick_casts_or_interrupt(
             // 发 GuangboTicaoPracticeEvent → consume_guangbo_practice_events 走真元门
             // 扣 qi_cost 并递增 proficiency（守恒在消费侧；此处只负责"练习发生了"）。
             // AV（练习姿态 + 轻量正反馈粒子 + 伸展音）纯加法 cosmetic。
-            if casting.skill_id.as_deref() == Some(GUANGBO_TICAO_ID) {
+            if casting
+                .skill_id
+                .as_deref()
+                .is_some_and(has_direct_generic_completion_consumer)
+            {
                 guangbo_practice_events.send(GuangboTicaoPracticeEvent { entity });
                 emit_recipe_audio_with_context(
                     &mut audio_events,
@@ -2514,6 +2524,16 @@ mod tests {
                 SkillBarBindings::default(),
             ))
             .id()
+    }
+
+    #[test]
+    fn direct_generic_completion_registry_matches_the_real_guangbo_consumer() {
+        assert!(has_direct_generic_completion_consumer(GUANGBO_TICAO_ID));
+        assert!(!has_direct_generic_completion_consumer("movement.dash"));
+        assert!(!has_direct_generic_completion_consumer("shield_block"));
+        assert!(!has_direct_generic_completion_consumer(
+            "unknown.consumerless"
+        ));
     }
 
     #[test]

@@ -149,7 +149,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_movement_state_to_joined_clients,
+            attach_movement_state_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients),
             sync_stamina_regen_from_realm,
             player_knockback::apply_pending_player_knockback_system,
             player_knockback::tick_active_player_knockback_system
@@ -165,7 +166,14 @@ pub fn register(app: &mut App) {
     );
 }
 
-type JoinedClientWithoutMovementFilter = (Added<Client>, Without<MovementState>);
+type JoinedClientWithoutMovementFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
+    Without<MovementState>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
 
 fn attach_movement_state_to_joined_clients(
     mut commands: Commands,

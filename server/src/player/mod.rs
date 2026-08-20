@@ -4,10 +4,10 @@ pub mod spawn_selector;
 pub mod state;
 
 use self::state::{
-    canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_known_techniques_slice, save_player_lifecycle_slice,
+    canonical_player_id, load_player_slices_for_canonical_techniques, save_player_core_slice,
+    save_player_inventory_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
-    save_player_slices_with_coffin, save_player_slow_slice, LoadedKnownTechniques, PlayerState,
+    save_player_slices_with_coffin, save_player_slow_slice, update_player_ui_prefs, PlayerState,
     PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
@@ -19,7 +19,7 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
-use crate::cultivation::known_techniques::{KnownTechniques, KnownTechniquesLoadFailed};
+use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -33,7 +33,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
 use valence::entity::entity::Flags;
 use valence::message::SendMessage;
-use valence::prelude::bevy_ecs::query::Has;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::Despawned;
 use valence::prelude::{
     bevy_ecs, Added, App, AppExit, Changed, Client, Commands, Component, Entity, EntityLayerId,
@@ -62,6 +62,14 @@ type ClientInitQueryItem<'a> = (
     &'a mut GameMode,
 );
 
+type ClientInitQueryFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
+
 type JoinedClientsWithoutStateQueryItem<'a> = (
     Entity,
     &'a Username,
@@ -71,9 +79,30 @@ type JoinedClientsWithoutStateQueryItem<'a> = (
     &'a mut Position,
     Option<&'a mut Flags>,
 );
-type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
+type JoinedClientsWithoutStateQueryFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        Added<ReconnectPersistencePending>,
+    )>,
+    Without<PlayerState>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
+
+#[derive(SystemParam)]
+pub(crate) struct PlayerAttachResources<'w> {
+    skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
+    skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
+    technique_registry: Option<Res<'w, TechniqueRegistry>>,
+}
+
 #[derive(Component, Default)]
 struct InventoryPersistenceDirty;
+
+/// Same-username reconnects wait one frame while the old disconnected entity's final persistence
+/// checkpoint runs. This marker is consumed by the normal join attach system on the next frame.
+#[derive(Component, Default)]
+pub(crate) struct ReconnectPersistencePending;
 
 type ChangedInventoryClientsQueryItem<'a> = (Entity, &'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (
@@ -83,13 +112,6 @@ type ChangedInventoryClientsQueryFilter = (
 );
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
-type ChangedKnownTechniquesClientsQueryItem<'a> = (&'a Username, &'a KnownTechniques);
-// Without<KnownTechniquesLoadFailed>：加载失败会话禁止把 default 表写回覆盖真实存档
-type ChangedKnownTechniquesClientsQueryFilter = (
-    With<Client>,
-    Changed<KnownTechniques>,
-    Without<KnownTechniquesLoadFailed>,
-);
 type CultivationBundleQueryItem<'a> = (
     &'a Username,
     &'a Cultivation,
@@ -131,12 +153,13 @@ pub fn register(app: &mut App) {
             autosave_player_lifespan_slices.after(autosave_player_cultivation_bundles),
             autosave_player_lifecycle_slices.after(autosave_player_lifespan_slices),
             flush_changed_player_skills.after(autosave_player_lifecycle_slices),
-            flush_changed_player_known_techniques.after(flush_changed_player_skills),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
-                .after(flush_changed_player_known_techniques)
+                .after(flush_changed_player_skills)
                 .after(crate::network::craft_emit::persist_dirty_craft_sessions),
-            despawn_disconnected_clients.after(flush_changed_player_inventories),
+            despawn_disconnected_clients
+                .after(flush_changed_player_inventories)
+                .after(crate::persistence::dispatch_known_techniques_reconnects),
         ),
     );
     app.add_systems(Last, flush_connected_players_on_shutdown);
@@ -158,9 +181,9 @@ pub fn initial_game_mode() -> GameMode {
     GameMode::Survival
 }
 
-fn init_clients(
+pub(crate) fn init_clients(
     mut commands: Commands,
-    mut clients: Query<ClientInitQueryItem<'_>, Added<Client>>,
+    mut clients: Query<ClientInitQueryItem<'_>, ClientInitQueryFilter>,
     dimension_layers: Option<Res<DimensionLayers>>,
 ) {
     // Spawn defaults route every client into the overworld layer. The follow-up
@@ -212,8 +235,8 @@ pub(crate) fn attach_player_state_to_joined_clients(
     persistence: Res<PlayerStatePersistence>,
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
-    mut skill_config_store: Option<ResMut<SkillConfigStore>>,
-    skill_config_schemas: Option<Res<SkillConfigSchemas>>,
+    mut resources: PlayerAttachResources<'_>,
+    pending_disconnects: Query<&Username, (Without<Client>, Without<Despawned>)>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -229,16 +252,23 @@ pub(crate) fn attach_player_state_to_joined_clients(
         flags,
     ) in &mut joined_clients
     {
-        let persisted = load_player_slices(&persistence, username.0.as_str());
+        if pending_disconnects
+            .iter()
+            .any(|disconnected| disconnected.0 == username.0)
+        {
+            commands.entity(entity).insert(ReconnectPersistencePending);
+            continue;
+        }
+
+        commands
+            .entity(entity)
+            .remove::<ReconnectPersistencePending>();
+        let persisted =
+            load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();
         let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
-        let (known_techniques, techniques_load_failed) = match persisted.known_techniques {
-            LoadedKnownTechniques::Loaded(known_techniques) => (known_techniques, false),
-            LoadedKnownTechniques::LoadFailed => (KnownTechniques::default(), true),
-        };
-        let restored_technique = !known_techniques.entries.is_empty();
         let last_dimension = persisted.last_dimension;
         let composite_power = persisted.state.composite_power(&Cultivation::default());
         position.set(persisted.position);
@@ -254,15 +284,30 @@ pub(crate) fn attach_player_state_to_joined_clients(
             }
         }
 
-        let quick_slot_bindings = persisted
-            .ui_prefs
-            .quick_slot_bindings(persisted.inventory.as_ref());
-        let skill_bar_bindings = persisted
-            .ui_prefs
-            .skill_bar_bindings(persisted.inventory.as_ref());
+        let mut ui_prefs = persisted.ui_prefs.clone();
+        let skill_bar_prefs_sanitized = resources
+            .technique_registry
+            .as_deref()
+            .is_some_and(|registry| ui_prefs.sanitize_skill_bar_bindings(registry));
+        if skill_bar_prefs_sanitized {
+            let sanitized_skill_bar = ui_prefs.skill_bar.clone();
+            if let Err(error) = update_player_ui_prefs(&persistence, username.0.as_str(), |prefs| {
+                prefs.skill_bar = sanitized_skill_bar
+            }) {
+                tracing::warn!(
+                    "[bong][player] failed to persist sanitized skill-bar bindings for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
+        let quick_slot_bindings = ui_prefs.quick_slot_bindings(persisted.inventory.as_ref());
+        let skill_bar_bindings = ui_prefs.skill_bar_bindings(
+            persisted.inventory.as_ref(),
+            resources.technique_registry.as_deref(),
+        );
         if let (Some(store), Some(schemas)) = (
-            skill_config_store.as_deref_mut(),
-            skill_config_schemas.as_deref(),
+            resources.skill_config_store.as_deref_mut(),
+            resources.skill_config_schemas.as_deref(),
         ) {
             store.replace_player_configs(
                 canonical_player_id(username.0.as_str()).as_str(),
@@ -277,11 +322,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
             quick_slot_bindings,
             skill_bar_bindings,
             UnlockedStyles::default(),
-            known_techniques,
         ));
-        if techniques_load_failed {
-            entity_commands.insert(KnownTechniquesLoadFailed);
-        }
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
@@ -320,7 +361,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
         //   若未来需要跨 server 重启持久化，需同时修改 PlayerStateAutosave 序列化路径。
         entity_commands.insert(VoidErosion::default());
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, restored_technique={restored_technique}, last_dimension={last_dimension:?})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
             username.0,
         );
     }
@@ -370,8 +411,6 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&PlayerInventory>,
         Option<&LifespanComponent>,
         Option<&SkillSet>,
-        Option<&KnownTechniques>,
-        Has<KnownTechniquesLoadFailed>,
         Option<&CoffinComponent>,
         Option<&CraftSession>,
         Option<&Lifecycle>,
@@ -411,8 +450,6 @@ pub(crate) fn despawn_disconnected_clients(
             player_inventory,
             lifespan,
             skill_set,
-            known_techniques,
-            known_techniques_load_failed,
             coffin,
             craft_session,
             lifecycle,
@@ -464,6 +501,15 @@ pub(crate) fn despawn_disconnected_clients(
                     );
                 }
             }
+            // Valence detects a closed TCP connection asynchronously. During that window the
+            // stale ECS entity still has `Client`, so an active CraftSession may advance a few
+            // ticks after the bot has already disconnected. The periodic craft checkpoint is
+            // the last authoritative in-game progress; prefer it for the disconnect flush so
+            // reconnect cannot turn network-detection latency into free crafting time.
+            let durable_craft_session =
+                load_player_slices_for_canonical_techniques(&persistence, username.0.as_str())
+                    .craft_session;
+            let craft_session_for_disconnect = durable_craft_session.as_ref().or(craft_session);
             match save_player_slices_with_coffin(
                 &persistence,
                 username.0.as_str(),
@@ -474,7 +520,7 @@ pub(crate) fn despawn_disconnected_clients(
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
                 coffin.map(|c| c.grade),
-                craft_session,
+                craft_session_for_disconnect,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -485,23 +531,6 @@ pub(crate) fn despawn_disconnected_clients(
                     "[bong][player] failed to save player slices for disconnected client `{}`: {error}",
                     username.0,
                 ),
-            }
-            if known_techniques_load_failed {
-                tracing::warn!(
-                    "[bong][player] skipping known techniques save for disconnected client `{}`: join-time load failed, refusing to overwrite the stored row",
-                    username.0,
-                );
-            } else if let Some(known_techniques) = known_techniques {
-                if let Err(error) = save_player_known_techniques_slice(
-                    &persistence,
-                    username.0.as_str(),
-                    known_techniques,
-                ) {
-                    tracing::warn!(
-                        "[bong][player] failed to save known techniques for disconnected client `{}`: {error}",
-                        username.0,
-                    );
-                }
             }
             // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须落盘死亡/
             // 复活状态机，否则重连时 attach_combat_bundle_to_joined_clients 只能盲插
@@ -554,8 +583,6 @@ fn flush_connected_players_on_shutdown(
             Option<&PlayerInventory>,
             Option<&LifespanComponent>,
             Option<&SkillSet>,
-            Option<&KnownTechniques>,
-            Has<KnownTechniquesLoadFailed>,
             Option<&CoffinComponent>,
             Option<&CraftSession>,
             Option<&Lifecycle>,
@@ -593,8 +620,6 @@ fn flush_connected_players_on_shutdown(
         player_inventory,
         lifespan,
         skill_set,
-        known_techniques,
-        known_techniques_load_failed,
         coffin,
         craft_session,
         lifecycle,
@@ -667,23 +692,6 @@ fn flush_connected_players_on_shutdown(
                 "[bong][player] failed to save player slices during shutdown flush for `{}`: {error}",
                 username.0,
             ),
-        }
-        if known_techniques_load_failed {
-            tracing::warn!(
-                "[bong][player] skipping known techniques save during shutdown flush for `{}`: join-time load failed, refusing to overwrite the stored row",
-                username.0,
-            );
-        } else if let Some(known_techniques) = known_techniques {
-            if let Err(error) = save_player_known_techniques_slice(
-                &persistence,
-                username.0.as_str(),
-                known_techniques,
-            ) {
-                tracing::warn!(
-                    "[bong][player] failed to save known techniques during shutdown flush for `{}`: {error}",
-                    username.0,
-                );
-            }
         }
         // bughunt player-lifecycle-relog-death-consequence-wipe：关服时同样要落盘死亡/
         // 复活状态机（同 despawn_disconnected_clients 的写路径），否则重启后重连会命中
@@ -942,25 +950,6 @@ fn flush_changed_player_skills(
     }
 }
 
-fn flush_changed_player_known_techniques(
-    persistence: Res<PlayerStatePersistence>,
-    players: Query<
-        ChangedKnownTechniquesClientsQueryItem<'_>,
-        ChangedKnownTechniquesClientsQueryFilter,
-    >,
-) {
-    for (username, known_techniques) in &players {
-        if let Err(error) =
-            save_player_known_techniques_slice(&persistence, username.0.as_str(), known_techniques)
-        {
-            tracing::warn!(
-                "[bong][player] immediate known techniques flush failed for `{}`: {error}",
-                username.0,
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1118,35 +1107,6 @@ mod tests {
             .expect("inventories row should exist")
     }
 
-    fn read_known_techniques_json(db_path: &PathBuf) -> String {
-        let connection = Connection::open(db_path).expect("sqlite db should open");
-        connection
-            .query_row(
-                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
-                params!["Azure"],
-                |row| row.get(0),
-            )
-            .expect("player_known_techniques row should exist")
-    }
-
-    fn dash_known_techniques(proficiency: f32) -> KnownTechniques {
-        KnownTechniques {
-            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
-                id: "movement.dash".to_string(),
-                proficiency,
-                active: true,
-            }],
-        }
-    }
-
-    fn dash_proficiency_from_json(json: &str) -> f64 {
-        serde_json::from_str::<serde_json::Value>(json)
-            .expect("known techniques JSON should decode")
-            .pointer("/entries/0/proficiency")
-            .and_then(serde_json::Value::as_f64)
-            .expect("dash proficiency should exist")
-    }
-
     #[derive(Default)]
     struct CapturedLoginPosition(Option<[f64; 3]>);
 
@@ -1261,9 +1221,8 @@ mod tests {
     fn cultivation_bundle_flushes_periodically() {
         let (persistence, data_dir, db_path) = sqlite_persistence("cultivation-flush");
         let mut app = App::new();
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-cultivation-flush",
         ));
         app.insert_resource(PlayerStateAutosaveTimer {
@@ -1322,9 +1281,8 @@ mod tests {
         let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-autosave-flush");
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-autosave-flush",
         ));
         app.insert_resource(PlayerStateAutosaveTimer {
@@ -1379,9 +1337,8 @@ mod tests {
             sqlite_persistence("lifecycle-autosave-no-early-flush");
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-autosave-no-early-flush",
         ));
         // ticks - 1 后面还差 2 才到 INTERVAL_TICKS，tick_player_persistence_timer 的 +1
@@ -1424,30 +1381,6 @@ mod tests {
     }
 
     #[test]
-    fn changed_known_techniques_flush_persists_dash_proficiency() {
-        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-changed-flush");
-        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.add_systems(Update, flush_changed_player_known_techniques);
-
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(dash_known_techniques(0.58));
-
-        app.update();
-
-        let known_techniques_json = read_known_techniques_json(&db_path);
-        assert!((dash_proficiency_from_json(&known_techniques_json) - 0.58).abs() < 1e-6);
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
     fn disconnect_flush_persists_latest_player_slices_before_cleanup() {
         let (persistence, data_dir, db_path) = sqlite_persistence("disconnect-flush");
         crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
@@ -1455,9 +1388,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-disconnect-flush",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1470,9 +1402,6 @@ mod tests {
             inventory_score: 0.7,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(dash_known_techniques(0.37));
 
         app.world_mut().entity_mut(entity).remove::<Client>();
         app.update();
@@ -1480,12 +1409,10 @@ mod tests {
         let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
-        let known_techniques_json = read_known_techniques_json(&db_path);
 
         assert_eq!(karma, -0.15);
         assert_eq!(inventory_score, 0.7);
         assert_eq!((pos_x, pos_y, pos_z), (42.0, 77.0, -3.5));
-        assert!((dash_proficiency_from_json(&known_techniques_json) - 0.37).abs() < 1e-6);
         assert_ne!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
@@ -1494,6 +1421,65 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "disconnect cleanup should mark entity as despawned"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn disconnect_flush_does_not_advance_craft_from_stale_ecs_session() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("disconnect-craft-checkpoint");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        let inventory = make_inventory();
+        let durable_session = CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.disconnect"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id("Azure"),
+            qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
+        };
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &persistence,
+            "Azure",
+            Some(&inventory),
+            Some(&durable_session),
+        )
+        .expect("durable craft checkpoint should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-disconnect-craft-checkpoint",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            PlayerState::default(),
+            inventory,
+            CraftSession {
+                remaining_ticks: 35,
+                ..durable_session.clone()
+            },
+        ));
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let reloaded = crate::player::state::load_player_slices(
+            app.world().resource::<PlayerStatePersistence>(),
+            "Azure",
+        );
+        assert_eq!(
+            reloaded.craft_session.as_ref(),
+            Some(&durable_session),
+            "断线检测延迟不能把 stale ECS CraftSession 的进度写成免费制作时间"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
@@ -1512,9 +1498,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-morph-auto-release-disconnect",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1599,9 +1584,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-disconnect-flush",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1672,9 +1656,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-disconnect-clock-anchor",
         ));
         app.insert_resource(CombatClock { tick: 500_000 });
@@ -1720,9 +1703,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-shutdown-clock-anchor",
         ));
         app.insert_resource(CombatClock { tick: 777_000 });
@@ -1762,9 +1744,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-shutdown-flush",
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);
@@ -1777,9 +1758,6 @@ mod tests {
             inventory_score: 0.85,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(dash_known_techniques(0.64));
 
         app.world_mut().send_event(AppExit::Success);
         app.update();
@@ -1787,12 +1765,10 @@ mod tests {
         let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
-        let known_techniques_json = read_known_techniques_json(&db_path);
 
         assert_eq!(karma, 0.33);
         assert_eq!(inventory_score, 0.85);
         assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
-        assert!((dash_proficiency_from_json(&known_techniques_json) - 0.64).abs() < 1e-6);
         assert_ne!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
@@ -1801,278 +1777,6 @@ mod tests {
         assert!(
             app.world().get::<Client>(entity).is_some(),
             "shutdown flush should persist while the player is still connected"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    fn seed_and_corrupt_known_techniques_row(persistence: &PlayerStatePersistence) {
-        crate::player::state::save_player_state(persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-        crate::player::state::save_player_known_techniques_slice(
-            persistence,
-            "Azure",
-            &dash_known_techniques(0.42),
-        )
-        .expect("seeding known techniques row should persist");
-        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
-        connection
-            .execute(
-                "UPDATE player_known_techniques SET known_techniques_json = '{not json' WHERE username = ?1",
-                params!["Azure"],
-            )
-            .expect("corrupting known techniques row should succeed");
-    }
-
-    #[test]
-    fn join_with_corrupt_known_techniques_row_blocks_flush_from_wiping_it() {
-        // C1 回归主锚：损坏行 → join 兜底 default → 同 tick Changed(=Added) flush。
-        // 修复前该 flush 会把 default 空表写回 DB，玩家全部功法+熟练度永久蒸发。
-        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-corrupt-join");
-        seed_and_corrupt_known_techniques_row(&persistence);
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.add_systems(
-            Update,
-            (
-                attach_player_state_to_joined_clients,
-                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
-            ),
-        );
-
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.update();
-        // 多跑一帧：attach 的 insert 经 deferred command 落地后，Changed 过滤在
-        // 下一帧才对 flush 系统可见，两帧覆盖「join 当帧 + 组件落地帧」全窗口。
-        app.update();
-
-        assert!(
-            app.world()
-                .get::<KnownTechniquesLoadFailed>(entity)
-                .is_some(),
-            "加载失败的 join 应给实体挂 KnownTechniquesLoadFailed 写保护标记"
-        );
-        assert_eq!(
-            app.world()
-                .get::<KnownTechniques>(entity)
-                .expect("join should still attach a KnownTechniques component"),
-            &KnownTechniques::default(),
-            "加载失败时会话内组件应为 default（玩家本次会话看到空表，但存档不受损）"
-        );
-        assert_eq!(
-            read_known_techniques_json(&db_path),
-            "{not json",
-            "DB 行必须保持损坏原文原样——任何写回（哪怕合法格式）都意味着真实存档被覆盖"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn join_without_known_techniques_row_flushes_normally_as_new_player() {
-        // 对照组：DB 无行（真新玩家）不挂写保护，后续熟练度增长照常落盘。
-        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-new-join");
-        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.add_systems(
-            Update,
-            (
-                attach_player_state_to_joined_clients,
-                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
-            ),
-        );
-
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.update();
-        app.update();
-
-        assert!(
-            app.world()
-                .get::<KnownTechniquesLoadFailed>(entity)
-                .is_none(),
-            "真新玩家（无行）不得挂写保护标记，否则整个会话的功法进度都无法持久化"
-        );
-
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(dash_known_techniques(0.58));
-        app.update();
-
-        assert!(
-            (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.58).abs() < 1e-6,
-            "新玩家会话内的功法变更应照常经 Changed flush 落盘"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn disconnect_save_skips_known_techniques_when_load_failed_marker_present() {
-        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-disc-guard");
-        seed_and_corrupt_known_techniques_row(&persistence);
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
-            &db_path,
-            data_dir.join("deceased"),
-            "player-known-techniques-disc-guard",
-        ));
-        app.add_systems(Update, despawn_disconnected_clients);
-
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut().entity_mut(entity).insert((
-            PlayerState::default(),
-            dash_known_techniques(0.99),
-            KnownTechniquesLoadFailed,
-        ));
-
-        app.world_mut().entity_mut(entity).remove::<Client>();
-        app.update();
-
-        assert_eq!(
-            read_known_techniques_json(&db_path),
-            "{not json",
-            "挂写保护标记的实体断线时不得把会话内组件（0.99）写回覆盖损坏前的真实存档"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn shutdown_flush_skips_known_techniques_when_load_failed_marker_present() {
-        let (persistence, data_dir, db_path) =
-            sqlite_persistence("known-techniques-shutdown-guard");
-        seed_and_corrupt_known_techniques_row(&persistence);
-
-        let mut app = App::default();
-        app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
-            &db_path,
-            data_dir.join("deceased"),
-            "player-known-techniques-shutdown-guard",
-        ));
-        app.add_systems(Last, flush_connected_players_on_shutdown);
-
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut().entity_mut(entity).insert((
-            PlayerState::default(),
-            dash_known_techniques(0.99),
-            KnownTechniquesLoadFailed,
-        ));
-
-        app.world_mut().send_event(AppExit::Success);
-        app.update();
-
-        assert_eq!(
-            read_known_techniques_json(&db_path),
-            "{not json",
-            "挂写保护标记的实体在停服 flush 时同样必须跳过功法落盘"
-        );
-
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn join_with_unopenable_db_marks_load_failed_and_recovery_preserves_row() {
-        // 锁定「连接打不开」早退分支的全链路契约（review #1288 major finding）：
-        // db_path 指向目录 → open_player_connection 必 SQLITE_CANTOPEN（稳定跨平台，
-        // 不依赖权限行为）→ join 挂写保护标记；DB 恢复可访问后，带标记会话的
-        // Changed flush 仍不得把 default/会话内数据写回覆盖真实存档；
-        // 恢复后的新 join 则完整加载原行、不带标记。
-        let data_dir = unique_temp_dir("known-techniques-cantopen-join");
-        let healthy_db = data_dir.join("healthy.db");
-        bootstrap_sqlite(&healthy_db, "player-mod-cantopen-join")
-            .expect("sqlite bootstrap should succeed");
-        let seed_persistence = PlayerStatePersistence::with_db_path(&data_dir, &healthy_db);
-        crate::player::state::save_player_state(
-            &seed_persistence,
-            "Azure",
-            &PlayerState::default(),
-        )
-        .expect("baseline player state should persist");
-        crate::player::state::save_player_known_techniques_slice(
-            &seed_persistence,
-            "Azure",
-            &dash_known_techniques(0.42),
-        )
-        .expect("seeding known techniques row should persist");
-
-        // 运行时 persistence 指向 bong.db——先以同名目录占位，令连接打开必失败。
-        let db_path = data_dir.join("bong.db");
-        fs::create_dir_all(&db_path).expect("creating directory placeholder should succeed");
-        let persistence = PlayerStatePersistence::with_db_path(&data_dir, &db_path);
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.add_systems(
-            Update,
-            (
-                attach_player_state_to_joined_clients,
-                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
-            ),
-        );
-
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.update();
-        app.update();
-
-        assert!(
-            app.world()
-                .get::<KnownTechniquesLoadFailed>(entity)
-                .is_some(),
-            "连接打不开（行状态不可知）的 join 应挂 KnownTechniquesLoadFailed 写保护标记"
-        );
-        assert_eq!(
-            app.world()
-                .get::<KnownTechniques>(entity)
-                .expect("join should still attach a KnownTechniques component"),
-            &KnownTechniques::default(),
-            "连接失败时会话内组件应为 default（本次会话降级，但不得反向污染存档）"
-        );
-
-        // 模拟 DB 恢复：目录占位撤掉，真实健康库落位到同一路径。
-        fs::remove_dir(&db_path).expect("removing directory placeholder should succeed");
-        fs::rename(&healthy_db, &db_path).expect("restoring healthy db should succeed");
-
-        // 带标记会话内的变更（0.99）不得写回：行必须保持恢复前的 0.42。
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(dash_known_techniques(0.99));
-        app.update();
-        assert!(
-            (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.42).abs() < 1e-6,
-            "DB 恢复后，加载失败会话的 Changed flush 仍必须被写保护标记拦住，\
-             期望行保持 0.42（真实存档），若被写成 0.99/空表即丢档回归"
-        );
-
-        // 恢复后的新 join（重连）应完整加载原行且不带标记——失败状态不粘滞。
-        let (client_bundle2, _helper2) = create_mock_client("Azure");
-        let entity2 = app.world_mut().spawn(client_bundle2).id();
-        app.update();
-        app.update();
-
-        assert!(
-            app.world()
-                .get::<KnownTechniquesLoadFailed>(entity2)
-                .is_none(),
-            "DB 恢复后的新 join 不得再挂写保护标记"
-        );
-        assert_eq!(
-            app.world()
-                .get::<KnownTechniques>(entity2)
-                .expect("recovered join should attach KnownTechniques"),
-            &dash_known_techniques(0.42),
-            "DB 恢复后的新 join 应完整加载原功法行（dash 0.42）"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
@@ -2094,9 +1798,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-shutdown-flush",
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);

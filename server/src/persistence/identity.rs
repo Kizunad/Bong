@@ -168,12 +168,8 @@ mod tests {
     fn fresh_settings() -> PersistenceSettings {
         let path = temp_db_path();
         let _ = std::fs::remove_file(&path);
-        let parent = path.parent().expect("temp parent");
-        let settings = PersistenceSettings::with_paths(
-            path.clone(),
-            parent.join("deceased"),
-            "test-identity-run".to_string(),
-        );
+        let settings =
+            PersistenceSettings::with_db_path(path.clone(), "test-identity-run".to_string());
         bootstrap_sqlite(&path, "test-identity-run").expect("bootstrap sqlite");
         settings
     }
