@@ -46,6 +46,7 @@ import time
 import urllib.parse
 
 from bot.bot import BotAssertionError
+from bot.scenarios._combat_helpers import last_event_time
 
 DESCRIPTION = "经脉锻造 forge_request：ForgeEventV1 字段 + tier 读回 + 成本 + 四负向分支"
 MODULES = ["cmd", "cultivation", "network"]
@@ -249,6 +250,17 @@ def _assert_failure_event(ev: dict, *, meridian: str) -> None:
         )
 
 
+def _expect_chat_after(bot, substring: str, after: float, timeout: float = 10.0) -> None:
+    """只接受发送锚点之后的回显，避免重复历史消息满足本次命令。"""
+    bot.wait_for(
+        lambda event: event.kind == "chat"
+        and event.t > after
+        and substring in event.data["text"],
+        timeout,
+        f"发送锚点 t>{after:.3f}s 后包含「{substring}」的聊天消息",
+    )
+
+
 def run(env) -> None:
     subscriber = _ForgeEventSubscriber()
     with env.new_bot("FoRq") as bot:
@@ -276,10 +288,11 @@ def run(env) -> None:
         # 成本读回：tier1 cost = tier_cost(1) = 4，qi 100→96（/qi set 0 的 before 回读）。
         bot.cmd("qi set 0")
         bot.expect_chat("[dev] qi set 96.0 -> 0.0", timeout=10.0)
+        refill_anchor = last_event_time(bot)
         bot.cmd("qi set 100")
-        # 与 setup 的回显同串（before 都是 0.0），wait_for 历史匹配即过——refill 是否生效
-        # 由紧随的 forge 断言兜底（qi 不足会以 NotEnoughQi success:false 暴露）。
-        bot.expect_chat("[dev] qi set 0.0 -> 100.0", timeout=10.0)
+        # 该回显与 setup 完全相同，必须锚定本次命令；否则历史消息可能让 forge
+        # 在补气尚未生效时发送，形成间歇性的 NotEnoughQi 假失败。
+        _expect_chat_after(bot, "[dev] qi set 0.0 -> 100.0", refill_anchor)
 
         # 状态读回：第二次 forge from_tier==1 → tier 前进恰好 1，无跳档。
         ev = _forge(bot, subscriber, "lung", "Rate")
