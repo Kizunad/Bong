@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 LOG_FILE="$EVIDENCE_DIR/task-26-smoke.log"
 ERROR_FILE="$EVIDENCE_DIR/task-26-smoke-error.txt"
@@ -128,16 +130,19 @@ run_or_fail "schema" "npm run build" bash -lc "cd '$ROOT/agent/packages/schema' 
 run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agent/packages/schema' && npm test -- tests/schema.test.ts"
 
 stage "4/10" "Server entrypoint startup"
-run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
+run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && CARGO_TARGET_DIR='$SERVER_CARGO_TARGET' '$ROOT/scripts/build-token.sh' cargo build"
+server_target_root="$SERVER_CARGO_TARGET"
+server_binary="$server_target_root/debug/bong-server"
+[[ -x "$server_binary" ]] || fail_stage "server-start" "successful cargo build did not produce $server_binary"
 server_start_exit=0
-echo "[run][server-start] timeout 20s 构建令牌 wrapper cargo run"
-timeout 20s bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo run" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
+echo "[run][server-start] timeout 20s built bong-server"
+timeout 20s "$server_binary" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
 echo "[server-start] exit=${server_start_exit}, log=${SERVER_BOOT_LOG}"
 if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
-  fail_stage "server-start" "wrapper cargo run failed before startup anchors"
+  fail_stage "server-start" "built bong-server failed before startup anchors"
 fi
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[bridge\\] tokio runtime started" "bridge runtime started"
-require_anchor "server-start" "$SERVER_BOOT_LOG" "creating overworld" "world creation"
+require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[world\\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+" "fallback world readiness"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[player\\] registering player init/cleanup systems" "player systems registered"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[redis\\] connecting to" "redis bridge connection"
 

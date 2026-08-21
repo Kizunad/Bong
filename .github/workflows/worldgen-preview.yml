@@ -168,12 +168,7 @@ jobs:
 
       - name: Stop server (cleanup)
         if: always()
-        run: |
-          if [ -f /tmp/bong-preview-server.pid ]; then
-            PID=$(cat /tmp/bong-preview-server.pid)
-            kill -TERM "$PID" 2>/dev/null || true
-            rm -f /tmp/bong-preview-server.pid
-          fi
+        run: bash scripts/preview/stop-server-headless.sh
 
       - name: List screenshot + raster output
         if: always()

@@ -326,11 +326,7 @@ mod tests {
         bootstrap_sqlite(&db_path, &format!("high-renown-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                db_path,
-                data_dir.join("deceased"),
-                format!("high-renown-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(db_path, format!("high-renown-{test_name}")),
             data_dir,
         )
     }
@@ -396,9 +392,8 @@ mod tests {
     fn enqueue_success_keeps_in_memory_dedupe_even_when_persistence_write_fails() {
         let mut tracker = HighRenownMilestoneTracker::default();
         let data_dir = unique_temp_dir("persist-failure-keeps-memory");
-        let settings = PersistenceSettings::with_paths(
+        let settings = PersistenceSettings::with_db_path(
             data_dir.join("bong.db"),
-            data_dir.join("deceased"),
             "high-renown-persist-failure",
         );
         let key = HighRenownMilestoneKey {

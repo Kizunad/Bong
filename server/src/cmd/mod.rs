@@ -61,6 +61,12 @@ fn test_command_app_for_dev_mode(connection_mode: ConnectionMode, dev_mode_enabl
     app.insert_resource(PendingScenario::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
+    app.insert_resource(
+        crate::cultivation::known_techniques::TechniqueRegistry::load_default(
+            &crate::body_plan::RaceRegistry::default(),
+        )
+        .expect("dev-command test app requires the checked-in technique catalog"),
+    );
     register_for_dev_mode(&mut app, dev_mode_enabled);
     crate::identity::command::register(&mut app);
     app.finish();
@@ -82,7 +88,7 @@ mod tests {
     }
 
     #[test]
-    fn production_command_registry_does_not_expose_ambient_spawn() {
+    fn production_command_registry_does_not_expose_dev_only_spawn_fixtures() {
         let app = test_command_app_for_dev_mode(ConnectionMode::Offline, false);
         let registry = app.world().resource::<CommandRegistry>();
         let roots = registry
@@ -95,10 +101,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert!(
-            !roots.contains(&"ambient_spawn"),
-            "production command tree must not expose /ambient_spawn when BONG_DEV_MODE is disabled; roots={roots:?}"
-        );
+        for dev_only in ["ambient_spawn", "botany_spawn"] {
+            assert!(
+                !roots.contains(&dev_only),
+                "production command tree must not expose /{dev_only} when BONG_DEV_MODE is disabled; roots={roots:?}"
+            );
+        }
     }
 
     #[test]

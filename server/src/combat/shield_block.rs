@@ -1229,8 +1229,7 @@ mod tests {
         std::fs::create_dir_all(db_path.parent().unwrap())
             .expect("temp dir creation should succeed");
         bootstrap_sqlite(&db_path, "shield-death-e2e").expect("sqlite bootstrap should succeed");
-        let persistence =
-            PersistenceSettings::with_paths(&db_path, root.join("deceased"), "shield-death-e2e");
+        let persistence = PersistenceSettings::with_db_path(&db_path, "shield-death-e2e");
 
         // -- App 构建：注册 death_arbiter_tick + cleanup_shield_on_death（保持 after 顺序）--
         let mut app = App::new();
@@ -2862,18 +2861,22 @@ mod tests {
         );
     }
 
-    // ── KnownTechniques 含 "shield_block" 注册（cultivation 全局注册断言）────
-    // 确保 known_techniques.rs 中 TECHNIQUE_IDS 包含 "shield_block"（通过 dev_default 验证）。
+    // ── KnownTechniques 含 "shield_block" 注册（cultivation registry 断言）────
     #[test]
     fn known_techniques_registry_contains_shield_block() {
-        use crate::cultivation::known_techniques::KnownTechniques;
-        let default = KnownTechniques::dev_default();
+        use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
+        let registry = TechniqueRegistry::load_for_tests();
+        let default = KnownTechniques::dev_default(&registry);
         let found = default.entries.iter().any(|e| e.id == "shield_block");
         assert!(
             found,
-            "KnownTechniques::dev_default() 应含 \"shield_block\" 条目（plan-shield-block-v1 P4 注册）；\
+            "KnownTechniques::dev_default(&registry) 应含 \"shield_block\" 条目（plan-shield-block-v1 P4 注册）；\
              实际 entries: {:?}",
-            default.entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>()
+            default
+                .entries
+                .iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>()
         );
     }
 }

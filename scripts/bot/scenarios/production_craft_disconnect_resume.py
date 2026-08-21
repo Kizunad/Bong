@@ -1,6 +1,7 @@
 """制作断线恢复：预扣后的 inventory 与 CraftSession 跨连接同值恢复。"""
 
 import time
+from contextlib import contextmanager
 
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import (
@@ -13,6 +14,22 @@ DESCRIPTION = "制作断线恢复：session 暂停重连后可取消，退款仅
 MODULES = ["craft", "inventory", "persistence"]
 
 RECIPE_ID = "workbench.weapon.stone_knife"
+DISCONNECT_SETTLE_SECONDS = 0.5
+# craft 进度按 production Update tick 推进，状态只在全局 20-tick 边界推送。
+# 全量 gate 实测可降至 2 TPS：最坏相位要等 39 tick，再留 packet/I/O 余量。
+CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS = 25.0
+
+
+@contextmanager
+def _reconnectable_session(env):
+    """Close one client fully before the same username reconnects."""
+    try:
+        with env.new_bot("Resume") as bot:
+            yield bot
+    finally:
+        # Socket close and Bevy's disconnected-client cleanup happen asynchronously.
+        # Keep this persistence scenario sequential instead of briefly creating duplicate clients.
+        time.sleep(DISCONNECT_SETTLE_SECONDS)
 
 
 def _wait_session(bot, active: bool, timeout: float = 10.0) -> dict:
@@ -34,7 +51,7 @@ def _wait_session(bot, active: bool, timeout: float = 10.0) -> dict:
 
 
 def run(env) -> None:
-    with env.new_bot("Resume") as bot:
+    with _reconnectable_session(env) as bot:
         wait_join_and_inventory(bot)
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
@@ -78,13 +95,13 @@ def run(env) -> None:
             and event.data["payload_type"] == "craft_session_state"
             and event.data["payload"].get("active") is True
             and event.data["payload"].get("elapsed_ticks", 0) >= 20,
-            timeout=10.0,
+            timeout=CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
             description="断线前已推进至少 20 tick 的 craft session",
         ).data["payload"]
         elapsed_before_disconnect = session["elapsed_ticks"]
         completed_before_disconnect = session["completed_count"]
 
-    with env.new_bot("Resume") as bot:
+    with _reconnectable_session(env) as bot:
         restored_inventory = wait_join_and_inventory(bot)
         restored = _wait_session(bot, True)
         assert restored.get("recipe_id") == RECIPE_ID, (
