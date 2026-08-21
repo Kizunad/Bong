@@ -46,6 +46,10 @@ fi
   printf '\n'
 } >>"$BUILD_TOKEN_TEST_LOG"
 printf '%s\0' "$@" >"$BUILD_TOKEN_TEST_DIR/$name.argv"
+if [[ -e /proc/$$/fd/9 ]]; then
+  printf 'build child inherited token fd 9\n' >&2
+  exit 97
+fi
 printf '%s\n' "$$" >"$BUILD_TOKEN_TEST_DIR/$name.pid"
 printf '%s\n' "$PPID" >"$BUILD_TOKEN_TEST_DIR/$name.parent"
 touch "$BUILD_TOKEN_TEST_DIR/$name.started"
@@ -64,6 +68,10 @@ name=$1
 shift
 printf 'start %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
 printf '%s\0' "$@" >"$BUILD_TOKEN_TEST_DIR/$name.argv"
+if [[ -e /proc/$$/fd/9 ]]; then
+  printf 'build child inherited token fd 9\n' >&2
+  exit 97
+fi
 printf '%s\n' "$$" >"$BUILD_TOKEN_TEST_DIR/$name.pid"
 printf '%s\n' "$PPID" >"$BUILD_TOKEN_TEST_DIR/$name.parent"
 touch "$BUILD_TOKEN_TEST_DIR/$name.started"
@@ -105,7 +113,7 @@ if ! (cd "$FAKE_REPO" && PATH="$ORIGINAL_PATH" "$TEST_TOKEN" gradle root_gradle)
 fi
 export PATH="$FAKE_REPO/server:$ORIGINAL_PATH"
 [ "$(cat "$SANDBOX/root-cargo.cwd")" = "$FAKE_REPO/server" ] || fail "根目录 cargo 调用未切到 server"
-[ "$(cat "$SANDBOX/root-gradle.cwd")" = "$FAKE_REPO/client" ] || fail "根目录 gradle 调用未切到 client";
+[ "$(cat "$SANDBOX/root-gradle.cwd")" = "$FAKE_REPO/client" ] || fail "根目录 gradle 调用未切到 client"
 TOKEN="$TEST_TOKEN"
 
 wait_file() {
@@ -228,22 +236,17 @@ if wait_file "$SANDBOX/crash_holder.started" && wait_file "$SANDBOX/survivor.sta
     crash_child_pid="$(cat "$SANDBOX/crash_holder.pid")"
     kill -9 "$crash_wrapper_pid"
     wait "$crash_wrapper_pid" 2>/dev/null || true
-    if not_started_briefly "$SANDBOX/crash_waiter.started"; then
-      pass "持锁 wrapper 被 SIGKILL 后 orphan build 仍占用槽位"
+    if wait_file "$SANDBOX/crash_waiter.started"; then
+      pass "持锁 wrapper 被 SIGKILL 后等待者立即获得槽位"
     else
-      fail "wrapper 被 SIGKILL 后等待者在 build 结束前错误获得槽位"
-    fi
-    touch "$SANDBOX/crash_holder.release"
-    if wait_file "$SANDBOX/crash_holder.finished" && wait_file "$SANDBOX/crash_waiter.started"; then
-      pass "orphan build 结束后等待者才获得槽位"
-    else
-      fail "orphan build 结束后等待者未获得槽位"
+      fail "SIGKILL 后槽位未自动释放"
     fi
     if process_is_running "$crash_child_pid"; then
-      fail "crash build child 在 release 后仍存活"
-      kill "$crash_child_pid" 2>/dev/null || true
+      pass "orphan build 可存活但因 FD 9 隔离不再持有 token"
+      touch "$SANDBOX/crash_holder.release"
+      wait_file "$SANDBOX/crash_holder.finished" || fail "orphan build 未能正常结束"
     else
-      pass "crash build child 生命周期已结束"
+      pass "wrapped command 已随 wrapper 结束"
     fi
   else
     fail "崩溃测试等待者未被双槽位阻塞"
@@ -342,6 +345,68 @@ elif grep -q "生产锁域固定" "$SANDBOX/root.err"; then
 else
   fail "锁域覆写拒绝缺少修复线索"
 fi
+
+artifact_target="$SANDBOX/artifact-target"
+artifact_output_dir="$SANDBOX/artifact-output"
+mkdir -p "$artifact_target/release" "$artifact_output_dir"
+chmod 700 "$artifact_output_dir"
+printf 'exact-build-artifact\n' >"$artifact_target/release/bong-server"
+chmod 700 "$artifact_target/release/bong-server"
+
+for name in artifact_reader_a artifact_reader_b; do
+  (
+    cd "$SANDBOX"
+    CARGO_TARGET_DIR="$artifact_target" "$TOKEN" cargo "$name"
+  ) >"$SANDBOX/$name.out" 2>"$SANDBOX/$name.err" &
+  PIDS+=("$!")
+done
+if wait_file "$SANDBOX/artifact_reader_a.started" \
+  && wait_file "$SANDBOX/artifact_reader_b.started"; then
+  (
+    cd "$SANDBOX"
+    CARGO_TARGET_DIR="$artifact_target" \
+      BONG_BUILD_TOKEN_SERVER_ARTIFACT="$artifact_output_dir/bong-server" \
+      "$TOKEN" cargo artifact_export
+  ) >"$SANDBOX/artifact_export.out" 2>"$SANDBOX/artifact_export.err" &
+  PIDS+=("$!")
+  if not_started_briefly "$SANDBOX/artifact_export.started"; then
+    pass "artifact 构建以 target 独占锁等待同 target 普通构建退出"
+  else
+    fail "artifact 构建未隔离同 target 并发写入"
+  fi
+  touch "$SANDBOX/artifact_reader_a.release" "$SANDBOX/artifact_reader_b.release"
+  if wait_file "$SANDBOX/artifact_export.started"; then
+    touch "$SANDBOX/artifact_export.release"
+  else
+    fail "同 target 普通构建退出后 artifact 构建未获得独占锁"
+  fi
+else
+  fail "同 target 普通 cargo 构建未保持共享锁并发"
+fi
+for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
+PIDS=()
+if [ "$(cat "$artifact_output_dir/bong-server" 2>/dev/null || true)" = exact-build-artifact ] \
+  && [ "$(stat -c %a "$artifact_output_dir/bong-server" 2>/dev/null || true)" = 700 ]; then
+  pass "artifact 在 target 独占锁内原子复制为私有可执行文件"
+else
+  fail "artifact 构建未输出精确的私有可执行副本"
+fi
+
+chmod 755 "$artifact_output_dir"
+CARGO_TARGET_DIR="$artifact_target" \
+  BONG_BUILD_TOKEN_SERVER_ARTIFACT="$artifact_output_dir/rejected" \
+  "$TOKEN" cargo artifact_bad_dir >"$SANDBOX/artifact_bad_dir.out" 2>"$SANDBOX/artifact_bad_dir.err" &
+bad_artifact_pid=$!
+wait_file "$SANDBOX/artifact_bad_dir.started" || true
+touch "$SANDBOX/artifact_bad_dir.release"
+if wait "$bad_artifact_pid"; then
+  fail "宽权限 artifact 目录必须 fail closed"
+elif [ ! -e "$artifact_output_dir/rejected" ]; then
+  pass "artifact 拒绝写入非 0700 目标目录"
+else
+  fail "artifact 目录校验失败后仍产生了输出"
+fi
+chmod 700 "$artifact_output_dir"
 
 symlink_root="$SANDBOX/symlink-locks"
 ln -s "$SANDBOX/locks" "$symlink_root"

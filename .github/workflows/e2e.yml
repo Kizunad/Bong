@@ -90,8 +90,15 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: bash scripts/check-proto-breaking.sh
 
-      - name: Proto breaking base-ref contract test
-        run: python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+      - name: Build-token and signal-boundary contract tests
+        run: |
+          bash scripts/tests/build_token_test.sh
+          python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/signal_boundary_contract_test.py
+          python3 scripts/tests/fallback_world_readiness_contract_test.py
+          python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+          bash scripts/tests/preview_lifecycle_contract_test.sh
+          bash scripts/tests/cargo_target_scope_test.sh
 
       - name: Install agent workspace dependencies
         working-directory: agent
@@ -133,9 +140,41 @@ jobs:
           npm run check
           npm test
 
-      - name: Build server release binary
+      - name: Build one sequential server release artifact
+        id: server-release-artifact
         working-directory: server
-        run: ../scripts/build-token.sh cargo build --release
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/bong-server-release"
+          artifact_binary="$artifact_dir/bong-server"
+          manifest="$artifact_dir/manifest.json"
+          build_binary="${CARGO_TARGET_DIR:?}/release/bong-server"
+          rm -rf -- "$artifact_dir"
+          mkdir -p -- "$artifact_dir"
+          ../scripts/build-token.sh cargo build --release
+          test -f "$build_binary"
+          test ! -L "$build_binary"
+          install -m 700 "$build_binary" "$artifact_binary"
+          chmod 400 "$artifact_binary"
+          commit="${GITHUB_SHA:?GITHUB_SHA must be provided by GitHub Actions}"
+          test "$(git rev-parse HEAD)" = "$commit"
+          test -f "$artifact_binary"
+          test ! -L "$artifact_binary"
+          sha256="$(sha256sum "$artifact_binary" | awk '{print $1}')"
+          python3 - "$manifest" "$artifact_binary" "$commit" "$sha256" <<'PY'
+          import json
+          import pathlib
+          import sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "binary": str(pathlib.Path(sys.argv[2]).resolve(strict=True)),
+              "commit": sys.argv[3],
+              "profile": "release",
+              "sha256": sys.argv[4],
+          }, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          python3 ../scripts/lib/bong_server_provenance.py check "$manifest" "$GITHUB_WORKSPACE"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "server release artifact commit=$commit sha256=$sha256 manifest=$manifest"
 
       - name: Server stage (build-token cargo test)
         working-directory: server
@@ -144,13 +183,24 @@ jobs:
       - name: Smoke/E2E stage (Task 13 harness)
         env:
           RUN_LABEL: ci-smoke
+          # Real tmux/process signals stay quarantined to this disposable runner.
+          # Local lifecycle suites must not opt in.
+          BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
         run: bash scripts/smoke-test-e2e.sh
 
-      # AGENTS.md §15 —— 协议级黑盒玩家场景（复用上面已构建的 release 二进制和 redis）
+      # AGENTS.md §15 —— 协议级黑盒玩家场景（复用同一份 provenance-checked sequential release artifact）
       - name: Bot e2e stage (protocol-level player scenarios)
         env:
           BOT_E2E_RUN_TAG: ci
           BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ steps.server-release-artifact.outputs.manifest }}
+        run: bash scripts/bot-e2e.sh
+
+      - name: Bot fallback-flat e2e stage (spawn distribution coverage)
+        env:
+          BOT_E2E_RUN_TAG: ci
+          BOT_E2E_FALLBACK_MODE: "1"
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ steps.server-release-artifact.outputs.manifest }}
         run: bash scripts/bot-e2e.sh
 
       - name: Bot chat timestamp → Tiandao window e2e

@@ -143,15 +143,10 @@ mod tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         bootstrap_sqlite(&db_path, &format!("ascension-quota-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                &db_path,
-                &deceased_dir,
-                format!("ascension-quota-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(&db_path, format!("ascension-quota-{test_name}")),
             root,
         )
     }
@@ -349,9 +344,8 @@ mod tests {
     #[test]
     fn persistence_read_failure_skips_quota_broadcast() {
         let root = unique_temp_dir("missing-db");
-        let settings = PersistenceSettings::with_paths(
+        let settings = PersistenceSettings::with_db_path(
             root.join("missing").join("bong.db"),
-            root.join("library-web").join("public").join("deceased"),
             "ascension-quota-missing-db",
         );
         let mut app = App::new();

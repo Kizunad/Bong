@@ -29,7 +29,7 @@ use valence::protocol::packets::play::{CommandSuggestionsS2c, RequestCommandComp
 use valence::protocol::VarInt;
 use valence::text::Text;
 
-use crate::cultivation::known_techniques::TECHNIQUE_DEFINITIONS;
+use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::inventory::ItemRegistry;
 use crate::world::zone::ZoneRegistry;
 
@@ -61,7 +61,7 @@ impl Candidate {
 pub enum CompletionSource {
     /// `ItemRegistry` 全部 template id（tooltip = display_name）
     ItemTemplates,
-    /// `TECHNIQUE_DEFINITIONS` 48 功法 id（tooltip = display_name）
+    /// `TechniqueRegistry` 全部功法 id（tooltip = display_name）
     Techniques,
     /// 20 经脉 canonical id（12 正经 + 奇经八脉）
     Meridians,
@@ -189,6 +189,7 @@ pub fn parse_completion_query(text: &str) -> Option<CompletionQuery> {
 fn candidates_for(
     source: CompletionSource,
     items: &ItemRegistry,
+    techniques: &TechniqueRegistry,
     zones: Option<&ZoneRegistry>,
 ) -> Vec<Candidate> {
     match source {
@@ -196,9 +197,9 @@ fn candidates_for(
             .iter_templates()
             .map(|t| Candidate::with_tooltip(t.id.clone(), t.display_name.clone()))
             .collect(),
-        CompletionSource::Techniques => TECHNIQUE_DEFINITIONS
+        CompletionSource::Techniques => techniques
             .iter()
-            .map(|d| Candidate::with_tooltip(d.id, d.display_name))
+            .map(|d| Candidate::with_tooltip(d.id.clone(), d.display_name.clone()))
             .collect(),
         CompletionSource::Meridians => MERIDIAN_COMPLETION_IDS
             .iter()
@@ -326,6 +327,7 @@ pub fn argument_suggestion(
 pub fn answer_command_completions(
     mut packets: EventReader<PacketEvent>,
     items: Res<ItemRegistry>,
+    techniques: Res<TechniqueRegistry>,
     zones: Option<Res<ZoneRegistry>>,
     mut clients: Query<&mut Client>,
 ) {
@@ -340,7 +342,7 @@ pub fn answer_command_completions(
             continue;
         };
         let candidates = filter_candidates(
-            candidates_for(query.source, &items, zones.as_deref()),
+            candidates_for(query.source, &items, &techniques, zones.as_deref()),
             &query.partial,
         );
         let tooltips: Vec<Option<Text>> = candidates
@@ -569,7 +571,12 @@ mod tests {
         // CR #829：ItemTemplates 分支（/give 主功能）专用测试 —— 锁 id→value、
         // display_name→tooltip 的映射与 iter_templates 的全量枚举。
         let items = test_item_registry(&[("qicao_grass", "气草"), ("fan_tie", "凡铁")]);
-        let out = candidates_for(CompletionSource::ItemTemplates, &items, None);
+        let out = candidates_for(
+            CompletionSource::ItemTemplates,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            None,
+        );
         assert_eq!(
             out.len(),
             2,
@@ -591,8 +598,13 @@ mod tests {
     #[test]
     fn technique_source_yields_all_definitions_with_tooltips() {
         let items = ItemRegistry::from_map(Default::default());
-        let out = candidates_for(CompletionSource::Techniques, &items, None);
-        assert_eq!(out.len(), TECHNIQUE_DEFINITIONS.len());
+        let out = candidates_for(
+            CompletionSource::Techniques,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            None,
+        );
+        assert_eq!(out.len(), TechniqueRegistry::load_for_tests().len());
         assert!(
             out.iter().all(|c| c.tooltip.is_some()),
             "功法候选应带 display_name tooltip"
@@ -602,14 +614,25 @@ mod tests {
     #[test]
     fn zones_source_without_registry_is_empty_not_panic() {
         let items = ItemRegistry::from_map(Default::default());
-        assert!(candidates_for(CompletionSource::Zones, &items, None).is_empty());
+        assert!(candidates_for(
+            CompletionSource::Zones,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            None,
+        )
+        .is_empty());
     }
 
     #[test]
     fn zones_source_lists_registry_names() {
         let items = ItemRegistry::from_map(Default::default());
         let zones = ZoneRegistry::fallback();
-        let out = candidates_for(CompletionSource::Zones, &items, Some(&zones));
+        let out = candidates_for(
+            CompletionSource::Zones,
+            &items,
+            &TechniqueRegistry::load_for_tests(),
+            Some(&zones),
+        );
         assert_eq!(
             out.len(),
             zones.zones.len(),
@@ -682,6 +705,7 @@ mod tests {
             ("fan_tie", "凡铁"),
         ]));
         app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_systems(Update, answer_command_completions);
 
         let (bundle, mut helper) = create_mock_client("Alice");
