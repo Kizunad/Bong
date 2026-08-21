@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""生成赤髓草 (ChiSuiCao) Blockbench .bbmodel 与三视图预览 (Round 3 终极打磨·血谷玛瑙剑草完美版)。
+"""生成赤髓草 (ChiSuiCao) Blockbench .bbmodel 与三视图预览 (世界观正典·完美生长咬合终极版)。
 
 【世界观正典与原画依据】：
 - 定位：《末法残土》卷首核心剧情物（血谷必争之草），《末法药材十七种》稀见五味之八。
   “仅生于血谷东侧红砂岩缝。乃凝脉散之高阶替品……叶中暗含血髓，犹如活物跳动。”
 - 原画特征 (client/src/main/resources/assets/bong-client/textures/gui/botany/chi_sui_cao.png)：
-  1. 斜生暗红血质主茎 (Dark Red Stalk)，自岩缝中斜向上挺立微曲；
-  2. 5 片互生/对生的卵圆剑形暗红玛瑙厚叶 (Agate Blade Leaves)，每片叶子肉质如黑红玛瑙宝石，叶缘微泛血光；
-  3. 贯穿每片叶心的鲜红搏动血髓脉 (Pulsing Marrow Veins)，随叶身舒展微翘；
+  1. 斜生暗红血质主茎 (Dark Red Stalk)，自岩缝中斜向上挺拔生长；
+  2. 5 片互生/对生的卵圆剑形暗红玛瑙厚叶 (Agate Blade Leaves)，每片叶子肉质如黑红玛瑙宝石，叶柄 100% 严丝合缝深扎于主茎；
+  3. 贯穿每片叶心的鲜红搏动血髓脉 (Pulsing Marrow Veins)，自茎秆髓心分流贯穿至叶梢尖；
   4. 基部断口处凝结悬垂的活物般鲜血髓滴 (Dripping Blood Droplet)；
   5. 夹峙斜切的血谷风化红砂岩缝基座 (Red Sandstone Chasm Base)。
 """
@@ -49,6 +49,20 @@ class Cube:
 
 def stable_uuid(*parts: str) -> str:
     return str(uuid.uuid5(UUID_NAMESPACE, ":".join(parts)))
+
+
+def rotmat(deg: float, axis: int) -> np.ndarray:
+    a = math.radians(deg)
+    c, s = math.cos(a), math.sin(a)
+    if axis == 0:
+        return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+    if axis == 1:
+        return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+
+
+def get_Rm(rx: float, ry: float, rz: float) -> np.ndarray:
+    return rotmat(rz, 2) @ rotmat(ry, 1) @ rotmat(rx, 0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -160,77 +174,87 @@ def part_sandstone_chasm() -> list[Cube]:
     return cubes
 
 
+# 主茎全局旋转参数
+STALK_ROT = (-8.0, 0.0, 12.0)
+STALK_ORG = np.array([8.0, 1.2, 8.0], dtype=float)
+RM_STALK = get_Rm(*STALK_ROT)
+
+
+def get_stalk_world_pos(local_y: float) -> tuple[float, float, float]:
+    """计算主茎上局部高度 local_y 对应的世界坐标中心点。"""
+    p_local = np.array([8.0, local_y, 8.0], dtype=float)
+    p_world = RM_STALK @ (p_local - STALK_ORG) + STALK_ORG
+    return float(p_world[0]), float(p_world[1]), float(p_world[2])
+
+
 def part_stalk_and_blood_drop() -> list[Cube]:
     """部件2：斜生暗红血质主茎与断口血滴 (part_stalk_and_blood_drop)。
-    位于 Y: 0.8 ~ 10.2，自左下方岩缝向右上方挺拔斜生，并在基部断口凝聚滴落血髓。
+    主茎自 (8.0, 1.2, 8.0) 起向左上方挺拔斜生至 Y ~ 9.5。
     """
     cubes: list[Cube] = []
-    STALK_ROT = (10.0, 0.0, -16.0)
-    STALK_ORG = (7.2, 2.0, 7.6)
+    org = tuple(STALK_ORG)
 
-    # 1. 主茎秆下段 (自岩缝伸出 Y: 1.6 ~ 4.6)
+    # 1. 主茎秆下段 (自岩缝伸出 Y: 1.2 ~ 4.4)
     cubes.append(
         Cube(
             "stalk",
             "stalk_lower_segment",
-            (6.8, 1.6, 7.2),
-            (7.8, 4.6, 8.2),
+            (7.5, 1.2, 7.5),
+            (8.5, 4.4, 8.5),
             front_uv="stalk_dark_bark",
             side_uv="stalk_dark_bark",
             back_uv="stalk_dark_bark",
             top_uv="stalk_dark_bark",
             bottom_uv="marrow_core_pulse",
             rotation=STALK_ROT,
-            rot_origin=STALK_ORG,
+            rot_origin=org,
         )
     )
-    # 2. 主茎秆中段 (分叉主中枢 Y: 4.4 ~ 7.4)
+    # 2. 主茎秆中段 (分叉主中枢 Y: 4.2 ~ 7.2)
     cubes.append(
         Cube(
             "stalk",
             "stalk_mid_segment",
-            (6.9, 4.4, 7.3),
-            (7.7, 7.4, 8.1),
+            (7.55, 4.2, 7.55),
+            (8.45, 7.2, 8.45),
             front_uv="stalk_dark_bark",
             side_uv="stalk_dark_bark",
             back_uv="stalk_dark_bark",
             top_uv="stalk_dark_bark",
             bottom_uv="stalk_dark_bark",
             rotation=STALK_ROT,
-            rot_origin=STALK_ORG,
+            rot_origin=org,
         )
     )
-    # 3. 主茎秆上梢 (承托顶叶 Y: 7.2 ~ 9.8)
+    # 3. 主茎秆上梢 (承托顶叶 Y: 7.0 ~ 9.4)
     cubes.append(
         Cube(
             "stalk",
             "stalk_upper_segment",
-            (7.0, 7.2, 7.4),
-            (7.6, 9.8, 8.0),
+            (7.6, 7.0, 7.6),
+            (8.4, 9.4, 8.4),
             front_uv="stalk_dark_bark",
             side_uv="stalk_dark_bark",
             back_uv="stalk_dark_bark",
             top_uv="stalk_dark_bark",
             bottom_uv="stalk_dark_bark",
             rotation=STALK_ROT,
-            rot_origin=STALK_ORG,
+            rot_origin=org,
         )
     )
 
-    # 4. 根部断口凝聚滴落血髓珠 (Dripping Blood Droplet Y: 0.2 ~ 1.8)
+    # 4. 根部断口凝聚滴落血髓珠 (Dripping Blood Droplet Y: 0.2 ~ 1.6)
     cubes.append(
         Cube(
             "stalk",
             "blood_severed_node",
-            (6.5, 1.0, 7.0),
-            (7.7, 1.9, 8.2),
+            (7.4, 0.9, 7.4),
+            (8.6, 1.7, 8.6),
             front_uv="blood_drop_bright",
             side_uv="blood_drop_bright",
             back_uv="blood_drop_bright",
             top_uv="marrow_core_pulse",
             bottom_uv="blood_drop_bright",
-            rotation=(0.0, 0.0, 0.0),
-            rot_origin=(7.1, 1.4, 7.6),
         )
     )
     # 悬垂拉丝血滴尖 (Hanging Blood Drip)
@@ -238,8 +262,8 @@ def part_stalk_and_blood_drop() -> list[Cube]:
         Cube(
             "stalk",
             "blood_drip_string",
-            (6.9, 0.2, 7.4),
-            (7.3, 1.1, 7.8),
+            (7.8, 0.2, 7.8),
+            (8.2, 1.0, 8.2),
             front_uv="blood_drop_bright",
             side_uv="blood_drop_bright",
             back_uv="blood_drop_bright",
@@ -251,103 +275,100 @@ def part_stalk_and_blood_drop() -> list[Cube]:
     return cubes
 
 
-def make_blade_leaf(
+def make_attached_blade_leaf(
     blade_id: str,
-    base_pos: tuple[float, float, float],
+    attach_world_point: tuple[float, float, float],
     length: float,
     width: float,
-    yaw_pitch_roll: tuple[float, float, float],
+    rotation_angles: tuple[float, float, float],
 ) -> list[Cube]:
-    """生成一片带有 3D 浮雕鲜红血髓脉的平滑连续玛瑙剑叶。
-    - 叶身：上凸下拱的暗红黑玛瑙厚叶片 (厚度 ~0.5)；
-    - 髓脉：嵌在正中轴线微凸起的发光鲜红经脉 (高出表面 0.12 格)。
+    """生成一片 100% 严丝合缝扎入主茎的玛瑙剑叶与鲜红血髓脉。
+    旋转原点严格设为 attach_world_point，盒体底端深度嵌插进主茎心部。
     """
     cubes: list[Cube] = []
-    bx, by, bz = base_pos
-    rx, ry, rz = yaw_pitch_roll
-    rot_org = (bx, by, bz)
+    ax, ay, az = attach_world_point
+    rot_org = (ax, ay, az)
 
-    # 1. 叶柄短根 (Petiole connection Y: 0.0 ~ 1.0)
+    # 1. 深度扎入主茎心部的粗壮叶柄 (Petiole Embedded: Y 从 ay - 0.3 到 ay + 1.2)
     cubes.append(
         Cube(
             blade_id,
             f"{blade_id}_petiole",
-            (bx - 0.35, by, bz - 0.35),
-            (bx + 0.35, by + 1.2, bz + 0.35),
+            (ax - 0.4, ay - 0.3, az - 0.4),
+            (ax + 0.4, ay + 1.2, az + 0.4),
             front_uv="stalk_dark_bark",
             side_uv="stalk_dark_bark",
             back_uv="stalk_dark_bark",
             top_uv="stalk_dark_bark",
             bottom_uv="stalk_dark_bark",
-            rotation=(rx, ry, rz),
+            rotation=rotation_angles,
             rot_origin=rot_org,
         )
     )
 
-    # 2. 叶身主板 (Leaf Blade Body - 卵圆剑形连续分段)
-    # (1) 叶身下部 (膨大过渡)
+    # 2. 玛瑙剑叶叶身 (Leaf Blade Body - 卵圆剑形)
+    # (1) 叶身下部 (膨大过渡 Y: ay + 0.8 ~ ay + length * 0.45)
     cubes.append(
         Cube(
             blade_id,
             f"{blade_id}_blade_lower",
-            (bx - width * 0.42, by + 1.0, bz - 0.28),
-            (bx + width * 0.42, by + length * 0.48, bz + 0.28),
+            (ax - width * 0.42, ay + 0.8, az - 0.28),
+            (ax + width * 0.42, ay + length * 0.48, az + 0.28),
             front_uv="agate_blade_main",
             side_uv="agate_blade_edge",
             back_uv="agate_blade_back",
             top_uv="agate_blade_edge",
             bottom_uv="agate_blade_edge",
-            rotation=(rx, ry, rz),
+            rotation=rotation_angles,
             rot_origin=rot_org,
         )
     )
-    # (2) 叶身中最宽处
+    # (2) 叶身中最宽处 (Y: ay + length * 0.42 ~ ay + length * 0.78)
     cubes.append(
         Cube(
             blade_id,
             f"{blade_id}_blade_mid",
-            (bx - width * 0.52, by + length * 0.42, bz - 0.28),
-            (bx + width * 0.52, by + length * 0.78, bz + 0.28),
+            (ax - width * 0.52, ay + length * 0.42, az - 0.28),
+            (ax + width * 0.52, ay + length * 0.78, az + 0.28),
             front_uv="agate_blade_main",
             side_uv="agate_blade_edge",
             back_uv="agate_blade_back",
             top_uv="agate_blade_edge",
             bottom_uv="agate_blade_edge",
-            rotation=(rx, ry, rz),
+            rotation=rotation_angles,
             rot_origin=rot_org,
         )
     )
-    # (3) 叶梢尖收束 (Tip Taper)
+    # (3) 叶梢尖收束 (Tip Taper Y: ay + length * 0.72 ~ ay + length)
     cubes.append(
         Cube(
             blade_id,
             f"{blade_id}_blade_tip",
-            (bx - width * 0.32, by + length * 0.72, bz - 0.25),
-            (bx + width * 0.32, by + length, bz + 0.25),
+            (ax - width * 0.32, ay + length * 0.72, az - 0.25),
+            (ax + width * 0.32, ay + length, az + 0.25),
             front_uv="agate_blade_tip",
             side_uv="agate_blade_edge",
             back_uv="agate_blade_back",
             top_uv="agate_blade_tip",
             bottom_uv="agate_blade_edge",
-            rotation=(rx, ry, rz),
+            rotation=rotation_angles,
             rot_origin=rot_org,
         )
     )
 
     # 3. 3D 凸起鲜红搏动血髓脉 (3D Blood Marrow Line)
-    # 贯穿叶片正面中线 (Z: bz - 0.38 ~ bz - 0.24)
     cubes.append(
         Cube(
             blade_id,
             f"{blade_id}_marrow_lower",
-            (bx - 0.25, by + 1.0, bz - 0.38),
-            (bx + 0.25, by + length * 0.58, bz - 0.22),
+            (ax - 0.25, ay + 0.8, az - 0.38),
+            (ax + 0.25, ay + length * 0.58, az - 0.22),
             front_uv="marrow_core_pulse",
             side_uv="marrow_side_red",
             back_uv="marrow_side_red",
             top_uv="marrow_core_pulse",
             bottom_uv="marrow_core_pulse",
-            rotation=(rx, ry, rz),
+            rotation=rotation_angles,
             rot_origin=rot_org,
         )
     )
@@ -355,14 +376,14 @@ def make_blade_leaf(
         Cube(
             blade_id,
             f"{blade_id}_marrow_upper",
-            (bx - 0.20, by + length * 0.52, bz - 0.35),
-            (bx + 0.20, by + length * 0.96, bz - 0.20),
+            (ax - 0.20, ay + length * 0.52, az - 0.35),
+            (ax + 0.20, ay + length * 0.96, az - 0.20),
             front_uv="marrow_core_pulse",
             side_uv="marrow_side_red",
             back_uv="marrow_side_red",
             top_uv="marrow_core_pulse",
             bottom_uv="marrow_core_pulse",
-            rotation=(rx, ry, rz),
+            rotation=rotation_angles,
             rot_origin=rot_org,
         )
     )
@@ -372,72 +393,72 @@ def make_blade_leaf(
 
 def part_five_agate_blades() -> list[Cube]:
     """部件3：五瓣玛瑙剑叶簇 (5 Agate Blade Leaves)。
-    按原画精确定位：
-    1. 顶端挺拔主剑叶 (Top Crown Blade)
+    所有剑叶均以数学精确计算的真实世界附着点扎入主茎：
+    1. 顶端挺拔主剑叶 (Top Crown Blade, 沿主茎顶梢直指苍穹)
     2. 左上斜展剑叶 (Upper Left Blade)
     3. 右上斜展剑叶 (Upper Right Blade)
-    4. 左下微垂剑叶 (Lower Left Blade)
-    5. 右下横生剑叶 (Lower Right Blade)
+    4. 左下前展剑叶 (Lower Left Blade)
+    5. 右下前展剑叶 (Lower Right Blade)
     """
     cubes: list[Cube] = []
 
-    # 1. 顶端主剑叶 (Top Blade - 挺立在主茎顶梢)
-    # 基点: (7.3, 9.4, 7.7), 长 4.4, 宽 2.0, 倾角 (-14°, 4°, 8°)
+    # 1. 顶端主剑叶 (Top Crown Blade)
+    p_top = get_stalk_world_pos(9.2)
     cubes.extend(
-        make_blade_leaf(
+        make_attached_blade_leaf(
             blade_id="blade_top",
-            base_pos=(7.3, 9.4, 7.7),
+            attach_world_point=p_top,
             length=4.4,
             width=2.0,
-            yaw_pitch_roll=(-14.0, 4.0, 8.0),
+            rotation_angles=(-14.0, 0.0, 8.0),
         )
     )
 
     # 2. 左上主剑叶 (Upper Left Blade)
-    # 基点: (7.1, 7.4, 7.6), 向左上方舒展
+    p_ul = get_stalk_world_pos(6.8)
     cubes.extend(
-        make_blade_leaf(
+        make_attached_blade_leaf(
             blade_id="blade_upper_left",
-            base_pos=(7.1, 7.4, 7.6),
-            length=4.2,
+            attach_world_point=p_ul,
+            length=4.3,
             width=2.1,
-            yaw_pitch_roll=(-6.0, 24.0, -36.0),
+            rotation_angles=(-6.0, 24.0, -36.0),
         )
     )
 
     # 3. 右上主剑叶 (Upper Right Blade)
-    # 基点: (7.4, 7.8, 7.7), 向右上方挺拔舒展
+    p_ur = get_stalk_world_pos(7.4)
     cubes.extend(
-        make_blade_leaf(
+        make_attached_blade_leaf(
             blade_id="blade_upper_right",
-            base_pos=(7.4, 7.8, 7.7),
+            attach_world_point=p_ur,
             length=4.5,
             width=2.2,
-            yaw_pitch_roll=(-10.0, -22.0, 32.0),
+            rotation_angles=(-8.0, -22.0, 36.0),
         )
     )
 
     # 4. 左下主剑叶 (Lower Left Blade)
-    # 基点: (6.9, 5.0, 7.4), 向左前侧斜展
+    p_ll = get_stalk_world_pos(4.2)
     cubes.extend(
-        make_blade_leaf(
+        make_attached_blade_leaf(
             blade_id="blade_lower_left",
-            base_pos=(6.9, 5.0, 7.4),
+            attach_world_point=p_ll,
             length=4.0,
             width=2.0,
-            yaw_pitch_roll=(8.0, 32.0, -52.0),
+            rotation_angles=(10.0, 32.0, -56.0),
         )
     )
 
     # 5. 右下主剑叶 (Lower Right Blade)
-    # 基点: (7.3, 5.4, 7.5), 向右前侧横生展开
+    p_lr = get_stalk_world_pos(4.8)
     cubes.extend(
-        make_blade_leaf(
+        make_attached_blade_leaf(
             blade_id="blade_lower_right",
-            base_pos=(7.3, 5.4, 7.5),
+            attach_world_point=p_lr,
             length=4.2,
             width=2.1,
-            yaw_pitch_roll=(6.0, -28.0, 48.0),
+            rotation_angles=(8.0, -28.0, 52.0),
         )
     )
 
