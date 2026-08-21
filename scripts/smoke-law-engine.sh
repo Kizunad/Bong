@@ -2,8 +2,6 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-source "$ROOT/scripts/lib/bong-cargo-target.sh"
-SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 LOG_FILE="$EVIDENCE_DIR/task-26-smoke.log"
 ERROR_FILE="$EVIDENCE_DIR/task-26-smoke-error.txt"
