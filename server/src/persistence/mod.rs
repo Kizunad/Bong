@@ -76,7 +76,10 @@ use slice::{
 };
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
-pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
+// NPC 自动保存批次会让 WAL 数据库出现合法的并发写等待；phase-9 回归同时
+// 驱动 20 个写入线程，15 秒不足以覆盖队列尾部，导致可恢复的 `SQLITE_BUSY`
+// 被误报为保存失败。保持有界等待，同时覆盖既定批次压力范围。
+pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
 /// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池；
 /// v39 新增 `player_lifecycle`（bughunt player-lifecycle-relog-death-consequence-wipe：

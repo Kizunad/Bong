@@ -121,6 +121,9 @@ def run(env) -> None:
         binding = wait_for_skill_binding(bot, bind_anchor, SLOT, SKILL_ID)
         _assert_binding_feedback(bot, binding)
 
+        # 先锁定真元上限再清零，避免修炼恢复 tick 在施法解析前回填真元。
+        bot.cmd("qi max 0")
+        bot.expect_chat("[dev] qi max", timeout=10.0)
         bot.cmd("qi set 0")
         bot.expect_chat("[dev] qi set", timeout=10.0)
         reject_anchor = last_event_time(bot)
@@ -145,6 +148,8 @@ def run(env) -> None:
 
         # 拒绝分支不应写入 cooldown；补足真元后再走正分支，避免先成功施放时
         # resolver 按 OnCooldown→QiInsufficient 的既定门顺序遮住目标拒绝证据。
+        bot.cmd("qi max 20")
+        bot.expect_chat("[dev] qi max", timeout=10.0)
         bot.cmd("qi set 10")
         bot.expect_chat("[dev] qi set", timeout=10.0)
         anchor = last_event_time(bot)
