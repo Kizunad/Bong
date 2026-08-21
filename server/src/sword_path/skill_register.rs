@@ -31,7 +31,9 @@ use crate::combat::events::{
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
-use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
+use crate::cultivation::known_techniques::{
+    KnownTechniques, TechniqueDefinition, TechniqueRegistry,
+};
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
@@ -52,7 +54,7 @@ use super::heaven_gate::{
 };
 use super::shatter::compute_heaven_gate_shatter;
 use super::sword_intent_entity::spawn_sword_intent_in_world;
-use super::techniques::{effects, CONDENSE_EDGE, HEAVEN_GATE, MANIFEST, QI_SLASH, RESONANCE};
+use super::techniques::effects;
 
 pub const SWORD_PATH_CONDENSE_EDGE_ID: &str = "sword_path.condense_edge";
 pub const SWORD_PATH_QI_SLASH_ID: &str = "sword_path.qi_slash";
@@ -104,22 +106,28 @@ fn cast_condense_edge(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, &CONDENSE_EDGE_PROFILE) {
+    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_CONDENSE_EDGE_ID) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
 
     // 去掉"目标无效"门禁（Option B）：凝锋是近战剑势，准星没对准也照常挥出，
     // target 透传 Option —— 有目标命中、无目标 resolver 跳过即空挥（不命中、无误伤）。
-    apply_cast_costs(world, caster, slot, ctx.now_tick, &CONDENSE_EDGE_PROFILE);
-    let injected = inject_bond_qi(world, caster, CONDENSE_EDGE.qi_cost);
-    credit_skill_qi_to_zone(world, caster, CONDENSE_EDGE.qi_cost, injected);
+    let qi_cost = f64::from(ctx.definition.qi_cost);
+    if !drain_qi(world, caster, qi_cost) {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    }
+    apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
+    let injected = inject_bond_qi(world, caster, qi_cost);
+    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     world.send_event(AttackIntent {
         attacker: caster,
         target,
         issued_at_tick: ctx.now_tick,
-        reach: AttackReach::new(CONDENSE_EDGE.range, 0.5),
+        reach: AttackReach::new(ctx.definition.range, 0.5),
         qi_invest: effects::CONDENSE_EDGE_DAMAGE_MULT,
         wound_kind: WoundKind::Cut,
         source: AttackSource::SwordPathCondenseEdge,
@@ -135,8 +143,8 @@ fn cast_condense_edge(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(CONDENSE_EDGE.cooldown_ticks),
-        anim_duration_ticks: CONDENSE_EDGE.cast_ticks,
+        cooldown_ticks: u64::from(ctx.definition.cooldown_ticks),
+        anim_duration_ticks: ctx.definition.cast_ticks,
     }
 }
 
@@ -148,28 +156,29 @@ fn cast_qi_slash(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, &QI_SLASH_PROFILE) {
+    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_QI_SLASH_ID) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
 
     // 去掉"目标无效"门禁（Option B）：剑气斩是方向招，准星没对准也照常释放，target
     // 透传 Option —— 有目标命中、无目标 resolver 跳过即空斩；朝向无目标时落到玩家面朝向。
-    if !drain_qi(world, caster, QI_SLASH.qi_cost) {
+    let qi_cost = f64::from(ctx.definition.qi_cost);
+    if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
-    apply_cast_costs(world, caster, slot, ctx.now_tick, &QI_SLASH_PROFILE);
-    let injected = inject_bond_qi(world, caster, QI_SLASH.qi_cost);
-    credit_skill_qi_to_zone(world, caster, QI_SLASH.qi_cost, injected);
+    apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
+    let injected = inject_bond_qi(world, caster, qi_cost);
+    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     world.send_event(AttackIntent {
         attacker: caster,
         target,
         issued_at_tick: ctx.now_tick,
-        reach: AttackReach::new(QI_SLASH.range, 0.0),
-        qi_invest: QI_SLASH.qi_cost as f32,
+        reach: AttackReach::new(ctx.definition.range, 0.0),
+        qi_invest: ctx.definition.qi_cost,
         wound_kind: WoundKind::Cut,
         source: AttackSource::SwordPathQiSlash,
         debug_command: None,
@@ -186,8 +195,8 @@ fn cast_qi_slash(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(QI_SLASH.cooldown_ticks),
-        anim_duration_ticks: QI_SLASH.cast_ticks,
+        cooldown_ticks: u64::from(ctx.definition.cooldown_ticks),
+        anim_duration_ticks: ctx.definition.cast_ticks,
     }
 }
 
@@ -228,19 +237,20 @@ fn cast_resonance(
     slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, &RESONANCE_PROFILE) {
+    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_RESONANCE_ID) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
 
-    if !drain_qi(world, caster, RESONANCE.qi_cost) {
+    let qi_cost = f64::from(ctx.definition.qi_cost);
+    if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
-    apply_cast_costs(world, caster, slot, ctx.now_tick, &RESONANCE_PROFILE);
-    let injected = inject_bond_qi(world, caster, RESONANCE.qi_cost);
-    credit_skill_qi_to_zone(world, caster, RESONANCE.qi_cost, injected);
+    apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
+    let injected = inject_bond_qi(world, caster, qi_cost);
+    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     // 6 格 AoE：扫范围内有 StatusEffects 的实体打 Slowed。
     // 范围内目标列表先 collect 出来，避免持有 query borrow 时 send_event。
@@ -248,7 +258,7 @@ fn cast_resonance(
         .get::<Position>(caster)
         .map(|p| p.get())
         .unwrap_or(DVec3::ZERO);
-    let radius_sq = (RESONANCE.range as f64).powi(2);
+    let radius_sq = f64::from(ctx.definition.range).powi(2);
     let mut targets: Vec<Entity> = Vec::new();
     let mut query = world.query::<(Entity, &Position, &StatusEffects)>();
     for (entity, position, _) in query.iter(world) {
@@ -278,8 +288,8 @@ fn cast_resonance(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(RESONANCE.cooldown_ticks),
-        anim_duration_ticks: RESONANCE.cast_ticks,
+        cooldown_ticks: u64::from(ctx.definition.cooldown_ticks),
+        anim_duration_ticks: ctx.definition.cast_ticks,
     }
 }
 
@@ -291,20 +301,21 @@ fn cast_manifest(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, &MANIFEST_PROFILE) {
+    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_MANIFEST_ID) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
     // 去掉"目标无效"门禁（Option B）：化形是方向招，准星没对准也照常释放，target 透传
     // Option —— 有目标命中、无目标 resolver 跳过即空放（不命中、无误伤）。
-    if !drain_qi(world, caster, MANIFEST.qi_cost) {
+    let qi_cost = f64::from(ctx.definition.qi_cost);
+    if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
-    apply_cast_costs(world, caster, slot, ctx.now_tick, &MANIFEST_PROFILE);
-    let injected = inject_bond_qi(world, caster, MANIFEST.qi_cost);
-    credit_skill_qi_to_zone(world, caster, MANIFEST.qi_cost, injected);
+    apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
+    let injected = inject_bond_qi(world, caster, qi_cost);
+    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     // 化形完整版（plan-sword-path-complete §C）：spawn SwordIntentEntity 追踪实体，
     // 5s 内追击目标 5 次，每次发 AttackIntent。
@@ -339,8 +350,8 @@ fn cast_manifest(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(MANIFEST.cooldown_ticks),
-        anim_duration_ticks: MANIFEST.cast_ticks,
+        cooldown_ticks: u64::from(ctx.definition.cooldown_ticks),
+        anim_duration_ticks: ctx.definition.cast_ticks,
     }
 }
 
@@ -352,7 +363,7 @@ fn cast_heaven_gate(
     slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, &HEAVEN_GATE_PROFILE) {
+    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_HEAVEN_GATE_ID) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
@@ -370,7 +381,7 @@ fn cast_heaven_gate(
     // 化虚四阶段（plan-sword-path-complete §D）：
     // cast 时插入 HeavenGateChanneling 组件，由 heaven_gate_phase_system 分四阶段推进，
     // 不再立即发 HeavenGateCastEvent（legacy 路径保留，但 cast 不触发它）。
-    apply_cast_costs(world, caster, slot, ctx.now_tick, &HEAVEN_GATE_PROFILE);
+    apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
     let stored_qi = world
         .get::<SwordBondComponent>(caster)
         .map(|b| b.stored_qi)
@@ -379,6 +390,7 @@ fn cast_heaven_gate(
         caster,
         start_tick: ctx.now_tick,
         position,
+        range: f64::from(ctx.definition.range),
         qi_max: cultivation.qi_max,
         stored_qi,
         aoe_done: false,
@@ -395,8 +407,8 @@ fn cast_heaven_gate(
     );
 
     CastResult::Started {
-        cooldown_ticks: u64::from(HEAVEN_GATE.cooldown_ticks),
-        anim_duration_ticks: HEAVEN_GATE.cast_ticks,
+        cooldown_ticks: u64::from(ctx.definition.cooldown_ticks),
+        anim_duration_ticks: ctx.definition.cast_ticks,
     }
 }
 
@@ -417,10 +429,17 @@ pub fn heaven_gate_cast_system(
     mut combat_intents: Option<ResMut<Events<AttackIntent>>>,
     mut shatter_events: Option<ResMut<Events<SwordShatterEvent>>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    technique_registry: Res<TechniqueRegistry>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
     mut zone_registry: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut av_events: EventWriter<SwordPathSkillCastEvent>,
 ) {
+    let heaven_gate_range = f64::from(
+        technique_registry
+            .get(SWORD_PATH_HEAVEN_GATE_ID)
+            .expect("validated TechniqueRegistry must contain sword_path.heaven_gate")
+            .range,
+    );
     // 多 caster 同 tick 触发的情况罕见，但为了保证 deterministic 排序，按 Entity bits 排序。
     let mut pending: Vec<HeavenGateCastEvent> = events.read().cloned().collect();
     pending.sort_by_key(|e| e.caster.to_bits());
@@ -439,7 +458,7 @@ pub fn heaven_gate_cast_system(
 
         // 100 格 AoE：每个范围内目标按距离衰减伤害。已死 / 无 Position 的略过。
         let center = event.position;
-        let radius_sq = effects::HEAVEN_GATE_RADIUS.powi(2);
+        let radius_sq = heaven_gate_range.powi(2);
         // 避免对自己造成伤害（caster 本身处理 shatter）。
         let mut emitted_targets: HashSet<Entity> = HashSet::new();
         for (entity, position) in targets.iter() {
@@ -460,7 +479,7 @@ pub fn heaven_gate_cast_system(
                     attacker: event.caster,
                     target: Some(entity),
                     issued_at_tick: clock.tick,
-                    reach: AttackReach::new(effects::HEAVEN_GATE_RADIUS as f32, 0.0),
+                    reach: AttackReach::new(heaven_gate_range as f32, 0.0),
                     qi_invest: damage as f32,
                     wound_kind: WoundKind::Cut,
                     source: AttackSource::SwordPathHeavenGate,
@@ -506,7 +525,7 @@ pub fn heaven_gate_cast_system(
         );
 
         // 盲区注册：把 caster 藏 5 min，agent world_state 不再推送其 snapshot。
-        let zone = create_blind_zone_from_cast(&event, clock.tick);
+        let zone = create_blind_zone_from_cast(&event, clock.tick, heaven_gate_range);
         blind_registry.add(zone);
 
         // 守恒：staging_buffer 进 caster 当前所在 zone（worldview §二 真元守恒、
@@ -627,7 +646,7 @@ pub fn heaven_gate_phase_system(
         // 用 >= 而非 ==：若服务器跳过第 120 帧，仍在首个 >=120 帧补发 AoE，不被跳帧吞掉。
         if elapsed >= HEAVEN_GATE_CRITICAL_END && !channeling.aoe_done {
             let staging_buffer = channeling.qi_max + channeling.stored_qi;
-            let radius_sq = super::techniques::effects::HEAVEN_GATE_RADIUS.powi(2);
+            let radius_sq = channeling.range.powi(2);
             let mut emitted_targets = std::collections::HashSet::new();
             for (entity, position) in targets.iter() {
                 if entity == channeling.caster {
@@ -646,10 +665,7 @@ pub fn heaven_gate_phase_system(
                         attacker: channeling.caster,
                         target: Some(entity),
                         issued_at_tick: now,
-                        reach: AttackReach::new(
-                            super::techniques::effects::HEAVEN_GATE_RADIUS as f32,
-                            0.0,
-                        ),
+                        reach: AttackReach::new(channeling.range as f32, 0.0),
                         qi_invest: damage as f32,
                         wound_kind: WoundKind::Cut,
                         source: AttackSource::SwordPathHeavenGate,
@@ -711,7 +727,7 @@ pub fn heaven_gate_phase_system(
                 qi_max: channeling.qi_max,
                 stored_qi: channeling.stored_qi,
             };
-            let zone = create_blind_zone_from_cast(&blind_zone_event, now);
+            let zone = create_blind_zone_from_cast(&blind_zone_event, now, channeling.range);
             blind_registry.add(zone);
 
             // 守恒：staging_buffer 通过 QiTransfer ledger 释放回 zone。
@@ -766,58 +782,21 @@ pub fn heaven_gate_phase_system(
 
 struct CastContext {
     now_tick: u64,
+    definition: TechniqueDefinition,
 }
-
-struct CastProfile {
-    cooldown_ticks: u64,
-    cast_ticks: u32,
-    stamina_cost: f32,
-    skill_id: &'static str,
-}
-
-const CONDENSE_EDGE_PROFILE: CastProfile = CastProfile {
-    cooldown_ticks: CONDENSE_EDGE.cooldown_ticks as u64,
-    cast_ticks: CONDENSE_EDGE.cast_ticks,
-    stamina_cost: CONDENSE_EDGE.stamina_cost,
-    skill_id: SWORD_PATH_CONDENSE_EDGE_ID,
-};
-
-const QI_SLASH_PROFILE: CastProfile = CastProfile {
-    cooldown_ticks: QI_SLASH.cooldown_ticks as u64,
-    cast_ticks: QI_SLASH.cast_ticks,
-    stamina_cost: QI_SLASH.stamina_cost,
-    skill_id: SWORD_PATH_QI_SLASH_ID,
-};
-
-const RESONANCE_PROFILE: CastProfile = CastProfile {
-    cooldown_ticks: RESONANCE.cooldown_ticks as u64,
-    cast_ticks: RESONANCE.cast_ticks,
-    stamina_cost: RESONANCE.stamina_cost,
-    skill_id: SWORD_PATH_RESONANCE_ID,
-};
-
-const MANIFEST_PROFILE: CastProfile = CastProfile {
-    cooldown_ticks: MANIFEST.cooldown_ticks as u64,
-    cast_ticks: MANIFEST.cast_ticks,
-    stamina_cost: MANIFEST.stamina_cost,
-    skill_id: SWORD_PATH_MANIFEST_ID,
-};
-
-const HEAVEN_GATE_PROFILE: CastProfile = CastProfile {
-    // 一次性招式：CD = u32::MAX 哨兵（plan §techniques::HEAVEN_GATE）。
-    cooldown_ticks: u32::MAX as u64,
-    cast_ticks: HEAVEN_GATE.cast_ticks,
-    stamina_cost: HEAVEN_GATE.stamina_cost,
-    skill_id: SWORD_PATH_HEAVEN_GATE_ID,
-};
 
 fn build_cast_context(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     _slot: u8,
-    profile: &CastProfile,
+    skill_id: &str,
 ) -> Result<CastContext, CastRejectReason> {
-    let skill_id = profile.skill_id;
+    let definition = world
+        .get_resource::<TechniqueRegistry>()
+        .expect("cultivation::register must insert TechniqueRegistry before skill resolution")
+        .get(skill_id)
+        .unwrap_or_else(|| panic!("validated TechniqueRegistry must contain {skill_id}"))
+        .clone();
     let now_tick = world
         .get_resource::<CombatClock>()
         .map(|c| c.tick)
@@ -842,12 +821,12 @@ fn build_cast_context(
     }
 
     // 体力前置校验（review fix）：除了 Exhausted/≤0 之外，还要保证当前体力够支付
-    // profile.stamina_cost——否则 cast 走到 drain_qi 扣完真元再失败就是脏状态。
+    // definition.stamina_cost——否则 cast 走到 drain_qi 扣完真元再失败就是脏状态。
     if let Some(stamina) = world.get::<Stamina>(caster) {
         if stamina.state == StaminaState::Exhausted || stamina.current <= 0.0 {
             return Err(CastRejectReason::InRecovery);
         }
-        if profile.stamina_cost > 0.0 && stamina.current < profile.stamina_cost {
+        if definition.stamina_cost > 0.0 && stamina.current < definition.stamina_cost {
             return Err(CastRejectReason::InRecovery);
         }
     }
@@ -863,34 +842,24 @@ fn build_cast_context(
     // plan-race-system-v1 P3a（决议 §8.1 #5/#6）—— race gate：拥有门后、境界门前。
     // 剑道五招（sword_path.*）全数据表标 RaceGate::Humanoid（依赖人体专属经脉拓扑 +
     // 双臂持械机能），本体非人形（`intrinsic_is_humanoid_from_world` 判 false）一律拒绝。
-    if let Some(definition) = technique_definition(skill_id) {
-        let cultivation_race = world
-            .get::<Cultivation>(caster)
-            .map(|c| c.race.clone())
-            .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
-        let intrinsic_is_humanoid = intrinsic_is_humanoid_from_world(world, caster);
-        if !definition
-            .required_race
-            .allows(&cultivation_race, intrinsic_is_humanoid)
-        {
-            return Err(CastRejectReason::RaceMismatch);
-        }
+    let cultivation_race = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| cultivation.race.clone())
+        .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    let intrinsic_is_humanoid = intrinsic_is_humanoid_from_world(world, caster);
+    if !definition
+        .required_race
+        .allows(&cultivation_race, intrinsic_is_humanoid)
+    {
+        return Err(CastRejectReason::RaceMismatch);
     }
 
-    // 境界（plan §techniques::required_realm）
+    // 境界（plan §techniques::required_realm）直接消费同一条 TOML metadata。
     let cultivation = world
         .get::<Cultivation>(caster)
         .cloned()
         .ok_or(CastRejectReason::RealmTooLow)?;
-    let required_realm = match skill_id {
-        SWORD_PATH_CONDENSE_EDGE_ID => Realm::Induce,
-        SWORD_PATH_QI_SLASH_ID => Realm::Condense,
-        SWORD_PATH_RESONANCE_ID => Realm::Solidify,
-        SWORD_PATH_MANIFEST_ID => Realm::Spirit,
-        SWORD_PATH_HEAVEN_GATE_ID => Realm::Void,
-        _ => Realm::Awaken,
-    };
-    if realm_rank(cultivation.realm) < realm_rank(required_realm) {
+    if realm_rank(cultivation.realm) < realm_rank(definition.required_realm_value()) {
         return Err(CastRejectReason::RealmTooLow);
     }
 
@@ -918,7 +887,10 @@ fn build_cast_context(
         }
     }
 
-    Ok(CastContext { now_tick })
+    Ok(CastContext {
+        now_tick,
+        definition,
+    })
 }
 
 fn apply_cast_costs(
@@ -926,10 +898,11 @@ fn apply_cast_costs(
     caster: Entity,
     slot: u8,
     now_tick: u64,
-    profile: &CastProfile,
+    definition: &TechniqueDefinition,
 ) {
     if let Some(mut stamina) = world.get_mut::<Stamina>(caster) {
-        stamina.current = (stamina.current - profile.stamina_cost.max(0.0)).clamp(0.0, stamina.max);
+        stamina.current =
+            (stamina.current - definition.stamina_cost.max(0.0)).clamp(0.0, stamina.max);
         stamina.state = if stamina.current <= 0.0 {
             StaminaState::Exhausted
         } else {
@@ -939,18 +912,18 @@ fn apply_cast_costs(
     }
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
         bindings.set_cooldown(
-            profile.skill_id,
-            now_tick.saturating_add(profile.cooldown_ticks),
+            &definition.id,
+            now_tick.saturating_add(u64::from(definition.cooldown_ticks)),
         );
     }
-    insert_casting(world, caster, slot, profile, now_tick);
+    insert_casting(world, caster, slot, definition, now_tick);
 }
 
 fn insert_casting(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     slot: u8,
-    profile: &CastProfile,
+    definition: &TechniqueDefinition,
     now_tick: u64,
 ) {
     let start_position = world
@@ -961,15 +934,15 @@ fn insert_casting(
         source: crate::combat::components::CastSource::SkillBar,
         slot,
         started_at_tick: now_tick,
-        duration_ticks: u64::from(profile.cast_ticks),
+        duration_ticks: u64::from(definition.cast_ticks),
         started_at_ms: current_unix_millis(),
-        duration_ms: profile
+        duration_ms: definition
             .cast_ticks
             .saturating_mul(crate::time::MILLIS_PER_TICK as u32),
         bound_instance_id: None,
         start_position,
-        complete_cooldown_ticks: profile.cooldown_ticks,
-        skill_id: Some(profile.skill_id.to_string()),
+        complete_cooldown_ticks: u64::from(definition.cooldown_ticks),
+        skill_id: Some(definition.id.clone()),
         skill_config: None,
     });
 }
@@ -1139,8 +1112,17 @@ mod tests {
     use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
     use valence::prelude::{App, Update};
 
+    fn technique_definition(app: &App, id: &str) -> TechniqueDefinition {
+        app.world()
+            .resource::<TechniqueRegistry>()
+            .get(id)
+            .unwrap_or_else(|| panic!("test fixture missing technique {id}"))
+            .clone()
+    }
+
     fn setup_app() -> (App, Entity) {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(SkillMeridianDependencies::default());
         app.add_event::<AttackIntent>();
@@ -1279,6 +1261,115 @@ mod tests {
             avs,
             vec![SwordPathSkillId::CondenseEdge],
             "凝锋应 emit 恰好一个 CondenseEdge AV 事件，实际 {avs:?}"
+        );
+    }
+
+    #[test]
+    fn qi_slash_runtime_consumes_overridden_metadata_fields() {
+        let (mut app, caster) = setup_app();
+        let configured_qi_cost = 7.25_f32;
+        let configured_stamina_cost = 4.5_f32;
+        let configured_cast_ticks = 17;
+        let configured_cooldown_ticks = 29;
+        let configured_range = 2.75_f32;
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_QI_SLASH_ID,
+            |definition| {
+                definition.qi_cost = configured_qi_cost;
+                definition.stamina_cost = configured_stamina_cost;
+                definition.cast_ticks = configured_cast_ticks;
+                definition.cooldown_ticks = configured_cooldown_ticks;
+                definition.range = configured_range;
+            },
+        ));
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(SkillBarBindings::default());
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let stamina_before = app.world().get::<Stamina>(caster).unwrap().current;
+        let target = app.world_mut().spawn(Position::default()).id();
+
+        let result = cast_qi_slash(app.world_mut(), caster, 3, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: u64::from(configured_cooldown_ticks),
+                anim_duration_ticks: configured_cast_ticks,
+            },
+            "resolver result timing must come from the injected TechniqueRegistry"
+        );
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_before - qi_after - f64::from(configured_qi_cost)).abs() < 1e-6,
+            "qi charge must use overridden metadata: {qi_before} -> {qi_after}"
+        );
+        let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
+        assert!(
+            (stamina_before - stamina_after - configured_stamina_cost).abs() < 1e-6,
+            "stamina charge must use overridden metadata: {stamina_before} -> {stamina_after}"
+        );
+        let attack = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("successful qi slash must emit AttackIntent");
+        assert_eq!(
+            attack.reach.base, configured_range,
+            "attack reach must use overridden metadata range"
+        );
+        assert_eq!(
+            attack.qi_invest, configured_qi_cost,
+            "attack qi investment must use the same overridden qi cost"
+        );
+        let casting = app
+            .world()
+            .get::<Casting>(caster)
+            .expect("Casting component");
+        assert_eq!(casting.duration_ticks, u64::from(configured_cast_ticks));
+        assert_eq!(
+            casting.complete_cooldown_ticks,
+            u64::from(configured_cooldown_ticks)
+        );
+        assert_eq!(casting.skill_id.as_deref(), Some(SWORD_PATH_QI_SLASH_ID));
+        let bindings = app.world().get::<SkillBarBindings>(caster).unwrap();
+        assert!(bindings.is_on_cooldown(
+            SWORD_PATH_QI_SLASH_ID,
+            100 + u64::from(configured_cooldown_ticks) - 1
+        ));
+        assert!(!bindings.is_on_cooldown(
+            SWORD_PATH_QI_SLASH_ID,
+            100 + u64::from(configured_cooldown_ticks)
+        ));
+    }
+
+    #[test]
+    fn condense_edge_realm_gate_consumes_overridden_metadata() {
+        let (mut app, caster) = setup_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_CONDENSE_EDGE_ID,
+            |definition| definition.required_realm = "Void".to_string(),
+        ));
+        app.world_mut()
+            .get_mut::<Cultivation>(caster)
+            .unwrap()
+            .realm = Realm::Spirit;
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+
+        let result = cast_condense_edge(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RealmTooLow,
+            },
+            "Spirit caster would pass the removed Induce hardcode but must fail overridden Void metadata"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            qi_before,
+            "realm rejection must precede all costs"
         );
     }
 
@@ -1574,7 +1665,7 @@ mod tests {
     fn rejected_cast_does_not_emit_av_event() {
         let (mut app, caster) = setup_app();
         if let Some(mut c) = app.world_mut().get_mut::<Cultivation>(caster) {
-            c.qi_current = 1.0; // < QI_SLASH.qi_cost
+            c.qi_current = 1.0; // < checked-in sword_path.qi_slash qi_cost
         }
         let target = app.world_mut().spawn(Position::default()).id();
         let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
@@ -1690,6 +1781,7 @@ mod tests {
     #[test]
     fn qi_slash_drains_qi_and_emits_attack_intent() {
         let (mut app, caster) = setup_app();
+        let qi_slash = technique_definition(&app, SWORD_PATH_QI_SLASH_ID);
         let target = app.world_mut().spawn(Position::default()).id();
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
 
@@ -1698,9 +1790,9 @@ mod tests {
 
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - QI_SLASH.qi_cost).abs() < 1e-6,
-            "qi_current 应扣 {} (QI_SLASH.qi_cost)，实际差值 {}",
-            QI_SLASH.qi_cost,
+            (qi_before - qi_after - f64::from(qi_slash.qi_cost)).abs() < 1e-6,
+            "qi_current 应扣 {} (f64::from(qi_slash.qi_cost))，实际差值 {}",
+            f64::from(qi_slash.qi_cost),
             qi_before - qi_after
         );
         let intent = app
@@ -1716,7 +1808,7 @@ mod tests {
     #[test]
     fn qi_slash_rejects_when_qi_insufficient() {
         let (mut app, caster) = setup_app();
-        // 真元降到 1 < QI_SLASH.qi_cost (3.0)
+        // 真元降到 1 < checked-in qi_cost (3.0)
         if let Some(mut c) = app.world_mut().get_mut::<Cultivation>(caster) {
             c.qi_current = 1.0;
         }
@@ -1749,7 +1841,7 @@ mod tests {
     #[test]
     fn cast_rejected_when_stamina_insufficient_before_qi_drain() {
         let (mut app, caster) = setup_app();
-        // QI_SLASH.stamina_cost = 12.0；把体力降到 5.0 < 12.0
+        // checked-in sword_path.qi_slash stamina_cost = 12.0；把体力降到 5.0 < 12.0
         if let Some(mut stamina) = app.world_mut().get_mut::<Stamina>(caster) {
             stamina.current = 5.0;
         }
@@ -2037,6 +2129,7 @@ mod tests {
     #[test]
     fn qi_slash_without_bond_credits_full_cost_to_zone() {
         let (mut app, caster) = setup_app();
+        let qi_slash = technique_definition(&app, SWORD_PATH_QI_SLASH_ID);
         // 插入含 spawn zone（spirit_qi=0.9）的 ZoneRegistry。
         let zone_before = 0.9_f64;
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
@@ -2047,16 +2140,16 @@ mod tests {
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
 
-        // qi_current 应减少 QI_SLASH.qi_cost。
+        // qi_current 应减少 f64::from(qi_slash.qi_cost)。
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - QI_SLASH.qi_cost).abs() < 1e-9,
-            "qi_current 应扣 {} (QI_SLASH.qi_cost)，实际差 {}",
-            QI_SLASH.qi_cost,
+            (qi_before - qi_after - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
+            "qi_current 应扣 {} (f64::from(qi_slash.qi_cost))，实际差 {}",
+            f64::from(qi_slash.qi_cost),
             qi_before - qi_after,
         );
 
-        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = QI_SLASH.qi_cost。
+        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = f64::from(qi_slash.qi_cost)。
         let release: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
@@ -2070,9 +2163,9 @@ mod tests {
             release.len()
         );
         assert!(
-            (release[0].amount - QI_SLASH.qi_cost).abs() < 1e-9,
-            "ReleaseToZone.amount 应等于 QI_SLASH.qi_cost={:.1}（全额归 zone），实际 {}",
-            QI_SLASH.qi_cost,
+            (release[0].amount - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
+            "ReleaseToZone.amount 应等于 f64::from(qi_slash.qi_cost)={:.1}（全额归 zone），实际 {}",
+            f64::from(qi_slash.qi_cost),
             release[0].amount,
         );
 
@@ -2093,6 +2186,7 @@ mod tests {
     #[test]
     fn qi_slash_with_condensed_bond_credits_remainder_to_zone() {
         let (mut app, caster) = setup_app();
+        let qi_slash = technique_definition(&app, SWORD_PATH_QI_SLASH_ID);
         let zone_before = 0.5_f64;
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
         registry.find_zone_mut("spawn").unwrap().spirit_qi = zone_before;
@@ -2133,7 +2227,7 @@ mod tests {
             "有 bond 时应有 1 笔 Channeling audit event，实际 {}",
             channeling.len()
         );
-        let expected_injected = QI_SLASH.qi_cost * super::super::bond::QI_INJECT_RATIO;
+        let expected_injected = f64::from(qi_slash.qi_cost) * super::super::bond::QI_INJECT_RATIO;
         assert!(
             (channeling[0].amount - expected_injected).abs() < 1e-9,
             "Channeling amount = cost × QI_INJECT_RATIO = {expected_injected:.2}，实际 {}",
@@ -2146,7 +2240,7 @@ mod tests {
             "有 bond 时仍应有 1 笔 ReleaseToZone，实际 {}",
             release.len()
         );
-        let expected_remainder = QI_SLASH.qi_cost - expected_injected;
+        let expected_remainder = f64::from(qi_slash.qi_cost) - expected_injected;
         assert!(
             (release[0].amount - expected_remainder).abs() < 1e-9,
             "ReleaseToZone amount = cost - injected = {expected_remainder:.2}，实际 {}",
@@ -2166,6 +2260,7 @@ mod tests {
     #[test]
     fn qi_slash_with_mortal_bond_credits_full_cost_to_zone() {
         let (mut app, caster) = setup_app();
+        let qi_slash = technique_definition(&app, SWORD_PATH_QI_SLASH_ID);
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.3;
         app.world_mut().insert_resource(registry);
@@ -2201,9 +2296,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "Mortal 灵剑全部 cost 归 zone");
         assert!(
-            (release[0].amount - QI_SLASH.qi_cost).abs() < 1e-9,
-            "全额归 zone = QI_SLASH.qi_cost={:.1}，实际 {}",
-            QI_SLASH.qi_cost,
+            (release[0].amount - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
+            "全额归 zone = f64::from(qi_slash.qi_cost)={:.1}，实际 {}",
+            f64::from(qi_slash.qi_cost),
             release[0].amount,
         );
     }
@@ -2226,6 +2321,7 @@ mod tests {
     #[test]
     fn resonance_without_bond_credits_full_cost_to_zone() {
         let (mut app, caster) = setup_app();
+        let resonance = technique_definition(&app, SWORD_PATH_RESONANCE_ID);
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.1;
         app.world_mut().insert_resource(registry);
@@ -2241,9 +2337,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "剑鸣无 bond 应有 1 笔 ReleaseToZone");
         assert!(
-            (release[0].amount - RESONANCE.qi_cost).abs() < 1e-9,
-            "ReleaseToZone = RESONANCE.qi_cost={:.1}，实际 {}",
-            RESONANCE.qi_cost,
+            (release[0].amount - f64::from(resonance.qi_cost)).abs() < 1e-9,
+            "ReleaseToZone = f64::from(resonance.qi_cost)={:.1}，实际 {}",
+            f64::from(resonance.qi_cost),
             release[0].amount,
         );
     }
@@ -2252,6 +2348,7 @@ mod tests {
     #[test]
     fn manifest_without_bond_credits_full_cost_to_zone() {
         let (mut app, caster) = setup_app();
+        let manifest = technique_definition(&app, SWORD_PATH_MANIFEST_ID);
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.1;
         app.world_mut().insert_resource(registry);
@@ -2267,9 +2364,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "化形无 bond 应有 1 笔 ReleaseToZone");
         assert!(
-            (release[0].amount - MANIFEST.qi_cost).abs() < 1e-9,
-            "ReleaseToZone = MANIFEST.qi_cost={:.1}，实际 {}",
-            MANIFEST.qi_cost,
+            (release[0].amount - f64::from(manifest.qi_cost)).abs() < 1e-9,
+            "ReleaseToZone = f64::from(manifest.qi_cost)={:.1}，实际 {}",
+            f64::from(manifest.qi_cost),
             release[0].amount,
         );
     }
@@ -2374,6 +2471,52 @@ mod tests {
         assert!(
             vfx.contains(&"bong:heaven_gate_shockwave".to_string()),
             "AoE 帧应 emit shockwave 粒子，实际 {vfx:?}"
+        );
+    }
+
+    #[test]
+    fn heaven_gate_phase_uses_range_snapshotted_from_metadata() {
+        let (mut app, caster) = setup_phase_app();
+        let configured_range = 4.0_f32;
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_HEAVEN_GATE_ID,
+            |definition| definition.range = configured_range,
+        ));
+        let inside = app.world_mut().spawn(Position::new([3.5, 0.0, 0.0])).id();
+        let outside = app.world_mut().spawn(Position::new([4.5, 0.0, 0.0])).id();
+
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(
+            app.world()
+                .get::<HeavenGateChanneling>(caster)
+                .expect("cast must insert channeling")
+                .range,
+            f64::from(configured_range),
+            "cast must snapshot TechniqueRegistry range into channeling"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 220;
+        app.update();
+        let intents: Vec<_> = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .filter(|intent| intent.source == AttackSource::SwordPathHeavenGate)
+            .collect();
+        assert!(
+            intents.iter().any(|intent| intent.target == Some(inside)),
+            "target inside overridden range must be hit"
+        );
+        assert!(
+            intents.iter().all(|intent| intent.target != Some(outside)),
+            "target outside overridden range must not be admitted by the removed Rust radius constant"
+        );
+        assert!(
+            intents
+                .iter()
+                .all(|intent| (intent.reach.base - configured_range).abs() < f32::EPSILON),
+            "emitted AttackReach must carry overridden metadata range"
         );
     }
 

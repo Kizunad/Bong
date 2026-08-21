@@ -23,14 +23,12 @@ on:
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
-# split 原则（不改任何测试代码）：
-# - smoke-test-e2e.sh 内 schema/agent/server 三段本可并行 -> 拆成独立 job
-# - e2e-redis.sh 8 段中 north-rift preview 单独成后续 job 的思想 -> 此处先以 smoke 整体保留时序
-# - bot/scenarios/*.py 每文件已是独立 job (MODULES/run) -> 按字母分 2 shard 并行，需独立 server+fixture
-# 每个 job 自带 checkout/setup/cache/redis，与原单体 job 行为一致，仅通过 needs 形成 DAG。
+# split 原则（不改任何测试脚本/场景代码）：
+# - 原单体 90min job 拆为 DAG，合入 main 新增的 fallback/契约测试后重解
+# - contract 预检中的重复 build-token 入口按 main 最新收敛
+# - 新增 BOT_E2E_FALLBACK_MODE=1 的 bot 片需独立 runner（与原 ambient fixture 互斥）
 
 jobs:
-  # 0) 轻量门禁：proto + build-token，失败即全链 fail-fast
   preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -52,10 +50,15 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: bash scripts/check-proto-breaking.sh
-      - run: python3 scripts/tests/proto_breaking_base_ref_contract_test.py
-      - working-directory: agent
-        run: npm ci
-      - run: bash scripts/tests/build_token_test.sh
+      - name: Build-token and signal-boundary contract tests
+        run: |
+          bash scripts/tests/build_token_test.sh
+          python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/signal_boundary_contract_test.py
+          python3 scripts/tests/fallback_world_readiness_contract_test.py
+          python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+          bash scripts/tests/preview_lifecycle_contract_test.sh
+          bash scripts/tests/cargo_target_scope_test.sh
 
   client:
     needs: preflight
@@ -184,7 +187,6 @@ jobs:
           path: /tmp/bong-target/release/bong-server
           if-no-files-found: error
 
-  # 5) 原 smoke-test-e2e.sh 整体仍串行（server 起后三段强依赖端口/订阅），但已与上游三段并行
   smoke:
     needs: [schema, agent, server-test, build-release]
     runs-on: ubuntu-latest
@@ -238,7 +240,6 @@ jobs:
       - if: always()
         run: docker compose -f docker-compose.test.yml down -v --remove-orphans
 
-  # 6) bot 按场景分片并行，每片独立起 server+tokenized fixture（BOT_E2E_AMBIENT_FIXTURE_MODE=1）
   bot-e2e:
     needs: build-release
     runs-on: ubuntu-latest
@@ -249,7 +250,6 @@ jobs:
         shard: [1, 2]
     env:
       BOT_E2E_RUN_TAG: ci
-      BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
       CARGO_TARGET_DIR: /tmp/bong-target
     steps:
       - uses: actions/checkout@v4
@@ -274,37 +274,14 @@ jobs:
           name: bong-server-release
           path: /tmp/bong-target/release
       - run: chmod +x /tmp/bong-target/release/bong-server
-      - run: |
-          python3 - <<'PY'
-          import pathlib
-          scenarios = sorted(pathlib.Path("scripts/bot/scenarios").glob("*.py"))
-          names = [p.stem for p in scenarios if not p.name.startswith("_")]
-          # shard 1: 前半，shard 2: 后半
-          shard = int("${{ matrix.shard }}")
-          total = 2
-          chunk = (len(names) + total - 1) // total
-          picked = names[(shard-1)*chunk : shard*chunk]
-          pathlib.Path("/tmp/bot-shard.txt").write_text("\n".join(picked))
-          print(f"shard {shard}: {picked}")
-          PY
-          echo "picked=$(cat /tmp/bot-shard.txt | tr '\n' ' ')"
-      - run: |
-          set -euo pipefail
-          SCENARIOS="$(cat /tmp/bot-shard.txt | tr '\n' ' ')"
-          ARGS=""
-          for s in $SCENARIOS; do ARGS="$ARGS --scenario $s"; done
-          # 每个 shard 独立起 server，run_scenarios 直连，避免 bot-e2e.sh 全量 --all
-          # 复用 bot-e2e.sh 的 fixture/server 生命周期能力：按 shard 单独起
-          if [ "${{ matrix.shard }}" = "1" ]; then
-            bash scripts/bot-e2e.sh
-          else
-            # shard 2 用 run_scenarios 精挑，避免重跑 shard1 已覆盖的场景
-            # 仍走 bot-e2e.sh 的自起 server 路径以复用同一证据/清理逻辑
-            BOT_E2E_RUN_TAG="ci${{ matrix.shard }}" bash scripts/bot-e2e.sh &
-            # 注：当前 shard 策略为示例——保持不改测试代码的前提下，真实分片可改为
-            # python3 scripts/bot/run_scenarios.py $ARGS
-            wait
-          fi
+      - if: matrix.shard == 1
+        env:
+          BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
+        run: bash scripts/bot-e2e.sh
+      - if: matrix.shard == 2
+        env:
+          BOT_E2E_FALLBACK_MODE: "1"
+        run: bash scripts/bot-e2e.sh
       - if: always()
         uses: actions/upload-artifact@v4
         with:
