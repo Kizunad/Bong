@@ -50,12 +50,12 @@ bug-hunt round1 confirmed（fix_pr 类，7 条）。可逐个直接修，但归�
 | P3 TSY collapse route 重复注册 | `client/src/main/java/com/bong/client/network/ServerDataRouter.java:193` 当前只注册一次 | `already-fixed/invalid`（already-fixed） | commit `4478c6ff5` / PR #576 | 仅归档 |
 | P4 quota release 并发丢更新 | `server/src/persistence/mod.rs:3338-3358` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10703-10782` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `230b9b784` / PR #590 | 仅归档 |
 | P5 ascension completion 并发丢更新 | `server/src/persistence/mod.rs:3158-3181` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10573-10664` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `1f5d30580` / PR #585 | 仅归档 |
-| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:4413-4449` 先写 bundle；`server/src/persistence/mod.rs:4429-4447` 的 DB-open 与 transaction-open 在补偿闭包外，早退仍绕过 `rollback_file` | `absorbed-by-track` | R3 `plan-refactor-persistence-slices-v1`（独占 `server/src/persistence/**`） | 已登记 R3 round-bundle 精确吸收，不另立 successor |
+| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:5931-5982`（`persist_npc_deceased_archive_with_hooks`）先写 bundle；`open_connection`、`connection.transaction()`、index upsert 与 hot-row 删除均位于 `persisted` 补偿闭包内，任一失败均进入 `rollback_file`；`npc_archive_transaction_begin_failure_restores_previous_bundle` 等回归测试锁定失败原子性 | `already-fixed/invalid`（already-fixed） | R3 `docs/plan-refactor-persistence-slices-v1.md`；commit `57d6801b03b09a0c10b79a0cc0cca22c252642b4` / 2026-08-05 | 已由 R3 交付并闭环，仅归档，不再作为 live 吸收项 |
 
 ## Finish Evidence
 
-- **落地清单**：逐条完成 current-code/祖先链复核；P6 已按 `server/src/persistence/**` 独占边界登记由 R3 `plan-refactor-persistence-slices-v1` 吸收；本 bundle 由 `docs/plan-bughunt-r1-mechanical-fixes-v1.md` 迁入本路径。
+- **落地清单**：逐条完成 current-code/祖先链复核；P6 的 DB-open/transaction-open rollback 已由 R3 交付并闭环，当前仅作已完成归档记录；本 bundle 由 `docs/plan-bughunt-r1-mechanical-fixes-v1.md` 迁入本路径。
 - **关键 commit / PR**：P0 `b118c467a`/#599；P1 `269c89e6e`/#1043；P2 `02b646056`/#595；P3 `4478c6ff5`/#576；P4 `230b9b784`/#590；P5 `1f5d30580`/#585。所有 commit 均验证为 `origin/main @ c625d5a5` 祖先且当前修复仍存在。
 - **测试结果**：本次为 master §6.16 授权的 docs-only triage，不运行代码栈门禁；最终以 `git diff --check`、mapping/owner/path/标题 static gate 与 exact-HEAD read-only validator 为准。
 - **跨仓库核验**：server 六条 + client TSY router 一条均已核对；无 schema/wire 修改。
-- **遗留 / 后续**：仅 P6 仍 live，后续由 R3 `plan-refactor-persistence-slices-v1` 在 persistence slice 重构中实施；不另立独立 successor，本归档文件禁止再消费。
+- **遗留 / 后续**：P6 已由 R3 交付并闭环，不再遗留 live 项；本归档文件禁止再消费。

@@ -2,7 +2,7 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Update};
+use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Res, Update};
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::body_mass::{BodyMass, Stance};
@@ -25,7 +25,7 @@ use crate::cultivation::full_power_strike::{ChargingState, FullPowerChargeRateOv
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::insight_flow::PendingInsightOffer;
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -35,7 +35,9 @@ use crate::cultivation::tribulation::{
     HeartDemonResolution, JueBiRuntimeContext, PendingHeartDemonOffer, TribulationOriginDimension,
     TribulationState,
 };
-use crate::inventory::{clear_player_inventory, ClearScope, OverloadedMarker, PlayerInventory};
+use crate::inventory::{
+    clear_player_inventory, ClearScope, ItemRegistry, OverloadedMarker, PlayerInventory,
+};
 use crate::movement::{player_knockback::ActivePlayerKnockback, MovementState};
 use crate::network::craft_emit::{CraftSessionPersistenceDirty, CraftSessionStateDirty};
 use crate::player::state::PlayerState;
@@ -246,6 +248,7 @@ type ProgressionResetItem<'a> = (
 
 fn reset_progression_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
+    registry: Res<TechniqueRegistry>,
     mut players: Query<ProgressionResetItem<'_>>,
 ) {
     for event in events.read() {
@@ -286,7 +289,7 @@ fn reset_progression_state(
             *dugu = DuguPractice::default();
         }
         if let Some(mut techniques) = techniques {
-            *techniques = KnownTechniques::default();
+            *techniques = KnownTechniques::progression_reset(&registry);
         }
         if let Some(mut skill_set) = skill_set {
             *skill_set = SkillSet::default();
@@ -306,6 +309,7 @@ type InventoryResetItem<'a> = (
 fn reset_inventory_and_ui_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
     mut players: Query<InventoryResetItem<'_>>,
+    registry: Res<ItemRegistry>,
 ) {
     for event in events.read() {
         let Ok((inventory, player_state, movement, quick_slots, skill_bar, styles)) =
@@ -315,7 +319,7 @@ fn reset_inventory_and_ui_state(
         };
 
         if let Some(mut inventory) = inventory {
-            clear_player_inventory(&mut inventory, ClearScope::All);
+            clear_player_inventory(&mut inventory, ClearScope::All, &registry);
         }
         if let Some(mut player_state) = player_state {
             *player_state = PlayerState::default();
@@ -411,7 +415,8 @@ mod tests {
     use crate::craft::recipe::RecipeId;
     use crate::cultivation::components::{ColorKind, ContamSource, MeridianId};
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        worn_pack_instance_from_container_id, ContainerState, InventoryRevision, ItemInstance,
+        ItemRarity, PlacedItemState, BASE_CARRY_CAPACITY, BODY_POCKET_CONTAINER_ID,
         MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::{HashMap, HashSet};
@@ -420,6 +425,10 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<ResetCmd>>();
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("real item registry should load"),
+        );
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         register_systems(&mut app);
         app
     }
@@ -606,6 +615,13 @@ mod tests {
             dirty_inventory(),
             quick_slots,
             skill_bar,
+            KnownTechniques {
+                entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                    id: "burst_meridian.beng_quan".to_string(),
+                    proficiency: 0.8,
+                    active: true,
+                }],
+            },
         ));
         player
     }
@@ -704,6 +720,25 @@ mod tests {
             .all(|container| container.items.is_empty()));
         assert!(inventory.hotbar.iter().all(Option::is_none));
         assert!(inventory.equipped.is_empty());
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .all(|container| worn_pack_instance_from_container_id(&container.id).is_none()),
+            "reset must not retain orphan dynamic pack containers after clearing equipment"
+        );
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .any(|container| container.id == BODY_POCKET_CONTAINER_ID),
+            "reset must restore authoritative body_pocket topology"
+        );
+        assert!(
+            (inventory.max_weight - BASE_CARRY_CAPACITY).abs() < f64::EPSILON,
+            "reset must restore naked base capacity {BASE_CARRY_CAPACITY}, got {}",
+            inventory.max_weight
+        );
         assert!(app
             .world()
             .get::<QuickSlotBindings>(player)
@@ -718,6 +753,22 @@ mod tests {
             .slots
             .iter()
             .all(|slot| matches!(slot, SkillSlot::Empty)));
+
+        let techniques = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .expect("reset should preserve the KnownTechniques component");
+        #[cfg(feature = "dev-techniques")]
+        assert_eq!(
+            techniques.entries.len(),
+            app.world().resource::<TechniqueRegistry>().len(),
+            "dev-techniques /reset must restore the complete injected catalog"
+        );
+        #[cfg(not(feature = "dev-techniques"))]
+        assert!(
+            techniques.entries.is_empty(),
+            "production /reset must keep the progression reset empty"
+        );
     }
 
     #[test]

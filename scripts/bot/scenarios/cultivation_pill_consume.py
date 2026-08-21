@@ -11,11 +11,17 @@
 - 负分支：吃不存在的丹（背包无此 template）不得踢线/panic（宽容红线）。
 """
 
-import math
 import time
 
 from bot.bot import BotAssertionError, Event
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
+from bot.scenarios._cultivation_helpers import (
+    QI_SET_TOLERANCE,
+    _player_state_qi,
+    _player_state_values,
+    _set_qi_and_wait,
+    _set_qi_max_and_wait,
+)
 from bot.scenarios._inventory_helpers import (
     find_item,
     latest_inventory_snapshot,
@@ -29,38 +35,8 @@ PILL_ID = "huiyuan_pill"
 PILL_QI_RECOVERY = 60.0
 NON_CLAMP_EXPECTED_QI = 65.0
 NON_CLAMP_QI_TOLERANCE = 0.05
-QI_SET_TOLERANCE = 0.01
 SERVER_TICK_OBSERVATION_TICKS = 20
 SERVER_TICK_FENCE_TIMEOUT_SECONDS = 15.0
-
-
-def _player_state_values(event: Event) -> tuple[float, float] | None:
-    if event.kind != "server_data" or event.data.get("payload_type") != "player_state":
-        return None
-    payload = event.data["payload"]
-    qi = payload.get("spirit_qi")
-    qi_max = payload.get("spirit_qi_max")
-    assert isinstance(qi, (int, float)) and not isinstance(qi, bool), (
-        f"权威 player_state.spirit_qi 必须是数值，实际 {qi!r}"
-    )
-    assert isinstance(qi_max, (int, float)) and not isinstance(qi_max, bool), (
-        f"权威 player_state.spirit_qi_max 必须是数值，实际 {qi_max!r}"
-    )
-    qi_value = float(qi)
-    qi_max_value = float(qi_max)
-    assert math.isfinite(qi_value), (
-        f"权威 player_state.spirit_qi 必须是有限数，实际 {qi_value!r}"
-    )
-    assert math.isfinite(qi_max_value) and qi_max_value > 0.0, (
-        "权威 player_state.spirit_qi_max 必须是有限正数，"
-        f"实际 {qi_max_value!r}"
-    )
-    return qi_value, qi_max_value
-
-
-def _player_state_qi(event: Event) -> float | None:
-    state = _player_state_values(event)
-    return None if state is None else state[0]
 
 
 def _extract_qi(node) -> float | None:
@@ -77,53 +53,6 @@ def _extract_qi(node) -> float | None:
             if got is not None:
                 return got
     return None
-
-
-def _wait_authoritative_qi(
-    bot, anchor: float, expected: float, timeout: float = 12.0
-) -> Event:
-    return bot.wait_for(
-        lambda event: event.t > anchor
-        and (lambda qi: qi is not None and abs(qi - expected) <= QI_SET_TOLERANCE)(
-            _player_state_qi(event)
-        ),
-        timeout=timeout,
-        description=(
-            f"t>{anchor:.3f}s 后权威 player_state.spirit_qi="
-            f"{expected}±{QI_SET_TOLERANCE}"
-        ),
-    )
-
-
-def _wait_authoritative_qi_max(
-    bot, anchor: float, expected: float, timeout: float = 12.0
-) -> Event:
-    return bot.wait_for(
-        lambda event: event.t > anchor
-        and (
-            lambda state: state is not None
-            and abs(state[1] - expected) <= QI_SET_TOLERANCE
-        )(_player_state_values(event)),
-        timeout=timeout,
-        description=(
-            f"t>{anchor:.3f}s 后权威 player_state.spirit_qi_max="
-            f"{expected}±{QI_SET_TOLERANCE}"
-        ),
-    )
-
-
-def _is_qi_set_confirmation(event, anchor: float, value: float) -> bool:
-    if event.kind != "chat" or event.t <= anchor:
-        return False
-    text = event.data.get("text", "")
-    return text.startswith("[dev] qi set ") and text.endswith(f" -> {value:.1f}")
-
-
-def _is_qi_max_confirmation(event, anchor: float, value: float) -> bool:
-    if event.kind != "chat" or event.t <= anchor:
-        return False
-    text = event.data.get("text", "")
-    return text.startswith("[dev] qi max ") and f" -> {value:.1f}; current=" in text
 
 
 def _server_tick_from_event(event, anchor: float) -> int | None:
@@ -297,28 +226,6 @@ def _assert_settled_consumption(
         )
     assert departed, "服丹后必须收到离开旧基线的权威 player_state"
     return final_snapshot
-
-
-def _set_qi_and_wait(bot, value: float) -> Event:
-    anchor = last_event_time(bot)
-    bot.cmd(f"qi set {value}")
-    bot.wait_for(
-        lambda event: _is_qi_set_confirmation(event, anchor, value),
-        timeout=10.0,
-        description=f"t>{anchor:.3f}s 后收到本次 qi set 精确目标 -> {value:.1f} 的确认",
-    )
-    return _wait_authoritative_qi(bot, anchor, value)
-
-
-def _set_qi_max_and_wait(bot, value: float) -> Event:
-    anchor = last_event_time(bot)
-    bot.cmd(f"qi max {value}")
-    bot.wait_for(
-        lambda event: _is_qi_max_confirmation(event, anchor, value),
-        timeout=10.0,
-        description=f"t>{anchor:.3f}s 后收到本次 qi max 精确目标 -> {value:.1f} 的确认",
-    )
-    return _wait_authoritative_qi_max(bot, anchor, value)
 
 
 def _consume_and_assert_once(bot, intent: dict, baseline_event) -> dict:

@@ -175,6 +175,7 @@ impl Default for BotanySkillState {
 #[derive(Debug, Default)]
 pub struct HarvestSessionStore {
     sessions_by_player: HashMap<String, HarvestSession>,
+    player_by_target: HashMap<Entity, String>,
     skills_by_player: HashMap<String, BotanySkillState>,
 }
 
@@ -190,13 +191,49 @@ impl HarvestSessionStore {
         self.sessions_by_player.get_mut(player_id)
     }
 
-    pub fn upsert_session(&mut self, session: HarvestSession) {
+    pub fn try_insert_session(&mut self, session: HarvestSession) -> Result<(), HarvestSession> {
+        if let Some(target) = session.target_entity {
+            if self
+                .player_by_target
+                .get(&target)
+                .is_some_and(|owner| owner != &session.player_id)
+            {
+                return Err(session);
+            }
+        }
+
+        if let Some(previous) = self.sessions_by_player.remove(&session.player_id) {
+            if let Some(target) = previous.target_entity {
+                self.player_by_target.remove(&target);
+            }
+        }
+        if let Some(target) = session.target_entity {
+            self.player_by_target
+                .insert(target, session.player_id.clone());
+        }
         self.sessions_by_player
             .insert(session.player_id.clone(), session);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn upsert_session(&mut self, session: HarvestSession) {
+        self.try_insert_session(session)
+            .expect("test fixture must not silently overwrite another player's target reservation");
     }
 
     pub fn remove_session(&mut self, player_id: &str) -> Option<HarvestSession> {
-        self.sessions_by_player.remove(player_id)
+        let session = self.sessions_by_player.remove(player_id)?;
+        if let Some(target) = session.target_entity {
+            self.player_by_target.remove(&target);
+        }
+        Some(session)
+    }
+
+    pub fn owns_target(&self, player_id: &str, target: Entity) -> bool {
+        self.player_by_target
+            .get(&target)
+            .is_some_and(|owner| owner == player_id)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &HarvestSession> {
@@ -331,6 +368,69 @@ mod tests {
         assert_eq!(session.progress_at(0), 0.0);
         assert!((session.progress_at(20) - 0.5).abs() < f32::EPSILON);
         assert_eq!(session.progress_at(35), 1.0);
+    }
+
+    #[test]
+    fn target_reservation_is_unique_and_released_with_session() {
+        let target = Entity::from_raw(7);
+        let session = |player_id: &str, client: u32| HarvestSession {
+            player_id: player_id.to_string(),
+            client_entity: Entity::from_raw(client),
+            target_entity: Some(target),
+            target_plant: BotanyPlantId::CiSheHao,
+            mode: BotanyHarvestMode::Manual,
+            started_at_tick: 10,
+            duration_ticks: 20,
+            phase: BotanyPhase::InProgress,
+            last_progress: 0.0,
+            origin_position: [0.0, 0.0, 0.0],
+        };
+        let mut store = HarvestSessionStore::default();
+
+        assert!(store
+            .try_insert_session(session("offline:Azure", 1))
+            .is_ok());
+        assert!(store.owns_target("offline:Azure", target));
+        assert!(store
+            .try_insert_session(session("offline:Breeze", 2))
+            .is_err());
+        assert!(store.session_for("offline:Breeze").is_none());
+
+        store
+            .remove_session("offline:Azure")
+            .expect("reservation owner should have a session");
+        assert!(!store.owns_target("offline:Azure", target));
+        assert!(store
+            .try_insert_session(session("offline:Breeze", 2))
+            .is_ok());
+        assert!(store.owns_target("offline:Breeze", target));
+    }
+
+    #[test]
+    fn replacing_players_session_moves_target_reservation() {
+        let mut store = HarvestSessionStore::default();
+        let session = |target: u32| HarvestSession {
+            player_id: "offline:Azure".to_string(),
+            client_entity: Entity::from_raw(1),
+            target_entity: Some(Entity::from_raw(target)),
+            target_plant: BotanyPlantId::CiSheHao,
+            mode: BotanyHarvestMode::Manual,
+            started_at_tick: 10,
+            duration_ticks: 20,
+            phase: BotanyPhase::InProgress,
+            last_progress: 0.0,
+            origin_position: [0.0, 0.0, 0.0],
+        };
+
+        store
+            .try_insert_session(session(7))
+            .expect("first target should be available");
+        store
+            .try_insert_session(session(8))
+            .expect("same player may replace their own session");
+
+        assert!(!store.owns_target("offline:Azure", Entity::from_raw(7)));
+        assert!(store.owns_target("offline:Azure", Entity::from_raw(8)));
     }
 
     #[test]

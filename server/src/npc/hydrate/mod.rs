@@ -109,6 +109,7 @@ pub fn hydrate_dormant_near_players_system(
     config: Res<NpcVirtualizationConfig>,
     mut store: ResMut<NpcDormantStore>,
     mut commands: Commands,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     dimension_layers: Option<Res<DimensionLayers>>,
     players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     registry: Option<Res<NpcRegistry>>,
@@ -191,6 +192,7 @@ pub fn hydrate_dormant_near_players_system(
         };
         let entity = spawn_from_snapshot(
             &mut commands,
+            &technique_registry,
             snapshot,
             dimension_layers,
             tick,
@@ -231,6 +233,7 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
     mut events: EventReader<HalfStepRechallengeTriggerEvent>,
     mut store: ResMut<NpcDormantStore>,
     mut commands: Commands,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     dimension_layers: Option<Res<DimensionLayers>>,
     game_tick: Option<Res<GameTick>>,
     pois: Option<Res<PoiNoviceRegistry>>,
@@ -302,6 +305,7 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
 
         let entity = spawn_from_snapshot(
             &mut commands,
+            &technique_registry,
             snapshot,
             dimension_layers,
             tick,
@@ -810,8 +814,10 @@ fn resolve_sentinel_guarding_container(
     found
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_from_snapshot(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     snapshot: NpcDormantSnapshot,
     dimension_layers: &DimensionLayers,
     current_tick: u64,
@@ -870,6 +876,7 @@ fn spawn_from_snapshot(
         ),
         NpcArchetype::Rogue => spawn_rogue_npc_at(
             commands,
+            technique_registry,
             NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
@@ -897,6 +904,7 @@ fn spawn_from_snapshot(
         },
         NpcArchetype::Disciple => spawn_disciple_npc_at(
             commands,
+            technique_registry,
             NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
@@ -947,6 +955,7 @@ fn spawn_from_snapshot(
                 let relic = snapshot.guardian_relic.as_ref();
                 spawn_relic_guard_npc_at(
                     commands,
+                    technique_registry,
                     layer,
                     home_zone,
                     pos,
@@ -966,6 +975,7 @@ fn spawn_from_snapshot(
             .map(|tsy| {
                 spawn_tsy_daoxiang_at(
                     commands,
+                    technique_registry,
                     layer,
                     tsy.family_id.as_str(),
                     home_zone,
@@ -980,6 +990,7 @@ fn spawn_from_snapshot(
             .map(|tsy| {
                 spawn_tsy_zhinian_at(
                     commands,
+                    technique_registry,
                     layer,
                     tsy.family_id.as_str(),
                     home_zone,
@@ -1651,6 +1662,9 @@ mod tests {
         app.world_mut()
             .spawn((ClientMarker, Position(DVec3::new(10.0, 64.0, 10.0))));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -1702,6 +1716,9 @@ mod tests {
         app.world_mut()
             .spawn((ClientMarker, Position(DVec3::new(10.0, 64.0, 10.0))));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -1894,6 +1911,9 @@ mod tests {
             Position(DVec3::new(10.0, 64.0, 10.0)),
         ));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -1956,6 +1976,9 @@ mod tests {
             Position(DVec3::new(10.0, 64.0, 10.0)),
         ));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -2022,6 +2045,9 @@ mod tests {
         app.world_mut()
             .spawn((ClientMarker, Position(DVec3::new(20.0, 64.0, 20.0))));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -2066,6 +2092,9 @@ mod tests {
         app.world_mut()
             .spawn((ClientMarker, Position(DVec3::new(20.0, 64.0, 20.0))));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -2116,6 +2145,9 @@ mod tests {
             Position(scatter_pos + DVec3::new(1.0, 0.0, 1.0)),
         ));
 
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
@@ -2363,6 +2395,9 @@ mod tests {
             app.insert_resource(store);
             app.world_mut().spawn((ClientMarker, Position(pos)));
 
+            app.insert_resource(
+                crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+            );
             app.add_systems(Update, hydrate_dormant_near_players_system);
             app.update();
 
@@ -2399,6 +2434,9 @@ mod tests {
         let mut store = NpcDormantStore::default();
         store.insert(ready);
         app.insert_resource(store);
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
 
         app.update();
@@ -2558,6 +2596,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(store);
         app.add_systems(Update, hydrate_dormant_on_rechallenge_trigger);
         app
@@ -2776,6 +2817,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(store);
         app.insert_resource(CombatClock { tick: 100 });
         // Pre-populate queue with dormant NPC entry (is_dormant=true)
@@ -2973,6 +3017,9 @@ mod tests {
             valence::client::ClientMarker,
             Position(DVec3::new(10.0, 64.0, 10.0)),
         ));
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app
     }
@@ -3631,6 +3678,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NpcDormantStore::default());
         app.insert_resource(NpcVirtualizationConfig {
             transition_interval_ticks: 1,
@@ -3757,6 +3807,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NpcDormantStore::default());
         app.insert_resource(NpcVirtualizationConfig {
             transition_interval_ticks: 1,
@@ -3916,6 +3969,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NpcDormantStore::default());
         app.insert_resource(NpcVirtualizationConfig {
             transition_interval_ticks: 1,
