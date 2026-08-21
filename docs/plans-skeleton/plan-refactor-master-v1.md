@@ -6,7 +6,7 @@
 
 ## 0. 范围与铁律
 
-- **玩法/运行时重构只动 `server/` + `client/`**。`worldgen/`、`library-web/` 不动，agent runtime/prompt/arbiter 等行为域独立保留（§6.11-6.12）；跨端 wire 的 TypeBox schema source 是本范围的唯一基础设施例外，按 §4.1 分 owner。
+- **玩法/运行时重构只动 `server/` + `client/`**。`worldgen/` 不动，agent runtime/prompt/arbiter 等行为域独立保留（§6.11-6.12）；跨端 wire 的 TypeBox schema source 是本范围的唯一基础设施例外，按 §4.1 分 owner。
 - **TypeBox source 是 repo-wide schema source of truth**。对外契约（Redis IPC、proto schema）原则上不动形状；确需变更时先改 TypeBox canonical content，再由 R6-owned generation/transport machinery 按 R6 plan 同步其 mirrors，并走必要的 breaking checks。**不写兼容层**——production activation 服从 §4.1 不变量。
 - 真元守恒律、worldview 正典、招式 A/V 差异化红线全部继续生效。
 - **测试方针（用户 2026-07-27 指示，仅限重构轨道，覆盖根 CLAUDE.md「饱和化测试」节）**：

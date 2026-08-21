@@ -120,6 +120,7 @@ pub struct CommandExecutionParams<'w> {
     qi_heatmap: Option<Res<'w, QiDensityHeatmap>>,
     clock: Option<Res<'w, CultivationClock>>,
     terrain_providers: Option<Res<'w, TerrainProviders>>,
+    technique_registry: Res<'w, crate::cultivation::known_techniques::TechniqueRegistry>,
 }
 
 impl CommandExecutorResource {
@@ -228,6 +229,7 @@ pub fn execute_agent_commands(
                 &mut faction_store,
                 &mut npc_behavior,
                 &mut params.heartbeat,
+                &params.technique_registry,
                 params.karma_weights.as_deref(),
                 params.qi_heatmap.as_deref(),
                 params.clock.as_deref().map(|clock| clock.tick),
@@ -277,6 +279,7 @@ fn execute_single_command(
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
     heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
     tick: Option<u64>,
@@ -311,6 +314,7 @@ fn execute_single_command(
         CommandType::SpawnNpc => execute_spawn_npc(
             command,
             commands,
+            technique_registry,
             zone_registry,
             npc_registry,
             skin_pool,
@@ -540,6 +544,7 @@ fn execute_despawn_npc(
 fn execute_spawn_npc(
     command: &Command,
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
     skin_pool: &mut Option<ResMut<SkinPool>>,
@@ -699,6 +704,7 @@ fn execute_spawn_npc(
             NpcArchetype::Rogue => {
                 let entity = spawn_rogue_npc_at(
                     commands,
+                    technique_registry,
                     NpcSkinSpawnContext::new(
                         skin_pool.as_deref_mut(),
                         NpcSkinFallbackPolicy::AllowFallback,
@@ -752,6 +758,7 @@ fn execute_spawn_npc(
                     .unwrap_or(FactionId::Neutral);
                 let entity = spawn_disciple_npc_at(
                     commands,
+                    technique_registry,
                     NpcSkinSpawnContext::new(
                         skin_pool.as_deref_mut(),
                         NpcSkinFallbackPolicy::AllowFallback,
@@ -798,6 +805,7 @@ fn execute_spawn_npc(
                     .unwrap_or("agent_trial");
                 let entity = spawn_relic_guard_npc_at(
                     commands,
+                    technique_registry,
                     layer,
                     zone.name.as_str(),
                     spawn_position,
@@ -822,6 +830,7 @@ fn execute_spawn_npc(
                     .unwrap_or(zone.name.as_str());
                 let entity = spawn_tsy_daoxiang_at(
                     commands,
+                    technique_registry,
                     layer,
                     family_id,
                     zone.name.as_str(),
@@ -845,6 +854,7 @@ fn execute_spawn_npc(
                     .unwrap_or(zone.name.as_str());
                 let entity = spawn_tsy_zhinian_at(
                     commands,
+                    technique_registry,
                     layer,
                     family_id,
                     zone.name.as_str(),
@@ -1406,6 +1416,9 @@ mod command_executor_tests {
     fn setup_executor_app() -> App {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(CommandExecutorResource::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());

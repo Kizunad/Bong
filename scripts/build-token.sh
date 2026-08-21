@@ -23,6 +23,7 @@ EOF
 [[ $# -ge 1 ]] || usage
 kind=$1
 shift
+server_artifact="${BONG_BUILD_TOKEN_SERVER_ARTIFACT:-}"
 
 if [[ -v BONG_BUILD_TOKEN_CARGO_SLOTS || -v BONG_BUILD_TOKEN_GRADLE_SLOTS ]]; then
   printf '[build-token] 生产槽位固定为 cargo=2、gradle=1，不接受环境变量改写容量\n' >&2
@@ -59,6 +60,11 @@ case "$kind" in
     usage
     ;;
 esac
+
+if [[ -n "$server_artifact" && "$kind" != cargo ]]; then
+  printf '[build-token] BONG_BUILD_TOKEN_SERVER_ARTIFACT 仅支持 cargo 构建\n' >&2
+  exit 2
+fi
 
 # 在 root-owned sticky /tmp 下建立当前用户私有锁域。目录一旦存在就严格核验：
 # 不跟随 symlink，不接管其他 owner，不容忍宽权限或 chmod 失败。
@@ -116,6 +122,57 @@ for ((slot = 1; slot <= slots; slot++)); do
   prepare_lock_file "$lock_root/$kind-$slot.lock"
 done
 
+target_lock_fd=""
+cargo_target_root=""
+if [[ "$kind" == cargo ]]; then
+  invocation_root="$(pwd -P)"
+  if [[ "$invocation_root" == "$ROOT" ]]; then
+    invocation_root="$build_root"
+  fi
+  cargo_target_root="${CARGO_TARGET_DIR:-target}"
+  if [[ "$cargo_target_root" != /* ]]; then
+    cargo_target_root="$invocation_root/$cargo_target_root"
+  fi
+  cargo_target_root="$(realpath -m -- "$cargo_target_root")"
+  target_hash="$(printf '%s\n' "$cargo_target_root" | sha256sum | cut -c1-32)"
+  target_lock="$lock_root/cargo-target-$target_hash.lock"
+  prepare_lock_file "$target_lock"
+  exec {target_lock_fd}<>"$target_lock"
+  if [[ -n "$server_artifact" ]]; then
+    flock --exclusive "$target_lock_fd"
+  else
+    flock --shared "$target_lock_fd"
+  fi
+fi
+
+copy_server_artifact() {
+  local source="$cargo_target_root/release/bong-server"
+  local destination="$server_artifact" parent canonical_parent lexical_parent temporary
+
+  [[ "$destination" = /* ]] || {
+    printf '[build-token] server artifact 目标必须是绝对路径：%s\n' "$destination" >&2
+    return 2
+  }
+  parent="$(dirname -- "$destination")"
+  canonical_parent="$(realpath -e -- "$parent" 2>/dev/null)" || return 2
+  lexical_parent="$(realpath -ms -- "$parent")" || return 2
+  [[ "$canonical_parent" == "$lexical_parent" && ! -L "$canonical_parent" ]] || return 2
+  [[ "$(stat -Lc '%u:%a' -- "$canonical_parent")" == "$(id -u):700" ]] || {
+    printf '[build-token] server artifact 目录必须由当前用户持有且权限为 700：%s\n' \
+      "$canonical_parent" >&2
+    return 2
+  }
+  [[ -f "$source" && ! -L "$source" ]] || {
+    printf '[build-token] 成功构建未产生可信 server binary：%s\n' "$source" >&2
+    return 1
+  }
+  temporary="$(mktemp "$canonical_parent/.bong-server.XXXXXXXX")" || return 1
+  if ! install -m 700 -- "$source" "$temporary" || ! mv -fT -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
 start_seconds=$SECONDS
 announced=0
 while true; do
@@ -132,9 +189,18 @@ while true; do
         cd "$build_root"
       fi
       set +e
-      "${command[@]}"
+      if [[ -n "$target_lock_fd" ]]; then
+        "${command[@]}" 9>&- {target_lock_fd}>&-
+      else
+        "${command[@]}" 9>&-
+      fi
       status=$?
       set -e
+      if ((status == 0)) && [[ -n "$server_artifact" ]]; then
+        if ! copy_server_artifact; then
+          status=1
+        fi
+      fi
       flock --unlock 9
       exec 9>&-
       if ((status == 75)); then
