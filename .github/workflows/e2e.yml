@@ -123,6 +123,8 @@ jobs:
           cache-dependency-path: agent/package-lock.json
       - working-directory: agent
         run: npm ci
+      - working-directory: agent/packages/schema
+        run: npm run build
       - working-directory: agent/packages/tiandao
         run: |
           npm run check
