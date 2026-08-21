@@ -45,6 +45,7 @@ from bot.scenarios._combat_helpers import (  # noqa: E402
     wait_for_server_data_after,
 )
 from bot.scenarios._inventory_helpers import (  # noqa: E402
+    give_inventory_revision_barrier,
     latest_inventory_snapshot,
     require_pack_container,
     wait_inventory_revision_after,
@@ -1705,6 +1706,48 @@ class InventoryHelperTest(unittest.TestCase):
 
         self.assertEqual(snapshot["revision"], 3)
         self.assertEqual(snapshot["marker"], "command_final")
+
+    def test_give_revision_barrier_ignores_prior_mutation_snapshot(self):
+        stale_receipt = _FakeEvent(
+            1.5,
+            "chat",
+            {"text": "[dev] gave grass_fiber x1 revision=3"},
+        )
+        prior_request = _snapshot_event(3.0, 4, "prior_request")
+        barrier_receipt = _FakeEvent(
+            4.0,
+            "chat",
+            {"text": "[dev] gave grass_fiber x1 revision=5"},
+        )
+        barrier_snapshot = _snapshot_event(4.1, 5, "barrier")
+        bot = _CommandFakeBot(
+            [_snapshot_event(2.0, 3, "baseline"), stale_receipt],
+            [prior_request, barrier_receipt, barrier_snapshot],
+        )
+
+        snapshot = give_inventory_revision_barrier(bot, "grass_fiber", timeout=0.01)
+
+        self.assertEqual(bot.commands, ["give grass_fiber 1"])
+        self.assertEqual(snapshot["revision"], 5)
+        self.assertEqual(snapshot["marker"], "barrier")
+
+    def test_give_revision_barrier_accepts_snapshot_after_exact_revision(self):
+        bot = _CommandFakeBot(
+            [_snapshot_event(1.0, 7, "baseline")],
+            [
+                _FakeEvent(
+                    2.0,
+                    "chat",
+                    {"text": "[dev] gave grass_fiber x1 revision=8"},
+                ),
+                _snapshot_event(2.1, 9, "coalesced_later_revision"),
+            ],
+        )
+
+        snapshot = give_inventory_revision_barrier(bot, "grass_fiber", timeout=0.01)
+
+        self.assertEqual(snapshot["revision"], 9)
+        self.assertEqual(snapshot["marker"], "coalesced_later_revision")
 
 
 class ProductionScenarioContractTest(unittest.TestCase):

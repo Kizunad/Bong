@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from bot.bot import BotAssertionError
@@ -57,6 +58,49 @@ def wait_inventory_revision_after_matching(
         and predicate(e.data["payload"]),
         timeout=timeout,
         description=f"revision > {previous_revision} 且 {description} 的 inventory_snapshot",
+    )
+    return event.data["payload"]
+
+
+def give_inventory_revision_barrier(
+    bot,
+    item_id: str,
+    timeout: float = 20.0,
+) -> dict[str, Any]:
+    """用 dev give 的回执 revision 建立 FIFO inventory barrier。
+
+    仅等待命令后的任意 inventory_snapshot 会误收命令前请求的迟到快照。这里先从精确
+    give 回执取得本次 mutation revision，再等待 revision 不低于该值的快照；调用方因而
+    能读取命令前请求已经结算后的权威库存。barrier item 必须与待观察模板不同，避免可
+    堆叠物品沿用同一 instance_id 而污染判定。
+    """
+    anchor = max((event.t for event in getattr(bot, "events", [])), default=0.0)
+    bot.cmd(f"give {item_id} 1")
+    pattern = re.compile(rf"^\[dev\] gave {re.escape(item_id)} x1 revision=(\d+)$")
+    matched_revision: dict[str, int] = {}
+
+    def is_barrier_receipt(event) -> bool:
+        if event.kind != "chat" or event.t <= anchor:
+            return False
+        match = pattern.fullmatch(event.data["text"])
+        if match is None:
+            return False
+        matched_revision["value"] = int(match.group(1))
+        return True
+
+    bot.wait_for(
+        is_barrier_receipt,
+        timeout=timeout,
+        description=f"give-barrier {item_id} 的精确 revision 回执",
+    )
+    revision = matched_revision["value"]
+    event = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and e.t > anchor
+        and e.data["payload"]["revision"] >= revision,
+        timeout=timeout,
+        description=f"give-barrier {item_id} revision >= {revision} 的 inventory_snapshot",
     )
     return event.data["payload"]
 

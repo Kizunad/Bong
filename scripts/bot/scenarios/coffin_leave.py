@@ -28,6 +28,7 @@ from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_instance,
+    give_inventory_revision_barrier,
     inventory_item_instances,
     wait_inventory_contains_new_instance,
 )
@@ -39,6 +40,7 @@ DESCRIPTION = (
 MODULES = ["coffin"]
 
 MUNDANE_COFFIN = "mundane_coffin"
+BARRIER_ITEM = "grass_fiber"
 MUNDANE_MULTIPLIER = 0.9
 PLACE_OFFSET = 2
 ENTER_RANGE = 5.0
@@ -153,26 +155,16 @@ def _settle_by_barrier(bot, instance_id, coords, barrier_timeout=20.0):
     本地观察死线不能区分「被拒」与「已接受但快照迟到」——静默拒绝本身就是协议，死线
     过期后带着未决请求发下一个放置（新实例 id、新坐标）会让两个非幂等请求先后都生效：
     双扣料、双棺、场景只记一个坐标，留持久脏状态。give 命令与放置请求共享同一条 TCP
-    流，服务端按流序处理（FIFO）：**give 的 inventory_snapshot 到达即证明其前的放置
-    请求已被服务端处理完毕**，快照内容即对该请求的权威裁决——
+    流，服务端按流序处理（FIFO）：从无关物品 give 的精确 revision 回执对拍到对应
+    inventory_snapshot，即证明其前的放置请求已处理完毕，快照内容是权威裁决——
 
     - 该实例已不在快照 → 放置实际成功（消耗快照迟到而已）→ 返回坐标；
     - 该实例仍在快照 → 该候选被权威拒绝（未消费）→ 返回 None，放行下一候选。
 
-    消耗判定按**具体实例 id**（find_instance）：barrier 的 give 本身也新增一个同模板
-    实例，首匹配会选中它而漏判前一候选（同 GAP13 review finding round 5）。barrier
-    快照在 barrier_timeout 内未到（服务端长时间停摆）→ 抛错红掉，绝不带未决请求
-    进入下一候选。"""
-    give_anchor = last_event_time(bot)
-    bot.cmd(f"give {MUNDANE_COFFIN} 1")
-    event = bot.wait_for(
-        lambda e, a=give_anchor: e.kind == "server_data"
-        and e.data["payload_type"] == "inventory_snapshot"
-        and e.t > a,
-        timeout=barrier_timeout,
-        description=f"give-barrier 结算候选 {coords}（FIFO 证明其前放置已处理）",
-    )
-    if find_instance(event.data["payload"], MUNDANE_COFFIN, instance_id) is None:
+    barrier 必须给与棺材不同的模板：棺材可堆叠，同模板 give 会增加被测实例的
+    stack_count，既不会产生 fresh instance_id，也会让消费一次后实例仍留在快照。"""
+    snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM, timeout=barrier_timeout)
+    if find_instance(snapshot, MUNDANE_COFFIN, instance_id) is None:
         return coords
     return None
 
@@ -182,18 +174,15 @@ def _place_coffin(bot, px, py, pz):
     mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
     leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。
 
-    成功判定必须绑定到本次请求：**每个候选 give 一个独立 fresh mundane_coffin 实例**，
-    消耗判定与结算全部按各自实例 id（find_instance）。候选 3s 等待超时后走
+    成功判定绑定到本次领取的具体实例 id（find_instance）。候选 3s 等待超时后走
     **give-barrier 权威结算**（_settle_by_barrier）——若其实际放置成功（消耗快照迟到
     于 3s 等待），返回其坐标，绝不让成功被误记到后续候选（否则 enter/leave 会指向
     registry 中不存在的坐标）；且**先结算再放行下一候选**，绝不带着未决请求发第二个
     放置（review finding [3]）。
 
-    review finding 3 (run 31434608946)：实例 id 即候选标识——旧实现多候选复用同一实例，
-    快照不带请求标识，settle 窗口超时后上一候选的迟到成功快照会被下一候选的 wait 误认，
-    返回的坐标在 registry 无记录，后续 enter/leave 全超时。fresh 实例使快照按实例 id
-    精确归属，上一候选的迟到快照只证明「它自己的实例」被消费，下一候选的 wait 检查
-    新实例 id，绝无跨候选误记。
+    同一实例只在 barrier 明确证明上一候选已拒绝、物品仍在后复用；此时没有未决请求，
+    不存在跨候选误记。不能逐候选 give fresh 棺材：可堆叠模板会沿用原 instance_id，
+    第二次 give 后等待“新 id”必然超时。
 
     review finding [3]（R5）：消耗判定按**具体实例 id**（find_instance），不用 find_item
     首匹配——同模板旧实例（恢复的旧存档残留）会让首匹配到已消费的旧实例，掩盖新实例
@@ -208,13 +197,11 @@ def _place_coffin(bot, px, py, pz):
         (px, py + 1, pz - PLACE_OFFSET),
         (px, py + 1, pz + PLACE_OFFSET),
     ]
+    pre = inventory_item_instances(bot, MUNDANE_COFFIN)
+    bot.cmd(f"give {MUNDANE_COFFIN} 1")
+    coffin = wait_inventory_contains_new_instance(bot, MUNDANE_COFFIN, pre)
+    instance_id = int(coffin["item"]["instance_id"])
     for x, y, z in candidates:
-        pre = inventory_item_instances(bot, MUNDANE_COFFIN)
-        bot.cmd(f"give {MUNDANE_COFFIN} 1")
-        # wait_inventory_contains_new_instance 返回新 give 的**实例**（instance_id
-        # ∉ pre），排除同模板旧实例（恢复的旧存档残留）——消耗判定必须按该实例 id。
-        coffin = wait_inventory_contains_new_instance(bot, MUNDANE_COFFIN, pre)
-        instance_id = int(coffin["item"]["instance_id"])
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -262,7 +249,7 @@ def run(env) -> None:
         _wait_settled(bot)
         assert bot.position is not None, "需要 pos_look 后的 bot.position 定放棺位"
         px, py, pz = (int(v) for v in bot.position)
-        # _place_coffin 内部按候选 give fresh mundane_coffin 实例，返回实际放置坐标。
+        # _place_coffin 领取一个实例并在每次权威拒绝后复用，返回实际放置坐标。
         lower = _place_coffin(bot, px, py, pz)
         in_coffin_pos = (lower[0] + 0.5, lower[1] + 0.05, lower[2] + 0.5)
         exit_pos = (lower[0] - 0.5, lower[1] + 0.05, lower[2] + 0.5)
