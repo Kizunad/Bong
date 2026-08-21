@@ -110,6 +110,7 @@ from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
     require_item,
+    send_move,
     wait_inventory_contains,
 )
 
@@ -497,6 +498,29 @@ def run(env) -> None:
         snapshot_a = coffin_ev.data["payload"]
         coffin_a = require_item(snapshot_a, COFFIN_ITEM_ID)
         a_id = int(coffin_a["item"]["instance_id"])
+
+        # 默认唯一 3×3 草包只能容纳一口 2×3 棺材；body_pocket 只有 2×3，
+        # 高度不足以接收第二口。先把第一口真实实例移入 hotbar，释放 pack
+        # 空间，再发第二口，保持两个独立实例同时存在的夹具强度。
+        move_anchor = last_event_time(bot)
+        send_move(
+            bot,
+            a_id,
+            coffin_a["location"],
+            {"kind": "hotbar", "index": 8},
+        )
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > move_anchor
+            and any(
+                item is not None
+                and int(item.get("instance_id")) == a_id
+                for item in e.data["payload"].get("hotbar", [])
+            ),
+            timeout=STAGE_TIMEOUT,
+            description=f"把第一口棺材实例 #{a_id} 移入 hotbar[8]，释放 pack 空间",
+        )
 
         coffin_anchor2 = last_event_time(bot)
         bot.cmd(f"give {COFFIN_ITEM_ID} 1")
