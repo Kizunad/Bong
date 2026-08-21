@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""生成化形根 (HuaXingGen) Blockbench .bbmodel 与三视图预览 (Round 3 终极打磨·万年老参灵胎完美版)。
+"""生成化形根 (HuaXingGen) Blockbench .bbmodel 与三视图预览 (万年老参灵胎·解剖级精修终极完美版)。
 
 【世界观正典与设定依据】：
 - 定位：丹道传说级灵草 (Legendary)，生长在死域深处 (spirit_qi: -1.0 ~ 0.0)。
 - 物理机制：在极度负压死域中吞噬煞气孕育逆天生机 (survival_mode: neg_pressure_feed)，
   触碰时微动，为炼制「化形大丹」与重塑肉身的无上神药。
-- 视觉解剖重构 (Visual Anatomy)：
-  1. 人形头颅与通灵五官 (Meditative Cranium & Face)：
-     - 象牙乳白玉质根肉 (0xF8F5EB)，圆润饱满的婴孩/老参颅相；
-     - 恬淡闭目安详通灵神态，无任何贴图重复错位；
-     - 颅顶簇生「三出灵叶」与「顶生朱红血髓灵珠」及发丝状青白灵须。
-  2. 灵胎入定躯干 (Meditative Root Torso)：
-     - 饱满微凸的灵胎腹部与自然微曲的入定身躯，胸背木质经络节理严密平滑咬合。
-  3. 环抱双臂与指状根须 (Clasping Root Arms & Fingers)：
-     - 双臂自肩部自然曲抱于腹前，末端分叉成纤细修长的指状须根。
-  4. 盘坐分叉主根双腿 (Crossed Taproot Legs & Feet)：
-     - 如同万年何首乌/老山参般健硕分叉的主根大腿，膝弯微屈，足端化为抓地主须根。
-  5. 死域腐土与伴生玄石 (Deadzone Soil & Basalt Base)：
-     - 细密乳白须根抓地，深扎于暗黑死域腐土与冷灰玄武岩裂隙之中。
+- 终极解剖精雕 (Refined Visual Anatomy)：
+  1. 人形头颅与通灵神貌 (Meditative Cranium & Face)：
+     - 象牙乳白莹润玉质 (0xF9F6ED)，饱满圆润的婴孩/老参颅相；
+     - 恬淡闭目入定神态，清秀安宁，仅有一对清秀柔和的闭目眼睑线与秀气鼻梁、安详唇吻；
+     - 颅顶簇生「三出青翠灵叶」(0x489662)、「顶生高光朱红血髓灵珠」(0xD82838) 与灵气青白发须。
+  2. 灵胎盘坐身躯 (Meditative Root Body & Torso)：
+     - 饱满微凸的灵胎腹部与自然微曲的入定身躯，胸腹脊柱木质经络节理紧密平滑咬合无缝隙；
+     - 檀中穴与气海穴内蕴微弱青金灵髓温润光晕；
+     - 浑然一体的通灵象牙玉白根质，各关节处呈自然微温润暖白过渡。
+  3. 环抱双臂与指状根须 (Clasping Arms & Root Fingers)：
+     - 双臂自肩部顺滑贴合胸侧，在小腹前优雅交叠合抱，末端分叉成纤细修长的指状须根。
+  4. 盘坐分叉主根双腿与缠绕根系 (Crossed Taproot Legs & Root Strands)：
+     - 健硕分叉的主根大腿呈入定盘坐之态，膝节微屈，足端化为多段主须根深入死土裂隙。
+  5. 死域腐土与玄石基盘 (Deadzone Soil & Basalt Substrate)：
+     - 细密乳白须根抓地，深扎于暗黑死域腐土 (0x242028) 与冷灰玄武岩 (0x484B52) 裂隙之中。
 """
 
 from __future__ import annotations
@@ -66,20 +68,20 @@ def stable_uuid(*parts: str) -> str:
 def part_head_and_crown() -> list[Cube]:
     """人形头颅与顶生灵芽 (Head & Crown Sprouts)：
     位于 Y: 8.2 ~ 13.8。
-    具有唯一清晰的安详闭目面容、圆润颅骨与顶生朱红灵珠三出灵叶。
+    具有清晰安详闭目的五官面容、圆润颅骨与顶生朱红灵珠三出灵叶。
     """
     cubes: list[Cube] = []
     HEAD_ROT = (4.0, 0.0, 0.0)
     HEAD_ORG = (8.0, 8.4, 7.8)
 
     # ── 1. 头部颅骨多盒有机拟合 ──
-    # (1) 颅骨核心主体 (Cranium Core Y: 9.0 ~ 11.6, X: 6.4 ~ 9.6, Z: 6.4 ~ 9.2)
+    # (1) 颅骨核心主体 (Cranium Core Y: 9.0 ~ 11.6, X: 6.5 ~ 9.5, Z: 6.5 ~ 9.1)
     cubes.append(
         Cube(
             "head",
             "head_cranium_main",
-            (6.4, 9.0, 6.4),
-            (9.6, 11.6, 9.2),
+            (6.5, 9.0, 6.5),
+            (9.5, 11.6, 9.1),
             front_uv="head_face_calm",
             side_uv="root_plain_ivory",
             back_uv="head_back_ivory",
@@ -105,13 +107,13 @@ def part_head_and_crown() -> list[Cube]:
             rot_origin=HEAD_ORG,
         )
     )
-    # (3) 鼻梁微隆 (Nose Ridge Protrusion Y: 9.7 ~ 10.5, Z: 6.0 ~ 6.4)
+    # (3) 鼻梁微隆 (Nose Ridge Protrusion Y: 9.6 ~ 10.4, Z: 6.1 ~ 6.5)
     cubes.append(
         Cube(
             "head",
             "head_nose_ridge",
-            (7.6, 9.7, 6.0),
-            (8.4, 10.5, 6.4),
+            (7.6, 9.6, 6.1),
+            (8.4, 10.4, 6.5),
             front_uv="head_nose",
             side_uv="root_plain_ivory",
             back_uv="root_plain_ivory",
@@ -227,11 +229,11 @@ def part_head_and_crown() -> list[Cube]:
 
 def part_torso_and_spine() -> list[Cube]:
     """躯干与胸腹脊柱 (Root Torso & Belly)：
-    位于 Y: 4.4 ~ 8.4，饱满微凸的灵胎入定腹部与微前倾体态。
+    位于 Y: 3.8 ~ 8.4，饱满微凸的灵胎入定腹部与微前倾体态。
     """
     cubes: list[Cube] = []
     TORSO_ROT = (4.0, 0.0, 0.0)
-    TORSO_ORG = (8.0, 4.4, 7.8)
+    TORSO_ORG = (8.0, 4.0, 7.8)
 
     # 1. 颈胸过渡与上胸腔 (Upper Chest Y: 7.2 ~ 8.4)
     cubes.append(
@@ -261,12 +263,12 @@ def part_torso_and_spine() -> list[Cube]:
             rot_origin=TORSO_ORG,
         )
     )
-    # 3. 饱满微凸灵胎腹 (Belly Core Y: 4.4 ~ 5.8)
+    # 3. 饱满微凸灵胎腹 (Belly Core Y: 4.2 ~ 5.8)
     cubes.append(
         Cube(
             "torso",
             "torso_belly_main",
-            (6.0, 4.4, 6.4),
+            (6.0, 4.2, 6.4),
             (10.0, 5.8, 9.2),
             front_uv="torso_belly",
             side_uv="root_plain_ivory",
@@ -303,13 +305,27 @@ def part_torso_and_spine() -> list[Cube]:
             rot_origin=TORSO_ORG,
         )
     )
+    # 6. 下腹与骨盆实心连接 (Lower Abdomen Core Y: 3.4 ~ 4.4)
+    cubes.append(
+        Cube(
+            "torso",
+            "torso_pelvis_bridge",
+            (6.4, 3.4, 6.6),
+            (9.6, 4.6, 9.0),
+            front_uv="torso_belly",
+            side_uv="root_plain_ivory",
+            back_uv="torso_spine",
+            rotation=TORSO_ROT,
+            rot_origin=TORSO_ORG,
+        )
+    )
 
     return cubes
 
 
 def part_arms_and_hands() -> list[Cube]:
     """双臂与手爪根须 (Arms & Root Hands)：
-    双臂自肩部顺滑自然垂抱于腹前，末端分叉出修长的指状根须。
+    双臂自肩部顺滑贴合胸侧，在小腹前方自然环抱，手指交错。
     """
     cubes: list[Cube] = []
 
@@ -342,32 +358,32 @@ def part_arms_and_hands() -> list[Cube]:
             rot_origin=(5.8, 6.2, 6.7),
         )
     )
-    # 左手根须手指 1 (拇指微根)
+    # 左手掌主指根须 (交叠抱于小腹)
     cubes.append(
         Cube(
             "arms",
-            "hand_left_finger_thumb",
-            (6.4, 5.0, 5.4),
-            (7.4, 5.8, 6.0),
+            "hand_left_palm_root",
+            (6.3, 4.4, 5.4),
+            (7.4, 5.6, 6.1),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(6.0, 15.0, -8.0),
-            rot_origin=(6.4, 5.4, 5.7),
+            rotation=(8.0, 15.0, -8.0),
+            rot_origin=(6.4, 5.2, 5.7),
         )
     )
-    # 左手根须手指 2 (修长主根尖)
+    # 左手指尖修长根须
     cubes.append(
         Cube(
             "arms",
-            "hand_left_finger_long",
-            (6.3, 4.0, 5.3),
-            (7.2, 5.2, 5.9),
+            "hand_left_finger_tip",
+            (6.5, 3.8, 5.3),
+            (7.3, 4.8, 5.8),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
             rotation=(16.0, 10.0, -6.0),
-            rot_origin=(6.4, 5.0, 5.6),
+            rot_origin=(6.6, 4.6, 5.5),
         )
     )
 
@@ -400,32 +416,32 @@ def part_arms_and_hands() -> list[Cube]:
             rot_origin=(10.2, 6.2, 6.7),
         )
     )
-    # 右手根须手指 1
+    # 右手掌主指根须
     cubes.append(
         Cube(
             "arms",
-            "hand_right_finger_thumb",
-            (8.6, 5.0, 5.4),
-            (9.6, 5.8, 6.0),
+            "hand_right_palm_root",
+            (8.6, 4.4, 5.4),
+            (9.7, 5.6, 6.1),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(6.0, -15.0, 8.0),
-            rot_origin=(9.6, 5.4, 5.7),
+            rotation=(8.0, -15.0, 8.0),
+            rot_origin=(9.6, 5.2, 5.7),
         )
     )
-    # 右手根须手指 2
+    # 右手指尖修长根须
     cubes.append(
         Cube(
             "arms",
-            "hand_right_finger_long",
-            (8.8, 4.0, 5.3),
-            (9.7, 5.2, 5.9),
+            "hand_right_finger_tip",
+            (8.7, 3.8, 5.3),
+            (9.5, 4.8, 5.8),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
             rotation=(16.0, -10.0, 6.0),
-            rot_origin=(9.6, 5.0, 5.6),
+            rot_origin=(9.4, 4.6, 5.5),
         )
     )
 
@@ -434,96 +450,96 @@ def part_arms_and_hands() -> list[Cube]:
 
 def part_legs_and_feet() -> list[Cube]:
     """双腿与分叉足根 (Legs & Root Feet)：
-    位于 Y: 0.6 ~ 4.6，万年老参健硕盘腿分叉，膝节微屈，足尖化为抓地须根。
+    位于 Y: 0.6 ~ 4.4，紧凑盘坐入定，双腿饱满外展，膝节微屈，底座密实无空洞。
     """
     cubes: list[Cube] = []
 
-    # ── 骨盆与裆部核心 (Pelvic Core) ──
+    # ── 骨盆裆部稳固中枢 (Pelvic Center Core Y: 2.4 ~ 4.4) ──
     cubes.append(
         Cube(
             "legs",
-            "pelvis_core_hub",
-            (6.6, 3.4, 6.6),
-            (9.4, 4.6, 8.8),
+            "pelvis_center_block",
+            (6.4, 2.4, 6.5),
+            (9.6, 4.2, 8.9),
             front_uv="torso_belly",
             side_uv="root_plain_ivory",
             back_uv="torso_spine",
             rotation=(0.0, 0.0, 0.0),
-            rot_origin=(8.0, 4.0, 7.7),
+            rot_origin=(8.0, 3.4, 7.7),
         )
     )
 
     # ── 左腿主根 (Left Leg Root) ──
-    # 左大腿 (自骨盆向左前方外展)
+    # 左大腿 (斜向左前外展)
     cubes.append(
         Cube(
             "legs",
             "leg_left_thigh",
-            (5.1, 2.6, 6.6),
-            (6.9, 4.4, 8.4),
+            (5.0, 2.2, 6.5),
+            (7.0, 4.2, 8.5),
             front_uv="leg_thigh",
             side_uv="root_plain_ivory",
             back_uv="root_plain_ivory",
-            rotation=(8.0, 20.0, -14.0),
-            rot_origin=(6.6, 4.2, 7.8),
+            rotation=(6.0, 18.0, -12.0),
+            rot_origin=(6.6, 3.8, 7.8),
         )
     )
-    # 左膝节瘤 (Knee Joint)
+    # 左膝前曲节瘤 (Knee Joint)
     cubes.append(
         Cube(
             "legs",
             "leg_left_knee",
-            (4.9, 1.6, 6.0),
-            (6.5, 3.0, 7.4),
+            (4.8, 1.4, 5.8),
+            (6.6, 2.8, 7.4),
             front_uv="root_joint_ivory",
             side_uv="root_joint_ivory",
             back_uv="root_joint_ivory",
-            rotation=(-4.0, 14.0, -8.0),
-            rot_origin=(5.7, 2.8, 6.8),
+            rotation=(-4.0, 12.0, -8.0),
+            rot_origin=(5.7, 2.4, 6.8),
         )
     )
-    # 左足爪主根 (Foot Taproot - 向前下方伸展抓地)
+    # 左足爪主根 (Foot Taproot - 向前下方稳固抓地)
     cubes.append(
         Cube(
             "legs",
             "leg_left_foot_root",
-            (4.7, 0.5, 5.4),
-            (6.1, 1.9, 6.8),
+            (4.6, 0.5, 5.2),
+            (6.2, 1.8, 6.8),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(12.0, 10.0, -6.0),
-            rot_origin=(5.5, 1.7, 6.2),
+            rotation=(10.0, 8.0, -4.0),
+            rot_origin=(5.5, 1.5, 6.2),
         )
     )
 
     # ── 右腿主根 (Right Leg Root) ──
-    # 右大腿 (自骨盆向右前方外展)
+    # 右大腿 (斜向右前外展)
     cubes.append(
         Cube(
             "legs",
             "leg_right_thigh",
-            (9.1, 2.6, 6.6),
-            (10.9, 4.4, 8.4),
+            (9.0, 2.2, 6.5),
+            (11.0, 4.2, 8.5),
             front_uv="leg_thigh",
             side_uv="root_plain_ivory",
             back_uv="root_plain_ivory",
-            rotation=(8.0, -20.0, 14.0),
-            rot_origin=(9.4, 4.2, 7.8),
+            rotation=(6.0, -18.0, 12.0),
+            rot_origin=(9.4, 3.8, 7.8),
         )
     )
-    # 右膝节瘤
+    # 右膝前曲节瘤
     cubes.append(
         Cube(
             "legs",
             "leg_right_knee",
-            (9.5, 1.6, 6.0),
-            (11.1, 3.0, 7.4),
+            (9.4, 1.4, 5.8),
+            (11.2, 2.8, 7.4),
             front_uv="root_joint_ivory",
             side_uv="root_joint_ivory",
             back_uv="root_joint_ivory",
-            rotation=(-4.0, -14.0, 8.0),
-            rot_origin=(10.3, 2.8, 6.8),
+            rotation=(-4.0, -12.0, 8.0),
+            rot_origin=(10.3, 2.4, 6.8),
         )
     )
     # 右足爪主根
@@ -531,13 +547,28 @@ def part_legs_and_feet() -> list[Cube]:
         Cube(
             "legs",
             "leg_right_foot_root",
-            (9.9, 0.5, 5.4),
-            (11.3, 1.9, 6.8),
+            (9.8, 0.5, 5.2),
+            (11.4, 1.8, 6.8),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(12.0, -10.0, 6.0),
-            rot_origin=(10.5, 1.7, 6.2),
+            rotation=(10.0, -8.0, 4.0),
+            rot_origin=(10.5, 1.5, 6.2),
+        )
+    )
+
+    # ── 盘坐前根横桥 (Center Cross Root - 象牙玉质与大腿平滑融接) ──
+    cubes.append(
+        Cube(
+            "legs",
+            "cross_root_front",
+            (6.5, 0.8, 5.8),
+            (9.5, 2.2, 7.2),
+            front_uv="leg_thigh",
+            side_uv="root_plain_ivory",
+            back_uv="root_plain_ivory",
+            rotation=(4.0, 0.0, 0.0),
+            rot_origin=(8.0, 1.5, 6.5),
         )
     )
 
@@ -552,46 +583,46 @@ def part_rootlets_and_substrate() -> list[Cube]:
     cubes: list[Cube] = []
 
     # 1. 抓地须根群 (Fibrous Rootlets)
-    # 前向中须根
+    # 前向中须根 (向前扎入石缝)
     cubes.append(
         Cube(
             "rootlets",
             "rootlet_front_mid",
-            (7.5, 0.0, 4.8),
-            (8.5, 0.8, 6.4),
+            (7.4, 0.0, 4.6),
+            (8.6, 0.8, 6.0),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(8.0, 0.0, 0.0),
-            rot_origin=(8.0, 0.0, 6.2),
+            rotation=(6.0, 0.0, 0.0),
+            rot_origin=(8.0, 0.0, 5.8),
         )
     )
-    # 左侧抓根
+    # 左侧外展抓根
     cubes.append(
         Cube(
             "rootlets",
             "rootlet_left_flank",
-            (3.8, 0.0, 6.2),
-            (5.2, 0.8, 7.6),
+            (3.6, 0.0, 6.0),
+            (5.0, 0.8, 7.4),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(0.0, 32.0, -10.0),
-            rot_origin=(4.8, 0.0, 7.0),
+            rotation=(0.0, 30.0, -10.0),
+            rot_origin=(4.6, 0.0, 6.8),
         )
     )
-    # 右侧抓根
+    # 右侧外展抓根
     cubes.append(
         Cube(
             "rootlets",
             "rootlet_right_flank",
-            (10.8, 0.0, 6.2),
-            (12.2, 0.8, 7.6),
+            (11.0, 0.0, 6.0),
+            (12.4, 0.8, 7.4),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(0.0, -32.0, 10.0),
-            rot_origin=(11.2, 0.0, 7.0),
+            rotation=(0.0, -30.0, 10.0),
+            rot_origin=(11.4, 0.0, 6.8),
         )
     )
     # 后侧主支撑须根
@@ -600,11 +631,11 @@ def part_rootlets_and_substrate() -> list[Cube]:
             "rootlets",
             "rootlet_back_anchor",
             (7.4, 0.0, 8.4),
-            (8.6, 0.9, 10.2),
+            (8.6, 0.9, 10.0),
             front_uv="finger_root",
             side_uv="finger_root",
             back_uv="finger_root",
-            rotation=(-10.0, 0.0, 0.0),
+            rotation=(-8.0, 0.0, 0.0),
             rot_origin=(8.0, 0.0, 8.6),
         )
     )
@@ -615,7 +646,7 @@ def part_rootlets_and_substrate() -> list[Cube]:
         Cube(
             "substrate",
             "deadzone_soil_core",
-            (4.8, 0.0, 4.6),
+            (4.8, 0.0, 4.4),
             (11.2, 0.6, 11.2),
             front_uv="deadzone_soil",
             side_uv="deadzone_soil",
@@ -627,13 +658,13 @@ def part_rootlets_and_substrate() -> list[Cube]:
         Cube(
             "substrate",
             "basalt_shard_left",
-            (3.4, 0.0, 4.0),
-            (6.2, 0.8, 6.2),
+            (3.2, 0.0, 3.8),
+            (6.0, 0.8, 6.0),
             front_uv="deadzone_rock",
             side_uv="deadzone_rock",
             back_uv="deadzone_rock",
             rotation=(4.0, 25.0, -6.0),
-            rot_origin=(4.8, 0.0, 5.1),
+            rot_origin=(4.6, 0.0, 4.9),
         )
     )
     # 右后方死域玄武石片
@@ -641,13 +672,13 @@ def part_rootlets_and_substrate() -> list[Cube]:
         Cube(
             "substrate",
             "basalt_shard_right",
-            (9.8, 0.0, 8.2),
-            (12.6, 1.0, 10.8),
+            (10.0, 0.0, 8.0),
+            (12.8, 1.0, 10.6),
             front_uv="deadzone_rock",
             side_uv="deadzone_rock",
             back_uv="deadzone_rock",
             rotation=(-6.0, -32.0, 8.0),
-            rot_origin=(11.2, 0.0, 9.5),
+            rot_origin=(11.4, 0.0, 9.3),
         )
     )
 
@@ -665,7 +696,7 @@ def all_cubes() -> list[Cube]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. 64x64 UV Atlas 高清贴图烘焙
+# 2. 64x64 UV Atlas 高清贴图烘焙 (精雕无杂色)
 # ─────────────────────────────────────────────────────────────────────────────
 
 UV_MAP = {
@@ -698,8 +729,8 @@ UV_MAP = {
 
 def create_texture() -> Image.Image:
     """烘焙 64x64 UV Atlas 贴图：
-    - 化形根体表：莹润乳白象牙质 (0xF8F5EB ~ 0xECE4D2)，带有自然纵向木质纤维与温润黄赭节理。
-    - 头面部：安详闭目入定、五官清秀安宁的通灵神态。
+    - 化形根体表：莹润乳白象牙质 (0xF8F5EB ~ 0xECE4D2)，纯净柔滑的木质纤维，无杂乱色斑。
+    - 头面部：仅有一对清晰安详的闭目眼睑与清秀鼻唇印痕。
     - 顶芽：三出翠绿灵叶 (0x489662) 与顶生高光朱红血髓灵珠 (0xD82838)。
     - 死域地基：暗黑腐殖土 (0x242028) 与冷灰玄岩 (0x484B52)。
     """
@@ -709,61 +740,52 @@ def create_texture() -> Image.Image:
     # 1. 象牙通灵玉白底色 (0,0)~(64,46)
     for x in range(64):
         for y in range(46):
-            noise = ((x * 19 + y * 29) % 17) - 8
-            # 基础象牙玉白 0xF8F5EB (248, 245, 235)
+            noise = ((x * 17 + y * 23) % 7) - 3
             base_r = 248
             base_g = 245
-            base_b = 235
+            base_b = 236
 
-            # 纵向木质纤维拉丝
-            is_fiber = (x % 3 == 0)
-            if is_fiber:
-                base_r -= 5
-                base_g -= 6
-                base_b -= 8
+            # 纵向极其微弱的纤维拉丝
+            if x % 4 == 0:
+                base_r -= 4
+                base_g -= 4
+                base_b -= 6
 
-            # 木质关节节瘤与暖赭色泽 (0xD8C4A0)
+            # 关节处的柔和温润微晕 (自然暖白 0xEFE8D8)
             if y in range(30, 46) and x in range(36, 46):
-                base_r, base_g, base_b = 216, 196, 160
-            elif (x * 7 + y * 13) % 11 == 0:
-                # 灵髓金光微斑
-                base_r, base_g, base_b = 254, 250, 215
+                base_r, base_g, base_b = 238, 232, 218
 
-            r = int(np.clip(base_r + noise * 1.2, 185, 255))
-            g = int(np.clip(base_g + noise * 1.2, 175, 255))
-            b = int(np.clip(base_b + noise * 1.5, 155, 250))
+            r = int(np.clip(base_r + noise, 205, 255))
+            g = int(np.clip(base_g + noise, 195, 255))
+            b = int(np.clip(base_b + noise, 175, 250))
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 2. 精绘人形面容 (2,2)~(16,16) - 仅此一处面部，绝无重叠
-    # 眉线与闭合入定安详眼睑
-    draw.line([(5, 6), (7, 6)], fill=(160, 140, 115, 255), width=1)
-    draw.line([(10, 6), (12, 6)], fill=(160, 140, 115, 255), width=1)
-    draw.line([(5, 8), (7, 8)], fill=(175, 155, 130, 255), width=1)
-    draw.line([(10, 8), (12, 8)], fill=(175, 155, 130, 255), width=1)
-    # 鼻梁微光与暗影
-    img.putpixel((8, 9), (255, 252, 244, 255))
-    img.putpixel((9, 9), (255, 252, 244, 255))
-    img.putpixel((8, 10), (195, 176, 148, 255))
-    img.putpixel((9, 10), (195, 176, 148, 255))
-    # 唇吻微合印痕
-    draw.line([(7, 13), (10, 13)], fill=(185, 158, 136, 255), width=1)
+    # 2. 精绘人形面容 (2,2)~(16,16) - 仅此唯一一对闭目清秀眼睑
+    # 柔和闭目眼睑线 (y=7)
+    draw.line([(5, 7), (7, 7)], fill=(162, 142, 118, 255), width=1)
+    draw.line([(10, 7), (12, 7)], fill=(162, 142, 118, 255), width=1)
+    # 鼻梁与鼻翼阴影 (y=9, 10)
+    img.putpixel((8, 9), (255, 253, 246, 255))
+    img.putpixel((9, 9), (255, 253, 246, 255))
+    img.putpixel((8, 10), (205, 188, 162, 255))
+    img.putpixel((9, 10), (205, 188, 162, 255))
+    # 安详微合唇线 (y=13)
+    draw.line([(7, 13), (10, 13)], fill=(190, 165, 142, 255), width=1)
 
-    # 3. 前额区 (16,2)~(26,10) - 光洁通灵前额天灵盖
+    # 3. 前额区 (16,2)~(26,10) - 纯净光洁天灵盖
     for x in range(16, 26):
         for y in range(2, 10):
-            noise = ((x * 13 + y * 23) % 11) - 5
-            r = int(np.clip(250 + noise, 220, 255))
-            g = int(np.clip(246 + noise, 215, 255))
-            b = int(np.clip(236 + noise, 205, 250))
-            img.putpixel((x, y), (r, g, b, 255))
+            noise = ((x * 11 + y * 19) % 5) - 2
+            img.putpixel((x, y), (250 + noise, 246 + noise, 238 + noise, 255))
 
     # 4. 精绘胸腹经络节理 (2,16)~(30,30)
-    # 胸骨微凹线
-    draw.line([(8, 18), (8, 28)], fill=(210, 195, 175, 255), width=1)
-    # 腹部灵气核心晶点 (微弱青金光晕)
-    img.putpixel((22, 23), (255, 248, 170, 255))
-    img.putpixel((23, 23), (255, 248, 170, 255))
+    # 胸骨微凹中线
+    draw.line([(8, 18), (8, 28)], fill=(225, 214, 198, 255), width=1)
+    # 檀中穴与气海穴温润灵髓微光 (柔和青金)
+    img.putpixel((8, 20), (255, 248, 195, 255))
+    img.putpixel((22, 23), (255, 248, 195, 255))
+    img.putpixel((23, 23), (255, 248, 195, 255))
 
     # 5. 顶生三出灵叶与细茎 (44,18)~(64,28)
     for x in range(44, 64):
@@ -941,7 +963,7 @@ def main():
     print(f"✅ Generated BBModel: {model_path.relative_to(REPO)}")
 
     tex = create_texture()
-    tex_path = PREVIEW_DIR / "hua_xing_gen_texture_r3.png"
+    tex_path = PREVIEW_DIR / "hua_xing_gen_texture_r4.png"
     tex.save(tex_path)
     print(f"✅ Saved Texture: {tex_path.relative_to(REPO)}")
 
