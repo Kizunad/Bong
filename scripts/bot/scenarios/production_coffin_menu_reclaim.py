@@ -841,6 +841,14 @@ def run(env) -> None:
         # 伪造/陈旧请求产生（真实玩家此刻无法再发起 G 交互）。先断言 marker 已清场
         # （世界侧证据），再注入伪造重复请求验证服务端对 registry 已摘除坐标静默
         # no-op（不双授）——「回收不返棺材本体」的实例级断言（_coffin_state_ok）兜底。
+        # Despawned 由 server 在当前 tick 通过实体销毁包异步送达；库存快照可能先到，
+        # 不能把同一 tick 的网络排序当成业务契约。等目标 marker 的销毁包到达后再断言，
+        # 仍然锁住「主回收后 G 菜单无目标」这一世界侧事实。
+        bot.wait_for(
+            lambda e: e.kind == "entities_destroy" and marker_id in e.data["entity_ids"],
+            timeout=STAGE_TIMEOUT,
+            description=f"主回收后 marker #{marker_id} 的实体销毁包",
+        )
         assert not _marker_live(bot, marker_id), (
             f"主回收后 marker #{marker_id} 必须已 despawn（G 菜单无目标可开二次回收）"
         )
