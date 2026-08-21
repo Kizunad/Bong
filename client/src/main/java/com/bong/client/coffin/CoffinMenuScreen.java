@@ -82,7 +82,11 @@ public final class CoffinMenuScreen extends Screen {
         }
     }
 
-    private void onReclaim() {
+    /**
+     * [回收] 按钮动作（ButtonWidget 的 onClick 直接调用本方法）。package-private 供
+     * {@code CoffinGMenuProducerChainTest} 按真实按钮触发路径驱动（review finding [1]）。
+     */
+    void onReclaim() {
         ClientRequestSender.sendCoffinMenuReclaim(coffinPos);
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {

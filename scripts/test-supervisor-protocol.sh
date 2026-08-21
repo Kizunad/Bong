@@ -461,6 +461,10 @@ import signal
 import sys
 import time
 
+if len(sys.argv) != 3:
+    print("usage: fake-supervisor.py SERVER_DIRECTORY BUILT_BINARY", file=sys.stderr)
+    raise SystemExit(2)
+
 os.setsid()
 for signal_number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
     signal.signal(signal_number, signal.SIG_IGN)
@@ -486,6 +490,15 @@ PY
 chmod +x "$fake_supervisor"
 fake_pid_file="$TEST_ROOT/fake-supervisor.pid"
 bong_server_port_is_open() { return 1; }
+
+# The strict fake accepts the same SERVER_DIRECTORY + BUILT_BINARY pair as production.
+# An accidental third argv must fail before READY so caller/supervisor drift cannot hide.
+if python3 "$fake_supervisor" "$fixture_server" "$fixture_target/release/bong-server" extra \
+    >"$TEST_ROOT/fake-extra-argv.out" 2>"$TEST_ROOT/fake-extra-argv.err"; then
+    fail "strict fake supervisor accepted an unexpected third argument"
+fi
+grep -Fq "usage: fake-supervisor.py SERVER_DIRECTORY BUILT_BINARY" "$TEST_ROOT/fake-extra-argv.err" \
+    || fail "strict fake supervisor did not reject extra argv with its two-argument usage"
 
 run_failed_parent_mode() {
     local mode="$1" after_commit_hook="${2:-}" after_ack_hook="${3:-}" owner wait_status=0

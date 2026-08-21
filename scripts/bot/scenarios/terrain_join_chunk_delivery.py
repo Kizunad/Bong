@@ -77,13 +77,18 @@ def _one_session(env, tag: str) -> tuple[tuple[int, int], str]:
 
         bot.wait_for(
             lambda _event: len(
-                [chunk for chunk in bot.events_of("chunk_data") if chunk.t >= center.t]
+                {
+                    (chunk.data["x"], chunk.data["z"])
+                    for chunk in bot.events_of("chunk_data")
+                    if chunk.t >= center.t
+                }
             )
             >= MIN_CHUNKS_AFTER_CENTER,
             timeout=CHUNK_BUDGET,
             description=(
-                f"center 之后 ≥{MIN_CHUNKS_AFTER_CENTER} 个 ChunkData"
-                "（fallback 平台必须覆盖真实 spawn_distribution + 醒灵视域）"
+                f"center 之后 ≥{MIN_CHUNKS_AFTER_CENTER} 个不同 (x,z) 的 ChunkData"
+                "（fallback 平台必须覆盖真实 spawn_distribution + 醒灵视域；"
+                "重复投递同一 chunk 坐标不计入视野覆盖）"
             ),
         )
 
@@ -134,10 +139,13 @@ def run(env) -> None:
         )
 
     # 同名玩家断开重进是 #846 原始触发面；production seed 还必须保持同一簇和 chunk。
-    rejoin_chunk, rejoin_cluster = _one_session(env, "J1")
-    expected_chunk, expected_cluster = first_sessions["J1"]
-    if (rejoin_chunk, rejoin_cluster) != (expected_chunk, expected_cluster):
-        raise BotAssertionError(
-            "J1 重连必须稳定落回同一 production 出生点证据，"
-            f"首轮={(expected_chunk, expected_cluster)} 重连={(rejoin_chunk, rejoin_cluster)}"
-        )
+    # 三个簇都声明了 rejoin 覆盖，重连确定性断言必须应用到每个簇（review finding：
+    # 只重连 J1 会放过西/中簇重连出生选择回归）。
+    for tag in ("J1", "J2", "FC"):
+        rejoin_chunk, rejoin_cluster = _one_session(env, tag)
+        expected_chunk, expected_cluster = first_sessions[tag]
+        if (rejoin_chunk, rejoin_cluster) != (expected_chunk, expected_cluster):
+            raise BotAssertionError(
+                f"{tag} 重连必须稳定落回同一 production 出生点证据，"
+                f"首轮={(expected_chunk, expected_cluster)} 重连={(rejoin_chunk, rejoin_cluster)}"
+            )
