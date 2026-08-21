@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import (
     is_outgoing_positive_hit,
@@ -42,6 +44,40 @@ def _rendezvous_in_spawn(bot) -> None:
         lambda event: event.kind == "pos_look" and event.t > anchor,
         timeout=10.0,
         description="/tpzone spawn 后 server 权威 PositionLook",
+    )
+
+
+def _attack_until_positive_hit(bot, spawn, target_id: int, timeout: float = 10.0) -> None:
+    """追踪同一协议实体重试近战，覆盖击退同步和服务端 10 tick GCD。"""
+    # /tpzone 后玩家可能仍在从传送高度落向地面；这次必要的真实定位不应
+    # 抢占攻击重试预算，否则首轮移动就会耗尽整个窗口。
+    move_to_melee_range(bot, spawn)
+    deadline = time.monotonic() + timeout
+    attempts = 0
+    while time.monotonic() < deadline:
+        anchor = last_event_time(bot)
+        bot.attack_entity(target_id)
+        attempts += 1
+        remaining = deadline - time.monotonic()
+        try:
+            bot.wait_for(
+                lambda event: event.t > anchor and is_outgoing_positive_hit(event),
+                timeout=min(0.55, max(0.01, remaining)),
+                description="同一目标的 outgoing=true positive hit",
+            )
+            return
+        except BotAssertionError:
+            # 失败攻击可能是目标击退位置尚未同步，或仍在 10 tick GCD；下一轮
+            # 重新读取 entity_pos，禁止用旧 spawn 坐标反复猜测。
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.55, deadline - time.monotonic()))
+            if time.monotonic() < deadline:
+                move_to_melee_range(bot, spawn)
+
+    raise BotAssertionError(
+        f"[{bot.username}] 在 {timeout:.1f}s 内对同一 target_id={target_id} "
+        f"重试 {attempts} 次仍未收到 outgoing=true positive hit"
     )
 
 
@@ -112,14 +148,7 @@ def run(env) -> None:
 
             # Bob 已通过同一 server 权威 rendezvous 与 Alice/目标共处；按 Bob 观察到的
             # 真实目标坐标走 C2S 移动包贴身，不使用协议外坐标或本地瞬移猜测。
-            move_to_melee_range(bob, bob_spawn)
-            bob_anchor = last_event_time(bob)
-            bob.attack_entity(target_id)
-            bob.wait_for(
-                lambda event: event.t > bob_anchor and is_outgoing_positive_hit(event),
-                timeout=10.0,
-                description="Bob 的专属 outgoing=true positive hit",
-            )
+            _attack_until_positive_hit(bob, bob_spawn, target_id)
 
             alice.assert_alive("互见身份并命中共享 NPC 后")
             bob.assert_alive("互见身份并命中共享 NPC 后")
