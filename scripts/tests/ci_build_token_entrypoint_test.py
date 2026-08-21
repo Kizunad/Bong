@@ -100,10 +100,16 @@ SPECS = {
     "scripts/smoke-law-engine.sh": {
         "required": [
             "'$ROOT/scripts/build-token.sh' cargo build",
-            'server_target_root="$SERVER_CARGO_TARGET"',
+            'SERVER_START_TARGET="$(mktemp -d /tmp/bong-lawengine-target.XXXXXX)"',
+            "cargo build --target-dir '$SERVER_START_TARGET'",
+            'server_binary="$SERVER_START_TARGET/debug/bong-server"',
             'timeout 20s "$server_binary"',
         ],
-        "forbid": [r"build-token\.sh' cargo run", r'exec \./target/debug/bong-server'],
+        "forbid": [
+            r"build-token\.sh' cargo run",
+            r'exec \./target/debug/bong-server',
+            r'server_target_root="\$SERVER_CARGO_TARGET"',
+        ],
     },
     "scripts/dev-reload.sh": {
         "required": [

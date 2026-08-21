@@ -72,12 +72,22 @@ use valence::prelude::{
 use self::dimension::{DimensionLayers, OverworldLayer, TsyLayer};
 
 use crate::combat::CombatSystemSet;
+use crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION;
 
 const TEST_AREA_CHUNKS: i32 = 16;
 const CHUNK_WIDTH: i32 = 16;
-const FALLBACK_VIEW_DISTANCE_CHUNKS: u8 =
+pub(crate) const FALLBACK_VIEW_DISTANCE_CHUNKS: u8 =
     crate::cultivation::realm_vision::planner::MAX_REALM_VIEW_DISTANCE_CHUNKS;
 const FALLBACK_FLAT_MAX_CHUNKS: usize = 8_192;
+/// fallback 启动期间对所有锚点 view 矩形的累计访问预算（单位：chunk 单元）。
+/// 语义与 FALLBACK_FLAT_MAX_CHUNKS 不同：后者约束去重后实际 eager-allocate 的唯一
+/// chunk 内存上限；这里约束遍历插入操作的候选单元总量。重叠/重复锚点不会推进唯一
+/// 计数（BTreeSet 去重），但每次迭代仍访问整个矩形，因此累计候选工作量必须独立设限，
+/// 否则大量重叠锚点可绕开唯一 chunk 上限做无界插入尝试（review finding）。当前
+/// zones.json 当前 3 个锚点的视距展开约 9,755 单元；固定 emergency ChunkView
+/// 还要占 2,025 个候选单元，故实际候选工作量约 11,780，此预算仍留出约 1.39 倍余量，
+/// 同时把病态重叠配置封顶为有限启动工作量。
+const FALLBACK_FLAT_MAX_ANCHOR_WORK: usize = FALLBACK_FLAT_MAX_CHUNKS * 2;
 const BEDROCK_Y: i32 = 64;
 const GRASS_Y: i32 = BEDROCK_Y + 1;
 pub(crate) const TEST_AREA_BLOCK_EXTENT: i32 = TEST_AREA_CHUNKS * CHUNK_WIDTH;
@@ -546,23 +556,34 @@ fn spawn_fallback_flat_world(
     dimensions: &DimensionTypeRegistry,
     biomes: &BiomeRegistry,
 ) -> Entity {
-    let registry = zone::ZoneRegistry::load();
-    let anchors = crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-    let chunks = match fallback_spawn_chunk_union(&registry, &anchors) {
+    let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+    let registry = &snapshot.registry;
+    let anchors = &snapshot.distribution;
+    let chunks = match fallback_spawn_chunk_union(registry, anchors) {
         Ok(chunks) => chunks,
-        Err(chunk_count) => {
-            tracing::error!(
-                chunks = chunk_count,
-                limit = FALLBACK_FLAT_MAX_CHUNKS,
-                "[bong][world] fallback spawn chunk union exceeded safety limit during construction; refusing eager world allocation"
-            );
-            // 这里必须 fail closed，而不是静默截断 union：spawn_selector 仍会按
-            // zones.json 的完整分布选点，部分物化会把玩家送进不存在的 chunk。
-            // 当前 zones.json 的上限约束由 fallback_flat_chunk_count_guard_* 回归测试钉住；
-            // 超限属于需要修正配置/拆分出生簇的启动配置错误。
-            panic!(
-                "fallback spawn chunk union has at least {chunk_count} chunks, above safety limit {FALLBACK_FLAT_MAX_CHUNKS}"
-            );
+        Err(error) => {
+            match error {
+                FallbackChunkUnionError::UniqueChunkOverflow { chunk_count, limit } => {
+                    tracing::error!(
+                        chunks = chunk_count,
+                        limit = limit,
+                        "[bong][world] fallback spawn chunk union exceeded unique-chunk safety limit during construction; refusing eager world allocation"
+                    );
+                }
+                FallbackChunkUnionError::CandidateWorkOverflow {
+                    candidate_work,
+                    limit,
+                } => {
+                    tracing::error!(
+                        candidate_work = candidate_work,
+                        limit = limit,
+                        "[bong][world] fallback spawn chunk union exceeded candidate-work budget during construction; refusing eager world allocation"
+                    );
+                }
+            }
+            // Display 精确按实际越界的 limit 措辞（review finding：不得再把候选工作量
+            // 越界当 chunk 数上报）。
+            panic!("{error}");
         }
     };
 
@@ -586,7 +607,7 @@ fn spawn_fallback_flat_world(
         }
     }
 
-    scatter_spawn_resources(&mut layer.chunk, &anchors);
+    scatter_spawn_resources(&mut layer.chunk, anchors);
 
     let layer_entity = commands.spawn((layer, OverworldLayer)).id();
     tracing::info!(
@@ -598,26 +619,77 @@ fn spawn_fallback_flat_world(
     layer_entity
 }
 
+/// fallback union 构造失败的两种独立边界。review finding：旧实现把两者折叠进一个
+/// 裸 `usize`，调用方一律当唯一 chunk 数、一律报 FALLBACK_FLAT_MAX_CHUNKS 上限，
+/// 候选工作量越界时诊断误导。带种类的错误让调用方按实际越界的 limit 报告。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackChunkUnionError {
+    /// 去重后的唯一 chunk 数超过 FALLBACK_FLAT_MAX_CHUNKS。
+    UniqueChunkOverflow { chunk_count: usize, limit: usize },
+    /// 全部锚点 view 矩形的累计候选工作量超过 FALLBACK_FLAT_MAX_ANCHOR_WORK。
+    CandidateWorkOverflow { candidate_work: usize, limit: usize },
+}
+
+impl std::fmt::Display for FallbackChunkUnionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UniqueChunkOverflow { chunk_count, limit } => write!(
+                f,
+                "fallback spawn chunk union has at least {chunk_count} chunks, above safety limit {limit}"
+            ),
+            Self::CandidateWorkOverflow { candidate_work, limit } => write!(
+                f,
+                "fallback spawn chunk union candidate work reached {candidate_work} units, above budget {limit}"
+            ),
+        }
+    }
+}
+
 fn fallback_spawn_chunk_union(
     registry: &zone::ZoneRegistry,
     anchors: &[crate::player::spawn_selector::SpawnDistributionAnchor],
-) -> Result<BTreeSet<ChunkPos>, usize> {
-    let Some(spawn_zone) = registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) else {
-        tracing::warn!(
-            "[bong][world] `{}` zone missing; materializing the emergency spawn view",
-            zone::DEFAULT_SPAWN_ZONE_NAME,
-        );
-        let emergency = ChunkPos::from(valence::prelude::DVec3::from(
-            crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION,
-        ));
-        return Ok(
-            valence::prelude::ChunkView::new(emergency, FALLBACK_VIEW_DISTANCE_CHUNKS)
-                .iter()
-                .collect(),
-        );
+) -> Result<BTreeSet<ChunkPos>, FallbackChunkUnionError> {
+    let (zone_min, zone_max) = match registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) {
+        Some(spawn_zone) => spawn_zone.bounds,
+        None => {
+            tracing::warn!(
+                "[bong][world] `{}` zone missing from registry; clamping fallback spawn union to bounded emergency bounds instead of allocating an empty world",
+                zone::DEFAULT_SPAWN_ZONE_NAME,
+            );
+            zone::default_spawn_bounds()
+        }
     };
-    let (zone_min, zone_max) = spawn_zone.bounds;
     let mut chunks = BTreeSet::new();
+    // 候选矩形工作量独立于去重后的唯一 chunk 计数累积：重叠/重复锚点不会推进
+    // chunks.len()（BTreeSet 去重），但每次迭代仍访问整个 view 矩形。累计越界即
+    // fail closed，防止大量重叠锚点绕开唯一 chunk 上限造成无界启动工作量。
+    let mut candidate_work: i128 = 0;
+
+    let mut add_rectangle =
+        |min_chunk: ChunkPos, max_chunk: ChunkPos| -> Result<(), FallbackChunkUnionError> {
+            let rectangle_width = i128::from(max_chunk.x) - i128::from(min_chunk.x) + 1;
+            let rectangle_height = i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1;
+            candidate_work += rectangle_width * rectangle_height;
+            if candidate_work > FALLBACK_FLAT_MAX_ANCHOR_WORK as i128 {
+                return Err(FallbackChunkUnionError::CandidateWorkOverflow {
+                    candidate_work: usize::try_from(candidate_work).unwrap_or(usize::MAX),
+                    limit: FALLBACK_FLAT_MAX_ANCHOR_WORK,
+                });
+            }
+
+            for chunk_z in min_chunk.z..=max_chunk.z {
+                for chunk_x in min_chunk.x..=max_chunk.x {
+                    chunks.insert(ChunkPos::new(chunk_x, chunk_z));
+                    if chunks.len() > FALLBACK_FLAT_MAX_CHUNKS {
+                        return Err(FallbackChunkUnionError::UniqueChunkOverflow {
+                            chunk_count: chunks.len(),
+                            limit: FALLBACK_FLAT_MAX_CHUNKS,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        };
 
     for anchor in anchors {
         let (anchor_pos, radius) = anchor.cluster();
@@ -639,29 +711,41 @@ fn fallback_spawn_chunk_union(
             valence::prelude::ChunkView::new(max_spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
         let (min_chunk, _) = min_view.bounding_box();
         let (_, max_chunk) = max_view.bounding_box();
-
-        let rectangle_width = i128::from(max_chunk.x) - i128::from(min_chunk.x) + 1;
-        let rectangle_height = i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1;
-        let rectangle_chunks = rectangle_width * rectangle_height;
-        if rectangle_chunks > FALLBACK_FLAT_MAX_CHUNKS as i128 {
-            return Err(usize::try_from(rectangle_chunks).unwrap_or(usize::MAX));
-        }
-
-        for chunk_z in min_chunk.z..=max_chunk.z {
-            for chunk_x in min_chunk.x..=max_chunk.x {
-                chunks.insert(ChunkPos::new(chunk_x, chunk_z));
-                if chunks.len() > FALLBACK_FLAT_MAX_CHUNKS {
-                    return Err(chunks.len());
-                }
-            }
-        }
+        add_rectangle(min_chunk, max_chunk)?;
     }
+
+    // Spawn selection can fail over to the fixed emergency position when a selected
+    // cluster is blocked or unusable. Its complete view must be materialized too;
+    // otherwise a valid emergency result can land in an allocated-but-empty gap.
+    let emergency_x = EMERGENCY_SPAWN_POSITION[0].clamp(zone_min.x, zone_max.x);
+    let emergency_z = EMERGENCY_SPAWN_POSITION[2].clamp(zone_min.z, zone_max.z);
+    let emergency_view = valence::prelude::ChunkView::new(
+        ChunkPos::new(
+            block_coord_to_chunk(emergency_x),
+            block_coord_to_chunk(emergency_z),
+        ),
+        FALLBACK_VIEW_DISTANCE_CHUNKS,
+    );
+    let (emergency_min_chunk, emergency_max_chunk) = emergency_view.bounding_box();
+    add_rectangle(emergency_min_chunk, emergency_max_chunk)?;
 
     Ok(chunks)
 }
 
 fn block_coord_to_chunk(coord: f64) -> i32 {
     (coord.floor() as i32).div_euclid(CHUNK_WIDTH)
+}
+
+/// Selector-side guard against returning a point in a chunk that fallback bootstrap
+/// did not materialize. Keep this set sourced from the exact producer used by
+/// [`spawn_fallback_flat_world`], including zone clamping and both construction limits.
+pub(crate) fn materialized_fallback_chunks(
+    registry: &zone::ZoneRegistry,
+    anchors: &[crate::player::spawn_selector::SpawnDistributionAnchor],
+) -> BTreeSet<ChunkPos> {
+    fallback_spawn_chunk_union(registry, anchors).unwrap_or_else(|error| {
+        panic!("fallback spawn chunk union must be materialized before spawn selection: {error}")
+    })
 }
 
 /// 在每个出生分布簇附近散布基础资源方块（树木、石头、铁矿），让新玩家裸手可采。
@@ -763,8 +847,10 @@ fn scatter_spawn_resources(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::event_rhythm::{
@@ -775,10 +861,12 @@ mod tests {
     use super::{
         block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
         select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
-        AnvilBootstrapConfig, FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap,
-        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, FALLBACK_VIEW_DISTANCE_CHUNKS, GRASS_Y,
-        TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
+        AnvilBootstrapConfig, DimensionLayers, FallbackChunkUnionError, FallbackFlatBootstrap,
+        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, BEDROCK_Y, CHUNK_WIDTH,
+        FALLBACK_FLAT_MAX_ANCHOR_WORK, FALLBACK_FLAT_MAX_CHUNKS, FALLBACK_VIEW_DISTANCE_CHUNKS,
+        GRASS_Y, TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
+    use valence::prelude::bevy_ecs::system::RunSystemOnce;
     use valence::prelude::{
         App, BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3, DimensionTypeRegistry,
         UnloadedChunk, Update,
@@ -790,6 +878,61 @@ mod tests {
     fn register_test_tsy_dimension(app: &mut App) {
         let mut dimensions = app.world_mut().resource_mut::<DimensionTypeRegistry>();
         super::dimension::register_tsy_dimension(&mut dimensions);
+    }
+
+    fn chunk_view_rectangle_work(view: ChunkView) -> usize {
+        let (min_chunk, max_chunk) = view.bounding_box();
+        usize::try_from(
+            (i128::from(max_chunk.x) - i128::from(min_chunk.x) + 1)
+                * (i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1),
+        )
+        .expect("fallback view rectangle should fit usize")
+    }
+
+    fn fallback_anchor_view_work(
+        registry: &ZoneRegistry,
+        anchor: &crate::player::spawn_selector::SpawnDistributionAnchor,
+    ) -> usize {
+        let zone = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("synthetic fallback registry should contain spawn zone");
+        let (zone_min, zone_max) = zone.bounds;
+        let (anchor_pos, radius) = anchor.cluster();
+        let min_spawn_chunk = ChunkPos::new(
+            block_coord_to_chunk((anchor_pos.x - radius).clamp(zone_min.x, zone_max.x)),
+            block_coord_to_chunk((anchor_pos.z - radius).clamp(zone_min.z, zone_max.z)),
+        );
+        let max_spawn_chunk = ChunkPos::new(
+            block_coord_to_chunk((anchor_pos.x + radius).clamp(zone_min.x, zone_max.x)),
+            block_coord_to_chunk((anchor_pos.z + radius).clamp(zone_min.z, zone_max.z)),
+        );
+        let min_view = ChunkView::new(min_spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
+        let max_view = ChunkView::new(max_spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
+        let (min_chunk, _) = min_view.bounding_box();
+        let (_, max_chunk) = max_view.bounding_box();
+        usize::try_from(
+            (i128::from(max_chunk.x) - i128::from(min_chunk.x) + 1)
+                * (i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1),
+        )
+        .expect("fallback anchor rectangle should fit usize")
+    }
+
+    fn fallback_emergency_view_work(registry: &ZoneRegistry) -> usize {
+        let zone = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("synthetic fallback registry should contain spawn zone");
+        let (zone_min, zone_max) = zone.bounds;
+        let emergency_x = crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION[0]
+            .clamp(zone_min.x, zone_max.x);
+        let emergency_z = crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION[2]
+            .clamp(zone_min.z, zone_max.z);
+        chunk_view_rectangle_work(ChunkView::new(
+            ChunkPos::new(
+                block_coord_to_chunk(emergency_x),
+                block_coord_to_chunk(emergency_z),
+            ),
+            FALLBACK_VIEW_DISTANCE_CHUNKS,
+        ))
     }
 
     #[test]
@@ -912,14 +1055,14 @@ mod tests {
 
     #[test]
     fn fallback_chunk_union_covers_each_real_spawn_view_without_global_bridge() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let registry = &snapshot.registry;
+        let anchors = &snapshot.distribution;
+        let chunks = fallback_spawn_chunk_union(registry, anchors)
             .expect("configured fallback union should fit");
 
         assert!(anchors.len() >= 3, "zones.json 应提供多个出生分布簇");
-        for anchor in &anchors {
+        for anchor in anchors {
             let (center, radius) = anchor.cluster();
             let spawn_min_x = block_coord_to_chunk(center.x - radius);
             let spawn_max_x = block_coord_to_chunk(center.x + radius);
@@ -1015,10 +1158,8 @@ mod tests {
 
     #[test]
     fn fallback_flat_chunk_count_guard_accepts_configured_union_and_rejects_excess() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let configured = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let configured = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
             .expect("当前 zones.json fallback union 必须留在显式 eager-allocation 上限内");
         assert!(
             configured.len() <= FALLBACK_FLAT_MAX_CHUNKS,
@@ -1058,69 +1199,192 @@ mod tests {
         let oversized_anchors = [oversized_anchor];
         assert_eq!(
             fallback_spawn_chunk_union(&oversized_registry, &oversized_anchors),
-            Err(oversized_count),
-            "单个巨大合法矩形必须在分配 BTreeSet 前 fail closed，并报告精确候选 chunk 数"
+            Err(FallbackChunkUnionError::CandidateWorkOverflow {
+                candidate_work: oversized_count,
+                limit: FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            }),
+            "单个巨大合法矩形必须在分配 BTreeSet 前 fail closed，并报告精确候选工作量"
         );
 
-        let disjoint_anchors = (0..=FALLBACK_FLAT_MAX_CHUNKS)
-            .map(|index| {
-                crate::player::spawn_selector::spawn_distribution_anchor_for_test(
-                    DVec3::new(index as f64 * 16_000.0, 65.0, 0.0),
-                    0.0,
-                )
-            })
-            .collect::<Vec<_>>();
-        let disjoint_registry = synthetic_spawn_registry((
-            DVec3::new(-1.0, 0.0, -1.0),
-            DVec3::new(FALLBACK_FLAT_MAX_CHUNKS as f64 * 16_000.0 + 1.0, 100.0, 1.0),
+        // 单个宽矩形必须在 emergency 追加前撞唯一 chunk 上限：raw spawn chunk
+        // span = 47×47，视域展开后的候选矩形 = 91×91 = 8,281，仍低于
+        // 16,384 的 candidate-work 预算，因此第 8,193 个唯一 chunk 才是触发点。
+        let unique_registry = synthetic_spawn_registry((
+            DVec3::new(-1_000.0, 0.0, -1_000.0),
+            DVec3::new(1_000.0, 100.0, 1_000.0),
         ));
+        let unique_anchor = crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+            DVec3::new(0.5, 65.0, 0.5),
+            368.0,
+        );
+        let unique_work = fallback_anchor_view_work(&unique_registry, &unique_anchor);
+        let (unique_center, unique_radius) = unique_anchor.cluster();
+        let (unique_zone_min, unique_zone_max) = unique_registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("unique-overflow fixture should contain spawn zone")
+            .bounds;
+        let unique_min_spawn_chunk = ChunkPos::new(
+            block_coord_to_chunk(
+                (unique_center.x - unique_radius).clamp(unique_zone_min.x, unique_zone_max.x),
+            ),
+            block_coord_to_chunk(
+                (unique_center.z - unique_radius).clamp(unique_zone_min.z, unique_zone_max.z),
+            ),
+        );
+        let unique_max_spawn_chunk = ChunkPos::new(
+            block_coord_to_chunk(
+                (unique_center.x + unique_radius).clamp(unique_zone_min.x, unique_zone_max.x),
+            ),
+            block_coord_to_chunk(
+                (unique_center.z + unique_radius).clamp(unique_zone_min.z, unique_zone_max.z),
+            ),
+        );
         assert_eq!(
-            fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
-            Err(FALLBACK_FLAT_MAX_CHUNKS + 1),
-            "多个小矩形的 union 累积越界也必须在第 {} 个唯一 chunk 处 fail closed",
-            FALLBACK_FLAT_MAX_CHUNKS + 1
+            (
+                unique_max_spawn_chunk.x - unique_min_spawn_chunk.x + 1,
+                unique_max_spawn_chunk.z - unique_min_spawn_chunk.z + 1,
+            ),
+            (47, 47),
+            "center=0.5/radius=368.0 必须产生 47×47 raw spawn chunk span"
+        );
+        assert_eq!(
+            unique_work,
+            91 * 91,
+            "47×47 raw spawn chunks 经视域展开后必须产生 91×91 candidate rectangle"
+        );
+        assert_eq!(unique_work, 8_281);
+        assert!(
+            unique_work <= FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            "唯一上限 fixture 的单矩形工作量必须仍在 candidate-work 预算内"
+        );
+        assert_eq!(
+            fallback_spawn_chunk_union(&unique_registry, &[unique_anchor]),
+            Err(FallbackChunkUnionError::UniqueChunkOverflow {
+                chunk_count: FALLBACK_FLAT_MAX_CHUNKS + 1,
+                limit: FALLBACK_FLAT_MAX_CHUNKS,
+            }),
+            "8,281 候选矩形必须在 emergency 计费前于第 8,193 个唯一 chunk fail closed"
         );
     }
 
     #[test]
-    fn missing_spawn_zone_materializes_complete_emergency_view() {
+    fn chunk_union_overflow_diagnostics_name_the_right_limit() {
+        // review finding：两种越界折叠成裸 usize 时，调用方把候选工作量越界也当
+        // chunk 数、报 FALLBACK_FLAT_MAX_CHUNKS 上限上报。修复后 Display（=panic
+        // 消息）必须按各自种类点名正确的 limit，不得混淆。
+        let work_msg = FallbackChunkUnionError::CandidateWorkOverflow {
+            candidate_work: FALLBACK_FLAT_MAX_ANCHOR_WORK + 1,
+            limit: FALLBACK_FLAT_MAX_ANCHOR_WORK,
+        }
+        .to_string();
+        assert!(
+            work_msg.contains("candidate work")
+                && work_msg.contains(&format!("above budget {FALLBACK_FLAT_MAX_ANCHOR_WORK}")),
+            "候选工作量越界必须点名 candidate-work 预算：{work_msg}"
+        );
+        assert!(
+            !work_msg.contains("safety limit"),
+            "候选工作量越界不得借用唯一 chunk 上限措辞：{work_msg}"
+        );
+
+        let chunk_msg = FallbackChunkUnionError::UniqueChunkOverflow {
+            chunk_count: FALLBACK_FLAT_MAX_CHUNKS + 1,
+            limit: FALLBACK_FLAT_MAX_CHUNKS,
+        }
+        .to_string();
+        assert!(
+            chunk_msg.contains(&format!("at least {} chunks", FALLBACK_FLAT_MAX_CHUNKS + 1))
+                && chunk_msg.contains(&format!("above safety limit {FALLBACK_FLAT_MAX_CHUNKS}")),
+            "唯一 chunk 越界必须点名精确 chunk 数与上限：{chunk_msg}"
+        );
+        assert!(
+            !chunk_msg.contains("above budget"),
+            "唯一 chunk 越界不得借用候选工作量预算措辞：{chunk_msg}"
+        );
+    }
+
+    #[test]
+    fn overlapping_spawn_anchors_cannot_bypass_candidate_work_limit() {
+        // review finding：重复/重叠零半径锚点各自命中同一 view 矩形时，去重后的
+        // 唯一 chunk 计数永不增长（BTreeSet 去重），但候选矩形工作量持续累积；
+        // 必须独立于唯一计数对候选工作量设上限，否则大量重复锚点做无界插入尝试。
+        let registry =
+            synthetic_spawn_registry((DVec3::new(-1.0, 0.0, -1.0), DVec3::new(1.0, 100.0, 1.0)));
+        let duplicate_anchor = crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+            DVec3::new(0.5, 65.0, 0.5),
+            0.0,
+        );
+        let per_anchor_work = fallback_anchor_view_work(&registry, &duplicate_anchor);
+        let emergency_work = fallback_emergency_view_work(&registry);
+        assert_eq!(per_anchor_work, 2_025);
+        assert_eq!(emergency_work, 2_025);
+
+        let anchor_work = 8 * per_anchor_work;
+        assert_eq!(anchor_work, 16_200);
+        assert!(
+            anchor_work <= FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            "八个重复锚点的 16,200 个候选单位必须尚未越过 16,384 预算"
+        );
+        let total_work = anchor_work + emergency_work;
+        assert_eq!(total_work, 18_225);
+        assert!(
+            total_work > FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            "mandatory emergency rectangle 必须把总工作量推到预算之上"
+        );
+
+        let anchors: [_; 8] = core::array::from_fn(|_| duplicate_anchor.clone());
+        assert_eq!(
+            fallback_spawn_chunk_union(&registry, &anchors),
+            Err(FallbackChunkUnionError::CandidateWorkOverflow {
+                candidate_work: 18_225,
+                limit: 16_384,
+            }),
+            "八个 2,025-work 锚点加 2,025 emergency work 必须精确撞出 18,225"
+        );
+    }
+
+    #[test]
+    fn missing_spawn_zone_yields_bounded_emergency_union_not_empty() {
+        // review finding：spawn zone 缺失时不得返回成功的空 union（会产生
+        // 无地形块的半初始化 fallback 世界）。退化路径应退回有界的 emergency
+        // 默认 bounds，仍为 emergency 出生位置分配可用的地形块。
         let registry = ZoneRegistry {
-            zones: Vec::new(),
             spatial_revision: 0,
+            zones: Vec::new(),
         };
-        let emergency_position =
-            DVec3::from(crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION);
-        let emergency_chunk = ChunkPos::from(emergency_position);
         let anchors = [
             crate::player::spawn_selector::spawn_distribution_anchor_for_test(
-                emergency_position,
+                DVec3::new(8.0, 150.0, 8.0),
                 0.0,
             ),
         ];
-
         let chunks = fallback_spawn_chunk_union(&registry, &anchors)
-            .expect("missing spawn zone must degrade to a bounded emergency view");
-        let expected = ChunkView::new(emergency_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS)
-            .iter()
-            .collect::<std::collections::BTreeSet<_>>();
+            .expect("spawn zone 缺失时必须仍产出有界的 emergency union，而非空 union");
+        assert!(
+            !chunks.is_empty(),
+            "spawn zone 缺失时不得产生空的成功 union（会建成无地形的半初始化世界）"
+        );
 
-        assert_eq!(chunks, expected);
-        assert!(chunks.contains(&emergency_chunk));
+        let emergency = DVec3::from(crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION);
+        assert!(
+            chunks.contains(&ChunkPos::from(emergency)),
+            "emergency 出生位置必须仍在分配的地形块内"
+        );
     }
 
     #[test]
     fn clamped_spawn_disk_and_emergency_position_remain_covered() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let registry = &snapshot.registry;
+        let anchors = &snapshot.distribution;
+        let chunks = fallback_spawn_chunk_union(registry, anchors)
             .expect("configured fallback union should fit");
         let spawn_zone = registry
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
             .expect("spawn zone should load");
         let (zone_min, zone_max) = spawn_zone.bounds;
 
-        for anchor in &anchors {
+        for anchor in anchors {
             let (center, radius) = anchor.cluster();
             for pos in [
                 DVec3::new(center.x - radius, center.y, center.z - radius),
@@ -1142,10 +1406,8 @@ mod tests {
 
     #[test]
     fn selected_spawn_chunks_and_views_are_inside_fallback_union() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let chunks = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
             .expect("configured fallback union should fit");
 
         for purpose in [
@@ -1165,8 +1427,67 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ci_bot_tags_cover_all_three_clusters_in_distinct_chunks() {
+        // 与 scripts/bot/scenarios/terrain_join_chunk_delivery.py 的 EXPECTED_CI_CLUSTERS
+        // 保持同步：BciJ1→east (180,140) r=112，BciJ2→west (-240,-160) r=96，
+        // BciFC→central (24,-24) r=80。两端各自独立断言同一契约，任何一端漂移都撞红。
+        let pinned = [
+            ("BciJ1", 180.0, 140.0, 112.0, "east"),
+            ("BciJ2", -240.0, -160.0, 96.0, "west"),
+            ("BciFC", 24.0, -24.0, 80.0, "central"),
+        ];
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let chunks = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+            .expect("configured fallback union should fit");
+
+        let mut spawn_chunks = Vec::new();
+        for (username, anchor_x, anchor_z, radius, cluster) in pinned {
+            let pos = crate::player::spawn_selector::fallback_spawn(
+                username,
+                crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+            );
+            let distance = ((pos[0] - anchor_x).powi(2) + (pos[2] - anchor_z).powi(2)).sqrt();
+            assert!(
+                distance <= radius + 1e-9,
+                "B{username} 必须落在 {cluster} 簇 anchor=({anchor_x},{anchor_z}) radius={radius} 内，实际=({pos_x},{pos_z}) distance={distance:.3}",
+                pos_x = pos[0],
+                pos_z = pos[2],
+            );
+            let spawn_chunk = ChunkPos::from(DVec3::from(pos));
+            let view = ChunkView::new(spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
+            assert!(
+                view.iter().all(|chunk| chunks.contains(&chunk)),
+                "B{username} 出生点 {pos:?} 的最大视域必须在 fallback union 内"
+            );
+            spawn_chunks.push(spawn_chunk);
+        }
+
+        spawn_chunks.sort_unstable();
+        spawn_chunks.dedup();
+        assert_eq!(
+            spawn_chunks.len(),
+            3,
+            "三个稳定 Bot tag 必须命中三个不同出生 chunk：{spawn_chunks:?}"
+        );
+
+        let rejoin = crate::player::spawn_selector::fallback_spawn(
+            "BciJ1",
+            crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+        );
+        let first = crate::player::spawn_selector::fallback_spawn(
+            "BciJ1",
+            crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+        );
+        assert_eq!(
+            rejoin, first,
+            "同名玩家重连必须稳定落回同一出生点（#846 rejoin 契约）"
+        );
+    }
+
     fn synthetic_spawn_registry(bounds: (DVec3, DVec3)) -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1179,27 +1500,27 @@ mod tests {
                 qi_equilibrium: 0.0,
                 qi_inflow_per_min: 0.0,
             }],
-            spatial_revision: 0,
         }
     }
 
     #[test]
     fn negative_anchor_margin_has_exact_inclusive_chunk_bounds() {
         let registry = synthetic_spawn_registry((
-            DVec3::new(-100.0, 0.0, -100.0),
-            DVec3::new(100.0, 100.0, 100.0),
+            DVec3::new(-100.0, 0.0, -10_000.0),
+            DVec3::new(100.0, 100.0, -8_000.0),
         ));
         let anchors = [
             crate::player::spawn_selector::spawn_distribution_anchor_for_test(
-                DVec3::new(-0.1, 65.0, -0.1),
+                DVec3::new(-0.1, 65.0, -9_000.1),
                 0.0,
             ),
         ];
         let chunks = fallback_spawn_chunk_union(&registry, &anchors)
             .expect("configured fallback union should fit");
 
-        let (min, max) =
-            ChunkView::new(ChunkPos::new(-1, -1), FALLBACK_VIEW_DISTANCE_CHUNKS).bounding_box();
+        let anchor_chunk =
+            ChunkPos::new(block_coord_to_chunk(-0.1), block_coord_to_chunk(-9_000.1));
+        let (min, max) = ChunkView::new(anchor_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS).bounding_box();
         assert!(chunks.contains(&min));
         assert!(chunks.contains(&max));
         assert!(!chunks.contains(&ChunkPos::new(min.x - 1, min.z)));
@@ -1274,11 +1595,60 @@ mod tests {
                 Some(BlockState::IRON_ORE)
             );
             assert_eq!(
+                block_state(&layer, x + 20, GRASS_Y + 1, z + 14),
+                Some(BlockState::OAK_LOG)
+            );
+            assert_eq!(
+                block_state(&layer, x + 20, GRASS_Y + 5, z + 14),
+                Some(BlockState::OAK_LOG),
+                "第二棵橡木 trunk 应铺满 5 格"
+            );
+            assert_eq!(
+                block_state(&layer, x + 20, GRASS_Y + 6, z + 14),
+                Some(BlockState::OAK_LEAVES)
+            );
+            assert_eq!(
+                block_state(&layer, x + 35, GRASS_Y, z + 18),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 36, GRASS_Y, z + 18),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 28, GRASS_Y, z + 26),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 29, GRASS_Y, z + 26),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
                 block_state(&layer, x + 18, GRASS_Y, z + 30),
                 Some(BlockState::STONE)
             );
             assert_eq!(
+                block_state(&layer, x + 19, GRASS_Y, z + 30),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 18, GRASS_Y, z + 31),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
                 block_state(&layer, x + 19, GRASS_Y, z + 31),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 40, GRASS_Y, z + 6),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 41, GRASS_Y, z + 6),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 40, GRASS_Y, z + 7),
                 Some(BlockState::STONE)
             );
         }
@@ -1362,6 +1732,255 @@ mod tests {
         assert!(
             !registry.is_empty(),
             "fallback setup_world must insert the authored default registry, not an absent resource"
+        );
+    }
+
+    #[derive(Clone)]
+    struct TestBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for TestBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TestBuf {
+        type Writer = TestBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// 运行 fallback `setup_world`（无 raster / 无 Anvil），捕获本轮 tracing 输出。
+    fn run_fallback_setup_world_capture() -> (App, String) {
+        let _lock = env_lock();
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, None);
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        register_test_tsy_dimension(&mut app);
+
+        let buf = TestBuf(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_target(false)
+            .with_ansi(false)
+            .with_writer(buf.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            // 用 run_system_once 在当前线程同步执行 setup_world：bevy 默认的
+            // MultiThreaded executor 会把 Update 系统调度到工作线程，线程本地的
+            // with_default subscriber 捕获不到那里发出的 tracing 事件。
+            app.world_mut().run_system_once(super::setup_world);
+        });
+        let captured = String::from_utf8_lossy(&buf.0.lock().unwrap()).to_string();
+        (app, captured)
+    }
+
+    fn parse_readiness_count(marker: &str, key: &str) -> usize {
+        let token = format!("{key}=");
+        let value = marker
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix(&token))
+            .unwrap_or_else(|| panic!("readiness marker 缺少 {key}= 字段：{marker}"));
+        value
+            .parse()
+            .unwrap_or_else(|_| panic!("{key}={value} 不是非负整数：{marker}"))
+    }
+
+    #[test]
+    fn fallback_flat_bootstrap_materializes_terrain_and_emits_readiness() {
+        let (mut app, captured) = run_fallback_setup_world_capture();
+
+        assert!(
+            captured.contains("BOT_FALLBACK_FLAT_READY"),
+            "fallback bootstrap 必须发出 readiness 标记，实际日志：\n{captured}"
+        );
+
+        let overworld = app
+            .world()
+            .get_resource::<DimensionLayers>()
+            .expect("setup_world must insert DimensionLayers")
+            .overworld;
+        let layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(overworld)
+            .expect("overworld layer entity must carry ChunkLayer");
+
+        // 每个 union chunk 都必须真实写入 bedrock + grass：抽检 emergency 出生点所在 chunk。
+        let emergency = crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION;
+        assert_eq!(
+            block_state(&layer, emergency[0] as i32, BEDROCK_Y, emergency[2] as i32),
+            Some(BlockState::BEDROCK)
+        );
+        assert_eq!(
+            block_state(&layer, emergency[0] as i32, GRASS_Y, emergency[2] as i32),
+            Some(BlockState::GRASS_BLOCK)
+        );
+
+        // review finding：只抽检 emergency 出生点所在 chunk 放过了「只 terraform
+        // emergency 一块、其余 union chunk 只建空壳」的错误实现——它仍会照发完整
+        // readiness 计数、仍能把锚点资源坐标 set_block 上去（不填满整块）。这里验证
+        // union 的每一个 chunk 都真实物化 bedrock + grass，只填 emergency 一块必红。
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected_chunks =
+            fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+                .expect("configured fallback union should fit within eager-allocation limit");
+        let chunk_center = CHUNK_WIDTH / 2;
+        // 露头坐标 → 期望面块：与 scatter_spawn_resources 的 deposits 表同步
+        // （dx, dz, count, block），树型 deposit 不碰 GRASS_Y 面层，无需列入。
+        const OUTCROPS: [(i32, i32, i32, BlockState); 5] = [
+            (30, 10, 3, BlockState::IRON_ORE),
+            (35, 18, 2, BlockState::IRON_ORE),
+            (28, 26, 2, BlockState::IRON_ORE),
+            (18, 30, 4, BlockState::STONE),
+            (40, 6, 3, BlockState::STONE),
+        ];
+        let mut outcrop_surface: std::collections::HashMap<(i32, i32), BlockState> =
+            std::collections::HashMap::new();
+        for anchor in &snapshot.distribution {
+            let base = anchor.anchor();
+            let base_x = base.x.floor() as i32;
+            let base_z = base.z.floor() as i32;
+            for (dx, dz, count, block) in OUTCROPS {
+                for i in 0..count {
+                    let ox = i % 2;
+                    let oz = i / 2;
+                    outcrop_surface.insert((base_x + dx + ox, base_z + dz + oz), block);
+                }
+            }
+        }
+        for chunk_pos in &expected_chunks {
+            let block_min_x = chunk_pos.x * CHUNK_WIDTH;
+            let block_min_z = chunk_pos.z * CHUNK_WIDTH;
+            let block_max_x = block_min_x + CHUNK_WIDTH - 1;
+            let block_max_z = block_min_z + CHUNK_WIDTH - 1;
+            // review finding：只断言每 chunk 中心列放过了「每 chunk 只填中心坐标 +
+            // 资源坐标」的残缺实现——它仍会让玩家在簇内其它坐标踩进虚空。fallback
+            // 契约是整块平坦地形：四角 + 中心都必须真实物化 bedrock + grass，
+            // 只填中心列的实现在四角断言上必红。
+            //
+            // scatter_spawn_resources 会把 stone/iron 露头埋进 GRASS_Y 面块（树只
+            // 立在 GRASS_Y+1，不碰面层），所以探针落在露头坐标上时面块是露头类型
+            // 属于合法物化结果；除此之外的任何坐标都必须仍是 grass——空壳 chunk 的
+            // stone 回退不能冒充。露头坐标表与生产实现逐项同步。
+            let probes = [
+                (block_min_x, block_min_z),
+                (block_max_x, block_min_z),
+                (block_min_x, block_max_z),
+                (block_max_x, block_max_z),
+                (block_min_x + chunk_center, block_min_z + chunk_center),
+            ];
+            for (probe_x, probe_z) in probes {
+                assert_eq!(
+                    block_state(&layer, probe_x, BEDROCK_Y, probe_z),
+                    Some(BlockState::BEDROCK),
+                    "union chunk ({0},{1}) 坐标 ({2},{3}) \
+                     必须真实物化 bedrock：只填中心列/角落的残缺实现在此必红",
+                    chunk_pos.x,
+                    chunk_pos.z,
+                    probe_x,
+                    probe_z
+                );
+                match outcrop_surface.get(&(probe_x, probe_z)).cloned() {
+                    Some(expected) => assert_eq!(
+                        block_state(&layer, probe_x, GRASS_Y, probe_z),
+                        Some(expected),
+                        "union chunk ({0},{1}) 坐标 ({2},{3}) 是散布露头坐标，\
+                         必须物化出露头类型",
+                        chunk_pos.x,
+                        chunk_pos.z,
+                        probe_x,
+                        probe_z
+                    ),
+                    None => assert_eq!(
+                        block_state(&layer, probe_x, GRASS_Y, probe_z),
+                        Some(BlockState::GRASS_BLOCK),
+                        "union chunk ({0},{1}) 坐标 ({2},{3}) 非露头坐标，必须仍是 grass：\
+                         空壳 chunk 的 stone 回退在非露头坐标上必红",
+                        chunk_pos.x,
+                        chunk_pos.z,
+                        probe_x,
+                        probe_z
+                    ),
+                }
+            }
+        }
+
+        // 资源散布必须随真实出生簇落位，而不是只建空 chunk。
+        for anchor in &snapshot.distribution {
+            let base = anchor.anchor();
+            let x = base.x.floor() as i32;
+            let z = base.z.floor() as i32;
+            assert_eq!(
+                block_state(&layer, x + 12, GRASS_Y + 1, z + 8),
+                Some(BlockState::OAK_LOG),
+                "fallback 世界必须真实散布资源（anchor=({x},{z})）"
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_ready_marker_reports_exact_configured_counts() {
+        let (_app, captured) = run_fallback_setup_world_capture();
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected_chunks =
+            fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+                .expect("configured fallback union should fit within eager-allocation limit");
+
+        let marker = captured
+            .lines()
+            .find(|line| line.contains("BOT_FALLBACK_FLAT_READY"))
+            .unwrap_or_else(|| {
+                panic!("fallback bootstrap 必须发出 readiness 标记，实际日志：\n{captured}")
+            });
+
+        let anchors = parse_readiness_count(marker, "anchors");
+        let chunks = parse_readiness_count(marker, "chunks");
+        let view_distance_chunks = parse_readiness_count(marker, "view_distance_chunks");
+
+        assert_eq!(anchors, snapshot.distribution.len());
+        assert_eq!(chunks, expected_chunks.len());
+        assert_eq!(view_distance_chunks, FALLBACK_VIEW_DISTANCE_CHUNKS as usize);
+        assert!(
+            anchors > 0 && chunks > 0 && view_distance_chunks > 0,
+            "readiness 计数必须全部为正：anchors={anchors} chunks={chunks} view_distance_chunks={view_distance_chunks}"
+        );
+    }
+
+    #[test]
+    fn fallback_bootstrap_materializes_exactly_the_union_chunk_set() {
+        let (app, _captured) = run_fallback_setup_world_capture();
+
+        let overworld = app
+            .world()
+            .get_resource::<DimensionLayers>()
+            .expect("setup_world must insert DimensionLayers")
+            .overworld;
+        let layer = app
+            .world()
+            .get::<ChunkLayer>(overworld)
+            .expect("overworld layer entity must carry ChunkLayer");
+
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+            .expect("configured fallback union should fit within eager-allocation limit");
+
+        // producer→consumer 契约端到端钉死（review finding）：bootstrap 必须把 union 返回
+        // 的 chunk 集**精确**物化进 ChunkLayer。count 断言 + emergency 抽检都会放走
+        // 「只物化 emergency 一块、把其余 union chunk 丢进黑洞」的错误 consumer —— 该
+        // 实现 readiness 计数照报完整 union、emergency 地形照常可查，但远处出生簇没有
+        // 任何预分配的可用地形/视野。这里直接比较物化集与 union 集，错误 consumer 必红。
+        let materialized: BTreeSet<ChunkPos> = layer.chunks().map(|(pos, _)| pos).collect();
+
+        assert_eq!(
+            materialized, expected,
+            "fallback bootstrap 必须物化恰好 union 返回的 chunk 集 \
+             （materialized={materialized:?} expected={expected:?}）：\
+             只物化 emergency 块、或把 union chunk 丢进黑洞的 consumer 都在此失败"
         );
     }
 

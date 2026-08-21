@@ -12,9 +12,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 READY_PREFIX = r"\[bong\]\[world\] BOT_FALLBACK_FLAT_READY"
+ANSI = r"(?:\x1b\[[0-9;]*m)*"
 TRACING_INFO_PREFIX = (
-    r"(?:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-    r"(?:\.[0-9]+)?Z\s+INFO\s+)?"
+    rf"{ANSI}[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}:[0-9]{{2}}"
+    rf"(?:\.[0-9]+)?Z{ANSI}\s+{ANSI}\s*INFO{ANSI}\s+"
 )
 READY_PATTERN = re.compile(
     rf"^{TRACING_INFO_PREFIX}{READY_PREFIX} anchors=[1-9][0-9]* "
@@ -30,13 +31,15 @@ HARNESS_PATHS = (
 
 
 class FallbackWorldReadinessContractTest(unittest.TestCase):
-    def test_accepts_complete_numeric_marker(self) -> None:
+    def test_accepts_complete_info_envelope(self) -> None:
         for line in (
-            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 "
-            "view_distance_chunks=20",
             "2026-08-11T23:25:37.123456Z  INFO [bong][world] "
             "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4",
-            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=4294967295 "
+            "\x1b[2m2026-08-11T23:25:37.123456Z\x1b[0m \x1b[32m INFO\x1b[0m "
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+            "view_distance_chunks=4",
+            "2026-08-11T23:25:37Z INFO [bong][world] "
+            "BOT_FALLBACK_FLAT_READY anchors=4294967295 "
             "chunks=8192 view_distance_chunks=18446744073709551615",
         ):
             with self.subTest(line=line):
@@ -86,10 +89,17 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
             (
                 "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
                 "view_distance_chunks=4\n",
-                0,
+                1,
             ),
             (
                 "2026-08-11T23:25:37.123456Z  INFO [bong][world] "
+                "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "view_distance_chunks=4\n",
+                0,
+            ),
+            (
+                "\x1b[2m2026-08-11T23:25:37.123456Z\x1b[0m "
+                "\x1b[32m INFO\x1b[0m [bong][world] "
                 "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
                 "view_distance_chunks=4\n",
                 0,
@@ -154,8 +164,8 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
         source = (ROOT / "scripts/e2e-redis.sh").read_text(encoding="utf-8")
         assignment = (
             "FALLBACK_WORLD_READY_PATTERN='\\[bong\\]\\[world\\] "
-            "BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ "
-            "view_distance_chunks=[0-9]+'"
+            "BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
+            "view_distance_chunks=[1-9][0-9]*'"
         )
         self.assertIn(assignment, source)
         self.assertEqual(
@@ -177,7 +187,7 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
         self.assertIsNotNone(assignment)
         pattern = assignment.group(1)
         self.assertTrue(pattern.startswith("^(") and pattern.endswith("$"))
-        self.assertIn("INFO[[:space:]]+", pattern)
+        self.assertIn("INFO", pattern)
         self.assertNotIn("WARN", pattern)
         self.assertNotIn("BOT_FALLBACK_READY_PAYLOAD", source)
         self.assertEqual(

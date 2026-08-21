@@ -18,7 +18,7 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
 # CI can have a slower SQLite/Redis shutdown path after the 100-NPC proof. Keep
 # the default lifecycle helper contract at 10s, but give this disposable E2E
 # transaction a bounded 30s graceful window before identity-safe KILL fallback.
@@ -1381,7 +1381,12 @@ run_north_rift_preview() {
       "$listener_failure; see $NORTH_RIFT_SERVER_LOG"
   fi
 
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  # review finding：run tag 在父 shell 产生后必须进入子进程环境 —— 仅作普通 shell
+  # 变量时子进程看不到。放进环境赋值前缀（并保留 --run-tag CLI 直传），run_scenarios.py
+  # 无论走 CLI 还是环境默认都能拿到本次 run 的隔离段。
   if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
+    NORTH_RIFT_RUN_TAG="$NORTH_RIFT_RUN_TAG" \
     python3 "$ROOT/scripts/bot/run_scenarios.py" \
       --host 127.0.0.1 \
       --port 25565 \

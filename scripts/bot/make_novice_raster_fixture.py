@@ -92,6 +92,18 @@ def _spawn_distribution(zones_path: Path = DEFAULT_ZONES_PATH) -> list[dict]:
     return distribution
 
 
+def _is_finite_float(value: object) -> bool:
+    """值可转成有限 float 才算合法；超界大整数 float() 抛 OverflowError，视作非有限。
+
+    Python 的 JSON 解析器可产生任意大整数，`float(10**1000)` 在 math.isfinite 看到它
+    之前就抛 OverflowError —— 若不拦截，巨大 anchor/radius 会以意外异常类型中止 fixture
+    生成，破坏"非法分布必须在写任何文件前以 ValueError 干净拒绝"的契约。
+    """
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
 def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int, int]]:
     tiles = set()
     for index, cluster in enumerate(_spawn_distribution(zones_path)):
@@ -110,13 +122,27 @@ def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int,
                 isinstance(value, (int, float)) and not isinstance(value, bool)
                 for value in anchor
             )
-            or not all(math.isfinite(float(value)) for value in anchor)
+            or not all(_is_finite_float(value) for value in anchor)
             or isinstance(radius, bool)
             or not isinstance(radius, (int, float))
-            or not math.isfinite(float(radius))
+            or not _is_finite_float(radius)
             or radius < 0
             or not valid_weight
             or cluster.get("safe_y") != SURFACE_Y
+        ):
+            raise ValueError(f"invalid spawn_distribution[{index}] in {zones_path}")
+        # review finding：逐字段有限性证明不了派生边界有限——anchor=1e308、radius=1e308
+        # 各自有限，但 anchor+radius 求值为 inf，math.floor(inf) 抛 OverflowError，非法
+        # 分布以意外异常类型中止 fixture 生成。派生边界 (anchor ± radius) 必须先证明
+        # 有限，否则一律 ValueError 干净拒绝。
+        if not all(
+            _is_finite_float(value)
+            for value in (
+                anchor[0] - radius,
+                anchor[0] + radius,
+                anchor[2] - radius,
+                anchor[2] + radius,
+            )
         ):
             raise ValueError(f"invalid spawn_distribution[{index}] in {zones_path}")
         min_tile_x = math.floor((anchor[0] - radius) / TILE_SIZE)

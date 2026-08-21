@@ -138,6 +138,10 @@ from bot.scenarios.terrain_north_rift_scorch_zone_identity import (  # noqa: E40
     _assert_ambient as north_rift_assert_ambient,
     _position_matches as north_rift_position_matches,
 )
+from bot.scenarios.terrain_join_chunk_delivery import (  # noqa: E402
+    EXPECTED_CI_CLUSTERS,
+    _assert_expected_cluster,
+)
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
     check_server_reachable,
@@ -253,6 +257,116 @@ class DiggingActionTest(unittest.TestCase):
         self.assertEqual(event.data, {"sequence": 17})
 
 
+def _finite_float(value: object) -> bool:
+    """oracle 自带的有限性判定（不调用生产 helper，保持 oracle 独立）：值可转成
+    有限 float 才算合法；超界大整数 float() 抛 OverflowError，视作非有限。"""
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
+
+def _spawn_distribution_tiles(
+    zones_path=make_novice_raster_fixture.DEFAULT_ZONES_PATH,
+) -> set[tuple[int, int]]:
+    """独立 tile 期望枚举：直接从 zones.json 读 spawn 分布，按每个簇锚点±半径的
+    完整笛卡尔跨度算出全部 tile。绝不调用生产 make_novice_raster_fixture.spawn_fixture_tiles
+    —— review finding：用生产 helper 做期望（圆形 oracle）会让只覆盖边界点的残缺
+    实现自证其绿。
+
+    review finding：oracle 展开前必须先做与生产契约一致的数值校验 + MAX_FIXTURE_TILES
+    工作量封顶——被 mock 掉生产 helper 的测试会直接调本 oracle，巨大半径（如 1e9）
+    的簇若直接进 range() 会跑万亿次迭代挂死 CI，而不是产生有界的校验失败。"""
+    config = json.loads(zones_path.read_text(encoding="utf-8"))
+    spawn_zone = next(
+        zone for zone in config["zones"] if zone.get("name") == "spawn"
+    )
+    tiles = set()
+    for index, cluster in enumerate(spawn_zone.get("spawn_distribution", [])):
+        x, _, z = cluster["anchor"]
+        radius = cluster["radius"]
+        for value in (x, z, radius):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"invalid spawn_distribution[{index}] in {zones_path}"
+                )
+        if not all(_finite_float(value) for value in (x, z, radius)) or radius < 0:
+            raise ValueError(
+                f"invalid spawn_distribution[{index}] in {zones_path}"
+            )
+        if not all(
+            _finite_float(value)
+            for value in (
+                x - radius,
+                x + radius,
+                z - radius,
+                z + radius,
+            )
+        ):
+            raise ValueError(
+                f"invalid spawn_distribution[{index}] in {zones_path}"
+            )
+        min_tile_x = math.floor(
+            (x - radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        max_tile_x = math.floor(
+            (x + radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        min_tile_z = math.floor(
+            (z - radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        max_tile_z = math.floor(
+            (z + radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        cluster_tile_count = (max_tile_x - min_tile_x + 1) * (
+            max_tile_z - min_tile_z + 1
+        )
+        if cluster_tile_count > make_novice_raster_fixture.MAX_FIXTURE_TILES:
+            raise ValueError(
+                f"spawn_distribution[{index}] covers {cluster_tile_count} fixture "
+                f"tiles, above safety limit "
+                f"{make_novice_raster_fixture.MAX_FIXTURE_TILES}"
+            )
+        for tile_z in range(min_tile_z, max_tile_z + 1):
+            for tile_x in range(min_tile_x, max_tile_x + 1):
+                tiles.add((tile_x, tile_z))
+                if len(tiles) > make_novice_raster_fixture.MAX_FIXTURE_TILES:
+                    raise ValueError(
+                        f"spawn_distribution union covers at least {len(tiles)} "
+                        f"fixture tiles, above safety limit "
+                        f"{make_novice_raster_fixture.MAX_FIXTURE_TILES}"
+                    )
+    return tiles
+
+
+def _boundary_point_only_spawn_tiles(
+    zones_path=make_novice_raster_fixture.DEFAULT_ZONES_PATH,
+) -> set[tuple[int, int]]:
+    """review finding 假设的残缺实现：每个簇只返回四个边界点所在 tile，而非完整
+    笛卡尔跨度。独立 oracle 必须能抓住这种实现（旧圆形 oracle 会放过）。"""
+    config = json.loads(zones_path.read_text(encoding="utf-8"))
+    spawn_zone = next(
+        zone for zone in config["zones"] if zone.get("name") == "spawn"
+    )
+    tiles = set()
+    for cluster in spawn_zone.get("spawn_distribution", []):
+        x, _, z = cluster["anchor"]
+        radius = cluster["radius"]
+        for point_x, point_z in (
+            (x - radius, z),
+            (x + radius, z),
+            (x, z - radius),
+            (x, z + radius),
+        ):
+            tiles.add(
+                (
+                    math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
+                    math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
+                )
+            )
+    return tiles
+
+
 class NoviceRasterFixtureTest(unittest.TestCase):
     TOKEN = "unit-test-ambient-fixture-token"
 
@@ -276,17 +390,32 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+            # review finding：期望 tile 集不得由生产 spawn_fixture_tiles 算出（圆形
+            # oracle）—— 用独立枚举覆盖完整笛卡尔跨度，残缺实现才可能暴露。
             expected_tiles = (
-                make_novice_raster_fixture.spawn_fixture_tiles()
+                _spawn_distribution_tiles()
                 | make_novice_raster_fixture.SPIRITWOOD_TILES
             )
             self.assertEqual(
                 {(tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]},
                 expected_tiles,
             )
+            # review finding：world_bounds 必须精确等于所有生成 tile 的外包盒 ——
+            # 期望值**独立**从 tile 集算出，不得调用生产 _world_bounds helper（实现若
+            # 加了多余一格 margin / 返回旧固定边界 / 过度放宽，委托 helper 算期望会
+            # 跟着同病而假通过；包含性断言也测不出过宽边界）。
+            min_tile_x = min(tile_x for tile_x, _ in expected_tiles)
+            max_tile_x = max(tile_x for tile_x, _ in expected_tiles)
+            min_tile_z = min(tile_z for _, tile_z in expected_tiles)
+            max_tile_z = max(tile_z for _, tile_z in expected_tiles)
             self.assertEqual(
                 manifest["world_bounds"],
-                make_novice_raster_fixture._world_bounds(expected_tiles),
+                {
+                    "min_x": min_tile_x * make_novice_raster_fixture.TILE_SIZE,
+                    "max_x": (max_tile_x + 1) * make_novice_raster_fixture.TILE_SIZE - 1,
+                    "min_z": min_tile_z * make_novice_raster_fixture.TILE_SIZE,
+                    "max_z": (max_tile_z + 1) * make_novice_raster_fixture.TILE_SIZE - 1,
+                },
             )
             palette = manifest["biome_palette"]
             self.assertEqual(palette[4], "minecraft:meadow")
@@ -297,7 +426,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
                 self.assertLess(max(biome_ids), len(palette))
 
-            for tile_x, tile_z in make_novice_raster_fixture.spawn_fixture_tiles():
+            for tile_x, tile_z in _spawn_distribution_tiles():
                 self.assertEqual(
                     set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
                     {0},
@@ -341,6 +470,92 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             zones_path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "above safety limit"):
                 make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_finite_values_overflowing_derived_bounds(self):
+        # review finding：anchor=1e308、radius=1e308 都是**有限**值，通过逐字段有限性
+        # 校验，但 anchor+radius 求值为 inf，math.floor(inf) 抛 OverflowError——非法分布
+        # 以意外异常类型中止 fixture 生成。修复后派生边界 (anchor ± radius) 必须先证明
+        # 有限，否则一律 ValueError 干净拒绝，绝不泄漏 OverflowError。
+        cluster = {
+            "anchor": [1e308, make_novice_raster_fixture.SURFACE_Y, 0.0],
+            "radius": 1e308,
+            "weight": 1,
+            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+        }
+        config = {"zones": [{"name": "spawn", "spawn_distribution": [cluster]}]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"invalid spawn_distribution\[0\]"):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_tile_oracle_rejects_oversized_cluster_before_expansion(self):
+        # review finding：独立 oracle 未加 MAX_FIXTURE_TILES 预检查——被测测试 mock 掉
+        # 生产 spawn_fixture_tiles（生产 cap 被旁路）后直接调本 oracle，巨大半径的簇
+        # 会在 range() 里跑万亿次迭代挂死 CI。oracle 必须在展开前与生产契约一致地
+        # fail-fast；本测试能在真实时间约束下完成本身即证明有界。
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": 1_000_000_000.0,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "above safety limit"):
+                _spawn_distribution_tiles(zones_path)
+
+    def test_spawn_tile_oracle_rejects_finite_values_overflowing_derived_bounds(self):
+        # review finding：oracle 与生产契约对齐——派生边界 (anchor ± radius) 非有限时
+        # 必须以 ValueError 拒绝，不得让 math.floor(inf) 泄漏 OverflowError。
+        cluster = {
+            "anchor": [1e308, make_novice_raster_fixture.SURFACE_Y, 0.0],
+            "radius": 1e308,
+            "weight": 1,
+            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+        }
+        config = {"zones": [{"name": "spawn", "spawn_distribution": [cluster]}]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"invalid spawn_distribution\[0\]"):
+                _spawn_distribution_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_huge_json_integers_as_valueerror(self):
+        # review finding：JSON 解析可产生任意大整数，`float(10**1000)` 在 isfinite 看到
+        # 之前就抛 OverflowError —— 修复前巨大 anchor/radius 以意外异常类型中止 fixture
+        # 生成，破坏"非法分布以 ValueError 干净拒绝、绝无文件写出"的契约。修复后巨大整数
+        # 必须一律判非法并抛 ValueError，不得泄漏 OverflowError。
+        for field in ("radius", "anchor"):
+            with self.subTest(field=field):
+                cluster = {
+                    "anchor": [0.0, make_novice_raster_fixture.SURFACE_Y, 0.0],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+                if field == "radius":
+                    cluster["radius"] = 10**1000
+                else:
+                    cluster["anchor"][0] = 10**1000
+                config = {
+                    "zones": [{"name": "spawn", "spawn_distribution": [cluster]}]
+                }
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    zones_path = pathlib.Path(temp_dir) / "zones.json"
+                    zones_path.write_text(json.dumps(config), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
 
     def test_spawn_fixture_tiles_rejects_union_over_limit_during_construction(self):
         clusters = []
@@ -386,6 +601,43 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 "总 tile union 越界必须在创建 tile 目录和大文件前 fail closed",
             )
 
+    def test_spawn_fixture_tiles_accepts_union_at_exact_maximum_tile_count(self):
+        # review finding：cap 契约只有「超上限拒绝」的覆盖，缺「恰好等于
+        # MAX_FIXTURE_TILES 也接受」的边界 pin —— 用 `>=` 的 off-by-one 实现会误拒合法
+        # 分布。本测试构造恰好 64 个 tile 的 union（64 个 radius=0 簇，每簇占一格，
+        # 间距 10 格互不重叠），断言成功返回且返回集就是这 64 格。
+        clusters = []
+        for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES):
+            clusters.append(
+                {
+                    "anchor": [
+                        float(index * make_novice_raster_fixture.TILE_SIZE * 10),
+                        70.0,
+                        0.0,
+                    ],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+            )
+        config = {
+            "zones": [{"name": "spawn", "spawn_distribution": clusters}]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            tiles = make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+        expected = {
+            (index * 10, 0)
+            for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES)
+        }
+        self.assertEqual(tiles, expected)
+        self.assertEqual(
+            len(tiles),
+            make_novice_raster_fixture.MAX_FIXTURE_TILES,
+            "恰好在 cap 上的 union 必须被接受，`>=` 的 off-by-one 实现在此必红",
+        )
+
     def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
@@ -395,43 +647,26 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
             }
 
-            zones = json.loads(
-                make_novice_raster_fixture.DEFAULT_ZONES_PATH.read_text(
-                    encoding="utf-8"
+            # review finding：只抽样每簇四个边界点，残缺实现仍可漏掉跨度内部的 tile。
+            # 用独立枚举的完整笛卡尔跨度做覆盖断言，内部 tile 缺失才会暴露。
+            expected_spawn_tiles = _spawn_distribution_tiles()
+            self.assertLessEqual(
+                expected_spawn_tiles,
+                generated_tiles,
+                "每个生产 spawn 簇的完整笛卡尔跨度都必须落在生成的 fixture tile 集内",
+            )
+            for tile in expected_spawn_tiles:
+                self.assertEqual(
+                    set(
+                        (
+                            root
+                            / f"tile_{tile[0]}_{tile[1]}"
+                            / "surface_id.bin"
+                        ).read_bytes()
+                    ),
+                    {0},
+                    f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
                 )
-            )
-            spawn_zone = next(
-                zone for zone in zones["zones"] if zone["name"] == "spawn"
-            )
-            for cluster in spawn_zone["spawn_distribution"]:
-                x, _, z = cluster["anchor"]
-                radius = cluster["radius"]
-                for point_x, point_z in (
-                    (x - radius, z),
-                    (x + radius, z),
-                    (x, z - radius),
-                    (x, z + radius),
-                ):
-                    tile = (
-                        math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
-                        math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
-                    )
-                    self.assertIn(
-                        tile,
-                        generated_tiles,
-                        f"production spawn cluster boundary {point_x, point_z} 缺 fixture tile",
-                    )
-                    self.assertEqual(
-                        set(
-                            (
-                                root
-                                / f"tile_{tile[0]}_{tile[1]}"
-                                / "surface_id.bin"
-                            ).read_bytes()
-                        ),
-                        {0},
-                        f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
-                    )
 
             bounds = manifest["world_bounds"]
             for tile_x, tile_z in generated_tiles:
@@ -439,6 +674,42 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertGreaterEqual(bounds["max_x"], (tile_x + 1) * 256 - 1)
                 self.assertLessEqual(bounds["min_z"], tile_z * 256)
                 self.assertGreaterEqual(bounds["max_z"], (tile_z + 1) * 256 - 1)
+
+    def test_spawn_tile_oracle_detects_boundary_point_only_enumeration(self):
+        # review finding：圆形 oracle（期望 tile 集由生产 spawn_fixture_tiles 算出）
+        # 下，残缺实现只返回每簇四边界点 tile 生成的 manifest 会与期望一致而假通过。
+        # 独立 oracle 直接从配置枚举完整跨度，必须与这种残缺 manifest 分歧（更大），
+        # 证明 oracle 不依赖生产枚举。
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value=_boundary_point_only_spawn_tiles(),
+        ):
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            generated_tiles = {
+                (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
+            }
+            oracle_tiles = (
+                _spawn_distribution_tiles()
+                | make_novice_raster_fixture.SPIRITWOOD_TILES
+            )
+            self.assertNotEqual(
+                generated_tiles,
+                oracle_tiles,
+                "边界四点式残缺实现的 manifest 必须与独立 oracle 分歧",
+            )
+            self.assertLess(
+                len(generated_tiles),
+                len(oracle_tiles),
+                "残缺实现漏掉每簇内部 tile，manifest 应小于独立 oracle",
+            )
+            interior = oracle_tiles - generated_tiles
+            self.assertTrue(
+                interior,
+                "独立 oracle 必须枚举完整笛卡尔跨度，而非只覆盖边界点",
+            )
 
     def test_spawn_fixture_tiles_rejects_missing_empty_or_invalid_distribution(self):
         cases = [
@@ -480,7 +751,131 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 },
                 "invalid spawn_distribution[0]",
             ),
+            # review finding：safe_y 契约只覆盖 SURFACE_Y+1 一个非法值，实现若错误接受
+            # safe_y <= SURFACE_Y、缺失 safe_y、布尔或非有限 safe_y 会全绿。生产实现
+            # `cluster.get("safe_y") != SURFACE_Y` 对下面每个方向都必须拒绝。
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": make_novice_raster_fixture.SURFACE_Y - 1,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    # 缺省 safe_y：get 返回 None，必须拒绝
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": True,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": float("nan"),
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
         ]
+
+        # 非有限数值边界：json.loads 默认接受 NaN/Infinity，必须同样以
+        # invalid spawn_distribution[0] 拒绝，而不是让 tile 计算炸成 ValueError/OverflowError。
+        for index, non_finite in enumerate(
+            (float("nan"), float("inf"), float("-inf"))
+        ):
+            anchor = [0.0, 70.0, 0.0]
+            anchor[index % 3] = non_finite
+            cases.append(
+                (
+                    {
+                        "zones": [
+                            {
+                                "name": "spawn",
+                                "spawn_distribution": [
+                                    {
+                                        "anchor": anchor,
+                                        "radius": 1.0,
+                                        "weight": 1,
+                                        "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "invalid spawn_distribution[0]",
+                )
+            )
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            cases.append(
+                (
+                    {
+                        "zones": [
+                            {
+                                "name": "spawn",
+                                "spawn_distribution": [
+                                    {
+                                        "anchor": [0.0, 70.0, 0.0],
+                                        "radius": non_finite,
+                                        "weight": 1,
+                                        "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "invalid spawn_distribution[0]",
+                )
+            )
 
         for config, expected_error in cases:
             with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temp_dir:
@@ -488,6 +883,36 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 zones_path.write_text(json.dumps(config), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
                     make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_accepts_exact_surface_y(self):
+        # review finding 保留的正向对照：safe_y 恰等于 SURFACE_Y（整数与相等浮点）是
+        # 合法分布，必须被接受并返回期望 tile —— 拒绝合法值同样违反契约。
+        for safe_y in (
+            make_novice_raster_fixture.SURFACE_Y,
+            float(make_novice_raster_fixture.SURFACE_Y),
+        ):
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": [0.0, 70.0, 0.0],
+                                "radius": 1.0,
+                                "weight": 1,
+                                "safe_y": safe_y,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(safe_y=safe_y), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                self.assertEqual(
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path),
+                    {(-1, -1), (-1, 0), (0, -1), (0, 0)},
+                )
 
     def test_spawn_fixture_tiles_rejects_boolean_anchor_components(self):
         for index in range(3):
@@ -589,6 +1014,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                     {(-1, -1), (-1, 0), (0, -1), (0, 0)},
                 )
 
+    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
             manifest_path = self._generate(root)
@@ -2084,6 +2510,69 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def test_fallback_readiness_pattern_matches_production_tracing_line(self):
+        pattern_matches = re.findall(
+            r"^BOT_FALLBACK_READY_PATTERN='([^']+)'$",
+            self.source,
+            re.MULTILINE,
+        )
+        self.assertEqual(
+            len(pattern_matches),
+            1,
+            "bot-e2e.sh 必须恰好声明一个 canonical fallback readiness pattern："
+            "重复声明会留下歧义的真实来源，grep 匹配到哪一条不可预期",
+        )
+        pattern = pattern_matches[0]
+        production_line = (
+            "2026-08-07T10:25:04.830194Z  INFO "
+            "[bong][world] BOT_FALLBACK_FLAT_READY "
+            "anchors=3 chunks=5002 view_distance_chunks=20"
+        )
+        production_lines = (
+            production_line,
+            "\x1b[2m2026-08-07T10:25:04.830194Z\x1b[0m "
+            "\x1b[32m INFO\x1b[0m "
+            "[bong][world] BOT_FALLBACK_FLAT_READY "
+            "anchors=3 chunks=5002 view_distance_chunks=20",
+        )
+        for traced_line in production_lines:
+            with self.subTest(traced_line=traced_line):
+                matched = subprocess.run(
+                    ["grep", "-Eq", "--", pattern],
+                    input=f"{traced_line}\n",
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    matched.returncode,
+                    0,
+                    "fallback readiness matcher 必须接受 production tracing 的完整日志行（含默认 ANSI 或 NO_COLOR 形态）",
+                )
+
+        for invalid_line in (
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 view_distance_chunks=20",
+            production_line.replace("  INFO ", "  WARN "),
+            production_line.replace("anchors=3", "anchors=0"),
+            production_line.replace("chunks=5002", "chunks=0"),
+            production_line.replace("view_distance_chunks=20", "view_distance_chunks=0"),
+            f"noise {production_line}",
+            f"{production_line} suffix",
+        ):
+            with self.subTest(invalid_line=invalid_line):
+                rejected = subprocess.run(
+                    ["grep", "-Eq", "--", pattern],
+                    input=f"{invalid_line}\n",
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    rejected.returncode,
+                    1,
+                    "fallback readiness matcher 必须拒绝缺少 production INFO envelope、零计数或额外前后缀的近似行",
+                )
+
     def test_mode_contract_distinguishes_generic_inputs_from_owned_fixture_inputs(self):
         guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
         guard = self.source[:guard_end]
@@ -2110,6 +2599,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         state_start = self.source.index('# Dedicated world evidence pins state to its private runtime.')
         state_end = self.source.index('\nport_open() {', state_start)
         state = self.source[state_start:state_end]
+        self.assertIn('if [ "$OWNED_WORLD_MODE" = "1" ]; then', state)
         self.assertIn('elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', state)
         self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_OWNED', fixture)
         self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_MANIFEST', fixture)
@@ -2210,6 +2700,21 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 },
                 "ambient fixture mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
             ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "bogus"},
+                "BOT_E2E_FALLBACK_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "fallback mode 不接受 BONG_TERRAIN_RASTER_PATH",
+            ),
         )
         isolated = (
             "BOT_E2E_AMBIENT_FIXTURE_MODE",
@@ -2220,6 +2725,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "BONG_TERRAIN_RASTER_PATH",
             "BONG_WORLD_PATH",
             "BONG_SPIRITWOOD_HARVESTED_PATH",
+            "BONG_E2E_PREBUILT_SERVER_MANIFEST",
             "REDIS_URL",
         )
         for overrides, expected in cases:
@@ -2238,6 +2744,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(expected, result.stderr)
+
+    def test_fallback_reuse_guard_precedes_reuse_normalization(self):
+        normalization = self.source.index("  REUSE=0")
+        guard = self.source.index("BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥")
+        self.assertLess(
+            guard,
+            normalization,
+            "fallback×reuse 互斥守卫必须先于 REUSE 归一化执行；"
+            "归一化在前会把 REUSE 就地改成 0，守卫校验的是已变异值而非调用方原始请求，排除被绕过",
+        )
 
     def test_generic_no_raster_generates_tokenized_fixture_before_tool_failure(self):
         root = pathlib.Path(__file__).parents[2]
@@ -2273,6 +2789,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_PORT",
                 "BONG_TERRAIN_RASTER_PATH",
                 "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "BONG_E2E_PREBUILT_SERVER_MANIFEST",
                 "REDIS_URL",
             ):
                 env.pop(name, None)
@@ -2643,7 +3160,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_REUSE",
                 "BOT_E2E_HOST",
                 "BOT_E2E_PORT", "BONG_TERRAIN_RASTER_PATH",
-                "BONG_SPIRITWOOD_HARVESTED_PATH", "REDIS_URL",
+                "BONG_SPIRITWOOD_HARVESTED_PATH", "BONG_E2E_PREBUILT_SERVER_MANIFEST",
+                "REDIS_URL",
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
@@ -2906,6 +3424,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_PORT", "BOT_E2E_FALLBACK_MODE",
                 "BONG_TERRAIN_RASTER_PATH", "BONG_WORLD_PATH",
                 "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "BONG_E2E_PREBUILT_SERVER_MANIFEST",
                 "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
                 "BOT_E2E_FALLBACK_OWNED",
             ):
@@ -2917,6 +3436,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                         if fallback_mode
                         else "BOT_E2E_AMBIENT_FIXTURE_MODE"
                     ): "1",
+                    "BOT_E2E_RUN_TAG": "ci" if fallback_mode else "unit-test",
                     "BOT_E2E_PORT": str(port),
                     "FAKE_RUNNER_MODE": runner_mode,
                     "FAKE_RUNNER_EXIT": str(runner_exit),
@@ -2989,6 +3509,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     else ""
                 )
                 if fallback_mode:
+                    self.assertTrue(
+                        runner_args_file.exists(),
+                        "fallback harness 未进入 scenario runner："
+                        f"returncode={result.returncode} stdout={result.stdout!r} "
+                        f"stderr={result.stderr!r}",
+                    )
                     self.assertEqual(
                         runner_args_file.read_text(encoding="utf-8").strip(),
                         f"{root / 'scripts/bot/run_scenarios.py'} --scenario terrain_join_chunk_delivery",
@@ -3086,6 +3612,141 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "runner-failed" if runner_exit else "runner-complete",
                 )
                 self.assertEqual(watcher_status.strip(), "complete")
+
+
+class FallbackScenarioPinTest(unittest.TestCase):
+    """finding 6：CI 场景钉必须由 zones.json 权威数据 + 生产选择数学复现。
+
+    EXPECTED_CI_CLUSTERS 是场景的验收定义，但钉本身必须能由权威配置独立推导：
+    任何一端漂移（改锚点坐标/半径/权重、改 FNV 种子串、改 cluster 语义）都撞红。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        root = pathlib.Path(__file__).parents[2]
+        with (root / "server/zones.json").open(encoding="utf-8") as fh:
+            zones = json.load(fh)
+        cls.spawn_zone = next(
+            zone for zone in zones["zones"] if zone["name"] == "spawn"
+        )
+        cls.anchors = cls.spawn_zone["spawn_distribution"]
+
+    def _config_anchor(self, x: float, z: float) -> dict:
+        for anchor in self.anchors:
+            if (
+                abs(anchor["anchor"][0] - x) < 1e-6
+                and abs(anchor["anchor"][2] - z) < 1e-6
+            ):
+                return anchor
+        raise AssertionError(f"zones.json 没有 spawn_distribution 锚点 ({x},{z})")
+
+    def test_pins_are_bijective_with_zones_json_anchors(self):
+        self.assertEqual(
+            len(EXPECTED_CI_CLUSTERS),
+            len(self.anchors),
+            "每个 CI pin 必须对应一个配置锚点，且数量必须一致",
+        )
+        pinned = set()
+        for tag, (anchor, radius, cluster) in EXPECTED_CI_CLUSTERS.items():
+            config = self._config_anchor(anchor[0], anchor[1])
+            self.assertAlmostEqual(
+                config["radius"],
+                radius,
+                places=6,
+                msg=f"tag={tag} 的 pin radius 必须等于 zones.json 权威半径",
+            )
+            pinned.add((config["anchor"][0], config["anchor"][2]))
+        for anchor in self.anchors:
+            self.assertIn(
+                (anchor["anchor"][0], anchor["anchor"][2]),
+                pinned,
+                "配置的每个出生锚点都必须被某个 CI pin 覆盖",
+            )
+
+    def _rust_fnv1a(self, seed: str) -> int:
+        hash_value = 0xCBF29CE484222325
+        for byte in f"InitialLogin:{seed}".encode("utf-8"):
+            hash_value ^= byte
+            hash_value = (hash_value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+        return hash_value
+
+    @staticmethod
+    def _rotl(value: int, shift: int) -> int:
+        return ((value << shift) | (value >> (64 - shift))) & 0xFFFFFFFFFFFFFFFF
+
+    def _mirror_select(self, username: str) -> tuple[float, float]:
+        """镜像 spawn_selector::select 的生产数学：FNV-1a → 加权随机 → 圆盘采样 → 钳制。"""
+        hash_value = self._rust_fnv1a(username)
+        total = sum(anchor["weight"] for anchor in self.anchors)
+        pick = hash_value % total
+        selected = None
+        for anchor in self.anchors:
+            if pick < anchor["weight"]:
+                selected = anchor
+                break
+            pick -= anchor["weight"]
+        assert selected is not None
+
+        radius_bits = self._rotl(hash_value, 17) & 0xFFFF
+        angle_bits = self._rotl(hash_value, 41) & 0xFFFF
+        radius = selected["radius"] * math.sqrt(radius_bits / 65535.0)
+        angle = (angle_bits / 65535.0) * 2.0 * math.pi
+        x = selected["anchor"][0] + radius * math.cos(angle)
+        z = selected["anchor"][2] + radius * math.sin(angle)
+
+        bounds_min, bounds_max = self.spawn_zone["aabb"]["min"], self.spawn_zone["aabb"]["max"]
+        x = min(max(x, bounds_min[0]), bounds_max[0])
+        z = min(max(z, bounds_min[2]), bounds_max[2])
+        blocked = [
+            (tile[0], tile[1])
+            for tile in self.spawn_zone.get("blocked_tiles", [])
+        ]
+        if (math.floor(x), math.floor(z)) in blocked:
+            x = min(max(selected["anchor"][0], bounds_min[0]), bounds_max[0])
+            z = min(max(selected["anchor"][2], bounds_min[2]), bounds_max[2])
+        return x, z
+
+    def test_ci_tags_mirror_production_selection_into_pinned_clusters(self):
+        expected_chunks = {}
+        for tag in ("J1", "J2", "FC"):
+            username = f"Bci{tag}"
+            x, z = self._mirror_select(username)
+            # 走场景自己的验收函数（raise BotAssertionError），钉/半径/簇映射全部由它判定
+            _assert_expected_cluster("ci", tag, (x, z))
+            chunk = (math.floor(x / 16), math.floor(z / 16))
+            self.assertNotIn(
+                chunk,
+                expected_chunks.values(),
+                f"B{username} 必须命中与既有 tag 不同的出生 chunk",
+            )
+            expected_chunks[tag] = chunk
+        self.assertEqual(len(expected_chunks), 3)
+
+        # 同名玩家重连契约（#846 原始触发面）：同 seed 复算必须逐位稳定。
+        for tag in ("J1", "J2", "FC"):
+            username = f"Bci{tag}"
+            self.assertEqual(
+                self._mirror_select(username),
+                self._mirror_select(username),
+                f"B{username} 重连复算必须稳定落在同一出生点",
+            )
+
+
+class LawEngineSmokeHarnessContractTest(unittest.TestCase):
+    def test_server_binary_launches_from_server_working_directory(self):
+        source = (
+            pathlib.Path(__file__).parents[2] / "scripts/smoke-law-engine.sh"
+        ).read_text(encoding="utf-8")
+        launch_start = source.index('echo "[run][server-start] timeout 20s')
+        launch_end = source.index('echo "[server-start] exit=', launch_start)
+        launch = source[launch_start:launch_end]
+
+        self.assertIn('cd "$ROOT/server"', launch)
+        self.assertLess(
+            launch.index('cd "$ROOT/server"'),
+            launch.index('timeout 20s "$server_binary"'),
+            "law-engine server 必须先进入 server/ 再启动，避免相对 data 路径污染仓库根目录",
+        )
 
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
@@ -5033,6 +5694,41 @@ def _scenario_default_enabled(tree: ast.Module) -> bool:
 
 
 class RunnerLogicTest(unittest.TestCase):
+    def test_fallback_run_tag_wins_when_north_rift_tag_is_also_present(self):
+        observed_run_tags: list[str] = []
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="tag precedence probe",
+            MODULES=["terrain"],
+            run=lambda env: observed_run_tags.append(env.run_tag),
+        )
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"tag_precedence_probe": scenario},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(
+                os.environ,
+                {"BOT_E2E_RUN_TAG": "ci", "NORTH_RIFT_RUN_TAG": "nr123"},
+                clear=False,
+            ),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["run_scenarios.py", "--scenario", "tag_precedence_probe"],
+            ),
+            redirect_stdout(io.StringIO()),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            observed_run_tags,
+            ["ci"],
+            "显式 fallback witness BOT_E2E_RUN_TAG 必须覆盖遗留 NORTH_RIFT_RUN_TAG",
+        )
+
     def test_craft_reconnect_session_closes_before_settle_window(self):
         events = []
 

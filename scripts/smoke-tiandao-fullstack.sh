@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-source "$ROOT/scripts/lib/bong-cargo-target.sh"
-SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
+# shellcheck source=lib/smoke-owned-artifacts.sh
+source "$ROOT/scripts/lib/smoke-owned-artifacts.sh"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 
 SMOKE_LOG="$EVIDENCE_DIR/task-24-final-matrix.log"
@@ -27,7 +27,7 @@ FULLSTACK_REDIS_LOG="$RUN_DIR/fullstack-redis.log"
 FULLSTACK_SERVER_LOG="$RUN_DIR/fullstack-server.log"
 FULLSTACK_REDIS_SUB_LOG="$RUN_DIR/fullstack-redis-sub.log"
 FULLSTACK_TIANDAO_LOG="$RUN_DIR/fullstack-tiandao.log"
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
 
 PASS=0
 FAIL=0
@@ -36,6 +36,10 @@ CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
 REDIS_SUB_PID=""
+# Owned paths stay empty until the exact canonical run directory exists and the
+# server build stage assigns its run-private target/binary.
+FULLSTACK_SERVER_BINARY=""
+FULLSTACK_CARGO_TARGET_ROOT=""
 
 pass() {
   echo "  ✓ $1"
@@ -129,7 +133,11 @@ dump_failure_context() {
 }
 
 cleanup() {
-  local exit_code=$?
+  local original_status=$?
+  local cleanup_status=0
+  local final_status
+  trap - EXIT
+  set +e
 
   if [ -n "$REDIS_SUB_PID" ] && kill -0 "$REDIS_SUB_PID" 2>/dev/null; then
     kill "$REDIS_SUB_PID" 2>/dev/null || true
@@ -148,12 +156,45 @@ cleanup() {
 
   bash "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 
-  if [ "$exit_code" -ne 0 ] || [ "$FAIL" -ne 0 ]; then
+  if ! smoke_cleanup_owned_artifacts "$RUN_DIR" "$FULLSTACK_CARGO_TARGET_ROOT" "$FULLSTACK_SERVER_BINARY"; then
+    cleanup_status=1
+    echo "[smoke-cleanup] refusing or failing run-private artifact cleanup; logs retained" >&2
+  fi
+
+  if [ "$original_status" -ne 0 ] || [ "$FAIL" -ne 0 ]; then
     dump_failure_context
   fi
+  final_status=$original_status
+  if [ "$final_status" -eq 0 ] && [ "$FAIL" -ne 0 ]; then
+    final_status=1
+  fi
+  if [ "$final_status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+    final_status=1
+  fi
+  exit "$final_status"
 }
 
 mkdir -p "$EVIDENCE_DIR" "$RUN_DIR"
+EVIDENCE_DIR="$(realpath -e -- "$EVIDENCE_DIR")"
+RUN_DIR="$(realpath -e -- "$RUN_DIR")"
+case "$RUN_DIR" in
+  "$EVIDENCE_DIR"/*) ;;
+  *) echo "[smoke-cleanup] run directory escaped evidence root: $RUN_DIR" >&2; exit 1 ;;
+esac
+SCHEMA_STAGE_LOG="$RUN_DIR/schema.log"
+AGENT_CHECK_LOG="$RUN_DIR/agent-check.log"
+AGENT_TEST_LOG="$RUN_DIR/agent-test.log"
+AGENT_START_MOCK_LOG="$RUN_DIR/agent-start-mock.log"
+SERVER_FMT_LOG="$RUN_DIR/server-fmt.log"
+SERVER_CLIPPY_LOG="$RUN_DIR/server-clippy.log"
+SERVER_TEST_LOG="$RUN_DIR/server-test.log"
+SERVER_PROOF_LOG="$RUN_DIR/server-proof.log"
+CLIENT_TEST_LOG="$RUN_DIR/client-test.log"
+CLIENT_BUILD_LOG="$RUN_DIR/client-build.log"
+FULLSTACK_REDIS_LOG="$RUN_DIR/fullstack-redis.log"
+FULLSTACK_SERVER_LOG="$RUN_DIR/fullstack-server.log"
+FULLSTACK_REDIS_SUB_LOG="$RUN_DIR/fullstack-redis-sub.log"
+FULLSTACK_TIANDAO_LOG="$RUN_DIR/fullstack-tiandao.log"
 : >"$SCHEMA_STAGE_LOG"
 : >"$AGENT_CHECK_LOG"
 : >"$AGENT_TEST_LOG"
@@ -258,9 +299,9 @@ if (
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
-  pass "server wrapper cargo test"
+  pass "server cargo test"
 else
-  fail "server wrapper cargo test"
+  fail "server cargo test"
 fi
 
 if (
@@ -362,12 +403,16 @@ else
 fi
 
 FULLSTACK_SERVER_BINARY="$RUN_DIR/bong-server"
+FULLSTACK_CARGO_TARGET_ROOT="$RUN_DIR/bong-target"
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
+  # review finding：build-token 只锁 cargo 子进程，机器共享 /tmp/bong-target 的
+  # debug 产物会在 build 返回与 install 之间被另一 job 替换（stale-read TOCTOU）。
+  # 改用 run-private target（RUN_DIR 每轮唯一），源产物不可能被并发替换。
+  export CARGO_TARGET_DIR="$FULLSTACK_CARGO_TARGET_ROOT"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo build
-  install -m 700 "$CARGO_TARGET_DIR/debug/bong-server" "$FULLSTACK_SERVER_BINARY"
+  install -m 700 "$FULLSTACK_CARGO_TARGET_ROOT/debug/bong-server" "$FULLSTACK_SERVER_BINARY"
 ) >>"$FULLSTACK_SERVER_LOG" 2>&1; then
   pass "server build"
   (
