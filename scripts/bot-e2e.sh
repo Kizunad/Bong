@@ -31,6 +31,7 @@ BOT_E2E_OPERATOR_TAGS=(
   Zlb Zre Alc Bob
   Rein Term NewCh BR1 BR2 RW1 RW2 OO1 OO2 NRift
   GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux
+  FoSc
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
