@@ -30,7 +30,7 @@ BOT_E2E_OPERATOR_TAGS=(
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi FoRq
   Zlb Zre Alc Bob CoPl
   Rein Term NewCh CoEn CoEnB CoLv CoLvB BR1 BR2 RW1 RW2 OO1 OO2 NRift
-  GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux
+  GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux FoCj
   FoSc
 )
 BOT_E2E_OPERATORS=""
