@@ -183,6 +183,7 @@ jobs:
       CARGO_TARGET_DIR: /tmp/bong-target
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/cache@v4
         with:
