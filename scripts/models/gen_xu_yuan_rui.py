@@ -1,31 +1,24 @@
 #!/usr/bin/env python3
-"""生成续元蕊 (XuYuanRui) Blockbench .bbmodel 与三视图预览 (自然真石与温润灵玉质感版)。
+"""生成续元蕊 (XuYuanRui) Blockbench .bbmodel 与三视图预览 (天然层叠玄曜岩簇与灵髓重构版)。
 
 【世界观与设定背景】：
 - 丹道稀有灵草，生长在灵眼与高灵气浓度灵脉旁（spirit_qi > 0.8）。
 - 物理机制：灵气极高压强下凝华结晶（survival_mode: spirit_crystallize），
   是炼制高阶保命丹药「续元丹」与「化形大丹」的核心药材。
-- 视觉特征与自然质感重构：
-  1. 裂隙黑曜石花萼基座 (Obsidian Mineral Base)：
-     - 基底：天然深沉冷黑玄武岩与暗紫黑曜石矿脉 (0x18171C ~ 0x2A2732)，带有微细岩层节理与哑光漫反射。
-     - 矿脉：摒弃大面积粗暴纯黄，采用内生石英含金细脉与地热微光 (0xD4A038 ~ 0x966B24)，自然嵌入岩体裂缝，深浅有致。
+- 视觉特征与玄曜石基座彻底重构：
+  1. 天然层叠玄曜岩簇基座 (Tiered Fractured Obsidian Base)：
+     - 彻底破除“方块桶/围栏感/整齐白边”：重构为天然地质层叠裂开的黑曜石矿床。
+     - 结构由【底层层叠平铺碎岩阶】+【8 块大小高低错落、参差咬合的向外爆裂楔形碎岩】+【深凹聚灵石缝】组成。
+     - 材质光学：真正火山黑曜岩与贝壳状断口质感 (0x141620 ~ 0x363C4E)，消除工业化边缘白圈，代之以天然晶面漫射与石缝内生细微金砂。
   2. 金华蕊柱簇 (Golden Stamen Cluster)：
-     - 蕊柱：从根部的暗赭褐木质化/深琥珀色 (0x4E371C) 平滑过渡到中段的温润玉黄 (0xC8A246)，再到上段的清透鹅黄 (0xF2D785)。
-     - 晶滴核心：温润如玉、白金交融的凝华灵髓结晶 (0xFFF8E7 ~ 0xFBE5A8)，顶端微泛白金纯净光晕，侧面呈自然矿晶折射。
+     - 8 根高低错落、平滑微弯向外展开的花蕊立柱 (高度 7.5~14.8 格)，顶端膨大为复合水滴菱形固化灵气晶滴 (Spirit Crystal Drops)。
+     - 主蕊柱位于中心，带有白金炽光高亮核心。
   3. 悬浮灵砾 (Ambient Floating Shards)：
      - 周围悬浮微小清透金髓碎粒与玄武岩微晶，与主体浑然一体。
 
 【技术规范】：
 - 尺寸边界：严格控制在 1x1 方块内 (X: 2.0~14.0, Z: 2.0~14.0, Y: 0.0~15.5)。
 - 3D 倾斜与真实旋转：使用 origin + rotation 呈现弯曲与向外张开的花萼，严禁 AABB 阶梯方块。
-- 64x64 UV Atlas 高清贴图分区：
-  * obsidian_dark: 天然暗黑玄武岩 (哑光灰黑 0x1A1920)
-  * obsidian_vein_a / b: 细微内生金矿裂隙与岩体节理 (自然微光 0xB88828 ~ 0x6E4C18)
-  * stamen_stem: 蕊柱纵向渐变光纤 (暗褐 0x422F18 -> 琥珀金 0xB88C32 -> 玉黄 0xE8CA76)
-  * crystal_core: 凝华温润白金晶核 (0xFFFBF0 ~ 0xF6DE9C)
-  * crystal_facet: 晶滴侧面矿晶折射面 (0xE2BE60 ~ 0xB58E34)
-  * floating_gold: 悬浮微晶金华 (0xF4E0A0)
-  * floating_obs: 悬浮曜岩微粒 (0x24202B)
 """
 
 from __future__ import annotations
@@ -195,160 +188,212 @@ def make_crystal_droplet(
 
 
 def part_obsidian_base() -> list[Cube]:
-    """部件1：裂隙黑曜石花萼基座 (Obsidian Mineral Base)。
+    """部件1：天然层叠玄曜岩簇基座 (Tiered Fractured Obsidian Base)。
 
-    层叠错落、向外爆裂剥开的 8 块玄岩/黑曜石矿簇岩片，缝隙透出温润内敛的金脉。
+    有机地貌设计：
+    - 底层错落碎岩基盘 (3 块层叠咬合的扁平岩板 Y: 0.0 ~ 1.0)
+    - 中外层 8 块高低起伏、向外开裂的天然斜切黑曜石岩瓣 (Y: 0.4 ~ 4.2)
+    - 4 块低位伴生碎矿角石
+    - 深凹的中心聚灵金石底槽
     """
     cubes: list[Cube] = []
 
-    # 1. 底部地基岩台 (层级阶梯碎岩基底 Y: 0.0 ~ 1.5)
+    # 1. 底层层叠地质基盘 (Tiered Base Slabs)
+    # 主基底
     cubes.append(
         Cube(
             "base",
-            "base_slab_bottom",
-            (3.8, 0.0, 3.8),
-            (12.2, 0.8, 12.2),
-            "obsidian_dark",
+            "base_slab_core",
+            (4.2, 0.0, 4.2),
+            (11.8, 0.6, 11.8),
+            "rock_dark",
         )
     )
+    # 东向延伸碎阶
     cubes.append(
         Cube(
             "base",
-            "base_slab_step_e",
-            (11.2, 0.0, 5.0),
-            (13.4, 0.6, 11.0),
-            "obsidian_dark",
-            rotation=(0.0, -8.0, -4.0),
-            rot_origin=(12.0, 0.0, 8.0),
+            "base_slab_east",
+            (10.8, 0.0, 4.6),
+            (13.2, 0.5, 11.2),
+            "rock_dark",
+            rotation=(0.0, -5.0, -3.0),
+            rot_origin=(11.5, 0.0, 8.0),
         )
     )
+    # 西北延伸碎阶
     cubes.append(
         Cube(
             "base",
-            "base_slab_step_w",
-            (2.6, 0.0, 5.2),
-            (4.8, 0.6, 11.2),
-            "obsidian_dark",
-            rotation=(0.0, 6.0, 4.0),
-            rot_origin=(4.0, 0.0, 8.0),
+            "base_slab_nw",
+            (2.8, 0.0, 3.4),
+            (5.4, 0.5, 10.4),
+            "rock_dark",
+            rotation=(0.0, 8.0, 3.0),
+            rot_origin=(4.0, 0.0, 7.0),
         )
     )
 
-    # 2. 8 块层叠爆裂的黑曜石花萼岩片 (8 Obsidian Petal Shards)
-    # Petal 1: 正北主岩柱 (North High Shard)
+    # 2. 8 块向外爆裂、高低参差的天然斜切黑曜岩块 (8 Fractured Obsidian Rocks)
+    # (1) 正北主岩峰 (North Ridge: 宽 4.2, 厚 1.8, 高 4.0, 倾角 -24°)
     cubes.append(
         Cube(
             "base",
-            "calyx_petal_n",
-            (6.0, 0.6, 2.6),
-            (10.0, 4.6, 4.8),
-            "obsidian_vein_a",
-            rotation=(-22.0, 2.0, 0.0),
-            rot_origin=(8.0, 0.6, 3.7),
+            "rock_n_main",
+            (5.9, 0.4, 3.4),
+            (10.1, 4.2, 5.2),
+            "rock_vein_a",
+            rotation=(-24.0, 0.0, 0.0),
+            rot_origin=(8.0, 0.4, 4.3),
         )
     )
-    # Petal 2: 东北高耸尖石 (North-East Tall Shard)
+    # 北岩阶梯侧削面
     cubes.append(
         Cube(
             "base",
-            "calyx_petal_ne",
-            (10.0, 0.6, 3.6),
-            (13.2, 5.2, 7.2),
-            "obsidian_vein_b",
-            rotation=(-16.0, 38.0, -22.0),
-            rot_origin=(11.5, 0.6, 5.4),
+            "rock_n_sub",
+            (6.6, 0.4, 2.6),
+            (9.4, 2.8, 3.8),
+            "rock_facet",
+            rotation=(-30.0, 0.0, 0.0),
+            rot_origin=(8.0, 0.4, 3.2),
         )
     )
-    # Petal 3: 正东低位横岩 (East Low Shard)
+
+    # (2) 东北高耸劈裂岩 (NE Tall Rock: 宽 2.4, 厚 2.2, 高 4.8, 复合倾斜)
     cubes.append(
         Cube(
             "base",
-            "calyx_petal_e",
-            (10.8, 0.5, 6.8),
-            (13.6, 3.8, 10.2),
-            "obsidian_vein_a",
-            rotation=(0.0, 10.0, -24.0),
-            rot_origin=(12.0, 0.5, 8.5),
+            "rock_ne_tall",
+            (10.0, 0.4, 3.8),
+            (12.4, 4.8, 6.0),
+            "rock_vein_b",
+            rotation=(-16.0, 35.0, -22.0),
+            rot_origin=(11.2, 0.4, 4.9),
         )
     )
-    # Petal 4: 东南爆裂岩柱 (South-East Shard)
+
+    # (3) 正东低平厚岩 (East Flat Rock: 宽 2.0, 厚 3.8, 高 2.8, 倾角 -18°)
     cubes.append(
         Cube(
             "base",
-            "calyx_petal_se",
-            (9.2, 0.6, 9.8),
-            (12.8, 4.8, 13.2),
-            "obsidian_vein_b",
+            "rock_e_flat",
+            (10.6, 0.4, 6.2),
+            (12.6, 3.2, 10.0),
+            "rock_facet",
+            rotation=(0.0, 5.0, -18.0),
+            rot_origin=(11.6, 0.4, 8.1),
+        )
+    )
+
+    # (4) 东南爆裂尖岩 (SE Angular Rock: 宽 2.6, 厚 2.4, 高 4.4, 复合倾斜)
+    cubes.append(
+        Cube(
+            "base",
+            "rock_se_shard",
+            (9.6, 0.4, 9.8),
+            (12.2, 4.4, 12.2),
+            "rock_vein_a",
             rotation=(20.0, -32.0, -18.0),
-            rot_origin=(11.0, 0.6, 11.5),
-        )
-    )
-    # Petal 5: 正南中位岩柱 (South Shard)
-    cubes.append(
-        Cube(
-            "base",
-            "calyx_petal_s",
-            (5.8, 0.6, 11.0),
-            (10.2, 4.4, 13.4),
-            "obsidian_vein_a",
-            rotation=(24.0, 0.0, 0.0),
-            rot_origin=(8.0, 0.6, 12.0),
-        )
-    )
-    # Petal 6: 西南高耸尖石 (South-West Tall Shard)
-    cubes.append(
-        Cube(
-            "base",
-            "calyx_petal_sw",
-            (2.8, 0.6, 9.2),
-            (6.2, 5.4, 12.6),
-            "obsidian_vein_b",
-            rotation=(18.0, 42.0, 22.0),
-            rot_origin=(4.5, 0.6, 10.9),
-        )
-    )
-    # Petal 7: 正西低位横岩 (West Low Shard)
-    cubes.append(
-        Cube(
-            "base",
-            "calyx_petal_w",
-            (2.4, 0.5, 5.8),
-            (5.2, 3.6, 9.2),
-            "obsidian_vein_a",
-            rotation=(0.0, -12.0, 25.0),
-            rot_origin=(3.8, 0.5, 7.5),
-        )
-    )
-    # Petal 8: 西北高位尖石 (North-West Shard)
-    cubes.append(
-        Cube(
-            "base",
-            "calyx_petal_nw",
-            (3.0, 0.6, 3.2),
-            (6.4, 4.9, 6.8),
-            "obsidian_vein_b",
-            rotation=(-18.0, -45.0, 20.0),
-            rot_origin=(4.7, 0.6, 5.0),
+            rot_origin=(10.9, 0.4, 11.0),
         )
     )
 
-    # 3. 内部凹槽聚灵金脉涌泉 (Vein Core Puddle)
+    # (5) 正南开裂厚岩 (South Ridge: 宽 4.0, 厚 1.8, 高 3.8, 倾角 25°)
+    cubes.append(
+        Cube(
+            "base",
+            "rock_s_main",
+            (6.0, 0.4, 10.8),
+            (10.0, 3.8, 12.6),
+            "rock_vein_b",
+            rotation=(25.0, 0.0, 0.0),
+            rot_origin=(8.0, 0.4, 11.7),
+        )
+    )
+
+    # (6) 西南高耸错落岩 (SW Tall Rock: 宽 2.4, 厚 2.2, 高 4.6, 复合倾斜)
+    cubes.append(
+        Cube(
+            "base",
+            "rock_sw_tall",
+            (3.6, 0.4, 9.8),
+            (6.0, 4.6, 12.0),
+            "rock_vein_a",
+            rotation=(18.0, 40.0, 22.0),
+            rot_origin=(4.8, 0.4, 10.9),
+        )
+    )
+
+    # (7) 正西平削岩 (West Flat Rock: 宽 2.0, 厚 3.8, 高 2.6, 倾角 18°)
+    cubes.append(
+        Cube(
+            "base",
+            "rock_w_flat",
+            (3.4, 0.4, 6.0),
+            (5.4, 3.0, 9.8),
+            "rock_facet",
+            rotation=(0.0, -6.0, 18.0),
+            rot_origin=(4.4, 0.4, 7.9),
+        )
+    )
+
+    # (8) 西北爆裂岩峰 (NW Angular Rock: 宽 2.6, 厚 2.4, 高 4.2, 复合倾斜)
+    cubes.append(
+        Cube(
+            "base",
+            "rock_nw_shard",
+            (3.8, 0.4, 3.8),
+            (6.4, 4.2, 6.2),
+            "rock_vein_b",
+            rotation=(-18.0, -42.0, 20.0),
+            rot_origin=(5.1, 0.4, 5.0),
+        )
+    )
+
+    # 3. 4 块低位天然伴生碎岩 (Flanking Debris)
+    cubes.append(
+        Cube(
+            "base",
+            "debris_ne",
+            (11.4, 0.2, 6.8),
+            (12.8, 1.6, 8.2),
+            "rock_dark",
+            rotation=(10.0, 20.0, -15.0),
+            rot_origin=(12.1, 0.2, 7.5),
+        )
+    )
+    cubes.append(
+        Cube(
+            "base",
+            "debris_sw",
+            (3.2, 0.2, 7.8),
+            (4.6, 1.6, 9.2),
+            "rock_dark",
+            rotation=(-10.0, 15.0, 15.0),
+            rot_origin=(3.9, 0.2, 8.5),
+        )
+    )
+
+    # 4. 中心内凹聚灵金晶涌泉池 (Vein Core Puddle Y: 0.6 ~ 2.0)
     cubes.append(
         Cube(
             "base",
             "vein_core_socket",
-            (5.8, 0.6, 5.8),
-            (10.2, 2.0, 10.2),
-            "obsidian_vein_a",
+            (6.0, 0.5, 6.0),
+            (10.0, 1.8, 10.0),
+            "rock_dark",
         )
     )
     cubes.append(
         Cube(
             "base",
-            "vein_core_gold_pool",
-            (6.4, 1.4, 6.4),
-            (9.6, 2.2, 9.6),
+            "golden_crystal_mound",
+            (6.6, 1.1, 6.6),
+            (9.4, 2.3, 9.4),
             "crystal_core",
+            rotation=(0.0, 45.0, 0.0),
+            rot_origin=(8.0, 1.7, 8.0),
         )
     )
 
@@ -661,26 +706,26 @@ def part_floating_shards() -> list[Cube]:
             rot_origin=(11.75, 9.4, 11.55),
         )
     )
-    # 5. 悬浮黑曜金斑碎粒 1 (西低位, Height ~6.8)
+    # 5. 悬浮黑曜晶刃碎粒 1 (西低位, Height ~6.8)
     cubes.append(
         Cube(
             "shards",
             "shard_obs_w_low",
             (3.2, 6.4, 6.2),
             (3.9, 7.2, 6.9),
-            "floating_obs",
+            "rock_dark",
             rotation=(12.0, 18.0, -25.0),
             rot_origin=(3.55, 6.8, 6.55),
         )
     )
-    # 6. 悬浮黑曜金斑碎粒 2 (东低位, Height ~6.2)
+    # 6. 悬浮黑曜晶刃碎粒 2 (东低位, Height ~6.2)
     cubes.append(
         Cube(
             "shards",
             "shard_obs_e_low",
             (12.2, 5.8, 8.6),
             (12.9, 6.6, 9.3),
-            "floating_obs",
+            "rock_dark",
             rotation=(-14.0, -20.0, 22.0),
             rot_origin=(12.55, 6.2, 8.95),
         )
@@ -718,105 +763,122 @@ def all_cubes() -> list[Cube]:
 
 
 def create_texture() -> Image.Image:
-    """生成 64x64 UV Atlas 高清自然质感贴图。"""
+    """生成 64x64 UV Atlas 天然玄曜石与金华贴图。"""
     img = Image.new("RGBA", (TEXTURE_RES, TEXTURE_RES), (0, 0, 0, 0))
 
-    # 1. 天然暗黑玄武岩 obsidian_dark (0,0)~(32,32)
-    # 色调：哑光玄武岩灰黑 (0x1C1C24)，富有自然矿物颗粒与岩层明暗
+    # ─────────────────────────────────────────────────────────────
+    # 1. 天然黑曜石内生金矿脉 A (rock_vein_a: 0,0~32,20)
+    # 整体为冷暗墨蓝黑岩石 (0x181A24 ~ 0x2A2E3E)，深嵌分形细微金砂裂痕
     for x in range(32):
-        for y in range(32):
-            layer_var = int(math.sin((x + y * 0.7) * 0.4) * 3)
-            noise = ((x * 17 + y * 31) % 9) - 4
-            base = 28 + layer_var + noise
-            r = max(16, min(50, base))
-            g = max(16, min(50, base + 1))
-            b = max(20, min(56, base + 5))
-            # 极微细的石英矿粒
-            if (x * 11 + y * 19) % 29 == 0:
-                r, g, b = r + 14, g + 14, b + 18
-            img.putpixel((x, y), (r, g, b, 255))
-
-    # 2. 细微金矿裂隙面 A obsidian_vein_a (0,32)~(32,48)
-    # 自然嵌入的石英含金细脉与地热微光
-    for x in range(32):
-        for y in range(32, 48):
+        for y in range(20):
             u = x
-            v = y - 32
-            # 细裂隙轨迹
-            crack1 = 12 + int(math.sin(v * 0.4) * 4 + math.cos(v * 0.9) * 1.5)
-            crack2 = 24 - int(v * 0.45)
-            d1 = abs(u - crack1)
-            d2 = abs(u - crack2)
-            min_d = min(d1, d2)
+            v = y
 
-            # 玄武岩底色
-            noise = ((x * 19 + y * 23) % 9) - 4
-            r = max(16, min(50, 30 + noise))
-            g = max(16, min(50, 29 + noise))
-            b = max(20, min(56, 36 + noise))
+            # 天然断口大面漫反射（斜向大明暗分面，非单一硬框）
+            plane_shade = int((u * 0.7 + (19 - v) * 0.9) / 32.0 * 20)
+            noise = ((u * 17 + v * 31) % 7) - 3
+            base = 28 + plane_shade + noise
 
-            if min_d == 0:
-                # 矿脉微光核心：温润金砂
-                r, g, b = 210, 162, 58
-            elif min_d == 1:
-                # 矿脉过渡：暗琥珀褐
-                r, g, b = 135, 96, 34
-            elif min_d == 2:
-                # 矿化围岩
-                r, g, b = 68, 52, 38
+            r = max(14, min(65, base - 5))
+            g = max(14, min(68, base - 3))
+            b = max(18, min(85, base + 8))
+
+            # 微细天然金矿裂痕 (断续、细窄、深陷)
+            crack_pos = 12 + int(math.sin(v * 0.5) * 5 + math.cos(u * 0.4) * 2)
+            d = abs(u - crack_pos)
+
+            if d == 0 and 4 <= v <= 16:
+                # 金矿核心
+                r, g, b = 238, 195, 52
+            elif d == 1 and 3 <= v <= 17:
+                # 暗金浸润
+                r, g, b = 135, 92, 28
+            elif d == 2 and 2 <= v <= 18:
+                # 矿槽深色阴影
+                r, g, b = 18, 16, 24
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 3. 细微金矿裂隙面 B obsidian_vein_b (0,48)~(32,64)
+    # ─────────────────────────────────────────────────────────────
+    # 2. 天然黑曜石内生金矿脉 B (rock_vein_b: 0,20~32,40)
     for x in range(32):
-        for y in range(48, 64):
+        for y in range(20, 40):
             u = x
-            v = y - 48
-            diag_c = 16 + int(math.cos(v * 0.45) * 5)
-            d = abs(u - diag_c)
+            v = y - 20
 
-            noise = ((x * 23 + y * 17) % 9) - 4
-            r = max(16, min(50, 29 + noise))
-            g = max(16, min(50, 28 + noise))
-            b = max(20, min(56, 35 + noise))
+            plane_shade = int(((31 - u) * 0.8 + (19 - v) * 0.8) / 32.0 * 20)
+            noise = ((u * 19 + v * 23) % 7) - 3
+            base = 28 + plane_shade + noise
 
-            # 点状金矿石英碎屑
-            is_speck = (u * 13 + v * 19) % 23 == 0 and d <= 3
+            r = max(14, min(65, base - 5))
+            g = max(14, min(68, base - 3))
+            b = max(18, min(85, base + 8))
 
-            if d == 0 or is_speck:
-                r, g, b = 215, 168, 62
-            elif d == 1:
-                r, g, b = 140, 100, 36
-            elif d == 2:
-                r, g, b = 65, 50, 36
+            crack_pos = 20 - int(v * 0.7 + math.sin(u * 0.5) * 2)
+            d = abs(u - crack_pos)
+
+            if d == 0 and 3 <= v <= 15:
+                r, g, b = 235, 190, 48
+            elif d == 1 and 2 <= v <= 16:
+                r, g, b = 130, 88, 25
+            elif d == 2 and 2 <= v <= 17:
+                r, g, b = 18, 16, 24
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 4. 蕊柱平滑渐变光纤 stamen_stem (32,0)~(64,32)
+    # ─────────────────────────────────────────────────────────────
+    # 3. 黑曜石贝壳状解理断口面 (rock_facet: 0,40~32,52)
+    # 冷青灰与墨蓝断口大块明暗，呈现火山玻璃自然断面
+    for x in range(32):
+        for y in range(40, 52):
+            u = x
+            v = y - 40
+
+            conchoidal = math.sin(u * 0.3 + v * 0.5) * 8
+            facet_grad = (u + v) / 42.0
+            noise = ((u * 13 + v * 17) % 7) - 3
+
+            val = int(58 * (1 - facet_grad) + 24 * facet_grad + conchoidal + noise)
+            r = max(14, min(75, val - 4))
+            g = max(14, min(78, val - 2))
+            b = max(18, min(95, val + 10))
+
+            img.putpixel((x, y), (r, g, b, 255))
+
+    # ─────────────────────────────────────────────────────────────
+    # 4. 天然黑曜玄岩暗底 (rock_dark: 0,52~32,64)
+    for x in range(32):
+        for y in range(52, 64):
+            u = x
+            v = y - 52
+            noise = ((u * 17 + v * 29) % 9) - 4
+            base = 24 + noise
+            r = max(12, min(42, base - 4))
+            g = max(12, min(44, base - 2))
+            b = max(16, min(54, base + 6))
+            img.putpixel((x, y), (r, g, b, 255))
+
+    # ─────────────────────────────────────────────────────────────
+    # 5. 蕊柱纵向平滑渐变光纤 stamen_stem (32,0)~(64,32)
     # 色调：根部暗赭褐 (0x4E371C) -> 中段琥珀金 (0xB88C32) -> 上段温润玉黄 (0xEAD48A)
     for x in range(32, 64):
         for y in range(32):
             u = x - 32
             v = y
             grad = (31 - v) / 31.0  # 1.0(顶部) -> 0.0(底部)
-
-            # 木质维管束纹理
             fiber = math.sin(u * 1.57) * 4
 
             if grad < 0.35:
-                # 底部：深沉暗木/暗琥珀
                 t = grad / 0.35
                 r = int(68 * (1 - t) + 145 * t + fiber)
                 g = int(48 * (1 - t) + 102 * t + fiber * 0.7)
                 b = int(22 * (1 - t) + 38 * t)
             elif grad < 0.75:
-                # 中部：温润古金/琥珀
                 t = (grad - 0.35) / 0.40
                 r = int(145 * (1 - t) + 215 * t + fiber)
                 g = int(102 * (1 - t) + 172 * t + fiber * 0.8)
                 b = int(38 * (1 - t) + 78 * t)
             else:
-                # 上部：清透玉黄/淡金
                 t = (grad - 0.75) / 0.25
                 r = int(215 * (1 - t) + 242 * t + fiber * 0.5)
                 g = int(172 * (1 - t) + 222 * t + fiber * 0.5)
@@ -827,29 +889,26 @@ def create_texture() -> Image.Image:
             b = max(0, min(255, b))
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 5. 凝华温润白金晶核 crystal_core (32,32)~(48,48)
-    # 色调：如脂羊脂玉般的白金光晕 (0xFFFAF0 ~ 0xF5DE9C ~ 0xD8B052)
+    # ─────────────────────────────────────────────────────────────
+    # 6. 凝华温润白金晶核 crystal_core (32,32)~(48,48)
     for x in range(32, 48):
         for y in range(32, 48):
             dx = abs(x - 40)
             dy = abs(y - 40)
             d = math.sqrt(dx * dx + dy * dy)
             if d < 2.0:
-                # 纯净灵髓白玉核
                 img.putpixel((x, y), (255, 252, 244, 255))
             elif d < 4.5:
-                # 温润羊脂金光晕
                 glow = (4.5 - d) / 2.5
                 r = int(255 * glow + 245 * (1 - glow))
                 g = int(250 * glow + 220 * (1 - glow))
                 b = int(235 * glow + 155 * (1 - glow))
                 img.putpixel((x, y), (r, g, b, 255))
             else:
-                # 晶滴基质玉黄
                 img.putpixel((x, y), (232, 198, 108, 255))
 
-    # 6. 晶滴侧面矿晶折射面 crystal_facet (48,32)~(64,48)
-    # 色调：柔和自然矿物折射 (0xE8CB78 ~ 0xC49838 ~ 0x9B7224)
+    # ─────────────────────────────────────────────────────────────
+    # 7. 晶滴侧面矿晶折射面 crystal_facet (48,32)~(64,48)
     for x in range(48, 64):
         for y in range(32, 48):
             u = x - 48
@@ -864,8 +923,8 @@ def create_texture() -> Image.Image:
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 7. 悬浮微晶金华 floating_gold (32,48)~(48,64)
-    # 色调：柔和淡金光点 (0xF6E4B0 ~ 0xD8B460)
+    # ─────────────────────────────────────────────────────────────
+    # 8. 悬浮微晶金华 floating_gold (32,48)~(48,64)
     for x in range(32, 48):
         for y in range(48, 64):
             u = x - 32
@@ -878,17 +937,14 @@ def create_texture() -> Image.Image:
             else:
                 img.putpixel((x, y), (205, 168, 88, 255))
 
-    # 8. 悬浮曜岩微粒 floating_obs (48,48)~(64,64)
-    # 色调：玄武岩带微量金斑 (0x282530 + 0xD8A848)
+    # ─────────────────────────────────────────────────────────────
+    # 9. 悬浮曜岩碎粒 (48,48)~(64,64)
     for x in range(48, 64):
         for y in range(48, 64):
             u = x - 48
             v = y - 48
-            if (u * 7 + v * 11) % 17 == 0:
-                img.putpixel((x, y), (218, 172, 74, 255))
-            else:
-                noise = ((u * 13 + v * 17) % 7) - 3
-                img.putpixel((x, y), (36 + noise, 34 + noise, 42 + noise, 255))
+            noise = ((u * 13 + v * 17) % 7) - 3
+            img.putpixel((x, y), (36 + noise, 38 + noise, 50 + noise, 255))
 
     return img
 
@@ -901,14 +957,14 @@ def build_bbmodel_dict() -> dict:
     tex_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     uv_presets = {
-        "obsidian_dark": [0, 0, 32, 32],
-        "obsidian_vein_a": [0, 32, 32, 48],
-        "obsidian_vein_b": [0, 48, 32, 64],
+        "rock_vein_a": [0, 0, 32, 20],
+        "rock_vein_b": [0, 20, 32, 40],
+        "rock_facet": [0, 40, 32, 52],
+        "rock_dark": [0, 52, 32, 64],
         "stamen_stem": [32, 0, 64, 32],
         "crystal_core": [32, 32, 48, 48],
         "crystal_facet": [48, 32, 64, 48],
         "floating_gold": [32, 48, 48, 64],
-        "floating_obs": [48, 48, 64, 64],
     }
 
     elements = []
