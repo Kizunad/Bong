@@ -20,6 +20,10 @@ from __future__ import annotations
 import time
 
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
+from bot.scenarios.cultivation_pill_consume import (
+    _set_qi_and_wait,
+    _set_qi_max_and_wait,
+)
 from bot.scenarios._inventory_helpers import (
     find_item,
     latest_inventory_snapshot,
@@ -351,10 +355,8 @@ def run(env) -> None:
         # ── dev 铺垫：Spirit 境界 + qi_current=100（fresh bot qi_max=10，须先提 max） ──
         bot.cmd("realm set spirit")
         bot.expect_chat("[dev] realm set", timeout=10.0)
-        bot.cmd("qi max 100")
-        bot.expect_chat("[dev] qi max", timeout=10.0)
-        bot.cmd("qi set 100")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        _set_qi_max_and_wait(bot, 100.0)
+        _set_qi_and_wait(bot, 100.0)
 
         # ── 负例 2/3/4：fake session / qi_amount=-1 / NaN → 全部拒绝 ──────
         # handler（client_request_handler.rs handle_forge_consecration_inject）先查
@@ -398,11 +400,13 @@ def run(env) -> None:
             f"{clamped['step_state']['qi_required']}"
         )
 
-        # ── 状态读回：补真元 50 再注入 60 → 钳到 50 → 累积 150.0 ─────────
+        # ── 状态读回：把上限收至 50 并补满，再注入 60 → 钳到 50 → 累积 150.0 ──
         # 守恒：两次注入总量 100+50=150 ≤ 累计真元 100+50=150；ledger 侧
-        # zone 余额同步 150（玩家真元 → zone ledger 搬运，不凭空增减）。
-        bot.cmd("qi set 50")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        # zone 余额同步 150（玩家真元 → zone ledger 搬运，不凭空增减）。把 qi_max
+        # 同步收至 50 可阻止命令确认与注入处理之间的自然回复产生 epsilon，使这里
+        # 真正验证精确 cap，而不是用浮点容差掩盖非确定性。
+        _set_qi_max_and_wait(bot, 50.0)
+        _set_qi_and_wait(bot, 50.0)
         anchor = last_event_time(bot)
         _forge_consecration_inject(bot, session_id, 60.0)
         accumulated = _wait_forge_payload_after(
