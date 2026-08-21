@@ -14,7 +14,7 @@ use crate::body_plan::{
 use crate::combat::events::CombatEvent;
 use crate::combat::rat_bite::RatBiteEvent;
 use crate::cultivation::components::{Cultivation, MeridianSystem};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::technique_scroll::{
     learn_technique_if_allowed, LearnSource, ScrollReadOutcome, TechniqueLearnedEvent,
@@ -27,7 +27,7 @@ use valence::prelude::Username;
 const DASH_SKILL_ID: &str = "movement.dash";
 const DASH_INSIGHT_NARRATION: &str = "皮肉记住了。比脑子快。";
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn first_hit_dash_insight(
     mut combat_events: EventReader<CombatEvent>,
     mut rat_events: EventReader<RatBiteEvent>,
@@ -45,6 +45,7 @@ pub fn first_hit_dash_insight(
     mut narrations: Option<ResMut<PendingGameplayNarrations>>,
     body_plans: Option<Res<BodyPlanRegistry>>,
     races: Option<Res<RaceRegistry>>,
+    techniques: Res<TechniqueRegistry>,
 ) {
     // Collect player entities that were damaged
     let mut damaged_players: Vec<Entity> = Vec::new();
@@ -90,6 +91,7 @@ pub fn first_hit_dash_insight(
         )
         .is_humanoid;
         let outcome = learn_technique_if_allowed(
+            &techniques,
             &mut known,
             cultivation,
             meridians,
@@ -134,6 +136,7 @@ mod tests {
         app.add_event::<RatBiteEvent>();
         app.add_event::<TechniqueLearnedEvent>();
         app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_systems(Update, first_hit_dash_insight);
         app
     }

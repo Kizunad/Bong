@@ -225,6 +225,7 @@ pub fn setup_world(
         WorldBootstrap::FallbackFlat(fallback) => {
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
+            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_fallback_flat_world(&mut commands, &server, &dimensions, &biomes)
         }
         WorldBootstrap::TerrainRaster(config) => {
@@ -252,6 +253,7 @@ pub fn setup_world(
                 anvil.world_path.display(),
                 anvil.region_dir.display()
             );
+            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_anvil_world(&mut commands, &server, &dimensions, &biomes, anvil)
         }
     };
@@ -1504,20 +1506,21 @@ mod tests {
     #[test]
     fn negative_anchor_margin_has_exact_inclusive_chunk_bounds() {
         let registry = synthetic_spawn_registry((
-            DVec3::new(-100.0, 0.0, -100.0),
-            DVec3::new(100.0, 100.0, 100.0),
+            DVec3::new(-100.0, 0.0, -10_000.0),
+            DVec3::new(100.0, 100.0, -8_000.0),
         ));
         let anchors = [
             crate::player::spawn_selector::spawn_distribution_anchor_for_test(
-                DVec3::new(-0.1, 65.0, -0.1),
+                DVec3::new(-0.1, 65.0, -9_000.1),
                 0.0,
             ),
         ];
         let chunks = fallback_spawn_chunk_union(&registry, &anchors)
             .expect("configured fallback union should fit");
 
-        let (min, max) =
-            ChunkView::new(ChunkPos::new(-1, -1), FALLBACK_VIEW_DISTANCE_CHUNKS).bounding_box();
+        let anchor_chunk =
+            ChunkPos::new(block_coord_to_chunk(-0.1), block_coord_to_chunk(-9_000.1));
+        let (min, max) = ChunkView::new(anchor_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS).bounding_box();
         assert!(chunks.contains(&min));
         assert!(chunks.contains(&max));
         assert!(!chunks.contains(&ChunkPos::new(min.x - 1, min.z)));

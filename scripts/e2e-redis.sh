@@ -19,6 +19,11 @@ DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
 FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
+# CI can have a slower SQLite/Redis shutdown path after the 100-NPC proof. Keep
+# the default lifecycle helper contract at 10s, but give this disposable E2E
+# transaction a bounded 30s graceful window before identity-safe KILL fallback.
+E2E_SERVER_STOP_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_GRACE_SECONDS:-30}"
+E2E_SERVER_STOP_KILL_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -853,19 +858,20 @@ port_open() {
   bong_server_port_is_open "$@"
 }
 
+resolve_server_cargo_target() {
+  bong_scoped_cargo_target "$1"
+}
+
 start_server_process_group() {
   local log_file="$1" preview_mode="$2" test_override_mode="${3:-0}"
-  local actual_pgid="" cargo_target owner_pid=""
-  local owner_starttime="" owner_executable_identity="" supervisor="" ready_line="" committed_line=""
+  local actual_pgid="" artifact_dir="" build_helper="" built_binary="" build_timeout="" cargo_target owner_pid=""
+  local owner_starttime="" owner_executable_identity="" supervisor="" build_token="" ready_line="" committed_line=""
   local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
-  cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
+  build_helper="$ROOT/scripts/lib/bong-pre-handshake-build.py"
+  build_token="$ROOT/scripts/build-token.sh"
   local server_directory="$ROOT/server"
-  if [ -n "${BONG_E2E_BUILD_TOKEN:-}" ]; then
-    echo "FAIL: BONG_E2E_BUILD_TOKEN is obsolete; supervisor accepts only SERVER_DIRECTORY" >&2
-    return 2
-  fi
   # Only the in-repo supervisor protocol fixture may opt into replacement binaries.
   if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
     [ "$test_override_mode" = "1" ] || {
@@ -873,8 +879,9 @@ start_server_process_group() {
       return 2
     }
     supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"
+    build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"
     server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"
-  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
+  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_BUILD_TOKEN:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
     echo "FAIL: e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1" >&2
     return 2
   fi
@@ -884,6 +891,49 @@ start_server_process_group() {
   SERVER_OWNER_EXECUTABLE_IDENTITY=""
   SERVER_STARTUP_CONTROL_FD=""
   SERVER_STARTUP_READY_FD=""
+  # No process authority exists during the isolated build phase. This keeps a
+  # preview persistence stash recoverable when compilation fails or times out.
+  SERVER_AUTHORITY_UNCERTAIN=0
+
+  server_directory="$(readlink -f -- "$server_directory")" || {
+    echo "FAIL: server directory does not resolve to a real directory" >&2
+    return 2
+  }
+  [ -d "$server_directory" ] || {
+    echo "FAIL: server directory is not a directory: $server_directory" >&2
+    return 2
+  }
+  cargo_target="$(resolve_server_cargo_target "$server_directory")" || {
+    echo "FAIL: CARGO_TARGET_DIR could not be resolved" >&2
+    return 2
+  }
+  build_timeout="${BONG_E2E_BUILD_TIMEOUT_SECONDS:-600}"
+  [[ "$build_timeout" =~ ^[1-9][0-9]*$ ]] || {
+    echo "FAIL: BONG_E2E_BUILD_TIMEOUT_SECONDS must be a positive integer" >&2
+    return 2
+  }
+  artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/bong-e2e-prebuilt.XXXXXXXX")" || return 1
+  chmod 700 -- "$artifact_dir"
+  built_binary="$artifact_dir/bong-server"
+  if ! env \
+    PATH="$RUST_PATH" \
+    python3 "$build_helper" \
+      "$server_directory" "$cargo_target" "$build_token" "$build_timeout" "$built_binary" \
+      >>"$log_file" 2>&1; then
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
+    echo "FAIL: release server build failed or exceeded ${build_timeout}s" >&2
+    return 1
+  fi
+  [ -f "$built_binary" ] || {
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
+    echo "FAIL: successful release build did not produce $built_binary" >&2
+    return 1
+  }
+
+  # From coproc creation until COMMITTED, startup may own an unpublishable
+  # process group. Fail closed until the complete pinned authority is committed.
   SERVER_AUTHORITY_UNCERTAIN=1
   coproc BONG_SERVER_SUPERVISOR {
     exec env \
@@ -892,8 +942,8 @@ start_server_process_group() {
       BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
       BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
       BONG_PREVIEW_MODE="$preview_mode" \
-      python3 "$supervisor" "$server_directory" \
-      2>"$log_file"
+      python3 "$supervisor" "$server_directory" "$built_binary" \
+      2>>"$log_file"
   }
   owner_pid=""
   ready_fd="${BONG_SERVER_SUPERVISOR[0]}"
@@ -903,6 +953,8 @@ start_server_process_group() {
 
   if ! IFS= read -r -t 5 -u "$ready_fd" ready_line \
     || [[ "$ready_line" != 'READY pid='[0-9]* ]]; then
+    rm -f -- "$built_binary"
+    rmdir -- "$artifact_dir" 2>/dev/null || true
     exec {control_fd}>&-
     exec {ready_fd}<&-
     # Do not wait on an unpinned startup PID: it can outlive a failed protocol
@@ -913,6 +965,9 @@ start_server_process_group() {
     echo "FAIL: server supervisor did not publish startup rollback readiness" >&2
     return 1
   fi
+  # READY means the supervisor has copied the token-pinned private artifact.
+  rm -f -- "$built_binary"
+  rmdir -- "$artifact_dir" 2>/dev/null || true
   # READY is emitted by the post-setsid supervisor itself and carries that exact
   # PID, avoiding Bash coproc wrapper ambiguity. The following identity snapshot
   # still pins starttime, executable inode, and PGID before C is sent.
@@ -1022,8 +1077,11 @@ stop_server() {
       echo "FAIL: incomplete server process-group authority (pid=${pid:-missing}, pgid=${pgid:-missing})" >&2
       return 1
     fi
+    local graceful_stop_seconds="${E2E_SERVER_STOP_GRACE_SECONDS:-30}"
+    local kill_stop_seconds="${E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
     if bong_server_stop_owned_process_group_and_release_port \
-        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565; then
+        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565 \
+        "$graceful_stop_seconds" "$kill_stop_seconds"; then
       SERVER_PID=""
       SERVER_PGID=""
       SERVER_OWNER_STARTTIME=""
@@ -1033,6 +1091,7 @@ stop_server() {
     else
       stop_status=$?
     fi
+    echo "FAIL: server process group stop did not complete (status=$stop_status, graceful=${graceful_stop_seconds}s, kill=${kill_stop_seconds}s)" >&2
     return "$stop_status"
   fi
   # Outside a READY transaction there are no stashed developer bytes to expose:

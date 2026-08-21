@@ -3,6 +3,7 @@
 # Capture the library directory while this file is sourced. Function-time
 # BASH_SOURCE may point at a test/caller frame after declare/eval replacement.
 BONG_SERVER_LIFECYCLE_LIBRARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$BONG_SERVER_LIFECYCLE_LIBRARY_DIR/bong-cargo-target.sh"
 
 # Environment values are not lock authority. Sourcing this library resets the
 # private reentrancy state; only bong_server_with_lock may populate it after a
@@ -954,7 +955,9 @@ bong_server_owned_process_group_owns_ipv4_listener() {
 # remains, so checking it immediately before every scan closes numeric-PGID reuse.
 bong_server_stop_owned_process_group_and_release_port() {
     local owner_pid="${1:-}" owner_starttime="${2:-}" owner_executable_identity="${3:-}"
-    local pgid="${4:-}" port="${5:-25565}" current_pgid members status pid starttime executable_identity
+    local pgid="${4:-}" port="${5:-25565}"
+    local grace_seconds="${6:-10}" kill_grace_seconds="${7:-2}"
+    local current_pgid members status pid starttime executable_identity
     local forced_stop=0 forced_children=0
 
     bong_server_validate_signal_id "$owner_pid" || return 2
@@ -965,6 +968,8 @@ bong_server_stop_owned_process_group_and_release_port() {
         return 2
     }
     [[ "$port" =~ ^[0-9]+$ ]] || return 2
+    [[ "$grace_seconds" =~ ^[0-9]+$ ]] || return 2
+    [[ "$kill_grace_seconds" =~ ^[0-9]+$ ]] || return 2
     current_pgid="$(ps -o pgid= -p "$BASHPID" 2>/dev/null)" || return 2
     current_pgid="${current_pgid//[[:space:]]/}"
     [ "$pgid" != "$current_pgid" ] || {
@@ -999,7 +1004,7 @@ bong_server_stop_owned_process_group_and_release_port() {
     done <<< "$members"
 
     if bong_server_wait_for_owned_process_group_children \
-        "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 10; then
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" "$grace_seconds"; then
         status=0
     else
         status=$?
@@ -1032,7 +1037,7 @@ bong_server_stop_owned_process_group_and_release_port() {
             esac
         done <<< "$members"
         bong_server_wait_for_owned_process_group_children \
-            "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 2 || return $?
+            "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$pgid" "$kill_grace_seconds" || return $?
         if [ "$forced_children" -eq 1 ]; then
             forced_stop=1
         fi
@@ -1046,7 +1051,7 @@ bong_server_stop_owned_process_group_and_release_port() {
         *) echo "FAIL: could not safely stop preview process-group owner" >&2; return 2 ;;
     esac
     bong_server_wait_for_pinned_process_exit \
-        "$owner_pid" "$owner_starttime" "$owner_executable_identity" 2 || return $?
+        "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$kill_grace_seconds" || return $?
     wait "$owner_pid" 2>/dev/null || true
     bong_server_confirm_port_released "$port" || return $?
     [ "$forced_stop" -eq 0 ] || return "$BONG_SERVER_STOP_FORCED"

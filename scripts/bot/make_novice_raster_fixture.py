@@ -104,7 +104,6 @@ def _is_finite_float(value: object) -> bool:
     except OverflowError:
         return False
 
-
 def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int, int]]:
     tiles = set()
     for index, cluster in enumerate(_spawn_distribution(zones_path)):

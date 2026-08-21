@@ -275,7 +275,7 @@ CURRENT_STAGE="server"
 echo "=== [3/11] server -> fmt/clippy/test + persistence/progression/payload proofs ==="
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo fmt --check
 ) >"$SERVER_FMT_LOG" 2>&1; then
@@ -285,7 +285,7 @@ else
 fi
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo clippy --all-targets -- -D warnings
 ) >"$SERVER_CLIPPY_LOG" 2>&1; then
@@ -295,7 +295,7 @@ else
 fi
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
@@ -306,7 +306,7 @@ fi
 
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test save_and_load_roundtrip_by_uuid -- --nocapture
   "$ROOT/scripts/build-token.sh" cargo test player::progression:: -- --nocapture

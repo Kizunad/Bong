@@ -18,6 +18,9 @@ MODULES = ["spiritwood", "inventory", "worldgen"]
 TREE_LOG_PATTERN = re.compile(
     r"Teleported to spirit tree log at \((-?\d+), (-?\d+), (-?\d+)\)\."
 )
+# Bot gate 过载实测可降至 2 TPS：240 production tick 需 120 秒。
+# 额外留出 chunk/worldgen stall 余量，但 terminal payload 断言不降级。
+LUMBER_TERMINAL_TIMEOUT_SECONDS = 180.0
 
 
 def _latest_drops(bot, timeout: float = 10.0) -> list[dict]:
@@ -48,8 +51,8 @@ def run(env) -> None:
 
         # 新手 loadout 自带出生剑；`clearinv all` 按契约保留装备槽。先清空
         # 携带面，把出生剑移入暗袋，再清一次携带面，既腾出主手又保留有效
-        # worn 背包容器（直接 `clearinv naked` 会留下孤儿 pack_* 壳，发放
-        # 物品时会被容器 owner 校验拒绝）。
+        # worn 背包容器。`clearinv naked` 会权威移除装备、动态 pack 拓扑与
+        # 容量加成，不适合后续“填满全部随身格”的采伐测试。
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
         after_first_clear = bot.wait_for(
@@ -208,7 +211,7 @@ def run(env) -> None:
                 event.data["payload"]["completed"]
                 or event.data["payload"]["interrupted"]
             ),
-            timeout=25.0,
+            timeout=LUMBER_TERMINAL_TIMEOUT_SECONDS,
             description="真实 DiggingEvent 经过 240 tick 后的 lumber_progress terminal",
         ).data["payload"]
         assert terminal["completed"] is True, f"采伐应成功完成，实际 {terminal!r}"

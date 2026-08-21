@@ -1,5 +1,6 @@
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::cultivation::components::{ColorKind, Cultivation, Realm};
+use crate::cultivation::known_techniques::TechniqueDefinition;
 use crate::qi_physics::constants::{DUGU_DIRTY_QI_ZONE_RETURN_RATIO, DUGU_RHO};
 use crate::qi_physics::{
     qi_collision, EnvField, MediumKind, QiAccountId, StyleAttack, StyleDefense,
@@ -83,6 +84,26 @@ pub fn skill_spec(skill: DuguSkillId) -> DuguSkillSpec {
             cooldown_ticks: 60 * TICKS_PER_SECOND,
             cast_ticks: 30,
         },
+    }
+}
+
+/// Build the resolver's shared cast contract from authoritative technique metadata when
+/// present. The legacy values remain the fallback for resolver-only techniques that are not
+/// yet exposed in `techniques.toml`; a metadata-backed extension therefore cannot advertise a
+/// different qi cost, cooldown, or cast duration than the resolver actually executes.
+pub fn skill_spec_with_definition(
+    skill: DuguSkillId,
+    definition: Option<&TechniqueDefinition>,
+) -> DuguSkillSpec {
+    let legacy = skill_spec(skill);
+    let Some(definition) = definition else {
+        return legacy;
+    };
+    DuguSkillSpec {
+        skill,
+        qi_cost: f64::from(definition.qi_cost),
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
+        cast_ticks: definition.cast_ticks,
     }
 }
 

@@ -90,8 +90,15 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: bash scripts/check-proto-breaking.sh
 
-      - name: Proto breaking base-ref contract test
-        run: python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+      - name: Build-token and signal-boundary contract tests
+        run: |
+          bash scripts/tests/build_token_test.sh
+          python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/signal_boundary_contract_test.py
+          python3 scripts/tests/fallback_world_readiness_contract_test.py
+          python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+          bash scripts/tests/preview_lifecycle_contract_test.sh
+          bash scripts/tests/cargo_target_scope_test.sh
 
       - name: Install agent workspace dependencies
         working-directory: agent
@@ -176,6 +183,9 @@ jobs:
       - name: Smoke/E2E stage (Task 13 harness)
         env:
           RUN_LABEL: ci-smoke
+          # Real tmux/process signals stay quarantined to this disposable runner.
+          # Local lifecycle suites must not opt in.
+          BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
         run: bash scripts/smoke-test-e2e.sh
 
       # AGENTS.md §15 —— 协议级黑盒玩家场景（复用同一份 provenance-checked sequential release artifact）

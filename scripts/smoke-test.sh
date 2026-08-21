@@ -3,14 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+export CARGO_TARGET_DIR="$(bong_scoped_cargo_target "$ROOT/server")"
 PASS=0
 FAIL=0
 export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/server/target}"
-# 相对 target 目录按构建起点 $ROOT/server 归一化，避免 launch 阶段按错误目录解析
-if [[ "$CARGO_TARGET_DIR" != /* ]]; then
-    CARGO_TARGET_DIR="$ROOT/server/$CARGO_TARGET_DIR"
-fi
 FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
 
 pass() { echo "  ✓ $1"; ((PASS+=1)); }
