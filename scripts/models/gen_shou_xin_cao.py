@@ -40,7 +40,7 @@ from PIL import Image, ImageDraw
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = REPO / "local_models"
 PREVIEW_DIR = REPO / "scripts" / "models"
-TEXTURE_RES = 64
+TEXTURE_RES = 128
 UUID_NAMESPACE = uuid.UUID("e2b1f804-9a3d-4c8e-b5f7-3d84a1e94c20")
 
 
@@ -819,24 +819,26 @@ def create_texture() -> Image.Image:
         for y in range(30):
             u = x - 44
             noise = ((x * 23 + y * 29) % 13) - 6
-            if u in range(0, 8):
-                # 主动脉 (鲜亮血红 0xAC1A2A)
+            if 0 <= u < 8 and 2 <= y < 20:
+                # 主动脉 (鲜亮血红 0xAC1A2A) [44, 2, 52, 20]
                 r = int(np.clip(176 + noise * 3.0, 135, 225))
                 g = int(np.clip(24 + noise * 1.0, 12, 48))
                 b = int(np.clip(38 + noise * 1.2, 18, 60))
-            elif u in range(8, 18):
-                # 搏动心室高光 (高饱和真元光泽 0xD82438)
+            elif 8 <= u < 18 and 2 <= y < 18:
+                # 搏动心室高光 (高饱和真元光泽 0xD82438) [52, 2, 62, 18]
                 r = int(np.clip(228 + noise * 3.5, 190, 255))
                 g = int(np.clip(36 + noise * 1.5, 20, 72))
                 b = int(np.clip(52 + noise * 1.8, 24, 92))
-            elif u in range(18, 24):
-                # 侧脉分叉
+            elif 0 <= u < 12 and 20 <= y < 30:
+                # 侧脉分叉 [44, 20, 56, 30]
                 r = int(np.clip(152 + noise * 2.5, 110, 195))
                 g = int(np.clip(20 + noise * 0.9, 10, 42))
                 b = int(np.clip(32 + noise * 1.1, 14, 54))
-            else:
-                # 血管侧边纯暗红
+            elif 12 <= u < 18 and 20 <= y < 28:
+                # 血管侧边平原暗红 [56, 20, 62, 28]
                 r, g, b = 120, 16, 26
+            else:
+                r, g, b = 135, 18, 30
             img.putpixel((x, y), (r, g, b, 255))
 
     # 4. 双生幼芽区 (32,36)~(64,48)
@@ -911,6 +913,8 @@ def create_texture() -> Image.Image:
                 g += 5
                 b += 7
             img.putpixel((x, y), (r, g, b, 255))
+    if img.size != (TEXTURE_RES, TEXTURE_RES):
+        img = img.resize((TEXTURE_RES, TEXTURE_RES), resample=Image.Resampling.NEAREST)
 
     return img
 

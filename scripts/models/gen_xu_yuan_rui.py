@@ -37,7 +37,7 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = REPO / "local_models"
 PREVIEW_DIR = REPO / "scripts" / "models"
-TEXTURE_RES = 64
+TEXTURE_RES = 128
 UUID_NAMESPACE = uuid.UUID("a74f28c1-8419-482a-9e32-5d8819280004")
 
 
@@ -945,6 +945,8 @@ def create_texture() -> Image.Image:
             v = y - 48
             noise = ((u * 13 + v * 17) % 7) - 3
             img.putpixel((x, y), (36 + noise, 38 + noise, 50 + noise, 255))
+    if img.size != (TEXTURE_RES, TEXTURE_RES):
+        img = img.resize((TEXTURE_RES, TEXTURE_RES), resample=Image.Resampling.NEAREST)
 
     return img
 
@@ -957,14 +959,14 @@ def build_bbmodel_dict() -> dict:
     tex_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     uv_presets = {
-        "rock_vein_a": [0, 0, 32, 20],
-        "rock_vein_b": [0, 20, 32, 40],
-        "rock_facet": [0, 40, 32, 52],
-        "rock_dark": [0, 52, 32, 64],
-        "stamen_stem": [32, 0, 64, 32],
-        "crystal_core": [32, 32, 48, 48],
-        "crystal_facet": [48, 32, 64, 48],
-        "floating_gold": [32, 48, 48, 64],
+        "rock_vein_a": [0, 0, 64, 40],
+        "rock_vein_b": [0, 40, 64, 80],
+        "rock_facet": [0, 80, 64, 104],
+        "rock_dark": [0, 104, 64, 128],
+        "stamen_stem": [64, 0, 128, 64],
+        "crystal_core": [64, 64, 96, 96],
+        "crystal_facet": [96, 64, 128, 96],
+        "floating_gold": [64, 96, 96, 128],
     }
 
     elements = []

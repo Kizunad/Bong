@@ -32,7 +32,7 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = REPO / "local_models"
 PREVIEW_DIR = REPO / "scripts" / "models"
-TEXTURE_RES = 64
+TEXTURE_RES = 128
 UUID_NAMESPACE = uuid.UUID("f912c443-6789-4b12-9832-1122aabb0006")
 
 
@@ -641,6 +641,8 @@ def create_texture() -> Image.Image:
             else:
                 col = CAP_PALETTE["dark"]
             img.putpixel((x, y), (*col, 255))
+    if img.size != (TEXTURE_RES, TEXTURE_RES):
+        img = img.resize((TEXTURE_RES, TEXTURE_RES), resample=Image.Resampling.NEAREST)
 
     return img
 
@@ -653,12 +655,12 @@ def build_bbmodel_dict() -> dict:
     tex_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     uv_presets = {
-        "bone_decayed": [0, 0, 32, 24],
-        "bone_marrow": [0, 24, 32, 40],
-        "cap_oily_black": [32, 0, 64, 24],
-        "cap_pale_rot": [32, 24, 48, 40],
-        "stalk_dark": [48, 24, 64, 48],
-        "spore_toxic": [0, 40, 32, 64],
+        "bone_decayed": [0, 0, 64, 48],
+        "bone_marrow": [0, 48, 64, 80],
+        "cap_oily_black": [64, 0, 128, 48],
+        "cap_pale_rot": [64, 48, 96, 80],
+        "stalk_dark": [96, 48, 128, 96],
+        "spore_toxic": [0, 80, 64, 128],
     }
 
     elements = []

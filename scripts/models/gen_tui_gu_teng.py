@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = REPO / "local_models"
 PREVIEW_DIR = REPO / "scripts" / "models"
-TEXTURE_RES = 64
+TEXTURE_RES = 128
 UUID_NAMESPACE = uuid.UUID("7a3e89b2-6541-4b78-9f12-8d992f4c0009")
 
 
@@ -682,6 +682,8 @@ def create_texture() -> Image.Image:
         for y in range(44, 64):
             val = 22 + ((x + y * 2) % 15)
             img.putpixel((x, y), (val, val, val + 12, 255))
+    if img.size != (TEXTURE_RES, TEXTURE_RES):
+        img = img.resize((TEXTURE_RES, TEXTURE_RES), resample=Image.Resampling.NEAREST)
 
     return img
 
@@ -694,14 +696,14 @@ def build_bbmodel_dict() -> dict:
     tex_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     uv_presets = {
-        "bone_clean": [0, 0, 32, 20],
-        "bone_crack": [0, 20, 32, 36],
-        "skull_teeth": [0, 36, 32, 42],
-        "orbit_dark": [0, 42, 32, 48],
-        "ground_bone": [0, 48, 32, 64],
-        "vine_main": [32, 0, 64, 24],
-        "vine_thorn": [32, 24, 48, 44],
-        "core_glow": [48, 24, 64, 44],
+        "bone_clean": [0, 0, 64, 40],
+        "bone_crack": [0, 40, 64, 72],
+        "skull_teeth": [0, 72, 64, 84],
+        "orbit_dark": [0, 84, 64, 96],
+        "ground_bone": [0, 96, 64, 128],
+        "vine_main": [64, 0, 128, 48],
+        "vine_thorn": [64, 48, 96, 88],
+        "core_glow": [96, 48, 128, 88],
     }
 
     elements = []

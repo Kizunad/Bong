@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = REPO / "local_models"
 PREVIEW_DIR = REPO / "scripts" / "models"
-TEXTURE_RES = 64
+TEXTURE_RES = 128
 UUID_NAMESPACE = uuid.UUID("c7b8d9e0-f1a2-4b3c-9d4e-5f6a7b8c9d0e")
 
 
@@ -631,6 +631,8 @@ def create_texture() -> Image.Image:
                 img.putpixel((x, y), (238, 28, 46, 255))
             else:
                 img.putpixel((x, y), (145, 18, 26, 255))
+    if img.size != (TEXTURE_RES, TEXTURE_RES):
+        img = img.resize((TEXTURE_RES, TEXTURE_RES), resample=Image.Resampling.NEAREST)
 
     return img
 

@@ -31,7 +31,7 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = REPO / "local_models"
 PREVIEW_DIR = REPO / "scripts" / "models"
-TEXTURE_RES = 64
+TEXTURE_RES = 128
 UUID_NAMESPACE = uuid.UUID("d894b321-4567-4e12-8921-9988aa110005")
 
 
@@ -554,6 +554,8 @@ def create_texture() -> Image.Image:
                 col = ROCK_PALETTE["ao"]
 
             img.putpixel((x, y), (*col, 255))
+    if img.size != (TEXTURE_RES, TEXTURE_RES):
+        img = img.resize((TEXTURE_RES, TEXTURE_RES), resample=Image.Resampling.NEAREST)
 
     return img
 
@@ -566,14 +568,14 @@ def build_bbmodel_dict() -> dict:
     tex_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     uv_presets = {
-        "scale_plate_a": [0, 0, 32, 16],
-        "scale_plate_b": [0, 16, 32, 32],
-        "scale_edge": [0, 32, 32, 48],
-        "moss_vibrant": [32, 0, 64, 24],
-        "moss_deep": [32, 24, 64, 40],
-        "moss_sprout": [0, 48, 32, 64],
-        "abyssal_rock": [32, 40, 64, 52],
-        "abyssal_rock_dark": [32, 52, 64, 64],
+        "scale_plate_a": [0, 0, 64, 32],
+        "scale_plate_b": [0, 32, 64, 64],
+        "scale_edge": [0, 64, 64, 96],
+        "moss_vibrant": [64, 0, 128, 48],
+        "moss_deep": [64, 48, 128, 80],
+        "moss_sprout": [0, 96, 64, 128],
+        "abyssal_rock": [64, 80, 128, 104],
+        "abyssal_rock_dark": [64, 104, 128, 128],
     }
 
     elements = []
