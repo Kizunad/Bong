@@ -1,7 +1,7 @@
 use valence::prelude::{bevy_ecs, Component, Entity, Event};
 
 use crate::cultivation::components::{Cultivation, MeridianSystem};
-use crate::cultivation::known_techniques::{technique_definition, KnownTechniques};
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::technique_observe::{parse_grade, TechniqueGrade};
 use crate::cultivation::technique_scroll::{
@@ -64,6 +64,7 @@ pub fn mentor_dialog_option_appears(
 
 #[allow(clippy::too_many_arguments)]
 pub fn mentor_teaches_technique(
+    registry: &TechniqueRegistry,
     inventory: &mut PlayerInventory,
     known: &mut KnownTechniques,
     cultivation: &Cultivation,
@@ -81,13 +82,13 @@ pub fn mentor_teaches_technique(
     if ctx.reputation_to_player < MENTOR_MIN_REPUTATION {
         return MentorOutcome::LowReputation;
     }
-    let Some(definition) = technique_definition(ctx.technique_id) else {
+    let Some(definition) = registry.get(ctx.technique_id) else {
         return MentorOutcome::UnknownTechnique;
     };
-    if parse_grade(definition.grade) == TechniqueGrade::Earth {
+    if parse_grade(&definition.grade) == TechniqueGrade::Earth {
         return MentorOutcome::EarthGradeRefused;
     }
-    let cost = mentor_cost_for_grade(parse_grade(definition.grade));
+    let cost = mentor_cost_for_grade(parse_grade(&definition.grade));
     if inventory.bone_coins < cost {
         return MentorOutcome::NotEnoughBoneCoins {
             required: cost,
@@ -95,6 +96,7 @@ pub fn mentor_teaches_technique(
         };
     }
     let outcome = learn_technique_if_allowed(
+        registry,
         known,
         cultivation,
         meridians,
@@ -198,6 +200,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -234,6 +237,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let _ = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -271,6 +275,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -303,6 +308,7 @@ mod tests {
             .insert(MeridianId::Lung.channel_id());
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {
@@ -335,6 +341,7 @@ mod tests {
         let mut known = KnownTechniques::default();
 
         let outcome = super::mentor_teaches_technique(
+            &TechniqueRegistry::load_for_tests(),
             &mut inventory,
             &mut known,
             &Cultivation {

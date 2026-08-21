@@ -63,6 +63,8 @@ set -euo pipefail
 # ioredis subscriber + wait_for_pattern + cleanup trap。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="offscreen-war-p0"
 SCRIPT_TAG="e2e-offscreen-war"
@@ -78,6 +80,7 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -1578,7 +1581,7 @@ start_server() {
   local seed_count="$2"
   (
     export PATH="$RUST_PATH"
-    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+    export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
     # 默认 seed N 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。小值避免
     # 1000 条全量 bong:npc/dormant HASH 替换触发 redis 3s 超时（实测 1000 必超时、8 秒级完成）。
     export BONG_DORMANT_ROGUE_SEED_COUNT="$seed_count"
@@ -1590,7 +1593,7 @@ start_server() {
   ) >"$server_log" 2>&1 &
   SERVER_PID="$!"
 
-  if wait_for_pattern "$server_log" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+  if wait_for_pattern "$server_log" "$FALLBACK_WORLD_READY_PATTERN" 300; then
     pass "server world bootstrap"
   else
     finalize_failure "server" "missing world bootstrap anchor in $server_log"
@@ -1957,7 +1960,7 @@ fi
 # 起 P7 专属 server：1000 Dormant 自种
 (
   export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
   export BONG_DORMANT_ROGUE_SEED_COUNT=1000
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_SIM_SEED="$SIM_SEED"
@@ -1968,7 +1971,7 @@ fi
 P7_SERVER_PID="$!"
 
 # 等 world bootstrap anchor
-if wait_for_pattern "$P7_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+if wait_for_pattern "$P7_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
   pass "P7 server world bootstrap (1000 Dormant)"
 else
   finalize_failure "p7_tps" "P7 server: world bootstrap anchor missing; see $P7_SERVER_LOG"

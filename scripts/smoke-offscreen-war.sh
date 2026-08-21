@@ -11,6 +11,8 @@ set -euo pipefail
 # fork 自 scripts/e2e-redis.sh 的 redis fallback + 构建令牌 wrapper + cleanup trap。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
+SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$ROOT/server")"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="offscreen-war-p0"
 SCRIPT_TAG="smoke-offscreen-war"
@@ -23,7 +25,7 @@ ERROR_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-error.log"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
-RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+SERVER_BINARY="$RUN_DIR/bong-server"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -166,16 +168,23 @@ clear_dormant_key >>"$OBSERVE_LOG" 2>&1 || finalize_failure "seed" "clear dorman
 pass "cleared bong:npc/dormant (server default-seeds factioned rogues)"
 
 CURRENT_STAGE="server"
+if ! (
+  export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+  export CARGO_TARGET_DIR="$SERVER_CARGO_TARGET"
+  cd "$ROOT/server"
+  "$ROOT/scripts/build-token.sh" cargo build --release
+  install -m 700 "$CARGO_TARGET_DIR/release/bong-server" "$SERVER_BINARY"
+) >>"$SERVER_LOG" 2>&1; then
+  finalize_failure "server" "server build failed; see $SERVER_LOG"
+fi
 (
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_SIM_SEED="$SIM_SEED"
   export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
   cd "$ROOT/server"
-  "$ROOT/scripts/build-token.sh" cargo run --release
-) >"$SERVER_LOG" 2>&1 &
+  exec "$SERVER_BINARY"
+) >>"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"
 
 if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[redis\\] subscribed to bong:agent_command" 300; then

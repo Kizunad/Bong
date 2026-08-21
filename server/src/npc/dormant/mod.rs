@@ -2959,9 +2959,8 @@ mod tests {
             "bong-dormant-receipt-{}-{unique}",
             std::process::id()
         ));
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             root.join("data").join("bong.db"),
-            root.join("deceased"),
             "dormant-receipt-tombstone",
         );
         std::fs::create_dir_all(settings.db_path().parent().unwrap())
@@ -3037,9 +3036,8 @@ mod tests {
         let blocked_parent = root.join("not-a-directory");
         std::fs::write(&blocked_parent, b"block sqlite parent")
             .expect("cleanup failure fixture should create a regular file");
-        let unavailable_settings = crate::persistence::PersistenceSettings::with_paths(
+        let unavailable_settings = crate::persistence::PersistenceSettings::with_db_path(
             blocked_parent.join("bong.db"),
-            root.join("unavailable-deceased"),
             "dormant-receipt-unavailable",
         );
         tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
