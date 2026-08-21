@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -22,8 +23,8 @@ pub enum SpawnPurpose {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerSpawnSelector<'a> {
     registry: Option<&'a ZoneRegistry>,
-    distribution: Vec<SpawnDistributionAnchor>,
-    materialized_chunks: BTreeSet<ChunkPos>,
+    distribution: Cow<'a, [SpawnDistributionAnchor]>,
+    materialized_chunks: Cow<'a, BTreeSet<ChunkPos>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,11 +83,11 @@ impl<'a> PlayerSpawnSelector<'a> {
         let distribution = distribution_from_zone_patrol_anchors(registry);
         Self {
             registry: Some(registry),
-            materialized_chunks: crate::world::materialized_fallback_chunks(
+            materialized_chunks: Cow::Owned(crate::world::materialized_fallback_chunks(
                 registry,
                 &distribution,
-            ),
-            distribution,
+            )),
+            distribution: Cow::Owned(distribution),
         }
     }
 
@@ -102,11 +103,11 @@ impl<'a> PlayerSpawnSelector<'a> {
         };
         Self {
             registry: Some(registry),
-            materialized_chunks: crate::world::materialized_fallback_chunks(
+            materialized_chunks: Cow::Owned(crate::world::materialized_fallback_chunks(
                 registry,
                 &distribution,
-            ),
-            distribution,
+            )),
+            distribution: Cow::Owned(distribution),
         }
     }
 
@@ -114,16 +115,16 @@ impl<'a> PlayerSpawnSelector<'a> {
     pub fn fallback() -> Self {
         Self {
             registry: None,
-            distribution: Vec::new(),
-            materialized_chunks: BTreeSet::new(),
+            distribution: Cow::Owned(Vec::new()),
+            materialized_chunks: Cow::Owned(BTreeSet::new()),
         }
     }
 
     fn from_snapshot(snapshot: &'a FallbackSpawnSnapshot) -> Self {
         Self {
             registry: Some(&snapshot.registry),
-            distribution: snapshot.distribution.clone(),
-            materialized_chunks: snapshot.materialized_chunks.clone(),
+            distribution: Cow::Borrowed(&snapshot.distribution),
+            materialized_chunks: Cow::Borrowed(&snapshot.materialized_chunks),
         }
     }
 
@@ -847,7 +848,8 @@ mod tests {
         };
 
         assert_eq!(
-            selector.materialized_chunks, expected_union,
+            selector.materialized_chunks.as_ref(),
+            &expected_union,
             "selector 必须保存同一 producer 计算出的 exact fallback union"
         );
         assert!(
@@ -1445,6 +1447,21 @@ mod tests {
             std::ptr::eq(first, second),
             "启动快照必须全局唯一（OnceLock），chunk 分配与出生选择才能读同一份权威数据"
         );
+        let selector = PlayerSpawnSelector::from_snapshot(first);
+        match &selector.distribution {
+            Cow::Borrowed(distribution) => assert!(
+                std::ptr::eq(*distribution, first.distribution.as_slice()),
+                "出生选择器必须直接借用快照分布，登录热路径不得复制整个 Vec"
+            ),
+            Cow::Owned(_) => panic!("出生选择器不得复制快照分布"),
+        }
+        match &selector.materialized_chunks {
+            Cow::Borrowed(materialized_chunks) => assert!(
+                std::ptr::eq(*materialized_chunks, &first.materialized_chunks),
+                "出生选择器必须直接借用快照 chunk 集，登录热路径不得复制整个 BTreeSet"
+            ),
+            Cow::Owned(_) => panic!("出生选择器不得复制快照 chunk 集"),
+        }
         let spawn_zone = first
             .registry
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
