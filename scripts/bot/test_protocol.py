@@ -44,7 +44,9 @@ from bot.scenarios._combat_helpers import (  # noqa: E402
     is_outgoing_positive_hit,
     wait_for_server_data_after,
 )
+from bot.scenarios._coffin_helpers import teardown_coffin  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
+    give_inventory_revision_barrier,
     latest_inventory_snapshot,
     require_pack_container,
     wait_inventory_revision_after,
@@ -694,6 +696,193 @@ class ServerDataDecodeTest(unittest.TestCase):
             "offline:Alice",
             "真实 Bot reader 必须把 production protobuf narration 暴露为可断言事件",
         )
+
+    def test_proto_coffin_state_enter_payload_decodes(self):
+        decoded = decode_server_data_payload(
+            _server_data_coffin_state_bytes(True, 0.9, "mundane")
+        )
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "coffin_state",
+                "in_coffin": True,
+                "lifespan_rate_multiplier": 0.9,
+                "coffin_grade": "mundane",
+            },
+            "enter 后 CoffinState 应解出 in_coffin=true、mundane grade 与 0.9 倍率",
+        )
+
+    def test_proto_coffin_state_leave_payload_decodes(self):
+        decoded = decode_server_data_payload(
+            _server_data_coffin_state_bytes(False, 1.0, None)
+        )
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "coffin_state",
+                "in_coffin": False,
+                "lifespan_rate_multiplier": 1.0,
+                "coffin_grade": None,
+            },
+            "leave 后 CoffinState 应解出 in_coffin=false、grade 缺席与 1.0 倍率",
+        )
+
+    def test_proto_coffin_state_omitted_multiplier_defaults_to_one(self):
+        # 只有 field 1（in_coffin）的 payload：field 2 省略时必须解出声明默认 1.0，
+        # 而不是 0.0 / None / 抛错。此前两个测试总是编码 field 2（_server_data_
+        # coffin_state_bytes 恒发 _pb_fixed64(2, ...)），钉不住省略字段的解码契约。
+        decoded = decode_server_data_payload(_pb_message(78, _pb_varint(1, 1)))
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "coffin_state",
+                "in_coffin": True,
+                "lifespan_rate_multiplier": 1.0,
+                "coffin_grade": None,
+            },
+            "省略 field 2 的 CoffinState 应解出 lifespan_rate_multiplier 默认 1.0",
+        )
+
+    def test_bot_dispatch_emits_entity_metadata_invisible_flag(self):
+        bot = _bare_bot()
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + bytes(
+            [0, 0, 0x20, 0xFF]
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertEqual(metadata_events[0].data["flags"], 0x20)
+        self.assertTrue(metadata_events[0].data["flags"] & 0x20, "bit 5 = invisible")
+
+    def test_bot_dispatch_entity_metadata_skips_non_flags_entry(self):
+        bot = _bare_bot()
+        # 首条目不是 flags（index 5 = custom name visible, BOOLEAN）：flags 应为 None，
+        # 不得因未知条目崩掉 dispatch。
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(7) + bytes(
+            [5, 8, 1, 0xFF]
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 7)
+        self.assertIsNone(metadata_events[0].data["flags"])
+
+    def test_bot_dispatch_entity_metadata_flags_after_non_flags_entry(self):
+        bot = _bare_bot()
+        # 首条目不是 flags（index 5, BOOLEAN），flags 条目在其后：必须扫描完整条目
+        # 序列直到 0xFF，flags 在任意位置都能读到（review finding, run 31442491424：
+        # 旧实现只读首条目，flags 非首条目即静默丢 None，invisible 状态切换读不回）。
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + bytes(
+            [5, 8, 1, 0, 0, 0x20, 0xFF]
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertEqual(metadata_events[0].data["flags"], 0x20)
+
+    def test_bot_dispatch_entity_metadata_flags_after_varint_and_string_entries(self):
+        bot = _bare_bot()
+        # VARINT（index 1 = air）与 STRING（index 2 = custom name）条目先于 flags：
+        # 按类型跳过（varint / 长度前缀字符串）不得错位，否则 flags 与 0xFF 终止符
+        # 都读不回来。
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_METADATA)
+            + mc.write_varint(0)
+            + bytes([1, 1, 5])  # index 1, type VARINT, 值 5
+            + bytes([2, 4])
+            + mc.mc_string("abc")  # index 2, type STRING, 值 "abc"
+            + bytes([0, 0, 0x20, 0xFF])  # index 0, type BYTE, flags=0x20
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertEqual(metadata_events[0].data["flags"], 0x20)
+
+    def test_bot_dispatch_entity_metadata_skips_pinned_fork_types_before_flags(self):
+        # 编号与 Kizunad/valence pinned rev 的 Value::type_id() 一一对应。
+        # PARTICLE(17) 的 fork payload 不携 variant ID，无法安全跳过，故保持 fail closed。
+        nbt_with_string = (
+            b"\x0a\x00\x00"  # TAG_Compound root + 空 root name (u16-BE)
+            + b"\x08\x00\x04name"  # TAG_String + compound key
+            + b"\x00\x03abc"  # TAG_String value length is u16-BE
+            + b"\x00"  # TAG_End
+        )
+        item_stack_with_nbt = b"\x01" + mc.write_varint(1) + b"\x01" + nbt_with_string
+        cases = [
+            ("byte", 0, b"\x01"),
+            ("integer", 1, mc.write_varint(300)),
+            ("long", 2, struct.pack(">q", 123456789)),
+            ("float", 3, struct.pack(">f", 20.0)),
+            ("string", 4, mc.mc_string("abc")),
+            ("text", 5, mc.mc_string('{"text":"abc"}')),
+            ("optional_text", 6, b"\x01" + mc.mc_string('{"text":"abc"}')),
+            ("empty_item_stack", 7, b"\x00"),
+            ("item_stack_nbt", 7, item_stack_with_nbt),
+            ("boolean", 8, b"\x01"),
+            ("rotation", 9, struct.pack(">fff", 1.0, 2.0, 3.0)),
+            ("block_pos", 10, struct.pack(">Q", 0)),
+            ("optional_block_pos", 11, b"\x01" + struct.pack(">Q", 0)),
+            ("facing", 12, mc.write_varint(3)),
+            ("optional_uuid", 13, b"\x01" + bytes(range(16))),
+            ("block_state", 14, mc.write_varint(42)),
+            ("optional_block_state", 15, mc.write_varint(0)),
+            ("nbt_compound", 16, nbt_with_string),
+            ("villager_data", 18, b"\x02\x03\x04"),
+            ("optional_int", 19, mc.write_varint(8)),
+            ("entity_pose", 20, mc.write_varint(5)),
+            ("cat_variant", 21, mc.write_varint(2)),
+            ("frog_variant", 22, mc.write_varint(1)),
+            ("optional_global_pos_unit", 23, b""),
+            ("painting_variant", 24, mc.write_varint(4)),
+            ("sniffer_state", 25, mc.write_varint(2)),
+            ("vector3f", 26, struct.pack(">fff", 1.0, 2.0, 3.0)),
+            ("quaternionf", 27, struct.pack(">ffff", 1.0, 2.0, 3.0, 4.0)),
+        ]
+
+        for name, mtype, value in cases:
+            with self.subTest(name=name, mtype=mtype):
+                bot = _bare_bot()
+                body = (
+                    mc.write_varint(mc.S2C_ENTITY_METADATA)
+                    + mc.write_varint(0)
+                    + bytes([9, mtype])
+                    + value
+                    + bytes([0, 0, 0x20, 0xFF])
+                )
+
+                bot._dispatch(body)
+
+                metadata_events = bot.events_of("entity_metadata")
+                self.assertEqual(len(metadata_events), 1)
+                self.assertEqual(metadata_events[0].data["flags"], 0x20)
+
+    def test_bot_dispatch_entity_metadata_empty_entries(self):
+        bot = _bare_bot()
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + b"\xFF"
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertIsNone(metadata_events[0].data["flags"])
 
     def test_proto_zone_info_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_zone_info_bytes())
@@ -1518,6 +1707,48 @@ class InventoryHelperTest(unittest.TestCase):
 
         self.assertEqual(snapshot["revision"], 3)
         self.assertEqual(snapshot["marker"], "command_final")
+
+    def test_give_revision_barrier_ignores_prior_mutation_snapshot(self):
+        stale_receipt = _FakeEvent(
+            1.5,
+            "chat",
+            {"text": "[dev] gave grass_fiber x1 revision=3"},
+        )
+        prior_request = _snapshot_event(3.0, 4, "prior_request")
+        barrier_receipt = _FakeEvent(
+            4.0,
+            "chat",
+            {"text": "[dev] gave grass_fiber x1 revision=5"},
+        )
+        barrier_snapshot = _snapshot_event(4.1, 5, "barrier")
+        bot = _CommandFakeBot(
+            [_snapshot_event(2.0, 3, "baseline"), stale_receipt],
+            [prior_request, barrier_receipt, barrier_snapshot],
+        )
+
+        snapshot = give_inventory_revision_barrier(bot, "grass_fiber", timeout=0.01)
+
+        self.assertEqual(bot.commands, ["give grass_fiber 1"])
+        self.assertEqual(snapshot["revision"], 5)
+        self.assertEqual(snapshot["marker"], "barrier")
+
+    def test_give_revision_barrier_accepts_snapshot_after_exact_revision(self):
+        bot = _CommandFakeBot(
+            [_snapshot_event(1.0, 7, "baseline")],
+            [
+                _FakeEvent(
+                    2.0,
+                    "chat",
+                    {"text": "[dev] gave grass_fiber x1 revision=8"},
+                ),
+                _snapshot_event(2.1, 9, "coalesced_later_revision"),
+            ],
+        )
+
+        snapshot = give_inventory_revision_barrier(bot, "grass_fiber", timeout=0.01)
+
+        self.assertEqual(snapshot["revision"], 9)
+        self.assertEqual(snapshot["marker"], "coalesced_later_revision")
 
 
 class ProductionScenarioContractTest(unittest.TestCase):
@@ -3131,6 +3362,17 @@ class _CommandFakeBot(_FakeBot):
             self.events.append(self.pending.pop(0))
 
 
+class _IntentFakeBot(_CommandFakeBot):
+    def __init__(self, events: list[_FakeEvent], pending: list[_FakeEvent]):
+        super().__init__(events, pending)
+        self.intents: list[dict] = []
+
+    def intent(self, payload: dict) -> None:
+        self.intents.append(payload)
+        if self.pending:
+            self.events.append(self.pending.pop(0))
+
+
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
     return _FakeEvent(
         t,
@@ -3144,6 +3386,55 @@ def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
             },
         },
     )
+
+
+class CoffinTeardownHelperTest(unittest.TestCase):
+    @staticmethod
+    def _spawn(t: float, entity_id: int, x: float, y: float, z: float) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "entity_spawn",
+            {"entity_id": entity_id, "type": 160, "x": x, "y": y, "z": z},
+        )
+
+    def test_teardown_targets_matching_marker_and_waits_for_its_destroy(self):
+        bot = _IntentFakeBot(
+            [
+                self._spawn(1.0, 41, 13.0, 64.0, -2.5),
+                self._spawn(2.0, 42, 11.0, 64.0, -2.5),
+            ],
+            [_FakeEvent(3.0, "entities_destroy", {"entity_ids": [42, 99]})],
+        )
+
+        teardown_coffin(bot, (10, 64, -3), timeout=0.01)
+
+        self.assertEqual(
+            bot.intents,
+            [{"type": "coffin_break", "v": 1, "x": 10, "y": 64, "z": -3}],
+            "清场必须对实际 lower 坐标发送精确 coffin_break payload",
+        )
+
+    def test_teardown_rejects_destroy_for_another_marker(self):
+        bot = _IntentFakeBot(
+            [self._spawn(1.0, 42, 11.0, 64.0, -2.5)],
+            [_FakeEvent(2.0, "entities_destroy", {"entity_ids": [99]})],
+        )
+
+        with self.assertRaisesRegex(AssertionError, "marker #42"):
+            teardown_coffin(bot, (10, 64, -3), timeout=0.01)
+
+        self.assertEqual(len(bot.intents), 1, "错误 destroy 证据不得阻止实际 break 请求发出")
+
+    def test_teardown_does_not_break_when_expected_marker_was_never_observed(self):
+        bot = _IntentFakeBot(
+            [self._spawn(1.0, 41, 99.0, 64.0, -2.5)],
+            [],
+        )
+
+        with self.assertRaisesRegex(AssertionError, "待清场"):
+            teardown_coffin(bot, (10, 64, -3), timeout=0.01)
+
+        self.assertEqual(bot.intents, [], "未锁定目标 marker 时不得盲目破坏其他棺材")
 
 
 def _pill_snapshot_event(t: float, revision: int, count: int, qi: float) -> _FakeEvent:
@@ -4374,6 +4665,15 @@ def _server_data_loot_container_open_bytes() -> bytes:
         + _pb_varint(4, 4)
     )
     return _pb_message(119, open_payload)
+
+
+def _server_data_coffin_state_bytes(
+    in_coffin: bool, multiplier: float, grade: str | None
+) -> bytes:
+    state = _pb_varint(1, 1 if in_coffin else 0) + _pb_fixed64(2, multiplier)
+    if grade is not None:
+        state += _pb_string(3, grade)
+    return _pb_message(78, state)
 
 
 def _server_data_loot_container_update_bytes() -> bytes:
