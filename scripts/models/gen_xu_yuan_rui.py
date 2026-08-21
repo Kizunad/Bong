@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
-"""生成续元蕊 (XuYuanRui) Blockbench .bbmodel 与三视图预览 (Round 3 终极打磨版)。
+"""生成续元蕊 (XuYuanRui) Blockbench .bbmodel 与三视图预览 (自然真石与温润灵玉质感版)。
 
 【世界观与设定背景】：
 - 丹道稀有灵草，生长在灵眼与高灵气浓度灵脉旁（spirit_qi > 0.8）。
 - 物理机制：灵气极高压强下凝华结晶（survival_mode: spirit_crystallize），
   是炼制高阶保命丹药「续元丹」与「化形大丹」的核心药材。
-- 视觉特征：
+- 视觉特征与自然质感重构：
   1. 裂隙黑曜石花萼基座 (Obsidian Mineral Base)：
-     底部多层错落、向外自然剥裂开壳的深黑玄岩/黑曜石矿簇岩片（8 块不同倾角和长短的天然矿晶岩），
-     表面具有多种随机分形金脉裂纹、晶面反光与暗紫玄晶质感，内凹聚灵金槽。
+     - 基底：天然深沉冷黑玄武岩与暗紫黑曜石矿脉 (0x18171C ~ 0x2A2732)，带有微细岩层节理与哑光漫反射。
+     - 矿脉：摒弃大面积粗暴纯黄，采用内生石英含金细脉与地热微光 (0xD4A038 ~ 0x966B24)，自然嵌入岩体裂缝，深浅有致。
   2. 金华蕊柱簇 (Golden Stamen Cluster)：
-     中央拔地而起的高低错落金黄色发光花蕊群（8 根带真实 3D 平滑弧度弯曲旋转的立柱），
-     底部聚拢于玄岩裂缝，中上部自然向外发散如灵华绽放，顶端膨大为水滴菱形「灵气固化晶滴 (Spirit Crystal Drops)」。
-     中心最长为主蕊柱（带白金炽光高亮核心）。
+     - 蕊柱：从根部的暗赭褐木质化/深琥珀色 (0x4E371C) 平滑过渡到中段的温润玉黄 (0xC8A246)，再到上段的清透鹅黄 (0xF2D785)。
+     - 晶滴核心：温润如玉、白金交融的凝华灵髓结晶 (0xFFF8E7 ~ 0xFBE5A8)，顶端微泛白金纯净光晕，侧面呈自然矿晶折射。
   3. 悬浮灵砾 (Ambient Floating Shards)：
-     周围斜向悬浮 8 颗微小黑曜石碎粒与金晶微粒，呈螺旋逸散微动分布。
+     - 周围悬浮微小清透金髓碎粒与玄武岩微晶，与主体浑然一体。
 
 【技术规范】：
 - 尺寸边界：严格控制在 1x1 方块内 (X: 2.0~14.0, Z: 2.0~14.0, Y: 0.0~15.5)。
 - 3D 倾斜与真实旋转：使用 origin + rotation 呈现弯曲与向外张开的花萼，严禁 AABB 阶梯方块。
 - 64x64 UV Atlas 高清贴图分区：
-  * obsidian_dark: 玄石暗黑面 (0x1C1C22 + 暗紫玄晶微粒与棱面折射)
-  * obsidian_vein_a / b: 树状金脉裂纹面 A/B (0xFFB800 裂纹 + 0x24222E 暗岩，双向纹理防止重复感)
-  * stamen_grad: 发光花蕊纵向金黄渐变 (0xBD7E00 -> 0xFFD700 -> 0xFFF9C0)，柔和光纤丝缕
-  * crystal_core: 水滴晶滴顶端白金核心 (0xFFFFFF / 0xFFECC0 / 0xFFD700 柔和光晕)
-  * crystal_facet: 晶滴侧面折射面 (0xFFE880 / 0xF5C400 / 0xE6A800 棱晶渐变)
-  * floating_gold: 悬浮金晶砾 (0xFFECC0 白金星芒)
-  * floating_obs: 悬浮曜岩碎粒 (0x26222E + 金砂斑)
+  * obsidian_dark: 天然暗黑玄武岩 (哑光灰黑 0x1A1920)
+  * obsidian_vein_a / b: 细微内生金矿裂隙与岩体节理 (自然微光 0xB88828 ~ 0x6E4C18)
+  * stamen_stem: 蕊柱纵向渐变光纤 (暗褐 0x422F18 -> 琥珀金 0xB88C32 -> 玉黄 0xE8CA76)
+  * crystal_core: 凝华温润白金晶核 (0xFFFBF0 ~ 0xF6DE9C)
+  * crystal_facet: 晶滴侧面矿晶折射面 (0xE2BE60 ~ 0xB58E34)
+  * floating_gold: 悬浮微晶金华 (0xF4E0A0)
+  * floating_obs: 悬浮曜岩微粒 (0x24202B)
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ def make_directed_segment(
     p1: tuple[float, float, float],
     p2: tuple[float, float, float],
     thickness: float = 0.55,
-    uv_preset: str = "stamen_grad",
+    uv_preset: str = "stamen_stem",
 ) -> Cube:
     """在空间两点 p1, p2 之间创建一节真实倾斜旋转的体素柱。"""
     x1, y1, z1 = p1
@@ -122,7 +121,7 @@ def build_stamen_chain(
     path_points: list[tuple[float, float, float]],
     thickness_start: float = 0.7,
     thickness_end: float = 0.45,
-    uv_preset: str = "stamen_grad",
+    uv_preset: str = "stamen_stem",
 ) -> list[Cube]:
     """生成一条连续平滑、自然微弯的花蕊柱。"""
     cubes: list[Cube] = []
@@ -198,7 +197,7 @@ def make_crystal_droplet(
 def part_obsidian_base() -> list[Cube]:
     """部件1：裂隙黑曜石花萼基座 (Obsidian Mineral Base)。
 
-    层叠错落、向外爆裂剥开的 8 块玄岩/黑曜石矿簇岩片，缝隙透出分形树状金脉。
+    层叠错落、向外爆裂剥开的 8 块玄岩/黑曜石矿簇岩片，缝隙透出温润内敛的金脉。
     """
     cubes: list[Cube] = []
 
@@ -359,7 +358,7 @@ def part_obsidian_base() -> list[Cube]:
 def part_stamen_cluster() -> list[Cube]:
     """部件2：金华蕊柱簇 (Golden Stamen Cluster)。
 
-    包含 8 根高低错落、微弯向外展开的花蕊柱与顶端水滴菱形灵晶滴。
+    包含 8 根高低错落、平滑微弯向外展开的花蕊柱与顶端水滴菱形灵晶滴。
     1. 主蕊柱 (Main Core): 高度 14.8
     2. 东北长蕊 (NE Long): 高度 12.8
     3. 东南长蕊 (SE Long): 高度 12.4
@@ -387,7 +386,7 @@ def part_stamen_cluster() -> list[Cube]:
             main_path,
             thickness_start=0.85,
             thickness_end=0.6,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -416,7 +415,7 @@ def part_stamen_cluster() -> list[Cube]:
             ne_path,
             thickness_start=0.68,
             thickness_end=0.48,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -445,7 +444,7 @@ def part_stamen_cluster() -> list[Cube]:
             se_path,
             thickness_start=0.68,
             thickness_end=0.48,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -474,7 +473,7 @@ def part_stamen_cluster() -> list[Cube]:
             sw_path,
             thickness_start=0.68,
             thickness_end=0.48,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -503,7 +502,7 @@ def part_stamen_cluster() -> list[Cube]:
             nw_path,
             thickness_start=0.68,
             thickness_end=0.48,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -532,7 +531,7 @@ def part_stamen_cluster() -> list[Cube]:
             e_path,
             thickness_start=0.62,
             thickness_end=0.44,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -561,7 +560,7 @@ def part_stamen_cluster() -> list[Cube]:
             w_path,
             thickness_start=0.62,
             thickness_end=0.44,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -590,7 +589,7 @@ def part_stamen_cluster() -> list[Cube]:
             s_path,
             thickness_start=0.58,
             thickness_end=0.42,
-            uv_preset="stamen_grad",
+            uv_preset="stamen_stem",
         )
     )
     cubes.extend(
@@ -719,158 +718,177 @@ def all_cubes() -> list[Cube]:
 
 
 def create_texture() -> Image.Image:
-    """生成 64x64 UV Atlas 高清贴图 (Round 3 终极精绘版)。"""
+    """生成 64x64 UV Atlas 高清自然质感贴图。"""
     img = Image.new("RGBA", (TEXTURE_RES, TEXTURE_RES), (0, 0, 0, 0))
 
-    # 1. 玄石暗黑面 obsidian_dark (0,0)~(32,32)
-    # 色调：0x1C1C22 基础，带有玄武岩暗紫灰与细微晶簇噪点
+    # 1. 天然暗黑玄武岩 obsidian_dark (0,0)~(32,32)
+    # 色调：哑光玄武岩灰黑 (0x1C1C24)，富有自然矿物颗粒与岩层明暗
     for x in range(32):
         for y in range(32):
-            noise = ((x * 17 + y * 31) % 13) - 6
-            r = max(0, min(255, 28 + noise))
-            g = max(0, min(255, 28 + noise))
-            b = max(0, min(255, 34 + noise + (noise // 2)))
-            if (x * 7 + y * 13) % 23 == 0:
-                r, g, b = r + 16, g + 14, b + 22
+            layer_var = int(math.sin((x + y * 0.7) * 0.4) * 3)
+            noise = ((x * 17 + y * 31) % 9) - 4
+            base = 28 + layer_var + noise
+            r = max(16, min(50, base))
+            g = max(16, min(50, base + 1))
+            b = max(20, min(56, base + 5))
+            # 极微细的石英矿粒
+            if (x * 11 + y * 19) % 29 == 0:
+                r, g, b = r + 14, g + 14, b + 18
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 2. 树状金脉裂纹面 A obsidian_vein_a (0,32)~(32,48)
-    # 树状分形向上延伸金脉
+    # 2. 细微金矿裂隙面 A obsidian_vein_a (0,32)~(32,48)
+    # 自然嵌入的石英含金细脉与地热微光
     for x in range(32):
         for y in range(32, 48):
             u = x
             v = y - 32
-            main_c1 = 10 + int(math.sin(v * 0.45) * 6 + math.cos(v * 0.9) * 2)
-            main_c2 = 24 - int(v * 0.5 + math.sin(u * 0.4) * 2)
-            branch1 = 999
-            if 4 <= v <= 14:
-                branch1 = 10 + int(math.sin(6 * 0.45) * 6) + int((v - 4) * 1.1)
+            # 细裂隙轨迹
+            crack1 = 12 + int(math.sin(v * 0.4) * 4 + math.cos(v * 0.9) * 1.5)
+            crack2 = 24 - int(v * 0.45)
+            d1 = abs(u - crack1)
+            d2 = abs(u - crack2)
+            min_d = min(d1, d2)
 
-            d1 = abs(u - main_c1)
-            d2 = abs(u - main_c2)
-            d3 = abs(u - branch1)
-            min_dist = min(d1, d2, d3)
-            is_speck = ((u * 13 + v * 19) % 29 == 0) and (min_dist <= 3)
+            # 玄武岩底色
+            noise = ((x * 19 + y * 23) % 9) - 4
+            r = max(16, min(50, 30 + noise))
+            g = max(16, min(50, 29 + noise))
+            b = max(20, min(56, 36 + noise))
 
-            if min_dist == 0 or is_speck:
-                r, g, b = 255, 235, 90
-            elif min_dist == 1:
-                r, g, b = 245, 175, 20
-            elif min_dist == 2:
-                r, g, b = 115, 75, 25
-            else:
-                noise = ((x * 19 + y * 23) % 11) - 5
-                r = max(0, min(255, 30 + noise))
-                g = max(0, min(255, 28 + noise))
-                b = max(0, min(255, 36 + noise))
+            if min_d == 0:
+                # 矿脉微光核心：温润金砂
+                r, g, b = 210, 162, 58
+            elif min_d == 1:
+                # 矿脉过渡：暗琥珀褐
+                r, g, b = 135, 96, 34
+            elif min_d == 2:
+                # 矿化围岩
+                r, g, b = 68, 52, 38
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 3. 树状金脉裂纹面 B obsidian_vein_b (0,48)~(32,64)
-    # 斜交与多网状金脉
+    # 3. 细微金矿裂隙面 B obsidian_vein_b (0,48)~(32,64)
     for x in range(32):
         for y in range(48, 64):
             u = x
             v = y - 48
-            diag_c1 = 16 + int(math.cos(v * 0.5) * 7)
-            diag_c2 = int(v * 1.2) - 2
-            d1 = abs(u - diag_c1)
-            d2 = abs(u - diag_c2)
-            min_dist = min(d1, d2)
-            is_speck = ((u * 17 + v * 11) % 31 == 0) and (min_dist <= 3)
+            diag_c = 16 + int(math.cos(v * 0.45) * 5)
+            d = abs(u - diag_c)
 
-            if min_dist == 0 or is_speck:
-                r, g, b = 255, 238, 95
-            elif min_dist == 1:
-                r, g, b = 242, 170, 18
-            elif min_dist == 2:
-                r, g, b = 110, 70, 22
-            else:
-                noise = ((x * 23 + y * 17) % 11) - 5
-                r = max(0, min(255, 29 + noise))
-                g = max(0, min(255, 27 + noise))
-                b = max(0, min(255, 35 + noise))
+            noise = ((x * 23 + y * 17) % 9) - 4
+            r = max(16, min(50, 29 + noise))
+            g = max(16, min(50, 28 + noise))
+            b = max(20, min(56, 35 + noise))
+
+            # 点状金矿石英碎屑
+            is_speck = (u * 13 + v * 19) % 23 == 0 and d <= 3
+
+            if d == 0 or is_speck:
+                r, g, b = 215, 168, 62
+            elif d == 1:
+                r, g, b = 140, 100, 36
+            elif d == 2:
+                r, g, b = 65, 50, 36
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 4. 发光花蕊金黄渐变 stamen_grad (32,0)~(64,32)
-    # 色调：纵向金黄渐变 (0xBD7E00 -> 0xFFD700 -> 0xFFF9C0)
+    # 4. 蕊柱平滑渐变光纤 stamen_stem (32,0)~(64,32)
+    # 色调：根部暗赭褐 (0x4E371C) -> 中段琥珀金 (0xB88C32) -> 上段温润玉黄 (0xEAD48A)
     for x in range(32, 64):
         for y in range(32):
             u = x - 32
             v = y
-            grad = (31 - v) / 31.0
-            fiber = math.sin(u * 1.57) * 7
+            grad = (31 - v) / 31.0  # 1.0(顶部) -> 0.0(底部)
 
-            r = int(190 * (1.0 - grad) + 255 * grad + fiber)
-            g = int(125 * (1.0 - grad) + 248 * grad + fiber * 0.8)
-            b = int(0 * (1.0 - grad) + 185 * grad + fiber * 0.4)
+            # 木质维管束纹理
+            fiber = math.sin(u * 1.57) * 4
+
+            if grad < 0.35:
+                # 底部：深沉暗木/暗琥珀
+                t = grad / 0.35
+                r = int(68 * (1 - t) + 145 * t + fiber)
+                g = int(48 * (1 - t) + 102 * t + fiber * 0.7)
+                b = int(22 * (1 - t) + 38 * t)
+            elif grad < 0.75:
+                # 中部：温润古金/琥珀
+                t = (grad - 0.35) / 0.40
+                r = int(145 * (1 - t) + 215 * t + fiber)
+                g = int(102 * (1 - t) + 172 * t + fiber * 0.8)
+                b = int(38 * (1 - t) + 78 * t)
+            else:
+                # 上部：清透玉黄/淡金
+                t = (grad - 0.75) / 0.25
+                r = int(215 * (1 - t) + 242 * t + fiber * 0.5)
+                g = int(172 * (1 - t) + 222 * t + fiber * 0.5)
+                b = int(78 * (1 - t) + 148 * t)
 
             r = max(0, min(255, r))
             g = max(0, min(255, g))
             b = max(0, min(255, b))
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 5. 白金晶滴核心 crystal_core (32,32)~(48,48)
-    # 色调：水滴晶滴顶端白金核心 (0xFFFFFF -> 0xFFECC0 -> 0xFFD700)
+    # 5. 凝华温润白金晶核 crystal_core (32,32)~(48,48)
+    # 色调：如脂羊脂玉般的白金光晕 (0xFFFAF0 ~ 0xF5DE9C ~ 0xD8B052)
     for x in range(32, 48):
         for y in range(32, 48):
             dx = abs(x - 40)
             dy = abs(y - 40)
             d = math.sqrt(dx * dx + dy * dy)
-            if d < 2.2:
-                img.putpixel((x, y), (255, 255, 255, 255))
-            elif d < 5.0:
-                glow = (5.0 - d) / 2.8
-                r = int(255)
-                g = int(248 * glow + 225 * (1 - glow))
-                b = int(235 * glow + 120 * (1 - glow))
+            if d < 2.0:
+                # 纯净灵髓白玉核
+                img.putpixel((x, y), (255, 252, 244, 255))
+            elif d < 4.5:
+                # 温润羊脂金光晕
+                glow = (4.5 - d) / 2.5
+                r = int(255 * glow + 245 * (1 - glow))
+                g = int(250 * glow + 220 * (1 - glow))
+                b = int(235 * glow + 155 * (1 - glow))
                 img.putpixel((x, y), (r, g, b, 255))
             else:
-                img.putpixel((x, y), (255, 215, 65, 255))
+                # 晶滴基质玉黄
+                img.putpixel((x, y), (232, 198, 108, 255))
 
-    # 6. 晶滴侧面折射面 crystal_facet (48,32)~(64,48)
-    # 色调：柔和连续的棱晶金黄 (0xFFE880 -> 0xF5C400 -> 0xE6A800)
+    # 6. 晶滴侧面矿晶折射面 crystal_facet (48,32)~(64,48)
+    # 色调：柔和自然矿物折射 (0xE8CB78 ~ 0xC49838 ~ 0x9B7224)
     for x in range(48, 64):
         for y in range(32, 48):
             u = x - 48
             v = y - 32
-            # 柔和的径向 + 对角微渐变
             rad = math.sqrt((u - 8) ** 2 + (v - 8) ** 2) / 11.3
-            diag = math.sin((u + v) * 0.5) * 0.15
+            diag = math.sin((u + v) * 0.6) * 0.12
             shade = max(0.0, min(1.0, rad + diag))
 
-            r = int(255 * (1.0 - shade) + 235 * shade)
-            g = int(235 * (1.0 - shade) + 175 * shade)
-            b = int(130 * (1.0 - shade) + 15 * shade)
+            r = int(238 * (1.0 - shade) + 172 * shade)
+            g = int(210 * (1.0 - shade) + 130 * shade)
+            b = int(128 * (1.0 - shade) + 48 * shade)
 
             img.putpixel((x, y), (r, g, b, 255))
 
-    # 7. 悬浮金晶微粒 floating_gold (32,48)~(48,64)
-    # 色调：轻灵纯净的聚灵白金星华 (0xFFECC0)
+    # 7. 悬浮微晶金华 floating_gold (32,48)~(48,64)
+    # 色调：柔和淡金光点 (0xF6E4B0 ~ 0xD8B460)
     for x in range(32, 48):
         for y in range(48, 64):
             u = x - 32
             v = y - 48
             center_dist = math.sqrt((u - 8) ** 2 + (v - 8) ** 2)
-            if center_dist < 3.0:
-                img.putpixel((x, y), (255, 255, 220, 255))
-            elif center_dist < 6.0:
-                img.putpixel((x, y), (255, 230, 100, 255))
+            if center_dist < 2.5:
+                img.putpixel((x, y), (252, 246, 230, 255))
+            elif center_dist < 5.5:
+                img.putpixel((x, y), (242, 220, 150, 255))
             else:
-                img.putpixel((x, y), (235, 180, 45, 255))
+                img.putpixel((x, y), (205, 168, 88, 255))
 
-    # 8. 悬浮曜岩碎粒 floating_obs (48,48)~(64,64)
-    # 色调：暗黑玄岩带聚灵金砂斑 (0x26222E + 0xFFC830)
+    # 8. 悬浮曜岩微粒 floating_obs (48,48)~(64,64)
+    # 色调：玄武岩带微量金斑 (0x282530 + 0xD8A848)
     for x in range(48, 64):
         for y in range(48, 64):
             u = x - 48
             v = y - 48
-            if (u * 5 + v * 7) % 11 == 0:
-                img.putpixel((x, y), (255, 220, 70, 255))
+            if (u * 7 + v * 11) % 17 == 0:
+                img.putpixel((x, y), (218, 172, 74, 255))
             else:
-                noise = ((u * 13 + v * 17) % 9) - 4
-                img.putpixel((x, y), (38 + noise, 34 + noise, 46 + noise, 255))
+                noise = ((u * 13 + v * 17) % 7) - 3
+                img.putpixel((x, y), (36 + noise, 34 + noise, 42 + noise, 255))
 
     return img
 
@@ -886,7 +904,7 @@ def build_bbmodel_dict() -> dict:
         "obsidian_dark": [0, 0, 32, 32],
         "obsidian_vein_a": [0, 32, 32, 48],
         "obsidian_vein_b": [0, 48, 32, 64],
-        "stamen_grad": [32, 0, 64, 32],
+        "stamen_stem": [32, 0, 64, 32],
         "crystal_core": [32, 32, 48, 48],
         "crystal_facet": [48, 32, 64, 48],
         "floating_gold": [32, 48, 48, 64],
