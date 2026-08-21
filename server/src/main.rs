@@ -218,9 +218,8 @@ fn run_full_app_startup_smoke() {
         "bong-full-app-startup-smoke-{}",
         std::process::id()
     ));
-    app.insert_resource(PersistenceSettings::with_paths(
+    app.insert_resource(PersistenceSettings::with_db_path(
         db_root.join("data").join("bong.db"),
-        db_root.join("deceased"),
         "full-app-startup-smoke",
     ));
 
@@ -294,11 +293,30 @@ fn assert_full_app_core_resources(app: &App) {
     assert!(
         craft_registry
             .get(&craft::RecipeId::new("craft.example.eclipse_needle.iron"))
-            .is_some()
-            && craft_registry
-                .get(&craft::RecipeId::new("craft.tool.workbench"))
-                .is_some(),
-        "CraftRegistry must contain data-owned recipes after strict TOML startup loading"
+            .is_some(),
+        "CraftRegistry must contain data-owned legacy recipes after strict TOML startup loading"
+    );
+    assert!(
+        craft_registry
+            .get(&craft::RecipeId::new("craft.tool.workbench"))
+            .is_some(),
+        "CraftRegistry must contain data-owned workbench recipes after strict TOML startup loading"
+    );
+    let technique_registry = world
+        .get_resource::<cultivation::known_techniques::TechniqueRegistry>()
+        .expect("full server App must install TechniqueRegistry after strict TOML startup loading");
+    assert!(
+        !technique_registry.is_empty(),
+        "TechniqueRegistry must contain data-owned metadata after strict TOML startup loading"
+    );
+    let unique_ids = technique_registry
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        unique_ids.len(),
+        technique_registry.len(),
+        "TechniqueRegistry must preserve every validated TOML entry exactly once"
     );
     // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
     // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产

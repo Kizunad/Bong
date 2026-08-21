@@ -9,9 +9,9 @@
 //!   * 接 ECS — 从真实 `AlchemyFurnace` / `AlchemySession` Component 取数据
 //!   * 配合 alchemy_emit_state 增量推送（只推变化字段）
 
-use valence::prelude::{Added, Client, Entity, Query, Username, With};
+use valence::prelude::{Added, Client, Entity, EventReader, Query, Username, With};
 
-use crate::alchemy::{AlchemySession, RecipeRegistry};
+use crate::alchemy::{AlchemyOutcomeEvent, AlchemySession, RecipeRegistry, ResolvedOutcome};
 use crate::cultivation::components::ColorKind;
 use crate::inventory::PlayerInventory;
 use crate::network::agent_bridge::{
@@ -389,6 +389,83 @@ fn mock_contamination() -> AlchemyContaminationDataV1 {
     }
 }
 
+pub fn emit_alchemy_outcome_resolved(
+    mut events: EventReader<AlchemyOutcomeEvent>,
+    mut clients: Query<(&Username, &mut Client), With<Client>>,
+) {
+    for event in events.read() {
+        let Some((_username, mut client)) = clients
+            .iter_mut()
+            .find(|(username, _)| username_matches_caster(username.0.as_str(), &event.caster_id))
+        else {
+            tracing::warn!(
+                "[bong][network][alchemy] resolved outcome for unknown caster `{}`",
+                event.caster_id
+            );
+            continue;
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::AlchemyOutcomeResolved(Box::new(
+            build_outcome_resolved_data(event),
+        )));
+        send_payload(&mut client, &payload, event.caster_id.as_str());
+    }
+}
+
+fn username_matches_caster(username: &str, caster_id: &str) -> bool {
+    caster_id == username || canonical_player_id(username) == caster_id
+}
+
+fn build_outcome_resolved_data(event: &AlchemyOutcomeEvent) -> AlchemyOutcomeResolvedDataV1 {
+    let mut data = AlchemyOutcomeResolvedDataV1 {
+        bucket: event.bucket.into(),
+        recipe_id: event.recipe_id.clone(),
+        pill: None,
+        quality: None,
+        toxin_amount: None,
+        toxin_color: None,
+        qi_gain: None,
+        side_effect_tag: None,
+        flawed_path: false,
+        damage: None,
+        meridian_crack: None,
+    };
+
+    match &event.outcome {
+        ResolvedOutcome::Pill {
+            recipe_id,
+            pill,
+            quality,
+            toxin_amount,
+            toxin_color,
+            qi_gain,
+            side_effect,
+            flawed_path,
+            ..
+        } => {
+            data.recipe_id = Some(recipe_id.clone());
+            data.pill = Some(pill.clone());
+            data.quality = Some(*quality);
+            data.toxin_amount = Some(*toxin_amount);
+            data.toxin_color = Some(*toxin_color);
+            data.qi_gain = *qi_gain;
+            data.side_effect_tag = side_effect.as_ref().map(|effect| effect.tag.clone());
+            data.flawed_path = *flawed_path;
+        }
+        ResolvedOutcome::Waste { recipe_id } => {
+            data.recipe_id = recipe_id.clone().or_else(|| event.recipe_id.clone());
+        }
+        ResolvedOutcome::Explode {
+            damage,
+            meridian_crack,
+        } => {
+            data.damage = Some(*damage);
+            data.meridian_crack = Some(*meridian_crack);
+        }
+        ResolvedOutcome::Mismatch => {}
+    }
+    data
+}
+
 fn mock_outcome_resolved() -> AlchemyOutcomeResolvedDataV1 {
     AlchemyOutcomeResolvedDataV1 {
         bucket: AlchemyOutcomeBucketV1::Good,
@@ -407,11 +484,19 @@ fn mock_outcome_resolved() -> AlchemyOutcomeResolvedDataV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{alchemy_join_mocks_enabled_value, build_session_data};
-    use crate::alchemy::recipe::{
-        FireProfile, IngredientSpec, Outcomes, Recipe, RecipeStage, ToleranceSpec,
+    use super::{
+        alchemy_join_mocks_enabled_value, build_outcome_resolved_data, build_session_data,
+        username_matches_caster,
     };
-    use crate::alchemy::{AlchemyFurnace, AlchemySession, Intervention, RecipeRegistry};
+    use crate::alchemy::outcome::OutcomeBucket;
+    use crate::alchemy::recipe::{
+        FireProfile, IngredientSpec, Outcomes, Recipe, RecipeStage, SideEffect, ToleranceSpec,
+    };
+    use crate::alchemy::{
+        AlchemyFurnace, AlchemyOutcomeEvent, AlchemySession, Intervention, RecipeRegistry,
+        ResolvedOutcome,
+    };
+    use crate::cultivation::components::ColorKind;
     use crate::network::agent_bridge::serialize_server_data_payload_proto;
     use crate::schema::alchemy::{AlchemySessionDataV1, AlchemyStageHintV1};
     use crate::schema::proto_gen::bong::{self, server_data_envelope};
@@ -611,6 +696,134 @@ mod tests {
         assert!(!session.stages[2].completed);
         assert!(!session.stages[2].missed);
         assert_eq!(session.interventions_recent, vec!["§7AdjustTemp(0.58)"]);
+    }
+
+    fn outcome_event(bucket: OutcomeBucket, outcome: ResolvedOutcome) -> AlchemyOutcomeEvent {
+        AlchemyOutcomeEvent {
+            furnace: valence::prelude::Entity::from_raw(7),
+            caster_id: "offline:alice".into(),
+            recipe_id: Some("event_recipe".into()),
+            bucket,
+            outcome,
+            elapsed_ticks: 80,
+        }
+    }
+
+    #[test]
+    fn outcome_recipient_matching_accepts_only_exact_username_or_canonical_player_id() {
+        assert!(username_matches_caster("alice", "alice"));
+        assert!(username_matches_caster("alice", "offline:alice"));
+        assert!(!username_matches_caster("bystander", "offline:alice"));
+        assert!(!username_matches_caster("alice_2", "alice"));
+    }
+
+    #[test]
+    fn pill_outcome_preserves_every_optional_field_and_resolved_recipe_identity() {
+        let event = outcome_event(
+            OutcomeBucket::Flawed,
+            ResolvedOutcome::Pill {
+                recipe_id: "resolved_recipe".into(),
+                pill: "flawed_pill".into(),
+                quality: 0.4,
+                toxin_amount: 0.8,
+                toxin_color: ColorKind::Turbid,
+                qi_gain: Some(18.0),
+                quality_tier: 1,
+                effect_multiplier: 0.5,
+                consecrated: false,
+                side_effect: Some(SideEffect {
+                    tag: "qi_cap_perm_minus_1".into(),
+                    duration_s: 0,
+                    weight: 1,
+                    perm: true,
+                    color: None,
+                    amount: None,
+                }),
+                flawed_path: true,
+            },
+        );
+
+        let data = build_outcome_resolved_data(&event);
+        assert_eq!(
+            data.bucket,
+            crate::schema::alchemy::AlchemyOutcomeBucketV1::Flawed
+        );
+        assert_eq!(data.recipe_id.as_deref(), Some("resolved_recipe"));
+        assert_eq!(data.pill.as_deref(), Some("flawed_pill"));
+        assert_eq!(data.quality, Some(0.4));
+        assert_eq!(data.toxin_amount, Some(0.8));
+        assert_eq!(data.toxin_color, Some(ColorKind::Turbid));
+        assert_eq!(data.qi_gain, Some(18.0));
+        assert_eq!(data.side_effect_tag.as_deref(), Some("qi_cap_perm_minus_1"));
+        assert!(data.flawed_path);
+        assert_eq!(data.damage, None);
+        assert_eq!(data.meridian_crack, None);
+    }
+
+    #[test]
+    fn waste_outcome_keeps_recipe_and_leaves_non_applicable_optionals_absent() {
+        let data = build_outcome_resolved_data(&outcome_event(
+            OutcomeBucket::Waste,
+            ResolvedOutcome::Waste { recipe_id: None },
+        ));
+
+        assert_eq!(
+            data.bucket,
+            crate::schema::alchemy::AlchemyOutcomeBucketV1::Waste
+        );
+        assert_eq!(data.recipe_id.as_deref(), Some("event_recipe"));
+        assert_eq!(data.pill, None);
+        assert_eq!(data.quality, None);
+        assert_eq!(data.toxin_amount, None);
+        assert_eq!(data.toxin_color, None);
+        assert_eq!(data.qi_gain, None);
+        assert_eq!(data.side_effect_tag, None);
+        assert!(!data.flawed_path);
+        assert_eq!(data.damage, None);
+        assert_eq!(data.meridian_crack, None);
+    }
+
+    #[test]
+    fn explode_outcome_sets_only_damage_and_meridian_crack() {
+        let data = build_outcome_resolved_data(&outcome_event(
+            OutcomeBucket::Explode,
+            ResolvedOutcome::Explode {
+                damage: 12.0,
+                meridian_crack: 0.2,
+            },
+        ));
+
+        assert_eq!(
+            data.bucket,
+            crate::schema::alchemy::AlchemyOutcomeBucketV1::Explode
+        );
+        assert_eq!(data.recipe_id.as_deref(), Some("event_recipe"));
+        assert_eq!(data.pill, None);
+        assert_eq!(data.damage, Some(12.0));
+        assert_eq!(data.meridian_crack, Some(0.2));
+    }
+
+    #[test]
+    fn mismatch_outcome_preserves_event_bucket_without_counterfeit_optional_values() {
+        let data = build_outcome_resolved_data(&outcome_event(
+            OutcomeBucket::Waste,
+            ResolvedOutcome::Mismatch,
+        ));
+
+        assert_eq!(
+            data.bucket,
+            crate::schema::alchemy::AlchemyOutcomeBucketV1::Waste
+        );
+        assert_eq!(data.recipe_id.as_deref(), Some("event_recipe"));
+        assert_eq!(data.pill, None);
+        assert_eq!(data.quality, None);
+        assert_eq!(data.toxin_amount, None);
+        assert_eq!(data.toxin_color, None);
+        assert_eq!(data.qi_gain, None);
+        assert_eq!(data.side_effect_tag, None);
+        assert!(!data.flawed_path);
+        assert_eq!(data.damage, None);
+        assert_eq!(data.meridian_crack, None);
     }
 
     #[test]

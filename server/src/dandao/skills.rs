@@ -218,12 +218,6 @@ pub fn resolve_pill_rush(
         };
     };
 
-    if (cultivation.realm as u8) < (Realm::Awaken as u8) {
-        return CastResult::Rejected {
-            reason: CastRejectReason::RealmTooLow,
-        };
-    }
-
     let severed = world.get::<MeridianSeveredPermanent>(caster);
     if let Err(mid) = check_meridian_dependencies(PILL_RUSH_MERIDIANS, severed) {
         return CastResult::Rejected {
@@ -413,6 +407,28 @@ mod skill_tests {
     }
 
     #[test]
+    fn pill_rush_accepts_every_valid_realm_before_resource_gates() {
+        let realms = [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ];
+
+        for realm in realms {
+            let qi_cost = dandao_qi_cost_base(realm);
+            let (mut world, caster) = make_world_with_caster(realm, qi_cost, qi_cost);
+            let result = resolve_pill_rush(&mut world, caster, 0, None);
+            assert!(
+                matches!(&result, CastResult::Started { .. }),
+                "所有合法境界都应通过服丹急行的境界门并在资源充足时开始施法：realm={realm:?}, actual={result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn pill_rush_rejects_qi_insufficient() {
         // qi_current < capacity_for_tier(0) * 0.03 = 10 * 0.03 = 0.3
         let (mut world, caster) = make_world_with_caster(Realm::Awaken, 0.0, 100.0);
@@ -470,7 +486,7 @@ mod skill_tests {
     // --- 投丹 ---
 
     #[test]
-    fn pill_bomb_rejects_below_yinqi() {
+    fn pill_bomb_rejects_below_induce() {
         let (mut world, caster) = make_world_with_caster(Realm::Awaken, 40.0, 40.0);
         let result = resolve_pill_bomb(&mut world, caster, 0, None);
         assert_eq!(
@@ -483,7 +499,7 @@ mod skill_tests {
     }
 
     #[test]
-    fn pill_bomb_succeeds_at_yinqi() {
+    fn pill_bomb_succeeds_at_induce() {
         let (mut world, caster) = make_world_with_caster(Realm::Induce, 40.0, 40.0);
         let result = resolve_pill_bomb(&mut world, caster, 0, None);
         assert!(
@@ -520,7 +536,7 @@ mod skill_tests {
     // --- 丹雾 ---
 
     #[test]
-    fn pill_mist_rejects_below_ningmai() {
+    fn pill_mist_rejects_below_condense() {
         let (mut world, caster) = make_world_with_caster(Realm::Induce, 150.0, 150.0);
         let result = resolve_pill_mist(&mut world, caster, 0, None);
         assert_eq!(
@@ -533,7 +549,7 @@ mod skill_tests {
     }
 
     #[test]
-    fn pill_mist_succeeds_at_ningmai() {
+    fn pill_mist_succeeds_at_condense() {
         let (mut world, caster) = make_world_with_caster(Realm::Condense, 150.0, 150.0);
         let result = resolve_pill_mist(&mut world, caster, 0, None);
         assert!(

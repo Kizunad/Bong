@@ -228,6 +228,7 @@ impl ScatteredCultivatorBundle {
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_rogue_npc_at(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
@@ -275,6 +276,7 @@ pub fn spawn_rogue_npc_at(
     );
     let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
     let known_techniques = assign_npc_techniques(
+        technique_registry,
         NpcArchetype::Rogue,
         realm,
         &meridian_sys,

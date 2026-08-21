@@ -391,9 +391,7 @@ fn relic_hydrate_app(
         std::process::id()
     ));
     let db_path = root.join("data").join("bong.db");
-    let deceased = root.join("deceased");
-    let settings =
-        PersistenceSettings::with_paths(&db_path, &deceased, format!("relic-{test_name}"));
+    let settings = PersistenceSettings::with_db_path(&db_path, format!("relic-{test_name}"));
     bootstrap_sqlite(settings.db_path(), settings.server_run_id()).expect("bootstrap sqlite");
 
     let mut app = App::new();
