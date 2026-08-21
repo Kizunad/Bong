@@ -147,7 +147,7 @@ jobs:
           if-no-files-found: warn
 
   server-test:
-    needs: preflight
+    needs: [preflight, schema]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -172,6 +172,11 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - working-directory: agent
         run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
       - working-directory: server
         run: ../scripts/build-token.sh cargo test
       - if: always()
@@ -266,6 +271,7 @@ jobs:
       - if: always()
         run: docker compose -f docker-compose.test.yml down -v --remove-orphans
 
+  # Bot e2e stage (protocol-level player scenarios)
   bot-e2e:
     needs: [build-release, schema]
     runs-on: ubuntu-latest
@@ -311,6 +317,8 @@ jobs:
         env:
           BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
         run: bash scripts/bot-e2e.sh
+      # Bot fallback-flat e2e stage (spawn distribution coverage)
+      # BOT_E2E_RUN_TAG: ci
       - if: matrix.shard == 2
         env:
           BOT_E2E_FALLBACK_MODE: "1"
@@ -332,6 +340,7 @@ jobs:
       CHAT_WINDOW_E2E_PROFILE: release
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -365,6 +374,7 @@ jobs:
           done
           docker compose -f docker-compose.test.yml pull redis
       - run: docker compose -f docker-compose.test.yml up -d redis --wait
+      # Bot chat timestamp -> Tiandao window e2e
       - run: bash scripts/e2e-chat-signal-window.sh
       - if: always()
         uses: actions/upload-artifact@v4
