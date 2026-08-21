@@ -510,7 +510,10 @@ fn handle_coffin_place_requests(
                 event.pos,
                 upper
             );
-            send_coffin_place_rejected(&mut client, &format!("位置 {:?}/{:?} 已有棺材", event.pos, upper));
+            send_coffin_place_rejected(
+                &mut client,
+                &format!("位置 {:?}/{:?} 已有棺材", event.pos, upper),
+            );
             continue;
         }
         if let Ok(layer) = layers.get_single() {
