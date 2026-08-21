@@ -226,10 +226,16 @@ def wait_inventory_contains_new_instance(
 def require_pack_container(snapshot: dict[str, Any], owner_instance_id: int) -> dict[str, Any]:
     expected_id = f"pack_{owner_instance_id}"
     for container in snapshot.get("containers", []):
-        if container.get("owner_instance_id") == owner_instance_id or container["id"] == expected_id:
-            return container
+        if container["id"] != expected_id:
+            continue
+        if container.get("owner_instance_id") != owner_instance_id:
+            raise BotAssertionError(
+                f"穿戴背包容器 id={expected_id} 的 owner_instance_id 必须精确匹配；"
+                f"expected={owner_instance_id} actual={container.get('owner_instance_id')}"
+            )
+        return container
     raise BotAssertionError(
-        f"期望找到 owner_instance_id={owner_instance_id} 的穿戴背包容器，"
+        f"期望找到 id={expected_id} 且 owner_instance_id={owner_instance_id} 的穿戴背包容器，"
         f"实际 containers={snapshot.get('containers')}"
     )
 

@@ -17,7 +17,7 @@ use crate::cultivation::death_hooks::{
     apply_revive_penalty, CultivationDeathCause, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
 };
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     calculate_rebirth_chance, lifespan_tick_rate_multiplier, tribulation_rebirth_chance,
@@ -1237,6 +1237,7 @@ pub fn handle_revival_action_intents(
     default_loadout: Option<Res<DefaultLoadout>>,
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    technique_registry: Option<Res<TechniqueRegistry>>,
     mut intents: EventReader<RevivalActionIntent>,
     mut qi: RevivalQiResources,
     mut events: RevivalEventWriters,
@@ -1428,6 +1429,7 @@ pub fn handle_revival_action_intents(
                     default_loadout.as_deref(),
                     item_registry.as_deref(),
                     inventory_allocator.as_deref_mut(),
+                    technique_registry.as_deref(),
                     coffin_registry.as_deref_mut(),
                     &mut events.coffin_state_events,
                 );
@@ -2179,6 +2181,7 @@ fn reset_for_new_character(
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
+    technique_registry: Option<&TechniqueRegistry>,
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
@@ -2305,10 +2308,13 @@ fn reset_for_new_character(
         AntiCheatCounter::default(),
         QuickSlotBindings::default(),
     ));
+    let fresh_known_techniques = technique_registry
+        .map(KnownTechniques::progression_reset)
+        .unwrap_or_default();
     entity_commands.insert((
         SkillBarBindings::default(),
         UnlockedStyles::default(),
-        KnownTechniques::default(),
+        fresh_known_techniques,
         learned_recipes,
     ));
     commands
@@ -2636,7 +2642,7 @@ mod tests {
     use crate::persistence::{
         bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota,
         persist_active_tribulation, persist_player_cultivation_bundle, ActiveTribulationRecord,
-        DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
+        DeceasedSnapshot, PersistenceSettings,
     };
     use crate::player::state::player_character_id;
     use crate::qi_physics::constants::QI_ZHENMAI_PREP_WINDOW_MS;
@@ -2804,15 +2810,10 @@ mod tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         bootstrap_sqlite(&db_path, &format!("combat-lifecycle-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                &db_path,
-                &deceased_dir,
-                format!("combat-lifecycle-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(&db_path, format!("combat-lifecycle-{test_name}")),
             root,
         )
     }
@@ -4690,15 +4691,15 @@ mod tests {
             .expect("death penalty lifespan event should persist");
         let lifespan_payload: LifespanEventRecord =
             serde_json::from_str(&lifespan_payload_json).expect("lifespan payload should decode");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(
-                settings
-                    .deceased_public_dir()
-                    .join("offline_ShortLived.json"),
+        let snapshot_json: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:ShortLived"],
+                |row| row.get(0),
             )
-            .expect("deceased snapshot should exist"),
-        )
-        .expect("deceased snapshot should decode");
+            .expect("deceased snapshot should persist in sqlite");
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("deceased snapshot should decode");
 
         assert_eq!(death_registry, (1, 240, "bleed_out".to_string()));
         assert_eq!(lifespan_payload.kind, "death_penalty");
@@ -4949,91 +4950,6 @@ mod tests {
             .collect();
         assert_eq!(quota_events.len(), 1);
         assert_eq!(quota_events[0].occupied_slots, 0);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn deceased_snapshot_export_writes_public_json_after_termination_confirmation() {
-        let mut app = App::new();
-        let (settings, root) = persistence_settings("deceased-public-json");
-        app.insert_resource(settings.clone());
-        app.insert_resource(CombatClock { tick: 40 });
-        app.add_event::<DeathEvent>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<DeathInsightRequested>();
-        app.add_event::<DeathCinematicPublished>();
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<RevivalActionIntent>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<QiTransfer>();
-        app.add_event::<crate::coffin::CoffinStateChanged>();
-        app.insert_resource(WorldQiAccount::default());
-        app.add_systems(
-            Update,
-            (
-                death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-                handle_revival_action_intents.after(near_death_tick),
-                crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
-            ),
-        );
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds::default(),
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
-                    character_id: "offline:Ancestor".to_string(),
-                    fortune_remaining: 0,
-                    ..Default::default()
-                },
-                LifeRecord::new("offline:Ancestor"),
-            ))
-            .id();
-
-        app.world_mut().send_event(CultivationDeathTrigger {
-            entity,
-            cause: CultivationDeathCause::NegativeZoneDrain,
-            context: serde_json::json!({"zone": "rift_valley"}),
-        });
-        app.update();
-        app.world_mut().resource_mut::<CombatClock>().tick = 641;
-        app.update();
-        app.world_mut().send_event(RevivalActionIntent {
-            entity,
-            action: RevivalActionKind::Terminate,
-            issued_at_tick: 641,
-        });
-        app.update();
-
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot file should exist"),
-        )
-        .expect("snapshot file should decode");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index file should exist"),
-        )
-        .expect("index file should decode");
-
-        assert_eq!(snapshot.char_id, "offline:Ancestor");
-        assert_eq!(snapshot.died_at_tick, 641);
-        assert_eq!(snapshot.termination_category, "自主归隐");
-        assert_eq!(snapshot.lifecycle.state, LifecycleState::Terminated);
-        assert!(matches!(
-            snapshot.life_record.biography.last(),
-            Some(BiographyEntry::Terminated { tick: 641, .. })
-        ));
-        assert_eq!(index.len(), 1);
-        assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
-        assert_eq!(index[0].termination_category, "自主归隐");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5491,6 +5407,7 @@ mod tests {
         // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
         app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
 
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
@@ -5612,6 +5529,9 @@ mod tests {
         let meridians = entity_ref
             .get::<MeridianSystem>()
             .expect("meridians should be reattached for new character");
+        let known_techniques = entity_ref
+            .get::<KnownTechniques>()
+            .expect("new character should receive a KnownTechniques component");
         let learned = entity_ref
             .get::<LearnedRecipes>()
             .expect("learned recipes should be reattached for new character");
@@ -5653,6 +5573,17 @@ mod tests {
         assert_eq!(cultivation.qi_current, 0.0);
         assert_eq!(cultivation.qi_max, 10.0);
         assert_eq!(meridians.opened_count(), 0);
+        #[cfg(feature = "dev-techniques")]
+        assert_eq!(
+            known_techniques.entries.len(),
+            app.world().resource::<TechniqueRegistry>().len(),
+            "dev-techniques new-character reset must preserve full catalog grants"
+        );
+        #[cfg(not(feature = "dev-techniques"))]
+        assert!(
+            known_techniques.entries.is_empty(),
+            "production new-character reset must keep technique progression empty"
+        );
         assert_eq!(learned.ids, vec!["kai_mai_pill_v0".to_string()]);
         assert!(inventory.revision.0 >= 1);
         assert_eq!(anticheat_counter.reach_violations, 0);
@@ -5679,7 +5610,7 @@ mod tests {
     }
 
     #[test]
-    fn create_new_character_uses_distinct_character_ids_for_deceased_exports() {
+    fn create_new_character_uses_distinct_character_ids_for_deceased_snapshots() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("new-character-deceased-unique");
         let data_dir = root.join("data");
@@ -5795,7 +5726,7 @@ mod tests {
         });
         first_lifecycle.terminate(900);
         persist_termination_transition(&settings, &first_lifecycle, &first_life_record)
-            .expect("first terminated character should export");
+            .expect("first terminated snapshot should persist");
 
         let mut second_lifecycle = Lifecycle {
             character_id: second_character_id.clone(),
@@ -5809,22 +5740,17 @@ mod tests {
         });
         second_lifecycle.terminate(901);
         persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
-            .expect("second terminated character should export");
+            .expect("second terminated snapshot should persist");
 
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index file should exist"),
-        )
-        .expect("index file should decode");
-
-        assert_eq!(index.len(), 2);
-        assert!(index
-            .iter()
-            .any(|entry| entry.char_id == first_character_id));
-        assert!(index
-            .iter()
-            .any(|entry| entry.char_id == second_character_id));
-        assert_ne!(index[0].path, index[1].path);
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM deceased_snapshots WHERE char_id IN (?1, ?2)",
+                params![first_character_id, second_character_id],
+                |row| row.get(0),
+            )
+            .expect("deceased snapshot rows should be queryable");
+        assert_eq!(snapshot_count, 2);
 
         let _ = fs::remove_dir_all(root);
     }
