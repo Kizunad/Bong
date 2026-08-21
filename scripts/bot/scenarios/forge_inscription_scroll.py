@@ -39,9 +39,7 @@ import time
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
-    latest_inventory_snapshot,
     require_item,
-    wait_inventory_contains,
 )
 
 DESCRIPTION = "刻铭：sharp_v0 残卷入炉 filled_slots 0→1→2 + 负例（不存在id/步骤错配）不消耗 + 双发不重复 grant + 会话照常结算"
@@ -128,6 +126,44 @@ def _inscription_step_state(payload):
     return step_state
 
 
+def _give_and_wait(
+    bot,
+    command_item_id,
+    expected_item_id=None,
+    count=1,
+    expected_stack_count=None,
+    timeout=45.0,
+):
+    """Wait for the inventory snapshot caused by this give, not a historical snapshot."""
+    expected_item_id = expected_item_id or command_item_id
+    anchor = last_event_time(bot)
+    bot.cmd(f"give {command_item_id} {count}")
+
+    def matches(event):
+        if (
+            event.kind != "server_data"
+            or event.data["payload_type"] != "inventory_snapshot"
+            or event.t <= anchor
+        ):
+            return False
+        found = find_item(event.data["payload"], expected_item_id)
+        if found is None:
+            return False
+        return (
+            expected_stack_count is None
+            or int(found["item"]["stack_count"]) == expected_stack_count
+        )
+
+    return bot.wait_for(
+        matches,
+        timeout=timeout,
+        description=(
+            f"give {command_item_id} {count} 后应收到新 inventory_snapshot，"
+            f"其中包含 {expected_item_id}"
+        ),
+    ).data["payload"]
+
+
 def run(env) -> None:
     with env.new_bot("FoSc") as bot:
         wait_for_ready(bot)
@@ -135,9 +171,7 @@ def run(env) -> None:
         bot.expect_chat("[dev] clearinv", timeout=30.0)
 
         # ── 放砧：真实 instance_id + 专属 forge_station 回执（镜像 production 链） ──
-        bot.cmd(f"give {ANVIL_ID} 1")
-        wait_inventory_contains(bot, ANVIL_ID)
-        snapshot = latest_inventory_snapshot(bot)
+        snapshot = _give_and_wait(bot, ANVIL_ID)
         anvil = require_item(snapshot, ANVIL_ID)
 
         assert bot.position is not None, (
@@ -183,8 +217,7 @@ def run(env) -> None:
         )
 
         # ── 学图谱：给残卷 → forge_learn_blueprint → 残卷消耗 ────────────────
-        bot.cmd(f"give {SCROLL_ID} 1")
-        wait_inventory_contains(bot, SCROLL_ID)
+        _give_and_wait(bot, SCROLL_ID)
         anchor = last_event_time(bot)
         _forge_learn_blueprint(bot, BLUEPRINT_ID)
         bot.wait_for(
@@ -197,18 +230,12 @@ def run(env) -> None:
         )
 
         # ── 备料 sui_tie×3 → 起炉受理（ling_feng_v0 要 3 块 sui_tie） ─────────
-        anchor = last_event_time(bot)
-        bot.cmd(f"give {MATERIAL} 3")
-        bot.wait_for(
-            lambda e: e.kind == "server_data"
-            and e.data["payload_type"] == "inventory_snapshot"
-            and e.t > anchor
-            and (find_item(e.data["payload"], MATERIAL_ITEM_ID) or {}).get("item", {}).get(
-                "stack_count"
-            )
-            == 3,
-            timeout=45.0,
-            description=f"give {MATERIAL} 3 后应出现 stack_count=3 的 {MATERIAL_ITEM_ID}",
+        material_snapshot = _give_and_wait(
+            bot,
+            MATERIAL,
+            expected_item_id=MATERIAL_ITEM_ID,
+            count=3,
+            expected_stack_count=3,
         )
 
         anchor = last_event_time(bot)
@@ -277,8 +304,7 @@ def run(env) -> None:
         )
 
         # ── 备第一枚刻铭残卷（sharp_v0） ─────────────────────────────────────
-        bot.cmd(f"give {INSCRIPTION_SCROLL_ID} 1")
-        snapshot = wait_inventory_contains(bot, INSCRIPTION_SCROLL_ID)
+        snapshot = _give_and_wait(bot, INSCRIPTION_SCROLL_ID)
         first_scroll = require_item(snapshot, INSCRIPTION_SCROLL_ID)
         assert int(first_scroll["item"]["stack_count"]) == 1, (
             f"备料应恰好 1 枚 {INSCRIPTION_SCROLL_ID}，实际 stack_count="
@@ -367,8 +393,7 @@ def run(env) -> None:
         )
 
         # ── 正例二：第 2 枚残卷入炉 → filled_slots 1→2（max_slots=2 封顶） ────
-        bot.cmd(f"give {INSCRIPTION_SCROLL_ID} 1")
-        wait_inventory_contains(bot, INSCRIPTION_SCROLL_ID)
+        _give_and_wait(bot, INSCRIPTION_SCROLL_ID)
         anchor = last_event_time(bot)
         _forge_inscription_scroll(bot, session_id, INSCRIPTION_ID)
         _wait_forge_payload_after(
@@ -393,8 +418,7 @@ def run(env) -> None:
         )
 
         # ── 负例二：步骤错配——探针残卷在包，推进到 Consecration 后提交 → 静默拒绝 ──
-        bot.cmd(f"give {INSCRIPTION_SCROLL_ID} 1")
-        probe = wait_inventory_contains(bot, INSCRIPTION_SCROLL_ID)
+        probe = _give_and_wait(bot, INSCRIPTION_SCROLL_ID)
         assert int(require_item(probe, INSCRIPTION_SCROLL_ID)["item"]["stack_count"]) == 1, (
             "步骤错配负例的探针残卷应恰好 1 枚"
         )
@@ -428,11 +452,12 @@ def run(env) -> None:
             f"Consecration 阶段提交 {INSCRIPTION_SCROLL_ID} 竟被消耗——步骤守卫失效"
         )
         # 正面读回：用无关 give 触发一次 inventory 回推，探针残卷应仍在。
+        give_anchor = last_event_time(bot)
         bot.cmd("give fan_tie 1")
         readback = bot.wait_for(
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
-            and e.t > anchor
+            and e.t > give_anchor
             and find_item(e.data["payload"], "fan_tie") is not None,
             timeout=45.0,
             description="用无关 give 触发一次 snapshot 读回背包状态",
