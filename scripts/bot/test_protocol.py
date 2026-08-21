@@ -2725,6 +2725,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "BONG_TERRAIN_RASTER_PATH",
             "BONG_WORLD_PATH",
             "BONG_SPIRITWOOD_HARVESTED_PATH",
+            "BONG_E2E_PREBUILT_SERVER_MANIFEST",
             "REDIS_URL",
         )
         for overrides, expected in cases:
@@ -2788,6 +2789,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_PORT",
                 "BONG_TERRAIN_RASTER_PATH",
                 "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "BONG_E2E_PREBUILT_SERVER_MANIFEST",
                 "REDIS_URL",
             ):
                 env.pop(name, None)
@@ -3158,7 +3160,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_REUSE",
                 "BOT_E2E_HOST",
                 "BOT_E2E_PORT", "BONG_TERRAIN_RASTER_PATH",
-                "BONG_SPIRITWOOD_HARVESTED_PATH", "REDIS_URL",
+                "BONG_SPIRITWOOD_HARVESTED_PATH", "BONG_E2E_PREBUILT_SERVER_MANIFEST",
+                "REDIS_URL",
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
@@ -3421,6 +3424,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_PORT", "BOT_E2E_FALLBACK_MODE",
                 "BONG_TERRAIN_RASTER_PATH", "BONG_WORLD_PATH",
                 "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "BONG_E2E_PREBUILT_SERVER_MANIFEST",
                 "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
                 "BOT_E2E_FALLBACK_OWNED",
             ):
