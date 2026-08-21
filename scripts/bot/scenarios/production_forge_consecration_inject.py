@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
-from bot.scenarios.cultivation_pill_consume import (
+from bot.scenarios._cultivation_helpers import (
     _set_qi_and_wait,
     _set_qi_max_and_wait,
 )

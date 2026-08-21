@@ -45,6 +45,13 @@ from bot.scenarios._combat_helpers import (  # noqa: E402
     wait_for_server_data_after,
 )
 from bot.scenarios._coffin_helpers import teardown_coffin  # noqa: E402
+from bot.scenarios._cultivation_helpers import (  # noqa: E402
+    _is_qi_max_confirmation,
+    _is_qi_set_confirmation,
+    _player_state_values,
+    _set_qi_and_wait,
+    _set_qi_max_and_wait,
+)
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     give_inventory_revision_barrier,
     latest_inventory_snapshot,
@@ -53,7 +60,10 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
-from bot.scenarios import production_forge_request  # noqa: E402
+from bot.scenarios import (  # noqa: E402
+    production_forge_consecration_inject,
+    production_forge_request,
+)
 from bot.scenarios.combat_skill_cast import (  # noqa: E402
     AUDIO_FLAG,
     AUDIO_RECIPE_ID,
@@ -82,12 +92,7 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _assert_settled_consumption,
     _expected_qi_after_pill,
     _has_departed_baseline,
-    _is_qi_max_confirmation,
-    _is_qi_set_confirmation,
-    _player_state_values,
     _server_tick_from_event,
-    _set_qi_and_wait,
-    _set_qi_max_and_wait,
     _snapshot_after_server_tick_fence,
 )
 from bot.scenarios.inventory_container_open_minimal import (  # noqa: E402
@@ -4053,6 +4058,25 @@ class LingtianScenarioFilteringTest(unittest.TestCase):
 
 
 class CultivationPillScenarioTest(unittest.TestCase):
+    def test_forge_consecration_uses_shared_cultivation_helpers(self):
+        source_path = pathlib.Path(production_forge_consecration_inject.__file__)
+        imports = {
+            node.module
+            for node in ast.walk(ast.parse(source_path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.ImportFrom)
+        }
+
+        self.assertIn(
+            "bot.scenarios._cultivation_helpers",
+            imports,
+            "开光场景必须从共享修炼 helper 导入通用 qi 同步逻辑",
+        )
+        self.assertNotIn(
+            "bot.scenarios.cultivation_pill_consume",
+            imports,
+            "开光场景不得横向依赖具体的服丹场景模块",
+        )
+
     def test_qi_set_confirmation_is_anchored_to_exact_target(self):
         good = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 95.0 -> 5.0"})
         wrong_target = _FakeEvent(2.0, "chat", {"text": "[dev] qi set 5.0 -> 95.0"})
