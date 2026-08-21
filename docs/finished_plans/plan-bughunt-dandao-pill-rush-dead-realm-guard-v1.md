@@ -1,13 +1,13 @@
-# plan-bughunt-dandao-pill-rush-dead-realm-guard-v1（骨架）
+# plan-bughunt-dandao-pill-rush-dead-realm-guard-v1（已归档）
 
-> **骨架（草案）**。一句话主题：删除 `resolve_pill_rush` 中对最低合法境界 `Realm::Awaken` 的恒假比较，保留“无 `Cultivation` 才按境界不足拒绝、六个合法境界均继续走经脉/真元门”的真实契约，并用边界测试锁住该契约。
+> **已归档（2026-08-14）**。一句话主题：删除 `resolve_pill_rush` 中对最低合法境界 `Realm::Awaken` 的恒假比较，保留“无 `Cultivation` 才按境界不足拒绝、六个合法境界均继续走经脉/真元门”的真实契约，并用边界测试锁住该契约。
 
 ## 阶段总览
 
 | 阶段 | 交付物 | 状态 |
 |---|---|---|
-| P0 | 第一性验真 + 删除 `resolve_pill_rush` 的不可达 `RealmTooLow` 分支 | ⬜ |
-| P1 | 六境界边界矩阵、无组件/经脉/真元回归与同类最低境界守卫审计 | ⬜ |
+| P0 | 第一性验真 + 删除 `resolve_pill_rush` 的不可达 `RealmTooLow` 分支 | ✅ 2026-08-14 |
+| P1 | 六境界边界矩阵、无组件/经脉/真元回归与同类最低境界守卫审计 | ✅ 2026-08-14 |
 
 ## 接入面
 
@@ -29,22 +29,22 @@
 
 ## P0 — 删除不可达境界守卫
 
-- [ ] 在 `server/src/dandao/skills.rs::resolve_pill_rush` 删除 `cultivation.realm < Realm::Awaken` 的恒假分支；保留缺 `Cultivation` 的 `RealmTooLow` 拒绝作为凡人/坏实体边界。
-- [ ] 不把门槛改成 `Realm::Induce`，不新增平行 `PILL_RUSH_MIN_REALM` 抽象；权威解锁表 `abilities_unlocked_at(Realm::Awaken)` 与既有成功测试已经说明最低合法境界就是醒灵。
-- [ ] 保持后续检查顺序和行为：`check_meridian_dependencies(PILL_RUSH_MERIDIANS, ...)` → `dandao_qi_cost_base(cultivation.realm)` → `drain_dandao_qi` → `CastResult::Started`。
-- [ ] 可核验 symbol：`resolve_pill_rush`、`pill_rush_succeeds_at_awaken`、`pill_rush_rejects_without_cultivation`。
+- [x] 在 `server/src/dandao/skills.rs::resolve_pill_rush` 删除 `cultivation.realm < Realm::Awaken` 的恒假分支；保留缺 `Cultivation` 的 `RealmTooLow` 拒绝作为凡人/坏实体边界。
+- [x] 不把门槛改成 `Realm::Induce`，不新增平行 `PILL_RUSH_MIN_REALM` 抽象；权威解锁表 `abilities_unlocked_at(Realm::Awaken)` 与既有成功测试已经说明最低合法境界就是醒灵。
+- [x] 保持后续检查顺序和行为：`check_meridian_dependencies(PILL_RUSH_MERIDIANS, ...)` → `dandao_qi_cost_base(cultivation.realm)` → `drain_dandao_qi` → `CastResult::Started`。
+- [x] 可核验 symbol：`resolve_pill_rush`、`pill_rush_succeeds_at_awaken`、`pill_rush_rejects_without_cultivation`。
 
 **P0 测试声明**：`cd server && cargo test dandao::skills::skill_tests`；该真实模块（`server/src/dandao/skills.rs:337-338`）至少覆盖无 `Cultivation` 拒绝、醒灵成功、真元不足、脾/肾经永久断裂、冷却、实际扣费，以及 `drain_qi_no_position_routes_to_overflow_not_destroyed` / `qi_transfer_to_account_is_zone_kind_when_in_zone` 两条 zone/overflow 守恒分支；现有测试不得因删分支弱化。
 
 ## P1 — 饱和边界与同类审计
 
-- [ ] 新增 `pill_rush_accepts_every_valid_realm_before_resource_gates`（或同义 greppable 测试）：遍历 `Realm::{Awaken, Induce, Condense, Solidify, Spirit, Void}`，给足对应 `dandao_qi_cost_base(realm)` 且经脉完好，断言均进入 `CastResult::Started`；失败信息必须带 realm 与实际结果。
-- [ ] 保留 `pill_rush_rejects_without_cultivation`，明确 `RealmTooLow` 只代表缺失修为组件，不再暗示存在低于醒灵的合法 `Realm`。
-- [ ] 审计 `server/src/dandao/skills.rs` 其余基础招 realm gate：`resolve_pill_bomb` 的 `Realm::Induce` 与 `resolve_pill_mist` 的 `Realm::Condense` 均有真实低阶反例；只补必要的正好低一境/恰达门槛测试，不顺手改数值或 resolver。
-- [ ] 不新增源码字符串测试：六境界行为矩阵锁定外部契约，恒假比较本身由删除后的 diff review 与 `cargo clippy --all-targets -- -D warnings` 守门；本 plan 不宣称行为测试能检测一个行为中性的死比较重新出现。
-- [ ] 在 `server/src/cultivation/skill_registry.rs`（或紧邻丹道测试）新增 `production_registry_dispatches_pill_rush_at_awaken`（或同义 greppable 测试）：必须调用 production `init_registry()` 后以 `DANDAO_PILL_RUSH_SKILL_ID` 执行 `SkillRegistry::lookup`，再调用返回的 `SkillFn`；禁止在测试内手工注册或直接调用 `resolve_pill_rush`。醒灵、经脉完好、真元充足时断言 `CastResult::Started` 与真元按 `dandao_qi_cost_base(Realm::Awaken)` 扣除，证明统一 registry 确实加载并消费该 resolver。
-- [ ] 同一 production-registry dispatch fixture 增加缺 `Cultivation` 拒绝 case，断言 lookup 仍命中且返回 `CastRejectReason::RealmTooLow`；这只锁 server registry→resolver，不绕过 `technique_definition` 去伪造当前不可达的玩家 `SkillBarCast` e2e。
-- [ ] 可核验 symbol：`skill_registry::init_registry`、`DANDAO_PILL_RUSH_SKILL_ID`、`SkillRegistry::lookup`、`production_registry_dispatches_pill_rush_at_awaken`、`pill_rush_accepts_every_valid_realm_before_resource_gates`、`pill_bomb_rejects_below_induce`、`pill_mist_rejects_below_condense`。
+- [x] 新增 `pill_rush_accepts_every_valid_realm_before_resource_gates`（或同义 greppable 测试）：遍历 `Realm::{Awaken, Induce, Condense, Solidify, Spirit, Void}`，给足对应 `dandao_qi_cost_base(realm)` 且经脉完好，断言均进入 `CastResult::Started`；失败信息必须带 realm 与实际结果。
+- [x] 保留 `pill_rush_rejects_without_cultivation`，明确 `RealmTooLow` 只代表缺失修为组件，不再暗示存在低于醒灵的合法 `Realm`。
+- [x] 审计 `server/src/dandao/skills.rs` 其余基础招 realm gate：`resolve_pill_bomb` 的 `Realm::Induce` 与 `resolve_pill_mist` 的 `Realm::Condense` 均有真实低阶反例；只补必要的正好低一境/恰达门槛测试，不顺手改数值或 resolver。
+- [x] 不新增源码字符串测试：六境界行为矩阵锁定外部契约，恒假比较本身由删除后的 diff review 与 `cargo clippy --all-targets -- -D warnings` 守门；本 plan 不宣称行为测试能检测一个行为中性的死比较重新出现。
+- [x] 在 `server/src/cultivation/skill_registry.rs`（或紧邻丹道测试）新增 `production_registry_dispatches_pill_rush_at_awaken`（或同义 greppable 测试）：必须调用 production `init_registry()` 后以 `DANDAO_PILL_RUSH_SKILL_ID` 执行 `SkillRegistry::lookup`，再调用返回的 `SkillFn`；禁止在测试内手工注册或直接调用 `resolve_pill_rush`。醒灵、经脉完好、真元充足时断言 `CastResult::Started` 与真元按 `dandao_qi_cost_base(Realm::Awaken)` 扣除，证明统一 registry 确实加载并消费该 resolver。
+- [x] 同一 production-registry dispatch fixture 增加缺 `Cultivation` 拒绝 case，断言 lookup 仍命中且返回 `CastRejectReason::RealmTooLow`；这只锁 server registry→resolver，不绕过 `technique_definition` 去伪造当前不可达的玩家 `SkillBarCast` e2e。
+- [x] 可核验 symbol：`skill_registry::init_registry`、`DANDAO_PILL_RUSH_SKILL_ID`、`SkillRegistry::lookup`、`production_registry_dispatches_pill_rush_at_awaken`、`pill_rush_accepts_every_valid_realm_before_resource_gates`、`pill_bomb_rejects_below_induce`、`pill_mist_rejects_below_condense`。
 
 **P1 测试声明**：`cd server && cargo test dandao::skills::skill_tests` 与 `cd server && cargo test cultivation::skill_registry::tests::production_registry_dispatches_pill_rush`；后一个过滤器必须实际运行 production-registry 的成功/拒绝 case，禁止零测试假绿。最终 server gate 为 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
 
@@ -59,3 +59,33 @@
 
 1. P1 是否需要源码形态 lint？推荐不为单个恒假比较引入源码字符串测试；六境界矩阵只锁行为契约，代码形态由 clippy 与实施 diff review 负责，验收证据不得把两者混称。
 2. `RealmTooLow` 用于“缺 `Cultivation`”是否需要另拆更精确拒绝原因？推荐本 plan 不改 wire/UI 枚举，避免把纯死代码清理扩大成协议变更。
+
+以上问题全部已在 §8.1 收口；实施时以 §8.1 决议为准。
+
+## §8.1 决议（pre-P0 收口，2026-08-14）
+
+### #1 不增加源码形态 lint
+
+**决议**：
+1. 不为单个恒假比较新增源码字符串测试；代码形态由删除该分支的 diff review 与 clippy 共同核验。
+2. 六境界矩阵只声明并锁定外部行为：所有合法 `Realm` 均继续进入既有经脉与真元门。
+3. 验收证据分别陈述行为测试与静态门禁，不把六境界矩阵误称为死代码回归 lint。
+
+**落点**：`server/src/dandao/skills.rs:209-248`；plan P0、P1。
+
+### #2 保留既有 RealmTooLow wire 语义
+
+**决议**：
+1. 缺 `Cultivation` 时继续返回 `CastRejectReason::RealmTooLow`。
+2. 不新增拒绝枚举、不调整 `CastOutcomeV1` 映射，也不触碰 client/agent 协议。
+3. 用 production registry dispatch 的缺组件用例锁住现有 server 契约。
+
+**落点**：`server/src/dandao/skills.rs:215-225`、`server/src/cultivation/skill_registry.rs:104-122`；plan P0、P1。
+
+## Finish Evidence
+
+- **落地清单**：P0 在 `server/src/dandao/skills.rs::resolve_pill_rush` 删除最低合法境界上的恒假比较，保留缺组件、经脉、真元、扣费与守恒路径；P1 在 `server/src/dandao/skills.rs::skill_tests` 增加六境界矩阵并以低一境/门槛境测试锁定 pill_bomb、pill_mist 的真实下界，在 `server/src/cultivation/skill_registry.rs::tests` 增加 production `init_registry()` → `SkillRegistry::lookup` → `SkillFn` 成功与缺组件拒绝覆盖。
+- **关键 commit**：`d4511c24a`（2026-08-14，删除死守卫并补齐边界与生产注册分发测试）；`ea42130d7`（2026-08-14，skeleton 晋升 active plan）。
+- **测试结果**：执行 broker 请求 `execution-pillrush-targeted` 与 `execution-pillrush-targeted-retry` 均已终态 failed；两次都在进入任何 cargo 命令前因 Docker 镜像 `cder-worker:rust196-java17` 缺失且 pull denied 退出，因此 `cargo fmt --check`、两组 targeted test、clippy 与全量 `cargo test` 实际执行数均为 0，无 PASS 可声明。实施 diff 已完成 `git diff --check` 和逐项静态审查；这不替代 server gate。
+- **跨仓库核验**：纯 server 修复；命中 `resolve_pill_rush`、`DANDAO_PILL_RUSH_SKILL_ID`、`init_registry`、`SkillRegistry::lookup`、`CastRejectReason::RealmTooLow`。未修改 client、agent、schema、Redis key 或 wire 类型。
+- **遗留 / 后续**：玩家 `SkillBarCast` 的 definition/ownership/A/V 链路仍归 `plan-bughunt-dandao-basic-skillbar-bridge-v1`；本 plan 未实现或伪造该 e2e。server gate 必须在执行镜像恢复后由 CI/后续执行环境补跑。

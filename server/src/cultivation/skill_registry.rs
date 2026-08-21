@@ -162,8 +162,65 @@ pub fn init_registry() -> SkillRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{Cultivation, Realm};
     use crate::cultivation::meridian::severed::SkillMeridianDependencies;
+    use crate::dandao::{dandao_qi_cost_base, DANDAO_PILL_RUSH_SKILL_ID};
     use crate::schema::combat_hud::CastOutcomeV1;
+
+    #[test]
+    fn production_registry_dispatches_pill_rush_at_awaken() {
+        let registry = init_registry();
+        let skill_fn = registry
+            .lookup(DANDAO_PILL_RUSH_SKILL_ID)
+            .expect("production init_registry must register dandao.pill_rush");
+        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
+        let initial_qi = qi_cost + 1.0;
+        let mut world = valence::prelude::bevy_ecs::world::World::new();
+        let caster = world
+            .spawn(Cultivation {
+                realm: Realm::Awaken,
+                qi_current: initial_qi,
+                qi_max: initial_qi,
+                ..Default::default()
+            })
+            .id();
+
+        let result = skill_fn(&mut world, caster, 0, None);
+
+        assert!(
+            matches!(&result, CastResult::Started { .. }),
+            "production registry 查表后的服丹急行应允许醒灵境施法，实际 {result:?}"
+        );
+        let actual_qi = world
+            .get::<Cultivation>(caster)
+            .expect("caster cultivation should remain present")
+            .qi_current;
+        let expected_qi = initial_qi - qi_cost;
+        assert!(
+            (actual_qi - expected_qi).abs() < f64::EPSILON,
+            "production registry 分发必须消费 resolver 并扣除 {qi_cost} qi：期望 {expected_qi}，实际 {actual_qi}"
+        );
+    }
+
+    #[test]
+    fn production_registry_dispatches_pill_rush_without_cultivation() {
+        let registry = init_registry();
+        let skill_fn = registry
+            .lookup(DANDAO_PILL_RUSH_SKILL_ID)
+            .expect("production init_registry must register dandao.pill_rush");
+        let mut world = valence::prelude::bevy_ecs::world::World::new();
+        let caster = world.spawn_empty().id();
+
+        let result = skill_fn(&mut world, caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RealmTooLow,
+            },
+            "production registry 查表仍应把缺少 Cultivation 的实体按既有契约拒绝"
+        );
+    }
 
     /// 通用技能警示：每个 `CastRejectReason` 变体都映射到一个非中性 `CastOutcomeV1`。
     /// 锁住"覆盖所有拒绝原因"不变量——新增 reject 变体若忘了映射，rustc 会先在
