@@ -35,6 +35,7 @@ import math
 import time
 
 from bot.bot import BotAssertionError
+from bot.scenarios._coffin_helpers import teardown_coffin
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_instance,
@@ -568,3 +569,6 @@ def run(env) -> None:
             timeout=10.0,
             description="回主世界后的坐标确认脉冲",
         )
+        # 场景创建的世界实体必须显式回收。只 leave 会清 occupied_by/current_coffin，
+        # 不会移除 registry 或 marker；长活 --all server 会把残留泄漏给后续场景。
+        teardown_coffin(bot, lower)

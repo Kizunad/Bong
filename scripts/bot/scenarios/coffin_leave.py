@@ -25,6 +25,7 @@ import math
 import time
 
 from bot.bot import BotAssertionError
+from bot.scenarios._coffin_helpers import teardown_coffin
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_instance,
@@ -364,3 +365,7 @@ def run(env) -> None:
                 timeout=10.0,
                 description="B leave 收尾应推 in_coffin:false",
             )
+
+        # leave 只释放占用，不销毁棺材。显式破坏并等待 marker despawn，避免污染同一
+        # --all server 中后续 production_coffin_place_destroy 的世界实体不变量。
+        teardown_coffin(bot, lower)

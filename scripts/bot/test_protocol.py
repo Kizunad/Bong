@@ -44,6 +44,7 @@ from bot.scenarios._combat_helpers import (  # noqa: E402
     is_outgoing_positive_hit,
     wait_for_server_data_after,
 )
+from bot.scenarios._coffin_helpers import teardown_coffin  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     give_inventory_revision_barrier,
     latest_inventory_snapshot,
@@ -3361,6 +3362,17 @@ class _CommandFakeBot(_FakeBot):
             self.events.append(self.pending.pop(0))
 
 
+class _IntentFakeBot(_CommandFakeBot):
+    def __init__(self, events: list[_FakeEvent], pending: list[_FakeEvent]):
+        super().__init__(events, pending)
+        self.intents: list[dict] = []
+
+    def intent(self, payload: dict) -> None:
+        self.intents.append(payload)
+        if self.pending:
+            self.events.append(self.pending.pop(0))
+
+
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
     return _FakeEvent(
         t,
@@ -3374,6 +3386,55 @@ def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
             },
         },
     )
+
+
+class CoffinTeardownHelperTest(unittest.TestCase):
+    @staticmethod
+    def _spawn(t: float, entity_id: int, x: float, y: float, z: float) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "entity_spawn",
+            {"entity_id": entity_id, "type": 160, "x": x, "y": y, "z": z},
+        )
+
+    def test_teardown_targets_matching_marker_and_waits_for_its_destroy(self):
+        bot = _IntentFakeBot(
+            [
+                self._spawn(1.0, 41, 13.0, 64.0, -2.5),
+                self._spawn(2.0, 42, 11.0, 64.0, -2.5),
+            ],
+            [_FakeEvent(3.0, "entities_destroy", {"entity_ids": [42, 99]})],
+        )
+
+        teardown_coffin(bot, (10, 64, -3), timeout=0.01)
+
+        self.assertEqual(
+            bot.intents,
+            [{"type": "coffin_break", "v": 1, "x": 10, "y": 64, "z": -3}],
+            "清场必须对实际 lower 坐标发送精确 coffin_break payload",
+        )
+
+    def test_teardown_rejects_destroy_for_another_marker(self):
+        bot = _IntentFakeBot(
+            [self._spawn(1.0, 42, 11.0, 64.0, -2.5)],
+            [_FakeEvent(2.0, "entities_destroy", {"entity_ids": [99]})],
+        )
+
+        with self.assertRaisesRegex(AssertionError, "marker #42"):
+            teardown_coffin(bot, (10, 64, -3), timeout=0.01)
+
+        self.assertEqual(len(bot.intents), 1, "错误 destroy 证据不得阻止实际 break 请求发出")
+
+    def test_teardown_does_not_break_when_expected_marker_was_never_observed(self):
+        bot = _IntentFakeBot(
+            [self._spawn(1.0, 41, 99.0, 64.0, -2.5)],
+            [],
+        )
+
+        with self.assertRaisesRegex(AssertionError, "待清场"):
+            teardown_coffin(bot, (10, 64, -3), timeout=0.01)
+
+        self.assertEqual(bot.intents, [], "未锁定目标 marker 时不得盲目破坏其他棺材")
 
 
 def _pill_snapshot_event(t: float, revision: int, count: int, qi: float) -> _FakeEvent:
