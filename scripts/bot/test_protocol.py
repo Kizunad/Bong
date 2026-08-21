@@ -3064,10 +3064,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
     def test_reuse_without_listener_fails_closed_before_private_self_start(self):
         server_start = self.source.index("# ---- server ----")
-        server = self.source[server_start:]
+        server_end = self.source.index("\n# ---- 场景 ----", server_start)
+        server = self.source[server_start:server_end]
         rejection = 'BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起'
         self.assertIn(rejection, server)
-        self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
+        dispatch = server[server.index("server_ready=0"):]
+        self.assertLess(
+            dispatch.index(rejection),
+            dispatch.index('if start_self_server_attempt "$attempt"'),
+            "REUSE 缺少 listener 时必须在调用自起 server 之前 fail closed",
+        )
 
     def test_owned_world_modes_use_private_cwd_and_only_ambient_enables_dev_commands(self):
         launch_start = self.source.index('  (\n    if [ "$OWNED_WORLD_MODE" = "1" ]; then')
@@ -3109,6 +3115,67 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 self.assertIn(required, self.source)
         self.assertIn('mkdir -p "$EVIDENCE_ROOT"', evidence_setup)
         self.assertNotIn('EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"', self.source)
+
+    def test_port_input_is_canonicalized_and_zero_rejected_before_harness_setup(self):
+        port_start = self.source.index("# 自起模式并发安全：")
+        port_end = self.source.index("\n# Ambient fixture ownership", port_start)
+        port = self.source[port_start:port_end]
+        launch_start = self.source.index('  (\n    if [ "$OWNED_WORLD_MODE" = "1" ]; then')
+        launch_end = self.source.index('  ) >>"$SERVER_LOG"', launch_start)
+        port += self.source[launch_start:launch_end]
+        scenario_start = self.source.index("# ---- 场景 ----")
+        port += self.source[scenario_start:]
+        for required in (
+            'sock.bind(("0.0.0.0", 0))',
+            'canonicalize_port() {',
+            'if ! PORT="$(canonicalize_port "$RAW_PORT")"; then',
+            'export BONG_SERVER_PORT="$PORT"',
+            'BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, port)
+
+        root = pathlib.Path(__file__).parents[2]
+        env = os.environ.copy()
+        env.update({"BOT_E2E_PORT": " 0 ", "BOT_E2E_AMBIENT_FIXTURE_MODE": "0"})
+        result = subprocess.run(
+            ["bash", "scripts/bot-e2e.sh"], cwd=root, env=env,
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("BOT_E2E_PORT 必须是 1-65535", result.stderr)
+        self.assertNotIn("600s 内未同时满足", result.stderr)
+
+    def test_auto_port_collision_uses_wildcard_probe_and_bounded_retry(self):
+        server_start = self.source.index("# ---- server ----")
+        server_end = self.source.index("\n# ---- 场景 ----", server_start)
+        server = self.source[server_start:server_end]
+        for required in (
+            "MAX_PORT_RETRIES=3",
+            "start_self_server_attempt()",
+            'grep -Fq "failed to start TCP listener" "$SERVER_LOG"',
+            'if [ "$attempt_status" -eq 75 ] && [ "$PORT_AUTO_ALLOCATED" = "1" ]',
+            'PORT="$(canonicalize_port "$(allocate_free_port)")"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, server)
+        allocation_start = self.source.index("allocate_free_port()")
+        allocation_end = self.source.index("\n# 环境变量允许", allocation_start)
+        self.assertIn('sock.bind(("0.0.0.0", 0))', self.source[allocation_start:allocation_end])
+
+    def test_concurrent_invocations_scope_preflight_evidence_to_unique_namespaces(self):
+        for required in (
+            'EVIDENCE_ROOT="$BOT_E2E_EVIDENCE_ROOT"',
+            'EVIDENCE_ROOT="$(mktemp -d "$EVIDENCE_ROOT/session.XXXXXXXXXX")"',
+            'export BOT_E2E_EVIDENCE_ROOT="$EVIDENCE_ROOT"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, self.source)
+        protocol_source = pathlib.Path(__file__).read_text(encoding="utf-8")
+        self.assertIn(
+            'evidence_root = root / ".sisyphus/evidence/bot-e2e" / f"test-{uuid.uuid4().hex}"',
+            protocol_source,
+        )
 
     def test_redis_adopts_default_listener_or_starts_owned_private_instance(self):
         redis_start = self.source.index("# ---- redis ----")
@@ -3273,7 +3340,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "with socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), timeout=0.05):\n"
                 "    pass\n"
                 "PY\n"
-                "    lsof -nP -iTCP:\"$BOT_E2E_PORT\" -sTCP:LISTEN -Fp 2>/dev/null | grep -q \"p$1\"\n"
+                "    ss -4 -H -ltnp \"sport = :$BOT_E2E_PORT\" 2>/dev/null | grep -qE \"pid=$1(,|\\))\"\n"
                 "  }\n"
                 "  case \"$FAKE_RUNNER_MODE\" in\n"
                 "    success) printf 'runner-complete\\n' > \"$FAKE_RUNNER_RESULT_FILE\"; exit 0 ;;\n"
@@ -3414,7 +3481,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 )
                 (fake_bin / "tee").chmod(0o755)
 
-            evidence_root = root / ".sisyphus/evidence/bot-e2e"
+            # Each bot-e2e invocation owns a private evidence namespace. The shell harness
+            # exports this path to the pre-flight tests, so concurrent checkouts cannot
+            # discover or delete one another's runtime-watch state.
+            evidence_root = root / ".sisyphus/evidence/bot-e2e" / f"test-{uuid.uuid4().hex}"
             env = os.environ.copy()
             # Exercise isolation against a hostile ambient world override. The
             # fixture must remove it before entering dedicated fallback mode.
@@ -3443,6 +3513,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "FAKE_SERVER_PID_FILE": str(server_pid_file),
                     "FAKE_LISTENER_PID_FILE": str(listener_pid_file),
                     "FAKE_EVIDENCE_ROOT": str(evidence_root),
+                    "BOT_E2E_EVIDENCE_ROOT": str(evidence_root),
                     "FAKE_RUNNER_RESULT_FILE": str(runner_result_file),
                     "FAKE_REPLACEMENT_READY_FILE": str(replacement_ready_file),
                     "BOT_E2E_WATCH_STATUS_EVIDENCE_PATH": str(watcher_status_file),

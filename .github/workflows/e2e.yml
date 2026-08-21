@@ -193,6 +193,9 @@ jobs:
         env:
           BOT_E2E_RUN_TAG: ci
           BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
+          # CI 单跑一次，钉死固定端口（与脚本默认行为一致，行为零变化）；端口自动
+          # 分配是本地并发多套 e2e 的路径，CI 不参与争抢。
+          BOT_E2E_PORT: "25565"
           BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ steps.server-release-artifact.outputs.manifest }}
         run: bash scripts/bot-e2e.sh
 
@@ -200,6 +203,7 @@ jobs:
         env:
           BOT_E2E_RUN_TAG: ci
           BOT_E2E_FALLBACK_MODE: "1"
+          BOT_E2E_PORT: "25565"
           BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ steps.server-release-artifact.outputs.manifest }}
         run: bash scripts/bot-e2e.sh
 
