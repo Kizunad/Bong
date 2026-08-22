@@ -199,10 +199,20 @@ def _open_botany_harvest_session(bot) -> str:
     ``request_harvest_mode`` 更新 session → 下个 sync 节拍回推 botany_harvest_progress）。
     探针若打在 ``session_id="x"`` 这种不存在 session 上，serde 错误接受未知 mode 变体
     后请求进 handler 也会被 "missing harvest session" 拒绝，探针假通过（本轮 review
-    finding 4）。先用 ``/bong gather spirit_grass`` 建立真实 session，再读回推的
-    botany_harvest_progress 拿 session_id（server 以 canonical_player_id 为 session_id，
-    client 无法凭空构造）。
+    finding 4）。先用 ``botany_spawn spirit_grass`` 在玩家脚边造一株就近 fixture（起
+    点 BciRng 生于  [8,150,8] 天空平台，与地表  y≈64 的自然植物远超 6 格半径，gather 会
+    因无就近目标而无 session），再 ``/bong gather spirit_grass`` 建真实 session，读
+    回推的 botany_harvest_progress 拿 session_id（server 以 canonical_player_id 为
+    session_id，client 无法凭空构造）。 fixture 需 BONG_DEV_MODE=1（ambient fixture
+    模式 server 已设，见 bot-e2e.sh）。
     """
+    # 就近 fixture：放在玩家 1 格外同高度，gather 6 格半径内必命中；失败只留日志，仍走
+    # 自然植物 gather 路径（非 owned fixture 跑可能无 dev 权限）。
+    try:
+        bot.cmd("botany_spawn spirit_grass")
+        bot.expect_chat("[dev] botany_spawn accepted:", timeout=5.0)
+    except Exception:
+        pass
     bot.cmd("bong gather spirit_grass")
     bot.expect_chat("Gameplay action queued.", timeout=10.0)
     progress = bot.wait_for(
