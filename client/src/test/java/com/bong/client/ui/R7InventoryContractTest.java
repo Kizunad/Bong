@@ -102,7 +102,7 @@ class R7InventoryContractTest {
         assertEquals(
             "8fde0305098e1500db8a454a76abff479d1426a7cf9204484e47b0f952a761bc",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "P0 is docs/tests/resources only; every shipped production path and byte must match the frozen baseline"
+            "P0 baseline plus the explicitly delivered R7 P1 DiffListWidget production path must match"
         );
     }
 
@@ -110,7 +110,6 @@ class R7InventoryContractTest {
     void p0AddsNoProductionFoundationOrScreenMigration() throws IOException {
         Set<String> forbiddenProductionTypes = Set.of(
             "BongScreenBase.java",
-            "DiffListWidget.java",
             "BongKeybindRegistry.java",
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
@@ -122,7 +121,7 @@ class R7InventoryContractTest {
                 .filter(forbiddenProductionTypes::contains)
                 .forEach(discovered::add);
         }
-        assertTrue(discovered.isEmpty(), "P0 is docs/tests/resources only; production foundation found=" + discovered);
+        assertTrue(discovered.isEmpty(), "P0/P1 boundary found an unapproved production foundation=" + discovered);
 
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
@@ -297,10 +296,11 @@ class R7InventoryContractTest {
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
-            "npc/NpcTradeScreen.java:163"
+            "npc/NpcTradeScreen.java:163",
+            "ui/DiffListWidget.java:71"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(15, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(16, sites.size(), "the frozen executable clearChildren inventory changed");
         assertEquals(sites.stream().sorted().toList(), actual,
             "the inventory must match every executable zero-argument production clearChildren call");
     }
