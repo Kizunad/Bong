@@ -7,8 +7,8 @@ use self::state::{
     canonical_player_id, load_player_slices_for_canonical_techniques, save_player_core_slice,
     save_player_inventory_slice, save_player_lifecycle_slice,
     save_player_lifespan_slice_with_coffin, save_player_skill_slice,
-    save_player_slices_with_coffin, save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer,
-    PlayerStatePersistence,
+    save_player_slices_with_coffin, save_player_slow_slice, update_player_ui_prefs, PlayerState,
+    PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{Lifecycle, UnlockedStyles, TICKS_PER_SECOND};
@@ -19,6 +19,7 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
+use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -32,6 +33,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
 use valence::entity::entity::Flags;
 use valence::message::SendMessage;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::Despawned;
 use valence::prelude::{
     bevy_ecs, Added, App, AppExit, Changed, Client, Commands, Component, Entity, EntityLayerId,
@@ -81,12 +83,26 @@ type JoinedClientsWithoutStateQueryFilter = (
     Or<(
         Added<Client>,
         Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        Added<ReconnectPersistencePending>,
     )>,
     Without<PlayerState>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
+
+#[derive(SystemParam)]
+pub(crate) struct PlayerAttachResources<'w> {
+    skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
+    skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
+    technique_registry: Option<Res<'w, TechniqueRegistry>>,
+}
+
 #[derive(Component, Default)]
 struct InventoryPersistenceDirty;
+
+/// Same-username reconnects wait one frame while the old disconnected entity's final persistence
+/// checkpoint runs. This marker is consumed by the normal join attach system on the next frame.
+#[derive(Component, Default)]
+pub(crate) struct ReconnectPersistencePending;
 
 type ChangedInventoryClientsQueryItem<'a> = (Entity, &'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (
@@ -219,8 +235,8 @@ pub(crate) fn attach_player_state_to_joined_clients(
     persistence: Res<PlayerStatePersistence>,
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
-    mut skill_config_store: Option<ResMut<SkillConfigStore>>,
-    skill_config_schemas: Option<Res<SkillConfigSchemas>>,
+    mut resources: PlayerAttachResources<'_>,
+    pending_disconnects: Query<&Username, (Without<Client>, Without<Despawned>)>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -236,6 +252,17 @@ pub(crate) fn attach_player_state_to_joined_clients(
         flags,
     ) in &mut joined_clients
     {
+        if pending_disconnects
+            .iter()
+            .any(|disconnected| disconnected.0 == username.0)
+        {
+            commands.entity(entity).insert(ReconnectPersistencePending);
+            continue;
+        }
+
+        commands
+            .entity(entity)
+            .remove::<ReconnectPersistencePending>();
         let persisted =
             load_player_slices_for_canonical_techniques(&persistence, username.0.as_str());
         let restored_inventory = persisted.inventory.is_some();
@@ -257,15 +284,30 @@ pub(crate) fn attach_player_state_to_joined_clients(
             }
         }
 
-        let quick_slot_bindings = persisted
-            .ui_prefs
-            .quick_slot_bindings(persisted.inventory.as_ref());
-        let skill_bar_bindings = persisted
-            .ui_prefs
-            .skill_bar_bindings(persisted.inventory.as_ref());
+        let mut ui_prefs = persisted.ui_prefs.clone();
+        let skill_bar_prefs_sanitized = resources
+            .technique_registry
+            .as_deref()
+            .is_some_and(|registry| ui_prefs.sanitize_skill_bar_bindings(registry));
+        if skill_bar_prefs_sanitized {
+            let sanitized_skill_bar = ui_prefs.skill_bar.clone();
+            if let Err(error) = update_player_ui_prefs(&persistence, username.0.as_str(), |prefs| {
+                prefs.skill_bar = sanitized_skill_bar
+            }) {
+                tracing::warn!(
+                    "[bong][player] failed to persist sanitized skill-bar bindings for `{}`: {error}",
+                    username.0
+                );
+            }
+        }
+        let quick_slot_bindings = ui_prefs.quick_slot_bindings(persisted.inventory.as_ref());
+        let skill_bar_bindings = ui_prefs.skill_bar_bindings(
+            persisted.inventory.as_ref(),
+            resources.technique_registry.as_deref(),
+        );
         if let (Some(store), Some(schemas)) = (
-            skill_config_store.as_deref_mut(),
-            skill_config_schemas.as_deref(),
+            resources.skill_config_store.as_deref_mut(),
+            resources.skill_config_schemas.as_deref(),
         ) {
             store.replace_player_configs(
                 canonical_player_id(username.0.as_str()).as_str(),
@@ -459,6 +501,15 @@ pub(crate) fn despawn_disconnected_clients(
                     );
                 }
             }
+            // Valence detects a closed TCP connection asynchronously. During that window the
+            // stale ECS entity still has `Client`, so an active CraftSession may advance a few
+            // ticks after the bot has already disconnected. The periodic craft checkpoint is
+            // the last authoritative in-game progress; prefer it for the disconnect flush so
+            // reconnect cannot turn network-detection latency into free crafting time.
+            let durable_craft_session =
+                load_player_slices_for_canonical_techniques(&persistence, username.0.as_str())
+                    .craft_session;
+            let craft_session_for_disconnect = durable_craft_session.as_ref().or(craft_session);
             match save_player_slices_with_coffin(
                 &persistence,
                 username.0.as_str(),
@@ -469,7 +520,7 @@ pub(crate) fn despawn_disconnected_clients(
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
                 coffin.map(|c| c.grade),
-                craft_session,
+                craft_session_for_disconnect,
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -1170,9 +1221,8 @@ mod tests {
     fn cultivation_bundle_flushes_periodically() {
         let (persistence, data_dir, db_path) = sqlite_persistence("cultivation-flush");
         let mut app = App::new();
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-cultivation-flush",
         ));
         app.insert_resource(PlayerStateAutosaveTimer {
@@ -1231,9 +1281,8 @@ mod tests {
         let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-autosave-flush");
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-autosave-flush",
         ));
         app.insert_resource(PlayerStateAutosaveTimer {
@@ -1288,9 +1337,8 @@ mod tests {
             sqlite_persistence("lifecycle-autosave-no-early-flush");
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-autosave-no-early-flush",
         ));
         // ticks - 1 后面还差 2 才到 INTERVAL_TICKS，tick_player_persistence_timer 的 +1
@@ -1340,9 +1388,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-disconnect-flush",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1380,6 +1427,64 @@ mod tests {
     }
 
     #[test]
+    fn disconnect_flush_does_not_advance_craft_from_stale_ecs_session() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("disconnect-craft-checkpoint");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        let inventory = make_inventory();
+        let durable_session = CraftSession {
+            recipe_id: crate::craft::RecipeId::new("craft.test.disconnect"),
+            started_at_tick: 10,
+            remaining_ticks: 37,
+            total_ticks: 40,
+            owner_player_id: canonical_player_id("Azure"),
+            qi_paid: 0.0,
+            quantity_total: 1,
+            completed_count: 0,
+        };
+        crate::player::state::save_player_inventory_and_craft_session_slices(
+            &persistence,
+            "Azure",
+            Some(&inventory),
+            Some(&durable_session),
+        )
+        .expect("durable craft checkpoint should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_db_path(
+            &db_path,
+            "player-disconnect-craft-checkpoint",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            PlayerState::default(),
+            inventory,
+            CraftSession {
+                remaining_ticks: 35,
+                ..durable_session.clone()
+            },
+        ));
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let reloaded = crate::player::state::load_player_slices(
+            app.world().resource::<PlayerStatePersistence>(),
+            "Azure",
+        );
+        assert_eq!(
+            reloaded.craft_session.as_ref(),
+            Some(&durable_session),
+            "断线检测延迟不能把 stale ECS CraftSession 的进度写成免费制作时间"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn disconnect_auto_releases_morph_state_before_persist_snapshot() {
         // plan-race-system-v1 P4 opus verifier MAJOR — 下线三条易形自动解除触发路径
         // 之一（见 despawn_disconnected_clients 内 release_morph_state deferred
@@ -1392,9 +1497,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-morph-auto-release-disconnect",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1479,9 +1583,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-disconnect-flush",
         ));
         app.add_systems(Update, despawn_disconnected_clients);
@@ -1552,9 +1655,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-disconnect-clock-anchor",
         ));
         app.insert_resource(CombatClock { tick: 500_000 });
@@ -1600,9 +1702,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-shutdown-clock-anchor",
         ));
         app.insert_resource(CombatClock { tick: 777_000 });
@@ -1642,9 +1743,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-shutdown-flush",
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);
@@ -1697,9 +1797,8 @@ mod tests {
 
         let mut app = App::default();
         app.insert_resource(persistence);
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            data_dir.join("deceased"),
             "player-lifecycle-shutdown-flush",
         ));
         app.add_systems(Last, flush_connected_players_on_shutdown);

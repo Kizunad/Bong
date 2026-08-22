@@ -67,7 +67,6 @@ Bong 是一个以「**末法时代**」为核心的 AI-Native 修仙沙盒：
 | `agent/` | TypeScript · openai · ioredis | "天道" LLM Agent 层：三 Agent 并发推演 + Arbiter 仲裁 + WorldModel 持久化 |
 | `schema/`（agent/packages） | TypeBox | IPC schema 唯一真源，双端生成 + sample 对拍 |
 | `worldgen/` | Python | blueprint 驱动的 16 层地形生成流水线（LAYER_REGISTRY），导出 mmap-friendly raster 供运行时按需生成 chunk |
-| `library-web/` | Astro | 末法残土图书馆前端（静态站点） |
 | `scripts/` | bash / Python | dev harness：构建、e2e、bot 场景回归、视觉资产工具链 |
 
 ## 快速开始

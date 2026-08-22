@@ -94,6 +94,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     71: "breakthrough_cinematic",
     72: "death_screen",
     73: "terminate_screen",
+    78: "coffin_state",
     80: "inventory_event",
     81: "dropped_loot_sync",
     90: "container_state",
@@ -362,6 +363,19 @@ def _morph_state(data: bytes) -> dict[str, Any]:
         "type": "morph_state",
         "mode": _string(fields, 2),
         "entries": [_morph_state_entry(_fields(raw)) for raw in _messages(fields, 3)],
+    }
+
+
+def _coffin_state(data: bytes) -> dict[str, Any]:
+    """plan-coffin-v1 —— 延寿棺状态（field 78）。enter 推 grade=Some、
+    multiplier<1.0；leave 推 grade 缺席、multiplier=1.0。"""
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "coffin_state",
+        "in_coffin": bool(_varint(fields, 1)),
+        "lifespan_rate_multiplier": _double(fields, 2, default=1.0),
+        "coffin_grade": _optional_string(fields, 3),
     }
 
 
@@ -1269,6 +1283,7 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     131: _insight_offer,
     137: _inventory_move_rejected,
     142: _morph_state,
+    78: _coffin_state,
 }
 
 

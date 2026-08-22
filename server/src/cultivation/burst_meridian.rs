@@ -6,14 +6,14 @@ use valence::prelude::{
 
 use crate::combat::components::{CastSource, Casting, SkillBarBindings, WoundKind};
 use crate::combat::events::{
-    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind, FIST_REACH,
+    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind,
 };
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
-use crate::cultivation::known_techniques::technique_definition;
+use crate::cultivation::known_techniques::{TechniqueDefinition, TechniqueRegistry};
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent,
 };
@@ -25,7 +25,8 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    qi_release_to_zone, MediumKind, QiAccountId, QiTransfer, QiTransferReason, StyleAttack,
+    proportional_qi_cost, qi_release_to_zone, MediumKind, QiAccountId, QiTransfer,
+    QiTransferReason, StyleAttack,
 };
 use crate::schema::server_data::{BurstMeridianEventV1, ServerDataPayloadV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -42,11 +43,11 @@ pub(crate) const BURST_MERIDIAN_FAMILY_COLOR: &str = "#C58B3F";
 
 pub const BENG_QUAN_SKILL_ID: &str = "burst_meridian.beng_quan";
 pub const BENG_QUAN_EVENT_SKILL: &str = "beng_quan";
+/// 崩拳沿用历史语义：按施法者当前真元的比例消耗，而不是把 catalog 的
+/// `qi_cost` 当作固定点数。catalog 的该字段保留用于客户端展示/兼容快照。
 pub const BENG_QUAN_QI_COST_RATIO: f64 = 0.4;
 pub const BENG_QUAN_OVERLOAD_RATIO: f64 = 1.5;
 pub const BENG_QUAN_INTEGRITY_MULTIPLIER: f64 = 0.7;
-pub const BENG_QUAN_COOLDOWN_TICKS: u64 = 60;
-pub const BENG_QUAN_ANIM_DURATION_TICKS: u32 = 8;
 
 // ─── 贴山靠（tie_shan_kao）─ 沉肩压步，躯干经脉短爆撞开近身敌 ───────────────────────
 pub const TIE_SHAN_KAO_SKILL_ID: &str = "burst_meridian.tie_shan_kao";
@@ -208,8 +209,15 @@ pub fn declare_meridian_dependencies(
 }
 
 /// 从 known_techniques 读招式的 flat qi_cost（单一真值源，严禁在本文件硬编码重复）。
-fn flat_qi_cost(skill_id: &str) -> Option<f64> {
-    technique_definition(skill_id).map(|def| f64::from(def.qi_cost))
+fn flat_qi_cost(techniques: &TechniqueRegistry, skill_id: &str) -> Option<f64> {
+    techniques.get(skill_id).map(|def| f64::from(def.qi_cost))
+}
+
+/// Convert the registry's metadata range into the combat reach used by the attack resolver.
+/// Skill ranges are already authoritative maxima, so they do not receive the generic fist
+/// step bonus.
+fn attack_reach(definition: &TechniqueDefinition) -> AttackReach {
+    AttackReach::new(definition.range, 0.0)
 }
 
 /// 空挥（无锁定目标）时的 AV 朝向点：沿施法者视线前推一臂；无 Look 组件时
@@ -218,12 +226,13 @@ fn whiff_focus_point(
     world: &bevy_ecs::world::World,
     caster: Entity,
     caster_position: valence::prelude::DVec3,
+    reach: AttackReach,
 ) -> valence::prelude::DVec3 {
     let dir = world
         .get::<Look>(caster)
         .map(|look| look.vec().as_dvec3())
         .unwrap_or(valence::prelude::DVec3::Z);
-    caster_position + dir * f64::from(FIST_REACH.max)
+    caster_position + dir * f64::from(reach.max)
 }
 
 pub fn resolve_beng_quan(
@@ -247,6 +256,23 @@ pub fn resolve_beng_quan(
     let Some(caster_position) = world.get::<Position>(caster).map(|position| position.get()) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
+
+    let (cast_ticks, cooldown_ticks, reach, required_realm) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(definition) = techniques.get(BENG_QUAN_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) = cast_timing(Some(definition), 1, 1);
+        (
+            cast_ticks,
+            cooldown_ticks,
+            attack_reach(definition),
+            definition.required_realm_value(),
+        )
+    };
+
     // Option B 去目标门禁（对齐 sword_basics 劈/刺）：崩拳是近战直拳，准星没对准
     // 实体也照常轰出（动画/粒子/扣费/撕脉/冷却照走），无目标 = 空挥。
     // 有目标时仍校验存在与射程——锁着超距目标硬轰属"目标无效"的正确语义。
@@ -257,8 +283,7 @@ pub fn resolve_beng_quan(
             else {
                 return rejected(CastRejectReason::InvalidTarget);
             };
-            if caster_position.distance(target_position) > f64::from(FIST_REACH.max) + f64::EPSILON
-            {
+            if caster_position.distance(target_position) > f64::from(reach.max) + f64::EPSILON {
                 return rejected(CastRejectReason::InvalidTarget);
             }
             Some(target_position)
@@ -266,16 +291,28 @@ pub fn resolve_beng_quan(
         None => None,
     };
 
-    let Some(cultivation) = world.get::<Cultivation>(caster) else {
+    let Some(qi_current) = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| cultivation.qi_current)
+    else {
         return rejected(CastRejectReason::RealmTooLow);
     };
-    if realm_rank(cultivation.realm) < realm_rank(Realm::Induce) {
-        return rejected(CastRejectReason::RealmTooLow);
-    }
+    // 比例参数属于招式配置，成本公式和输入校验统一由 qi_physics 负责。
+    let cost = match proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO) {
+        Ok(cost) => cost,
+        Err(_) => return rejected(CastRejectReason::QiInsufficient),
+    };
 
-    let cost = cultivation.qi_current * BENG_QUAN_QI_COST_RATIO;
-    if cultivation.qi_current + f64::EPSILON < cost || cost <= f64::EPSILON {
+    if let Some(reason) = check_realm_gate(world, caster, required_realm) {
+        return rejected(reason);
+    }
+    // 旧路径对零/极小真元拒绝施法；通用门对真正的免费技能允许零成本，
+    // 因此这里显式保留崩拳的非零成本门禁后再复用统一校验。
+    if !cost.is_finite() || cost <= QI_EPSILON {
         return rejected(CastRejectReason::QiInsufficient);
+    }
+    if let Some(reason) = check_qi_gate(world, caster, cost) {
+        return rejected(reason);
     }
 
     let Some(meridians) = world.get::<MeridianSystem>(caster) else {
@@ -289,21 +326,16 @@ pub fn resolve_beng_quan(
         return rejected(CastRejectReason::MeridianSevered(Some(blocking)));
     }
 
-    let started_at_ms = current_unix_millis();
-    world.entity_mut(caster).insert(Casting {
-        source: CastSource::SkillBar,
+    insert_casting(
+        world,
+        caster,
         slot,
-        started_at_tick: now_tick,
-        duration_ticks: u64::from(BENG_QUAN_ANIM_DURATION_TICKS),
-        started_at_ms,
-        duration_ms: BENG_QUAN_ANIM_DURATION_TICKS
-            .saturating_mul(crate::time::MILLIS_PER_TICK as u32),
-        bound_instance_id: None,
-        start_position: caster_position,
-        complete_cooldown_ticks: BENG_QUAN_COOLDOWN_TICKS,
-        skill_id: Some(BENG_QUAN_SKILL_ID.to_string()),
-        skill_config: None,
-    });
+        now_tick,
+        cast_ticks,
+        cooldown_ticks,
+        caster_position,
+        BENG_QUAN_SKILL_ID,
+    );
 
     // bughunt r3 — beng_quan 此前内联扣 qi_current 却不归还 zone（绕过 spend_qi）→ 真元蒸发、守恒破。
     // 改走 spend_qi（与铁山靠/血崩步/逆脉护体同一路径）：扣费的同时把消耗回灌到 caster 所在 zone。
@@ -325,7 +357,7 @@ pub fn resolve_beng_quan(
         // Option 透传：Some 命中结算，None 时 resolver 跳过 = 空挥。
         target,
         issued_at_tick: now_tick,
-        reach: FIST_REACH,
+        reach,
         qi_invest: (cost * BENG_QUAN_OVERLOAD_RATIO) as f32,
         wound_kind: WoundKind::Blunt,
         source: AttackSource::BurstMeridian,
@@ -340,12 +372,12 @@ pub fn resolve_beng_quan(
         integrity_snapshot,
     });
     let vfx_toward =
-        target_position.unwrap_or_else(|| whiff_focus_point(world, caster, caster_position));
-    emit_beng_quan_vfx(world, caster, caster_position, vfx_toward);
+        target_position.unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, reach));
+    emit_beng_quan_vfx(world, caster, caster_position, vfx_toward, cast_ticks);
 
     CastResult::Started {
-        cooldown_ticks: BENG_QUAN_COOLDOWN_TICKS,
-        anim_duration_ticks: BENG_QUAN_ANIM_DURATION_TICKS,
+        cooldown_ticks,
+        anim_duration_ticks: cast_ticks,
     }
 }
 
@@ -354,6 +386,7 @@ fn emit_beng_quan_vfx(
     caster: Entity,
     caster_position: valence::prelude::DVec3,
     target_position: valence::prelude::DVec3,
+    cast_ticks: u32,
 ) {
     if let Some(unique_id) = world.get::<UniqueId>(caster).copied() {
         world.send_event(VfxEventRequest::new(
@@ -381,7 +414,7 @@ fn emit_beng_quan_vfx(
             color: Some(BURST_MERIDIAN_FAMILY_COLOR.to_string()),
             strength: Some(0.9),
             count: Some(8),
-            duration_ticks: Some(BENG_QUAN_ANIM_DURATION_TICKS as u16),
+            duration_ticks: Some(cast_ticks as u16),
         },
     ));
 }
@@ -425,8 +458,16 @@ pub fn resolve_tie_shan_kao(
     if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
         return rejected(reason);
     }
-    let Some(cost) = flat_qi_cost(TIE_SHAN_KAO_SKILL_ID) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    let (cost, cast_ticks, cooldown_ticks) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(cost) = flat_qi_cost(techniques, TIE_SHAN_KAO_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) =
+            cast_timing(techniques.get(TIE_SHAN_KAO_SKILL_ID), 10, 70);
+        (cost, cast_ticks, cooldown_ticks)
     };
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -439,8 +480,6 @@ pub fn resolve_tie_shan_kao(
         )));
     };
 
-    let definition = technique_definition(TIE_SHAN_KAO_SKILL_ID);
-    let (cast_ticks, cooldown_ticks) = cast_timing(definition, 10, 70);
     insert_casting(
         world,
         caster,
@@ -481,8 +520,8 @@ pub fn resolve_tie_shan_kao(
         overload_ratio: TIE_SHAN_KAO_OVERLOAD_RATIO,
         integrity_snapshot,
     });
-    let av_toward =
-        target_position.unwrap_or_else(|| whiff_focus_point(world, caster, caster_position));
+    let av_toward = target_position
+        .unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, TIE_SHAN_KAO_REACH));
     emit_burst_av(
         world,
         caster,
@@ -535,8 +574,15 @@ pub fn resolve_xue_beng_bu(
     if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
         return rejected(reason);
     }
-    let Some(cost) = flat_qi_cost(XUE_BENG_BU_SKILL_ID) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    let (cost, cast_ticks, cooldown_ticks) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(cost) = flat_qi_cost(techniques, XUE_BENG_BU_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) = cast_timing(techniques.get(XUE_BENG_BU_SKILL_ID), 6, 50);
+        (cost, cast_ticks, cooldown_ticks)
     };
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -549,8 +595,6 @@ pub fn resolve_xue_beng_bu(
         )));
     };
 
-    let definition = technique_definition(XUE_BENG_BU_SKILL_ID);
-    let (cast_ticks, cooldown_ticks) = cast_timing(definition, 6, 50);
     insert_casting(
         world,
         caster,
@@ -630,8 +674,16 @@ pub fn resolve_ni_mai_hu_ti(
     if let Some(reason) = check_realm_gate(world, caster, Realm::Solidify) {
         return rejected(reason);
     }
-    let Some(cost) = flat_qi_cost(NI_MAI_HU_TI_SKILL_ID) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    let (cost, cast_ticks, cooldown_ticks) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(cost) = flat_qi_cost(techniques, NI_MAI_HU_TI_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) =
+            cast_timing(techniques.get(NI_MAI_HU_TI_SKILL_ID), 12, 120);
+        (cost, cast_ticks, cooldown_ticks)
     };
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -644,8 +696,6 @@ pub fn resolve_ni_mai_hu_ti(
         )));
     };
 
-    let definition = technique_definition(NI_MAI_HU_TI_SKILL_ID);
-    let (cast_ticks, cooldown_ticks) = cast_timing(definition, 12, 120);
     insert_casting(
         world,
         caster,
@@ -743,8 +793,8 @@ fn check_realm_gate(
     }
 }
 
-/// 真元门：flat cost。`cost <= ε`（误配 0 成本招）或 `qi_current < cost` 均拒绝，
-/// 不在此处扣减（扣减由 `spend_qi` 在所有门通过后执行，保证拒绝路径零突变）。
+/// 真元门：flat cost。精确零成本是合法免费招；正数 dust（`0 < cost <= ε`）、
+/// 非有限/负成本或 `qi_current < cost` 均拒绝。此处不扣减。
 fn check_qi_gate(
     world: &bevy_ecs::world::World,
     caster: Entity,
@@ -753,7 +803,11 @@ fn check_qi_gate(
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return Some(CastRejectReason::RealmTooLow);
     };
-    if cost <= f64::EPSILON || cultivation.qi_current + f64::EPSILON < cost {
+    if !cost.is_finite()
+        || cost < 0.0
+        || (cost > 0.0 && cost <= QI_EPSILON)
+        || cultivation.qi_current < cost
+    {
         return Some(CastRejectReason::QiInsufficient);
     }
     None
@@ -803,7 +857,7 @@ fn insert_casting(
 
 /// 从 known_techniques 读 cast/cooldown，缺定义时退化为传入兜底（保证 ≥1）。
 fn cast_timing(
-    definition: Option<&'static crate::cultivation::known_techniques::TechniqueDefinition>,
+    definition: Option<&TechniqueDefinition>,
     fallback_cast: u32,
     fallback_cooldown: u64,
 ) -> (u32, u64) {
@@ -816,16 +870,26 @@ fn cast_timing(
 /// 扣真元（玩家私有池）并将消耗的真元释放回区域灵气池，维持 qi_physics 守恒。
 /// 与 baomai_v3 / tuike_v2 的 spend_qi + emit_spent_qi_release 模式对齐。
 fn spend_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) {
-    if cost <= f64::EPSILON {
+    if cost <= QI_EPSILON || !cost.is_finite() {
         return;
     }
-    if !cost.is_finite() {
-        return;
+    let debited = if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
+        if cultivation.qi_current < cost {
+            false
+        } else {
+            cultivation.qi_current = if cultivation.qi_current == cost {
+                0.0
+            } else {
+                cultivation.qi_current - cost
+            };
+            true
+        }
+    } else {
+        false
+    };
+    if debited {
+        emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
     }
-    if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
-        cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
-    }
-    emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
 }
 
 /// 把消耗的真元释放回 ZoneRegistry，走 qi_release_to_zone 守恒路径；区域满时路由至 overflow。
@@ -868,7 +932,7 @@ fn emit_spent_qi_release(
                         if let Some(transfer) = outcome.transfer {
                             transfers.push(transfer);
                         }
-                        if outcome.overflow > QI_EPSILON {
+                        if outcome.overflow > 0.0 {
                             push_spent_qi_overflow(
                                 &mut transfers,
                                 from.clone(),
@@ -911,7 +975,7 @@ fn push_spent_qi_overflow(
     sink: &'static str,
     caster: Entity,
 ) {
-    if amount <= QI_EPSILON {
+    if amount <= 0.0 {
         return;
     }
     match QiTransfer::new(
@@ -1131,11 +1195,26 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock { tick: 10 });
         app.add_event::<AttackIntent>();
         app.add_event::<BurstMeridianEvent>();
         app.add_event::<VfxEventRequest>();
         app
+    }
+
+    fn beng_quan_reach(app: &App) -> AttackReach {
+        let registry = app.world().resource::<TechniqueRegistry>();
+        attack_reach(
+            registry
+                .get(BENG_QUAN_SKILL_ID)
+                .expect("checked-in catalog must define beng_quan"),
+        )
+    }
+
+    fn beng_quan_cost(qi_current: f64) -> f64 {
+        proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO)
+            .expect("beng_quan ratio cost must be valid")
     }
 
     fn assert_no_mutation(app: &App, caster: Entity, qi: f64, integrity: f64) {
@@ -1165,7 +1244,9 @@ mod tests {
     fn beng_quan_happy_path_mutates_atomically_and_emits_events() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let target = spawn_target(&mut app, DVec3::new(f64::from(FIST_REACH.max), 0.0, 0.0));
+        let reach = beng_quan_reach(&app).max;
+        let cost = beng_quan_cost(100.0);
+        let target = spawn_target(&mut app, DVec3::new(f64::from(reach), 0.0, 0.0));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 
@@ -1176,9 +1257,10 @@ mod tests {
                 anim_duration_ticks: 8,
             }
         );
-        assert_eq!(
-            app.world().get::<Cultivation>(caster).unwrap().qi_current,
-            60.0
+        assert!(
+            (app.world().get::<Cultivation>(caster).unwrap().qi_current - (100.0 - cost)).abs()
+                <= f64::EPSILON,
+            "beng_quan must deduct 40% of the caster's current qi"
         );
         for id in RIGHT_ARM_MERIDIANS {
             assert_eq!(
@@ -1208,7 +1290,7 @@ mod tests {
         let attack = attack_events.iter_current_update_events().next().unwrap();
         assert_eq!(attack.target, Some(target));
         assert_eq!(attack.source, AttackSource::BurstMeridian);
-        assert_eq!(attack.qi_invest, 60.0);
+        assert_eq!(attack.qi_invest, (cost * BENG_QUAN_OVERLOAD_RATIO) as f32);
         assert_eq!(attack.wound_kind, WoundKind::Blunt);
 
         let burst_events = app.world().resource::<Events<BurstMeridianEvent>>();
@@ -1230,6 +1312,117 @@ mod tests {
             }
             other => panic!("expected beng_quan particle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn beng_quan_uses_registry_metadata_for_cast_contract() {
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            BENG_QUAN_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Condense".to_string();
+                // Deliberately diverge the display/catalog value: Beng Quan's
+                // runtime contract remains a percentage of current qi.
+                definition.qi_cost = 7.25;
+                definition.cast_ticks = 3;
+                definition.cooldown_ticks = 17;
+                definition.range = 0.75;
+            },
+        ));
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<BurstMeridianEvent>();
+        app.add_event::<VfxEventRequest>();
+
+        let caster = spawn_caster(&mut app, Realm::Condense, 20.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(0.75, 0.0, 0.0));
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 17,
+                anim_duration_ticks: 3,
+            },
+            "beng_quan must use overridden registry timing instead of legacy constants"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            12.0,
+            "beng_quan must keep its current-qi percentage cost even when catalog qi_cost changes"
+        );
+        assert_eq!(
+            app.world().get::<Casting>(caster).unwrap().duration_ticks,
+            3,
+            "Casting duration must follow the registry definition"
+        );
+        let attack = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("metadata-backed beng_quan must emit an attack");
+        assert_eq!(attack.reach, AttackReach::new(0.75, 0.0));
+        assert_eq!(attack.qi_invest, 12.0);
+        let particle = app
+            .world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .find_map(|request| match &request.payload {
+                VfxEventPayloadV1::SpawnParticle { duration_ticks, .. } => *duration_ticks,
+                _ => None,
+            })
+            .expect("metadata-backed beng_quan must emit a particle");
+        assert_eq!(
+            particle, 3,
+            "particle duration must follow cast_ticks metadata"
+        );
+    }
+
+    #[test]
+    fn beng_quan_uses_registry_realm_gate_and_range() {
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            BENG_QUAN_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Condense".to_string();
+                definition.range = 0.75;
+            },
+        ));
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<BurstMeridianEvent>();
+        app.add_event::<VfxEventRequest>();
+
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(0.5, 0.0, 0.0));
+
+        assert_eq!(
+            resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
+            rejected(CastRejectReason::RealmTooLow),
+            "registry required_realm must gate the cast before any mutation"
+        );
+        assert_no_mutation(&app, caster, 100.0, 1.0);
+
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            BENG_QUAN_SKILL_ID,
+            |definition| definition.range = 0.75,
+        ));
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<BurstMeridianEvent>();
+        app.add_event::<VfxEventRequest>();
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(0.76, 0.0, 0.0));
+
+        assert_eq!(
+            resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
+            rejected(CastRejectReason::InvalidTarget),
+            "registry range must reject targets beyond the metadata maximum"
+        );
+        assert_no_mutation(&app, caster, 100.0, 1.0);
     }
 
     #[test]
@@ -1265,6 +1458,22 @@ mod tests {
 
         assert_eq!(result, rejected(CastRejectReason::RealmTooLow));
         assert_no_mutation(&app, caster, 100.0, 1.0);
+    }
+
+    #[test]
+    fn beng_quan_rejects_zero_or_dust_qi_without_mutation() {
+        for qi_current in [0.0, QI_EPSILON / BENG_QUAN_QI_COST_RATIO / 2.0] {
+            let mut app = app();
+            let caster = spawn_caster(&mut app, Realm::Induce, qi_current, DVec3::ZERO);
+            let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+            assert_eq!(
+                resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
+                rejected(CastRejectReason::QiInsufficient),
+                "non-positive effective Beng Quan cost must reject without casting"
+            );
+            assert_no_mutation(&app, caster, qi_current, 1.0);
+        }
     }
 
     #[test]
@@ -1350,10 +1559,8 @@ mod tests {
     fn beng_quan_rejects_out_of_range_target_without_mutation() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let target = spawn_target(
-            &mut app,
-            DVec3::new(f64::from(FIST_REACH.max) + 0.01, 0.0, 0.0),
-        );
+        let reach = beng_quan_reach(&app).max;
+        let target = spawn_target(&mut app, DVec3::new(f64::from(reach) + 0.01, 0.0, 0.0));
 
         // 锁定超距目标硬轰仍是"目标无效"的正确语义（有目标时距离门保留）。
         assert_eq!(
@@ -1448,6 +1655,7 @@ mod tests {
     fn beng_quan_preserves_float_precision_and_pre_mutation_snapshot() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 99.9, DVec3::ZERO);
+        let cost = beng_quan_cost(99.9);
         app.world_mut()
             .get_mut::<MeridianSystem>(caster)
             .unwrap()
@@ -1459,7 +1667,10 @@ mod tests {
 
         assert!(matches!(result, CastResult::Started { .. }));
         let qi = app.world().get::<Cultivation>(caster).unwrap().qi_current;
-        assert!((qi - 59.94).abs() < 1e-9);
+        assert!(
+            (qi - (99.9 - cost)).abs() <= f64::EPSILON,
+            "beng_quan must preserve the exact current-qi percentage cost"
+        );
         let li = app
             .world()
             .get::<MeridianSystem>(caster)
@@ -2112,11 +2323,12 @@ mod tests {
 
     #[test]
     fn flat_qi_cost_reads_from_known_techniques_single_source() {
-        // 严禁本文件硬编码重复 qi_cost：值必须来自 known_techniques。
-        assert_eq!(flat_qi_cost(TIE_SHAN_KAO_SKILL_ID), Some(35.0));
-        assert_eq!(flat_qi_cost(XUE_BENG_BU_SKILL_ID), Some(25.0));
-        assert_eq!(flat_qi_cost(NI_MAI_HU_TI_SKILL_ID), Some(45.0));
-        assert_eq!(flat_qi_cost("nonexistent.skill"), None);
+        // 严禁本文件硬编码重复 qi_cost：值必须来自 checked-in registry。
+        let techniques = TechniqueRegistry::load_for_tests();
+        assert_eq!(flat_qi_cost(&techniques, TIE_SHAN_KAO_SKILL_ID), Some(35.0));
+        assert_eq!(flat_qi_cost(&techniques, XUE_BENG_BU_SKILL_ID), Some(25.0));
+        assert_eq!(flat_qi_cost(&techniques, NI_MAI_HU_TI_SKILL_ID), Some(45.0));
+        assert_eq!(flat_qi_cost(&techniques, "nonexistent.skill"), None);
     }
 
     // ─── 真元守恒：burst_meridian 招式扣 qi 后必须释放回区域 ────────────────────────
@@ -2132,6 +2344,7 @@ mod tests {
     /// caster 位置应使用 DVec3::new(0.0, 70.0, 0.0) 才落在 spawn zone AABB 内。
     fn app_with_zone() -> App {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock { tick: 10 });
         app.add_event::<AttackIntent>();
         app.add_event::<BurstMeridianEvent>();
@@ -2161,13 +2374,78 @@ mod tests {
             .count()
     }
 
+    #[test]
+    fn qi_cost_threshold_never_debits_without_complete_settlement() {
+        let costs = [
+            ("zero", 0.0),
+            ("below", QI_EPSILON / 2.0),
+            ("at", QI_EPSILON),
+            // f32 metadata 的第一可表示边界，和 loader 用例对齐。
+            (
+                "above",
+                f64::from(f32::from_bits((QI_EPSILON as f32).to_bits() + 1)),
+            ),
+        ];
+        for (label, cost) in costs {
+            let mut app = app_with_zone();
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi = 0.0;
+            let caster = spawn_caster(&mut app, Realm::Condense, 1.0, DVec3::new(0.0, 70.0, 0.0));
+            let qi_before = qi(&app, caster);
+            let zone_before = zone_spirit_qi(&app);
+
+            let gate = check_qi_gate(app.world(), caster, cost);
+            if cost == 0.0 || cost > QI_EPSILON {
+                assert_eq!(gate, None, "{label}: legal cost must pass the qi gate");
+            } else {
+                assert_eq!(
+                    gate,
+                    Some(CastRejectReason::QiInsufficient),
+                    "{label}: positive dust must fail the qi gate"
+                );
+            }
+            spend_qi(app.world_mut(), caster, cost);
+
+            let debited = qi_before - qi(&app, caster);
+            let zone_credited = (zone_spirit_qi(&app) - zone_before) * QI_ZONE_UNIT_CAPACITY;
+            if cost <= QI_EPSILON {
+                assert_eq!(debited, 0.0, "{label}: free/dust cost must not be deducted");
+                assert_eq!(
+                    zone_credited, 0.0,
+                    "{label}: free/dust cost must not credit the zone"
+                );
+                assert_eq!(qi_transfer_count(&app), 0, "{label}: no audit for no-op");
+            } else {
+                assert!(
+                    (debited - cost).abs() <= f64::EPSILON,
+                    "{label}: accepted cost must be deducted within machine precision; cost={cost}, debited={debited}"
+                );
+                assert!(
+                    (zone_credited - cost).abs() <= f64::EPSILON,
+                    "{label}: every deducted unit must be credited within machine precision; cost={cost}, credited={zone_credited}"
+                );
+                let transfers: Vec<_> = app
+                    .world()
+                    .resource::<Events<QiTransfer>>()
+                    .iter_current_update_events()
+                    .collect();
+                assert_eq!(transfers.len(), 1, "{label}: one complete settlement audit");
+                assert_eq!(transfers[0].amount, cost, "{label}: audit amount is exact");
+            }
+        }
+    }
+
     /// beng_quan 施法后区域 spirit_qi 必须升高（消耗的真元返还区域）。
     #[test]
     fn beng_quan_spend_qi_releases_to_zone() {
         let mut app = app_with_zone();
         // 在 spawn zone AABB 内（y=70）生成施法者。
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
+        let reach = beng_quan_reach(&app).max;
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(reach)));
 
         let initial_spirit_qi = zone_spirit_qi(&app);
 
@@ -2303,7 +2581,8 @@ mod tests {
             .spirit_qi = 1.0;
 
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
+        let reach = beng_quan_reach(&app).max;
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(reach)));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 

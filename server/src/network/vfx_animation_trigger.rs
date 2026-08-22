@@ -4650,7 +4650,7 @@ mod tests {
     }
 
     /// happy path：两条生产可达的 stance 接线逐条 pin——每个映射前缀习得时恰发
-    /// 一条携正确 anim_id 的 PlayAnim（technique_id 全部取 TECHNIQUE_DEFINITIONS
+    /// 一条携正确 anim_id 的 PlayAnim（technique_id 全部取 TechniqueRegistry
     /// 真实条目，且均有真实卷轴内容可授予）。
     #[test]
     fn technique_learned_emits_mapped_stance_animation_for_each_wired_family() {
@@ -4758,7 +4758,7 @@ mod tests {
     }
 
     /// 注：`"woliu"`（无 `.` 的裸前缀）走 `split('.').next()` 仍解析出 `woliu`——
-    /// 该形态在 TECHNIQUE_DEFINITIONS 中不存在，仅锁 split 语义不背离预期。
+    /// 该形态在 TechniqueRegistry 中不存在，仅锁 split 语义不背离预期。
     #[test]
     fn bare_family_prefix_without_dot_still_maps_by_split_semantics() {
         assert_eq!(

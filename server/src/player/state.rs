@@ -13,7 +13,7 @@ use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueDispatch, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
@@ -101,9 +101,30 @@ impl PlayerUiPrefs {
         bindings
     }
 
+    /// Remove persisted skill-bar entries that are no longer valid generic actions.
+    /// Dedicated-input techniques have their own C2S path and must not be rebound through
+    /// the skill bar after reconnect; unknown ids are cleared as well.
+    pub(crate) fn sanitize_skill_bar_bindings(&mut self, registry: &TechniqueRegistry) -> bool {
+        let mut changed = false;
+        for persist in &mut self.skill_bar {
+            let SkillSlotPersist::Skill { skill_id } = persist else {
+                continue;
+            };
+            let invalid = registry
+                .get(skill_id)
+                .is_none_or(|definition| definition.dispatch == TechniqueDispatch::DedicatedInput);
+            if invalid {
+                *persist = SkillSlotPersist::Empty;
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(crate) fn skill_bar_bindings(
         &self,
         inventory: Option<&PlayerInventory>,
+        registry: Option<&TechniqueRegistry>,
     ) -> SkillBarBindings {
         let mut bindings = SkillBarBindings::default();
         for (slot, persist) in self.skill_bar.iter().enumerate() {
@@ -115,9 +136,20 @@ impl PlayerUiPrefs {
                     })
                     .map(|instance_id| SkillSlot::Item { instance_id })
                     .unwrap_or_default(),
-                SkillSlotPersist::Skill { skill_id } => SkillSlot::Skill {
-                    skill_id: skill_id.clone(),
-                },
+                SkillSlotPersist::Skill { skill_id } => {
+                    let valid = registry.is_none_or(|registry| {
+                        registry.get(skill_id).is_some_and(|definition| {
+                            definition.dispatch != TechniqueDispatch::DedicatedInput
+                        })
+                    });
+                    if valid {
+                        SkillSlot::Skill {
+                            skill_id: skill_id.clone(),
+                        }
+                    } else {
+                        SkillSlot::Empty
+                    }
+                }
             };
             bindings.set(slot as u8, slot_value);
         }
@@ -3987,9 +4019,8 @@ mod player_state_tests {
             reloaded.craft_session.is_none(),
             "failed checkpoint must not leave an active session beside the old inventory"
         );
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             persistence.db_path(),
-            data_dir.join("deceased"),
             "craft-checkpoint-rollback",
         );
         assert!(
@@ -4038,9 +4069,8 @@ mod player_state_tests {
             std::slice::from_ref(&drop),
         )
         .expect("craft drop should commit with terminal inventory");
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             persistence.db_path(),
-            data_dir.join("deceased"),
             "durable-craft-drop-roundtrip",
         );
         let first_hydrate = crate::persistence::load_durable_dropped_loot(&settings)
@@ -4140,9 +4170,8 @@ mod player_state_tests {
             "failure should retain the injected repair hint, actual={error}"
         );
 
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             persistence.db_path(),
-            data_dir.join("deceased"),
             "pickup-checkpoint-zone-rollback",
         );
         assert_eq!(
@@ -5748,6 +5777,43 @@ mod player_state_tests {
     }
 
     #[test]
+    fn ui_prefs_sanitizes_legacy_dedicated_input_bindings() {
+        let mut prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+            "skill_bar": [
+                {"kind":"skill","skill_id":"movement.dash"},
+                {"kind":"skill","skill_id":"shield_block"},
+                {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
+                {"kind":"skill","skill_id":"legacy.removed"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"},
+                {"kind":"empty"}
+            ]
+        }))
+        .expect("legacy skill-bar prefs should decode");
+        let registry = TechniqueRegistry::load_for_tests();
+
+        assert!(
+            prefs.sanitize_skill_bar_bindings(&registry),
+            "known dedicated-input and unknown legacy bindings must be repaired"
+        );
+        assert!(
+            !prefs.sanitize_skill_bar_bindings(&registry),
+            "sanitizing an already repaired skill bar must be idempotent"
+        );
+
+        let bindings = prefs.skill_bar_bindings(None, Some(&registry));
+        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+        assert!(matches!(bindings.slots[1], SkillSlot::Empty));
+        assert!(matches!(
+            &bindings.slots[2],
+            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+        ));
+        assert!(matches!(bindings.slots[3], SkillSlot::Empty));
+    }
+
+    #[test]
     fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
         let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
             "quick_slots": ["tea", null, null, null, null, null, null, null, null],
@@ -5809,7 +5875,7 @@ mod player_state_tests {
         };
 
         let quick = prefs.quick_slot_bindings(Some(&inventory));
-        let skill_bar = prefs.skill_bar_bindings(Some(&inventory));
+        let skill_bar = prefs.skill_bar_bindings(Some(&inventory), None);
 
         assert_eq!(quick.slots[0], Some(42));
         assert!(matches!(

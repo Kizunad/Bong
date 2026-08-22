@@ -14,6 +14,14 @@ on:
       - "server/Cargo.toml"
       - "server/Cargo.lock"
       - ".github/workflows/script-contracts.yml"
+      - "scripts/tests/bong_server_provenance_test.py"
+      - "scripts/tests/smoke_owned_artifacts_test.sh"
+      - "scripts/lib/bong_server_provenance.py"
+      - "scripts/lib/smoke-owned-artifacts.sh"
+      - "scripts/bot-e2e.sh"
+      - "scripts/smoke-offscreen-war.sh"
+      - "scripts/smoke-tiandao-fullstack.sh"
+      - ".github/workflows/e2e.yml"
   pull_request:
     paths:
       - "scripts/tests/cargo_dev_profile_config_test.sh"
@@ -25,6 +33,14 @@ on:
       - "server/Cargo.toml"
       - "server/Cargo.lock"
       - ".github/workflows/script-contracts.yml"
+      - "scripts/tests/bong_server_provenance_test.py"
+      - "scripts/tests/smoke_owned_artifacts_test.sh"
+      - "scripts/lib/bong_server_provenance.py"
+      - "scripts/lib/smoke-owned-artifacts.sh"
+      - "scripts/bot-e2e.sh"
+      - "scripts/smoke-offscreen-war.sh"
+      - "scripts/smoke-tiandao-fullstack.sh"
+      - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
 permissions:
@@ -52,3 +68,9 @@ jobs:
 
       - name: Worktree janitor contract
         run: bash scripts/tests/wt_janitor_test.sh
+
+      - name: Server release provenance contract
+        run: python3 scripts/tests/bong_server_provenance_test.py
+
+      - name: Smoke owned-artifacts cleanup contract
+        run: bash scripts/tests/smoke_owned_artifacts_test.sh
