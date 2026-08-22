@@ -68,6 +68,8 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
 _AMBIENT_VFX_EVENT_IDS = frozenset(
     {"bong:cultivation_absorb", "bong:fauna_spawn_dust"}
 )
+_AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage",)
+
 
 
 def is_gameplay_side_effect(
@@ -105,7 +107,15 @@ def is_gameplay_side_effect(
         return payload_type not in ambient_data
     if event.kind == "vfx_event":
         event_id = event.data.get("event_id")
-        return not (event_id and event_id in ambient_vfx)
+        if not event_id:
+            return True
+        if event_id in ambient_vfx:
+            return False
+        # 前缀匹配：botany_* 周期生长粒子（bong:botany_plant_stage__*）非请求驱动，每 ~140 tick 自发
+        for prefix in _AMBIENT_VFX_EVENT_PREFIXES:
+            if event_id.startswith(prefix):
+                return False
+        return True
     return False
 
 
