@@ -90,9 +90,9 @@ pub(crate) struct StartHandlerPlotScanCount {
 #[cfg(not(test))]
 fn build_start_plot_index<'a>(
     plots: impl Iterator<Item = &'a LingtianPlot>,
-) -> HashMap<BlockPos, &'a LingtianPlot> {
+) -> HashMap<BlockPos, Vec<&'a LingtianPlot>> {
     plots.fold(HashMap::new(), |mut index, plot| {
-        index.entry(plot.pos).or_insert(plot);
+        index.entry(plot.pos).or_default().push(plot);
         index
     })
 }
@@ -101,7 +101,7 @@ fn build_start_plot_index<'a>(
 fn build_start_plot_index<'a>(
     plots: impl Iterator<Item = &'a LingtianPlot>,
     mut plot_scan_count: Option<&mut StartHandlerPlotScanCount>,
-) -> HashMap<BlockPos, &'a LingtianPlot> {
+) -> HashMap<BlockPos, Vec<&'a LingtianPlot>> {
     if let Some(count) = plot_scan_count.as_deref_mut() {
         count.index_builds += 1;
     }
@@ -112,7 +112,7 @@ fn build_start_plot_index<'a>(
             }
         })
         .fold(HashMap::new(), |mut index, plot| {
-            index.entry(plot.pos).or_insert(plot);
+            index.entry(plot.pos).or_default().push(plot);
             index
         })
 }
@@ -660,8 +660,7 @@ pub fn handle_start_renew(
         // 必须有处于"贫瘠"状态的 plot
         let barren = plot_positions
             .get(&req.pos)
-            .map(|p| p.is_barren())
-            .unwrap_or(false);
+            .is_some_and(|plots| plots.iter().any(|plot| plot.is_barren()));
         if !barren {
             tracing::warn!(
                 "[bong][lingtian] StartRenewRequest rejected: no barren plot at {:?}",
@@ -718,10 +717,11 @@ pub fn handle_start_planting(
             continue;
         }
         // 目标 plot 必须存在 + 空 + 未贫瘠
-        let target_ok = plot_positions
-            .get(&req.pos)
-            .map(|p| p.is_empty() && !p.is_barren())
-            .unwrap_or(false);
+        let target_ok = plot_positions.get(&req.pos).is_some_and(|plots| {
+            plots
+                .iter()
+                .any(|plot| plot.is_empty() && !plot.is_barren())
+        });
         if !target_ok {
             tracing::warn!(
                 "[bong][lingtian] StartPlantingRequest rejected: no empty/non-barren plot at {:?}",
@@ -759,8 +759,7 @@ pub fn handle_start_drain_qi(
         }
         let exists_with_qi = plot_positions
             .get(&req.pos)
-            .map(|p| p.plot_qi > 0.0)
-            .unwrap_or(false);
+            .is_some_and(|plots| plots.iter().any(|plot| plot.plot_qi > 0.0));
         if !exists_with_qi {
             tracing::warn!(
                 "[bong][lingtian] StartDrainQiRequest rejected: no plot with plot_qi at {:?}",
@@ -823,7 +822,8 @@ pub fn handle_start_harvest(
         }
         let plant_id = plot_positions
             .get(&req.pos)
-            .and_then(|p| p.crop.as_ref())
+            .and_then(|plots| plots.first().copied())
+            .and_then(|plot| plot.crop.as_ref())
             .filter(|c| c.is_ripe())
             .map(|c| c.kind.clone());
         let Some(plant_id) = plant_id else {
@@ -866,7 +866,10 @@ pub fn handle_start_replenish(
             );
             continue;
         }
-        let Some(plot) = plot_positions.get(&req.pos).copied() else {
+        let Some(plot) = plot_positions
+            .get(&req.pos)
+            .and_then(|plots| plots.first().copied())
+        else {
             tracing::warn!(
                 "[bong][lingtian] StartReplenishRequest rejected: no plot at {:?}",
                 req.pos
@@ -2326,7 +2329,7 @@ mod tests {
     }
 
     #[test]
-    fn start_plot_index_preserves_first_plot_at_duplicate_position() {
+    fn start_plot_index_preserves_all_plots_at_duplicate_position() {
         let pos = BlockPos::new(7, 64, -3);
         let mut first = LingtianPlot::new(pos, None);
         first.plot_qi = 0.25;
@@ -2335,16 +2338,101 @@ mod tests {
         let plots = vec![first, second];
 
         let index = build_start_plot_index(plots.iter(), None);
-        let selected = index
+        let candidates = index
             .get(&pos)
-            .copied()
             .expect("duplicate-position fixture must be indexed");
+        assert_eq!(candidates.len(), 2, "同一位置的 plot 候选不能在索引中丢失");
+        let selected = candidates
+            .first()
+            .copied()
+            .expect("duplicate-position fixture must preserve the first plot");
 
         assert!(
             std::ptr::eq(selected, &plots[0]),
             "duplicate BlockPos must preserve the first plot, matching the previous find semantics"
         );
         assert_eq!(selected.plot_qi, 0.25);
+    }
+
+    #[test]
+    fn renew_accepts_later_barren_duplicate_plot() {
+        let mut app = build_app();
+        let pos = BlockPos::new(8, 64, -3);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
+            pos,
+        );
+        app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
+        let mut barren = LingtianPlot::new(pos, Some(player));
+        barren.harvest_count = super::super::plot::N_RENEW;
+        app.world_mut().spawn(barren);
+
+        app.world_mut().send_event(StartRenewRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            1,
+            "后续重复位置 plot 满足贫瘠条件时，Renew 不应被首个 plot 拒绝"
+        );
+    }
+
+    #[test]
+    fn planting_accepts_later_empty_duplicate_plot() {
+        let mut app = build_planting_app();
+        let pos = BlockPos::new(9, 64, -3);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 2),
+            pos,
+        );
+        let mut blocked = LingtianPlot::new(pos, Some(player));
+        blocked.crop = Some(CropInstance::new("ning_mai_cao".into()));
+        app.world_mut().spawn(blocked);
+        app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
+
+        app.world_mut().send_event(StartPlantingRequest {
+            player,
+            pos,
+            plant_id: "ci_she_hao".into(),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            1,
+            "后续重复位置 plot 满足空且不贫瘠时，Planting 不应被首个 plot 拒绝"
+        );
+    }
+
+    #[test]
+    fn drain_qi_accepts_later_nonzero_duplicate_plot() {
+        let mut app = build_app();
+        let pos = BlockPos::new(10, 64, -3);
+        let player = valid_test_player(
+            &mut app,
+            (empty_inventory_8x8(), LifeRecord::new("duplicate-drain")),
+            pos,
+        );
+        app.world_mut().spawn(LingtianPlot::new(pos, None));
+        let mut charged = LingtianPlot::new(pos, None);
+        charged.plot_qi = 0.5;
+        app.world_mut().spawn(charged);
+
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player, pos });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            1,
+            "后续重复位置 plot 有真元时，DrainQi 不应被首个空 plot 拒绝"
+        );
     }
 
     #[test]
