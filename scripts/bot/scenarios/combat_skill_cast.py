@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import (
@@ -24,6 +25,54 @@ PARTICLE_ID = "bong:dugu_needle_bolt"
 AUDIO_RECIPE_ID = "dugu_cast"
 AUDIO_FLAG = "dugu_shoot_needle"
 SLOT = 0
+
+
+def _wait_authoritative_qi_state(
+    bot, anchor: float, expected_qi: float, expected_qi_max: float
+):
+    """等待 dev 命令后的精确修炼状态。
+
+    共享修炼 helper 有意拒绝 ``qi_max == 0``，因为正常玩法不会暴露零容量玩家；
+    本 dev-only 场景用零值构造真元不足夹具，因此在此保留独立谓词，但仍以 typed
+    ``player_state`` payload 作为权威状态。
+    """
+
+    def matches(event) -> bool:
+        if (
+            event.kind != "server_data"
+            or event.t <= anchor
+            or event.data.get("payload_type") != "player_state"
+        ):
+            return False
+        payload = event.data.get("payload")
+        if not isinstance(payload, dict):
+            return False
+        qi = payload.get("spirit_qi")
+        qi_max = payload.get("spirit_qi_max")
+        if not (
+            isinstance(qi, (int, float))
+            and not isinstance(qi, bool)
+            and isinstance(qi_max, (int, float))
+            and not isinstance(qi_max, bool)
+        ):
+            return False
+        qi_value = float(qi)
+        qi_max_value = float(qi_max)
+        return (
+            math.isfinite(qi_value)
+            and math.isfinite(qi_max_value)
+            and abs(qi_value - expected_qi) <= 0.01
+            and abs(qi_max_value - expected_qi_max) <= 0.01
+        )
+
+    return bot.wait_for(
+        matches,
+        timeout=12.0,
+        description=(
+            "t>%.3fs 后权威 player_state.spirit_qi=%.2f, "
+            "spirit_qi_max=%.2f" % (anchor, expected_qi, expected_qi_max)
+        ),
+    )
 
 
 def _is_dugu_audio_play(event, anchor: float) -> bool:
@@ -122,10 +171,14 @@ def run(env) -> None:
         _assert_binding_feedback(bot, binding)
 
         # 先锁定真元上限再清零，避免修炼恢复 tick 在施法解析前回填真元。
+        max_zero_anchor = last_event_time(bot)
         bot.cmd("qi max 0")
         bot.expect_chat("[dev] qi max", timeout=10.0)
+        _wait_authoritative_qi_state(bot, max_zero_anchor, 0.0, 0.0)
+        set_zero_anchor = last_event_time(bot)
         bot.cmd("qi set 0")
         bot.expect_chat("[dev] qi set", timeout=10.0)
+        _wait_authoritative_qi_state(bot, set_zero_anchor, 0.0, 0.0)
         reject_anchor = last_event_time(bot)
         bot.intent(
             {
@@ -148,10 +201,14 @@ def run(env) -> None:
 
         # 拒绝分支不应写入 cooldown；补足真元后再走正分支，避免先成功施放时
         # resolver 按 OnCooldown→QiInsufficient 的既定门顺序遮住目标拒绝证据。
+        max_restore_anchor = last_event_time(bot)
         bot.cmd("qi max 20")
         bot.expect_chat("[dev] qi max", timeout=10.0)
+        _wait_authoritative_qi_state(bot, max_restore_anchor, 0.0, 20.0)
+        set_restore_anchor = last_event_time(bot)
         bot.cmd("qi set 10")
         bot.expect_chat("[dev] qi set", timeout=10.0)
+        _wait_authoritative_qi_state(bot, set_restore_anchor, 10.0, 20.0)
         anchor = last_event_time(bot)
         bot.intent(
             {

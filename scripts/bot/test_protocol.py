@@ -70,6 +70,7 @@ from bot.scenarios.combat_skill_cast import (  # noqa: E402
     SKILL_ICON,
     _assert_binding_feedback,
     _is_dugu_audio_play,
+    _wait_authoritative_qi_state,
     _wait_successful_cast_sequence,
 )
 from bot.scenarios.cultivation_breakthrough import (  # noqa: E402
@@ -4222,6 +4223,36 @@ def _player_state_event(t: float, qi: float, qi_max: float = 100.0) -> _FakeEven
 
 
 class CombatSkillCastScenarioTest(unittest.TestCase):
+    def test_authoritative_qi_state_accepts_zero_capacity_dev_fixture(self):
+        authoritative = _player_state_event(2.0, 0.0, 0.0)
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "chat",
+                    {"text": "[dev] qi max 20.0 -> 0.0; current=0.0"},
+                ),
+                authoritative,
+            ]
+        )
+
+        self.assertIs(
+            _wait_authoritative_qi_state(bot, 1.0, 0.0, 0.0),
+            authoritative,
+            "零上限只用于 dev 拒绝夹具，仍必须以命令后的 typed player_state 为准",
+        )
+
+    def test_authoritative_qi_state_rejects_pre_command_snapshot(self):
+        bot = _FakeBot(
+            [
+                _player_state_event(1.0, 0.0, 0.0),
+                _player_state_event(2.0, 0.0, 20.0),
+            ]
+        )
+
+        with self.assertRaisesRegex(AssertionError, "权威 player_state"):
+            _wait_authoritative_qi_state(bot, 2.0, 0.0, 0.0)
+
     @staticmethod
     def _cast_sync(t: float, phase: str, outcome: str) -> _FakeEvent:
         return _FakeEvent(
