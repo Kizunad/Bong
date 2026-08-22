@@ -1,9 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Added, Client, Commands, Entity, EventReader, EventWriter, Events, GameMode,
-    Position, Query, Res, ResMut, Username, Without,
+    bevy_ecs, bevy_ecs::system::SystemParam, Added, Client, Commands, Entity, EventReader,
+    EventWriter, Events, GameMode, Position, Query, Res, ResMut, Username, Without,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -18,7 +17,7 @@ use crate::cultivation::death_hooks::{
     apply_revive_penalty, CultivationDeathCause, CultivationDeathTrigger, PlayerRevived,
     PlayerTerminated,
 };
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     calculate_rebirth_chance, lifespan_tick_rate_multiplier, tribulation_rebirth_chance,
@@ -1214,16 +1213,6 @@ pub fn reemit_death_screen_for_reconnected_awaiting_revival_clients(
     }
 }
 
-/// 复活/新建角色的只读 registry 桶。M36：合并两个 `Option<Res<...>>` 为单一
-/// SystemParam，避免顶层参数撞 Bevy 0.14 的 16 元上限（与 `resolve.rs` 的
-/// `CombatResolveEventWriters` 同一模式）。
-#[derive(SystemParam)]
-pub struct RevivalRegistries<'w, 's> {
-    item_registry: Option<Res<'w, crate::inventory::ItemRegistry>>,
-    technique_registry: Option<Res<'w, crate::cultivation::known_techniques::TechniqueRegistry>>,
-    _marker: std::marker::PhantomData<&'s ()>,
-}
-
 #[derive(SystemParam)]
 pub struct RevivalQiResources<'w> {
     ledger: ResMut<'w, WorldQiAccount>,
@@ -1246,13 +1235,9 @@ pub fn handle_revival_action_intents(
     persistence: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
     default_loadout: Option<Res<DefaultLoadout>>,
-    // M36：`item_registry` 与 `technique_registry` 合并进同一个 bucket 结构（单一
-    // SystemParam），保持系统函数在 Bevy 0.14 的 16 元 SystemParam 上限内（实测第 17
-    // 个参数直接编译失败，见 `resolve_attack_intents` 的同一注释）。`TechniqueRegistry`
-    // 供 `CreateNewCharacter` 分支的 `reset_for_new_character` 使用——新角色功法授予
-    // 与 `/reset`、fresh-player join 同源（`fresh_player_known_techniques`）。
-    registries: RevivalRegistries<'_, '_>,
+    item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    technique_registry: Option<Res<TechniqueRegistry>>,
     mut intents: EventReader<RevivalActionIntent>,
     mut qi: RevivalQiResources,
     mut events: RevivalEventWriters,
@@ -1262,8 +1247,6 @@ pub fn handle_revival_action_intents(
     // P0 fix: coffin 清除参数（复活/新建时彻底清除 coffin 状态）
     mut coffin_registry: Option<ResMut<crate::coffin::CoffinRegistry>>,
 ) {
-    let item_registry = registries.item_registry.as_deref();
-    let technique_registry = registries.technique_registry.as_deref();
     for intent in intents.read() {
         let Ok((
             (entity, mut lifecycle, wounds, stamina, combat_state),
@@ -1444,9 +1427,9 @@ pub fn handle_revival_action_intents(
                     skill_set,
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
-                    item_registry,
-                    technique_registry,
+                    item_registry.as_deref(),
                     inventory_allocator.as_deref_mut(),
+                    technique_registry.as_deref(),
                     coffin_registry.as_deref_mut(),
                     &mut events.coffin_state_events,
                 );
@@ -2177,23 +2160,6 @@ fn terminate_lifecycle_with_death_context(
     true
 }
 
-/// 新角色/重置的功法初始集。M36 修复：dev-techniques feature 下必须授予
-/// **当前权威 registry** 的全量（与 fresh-player join 路径的 `dev_default` 同源，
-/// 而不是 derive 出来的无条件空表）——否则创建新角色 / `/reset` 会把 dev 玩家
-/// 已授予的全部功法清空，与加入时的授予行为自相矛盾。非 dev 构建保持空表。
-fn fresh_player_known_techniques(
-    #[cfg_attr(not(feature = "dev-techniques"), allow(unused_variables))]
-    technique_registry: Option<&crate::cultivation::known_techniques::TechniqueRegistry>,
-) -> KnownTechniques {
-    #[cfg(feature = "dev-techniques")]
-    {
-        if let Some(registry) = technique_registry {
-            return KnownTechniques::dev_default(registry);
-        }
-    }
-    KnownTechniques::default()
-}
-
 #[allow(clippy::too_many_arguments)]
 fn reset_for_new_character(
     entity: Entity,
@@ -2214,8 +2180,8 @@ fn reset_for_new_character(
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
-    technique_registry: Option<&crate::cultivation::known_techniques::TechniqueRegistry>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
+    technique_registry: Option<&TechniqueRegistry>,
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
@@ -2342,10 +2308,13 @@ fn reset_for_new_character(
         AntiCheatCounter::default(),
         QuickSlotBindings::default(),
     ));
+    let fresh_known_techniques = technique_registry
+        .map(KnownTechniques::progression_reset)
+        .unwrap_or_default();
     entity_commands.insert((
         SkillBarBindings::default(),
         UnlockedStyles::default(),
-        fresh_player_known_techniques(technique_registry),
+        fresh_known_techniques,
         learned_recipes,
     ));
     commands
@@ -2673,7 +2642,7 @@ mod tests {
     use crate::persistence::{
         bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota,
         persist_active_tribulation, persist_player_cultivation_bundle, ActiveTribulationRecord,
-        DeceasedIndexEntry, DeceasedSnapshot, PersistenceSettings,
+        DeceasedSnapshot, PersistenceSettings,
     };
     use crate::player::state::player_character_id;
     use crate::qi_physics::constants::QI_ZHENMAI_PREP_WINDOW_MS;
@@ -2841,15 +2810,10 @@ mod tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         bootstrap_sqlite(&db_path, &format!("combat-lifecycle-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                &db_path,
-                &deceased_dir,
-                format!("combat-lifecycle-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(&db_path, format!("combat-lifecycle-{test_name}")),
             root,
         )
     }
@@ -4727,15 +4691,15 @@ mod tests {
             .expect("death penalty lifespan event should persist");
         let lifespan_payload: LifespanEventRecord =
             serde_json::from_str(&lifespan_payload_json).expect("lifespan payload should decode");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(
-                settings
-                    .deceased_public_dir()
-                    .join("offline_ShortLived.json"),
+        let snapshot_json: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:ShortLived"],
+                |row| row.get(0),
             )
-            .expect("deceased snapshot should exist"),
-        )
-        .expect("deceased snapshot should decode");
+            .expect("deceased snapshot should persist in sqlite");
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("deceased snapshot should decode");
 
         assert_eq!(death_registry, (1, 240, "bleed_out".to_string()));
         assert_eq!(lifespan_payload.kind, "death_penalty");
@@ -4986,91 +4950,6 @@ mod tests {
             .collect();
         assert_eq!(quota_events.len(), 1);
         assert_eq!(quota_events[0].occupied_slots, 0);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn deceased_snapshot_export_writes_public_json_after_termination_confirmation() {
-        let mut app = App::new();
-        let (settings, root) = persistence_settings("deceased-public-json");
-        app.insert_resource(settings.clone());
-        app.insert_resource(CombatClock { tick: 40 });
-        app.add_event::<DeathEvent>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_event::<DeathInsightRequested>();
-        app.add_event::<DeathCinematicPublished>();
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<RevivalActionIntent>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<QiTransfer>();
-        app.add_event::<crate::coffin::CoffinStateChanged>();
-        app.insert_resource(WorldQiAccount::default());
-        app.add_systems(
-            Update,
-            (
-                death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-                handle_revival_action_intents.after(near_death_tick),
-                crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
-            ),
-        );
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Wounds::default(),
-                Stamina::default(),
-                CombatState::default(),
-                Lifecycle {
-                    character_id: "offline:Ancestor".to_string(),
-                    fortune_remaining: 0,
-                    ..Default::default()
-                },
-                LifeRecord::new("offline:Ancestor"),
-            ))
-            .id();
-
-        app.world_mut().send_event(CultivationDeathTrigger {
-            entity,
-            cause: CultivationDeathCause::NegativeZoneDrain,
-            context: serde_json::json!({"zone": "rift_valley"}),
-        });
-        app.update();
-        app.world_mut().resource_mut::<CombatClock>().tick = 641;
-        app.update();
-        app.world_mut().send_event(RevivalActionIntent {
-            entity,
-            action: RevivalActionKind::Terminate,
-            issued_at_tick: 641,
-        });
-        app.update();
-
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot file should exist"),
-        )
-        .expect("snapshot file should decode");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index file should exist"),
-        )
-        .expect("index file should decode");
-
-        assert_eq!(snapshot.char_id, "offline:Ancestor");
-        assert_eq!(snapshot.died_at_tick, 641);
-        assert_eq!(snapshot.termination_category, "自主归隐");
-        assert_eq!(snapshot.lifecycle.state, LifecycleState::Terminated);
-        assert!(matches!(
-            snapshot.life_record.biography.last(),
-            Some(BiographyEntry::Terminated { tick: 641, .. })
-        ));
-        assert_eq!(index.len(), 1);
-        assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
-        assert_eq!(index[0].termination_category, "自主归隐");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5528,6 +5407,7 @@ mod tests {
         // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
         app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
 
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();
@@ -5649,6 +5529,9 @@ mod tests {
         let meridians = entity_ref
             .get::<MeridianSystem>()
             .expect("meridians should be reattached for new character");
+        let known_techniques = entity_ref
+            .get::<KnownTechniques>()
+            .expect("new character should receive a KnownTechniques component");
         let learned = entity_ref
             .get::<LearnedRecipes>()
             .expect("learned recipes should be reattached for new character");
@@ -5690,6 +5573,17 @@ mod tests {
         assert_eq!(cultivation.qi_current, 0.0);
         assert_eq!(cultivation.qi_max, 10.0);
         assert_eq!(meridians.opened_count(), 0);
+        #[cfg(feature = "dev-techniques")]
+        assert_eq!(
+            known_techniques.entries.len(),
+            app.world().resource::<TechniqueRegistry>().len(),
+            "dev-techniques new-character reset must preserve full catalog grants"
+        );
+        #[cfg(not(feature = "dev-techniques"))]
+        assert!(
+            known_techniques.entries.is_empty(),
+            "production new-character reset must keep technique progression empty"
+        );
         assert_eq!(learned.ids, vec!["kai_mai_pill_v0".to_string()]);
         assert!(inventory.revision.0 >= 1);
         assert_eq!(anticheat_counter.reach_violations, 0);
@@ -5700,7 +5594,6 @@ mod tests {
         let persisted = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
-            None,
         );
         assert_eq!(persisted.state, PlayerState::default());
         assert_eq!(persisted.position, expected_spawn);
@@ -5717,7 +5610,7 @@ mod tests {
     }
 
     #[test]
-    fn create_new_character_uses_distinct_character_ids_for_deceased_exports() {
+    fn create_new_character_uses_distinct_character_ids_for_deceased_snapshots() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("new-character-deceased-unique");
         let data_dir = root.join("data");
@@ -5833,7 +5726,7 @@ mod tests {
         });
         first_lifecycle.terminate(900);
         persist_termination_transition(&settings, &first_lifecycle, &first_life_record)
-            .expect("first terminated character should export");
+            .expect("first terminated snapshot should persist");
 
         let mut second_lifecycle = Lifecycle {
             character_id: second_character_id.clone(),
@@ -5847,22 +5740,17 @@ mod tests {
         });
         second_lifecycle.terminate(901);
         persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
-            .expect("second terminated character should export");
+            .expect("second terminated snapshot should persist");
 
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index file should exist"),
-        )
-        .expect("index file should decode");
-
-        assert_eq!(index.len(), 2);
-        assert!(index
-            .iter()
-            .any(|entry| entry.char_id == first_character_id));
-        assert!(index
-            .iter()
-            .any(|entry| entry.char_id == second_character_id));
-        assert_ne!(index[0].path, index[1].path);
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM deceased_snapshots WHERE char_id IN (?1, ?2)",
+                params![first_character_id, second_character_id],
+                |row| row.get(0),
+            )
+            .expect("deceased snapshot rows should be queryable");
+        assert_eq!(snapshot_count, 2);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -7263,7 +7151,6 @@ mod tests {
         let before = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
-            None,
         );
         assert!(
             before.in_coffin,
@@ -7329,7 +7216,6 @@ mod tests {
         let after = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
-            None,
         );
         assert!(
             !after.in_coffin,
@@ -7390,7 +7276,6 @@ mod tests {
         let before = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
-            None,
         );
         assert!(
             before.in_coffin,
@@ -7454,7 +7339,6 @@ mod tests {
         let after = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
-            None,
         );
         assert!(
             !after.in_coffin,

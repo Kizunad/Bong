@@ -1229,8 +1229,7 @@ mod tests {
         std::fs::create_dir_all(db_path.parent().unwrap())
             .expect("temp dir creation should succeed");
         bootstrap_sqlite(&db_path, "shield-death-e2e").expect("sqlite bootstrap should succeed");
-        let persistence =
-            PersistenceSettings::with_paths(&db_path, root.join("deceased"), "shield-death-e2e");
+        let persistence = PersistenceSettings::with_db_path(&db_path, "shield-death-e2e");
 
         // -- App 构建：注册 death_arbiter_tick + cleanup_shield_on_death（保持 after 顺序）--
         let mut app = App::new();

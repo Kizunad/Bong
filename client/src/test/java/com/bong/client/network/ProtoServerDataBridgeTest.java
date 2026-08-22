@@ -2789,16 +2789,67 @@ class ProtoServerDataBridgeTest {
     }
 
     @Test
-    void bridgeAlchemyOutcomeResolvedStripsBucketEnumPrefix() {
+    void bridgeAlchemyOutcomeResolvedNormalizesBucketAndToxinColor() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
-                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT))
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT)
+                        .setToxinColor(Common.ColorKind.COLOR_KIND_TURBID))
                 .build();
 
         JsonObject json = bridgeAndParse(envelope);
         assertEquals("perfect", json.get("bucket").getAsString(),
                 "bucket 必须剥成 'perfect'（AlchemyProgressHudPlanner/AlchemyScreen switch），"
                 + "否则炼丹结果 HUD/试药史恒显示灰色默认'炼废'标签");
+        assertEquals("Turbid", json.get("toxin_color").getAsString(),
+                "toxin_color 必须符合 TypeBox ColorKind 的 PascalCase 字面量");
+    }
+
+    @Test
+    void bridgeAlchemyOutcomeResolvedOmitsAbsentOrUnspecifiedToxinColor() {
+        for (Envelope.AlchemyOutcomeResolved outcome : new Envelope.AlchemyOutcomeResolved[] {
+                Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_GOOD)
+                        .build(),
+                Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_GOOD)
+                        .setToxinColor(Common.ColorKind.COLOR_KIND_UNSPECIFIED)
+                        .build()
+        }) {
+            JsonObject json = bridgeAndParse(Envelope.ServerDataEnvelope.newBuilder()
+                    .setAlchemyOutcomeResolved(outcome)
+                    .build());
+            assertFalse(json.has("toxin_color"),
+                    "absent/unspecified optional toxin_color 不得伪造成 TypeBox 非法值");
+        }
+    }
+
+    @Test
+    void bridgeAlchemyOutcomeResolvedPinsEveryValidColorKindVariantToPascalCase() {
+        record ColorKindWire(Common.ColorKind wire, String pascalCase) {}
+        List<ColorKindWire> variants = List.of(
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_SHARP, "Sharp"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_HEAVY, "Heavy"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_MELLOW, "Mellow"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_SOLID, "Solid"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_LIGHT, "Light"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_INTRICATE, "Intricate"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_GENTLE, "Gentle"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_INSIDIOUS, "Insidious"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_VIOLENT, "Violent"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_TURBID, "Turbid"));
+
+        for (ColorKindWire variant : variants) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
+                            .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT)
+                            .setToxinColor(variant.wire))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(variant.pascalCase, json.get("toxin_color").getAsString(),
+                    () -> variant.wire + " 必须剥成 TypeBox ColorKind PascalCase '" + variant.pascalCase
+                            + "'；每个有效变体都要命中规范化，不能只有 TURBID 单变体特判而其余返回 "
+                            + "原始 proto 字面量/错误拼写");
+        }
     }
 
     @Test

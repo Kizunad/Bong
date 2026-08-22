@@ -1005,6 +1005,10 @@ mod tests {
         );
     }
 
+    // R5 P0b (#1931) 冻结的真元事务契约：qi 释放 fail-closed，无 canonical LifeRecord
+    // 身份即拒绝入账（匿名 entity 账户已被移除），生产玩家出生必带 LifeRecord。
+    const FORGE_TEST_CHARACTER_ID: &str = "offline:forge_request_test";
+
     #[test]
     fn forge_request_system_adds_output_and_spends_inputs() {
         let mut app = test_app();
@@ -1041,6 +1045,7 @@ mod tests {
                 },
                 Position::new([0.0, 64.0, 0.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(FORGE_TEST_CHARACTER_ID),
             ))
             .id();
 
@@ -1072,8 +1077,8 @@ mod tests {
         let transfer = &transfers[0];
         assert_eq!(
             transfer.from,
-            QiAccountId::player(format!("entity:{entity:?}")),
-            "QiTransfer.from 应对应锻造者账户，实际 {:?}",
+            QiAccountId::player(FORGE_TEST_CHARACTER_ID),
+            "QiTransfer.from 应对应锻造者 canonical 身份账户，实际 {:?}",
             transfer.from
         );
         assert_eq!(

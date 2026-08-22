@@ -37,7 +37,9 @@ use crate::cultivation::tribulation::{
     HeartDemonResolution, JueBiRuntimeContext, PendingHeartDemonOffer, TribulationOriginDimension,
     TribulationState,
 };
-use crate::inventory::{clear_player_inventory, ClearScope, OverloadedMarker, PlayerInventory};
+use crate::inventory::{
+    clear_player_inventory, ClearScope, ItemRegistry, OverloadedMarker, PlayerInventory,
+};
 use crate::movement::{player_knockback::ActivePlayerKnockback, MovementState};
 use crate::network::craft_emit::{CraftSessionPersistenceDirty, CraftSessionStateDirty};
 use crate::player::state::PlayerState;
@@ -325,6 +327,7 @@ type InventoryResetItem<'a> = (
 fn reset_inventory_and_ui_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
     mut players: Query<InventoryResetItem<'_>>,
+    registry: Option<Res<ItemRegistry>>,
 ) {
     for event in events.read() {
         let Ok((inventory, player_state, movement, quick_slots, skill_bar, styles)) =
@@ -333,8 +336,8 @@ fn reset_inventory_and_ui_state(
             continue;
         };
 
-        if let Some(mut inventory) = inventory {
-            clear_player_inventory(&mut inventory, ClearScope::All);
+        if let (Some(mut inventory), Some(registry)) = (inventory, registry.as_deref()) {
+            clear_player_inventory(&mut inventory, ClearScope::All, registry);
         }
         if let Some(mut player_state) = player_state {
             *player_state = PlayerState::default();
@@ -462,6 +465,9 @@ mod tests {
 
     fn setup_app() -> App {
         let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("real item registry should load"),
+        );
         #[cfg(feature = "dev-techniques")]
         app.insert_resource(runtime_registry());
         app.add_event::<CommandResultEvent<ResetCmd>>();

@@ -16,6 +16,7 @@ pub enum NpcScenarioAction {
     Kite,
     Swarm,
     Duel,
+    PassiveTarget,
     Clear,
 }
 
@@ -28,6 +29,7 @@ impl NpcScenarioAction {
             Self::Kite => ScenarioType::Kite,
             Self::Swarm => ScenarioType::Swarm,
             Self::Duel => ScenarioType::Duel,
+            Self::PassiveTarget => ScenarioType::PassiveTarget,
             Self::Clear => ScenarioType::Clear,
         }
     }
@@ -38,7 +40,7 @@ impl CommandArg for NpcScenarioAction {
         let raw = String::parse_arg(input)?;
         let Some(scenario) = ScenarioType::from_str(raw.as_str()) else {
             return Err(CommandArgParseError::InvalidArgument {
-                expected: "chase|flee|fight|kite|swarm|duel|clear".to_string(),
+                expected: "chase|flee|fight|kite|swarm|duel|passive_target|clear".to_string(),
                 got: raw,
             });
         };
@@ -50,6 +52,7 @@ impl CommandArg for NpcScenarioAction {
             ScenarioType::Kite => Self::Kite,
             ScenarioType::Swarm => Self::Swarm,
             ScenarioType::Duel => Self::Duel,
+            ScenarioType::PassiveTarget => Self::PassiveTarget,
             ScenarioType::Clear => Self::Clear,
         })
     }
@@ -109,6 +112,10 @@ mod tests {
             NpcScenarioAction::arg_from_str("clear").unwrap(),
             NpcScenarioAction::Clear
         );
+        assert_eq!(
+            NpcScenarioAction::arg_from_str("passive_target").unwrap(),
+            NpcScenarioAction::PassiveTarget
+        );
     }
 
     #[test]
@@ -125,6 +132,10 @@ mod tests {
             (NpcScenarioAction::Kite, ScenarioType::Kite),
             (NpcScenarioAction::Swarm, ScenarioType::Swarm),
             (NpcScenarioAction::Duel, ScenarioType::Duel),
+            (
+                NpcScenarioAction::PassiveTarget,
+                ScenarioType::PassiveTarget,
+            ),
             (NpcScenarioAction::Clear, ScenarioType::Clear),
         ] {
             assert_eq!(

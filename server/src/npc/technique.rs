@@ -265,8 +265,11 @@ pub fn assign_npc_techniques_for_identity(
     let range = (count_max - count_min + 1) as u32;
     let total_count = count_min + splitmix64_range(entity_seed, range) as usize;
     let passive_count = passive_available.len().min(total_count);
+    // 被动条目共享基础配额，但不能吞掉唯一主动条目；NPC 至少保留一个可施放功法，
+    // 否则通用战斗 scorer 会在已知功法非空时失去 cast-ready 路径。
     let active_count = total_count
         .saturating_sub(passive_count)
+        .max(1)
         .min(available.len());
 
     // Fisher-Yates shuffle 选前 active_count 个

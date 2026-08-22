@@ -398,6 +398,9 @@ mod tests {
 
     fn mundane_thinker_scenario_with_kind(kind: MundaneFaunaKind) -> (App, Entity) {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(crate::qi_physics::WorldQiAccount::default());
         app.add_event::<crate::qi_physics::QiTransfer>();
         app.insert_resource(

@@ -3,7 +3,8 @@ use valence::prelude::{Added, Changed, Client, Entity, Query, Res, Username, Wit
 use crate::combat::sword_basics::sword_proficiency_label;
 use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::network::agent_bridge::{
-    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+    payload_type_label, serialize_server_data_payload, serialize_server_data_payload_proto,
+    PayloadBuildError, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::combat_hud::{
@@ -89,6 +90,28 @@ fn build_techniques_snapshot(
             })
             .collect(),
     }
+}
+
+/// 启动期按“玩家学会完整 catalog”构造最坏情况快照，并强制走生产 protobuf 编码。
+/// registry 启动后不可变，因此通过即保证任意 `KnownTechniques` 子集不会因整包超限被丢弃。
+pub fn validate_techniques_snapshot_budget(
+    registry: &TechniqueRegistry,
+) -> Result<usize, PayloadBuildError> {
+    let known = KnownTechniques {
+        entries: registry
+            .iter()
+            .map(
+                |definition| crate::cultivation::known_techniques::KnownTechnique {
+                    id: definition.id.clone(),
+                    proficiency: 1.0,
+                    active: true,
+                },
+            )
+            .collect(),
+    };
+    let snapshot = build_techniques_snapshot(registry, &known, None);
+    let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot));
+    serialize_server_data_payload_proto(&payload).map(|bytes| bytes.len())
 }
 
 pub fn send_techniques_snapshot_to_client(

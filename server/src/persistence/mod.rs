@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
@@ -10,15 +11,20 @@ use rusqlite::{params, types::Type, Connection, OptionalExtension, TransactionBe
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
+use valence::prelude::bevy_ecs::event::{Events, ManualEventReader};
 use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
-    App, AppExit, Client, Commands, Component, DVec3, Entity, EntityKind, EventReader,
-    IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource, Startup, Update, Username,
-    With,
+    Added, App, AppExit, Changed, Client, Commands, Component, DVec3, Despawned, Entity,
+    EntityKind, EventReader, IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource,
+    Startup, Update, Username, With, Without, World,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::known_techniques::{
+    KnownTechniques, KnownTechniquesLoadFailed, KnownTechniquesReconnectBlocked,
+    KnownTechniquesReconnectFailed, KnownTechniquesReconnectReady, TechniqueRegistry,
+};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
@@ -27,7 +33,10 @@ use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, M
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
-use crate::player::state::canonical_player_id;
+use crate::player::state::{
+    canonical_player_id, load_player_known_techniques_slice, open_player_connection,
+    player_username_from_character_id, PlayerStatePersistence, PLAYER_ROW_SCHEMA_VERSION,
+};
 #[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 #[cfg(test)]
@@ -54,18 +63,32 @@ use crate::world::heartbeat::{
 
 #[allow(dead_code)]
 pub mod identity;
+#[allow(dead_code)]
+pub mod slice;
+
+use slice::{
+    dispatch_reconnect_handoff, reconnect_handoff_token, AutosavePolicy, DirtyAcknowledgement,
+    DirtyRevision, DirtyTracker, GuardedSlice, LoadFailurePolicy, PersistedRevisionFence,
+    PersistenceSlice, PersistenceSliceRegistry, ReconnectHandoffReport, ShutdownFlushRequest,
+    SliceClock, SliceDescriptor, SliceId, SliceLoad, SliceRunContext, SliceRunError,
+    SliceRunOutcome, SliceRunReason, SliceRunResult, SliceScope, TimeBasis, WriteAuthority,
+    WriteBinding, WriteDomain, WriteOrdering, WriteOutlet,
+};
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
-pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
-const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
+// NPC 自动保存批次会让 WAL 数据库出现合法的并发写等待；phase-9 回归同时
+// 驱动 20 个写入线程，15 秒不足以覆盖队列尾部，导致可恢复的 `SQLITE_BUSY`
+// 被误报为保存失败。保持有界等待，同时覆盖既定批次压力范围。
+pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
 /// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池；
 /// v39 新增 `player_lifecycle`（bughunt player-lifecycle-relog-death-consequence-wipe：
 /// 断线重连此前从未持久化 `Lifecycle` 死亡/复活状态机，`fortune_remaining`/
 /// `awaiting_decision`/`state` 全部被 `Lifecycle::default()` 抹回满状态新角色）；
 /// v40 持久化 R5 真元事务固定 overflow 池；v41 持久化坍缩渊 drain 固定池；
-/// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放。
-const CURRENT_USER_VERSION: i32 = 42;
+/// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放；
+/// v43 移除已退役亡者公开站点的 `deceased_snapshots.public_path` 投影字段。
+const CURRENT_USER_VERSION: i32 = 43;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -112,7 +135,6 @@ const STARTUP_BACKUP_KEEP_COUNT: usize = 7;
 #[derive(Debug, Clone)]
 pub struct PersistenceSettings {
     db_path: PathBuf,
-    deceased_public_dir: PathBuf,
     server_run_id: String,
 }
 
@@ -162,6 +184,193 @@ struct ZoneInfluenceSnapshotState {
 
 impl Resource for ZoneInfluenceSnapshotState {}
 
+#[derive(Debug, Default)]
+struct PersistenceShutdownReader(ManualEventReader<AppExit>);
+
+impl Resource for PersistenceShutdownReader {}
+
+#[derive(Debug, Clone, Copy)]
+struct ProductionSliceClock {
+    runtime_tick: u64,
+    wall_unix_millis: u64,
+}
+
+impl SliceClock for ProductionSliceClock {
+    fn runtime_tick(&self) -> u64 {
+        self.runtime_tick
+    }
+
+    fn wall_unix_millis(&self) -> u64 {
+        self.wall_unix_millis
+    }
+}
+
+struct ZoneRuntimePersistenceSlice;
+
+impl PersistenceSlice for ZoneRuntimePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &ZONE_RUNTIME_SLICE_DESCRIPTOR
+    }
+}
+
+const ZONE_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.zone_runtime"),
+    scope: SliceScope::WorldResource,
+    order: 100,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.zone_runtime"),
+        WriteAuthority::new("persistence.zone_runtime"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_zone_runtime_slice),
+};
+
+struct KnownTechniquesPersistenceSlice;
+
+impl PersistenceSlice for KnownTechniquesPersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR
+    }
+}
+
+const KNOWN_TECHNIQUES_SLICE_ID: SliceId = SliceId::new("player.known_techniques");
+const KNOWN_TECHNIQUES_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: KNOWN_TECHNIQUES_SLICE_ID,
+    scope: SliceScope::PlayerEntity,
+    order: 10,
+    load_failure: LoadFailurePolicy::BlockWrites,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("player.known_techniques"),
+        WriteAuthority::new("persistence.known_techniques"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: Some(hydrate_known_techniques_slice),
+    reconnect_preflight: Some(preflight_known_techniques_slice),
+    reconnect_cleanup: Some(cleanup_known_techniques_slice),
+    rebase: None,
+    disconnect_save: Some(save_known_techniques_disconnect_slice),
+    shutdown_flush: Some(flush_known_techniques_shutdown_slice),
+};
+
+#[derive(Debug)]
+struct KnownTechniquesActivation {
+    entity: Entity,
+    guarded: GuardedSlice<KnownTechniques, String>,
+    tracker: DirtyTracker,
+    fence: PersistedRevisionFence,
+}
+
+#[derive(Debug, Default)]
+struct KnownTechniquesActivations(HashMap<String, KnownTechniquesActivation>);
+
+impl Resource for KnownTechniquesActivations {}
+
+#[derive(Debug, Default)]
+struct PendingKnownTechniquesHandoffs(HashMap<String, Entity>);
+
+impl Resource for PendingKnownTechniquesHandoffs {}
+
+#[derive(Debug, Default)]
+struct PendingKnownTechniquesCandidates(HashMap<String, Vec<Entity>>);
+
+impl Resource for PendingKnownTechniquesCandidates {}
+
+#[derive(Debug, Default)]
+struct KnownTechniquesRetryEntry {
+    attempts: u8,
+    next_attempt_frame: u64,
+    next_log_frame: u64,
+}
+
+#[derive(Debug, Default)]
+struct KnownTechniquesReconnectState {
+    frame: u64,
+    retries: HashMap<String, KnownTechniquesRetryEntry>,
+    preflight_loads: Mutex<HashMap<String, Result<Option<KnownTechniques>, String>>>,
+}
+
+impl Resource for KnownTechniquesReconnectState {}
+
+const KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS: u8 = 8;
+const KNOWN_TECHNIQUES_RETRY_MAX_BACKOFF_FRAMES: u64 = 64;
+const KNOWN_TECHNIQUES_RETRY_LOG_INTERVAL_FRAMES: u64 = 64;
+
+fn begin_known_techniques_retry(
+    state: &mut KnownTechniquesReconnectState,
+    subject: &str,
+    frame: u64,
+) -> bool {
+    let entry = state.retries.entry(subject.to_string()).or_default();
+    if frame < entry.next_attempt_frame {
+        return false;
+    }
+    entry.attempts = entry
+        .attempts
+        .saturating_add(1)
+        .min(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS);
+    true
+}
+
+fn record_known_techniques_retry_failure(
+    state: &mut KnownTechniquesReconnectState,
+    subject: &str,
+    frame: u64,
+) -> bool {
+    let entry = state.retries.entry(subject.to_string()).or_default();
+    let capped = entry.attempts >= KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS;
+    if capped {
+        entry.attempts = KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS;
+    }
+    let backoff_shift = entry.attempts.saturating_sub(1).min(6);
+    let backoff = 1_u64 << backoff_shift;
+    entry.next_attempt_frame =
+        frame.saturating_add(backoff.min(KNOWN_TECHNIQUES_RETRY_MAX_BACKOFF_FRAMES));
+    capped
+}
+
+fn known_techniques_retry_log_allowed(
+    state: &mut KnownTechniquesReconnectState,
+    subject: &str,
+    frame: u64,
+) -> bool {
+    let entry = state.retries.entry(subject.to_string()).or_default();
+    if frame < entry.next_log_frame {
+        return false;
+    }
+    entry.next_log_frame = frame.saturating_add(KNOWN_TECHNIQUES_RETRY_LOG_INTERVAL_FRAMES);
+    true
+}
+
+fn clear_known_techniques_retry(state: &mut KnownTechniquesReconnectState, subject: &str) {
+    state.retries.remove(subject);
+}
+
+fn known_techniques_live_activation(world: &World, subject: &str) -> Option<Entity> {
+    world
+        .resource::<KnownTechniquesActivations>()
+        .0
+        .get(subject)
+        .filter(|activation| world.get::<Client>(activation.entity).is_some())
+        .map(|activation| activation.entity)
+}
+
+fn reconnect_report_is_live_duplicate(report: &ReconnectHandoffReport) -> bool {
+    report.failures.iter().any(|failure| {
+        failure.reason == SliceRunReason::ReconnectPreflight
+            && failure.error.message() == "known techniques subject already has a live activation"
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub(crate) struct PersistenceBootstrapSet;
 
@@ -175,31 +384,32 @@ impl Default for PersistenceSettings {
     fn default() -> Self {
         Self {
             db_path: PathBuf::from(DEFAULT_DATABASE_PATH),
-            deceased_public_dir: PathBuf::from(DEFAULT_DECEASED_PUBLIC_DIR),
             server_run_id: Uuid::now_v7().to_string(),
         }
     }
 }
 
 impl PersistenceSettings {
-    pub fn with_paths(
-        db_path: impl Into<PathBuf>,
-        deceased_public_dir: impl Into<PathBuf>,
-        server_run_id: impl Into<String>,
-    ) -> Self {
+    pub fn with_db_path(db_path: impl Into<PathBuf>, server_run_id: impl Into<String>) -> Self {
         Self {
             db_path: db_path.into(),
-            deceased_public_dir: deceased_public_dir.into(),
             server_run_id: server_run_id.into(),
         }
     }
 
-    pub fn db_path(&self) -> &Path {
-        self.db_path.as_path()
+    /// 旧测试夹具兼容构造器。亡者索引已并入 SQLite，历史调用方传入的目录不再参与
+    /// 持久化；保留该入口可让跨模块回归测试继续复用同一套 fixture。
+    #[cfg(test)]
+    pub fn with_paths(
+        db_path: impl Into<PathBuf>,
+        _deceased_dir: impl Into<PathBuf>,
+        server_run_id: impl Into<String>,
+    ) -> Self {
+        Self::with_db_path(db_path, server_run_id)
     }
 
-    pub fn deceased_public_dir(&self) -> &Path {
-        self.deceased_public_dir.as_path()
+    pub fn db_path(&self) -> &Path {
+        self.db_path.as_path()
     }
 
     pub fn server_run_id(&self) -> &str {
@@ -213,15 +423,6 @@ pub struct LifespanEventRecord {
     pub kind: String,
     pub delta_years: i64,
     pub source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DeceasedIndexEntry {
-    pub char_id: String,
-    pub died_at_tick: u64,
-    pub path: String,
-    #[serde(default = "default_termination_category")]
-    pub termination_category: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,27 +475,6 @@ struct DeathInsightEventPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LifeEventPayload {
     biography_entry: BiographyEntry,
-}
-
-#[derive(Debug)]
-struct StagedDeceasedExport {
-    snapshot_path: PathBuf,
-    index_path: PathBuf,
-    previous_snapshot: Option<Vec<u8>>,
-    previous_index: Option<Vec<u8>>,
-    relative_snapshot_path: String,
-    _guard: MutexGuard<'static, ()>,
-}
-
-impl StagedDeceasedExport {
-    fn relative_snapshot_path(&self) -> &str {
-        self.relative_snapshot_path.as_str()
-    }
-
-    fn rollback(&self) {
-        rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
-        rollback_file(&self.index_path, self.previous_index.as_deref());
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -706,8 +886,846 @@ pub struct SocialPersistenceBundle {
     pub spirit_niches: Vec<SocialSpiritNicheRecord>,
 }
 
+const KNOWN_TECHNIQUES_UPSERT: &str = "
+    INSERT INTO player_known_techniques (
+        username,
+        known_techniques_json,
+        schema_version,
+        last_updated_wall
+    ) VALUES (?1, ?2, ?3, ?4)
+    ON CONFLICT(username) DO UPDATE SET
+        known_techniques_json = excluded.known_techniques_json,
+        schema_version = excluded.schema_version,
+        last_updated_wall = excluded.last_updated_wall
+";
+
+fn persist_known_techniques_activation(
+    activation: &mut KnownTechniquesActivation,
+    persistence: &PlayerStatePersistence,
+    outlet: WriteOutlet,
+) -> Result<SliceRunOutcome, SliceRunError> {
+    let permit = activation
+        .guarded
+        .write_permit(outlet)
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    let Some(snapshot) = activation
+        .tracker
+        .begin_snapshot(permit, Clone::clone)
+        .map_err(|error| SliceRunError::new(error.to_string()))?
+    else {
+        return Ok(SliceRunOutcome::Clean);
+    };
+    let username = player_username_from_character_id(snapshot.subject_key().as_str())
+        .ok_or_else(|| SliceRunError::new("known techniques subject is not a player identity"))?
+        .to_string();
+    let known_techniques_json = serde_json::to_string(snapshot.payload())
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    let mut connection = open_player_connection(persistence)
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    let receipt = activation
+        .fence
+        .commit(&mut connection, snapshot, |request| {
+            request.execute_serialized(
+                KNOWN_TECHNIQUES_UPSERT,
+                params![
+                    username,
+                    known_techniques_json,
+                    PLAYER_ROW_SCHEMA_VERSION,
+                    current_unix_seconds()
+                ],
+            )
+        })
+        .map_err(|error| SliceRunError::new(format!("{error:?}")))?;
+    match activation.tracker.acknowledge(receipt) {
+        DirtyAcknowledgement::Acknowledged => Ok(SliceRunOutcome::Flushed),
+        acknowledgement => Err(SliceRunError::new(format!(
+            "known techniques durable receipt was not acknowledged: {acknowledgement:?}"
+        ))),
+    }
+}
+
+fn sync_known_techniques_activation(
+    world: &World,
+    subject: &str,
+    activation: &mut KnownTechniquesActivation,
+) -> Result<(), SliceRunError> {
+    let Some(current) = world.get::<KnownTechniques>(activation.entity) else {
+        return Ok(());
+    };
+    if current != activation.guarded.value() {
+        activation
+            .guarded
+            .mutate(&mut activation.tracker, |value| *value = current.clone())
+            .map_err(|error| SliceRunError::new(format!("{subject}: {error}")))?;
+    }
+    Ok(())
+}
+
+fn hydrate_known_techniques_slice(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+    let subject = context
+        .handoff_key
+        .as_deref()
+        .ok_or_else(|| SliceRunError::new("known techniques hydrate has no subject"))?;
+    let entity = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .get(subject)
+        .copied()
+        .ok_or_else(|| SliceRunError::new("known techniques reconnect target is unavailable"))?;
+    if world.get_entity(entity).is_none() {
+        cleanup_stale_known_techniques_pending(world);
+        return Err(SliceRunError::new(
+            "known techniques reconnect target entity is gone",
+        ));
+    }
+    validate_known_techniques_reconnect_target(world, subject, entity)?;
+    let loaded = world
+        .resource::<KnownTechniquesReconnectState>()
+        .preflight_loads
+        .lock()
+        .map_err(|_| SliceRunError::new("known techniques preflight cache is poisoned"))?
+        .remove(subject)
+        .ok_or_else(|| SliceRunError::new("known techniques preflight load is unavailable"))?;
+    let load = match loaded {
+        Ok(Some(value)) => SliceLoad::loaded(value),
+        Ok(None) => SliceLoad::missing(),
+        Err(error) => SliceLoad::failed(error),
+    };
+    let activation = context.reconnect_activation()?;
+    let missing_default = world
+        .get_resource::<TechniqueRegistry>()
+        .map_or_else(KnownTechniques::default, KnownTechniques::progression_reset);
+    let missing_default_for_rebase = missing_default.clone();
+    let mut guarded = world
+        .resource_scope(
+            |_, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                registry.activate(
+                    load,
+                    KNOWN_TECHNIQUES_SLICE_ID,
+                    activation,
+                    DirtyRevision::default(),
+                    || missing_default,
+                    |_| missing_default_for_rebase,
+                )
+            },
+        )
+        .map_err(|error| SliceRunError::new(format!("activation failed: {error:?}")))?;
+    let failed = guarded.load_status() == slice::SliceLoadStatus::Failed;
+    let value = guarded.value().clone();
+    let (tracker, fence) = guarded
+        .restore_persistence_state()
+        .map_err(|error| SliceRunError::new(error.to_string()))?;
+    {
+        let Some(mut target) = world.get_entity_mut(entity) else {
+            cleanup_stale_known_techniques_pending(world);
+            return Err(SliceRunError::new(
+                "known techniques reconnect target entity disappeared during hydrate",
+            ));
+        };
+        target.insert(value);
+        if failed {
+            target.insert(KnownTechniquesLoadFailed);
+        } else {
+            target.remove::<KnownTechniquesLoadFailed>();
+        }
+    }
+    world.resource_mut::<KnownTechniquesActivations>().0.insert(
+        subject.to_string(),
+        KnownTechniquesActivation {
+            entity,
+            guarded,
+            tracker,
+            fence,
+        },
+    );
+    world
+        .resource_mut::<PendingKnownTechniquesHandoffs>()
+        .0
+        .remove(subject);
+    Ok(SliceRunOutcome::Clean)
+}
+
+fn cleanup_stale_known_techniques_pending(world: &mut World) {
+    let pending_subjects = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let stale_subjects = pending_subjects
+        .iter()
+        .filter(|subject| {
+            let Some(entity) = world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(*subject)
+                .copied()
+            else {
+                return true;
+            };
+            !known_techniques_reconnect_candidate_is_live(world, subject, entity)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in stale_subjects {
+        let entity = world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .remove(&subject);
+        if let Some(entity) = entity {
+            if let Some(mut target) = world.get_entity_mut(entity) {
+                target.remove::<KnownTechniquesReconnectBlocked>();
+                target.remove::<KnownTechniquesReconnectFailed>();
+                target.remove::<KnownTechniquesReconnectReady>();
+            }
+        }
+        let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+        state.retries.remove(&subject);
+        if let Ok(mut loads) = state.preflight_loads.lock() {
+            loads.remove(&subject);
+        };
+    }
+
+    let subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut stale_candidates = Vec::new();
+    for subject in subjects {
+        let candidates = world
+            .resource::<PendingKnownTechniquesCandidates>()
+            .0
+            .get(&subject)
+            .cloned()
+            .unwrap_or_default();
+        let live = candidates
+            .into_iter()
+            .filter(|entity| known_techniques_reconnect_candidate_is_live(world, &subject, *entity))
+            .collect::<Vec<_>>();
+        if live.is_empty() {
+            stale_candidates.push(subject);
+        } else {
+            world
+                .resource_mut::<PendingKnownTechniquesCandidates>()
+                .0
+                .insert(subject, live);
+        }
+    }
+    for subject in stale_candidates {
+        world
+            .resource_mut::<PendingKnownTechniquesCandidates>()
+            .0
+            .remove(&subject);
+    }
+}
+
+fn known_techniques_reconnect_candidate_is_live(
+    world: &World,
+    subject: &str,
+    entity: Entity,
+) -> bool {
+    let Some(target) = world.get_entity(entity) else {
+        return false;
+    };
+    let Some(username) = target.get::<Username>() else {
+        return false;
+    };
+    target.get::<Client>().is_some()
+        && target.get::<Despawned>().is_none()
+        && player_username_from_character_id(subject).is_some_and(|expected| username.0 == expected)
+}
+
+fn promote_known_techniques_candidate(world: &mut World, subject: &str) {
+    if world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .contains_key(subject)
+        || world
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .contains_key(subject)
+    {
+        return;
+    }
+    let candidate = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .get(subject)
+        .and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .min_by_key(|entity| entity.index())
+        });
+    let Some(entity) = candidate else {
+        return;
+    };
+    world
+        .resource_mut::<PendingKnownTechniquesCandidates>()
+        .0
+        .entry(subject.to_string())
+        .and_modify(|candidates| candidates.retain(|candidate| *candidate != entity));
+    if let Some(mut target) = world.get_entity_mut(entity) {
+        target.remove::<KnownTechniquesReconnectBlocked>();
+        target.remove::<KnownTechniquesReconnectFailed>();
+    }
+    world
+        .resource_mut::<PendingKnownTechniquesHandoffs>()
+        .0
+        .insert(subject.to_string(), entity);
+}
+
+fn validate_known_techniques_reconnect_target(
+    world: &World,
+    subject: &str,
+    entity: Entity,
+) -> Result<(), SliceRunError> {
+    let Some(target) = world.get_entity(entity) else {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target entity is gone",
+        ));
+    };
+    let Some(client) = target.get::<Client>() else {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target is disconnected",
+        ));
+    };
+    let username = target
+        .get::<Username>()
+        .ok_or_else(|| SliceRunError::new("known techniques reconnect target has no username"))?;
+    let expected = player_username_from_character_id(subject)
+        .ok_or_else(|| SliceRunError::new("known techniques subject is not a player identity"))?;
+    if username.0 != expected {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target identity mismatch",
+        ));
+    }
+    let _ = client;
+    if target.get::<Despawned>().is_some() {
+        return Err(SliceRunError::new(
+            "known techniques reconnect target is despawned",
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_known_techniques_slice(
+    world: &mut World,
+    context: &SliceRunContext,
+) -> SliceRunResult {
+    let subject = context
+        .handoff_key
+        .as_deref()
+        .ok_or_else(|| SliceRunError::new("known techniques preflight has no subject"))?;
+    let target = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .get(subject)
+        .copied()
+        .ok_or_else(|| SliceRunError::new("known techniques reconnect target is unavailable"))?;
+    validate_known_techniques_reconnect_target(world, subject, target)?;
+    if known_techniques_live_activation(world, subject).is_some() {
+        return Err(SliceRunError::new(
+            "known techniques subject already has a live activation",
+        ));
+    }
+    let has_activation = world
+        .resource::<KnownTechniquesActivations>()
+        .0
+        .contains_key(subject);
+    let persistence = world
+        .get_resource::<PlayerStatePersistence>()
+        .cloned()
+        .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
+    let username = player_username_from_character_id(subject)
+        .ok_or_else(|| SliceRunError::new("known techniques subject is not a player identity"))?;
+    let loaded = load_player_known_techniques_slice(&persistence, username);
+    let cached = match loaded {
+        Ok(value) => Ok(value),
+        Err(error) if !has_activation => Err(error.to_string()),
+        Err(error) => return Err(SliceRunError::new(error.to_string())),
+    };
+    world
+        .resource::<KnownTechniquesReconnectState>()
+        .preflight_loads
+        .lock()
+        .map_err(|_| SliceRunError::new("known techniques preflight cache is poisoned"))?
+        .insert(subject.to_string(), cached);
+    Ok(SliceRunOutcome::Clean)
+}
+
+fn cleanup_known_techniques_slice(world: &mut World, context: &SliceRunContext) {
+    let Some(subject) = context.handoff_key.as_deref() else {
+        return;
+    };
+    if let Some(activation) = world
+        .resource_mut::<KnownTechniquesActivations>()
+        .0
+        .remove(subject)
+    {
+        if let Some(mut entity) = world.get_entity_mut(activation.entity) {
+            entity.remove::<KnownTechniques>();
+            entity.remove::<KnownTechniquesLoadFailed>();
+        }
+    }
+}
+
+fn save_known_techniques_disconnect_slice(
+    world: &mut World,
+    context: &SliceRunContext,
+) -> SliceRunResult {
+    let subject = context
+        .handoff_key
+        .as_deref()
+        .ok_or_else(|| SliceRunError::new("known techniques disconnect save has no subject"))?;
+    let persistence = world
+        .get_resource::<PlayerStatePersistence>()
+        .cloned()
+        .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
+    world.resource_scope(
+        |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+            let Some(activation) = activations.0.get_mut(subject) else {
+                return Ok(SliceRunOutcome::Clean);
+            };
+            if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
+                return Ok(SliceRunOutcome::Clean);
+            }
+            sync_known_techniques_activation(world, subject, activation)?;
+            persist_known_techniques_activation(activation, &persistence, WriteOutlet::Disconnect)
+        },
+    )
+}
+
+fn flush_known_techniques_shutdown_slice(
+    world: &mut World,
+    _context: &SliceRunContext,
+) -> SliceRunResult {
+    let persistence = world
+        .get_resource::<PlayerStatePersistence>()
+        .cloned()
+        .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
+    world.resource_scope(
+        |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+            let mut subjects = activations.0.keys().cloned().collect::<Vec<_>>();
+            subjects.sort();
+            let mut flushed = false;
+            let mut failures = Vec::new();
+            for subject in subjects {
+                let Some(activation) = activations.0.get_mut(&subject) else {
+                    continue;
+                };
+                if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
+                    continue;
+                }
+                let result = (|| -> Result<SliceRunOutcome, SliceRunError> {
+                    sync_known_techniques_activation(world, &subject, activation)?;
+                    persist_known_techniques_activation(
+                        activation,
+                        &persistence,
+                        WriteOutlet::Shutdown,
+                    )
+                })();
+                match result {
+                    Ok(SliceRunOutcome::Flushed) => flushed = true,
+                    Ok(SliceRunOutcome::Clean | SliceRunOutcome::SkippedBlocked) => {}
+                    Err(error) => failures.push(format!("{subject}: {error}")),
+                }
+            }
+            if failures.is_empty() {
+                Ok(if flushed {
+                    SliceRunOutcome::Flushed
+                } else {
+                    SliceRunOutcome::Clean
+                })
+            } else {
+                Err(SliceRunError::new(format!(
+                    "known techniques shutdown flush failed: {}",
+                    failures.join("; ")
+                )))
+            }
+        },
+    )
+}
+
+fn production_slice_clock(world: &World) -> ProductionSliceClock {
+    ProductionSliceClock {
+        runtime_tick: world
+            .get_resource::<CultivationClock>()
+            .map_or(0, |clock| clock.tick),
+        wall_unix_millis: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_millis() as u64),
+    }
+}
+
+pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
+    let frame = {
+        let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+        state.frame = state.frame.saturating_add(1);
+        state.frame
+    };
+
+    cleanup_stale_known_techniques_pending(world);
+
+    let mut added_query = world.query_filtered::<(Entity, &Username), Added<Client>>();
+    let added = added_query
+        .iter(world)
+        .map(|(entity, username)| (canonical_player_id(username.0.as_str()), entity))
+        .collect::<Vec<_>>();
+    for (subject, entity) in added {
+        let already_pending = world
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .contains_key(&subject);
+        if already_pending {
+            world
+                .entity_mut(entity)
+                .insert(KnownTechniquesReconnectBlocked);
+            world
+                .resource_mut::<PendingKnownTechniquesCandidates>()
+                .0
+                .entry(subject.clone())
+                .or_default()
+                .push(entity);
+            tracing::warn!(
+                "[bong][persistence] rejecting duplicate known techniques reconnect target for `{subject}`"
+            );
+            continue;
+        }
+        world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .insert(subject, entity);
+    }
+
+    let candidate_subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in candidate_subjects {
+        promote_known_techniques_candidate(world, &subject);
+    }
+
+    let disconnected_subjects = world
+        .resource::<KnownTechniquesActivations>()
+        .0
+        .iter()
+        .filter(|(_, activation)| world.get::<Client>(activation.entity).is_none())
+        .map(|(subject, _)| subject.clone())
+        .collect::<Vec<_>>();
+
+    let persistence = world.get_resource::<PlayerStatePersistence>().cloned();
+    let save_subjects = disconnected_subjects
+        .into_iter()
+        .filter(|subject| {
+            !world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key(subject)
+        })
+        .collect::<Vec<_>>();
+    for subject in save_subjects {
+        let should_attempt = {
+            let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+            begin_known_techniques_retry(&mut state, &subject, frame)
+        };
+        if !should_attempt {
+            continue;
+        }
+        let result = persistence.as_ref().map_or_else(
+            || Err(SliceRunError::new("PlayerStatePersistence is unavailable")),
+            |persistence| {
+                world.resource_scope(
+                    |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+                        let Some(activation) = activations.0.get_mut(&subject) else {
+                            return Ok(SliceRunOutcome::Clean);
+                        };
+                        if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
+                            return Ok(SliceRunOutcome::Clean);
+                        }
+                        sync_known_techniques_activation(world, &subject, activation)?;
+                        persist_known_techniques_activation(
+                            activation,
+                            persistence,
+                            WriteOutlet::Disconnect,
+                        )
+                    },
+                )
+            },
+        );
+        match result {
+            Ok(_) => {
+                world
+                    .resource_mut::<KnownTechniquesActivations>()
+                    .0
+                    .remove(&subject);
+                clear_known_techniques_retry(
+                    &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                    &subject,
+                );
+            }
+            Err(error) => {
+                let (at_retry_cap, should_log) = {
+                    let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+                    let at_retry_cap =
+                        record_known_techniques_retry_failure(&mut state, &subject, frame);
+                    let should_log =
+                        known_techniques_retry_log_allowed(&mut state, &subject, frame);
+                    (at_retry_cap, should_log)
+                };
+                if should_log {
+                    if at_retry_cap {
+                        tracing::error!(
+                            "[bong][persistence] known techniques disconnect flush remains unavailable at the retry cap for `{subject}`; retry scheduled: {error}"
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[bong][persistence] known techniques disconnect flush failed for `{subject}`; retry scheduled: {error}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let candidate_subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in candidate_subjects {
+        promote_known_techniques_candidate(world, &subject);
+    }
+    let pending_subjects = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // A subject that is still pending reconnect is saved by the handoff dispatcher below;
+    // keeping its retry entry here would double-count attempts and alter the handoff gate.
+    for subject in &pending_subjects {
+        if !world
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .contains_key(subject)
+        {
+            clear_known_techniques_retry(
+                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                subject,
+            );
+        }
+    }
+
+    for subject in pending_subjects {
+        if !world
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .contains_key(&subject)
+        {
+            continue;
+        }
+        if known_techniques_live_activation(world, &subject).is_some() {
+            if let Some(entity) = world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(&subject)
+                .copied()
+            {
+                let was_blocked = world
+                    .get::<KnownTechniquesReconnectBlocked>(entity)
+                    .is_some();
+                world
+                    .entity_mut(entity)
+                    .insert(KnownTechniquesReconnectBlocked);
+                if !was_blocked {
+                    tracing::warn!(
+                        "[bong][persistence] rejecting live duplicate known techniques reconnect target for `{subject}`"
+                    );
+                }
+            }
+            clear_known_techniques_retry(
+                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                &subject,
+            );
+            continue;
+        }
+
+        let should_attempt = {
+            let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+            begin_known_techniques_retry(&mut state, &subject, frame)
+        };
+        if !should_attempt {
+            continue;
+        }
+
+        let clock = production_slice_clock(world);
+        let (succeeded, stable_live_duplicate) = match dispatch_reconnect_handoff(
+            world,
+            reconnect_handoff_token(subject.clone()),
+            &clock,
+        ) {
+            Ok(report)
+                if report.failures.is_empty()
+                    && report.blocked_saves.is_empty()
+                    && report.blocked_loads.is_empty()
+                    && report.blocked_preflights.is_empty()
+                    && report.blocked_rebases.is_empty() =>
+            {
+                (true, false)
+            }
+            Ok(report) => {
+                let stable_live_duplicate = reconnect_report_is_live_duplicate(&report);
+                let pending_entity = world
+                    .resource::<PendingKnownTechniquesHandoffs>()
+                    .0
+                    .get(&subject)
+                    .copied();
+                if let Some(entity) = pending_entity {
+                    world
+                        .entity_mut(entity)
+                        .insert(KnownTechniquesReconnectFailed);
+                }
+                let should_log = known_techniques_retry_log_allowed(
+                    &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                    &subject,
+                    frame,
+                );
+                if should_log {
+                    tracing::error!(
+                        "[bong][persistence] known techniques reconnect handoff failed closed for `{subject}`: {report:?}"
+                    );
+                }
+                (false, stable_live_duplicate)
+            }
+            Err(error) => {
+                if let Some(entity) = world
+                    .resource::<PendingKnownTechniquesHandoffs>()
+                    .0
+                    .get(&subject)
+                    .copied()
+                {
+                    world
+                        .entity_mut(entity)
+                        .insert(KnownTechniquesReconnectFailed);
+                }
+                let should_log = known_techniques_retry_log_allowed(
+                    &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                    &subject,
+                    frame,
+                );
+                if should_log {
+                    tracing::error!(
+                        "[bong][persistence] known techniques reconnect dispatch failed for `{subject}`: {error}"
+                    );
+                }
+                (false, false)
+            }
+        };
+        if succeeded {
+            if let Some(entity) = world
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity)
+            {
+                let load_failed = world
+                    .resource::<KnownTechniquesActivations>()
+                    .0
+                    .get(&subject)
+                    .is_some_and(|activation| {
+                        activation.guarded.load_status() == slice::SliceLoadStatus::Failed
+                    });
+                if let Some(mut target) = world.get_entity_mut(entity) {
+                    target.remove::<KnownTechniquesReconnectBlocked>();
+                    if load_failed {
+                        target.remove::<KnownTechniquesReconnectReady>();
+                        target.insert(KnownTechniquesReconnectFailed);
+                    } else {
+                        target.remove::<KnownTechniquesReconnectFailed>();
+                        target.insert(KnownTechniquesReconnectReady);
+                    }
+                }
+            }
+            world
+                .resource_mut::<KnownTechniquesReconnectState>()
+                .retries
+                .remove(&subject);
+        } else if stable_live_duplicate {
+            clear_known_techniques_retry(
+                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+                &subject,
+            );
+        } else {
+            let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
+            record_known_techniques_retry_failure(&mut state, &subject, frame);
+        }
+    }
+}
+
+fn flush_changed_known_techniques_slices(world: &mut World) {
+    let mut query = world.query_filtered::<(Entity, &Username, &KnownTechniques), (
+        With<Client>,
+        Changed<KnownTechniques>,
+        Without<KnownTechniquesLoadFailed>,
+    )>();
+    let changed = query
+        .iter(world)
+        .map(|(entity, username, value)| {
+            (
+                entity,
+                canonical_player_id(username.0.as_str()),
+                value.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let Some(persistence) = world.get_resource::<PlayerStatePersistence>().cloned() else {
+        return;
+    };
+    for (entity, subject, value) in changed {
+        let result = world.resource_scope(
+            |_, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+                let Some(activation) = activations.0.get_mut(&subject) else {
+                    return Ok(SliceRunOutcome::Clean);
+                };
+                if activation.entity != entity || activation.guarded.value() == &value {
+                    return Ok(SliceRunOutcome::Clean);
+                }
+                activation
+                    .guarded
+                    .mutate(&mut activation.tracker, |guarded| *guarded = value)
+                    .map_err(|error| SliceRunError::new(error.to_string()))?;
+                persist_known_techniques_activation(activation, &persistence, WriteOutlet::Changed)
+            },
+        );
+        if let Err(error) = result {
+            tracing::warn!(
+                "[bong][persistence] immediate known techniques flush failed for `{subject}`: {error}"
+            );
+        }
+    }
+}
+
 pub fn register(app: &mut App) {
-    app.init_resource::<PersistenceSettings>()
+    let mut slice_registry = PersistenceSliceRegistry::empty();
+    slice_registry
+        .register_slice::<ZoneRuntimePersistenceSlice>()
+        .and_then(|()| slice_registry.register_slice::<KnownTechniquesPersistenceSlice>())
+        .expect("production persistence slice descriptors must be valid");
+
+    app.insert_resource(slice_registry)
+        .init_resource::<PersistenceShutdownReader>()
+        .init_resource::<KnownTechniquesActivations>()
+        .init_resource::<PendingKnownTechniquesHandoffs>()
+        .init_resource::<PendingKnownTechniquesCandidates>()
+        .init_resource::<KnownTechniquesReconnectState>()
+        .init_resource::<PersistenceSettings>()
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DormantRelicSweepState>()
@@ -723,6 +1741,11 @@ pub fn register(app: &mut App) {
         .add_systems(
             Update,
             (
+                dispatch_known_techniques_reconnects
+                    .before(crate::player::init_clients)
+                    .before(crate::player::attach_player_state_to_joined_clients),
+                flush_changed_known_techniques_slices
+                    .after(crate::player::attach_player_state_to_joined_clients),
                 persist_npc_runtime_state_system,
                 sweep_npc_digest_retention_system,
                 persist_pending_dormant_relics_system,
@@ -732,7 +1755,7 @@ pub fn register(app: &mut App) {
                 persist_zone_influence_system,
             ),
         )
-        .add_systems(Last, persist_zone_runtime_on_shutdown_system);
+        .add_systems(Last, dispatch_persistence_shutdown_flushes);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -929,32 +1952,74 @@ fn persist_zone_runtime_system(
     }
 }
 
-fn persist_zone_runtime_on_shutdown_system(
-    settings: Res<PersistenceSettings>,
-    mut app_exit: EventReader<AppExit>,
-    zones: Option<Res<crate::world::zone::ZoneRegistry>>,
-    heartbeat: Option<Res<WorldHeartbeat>>,
-    qi_ledger: Res<WorldQiAccount>,
-    clock: Res<CultivationClock>,
-) {
-    if app_exit.read().next().is_none() {
-        return;
+fn flush_zone_runtime_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    if !world.contains_resource::<crate::world::zone::ZoneRegistry>() {
+        return Ok(SliceRunOutcome::Clean);
     }
-    let Some(zone_registry) = zones else {
-        return;
+    if !world.contains_resource::<PersistenceSettings>() {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    }
+    world.resource_scope(
+        |world, settings: valence::prelude::Mut<PersistenceSettings>| {
+            world.resource_scope(
+                |world, zones: valence::prelude::Mut<crate::world::zone::ZoneRegistry>| {
+                    let heartbeat = world.get_resource::<WorldHeartbeat>();
+                    let qi_ledger = world
+                        .get_resource::<WorldQiAccount>()
+                        .ok_or_else(|| SliceRunError::new("WorldQiAccount is unavailable"))?;
+                    let clock_tick = world
+                        .get_resource::<CultivationClock>()
+                        .ok_or_else(|| SliceRunError::new("CultivationClock is unavailable"))?
+                        .tick;
+
+                    persist_zone_runtime_snapshot_with_heartbeat_at_tick(
+                        &settings, &zones, heartbeat, qi_ledger, clock_tick,
+                    )
+                    .map(|_| SliceRunOutcome::Flushed)
+                    .map_err(|error| SliceRunError::new(error.to_string()))
+                },
+            )
+        },
+    )
+}
+
+fn dispatch_persistence_shutdown_flushes(world: &mut World) {
+    let requested = world.resource_scope(
+        |world, mut reader: valence::prelude::Mut<PersistenceShutdownReader>| {
+            world
+                .get_resource::<Events<AppExit>>()
+                .is_some_and(|events| reader.0.read(events).next().is_some())
+        },
+    );
+    let request = if requested {
+        ShutdownFlushRequest::Requested
+    } else {
+        ShutdownFlushRequest::NotRequested
+    };
+    let runtime_tick = world
+        .get_resource::<CultivationClock>()
+        .map_or(0, |clock| clock.tick);
+    let wall_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64);
+    let clock = ProductionSliceClock {
+        runtime_tick,
+        wall_unix_millis,
     };
 
-    if let Err(error) = persist_zone_runtime_snapshot_with_heartbeat_at_tick(
-        &settings,
-        &zone_registry,
-        heartbeat.as_deref(),
-        &qi_ledger,
-        clock.tick,
-    ) {
-        tracing::warn!(
-            "[bong][persistence] failed to flush zone runtime on shutdown at {}: {error}",
-            settings.db_path().display()
-        );
+    match slice::dispatch_shutdown_flushes(world, request, &clock) {
+        Ok(report) => {
+            for failure in report.failures {
+                tracing::warn!(
+                    "[bong][persistence] shutdown slice `{}` failed: {}",
+                    failure.slice_id,
+                    failure.error
+                );
+            }
+        }
+        Err(error) => {
+            tracing::error!("[bong][persistence] shutdown slice dispatch failed closed: {error}")
+        }
     }
 }
 
@@ -1228,7 +2293,6 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             CREATE TABLE IF NOT EXISTS deceased_snapshots (
                 char_id TEXT PRIMARY KEY,
                 snapshot_json TEXT NOT NULL,
-                public_path TEXT,
                 died_at_tick INTEGER NOT NULL CHECK (died_at_tick >= 0),
                 schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
                 last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
@@ -2447,6 +3511,29 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 43 {
+        let transaction = connection.transaction()?;
+        assert_dormant_terminal_commits_schema_ready(&transaction)?;
+        if table_exists(&transaction, "deceased_snapshots")? {
+            let columns = table_columns(&transaction, "deceased_snapshots")?;
+            if columns.iter().any(|column| column == "public_path") {
+                transaction
+                    .execute_batch("ALTER TABLE deceased_snapshots DROP COLUMN public_path;")?;
+            }
+            assert_deceased_snapshots_schema_ready(&transaction)?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 43;")?;
+        transaction.commit()?;
+    }
+
+    let deceased_schema_transaction = connection.transaction()?;
+    if table_exists(&deceased_schema_transaction, "deceased_snapshots")? {
+        assert_deceased_snapshots_schema_ready(&deceased_schema_transaction)?;
+    }
+    deceased_schema_transaction.commit()?;
+
     let terminal_schema_transaction = connection.transaction()?;
     assert_dormant_terminal_commits_schema_ready(&terminal_schema_transaction)?;
     terminal_schema_transaction.commit()?;
@@ -2562,6 +3649,14 @@ fn table_columns(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn table_exists(transaction: &rusqlite::Transaction<'_>, table: &str) -> rusqlite::Result<bool> {
+    transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        params![table],
+        |row| row.get(0),
+    )
 }
 
 fn assert_spirit_treasure_schema_ready(
@@ -2749,6 +3844,37 @@ fn assert_dormant_terminal_commits_schema_ready(
             io::Error::other(format!(
                 "v42 migration completed but dormant_terminal_commits primary key mismatch: expected char_id got {primary_key:?}"
             )),
+        )));
+    }
+    Ok(())
+}
+
+fn assert_deceased_snapshots_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "deceased_snapshots")?;
+    let required = [
+        "char_id",
+        "snapshot_json",
+        "died_at_tick",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|candidate| candidate == *column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v43 migration completed but deceased_snapshots column {missing} missing"
+            )),
+        )));
+    }
+    if columns.iter().any(|column| column == "public_path") {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(
+                "v43 migration completed but retired deceased_snapshots.public_path remains",
+            ),
         )));
     }
     Ok(())
@@ -4646,70 +5772,46 @@ fn persist_termination_transition_inner(
     };
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let staged_export = if should_export_public_snapshot(life_record.character_id.as_str()) {
-        Some(stage_public_deceased_export(
-            settings,
-            life_record.character_id.as_str(),
-            snapshot_json.as_str(),
-            died_at_tick,
-            termination_category.as_str(),
-        )?)
-    } else {
-        None
-    };
 
-    let persisted = (|| -> io::Result<()> {
-        let mut connection = open_persistence_connection(settings)?;
-        let transaction = connection.transaction().map_err(io::Error::other)?;
-        upsert_life_record(&transaction, life_record, wall_clock)?;
-        append_life_event(
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    upsert_life_record(&transaction, life_record, wall_clock)?;
+    append_life_event(
+        &transaction,
+        life_record.character_id.as_str(),
+        entry,
+        wall_clock,
+    )?;
+    if let Some(death_registry_cause) = death_registry_cause {
+        upsert_death_registry(
             &transaction,
             life_record.character_id.as_str(),
-            entry,
+            lifecycle,
+            death_registry_cause,
             wall_clock,
         )?;
-        if let Some(death_registry_cause) = death_registry_cause {
-            upsert_death_registry(
-                &transaction,
-                life_record.character_id.as_str(),
-                lifecycle,
-                death_registry_cause,
-                wall_clock,
-            )?;
-        }
-        if let Some(lifespan_event) = lifespan_event {
-            append_lifespan_event(
-                &transaction,
-                life_record.character_id.as_str(),
-                lifespan_event,
-                wall_clock,
-            )?;
-        }
-        if let Some((zones, qi_ledger)) = qi_snapshot {
-            persist_zone_runtime_records(&transaction, zones, wall_clock)?;
-            upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
-        }
-        upsert_deceased_snapshot(
-            &transaction,
-            life_record.character_id.as_str(),
-            snapshot_json.as_str(),
-            staged_export
-                .as_ref()
-                .map(|export| export.relative_snapshot_path().to_string()),
-            died_at_tick,
-            wall_clock,
-        )?;
-
-        transaction.commit().map_err(io::Error::other)
-    })();
-
-    if persisted.is_err() {
-        if let Some(export) = staged_export.as_ref() {
-            export.rollback();
-        }
     }
+    if let Some(lifespan_event) = lifespan_event {
+        append_lifespan_event(
+            &transaction,
+            life_record.character_id.as_str(),
+            lifespan_event,
+            wall_clock,
+        )?;
+    }
+    if let Some((zones, qi_ledger)) = qi_snapshot {
+        persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+        upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+    }
+    upsert_deceased_snapshot(
+        &transaction,
+        life_record.character_id.as_str(),
+        snapshot_json.as_str(),
+        died_at_tick,
+        wall_clock,
+    )?;
 
-    persisted
+    transaction.commit().map_err(io::Error::other)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4844,6 +5946,23 @@ pub fn persist_npc_deceased_archive(
     settings: &PersistenceSettings,
     archive: &NpcDeceasedArchiveRecord,
 ) -> io::Result<()> {
+    persist_npc_deceased_archive_with_connection(settings, archive, open_persistence_connection)
+}
+
+fn persist_npc_deceased_archive_with_connection(
+    settings: &PersistenceSettings,
+    archive: &NpcDeceasedArchiveRecord,
+    open_connection: impl FnOnce(&PersistenceSettings) -> io::Result<Connection>,
+) -> io::Result<()> {
+    persist_npc_deceased_archive_with_hooks(settings, archive, open_connection, write_zstd_bundle)
+}
+
+fn persist_npc_deceased_archive_with_hooks(
+    settings: &PersistenceSettings,
+    archive: &NpcDeceasedArchiveRecord,
+    open_connection: impl FnOnce(&PersistenceSettings) -> io::Result<Connection>,
+    write_bundle: impl FnOnce(&Path, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     let archive_path = npc_deceased_archive_absolute_path(
         settings,
         archive.char_id.as_str(),
@@ -4851,14 +5970,21 @@ pub fn persist_npc_deceased_archive(
     );
     let relative_path =
         npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall);
-    let previous_archive = fs::read(&archive_path).ok();
+    let previous_archive = read_optional_file(&archive_path)?;
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    write_zstd_bundle(&archive_path, &archive_json)?;
+    if let Err(error) = write_bundle(&archive_path, &archive_json) {
+        return match rollback_file(&archive_path, previous_archive.as_deref()) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "npc archive replacement failed: {error}; rollback failed: {rollback_error}"
+            ))),
+        };
+    }
 
-    let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
     let persisted = (|| -> io::Result<()> {
+        let mut connection = open_connection(settings)?;
+        let transaction = connection.transaction().map_err(io::Error::other)?;
         upsert_npc_deceased_index(
             &transaction,
             &NpcDeceasedIndexRecord {
@@ -4873,11 +5999,15 @@ pub fn persist_npc_deceased_archive(
         transaction.commit().map_err(io::Error::other)
     })();
 
-    if persisted.is_err() {
-        rollback_file(&archive_path, previous_archive.as_deref());
+    match persisted {
+        Ok(()) => Ok(()),
+        Err(error) => match rollback_file(&archive_path, previous_archive.as_deref()) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "npc archive persistence failed: {error}; rollback failed: {rollback_error}"
+            ))),
+        },
     }
-
-    persisted
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -4917,12 +6047,16 @@ pub fn sweep_stale_npc_digests(
     for digest in &stale_digests {
         let archive_path =
             npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall);
-        let previous_archive = fs::read(&archive_path).ok();
+        let previous_archive = read_optional_file(&archive_path)?;
         let archive_json = serde_json::to_vec_pretty(digest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         if let Err(error) = write_zstd_bundle(&archive_path, &archive_json) {
-            rollback_file(&archive_path, previous_archive.as_deref());
-            return Err(error);
+            return match rollback_file(&archive_path, previous_archive.as_deref()) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(io::Error::other(format!(
+                    "npc digest archive replacement failed: {error}; rollback failed: {rollback_error}"
+                ))),
+            };
         }
     }
 
@@ -6119,41 +7253,54 @@ fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
     Ok(())
 }
 
+fn upsert_runtime_qi_account_balance(
+    transaction: &rusqlite::Transaction<'_>,
+    qi_ledger: &WorldQiAccount,
+    account: &QiAccountId,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let balance = qi_ledger.balance(account);
+    if !balance.is_finite() || balance < 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid runtime qi balance account={account} balance={balance}"),
+        ));
+    }
+    transaction
+        .execute(
+            "
+        INSERT INTO qi_runtime_accounts (
+            account_id,
+            balance,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT(account_id) DO UPDATE SET
+            balance = excluded.balance,
+            schema_version = excluded.schema_version,
+            last_updated_wall = excluded.last_updated_wall
+        ",
+            params![
+                account.id.as_str(),
+                balance,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 pub(crate) fn upsert_runtime_qi_account_balances(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
     wall_clock: i64,
 ) -> io::Result<()> {
+    // Main credits TSY drain into the fixed `rift_drain_account()`, which is already in this
+    // whitelist. Sync every durable account through one path; do not recreate the PR's obsolete
+    // zone-specific `rift:*` row scan.
     for account in persistent_runtime_qi_accounts() {
-        let balance = qi_ledger.balance(&account);
-        if !balance.is_finite() || balance < 0.0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid runtime qi balance account={account} balance={balance}"),
-            ));
-        }
-        transaction
-            .execute(
-                "
-            INSERT INTO qi_runtime_accounts (
-                account_id,
-                balance,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(account_id) DO UPDATE SET
-                balance = excluded.balance,
-                schema_version = excluded.schema_version,
-                last_updated_wall = excluded.last_updated_wall
-            ",
-                params![
-                    account.id.as_str(),
-                    balance,
-                    CURRENT_SCHEMA_VERSION,
-                    wall_clock,
-                ],
-            )
-            .map_err(io::Error::other)?;
+        upsert_runtime_qi_account_balance(transaction, qi_ledger, &account, wall_clock)?;
     }
     Ok(())
 }
@@ -7883,7 +9030,6 @@ fn upsert_deceased_snapshot(
     transaction: &rusqlite::Transaction<'_>,
     char_id: &str,
     snapshot_json: &str,
-    public_path: Option<String>,
     died_at_tick: u64,
     wall_clock: i64,
 ) -> io::Result<()> {
@@ -7893,14 +9039,12 @@ fn upsert_deceased_snapshot(
             INSERT INTO deceased_snapshots (
                 char_id,
                 snapshot_json,
-                public_path,
                 died_at_tick,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(char_id) DO UPDATE SET
                 snapshot_json = excluded.snapshot_json,
-                public_path = excluded.public_path,
                 died_at_tick = excluded.died_at_tick,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -7908,7 +9052,6 @@ fn upsert_deceased_snapshot(
             params![
                 char_id,
                 snapshot_json,
-                public_path,
                 tick_to_sql(died_at_tick)?,
                 EVENT_SCHEMA_VERSION,
                 wall_clock
@@ -8169,18 +9312,23 @@ fn tick_to_sql(tick: u64) -> io::Result<i64> {
     i64::try_from(tick).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn should_export_public_snapshot(char_id: &str) -> bool {
-    char_id.starts_with("offline:")
+fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
-fn sanitize_deceased_snapshot_stem(char_id: &str) -> String {
-    char_id
-        .chars()
-        .map(|character| match character {
-            ':' | '/' | '\\' => '_',
-            _ => character,
-        })
-        .collect()
+fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
+    match previous {
+        Some(contents) => fs::write(path, contents),
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+    }
 }
 
 fn default_termination_category() -> String {
@@ -8206,87 +9354,6 @@ fn termination_category_from_entry(entry: &BiographyEntry) -> String {
         _ => "横死",
     }
     .to_string()
-}
-
-fn deceased_export_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn stage_public_deceased_export(
-    settings: &PersistenceSettings,
-    char_id: &str,
-    snapshot_json: &str,
-    died_at_tick: u64,
-    termination_category: &str,
-) -> io::Result<StagedDeceasedExport> {
-    let guard = deceased_export_lock()
-        .lock()
-        .map_err(|_| io::Error::other("deceased public export lock poisoned"))?;
-    fs::create_dir_all(settings.deceased_public_dir())?;
-
-    let snapshot_stem = sanitize_deceased_snapshot_stem(char_id);
-    let snapshot_path = settings
-        .deceased_public_dir()
-        .join(format!("{snapshot_stem}.json"));
-    let index_path = settings.deceased_public_dir().join("_index.json");
-    let previous_snapshot = fs::read(&snapshot_path).ok();
-    let previous_index = fs::read(&index_path).ok();
-    let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
-    let staged = StagedDeceasedExport {
-        snapshot_path,
-        index_path,
-        previous_snapshot,
-        previous_index,
-        relative_snapshot_path,
-        _guard: guard,
-    };
-
-    let write_result = (|| -> io::Result<()> {
-        fs::write(&staged.snapshot_path, snapshot_json.as_bytes())?;
-        let mut entries = read_deceased_index(&staged.index_path)?;
-        entries.retain(|entry| entry.char_id != char_id);
-        entries.push(DeceasedIndexEntry {
-            char_id: char_id.to_string(),
-            died_at_tick,
-            path: staged.relative_snapshot_path.clone(),
-            termination_category: termination_category.to_string(),
-        });
-        entries.sort_by(|left, right| {
-            left.died_at_tick
-                .cmp(&right.died_at_tick)
-                .then_with(|| left.char_id.cmp(&right.char_id))
-        });
-        let index_json = serde_json::to_string_pretty(&entries)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        fs::write(&staged.index_path, index_json.as_bytes())
-    })();
-    if let Err(error) = write_result {
-        staged.rollback();
-        return Err(error);
-    }
-
-    Ok(staged)
-}
-
-fn read_deceased_index(index_path: &Path) -> io::Result<Vec<DeceasedIndexEntry>> {
-    match fs::read_to_string(index_path) {
-        Ok(contents) => serde_json::from_str(&contents)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error),
-    }
-}
-
-fn rollback_file(path: &Path, previous: Option<&[u8]>) {
-    match previous {
-        Some(contents) => {
-            let _ = fs::write(path, contents);
-        }
-        None => {
-            let _ = fs::remove_file(path);
-        }
-    }
 }
 
 fn build_npc_blackboard_snapshot(
@@ -8511,11 +9578,42 @@ fn resolve_persistence_relative_path(
 }
 
 fn write_zstd_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
+    write_zstd_bundle_with_writer(path, payload, |file, compressed| file.write_all(compressed))
+}
+
+fn write_zstd_bundle_with_writer(
+    path: &Path,
+    payload: &[u8],
+    write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let compressed = zstd::stream::encode_all(payload, 3).map_err(io::Error::other)?;
-    fs::write(path, compressed)
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "bundle".to_string());
+    let temp_path = path.with_file_name(format!(
+        ".{filename}.tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut temp_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    let result = (|| {
+        write_temp(&mut temp_file, &compressed)?;
+        temp_file.sync_all()?;
+        drop(temp_file);
+        fs::rename(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -8525,7 +9623,6 @@ fn read_zstd_bundle(reference: &Path, relative_path: &str) -> io::Result<Vec<u8>
     } else {
         let settings = PersistenceSettings {
             db_path: reference.to_path_buf(),
-            deceased_public_dir: PathBuf::new(),
             server_run_id: String::new(),
         };
         resolve_persistence_relative_path(&settings, relative_path)
@@ -8711,9 +9808,14 @@ mod persistence_tests {
     use crate::cultivation::components::{
         ColorKind, ContamSource, Contamination, Cultivation, Karma, MeridianSystem, QiColor, Realm,
     };
+    use crate::cultivation::known_techniques::KnownTechnique;
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
+    use crate::persistence::slice::{
+        dispatch_shutdown_flushes, DirtyRevision, PersistenceSubjectKey, ShutdownFlushReport,
+        SliceLoad,
+    };
     use crate::player::state::{
         save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
     };
@@ -8723,14 +9825,964 @@ mod persistence_tests {
     use serde_json::Value;
     use std::sync::{Arc, Barrier};
     use std::time::Instant;
-    use valence::prelude::{App, DVec3, EntityKind, Position, Update};
+    use valence::prelude::{App, AppExit, DVec3, EntityKind, Events, Position, PostUpdate, Update};
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::create_mock_client;
+
+    fn known_techniques_fixture(id: &str, proficiency: f32) -> KnownTechniques {
+        KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: id.to_string(),
+                proficiency,
+                active: true,
+            }],
+        }
+    }
+
+    fn flush_mock_client_packets(mut clients: Query<&mut Client>) {
+        for mut client in &mut clients {
+            let _ = client.flush_packets();
+        }
+    }
+
+    fn known_techniques_app(
+        test_name: &str,
+    ) -> (App, PlayerStatePersistence, PersistenceSettings, PathBuf) {
+        let (settings, root) = persistence_settings(test_name);
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("known techniques fixture database should bootstrap");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let mut app = App::new();
+        app.add_event::<AppExit>();
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        let overworld_layer = app.world_mut().spawn_empty().id();
+        let tsy_layer = app.world_mut().spawn_empty().id();
+        app.insert_resource(crate::world::dimension::DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer,
+        });
+        register(&mut app);
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        app.add_systems(
+            Update,
+            (
+                crate::player::init_clients,
+                crate::player::attach_player_state_to_joined_clients
+                    .after(crate::player::init_clients),
+            ),
+        );
+        app.add_systems(PostUpdate, flush_mock_client_packets);
+        (app, player_persistence, settings, root)
+    }
+
+    fn persisted_known_techniques(
+        persistence: &PlayerStatePersistence,
+        username: &str,
+    ) -> Option<KnownTechniques> {
+        load_player_known_techniques_slice(persistence, username)
+            .expect("known techniques row should decode")
+    }
 
     #[test]
-    fn sanitize_deceased_snapshot_stem_replaces_windows_invalid_separators() {
+    fn known_techniques_retry_uses_bounded_backoff_capped_attempts_and_log_coalescing() {
+        let subject = "offline:retry-boundaries";
+        let mut state = KnownTechniquesReconnectState::default();
+
+        let retry_frames = [0_u64, 1, 3, 7, 15, 31, 63, 127];
+        for (index, frame) in retry_frames.into_iter().enumerate() {
+            assert!(
+                begin_known_techniques_retry(&mut state, subject, frame),
+                "attempt {} should run at its scheduled frame",
+                index + 1
+            );
+            assert_eq!(
+                state.retries.get(subject).map(|entry| entry.attempts),
+                Some(((index + 1) as u8).min(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS)),
+                "retry attempts must count actual attempts, not skipped frames"
+            );
+            let at_cap = index >= retry_frames.len() - 1;
+            assert_eq!(
+                record_known_techniques_retry_failure(&mut state, subject, frame),
+                at_cap,
+                "only the retry cap reports back to the caller"
+            );
+            assert!(
+                state
+                    .retries
+                    .get(subject)
+                    .map(|entry| entry.next_attempt_frame > frame)
+                    .unwrap_or(false),
+                "every failure must schedule a later retry frame, never a terminal one"
+            );
+            if !at_cap {
+                assert_eq!(
+                    state
+                        .retries
+                        .get(subject)
+                        .map(|entry| entry.next_attempt_frame),
+                    Some(retry_frames[index + 1]),
+                    "failure must schedule the documented exponential backoff"
+                );
+            }
+        }
+
+        // 8 次瞬态失败后不得永久终止：attempts 停在 cap，backoff 继续按 64 帧上限调度。
+        let entry = state.retries.get(subject).expect("retry entry");
+        assert_eq!(entry.attempts, KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS);
+        let next_frame = entry.next_attempt_frame;
+        assert!(!begin_known_techniques_retry(
+            &mut state,
+            subject,
+            next_frame - 1
+        ));
+        assert!(begin_known_techniques_retry(
+            &mut state, subject, next_frame
+        ));
         assert_eq!(
-            sanitize_deceased_snapshot_stem("offline:Ancestor/Shard\\Echo"),
-            "offline_Ancestor_Shard_Echo"
+            state.retries.get(subject).map(|entry| entry.attempts),
+            Some(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS),
+            "attempts must stay capped at the retry limit, not grow"
         );
+        assert!(record_known_techniques_retry_failure(
+            &mut state, subject, next_frame
+        ));
+        assert!(
+            state
+                .retries
+                .get(subject)
+                .map(|entry| entry.next_attempt_frame > next_frame)
+                .unwrap_or(false),
+            "post-cap failures must keep scheduling retries"
+        );
+
+        assert!(known_techniques_retry_log_allowed(&mut state, subject, 0));
+        assert!(!known_techniques_retry_log_allowed(&mut state, subject, 1));
+        assert!(!known_techniques_retry_log_allowed(&mut state, subject, 63));
+        assert!(known_techniques_retry_log_allowed(&mut state, subject, 64));
+
+        clear_known_techniques_retry(&mut state, subject);
+        assert!(!state.retries.contains_key(subject));
+    }
+
+    #[test]
+    fn known_techniques_descriptor_pins_canonical_slice_contract() {
+        let descriptor = &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR;
+        assert_eq!(descriptor.id, KNOWN_TECHNIQUES_SLICE_ID);
+        assert_eq!(descriptor.scope, SliceScope::PlayerEntity);
+        assert_eq!(descriptor.order, 10);
+        assert_eq!(descriptor.load_failure, LoadFailurePolicy::BlockWrites);
+        assert_eq!(descriptor.time_basis, TimeBasis::None);
+        assert_eq!(
+            descriptor.write_binding,
+            WriteBinding::new(
+                WriteDomain::new("player.known_techniques"),
+                WriteAuthority::new("persistence.known_techniques"),
+            )
+        );
+        assert_eq!(descriptor.write_ordering, WriteOrdering::Serialized);
+        assert_eq!(descriptor.autosave, AutosavePolicy::Disabled);
+        assert!(descriptor.hydrate.is_some());
+        assert!(descriptor.reconnect_preflight.is_some());
+        assert!(descriptor.reconnect_cleanup.is_some());
+        assert!(descriptor.rebase.is_none());
+        assert!(descriptor.disconnect_save.is_some());
+        assert!(descriptor.shutdown_flush.is_some());
+    }
+
+    #[test]
+    fn hydrate_known_techniques_cleans_pending_entry_when_target_is_gone() {
+        let mut world = World::new();
+        world.insert_resource(PendingKnownTechniquesHandoffs::default());
+        world.insert_resource(PendingKnownTechniquesCandidates::default());
+        world.insert_resource(KnownTechniquesReconnectState::default());
+        let entity = world.spawn_empty().id();
+        world
+            .resource_mut::<PendingKnownTechniquesHandoffs>()
+            .0
+            .insert("player:Azure".to_string(), entity);
+        world.despawn(entity);
+
+        let context = SliceRunContext {
+            reason: SliceRunReason::ReconnectLoad,
+            runtime_tick: 0,
+            wall_unix_millis: 0,
+            handoff_key: Some("player:Azure".to_string()),
+            reconnect_activation: None,
+        };
+        let error = hydrate_known_techniques_slice(&mut world, &context)
+            .expect_err("a vanished target must fail without panicking");
+        assert!(error.message().contains("entity is gone"));
+        assert!(
+            !world
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key("player:Azure"),
+            "stale pending handoffs must be removed after the target disappears"
+        );
+    }
+
+    #[test]
+    fn production_known_techniques_join_and_changed_write_use_canonical_activation() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-changed");
+        let initial = known_techniques_fixture("movement.dash", 0.25);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(player),
+            Some(&initial),
+            "Added<Client> must hydrate KnownTechniques through the production dispatcher"
+        );
+        let subject = canonical_player_id("Azure");
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&subject)
+            .expect("join must create the canonical activation");
+        assert_eq!(activation.entity, player);
+        assert_eq!(
+            activation.guarded.load_status(),
+            slice::SliceLoadStatus::Loaded
+        );
+        assert!(!activation.tracker.is_dirty());
+
+        let changed = known_techniques_fixture("movement.dash", 0.75);
+        app.world_mut().entity_mut(player).insert(changed.clone());
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed),
+            "Changed<KnownTechniques> must commit through the production durable fence"
+        );
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&subject)
+            .expect("changed write must retain the activation");
+        assert!(!activation.tracker.is_dirty());
+        assert_eq!(
+            activation.fence.persisted_revision(),
+            activation.tracker.current_revision(),
+            "durable receipt acknowledgement must align fence and tracker revisions"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_connection_outage_stays_read_only_until_reconnect_rehydrates() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-connection-outage");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+        app.update();
+
+        let backup_path = root.join("known-techniques-outage-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should make player connection unavailable");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(old_player)
+            .is_some());
+        assert!(
+            app.world().get::<PlayerState>(old_player).is_some(),
+            "known-techniques DB outage must not prevent the ordinary PlayerState bundle from attaching"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectFailed>(old_player)
+                .is_some(),
+            "a transient known-techniques outage must mark only that slice as degraded"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(old_player)
+                .is_none(),
+            "a load failure must not use the duplicate-login block marker"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&canonical_player_id("Azure"))
+                .map(|activation| activation.guarded.load_status()),
+            Some(slice::SliceLoadStatus::Failed),
+            "a production connection-open failure must retain Failed provenance"
+        );
+
+        let during_outage = known_techniques_fixture("movement.dash", 0.8);
+        app.world_mut().entity_mut(old_player).insert(during_outage);
+        app.update();
+
+        fs::remove_dir(settings.db_path())
+            .expect("database outage placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("the durable database should be restored after the outage");
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(initial.clone()),
+            "an outage Changed event must not overwrite the existing durable row"
+        );
+
+        let before_reconnect = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(before_reconnect);
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(initial.clone()),
+            "database recovery alone must not make the failed activation writable"
+        );
+
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&initial),
+            "reconnect must rehydrate the durable row before reopening writes"
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(new_player)
+            .is_none());
+
+        let after_reconnect = known_techniques_fixture("movement.dash", 1.0);
+        app.world_mut()
+            .entity_mut(new_player)
+            .insert(after_reconnect.clone());
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(after_reconnect),
+            "only the rehydrated activation may resume Changed writes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_missing_known_techniques_row_uses_injected_registry_and_persists_first_change() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-missing");
+        let registry = TechniqueRegistry::load_for_tests();
+        let expected_reset = KnownTechniques::progression_reset(&registry);
+        app.insert_resource(registry);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.guarded.load_status()),
+            Some(slice::SliceLoadStatus::Missing),
+            "an absent durable row must preserve Missing provenance"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(player),
+            Some(&expected_reset),
+            "a missing row must derive its progression reset from the injected runtime registry"
+        );
+
+        let first = known_techniques_fixture("movement.dash", 0.1);
+        app.world_mut().entity_mut(player).insert(first.clone());
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(first),
+            "Missing provenance must allow the first Changed write"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_disconnect_releases_activation() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-disconnect");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        let changed = known_techniques_fixture("movement.dash", 0.4);
+        app.world_mut().entity_mut(player).insert(changed.clone());
+        app.world_mut().entity_mut(player).remove::<Client>();
+
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed)
+        );
+        assert!(
+            !app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .contains_key(&canonical_player_id("Azure")),
+            "ordinary disconnect must release the durable-subject activation"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_same_tick_reconnect_saves_before_hydrate() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-reconnect");
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+        let unsaved = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved),
+            "same-tick reconnect must hydrate the row written from the old activation"
+        );
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(unsaved)
+        );
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&canonical_player_id("Azure"))
+            .expect("new activation should replace the old one");
+        assert_eq!(activation.entity, new_player);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_reconnect_retries_after_save_failure() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-reconnect-retry");
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let unsaved = known_techniques_fixture("movement.dash", 0.85);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        let backup_path = root.join("retry-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should force the disconnect save to fail");
+
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(old_player),
+            "failed save must retain the old activation for a later retry"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(&subject),
+            Some(&new_player),
+            "failed handoff must retain the reconnect target"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(new_player).is_none(),
+            "hydrate must not run after the old activation failed to save"
+        );
+
+        fs::remove_dir(settings.db_path()).expect("directory placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("fixture database should return to the production path");
+        app.update();
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(unsaved.clone()),
+            "retry must durably save the old activation before hydrating"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved)
+        );
+        assert!(
+            !app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key(&subject),
+            "successful retry must consume the pending reconnect target"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(new_player),
+            "successful retry must replace the old activation exactly once"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reconnect_ready_client_reruns_init_clients_welcome() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-reconnect-ready-init");
+        let initial = known_techniques_fixture("movement.dash", 0.85);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let unsaved = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, mut new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        let backup_path = root.join("reconnect-ready-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should force the disconnect save to fail");
+
+        app.update();
+        new_helper.clear_received();
+
+        fs::remove_dir(settings.db_path()).expect("directory placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("fixture database should return to the production path");
+        app.update();
+
+        let messages: Vec<String> = new_helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|message| message.chat.to_legacy_lossy())
+            })
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains(crate::player::welcome_message())),
+            "the Ready edge must rerun init_clients and deliver the welcome message; \
+             actual messages={messages:?}"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved),
+            "the delayed reconnect must still hydrate the known techniques slice"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_live_duplicate_login_fails_closed_without_activation_theft() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-live-duplicate");
+        let initial = known_techniques_fixture("movement.dash", 0.55);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        let before = {
+            let activation = app
+                .world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .expect("the first client must own the canonical activation");
+            (
+                activation.entity,
+                activation.tracker.current_revision(),
+                activation.fence.persisted_revision(),
+            )
+        };
+
+        let (replacement_bundle, _replacement_helper) = create_mock_client("Azure");
+        let replacement = app.world_mut().spawn(replacement_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(old_player),
+            Some(&initial),
+            "a live duplicate must not remove KnownTechniques from the original entity"
+        );
+        let activation = app
+            .world()
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .get(&subject)
+            .expect("a live duplicate must retain the original activation");
+        assert_eq!(activation.entity, before.0);
+        assert_eq!(activation.entity, old_player);
+        assert_eq!(
+            activation.tracker.current_revision(),
+            before.1,
+            "duplicate-login preflight must not discard the original DirtyTracker"
+        );
+        assert_eq!(
+            activation.fence.persisted_revision(),
+            before.2,
+            "duplicate-login preflight must not discard the original revision fence"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(replacement)
+                .is_some(),
+            "the replacement target must fail closed when the canonical subject is still live"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(replacement)
+                .is_none(),
+            "a rejected duplicate must never enter Ready hydration"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(replacement).is_none(),
+            "a rejected duplicate must not receive a second KnownTechniques activation"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .get(&subject),
+            Some(&replacement),
+            "the blocked replacement remains the only pending target and cannot steal the old activation"
+        );
+
+        let changed = known_techniques_fixture("movement.dash", 0.85);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(changed.clone());
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed),
+            "the original live entity must still be writable after duplicate-login rejection"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(old_player),
+            "a duplicate login must never transfer the canonical activation"
+        );
+        assert!(
+            !app.world()
+                .resource::<KnownTechniquesReconnectState>()
+                .retries
+                .contains_key(&subject),
+            "a still-live duplicate must be a stable block, not a backoff retry"
+        );
+
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<KnownTechniquesReconnectState>()
+                .retries
+                .contains_key(&subject),
+            "repeated frames must not reintroduce retry accounting while the old client is live"
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesReconnectBlocked>(replacement)
+            .is_some());
+        assert!(app
+            .world()
+            .get::<KnownTechniquesReconnectReady>(replacement)
+            .is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_duplicate_pending_target_keeps_first_target_and_blocks_later_client() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-duplicate-pending");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (first_bundle, _first_helper) = create_mock_client("Azure");
+        let first_target = app.world_mut().spawn(first_bundle).id();
+        let (second_bundle, _second_helper) = create_mock_client("Azure");
+        let second_target = app.world_mut().spawn(second_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(first_target),
+            "the first same-tick target must own the canonical activation"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(first_target),
+            Some(&initial),
+            "the first target must complete durable hydration"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_some(),
+            "a later same-subject target must be blocked rather than replacing pending state"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(second_target)
+                .is_none(),
+            "the later duplicate must not enter Ready hydration"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(second_target).is_none(),
+            "the later duplicate must not receive the first target's durable slice"
+        );
+        assert!(
+            !app.world()
+                .resource::<PendingKnownTechniquesHandoffs>()
+                .0
+                .contains_key(&subject),
+            "successful hydration must consume the first target's pending handoff"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_blocked_duplicate_promoted_and_hydrated_after_first_target_despawns() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-duplicate-promotion");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (first_bundle, _first_helper) = create_mock_client("Azure");
+        let first_target = app.world_mut().spawn(first_bundle).id();
+        let (second_bundle, _second_helper) = create_mock_client("Azure");
+        let second_target = app.world_mut().spawn(second_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world().get::<KnownTechniques>(first_target),
+            Some(&initial),
+            "the first target must hydrate before the duplicate arrives"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_some(),
+            "the duplicate must be blocked while the first target holds the activation"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(second_target).is_none(),
+            "the blocked duplicate must not hydrate while the first target is live"
+        );
+
+        app.world_mut().entity_mut(first_target).remove::<Client>();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(second_target),
+            Some(&initial),
+            "after the first target disconnects, the blocked duplicate must be promoted and hydrated"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(second_target)
+                .is_some(),
+            "promotion must emit the Ready marker that drives hydration"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_none(),
+            "promotion must clear the block on the promoted duplicate"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(second_target),
+            "the canonical activation must transfer to the promoted duplicate"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_shutdown_flushes_dirty_activation() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-shutdown");
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        let changed = known_techniques_fixture("movement.dash", 0.6);
+        app.world_mut().entity_mut(player).insert(changed.clone());
+        app.world_mut()
+            .resource_mut::<Events<AppExit>>()
+            .send(AppExit::Success);
+
+        app.world_mut().run_schedule(Last);
+
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(changed),
+            "AppExit -> Last must flush the canonical KnownTechniques activation"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_failed_load_stays_read_only_and_recovers_on_reconnect() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-load-recovery");
+        let connection = Connection::open(settings.db_path()).expect("fixture db should open");
+        connection
+            .execute(
+                "INSERT INTO player_known_techniques (username, known_techniques_json, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+                params!["Azure", "{broken-json", PLAYER_ROW_SCHEMA_VERSION, 1],
+            )
+            .expect("corrupt known techniques row should seed");
+        drop(connection);
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(old_player)
+            .is_some());
+        assert!(
+            app.world().get::<PlayerState>(old_player).is_some(),
+            "a corrupt known-techniques row must not prevent PlayerState attachment"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectFailed>(old_player)
+                .is_some(),
+            "a corrupt known-techniques row must mark only that slice as degraded"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(old_player)
+                .is_none(),
+            "a corrupt row must not be treated as a duplicate-login block"
+        );
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(known_techniques_fixture("movement.dash", 0.99));
+        app.update();
+        let connection = Connection::open(settings.db_path()).expect("fixture db should reopen");
+        let stored: String = connection
+            .query_row(
+                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("corrupt row should remain present");
+        assert_eq!(
+            stored, "{broken-json",
+            "failed provenance must block Changed writes"
+        );
+        drop(connection);
+
+        let repaired = known_techniques_fixture("movement.dash", 0.35);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &repaired)
+            .expect("operator repair should replace the corrupt row");
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&repaired)
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(new_player)
+            .is_none());
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&canonical_player_id("Azure"))
+                .map(|activation| activation.entity),
+            Some(new_player),
+            "failed activation lease must be releasable so a repaired row can hydrate"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -8893,9 +10945,8 @@ mod persistence_tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         (
-            PersistenceSettings::with_paths(&db_path, &deceased_dir, format!("task3-{test_name}")),
+            PersistenceSettings::with_db_path(&db_path, format!("task3-{test_name}")),
             root,
         )
     }
@@ -12396,115 +14447,381 @@ mod persistence_tests {
     }
 
     #[test]
-    fn persistence_can_write_deceased_snapshot_and_public_index() {
-        let (settings, root) = persistence_settings("deceased-export");
+    fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
+        let (settings, root) = persistence_settings("production-zone-runtime-shutdown-slice");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
 
-        let life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
-                tick: 77,
+        let mut app = App::new();
+        app.add_event::<AppExit>();
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.insert_resource(settings.clone());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: 0.37,
+                danger_level: 3,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
-            ..LifeRecord::default()
-        };
-        let lifecycle = Lifecycle {
-            character_id: life_record.character_id.clone(),
-            death_count: 3,
-            fortune_remaining: 0,
-            last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
-        };
+            spatial_revision: 0,
+        });
+        register(&mut app);
+        app.world_mut()
+            .resource_mut::<ZoneRuntimeSnapshotState>()
+            .last_snapshot_wall = current_unix_seconds();
 
-        persist_termination_transition(&settings, &lifecycle, &life_record)
-            .expect("terminated snapshot should persist");
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
 
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
+        let records = load_zone_runtime_snapshot(&settings)
+            .expect("production shutdown dispatcher should persist zone runtime");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].zone_id, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(records[0].spirit_qi, 0.37);
+        assert_eq!(records[0].danger_level, 3);
+        assert_eq!(
+            app.world()
+                .resource::<PersistenceSliceRegistry>()
+                .descriptors()
+                .map(|descriptor| descriptor.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["player.known_techniques", "world.zone_runtime"],
+            "production must install every wired production descriptor"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn production_zone_runtime_registry() -> PersistenceSliceRegistry {
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry
+            .register_slice::<ZoneRuntimePersistenceSlice>()
+            .and_then(|()| registry.register_slice::<KnownTechniquesPersistenceSlice>())
+            .expect("production slice descriptors must remain valid");
+        registry
+    }
+
+    fn dispatch_production_shutdown_flushes(world: &mut World) -> ShutdownFlushReport {
+        dispatch_shutdown_flushes(
+            world,
+            ShutdownFlushRequest::Requested,
+            &ProductionSliceClock {
+                runtime_tick: 0,
+                wall_unix_millis: 0,
+            },
         )
-        .expect("snapshot json should deserialize");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        let public_path: String = connection
-            .query_row(
-                "SELECT public_path FROM deceased_snapshots WHERE char_id = ?1",
-                params!["offline:Ancestor"],
-                |row| row.get(0),
-            )
-            .expect("deceased snapshot row should exist");
+        .expect("production shutdown dispatch must not fail closed on a missing registry")
+    }
 
-        assert_eq!(snapshot.char_id, "offline:Ancestor");
-        assert_eq!(snapshot.died_at_tick, 77);
-        assert_eq!(snapshot.termination_category, "横死");
-        assert_eq!(snapshot.lifecycle.character_id, lifecycle.character_id);
-        assert_eq!(snapshot.lifecycle.death_count, lifecycle.death_count);
-        assert_eq!(
-            snapshot.lifecycle.fortune_remaining,
-            lifecycle.fortune_remaining
-        );
-        assert_eq!(
-            snapshot.lifecycle.last_death_tick,
-            lifecycle.last_death_tick
-        );
-        assert_eq!(
-            snapshot.lifecycle.last_revive_tick,
-            lifecycle.last_revive_tick
-        );
-        assert_eq!(snapshot.lifecycle.state, lifecycle.state);
-        assert_eq!(snapshot.life_record.character_id, life_record.character_id);
-        assert_eq!(snapshot.life_record.created_at, life_record.created_at);
-        assert_eq!(
-            snapshot.life_record.biography.len(),
-            life_record.biography.len()
-        );
-        assert!(matches!(
-            snapshot.life_record.biography.last(),
-            Some(BiographyEntry::Terminated { tick: 77, .. })
+    fn zone_runtime_failure_message(report: &ShutdownFlushReport) -> Option<&str> {
+        report
+            .failures
+            .iter()
+            .find(|failure| failure.slice_id.as_str() == "world.zone_runtime")
+            .map(|failure| failure.error.message())
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_registry_is_clean_noop() {
+        let (settings, root) = persistence_settings("zone-flush-no-registry");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
         ));
-        assert_eq!(index.len(), 1);
-        assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].died_at_tick, 77);
-        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
-        assert_eq!(index[0].termination_category, "横死");
-        assert_eq!(public_path, "deceased/offline_Ancestor.json");
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.attempted, 2,
+            "both production descriptors must be attempted, actual {report:?}"
+        );
+        assert!(
+            report.failures.is_empty(),
+            "an absent ZoneRegistry must be a clean no-op, actual {report:?}"
+        );
+        assert_eq!(report.clean, 2, "both slices must report Clean");
+        assert!(
+            load_zone_runtime_snapshot(&settings)
+                .expect("zone snapshot load must work on a fixture database")
+                .is_empty(),
+            "an absent ZoneRegistry must not write any zone runtime rows"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_settings_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-settings");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("PersistenceSettings is unavailable"),
+            "the zone slice must fail closed without PersistenceSettings, actual {report:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_qi_account_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-qi-account");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the zone slice may fail without WorldQiAccount, actual {report:?}"
+        );
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("WorldQiAccount is unavailable"),
+            "the zone slice must fail closed without WorldQiAccount"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_clock_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-clock");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the zone slice may fail without CultivationClock, actual {report:?}"
+        );
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("CultivationClock is unavailable"),
+            "the zone slice must fail closed without CultivationClock"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_resource_failure_keeps_later_zone_flush_running() {
+        let (settings, root) = persistence_settings("zone-flush-later-descriptor");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the known-techniques slice may fail without PlayerStatePersistence, actual {report:?}"
+        );
+        assert_eq!(
+            report.failures[0].slice_id.as_str(),
+            "player.known_techniques"
+        );
+        assert!(
+            report.flushed >= 1,
+            "the zone slice must still flush, actual {report:?}"
+        );
+        let records = load_zone_runtime_snapshot(&settings)
+            .expect("the later zone descriptor must have persisted its snapshot");
+        assert!(
+            !records.is_empty(),
+            "the later zone descriptor must write rows after the earlier known-techniques failure"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_shutdown_flush_failing_subject_does_not_abort_later_subject() {
+        let (settings, root) = persistence_settings("zone-flush-per-subject-isolation");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let registry = production_zone_runtime_registry();
+        let mut world = World::new();
+
+        let failing = known_techniques_fixture("movement.dash", 0.2);
+        let mut failing_guard = registry
+            .activate_test_subject(
+                SliceLoad::<KnownTechniques, String>::loaded(failing),
+                KNOWN_TECHNIQUES_SLICE_ID,
+                PersistenceSubjectKey::new("npc:hermit"),
+                DirtyRevision::default(),
+                KnownTechniques::default,
+                |_| KnownTechniques::default(),
+            )
+            .expect("failing subject activation should succeed");
+        let (failing_tracker, failing_fence) = failing_guard
+            .restore_persistence_state()
+            .expect("failing subject tracker should issue once");
+        let failing_entity = world
+            .spawn(known_techniques_fixture("movement.dash", 0.9))
+            .id();
+
+        let later = known_techniques_fixture("movement.dash", 0.3);
+        let mut later_guard = registry
+            .activate_test_subject(
+                SliceLoad::<KnownTechniques, String>::loaded(later),
+                KNOWN_TECHNIQUES_SLICE_ID,
+                PersistenceSubjectKey::new("offline:Beta"),
+                DirtyRevision::default(),
+                KnownTechniques::default,
+                |_| KnownTechniques::default(),
+            )
+            .expect("later subject activation should succeed");
+        let (later_tracker, later_fence) = later_guard
+            .restore_persistence_state()
+            .expect("later subject tracker should issue once");
+        let later_entity = world
+            .spawn(known_techniques_fixture("movement.dash", 0.8))
+            .id();
+
+        world.insert_resource(registry);
+        world.insert_resource(settings.clone());
+        world.insert_resource(player_persistence.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations(HashMap::from([
+            (
+                "npc:hermit".to_string(),
+                KnownTechniquesActivation {
+                    entity: failing_entity,
+                    guarded: failing_guard,
+                    tracker: failing_tracker,
+                    fence: failing_fence,
+                },
+            ),
+            (
+                canonical_player_id("Beta"),
+                KnownTechniquesActivation {
+                    entity: later_entity,
+                    guarded: later_guard,
+                    tracker: later_tracker,
+                    fence: later_fence,
+                },
+            ),
+        ])));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the failing subject may report, actual {report:?}"
+        );
+        assert_eq!(
+            report.failures[0].slice_id.as_str(),
+            "player.known_techniques"
+        );
+        assert!(
+            report.failures[0].error.message().contains("npc:hermit"),
+            "the failure must identify the failing subject, actual {:?}",
+            report.failures[0].error.message()
+        );
+        assert_eq!(
+            load_player_known_techniques_slice(&player_persistence, "Beta")
+                .expect("later subject row should decode"),
+            Some(known_techniques_fixture("movement.dash", 0.8)),
+            "the later subject must still flush after the earlier subject failed"
+        );
+        assert!(
+            load_player_known_techniques_slice(&player_persistence, "hermit")
+                .expect("failing subject lookup should decode")
+                .is_none(),
+            "the failing subject must not write any row"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn persist_termination_transition_preserves_skill_milestones_and_narration_in_deceased_exports()
-    {
-        let (settings, root) = persistence_settings("deceased-export-skill-milestones");
+    fn persist_termination_transition_stores_complete_deceased_snapshot_in_sqlite() {
+        let (settings, root) = persistence_settings("deceased-snapshot-sqlite");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
+        let tags_json = serde_json::to_string(&vec![RenownTagV1 {
+            tag: "三叛之人".to_string(),
+            weight: 20.0,
+            last_seen_tick: 70,
+            permanent: true,
+        }])
+        .expect("renown tags should serialize");
+        Connection::open(settings.db_path())
+            .expect("db should open")
+            .execute(
+                "
+                INSERT INTO social_renown (
+                    char_id, fame, notoriety, tags_json, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, ?4, 1, 1)
+                ",
+                params!["offline:Ancestor", 12, 80, tags_json],
+            )
+            .expect("renown row should insert");
 
         let life_record = LifeRecord {
             character_id: "offline:Ancestor".to_string(),
             created_at: 11,
             biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
+                cause: "natural_end".to_string(),
                 tick: 77,
             }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
             skill_milestones: vec![crate::cultivation::life_record::SkillMilestone {
                 skill: crate::skill::components::SkillId::Alchemy,
                 new_lv: 4,
@@ -12512,7 +14829,6 @@ mod persistence_tests {
                 narration: "丹火三转，炉意已成。".to_string(),
                 total_xp_at: 1_280,
             }],
-            spirit_root_first: None,
             ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
@@ -12520,56 +14836,61 @@ mod persistence_tests {
             death_count: 3,
             fortune_remaining: 0,
             last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
         };
 
         persist_termination_transition(&settings, &lifecycle, &life_record)
             .expect("terminated snapshot should persist");
 
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let public_snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
-        )
-        .expect("public snapshot json should deserialize");
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        let sqlite_snapshot_json: String = connection
+        let (snapshot_json, died_at_tick): (String, i64) = Connection::open(settings.db_path())
+            .expect("db should reopen")
             .query_row(
-                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                "SELECT snapshot_json, died_at_tick FROM deceased_snapshots WHERE char_id = ?1",
                 params!["offline:Ancestor"],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("deceased snapshot row should exist");
-        let sqlite_snapshot: DeceasedSnapshot = serde_json::from_str(&sqlite_snapshot_json)
-            .expect("sqlite snapshot json should deserialize");
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("snapshot should decode");
 
-        for snapshot in [&public_snapshot, &sqlite_snapshot] {
-            assert_eq!(snapshot.life_record.skill_milestones.len(), 1);
-            assert_eq!(
-                snapshot.life_record.skill_milestones[0].skill,
-                crate::skill::components::SkillId::Alchemy
-            );
-            assert_eq!(snapshot.life_record.skill_milestones[0].new_lv, 4);
-            assert_eq!(snapshot.life_record.skill_milestones[0].achieved_at, 75);
-            assert_eq!(snapshot.life_record.skill_milestones[0].total_xp_at, 1_280);
-            assert_eq!(
-                snapshot.life_record.skill_milestones[0].narration,
-                "丹火三转，炉意已成。"
-            );
-        }
+        assert_eq!(died_at_tick, 77);
+        assert_eq!(snapshot.char_id, "offline:Ancestor");
+        assert_eq!(snapshot.termination_category, "善终");
+        assert_eq!(snapshot.lifecycle.character_id, lifecycle.character_id);
+        assert_eq!(snapshot.lifecycle.death_count, 3);
+        assert_eq!(snapshot.lifecycle.fortune_remaining, 0);
+        assert_eq!(snapshot.lifecycle.last_death_tick, Some(77));
+        assert_eq!(snapshot.lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(snapshot.life_record.character_id, life_record.character_id);
+        assert_eq!(snapshot.life_record.created_at, life_record.created_at);
+        assert!(matches!(
+            snapshot.life_record.biography.last(),
+            Some(BiographyEntry::Terminated { tick: 77, .. })
+        ));
+        assert_eq!(snapshot.life_record.skill_milestones.len(), 1);
+        assert_eq!(
+            snapshot.life_record.skill_milestones[0].skill,
+            crate::skill::components::SkillId::Alchemy
+        );
+        assert_eq!(snapshot.life_record.skill_milestones[0].new_lv, 4);
+        assert_eq!(snapshot.life_record.skill_milestones[0].achieved_at, 75);
+        assert_eq!(
+            snapshot.life_record.skill_milestones[0].narration,
+            "丹火三转，炉意已成。"
+        );
+        assert_eq!(snapshot.life_record.skill_milestones[0].total_xp_at, 1_280);
+        let social = snapshot.social.expect("social snapshot should persist");
+        assert_eq!(social.renown.fame, 12);
+        assert_eq!(social.renown.notoriety, 80);
+        assert_eq!(social.renown.tags[0].tag, "三叛之人");
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn persist_termination_transition_exports_public_social_snapshot() {
-        let (settings, root) = persistence_settings("deceased-export-social");
+    fn persist_termination_transition_persists_complete_social_snapshot_in_sqlite() {
+        let (settings, root) = persistence_settings("deceased-snapshot-social-sqlite");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
 
@@ -12588,7 +14909,7 @@ mod persistence_tests {
                     char_id, fame, notoriety, tags_json, schema_version, last_updated_wall
                 ) VALUES (?1, ?2, ?3, ?4, 1, 1)
                 ",
-                params!["offline:Ancestor", 12, 80, tags_json],
+                params!["offline:Social", 12, 80, tags_json],
             )
             .expect("renown row should insert");
         connection
@@ -12600,7 +14921,7 @@ mod persistence_tests {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)
                 ",
                 params![
-                    "offline:Ancestor",
+                    "offline:Social",
                     "char:rival",
                     "feud",
                     33,
@@ -12618,8 +14939,8 @@ mod persistence_tests {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)
                 ",
                 params![
-                    "exposure-death-1",
-                    "offline:Ancestor",
+                    "exposure-death-social",
+                    "offline:Social",
                     "death",
                     witnesses_json,
                     77
@@ -12634,22 +14955,18 @@ mod persistence_tests {
                     permanently_refused, schema_version, last_updated_wall
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1)
                 ",
-                params!["offline:Ancestor", "attack", 2, -10, 3, 88, 1],
+                params!["offline:Social", "attack", 2, -10, 3, 88, 1],
             )
             .expect("faction membership row should insert");
         drop(connection);
 
         let life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
+            character_id: "offline:Social".to_string(),
             created_at: 11,
             biography: vec![BiographyEntry::Terminated {
                 cause: "fortune_exhausted".to_string(),
                 tick: 77,
             }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
             ..LifeRecord::default()
         };
         let lifecycle = Lifecycle {
@@ -12657,290 +14974,52 @@ mod persistence_tests {
             death_count: 3,
             fortune_remaining: 0,
             last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
         };
 
         persist_termination_transition(&settings, &lifecycle, &life_record)
             .expect("terminated snapshot should persist");
 
-        let public_snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(settings.deceased_public_dir().join("offline_Ancestor.json"))
-                .expect("snapshot json should exist"),
-        )
-        .expect("public snapshot json should deserialize");
-        let sqlite_snapshot_json: String = Connection::open(settings.db_path())
+        let snapshot_json: String = Connection::open(settings.db_path())
             .expect("db should reopen")
             .query_row(
                 "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
-                params!["offline:Ancestor"],
+                params!["offline:Social"],
                 |row| row.get(0),
             )
             .expect("deceased snapshot row should exist");
-        let sqlite_snapshot: DeceasedSnapshot = serde_json::from_str(&sqlite_snapshot_json)
-            .expect("sqlite snapshot json should deserialize");
-
-        for snapshot in [&public_snapshot, &sqlite_snapshot] {
-            let social = snapshot.social.as_ref().expect("social should be public");
-            assert_eq!(social.renown.fame, 12);
-            assert_eq!(social.renown.notoriety, 80);
-            assert_eq!(social.renown.tags[0].tag, "三叛之人");
-            assert_eq!(social.relationships.len(), 1);
-            assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
-            assert_eq!(social.relationships[0].peer, "char:rival");
-            assert_eq!(social.relationships[0].since_tick, 33);
-            assert_eq!(social.relationships[0].metadata["cause"], "ambush");
-            assert_eq!(social.exposure_log.len(), 1);
-            assert_eq!(social.exposure_log[0].kind, ExposureKindV1::Death);
-            assert_eq!(social.exposure_log[0].tick, 77);
-            assert_eq!(social.exposure_log[0].witnesses.len(), 2);
-            let membership = social
-                .faction_membership
-                .as_ref()
-                .expect("faction membership should be public");
-            assert_eq!(membership.faction, "attack");
-            assert_eq!(membership.rank, 2);
-            assert_eq!(membership.loyalty, -10);
-            assert_eq!(membership.betrayal_count, 3);
-            assert_eq!(membership.invite_block_until_tick, Some(88));
-            assert!(membership.permanently_refused);
-        }
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("snapshot should decode");
+        let social = snapshot.social.expect("social snapshot should persist");
+        assert_eq!(social.renown.fame, 12);
+        assert_eq!(social.renown.notoriety, 80);
+        assert_eq!(social.renown.tags[0].tag, "三叛之人");
+        assert_eq!(social.relationships.len(), 1);
+        assert_eq!(social.relationships[0].kind, RelationshipKindV1::Feud);
+        assert_eq!(social.relationships[0].peer, "char:rival");
+        assert_eq!(social.relationships[0].since_tick, 33);
+        assert_eq!(social.relationships[0].metadata["cause"], "ambush");
+        assert_eq!(social.exposure_log.len(), 1);
+        assert_eq!(social.exposure_log[0].kind, ExposureKindV1::Death);
+        assert_eq!(social.exposure_log[0].tick, 77);
+        assert_eq!(social.exposure_log[0].witnesses.len(), 2);
+        let membership = social
+            .faction_membership
+            .expect("faction membership should persist");
+        assert_eq!(membership.faction, "attack");
+        assert_eq!(membership.rank, 2);
+        assert_eq!(membership.loyalty, -10);
+        assert_eq!(membership.betrayal_count, 3);
+        assert_eq!(membership.invite_block_until_tick, Some(88));
+        assert!(membership.permanently_refused);
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn public_deceased_staging_failure_restores_existing_files_and_skips_sqlite() {
-        let (settings, root) = persistence_settings("deceased-export-stage-rollback");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-        fs::create_dir_all(settings.deceased_public_dir())
-            .expect("deceased directory should exist");
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let previous_snapshot = b"previous snapshot";
-        let corrupt_index = b"{not-json";
-        fs::write(&snapshot_path, previous_snapshot).expect("snapshot fixture should write");
-        fs::write(&index_path, corrupt_index).expect("index fixture should write");
-
-        let life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
-                tick: 77,
-            }],
-            ..LifeRecord::default()
-        };
-        let lifecycle = Lifecycle {
-            character_id: life_record.character_id.clone(),
-            state: crate::combat::components::LifecycleState::Terminated,
-            ..Lifecycle::default()
-        };
-
-        persist_termination_transition(&settings, &lifecycle, &life_record)
-            .expect_err("corrupt public index must fail before SQLite commit");
-
-        assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
-        assert_eq!(fs::read(&index_path).unwrap(), corrupt_index);
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT COUNT(*) FROM deceased_snapshots WHERE char_id = ?1",
-                    params!["offline:Ancestor"],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            0,
-            "failed public staging must not authorize the SQLite terminal snapshot"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_rewrites_existing_public_index_entry_for_same_char() {
-        let (settings, root) = persistence_settings("deceased-export-rewrite");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-
-        let first_life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "fortune_exhausted".to_string(),
-                tick: 77,
-            }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
-            ..LifeRecord::default()
-        };
-        let first_lifecycle = Lifecycle {
-            character_id: first_life_record.character_id.clone(),
-            death_count: 3,
-            fortune_remaining: 0,
-            last_death_tick: Some(77),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
-        };
-        persist_termination_transition(&settings, &first_lifecycle, &first_life_record)
-            .expect("first terminated snapshot should persist");
-
-        let second_life_record = LifeRecord {
-            character_id: "offline:Ancestor".to_string(),
-            created_at: 11,
-            biography: vec![BiographyEntry::Terminated {
-                cause: "tribulation_aftershock".to_string(),
-                tick: 99,
-            }],
-            insights_taken: Vec::new(),
-            death_insights: Vec::new(),
-            skill_milestones: Vec::new(),
-            spirit_root_first: None,
-            ..LifeRecord::default()
-        };
-        let second_lifecycle = Lifecycle {
-            character_id: second_life_record.character_id.clone(),
-            death_count: 4,
-            fortune_remaining: 0,
-            last_death_tick: Some(99),
-            last_revive_tick: Some(55),
-            spawn_anchor: None,
-            spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
-            awaiting_decision: None,
-            revival_decision_deadline_tick: None,
-            weakened_until_tick: None,
-            state: crate::combat::components::LifecycleState::Terminated,
-        };
-        persist_termination_transition(&settings, &second_lifecycle, &second_life_record)
-            .expect("second terminated snapshot should overwrite export");
-
-        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let snapshot: DeceasedSnapshot = serde_json::from_str(
-            &fs::read_to_string(&snapshot_path).expect("snapshot json should exist"),
-        )
-        .expect("snapshot json should deserialize");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        let (died_at_tick, public_path): (i64, String) = connection
-            .query_row(
-                "SELECT died_at_tick, public_path FROM deceased_snapshots WHERE char_id = ?1",
-                params!["offline:Ancestor"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("deceased snapshot row should exist");
-
-        assert_eq!(snapshot.char_id, "offline:Ancestor");
-        assert_eq!(snapshot.died_at_tick, 99);
-        assert_eq!(snapshot.termination_category, "横死");
-        assert!(matches!(
-            snapshot.life_record.biography.last(),
-            Some(BiographyEntry::Terminated { tick: 99, .. })
-        ));
-        assert_eq!(index.len(), 1);
-        assert_eq!(index[0].char_id, "offline:Ancestor");
-        assert_eq!(index[0].died_at_tick, 99);
-        assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
-        assert_eq!(index[0].termination_category, "横死");
-        assert_eq!(died_at_tick, 99);
-        assert_eq!(public_path, "deceased/offline_Ancestor.json");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_sorts_public_index_by_died_at_tick_then_char_id() {
-        let (settings, root) = persistence_settings("deceased-export-index-ordering");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-
-        let exports = [
-            ("offline:Crimson", 90_i64),
-            ("offline:Azure", 90_i64),
-            ("offline:Bronze", 77_i64),
-        ];
-
-        for (char_id, died_at_tick) in exports {
-            let life_record = LifeRecord {
-                character_id: char_id.to_string(),
-                created_at: 11,
-                biography: vec![BiographyEntry::Terminated {
-                    cause: "fortune_exhausted".to_string(),
-                    tick: died_at_tick as u64,
-                }],
-                insights_taken: Vec::new(),
-                death_insights: Vec::new(),
-                skill_milestones: Vec::new(),
-                spirit_root_first: None,
-                ..LifeRecord::default()
-            };
-            let lifecycle = Lifecycle {
-                character_id: life_record.character_id.clone(),
-                death_count: 1,
-                fortune_remaining: 0,
-                last_death_tick: Some(died_at_tick as u64),
-                last_revive_tick: None,
-                spawn_anchor: None,
-                spawn_anchor_damaged: false,
-                near_death_deadline_tick: None,
-                awaiting_decision: None,
-                revival_decision_deadline_tick: None,
-                weakened_until_tick: None,
-                state: crate::combat::components::LifecycleState::Terminated,
-            };
-
-            persist_termination_transition(&settings, &lifecycle, &life_record)
-                .expect("terminated snapshot should persist");
-        }
-
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
-
-        assert_eq!(index.len(), 3);
-        assert_eq!(index[0].char_id, "offline:Bronze");
-        assert_eq!(index[0].died_at_tick, 77);
-        assert_eq!(index[0].path, "deceased/offline_Bronze.json");
-        assert_eq!(index[0].termination_category, "横死");
-
-        assert_eq!(index[1].char_id, "offline:Azure");
-        assert_eq!(index[1].died_at_tick, 90);
-        assert_eq!(index[1].path, "deceased/offline_Azure.json");
-        assert_eq!(index[1].termination_category, "横死");
-
-        assert_eq!(index[2].char_id, "offline:Crimson");
-        assert_eq!(index[2].died_at_tick, 90);
-        assert_eq!(index[2].path, "deceased/offline_Crimson.json");
-        assert_eq!(index[2].termination_category, "横死");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn persist_termination_transition_classifies_good_end_and_voluntary_retire() {
-        let (settings, root) = persistence_settings("deceased-export-category");
+    fn persist_termination_transition_updates_sqlite_snapshot_and_categories() {
+        let (settings, root) = persistence_settings("deceased-snapshot-categories");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
 
@@ -12955,57 +15034,141 @@ mod persistence_tests {
                     cause: cause.to_string(),
                     tick,
                 }],
-                insights_taken: Vec::new(),
-                death_insights: Vec::new(),
-                skill_milestones: Vec::new(),
-                spirit_root_first: None,
                 ..LifeRecord::default()
             };
             let lifecycle = Lifecycle {
-                character_id: life_record.character_id.clone(),
+                character_id: char_id.to_string(),
                 death_count: 1,
                 fortune_remaining: 0,
                 last_death_tick: Some(tick),
-                last_revive_tick: None,
-                spawn_anchor: None,
-                spawn_anchor_damaged: false,
-                near_death_deadline_tick: None,
-                awaiting_decision: None,
-                revival_decision_deadline_tick: None,
-                weakened_until_tick: None,
-                state: crate::combat::components::LifecycleState::Terminated,
+                state: LifecycleState::Terminated,
+                ..Lifecycle::default()
             };
 
             persist_termination_transition(&settings, &lifecycle, &life_record)
                 .expect("terminated snapshot should persist");
-
-            let snapshot: DeceasedSnapshot = serde_json::from_str(
-                &fs::read_to_string(
-                    settings
-                        .deceased_public_dir()
-                        .join(format!("{}.json", sanitize_deceased_snapshot_stem(char_id))),
+            let snapshot_json: String = Connection::open(settings.db_path())
+                .expect("db should reopen")
+                .query_row(
+                    "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                    params![char_id],
+                    |row| row.get(0),
                 )
-                .expect("snapshot json should exist"),
-            )
-            .expect("snapshot json should deserialize");
+                .expect("deceased snapshot row should exist");
+            let snapshot: DeceasedSnapshot =
+                serde_json::from_str(&snapshot_json).expect("snapshot should decode");
             assert_eq!(snapshot.termination_category, expected_category);
+            assert_eq!(snapshot.died_at_tick, tick);
         }
 
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            &fs::read_to_string(&index_path).expect("index json should exist"),
-        )
-        .expect("index json should deserialize");
+        let (died_at_tick, snapshot_json): (i64, String) = Connection::open(settings.db_path())
+            .expect("db should reopen for overwrite")
+            .query_row(
+                "SELECT died_at_tick, snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Hermit"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("hermit snapshot row should exist");
+        let snapshot: DeceasedSnapshot =
+            serde_json::from_str(&snapshot_json).expect("overwritten snapshot should decode");
+        assert_eq!(died_at_tick, 89);
+        assert_eq!(snapshot.char_id, "offline:Hermit");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_death_peak_keeps_sqlite_life_registry_and_snapshots_consistent() {
+        let (settings, root) = persistence_settings("semantic-death-peak-sqlite");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let writer_count = 10usize;
+        let settings = Arc::new(settings);
+        let barrier = Arc::new(Barrier::new(writer_count + 1));
+        let handles = (0..writer_count)
+            .map(|index| {
+                let settings = Arc::clone(&settings);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let char_id = format!("offline:PeakDeath{index}");
+                    let tick = 2_000 + index as u64;
+                    let life_record = LifeRecord {
+                        character_id: char_id.clone(),
+                        created_at: tick.saturating_sub(100),
+                        biography: vec![BiographyEntry::Terminated {
+                            cause: "peak_death".to_string(),
+                            tick,
+                        }],
+                        ..LifeRecord::default()
+                    };
+                    let lifecycle = Lifecycle {
+                        character_id: char_id,
+                        death_count: 1,
+                        fortune_remaining: 0,
+                        last_death_tick: Some(tick),
+                        state: LifecycleState::Terminated,
+                        ..Lifecycle::default()
+                    };
+                    let lifespan_event = LifespanEventRecord {
+                        at_tick: tick,
+                        kind: "termination".to_string(),
+                        delta_years: -999,
+                        source: "peak_death".to_string(),
+                    };
+
+                    barrier.wait();
+                    persist_termination_transition_with_death_context(
+                        settings.as_ref(),
+                        &lifecycle,
+                        &life_record,
+                        Some("peak_death"),
+                        Some(&lifespan_event),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let errors = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("death writer should not panic"))
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
         assert!(
-            index
-                .iter()
-                .any(|entry| entry.char_id == "offline:OldOne"
-                    && entry.termination_category == "善终")
+            errors.is_empty(),
+            "concurrent termination events should persist atomically: {errors:?}"
         );
-        assert!(index
-            .iter()
-            .any(|entry| entry.char_id == "offline:Hermit"
-                && entry.termination_category == "自主归隐"));
+
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        for (table, expected) in [
+            ("life_records", writer_count as i64),
+            ("life_events", writer_count as i64),
+            ("death_registry", writer_count as i64),
+            ("lifespan_events", writer_count as i64),
+            ("deceased_snapshots", writer_count as i64),
+        ] {
+            let sql = format!("SELECT COUNT(*) FROM {table}");
+            let count: i64 = connection
+                .query_row(sql.as_str(), [], |row| row.get(0))
+                .expect("table count should be readable");
+            assert_eq!(count, expected, "{table} should contain all peak rows");
+        }
+        for index in 0..writer_count {
+            let char_id = format!("offline:PeakDeath{index}");
+            let snapshot_json: String = connection
+                .query_row(
+                    "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                    params![char_id],
+                    |row| row.get(0),
+                )
+                .expect("peak snapshot should exist");
+            let snapshot: DeceasedSnapshot =
+                serde_json::from_str(&snapshot_json).expect("peak snapshot should decode");
+            assert_eq!(snapshot.died_at_tick, 2_000 + index as u64);
+            assert_eq!(snapshot.termination_category, "横死");
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -13357,142 +15520,6 @@ mod persistence_tests {
         assert_eq!(life_events, writer_count as i64);
         assert_eq!(death_registry, writer_count as i64);
         assert_eq!(lifespan_events, writer_count as i64);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn semantic_death_peak_keeps_life_registry_and_public_exports_consistent() {
-        let (settings, root) = persistence_settings("semantic-death-peak");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("bootstrap should succeed");
-
-        let writer_count = 10usize;
-        let settings = Arc::new(settings);
-        let barrier = Arc::new(Barrier::new(writer_count + 1));
-        let handles = (0..writer_count)
-            .map(|index| {
-                let settings = Arc::clone(&settings);
-                let barrier = Arc::clone(&barrier);
-                std::thread::spawn(move || {
-                    let char_id = format!("offline:PeakDeath{index}");
-                    let tick = 2_000 + index as u64;
-                    let life_record = LifeRecord {
-                        character_id: char_id.clone(),
-                        created_at: tick.saturating_sub(100),
-                        biography: vec![BiographyEntry::Terminated {
-                            cause: "peak_death".to_string(),
-                            tick,
-                        }],
-                        insights_taken: Vec::new(),
-                        death_insights: Vec::new(),
-                        skill_milestones: Vec::new(),
-                        spirit_root_first: None,
-                        ..LifeRecord::default()
-                    };
-                    let lifecycle = Lifecycle {
-                        character_id: char_id,
-                        death_count: 1,
-                        fortune_remaining: 0,
-                        last_death_tick: Some(tick),
-                        last_revive_tick: None,
-                        spawn_anchor: None,
-                        spawn_anchor_damaged: false,
-                        near_death_deadline_tick: None,
-                        awaiting_decision: None,
-                        revival_decision_deadline_tick: None,
-                        weakened_until_tick: None,
-                        state: LifecycleState::Terminated,
-                    };
-                    let lifespan_event = LifespanEventRecord {
-                        at_tick: tick,
-                        kind: "termination".to_string(),
-                        delta_years: -999,
-                        source: "peak_death".to_string(),
-                    };
-
-                    barrier.wait();
-                    let started_at = Instant::now();
-                    let result = persist_termination_transition_with_death_context(
-                        settings.as_ref(),
-                        &lifecycle,
-                        &life_record,
-                        Some("peak_death"),
-                        Some(&lifespan_event),
-                    );
-                    let mut metrics = WriteBatchMetrics::default();
-                    metrics.record(started_at, result);
-                    metrics
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let batch_started = Instant::now();
-        barrier.wait();
-        let metrics = handles
-            .into_iter()
-            .map(|handle| handle.join().expect("death writer should not panic"))
-            .fold(WriteBatchMetrics::default(), WriteBatchMetrics::merge);
-        let elapsed = batch_started.elapsed();
-        let lock_failures = metrics
-            .errors
-            .iter()
-            .filter(|error| error.contains("locked") || error.contains("busy"))
-            .count();
-        eprintln!(
-            "[phase9] semantic death peak: writes={} elapsed_ms={} max_write_ms={} lock_failures={} failure_rate={:.4}",
-            metrics.writes,
-            elapsed.as_millis(),
-            metrics.max_write_ms,
-            lock_failures,
-            metrics.errors.len() as f64 / metrics.writes as f64
-        );
-        assert!(
-            metrics.errors.is_empty(),
-            "10 concurrent termination events should persist atomically: {:?}",
-            metrics.errors
-        );
-
-        let connection = Connection::open(settings.db_path()).expect("db should open");
-        for (table, expected) in [
-            ("life_records", writer_count as i64),
-            ("life_events", writer_count as i64),
-            ("death_registry", writer_count as i64),
-            ("lifespan_events", writer_count as i64),
-            ("deceased_snapshots", writer_count as i64),
-        ] {
-            let sql = format!("SELECT COUNT(*) FROM {table}");
-            let count: i64 = connection
-                .query_row(sql.as_str(), [], |row| row.get(0))
-                .expect("table count should be readable");
-            assert_eq!(count, expected, "{table} should contain all peak rows");
-        }
-
-        let index_path = settings.deceased_public_dir().join("_index.json");
-        let index_entries: Vec<DeceasedIndexEntry> = serde_json::from_str(
-            fs::read_to_string(&index_path)
-                .expect("deceased index should exist")
-                .as_str(),
-        )
-        .expect("deceased index should decode");
-        assert_eq!(index_entries.len(), writer_count);
-
-        for index in 0..writer_count {
-            let char_id = format!("offline:PeakDeath{index}");
-            assert!(
-                index_path
-                    .parent()
-                    .expect("deceased dir should exist")
-                    .join(format!("offline_PeakDeath{index}.json"))
-                    .exists(),
-                "public deceased snapshot for {char_id} should exist"
-            );
-            assert!(
-                index_entries.iter().any(|entry| entry.char_id == char_id
-                    && entry.path == format!("deceased/offline_PeakDeath{index}.json")),
-                "deceased index should contain {char_id}"
-            );
-        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -14513,6 +16540,353 @@ mod persistence_tests {
             "dead NPC should be removed from hot npc_digests table"
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_db_open_failure_restores_previous_bundle() {
+        let (settings, root) = persistence_settings("npc-archive-db-open-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_db_open_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 700,
+            archived_at_wall: 1_704_067_250,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial npc archive should persist");
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
+
+        fs::remove_file(settings.db_path()).expect("fixture database should be removable");
+        fs::create_dir(settings.db_path())
+            .expect("database path should become an invalid directory");
+        archive.death_count = 2;
+        archive.died_at_tick = 701;
+        let error = persist_npc_deceased_archive(&settings, &archive)
+            .expect_err("database open failure must abort archive persistence");
+        assert!(
+            !error.to_string().is_empty(),
+            "database open failure should retain its diagnostic"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("previous archive should be restored"),
+            previous_bundle,
+            "DB-open failure after bundle replacement must restore the previous archive bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
+        let (settings, root) = persistence_settings("npc-archive-transaction-begin-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_transaction_begin_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 710,
+            archived_at_wall: 1_704_067_260,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial npc archive should persist");
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
+
+        archive.death_count = 2;
+        archive.died_at_tick = 711;
+        let error = persist_npc_deceased_archive_with_connection(&settings, &archive, |settings| {
+            let connection = open_persistence_connection(settings)?;
+            connection
+                .execute_batch("BEGIN DEFERRED TRANSACTION")
+                .map_err(io::Error::other)?;
+            Ok(connection)
+        })
+        .expect_err("transaction begin failure must abort archive persistence");
+        assert!(
+            !error.to_string().is_empty(),
+            "transaction begin failure should retain its diagnostic"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("previous archive should be restored"),
+            previous_bundle,
+            "transaction-begin failure after bundle replacement must restore the previous archive bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_replacement_write_failure_preserves_bundle_and_index() {
+        let (settings, root) = persistence_settings("npc-archive-replacement-write-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_replacement_write_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 730,
+            archived_at_wall: 1_704_067_280,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial archive should establish the durable baseline");
+
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("baseline bundle should exist");
+        let previous_index: (String, i64, String) = {
+            let connection = Connection::open(settings.db_path()).expect("db should open");
+            connection
+                .query_row(
+                    "SELECT archetype, died_at_tick, path FROM npc_deceased_index WHERE char_id = ?1",
+                    params![archive.char_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("baseline index row should exist")
+        };
+
+        archive.death_count = 2;
+        archive.died_at_tick = 731;
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            open_persistence_connection,
+            |path, payload| {
+                write_zstd_bundle_with_writer(path, payload, |file, compressed| {
+                    let partial_len = (compressed.len() / 2).max(1).min(compressed.len());
+                    file.write_all(&compressed[..partial_len])?;
+                    Err(io::Error::other("injected replacement short write"))
+                })
+            },
+        )
+        .expect_err("a replacement short write must abort before touching the final bundle");
+        assert!(
+            error
+                .to_string()
+                .contains("injected replacement short write"),
+            "the injected write failure should remain observable"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("the previous final bundle must remain present"),
+            previous_bundle,
+            "a failed replacement write must preserve the complete previous bundle"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should reopen");
+        let current_index: (String, i64, String) = connection
+            .query_row(
+                "SELECT archetype, died_at_tick, path FROM npc_deceased_index WHERE char_id = ?1",
+                params![archive.char_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the previous index row must remain present");
+        assert_eq!(
+            current_index, previous_index,
+            "a failed replacement write must not advance npc_deceased_index"
+        );
+        drop(connection);
+
+        let loaded = load_npc_deceased_archive(&settings, archive.char_id.as_str())
+            .expect("the unchanged baseline bundle must remain readable")
+            .expect("the baseline archive should remain indexed");
+        assert_eq!(loaded.died_at_tick, 730);
+        assert_eq!(loaded.death_count, 1);
+        let temporary_files = fs::read_dir(
+            archive_path
+                .parent()
+                .expect("archive bundle should have a parent directory"),
+        )
+        .expect("archive directory should remain readable")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".npc_archive_replacement_write_rollback.json.zst.tmp-")
+        })
+        .count();
+        assert_eq!(
+            temporary_files, 0,
+            "a failed temporary replacement write must clean up its partial file"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_first_archive_failure_removes_new_bundle() {
+        let (settings, root) = persistence_settings("npc-first-archive-rollback");
+        let capture = sample_npc_capture("npc_first_archive_rollback");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 720,
+            archived_at_wall: 1_704_067_270,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        assert!(
+            !archive_path.exists(),
+            "first archive fixture must begin without previous bytes"
+        );
+
+        let error = persist_npc_deceased_archive_with_connection(&settings, &archive, |_| {
+            Err(io::Error::other("injected database open failure"))
+        })
+        .expect_err("database failure must abort first archive persistence");
+        assert!(
+            error.to_string().contains("injected database open failure"),
+            "injected open failure should remain observable"
+        );
+        assert!(
+            !archive_path.exists(),
+            "failure after writing a first archive must remove the unindexed bundle"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
+        let (settings, root) = persistence_settings("npc-archive-prior-read-error");
+        let capture = sample_npc_capture("npc_archive_prior_read_error");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 721,
+            archived_at_wall: 1_704_067_271,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        fs::create_dir_all(&archive_path).expect("directory fixture should be creatable");
+        let open_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let open_called_for_hook = open_called.clone();
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            move |_| {
+                open_called_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
+                Err(io::Error::other("database hook must not run"))
+            },
+            |_, _| panic!("write hook must not run after a prior read error"),
+        )
+        .expect_err("a non-NotFound prior read error must abort before mutation");
+        assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
+        assert!(
+            !open_called.load(std::sync::atomic::Ordering::SeqCst),
+            "prior-file read errors must not open the database or run hooks"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_file_treats_missing_cleanup_as_idempotent() {
+        let (_, root) = persistence_settings("rollback-file-missing-cleanup");
+        let path = root.join("missing.json");
+        rollback_file(&path, None).expect("removing an already-missing file is idempotent");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_file_surfaces_write_and_remove_errors() {
+        let (_, root) = persistence_settings("rollback-file-errors");
+        let write_path = root.join("write-error");
+        fs::create_dir_all(&write_path).expect("write-error directory should be creatable");
+        let write_error = rollback_file(&write_path, Some(b"previous"))
+            .expect_err("rollback writes must surface destination errors");
+        assert_eq!(write_error.kind(), io::ErrorKind::IsADirectory);
+
+        let remove_path = root.join("remove-error");
+        fs::create_dir_all(&remove_path).expect("remove-error directory should be creatable");
+        let remove_error = rollback_file(&remove_path, None)
+            .expect_err("rollback removes must surface non-NotFound errors");
+        assert_eq!(remove_error.kind(), io::ErrorKind::IsADirectory);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_reports_primary_and_rollback_failures_together() {
+        let (settings, root) = persistence_settings("npc-archive-composite-diagnostic");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        let capture = sample_npc_capture("npc_archive_composite_diagnostic");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 722,
+            archived_at_wall: 1_704_067_272,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("baseline archive should establish previous bytes");
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            |_| Err(io::Error::other("primary database failure")),
+            |path, _| {
+                fs::remove_file(path)?;
+                fs::create_dir(path)?;
+                Err(io::Error::other("primary write failure"))
+            },
+        )
+        .expect_err("primary failure with failed rollback must retain both diagnostics");
+        let message = error.to_string();
+        assert!(message.contains("primary write failure"));
+        assert!(message.contains("rollback failed"));
+        assert!(message.contains("Is a directory") || message.contains("directory"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -16602,6 +18976,160 @@ mod persistence_tests {
     }
 
     #[test]
+    fn v41_migration_initializes_absent_rift_drain_at_known_zero() {
+        let db_path = database_path("v41-rift-drain-account-absent");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v41-absent-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DELETE FROM qi_runtime_accounts WHERE account_id = 'rift_drain';
+                UPDATE qi_runtime_accounts
+                SET balance = 12.5
+                WHERE account_id = 'pending_inflow';
+                DROP TABLE dormant_terminal_commits;
+                PRAGMA user_version = 40;
+                ",
+            )
+            .expect("fixture should emulate a v40 database without the v41-only row");
+
+        let absent_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("pre-v41 rift row count should query");
+        assert_eq!(
+            absent_rows, 0,
+            "the pre-v41 fixture must genuinely omit rift_drain before migration"
+        );
+
+        apply_migrations(&mut connection)
+            .expect("v41 rift migration and current v43 migration should succeed");
+
+        let rift_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("v41 must create the missing rift_drain row");
+        assert_eq!(
+            rift_balance, 0.0,
+            "a v40 database without rift history must initialize the new account at known zero"
+        );
+        let pending_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("existing pending balance should remain readable");
+        assert_eq!(
+            pending_balance, 12.5,
+            "v41 must preserve existing stable runtime balances while adding rift_drain"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "the v41 fixture must continue through the current v43 schema"
+        );
+        let terminal_table_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dormant_terminal_commits'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("current terminal table existence should query");
+        assert_eq!(
+            terminal_table_rows, 1,
+            "the migration chain must retain the v42 dormant terminal schema"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v41_migration_initializes_rift_drain_without_mutating_existing_runtime_balances() {
+        let db_path = database_path("v41-rift-drain-account");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v41-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                UPDATE qi_runtime_accounts
+                SET balance = 55.5
+                WHERE account_id = 'rift_drain';
+                UPDATE qi_runtime_accounts
+                SET balance = 12.5
+                WHERE account_id = 'pending_inflow';
+                DROP TABLE dormant_terminal_commits;
+                PRAGMA user_version = 40;
+                ",
+            )
+            .expect("fixture should emulate a v40 database with existing runtime balances");
+
+        apply_migrations(&mut connection)
+            .expect("v41 rift migration and current v43 migration should succeed");
+
+        let rift_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("v41 must preserve the existing rift_drain row");
+        assert_eq!(
+            rift_balance, 55.5,
+            "v41 must preserve an existing rift-drain balance instead of resetting it"
+        );
+        let pending_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("existing pending balance should remain readable");
+        assert_eq!(
+            pending_balance, 12.5,
+            "v41 must not overwrite existing stable runtime balances while adding rift_drain"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "the v41 fixture must continue through the current v43 schema"
+        );
+        let terminal_table_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dormant_terminal_commits'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("current terminal table existence should query");
+        assert_eq!(
+            terminal_table_rows, 1,
+            "the migration chain must retain the v42 dormant terminal schema"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn v42_migration_creates_guarded_dormant_terminal_commits_schema() {
         let db_path = database_path("v42-dormant-terminal-schema");
         let root = db_path
@@ -16647,6 +19175,162 @@ mod persistence_tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version should query");
         assert_eq!(user_version, CURRENT_USER_VERSION);
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v43_migration_removes_retired_deceased_public_path_without_losing_snapshot() {
+        let db_path = database_path("v43-deceased-public-path");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                ALTER TABLE deceased_snapshots ADD COLUMN public_path TEXT;
+                INSERT INTO deceased_snapshots (
+                    char_id, snapshot_json, public_path, died_at_tick, schema_version, last_updated_wall
+                ) VALUES ('offline:Legacy', '{}', 'deceased/offline_Legacy.json', 7, 1, 1);
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should emulate a v42 database with the retired column");
+
+        apply_migrations(&mut connection).expect("v43 migration should remove retired column");
+
+        let columns = table_columns(&connection.transaction().unwrap(), "deceased_snapshots")
+            .expect("deceased snapshot columns should query");
+        assert!(!columns.iter().any(|column| column == "public_path"));
+        let snapshot_json: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Legacy"],
+                |row| row.get(0),
+            )
+            .expect("legacy deceased snapshot should survive migration");
+        assert_eq!(snapshot_json, "{}");
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v43_migration_tolerates_partial_fixture_without_deceased_snapshots_table() {
+        let db_path = database_path("v43-partial-fixture-without-deceased-table");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-partial-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE deceased_snapshots;
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should emulate a focused migration test without the unrelated table");
+
+        apply_migrations(&mut connection)
+            .expect("v43 should not break focused migration fixtures that omit the table");
+        assert!(
+            !table_exists(&connection.transaction().unwrap(), "deceased_snapshots")
+                .expect("table existence should query")
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v43_migration_rejects_malformed_deceased_schema_without_advancing_version() {
+        let db_path = database_path("v43-deceased-bad-schema");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-bad-schema-fixture")
+            .expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE deceased_snapshots;
+                CREATE TABLE deceased_snapshots (
+                    char_id TEXT PRIMARY KEY,
+                    public_path TEXT
+                );
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should install a malformed v42 deceased table");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v43 must reject a malformed preexisting deceased table");
+        assert!(
+            error
+                .to_string()
+                .contains("deceased_snapshots column snapshot_json missing"),
+            "schema guard should identify the missing deceased column: {error}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(
+            user_version, 42,
+            "failed v43 schema validation must not advance user_version"
+        );
+        let columns = table_columns(&connection.transaction().unwrap(), "deceased_snapshots")
+            .expect("rolled-back deceased columns should query");
+        assert!(
+            columns.iter().any(|column| column == "public_path"),
+            "the failed migration must roll back its DROP COLUMN"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn current_v43_database_rejects_retired_deceased_public_path() {
+        let db_path = database_path("v43-current-deceased-public-path");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v43-current-public-path-fixture")
+            .expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("ALTER TABLE deceased_snapshots ADD COLUMN public_path TEXT;")
+            .expect("fixture should add the retired column without changing user_version");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("current v43 schema must reject the retired public projection");
+        assert!(
+            error
+                .to_string()
+                .contains("retired deceased_snapshots.public_path remains"),
+            "schema guard should identify the retired column: {error}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
         drop(connection);
         let _ = fs::remove_dir_all(root);
     }

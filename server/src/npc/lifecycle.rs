@@ -1257,12 +1257,10 @@ mod tests {
         let blocked_db_path = root.join("blocked-db-path");
         std::fs::create_dir_all(&blocked_db_path).expect("blocked db path should be a directory");
         let live_db_path = root.join("bong.db");
-        let deceased_dir = root.join("deceased");
 
         let mut app = App::new();
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &blocked_db_path,
-            &deceased_dir,
             "terminal-side-effects-fail",
         ));
         app.insert_resource(ZoneRegistry::default());
@@ -1340,9 +1338,8 @@ mod tests {
 
         bootstrap_sqlite(&live_db_path, "terminal-side-effects-pass")
             .expect("live retry database should bootstrap");
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &live_db_path,
-            &deceased_dir,
             "terminal-side-effects-pass",
         ));
         app.update();
@@ -1627,15 +1624,13 @@ mod tests {
             std::process::id()
         ));
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         bootstrap_sqlite(&db_path, "npc-full-death-chain")
             .expect("sqlite bootstrap should succeed");
 
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
-        app.insert_resource(PersistenceSettings::with_paths(
+        app.insert_resource(PersistenceSettings::with_db_path(
             &db_path,
-            &deceased_dir,
             "npc-full-death-chain",
         ));
         app.insert_resource(crate::world::zone::ZoneRegistry::default());
@@ -1650,6 +1645,7 @@ mod tests {
         app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<PlayerTerminated>();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<NpcReproductionRequest>();

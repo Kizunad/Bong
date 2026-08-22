@@ -241,6 +241,12 @@ pub fn register(app: &mut App) {
             .unwrap_or_else(|error| {
                 panic!("[bong][cultivation] startup rejected technique wiring: {error}")
             });
+        crate::network::techniques_snapshot_emit::validate_techniques_snapshot_budget(&techniques)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "[bong][cultivation] startup rejected learned-technique snapshot budget: {error:?}"
+                )
+            });
         (techniques, skills, dependencies)
     };
 
@@ -554,9 +560,11 @@ type CultivationAttachFilter = (
     Or<(
         Added<Client>,
         Added<CurrentDimension>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
         With<CultivationAttachPending>,
     )>,
     Without<Cultivation>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 type CultivationAttachQueryItem<'a> = (
     Entity,
@@ -1073,6 +1081,35 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             ) {
                 tracing::warn!(
                     "[bong][cultivation] failed to persist reincarnated cultivation bundle for `{}`: {error}",
+                    username.0,
+                );
+            }
+        } else if persisted_bundle.is_none() && !cultivation_bundle_load_failed {
+            // 全新角色（无持久化 bundle）首次 join：立即落盘默认 bundle。否则在首笔
+            // 周期 qi 持久化写回之前死亡并复活（combat_reincarnate）会因
+            // `player_cultivation` 无行而 fail closed——新玩家在 30s 濒死窗内死亡即
+            // 卡死死亡屏（实测）。`cultivation_bundle_load_failed` 时是拒写回会话，
+            // 保持严格不落盘。
+            if let Err(error) = crate::persistence::persist_player_cultivation_bundle(
+                &settings,
+                username.0.as_str(),
+                &cultivation,
+                &meridians,
+                &qi_color,
+                &karma,
+                &contamination,
+                &life_record,
+                &practice_log,
+                &insight_quota,
+                &unlocked_perceptions,
+                &insight_modifiers,
+                None,
+                &severed_permanent,
+                Some(&poison_toxicity),
+                Some(&digestion_load),
+            ) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to persist fresh-character cultivation bundle for `{}`: {error}",
                     username.0,
                 );
             }
@@ -1814,11 +1851,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         (settings, temp_root)
@@ -2451,11 +2484,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -2524,11 +2553,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -2586,11 +2611,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -2647,11 +2668,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -2725,11 +2742,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(
@@ -2788,11 +2801,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = temp_root.join("data").join("bong.db");
-        let deceased_dir = temp_root
-            .join("library-web")
-            .join("public")
-            .join("deceased");
-        let settings = PersistenceSettings::with_paths(&db_path, &deceased_dir, "cultivation-test");
+        let settings = PersistenceSettings::with_db_path(&db_path, "cultivation-test");
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_active_tribulation(

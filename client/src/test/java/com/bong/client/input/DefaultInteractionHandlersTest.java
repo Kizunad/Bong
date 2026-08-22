@@ -1,5 +1,6 @@
 package com.bong.client.input;
 
+import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.inventory.DeadDropInteractIntentHandler;
 import com.bong.client.inventory.StorageCrateInteractIntentHandler;
 import org.junit.jupiter.api.AfterEach;
@@ -26,6 +27,20 @@ class DefaultInteractionHandlersTest {
         assertTrue(
             InteractKeyRouter.global().hasHandlerForTests(DeadDropInteractIntentHandler.class),
             "expected DeadDropInteractIntentHandler because default route must expose dead drops"
+        );
+    }
+
+    @Test
+    void registerDefaultsIncludesCoffinGMenuProducer() {
+        InteractKeyRouter.resetGlobalForTests();
+
+        DefaultInteractionHandlers.registerDefaults();
+
+        assertTrue(
+            InteractKeyRouter.global().hasHandlerForTests(CoffinEnterIntentHandler.class),
+            "expected CoffinEnterIntentHandler because default G route must expose the coffin " +
+            "menu producer (plan-coffin-tiers-v1 P3); a removed handler would silently drop " +
+            "G-menu dispatch"
         );
     }
 }

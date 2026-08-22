@@ -45,6 +45,21 @@ pub struct KnownTechnique {
 #[derive(Debug, Component)]
 pub struct KnownTechniquesLoadFailed;
 
+/// Canonical persistence reconnect gate: while a duplicate or in-flight handoff is being
+/// resolved, gameplay systems must wait before attaching the rest of the player bundle.
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectBlocked;
+
+/// Reconnect handoff failed after the retry policy exhausted its current attempt. The marker is
+/// separate from `KnownTechniquesLoadFailed`: the latter protects a durable row from being
+/// overwritten, while this one records a reconnect state for the dispatcher.
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectFailed;
+
+/// Reconnect handoff completed and the remaining player systems may attach their bundles.
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectReady;
+
 impl KnownTechniques {
     /// 开发命令的“授予全部”集合。顺序严格复用数据文件的声明顺序，保证 NPC deterministic
     /// selection、命令展示和 dev grants 不会因数据化而重排。
@@ -58,6 +73,21 @@ impl KnownTechniques {
                     active: true,
                 })
                 .collect(),
+        }
+    }
+
+    /// Construct the progression-reset value from the same runtime catalog that the server
+    /// injected at startup. Development builds preserve their historical full-catalog reset;
+    /// production builds keep the empty progression reset.
+    pub fn progression_reset(registry: &TechniqueRegistry) -> Self {
+        #[cfg(feature = "dev-techniques")]
+        {
+            Self::dev_default(registry)
+        }
+        #[cfg(not(feature = "dev-techniques"))]
+        {
+            let _ = registry;
+            Self::default()
         }
     }
 }
@@ -79,6 +109,18 @@ pub enum SkillCategory {
 pub enum TechniqueDispatch {
     MetadataBacked,
     DirectGeneric,
+    DedicatedInput,
+}
+
+/// 由独立 C2S / gameplay 入口驱动、禁止绑定到 skill bar 的功法。保留该扩展点与主线
+/// 持久化切片的清洗契约一致；当前 catalog 中的历史条目仍按 `direct_generic` 兼容语义。
+pub const DEDICATED_INPUT_CONSUMER_IDS: &[&str] = &[
+    crate::movement::dash_proficiency::DASH_TECHNIQUE_ID,
+    crate::combat::shield_block::SHIELD_BLOCK_TECHNIQUE_ID,
+];
+
+pub fn has_dedicated_input_consumer(skill_id: &str) -> bool {
+    DEDICATED_INPUT_CONSUMER_IDS.contains(&skill_id)
 }
 
 /// `direct_generic` 招式 id 的严格白名单（M11 契约）。
@@ -883,6 +925,20 @@ fn validate_startup_relationships(
                 if skills.lookup(&definition.id).is_some() {
                     return Err(TechniqueWiringError(format!(
                         "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
+                        definition.id
+                    )));
+                }
+            }
+            TechniqueDispatch::DedicatedInput => {
+                if !has_dedicated_input_consumer(&definition.id) {
+                    return Err(TechniqueWiringError(format!(
+                        "dedicated_input technique {:?} has no registered gameplay consumer",
+                        definition.id
+                    )));
+                }
+                if skills.lookup(&definition.id).is_some() {
+                    return Err(TechniqueWiringError(format!(
+                        "dedicated_input technique {:?} unexpectedly has a SkillRegistry resolver",
                         definition.id
                     )));
                 }

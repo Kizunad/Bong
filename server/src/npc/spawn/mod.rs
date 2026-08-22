@@ -608,6 +608,9 @@ mod tests {
     #[test]
     fn startup_spawned_npc_default_thinker_emits_attack_intent_in_melee_range() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(crate::qi_physics::WorldQiAccount::default());
         app.add_event::<crate::qi_physics::QiTransfer>();
         app.insert_resource(
@@ -2271,6 +2274,9 @@ mod tests {
         // We only call spawn::register() (not brain::register()) to avoid needing
         // all the events that brain systems require.
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(crate::qi_physics::WorldQiAccount::default());
         app.add_event::<crate::qi_physics::QiTransfer>();
         app.insert_resource(
