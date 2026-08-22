@@ -100,7 +100,7 @@ class R7InventoryContractTest {
     @Test
     void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "13dc7e6732e85db274e55708bba5ba044af0a7edafe898bc9e753d6975a53ec4",
+            "9e1ef6739153d03bf2699af91156774f7ed85e907787af2763e3a0387a5ada23",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "P0 baseline plus the explicitly delivered R7 P1 DiffListWidget production path must match"
         );
@@ -297,10 +297,11 @@ class R7InventoryContractTest {
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
             "npc/NpcTradeScreen.java:163",
-            "ui/DiffListWidget.java:71"
+            "ui/DiffListWidget.java:120",
+            "ui/DiffListWidget.java:124"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(16, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(17, sites.size(), "the frozen executable clearChildren inventory changed");
         assertEquals(sites.stream().sorted().toList(), actual,
             "the inventory must match every executable zero-argument production clearChildren call");
     }
