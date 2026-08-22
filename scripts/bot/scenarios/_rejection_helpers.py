@@ -68,7 +68,7 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
 _AMBIENT_VFX_EVENT_IDS = frozenset(
     {"bong:cultivation_absorb", "bong:fauna_spawn_dust"}
 )
-_AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage",)
+_AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage__",)
 
 
 
@@ -111,7 +111,8 @@ def is_gameplay_side_effect(
             return True
         if event_id in ambient_vfx:
             return False
-        # 前缀匹配：botany_* 周期生长粒子（bong:botany_plant_stage__*）非请求驱动，每 ~140 tick 自发
+        # 前缀匹配：botany 周期生长粒子（bong:botany_plant_stage__*）非请求驱动，每 ~140 tick 自发；
+        # 必须用 "__" 族分隔符收窄，避免把未来可能出现的请求驱动事件（如 bong:botany_plant_stage_xxx）误豁免
         for prefix in _AMBIENT_VFX_EVENT_PREFIXES:
             if event_id.startswith(prefix):
                 return False
