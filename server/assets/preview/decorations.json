@@ -1,0 +1,30 @@
+{
+  "_doc": "Preview 装饰 JSON（plan-worldgen-snapshot-v1 §2.2）。server 端在 BONG_PREVIEW_MODE=1 时启动期读，调用 ChunkLayer.set_block 把这些方块种到 world 里，让 client 截图能看到地标性内容。",
+  "_pos_convention": "pos 是 [x, y, z] block coord (i32)。spawn 中心 (8, 150, 8) — 装饰摆在 spawn 周围 ±400 内才在 client view_distance 32 chunks 内可见。",
+  "_kinds": {
+    "sign": "4 行木牌（lines[] 至多 4 项，多余截断）。block 缺省 minecraft:oak_sign。NBT front_text.messages 4 行（valence sign API 要求）。",
+    "pillar": "竖直方块柱，从 pos 起向 +Y 延 height 个 block。地标可见性增强。block 缺省 minecraft:end_rod。",
+    "boundary_marker": "schema 占位，本 v1 不实装（AABB 点阵 spawn 几百 block 影响 chunk 加载，留 v2 plan 配合 server-side 优化）"
+  },
+  "items": [
+    {
+      "_doc": "spawn 中心地标牌：spawn 中心 (8, 80, 8) 上方 80 高（地表附近），4 行写 zone 显示名 + 灵气 + 危险等级。client iso 5 角度都可见。",
+      "kind": "sign",
+      "pos": [8, 80, 8],
+      "block": "minecraft:oak_sign",
+      "lines": [
+        "初醒原",
+        "灵气 0.3",
+        "危险 1",
+        "末法 spawn"
+      ]
+    },
+    {
+      "_doc": "spawn 灵脉柱：spawn 中心 (8, 81, 8) 起向上 12 格 end_rod 柱，远距离也能看到 spawn 中心位置。",
+      "kind": "pillar",
+      "pos": [8, 81, 8],
+      "block": "minecraft:end_rod",
+      "height": 12
+    }
+  ]
+}
