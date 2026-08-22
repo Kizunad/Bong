@@ -3,9 +3,39 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from bot.bot import BotAssertionError
+
+
+def drain_inventory_snapshots(bot, quiet: float = 0.8, max_wait: float = 5.0) -> None:
+    """排空在途 inventory_snapshot：发送请求前保证没有未解码的快照留在 socket。
+
+    event.t 是**客户端解码时刻**（bot.py ``_emit`` 用 ``time.monotonic() - t0``）：
+    一张在请求发送前就已入队、之后才解码的快照会以 ``t > 锚点`` 冒充「拒绝 resync」——
+    请求尚未处理，快照已满足断言（central-review 1993 #2）。inventory_snapshot 无
+    周期发射（只随 join / Changed / resync），等一个「无新快照」的短窗口即可排干在途
+    快照；用快照级静默而非全事件流静默，避免被 carrier_state 每 1s 周期流量拖到上限。
+    到上限仍持续到达则报错（fail-closed，不留「无法排空仍继续」的静默路径）。
+    """
+    deadline = time.monotonic() + max_wait
+    while True:
+        anchor = bot.events[-1].t if bot.events else 0.0
+        time.sleep(quiet)
+        fresh = [
+            e
+            for e in bot.events
+            if e.kind == "server_data"
+            and e.data.get("payload_type") == "inventory_snapshot"
+            and e.t > anchor
+        ]
+        if not fresh:
+            return
+        if time.monotonic() > deadline:
+            raise BotAssertionError(
+                "inventory_snapshot 在排空窗口内持续到达，无法建立请求前快照静默"
+            )
 
 
 def wait_join_and_inventory(bot, timeout: float = 15.0) -> dict[str, Any]:
@@ -22,13 +52,40 @@ def latest_inventory_snapshot(bot, timeout: float = 10.0) -> dict[str, Any]:
     return event.data["payload"]
 
 
-def wait_inventory_snapshot_after(bot, after_t: float, timeout: float = 10.0) -> dict[str, Any]:
+def wait_inventory_snapshot_after(
+    bot,
+    after_t: float,
+    timeout: float = 10.0,
+    until_t: float | None = None,
+    after_event_t: float | None = None,
+    revision_equals: int | None = None,
+) -> dict[str, Any]:
+    """等一张 ``after_t < e.t <= until_t`` 且满足附加谓词的 inventory_snapshot。
+
+    ``until_t`` / ``after_event_t`` 给调用方上下界：把快照断言收窄到「与某个请求
+    处理有因果关系」的区间（同步点确认时刻 / 同一 handler 前置响应事件时刻）。
+    ``revision_equals`` 要求快照 revision 精确等于给定值 —— 任何背包 mutation 都
+    bump revision（inventory/mod.rs add_item_to_player_inventory_inner 恰好一次），
+    故排除全部 Changed 驱动的更高 revision 重发，把候选取收敛到「零 mutation 快照」
+    （central-review 1993 #1：拒绝 resync 是零 mutation，周期/Changed 重发若含
+    mutation 则 revision 必然更高）。不传这些约束时行为同旧版（只要求 t > after_t）。
+    """
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.t > after_t,
+        and e.t > after_t
+        and (until_t is None or e.t <= until_t)
+        and (after_event_t is None or e.t > after_event_t)
+        and (
+            revision_equals is None
+            or e.data["payload"].get("revision") == revision_equals
+        ),
         timeout=timeout,
-        description=f"t > {after_t:.3f}s 的 inventory_snapshot",
+        description=(
+            f"{after_t:.3f}s < t <= {until_t if until_t is not None else '∞'}，"
+            f"revision={revision_equals if revision_equals is not None else '任意'} 的 "
+            f"inventory_snapshot"
+        ),
     )
     return event.data["payload"]
 

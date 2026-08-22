@@ -60,6 +60,14 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
+from bot.scenarios._rejection_helpers import (  # noqa: E402
+    assert_no_gameplay_side_effect_since,
+    assert_valid_request_still_works,
+    fire_probes_and_keep_connection,
+    inventory_fingerprint,
+    wait_keepalive_after,
+)
 from bot.scenarios import (  # noqa: E402
     production_forge_consecration_inject,
     production_forge_request,
@@ -4098,6 +4106,777 @@ class _CommandFakeBot(_FakeBot):
             if not self.pending:
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
+
+
+class _ReaderAlive:
+    def __init__(self, alive: bool):
+        self._alive = alive
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+
+class _ClockAdvancingList(list):
+    """append 时把 bot 的模拟相对时钟推进到该事件时刻（max）。
+
+    场景断言用 ``time.monotonic() - bot.t0`` 作相对时钟锚（与 ``event.t`` 同一帧）。
+    fake 的 ``_now`` 是模拟相对时刻：初始 0，随事件 append 推进 —— 于是"发送后
+    t>锚"的时序语义对 fake 可测（发送前锚 = 发送前最后事件时刻，发送中 append 的
+    事件时刻会推进 probe_done_at，自然形成"探针期间 vs 探针完成后"的边界）。
+    """
+
+    def __init__(self, bot: "_RejectionFakeBot"):
+        super().__init__()
+        self._bot = bot
+
+    def append(self, item: _FakeEvent) -> None:
+        super().append(item)
+        self._bot._advance_clock_to(getattr(item, "t", 0.0))
+
+    def extend(self, items: list[_FakeEvent]) -> None:
+        for item in items:
+            self.append(item)
+
+
+class _RejectionFakeBot(_FakeBot):
+    """干净拒绝断言所需的最小 Bot 接口替身（无 socket）。
+
+    - ``assert_alive`` 按 disconnect_reason / reader 存活判连接状态；
+    - ``wait_for`` 在 events 里找不到时按顺序补充 ``pending`` 事件（模拟 server
+      后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测；
+    - ``t0`` 是模拟相对时钟（``time.monotonic() - t0 == self._now``），随事件
+      append 推进 —— 让 ``time.monotonic() - bot.t0`` 锚与 ``event.t`` 同帧可测。
+    """
+
+    def __init__(
+        self,
+        events: list[_FakeEvent],
+        *,
+        pending: list[_FakeEvent] | None = None,
+        disconnected: bool = False,
+        reader_alive: bool = True,
+    ):
+        super().__init__([])
+        self._now = 0.0
+        self._clock_base = time.monotonic() - self._now
+        self.events = _ClockAdvancingList(self)
+        self.events.extend(events)
+        self.pending = list(pending or [])
+        self.disconnect_reason = "服务器主动断开" if disconnected else None
+        self._reader_thread = _ReaderAlive(reader_alive)
+        self.intents: list[dict] = []
+        self.commands: list[str] = []
+
+    @property
+    def t0(self) -> float:
+        """模拟相对时钟基座：让 ``time.monotonic() - t0 == self._now``。
+
+        central-review 1993 #3：基座是**稳定存储值**（``_clock_base``），随事件推进
+        由 ``_advance_clock_to`` 一次性重基，而不是每次读取都现场
+        ``time.monotonic() - self._now``。旧实现按 property 每次读都取一次新
+        monotonic：``time.monotonic() - bot.t0`` 先算左边再读 t0，第二次读比第一次
+        晚 ~µs，``sent_at`` 被推到比当前 ``_now`` 略小，同一时刻（t==_now）的诱饵事件
+        ``e.t > sent_at`` 成立被误收 —— 时序锚定失效、回归测试报出与因果窗口契约相反
+        的结果。稳定基座下两种求值顺序都得到 ``sent_at == _now + 流逝``（≥_now），
+        "t > 锚"语义与真实 bot（t0 创建时定死）一致。
+        """
+        return self._clock_base
+
+    def _advance_clock_to(self, t: float) -> None:
+        if t > self._now:
+            self._now = t
+            self._clock_base = time.monotonic() - self._now
+
+    def rebase_clock_base(self) -> None:
+        """把稳定基座重基到当前真实时刻，抵消自上次推进以来累积的真实流逝。
+
+        模拟时钟只在事件 append 时推进（``_advance_clock_to``），真实时钟在场景的
+        drain/sleep 期间照常流逝 —— 若不重基，``time.monotonic() - t0`` 会把真实流逝
+        一起计入锚点，把「当前模拟时刻」抬到未来事件时刻之上（实跑：2s drain 后锚点
+        ≈ 4.0，pending keepalive@3.0 反而不满足 ``t > 锚``）。锚点计算前重基一次，
+        基座稳定（t0 在两次读取间不变）与「锚点 ≈ 当前模拟时刻 + 微抖动」两者兼得。
+        """
+        self._clock_base = time.monotonic() - self._now
+
+    def intent(self, request: dict) -> None:
+        self.intents.append(request)
+
+    def cmd(self, command: str) -> None:
+        self.commands.append(command)
+
+    def expect_chat(self, substring: str, timeout: float = 5.0) -> _FakeEvent:
+        return self.wait_for(
+            lambda e: e.kind == "chat" and substring in e.data["text"],
+            timeout,
+            f"包含「{substring}」的聊天消息",
+        )
+
+    def assert_alive(self, context: str) -> None:
+        if self.disconnect_reason is not None:
+            raise BotAssertionError(
+                f"期望连接保持（{context}），实际被服务器断开：{self.disconnect_reason!r}"
+            )
+        if not self._reader_thread.is_alive():
+            raise BotAssertionError(f"期望连接保持（{context}），实际底层 socket 已断")
+
+    def wait_for(self, predicate, timeout: float, description: str) -> _FakeEvent:
+        while True:
+            for event in self.events:
+                if predicate(event):
+                    return event
+            if not self.pending:
+                raise BotAssertionError(
+                    f"未找到 {description}; events={self.events}"
+                )
+            self.events.append(self.pending.pop(0))
+
+
+class RejectionHelperTest(unittest.TestCase):
+    def test_wait_keepalive_after_finds_later_keepalive(self):
+        bot = _RejectionFakeBot([_FakeEvent(2.0, "keepalive", {"id": 7})])
+        event = wait_keepalive_after(bot, after=1.0, timeout=1.0)
+        self.assertEqual(event.data["id"], 7)
+
+    def test_wait_keepalive_after_rejects_older_only_heartbeat(self):
+        bot = _RejectionFakeBot([_FakeEvent(1.0, "keepalive", {"id": 7})])
+        with self.assertRaises(BotAssertionError):
+            wait_keepalive_after(bot, after=2.0, timeout=0.1)
+
+    def test_fire_probes_keeps_connection_when_heartbeat_continues(self):
+        # central-review 1993 #6：helper 现在要求**连续两个新 id** keepalive（第二个
+        # 才是探针后生成的证据）—— 单条心跳的版本在此语义下必须失败。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[
+                _FakeEvent(3.0, "keepalive", {"id": 8}),
+                _FakeEvent(4.0, "keepalive", {"id": 9}),
+            ],
+        )
+        fired: list[str] = []
+        fire_probes_and_keep_connection(
+            bot, "测试", [("p1", lambda: fired.append("p1"))], settle_s=0.0
+        )
+        self.assertEqual(fired, ["p1"])
+        self.assertEqual(bot.events[-1].kind, "keepalive")
+
+    def test_fire_probes_fails_when_only_one_post_probe_keepalive(self):
+        # central-review 1993 #6：单条「解码时刻晚于探针完成」的 keepalive 不构成
+        # 「拒绝后持续心跳」证据 —— 它可能是探针前已生成、探针后才解码的在途心跳
+        # （event.t 是客户端解码时刻，不是 server 生成边界）。helper 要求第二个新 id
+        # 心跳（valence 只在收到对上一心跳的响应后才发下一个），没有则必须失败。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[_FakeEvent(4.0, "keepalive", {"id": 9})],
+        )
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
+    def test_fire_probes_fails_when_kicked(self):
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})], disconnected=True
+        )
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
+    def test_fire_probes_fails_when_connection_forgotten(self):
+        # 探针后无新 keepalive（server 单方面遗忘连接）→ 断言必须失败。
+        bot = _RejectionFakeBot([_FakeEvent(2.0, "game_join", {})])
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
+    def test_fire_probes_fails_when_keepalive_predates_probe_completion(self):
+        # 异步 reader 在 sent_at（探针前锚）之后、探针全部发出之前追加了一条周期性
+        # keepalive：心跳断言必须以探针发出完成为锚，这条探针前 keepalive 不能冒充
+        # 拒绝后的心跳 —— 若探针导致 server 遗忘连接且不再心跳，断言必须失败。
+        bot = _RejectionFakeBot([_FakeEvent(2.0, "game_join", {})])
+
+        def keepalive_during_probes():
+            # 模拟 reader 在探针发送期间收到 keepalive（t=2.5 > sent_at=2.0，但
+            # 早于探针发出完成时刻 probe_done_at）。
+            bot.events.append(_FakeEvent(2.5, "keepalive", {"id": 7}))
+
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", keepalive_during_probes)], settle_s=0.0
+            )
+
+    def test_fire_probes_fails_when_probe_produces_gameplay_side_effect(self):
+        # 探针触发了玩法反馈（server 在探针后回推 inventory_snapshot）→ 断言必须失败：
+        # 说明坏请求被成功/部分处理了，而不是在副作用产生前被拒绝。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[_FakeEvent(4.0, "keepalive", {"id": 9})],
+        )
+
+        def bad_probe():
+            # 模拟 reader 在探针发出后收到玩法反馈（t > 窗口起点 sent_at=2.0）。
+            bot.events.append(
+                _FakeEvent(
+                    3.0, "server_data", {"payload_type": "inventory_snapshot"}
+                )
+            )
+
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("探针副作用", bad_probe)], settle_s=0.0
+            )
+
+    def test_fire_probes_fails_when_side_effect_arrives_during_keepalive_wait(self):
+        # 拒绝后的心跳观察期（wait_keepalive_after，最多 ~25s）内到达的玩法副作用
+        # 也必须计入拒绝判定：pending 依次出「玩法反馈 → 合法 keepalive」，若 helper
+        # 只扫 settle 窗口就放行，这个 feedback 会被 keepalive 等待掩盖而假通过
+        # （review finding：side-effect oracle 必须覆盖完整异步观察期）。
+        # central-review 1993 #6：需要第三个 pending 事件（第二条新 id keepalive）让
+        # helper 走完两个心跳等待 —— 否则失败发生在缺第二个心跳（测试语义漂移），
+        # 而不是目标断言（心跳观察期内的玩法副作用被计入拒绝判定）。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[
+                _FakeEvent(3.0, "server_data", {"payload_type": "inventory_snapshot"}),
+                _FakeEvent(4.0, "keepalive", {"id": 9}),
+                _FakeEvent(5.0, "keepalive", {"id": 11}),
+            ],
+        )
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
+    def test_no_gameplay_side_effect_since_ignores_idle_traffic_but_flags_feedback(self):
+        # 基础维护流量（keepalive/pos_look）不算副作用，只有玩法反馈通道才算。
+        idle = _RejectionFakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(2.5, "pos_look", {"x": 0, "y": 0, "z": 0}),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(idle, since_t=1.0, label="测试")
+        feedback = _RejectionFakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": {"revision": 1}},
+                ),
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(feedback, since_t=1.0, label="测试")
+
+    def test_ambient_connection_sync_not_gameplay_side_effect(self):
+        # 连接同步流量不算玩法副作用：解码的 status_snapshot（Changed<StatusEffects>
+        # 驱动，探针场景的铺垫动作也会触发）与解码器读不动的 spawn 裸 payload（join
+        # 突发）都不应触发窗口断言失败；只有响应式反馈（chat）才必须触发。
+        ambient = _RejectionFakeBot(
+            [
+                _FakeEvent(1.5, "payload", {"channel": "bong:server_data", "data": b"spawn-bytes"}),
+                _FakeEvent(3.8, "server_data", {"payload_type": "status_snapshot"}),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(ambient, since_t=1.0, label="测试")
+        chat = _RejectionFakeBot([_FakeEvent(2.0, "chat", {"text": "已收到经脉目标"})])
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(chat, since_t=1.0, label="测试")
+
+    def test_fire_probes_ignores_join_burst_ambient_traffic(self):
+        # join 突发里既有无法解码的 spawn（裸 payload）也有解码的 status_snapshot，
+        # 它们都落在探针窗口起点之前：drain 排干 + 类型排除后不误判成副作用。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(1.5, "payload", {"channel": "bong:server_data", "data": b"spawn-bytes"}),
+                _FakeEvent(2.0, "game_join", {}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "status_snapshot"}),
+            ],
+            pending=[
+                _FakeEvent(4.0, "keepalive", {"id": 9}),
+                _FakeEvent(5.0, "keepalive", {"id": 12}),
+            ],
+        )
+        fired: list[str] = []
+        fire_probes_and_keep_connection(
+            bot, "测试", [("p1", lambda: fired.append("p1"))], settle_s=0.0
+        )
+        self.assertEqual(fired, ["p1"])
+
+    def test_passive_vfx_ambient_and_any_responsive_vfx_in_window_flagged(self):
+        # 被动/周期 vfx（灵气回充粒子 bong:cultivation_absorb，显式集合）不算副作用；
+        # 响应式 vfx（如 combat_hit）只要落在探针窗口内就必须被标记 —— 窗口起点前
+        # 见过同类型**不自证**它 ambient（同一 event_id 既可由 join 期间被动触发，
+        # 也可由请求处理触发，不能按"见过"放行）。
+        ambient = _RejectionFakeBot([_FakeEvent(6.5, "vfx_event", {"event_id": "bong:cultivation_absorb"})])
+        assert_no_gameplay_side_effect_since(ambient, since_t=1.0, label="测试")
+        seen_before_window = _RejectionFakeBot(
+            [
+                _FakeEvent(0.5, "vfx_event", {"event_id": "bong:combat_hit"}),
+                _FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"}),
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(seen_before_window, since_t=1.0, label="测试")
+        fresh = _RejectionFakeBot([_FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"})])
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(fresh, since_t=1.0, label="测试")
+
+    def test_payload_type_seen_before_window_is_not_automatically_ambient(self):
+        # 窗口起点前见过某 payload type **不自证**它是连接同步：inventory_snapshot
+        # 既是 join 同步也是容器请求的 resync 响应 —— 若探针窗口内再次出现，说明某个
+        # 坏请求被成功/部分处理并产生了响应，必须标记为副作用（拒绝路径断言点）。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(0.5, "server_data", {"payload_type": "inventory_snapshot"}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "inventory_snapshot"}),
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_inventory_snapshot_without_baseline_always_flagged(self):
+        # 无 baseline 时无从证明它是周期重发 ⇒ 一律标记（宁严勿松）。这锁定
+        # inventory_snapshot **不在** ambient 集合（review finding 8）：payload type
+        # 不能作为豁免依据 —— 它既是 join 同步/周期重发，也是容器请求的 resync 响应。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": {"revision": 7}},
+                )
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_inventory_snapshot_fingerprint_equal_to_baseline_is_exempted(self):
+        # 内容判别：带 baseline 时，指纹（revision + 全部内容字段）与基线一致的快照
+        # 是周期 shelflife/Changed 驱动的无变更重发 —— 连接同步，豁免。若对一致快照
+        # 也标记，周期重发会把真实场景全部误报成副作用。
+        baseline = {
+            "type": "inventory_snapshot",
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": dict(baseline)},
+                )
+            ]
+        )
+        assert_no_gameplay_side_effect_since(
+            bot, since_t=1.0, label="测试", baseline_snapshot=baseline
+        )
+
+    def test_inventory_snapshot_fingerprint_changed_vs_baseline_is_flagged(self):
+        # 内容判别：指纹与基线不同 ⇒ 请求引发的 mutation resync，必须标记副作用。
+        baseline = {
+            "type": "inventory_snapshot",
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        mutated = dict(baseline, revision=8)
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": mutated},
+                )
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(
+                bot, since_t=1.0, label="测试", baseline_snapshot=baseline
+            )
+
+    def test_explicit_ambient_payload_type_in_window_is_not_side_effect(self):
+        # 显式集合里的连接同步类型（derived_attrs_sync 为 Changed 驱动，见
+        # derived_attrs_emit.rs）即使首次出现在窗口内也不算副作用 —— 只有显式集合
+        # 才是 ambient 的依据，不是"窗口前见过"。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(3.0, "server_data", {"payload_type": "derived_attrs_sync"})]
+        )
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_valid_request_ignores_earlier_chat_and_accepts_response_after_send(self):
+        # 更早的同文广播（坏请求探针被错误接受时留下的副作用）已在 events 里，
+        # 真实响应在 pending：时序锚定必须跳过诱饵，只接受发送时刻之后的响应。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})],
+            pending=[_FakeEvent(4.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})],
+        )
+        assert_valid_request_still_works(bot)
+        self.assertEqual(
+            bot.intents,
+            [{"v": 1, "type": "set_meridian_target", "meridian": "lung"}],
+        )
+        self.assertEqual(bot.events[-1].t, 4.0)  # 返回的是发送后的响应，不是诱饵
+
+    def test_valid_request_fails_when_only_earlier_chat_exists(self):
+        # 只有一个更早的同文广播、发送后没有新响应 → 必须失败（旧广播不能冒充成功）。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_valid_request_still_works(bot)
+
+    def test_valid_request_fails_when_chat_never_comes(self):
+        bot = _RejectionFakeBot([])
+        with self.assertRaises(BotAssertionError):
+            assert_valid_request_still_works(bot)
+
+    def test_fake_clock_anchor_stable_across_read_orderings(self):
+        # central-review 1993 #3：t0 是稳定存储基座。旧实现按 property 每次读都取新
+        # monotonic，``time.monotonic() - bot.t0`` 先算左边再读 t0 时 sent_at 被推到
+        # 比当前模拟时刻 _now 略小，同刻（t==_now）诱饵事件被 ``e.t > sent_at`` 误收。
+        # 稳定基座下无论先求值哪边，锚点都必须 ≥ _now（"t > 锚"才不会被诱饵满足）。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "chat", {"text": "decoy"})],
+        )
+        self.assertEqual(bot.t0, bot.t0)  # 基座稳定：两次读取同值
+        # monotonic 先求值（review 指出的求值顺序）：
+        sent_at_left_first = time.monotonic() - bot.t0
+        self.assertGreaterEqual(
+            sent_at_left_first,
+            2.0,
+            "monotonic 先求值：锚点必须 ≥ 当前模拟时刻 _now=2.0",
+        )
+        # t0 先求值：
+        t0_first = bot.t0
+        sent_at_t0_first = time.monotonic() - t0_first
+        self.assertGreaterEqual(
+            sent_at_t0_first,
+            2.0,
+            "t0 先求值：锚点必须 ≥ 当前模拟时刻 _now=2.0",
+        )
+
+    def test_inventory_fingerprint_equal_when_zero_mutation_and_differs_on_revision(self):
+        base = {
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        self.assertEqual(inventory_fingerprint(base), inventory_fingerprint(dict(base)))
+        self.assertNotEqual(
+            inventory_fingerprint(base), inventory_fingerprint(dict(base, revision=8))
+        )
+
+    def test_inventory_fingerprint_covers_each_content_mutation_field(self):
+        # 拒绝 oracles 用 fingerprint 判零 mutation：若它只对 revision 敏感，一个「内容
+        # 变了但 revision 没 bump」的实现（如只哈希 revision 的坏 fingerprint）会让
+        # 零 mutation 断言假通过。逐字段独立变异，钉住 fingerprint 覆盖全部内容字段
+        # （review finding：只测 revision 变化会漏掉其余五个 mutation 字段）。
+        base = {
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        one_item = {"instance_id": 1, "template_id": "trade_crate", "count": 1}
+        mutations = {
+            # 每个字段换成非默认的「有内容」形态 —— 仅该字段与 base 不同。
+            "containers": [{"container_id": "pack", "slots": [one_item]}],
+            "placed_items": [{"entity_id": 5, "item": one_item}],
+            "equipped": {"chest": one_item},
+            "hotbar": [one_item],
+            "bone_coins": 1,
+        }
+        for key, value in mutations.items():
+            with self.subTest(mutation_field=key):
+                mutated = dict(base)
+                mutated[key] = value
+                self.assertNotEqual(
+                    inventory_fingerprint(base),
+                    inventory_fingerprint(mutated),
+                    f"fingerprint 必须对 {key} 内容变化敏感（即使 revision 未变）",
+                )
+        # 反向保证：指纹唯一性成立 —— 各字段单独变异得到的指纹互不相同，避免两个
+        # 字段互相抵消（如坏实现把 containers 与 hotbar 拼进同一位）。
+        fingerprints = {
+            key: inventory_fingerprint(dict(base, **{key: value}))
+            for key, value in mutations.items()
+        }
+        self.assertEqual(
+            len(set(fingerprints.values())),
+            len(mutations),
+            f"各字段变异产生的指纹必须互异：{fingerprints}",
+        )
+
+    def test_inventory_snapshot_same_revision_content_mutation_is_flagged(self):
+        # 完整内容指纹必须连到分类器（central-review 1993 #1）：仅当指纹（revision +
+        # 全部内容字段）与基线一致才是周期重发、应豁免；内容变了但 revision 未 bump 的
+        # 实现（如坏分类器只比 `snapshot["revision"] == baseline["revision"]`）会放过
+        # 本快照，让「容器/放置物/装备/快捷栏/bone_coins 变了但没 bump revision」的
+        # 拒绝场景报零副作用。上一测只把内容变异直接喂给 `inventory_fingerprint`，
+        # 从未经 `assert_no_gameplay_side_effect_since` 走分类器 —— 逐字段独立变异并
+        # 走分类器，把指纹契约钉到拒绝 oracle 的判定路径上。
+        baseline = {
+            "type": "inventory_snapshot",
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        one_item = {"instance_id": 1, "template_id": "trade_crate", "count": 1}
+        mutations = {
+            "containers": [{"container_id": "pack", "slots": [one_item]}],
+            "placed_items": [{"entity_id": 5, "item": one_item}],
+            "equipped": {"chest": one_item},
+            "hotbar": [one_item],
+            "bone_coins": 1,
+        }
+        for key, value in mutations.items():
+            with self.subTest(mutation_field=key):
+                mutated = dict(baseline)  # revision 保持 7 不变，仅该内容字段变异
+                mutated[key] = value
+                bot = _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            3.0,
+                            "server_data",
+                            {"payload_type": "inventory_snapshot", "payload": mutated},
+                        )
+                    ]
+                )
+                with self.assertRaises(BotAssertionError):
+                    assert_no_gameplay_side_effect_since(
+                        bot, since_t=1.0, label="测试", baseline_snapshot=baseline
+                    )
+
+
+def _stale_session_snapshot(
+    revision: int, *, probe_count: int = 0, bone_coins: int = 0
+) -> dict:
+    placed_items = []
+    if probe_count:
+        placed_items.append(
+            {
+                "container_id": "body_pocket",
+                "row": 0,
+                "col": 0,
+                "item": {
+                    "instance_id": 99,
+                    "item_id": stale_session_scenario.PROBE_ITEM_ID,
+                    "stack_count": probe_count,
+                },
+            }
+        )
+    return {
+        "type": "inventory_snapshot",
+        "revision": revision,
+        "containers": [],
+        "placed_items": placed_items,
+        "equipped": {},
+        "hotbar": [],
+        "bone_coins": bone_coins,
+    }
+
+
+def _stale_session_close_bot(probe_snapshot: dict) -> _RejectionFakeBot:
+    pre = _stale_session_snapshot(7)
+    return _RejectionFakeBot(
+        [
+            _FakeEvent(
+                2.0,
+                "server_data",
+                {"payload_type": "inventory_snapshot", "payload": pre},
+            )
+        ],
+        pending=[
+            _FakeEvent(3.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"}),
+            _FakeEvent(
+                4.0,
+                "chat",
+                {"text": f"[dev] gave {stale_session_scenario.PROBE_ITEM_ID} x1"},
+            ),
+            _FakeEvent(
+                5.0,
+                "server_data",
+                {"payload_type": "inventory_snapshot", "payload": probe_snapshot},
+            ),
+        ],
+    )
+
+
+class StaleSessionScenarioTest(unittest.TestCase):
+    def test_content_fingerprint_ignores_revision_but_detects_content(self):
+        before = _stale_session_snapshot(7)
+        after_give = _stale_session_snapshot(8)
+        self.assertEqual(
+            stale_session_scenario._inventory_content_fingerprint(before),
+            stale_session_scenario._inventory_content_fingerprint(after_give),
+            "close 已独立钉住 revision=R+1 后，内容指纹必须忽略该合法 revision 差异",
+        )
+        mutated = _stale_session_snapshot(8, bone_coins=1)
+        self.assertNotEqual(
+            stale_session_scenario._inventory_content_fingerprint(before),
+            stale_session_scenario._inventory_content_fingerprint(mutated),
+            "内容指纹必须继续覆盖真实背包 mutation",
+        )
+
+    def test_stale_close_accepts_exact_probe_revision_and_equal_content(self):
+        bot = _stale_session_close_bot(
+            _stale_session_snapshot(8, probe_count=1)
+        )
+
+        stale_session_scenario._assert_stale_close_rejected(bot, 41, "closed token")
+
+        self.assertEqual(bot.commands, [f"give {stale_session_scenario.PROBE_ITEM_ID} 1"])
+        self.assertEqual(
+            bot.intents,
+            [
+                {"v": 1, "type": "external_container_close", "session_id": 41},
+                {"v": 1, "type": "set_meridian_target", "meridian": "lung"},
+            ],
+            "helper 必须先发 stale close，再用合法请求建立处理屏障",
+        )
+
+    def test_stale_close_rejects_spurious_revision_bump(self):
+        bot = _stale_session_close_bot(
+            _stale_session_snapshot(9, probe_count=1)
+        )
+        with self.assertRaisesRegex(BotAssertionError, "revision 恰好 \\+1"):
+            stale_session_scenario._assert_stale_close_rejected(
+                bot, 41, "closed token"
+            )
+
+    def test_stale_close_rejects_content_mutation_after_probe_removed(self):
+        bot = _stale_session_close_bot(
+            _stale_session_snapshot(8, probe_count=1, bone_coins=1)
+        )
+        with self.assertRaisesRegex(BotAssertionError, "背包内容零 mutation"):
+            stale_session_scenario._assert_stale_close_rejected(
+                bot, 41, "closed token"
+            )
+
+    def test_run_reaches_all_stale_and_forged_paths(self):
+        real_move = {
+            "session_id": 41,
+            "instance_id": 501,
+            "from": {
+                "kind": "container",
+                "container_id": "ext_41",
+                "row": 0,
+                "col": 0,
+            },
+            "to": {
+                "kind": "container",
+                "container_id": "body_pocket",
+                "row": 0,
+                "col": 0,
+            },
+            "placed_pos": (1, 64, 1),
+        }
+        snapshot = _stale_session_snapshot(7)
+        close_event = _FakeEvent(
+            3.0,
+            "server_data",
+            {"payload_type": "loot_container_close", "payload": {"session_id": 41}},
+        )
+        bot = mock.MagicMock()
+        bot.t0 = 0.0
+        # MagicMock 保留 assert_* 名字给自身断言 API，场景的 Bot.assert_alive 必须显式安装。
+        bot.assert_alive = mock.Mock()
+        bot.expect_server_data.return_value = close_event
+        context = mock.MagicMock()
+        context.__enter__.return_value = bot
+        context.__exit__.return_value = False
+        env = mock.MagicMock()
+        env.new_bot.return_value = context
+
+        with (
+            mock.patch.object(stale_session_scenario.time, "sleep"),
+            mock.patch.object(
+                stale_session_scenario, "_open_real_session", return_value=real_move
+            ),
+            mock.patch.object(
+                stale_session_scenario, "_assert_stale_move_rejected_zero_mutation"
+            ) as move_rejected,
+            mock.patch.object(
+                stale_session_scenario, "_assert_stale_close_rejected"
+            ) as close_rejected,
+            mock.patch.object(
+                stale_session_scenario, "_teardown_placed_crate"
+            ) as teardown,
+            mock.patch(
+                "bot.scenarios._inventory_helpers.latest_inventory_snapshot",
+                return_value=snapshot,
+            ),
+            mock.patch("bot.scenarios._inventory_helpers.drain_inventory_snapshots"),
+            mock.patch(
+                "bot.scenarios._inventory_helpers.wait_inventory_snapshot_after",
+                return_value=snapshot,
+            ),
+            mock.patch(
+                "bot.scenarios._rejection_helpers.inventory_fingerprint",
+                return_value="same",
+            ),
+            mock.patch(
+                "bot.scenarios._rejection_helpers.fire_probes_and_keep_connection"
+            ) as fire_probes,
+            mock.patch(
+                "bot.scenarios._rejection_helpers.assert_valid_request_still_works"
+            ) as valid_request,
+        ):
+            stale_session_scenario.run(env)
+
+        self.assertEqual(
+            move_rejected.call_args_list,
+            [
+                mock.call(bot, 41, "replay 已关闭 session 的 move", real_move),
+                mock.call(
+                    bot,
+                    stale_session_scenario.FORGED_SESSION_ID,
+                    "stale move #1（forged token）",
+                    real_move,
+                ),
+                mock.call(
+                    bot,
+                    stale_session_scenario.FORGED_SESSION_ID,
+                    "stale move #2（重放 forged token）",
+                    real_move,
+                ),
+            ],
+            "真实 stale move 与两轮 forged move 必须全部执行",
+        )
+        self.assertEqual(
+            close_rejected.call_args_list,
+            [
+                mock.call(bot, 41, "replay 已关闭 session 的 close"),
+                mock.call(
+                    bot,
+                    stale_session_scenario.FORGED_SESSION_ID,
+                    "stale close（forged token）",
+                ),
+            ],
+            "真实 stale close 通过后必须继续执行 forged close",
+        )
+        fire_probes.assert_called_once()
+        valid_request.assert_called_once_with(bot)
+        teardown.assert_called_once_with(bot, (1, 64, 1), 501)
 
 
 class _IntentFakeBot(_CommandFakeBot):

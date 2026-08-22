@@ -38,6 +38,22 @@ PLAYER_STATE_REALM_NAMES = {
 }
 
 SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
+SERVER_DATA_QUICKSLOT_CONFIG_FIELD = 35
+
+# QuickSlotConfigV1 内部字段（proto/bong/envelope.proto QuickSlotConfig）——
+# 命名常量供 decoder 与 wire 契约测试共同引用，避免两端各写一遍魔法数字漂移。
+QUICKSLOT_CONFIG_SLOTS_FIELD = 1
+QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD = 2
+QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD = 3
+QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD = 4
+
+# QuickSlotEntryV1 / OptionalQuickSlotEntry 内部字段。
+QUICKSLOT_ENTRY_ITEM_ID_FIELD = 1
+QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD = 2
+QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD = 3
+QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD = 4
+QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD = 5
+OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD = 1
 
 
 class ProtoDecodeError(ValueError):
@@ -71,6 +87,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     30: "gathering_session",
     31: "lingtian_session",
     34: "cast_sync",
+    35: "quickslot_config",
     36: "skillbar_config",
     51: "combat_event",
     66: "tribulation_state",
@@ -963,6 +980,53 @@ def _repeated_uint64(fields: list[tuple[int, int, Any]], field: int) -> list[int
     return values
 
 
+def _quick_slot_config(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "quickslot_config",
+        "slots": [
+            _quick_slot_entry(raw) for raw in _messages(fields, QUICKSLOT_CONFIG_SLOTS_FIELD)
+        ],
+        "cooldown_until_ms": _repeated_varints(fields, QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD),
+        "ack_request_id": _optional_string(fields, QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD),
+        "bind_accepted": (
+            bool(_varint(fields, QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD))
+            if _has(fields, QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD)
+            else None
+        ),
+    }
+
+
+def _quick_slot_entry(data: bytes) -> dict[str, Any] | None:
+    fields = _fields(data)
+    if not _has(fields, OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD):
+        return None
+    entry = _message(fields, OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD)
+    return {
+        "item_id": _string(entry, QUICKSLOT_ENTRY_ITEM_ID_FIELD),
+        "display_name": _string(entry, QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD),
+        "cast_duration_ms": _varint(entry, QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
+        "cooldown_ms": _varint(entry, QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
+        "icon_texture": _string(entry, QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
+    }
+
+
+def _repeated_varints(fields: list[tuple[int, int, Any]], field: int) -> list[int]:
+    values: list[int] = []
+    for existing, wire, value in fields:
+        if existing != field:
+            continue
+        if wire == 0:
+            values.append(int(value))
+        elif wire == 2:
+            pos = 0
+            while pos < len(value):
+                v, pos = _read_varint(value, pos)
+                values.append(v)
+    return values
+
+
 def _combat_event_floater(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     events = []
@@ -1203,6 +1267,7 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     30: _gathering_session,
     31: _lingtian_session,
     34: _cast_sync,
+    SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
     36: _skill_bar_config,
     51: _combat_event_floater,
     66: _tribulation_state,
