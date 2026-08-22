@@ -10,8 +10,8 @@
 //! 进新请求时若已有活 session 直接拒。
 //!
 //! plot 实体：当前切片把 LingtianPlot 作为独立 Entity（`spawn(LingtianPlot, ...)`）
-//! 而非真正的 valence BlockEntity（后者依 plan-persistence-v1）。Renew 通过
-//! `Query<&mut LingtianPlot>` 按 BlockPos 反查匹配 plot。
+//! 而非真正的 valence BlockEntity（后者依 plan-persistence-v1）。Renew 在准入时
+//! 绑定匹配的 plot Entity，结算时按实体复验，避免 session 期间位置复用导致误操作。
 
 use std::collections::{HashMap, HashSet};
 
@@ -93,6 +93,15 @@ fn build_start_plot_index<'a>(
 ) -> HashMap<BlockPos, Vec<&'a LingtianPlot>> {
     plots.fold(HashMap::new(), |mut index, plot| {
         index.entry(plot.pos).or_default().push(plot);
+        index
+    })
+}
+
+fn build_start_plot_entity_index<'a>(
+    plots: impl Iterator<Item = (Entity, &'a LingtianPlot)>,
+) -> HashMap<BlockPos, Vec<(Entity, &'a LingtianPlot)>> {
+    plots.fold(HashMap::new(), |mut index, (entity, plot)| {
+        index.entry(plot.pos).or_default().push((entity, plot));
         index
     })
 }
@@ -618,18 +627,14 @@ pub fn handle_start_renew(
     mut events: EventReader<StartRenewRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
-    plots: Query<&LingtianPlot>,
-    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
+    plots: Query<(Entity, &LingtianPlot)>,
 ) {
     if events.is_empty() {
         return;
     }
     // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
     // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
-    #[cfg(not(test))]
-    let plot_positions = build_start_plot_index(plots.iter());
-    #[cfg(test)]
-    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
+    let plot_positions = build_start_plot_entity_index(plots.iter());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -658,17 +663,19 @@ pub fn handle_start_renew(
             continue;
         }
         // 必须有处于"贫瘠"状态的 plot
-        let barren = plot_positions
-            .get(&req.pos)
-            .is_some_and(|plots| plots.iter().any(|plot| plot.is_barren()));
-        if !barren {
+        let Some(plot_entity) = plot_positions.get(&req.pos).and_then(|plots| {
+            plots
+                .iter()
+                .find(|(_, plot)| plot.is_barren())
+                .map(|(entity, _)| *entity)
+        }) else {
             tracing::warn!(
                 "[bong][lingtian] StartRenewRequest rejected: no barren plot at {:?}",
                 req.pos
             );
             continue;
-        }
-        let session = RenewSession::new(req.pos, kind, instance_id);
+        };
+        let session = RenewSession::new(req.pos, plot_entity, kind, instance_id);
         sessions.try_insert(req.player, ActiveSession::Renew(session));
     }
 }
@@ -1082,14 +1089,20 @@ pub fn apply_completed_sessions(
                 emit_lingtian_skill_xp(&mut skill_xp_events, player, 1, "till");
             }
             ActiveSession::Renew(s) => {
-                if let Ok(mut inv) = inventories.get_mut(player) {
-                    wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
-                }
-                if let Some((_e, mut plot)) = plots
-                    .iter_mut()
-                    .find(|(_, p)| p.pos == s.pos && p.is_barren())
-                {
-                    plot.renew();
+                let renewed = if let Ok((_entity, mut plot)) = plots.get_mut(s.plot_entity) {
+                    if plot.pos == s.pos && plot.is_barren() {
+                        plot.renew();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if renewed {
+                    if let Ok(mut inv) = inventories.get_mut(player) {
+                        wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
+                    }
                     // 翻新后从"贫瘠"（CoarseDirt）回到 Farmland 可耕状态。
                     if let Ok(mut layer) = layers.get_single_mut() {
                         layer.set_block(s.pos, BlockState::FARMLAND);
@@ -2406,6 +2419,67 @@ mod tests {
             0,
             "Renew 应修改准入时命中的贫瘠 plot"
         );
+    }
+
+    #[test]
+    fn renew_does_not_fallback_to_other_plot_when_bound_target_changes() {
+        let mut app = build_app();
+        let pos = BlockPos::new(8, 64, -4);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
+            pos,
+        );
+        let mut target = LingtianPlot::new(pos, Some(player));
+        target.harvest_count = super::super::plot::N_RENEW;
+        let target_entity = app.world_mut().spawn(target).id();
+
+        app.world_mut().send_event(StartRenewRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+        });
+        app.update();
+        app.world_mut()
+            .get_mut::<LingtianPlot>(target_entity)
+            .unwrap()
+            .harvest_count = super::super::plot::N_RENEW - 1;
+        let fallback_entity = app
+            .world_mut()
+            .spawn({
+                let mut plot = LingtianPlot::new(pos, Some(player));
+                plot.harvest_count = super::super::plot::N_RENEW;
+                plot
+            })
+            .id();
+
+        for _ in 0..RENEW_TICKS - 1 {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(target_entity)
+                .unwrap()
+                .harvest_count,
+            super::super::plot::N_RENEW - 1,
+            "准入实体状态变化后 Renew 不应继续翻新该实体"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(fallback_entity)
+                .unwrap()
+                .harvest_count,
+            super::super::plot::N_RENEW,
+            "Renew 不应回退到同位置的其他 plot"
+        );
+        let durability = app.world().get::<PlayerInventory>(player).unwrap().equipped
+            [MAIN_HAND_SLOT]
+            .held
+            .as_ref()
+            .unwrap()
+            .durability;
+        assert_eq!(durability, 1.0, "目标失效时不应扣锄耐久");
     }
 
     #[test]
