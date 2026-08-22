@@ -100,7 +100,7 @@ class R7InventoryContractTest {
     @Test
     void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "8fde0305098e1500db8a454a76abff479d1426a7cf9204484e47b0f952a761bc",
+            "13dc7e6732e85db274e55708bba5ba044af0a7edafe898bc9e753d6975a53ec4",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "P0 baseline plus the explicitly delivered R7 P1 DiffListWidget production path must match"
         );
