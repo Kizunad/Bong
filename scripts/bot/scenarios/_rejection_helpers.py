@@ -57,6 +57,7 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
         # （derived_attrs_emit.rs，含 join 首次 attach）
         "morph_state",        # join 首帧 + 每 20 tick 周期全量重发 + 易形增删 delta
         "cultivation_detail",  # 每 20 tick 周期全量重发（cultivation_detail_emit.rs）
+        "lingtian_session",  # 每帧全量推送的灵田 HUD 同步（lingtian/network_emit.rs，无请求也每帧发，active 覆盖）
     }
 )
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
