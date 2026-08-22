@@ -68,8 +68,7 @@ public final class DiffListWidget<T, K, C extends Component> {
         // All factories have succeeded. The host is changed only as one
         // synchronous replacement, and bookkeeping is committed afterwards.
         List<Component> replacement = new ArrayList<>(nextRows);
-        rows.clearChildren();
-        rows.children(replacement);
+        replaceChildrenAtomically(replacement);
         committedKeys = nextKeys;
         mountedByKey = Map.copyOf(nextRowsByKey);
         return UpdateResult.REBUILT;
@@ -112,6 +111,22 @@ public final class DiffListWidget<T, K, C extends Component> {
                 throw new IllegalStateException("missing mounted row for committed key " + keys.get(index));
             }
             patchRow.accept(row, items.get(index));
+        }
+    }
+
+    private void replaceChildrenAtomically(List<Component> replacement) {
+        List<Component> previousChildren = List.copyOf(rows.children());
+        try {
+            rows.clearChildren();
+            rows.children(replacement);
+        } catch (RuntimeException | Error failure) {
+            try {
+                rows.clearChildren();
+                rows.children(previousChildren);
+            } catch (RuntimeException | Error rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+            throw failure;
         }
     }
 

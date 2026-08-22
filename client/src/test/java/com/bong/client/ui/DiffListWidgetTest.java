@@ -7,6 +7,7 @@ import io.wispforest.owo.ui.core.Sizing;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,6 +22,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DiffListWidgetTest {
     private record Item(int key, String value) {}
+
+    private static final class FailingRows extends FlowLayout {
+        private boolean failNextChildren;
+
+        private FailingRows() {
+            super(Sizing.content(), Sizing.content(), Algorithm.VERTICAL);
+        }
+
+        private void failNextChildren() {
+            failNextChildren = true;
+        }
+
+        @Override
+        public FlowLayout children(Collection<Component> children) {
+            FlowLayout result = super.children(children);
+            if (failNextChildren) {
+                failNextChildren = false;
+                throw new IllegalStateException("mount failed");
+            }
+            return result;
+        }
+    }
 
     private static FlowLayout rows() {
         return Containers.verticalFlow(Sizing.content(), Sizing.content());
@@ -148,6 +171,20 @@ class DiffListWidgetTest {
         assertThrows(IllegalStateException.class, () -> widget.update(List.of(item(1), item(2))));
         assertEquals(List.of(1), widget.renderedKeys());
         assertEquals(before, rows.children(), "createRow 失败发生在 host mutation 前");
+    }
+
+    @Test
+    void mountFailureRollsBackOldChildrenAndCommittedKeys() {
+        FailingRows rows = new FailingRows();
+        DiffListWidget<Item, Integer, FlowLayout> widget = widget(rows, new AtomicInteger(), new ArrayList<>());
+        widget.update(List.of(item(1)));
+        List<Component> before = List.copyOf(rows.children());
+        rows.failNextChildren();
+
+        assertThrows(IllegalStateException.class, () -> widget.update(List.of(item(1), item(2))));
+        assertEquals(List.of(1), widget.renderedKeys(), "挂载失败不能提交新的 key 序列");
+        assertEquals(before, rows.children(), "挂载失败后必须恢复旧 children");
+        assertSame(before.get(0), widget.rowForKey(1).orElseThrow(), "旧 key 必须仍指向旧 row");
     }
 
     @Test
