@@ -1085,7 +1085,10 @@ pub fn apply_completed_sessions(
                 if let Ok(mut inv) = inventories.get_mut(player) {
                     wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
                 }
-                if let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| p.pos == s.pos) {
+                if let Some((_e, mut plot)) = plots
+                    .iter_mut()
+                    .find(|(_, p)| p.pos == s.pos && p.is_barren())
+                {
                     plot.renew();
                     // 翻新后从"贫瘠"（CoarseDirt）回到 Farmland 可耕状态。
                     if let Ok(mut layer) = layers.get_single_mut() {
@@ -1558,7 +1561,10 @@ fn apply_drain_qi_completion(
     qi_transfers: &mut EventWriter<QiTransfer>,
 ) {
     let (plot_owner, drained, to_player, to_zone, zone_key) = {
-        let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
+        let Some((_e, mut plot)) = plots
+            .iter_mut()
+            .find(|(_, p)| &p.pos == pos && p.plot_qi > 0.0)
+        else {
             tracing::warn!("[bong][lingtian] DrainQiSession finished but plot at {pos:?} vanished");
             return;
         };
@@ -2363,22 +2369,42 @@ mod tests {
             make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
             pos,
         );
-        app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
+        let mut first_plot = LingtianPlot::new(pos, Some(player));
+        first_plot.harvest_count = super::super::plot::N_RENEW - 1;
+        let first_plot_entity = app.world_mut().spawn(first_plot).id();
         let mut barren = LingtianPlot::new(pos, Some(player));
         barren.harvest_count = super::super::plot::N_RENEW;
-        app.world_mut().spawn(barren);
+        let barren_plot_entity = app.world_mut().spawn(barren).id();
 
         app.world_mut().send_event(StartRenewRequest {
             player,
             pos,
             hoe_instance_id: 1,
         });
-        app.update();
+        for _ in 0..RENEW_TICKS {
+            app.update();
+        }
 
         assert_eq!(
             app.world().resource::<ActiveLingtianSessions>().len(),
-            1,
-            "后续重复位置 plot 满足贫瘠条件时，Renew 不应被首个 plot 拒绝"
+            0,
+            "Renew 结算后 session 应清理"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(first_plot_entity)
+                .unwrap()
+                .harvest_count,
+            super::super::plot::N_RENEW - 1,
+            "Renew 不应修改同位置首个非贫瘠 plot"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(barren_plot_entity)
+                .unwrap()
+                .harvest_count,
+            0,
+            "Renew 应修改准入时命中的贫瘠 plot"
         );
     }
 
@@ -2393,20 +2419,45 @@ mod tests {
         );
         let mut blocked = LingtianPlot::new(pos, Some(player));
         blocked.crop = Some(CropInstance::new("ning_mai_cao".into()));
-        app.world_mut().spawn(blocked);
-        app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
+        let blocked_plot_entity = app.world_mut().spawn(blocked).id();
+        let empty_plot_entity = app
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, Some(player)))
+            .id();
 
         app.world_mut().send_event(StartPlantingRequest {
             player,
             pos,
             plant_id: "ci_she_hao".into(),
         });
-        app.update();
+        for _ in 0..PLANTING_TICKS {
+            app.update();
+        }
 
         assert_eq!(
             app.world().resource::<ActiveLingtianSessions>().len(),
-            1,
-            "后续重复位置 plot 满足空且不贫瘠时，Planting 不应被首个 plot 拒绝"
+            0,
+            "Planting 结算后 session 应清理"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(blocked_plot_entity)
+                .unwrap()
+                .crop
+                .as_ref()
+                .map(|crop| crop.kind.as_str()),
+            Some("ning_mai_cao"),
+            "Planting 不应修改同位置首个已占用 plot"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(empty_plot_entity)
+                .unwrap()
+                .crop
+                .as_ref()
+                .map(|crop| crop.kind.as_str()),
+            Some("ci_she_hao"),
+            "Planting 应修改准入时命中的空 plot"
         );
     }
 
@@ -2419,19 +2470,37 @@ mod tests {
             (empty_inventory_8x8(), LifeRecord::new("duplicate-drain")),
             pos,
         );
-        app.world_mut().spawn(LingtianPlot::new(pos, None));
+        let empty_plot_entity = app.world_mut().spawn(LingtianPlot::new(pos, None)).id();
         let mut charged = LingtianPlot::new(pos, None);
         charged.plot_qi = 0.5;
-        app.world_mut().spawn(charged);
+        let charged_plot_entity = app.world_mut().spawn(charged).id();
 
         app.world_mut()
             .send_event(StartDrainQiRequest { player, pos });
-        app.update();
+        for _ in 0..DRAIN_QI_TICKS {
+            app.update();
+        }
 
         assert_eq!(
             app.world().resource::<ActiveLingtianSessions>().len(),
-            1,
-            "后续重复位置 plot 有真元时，DrainQi 不应被首个空 plot 拒绝"
+            0,
+            "DrainQi 结算后 session 应清理"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(empty_plot_entity)
+                .unwrap()
+                .plot_qi,
+            0.0,
+            "DrainQi 不应修改同位置首个空 plot"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(charged_plot_entity)
+                .unwrap()
+                .plot_qi,
+            0.0,
+            "DrainQi 应修改准入时命中的有真元 plot"
         );
     }
 
