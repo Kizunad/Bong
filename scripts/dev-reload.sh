@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# dev-reload.sh — one-command regen + validate + rebuild + restart
+# dev-reload.sh — one-command raster check + rebuild + restart
 # Usage: bash scripts/dev-reload.sh [--skip-regen] [--skip-validate] [--console]
 #
-# --console (worldgen-v4 P1 §8.1 #7, dev-only): after the raster regen+validate,
-# launch the FastAPI 3D-preview console_server in the background (logs to
-# /tmp/bong-console.log, http://127.0.0.1:8765). The console is fully decoupled
-# from the cargo build/restart steps below — it just reads the same rasters. The
-# vite + three.js viewer is started separately:
-#   cd worldgen/console && npm install && npm run dev
+# --console (dev-only): print the external BongWorldGen console location.
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/bong-server-lifecycle.sh"
 SERVER_CARGO_TARGET="$(bong_scoped_cargo_target "$(git rev-parse --show-toplevel)/server")" \
     || { echo "FAIL: unable to resolve checkout-scoped Cargo target" >&2; exit 1; }
@@ -435,71 +430,35 @@ for arg in "$@"; do
     esac
 done
 
-RASTER_DIR="worldgen/generated/terrain-gen/rasters"
-WORLDGEN_RASTER_DIR="generated/terrain-gen/rasters"
+RASTER_DIR="${BONG_TERRAIN_RASTER_DIR:-generated/terrain-gen/rasters}"
 MANIFEST="$RASTER_DIR/manifest.json"
 
-# plan-tsy-worldgen-v1 §6.1 — TSY 双 manifest 改造
-TSY_BLUEPRINT="server/zones.tsy.json"
-WORLDGEN_TSY_OUTPUT_DIR="generated/terrain-gen-tsy"
-TSY_RASTER_DIR="worldgen/$WORLDGEN_TSY_OUTPUT_DIR/rasters"
-WORLDGEN_TSY_RASTER_DIR="$WORLDGEN_TSY_OUTPUT_DIR/rasters"
-TSY_MANIFEST="$TSY_RASTER_DIR/manifest.json"
-
-# --- Step 1: Regenerate rasters (overworld + optional TSY) ---
+# --- Step 1: External generator reminder ---
 if [ "$SKIP_REGEN" = false ]; then
-    if [ -f "$TSY_BLUEPRINT" ]; then
-        echo "==> [1/4] Regenerating terrain rasters (overworld + tsy)..."
-        (cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster \
-             --tsy-blueprint "../$TSY_BLUEPRINT" \
-             --tsy-output-dir "$WORLDGEN_TSY_OUTPUT_DIR") || {
-            echo "FAIL: terrain generation failed"; exit 1
-        }
-    else
-        echo "==> [1/4] Regenerating terrain rasters (overworld only — no $TSY_BLUEPRINT)..."
-        (cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster) || {
-            echo "FAIL: terrain generation failed"; exit 1
-        }
-    fi
-    echo "    OK"
+    echo "FAIL: 地形生成已迁移到 ../BongWorldGen，请先在那里生成 raster。" >&2
+    echo "      生成完成后可用 --skip-regen --skip-validate 只重建并重启服务端。" >&2
+    exit 1
 else
-    echo "==> [1/4] Skipping raster regeneration (--skip-regen)"
+    echo "==> [1/4] Skipping external raster generation (--skip-regen)"
 fi
 
-# --- Step 2: Validate raster data (overworld + optional TSY) ---
+# --- Step 2: Check the external raster handoff ---
 if [ "$SKIP_VALIDATE" = false ]; then
-    echo "==> [2/4] Validating raster data..."
-    (cd worldgen && .venv/bin/python -c "
-from scripts.terrain_gen.harness.raster_check import validate_rasters
-import sys
-ok, msg = validate_rasters('$WORLDGEN_RASTER_DIR')
-print('[overworld]')
-print(msg)
-ok_all = ok
-import os.path
-if os.path.isdir('$WORLDGEN_TSY_RASTER_DIR'):
-    ok2, msg2 = validate_rasters('$WORLDGEN_TSY_RASTER_DIR')
-    print('[tsy]')
-    print(msg2)
-    ok_all = ok_all and ok2
-sys.exit(0 if ok_all else 1)
-") || { echo "FAIL: raster validation failed"; exit 1; }
-    echo "    OK"
+    echo "==> [2/4] Checking external raster handoff..."
+    if [ ! -f "$MANIFEST" ]; then
+        echo "FAIL: raster manifest not found at $MANIFEST" >&2
+        echo "      请在 BongWorldGen 生成 raster，或设置 BONG_TERRAIN_RASTER_DIR。" >&2
+        exit 1
+    fi
+    echo "    OK: $MANIFEST"
 else
-    echo "==> [2/4] Skipping validation (--skip-validate)"
+    echo "==> [2/4] Skipping raster handoff check (--skip-validate)"
 fi
 
-# --- Optional: launch dev-only 3D preview console (worldgen-v4 P1 §8.1 #7) ---
-# Decoupled from build/restart — backgrounded so the 4-step flow continues.
+# --- Optional: launch the external 3D preview console ---
 if [ "$LAUNCH_CONSOLE" = true ]; then
-    echo "==> [console] Launching worldgen-v4 3D preview console (dev-only)..."
-    pkill -f 'scripts.terrain_gen.console_server' 2>/dev/null || true
-    (cd worldgen && .venv/bin/python -m scripts.terrain_gen.console_server \
-         --rasters "$WORLDGEN_RASTER_DIR" \
-         > /tmp/bong-console.log 2>&1 &)
-    disown
-    echo "    console -> http://127.0.0.1:8765 (log: /tmp/bong-console.log)"
-    echo "    viewer  -> cd worldgen/console && npm install && npm run dev"
+    echo "==> [console] 控制台已迁移到 ../BongWorldGen/console"
+    echo "    cd ../BongWorldGen/console && npm install && npm run dev"
 fi
 
 restart_bong_server() {
@@ -517,11 +476,7 @@ echo "    OK"
 # --- Step 5: Launch server ---
 echo "==> [5/5] Starting server..."
 MANIFEST_ABS="$(pwd)/$MANIFEST"
-TSY_MANIFEST_ABS="$(pwd)/$TSY_MANIFEST"
 ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
-if [ -f "$TSY_MANIFEST_ABS" ]; then
-    ENV_ARGS+=("BONG_TSY_RASTER_PATH=$TSY_MANIFEST_ABS")
-fi
 launch_bong_server
 
 if grep -q "loaded.*terrain tiles" /tmp/bong-server.log 2>/dev/null; then
