@@ -162,7 +162,7 @@ def main() -> int:
         workflow = (ROOT / ".github" / "workflows" / "e2e.yml").read_text(encoding="utf-8")
         assert workflow.count("cargo build --release") == 1
         assert workflow.count(
-            "BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ steps.server-release-artifact.outputs.manifest }}"
+            "BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}"
         ) == 2
         assert workflow.count("id: server-release-artifact") == 1
         assert workflow.count("../scripts/lib/bong_server_provenance.py check") == 1
