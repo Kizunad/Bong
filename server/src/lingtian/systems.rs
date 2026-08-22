@@ -91,7 +91,10 @@ pub(crate) struct StartHandlerPlotScanCount {
 fn build_start_plot_index<'a>(
     plots: impl Iterator<Item = &'a LingtianPlot>,
 ) -> HashMap<BlockPos, &'a LingtianPlot> {
-    plots.map(|plot| (plot.pos, plot)).collect()
+    plots.fold(HashMap::new(), |mut index, plot| {
+        index.entry(plot.pos).or_insert(plot);
+        index
+    })
 }
 
 #[cfg(test)]
@@ -108,8 +111,10 @@ fn build_start_plot_index<'a>(
                 count.scanned_plots += 1;
             }
         })
-        .map(|plot| (plot.pos, plot))
-        .collect()
+        .fold(HashMap::new(), |mut index, plot| {
+            index.entry(plot.pos).or_insert(plot);
+            index
+        })
 }
 
 fn plot_zone_key(plot: &LingtianPlot) -> &str {
@@ -2318,6 +2323,28 @@ mod tests {
                     .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
+    }
+
+    #[test]
+    fn start_plot_index_preserves_first_plot_at_duplicate_position() {
+        let pos = BlockPos::new(7, 64, -3);
+        let mut first = LingtianPlot::new(pos, None);
+        first.plot_qi = 0.25;
+        let mut second = LingtianPlot::new(pos, None);
+        second.plot_qi = 0.75;
+        let plots = vec![first, second];
+
+        let index = build_start_plot_index(plots.iter(), None);
+        let selected = index
+            .get(&pos)
+            .copied()
+            .expect("duplicate-position fixture must be indexed");
+
+        assert!(
+            std::ptr::eq(selected, &plots[0]),
+            "duplicate BlockPos must preserve the first plot, matching the previous find semantics"
+        );
+        assert_eq!(selected.plot_qi, 0.25);
     }
 
     #[test]

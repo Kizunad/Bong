@@ -1164,7 +1164,9 @@ mod boss_spawn_integration {
     use crate::cultivation::life_record::LifeRecord;
     use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    use crate::qi_physics::ledger::{QiAccountId, QiTransferReason, WorldQiAccount};
+    use crate::qi_physics::ledger::{
+        assert_conservation, summarize_world_qi, QiAccountId, QiTransferReason, WorldQiAccount,
+    };
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, ZoneRegistry};
     use valence::prelude::{App, DVec3, Position};
@@ -1336,7 +1338,12 @@ mod boss_spawn_integration {
             ))
             .id();
 
+        let before = summarize_world_qi(app.world_mut());
         app.update();
+        let after = summarize_world_qi(app.world_mut());
+
+        assert_conservation(&before, &after, 0.0)
+            .expect("Expel 阶段无 era decay 时，全局灵气总量必须保持守恒");
 
         let player_qi_after = app
             .world()
