@@ -6,7 +6,7 @@ import time
 
 from bot.scenarios._combat_helpers import (
     last_event_time,
-    move_to_melee_range,
+    move_to_melee_target,
     queue_passive_target,
     queue_npc_scenario,
     wait_for_ready,
@@ -24,12 +24,13 @@ def run(env) -> None:
         queue_npc_scenario(bot, "clear")
         spawn = queue_passive_target(bot)
         target_id = spawn.data["entity_id"]
-        move_to_melee_range(bot, spawn)
+        move_to_melee_target(bot, target_id, spawn)
 
         anchor = last_event_time(bot)
         for _ in range(40):
             if bot.entity_pos(target_id) is None:
                 break
+            move_to_melee_target(bot, target_id, spawn)
             bot.attack_entity(target_id)
             time.sleep(0.25)
 

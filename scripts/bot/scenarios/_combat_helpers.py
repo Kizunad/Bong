@@ -79,6 +79,28 @@ def move_to_melee_range(bot: Bot, spawn: Event, distance: float = 1.8) -> None:
     time.sleep(0.2)
 
 
+def move_to_melee_target(
+    bot: Bot, target_id: int, fallback_spawn: Event, distance: float = 1.8
+) -> None:
+    """贴近目标的最新协议坐标，避免 spawn 后的相对位移使用旧坐标。"""
+    target_pos = bot.entity_pos(target_id)
+    if target_pos is None:
+        target_pos = _event_position(fallback_spawn)
+    if bot.position is None:
+        raise BotAssertionError("move_to_melee_target 需要 bot.position，实际 None")
+
+    bx, by, bz = bot.position
+    tx, ty, tz = target_pos
+    dx, dz = bx - tx, bz - tz
+    length = math.hypot(dx, dz)
+    if length <= 0.001:
+        dx, dz, length = 1.0, 0.0, 1.0
+    goal_x = tx + dx / length * distance
+    goal_z = tz + dz / length * distance
+    bot.move_to(goal_x, ty, goal_z, speed=5.5)
+    time.sleep(0.2)
+
+
 def wait_for_server_data_after(
     bot: Bot,
     anchor: float,
