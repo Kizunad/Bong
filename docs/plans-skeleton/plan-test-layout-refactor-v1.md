@@ -33,7 +33,7 @@
 
 - **范围决策**：Bong 只冻结 server/client/agent 三栈与根脚本 contract/preview handoff；BongWorldGen 的生成器、测试和 CI 永不由 `scripts/test-all.sh` 隐式拉起。
 - **preview handoff CLI 决策**：`--profile preview` 必须收到 `BONG_TERRAIN_RASTER_DIR`（优先，目录内含外部生成的 `focus-layout-preview.png`/`focus-surface-preview.png`）或 `BONG_TERRAIN_RASTER_PATH`（manifest 文件，取其父目录）；两者都缺失时 suite 为 `BLOCKED` 并返回非零。入口只读这些输入，不生成、覆盖或搬迁 raster；client 截图仍显式由 `--client-dir client/run/screenshots` 提供，`validate_snapshots.py` 只验证截图，`compose_grid.py` 负责拼图。
-- **owner/reviewer 映射决策**：基线不存在 `.github/CODEOWNERS` 或可消费的 team slug，因此不再保留“未来若有 CODEOWNERS 再映射”的条件分支。P1 必须新增 `scripts/test-all-owners.tsv`，以 `suite<TAB>owner_role<TAB>reviewer_path<TAB>evidence` 固定映射：`server→server/`、`client→client/`、`schema→agent/packages/schema/`、`tiandao→agent/packages/tiandao/`、`scripts→scripts/`；`scripts/test-all.sh --list` 必须逐行输出并校验该文件，缺行/路径不存在即 exit 2。
+- **owner/reviewer 映射决策**：探索证据为 `find .github -maxdepth 2 -type f -iname '*codeowner*'` 无输出，且 `git ls-tree -r --name-only origin/main -- .github | grep -i codeowner`、`git ls-tree -r --name-only origin/main -- scripts/test-all.sh scripts/test-all-owners.tsv` 均无命中；因此不存在可引用的 `.github/CODEOWNERS`/目标文件行号，不再保留“未来若有 CODEOWNERS 再映射”的条件分支。当前可核验的 preview/CLI 证据锚点为 `client/build.gradle:231-248`、`scripts/preview/compose_grid.py:209-238`、`scripts/preview/validate_snapshots.py:212-220`；P1 目标文件固定为 `scripts/test-all.sh` 与 `scripts/test-all-owners.tsv`，落点见本文 `§P1 设计目标`/`§CLI 契约` 与 `§验收抓手`。P1 必须新增 owners TSV，以 `suite<TAB>owner_role<TAB>reviewer_path<TAB>evidence` 固定映射：`server→server/`、`client→client/`、`schema→agent/packages/schema/`、`tiandao→agent/packages/tiandao/`、`scripts→scripts/`；`scripts/test-all.sh --list` 必须逐行输出并校验该文件，缺行/路径不存在即 exit 2。
 
 ## 接入面（docs/CLAUDE.md §二 checklist）
 

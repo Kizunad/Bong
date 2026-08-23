@@ -207,14 +207,16 @@ def compose_grid(client_dir: Path, raster_dir: Path, out_path: Path) -> int:
 
 
 def _default_raster_dir() -> Path:
-    """Resolve the read-only external raster handoff directory."""
+    """Resolve the explicitly supplied read-only external raster handoff."""
     raster_dir = os.environ.get("BONG_TERRAIN_RASTER_DIR")
     if raster_dir:
         return Path(raster_dir)
     manifest = os.environ.get("BONG_TERRAIN_RASTER_PATH")
     if manifest:
         return Path(manifest).parent
-    return Path("generated/terrain-gen/rasters")
+    raise ValueError(
+        "BLOCKED: BONG_TERRAIN_RASTER_DIR or BONG_TERRAIN_RASTER_PATH is required"
+    )
 
 
 def main() -> int:
@@ -223,14 +225,19 @@ def main() -> int:
     parser.add_argument(
         "--raster-dir",
         type=Path,
-        default=_default_raster_dir(),
-        help="只读外部 raster 目录（默认读取 BONG_TERRAIN_RASTER_DIR 或 manifest 父目录）",
+        default=None,
+        help="只读外部 raster 目录（或使用 BONG_TERRAIN_RASTER_DIR/PATH）",
     )
     parser.add_argument(
         "--out", type=Path, default=Path("client/run/screenshots/preview-grid.png")
     )
     args = parser.parse_args()
-    return compose_grid(args.client_dir, args.raster_dir, args.out)
+    try:
+        raster_dir = args.raster_dir or _default_raster_dir()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return compose_grid(args.client_dir, raster_dir, args.out)
 
 
 if __name__ == "__main__":
