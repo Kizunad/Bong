@@ -31,8 +31,8 @@ use crate::world::dimension::DimensionKind;
 use crate::world::events::ActiveEventsResource;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-const GATHER_INVENTORY_REWARD: f64 = 0.12;
-const GATHER_KARMA_REWARD: f64 = 0.06;
+pub(crate) const GATHER_INVENTORY_REWARD: f64 = 0.12;
+pub(crate) const GATHER_KARMA_REWARD: f64 = 0.06;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -292,24 +292,79 @@ fn apply_gather_action(
 ) {
     let resource_name = empty_target_fallback(action.resource.as_str());
 
-    if let Some(harvest_sessions) = harvest_sessions {
-        if let Ok(plant_id) = canonicalize_herb_id(resource_name) {
-            let target_entity = action.target_entity.or_else(|| {
-                resolve_nearest_harvestable_plant(plants, plant_id, zone_name, player_position)
-            });
-            start_or_resume_harvest(
-                harvest_sessions,
-                canonical_player.trim_start_matches("offline:"),
-                player_entity,
-                target_entity,
-                plant_id,
-                action.mode.unwrap_or(BotanyHarvestMode::Manual),
-                [player_position.x, player_position.y, player_position.z],
-                event_tick,
+    if let Ok(plant_id) = canonicalize_herb_id(resource_name) {
+        let Some(harvest_sessions) = harvest_sessions else {
+            pending_narrations.push_player(
+                canonical_player,
+                "采集暂不可用，请稍后重试。",
+                NarrationStyle::Narration,
+            );
+            return;
+        };
+        let target_entity = match action.target_entity {
+            Some(entity) => plants
+                .get(entity)
+                .ok()
+                .filter(|(_, plant)| {
+                    is_harvestable_target(plant, plant_id, zone_name, player_position)
+                })
+                .map(|_| entity),
+            None => resolve_nearest_harvestable_plant(plants, plant_id, zone_name, player_position),
+        };
+        let Some(target_entity) = target_entity else {
+            pending_narrations.push_player(
+                canonical_player,
+                "附近没有可采集的目标灵草。",
+                NarrationStyle::Narration,
+            );
+            return;
+        };
+        if !start_or_resume_harvest(
+            harvest_sessions,
+            canonical_player.trim_start_matches("offline:"),
+            player_entity,
+            Some(target_entity),
+            plant_id,
+            action.mode.unwrap_or(BotanyHarvestMode::Manual),
+            [player_position.x, player_position.y, player_position.z],
+            event_tick,
+        ) {
+            pending_narrations.push_player(
+                canonical_player,
+                "无法开始采集：你已有采集进度，或目标正被他人占用。",
+                NarrationStyle::Narration,
             );
         }
+        return;
     }
 
+    settle_gather_reward(
+        canonical_player,
+        resource_name,
+        zone_name,
+        event_tick,
+        player_state,
+        cultivation,
+        zone_registry,
+        qi_ledger,
+        active_events,
+        Some(pending_narrations),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn settle_gather_reward(
+    canonical_player: &str,
+    resource_name: &str,
+    zone_name: &str,
+    event_tick: u64,
+    player_state: &mut PlayerState,
+    cultivation: &mut Cultivation,
+    zone_registry: Option<&mut ZoneRegistry>,
+    qi_ledger: Option<&mut WorldQiAccount>,
+    active_events: Option<&mut ActiveEventsResource>,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
+) -> f64 {
     let qi_gain = gather_qi_from_zone(
         zone_registry,
         zone_name,
@@ -337,11 +392,14 @@ fn apply_gather_action(
         });
     }
 
-    pending_narrations.push_player(
-        canonical_player,
-        format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
-        NarrationStyle::Narration,
-    );
+    if let Some(pending_narrations) = pending_narrations {
+        pending_narrations.push_player(
+            canonical_player,
+            format!("你采得 {}，储物与阅历皆有所增长。", resource_name),
+            NarrationStyle::Narration,
+        );
+    }
+    qi_gain
 }
 
 fn gather_qi_from_zone(
@@ -360,7 +418,7 @@ fn gather_qi_from_zone(
     let Some(zone) = zone_registry.find_zone_mut(zone_name) else {
         return 0.0;
     };
-    let room = (cultivation.qi_max.max(1.0) - cultivation.qi_current).max(0.0);
+    let room = cultivation.qi_room();
     let available = (zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY).max(0.0);
     let gain = QI_GATHER_REWARD.min(room).min(available);
     if gain <= 0.0 {
@@ -384,27 +442,44 @@ fn gather_qi_from_zone(
     gain
 }
 
+fn is_harvestable_target(
+    plant: &Plant,
+    plant_id: crate::botany::registry::BotanyPlantId,
+    zone_name: &str,
+    player_position: valence::prelude::DVec3,
+) -> bool {
+    if plant.id != plant_id || plant.zone_name != zone_name || plant.harvested || plant.trampled {
+        return false;
+    }
+    let dx = player_position.x - plant.position[0];
+    let dy = player_position.y - plant.position[1];
+    let dz = player_position.z - plant.position[2];
+    dx * dx + dy * dy + dz * dz <= 6.0 * 6.0
+}
+
 fn resolve_nearest_harvestable_plant(
     plants: &Query<(Entity, &Plant)>,
     plant_id: crate::botany::registry::BotanyPlantId,
     zone_name: &str,
     player_position: valence::prelude::DVec3,
 ) -> Option<Entity> {
-    const MAX_HARVEST_DISTANCE_SQ: f64 = 6.0 * 6.0;
+    nearest_harvestable_plant(plants.iter(), plant_id, zone_name, player_position)
+}
+
+fn nearest_harvestable_plant<'a>(
+    plants: impl Iterator<Item = (Entity, &'a Plant)>,
+    plant_id: crate::botany::registry::BotanyPlantId,
+    zone_name: &str,
+    player_position: valence::prelude::DVec3,
+) -> Option<Entity> {
     plants
-        .iter()
-        .filter(|(_, plant)| {
-            plant.id == plant_id
-                && plant.zone_name == zone_name
-                && !plant.harvested
-                && !plant.trampled
-        })
+        .filter(|(_, plant)| is_harvestable_target(plant, plant_id, zone_name, player_position))
         .filter_map(|(entity, plant)| {
             let dx = player_position.x - plant.position[0];
             let dy = player_position.y - plant.position[1];
             let dz = player_position.z - plant.position[2];
             let dist_sq = dx * dx + dy * dy + dz * dz;
-            (dist_sq <= MAX_HARVEST_DISTANCE_SQ).then_some((entity, dist_sq))
+            (dist_sq <= 6.0 * 6.0).then_some((entity, dist_sq))
         })
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity)
@@ -670,6 +745,40 @@ mod tests {
     }
 
     #[test]
+    fn gather_reward_respects_frozen_effective_qi_cap() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
+        let zone_before = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        let mut cultivation = Cultivation {
+            qi_current: 50.0,
+            qi_max: 100.0,
+            qi_max_frozen: Some(40.0),
+            ..Cultivation::default()
+        };
+
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
+
+        let zone_after = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        assert_eq!(gained, 10.0, "frozen cap leaves exactly 10 qi of room");
+        assert_eq!(cultivation.qi_current, 60.0);
+        assert_eq!(cultivation.qi_current, cultivation.effective_qi_max());
+        assert!((zone_before - zone_after - gained / QI_ZONE_UNIT_CAPACITY).abs() < 1e-9);
+        assert_eq!(qi_ledger.transfers().len(), 1);
+    }
+
+    #[test]
     fn gather_reward_without_qi_ledger_does_not_absorb_zone_qi() {
         let mut zones = ZoneRegistry::fallback();
         let zone_before = zones
@@ -722,6 +831,555 @@ mod tests {
         assert!(
             qi_ledger.transfers().is_empty(),
             "missing source zone must not emit or record a QiTransfer"
+        );
+    }
+
+    fn setup_gather_action_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(GameplayTick::default());
+        app.insert_resource(HarvestSessionStore::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ActiveEventsResource::default());
+        app.add_event::<AttackIntent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_systems(Update, apply_queued_gameplay_actions);
+        app
+    }
+
+    fn spawn_gather_action_test_player(
+        app: &mut App,
+        player_state: PlayerState,
+        cultivation: Cultivation,
+    ) -> Entity {
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([0.0, 66.0, 0.0]);
+        app.world_mut()
+            .spawn((client_bundle, player_state, cultivation))
+            .id()
+    }
+
+    fn spawn_gather_action_test_plant(
+        app: &mut App,
+        id: crate::botany::registry::BotanyPlantId,
+        zone_name: &str,
+        position: [f64; 3],
+        harvested: bool,
+        trampled: bool,
+    ) -> Entity {
+        app.world_mut()
+            .spawn(Plant {
+                id,
+                zone_name: zone_name.to_string(),
+                position,
+                planted_at_tick: 0,
+                wither_progress: 0,
+                source_point: None,
+                harvested,
+                trampled,
+                variant: crate::botany::registry::PlantVariant::None,
+            })
+            .id()
+    }
+
+    fn enqueue_spirit_grass_gather(app: &mut App, target_entity: Option<Entity>) {
+        app.world_mut()
+            .resource_mut::<GameplayActionQueue>()
+            .enqueue(
+                "offline:Azure",
+                GameplayAction::Gather(GatherAction {
+                    resource: crate::botany::registry::SPIRIT_GRASS.to_string(),
+                    target_entity,
+                    mode: Some(BotanyHarvestMode::Manual),
+                }),
+            );
+    }
+
+    fn assert_rejected_gather_has_no_side_effects(
+        app: &mut App,
+        player: Entity,
+        initial_state: &PlayerState,
+        initial_cultivation: &Cultivation,
+        zone_qi_before: f64,
+        context: &str,
+    ) {
+        assert!(
+            app.world()
+                .resource::<HarvestSessionStore>()
+                .session_for("offline:Azure")
+                .is_none(),
+            "{context}: rejected gather must not create a harvest session"
+        );
+        let player_ref = app.world().entity(player);
+        assert_eq!(
+            player_ref
+                .get::<PlayerState>()
+                .expect("gather test player keeps PlayerState"),
+            initial_state,
+            "{context}: rejected gather must not mutate inventory score or karma"
+        );
+        assert_eq!(
+            player_ref
+                .get::<Cultivation>()
+                .expect("gather test player keeps Cultivation"),
+            initial_cultivation,
+            "{context}: rejected gather must not absorb zone qi"
+        );
+        let zone_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        assert_eq!(
+            zone_qi_after, zone_qi_before,
+            "{context}: rejected gather must not drain zone qi"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .is_empty(),
+            "{context}: rejected gather must not record QiTransfer audit"
+        );
+        assert!(
+            app.world()
+                .resource::<ActiveEventsResource>()
+                .recent_events_snapshot()
+                .is_empty(),
+            "{context}: rejected gather must not record a success event"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "{context}: rejected gather must emit exactly one actionable player narration"
+        );
+        assert!(
+            narrations[0].text.contains("没有可采集"),
+            "{context}: rejection narration must explain that no valid target was found: {:?}",
+            narrations[0]
+        );
+    }
+
+    #[test]
+    fn nearest_harvestable_plant_requires_matching_live_target_within_six_blocks() {
+        let mut app = App::new();
+        let near = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            "spawn",
+            [5.0, 64.0, 0.0],
+            false,
+            false,
+        );
+        for (id, zone_name, position, harvested, trampled) in [
+            (
+                crate::botany::registry::BotanyPlantId::SpiritGrass,
+                "spawn",
+                [6.0, 64.0, 0.0],
+                true,
+                false,
+            ),
+            (
+                crate::botany::registry::BotanyPlantId::SpiritGrass,
+                "spawn",
+                [6.0, 64.0, 0.0],
+                false,
+                true,
+            ),
+            (
+                crate::botany::registry::BotanyPlantId::SpiritGrass,
+                "other",
+                [1.0, 64.0, 0.0],
+                false,
+                false,
+            ),
+            (
+                crate::botany::registry::BotanyPlantId::CiSheHao,
+                "spawn",
+                [1.0, 64.0, 0.0],
+                false,
+                false,
+            ),
+            (
+                crate::botany::registry::BotanyPlantId::SpiritGrass,
+                "spawn",
+                [6.0, 64.0, 0.01],
+                false,
+                false,
+            ),
+        ] {
+            spawn_gather_action_test_plant(&mut app, id, zone_name, position, harvested, trampled);
+        }
+
+        let mut plants = app.world_mut().query::<(Entity, &Plant)>();
+        assert_eq!(
+            nearest_harvestable_plant(
+                plants.iter(app.world()),
+                crate::botany::registry::BotanyPlantId::SpiritGrass,
+                "spawn",
+                valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            ),
+            Some(near),
+            "resolver must ignore harvested/trampled/wrong-zone/wrong-kind/out-of-radius plants"
+        );
+    }
+
+    #[test]
+    fn gather_action_without_real_target_is_fully_fail_closed() {
+        let mut app = setup_gather_action_test_app();
+        let initial_state = PlayerState {
+            karma: 0.11,
+            inventory_score: 0.22,
+        };
+        let initial_cultivation = Cultivation {
+            qi_current: 3.0,
+            qi_max: 10.0,
+            ..Cultivation::default()
+        };
+        let player = spawn_gather_action_test_player(
+            &mut app,
+            initial_state.clone(),
+            initial_cultivation.clone(),
+        );
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        enqueue_spirit_grass_gather(&mut app, None);
+
+        app.update();
+
+        assert_rejected_gather_has_no_side_effects(
+            &mut app,
+            player,
+            &initial_state,
+            &initial_cultivation,
+            zone_qi_before,
+            "name-only canonical herb without a real Plant",
+        );
+    }
+
+    #[test]
+    fn canonical_gather_without_session_store_is_fully_fail_closed() {
+        let mut app = setup_gather_action_test_app();
+        app.world_mut().remove_resource::<HarvestSessionStore>();
+        let initial_state = PlayerState {
+            karma: 0.11,
+            inventory_score: 0.22,
+        };
+        let initial_cultivation = Cultivation {
+            qi_current: 3.0,
+            qi_max: 10.0,
+            ..Cultivation::default()
+        };
+        let player = spawn_gather_action_test_player(
+            &mut app,
+            initial_state.clone(),
+            initial_cultivation.clone(),
+        );
+        let target = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            DEFAULT_SPAWN_ZONE_NAME,
+            [1.0, 66.0, 0.0],
+            false,
+            false,
+        );
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        enqueue_spirit_grass_gather(&mut app, Some(target));
+
+        app.update();
+
+        let player_ref = app.world().entity(player);
+        assert_eq!(player_ref.get::<PlayerState>(), Some(&initial_state));
+        assert_eq!(player_ref.get::<Cultivation>(), Some(&initial_cultivation));
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("fallback spawn zone exists")
+                .spirit_qi,
+            zone_qi_before
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot()
+            .is_empty());
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert!(narrations[0].text.contains("暂不可用"));
+        let plant = app.world().entity(target).get::<Plant>().unwrap();
+        assert!(!plant.harvested && !plant.trampled);
+    }
+
+    #[test]
+    fn explicit_gather_target_rejects_every_non_harvestable_shape() {
+        for (label, id, zone_name, position, harvested, trampled) in [
+            (
+                "entity without Plant",
+                None,
+                "spawn",
+                [1.0, 66.0, 0.0],
+                false,
+                false,
+            ),
+            (
+                "wrong plant kind",
+                Some(crate::botany::registry::BotanyPlantId::CiSheHao),
+                "spawn",
+                [1.0, 66.0, 0.0],
+                false,
+                false,
+            ),
+            (
+                "wrong zone",
+                Some(crate::botany::registry::BotanyPlantId::SpiritGrass),
+                "other",
+                [1.0, 66.0, 0.0],
+                false,
+                false,
+            ),
+            (
+                "harvested plant",
+                Some(crate::botany::registry::BotanyPlantId::SpiritGrass),
+                "spawn",
+                [1.0, 66.0, 0.0],
+                true,
+                false,
+            ),
+            (
+                "trampled plant",
+                Some(crate::botany::registry::BotanyPlantId::SpiritGrass),
+                "spawn",
+                [1.0, 66.0, 0.0],
+                false,
+                true,
+            ),
+            (
+                "plant beyond six blocks",
+                Some(crate::botany::registry::BotanyPlantId::SpiritGrass),
+                "spawn",
+                [6.0, 66.0, 0.01],
+                false,
+                false,
+            ),
+        ] {
+            let mut app = setup_gather_action_test_app();
+            let initial_state = PlayerState {
+                karma: 0.11,
+                inventory_score: 0.22,
+            };
+            let initial_cultivation = Cultivation {
+                qi_current: 3.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            };
+            let player = spawn_gather_action_test_player(
+                &mut app,
+                initial_state.clone(),
+                initial_cultivation.clone(),
+            );
+            let target = match id {
+                Some(id) => spawn_gather_action_test_plant(
+                    &mut app, id, zone_name, position, harvested, trampled,
+                ),
+                None => app.world_mut().spawn_empty().id(),
+            };
+            let zone_qi_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("fallback spawn zone exists")
+                .spirit_qi;
+            enqueue_spirit_grass_gather(&mut app, Some(target));
+
+            app.update();
+
+            assert_rejected_gather_has_no_side_effects(
+                &mut app,
+                player,
+                &initial_state,
+                &initial_cultivation,
+                zone_qi_before,
+                label,
+            );
+        }
+    }
+
+    #[test]
+    fn gather_reserved_by_another_player_emits_rejection_without_stealing_reservation() {
+        let mut app = setup_gather_action_test_app();
+        spawn_gather_action_test_player(&mut app, PlayerState::default(), Cultivation::default());
+        let target = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            DEFAULT_SPAWN_ZONE_NAME,
+            [1.0, 66.0, 0.0],
+            false,
+            false,
+        );
+        assert!(start_or_resume_harvest(
+            &mut app.world_mut().resource_mut::<HarvestSessionStore>(),
+            "Breeze",
+            Entity::from_raw(99),
+            Some(target),
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            BotanyHarvestMode::Manual,
+            [1.0, 66.0, 0.0],
+            0,
+        ));
+        enqueue_spirit_grass_gather(&mut app, Some(target));
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(store.session_for("offline:Azure").is_none());
+        assert_eq!(
+            store
+                .session_for("offline:Breeze")
+                .and_then(|session| session.target_entity),
+            Some(target),
+            "rejected gather must preserve the existing target owner"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert!(narrations[0].text.contains("正被他人占用"));
+    }
+
+    #[test]
+    fn explicit_gather_target_accepts_exact_six_block_boundary_without_awarding_on_start() {
+        let mut app = setup_gather_action_test_app();
+        let initial_state = PlayerState::default();
+        let initial_cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+        let player = spawn_gather_action_test_player(
+            &mut app,
+            initial_state.clone(),
+            initial_cultivation.clone(),
+        );
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        let plant = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            DEFAULT_SPAWN_ZONE_NAME,
+            [6.0, 66.0, 0.0],
+            false,
+            false,
+        );
+        enqueue_spirit_grass_gather(&mut app, Some(plant));
+
+        app.update();
+
+        let session = app
+            .world()
+            .resource::<HarvestSessionStore>()
+            .session_for("offline:Azure")
+            .expect("a valid explicit Plant exactly six blocks away must open a harvest session");
+        assert_eq!(session.target_entity, Some(plant));
+        assert_eq!(
+            session.target_plant,
+            crate::botany::registry::BotanyPlantId::SpiritGrass
+        );
+        assert!(
+            !app.world().entity(plant).get::<Plant>().unwrap().harvested,
+            "starting the delayed harvest session must not consume or grant the herb"
+        );
+        let player_ref = app.world().entity(player);
+        assert_eq!(
+            player_ref.get::<PlayerState>(),
+            Some(&initial_state),
+            "starting the delayed harvest session must not award progression"
+        );
+        assert_eq!(
+            player_ref.get::<Cultivation>(),
+            Some(&initial_cultivation),
+            "starting the delayed harvest session must not award qi"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("fallback spawn zone exists")
+                .spirit_qi,
+            zone_qi_before,
+            "starting the delayed harvest session must not debit zone qi"
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot()
+            .is_empty());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
+    }
+
+    #[test]
+    fn gather_action_binds_nearest_real_target_entity() {
+        let mut app = setup_gather_action_test_app();
+        spawn_gather_action_test_player(&mut app, PlayerState::default(), Cultivation::default());
+        let plant = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            DEFAULT_SPAWN_ZONE_NAME,
+            [1.0, 66.0, 0.0],
+            false,
+            false,
+        );
+        enqueue_spirit_grass_gather(&mut app, None);
+
+        app.update();
+
+        let session = app
+            .world()
+            .resource::<HarvestSessionStore>()
+            .session_for("offline:Azure")
+            .expect("a nearby matching Plant must open a harvest session");
+        assert_eq!(session.target_entity, Some(plant));
+        assert_eq!(
+            session.target_plant,
+            crate::botany::registry::BotanyPlantId::SpiritGrass
         );
     }
 

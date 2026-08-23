@@ -40,6 +40,142 @@ class Event:
         return f"Event({self.t:.3f}s {self.kind} {self.data})"
 
 
+def _skip_bytes(reader, count, *, field):
+    """跳过固定长度字段，并在截断包上亮出可定位的协议错误。"""
+    if count < 0:
+        raise ValueError(f"{field} length {count} must be non-negative")
+    remaining = len(reader.data) - reader.pos
+    if count > remaining:
+        raise ValueError(f"{field} length {count} exceeds remaining bytes {remaining}")
+    reader.pos += count
+
+
+def _skip_nbt_string(reader):
+    """跳过 NBT modified UTF-8 字符串；其长度是 u16-BE，不是协议 VarInt。"""
+    length = struct.unpack_from(">H", reader.data, reader.pos)[0]
+    reader.pos += 2
+    _skip_bytes(reader, length, field="NBT string")
+
+
+def _skip_nbt_value(reader, tag):
+    """按 NBT tag 类型跳过 value payload（tag/name 已由调用方消费）。"""
+    if tag == 0:  # TAG_End
+        return
+    if tag == 1:  # byte
+        reader.u8()
+    elif tag == 2:  # short
+        _skip_bytes(reader, 2, field="NBT short")
+    elif tag == 3:  # int
+        _skip_bytes(reader, 4, field="NBT int")
+    elif tag == 4:  # long
+        _skip_bytes(reader, 8, field="NBT long")
+    elif tag == 5:  # float
+        _skip_bytes(reader, 4, field="NBT float")
+    elif tag == 6:  # double
+        _skip_bytes(reader, 8, field="NBT double")
+    elif tag == 7:  # byte array
+        _skip_bytes(reader, reader.i32(), field="NBT byte array")
+    elif tag == 8:  # string
+        _skip_nbt_string(reader)
+    elif tag == 9:  # list：元素 tag 在前，然后 count 个元素
+        elem_tag = reader.u8()
+        count = reader.i32()
+        if count < 0:
+            raise ValueError(f"NBT list length {count} must be non-negative")
+        for _ in range(count):
+            _skip_nbt_value(reader, elem_tag)
+    elif tag == 10:  # compound：循环 (tag, name, value) 直到 TAG_End
+        while True:
+            inner = reader.u8()
+            if inner == 0:
+                return
+            _skip_nbt_string(reader)
+            _skip_nbt_value(reader, inner)
+    elif tag == 11:  # int array
+        _skip_bytes(reader, 4 * reader.i32(), field="NBT int array")
+    elif tag == 12:  # long array
+        _skip_bytes(reader, 8 * reader.i32(), field="NBT long array")
+    else:
+        raise ValueError(f"无法跳过未知 NBT tag {tag}")
+
+
+def _skip_nbt_root(reader, *, allow_null=False):
+    """跳过 Compound::encode 产生的 root tag、u16 名称和 compound payload。"""
+    root_tag = reader.u8()
+    if root_tag == 0 and allow_null:
+        return
+    if root_tag != 10:
+        raise ValueError(f"NBT root must be TAG_Compound (10), got {root_tag}")
+    _skip_nbt_string(reader)
+    _skip_nbt_value(reader, root_tag)
+
+
+def _skip_item_stack(reader):
+    if not reader.boolean():
+        return
+    reader.varint()  # item kind
+    reader.u8()  # count (i8 on the wire)
+    _skip_nbt_root(reader, allow_null=True)
+
+
+def _skip_metadata_value(reader, mtype):
+    """按 pinned Valence fork 的 tracked-data 类型表跳过条目值。
+
+    元数据条目 (index, type_id, value) 的 value 编码随 type_id 变化；跳错大小会让
+    后续条目错位、flags 与 0xFF 终止符都读不回来。类型编号权威是 pinned fork
+    `valence_entity/build.rs::Value::type_id()`，不能套用 vanilla wiki 表。"""
+    if mtype == 0:  # BYTE
+        reader.u8()
+    elif mtype == 1:  # INTEGER / VARINT
+        reader.varint()
+    elif mtype == 2:  # LONG
+        _skip_bytes(reader, 8, field="metadata long")
+    elif mtype == 3:  # FLOAT
+        _skip_bytes(reader, 4, field="metadata float")
+    elif mtype in (4, 5):  # STRING / TEXT
+        reader.string()
+    elif mtype == 6:  # OPTIONAL_TEXT
+        if reader.boolean():
+            reader.string()
+    elif mtype == 7:  # ITEM_STACK
+        _skip_item_stack(reader)
+    elif mtype == 8:  # BOOLEAN
+        reader.u8()
+    elif mtype == 9:  # ROTATION
+        _skip_bytes(reader, 12, field="metadata rotation")
+    elif mtype == 10:  # BLOCK_POS
+        _skip_bytes(reader, 8, field="metadata block position")
+    elif mtype == 11:  # OPTIONAL_BLOCK_POS
+        if reader.boolean():
+            _skip_bytes(reader, 8, field="metadata optional block position")
+    elif mtype == 12:  # FACING
+        reader.varint()
+    elif mtype == 13:  # OPTIONAL_UUID
+        if reader.boolean():
+            _skip_bytes(reader, 16, field="metadata optional UUID")
+    elif mtype in (14, 15):  # BLOCK_STATE / OPTIONAL_BLOCK_STATE
+        reader.varint()
+    elif mtype == 16:  # NBT_COMPOUND
+        _skip_nbt_root(reader)
+    elif mtype == 17:  # PARTICLE：fork 的编码不携 variant ID，无法推断 payload 长度
+        raise ValueError("metadata type 17 (PARTICLE) cannot be skipped safely")
+    elif mtype == 18:  # VILLAGER_DATA
+        reader.varint()
+        reader.varint()
+        reader.varint()
+    elif mtype in (19, 20, 21, 22, 24, 25):
+        # OPTIONAL_INT / ENTITY_POSE / CAT / FROG / PAINTING / SNIFFER
+        reader.varint()
+    elif mtype == 23:  # OPTIONAL_GLOBAL_POS：fork 当前以 unit `()` 编码（零字节）
+        return
+    elif mtype == 26:  # VECTOR3F
+        _skip_bytes(reader, 12, field="metadata vector3f")
+    elif mtype == 27:  # QUATERNIONF
+        _skip_bytes(reader, 16, field="metadata quaternionf")
+    else:
+        raise ValueError(f"未知 metadata type {mtype}")
+
+
 class Bot:
     """一条独立连接 = 一个玩家。用完必须 close()（或用 with 语句）。"""
 
@@ -333,6 +469,29 @@ class Bot:
                 self.entities.pop(eid, None)
                 self.player_entity_uuids.pop(eid, None)
             self._emit("entities_destroy", {"entity_ids": ids})
+        elif packet_id == mc.S2C_ENTITY_METADATA:
+            # EntityTrackerUpdateS2c：entity_id 0 = 本客户端自己（valence 预留 ID 0）。
+            # 条目序列 (index, type_id, value)…0xFF 终止；场景只消费 flags（index 0,
+            # BYTE, 位 5 = invisible），但其他条目可先于 flags 出现（同帧多个 tracked
+            # 字段变化时 valence 按字段声明序 append）——必须逐条解码/跳过直到 0xFF，
+            # flags 在任意位置都能被读到（review finding, run 31442491424：旧实现只读
+            # 首条目，flags 非首条目即静默丢失，invisible 状态切换读不回来）。
+            entity_id = reader.varint()
+            flags = None
+            while True:
+                index = reader.u8()
+                if index == 0xFF:
+                    break
+                mtype = reader.u8()
+                if index == 0 and mtype == 0:
+                    flags = struct.unpack_from(">b", reader.data, reader.pos)[0]
+                    reader.pos += 1
+                else:
+                    _skip_metadata_value(reader, mtype)
+            self._emit(
+                "entity_metadata",
+                {"entity_id": entity_id, "flags": flags},
+            )
         elif packet_id == mc.S2C_BLOCK_UPDATE:
             packed = struct.unpack_from(">Q", reader.data, reader.pos)[0]
             reader.pos += 8

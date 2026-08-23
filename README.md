@@ -66,8 +66,7 @@ Bong 是一个以「**末法时代**」为核心的 AI-Native 修仙沙盒：
 | `client/` | Java 17 · Fabric 1.20.1 · owo-lib | 微端：HUD、技能条、动画（PlayerAnimator）、粒子 VFX、交易/炼丹/炼器等全部 UI |
 | `agent/` | TypeScript · openai · ioredis | "天道" LLM Agent 层：三 Agent 并发推演 + Arbiter 仲裁 + WorldModel 持久化 |
 | `schema/`（agent/packages） | TypeBox | IPC schema 唯一真源，双端生成 + sample 对拍 |
-| `worldgen/` | Python | blueprint 驱动的 16 层地形生成流水线（LAYER_REGISTRY），导出 mmap-friendly raster 供运行时按需生成 chunk |
-| `library-web/` | Astro | 末法残土图书馆前端（静态站点） |
+| [BongWorldGen](https://github.com/Kizunad/BongWorldGen) | Python · NumPy | 独立的 seed 可复现地形生成器；导出 mmap-friendly raster 供运行时按需生成 chunk |
 | `scripts/` | bash / Python | dev harness：构建、e2e、bot 场景回归、视觉资产工具链 |
 
 ## 快速开始
@@ -83,8 +82,10 @@ scripts/build-token.sh gradle runClient
 cd agent/packages/tiandao && npm start
 cd agent/packages/tiandao && npm run start:mock     # 无 key 跑通全链路
 
-# 地形生成
-cd worldgen && python -m scripts.terrain_gen
+# 地形生成（独立仓库）
+cd ../BongWorldGen
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/bong-worldgen --width 256 --height 256 --seed 812731 --output generated/demo.npz
 
 # 一键开发重载（regen + validate + rebuild + restart）
 bash scripts/dev-reload.sh
@@ -103,8 +104,6 @@ bash scripts/smoke-test.sh
 | [`docs/finished_plans/`](docs/finished_plans/) | 已落地玩法 plan（100+ 份，含各系统接口面） |
 | [`docs/server-architecture.md`](docs/server-architecture.md) | 服务端架构设计 |
 | [`docs/player-animation-conventions.md`](docs/player-animation-conventions.md) | 动画约定（PlayerAnimator 四大坑） |
-
-<!-- BEGIN:PLANS_PROGRESS -->
 
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度

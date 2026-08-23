@@ -10,6 +10,7 @@ pub mod channeling;
 pub mod collision;
 pub mod constants;
 pub mod container;
+pub mod cost;
 pub mod distance;
 pub mod env;
 pub mod excretion;
@@ -38,6 +39,7 @@ pub use collision::{
     qi_woliu_vortex_field_strength_for_realm, reverse_clamp, CollisionOutcome, QI_ZHENMAI_BETA,
 };
 pub use container::{abrasion_loss, AbrasionDirection, AbrasionOutcome, AnqiContainerKind};
+pub use cost::proportional_qi_cost;
 pub use distance::qi_distance_atten;
 pub use env::{CarrierGrade, ContainerKind, EnvField, MediumKind};
 pub use excretion::{qi_excretion, qi_excretion_loss, regen_from_zone};

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import struct
@@ -41,6 +42,7 @@ S2C_PLAYER_REMOVE = 0x39
 S2C_PLAYER_LIST = 0x3A
 S2C_POS_LOOK = 0x3C
 S2C_ENTITIES_DESTROY = 0x3E
+S2C_ENTITY_METADATA = 0x52
 S2C_ENTITY_TELEPORT = 0x68
 S2C_RESPAWN = 0x41
 S2C_CHUNK_CENTER = 0x4E
@@ -287,3 +289,19 @@ def chat_text_to_plain(raw: str) -> str:
         return walk(json.loads(raw))
     except (json.JSONDecodeError, TypeError):
         return raw
+
+
+def offline_uuid(username: str) -> str:
+    """offline mode 玩家 UUID：valence `offline_uuid` = sha256(username) 前 16 字节。
+
+    服务器身份由用户名确定性导出，bot 可据此在 PlayerSpawnS2c 里精确辨认
+    另一名 bot（NPC 也有 spawn 包，不能靠位置猜）。
+    """
+    raw = hashlib.sha256(username.encode()).digest()[:16]
+    hexed = raw.hex()
+    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"
+
+
+def uuid_to_string(raw: bytes) -> str:
+    hexed = raw.hex()
+    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"

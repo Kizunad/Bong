@@ -9,7 +9,7 @@
 //!   * `cancel()` 提前打断，不结算
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::BlockPos;
+use valence::prelude::{BlockPos, Entity};
 
 use crate::alchemy::residue::PillResidueKind;
 use crate::botany::PlantId;
@@ -245,6 +245,7 @@ impl TillSession {
 #[derive(Debug, Clone)]
 pub struct RenewSession {
     pub pos: BlockPos,
+    pub plot_entity: Entity,
     pub hoe: HoeKind,
     pub hoe_instance_id: u64,
     pub elapsed_ticks: u32,
@@ -252,9 +253,10 @@ pub struct RenewSession {
 }
 
 impl RenewSession {
-    pub fn new(pos: BlockPos, hoe: HoeKind, hoe_instance_id: u64) -> Self {
+    pub fn new(pos: BlockPos, plot_entity: Entity, hoe: HoeKind, hoe_instance_id: u64) -> Self {
         Self {
             pos,
+            plot_entity,
             hoe,
             hoe_instance_id,
             elapsed_ticks: 0,
@@ -463,7 +465,7 @@ mod tests {
 
     #[test]
     fn renew_finishes_at_100_ticks() {
-        let mut s = RenewSession::new(pos(), HoeKind::Xuantie, 1);
+        let mut s = RenewSession::new(pos(), Entity::PLACEHOLDER, HoeKind::Xuantie, 1);
         for _ in 0..RENEW_TICKS - 1 {
             s.tick();
             assert!(!s.is_finished());
@@ -474,7 +476,7 @@ mod tests {
 
     #[test]
     fn renew_cancel_blocks_finish() {
-        let mut s = RenewSession::new(pos(), HoeKind::Iron, 1);
+        let mut s = RenewSession::new(pos(), Entity::PLACEHOLDER, HoeKind::Iron, 1);
         s.cancel();
         for _ in 0..200 {
             s.tick();

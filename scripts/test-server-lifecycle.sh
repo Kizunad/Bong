@@ -734,7 +734,8 @@ wait "$tree_root_pid" 2>/dev/null || true
 runtime_root="$TEST_ROOT/runtime"
 mkdir -p "$runtime_root"
 chmod 700 "$runtime_root"
-XDG_RUNTIME_DIR="$runtime_root" default_runtime="$(bong_server_runtime_dir)" \
+export XDG_RUNTIME_DIR="$runtime_root"
+default_runtime="$(bong_server_runtime_dir)" \
     || fail "secure XDG runtime directory must create a private bong leaf"
 [ "$(stat -Lc '%a' "$default_runtime")" = 700 ] \
     || fail "default runtime leaf must be mode 0700"
@@ -2347,9 +2348,9 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
-if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST=1 \
-        "$ROOT/scripts/test-tmux-shutdown-order.sh"
+if [ "${GITHUB_ACTIONS:-}" = true ] \
+    && [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ]; then
+    "$ROOT/scripts/test-tmux-shutdown-order.sh"
 else
     printf 'SKIP: tmux shutdown-order signal test is quarantined to opted-in GitHub Actions e2e\n'
 fi
@@ -2360,8 +2361,18 @@ supervisor_fixture_marker="$supervisor_fixture_dir/cargo.marker"
 supervisor_fixture_term_marker="$supervisor_fixture_dir/term.marker"
 supervisor_fixture_descendant="$supervisor_fixture_dir/descendant.pid"
 supervisor_fixture_cargo="$supervisor_fixture_bin/cargo"
-mkdir -p "$supervisor_fixture_bin" "$supervisor_fixture_dir/server"
+supervisor_fixture_build_token="$supervisor_fixture_dir/build-token.sh"
+supervisor_fixture_build_token_args="$supervisor_fixture_dir/build-token.args"
+supervisor_fixture_target="$supervisor_fixture_dir/target"
+mkdir -p "$supervisor_fixture_bin" "$supervisor_fixture_dir/server" \
+    "$supervisor_fixture_target"
 cat > "$supervisor_fixture_cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 2 ] && [ "$1" = build ] && [ "$2" = --release ] || exit 43
+: "${CARGO_TARGET_DIR:?}"
+mkdir -p "$CARGO_TARGET_DIR/release"
+cat > "$CARGO_TARGET_DIR/release/bong-server" <<'SERVER'
 #!/usr/bin/env bash
 set -euo pipefail
 : "${SUPERVISOR_FIXTURE_MARKER:?}"
@@ -2379,18 +2390,40 @@ trap 'kill "$(cat "$SUPERVISOR_FIXTURE_DESCENDANT")" 2>/dev/null || true; exit 0
 printf '%s\n' "$!" > "$SUPERVISOR_FIXTURE_DESCENDANT"
 printf 'started\n' > "$SUPERVISOR_FIXTURE_MARKER"
 while :; do sleep 1; done
+SERVER
+chmod +x "$CARGO_TARGET_DIR/release/bong-server"
 SCRIPT
 chmod +x "$supervisor_fixture_cargo"
+cat > "$supervisor_fixture_build_token" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS:?}"
+printf '%s\n' "$@" > "$SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS"
+[ "$#" -ge 1 ] && [ "$1" = cargo ] || exit 42
+shift
+exec cargo "$@"
+SCRIPT
+chmod +x "$supervisor_fixture_build_token"
+
 start_supervisor_fixture() {
     local control_fd ready_fd ready_line
 
+    rm -f -- "$supervisor_fixture_build_token_args"
+    env \
+        CARGO_TARGET_DIR="$supervisor_fixture_target" \
+        PATH="$supervisor_fixture_bin:$PATH" \
+        SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$supervisor_fixture_build_token_args" \
+        "$supervisor_fixture_build_token" cargo build --release </dev/null \
+        || fail "startup supervisor fixture release build failed"
+    [ -x "$supervisor_fixture_target/release/bong-server" ] \
+        || fail "startup supervisor fixture did not build an executable server"
     coproc LIFECYCLE_SUPERVISOR_FIXTURE {
         exec env \
-            PATH="$supervisor_fixture_bin:$PATH" \
             SUPERVISOR_FIXTURE_MARKER="$supervisor_fixture_marker" \
             SUPERVISOR_FIXTURE_TERM_MARKER="$supervisor_fixture_term_marker" \
             SUPERVISOR_FIXTURE_DESCENDANT="$supervisor_fixture_descendant" \
             python3 "$supervisor" "$supervisor_fixture_dir/server" \
+                "$supervisor_fixture_target/release/bong-server" \
             2>"$supervisor_fixture_dir/supervisor.log"
     }
     SUPERVISOR_FIXTURE_PID="$LIFECYCLE_SUPERVISOR_FIXTURE_PID"
@@ -2404,11 +2437,17 @@ start_supervisor_fixture() {
         || fail "startup supervisor fixture published malformed READY"
     SUPERVISOR_FIXTURE_OWNER_PID="${ready_line#READY pid=}"
     for _ in $(seq 1 100); do
-        [ -s "$supervisor_fixture_descendant" ] && break
+        [ -s "$supervisor_fixture_descendant" ] \
+            && [ -s "$supervisor_fixture_build_token_args" ] \
+            && break
         sleep 0.01
     done
     [ -s "$supervisor_fixture_descendant" ] \
         || fail "startup supervisor fixture did not publish its descendant"
+    [ -s "$supervisor_fixture_build_token_args" ] \
+        || fail "startup supervisor build-token fixture did not publish argv"
+    [ "$(tr '\n' ' ' < "$supervisor_fixture_build_token_args")" = "cargo build --release " ] \
+        || fail "startup fixture must route exact cargo build --release argv through build-token"
 }
 
 read_supervisor_ack() {
@@ -2451,7 +2490,7 @@ assert_supervisor_rollback "$rollback_owner" "$rollback_pgid" "$rollback_descend
 [ ! -f "$supervisor_fixture_term_marker" ] \
     || fail "TERM-ignoring rollback descendant unexpectedly handled TERM"
 [ "$(cat "$supervisor_fixture_marker")" = started ] \
-    || fail "cargo child inherited and consumed the supervisor control pipe"
+    || fail "server artifact inherited and consumed the supervisor control pipe"
 
 rm -f -- "$supervisor_fixture_marker" "$supervisor_fixture_term_marker" \
     "$supervisor_fixture_descendant"
@@ -2480,14 +2519,14 @@ fi
     || fail "committed startup fixture must report forced cleanup when its TERM-ignoring descendant is killed"
 unset -f bong_server_port_is_open
 [ "$(cat "$supervisor_fixture_marker")" = started ] \
-    || fail "committed cargo child inherited and consumed the supervisor control pipe"
+    || fail "committed server artifact inherited and consumed the supervisor control pipe"
 
 # The executable supervisor protocol has one reader and exact acknowledgement;
 # static pins also prevent future e2e changes from publishing pre-ACK authority.
 grep -Fq 'stdin=subprocess.DEVNULL' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
-    || fail "cargo must retain /dev/null stdin before and after commit"
+    || fail "server artifact must retain /dev/null stdin before and after commit"
 grep -Fq 'close_fds=True' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
-    || fail "cargo must not inherit protocol descriptors"
+    || fail "server artifact must not inherit protocol descriptors"
 grep -Fq 'sys.stdout.buffer.write(b"COMMITTED\n")' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
     || fail "supervisor must emit exact COMMITTED acknowledgement"
 
@@ -2550,6 +2589,15 @@ unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_rollback_pinned
 # preserving 1/2; stop completes non-server teardown and returns status 3 so an
 # operator can observe that AppExit/Last was not proven.
 source "$ROOT/scripts/dev-reload.sh"
+
+manifest_path_fixture="$TEST_ROOT/raster-path"
+mkdir -p "$manifest_path_fixture"
+touch "$manifest_path_fixture/manifest.json"
+absolute_manifest_path="$(realpath -- "$manifest_path_fixture/manifest.json")"
+resolved_manifest_path="$(resolve_raster_manifest_path "$absolute_manifest_path")"
+[ "$resolved_manifest_path" = "$absolute_manifest_path" ] \
+    || fail "dev-reload must preserve an absolute raster manifest path"
+
 production_managed_status=0
 bong_server_stop_managed() { return "$production_managed_status"; }
 for production_managed_status in 0 "$BONG_SERVER_STOP_FORCED"; do
