@@ -7,14 +7,15 @@
 //!   - BreakthroughRequest → emit `BreakthroughRequest` Bevy event
 //!   - ForgeRequest → emit `ForgeRequest` Bevy event
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter, Events,
-    Query, Res, ResMut, Resource, UniqueId, Username, With,
+    bevy_ecs, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager, EventReader,
+    EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource, UniqueId,
+    Username, With,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -39,6 +40,8 @@ use crate::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
 use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
+use crate::craft::workbench::workbench_block_pos;
+use crate::craft::WorkbenchBlock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::{
     recover_current_qi, Cultivation, MeridianChannelId, MeridianId, MeridianSystem,
@@ -63,6 +66,7 @@ use crate::cultivation::technique_scroll::{
 };
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::cultivation::void::actions::VoidActionIntent;
+use crate::fauna::dying_elder::DyingElderState;
 use crate::forge::blueprint::{BlueprintRegistry, TemperBeat};
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
@@ -101,6 +105,8 @@ use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 use crate::network::forge_snapshot_emit;
+use crate::network::gate::budget::BudgetStore;
+use crate::network::gate::{GateContext, GateDenialReason, GateSpec, NoGateReason, RequestGate};
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
@@ -146,6 +152,7 @@ use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
+use crate::schema::common::EventKind;
 use crate::schema::inventory::{
     ContainerIdV1, EquipSlotV1, EquipStateV1, InventoryEventV1, InventoryLocationV1,
 };
@@ -169,7 +176,7 @@ use crate::social::events::{
     SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::world::block_place::BlockPlaceRequest;
-use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
@@ -283,6 +290,91 @@ pub struct DroppedLootRequestParams<'w, 's> {
 #[derive(SystemParam)]
 pub struct LingtianRequestParams<'w> {
     pub pending: ResMut<'w, crate::lingtian::requests::PendingLingtianRequests>,
+}
+
+/// Runtime owner of the C2S ingress budget.  The pure token and aggregation
+/// accounting remains in [`BudgetStore`]; this wrapper only binds it to the
+/// lifetime of a connected ECS client and forgets state when a role generation
+/// changes.
+#[derive(Debug, Default, Resource)]
+pub struct ClientRequestBudget {
+    pub store: BudgetStore<Entity>,
+    character_ids: HashMap<Entity, String>,
+}
+
+impl ClientRequestBudget {
+    fn prepare_client(&mut self, client: Entity, character_id: Option<&str>) {
+        let current = character_id.unwrap_or("<missing>");
+        if self
+            .character_ids
+            .get(&client)
+            .is_some_and(|previous| previous != current)
+        {
+            self.store.cleanup(&client);
+        }
+        self.character_ids.insert(client, current.to_owned());
+    }
+
+    fn cleanup_client(&mut self, client: Entity) {
+        self.store.cleanup(&client);
+        self.character_ids.remove(&client);
+    }
+
+    fn retain_active<I>(&mut self, active_clients: I)
+    where
+        I: IntoIterator<Item = (Entity, Option<String>)>,
+    {
+        let active: Vec<_> = active_clients.into_iter().collect();
+        let active_entities: HashSet<_> = active.iter().map(|(entity, _)| *entity).collect();
+        self.store.retain_active(active_entities);
+        self.character_ids.retain(|entity, _| {
+            active
+                .iter()
+                .any(|(active_entity, _)| active_entity == entity)
+        });
+        for (entity, character_id) in active {
+            self.prepare_client(entity, character_id.as_deref());
+        }
+    }
+}
+
+/// Drop ingress state before disconnected clients are despawned.  The same
+/// pass also notices a changed `Lifecycle.character_id` and starts the new
+/// role generation with a fresh bucket.
+pub fn cleanup_client_request_budget(
+    mut budget: ResMut<ClientRequestBudget>,
+    mut disconnected: RemovedComponents<Client>,
+    clients: Query<(Entity, Option<&Lifecycle>), With<Client>>,
+) {
+    for client in disconnected.read() {
+        budget.cleanup_client(client);
+    }
+    budget.retain_active(clients.iter().map(|(entity, lifecycle)| {
+        (
+            entity,
+            lifecycle.map(|lifecycle| lifecycle.character_id.clone()),
+        )
+    }));
+}
+
+type ClientRequestGateTarget<'a> = (
+    &'a Position,
+    Option<&'a CurrentDimension>,
+    Option<&'a EntityLayerId>,
+    Option<&'a WorkbenchBlock>,
+    Option<&'a DyingElderState>,
+);
+
+/// Authority facts needed by the live gate adapters.  This query is
+/// deliberately read-only; the external-container mutation query remains in
+/// `CombatRequestParams` and is only borrowed after this barrier succeeds.
+#[derive(SystemParam)]
+pub struct ClientRequestIngressParams<'w, 's> {
+    pub combat_clock: Res<'w, CombatClock>,
+    pub budget: Option<ResMut<'w, ClientRequestBudget>>,
+    pub lifecycles: Query<'w, 's, Option<&'static Lifecycle>>,
+    pub gate_targets: Query<'w, 's, ClientRequestGateTarget<'static>>,
+    pub dimension_layers: Option<Res<'w, DimensionLayers>>,
 }
 
 /// 合并 alchemy 相关 Resource/Query，避开 `handle_client_request_payloads`
@@ -515,11 +607,312 @@ fn meridian_label(id: &MeridianChannelId) -> &'static str {
     }
 }
 
+fn live_gate_request_kind(request: &ClientRequestV1) -> Option<&'static str> {
+    match request {
+        ClientRequestV1::GiveDanToElder { .. } => Some("give_dan_to_elder"),
+        ClientRequestV1::LingtianStartTill { .. } => Some("lingtian_start_till"),
+        ClientRequestV1::CraftStart { .. } => Some("craft_start"),
+        ClientRequestV1::WorkbenchOpen { .. } => Some("workbench_open"),
+        ClientRequestV1::ExternalContainerMove { .. } => Some("external_container_move"),
+        _ => None,
+    }
+}
+
+fn entity_gate_authority(entity: Entity) -> String {
+    format!("entity:{}", entity.to_bits())
+}
+
+fn gate_position(position: &Position) -> [f64; 3] {
+    let position = position.get();
+    [position.x, position.y, position.z]
+}
+
+fn dimension_for_target_layer(
+    current: Option<&CurrentDimension>,
+    layer: Option<&EntityLayerId>,
+    dimension_layers: Option<&DimensionLayers>,
+) -> Option<DimensionKind> {
+    current.map(|dimension| dimension.0).or_else(|| {
+        let layers = dimension_layers?;
+        let layer = layer?.0;
+        if layer == layers.overworld {
+            Some(DimensionKind::Overworld)
+        } else if layer == layers.tsy {
+            Some(DimensionKind::Tsy)
+        } else {
+            None
+        }
+    })
+}
+
+fn requester_gate_context(
+    client: Entity,
+    ingress: &ClientRequestIngressParams<'_, '_>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) -> Result<GateContext, GateDenialReason> {
+    let lifecycle = ingress
+        .lifecycles
+        .get(client)
+        .ok()
+        .flatten()
+        .ok_or(GateDenialReason::MissingAuthorityContext)?;
+    if lifecycle.state != LifecycleState::Alive {
+        return Err(GateDenialReason::InvalidState);
+    }
+    if clients.get_mut(client).is_err() {
+        return Err(GateDenialReason::MissingAuthorityContext);
+    }
+
+    let Ok((position, dimension, _, _, _)) = ingress.gate_targets.get(client) else {
+        return Err(GateDenialReason::MissingAuthorityContext);
+    };
+    let dimension = dimension
+        .map(|dimension| dimension.0)
+        .ok_or(GateDenialReason::MissingAuthorityContext)?;
+
+    Ok(GateContext::new(
+        Some(gate_position(position)),
+        Some(dimension),
+        Some(entity_gate_authority(client)),
+    ))
+}
+
+fn live_gate_spec(request: &ClientRequestV1) -> Result<GateSpec, NoGateReason> {
+    match request.gate_spec() {
+        RequestGate::Spec(spec) => Ok(spec),
+        RequestGate::NoGate(reason) => Err(reason),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_live_gate(
+    request: &ClientRequestV1,
+    client: Entity,
+    ingress: &ClientRequestIngressParams<'_, '_>,
+    dispatch: &ClientRequestDispatchParams<'_>,
+    combat_params: &CombatRequestParams<'_, '_>,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) -> Result<(), GateDenialReason> {
+    let spec = live_gate_spec(request)?;
+    let requester = requester_gate_context(client, ingress, clients)?;
+
+    match request {
+        ClientRequestV1::CraftStart { .. } => {
+            spec.check(&requester)?;
+            if inventories.get_mut(client).is_err() {
+                return Err(GateDenialReason::InvalidState);
+            }
+        }
+        ClientRequestV1::LingtianStartTill { x, y, z, .. } => {
+            let target = [
+                f64::from(*x) + 0.5,
+                f64::from(*y) + 0.5,
+                f64::from(*z) + 0.5,
+            ];
+            let context = requester.with_target(Some(target), Some(DimensionKind::Overworld), None);
+            spec.check(&context)?;
+        }
+        ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
+            let entity_manager = combat_params
+                .entity_manager
+                .as_deref()
+                .ok_or(GateDenialReason::MissingAuthorityContext)?;
+            let target = entity_manager
+                .get_by_id(*entity_id)
+                .ok_or(GateDenialReason::TargetNotFound)?;
+            let (position, current_dimension, layer, workbench, _) = ingress
+                .gate_targets
+                .get(target)
+                .map_err(|_| GateDenialReason::TargetNotFound)?;
+            let target_dimension = dimension_for_target_layer(
+                current_dimension,
+                layer,
+                ingress.dimension_layers.as_deref(),
+            )
+            .ok_or(GateDenialReason::TargetNotFound)?;
+            let block_position = workbench_block_pos(position);
+            let target_position = [
+                f64::from(block_position[0]),
+                f64::from(block_position[1]),
+                f64::from(block_position[2]),
+            ];
+            let context =
+                requester.with_target(Some(target_position), Some(target_dimension), None);
+            spec.check(&context)?;
+            if workbench.is_none() {
+                return Err(GateDenialReason::InvalidState);
+            }
+        }
+        ClientRequestV1::GiveDanToElder {
+            elder_entity_id, ..
+        } => {
+            let entity_manager = combat_params
+                .entity_manager
+                .as_deref()
+                .ok_or(GateDenialReason::MissingAuthorityContext)?;
+            let target = entity_manager
+                .get_by_id(*elder_entity_id)
+                .ok_or(GateDenialReason::TargetNotFound)?;
+            let (position, current_dimension, layer, _, elder_state) = ingress
+                .gate_targets
+                .get(target)
+                .map_err(|_| GateDenialReason::TargetNotFound)?;
+            let target_dimension = dimension_for_target_layer(
+                current_dimension,
+                layer,
+                ingress.dimension_layers.as_deref(),
+            )
+            .ok_or(GateDenialReason::TargetNotFound)?;
+            let context =
+                requester.with_target(Some(gate_position(position)), Some(target_dimension), None);
+            spec.check(&context)?;
+            let elder_state = elder_state.ok_or(GateDenialReason::InvalidState)?;
+            match *elder_state {
+                DyingElderState::Plea => {}
+                DyingElderState::Recovering { dan_received }
+                    if dan_received < crate::fauna::dying_elder::DYING_ELDER_DAN_THRESHOLD => {}
+                _ => return Err(GateDenialReason::InvalidState),
+            }
+        }
+        ClientRequestV1::ExternalContainerMove { session_id, .. } => {
+            let ext_registry = dispatch
+                .ext_container_registry
+                .as_deref()
+                .ok_or(GateDenialReason::MissingAuthorityContext)?;
+            let target = *ext_registry
+                .sessions
+                .get(session_id)
+                .ok_or(GateDenialReason::TargetNotFound)?;
+            let (opened_by, is_supply_coffin, timeout_wall_secs) = {
+                let external = combat_params
+                    .ext_containers
+                    .get(target)
+                    .map_err(|_| GateDenialReason::TargetNotFound)?;
+                (
+                    external.opened_by,
+                    matches!(
+                        &external.source_kind,
+                        crate::inventory::external_container::ExternalContainerKind::SupplyCoffin { .. }
+                    ),
+                    external.timeout_wall_secs,
+                )
+            };
+            let active_supply_coffin = dispatch
+                .supply_coffin_registry
+                .as_deref()
+                .and_then(|registry| registry.active.get(&target));
+            let ecs_facts = ingress.gate_targets.get(target).ok();
+            let target_position = ecs_facts
+                .as_ref()
+                .map(|(position, _, _, _, _)| gate_position(position))
+                .or_else(|| {
+                    if !is_supply_coffin {
+                        return None;
+                    }
+                    let position = active_supply_coffin?.pos;
+                    Some([position.x, position.y, position.z])
+                })
+                .ok_or(GateDenialReason::TargetNotFound)?;
+            let target_dimension = ecs_facts
+                .as_ref()
+                .and_then(|(_, current_dimension, layer, _, _)| {
+                    dimension_for_target_layer(
+                        *current_dimension,
+                        *layer,
+                        ingress.dimension_layers.as_deref(),
+                    )
+                })
+                .or_else(|| {
+                    if !is_supply_coffin {
+                        return None;
+                    }
+                    Some(active_supply_coffin?.dimension)
+                })
+                .ok_or(GateDenialReason::TargetNotFound)?;
+            let context = requester.with_target(
+                Some(target_position),
+                Some(target_dimension),
+                opened_by.map(entity_gate_authority),
+            );
+            spec.check(&context)?;
+            if opened_by.is_none() {
+                return Err(GateDenialReason::NotOwner);
+            }
+            if crate::supply_coffin::current_wall_clock_secs() >= timeout_wall_secs {
+                return Err(GateDenialReason::Expired);
+            }
+        }
+        _ => return Err(GateDenialReason::InvalidState),
+    }
+
+    Ok(())
+}
+
+fn gate_feedback_message(reason: GateDenialReason) -> &'static str {
+    match reason {
+        GateDenialReason::TargetNotFound
+        | GateDenialReason::NotVisible
+        | GateDenialReason::WrongDimension
+        | GateDenialReason::OutOfReach
+        | GateDenialReason::NotOwner => "目标不可用",
+        _ => "当前状态不可用",
+    }
+}
+
+fn report_live_gate_denial(
+    client: Entity,
+    tick: u64,
+    request_kind: &'static str,
+    reason: GateDenialReason,
+    budget: Option<&mut ClientRequestBudget>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    let Some(budget) = budget else {
+        return;
+    };
+    let feedback = budget
+        .store
+        .admit_feedback(client, tick, request_kind, reason);
+    let log = budget.store.admit_log(client, tick, request_kind, reason);
+
+    if log.emit {
+        tracing::warn!(
+            target: "bong::network::c2s_gate",
+            request_kind,
+            reason = ?reason,
+            suppressed = log.suppressed_count,
+            "live C2S request rejected"
+        );
+    }
+    if !feedback.emit {
+        return;
+    }
+
+    let payload = ServerDataV1::new(ServerDataPayloadV1::EventAlert {
+        event: EventKind::Generic,
+        message: gate_feedback_message(reason).to_owned(),
+        zone: None,
+        duration_ticks: Some(70),
+    });
+    let Ok(bytes) = serialize_server_data_payload(&payload) else {
+        tracing::warn!(
+            target: "bong::network::c2s_gate",
+            request_kind,
+            "live C2S rejection feedback serialization failed"
+        );
+        return;
+    };
+    if let Ok((_username, mut client)) = clients.get_mut(client) {
+        send_server_data_payload(&mut client, bytes.as_slice());
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
     mut dispatch: ClientRequestDispatchParams,
-    combat_clock: Res<CombatClock>,
+    mut ingress: ClientRequestIngressParams,
     mut commands: Commands,
     mut clients: Query<(&Username, &mut Client)>,
     persistence: Option<Res<PlayerStatePersistence>>,
@@ -534,9 +927,48 @@ pub fn handle_client_request_payloads(
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
+    let combat_clock = &ingress.combat_clock;
     let mut pending_forge_steps: HashMap<(u64, ForgeSessionId), ForgeStep> = HashMap::new();
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
+            continue;
+        }
+
+        let character_id = ingress
+            .lifecycles
+            .get(ev.client)
+            .ok()
+            .flatten()
+            .map(|lifecycle| lifecycle.character_id.as_str());
+        let ingress_admitted = if let Some(budget) = ingress.budget.as_deref_mut() {
+            budget.prepare_client(ev.client, character_id);
+            budget
+                .store
+                .admit_ingress(ev.client, ingress.combat_clock.tick)
+                .admitted
+        } else {
+            #[cfg(not(test))]
+            {
+                tracing::error!(
+                    target: "bong::network::c2s_gate",
+                    "ClientRequestBudget resource is missing; rejecting C2S ingress"
+                );
+                false
+            }
+            #[cfg(test)]
+            {
+                true
+            }
+        };
+        if !ingress_admitted {
+            report_live_gate_denial(
+                ev.client,
+                ingress.combat_clock.tick,
+                "ingress",
+                GateDenialReason::RateLimited,
+                ingress.budget.as_deref_mut(),
+                &mut clients,
+            );
             continue;
         }
 
@@ -692,6 +1124,28 @@ pub fn handle_client_request_payloads(
                 ev.data.len()
             );
             continue;
+        }
+
+        if let Some(request_kind) = live_gate_request_kind(&request) {
+            if let Err(reason) = evaluate_live_gate(
+                &request,
+                ev.client,
+                &ingress,
+                &dispatch,
+                &combat_params,
+                &mut inventories,
+                &mut clients,
+            ) {
+                report_live_gate_denial(
+                    ev.client,
+                    ingress.combat_clock.tick,
+                    request_kind,
+                    reason,
+                    ingress.budget.as_deref_mut(),
+                    &mut clients,
+                );
+                continue;
+            }
         }
 
         match request {
@@ -936,7 +1390,7 @@ pub fn handle_client_request_payloads(
                     &pill_item_id,
                     None,
                     &mut commands,
-                    &combat_clock,
+                    combat_clock,
                     &mut inventories,
                     &mut clients,
                     &player_states,
@@ -2104,7 +2558,7 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     target,
                     &mut commands,
-                    &combat_clock,
+                    combat_clock,
                     &mut inventories,
                     &mut clients,
                     &player_states,
@@ -2254,7 +2708,7 @@ pub fn handle_client_request_payloads(
                 handle_use_quick_slot(
                     ev.client,
                     slot,
-                    &combat_clock,
+                    combat_clock,
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
@@ -2281,7 +2735,7 @@ pub fn handle_client_request_payloads(
                     (
                         &combat_params.item_registry,
                         persistence.as_deref(),
-                        &combat_clock,
+                        combat_clock,
                     ),
                 );
             }
@@ -2290,7 +2744,7 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     slot,
                     target,
-                    &combat_clock,
+                    combat_clock,
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
@@ -4649,6 +5103,7 @@ mod tests {
                 empty_inventory(),
                 Cultivation::default(),
                 PlayerState::default(),
+                Lifecycle::default(),
             ))
             .id();
         app.world_mut()
@@ -4667,25 +5122,29 @@ mod tests {
         };
         let coffin = app
             .world_mut()
-            .spawn(ExternalContainer {
-                session_id: SESSION_ID,
-                container: ContainerState {
-                    id: ExternalContainer::container_id(SESSION_ID),
-                    name: "external_test".to_string(),
-                    rows: 3,
-                    cols: 4,
-                    items: vec![PlacedItemState {
-                        row: 0,
-                        col: 0,
-                        instance: inventory_test_item(INSTANCE_ID, "spiritual_ore", 1),
-                    }],
-                    owner_instance_id: None,
-                    quick_access: false,
+            .spawn((
+                ExternalContainer {
+                    session_id: SESSION_ID,
+                    container: ContainerState {
+                        id: ExternalContainer::container_id(SESSION_ID),
+                        name: "external_test".to_string(),
+                        rows: 3,
+                        cols: 4,
+                        items: vec![PlacedItemState {
+                            row: 0,
+                            col: 0,
+                            instance: inventory_test_item(INSTANCE_ID, "spiritual_ore", 1),
+                        }],
+                        owner_instance_id: None,
+                        quick_access: false,
+                    },
+                    opened_by: Some(owner),
+                    timeout_wall_secs: u64::MAX,
+                    source_kind,
                 },
-                opened_by: Some(owner),
-                timeout_wall_secs: u64::MAX,
-                source_kind,
-            })
+                Position::new(COFFIN_POS),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
             .id();
 
         let mut ext_registry = ExternalContainerRegistry {
@@ -4801,12 +5260,14 @@ mod tests {
             "real C2S move must be rejected while authoritative supply-coffin source is still active"
         );
         assert!(
-            payload_types.iter().any(|ty| ty == "loot_container_update"),
-            "authorized owner rejected for stale spatial authority must receive external-container resync; payloads={payload_types:?}"
+            payload_types.iter().any(|ty| ty == "event_alert"),
+            "live gate rejection must use the bounded feedback path; payloads={payload_types:?}"
         );
         assert!(
-            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
-            "authorized owner rejected for stale spatial authority must receive inventory resync; payloads={payload_types:?}"
+            payload_types.iter().all(|ty| {
+                ty != "loot_container_update" && ty != "inventory_snapshot"
+            }),
+            "a gate rejection must not enter the external-container handler; payloads={payload_types:?}"
         );
     }
 
@@ -4846,12 +5307,8 @@ mod tests {
 
             assert_external_move_rejected_without_mutation(&app, player, coffin);
             assert!(
-                payload_types.iter().any(|ty| ty == "loot_container_update"),
-                "{label} owner rejection must push authoritative external-container state; payloads={payload_types:?}"
-            );
-            assert!(
-                payload_types.iter().any(|ty| ty == "inventory_snapshot"),
-                "{label} owner rejection must push authoritative inventory state; payloads={payload_types:?}"
+                payload_types.iter().any(|ty| ty == "event_alert"),
+                "{label} live gate rejection must emit bounded feedback; payloads={payload_types:?}"
             );
         }
     }
@@ -4903,12 +5360,14 @@ mod tests {
 
         assert_external_move_rejected_without_mutation(&app, player, coffin);
         assert!(
-            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
-            "non-owner rejection must resync only requester-owned inventory state; payloads={payload_types:?}"
+            payload_types.iter().any(|ty| ty == "event_alert"),
+            "non-owner live gate rejection must emit bounded feedback; payloads={payload_types:?}"
         );
         assert!(
-            payload_types.iter().all(|ty| ty != "loot_container_update"),
-            "non-owner rejection must not disclose external-container contents; payloads={payload_types:?}"
+            payload_types.iter().all(|ty| {
+                ty != "loot_container_update" && ty != "inventory_snapshot"
+            }),
+            "non-owner rejection must not enter the external-container handler; payloads={payload_types:?}"
         );
     }
 
@@ -4927,8 +5386,8 @@ mod tests {
 
         assert_external_move_rejected_without_mutation(&app, player, coffin);
         assert!(
-            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
-            "unknown/stale session must resync requester inventory; payloads={payload_types:?}"
+            payload_types.iter().any(|ty| ty == "event_alert"),
+            "unknown/stale session must use bounded gate feedback; payloads={payload_types:?}"
         );
     }
 
@@ -5070,28 +5529,37 @@ mod tests {
                 inventory,
                 Cultivation::default(),
                 PlayerState::default(),
+                Lifecycle::default(),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(DVec3::ZERO));
         let coffin = app
             .world_mut()
-            .spawn(ExternalContainer {
-                session_id: SESSION_ID,
-                container: ContainerState {
-                    id: ExternalContainer::container_id(SESSION_ID),
-                    name: "external_test".to_string(),
-                    rows: 3,
-                    cols: 4,
-                    items: Vec::new(),
-                    owner_instance_id: None,
-                    quick_access: false,
-                },
-                opened_by: Some(player),
-                timeout_wall_secs: u64::MAX,
-                source_kind:
-                    crate::inventory::external_container::ExternalContainerKind::StorageCrate {
-                        is_herb: false,
+            .spawn((
+                ExternalContainer {
+                    session_id: SESSION_ID,
+                    container: ContainerState {
+                        id: ExternalContainer::container_id(SESSION_ID),
+                        name: "external_test".to_string(),
+                        rows: 3,
+                        cols: 4,
+                        items: Vec::new(),
+                        owner_instance_id: None,
+                        quick_access: false,
                     },
-            })
+                    opened_by: Some(player),
+                    timeout_wall_secs: u64::MAX,
+                    source_kind:
+                        crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                            is_herb: false,
+                        },
+                },
+                Position::new(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
             .id();
         app.insert_resource(ExternalContainerRegistry {
             next_session_id: SESSION_ID + 1,
@@ -5115,10 +5583,10 @@ mod tests {
     }
 
     #[test]
-    fn non_supply_external_container_move_keeps_existing_contract_across_dimensions() {
+    fn non_supply_external_container_move_keeps_existing_contract_after_live_gate() {
         let (app, player, coffin, _payload_types) = run_external_container_move_case(
-            Some(DimensionKind::Tsy),
-            DVec3::new(999.0, 64.0, 999.0),
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
             crate::inventory::external_container::ExternalContainerKind::StorageCrate {
                 is_herb: false,
             },
@@ -6056,7 +6524,10 @@ mod tests {
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("LingtianDispatch");
-        let client = app.world_mut().spawn(client_bundle).id();
+        let client = app
+            .world_mut()
+            .spawn((client_bundle, Lifecycle::default()))
+            .id();
         if let Some(position) = position {
             app.world_mut()
                 .entity_mut(client)
@@ -6190,7 +6661,10 @@ mod tests {
         let mut app = App::new();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("LingtianFifo");
-        let client = app.world_mut().spawn(client_bundle).id();
+        let client = app
+            .world_mut()
+            .spawn((client_bundle, Lifecycle::default()))
+            .id();
         app.world_mut()
             .entity_mut(client)
             .insert(Position::new(DVec3::new(5.0, 64.5, 0.5)));
@@ -6309,7 +6783,10 @@ mod tests {
         );
 
         let (client_bundle, _helper) = create_mock_client("IngressWiring");
-        let client = app.world_mut().spawn(client_bundle).id();
+        let client = app
+            .world_mut()
+            .spawn((client_bundle, Lifecycle::default()))
+            .id();
         app.world_mut()
             .entity_mut(client)
             .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
@@ -6353,6 +6830,281 @@ mod tests {
         );
     }
 
+    fn send_gate_test_payload(app: &mut App, client: Entity, payload: serde_json::Value) {
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: payload.to_string().into_bytes().into_boxed_slice(),
+            });
+    }
+
+    #[test]
+    fn c2s_ingress_budget_drops_the_thirty_third_payload_before_decode() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, mut helper) = create_mock_client("BudgetIngress");
+        let client = app.world_mut().spawn(client_bundle).id();
+
+        for _ in 0..33 {
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client,
+                    channel: ident!("bong:client_request").into(),
+                    data: vec![0xff].into_boxed_slice(),
+                });
+        }
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<ClientRequestBudget>()
+                .store
+                .tokens_for(&client),
+            Some(0),
+            "the 33rd same-tick payload must be refused by ingress after 32 admissions"
+        );
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        assert_eq!(
+            payload_types,
+            vec!["event_alert"],
+            "only the budgeted rate-limit feedback may be emitted; malformed payload #33 must not be decoded"
+        );
+    }
+
+    #[test]
+    fn craft_start_live_gate_rejects_missing_inventory_without_emitting_intent() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("CraftGate");
+        let client = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                empty_inventory(),
+                Lifecycle::default(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
+
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "craft_start",
+                "v": 1,
+                "recipe_id": "craft.example.herb_knife.iron",
+                "quantity": 1
+            }),
+        );
+        app.update();
+        let accepted = app
+            .world_mut()
+            .resource_mut::<Events<crate::craft::CraftStartIntent>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            accepted.len(),
+            1,
+            "valid craft ingress must emit exactly one intent"
+        );
+
+        app.world_mut()
+            .entity_mut(client)
+            .remove::<PlayerInventory>();
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "craft_start",
+                "v": 1,
+                "recipe_id": "craft.example.herb_knife.iron",
+                "quantity": 1
+            }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::craft::CraftStartIntent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "missing inventory must be rejected before CraftStartIntent and therefore before mutation"
+        );
+    }
+
+    #[test]
+    fn workbench_open_live_gate_dispatches_only_a_resolved_nearby_workbench() {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("WorkbenchGate");
+        let client = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Lifecycle::default(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
+        let workbench = app
+            .world_mut()
+            .spawn((
+                crate::world::entity_model::WORKBENCH_ENTITY_KIND,
+                EntityId::default(),
+                Position::new(DVec3::new(0.5, 64.0, 0.5)),
+                OldPosition::new(DVec3::new(0.5, 64.0, 0.5)),
+                CurrentDimension(DimensionKind::Overworld),
+                WorkbenchBlock {
+                    placed_by: client,
+                    placed_at_tick: 0,
+                },
+            ))
+            .id();
+        app.update();
+        let entity_id = app
+            .world()
+            .get::<EntityId>(workbench)
+            .expect("EntityPlugin must assign the workbench protocol id")
+            .get();
+
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({ "type": "workbench_open", "v": 1, "entity_id": entity_id }),
+        );
+        app.update();
+        let requests = app
+            .world_mut()
+            .resource_mut::<Events<crate::craft::WorkbenchOpenRequest>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            requests.len(),
+            1,
+            "nearby workbench must reach its open consumer"
+        );
+        assert_eq!(requests[0].workbench, workbench);
+
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(4.000_001, 64.5, 0.5)));
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({ "type": "workbench_open", "v": 1, "entity_id": entity_id }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::craft::WorkbenchOpenRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "out-of-reach workbench must be rejected before the open event"
+        );
+    }
+
+    #[test]
+    fn give_dan_live_gate_preserves_inventory_when_elder_state_is_invalid() {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("ElderGate");
+        let client = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_stack("huiyuan_pill", 1),
+                Lifecycle::default(),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
+        let elder = app
+            .world_mut()
+            .spawn((
+                EntityKind::new(164),
+                EntityId::default(),
+                Position::new(DVec3::new(0.5, 64.0, 0.5)),
+                OldPosition::new(DVec3::new(0.5, 64.0, 0.5)),
+                CurrentDimension(DimensionKind::Overworld),
+                DyingElderState::Plea,
+            ))
+            .id();
+        app.update();
+        let elder_id = app
+            .world()
+            .get::<EntityId>(elder)
+            .expect("EntityPlugin must assign the elder protocol id")
+            .get();
+
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "give_dan_to_elder",
+                "v": 1,
+                "pill_instance_id": 9001,
+                "elder_entity_id": elder_id
+            }),
+        );
+        app.update();
+        let accepted = app
+            .world_mut()
+            .resource_mut::<Events<crate::fauna::dying_elder::GiveDanToElderIntent>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            accepted.len(),
+            1,
+            "Plea elder must accept a live give-dan intent"
+        );
+        let revision_before = app.world().get::<PlayerInventory>(client).unwrap().revision;
+
+        app.world_mut()
+            .entity_mut(elder)
+            .insert(DyingElderState::Dead {
+                dead_by_betrayal: false,
+            });
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "give_dan_to_elder",
+                "v": 1,
+                "pill_instance_id": 9001,
+                "elder_entity_id": elder_id
+            }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::fauna::dying_elder::GiveDanToElderIntent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "dead elder must be rejected before the give-dan mutation path"
+        );
+        assert_eq!(
+            app.world().get::<PlayerInventory>(client).unwrap().revision,
+            revision_before,
+            "gate rejection must leave the pill inventory revision unchanged"
+        );
+    }
+
     fn register_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
@@ -6389,6 +7141,8 @@ mod tests {
         app.add_event::<CoffinOpenRequest>();
         app.add_event::<crate::coffin::CoffinBreakRequest>();
         app.add_event::<crate::coffin::CoffinMenuReclaimRequest>();
+        app.add_event::<crate::craft::CraftStartIntent>();
+        app.add_event::<crate::fauna::dying_elder::GiveDanToElderIntent>();
         app.add_event::<crate::craft::WorkbenchOpenRequest>();
         app.add_event::<crate::world::container_open::ContainerOpenRequest>();
         app.add_event::<StartTillRequest>();
