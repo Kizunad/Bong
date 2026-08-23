@@ -10,22 +10,10 @@ from bot.scenarios._combat_helpers import (
     is_outgoing_positive_hit,
     last_event_time,
     move_to_melee_range,
-    queue_fight_target,
+    queue_passive_target,
     queue_npc_scenario,
     wait_for_ready,
 )
-
-# CI 上这些等的是 server 对具体请求的响应，而不是本地计算：实测挂掉那次进程里已经
-# 收了 3000~15000 条事件，10s 窗口在满载 runner 上不够用（同一 commit 重跑就换了个
-# 场景挂）。放宽只在**失败**路径上多花时间——成功时 wait_for 收到事件立刻返回，
-# 绿色用例的墙钟不变。
-SERVER_RESPONSE_TIMEOUT = 25.0
-
-# 近战重试预算单列，**不要**跟上面那个混用：实测把它从 10s/8 次放宽到 25s/20 次
-# 仍然打不中（PR #2066 的 CI），瓶颈不在预算，调大只会让失败更慢。真因待查，
-# 失败消息已带 _melee_failure_diagnosis 的现场判据。
-MELEE_RETRY_TIMEOUT = 15.0
-MELEE_DISTANCE = 1.2
 
 DESCRIPTION = "两个 Bot 互见 PlayerSpawn，并对共同观察到的同一 passive NPC 各自产生 outgoing typed hit"
 MODULES = ["network", "multibot", "combat", "npc"]
@@ -38,7 +26,7 @@ def _wait_for_peer(bot, peer_username: str):
             event.data.get("username") == peer_username
             or bot.player_names.get(event.data.get("uuid")) == peer_username
         ),
-        timeout=SERVER_RESPONSE_TIMEOUT,
+        timeout=15.0,
         description=f"PlayerList+PlayerSpawn 权威关联到在线 peer `{peer_username}`",
     )
 
@@ -50,22 +38,28 @@ def _rendezvous_in_spawn(bot) -> None:
         lambda event: event.kind == "chat"
         and event.t > anchor
         and event.data.get("text") == "Teleported to zone `spawn`.",
-        timeout=SERVER_RESPONSE_TIMEOUT,
+        timeout=10.0,
         description="/tpzone spawn 权威命令回执",
     )
     bot.wait_for(
         lambda event: event.kind == "pos_look" and event.t > anchor,
-        timeout=SERVER_RESPONSE_TIMEOUT,
+        timeout=10.0,
         description="/tpzone spawn 后 server 权威 PositionLook",
     )
+
+
+# 近战重试预算。**这不是旋钮**：实测从 10s/8 次放宽到 25s/20 次仍然打不中
+# （PR #2066 的 CI），瓶颈不在预算，调大只会让失败更慢。数值沿用 upstream，
+# 真因待查，失败时看 _melee_failure_diagnosis 给的现场判据。
+MELEE_RETRY_TIMEOUT = 10.0
+MELEE_DISTANCE = 1.2
 
 
 def _melee_failure_diagnosis(bot, target_id: int) -> str:
     """把"打不中"拆成能判读的几种原因。
 
-    实测（PR #2066 的 CI）把重试预算从 10s/8 次放宽到 25s/20 次**仍然**打不中，
-    说明瓶颈根本不是预算——但旧的失败消息只说"重试 N 次未命中"，看不出到底是
-    目标没了、够不着、还是打出去没反馈。这里把三者分开报，下次撞红直接可判。
+    旧的失败消息只说"重试 N 次未命中"，看不出是目标没了、够不着、还是打出去
+    没反馈；三者的修法完全不同。这里分开报，下次撞红直接可判。
     """
     target = bot.entity_pos(target_id)
     if target is None:
@@ -99,7 +93,7 @@ def _melee_failure_diagnosis(bot, target_id: int) -> str:
 def _attack_until_positive_hit(
     bot, spawn, target_id: int, timeout: float = MELEE_RETRY_TIMEOUT
 ) -> None:
-    """追踪同一协议实体重试近战，覆盖击退同步和服务端 10 tick GCD。"""
+    """追踪同一协议实体重试近战，覆盖目标坐标同步和服务端 10 tick GCD。"""
     # /tpzone 后玩家可能仍在从传送高度落向地面；这次必要的真实定位不应
     # 抢占攻击重试预算，否则首轮移动就会耗尽整个窗口。
     move_to_melee_range(bot, spawn, MELEE_DISTANCE)
@@ -118,7 +112,7 @@ def _attack_until_positive_hit(
             )
             return
         except BotAssertionError:
-            # 失败攻击可能是目标击退位置尚未同步，或仍在 10 tick GCD；下一轮
+            # 失败攻击可能是目标位置尚未同步，或仍在 10 tick GCD；下一轮
             # 重新读取 entity_pos，禁止用旧 spawn 坐标反复猜测。
             if time.monotonic() >= deadline:
                 break
@@ -168,12 +162,12 @@ def run(env) -> None:
             # scenario command will clear earlier scenario fixtures and create one protocol-visible,
             # stationary real-combat NPC. Both clients must observe the same protocol entity ID.
             queue_npc_scenario(alice, "clear")
-            alice_spawn = queue_fight_target(alice)
+            alice_spawn = queue_passive_target(alice)
             target_id = int(alice_spawn.data["entity_id"])
             bob_spawn = bob.wait_for(
                 lambda event: event.kind == "entity_spawn"
                 and event.data.get("entity_id") == target_id,
-                timeout=SERVER_RESPONSE_TIMEOUT,
+                timeout=15.0,
                 description=f"Bob 观察到 Alice 所见的同一 passive NPC entity_id={target_id}",
             )
             if alice_spawn.data["uuid"] != bob_spawn.data["uuid"]:
@@ -187,19 +181,13 @@ def run(env) -> None:
             alice.attack_entity(target_id)
             alice.wait_for(
                 lambda event: event.t > alice_anchor and is_outgoing_positive_hit(event),
-                timeout=SERVER_RESPONSE_TIMEOUT,
+                timeout=10.0,
                 description="Alice 的专属 outgoing=true positive hit",
-            )
-            alice.wait_for(
-                lambda event: event.kind == "entity_move"
-                and event.t > alice_anchor
-                and event.data.get("entity_id") == target_id,
-                timeout=SERVER_RESPONSE_TIMEOUT,
-                description=f"Alice 命中后精确共享 NPC entity_id={target_id} 产生 knockback",
             )
 
             # Bob 已通过同一 server 权威 rendezvous 与 Alice/目标共处；按 Bob 观察到的
-            # 真实目标坐标走 C2S 移动包贴身，不使用协议外坐标或本地瞬移猜测。
+            # 真实目标坐标走 C2S 移动包贴身，不使用协议外坐标或本地瞬移猜测；被动靶
+            # 明确禁止击退，不应要求 target entity_move。
             _attack_until_positive_hit(bob, bob_spawn, target_id)
 
             alice.assert_alive("互见身份并命中共享 NPC 后")

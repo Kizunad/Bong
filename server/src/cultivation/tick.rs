@@ -20,6 +20,7 @@ use crate::combat::woliu_v2::state::TurbulenceExposure;
 use crate::combat::CombatClock;
 use crate::fauna::mundane::MundaneFaunaSpecies;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
+use crate::npc::scenario::ScenarioNpc;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
     constants::QI_NPC_ABSORB_FLOOR, regen_from_zone, QiAccountId, QiTransferReason, WorldQiAccount,
@@ -129,7 +130,11 @@ pub fn qi_regen_and_zone_drain_tick(
             // 裸 insert(Despawned)）100% 蒸发，破守恒（plan §59 qi_physics 锚点 + mundane.rs 模块 doc）。
             // spawn 与 hydrate 两路均挂 MundaneFaunaSpecies（hydrate 走 spawn_mundane_fauna_at），过滤稳。
         ),
-        (Without<MundaneFaunaSpecies>, Without<Despawned>),
+        (
+            Without<MundaneFaunaSpecies>,
+            Without<Despawned>,
+            Without<ScenarioNpc>,
+        ),
     >,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -1014,6 +1019,55 @@ mod tests {
         assert_eq!(
             zone_after, 0.8,
             "凡兽不吸灵气：zone.spirit_qi 必须原样保持 0.8，一分都不被凡兽抽走（守恒）"
+        );
+    }
+
+    #[test]
+    fn qi_regen_excludes_transient_scenario_npcs_even_in_rich_zone() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(zone_with_spirit_qi(0.8));
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let npc = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation {
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+                LifeRecord::new("scenario_regen_test"),
+                NpcMarker,
+                ScenarioNpc,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(npc).unwrap().qi_current,
+            0.0,
+            "transient scenario NPC must not acquire qi that its clear path then has to settle"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi,
+            0.8,
+            "scenario NPC regen exclusion must leave zone qi unchanged"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .is_empty(),
+            "excluded scenario NPC must not leave a false regen audit"
         );
     }
 
