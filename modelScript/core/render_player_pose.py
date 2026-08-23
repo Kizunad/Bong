@@ -288,7 +288,7 @@ def render_pose(tris, tex, yaw=180.0, pitch=4.0, size=300, bg=(26, 27, 31)):
     size = _validate_size(size, "render_pose size")
     orig = R.load_bbmodel
 
-    def load_pose(_path, xform=None):
+    def load_pose(_path, xform=None, texture=None):
         if xform:
             raise ValueError(
                 "render_pose uses pre-baked triangles and cannot apply "

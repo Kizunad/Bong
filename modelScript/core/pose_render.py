@@ -75,7 +75,7 @@ def load_posed(path, pose):
 
 def render_pose(path, pose, yaw=90, pitch=8, size=440, bg=(120, 122, 128)):
     orig = R.load_bbmodel
-    R.load_bbmodel = lambda p: load_posed(path, pose)
+    R.load_bbmodel = lambda p, xform=None, texture=None: load_posed(path, pose)
     try:
         im, _ = R.render(path, yaw=yaw, pitch=pitch, size=size, bg=bg)
     finally:

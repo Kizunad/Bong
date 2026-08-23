@@ -65,7 +65,7 @@ for _d in (LIB / "core", LIB / "tools", REPO / "client" / "tools"):
 
 import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimator/bendy 数学
 from preview_armor_on_body import make_player_skin  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from render_bbmodel import load_bbmodel, render  # noqa: E402
 
 NS = uuid.UUID("6b1d0f3a-2c47-4e58-9a10-77c3f9e0b542")
 S_FLIP = np.diag([1.0, -1.0, 1.0])        # ModelPart(y↓) ↔ Bedrock(y↑) 的手性夹层
@@ -152,9 +152,12 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
             # 下段：上段之后再绕 bend_center 转 bend 角。bendy-lib 的轴向量在
             # cuboid 局部是 (cos(axis), 0, sin(axis))，只作用于靠 hand/foot 那半。
             centre_b = _pt(np.array(PIVOT_OF[name], float) + RA.bend_center(part))
-            a = np.radians(p["axis"])
+            # bend/axis 已经是**弧度**（emote 头 degrees:false，`sample_axis` 原样返回，
+            # 上面的 part_rotation_matrix 也是直接吃原值）。这里曾多套一层 np.radians，
+            # 把角度缩掉约 57 倍 —— 肘和膝在预览里等于焊死，"肘不伸直"这类判据全失效。
+            a = float(p["axis"])
             axis_b = S_FLIP @ np.array([np.cos(a), 0.0, np.sin(a)], float)
-            seg = seg @ _about(_axis_rot(axis_b, np.radians(p["bend"])), centre_b)
+            seg = seg @ _about(_axis_rot(axis_b, float(p["bend"])), centre_b)
 
         out[name] = body_m @ seg
     return out
@@ -277,6 +280,70 @@ def build_scene(out_path: Path, held: Path | None) -> tuple[Path, dict[str, str]
     return out_path, ids, held_ids
 
 
+def _fit_focus(kfs, display, scene, ids, held_ids, end, samples=17, margin=1.10):
+    """扫全段取联合 AABB。分开算每帧会抖；只看首末帧会在挥砍中段裁掉刀尖。"""
+    lo = np.full(3, np.inf)
+    hi = np.full(3, -np.inf)
+    for i in range(samples):
+        seg = segment_transforms(kfs, end * i / max(1, samples - 1))
+        xform = {ids[n]: m for n, m in seg.items()}
+        if held_ids:
+            hm = hand_transform(seg, display)
+            for hid in held_ids:
+                xform[hid] = hm
+        tris, _, _, _ = load_bbmodel(scene, xform=xform)
+        v = np.array([p for vs, _, _ in tris for p in vs])
+        lo = np.minimum(lo, v.min(0))
+        hi = np.maximum(hi, v.max(0))
+    center = (lo + hi) / 2
+    # span 取 xy 里较大的那个：render 按单一 scale 等比缩放，取 max 才不会裁掉。
+    span = float(max(hi[0] - lo[0], hi[1] - lo[1])) * margin
+    return center, span
+
+
+def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
+    """一个 tick 的三视图横排。GIF 和静态网格共用，保证两者画的是同一套变换。"""
+    seg = segment_transforms(kfs, tick)
+    xform = {ids[n]: m for n, m in seg.items()}
+    if held_ids:
+        hm = hand_transform(seg, display)
+        for hid in held_ids:
+            xform[hid] = hm
+    return [(label, render(scene, yaw=yaw, pitch=pitch, size=args.size,
+                           xform=xform, focus=focus, shading="mc")[0])
+            for label, yaw, pitch in VIEWS]
+
+
+def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
+    end = float(emote.get("endTick", 8))
+    n = max(2, int(round(end * args.subdiv)))
+    gap, lab = 8, 16
+    w = args.size * len(VIEWS) + gap * (len(VIEWS) + 1) + 54
+    h = args.size + lab + gap * 2
+
+    frames = []
+    for i in range(n):
+        tick = end * i / n            # 不含 end：末帧==首帧时循环会顿一拍
+        tiles = _frame(args, kfs, display, scene, ids, held_ids, focus, tick)
+        canvas = Image.new("RGB", (w, h), (16, 17, 20))
+        draw = ImageDraw.Draw(canvas)
+        draw.text((6, h // 2), f"t{tick:4.1f}", fill=(232, 232, 224))
+        x = 54
+        for label, img in tiles:
+            draw.text((x + 3, gap), label, fill=(198, 198, 190))
+            canvas.paste(img, (x, gap + lab))
+            x += args.size + gap
+        frames.append(canvas.convert("P", palette=Image.ADAPTIVE, colors=192))
+
+    per = max(20, int(round(50.0 / args.subdiv / args.speed)))
+    out = args.out or (LIB / "out" / f"{args.json.stem}.gif")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    frames[0].save(out, save_all=True, append_images=frames[1:],
+                   duration=per, loop=0, disposal=2, optimize=False)
+    print(f"{out}  {n} 帧 / {per}ms 每帧 / 循环 {n * per}ms（原速 {end * 50:.0f}ms）")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("json", type=Path, help="player_animation JSON")
@@ -286,6 +353,15 @@ def main() -> int:
     ap.add_argument("--ticks", default="0,3,5,6,8")
     ap.add_argument("--size", type=int, default=260)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--gif", action="store_true",
+                    help="出逐帧 GIF 而不是静态网格。静态图看得出姿势对不对，"
+                         "看不出动作节奏——错峰、overshoot、收势是否连得上只有动起来才判得了")
+    ap.add_argument("--subdiv", type=int, default=3,
+                    help="每 tick 插几帧（GIF 用）。MC 一 tick 50ms，只按整 tick 采样"
+                         "会把缓动曲线抽没")
+    ap.add_argument("--speed", type=float, default=0.35,
+                    help="GIF 播放速度倍率（GIF 用）。默认 0.35 倍慢放：原速 8 tick 只有"
+                         "400ms，且多数看图器把 <50ms 的帧延迟钳到 100ms，原速反而失真")
     args = ap.parse_args()
 
     emote = json.loads(args.json.read_text(encoding="utf-8"))
@@ -299,8 +375,13 @@ def main() -> int:
 
     scene, ids, held_ids = build_scene(LIB / "out" / "_player_anim_scene.bbmodel", args.hold)
 
-    # 固定取景：逐帧自动取景会让整段动画抖（render_bbmodel.render 的 docstring 明说）
-    focus = (np.array([0.0, 13.0, 0.0]), 46.0)
+    # 固定取景：逐帧自动取景会让整段动画抖（render_bbmodel.render 的 docstring 明说）。
+    # 但硬编码 span 会留一圈死边——扫一遍整段动画取**联合**包围盒，既贴身又照样恒定。
+    focus = _fit_focus(kfs, display, scene, ids, held_ids,
+                       float(emote.get("endTick", 8)))
+
+    if args.gif:
+        return _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus)
 
     rows = []
     for tick in ticks:

@@ -181,7 +181,7 @@ def build(pose_key: str):
 
 
 # ── 带 group 变换的加载（render_bbmodel 只读 element，会忽略 group 旋转）──
-def load_grouped(path):
+def load_grouped(path, xform=None, texture=None):
     d = json.loads(Path(path).read_text())
     res = d["resolution"]
     tex = np.asarray(Image.open(io.BytesIO(base64.b64decode(
