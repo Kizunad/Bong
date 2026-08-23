@@ -117,6 +117,11 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios._npc_dialogue_helpers import (  # noqa: E402
+    _scenario_spawn_matches,
+    _trade_metadata,
+)
+from bot.scenarios import npc_dialogue_chain_trade as npc_dialogue_trade  # noqa: E402
 from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
     DISCONNECT_SETTLE_SECONDS,
@@ -11525,5 +11530,100 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
+class NpcDialogueHelperContractTest(unittest.TestCase):
+    def test_scenario_spawn_requires_fixed_chase_geometry(self):
+        origin = (10.0, 64.0, -3.0)
+        valid = _FakeEvent(
+            2.0,
+            "entity_spawn",
+            {"type": 118, "entity_id": 7, "x": 22.0, "y": 64.0, "z": -3.0},
+        )
+        ambient = _FakeEvent(
+            2.1,
+            "entity_spawn",
+            {"type": 118, "entity_id": 8, "x": 18.0, "y": 64.0, "z": -3.0},
+        )
+        self.assertTrue(
+            _scenario_spawn_matches(valid, origin),
+            "chase 单体应只接受 origin +X 12 格的 type=118 出生点",
+        )
+        self.assertFalse(
+            _scenario_spawn_matches(ambient, origin),
+            "远处环境僵尸不得冒充 /npc_scenario chase 的返回实体",
+        )
+
+    def test_trade_metadata_requires_rogue_and_preserves_all_observed_offers(self):
+        payload = {
+            "type": "npc_metadata",
+            "entity_id": 42,
+            "archetype": "rogue",
+            "trade_offers": [
+                {"template_id": "skill_scroll_herbalism_baicao_can", "price_bone_coins": 30},
+                {"template_id": "broken_artifact_scroll", "price_bone_coins": 40},
+            ],
+        }
+        event = _FakeEvent(
+            3.0,
+            "payload",
+            {"channel": "bong:npc_metadata", "data": json.dumps(payload).encode()},
+        )
+        self.assertEqual(
+            _trade_metadata(event),
+            (
+                42,
+                [
+                    ("skill_scroll_herbalism_baicao_can", 30),
+                    ("broken_artifact_scroll", 40),
+                ],
+            ),
+            "场景必须按服务端 metadata 的实际库存覆盖高境界商品，而不是硬编码三件醒灵商品",
+        )
+        payload["archetype"] = "commoner"
+        self.assertIsNone(
+            _trade_metadata(
+                _FakeEvent(
+                    3.1,
+                    "payload",
+                    {"channel": "bong:npc_metadata", "data": json.dumps(payload).encode()},
+                )
+            ),
+            "非 Rogue 的 metadata 不得被选为散修商贩",
+        )
+
+    def test_trade_range_recovery_resends_the_same_observed_offer(self):
+        class TradeBot:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.events: list[_FakeEvent] = []
+                self.requests: list[dict] = []
+
+            def intent(self, request):
+                self.requests.append(request)
+
+            def wait_for(self, predicate, timeout, description):
+                text = (
+                    npc_dialogue_trade.OUT_OF_RANGE_TRADE
+                    if len(self.requests) == 1
+                    else "§c[NPC] 骨币不足，需要 30 枚。"
+                )
+                event = _FakeEvent(float(len(self.requests)), "chat", {"text": text})
+                self.events.append(event)
+                if predicate(event):
+                    return event
+                raise AssertionError(f"未匹配 {description}: {event!r}")
+
+        bot = TradeBot()
+        with (
+            mock.patch.object(npc_dialogue_trade, "request_and_assert_rogue"),
+            mock.patch.object(npc_dialogue_trade, "approach_entity", return_value=True),
+        ):
+            npc_dialogue_trade._run_rogue_chain(
+                bot, 77, [("skill_scroll_herbalism_baicao_can", 30)]
+            )
+        self.assertEqual(
+            [request["requested_item_id"] for request in bot.requests],
+            ["skill_scroll_herbalism_baicao_can", "skill_scroll_herbalism_baicao_can"],
+            "越界恢复必须重发当前 metadata offer，不得 advance/结束该商品",
+        )
 if __name__ == "__main__":
     unittest.main(verbosity=1)

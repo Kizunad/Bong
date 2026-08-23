@@ -84,6 +84,7 @@ BOT_E2E_OPERATOR_TAGS=(
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
   Zlb Zre Alc Bob Ascend HdJue HdKeep HdSkip
   Rein Term NewCh
+  NpcIn NpcCh NpcTr
   FalseSkin InvGroup Quickslot Scrolls SkillCfg
   Zlb Zre Alc Bob CoPl Coffin
   Big Typ Rng Stl
