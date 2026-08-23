@@ -9,7 +9,7 @@
 | 阶段 | 主题 | 状态 |
 |------|------|------|
 | T0 / P0 | 三栈盘点、CI/产物地图、所有权矩阵冻结、统一入口契约设计 | ✅ 2026-08-23 |
-| P1 | 只新增 `scripts/test-all.sh` 编排层，保持所有测试源路径不变 | ⬜ |
+| P1 | 只新增 `scripts/test-all.sh` 与 `scripts/test-all-owners.tsv` 编排/审查映射层，保持所有测试源路径不变 | ⬜ |
 | P2 | CI job 以兼容层接入统一入口，保留现有 job 的证据与 DAG 语义 | ⬜ |
 | P3 | 报告格式/保留策略与失败诊断收口；决定是否拆出 JUnit/coverage 转换 | ⬜ |
 | P4 | 经过一轮 CI 对拍后，才评估是否需要任何测试路径整理 | ⬜ |
@@ -28,6 +28,12 @@
 - **`docs/finished_plans/`**：共 359 份归档 plan；相关关键词命中的是业务 plan 内的测试段（如 `plan-dandao-path-v1`、`plan-shield-block-combat-event-feedback-v1`），没有覆盖当前三栈测试布局、统一入口或 artifact ownership 的既有 plan，因此不并入；历史 worldgen plans 不属于当前 Bong 测试栈。
 - **当前 active `docs/plan-*.md`**：逐项检查了 `plan-bot-e2e-coverage-v1`、`plan-ci-redis-pull-resilience-v1`、`plan-refactor-master-v1` 及其他 active plan；前者负责 bot 场景覆盖，后者负责 CI Redis 稳定性，`plan-refactor-master-v1` 的矩阵是代码 ownership，均不拥有三栈测试目录/报告编排，不重复其 scope。
 - **`docs/plans-skeleton/` 与 `reminder.md`**：立项前有 166 个 skeleton；无同名 `plan-test-layout-refactor-*` 或三栈测试布局主题骨架，`docs/plans-skeleton/reminder.md` 也无匹配待办。本文件因此作为独立 skeleton 新建。
+
+## Pre-P0 Decisions（T0，2026-08-23）
+
+- **范围决策**：Bong 只冻结 server/client/agent 三栈与根脚本 contract/preview handoff；BongWorldGen 的生成器、测试和 CI 永不由 `scripts/test-all.sh` 隐式拉起。
+- **preview handoff CLI 决策**：`--profile preview` 必须收到 `BONG_TERRAIN_RASTER_DIR`（优先，目录内含外部生成的 `focus-layout-preview.png`/`focus-surface-preview.png`）或 `BONG_TERRAIN_RASTER_PATH`（manifest 文件，取其父目录）；两者都缺失时 suite 为 `BLOCKED` 并返回非零。入口只读这些输入，不生成、覆盖或搬迁 raster；client 截图仍显式由 `--client-dir client/run/screenshots` 提供，`validate_snapshots.py` 只验证截图，`compose_grid.py` 负责拼图。
+- **owner/reviewer 映射决策**：基线不存在 `.github/CODEOWNERS` 或可消费的 team slug，因此不再保留“未来若有 CODEOWNERS 再映射”的条件分支。P1 必须新增 `scripts/test-all-owners.tsv`，以 `suite<TAB>owner_role<TAB>reviewer_path<TAB>evidence` 固定映射：`server→server/`、`client→client/`、`schema→agent/packages/schema/`、`tiandao→agent/packages/tiandao/`、`scripts→scripts/`；`scripts/test-all.sh --list` 必须逐行输出并校验该文件，缺行/路径不存在即 exit 2。
 
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
@@ -57,7 +63,7 @@
 |---|---|
 | 测试目录 | `client/src/test/java/**` 当前 521 个 Java 测试源文件，资源 fixture 在 `client/src/test/resources/**`；独立 GameTest 源在 `client/src/gametest/java/**`（当前 1 个入口）。 |
 | 依赖/配置 | JUnit Jupiter 5.10，Java 17，见 `client/build.gradle:84-92`；`test` 使用 JUnit Platform，且显式 `dependsOn(runGametest)`，见 `client/build.gradle:202-217`。GameTest 报告路径由 `fabric-api.gametest.report-file` 固定为 `client/build/gametest-results.xml`（`:126-134`）。 |
-| 本地命令 | `cd client && ../scripts/build-token.sh gradle test`（包含 GameTest）；`gradle build`；定向 `gradle test --tests '<pattern>'`；GameTest 可单独 `gradle runGametest`。`runClientPreview` 仍是显式的 client/server preview harness，不属于 unit 默认入口，也不负责生成 raster。仓库 smoke 的 `test build` 入口见 `scripts/smoke-test.sh:45-59`。 |
+| 本地命令 | `cd client && ../scripts/build-token.sh gradle test`（包含 GameTest）；`gradle build`；定向 `gradle test --tests '<pattern>'`；GameTest 可单独 `gradle runGametest`。`runClientPreview` 仍是显式的 client/server preview harness，不属于 unit 默认入口，也不负责生成 raster；preview profile 另需只读的 `BONG_TERRAIN_RASTER_DIR`/`BONG_TERRAIN_RASTER_PATH`。仓库 smoke 的 `test build` 入口见 `scripts/smoke-test.sh:45-59`。 |
 | CI job | `.github/workflows/e2e.yml` 的 `client` job 执行 `gradle test`；`smoke`/bot/chat jobs 消费已构建 server，不替代 client 单测。没有 worldgen snapshot job。 |
 | 报告/产物 | Gradle 原生 `client/build/test-results/test/**/*.xml` 与 `client/build/reports/tests/test/**`；GameTest `client/build/gametest-results.xml`；显式 preview harness 的截图 `client/run/screenshots/preview-*.png` 仅由调用方消费；CI 上传 `evidence-client`。统一入口只复制/索引这些产物，不改变 Gradle 的原生路径。 |
 | 冻结 owner | **Client owner** 负责 Java/GameTest/fixture 的分类、JUnit/Gradle 选择器和 client preview harness 断言；外部 BongWorldGen 不取得 client 单测源的所有权。 |
@@ -97,7 +103,7 @@
 | Fabric JUnit/GameTest/fixtures | `client/src/test/**`、`client/src/gametest/**`、`client/src/test/resources/**` | Client | Gradle report、CI client、preview consumer | 不把 GameTest 混入 JUnit 源目录；不改 `build/**` 原生输出路径 |
 | TypeBox schema | `agent/packages/schema/tests/**` + samples/generated | Schema | agent/server/client contract jobs | source/generated/sample 变更必须同 PR 对拍 |
 | Tiandao runtime | `agent/packages/tiandao/tests/**` | Tiandao | Agent owner、Redis/E2E jobs | `npm test` 的 tsc 前置不能被统一入口省略 |
-| Preview validator / resource/model tooling | `scripts/preview/**`、`scripts/test_build_resourcepack.py`、`scripts/models/test_*.py` | CI/DevEx + Server/Client/asset owner | 显式 preview/resourcepack callers | 仍是根脚本资产，验证 Bong 的 preview/raster handoff，不冒充三栈单元测试或外部生成器测试 |
+| Preview validator / resource/model tooling | `scripts/preview/**`、`scripts/test_build_resourcepack.py`、`scripts/models/test_*.py` | CI/DevEx + Server/Client/asset owner | 显式 preview/resourcepack callers | 仍是根脚本资产；preview CLI 只读 `BONG_TERRAIN_RASTER_DIR`/`BONG_TERRAIN_RASTER_PATH` 外部 handoff，不冒充三栈单元测试或外部生成器测试 |
 | Cross-stack smoke/E2E | `scripts/smoke-*.sh`、`scripts/e2e-*.sh`、`scripts/bot-e2e.sh` | CI/DevEx 编排；领域 owner 提供场景 | `.sisyphus/evidence/**`、job log、截图 | 统一入口只能调度，不复制场景逻辑或改变 Redis/时间/fixture 前置 |
 | CI workflow/artifact plumbing | `.github/workflows/**`、artifact upload/download blocks | CI/DevEx | GitHub Actions artifacts/release | P2 只做兼容接入；artifact 名称和 retention 未决前不可改 |
 
@@ -105,7 +111,7 @@
 
 ### CLI 契约
 
-建议入口位于仓库根 `scripts/test-all.sh`，默认从脚本所在目录解析仓库根，不依赖当前 cwd。P1 实现前不得把以下设计当成已落地命令：
+建议入口位于仓库根 `scripts/test-all.sh`，默认从脚本所在目录解析仓库根，不依赖当前 cwd；同目录的 `scripts/test-all-owners.tsv` 是 owner/reviewer 映射真源。P1 实现前不得把以下设计当成已落地命令：
 
 ```text
 scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
@@ -116,7 +122,8 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - `--profile unit`：Bong 三栈本地可重复测试（server `cargo test`、client `gradle test`、schema/tiandao `npm test`），其中 client 的 `gradle test` 必须保留现有 `dependsOn(runGametest)` 语义；不自动启动 Redis、真实 LLM、外部 BongWorldGen 或 raster 生成。
 - `--profile contract`：在 `unit` 之前/之后加入 `scripts/tests/**`、schema generated check、resourcepack/preview validator 等快速合同测试；不替代现有 workflow 的显式 job。
 - `--profile full`：按依赖 DAG 运行 unit + contract + build；允许昂贵编译，但仍不启动长生命周期 Redis/E2E。
-- `--profile e2e`、`--profile preview`：显式调用既有 `smoke-test-e2e.sh`、`bot-e2e.sh`、`e2e-chat-signal-window.sh` 与 Bong 内 server/client preview handoff wrapper；默认不纳入 `unit`，不得启动外部 BongWorldGen，避免本地入口意外消耗外部服务或 30 分钟 CI 预算。
+- `--profile e2e`：显式调用既有 `smoke-test-e2e.sh`、`bot-e2e.sh`、`e2e-chat-signal-window.sh`；默认不纳入 `unit`，避免本地入口意外消耗外部服务或 30 分钟 CI 预算。
+- `--profile preview`：先校验 `BONG_TERRAIN_RASTER_DIR`/`BONG_TERRAIN_RASTER_PATH` 与 `client/run/screenshots`，再调用 Bong 内 server/client preview handoff wrapper；外部 raster 缺失时返回 `BLOCKED`，不得启动 BongWorldGen、写入外部目录或把 `generated/snapshot` 当作隐式生成结果。
 - `--suite` 是选择器，可重复传入；未知 suite/profile、缺少 Java 17/Node/Python/Rust 或依赖未安装时必须以明确 `SKIP`/非零退出说明，不得静默成功。
 - `--continue` 只影响后续 suite 是否继续；最终退出码仍为非零。无该 flag 时 fail-fast，但必须写出已跳过的 suite。
 - `--list` 只打印矩阵中的 suite、命令、依赖和预期报告路径，不执行测试。
@@ -132,7 +139,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 
 ## P2/P3/P4 预留交付物（当前不实施）
 
-- **P2 CI 兼容接入**：为每个现有 DAG job 写 explicit suite mapping，先 shadow run，再逐 job 切换；保留 `schema-dist`、`bong-server-release`、`evidence-*`、resourcepack artifact 的生产/消费关系，不重新接入已迁出的 worldgen snapshot job。
+- **P2 CI 兼容接入**：为每个现有 DAG job 写 explicit suite mapping，先 shadow run，再逐 job 切换；保留 `schema-dist`、`bong-server-release`、`evidence-*`、resourcepack artifact 的生产/消费关系，不重新接入已迁出的 worldgen snapshot job；owner/reviewer 校验复用 `scripts/test-all-owners.tsv`。
 - **P3 报告统一**：对比 stdout、JUnit XML、Criterion HTML、Vitest stdout、根 preview 日志/截图与 `.sisyphus/evidence/**` 的诊断价值；只有确实需要跨 job 汇总时才增加 JUnit/coverage 转换器，转换器归 CI/DevEx owner，不修改源测试。
 - **P4 路径整理评估**：只在 P1-P3 完成、CI 对拍和 owner 签字后评估；默认结论是“无需搬路径”。若确有迁移，必须另列迁移表、双跑窗口、回滚方案和 artifact 兼容期，不能借本 plan 的 T0/P1 顺手移动文件，也不扩展到 BongWorldGen。
 
@@ -140,7 +147,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 
 - `docs/plans-skeleton/plan-test-layout-refactor-v1.md` 独立存在，未产生 `scripts/test-all.sh`。
 - 盘点覆盖三栈及根 preview/contract tooling 的 source directory、local command、CI job、native report/artifact；每行都有 owner 和 consumer。
-- 矩阵明确区分测试语义 owner、编排 owner、报告 producer/consumer，且声明跨栈 smoke 不得复制场景。
+- 矩阵明确区分测试语义 owner、编排 owner、报告 producer/consumer；P1 交付的 `scripts/test-all-owners.tsv` 必须能逐行核验 suite/path/evidence 三列，且声明跨栈 smoke 不得复制场景。
 - `git diff --name-only`（在干净基线核验时）只应出现本 skeleton；本轮不要求清理工作树中已有的用户文件。
 - 本轮不修改任何 `server/**`、`client/**`、`agent/**` 测试路径，不修改 `.github/workflows/**`，不添加依赖；外部 BongWorldGen 不在本 PR 的路径/命令/CI 变更范围内。
 
@@ -151,7 +158,6 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 3. **Vitest/根 Python validator 是否引入统一 JUnit reporter**：现状 schema/tiandao 依赖 stdout，`scripts/preview` validator 也没有统一 reporter；需先确认 GitHub artifact/检查器是否真正消费 JUnit，不能为格式统一而新增无消费者产物。
 4. **CI 接入策略**：shadow run 的 job 选择、重复执行预算和失败归因窗口需要拍板；未经对拍不得删除现有显式命令。
 5. **artifact retention 与命名是否冻结为现状**：`evidence-*`、`schema-dist`、`bong-server-release`、`bong-resourcepack-*` 已被 job/PR comment 消费，保留期和命名变更需 CI/DevEx 与各栈 owner 共同决议；不恢复 `worldgen-snapshot-*`。
-6. **矩阵的 owner 粒度**：当前按栈/基础设施角色冻结，不写个人姓名；若仓库建立 CODEOWNERS 或 team slug，P1 应把角色映射到可执行 reviewer，而不是改变测试路径。
 
 ### §8.1 决议要求（pre-P1）
 
