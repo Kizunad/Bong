@@ -26,13 +26,19 @@
     tick 8  == tick 0
 
 峰值错开：腿 t2 → 腰 t3 → 肩 t5 → 肘/腕 t6。
+
+## easing 的管辖方向（conventions §15）
+
+每帧的 easing 管「本帧 → 下一帧」，不是「怎么到达本帧」，所以按段写在起始侧：
+t0/t2 蓄势 OUT 族，**t3 发力 INCUBIC**（单调加速到撞击），t5 余势 OUTQUAD，
+t6 收势 INOUTSINE。详见 `gen_dagger_slash.py` 同名小节记的那次踩坑。
 """
 
 from anim_common import emit_json
 
 POSE = {
     0: dict(  # guard —— 低位持刀，副手前探控距
-        easing="INOUTSINE",
+        easing="OUTSINE",
         body=dict(x=+0.03, y=0.0, z=0.0),
         head=dict(pitch=+2, yaw=-8),
         torso=dict(pitch=+4, yaw=+18),
@@ -42,7 +48,7 @@ POSE = {
         leftLeg=dict(pitch=-10, yaw=+4, bend=18, z=-0.05),
     ),
     2: dict(  # 腿先动 —— 后腿蹬地
-        easing="INOUTSINE",
+        easing="OUTQUAD",
         body=dict(x=+0.05, y=+0.01, z=-0.03),
         head=dict(pitch=+2, yaw=-10),
         torso=dict(pitch=+5, yaw=+26),
@@ -52,7 +58,7 @@ POSE = {
         leftLeg=dict(pitch=-8, yaw=+4, bend=16, z=-0.05),
     ),
     3: dict(  # LOAD —— 刀回胯，后坐；副手探到最远（与右手反相）
-        easing="INOUTSINE",
+        easing="INCUBIC",
         body=dict(x=+0.06, y=+0.02, z=-0.06),
         head=dict(pitch=+1, yaw=-12),
         torso=dict(pitch=+6, yaw=+34),
@@ -72,7 +78,7 @@ POSE = {
         leftLeg=dict(pitch=-26, yaw=+2, bend=40, z=-0.09),
     ),
     6: dict(  # overshoot —— 再送一寸 + 腕翻
-        easing="OUTQUAD",
+        easing="INOUTSINE",
         body=dict(x=-0.01, y=-0.02, z=+0.22),
         head=dict(pitch=+6, yaw=+4),
         torso=dict(pitch=+7, yaw=-12),
