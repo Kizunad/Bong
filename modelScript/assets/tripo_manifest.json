@@ -1,0 +1,333 @@
+{
+  "_说明": "Tripo AI 生成资产索引。二进制 .glb/.zip 已删（约 360M，均未进资源包）；凭 prompt + task_id 可在 Tripo 重新生成。已发布的成品在 client/src/main/resources/assets/bong/models/item/<id>/，由 client/tools/tripo_to_sml.py 减面转换而来。",
+  "batch_generated": [
+    {
+      "name": "pill_gourd",
+      "category": "alchemy",
+      "prompt": "Small traditional Chinese gourd container (葫芦丹瓶) for storing medicinal pills, cork stopper, worn surface with faded red lacquer, tied with hemp cord, compact size, single item on plain background",
+      "task_id": "ddd3602f-167a-4001-aefd-1985697d820e",
+      "timestamp": 1778475718,
+      "_files": [
+        "pill_gourd_pbr.glb",
+        "pill_gourd_preview.webp"
+      ]
+    },
+    {
+      "name": "spirit_herb",
+      "category": "alchemy",
+      "prompt": "Single glowing spirit herb (灵草), a small luminescent plant with pale blue-green crystalline leaves growing from dark soil clump, faintly translucent, xianxia medicinal herb, single item on plain background",
+      "task_id": "6ab200ad-8956-47df-a866-f3394762be3b",
+      "timestamp": 1778476558,
+      "_files": [
+        "spirit_herb_pbr.glb",
+        "spirit_herb_preview.webp"
+      ]
+    },
+    {
+      "name": "spirit_stone_cluster",
+      "category": "alchemy",
+      "prompt": "Cluster of three spirit stones (灵石), translucent crystalline stones with faint inner glow, pale blue-white color, rough natural facets, sitting on dark rock base, xianxia energy crystals, single item on plain background",
+      "task_id": "1c9550a4-2054-4c05-830f-819d9675e4e3",
+      "timestamp": 1778476541,
+      "_files": [
+        "spirit_stone_cluster_pbr.glb",
+        "spirit_stone_cluster_preview.webp"
+      ]
+    },
+    {
+      "name": "bone_coin_imgref",
+      "source_image": "local_images/封灵骨币_nobg.png",
+      "task_id": "d5787a90-c74b-4316-8259-19201ca4b1a6",
+      "timestamp": 1778476113,
+      "_files": [
+        "d5787a90-c74b-4316-8259-19201ca4b1a6_pbr.glb",
+        "d5787a90-c74b-4316-8259-19201ca4b1a6_rendered.webp"
+      ]
+    },
+    {
+      "name": "bone_coin_stack",
+      "category": "currency",
+      "prompt": "Stack of three ancient bone coins (骨币), circular discs made from polished beast bone with square holes in center, carved with tiny rune symbols around the edges, slightly yellowed with age, dark fantasy currency, single item on plain background",
+      "task_id": "3c9281ad-b396-444c-a72e-23317460dff7",
+      "timestamp": 1778475729,
+      "_files": [
+        "bone_coin_stack_pbr.glb",
+        "bone_coin_stack_preview.webp"
+      ]
+    },
+    {
+      "name": "skull_fiend_lowpoly",
+      "source": "iridescent skull 3d model.glb",
+      "original_faces": 1927422,
+      "original_vertices": 983405,
+      "reduced_faces": 48744,
+      "reduced_vertices": 44066,
+      "target_faces": 5000,
+      "reduction_pct": 97.5,
+      "timestamp": 1778478317,
+      "final_faces": 5000,
+      "final_vertices": 3989,
+      "_files": [
+        "skull_fiend_lowpoly.glb",
+        "skull_fiend_lowpoly.obj"
+      ]
+    },
+    {
+      "name": "spirit_sealing_box_lowpoly",
+      "source": "iron+spirit-sealing+box+3d+model.glb",
+      "original_faces": 1793841,
+      "original_vertices": 1112150,
+      "reduced_faces": 547383,
+      "reduced_vertices": 488921,
+      "target_faces": 8000,
+      "reduction_pct": 69.5,
+      "timestamp": 1778478329,
+      "final_faces": 21281,
+      "final_vertices": 18918,
+      "final_glb_kb": 472,
+      "_files": [
+        "spirit_sealing_box_lowpoly.glb",
+        "spirit_sealing_box_lowpoly.obj"
+      ]
+    },
+    {
+      "name": "ancient_scroll",
+      "category": "prop",
+      "prompt": "Partially unrolled ancient Chinese scroll (残卷), aged yellowed paper with faded ink calligraphy visible, wooden scroll rods at both ends, slightly torn and damaged, cultivation technique manual fragment, single item on plain background",
+      "task_id": "2790889d-d86f-42b0-8455-4d43359651bc",
+      "timestamp": 1778476598,
+      "_files": [
+        "ancient_scroll_pbr.glb",
+        "ancient_scroll_preview.webp"
+      ]
+    },
+    {
+      "name": "ancient_stone_stele",
+      "category": "prop",
+      "prompt": "Weathered ancient Chinese stone stele (石碑), tall rectangular stone tablet with partially eroded carved inscriptions, moss growing at the base, cracked surface, standing upright, dark grey stone, xianxia ruin, single item on plain background",
+      "task_id": "8446e25d-05fc-4fe1-92f9-d9330e2d0ed1",
+      "timestamp": 1778475740,
+      "_files": [
+        "ancient_stone_stele_pbr.glb",
+        "ancient_stone_stele_preview.webp"
+      ]
+    },
+    {
+      "name": "dead_drop_box",
+      "category": "prop",
+      "prompt": "Locked wooden storage box (死信箱) half-buried in dirt, small reinforced chest with iron bands and a rusted padlock, faded rune symbols carved on lid, dark wood weathered, xianxia anonymous trade container, single item on plain background",
+      "task_id": "2a1a2fc2-24bb-490a-a9c3-b08e674ed833",
+      "timestamp": 1778476563,
+      "_files": [
+        "dead_drop_box_pbr.glb",
+        "dead_drop_box_preview.webp"
+      ]
+    },
+    {
+      "name": "formation_flag",
+      "category": "prop",
+      "prompt": "Ancient Chinese formation flag (阵旗), small triangular banner on a short iron pole, the fabric is dark red silk with golden rune circle embroidered, weathered and frayed edges, xianxia ritual item, single item on plain background",
+      "task_id": "40213ab6-601b-44ad-91cd-a6546b418296",
+      "timestamp": 1778476508,
+      "_files": [
+        "formation_flag_pbr.glb",
+        "formation_flag_preview.webp"
+      ]
+    },
+    {
+      "name": "jade_slip",
+      "category": "prop",
+      "prompt": "Chinese jade slip (玉简), thin rectangular piece of polished green jade with tiny carved ancient characters in neat rows, slightly translucent, traditional cultivation manual tablet, elegant and simple, single small item on plain background",
+      "task_id": "20cdaf95-0291-4346-8d3f-c044ecef179d",
+      "timestamp": 1778475734,
+      "_files": [
+        "jade_slip_pbr.glb",
+        "jade_slip_preview.webp"
+      ]
+    },
+    {
+      "name": "talisman_paper",
+      "category": "prop",
+      "prompt": "Chinese yellow paper talisman (符箓), rectangular strip of aged yellow paper with red cinnabar brush-painted rune characters and seal marks, slightly curled edges, traditional Taoist charm, single item on plain background",
+      "task_id": "53fcd0ee-aa75-42b5-8414-4c47d2eac986",
+      "timestamp": 1778476519,
+      "_files": [
+        "talisman_paper_pbr.glb",
+        "talisman_paper_preview.webp"
+      ]
+    },
+    {
+      "name": "jade_pendant",
+      "category": "spirit_treasure",
+      "prompt": "Chinese jade pendant (玉佩), flat circular disc of translucent green jade with carved dragon motif, attached to red silk cord with decorative knots, polished surface, xianxia protective amulet, single item on plain background",
+      "task_id": "977756c1-67e8-4451-aeac-5342707253bb",
+      "timestamp": 1778476622,
+      "_files": [
+        "jade_pendant_pbr.glb",
+        "jade_pendant_preview.webp"
+      ]
+    },
+    {
+      "name": "silent_mirror",
+      "category": "spirit_treasure",
+      "prompt": "Ancient Chinese bronze mirror (寂照镜), circular with ornate back featuring coiling dragon relief, the reflective surface has a subtle crack running across it, faint glowing runes along the rim, dark patina, mystical artifact, single item on plain background",
+      "task_id": "06f26ee9-265a-4174-9339-3befe3c3f163",
+      "timestamp": 1778475751,
+      "_files": [
+        "silent_mirror_pbr.glb",
+        "silent_mirror_preview.webp"
+      ]
+    },
+    {
+      "name": "herb_knife",
+      "category": "weapon",
+      "prompt": "Simple herb gathering knife (采药刀), short curved blade with wooden handle wrapped in hemp cord, rustic and well-worn, traditional Chinese herbalist tool, single item on plain background",
+      "task_id": "e658f6c1-b73c-4f83-9899-148500c83f56",
+      "timestamp": 1778476553,
+      "_files": [
+        "herb_knife_pbr.glb",
+        "herb_knife_preview.webp"
+      ]
+    },
+    {
+      "name": "horsetail_whisk",
+      "category": "weapon",
+      "prompt": "Taoist horsehair fly whisk (拂尘), long bamboo handle with flowing white horsehair tassel, jade ring at the joint, traditional Chinese Taoist weapon, elegant and simple, single item on plain background",
+      "task_id": "b219e059-694b-4f2c-b9da-30d342cd4e40",
+      "timestamp": 1778476497,
+      "_files": [
+        "horsetail_whisk_pbr.glb",
+        "horsetail_whisk_preview.webp"
+      ]
+    },
+    {
+      "name": "iron_spear",
+      "category": "weapon",
+      "prompt": "Ancient Chinese iron spear (长枪), long wooden shaft with weathered iron spearhead, cloth wrapping near the grip, worn and battle-damaged, dark metal, xianxia fantasy style, single weapon on plain background",
+      "task_id": "88e6f291-89eb-44a2-aa6b-adc0bb73e994",
+      "timestamp": 1778475706,
+      "_files": [
+        "iron_spear_pbr.glb",
+        "iron_spear_preview.webp"
+      ]
+    },
+    {
+      "name": "iron_war_fan",
+      "category": "weapon",
+      "prompt": "Chinese iron war fan (铁扇), partially open folding fan with sharp metal ribs and dark silk fabric, engraved with faded rune patterns, martial arts weapon, single item on plain background",
+      "task_id": "befc596a-330a-4446-8771-2285df176189",
+      "timestamp": 1778476536,
+      "_files": [
+        "iron_war_fan_pbr.glb",
+        "iron_war_fan_preview.webp"
+      ]
+    }
+  ],
+  "manual_downloads": [
+    {
+      "file": "ancient+wooden+bow+3d+model.glb",
+      "size_mb": 26.3,
+      "sha1": "bd919cec6d864598ac91949a58f7b94ed080bc9b"
+    },
+    {
+      "file": "ant-minecraft-model-blockbench.zip",
+      "size_mb": 0.1,
+      "sha1": "047f3f4d499c10216702386a53c3f9dc8a654a29"
+    },
+    {
+      "file": "ant_minecraft_model_blockbench.glb",
+      "size_mb": 0.1,
+      "sha1": "bd79c05b02748b358062fd6f6b2ee82813e53573"
+    },
+    {
+      "file": "armored+gauntlets+3d+model.zip",
+      "size_mb": 27.4,
+      "sha1": "d63e9dec8884ba62b911a7d2b2575dd8b38d3c59"
+    },
+    {
+      "file": "cracked+sword+3d+model.zip",
+      "size_mb": 4.0,
+      "sha1": "5363617d19871baed3c5e7ad704a9ca7d675ed4e"
+    },
+    {
+      "file": "dagger+3d+model.zip",
+      "size_mb": 1.9,
+      "sha1": "5c43cc522f85f422b19b85929121ad04c421f245"
+    },
+    {
+      "file": "dark+mystic+sword+3d+model.glb",
+      "size_mb": 21.7,
+      "sha1": "05aa112ee4b8a84b1b6aeba2cb15efd37bb60742"
+    },
+    {
+      "file": "herb+sickle+3d+model.glb",
+      "size_mb": 47.4,
+      "sha1": "54e68cff861ba13aa6b959d279d5f1cf5ccee121"
+    },
+    {
+      "file": "iridescent skull 3d model.glb",
+      "size_mb": 53.8,
+      "sha1": "0465b9c30459d3203608cfaf39506dd9a1f6e592"
+    },
+    {
+      "file": "iron+spirit-sealing+box+3d+model.glb",
+      "size_mb": 54.8,
+      "sha1": "d4d2b0caf6f5bc2cb6485c248b3a134249511ea8"
+    },
+    {
+      "file": "medieval+dagger+3d+model.zip",
+      "size_mb": 2.4,
+      "sha1": "a876f26c00c8c6544bed80974b0630626343881a"
+    },
+    {
+      "file": "ruined+wooden+shelf+3d+model.glb",
+      "size_mb": 0.4,
+      "sha1": "bac12911d8255b709986288bbb02558daafcbf10"
+    },
+    {
+      "file": "skeleton-drgaon.zip",
+      "size_mb": 0.9,
+      "sha1": "6500e5217dcb5faabc6f7551b5aec379fc1b0361"
+    },
+    {
+      "file": "skeleton_drgaon.glb",
+      "size_mb": 0.7,
+      "sha1": "082420de5d4281f754e2f9b59a180fce36718491"
+    },
+    {
+      "file": "test1.glb",
+      "size_mb": 0.1,
+      "sha1": "d27e101aa65582873379232e8609a605998b81cf"
+    },
+    {
+      "file": "test1.zip",
+      "size_mb": 0.1,
+      "sha1": "bb415978c72d53a5622d19f2a45b846951ba7216"
+    },
+    {
+      "file": "wooden totem 3d model.zip",
+      "size_mb": 5.7,
+      "sha1": "b7fe97521ec5b6601d7ea903d702d0e9046343b7"
+    },
+    {
+      "file": "yog-sothoth-blockbench.zip",
+      "size_mb": 0.3,
+      "sha1": "99feb5010610b3da428a40e1f59f4a272bea934a"
+    },
+    {
+      "file": "灵弓+3d+模型.glb",
+      "size_mb": 27.8,
+      "sha1": "5921000a422ae5a6a8948e82831b660abf9b81ff"
+    },
+    {
+      "file": "角弓+3d+模型.glb",
+      "size_mb": 27.8,
+      "sha1": "143a04853ceff3f9ae6c8125a372afdc252fb869"
+    },
+    {
+      "file": "铁拳套+3d+模型.glb",
+      "size_mb": 28.6,
+      "sha1": "2c279db8422e0e8a4e39c12a1a1b5a2c60ca406c"
+    }
+  ]
+}
