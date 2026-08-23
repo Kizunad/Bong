@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""小刀三件套：石刃 / 凡铁匕首 / 骨刺的 bbmodel + SML OBJ 双出。
+
+参考图：`orthograph #8`（石刃：打制燧石刃 + 劈开木柄 + 绳缠箍）、
+`orthograph #9`（凡铁匕首：锻打起棱刃 + 金属护环 + 单铆钉木柄）、
+`orthograph #10`（骨刺：劈开的长骨，保留关节头当握把，尖端磨出斜纹）。
+
+三件都是 `server/assets/items/*.toml` 里的真物品，此前全在借原版皮：
+
+    stone_knife  石刃      → item/stone_sword
+    iron_dagger  凡铁匕首  → **注册表里根本没有，手持渲染是空手**
+    bone_spike   骨刺      → item/bone（且在新手默认 loadout，开局第一眼）
+
+## 参考图标定
+
+三张图都是单件正 / 侧 / 背，没有人体做尺，所以只能取**比例**，绝对尺寸按
+MC 手持物基线（axe_bone 全长 0.80、scale 0.85）定。逐段量色分出的分界：
+
+    石刃    刃 41% / 绳缠 17% / 木柄 38%（余下 4% 是绳缠上方露出的劈开木口）
+            前视长宽比 5.90，侧/正宽比 0.62
+    铁匕首  刃 61% / 护环 2% / 木柄 37%；刃最宽处在护环往上 34% 处
+            前视长宽比 6.90，侧/正宽比 0.71
+    骨刺    关节头 19% / 骨干 64% / 磨尖 17%；骨干宽只有关节头的 51%
+            前视长宽比 6.25，侧/正宽比 0.77
+
+骨刺在参考图里关节头朝上、尖朝下，**这里整个翻过来**：手持物约定尖端朝 +Y，
+关节头当握把落在 y=0（`assert_conventions` 会查）。
+
+## 刻意偏离参考的地方
+
+- **全长压到 0.76~0.84**，不照参考的细长比。MC 手持物的显示框就那么大，
+  照 6.9:1 做出来在手里是一根针，GUI 图标里更是一条线。
+- **刃厚放到 0.017~0.024**（按比例只该 0.008）。低于 0.015 的片在 MC 的
+  item 光照下侧面几乎不受光，转到侧视整片刃会"消失"一帧。
+
+## 贴图明度未经真机标定
+
+这套走 SML item 光照，和护甲那条（方块分轴着色）不是一回事，我这里也跑不了
+`client/tools/render_held_item.py`（缺 pyrender）。所以贴图只按参考量色 ×1.25
+放亮，**这个系数是从既有手持物贴图（gen_shield_models 的木纹/骨纹）反推的经验值，
+不是实测**，进游戏后大概率还要调一轮。
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+import sys
+from pathlib import Path
+
+from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
+
+from held_item_common import (  # noqa: E402
+    Box,
+    HeldItem,
+    Material,
+    build_mtl,
+    build_obj,
+    write_assets,
+)
+
+REPO = Path(__file__).resolve().parents[2]
+BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "items"
+PREVIEW_DIR = Path(__file__).resolve().parents[1] / "out"
+CLIENT_RESOURCES = REPO / "client" / "src" / "main" / "resources"
+
+
+# ── 贴图 ──────────────────────────────────────────────────────────────────
+# 每张 16²。OBJ 那条链是**每个面整张铺满**，所以只能画通用材质样本，
+# 不能画"某个面的具体图案"——画了会被按面拉伸成条带。
+
+
+def _noise(image: Image.Image, rng: random.Random, base, spread: int, warm: int = 0) -> None:
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            jitter = rng.randint(-spread, spread)
+            tint = rng.randint(-warm, warm) if warm else 0
+            pixels[x, y] = (
+                max(0, min(255, base[0] + jitter + tint)),
+                max(0, min(255, base[1] + jitter)),
+                max(0, min(255, base[2] + jitter - tint)),
+                255,
+            )
+
+
+def _blotch(image: Image.Image, rng: random.Random, count: int, colour, radius) -> None:
+    pixels = image.load()
+    for _ in range(count):
+        cx, cy = rng.uniform(0, 15), rng.uniform(0, 15)
+        r = rng.uniform(*radius)
+        peak = rng.uniform(0.25, 0.62)
+        for y in range(max(0, int(cy - r)), min(16, int(cy + r) + 1)):
+            for x in range(max(0, int(cx - r)), min(16, int(cx + r) + 1)):
+                d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 / r
+                if d > 1.0:
+                    continue
+                a = peak * (1.0 - d)
+                px = pixels[x, y]
+                pixels[x, y] = tuple(
+                    int(round(px[i] * (1 - a) + colour[i] * a)) for i in range(3)
+                ) + (255,)
+
+
+def tex_stone_flake() -> Image.Image:
+    """打制石刃：贝壳状剥片面。参考量得 H36 S12 V51，×1.25 放亮。
+
+    石片的特征是**大块的平面 + 平面之间的棱**，不是均匀噪点；所以先铺底噪，
+    再叠几块边界清楚的多边形亮/暗斑当剥片疤。
+    """
+    rng = random.Random(0x5701)
+    img = Image.new("RGBA", (16, 16), (168, 161, 150, 255))
+    _noise(img, rng, (168, 161, 150), 7, warm=2)
+    _blotch(img, rng, 5, (196, 191, 182), (2.6, 4.4))     # 新剥片：亮
+    _blotch(img, rng, 4, (132, 126, 118), (2.2, 3.8))     # 旧面：暗
+    pixels = img.load()
+    for _ in range(9):                                     # 棱：1px 亮线
+        x0, y0 = rng.randint(0, 15), rng.randint(0, 15)
+        dx, dy = rng.choice(((1, 1), (1, -1), (1, 0), (0, 1)))
+        for step in range(rng.randint(3, 7)):
+            x, y = x0 + dx * step, y0 + dy * step
+            if 0 <= x < 16 and 0 <= y < 16:
+                pixels[x, y] = (206, 202, 194, 255)
+    return img
+
+
+def tex_haft_dark() -> Image.Image:
+    """石刃的木柄：风化开裂的深色木，竖向纹。参考 H33 S45 V37。"""
+    rng = random.Random(0x5702)
+    img = Image.new("RGBA", (16, 16), (123, 100, 70, 255))
+    _noise(img, rng, (123, 100, 70), 8, warm=4)
+    _blotch(img, rng, 4, (99, 79, 54), (2.2, 4.0))         # 风化的暗块
+    _blotch(img, rng, 3, (148, 122, 88), (1.8, 3.2))       # 磨亮处
+    pixels = img.load()
+    # 木纹只画 3 条、且是**断续**的 1px 暗线。round 1 画成 2px 一条的连续竖条纹，
+    # 在手持物那个尺寸上整根柄读成"一捆木棍"，石刃那把直接成了火把。
+    for x in (3, 8, 13):
+        for y in range(16):
+            if (x * 7 + y * 5) % 4:                        # 断续
+                pixels[x, y] = (104, 84, 58, 255)
+    for _ in range(3):                                     # 裂
+        x = rng.randint(1, 14)
+        for y in range(rng.randint(0, 6), rng.randint(9, 16)):
+            pixels[x, y] = (72, 57, 38, 255)
+    return img
+
+
+def tex_cord() -> Image.Image:
+    """绳缠：搓过的植物纤维，斜向拧纹。参考 H35 S45 V42。"""
+    rng = random.Random(0x5703)
+    img = Image.new("RGBA", (16, 16), (140, 114, 77, 255))
+    _noise(img, rng, (140, 114, 77), 7, warm=3)
+    pixels = img.load()
+    for start in range(-8, 16, 3):
+        for step in range(16):
+            x, y = start + step, 15 - step
+            if 0 <= x < 16 and 0 <= y < 16:
+                pixels[x, y] = (114, 92, 60, 255)
+    for start in range(-6, 16, 6):
+        for step in range(16):
+            x, y = start + step, 15 - step
+            if 0 <= x < 16 and 0 <= y < 16:
+                pixels[x, y] = (172, 145, 102, 255)
+    return img
+
+
+def tex_iron_forged() -> Image.Image:
+    """锻打铁刃：锤痕面 + 锈斑。参考 H29 S20 V47（锈处 S 到 42）。"""
+    rng = random.Random(0x5704)
+    img = Image.new("RGBA", (16, 16), (150, 138, 126, 255))
+    _noise(img, rng, (150, 138, 126), 8, warm=4)
+    _blotch(img, rng, 4, (186, 178, 168), (2.4, 4.2))      # 锤面高光
+    # round 1 把暖偏去掉做成了纯灰（S10），渲出来和石刃那把分不开，读成石头。
+    # 参考量得 S20、锈处 S42：铁得带锈才是铁，这里锈斑给到 9 块盖住约四成面积。
+    _blotch(img, rng, 9, (134, 82, 46), (1.6, 3.6))        # 锈
+    _blotch(img, rng, 3, (88, 82, 76), (1.8, 3.0))         # 暗坑
+    return img
+
+
+def tex_haft_pale() -> Image.Image:
+    """铁匕首的木柄：新削的浅色木，比石刃那把亮一大截。参考 H32 S37 V65。"""
+    rng = random.Random(0x5705)
+    img = Image.new("RGBA", (16, 16), (206, 172, 130, 255))
+    _noise(img, rng, (206, 172, 130), 7, warm=4)
+    _blotch(img, rng, 4, (180, 148, 108), (2.2, 4.2))
+    pixels = img.load()
+    for x in (4, 11):                                      # 只两条断续纹，同上
+        for y in range(16):
+            if (x * 3 + y * 7) % 3:
+                pixels[x, y] = (186, 154, 114, 255)
+    return img
+
+
+def tex_iron_dark() -> Image.Image:
+    """护环与铆钉：比刃暗一档的熟铁，少锈（常摩擦）。"""
+    rng = random.Random(0x5706)
+    img = Image.new("RGBA", (16, 16), (112, 108, 104, 255))
+    _noise(img, rng, (112, 108, 104), 9)
+    _blotch(img, rng, 3, (150, 146, 142), (2.2, 4.0))
+    _blotch(img, rng, 2, (84, 62, 44), (1.4, 2.4))
+    return img
+
+
+def tex_bone_shaft() -> Image.Image:
+    """骨干：奶白，细密纵纹 + 淡褐土沁。参考 H39 S27 V72。"""
+    rng = random.Random(0x5707)
+    img = Image.new("RGBA", (16, 16), (229, 214, 182, 255))
+    _noise(img, rng, (229, 214, 182), 6, warm=3)
+    _blotch(img, rng, 5, (204, 186, 150), (2.4, 4.6))
+    pixels = img.load()
+    for x in (5, 12):                                      # 纵纹只两条、断续、低对比
+        for y in range(16):
+            if (x * 5 + y * 3) % 3:
+                pixels[x, y] = (214, 198, 166, 255)
+    _blotch(img, rng, 4, (186, 162, 118), (1.8, 3.4))      # 土沁
+    return img
+
+
+def tex_bone_joint() -> Image.Image:
+    """关节头：疏松骨质 + 更重的染色，明显比骨干脏。参考 H34 S51 V60。"""
+    rng = random.Random(0x5708)
+    img = Image.new("RGBA", (16, 16), (199, 172, 124, 255))
+    _noise(img, rng, (199, 172, 124), 9, warm=5)
+    _blotch(img, rng, 6, (160, 128, 82), (1.8, 3.6))
+    _blotch(img, rng, 3, (222, 202, 164), (1.6, 2.8))
+    return img
+
+
+def tex_bone_ground() -> Image.Image:
+    """磨出来的尖：斜向磨痕。参考图那一段的斜纹是这把刀最认得出的做工痕迹。"""
+    rng = random.Random(0x5709)
+    img = Image.new("RGBA", (16, 16), (221, 205, 170, 255))
+    _noise(img, rng, (221, 205, 170), 6, warm=2)
+    pixels = img.load()
+    for start in range(-10, 16, 2):                        # 斜磨痕，1px
+        for step in range(16):
+            x, y = start + step, step
+            if 0 <= x < 16 and 0 <= y < 16:
+                pixels[x, y] = (190, 172, 136, 255)
+    return img
+
+
+# ── 手持 display：以 axe_bone 为基线 ──────────────────────────────────────
+# axe_bone 是 TP rotation [0,-90,55] / translation [0,4,0] / scale 0.85。
+# 小刀比斧短、也该在手里显得更小，scale 压到 0.72；GUI 里刀太小看不清，
+# 单独放到 1.15 并转 45° 走对角（原版剑/匕首同一处理）。
+def _display(scale: float) -> dict:
+    return {
+        "thirdperson_righthand": {"rotation": [0, -90, 55], "translation": [0, 4.0, 0],
+                                  "scale": [scale, scale, scale]},
+        "thirdperson_lefthand": {"rotation": [0, 90, -55], "translation": [0, 4.0, 0],
+                                 "scale": [scale, scale, scale]},
+        "firstperson_righthand": {"rotation": [0, -90, 25], "translation": [0, 2.0, -5.0],
+                                  "scale": [scale - 0.04] * 3},
+        "firstperson_lefthand": {"rotation": [0, 90, -25], "translation": [0, 2.0, -5.0],
+                                 "scale": [scale - 0.04] * 3},
+        "ground": {"rotation": [0, 0, 0], "translation": [0, 2.0, 0], "scale": [0.45, 0.45, 0.45]},
+        "gui": {"rotation": [0, 0, 45], "translation": [0, 0, 0], "scale": [1.15, 1.15, 1.15]},
+        "fixed": {"rotation": [0, 180, 0], "translation": [0, 0, 0], "scale": [1.0, 1.0, 1.0]},
+        "head": {"rotation": [0, 0, 0], "translation": [0, 12.0, 0], "scale": [1.0, 1.0, 1.0]},
+    }
+
+
+# ── 为什么三把都比参考"粗"一大截 ────────────────────────────────────────
+# 参考图是实物照，长宽比 5.9 / 6.9 / 6.25。**照抄进 MC 是错的**：手持物在屏幕上
+# 就三十来像素，6.9:1 渲出来是一根针；round 1 三把分别读成了火把、针、电视塔。
+# 这里统一压到 3.9~4.7:1（原版剑连护手大约就是 4:1），保住"这是把刀"的读法，
+# 代价是失掉参考那种细长的考古感——这是 MC 手持物尺寸的硬下限，不是没做够。
+#
+# 刃厚同理放到 0.019~0.024（按参考比例只该 0.008）：低于 0.015 的片在 item 光照
+# 下侧面几乎不受光，转到侧视整片刃会"消失"。
+#
+# 收刃**不用等分多段**。round 1 每把七段等长，段高和段间宽差同量级，渲出来是
+# 一道楼梯。改成"根部一小段 + 中段一长条等宽 + 尖部两三段快收"：中段那条长的
+# 才是眼睛读到的"刃"，楼梯感被挤进最后 30%，正好是真刀该收尖的地方。
+
+
+# ── 石刃 stone_knife（全长 0.72，长宽比 3.9:1）────────────────────────────
+# 刃 y0.400~0.722 / 绳缠 0.274~0.400 / 木柄 0~0.274。
+# 刃分四段，每段的 x 半宽和中心都不同——参考图那片燧石是**不对称**的（一边直、
+# 一边弧），左右对称写出来就成了一把工业冲压的小刀，正是这把最不该有的味道。
+STONE_KNIFE = HeldItem(
+    key="stone_knife",
+    display_name="石刃",
+    host_item="stone_sword",
+    boxes=(
+        Box("handle_butt", "stone_haft", (0.0, 0.0300, 0.0), (0.0520, 0.0300, 0.0400)),
+        Box("handle_low", "stone_haft", (0.0, 0.1050, 0.0), (0.0596, 0.0480, 0.0458)),
+        Box("handle_up", "stone_haft", (0.0, 0.2140, 0.0), (0.0648, 0.0655, 0.0502)),
+        # 绳缠四道。厚度交替 0.058/0.055，x 中心左右各偏 0.004：等厚等宽的四道会
+        # 读成"车出来的四道凹槽"，参差才读成一圈圈绕上去的绳。
+        Box("wrap_a", "stone_cord", (-0.0040, 0.2900, 0.0), (0.0715, 0.0168, 0.0580)),
+        Box("wrap_b", "stone_cord", (+0.0043, 0.3235, 0.0), (0.0706, 0.0164, 0.0554)),
+        Box("wrap_c", "stone_cord", (-0.0038, 0.3560, 0.0), (0.0710, 0.0161, 0.0575)),
+        Box("wrap_d", "stone_cord", (+0.0041, 0.3862, 0.0), (0.0698, 0.0158, 0.0549)),
+        # 劈开的木口：两瓣夹住刃根，中间留缝——参考图侧视看得见那道缝。
+        Box("ferrule_l", "stone_haft", (-0.0475, 0.4180, 0.0), (0.0262, 0.0242, 0.0472)),
+        Box("ferrule_r", "stone_haft", (+0.0483, 0.4180, 0.0), (0.0255, 0.0236, 0.0464)),
+        # 燧石刃四段：根 → 长中段（最宽，眼睛读到的就是它）→ 收 → 尖
+        Box("blade_root", "stone_flake", (+0.0030, 0.4285, 0.0), (0.0782, 0.0325, 0.0240)),
+        Box("blade_belly", "stone_flake", (+0.0044, 0.5120, 0.0), (0.0918, 0.0520, 0.0224)),
+        Box("blade_mid", "stone_flake", (+0.0018, 0.6110, 0.0), (0.0724, 0.0478, 0.0189)),
+        Box("blade_tip", "stone_flake", (+0.0052, 0.6862, 0.0), (0.0381, 0.0358, 0.0131)),
+    ),
+    materials=(
+        Material("stone_flake", (0.66, 0.63, 0.59), tex_stone_flake()),
+        Material("stone_haft", (0.48, 0.39, 0.27), tex_haft_dark()),
+        Material("stone_cord", (0.55, 0.45, 0.30), tex_cord()),
+    ),
+    display=_display(0.72),
+)
+
+
+# ── 凡铁匕首 iron_dagger（全长 0.775，长宽比 4.7:1）───────────────────────
+# 刃 0.292~0.775 / 护环 0.269~0.293 / 木柄 0~0.269。
+# 刃对称（锻件不是石片），最宽段落在护环往上 28%~46% 那一整条（参考实测最宽点
+# 在 34%）——摆到中点会读成柳叶刀，摆到根部读成矛头。
+IRON_DAGGER = HeldItem(
+    key="iron_dagger",
+    display_name="凡铁匕首",
+    host_item="iron_ingot",
+    boxes=(
+        Box("handle_butt", "dagger_haft", (0.0, 0.0200, 0.0), (0.0478, 0.0200, 0.0398)),
+        Box("handle_body", "dagger_haft", (0.0, 0.1495, 0.0), (0.0542, 0.1140, 0.0438)),
+        # 单铆钉：参考图在柄下段约 88% 处，前后两面各露一个头 → 一根穿透的钉。
+        Box("rivet", "dagger_fitting", (0.0, 0.0600, 0.0), (0.0132, 0.0132, 0.0476)),
+        Box("guard", "dagger_fitting", (0.0, 0.2810, 0.0), (0.0788, 0.0122, 0.0518)),
+        Box("blade_root", "dagger_iron", (0.0, 0.3178, 0.0), (0.0598, 0.0258, 0.0238)),
+        Box("blade_body", "dagger_iron", (0.0, 0.4280, 0.0), (0.0822, 0.0855, 0.0223)),
+        Box("blade_taper", "dagger_iron", (0.0, 0.5560, 0.0), (0.0661, 0.0428, 0.0184)),
+        Box("blade_upper", "dagger_iron", (0.0, 0.6520, 0.0), (0.0458, 0.0535, 0.0146)),
+        Box("blade_tip", "dagger_iron", (0.0, 0.7400, 0.0), (0.0212, 0.0350, 0.0096)),
+    ),
+    materials=(
+        Material("dagger_iron", (0.59, 0.54, 0.49), tex_iron_forged()),
+        Material("dagger_haft", (0.81, 0.67, 0.51), tex_haft_pale()),
+        Material("dagger_fitting", (0.44, 0.42, 0.41), tex_iron_dark()),
+    ),
+    display=_display(0.74),
+)
+
+
+# ── 骨刺 bone_spike（全长 0.795，长宽比 4.5:1）────────────────────────────
+# 参考图里关节头朝上、尖朝下，这里整个翻过来（手持物约定尖朝 +Y）。
+# 关节头 0~0.16 / 骨干 0.156~0.53 / 磨尖 0.528~0.795。
+# 关节头做成两瓣不等大的髁——真骨的远端关节就是两个不对称的球，做成一个方块
+# 就成了"棒槌"。骨干带一道背面的纵沟：参考图侧视能看到它是**劈开的半根骨**，
+# 里面是空的，那道沟是整件最认得出"这是骨不是木棍"的地方。
+BONE_SPIKE = HeldItem(
+    key="bone_spike",
+    display_name="骨刺",
+    host_item="bone",
+    boxes=(
+        Box("condyle_major", "spike_joint", (-0.0400, 0.0480, 0.0), (0.0500, 0.0480, 0.0520)),
+        Box("condyle_minor", "spike_joint", (+0.0432, 0.0505, 0.0), (0.0462, 0.0433, 0.0484)),
+        Box("joint_neck", "spike_joint", (0.0, 0.1240, 0.0), (0.0558, 0.0362, 0.0448)),
+        Box("shaft_low", "spike_bone", (0.0, 0.2500, -0.0050), (0.0472, 0.0938, 0.0372)),
+        Box("shaft_up", "spike_bone", (0.0, 0.4360, -0.0032), (0.0424, 0.0928, 0.0334)),
+        # 背面的纵沟：劈开的半骨露出的髓腔。压进骨干体内，只露一道暗缝。
+        Box("marrow_groove", "spike_joint", (0.0, 0.3400, +0.0292), (0.0112, 0.1800, 0.0118)),
+        Box("point_base", "spike_ground", (0.0, 0.5900, 0.0), (0.0358, 0.0624, 0.0281)),
+        Box("point_mid", "spike_ground", (0.0, 0.6900, 0.0), (0.0241, 0.0398, 0.0192)),
+        Box("point_tip", "spike_ground", (0.0, 0.7620, 0.0), (0.0113, 0.0332, 0.0091)),
+    ),
+    materials=(
+        Material("spike_bone", (0.90, 0.84, 0.71), tex_bone_shaft()),
+        Material("spike_joint", (0.78, 0.67, 0.49), tex_bone_joint()),
+        Material("spike_ground", (0.87, 0.80, 0.67), tex_bone_ground()),
+    ),
+    display=_display(0.76),
+)
+
+
+def items() -> tuple[HeldItem, ...]:
+    return (STONE_KNIFE, IRON_DAGGER, BONE_SPIKE)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-preview", action="store_true", help="只写 bbmodel/资源，不出图")
+    parser.add_argument("--install", action="store_true",
+                        help="OBJ/MTL/贴图/model JSON 写进 client 资源树"
+                             "（记得同步资源包 sha1）")
+    parser.add_argument("--dump-obj", metavar="KEY", help="把某件的 OBJ/MTL 打到 stdout")
+    args = parser.parse_args()
+
+    if args.dump_obj:
+        chosen = next((i for i in items() if i.key == args.dump_obj), None)
+        if chosen is None:
+            raise SystemExit(f"没有这件：{args.dump_obj}（可选 {[i.key for i in items()]}）")
+        print(build_obj(chosen))
+        print(build_mtl(chosen))
+        return
+
+    outputs = write_assets(
+        items(),
+        bbmodel_dir=BBMODEL_DIR,
+        client_resources=CLIENT_RESOURCES if args.install else None,
+        preview_dir=PREVIEW_DIR,
+        render_previews=not args.no_preview,
+    )
+    for key, path in outputs.items():
+        print(f"[{key}] {path.relative_to(REPO)}")
+
+
+if __name__ == "__main__":
+    main()
