@@ -257,10 +257,14 @@ fi
 #      ① 审查结论「代码审查完成 / Kody 审查完成」—— 同时带 -completed- 和裸标记
 #      ② PR 摘要 —— 只有裸标记，**不是**结论
 #      ③ 任何正文里提到该标记的评论，**包括你自己回复时引用它**（实测 #2061
-#         上我的一条说明性回复就命中了裸标记）
+#         上我的一条说明性回复就命中了裸标记；后来我在回复里引用了
+#         `-completed-` 字样，连加长后的 contains 也照样被自己命中）
+#    所以匹配用**完整形态的正则** `<!-- kody-codereview-completed-<数字>-<随机> -->`
+#    而不是 contains：散文里引用前缀不会带那串 id，正则就不会误命中。
+#    实测 #2061：contains 命中 7 条、严格正则 6 条，差的那条正是我自己的回复。
 gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
   | jq -r --arg t "$TRIGGER_AT" --argjson uid "$OWNER_ID" '.[]
-      | select((.body | contains("<!-- kody-codereview-completed-"))
+      | select((.body | test("<!-- kody-codereview-completed-[0-9]+-[a-z0-9]+ -->"))
                and .user.id == $uid
                and .created_at > $t)
       | "\(.created_at)"'
@@ -280,6 +284,28 @@ API 层没有任何字段能把它和真人分开：review 对象 body 为空（
 `pulls/<PR>/reviews` 端点也带真实 `commit_id`，但 Kody 的 review 对象 **body 是空的**
 （实测 `body_len=0`），认不出是不是它发的，所以不拿它当权威——真要用得靠行内意见的
 `pull_request_review_id` 反查。直接走上面的行内意见更简单。
+
+**别把触发当成唯一出路（会死锁）**：Kody 常在你 push 后十几秒就自动审完。
+这时候你再补一条 `@kody start-review`，它可能**不会**重跑——于是"结论必须晚于触发"
+永远不成立，PR 卡死。#2061 实测：HEAD 03:09:41 push，verdict 03:10:00 与 03:10:21，
+我的触发 03:10:23 落在结论**之后**，Kody 没再跑。
+
+所以判"这条 clean 结论算不算当前 HEAD 的"，按下面顺序：
+
+1. **配对法（首选，无需触发）**：把本 PR 每个 commit 的时间与每条 verdict 时间排在一起，
+   若**每个更早的 commit 都已经各自配到过一条 verdict**，那么晚于当前 HEAD push 的
+   verdict 就只能是当前 HEAD 的——旧 HEAD 的延迟结论已经被它自己那条认领掉了。
+   ```bash
+   gh pr view <PR> --json commits --jq '.commits[] | "commit  \(.committedDate)  \(.oid[:9])"'
+   gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
+     | jq -r --argjson uid "$OWNER_ID" '.[]
+         | select((.body|test("<!-- kody-codereview-completed-[0-9]+-[a-z0-9]+ -->")) and .user.id==$uid)
+         | "verdict \(.created_at)"'
+   ```
+   两列合并按时间排序，检查是不是 commit→verdict 交替出现、没有哪个 commit 光秃秃。
+2. **配对不干净时**（有 commit 没配到 verdict、或时间交错分不清）才发
+   `@kody start-review`，并要求 verdict 晚于该触发评论（用上面 TRIGGER_AT 那套）。
+3. 两条都不成立就如实说"当前 HEAD 的审查归属无法确认"，别猜。
 
 **"无问题"那一轮没有 SHA 可核**：Kody 查无问题时只发一条 issue comment，不产生 review 对象，而 issue comment 不带 commit SHA（#2058 实测：`c8e57c24a` 上零 review 对象，只有一条"未发现问题"评论）。这时唯一能收紧的办法是 **push 后显式发 `@kody start-review`**，把这一轮绑到自己的一个已知动作上，再要求那条 clean 评论**晚于该触发评论**，而不是仅仅晚于 push。做不到就别宣称"当前 HEAD 已通过审查"，如实说「Kody 对当前 HEAD 只给了不带 SHA 的 clean 评论」。
 
