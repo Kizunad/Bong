@@ -9,6 +9,9 @@
 
 use std::collections::HashMap;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
@@ -101,6 +104,7 @@ use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 use crate::network::forge_snapshot_emit;
+use crate::network::gate::budget::BudgetStore;
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
@@ -481,6 +485,105 @@ const GIVE_DAN_MAX_DISTANCE: f64 = 6.0;
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 
+/// Runtime owner of the pure ingress bucket.  The role map is lifecycle
+/// metadata only; token and aggregation accounting remains in `BudgetStore`.
+#[derive(Debug, Default, Resource)]
+pub struct ClientRequestBudget {
+    pub store: BudgetStore<Entity>,
+    character_ids: HashMap<Entity, String>,
+}
+
+#[derive(SystemParam)]
+pub struct ClientRequestIngressParams<'w, 's> {
+    pub combat_clock: Res<'w, CombatClock>,
+    pub budget: Option<ResMut<'w, ClientRequestBudget>>,
+    pub lifecycles: Query<'w, 's, &'static Lifecycle>,
+}
+
+impl ClientRequestBudget {
+    fn prepare_client(&mut self, client: Entity, character_id: Option<&str>) -> bool {
+        let current = character_id.unwrap_or("<unbound>");
+        if let Some(previous) = self.character_ids.get_mut(&client) {
+            if previous != current {
+                self.store.cleanup(&client);
+                current.clone_into(previous);
+            }
+            return true;
+        }
+
+        if self.character_ids.len() >= self.store.max_clients() {
+            return false;
+        }
+
+        // A bucket may have been seeded through the pure store API before
+        // lifecycle metadata was observed.  Treat that as an unknown role
+        // generation and discard it before binding the current character.
+        self.store.cleanup(&client);
+        self.character_ids.insert(client, current.to_string());
+        true
+    }
+
+    fn cleanup_client(&mut self, client: Entity) {
+        self.store.cleanup(&client);
+        self.character_ids.remove(&client);
+    }
+
+    fn retain_active<I>(&mut self, active_clients: I)
+    where
+        I: IntoIterator<Item = (Entity, Option<String>)>,
+    {
+        let active: Vec<_> = active_clients.into_iter().collect();
+        let active_entities: std::collections::HashSet<_> =
+            active.iter().map(|(entity, _)| *entity).collect();
+        self.store.retain_active(active_entities.iter().copied());
+        self.character_ids
+            .retain(|entity, _| active_entities.contains(entity));
+        for (entity, character_id) in active {
+            if self.character_ids.contains_key(&entity) || self.store.contains_client(&entity) {
+                self.prepare_client(entity, character_id.as_deref());
+            }
+        }
+    }
+}
+
+/// Drop ingress state before the normal disconnected-client despawn and also
+/// remove stale role generations from clients whose `Lifecycle` changed.
+pub fn cleanup_client_request_budget(
+    mut budget: ResMut<ClientRequestBudget>,
+    mut disconnected: valence::prelude::RemovedComponents<Client>,
+    clients: Query<(Entity, Option<&Lifecycle>), With<Client>>,
+) {
+    for client in disconnected.read() {
+        budget.cleanup_client(client);
+    }
+    budget.retain_active(clients.iter().map(|(entity, lifecycle)| {
+        (
+            entity,
+            lifecycle.map(|lifecycle| lifecycle.character_id.clone()),
+        )
+    }));
+}
+
+#[cfg(test)]
+static CLIENT_REQUEST_DECODE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+fn decode_client_request(payload: &str) -> Result<ClientRequestV1, serde_json::Error> {
+    if payload
+        .as_bytes()
+        .get(..128)
+        .is_some_and(|prefix| prefix.iter().all(|byte| *byte == b'\n'))
+    {
+        CLIENT_REQUEST_DECODE_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+    serde_json::from_str(payload)
+}
+
+#[cfg(not(test))]
+fn decode_client_request(payload: &str) -> Result<ClientRequestV1, serde_json::Error> {
+    serde_json::from_str(payload)
+}
+
 /// plan-scroll-reading-v1 P0/P2：阅读残卷循环姿态动画 priority——"中低"档位，
 /// 低于战斗层（`COMBAT_PRIORITY`=1000）、高于仪式套路层（`GUANGBO_TICAO_PRIORITY`=500）。
 /// 合法区间 [`VFX_ANIM_PRIORITY_MIN`, `VFX_ANIM_PRIORITY_MAX`] = [100, 3999]。
@@ -532,7 +635,7 @@ fn meridian_label(id: &MeridianChannelId) -> &'static str {
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
     mut dispatch: ClientRequestDispatchParams,
-    combat_clock: Res<CombatClock>,
+    mut ingress: ClientRequestIngressParams,
     mut commands: Commands,
     mut clients: Query<(&Username, &mut Client)>,
     persistence: Option<Res<PlayerStatePersistence>>,
@@ -547,10 +650,34 @@ pub fn handle_client_request_payloads(
     mut skill_scroll_params: SkillScrollRequestParams,
     mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
+    // Production wiring always inserts this resource.  If an alternate app
+    // forgets it, fail closed instead of allowing an unbudgeted payload.
+    #[cfg(not(test))]
+    if ingress.budget.is_none() {
+        return;
+    }
+
     let mut pending_forge_steps: HashMap<(u64, ForgeSessionId), ForgeStep> = HashMap::new();
+    let combat_clock = &ingress.combat_clock;
     for ev in events.read() {
         if ev.channel.as_str() != CHANNEL {
             continue;
+        }
+
+        if let Some(budget) = ingress.budget.as_deref_mut() {
+            let character_id = ingress
+                .lifecycles
+                .get(ev.client)
+                .ok()
+                .map(|lifecycle| lifecycle.character_id.as_str());
+            if !budget.prepare_client(ev.client, character_id)
+                || !budget
+                    .store
+                    .admit_ingress(ev.client, ingress.combat_clock.tick)
+                    .admitted
+            {
+                continue;
+            }
         }
 
         let payload = match std::str::from_utf8(&ev.data) {
@@ -564,7 +691,8 @@ pub fn handle_client_request_payloads(
             }
         };
 
-        let request: ClientRequestV1 = match serde_json::from_str(payload) {
+        let decoded_request = decode_client_request(payload);
+        let request: ClientRequestV1 = match decoded_request {
             Ok(r) => r,
             Err(err) => {
                 // 带 user= 关联键：deserialize-failed 是全局频道共有的 warn，bot
@@ -745,7 +873,7 @@ pub fn handle_client_request_payloads(
                 if let Some(start_du_xu_tx) = dispatch.start_du_xu_tx.as_deref_mut() {
                     start_du_xu_tx.send(StartDuXuRequest {
                         entity: ev.client,
-                        requested_at_tick: combat_clock.tick,
+                        requested_at_tick: ingress.combat_clock.tick,
                     });
                 }
             }
@@ -764,7 +892,7 @@ pub fn handle_client_request_payloads(
                 void_action_tx.send(VoidActionIntent {
                     caster: ev.client,
                     request,
-                    requested_at_tick: combat_clock.tick,
+                    requested_at_tick: ingress.combat_clock.tick,
                 });
             }
             ClientRequestV1::MovementAction {
@@ -949,7 +1077,7 @@ pub fn handle_client_request_payloads(
                     &pill_item_id,
                     None,
                     &mut commands,
-                    &combat_clock,
+                    combat_clock,
                     &mut inventories,
                     &mut clients,
                     &player_states,
@@ -2117,7 +2245,7 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     target,
                     &mut commands,
-                    &combat_clock,
+                    combat_clock,
                     &mut inventories,
                     &mut clients,
                     &player_states,
@@ -2189,7 +2317,7 @@ pub fn handle_client_request_payloads(
                 if let Some(defense_tx) = dispatch.defense_tx.as_deref_mut() {
                     defense_tx.send(DefenseIntent {
                         defender: ev.client,
-                        issued_at_tick: combat_clock.tick,
+                        issued_at_tick: ingress.combat_clock.tick,
                     });
                 }
             }
@@ -2267,7 +2395,7 @@ pub fn handle_client_request_payloads(
                 handle_use_quick_slot(
                     ev.client,
                     slot,
-                    &combat_clock,
+                    combat_clock,
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
@@ -2294,7 +2422,7 @@ pub fn handle_client_request_payloads(
                     (
                         &combat_params.item_registry,
                         persistence.as_deref(),
-                        &combat_clock,
+                        combat_clock,
                     ),
                 );
             }
@@ -2303,7 +2431,7 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     slot,
                     target,
-                    &combat_clock,
+                    combat_clock,
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
@@ -3979,7 +4107,7 @@ mod tests {
     };
     use crate::botany::harvest::harvest_duration_ticks_for;
     use crate::botany::registry::BotanyPlantId;
-    use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
+    use crate::combat::components::{Lifecycle, UnlockedStyles, WoundKind, Wounds};
     use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
     use crate::cultivation::known_techniques::KnownTechniques;
     use crate::cultivation::tribulation::TribulationState;
@@ -6371,6 +6499,7 @@ mod tests {
 
     fn register_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
+        app.init_resource::<ClientRequestBudget>();
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
         app.insert_resource(TechniqueRegistry::load_for_tests());
         // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
@@ -8752,6 +8881,142 @@ mod tests {
                 .is_empty(),
             "unsupported request version should not emit InsightChosen"
         );
+    }
+
+    #[test]
+    fn ingress_budget_rejects_33rd_same_tick_before_decode_or_dispatch() {
+        CLIENT_REQUEST_DECODE_COUNT.store(0, Ordering::Relaxed);
+
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(CapturedBreakthroughRequests::default());
+        app.add_systems(
+            Update,
+            capture_breakthrough_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("BudgetIngress");
+        let client = app.world_mut().spawn(client_bundle).id();
+        for _ in 0..33 {
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client,
+                    channel: ident!("bong:client_request").into(),
+                    data: format!(
+                        "{}{{\"type\":\"breakthrough_request\",\"v\":1}}",
+                        "\n".repeat(128)
+                    )
+                    .into_bytes()
+                    .into_boxed_slice(),
+                });
+        }
+
+        app.update();
+
+        assert_eq!(
+            CLIENT_REQUEST_DECODE_COUNT.load(Ordering::Relaxed),
+            32,
+            "the 33rd same-tick payload must be rejected before JSON decode"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<CapturedBreakthroughRequests>()
+                .0
+                .len(),
+            32,
+            "the 33rd same-tick payload must not dispatch a handler event"
+        );
+    }
+
+    #[test]
+    fn ingress_budget_clears_bucket_when_character_role_changes() {
+        let mut app = App::new();
+        app.init_resource::<ClientRequestBudget>();
+        app.add_systems(Update, cleanup_client_request_budget);
+
+        let (client_bundle, _helper) = create_mock_client("RoleSwitch");
+        let client = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Lifecycle {
+                    character_id: "character-a".to_string(),
+                    ..Lifecycle::default()
+                },
+            ))
+            .id();
+        app.update();
+
+        {
+            let mut budget = app.world_mut().resource_mut::<ClientRequestBudget>();
+            for _ in 0..32 {
+                assert!(budget.store.admit_ingress(client, 0).admitted);
+            }
+            assert_eq!(budget.store.tokens_for(&client), Some(0));
+        }
+
+        app.world_mut()
+            .get_mut::<Lifecycle>(client)
+            .expect("connected client must retain lifecycle")
+            .character_id = "character-b".to_string();
+        app.update();
+
+        let budget = app.world().resource::<ClientRequestBudget>();
+        assert_eq!(
+            budget.store.tokens_for(&client),
+            None,
+            "role switch must discard the old entity bucket before the next ingress"
+        );
+        assert_eq!(
+            budget.character_ids.get(&client).map(String::as_str),
+            Some("character-b")
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<ClientRequestBudget>()
+                .store
+                .admit_ingress(client, 0)
+                .admitted,
+            "a switched role must receive a clean 32-token bucket"
+        );
+    }
+
+    #[test]
+    fn ingress_budget_clears_bucket_when_client_disconnects() {
+        let mut app = App::new();
+        app.init_resource::<ClientRequestBudget>();
+        app.add_systems(Update, cleanup_client_request_budget);
+
+        let (client_bundle, _helper) = create_mock_client("Disconnect");
+        let client = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Lifecycle {
+                    character_id: "character-a".to_string(),
+                    ..Lifecycle::default()
+                },
+            ))
+            .id();
+        app.update();
+        app.world_mut()
+            .resource_mut::<ClientRequestBudget>()
+            .store
+            .admit_ingress(client, 0);
+        assert!(app
+            .world()
+            .resource::<ClientRequestBudget>()
+            .store
+            .contains_client(&client));
+
+        app.world_mut().despawn(client);
+        app.update();
+
+        let budget = app.world().resource::<ClientRequestBudget>();
+        assert!(!budget.store.contains_client(&client));
+        assert!(!budget.character_ids.contains_key(&client));
     }
 
     #[test]
@@ -11514,6 +11779,7 @@ mod tests {
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.init_resource::<ClientRequestBudget>();
         app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11605,6 +11871,7 @@ mod tests {
     fn learn_skill_scroll_duplicate_does_not_consume_item() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.init_resource::<ClientRequestBudget>();
         app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11698,6 +11965,7 @@ mod tests {
     fn learn_blueprint_consumes_scroll_item() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.init_resource::<ClientRequestBudget>();
         app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -22136,6 +22404,7 @@ mod freshness_probe_handler_tests {
     fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.init_resource::<ClientRequestBudget>();
         app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedRaiseShieldIntents::default());
         app.insert_resource(CapturedLowerShieldIntents::default());
