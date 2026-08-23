@@ -40,6 +40,7 @@ use crate::npc::loot::{default_loot_for_archetype, NpcLootTable};
 use crate::npc::movement::GameTick;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::relic::{GuardianDuty, TrialEval};
+use crate::npc::scenario::ScenarioNpc;
 use crate::npc::schedule::{
     home_base_for_archetype, hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule,
 };
@@ -351,7 +352,7 @@ pub fn dehydrate_far_npcs_system(
             Option<&FactionMembership>,
             Option<&NpcPatrol>,
         ),
-        (With<NpcMarker>, Without<Despawned>),
+        (With<NpcMarker>, Without<Despawned>, Without<ScenarioNpc>),
     >,
     severed: Query<Option<&MeridianSeveredPermanent>, With<NpcMarker>>,
     shared_lifespan: Query<Option<&LifespanComponent>, With<NpcMarker>>,
@@ -1574,6 +1575,58 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(entity).is_some(),
             "dehydrated NPC must be marked Despawned instead of raw despawned"
+        );
+    }
+
+    #[test]
+    fn dehydrate_keeps_transient_scenario_npc_live_and_out_of_dormant_store() {
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                ScenarioNpc,
+                Position(DVec3::new(10.0, 64.0, 10.0)),
+                Lifecycle {
+                    character_id: "npc_scenario_far".to_string(),
+                    ..Default::default()
+                },
+                LifeRecord::new("npc_scenario_far"),
+                DeathRegistry::new("npc_scenario_far"),
+                NpcArchetype::Rogue,
+                NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 42),
+                NpcLifespan::new(0.0, 1_000.0),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            !app.world()
+                .resource::<NpcDormantStore>()
+                .contains("npc_scenario_far"),
+            "scenario identity is transient and must never be serialized as a generic dormant zombie"
+        );
+        assert!(app.world().get::<ScenarioNpc>(entity).is_some());
+        assert!(
+            app.world().get::<Despawned>(entity).is_none(),
+            "scenario NPC must remain live for the explicit scenario clear/terminal lifecycle"
         );
     }
 
