@@ -35,6 +35,14 @@ detach_background_job() {
     fi
 }
 
+resolve_raster_manifest_path() {
+    local manifest="${1:-}"
+
+    [ -n "$manifest" ] || return 1
+    # 统一解析相对/绝对路径；不能把仓库根目录无条件拼到绝对路径前面。
+    realpath -m -- "$manifest"
+}
+
 background_process_is_running() {
     local pid="${1:-}"
     local state
@@ -475,7 +483,7 @@ echo "    OK"
 
 # --- Step 5: Launch server ---
 echo "==> [5/5] Starting server..."
-MANIFEST_ABS="$(pwd)/$MANIFEST"
+MANIFEST_ABS="$(resolve_raster_manifest_path "$MANIFEST")"
 ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
 launch_bong_server
 
