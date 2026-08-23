@@ -62,7 +62,7 @@ from held_item_common import (  # noqa: E402
 )
 
 REPO = Path(__file__).resolve().parents[2]
-BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "items"
+BBMODEL_DIR = Path(__file__).resolve().parents[1] / "models"
 PREVIEW_DIR = Path(__file__).resolve().parents[1] / "out"
 CLIENT_RESOURCES = REPO / "client" / "src" / "main" / "resources"
 
@@ -134,13 +134,15 @@ def tex_haft_dark() -> Image.Image:
     _blotch(img, rng, 4, (99, 79, 54), (2.2, 4.0))         # 风化的暗块
     _blotch(img, rng, 3, (148, 122, 88), (1.8, 3.2))       # 磨亮处
     pixels = img.load()
-    # 木纹只画 3 条、且是**断续**的 1px 暗线。round 1 画成 2px 一条的连续竖条纹，
-    # 在手持物那个尺寸上整根柄读成"一捆木棍"，石刃那把直接成了火把。
-    for x in (3, 8, 13):
+    # 木纹只画 2 条、断续、对比压到 8 个色阶。round 1 画成 2px 一条的连续竖条纹，
+    # 手持物那个尺寸上整根柄读成"一捆木棍"，石刃那把直接成了火把；round 2 收到
+    # 3 条仍嫌密——柄面在屏幕上不过十来像素，一张 16² 图铺上去，超过两条竖线
+    # 就必然读成条纹布。
+    for x in (4, 11):
         for y in range(16):
             if (x * 7 + y * 5) % 4:                        # 断续
-                pixels[x, y] = (104, 84, 58, 255)
-    for _ in range(3):                                     # 裂
+                pixels[x, y] = (115, 94, 66, 255)
+    for _ in range(2):                                     # 裂
         x = rng.randint(1, 14)
         for y in range(rng.randint(0, 6), rng.randint(9, 16)):
             pixels[x, y] = (72, 57, 38, 255)
@@ -169,13 +171,19 @@ def tex_cord() -> Image.Image:
 def tex_iron_forged() -> Image.Image:
     """锻打铁刃：锤痕面 + 锈斑。参考 H29 S20 V47（锈处 S 到 42）。"""
     rng = random.Random(0x5704)
-    img = Image.new("RGBA", (16, 16), (150, 138, 126, 255))
-    _noise(img, rng, (150, 138, 126), 8, warm=4)
-    _blotch(img, rng, 4, (186, 178, 168), (2.4, 4.2))      # 锤面高光
-    # round 1 把暖偏去掉做成了纯灰（S10），渲出来和石刃那把分不开，读成石头。
-    # 参考量得 S20、锈处 S42：铁得带锈才是铁，这里锈斑给到 9 块盖住约四成面积。
-    _blotch(img, rng, 9, (134, 82, 46), (1.6, 3.6))        # 锈
-    _blotch(img, rng, 3, (88, 82, 76), (1.8, 3.0))         # 暗坑
+    img = Image.new("RGBA", (16, 16), (132, 121, 110, 255))
+    _noise(img, rng, (132, 121, 110), 9, warm=4)
+    _blotch(img, rng, 4, (176, 167, 156), (2.4, 4.2))      # 锤面高光
+    # 暖偏不能去：round 1 做成纯灰（S10），渲出来和石刃那把分不开，读成石头。
+    # 但锈也不能给满——round 2 给了 9 块大斑，96px 下整片刃读成"锈成一坨的铁块"
+    # 而不是刃。参考图的锈是**沿棱和凹处的小片**，中间的锻面是干净的：这里收到
+    # 5 块小斑（约两成面积）+ 3 条 1px 的棱锈线。
+    # round 2 除了斑还画了 3 条 45° 的"沿棱锈线"，与参考并排一看是**斜划痕**不是
+    # 锈——真锈是斑不是线，规则的等角斜线在任何尺度下都读成刮蹭。全删，只留斑，
+    # 并把底色从 V59 压到 V52（参考量得 V47，×1.25 该是 V59；但参考那把是**深色
+    # 重锈**的旧铁，纯按系数放亮会得到一把崭新的钢刀）。
+    _blotch(img, rng, 7, (126, 76, 42), (1.1, 2.2))        # 锈斑：多而小
+    _blotch(img, rng, 3, (78, 72, 66), (1.6, 2.8))         # 暗坑
     return img
 
 
@@ -301,8 +309,11 @@ STONE_KNIFE = HeldItem(
         # 燧石刃四段：根 → 长中段（最宽，眼睛读到的就是它）→ 收 → 尖
         Box("blade_root", "stone_flake", (+0.0030, 0.4285, 0.0), (0.0782, 0.0325, 0.0240)),
         Box("blade_belly", "stone_flake", (+0.0044, 0.5120, 0.0), (0.0918, 0.0520, 0.0224)),
-        Box("blade_mid", "stone_flake", (+0.0018, 0.6110, 0.0), (0.0724, 0.0478, 0.0189)),
-        Box("blade_tip", "stone_flake", (+0.0052, 0.6862, 0.0), (0.0381, 0.0358, 0.0131)),
+        Box("blade_mid", "stone_flake", (+0.0018, 0.6020, 0.0), (0.0724, 0.0398, 0.0189)),
+        # 尖再收一档、拉长一档：round 2 的 tip 宽 0.076 高 0.072 接近正方，
+        # 与参考并排是个"钝头"，参考那片燧石是明确收出来的偏锋尖。
+        Box("blade_upper", "stone_flake", (+0.0044, 0.6620, 0.0), (0.0498, 0.0212, 0.0156)),
+        Box("blade_tip", "stone_flake", (+0.0086, 0.7005, 0.0), (0.0268, 0.0215, 0.0112)),
     ),
     materials=(
         Material("stone_flake", (0.66, 0.63, 0.59), tex_stone_flake()),
@@ -353,10 +364,19 @@ BONE_SPIKE = HeldItem(
     display_name="骨刺",
     host_item="bone",
     boxes=(
-        Box("condyle_major", "spike_joint", (-0.0400, 0.0480, 0.0), (0.0500, 0.0480, 0.0520)),
-        Box("condyle_minor", "spike_joint", (+0.0432, 0.0505, 0.0), (0.0462, 0.0433, 0.0484)),
-        Box("joint_neck", "spike_joint", (0.0, 0.1240, 0.0), (0.0558, 0.0362, 0.0448)),
-        Box("shaft_low", "spike_bone", (0.0, 0.2500, -0.0050), (0.0472, 0.0938, 0.0372)),
+        # 关节头：round 2 做成两个等大的方块，96px 下只读成"稍宽的底座"。真骨的
+        # 远端关节是**两个不等大的球 + 中间一道髁间窝**，这里用大小/高低/前后都
+        # 错开的三块 + 一顶帽做出来：大髁最高最靠前，小髁矮半格且后缩，中间那块
+        # 窄的把两瓣连起来并留出可见的凹。
+        # round 2 把大髁往 -x 甩了 0.0455、还压在最底，正视整个头歪向一边，读成
+        # 一只靴子。这轮把两髁收回中线附近（±0.030），改用**高度差**而不是偏移
+        # 差来做不对称：大髁高 0.104、小髁 0.078，中间的髁间窝更浅。
+        Box("condyle_major", "spike_joint", (-0.0300, 0.0520, -0.0055), (0.0472, 0.0520, 0.0520)),
+        Box("condyle_minor", "spike_joint", (+0.0332, 0.0430, +0.0068), (0.0428, 0.0390, 0.0452)),
+        Box("intercondylar", "spike_joint", (+0.0022, 0.0330, 0.0), (0.0188, 0.0272, 0.0368)),
+        Box("condyle_cap", "spike_joint", (-0.0232, 0.1008, -0.0038), (0.0356, 0.0172, 0.0408)),
+        Box("joint_neck", "spike_joint", (0.0, 0.1418, 0.0), (0.0468, 0.0342, 0.0416)),
+        Box("shaft_low", "spike_bone", (0.0, 0.2620, -0.0050), (0.0468, 0.0862, 0.0372)),
         Box("shaft_up", "spike_bone", (0.0, 0.4360, -0.0032), (0.0424, 0.0928, 0.0334)),
         # 背面的纵沟：劈开的半骨露出的髓腔。压进骨干体内，只露一道暗缝。
         Box("marrow_groove", "spike_joint", (0.0, 0.3400, +0.0292), (0.0112, 0.1800, 0.0118)),
