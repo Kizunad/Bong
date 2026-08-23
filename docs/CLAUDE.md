@@ -215,21 +215,31 @@ PR 创建时 Kody 必跑，push 新提交后通常也会重跑但不保证。
 
 **只比时间戳不够**：旧 HEAD 的延迟评论会落在新 push 之后，被当成本轮结论，等于放没被审过的代码进 main。**必须核 SHA**。
 
-⚠️ **核 SHA 有个坑：不能用行内评论的 `commit_id`。** GitHub 会把它改写成"该评论仍然适用的最新 commit"，于是旧评论自动显示成当前 HEAD。真实归属看 **`original_commit_id`**（行内）和 **`reviews[].commit_id`**（review 对象）。PR #2058 实测：6 条评论全部写于 `93f88bedb`，其中 4 条的 `commit_id` 已被改写成 `c8e57c24a`——照 `commit_id` 判会得出"Kody 审过我的修复"这个假结论。
+⚠️ **核 SHA 有个坑：不能用行内评论的 `commit_id`。** GitHub 会把它改写成"该评论仍然适用的最新 commit"，于是旧评论自动显示成当前 HEAD。真实归属看行内评论的 **`original_commit_id`**。PR #2058 实测：6 条评论全部写于 `93f88bedb`，其中 4 条的 `commit_id` 已被改写成 `c8e57c24a`——照 `commit_id` 判会得出"Kody 审过我的修复"这个假结论。另外两个同样会放过未审代码的坑：**认不了 `user.login`**（Kody 用仓库 owner 账号发言）和**忘了 `--paginate`**（默认每页 30 条）。
 
 ```bash
 HEAD=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
 
-# 有意见时：review 对象带真实 SHA，这是权威判据
-# 注意 gh api 的 --jq 不支持 --arg，要过滤变量就管道给 jq
-gh api repos/{owner}/{repo}/pulls/<PR>/reviews \
-  | jq -r --arg h "$HEAD" '.[] | select(.commit_id == $h) | "\(.submitted_at)  \(.state)"'
+# ① 本轮有没有针对当前 HEAD 的 Kody 意见。三个过滤条件缺一不可：
+#    - original_commit_id：commit_id 会被 GitHub 改写成"仍适用的最新 commit"
+#    - <!-- kody-codereview 标记：**Kody 用仓库 owner 自己的账号发言**
+#      （user.login=Kizunad / type=User / author_association=OWNER），
+#      按 user.login 根本区分不出它和真人，只能认这个标记
+#    - --paginate：默认每页 30 条，长 PR 会把后面几页的结论整段漏掉
+#    （gh api 的 --jq 不支持 --arg，要带变量过滤就管道给 jq）
+gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments \
+  | jq -r --arg h "$HEAD" '.[]
+      | select(.original_commit_id == $h and (.body | contains("<!-- kody-codereview")))
+      | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
 
-# 行内意见：认 original_commit_id，不认 commit_id
-gh api repos/{owner}/{repo}/pulls/<PR>/comments \
-  | jq -r --arg h "$HEAD" '.[] | select(.original_commit_id == $h)
-        | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
+# ② 无意见那一轮只有一条 issue comment，不带任何 SHA（见下）
+gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
+  | jq -r '.[] | select(.body | contains("<!-- kody-codereview")) | "\(.created_at)"'
 ```
+
+`pulls/<PR>/reviews` 端点也带真实 `commit_id`，但 Kody 的 review 对象 **body 是空的**
+（实测 `body_len=0`），认不出是不是它发的，所以不拿它当权威——真要用得靠行内意见的
+`pull_request_review_id` 反查。直接走上面的行内意见更简单。
 
 **"无问题"那一轮没有 SHA 可核**：Kody 查无问题时只发一条 issue comment，不产生 review 对象，而 issue comment 不带 commit SHA（#2058 实测：`c8e57c24a` 上零 review 对象，只有一条"未发现问题"评论）。这时唯一能收紧的办法是 **push 后显式发 `@kody start-review`**，把这一轮绑到自己的一个已知动作上，再要求那条 clean 评论**晚于该触发评论**，而不是仅仅晚于 push。做不到就别宣称"当前 HEAD 已通过审查"，如实说「Kody 对当前 HEAD 只给了不带 SHA 的 clean 评论」。
 
