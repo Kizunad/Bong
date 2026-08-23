@@ -209,16 +209,29 @@ for pr_n in [PR-1..PR-N]:
 
 PR 创建时 Kody 必跑，push 新提交后通常也会重跑但不保证。
 
-**Kody 不是 check run，`gh pr checks` 里看不到它**——它出的是 PR 评论（总结走 issue comment，具体问题走行内 review comment）。所以状态要这么查：
+**Kody 不是 check run，`gh pr checks` 里看不到它**——它出的是 PR 评论：总结走 issue comment，具体问题走行内 review comment。
+
+#### 判"这一轮审的是不是当前 HEAD"
+
+**只比时间戳不够**：旧 HEAD 的延迟评论会落在新 push 之后，被当成本轮结论，等于放没被审过的代码进 main。**必须核 SHA**。
+
+⚠️ **核 SHA 有个坑：不能用行内评论的 `commit_id`。** GitHub 会把它改写成"该评论仍然适用的最新 commit"，于是旧评论自动显示成当前 HEAD。真实归属看 **`original_commit_id`**（行内）和 **`reviews[].commit_id`**（review 对象）。PR #2058 实测：6 条评论全部写于 `93f88bedb`，其中 4 条的 `commit_id` 已被改写成 `c8e57c24a`——照 `commit_id` 判会得出"Kody 审过我的修复"这个假结论。
 
 ```bash
-gh pr view <PR> --json comments \
-  --jq '.comments[] | select(.body | test("Kody")) | "\(.createdAt)  \(.body[:60])"'
+HEAD=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
+
+# 有意见时：review 对象带真实 SHA，这是权威判据
+# 注意 gh api 的 --jq 不支持 --arg，要过滤变量就管道给 jq
+gh api repos/{owner}/{repo}/pulls/<PR>/reviews \
+  | jq -r --arg h "$HEAD" '.[] | select(.commit_id == $h) | "\(.submitted_at)  \(.state)"'
+
+# 行内意见：认 original_commit_id，不认 commit_id
 gh api repos/{owner}/{repo}/pulls/<PR>/comments \
-  --jq '.[] | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
+  | jq -r --arg h "$HEAD" '.[] | select(.original_commit_id == $h)
+        | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
 ```
 
-判"这一轮跑完没有"看**最新一条 Kody 评论的时间是否晚于当前 HEAD 的 push 时间**；只数评论条数会把上一轮的结论当成本轮的。
+**"无问题"那一轮没有 SHA 可核**：Kody 查无问题时只发一条 issue comment，不产生 review 对象，而 issue comment 不带 commit SHA（#2058 实测：`c8e57c24a` 上零 review 对象，只有一条"未发现问题"评论）。这时唯一能收紧的办法是 **push 后显式发 `@kody start-review`**，把这一轮绑到自己的一个已知动作上，再要求那条 clean 评论**晚于该触发评论**，而不是仅仅晚于 push。做不到就别宣称"当前 HEAD 已通过审查"，如实说「Kody 对当前 HEAD 只给了不带 SHA 的 clean 评论」。
 
 **等待节奏硬约束**：
 
