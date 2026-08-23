@@ -55,6 +55,7 @@ from bot.scenarios._cultivation_helpers import (  # noqa: E402
     _set_qi_max_and_wait,
 )
 from bot.scenarios._inventory_helpers import (  # noqa: E402
+    inventory_signature,
     give_inventory_revision_barrier,
     latest_inventory_snapshot,
     require_pack_container,
@@ -2159,7 +2160,272 @@ class CombatServerDataGateTest(unittest.TestCase):
         )
         self.assertTrue(is_outgoing_positive_hit(accepted))
 
+def _server_data_skill_xp_gain_bytes() -> bytes:
+    scroll = _pb_string(1, "skill_scroll_herbalism_baicao_can") + _pb_varint(2, 500)
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_varint(2, 1)  # SkillId HERBALISM
+        + _pb_varint(3, 500)
+        + _pb_message(5, scroll)  # XpGainSourceScroll
+    )
+    return _pb_message(7, payload)
+
+
+def _server_data_quickslot_config_bytes() -> bytes:
+    entry = (
+        _pb_string(1, "guyuan_pill")
+        + _pb_string(2, "固元丹")
+        + _pb_varint(3, 1500)
+        + _pb_varint(4, 3000)
+        + _pb_string(5, "bong-client:textures/gui/items/pill.png")
+    )
+    bound_slot = _pb_message(1, entry)
+    empty_slot = b""
+    # review finding [5]：proto3 `repeated uint64` 默认 **packed**（wire type 2，
+    # length-delimited blob 内连续 varint）。旧 builder 用 9 个独立 wire-0 varint
+    # 构造、解码器只读 w==0，真实服务器生产的 packed 载荷被解成空列表——用 packed
+    # 编码 + 非零时间戳钉死解码器必须走 packed 路径且逐值还原。
+    packed_cooldowns = _pb_bytes(
+        2,
+        _pb_raw_varint(1)
+        + _pb_raw_varint(2)
+        + _pb_raw_varint(3)
+        + _pb_raw_varint(4)
+        + _pb_raw_varint(5)
+        + _pb_raw_varint(6)
+        + _pb_raw_varint(7)
+        + _pb_raw_varint(8)
+        + _pb_raw_varint(9),
+    )
+    payload = (
+        _pb_message(1, bound_slot)
+        + _pb_message(1, empty_slot) * 8
+        + packed_cooldowns
+        + _pb_string(3, "gap10-bind-1")
+        + _pb_varint(4, 1)
+    )
+    return _pb_message(35, payload)
+
+
+def _server_data_techniques_snapshot_bytes() -> bytes:
+    meridian = _pb_string(1, "Lung") + _pb_fixed32(2, 0.5)
+    # central-review 31438252846 finding [5]：proficiency(field 4) 与 qi_cost(field 10)
+    # 取**非零互异**值——旧 fixture 两者都是 0.0，解码器完全忽略这两个 wire 字段、
+    # 返回默认 0.0 也能通过断言。非零值 + 精确断言才能区分「正确解码」与「丢弃字段」。
+    entry = (
+        _pb_string(1, "sword.cleave")
+        + _pb_string(2, "劈")
+        + _pb_string(3, "common")
+        + _pb_fixed32(4, 0.5)  # proficiency
+        + _pb_string(5, "生疏")
+        + _pb_varint(6, 1)
+        + _pb_string(7, "基础劈砍。举剑过顶，顺势劈下。")
+        + _pb_string(8, "Awaken")
+        + _pb_message(9, meridian)
+        + _pb_fixed32(10, 2.5)  # qi_cost
+        + _pb_fixed32(11, 8.0)
+        + _pb_varint(12, 16)
+        + _pb_varint(13, 30)
+        + _pb_fixed32(14, 3.0)
+    )
+    return _pb_message(37, _pb_message(1, entry))
+
+
+def _server_data_skill_config_snapshot_bytes() -> bytes:
+    entry = _pb_string(1, "zhenmai.sever_chain") + _pb_string(
+        2, '{"backfire_kind":"tainted_yuan","meridian_id":"Pericardium"}'
+    )
+    return _pb_message(54, _pb_message(1, entry))
+
+
+def _server_data_skill_scroll_used_bytes() -> bytes:
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_string(2, "skill_scroll_herbalism_baicao_can")
+        + _pb_varint(3, 1)  # SkillId HERBALISM
+        + _pb_varint(4, 500)
+        + _pb_varint(5, 0)
+    )
+    return _pb_message(97, payload)
+
+
+def _server_data_skill_snapshot_bytes() -> bytes:
+    # central-review 31438252846 finding [4] + 31442475206 finding [9]：六个嵌套字段
+    # 全部取**互异**非默认值——旧 fixture 用 500 同时填 xp 与 recent_gain_xp，解码器
+    # 交换 field 2/field 6 在断言下仍观测相同；互异值才能暴露 field swap 与 drop。
+    entry_snap = (
+        _pb_varint(1, 3)      # lv
+        + _pb_varint(2, 500)  # xp
+        + _pb_varint(3, 1600) # xp_to_next
+        + _pb_varint(4, 1440) # total_xp
+        + _pb_varint(5, 30)   # cap
+        + _pb_varint(6, 700)  # recent_gain_xp
+    )
+    snap_entry = _pb_string(1, "herbalism") + _pb_message(2, entry_snap)
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_message(2, snap_entry)
+        + _pb_string(3, "skill_scroll_herbalism_baicao_can")
+    )
+    return _pb_message(98, payload)
+
+
+class ServerDataSkillScrollDecodeTest(unittest.TestCase):
+    def test_proto_skill_xp_gain_scroll_source_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_xp_gain_bytes())
+
+        self.assertEqual(decoded["type"], "skill_xp_gain")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(decoded["skill"], "herbalism")
+        self.assertEqual(decoded["amount"], 500)
+        self.assertEqual(
+            decoded["source"],
+            {"kind": "scroll", "scroll_id": "skill_scroll_herbalism_baicao_can", "xp_grant": 500},
+            "learn_skill_scroll 的 XP 来源必须是 scroll 且带 scroll_id，场景才可断言来源",
+        )
+
+    def test_proto_quick_slot_config_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_quickslot_config_bytes())
+
+        self.assertEqual(decoded["type"], "quickslot_config")
+        self.assertEqual(len(decoded["slots"]), 9, "固定 9 槽")
+        bound = decoded["slots"][0]
+        # central-review 31442475206 finding [5]：fixture 供应完整 5 字段绑定条目
+        # （item_id/display_name/cast_duration_ms/cooldown_ms/icon_texture），旧测试
+        # 只断言 item_id + cast_duration_ms——解码器丢弃字段 2/4/5 或返回默认值也能
+        # 通过。逐字段 pin 全部 5 个可观测槽元数据。
+        self.assertEqual(bound["item_id"], "guyuan_pill")
+        self.assertEqual(bound["display_name"], "固元丹")
+        self.assertEqual(bound["cast_duration_ms"], 1500)
+        self.assertEqual(bound["cooldown_ms"], 3000)
+        self.assertEqual(bound["icon_texture"], "bong-client:textures/gui/items/pill.png")
+        self.assertIsNone(decoded["slots"][1], "未绑定槽应为 None")
+        self.assertEqual(
+            decoded["cooldown_until_ms"],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            "packed repeated uint64 必须逐值还原（review finding [5]：旧解码器把 "
+            "wire-2 packed 载荷解成空列表）",
+        )
+        self.assertEqual(decoded["ack_request_id"], "gap10-bind-1")
+        self.assertIs(decoded["bind_accepted"], True)
+
+    def test_proto_techniques_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_techniques_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "techniques_snapshot")
+        self.assertEqual(len(decoded["entries"]), 1)
+        entry = decoded["entries"][0]
+        self.assertEqual(entry["id"], "sword.cleave")
+        self.assertEqual(entry["display_name"], "劈")
+        self.assertEqual(entry["required_realm"], "Awaken")
+        self.assertEqual(entry["required_meridians"], [{"channel": "Lung", "min_health": 0.5}])
+        self.assertEqual(entry["cast_ticks"], 16)
+        self.assertEqual(entry["cooldown_ticks"], 30)
+        # central-review 2012 #6 回归：fixture 供应了 grade/proficiency/
+        # proficiency_label/active/description/qi_cost/stamina_cost/range 全部分解码
+        # 字段，但旧测试只断言其中一部分——解码器对这些字段返回零值/丢弃也能通过。
+        # 这些是新支持快照载荷的可观测字段，逐个 pin 完整解码契约。
+        self.assertEqual(entry["grade"], "common")
+        # central-review 31438252846 finding [5]：fixture 现以非零互异值编码
+        # proficiency(0.5) 与 qi_cost(2.5)，精确断言其解码值——忽略任一 wire 字段的
+        # 解码器会返回 0.0 并被此处抓红。
+        self.assertEqual(entry["proficiency"], 0.5)
+        self.assertEqual(entry["proficiency_label"], "生疏")
+        self.assertIs(entry["active"], True)
+        self.assertEqual(entry["description"], "基础劈砍。举剑过顶，顺势劈下。")
+        self.assertEqual(entry["qi_cost"], 2.5)
+        self.assertEqual(entry["stamina_cost"], 8.0)
+        self.assertEqual(entry["range"], 3.0)
+
+    def test_proto_skill_config_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_config_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "skill_config_snapshot")
+        self.assertEqual(len(decoded["configs"]), 1)
+        entry = decoded["configs"][0]
+        self.assertEqual(entry["skill_id"], "zhenmai.sever_chain")
+        self.assertIn('"meridian_id":"Pericardium"', entry["json_config"])
+
+    def test_proto_skill_scroll_used_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_scroll_used_bytes())
+
+        self.assertEqual(decoded["type"], "skill_scroll_used")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(decoded["scroll_id"], "skill_scroll_herbalism_baicao_can")
+        self.assertEqual(decoded["skill"], "herbalism")
+        self.assertEqual(decoded["xp_granted"], 500)
+        self.assertIs(decoded["was_duplicate"], False)
+
+    def test_proto_skill_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "skill_snapshot")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(len(decoded["skills"]), 1)
+        entry = decoded["skills"][0]
+        self.assertEqual(entry["skill_name"], "herbalism")
+        # central-review 31438252846 finding [4] + 31442475206 finding [9]：fixture
+        # 供应全部六个嵌套字段且互异（xp=500 ≠ recent_gain_xp=700），旧 fixture 用
+        # 500 同时填两个字段——交换 field 2/field 6 的解码器也观测相同。逐字段 pin
+        # 完整解码契约（互异值暴露 field swap）。
+        self.assertEqual(entry["entry"]["lv"], 3)
+        self.assertEqual(entry["entry"]["xp"], 500)
+        self.assertEqual(entry["entry"]["xp_to_next"], 1600)
+        self.assertEqual(entry["entry"]["total_xp"], 1440)
+        self.assertEqual(entry["entry"]["cap"], 30)
+        self.assertEqual(entry["entry"]["recent_gain_xp"], 700)
+        self.assertEqual(decoded["consumed_scrolls"], ["skill_scroll_herbalism_baicao_can"])
+
+    def test_bot_dispatch_emits_quickslot_config_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_quickslot_config_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "quickslot_config")
+        self.assertEqual(
+            decoded_events[0].data["payload"]["ack_request_id"],
+            "gap10-bind-1",
+            "真实 Bot reader 必须把 production protobuf quickslot_config 暴露为可断言事件",
+        )
+
+
 class InventoryHelperTest(unittest.TestCase):
+    def test_inventory_signature_retains_complete_item_metadata(self):
+        baseline = {
+            "containers": [{"id": "body_pocket", "rows": 2, "cols": 3}],
+            "placed_items": [
+                {
+                    "container_id": "body_pocket",
+                    "row": 0,
+                    "col": 1,
+                    "item": {
+                        "instance_id": 7,
+                        "item_id": "guyuan_pill",
+                        "durability": 0.61,
+                        "freshness": {"current_qi": 0.4},
+                        "forge_quality": 0.8,
+                    },
+                }
+            ],
+            "equipped": {"chest_worn": []},
+            "hotbar": [None] * 9,
+            "bone_coins": 12,
+        }
+        changed = json.loads(json.dumps(baseline))
+        changed["placed_items"][0]["item"]["durability"] = 0.60
+        self.assertNotEqual(
+            inventory_signature(baseline),
+            inventory_signature(changed),
+            "拒绝路径签名必须捕获 durability/NBT-like metadata 的细微篡改",
+        )
+
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(
             [
@@ -6710,6 +6976,26 @@ class ProtoMinTest(unittest.TestCase):
                         f"field {field} 必须由 decoder table 分发",
                     )
 
+    def test_server_data_payload_name_reads_skill_xp_gain_oneof_field(self):
+        # central-review 2012 #1：field 7 必须在 SERVER_DATA_PAYLOAD_NAMES 中登记，
+        # 否则 expect_server_data_payload("skill_xp_gain") 会把该 oneof 分类为未知。
+        envelope = _server_data_skill_xp_gain_bytes()
+        self.assertEqual(proto_min.server_data_payload_field(envelope), 7)
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "skill_xp_gain")
+
+    def test_server_data_payload_name_falls_back_to_decoded_type(self):
+        # decoder 认识但注册表未登记的 oneof 字段（field 34=cast_sync）：name 桥
+        # 由 decoded payload 的 type 回退，与 decoder 保持一致，而不是退回 field_34。
+        envelope = _pb_len_field(34, b"")
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+        # 验证未在 SERVER_DATA_PAYLOAD_NAMES 注册但在 DECODERS 注册时的回退机制
+        saved = proto_min.SERVER_DATA_PAYLOAD_NAMES.pop(34, None)
+        try:
+            self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+        finally:
+            if saved is not None:
+                proto_min.SERVER_DATA_PAYLOAD_NAMES[34] = saved
+
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
             _pb_varint_field(1, 4242)
@@ -10611,6 +10897,14 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
             _pb_message(30, _pb_varint(5, 7))
         )
         self.assertEqual(gathering["target_type"], "unknown_7")
+        xp_gain = proto_min.decode_server_data_envelope(
+            _pb_message(7, _pb_varint(2, 99))
+        )
+        self.assertEqual(xp_gain["skill"], "unknown_99")
+        scroll_used = proto_min.decode_server_data_envelope(
+            _pb_message(97, _pb_varint(3, 99))
+        )
+        self.assertEqual(scroll_used["skill"], "unknown_99")
 
     def test_new_registry_tags_dispatch_to_named_decoders(self):
         for field, expected_type in (
