@@ -16,9 +16,9 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, BlockPos, ChunkLayer, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager,
-    EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
-    UniqueId, Username, With, Without,
+    bevy_ecs, BlockPos, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager, EventReader,
+    EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource, UniqueId,
+    Username, With, Without,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -422,8 +422,6 @@ pub struct ClientRequestIngressParams<'w, 's> {
     pub lifecycles: Query<'w, 's, Option<&'static Lifecycle>>,
     pub gate_targets: Query<'w, 's, ClientRequestGateTarget<'static>>,
     pub lingtian_plot_index: Option<Res<'w, LingtianPlotIndex>>,
-    pub chunk_layers:
-        Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     pub dimension_layers: Option<Res<'w, DimensionLayers>>,
 }
 
@@ -776,12 +774,7 @@ fn evaluate_live_gate(
             let target_block = BlockPos::new(*x, *y, *z);
             let plot_index =
                 lingtian_plot_index.ok_or(GateDenialReason::MissingAuthorityContext)?;
-            let target_exists = plot_index.contains(&target_block)
-                || ingress
-                    .chunk_layers
-                    .iter()
-                    .any(|layer| layer.block(target_block).is_some());
-            if !target_exists {
+            if !plot_index.contains(&target_block) {
                 return Err(GateDenialReason::TargetNotFound);
             }
             let target = [
@@ -1111,6 +1104,13 @@ fn resync_external_container_after_gate_denial(
         resync_inventory_only(player, inventories, player_states, cultivations, clients);
         return;
     };
+    if external.opened_by != Some(player) {
+        // A gate rejection must not disclose the container to a requester who
+        // has not been proven to own the live session. The requester still
+        // receives their own authoritative inventory snapshot.
+        resync_inventory_only(player, inventories, player_states, cultivations, clients);
+        return;
+    }
     resync_ext_and_inventory(
         player,
         &external,
@@ -1359,16 +1359,26 @@ pub fn handle_client_request_payloads(
                 );
                 if feedback_admitted {
                     if let ClientRequestV1::ExternalContainerMove { session_id, .. } = &request {
-                        resync_external_container_after_gate_denial(
-                            ev.client,
-                            *session_id,
-                            &dispatch,
-                            &mut combat_params,
-                            &mut inventories,
-                            &player_states,
-                            &skill_scroll_params.cultivations,
-                            &mut clients,
-                        );
+                        if reason == GateDenialReason::NotOwner {
+                            resync_inventory_only(
+                                ev.client,
+                                &inventories,
+                                &player_states,
+                                &skill_scroll_params.cultivations,
+                                &mut clients,
+                            );
+                        } else {
+                            resync_external_container_after_gate_denial(
+                                ev.client,
+                                *session_id,
+                                &dispatch,
+                                &mut combat_params,
+                                &mut inventories,
+                                &player_states,
+                                &skill_scroll_params.cultivations,
+                                &mut clients,
+                            );
+                        }
                     }
                 }
                 continue;
@@ -5593,9 +5603,34 @@ mod tests {
             "non-owner live gate rejection must emit bounded feedback; payloads={payload_types:?}"
         );
         assert!(
-            payload_types.iter().any(|ty| ty == "loot_container_update")
-                && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
-            "non-owner rejection must use the read-only external/inventory resync contract without entering the mutation handler; payloads={payload_types:?}"
+            payload_types.iter().any(|ty| ty == "inventory_snapshot")
+                && payload_types.iter().all(|ty| ty != "loot_container_update"),
+            "non-owner rejection may resync only the requester's inventory and must not expose external contents; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn external_move_non_owner_cross_dimension_does_not_disclose_container() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case(
+            Some(DimensionKind::Tsy),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::SupplyCoffin {
+                grade: crate::supply_coffin::SupplyCoffinGrade::Common,
+            },
+            true,
+            true,
+            false,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "event_alert"),
+            "non-owner cross-dimension rejection must emit bounded feedback; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot")
+                && payload_types.iter().all(|ty| ty != "loot_container_update"),
+            "non-owner rejection must not disclose external contents even when dimension gate rejects first; payloads={payload_types:?}"
         );
     }
 
