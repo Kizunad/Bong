@@ -16,6 +16,7 @@ pub mod decay;
 pub mod dugu_v2;
 pub mod events;
 pub mod foreign_qi_resistance;
+pub mod guard_log;
 pub mod jiemai;
 pub mod knockback;
 pub mod lifecycle;
@@ -41,7 +42,7 @@ pub mod zhenmai_v2;
 use std::path::Path;
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Entity, GameMode, IntoSystemConfigs,
-    IntoSystemSetConfigs, Query, SystemSet, Update, Username, Without,
+    IntoSystemSetConfigs, Or, Query, SystemSet, Update, Username, Without,
 };
 
 #[cfg(test)]
@@ -88,9 +89,16 @@ pub fn is_damageable(entity: Entity, game_modes: &Query<&GameMode>) -> bool {
 }
 
 type JoinedClientsWithoutCombatBundle<'a> = (valence::prelude::Entity, &'a Username);
-type JoinedClientsWithoutCombatBundleFilter = (Added<Client>, Without<Wounds>);
+type JoinedClientsWithoutCombatBundleFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
+    Without<Wounds>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
 
-fn attach_combat_bundle_to_joined_clients(
+pub(crate) fn attach_combat_bundle_to_joined_clients(
     mut commands: Commands,
     joined_clients: Query<
         JoinedClientsWithoutCombatBundle<'_>,

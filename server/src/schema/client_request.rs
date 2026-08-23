@@ -17,6 +17,10 @@ use super::tuike::FalseSkinKindV1;
 use super::void_actions::VoidActionRequestV1;
 use crate::cultivation::components::MeridianChannelId;
 use crate::cultivation::forging::ForgeAxis;
+use crate::network::gate::{
+    DimensionRule, DistanceRule, GateSpec, GateTarget, NoGateReason, OwnershipRule, RequestGate,
+    StateGateId,
+};
 use crate::zhenfa::{
     trap_content::TrapTargetFace, ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind,
 };
@@ -728,6 +732,171 @@ pub enum ClientRequestV1 {
     },
 }
 
+impl ClientRequestV1 {
+    /// Return the contract-first gate declaration for this request variant.
+    ///
+    /// This match is deliberately exhaustive.  `NoGate(InvalidState)` is an
+    /// explicit fail-closed marker for a domain whose adapter is not part of
+    /// this registry slice; it must never be interpreted as implicit allow.
+    #[allow(clippy::match_same_arms)]
+    pub fn gate_spec(&self) -> RequestGate {
+        match self {
+            Self::SetMeridianTarget { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::BreakthroughRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::StartDuXu { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::VoidAction { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::MovementAction { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AbortTribulation { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::HeartDemonDecision { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::InsightDecision { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::BotanyHarvestRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyOpenFurnace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyFeedSlot { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyTakeBack { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyIgnite { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyIntervention { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyTurnPage { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyLearnRecipe { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyLearnRecipeFragment { .. } => {
+                RequestGate::NoGate(NoGateReason::InvalidState)
+            }
+            Self::AlchemyTakePill { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AlchemyFurnacePlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CoffinOpen { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CoffinPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::BlockPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::BlockPickerGive { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CoffinEnter { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CoffinLeave { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CoffinBreak { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CoffinMenuReclaim { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SpiritNichePlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SpiritNicheRepair { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SpiritNicheGaze { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SpiritNicheMarkCoordinate { .. } => {
+                RequestGate::NoGate(NoGateReason::InvalidState)
+            }
+            Self::SpiritNicheActivateGuardian { .. } => {
+                RequestGate::NoGate(NoGateReason::InvalidState)
+            }
+            Self::SparringInviteResponse { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::TradeOfferRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::TradeOfferResponse { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::NpcInspectRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::NpcDialogueChoice { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::NpcTradeRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ZhenfaPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ZhenfaTrigger { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ZhenfaDisarm { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::QiScatterBeadUse { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LearnSkillScroll { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::TechniqueScrollUse { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::InventoryMoveIntent { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::EquipFalseSkin { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeFalseSkin { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::InventoryDiscardItem { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::TreasureActivate { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::DropWeaponIntent { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::RepairWeaponIntent { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::PickupDroppedItem { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::RemainsLoot { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::MineralProbe { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::FreshnessProbe { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ApplyPill { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SelfAntidote { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::DuoSheRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::QiColorInspect { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::UseLifeCore { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::Jiemai { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ChargeCarrier { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ThrowCarrier { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AnqiContainerSwitch { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::UseQuickSlot { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::QuickSlotBind { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SkillBarCast { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SkillBarBind { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SkillConfigIntent { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CombatReincarnate { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CombatTerminate { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CombatCreateNewCharacter { .. } => {
+                RequestGate::NoGate(NoGateReason::InvalidState)
+            }
+            Self::StartExtractRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CancelExtractRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::StartSearch { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CancelSearch { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::SupplyCoffinOpen { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ContainerOpen { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::WorkbenchOpen { .. } => RequestGate::Spec(GateSpec {
+                target: GateTarget::ProtocolEntityId,
+                distance: DistanceRule::WORKBENCH,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::Any,
+                state: &[
+                    StateGateId::PlayerAlive,
+                    StateGateId::TargetExists,
+                    StateGateId::WorkbenchPresent,
+                ],
+            }),
+            Self::ExternalContainerMove { .. } => RequestGate::Spec(GateSpec {
+                target: GateTarget::SessionId,
+                distance: DistanceRule::EXTERNAL_SESSION,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::Owner,
+                state: &[
+                    StateGateId::PlayerAlive,
+                    StateGateId::TargetExists,
+                    StateGateId::SessionOpen,
+                    StateGateId::SessionOwner,
+                    StateGateId::ExternalSession,
+                ],
+            }),
+            Self::ExternalContainerClose { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LingtianStartTill { .. } => RequestGate::Spec(GateSpec {
+                target: GateTarget::RequestBlockPosition,
+                distance: DistanceRule::NEARBY_INTERACT,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::None,
+                state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
+            }),
+            Self::LingtianStartRenew { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LingtianStartPlanting { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LingtianStartHarvest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LingtianStartReplenish { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LingtianStartDrainQi { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeStartSession { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeTemperingHit { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeInscriptionScroll { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeConsecrationInject { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeStepAdvance { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeBlueprintTurnPage { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeLearnBlueprint { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ForgeStationPlace { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::CraftStart { .. } => RequestGate::Spec(GateSpec {
+                target: GateTarget::None,
+                distance: DistanceRule::None,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::None,
+                state: &[StateGateId::PlayerAlive, StateGateId::InventoryOpen],
+            }),
+            Self::CraftCancel { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::GiveDanToElder { .. } => RequestGate::Spec(GateSpec {
+                target: GateTarget::ProtocolEntityId,
+                distance: DistanceRule::NEARBY_INTERACT,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::Any,
+                state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
+            }),
+            Self::RaiseShield { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::LowerShield { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ScrollReadRequest { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::ScrollReadClosed { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+            Self::AgentUiResponse { .. } => RequestGate::NoGate(NoGateReason::InvalidState),
+        }
+    }
+}
+
 fn default_craft_quantity() -> u32 {
     1
 }
@@ -803,6 +972,123 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gate_spec_registry_pins_the_five_live_request_paths() {
+        let cases = [
+            (
+                "give_dan_to_elder",
+                ClientRequestV1::GiveDanToElder {
+                    v: 1,
+                    pill_instance_id: 7,
+                    elder_entity_id: 42,
+                },
+                GateSpec {
+                    target: GateTarget::ProtocolEntityId,
+                    distance: DistanceRule::NEARBY_INTERACT,
+                    dimension: DimensionRule::Same,
+                    ownership: OwnershipRule::Any,
+                    state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
+                },
+            ),
+            (
+                "lingtian_start_till",
+                ClientRequestV1::LingtianStartTill {
+                    v: 1,
+                    x: -12,
+                    y: 64,
+                    z: 38,
+                    hoe_instance_id: 9,
+                    mode: "manual".to_owned(),
+                },
+                GateSpec {
+                    target: GateTarget::RequestBlockPosition,
+                    distance: DistanceRule::NEARBY_INTERACT,
+                    dimension: DimensionRule::Same,
+                    ownership: OwnershipRule::None,
+                    state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
+                },
+            ),
+            (
+                "craft_start",
+                ClientRequestV1::CraftStart {
+                    v: 1,
+                    recipe_id: "craft.example.herb_knife.iron".to_owned(),
+                    quantity: 1,
+                },
+                GateSpec {
+                    target: GateTarget::None,
+                    distance: DistanceRule::None,
+                    dimension: DimensionRule::Same,
+                    ownership: OwnershipRule::None,
+                    state: &[StateGateId::PlayerAlive, StateGateId::InventoryOpen],
+                },
+            ),
+            (
+                "workbench_open",
+                ClientRequestV1::WorkbenchOpen {
+                    v: 1,
+                    entity_id: 42,
+                },
+                GateSpec {
+                    target: GateTarget::ProtocolEntityId,
+                    distance: DistanceRule::WORKBENCH,
+                    dimension: DimensionRule::Same,
+                    ownership: OwnershipRule::Any,
+                    state: &[
+                        StateGateId::PlayerAlive,
+                        StateGateId::TargetExists,
+                        StateGateId::WorkbenchPresent,
+                    ],
+                },
+            ),
+            (
+                "external_container_move",
+                ClientRequestV1::ExternalContainerMove {
+                    v: 1,
+                    session_id: 11,
+                    instance_id: 12,
+                    from: InventoryLocationV1::Hotbar { index: 0 },
+                    to: InventoryLocationV1::Hotbar { index: 1 },
+                },
+                GateSpec {
+                    target: GateTarget::SessionId,
+                    distance: DistanceRule::EXTERNAL_SESSION,
+                    dimension: DimensionRule::Same,
+                    ownership: OwnershipRule::Owner,
+                    state: &[
+                        StateGateId::PlayerAlive,
+                        StateGateId::TargetExists,
+                        StateGateId::SessionOpen,
+                        StateGateId::SessionOwner,
+                        StateGateId::ExternalSession,
+                    ],
+                },
+            ),
+        ];
+
+        for (kind, request, expected) in cases {
+            assert_eq!(
+                request.gate_spec(),
+                RequestGate::Spec(expected),
+                "{kind} must use its frozen gate declaration"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_spec_registry_uses_an_explicit_fail_closed_reason_for_unwired_variants() {
+        let request = ClientRequestV1::SetMeridianTarget {
+            v: 1,
+            meridian: MeridianChannelId::new("lung"),
+        };
+
+        assert_eq!(
+            request.gate_spec(),
+            RequestGate::NoGate(NoGateReason::InvalidState),
+            "unwired registry entries must deny explicitly rather than defaulting to allow"
+        );
+    }
+
+    #[test]
     fn set_meridian_target_roundtrip() {
         let json = r#"{"type":"set_meridian_target","v":1,"meridian":"lung"}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
@@ -834,6 +1120,28 @@ mod tests {
         let json = r#"{"type":"breakthrough_request","v":1}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         assert!(matches!(req, ClientRequestV1::BreakthroughRequest { v: 1 }));
+    }
+
+    #[test]
+    fn client_request_rejects_missing_version_at_serde_boundary() {
+        let json = r#"{"type":"breakthrough_request"}"#;
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("ClientRequestV1 缺少必填 v 必须在 serde 反序列化阶段失败");
+        assert!(
+            error.to_string().contains("missing field `v`"),
+            "缺 v 必须是 serde missing-field 错误，不能被默认为 v=0 后再由版本门忽略；实际 {error}"
+        );
+    }
+
+    #[test]
+    fn client_request_rejects_unknown_field_at_serde_boundary() {
+        let json = r#"{"type":"breakthrough_request","v":1,"extra_field":true}"#;
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("ClientRequestV1 额外字段必须被 deny_unknown_fields 拒绝");
+        assert!(
+            error.to_string().contains("unknown field `extra_field`"),
+            "额外字段必须是 serde unknown-field 错误；实际 {error}"
+        );
     }
 
     // ─── plan-rotate-v1 — InventoryMoveIntent.rotated serde pin ────────────

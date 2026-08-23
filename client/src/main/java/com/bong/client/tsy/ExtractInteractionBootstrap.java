@@ -2,8 +2,8 @@ package com.bong.client.tsy;
 
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -20,14 +20,26 @@ public final class ExtractInteractionBootstrap {
     }
 
     public static void register() {
-        extractKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(EXTRACT_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_Y, CATEGORY)
+        extractKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("tsy.extract_start"),
+                EXTRACT_KEY_TRANSLATION,
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_Y,
+                CATEGORY
+            )
         );
-        cancelKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(CANCEL_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_U, CATEGORY)
+        cancelKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("tsy.extract_cancel"),
+                CANCEL_KEY_TRANSLATION,
+                InputUtil.Type.KEYSYM,
+                InputUtil.UNKNOWN_KEY.getCode(),
+                CATEGORY
+            )
         );
         ClientTickEvents.END_CLIENT_TICK.register(ExtractInteractionBootstrap::onTick);
-        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/U");
+        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/UNKNOWN");
     }
 
     private static void onTick(MinecraftClient client) {

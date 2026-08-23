@@ -96,7 +96,7 @@ fi
    - `.github/workflows/e2e.yml:104-117` —— **已被 P0 重试覆盖**
    - `scripts/bot-e2e.sh:138-139` —— `docker compose ... up -d redis --wait` 兜底路径，**在 CI gate 路径上**（`e2e.yml:151` 直接 `bash scripts/bot-e2e.sh`），**无重试** → **拆为本 plan P2 阶段**（见上方「P2」小节），不再作为无人认领的遗留项悬空
    - `scripts/e2e-redis.sh:792`、`scripts/e2e-offscreen-war.sh:1458`、`scripts/smoke-offscreen-war.sh:121`、`scripts/e2e-chat-signal-window.sh:94` —— 各自 `docker run ... redis:7-alpine`，本地 harness 用，不在 e2e CI gate 路径上，优先级低于 P2，P2 落地时可一并处理
-   - `library-web/Dockerfile:1,26`（`node:20-alpine` / `nginx:alpine`）、`library-web/docker-compose.yml:40`（`cloudflare/cloudflared:latest`）—— 静态站点部署侧，不在 e2e gate 路径，不属于本 plan 范围
+   - ~~`library-web/Dockerfile` / `library-web/docker-compose.yml`~~（已随脱缚 `chore/tuo-fu-unburden` 移除）—— 原静态站点部署侧，不在 e2e gate 路径，不属于本 plan 范围
    - `grep -rn "services:\|container:" .github/workflows/` 仍为 0 命中——**这一条初版没错**，确无 GitHub Actions 托管容器块。
 4. **为何不再用「登记为遗留项」结案**：初版归档把 `scripts/bot-e2e.sh:138-139` 写成「供后续 plan 认领」的遗留项，然后仍按 100% 归档——review 指出这是「登记不等于闭环」。本次复核改为**在本 plan 内新增 P2 阶段**直接承接，不外抛给未来某个不存在的 plan/issue；P2 未 ✅ 之前，本 plan 不算收口。
 

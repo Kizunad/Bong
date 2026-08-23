@@ -9,6 +9,7 @@
 //!
 //! §8.1 #3 决议：不设 per-chunk 数量限制（制作台是凡物，材料成本已限制滥放）。
 
+use valence::entity::EntityId;
 use valence::prelude::{
     bevy_ecs, App, BlockPos, Client, Commands, Component, DVec3, DiggingEvent, Entity, Event,
     EventReader, Events, GameMode, Position, Query, Res, ResMut, Update, Username, With,
@@ -116,14 +117,16 @@ pub fn handle_workbench_interact(
     mut requests: EventReader<WorkbenchOpenRequest>,
     mut clients: Query<&mut Client>,
     players: Query<&Position, With<Client>>,
-    workbenches: Query<(&Position, &WorkbenchBlock)>,
+    workbenches: Query<(&Position, &WorkbenchBlock, &EntityId)>,
     mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     for request in requests.read() {
         let Ok(player_pos) = players.get(request.client) else {
             continue;
         };
-        let Ok((workbench_pos, _workbench)) = workbenches.get(request.workbench) else {
+        let Ok((workbench_pos, _workbench, protocol_entity_id)) =
+            workbenches.get(request.workbench)
+        else {
             continue;
         };
         let block_pos = workbench_block_pos(workbench_pos);
@@ -138,8 +141,17 @@ pub fn handle_workbench_interact(
         let Ok(mut client) = clients.get_mut(request.client) else {
             continue;
         };
+        let entity_id = protocol_entity_id.get();
+        if entity_id < 0 {
+            tracing::warn!(
+                "[bong][workbench] rejected open: workbench={:?} has no valid MC protocol entity id {}",
+                request.workbench,
+                entity_id,
+            );
+            continue;
+        }
         let payload = ServerDataV1::new(ServerDataPayloadV1::WorkbenchOpen {
-            entity_id: request.workbench.to_bits(),
+            entity_id: entity_id as u64,
             position: block_pos,
         });
         let payload_type = payload_type_label(payload.payload_type());

@@ -2,24 +2,21 @@
 //! （+5% 移速 / +5% 跳跃 / +0.5% 四肢防御），每次施放递减增长 proficiency。
 //! `body_conditioning_aggregate` 在 Physics 阶段读 `KnownTechniques` 写入 `DerivedAttrs`。
 
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, Events, Position, Query, ResMut};
+use valence::prelude::{
+    bevy_ecs, Entity, Event, EventReader, Events, Position, Query, Res, ResMut,
+};
 
 use crate::combat::armor::ARMOR_MITIGATION_CAP;
 use crate::combat::components::{BodyPart, DerivedAttrs, WoundKind};
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
-use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques, TechniqueRegistry};
 use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
 pub const GUANGBO_TICAO_ID: &str = "body.guangbo_ticao";
-
-/// 每次成功练习消耗的真元（守恒：proficiency 增长不得凭空——每 rep 付真元代价）。
-/// 与 `known_techniques.body.guangbo_ticao.qi_cost` 保持一致；改一处必须改另一处，
-/// `qi_cost_matches_known_technique_definition` 测试会撞红。
-pub const GUANGBO_TICAO_QI_COST: f64 = 1.0;
 
 const MOVE_SPEED_BONUS_MAX: f32 = 0.05;
 const JUMP_HEIGHT_BONUS_MAX: f32 = 0.05;
@@ -72,31 +69,6 @@ pub fn record_guangbo_practice(known: &mut KnownTechniques) -> f32 {
     entry.proficiency
 }
 
-/// 一次练习的结算结果——`tick_casts_or_interrupt` 据此决定是否发 AV / 日志。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PracticeOutcome {
-    /// 付清真元代价，proficiency 已递增；携带递增后的 proficiency 值。
-    Trained { proficiency: f32 },
-    /// 真元不足，本次练习无效——不扣真元、不涨 proficiency（守恒：进度必须付费）。
-    TooTiredNoQi,
-}
-
-/// 守恒入口：真元充足时扣 `GUANGBO_TICAO_QI_COST` 并递增 proficiency；
-/// 不足则拒绝（既不扣费也不涨熟练度）。proficiency 仍受 `record_guangbo_practice`
-/// 的 clamp(0,1) + 递减增长上限约束，故总收益有界、增长需持续付费。
-pub fn try_record_guangbo_practice(
-    cultivation: &mut Cultivation,
-    known: &mut KnownTechniques,
-) -> PracticeOutcome {
-    if cultivation.qi_current < GUANGBO_TICAO_QI_COST {
-        return PracticeOutcome::TooTiredNoQi;
-    }
-    // 扣费后绝不允许为负（防御性 clamp，理论上前置判定已保证 >= cost）。
-    cultivation.qi_current = (cultivation.qi_current - GUANGBO_TICAO_QI_COST).max(0.0);
-    let proficiency = record_guangbo_practice(known);
-    PracticeOutcome::Trained { proficiency }
-}
-
 fn ensure_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
     if let Some(idx) = known.entries.iter().position(|e| e.id == GUANGBO_TICAO_ID) {
         return &mut known.entries[idx];
@@ -112,12 +84,14 @@ fn ensure_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
 /// 消费 `GuangboTicaoPracticeEvent`：每次成功练习扣真元 + 递增 proficiency，
 /// 并将消耗的真元回灌至当前区域（守恒：player_qi 减少必须对应 zone_qi 增加）。
 ///
-/// 守恒：通过 [`try_record_guangbo_practice`] 走真元门——真元不足则本次练习无效
-/// （不扣费、不涨熟练度）。无 `Cultivation` 组件的实体（理论上玩家恒有）按"无真元
-/// 可付"处理，同样不涨 proficiency，避免凭空增益。
+/// 守恒：通过 [`release_qi_amount_to_zone`] 走真元门——真元不足或账本结算失败时
+/// 本次练习无效（不扣费、不涨熟练度）；找不到区域时则守恒转入 overflow。无
+/// `Cultivation` 组件的实体（理论上玩家恒有）按"无真元可付"处理，同样不涨
+/// proficiency，避免凭空增益。
 #[allow(clippy::too_many_arguments)]
 pub fn consume_guangbo_practice_events(
     mut events: EventReader<GuangboTicaoPracticeEvent>,
+    technique_registry: Res<TechniqueRegistry>,
     mut q: Query<(&mut KnownTechniques, Option<&mut Cultivation>)>,
     locations: Query<(
         Option<&Position>,
@@ -128,6 +102,10 @@ pub fn consume_guangbo_practice_events(
     mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
+    let qi_cost = technique_registry
+        .get(GUANGBO_TICAO_ID)
+        .expect("validated TechniqueRegistry must contain body.guangbo_ticao")
+        .qi_cost;
     for event in events.read() {
         let Ok((mut known, cultivation)) = q.get_mut(event.entity) else {
             continue;
@@ -135,14 +113,11 @@ pub fn consume_guangbo_practice_events(
         let Some(mut cultivation) = cultivation else {
             continue;
         };
-        if cultivation.qi_current < GUANGBO_TICAO_QI_COST {
-            continue;
-        }
         let (position, current_dimension, life_record) =
             locations.get(event.entity).unwrap_or((None, None, None));
         let release = release_qi_amount_to_zone(
             &mut cultivation,
-            GUANGBO_TICAO_QI_COST,
+            qi_cost,
             position,
             current_dimension,
             life_record,
@@ -201,6 +176,8 @@ pub fn body_conditioning_aggregate(mut q: Query<(&mut DerivedAttrs, Option<&Know
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const GUANGBO_TICAO_TEST_QI_COST: f64 = 1.0;
 
     fn assert_near(actual: f32, expected: f32, label: &str) {
         assert!(
@@ -468,8 +445,6 @@ mod tests {
         );
     }
 
-    // ── 守恒：真元门 try_record_guangbo_practice ─────────────────────────────
-
     fn cultivation_with_qi(qi: f64) -> Cultivation {
         Cultivation {
             qi_current: qi,
@@ -478,119 +453,20 @@ mod tests {
         }
     }
 
-    /// 守恒锚点：每 rep 扣的真元必须等于 known_techniques 声明的 qi_cost，
-    /// 否则代价与定义脱节。改 TechniqueDefinition.qi_cost 必须同步本常量。
+    /// 冻结 legacy 值只负责 baseline parity；生产扣费直接读取 TechniqueRegistry。
     #[test]
     fn qi_cost_matches_known_technique_definition() {
-        use crate::cultivation::known_techniques::technique_definition;
-        let def = technique_definition(GUANGBO_TICAO_ID)
-            .expect("body.guangbo_ticao must exist in TECHNIQUE_DEFINITIONS");
+        use crate::cultivation::known_techniques::TechniqueRegistry;
+        let registry = TechniqueRegistry::load_for_tests();
+        let def = registry
+            .get(GUANGBO_TICAO_ID)
+            .expect("body.guangbo_ticao must exist in TechniqueRegistry");
         assert_eq!(
-            f64::from(def.qi_cost),
-            GUANGBO_TICAO_QI_COST,
-            "GUANGBO_TICAO_QI_COST ({GUANGBO_TICAO_QI_COST}) must equal known_techniques \
+            def.qi_cost,
+            GUANGBO_TICAO_TEST_QI_COST,
+            "GUANGBO_TICAO_TEST_QI_COST ({GUANGBO_TICAO_TEST_QI_COST}) must equal known_techniques \
              qi_cost ({}); 守恒：练习代价不得偏离技能定义",
             def.qi_cost
-        );
-    }
-
-    #[test]
-    fn practice_with_sufficient_qi_charges_cost_and_grants_proficiency() {
-        let mut cultivation = cultivation_with_qi(10.0);
-        let mut known = KnownTechniques { entries: vec![] };
-
-        let outcome = try_record_guangbo_practice(&mut cultivation, &mut known);
-
-        match outcome {
-            PracticeOutcome::Trained { proficiency } => {
-                assert!(
-                    proficiency > 0.0,
-                    "付费练习应递增 proficiency，got {proficiency}"
-                );
-            }
-            other => panic!("expected Trained with qi available, got {other:?}"),
-        }
-        assert_eq!(
-            cultivation.qi_current,
-            10.0 - GUANGBO_TICAO_QI_COST,
-            "成功练习应恰好扣 GUANGBO_TICAO_QI_COST 真元（守恒：进度有代价）"
-        );
-    }
-
-    #[test]
-    fn practice_with_insufficient_qi_is_rejected_no_charge_no_gain() {
-        // qi 严格小于 cost → 拒绝。用 cost 的一半做边界外侧锚点。
-        let mut cultivation = cultivation_with_qi(GUANGBO_TICAO_QI_COST - 0.5);
-        let mut known = KnownTechniques { entries: vec![] };
-        let qi_before = cultivation.qi_current;
-
-        let outcome = try_record_guangbo_practice(&mut cultivation, &mut known);
-
-        assert_eq!(
-            outcome,
-            PracticeOutcome::TooTiredNoQi,
-            "真元不足时练习必须被拒（守恒：不得凭空涨熟练度）"
-        );
-        assert_eq!(
-            cultivation.qi_current, qi_before,
-            "被拒练习不得扣真元，期望 {qi_before} 实际 {}",
-            cultivation.qi_current
-        );
-        assert!(
-            known.entries.is_empty(),
-            "被拒练习不得创建 / 递增 proficiency entry，但 entries={:?}",
-            known.entries
-        );
-    }
-
-    #[test]
-    fn practice_at_exact_qi_cost_boundary_is_accepted() {
-        // qi == cost（off-by-one 边界）：>= 成立应放行，扣后归零。
-        let mut cultivation = cultivation_with_qi(GUANGBO_TICAO_QI_COST);
-        let mut known = KnownTechniques { entries: vec![] };
-
-        let outcome = try_record_guangbo_practice(&mut cultivation, &mut known);
-
-        assert!(
-            matches!(outcome, PracticeOutcome::Trained { .. }),
-            "qi 恰好等于 cost 应放行（边界 >=），got {outcome:?}"
-        );
-        assert_eq!(
-            cultivation.qi_current, 0.0,
-            "扣费后真元应归零（恰好 cost），实际 {}",
-            cultivation.qi_current
-        );
-    }
-
-    #[test]
-    fn repeated_practice_drains_qi_and_eventually_starves() {
-        // 守恒压力测试：有限真元只能买有限次练习；耗尽后练习无效，proficiency 停涨。
-        let mut cultivation = cultivation_with_qi(3.0 * GUANGBO_TICAO_QI_COST);
-        let mut known = KnownTechniques { entries: vec![] };
-
-        let mut trained_count = 0;
-        let mut last_prof = 0.0;
-        for _ in 0..10 {
-            match try_record_guangbo_practice(&mut cultivation, &mut known) {
-                PracticeOutcome::Trained { proficiency } => {
-                    assert!(
-                        proficiency >= last_prof,
-                        "proficiency 应单调不减：{proficiency} vs {last_prof}"
-                    );
-                    last_prof = proficiency;
-                    trained_count += 1;
-                }
-                PracticeOutcome::TooTiredNoQi => {}
-            }
-        }
-        assert_eq!(
-            trained_count, 3,
-            "3×cost 真元应恰好买到 3 次练习（守恒：每次付费），实际 {trained_count} 次"
-        );
-        assert!(
-            cultivation.qi_current < GUANGBO_TICAO_QI_COST,
-            "练习耗尽真元后余量应 < cost，实际 {}",
-            cultivation.qi_current
         );
     }
 
@@ -606,6 +482,7 @@ mod tests {
 
         fn build_app() -> App {
             let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests());
             app.add_event::<GuangboTicaoPracticeEvent>();
             app.insert_resource(WorldQiAccount::default());
             app.add_systems(Update, consume_guangbo_practice_events);
@@ -614,6 +491,7 @@ mod tests {
 
         fn build_app_with_zone() -> App {
             let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests());
             app.add_event::<GuangboTicaoPracticeEvent>();
             app.add_event::<QiTransfer>();
             app.insert_resource(ZoneRegistry::fallback());
@@ -642,8 +520,8 @@ mod tests {
             let cultivation = app.world().get::<Cultivation>(entity).unwrap();
             assert_eq!(
                 cultivation.qi_current,
-                5.0 - GUANGBO_TICAO_QI_COST,
-                "消费练习事件应扣 GUANGBO_TICAO_QI_COST 真元"
+                5.0 - GUANGBO_TICAO_TEST_QI_COST,
+                "消费练习事件应扣 GUANGBO_TICAO_TEST_QI_COST 真元"
             );
             let known = app.world().get::<KnownTechniques>(entity).unwrap();
             let entry = known
@@ -732,7 +610,7 @@ mod tests {
 
         // ── 守恒：zone credit 链路（扣真元 → 回灌区域）────────────────────────────
 
-        /// 成功练习应将 GUANGBO_TICAO_QI_COST 回灌到当前区域，emit QiTransfer 事件，
+        /// 成功练习应将 GUANGBO_TICAO_TEST_QI_COST 回灌到当前区域，emit QiTransfer 事件，
         /// 且 zone.spirit_qi 应增加对应量。
         ///
         /// pitfall (a)：将 zone 清空（spirit_qi=0.0）避免接近满容量时发生溢出分割导致
@@ -779,8 +657,8 @@ mod tests {
             let cultivation = app.world().get::<Cultivation>(entity).unwrap();
             assert_eq!(
                 cultivation.qi_current,
-                5.0 - GUANGBO_TICAO_QI_COST,
-                "守恒：练习应扣 GUANGBO_TICAO_QI_COST 真元，实际 {}",
+                5.0 - GUANGBO_TICAO_TEST_QI_COST,
+                "守恒：练习应扣 GUANGBO_TICAO_TEST_QI_COST 真元，实际 {}",
                 cultivation.qi_current
             );
 
@@ -793,9 +671,9 @@ mod tests {
                 .spirit_qi;
             let zone_delta_raw = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
             assert!(
-                (zone_delta_raw - GUANGBO_TICAO_QI_COST).abs() < 1e-6,
+                (zone_delta_raw - GUANGBO_TICAO_TEST_QI_COST).abs() < 1e-6,
                 "守恒：扣除的 qi_cost 必须进入当前 zone；期望 delta={}, 实际 {zone_delta_raw}",
-                GUANGBO_TICAO_QI_COST
+                GUANGBO_TICAO_TEST_QI_COST
             );
 
             // QiTransfer 事件应被 emit（守恒审计链路）。
@@ -808,7 +686,7 @@ mod tests {
             assert_eq!(
                 transfers.len(),
                 1,
-                "广播体操扣 {GUANGBO_TICAO_QI_COST} 真元时必须 emit 1 条 QiTransfer，实际 {} 条",
+                "广播体操扣 {GUANGBO_TICAO_TEST_QI_COST} 真元时必须 emit 1 条 QiTransfer，实际 {} 条",
                 transfers.len()
             );
             let transfer = &transfers[0];
@@ -819,8 +697,8 @@ mod tests {
                 transfer.to
             );
             assert!(
-                (transfer.amount - GUANGBO_TICAO_QI_COST).abs() < 1e-6,
-                "QiTransfer.amount 应等于 GUANGBO_TICAO_QI_COST={GUANGBO_TICAO_QI_COST}，实际 {}",
+                (transfer.amount - GUANGBO_TICAO_TEST_QI_COST).abs() < 1e-6,
+                "QiTransfer.amount 应等于 GUANGBO_TICAO_TEST_QI_COST={GUANGBO_TICAO_TEST_QI_COST}，实际 {}",
                 transfer.amount
             );
             assert_eq!(
@@ -828,6 +706,255 @@ mod tests {
                 QiTransferReason::ReleaseToZone,
                 "广播体操释放真元应使用 ReleaseToZone，实际 {:?}",
                 transfer.reason
+            );
+        }
+
+        #[test]
+        fn overridden_registry_cost_drives_charge_zone_credit_and_audit() {
+            let configured_cost = 2.75_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(5.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let charged = 5.0 - app.world().get::<Cultivation>(entity).unwrap().qi_current;
+            assert!(
+                (charged - configured_cost).abs() < 1e-6,
+                "production system must charge the overridden TechniqueRegistry cost, got {charged}"
+            );
+            let zone_credit = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                * QI_ZONE_UNIT_CAPACITY;
+            assert!(
+                (zone_credit - configured_cost).abs() < 1e-6,
+                "the exact overridden cost must be credited to the zone, got {zone_credit}"
+            );
+            let transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .collect();
+            assert_eq!(
+                transfers.len(),
+                1,
+                "successful practice emits one audit transfer"
+            );
+            assert!(
+                (transfers[0].amount - configured_cost).abs() < 1e-6,
+                "audit amount must equal the overridden registry cost"
+            );
+        }
+
+        /// 真元恰好等于 configured cost（exact affordability 边界）——charge 与 zone credit
+        /// 必须同时使用同一个 configured cost，扣后玩家真元归零且 zone 收到全额。
+        #[test]
+        fn exact_affordability_at_overridden_cost_charges_fully_and_credits_zone() {
+            let configured_cost = 2.75_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(configured_cost),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let qi_after = app.world().get::<Cultivation>(entity).unwrap().qi_current;
+            assert!(
+                (qi_after - 0.0).abs() < 1e-12,
+                "exact-affordability practice must drain the player to exactly zero, got {qi_after}"
+            );
+            let zone_credit = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                * QI_ZONE_UNIT_CAPACITY;
+            assert!(
+                (zone_credit - configured_cost).abs() < 1e-6,
+                "the full configured cost must be credited to the zone, got {zone_credit}"
+            );
+        }
+
+        /// configured cost 大于旧常量（1.0）但低于玩家余额——入账必须是 configured cost，
+        /// 而不是把 affordability 门留在旧常量上（split cost 回归）。
+        #[test]
+        fn overridden_cost_above_legacy_constant_below_balance_charges_full_cost() {
+            let configured_cost = 1.5_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(2.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let charged = 2.0 - app.world().get::<Cultivation>(entity).unwrap().qi_current;
+            assert!(
+                (charged - configured_cost).abs() < 1e-6,
+                "player must be charged the configured cost (not legacy 1.0), got {charged}"
+            );
+            let zone_credit = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                * QI_ZONE_UNIT_CAPACITY;
+            assert!(
+                (zone_credit - configured_cost).abs() < 1e-6,
+                "zone must receive the configured cost (not legacy 1.0), got {zone_credit}"
+            );
+        }
+
+        /// configured cost 高于玩家余额时，affordability 必须使用 registry cost 而不是旧常量；
+        /// 拒绝路径不得扣玩家真元、创建熟练度、回灌 zone 或 emit transfer。
+        #[test]
+        fn overridden_cost_above_balance_rejects_without_charge_credit_or_audit() {
+            let configured_cost = 2.75_f64;
+            let initial_qi = 2.0_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let zone_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(initial_qi),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(
+                cultivation.qi_current, initial_qi,
+                "qi 小于 configured cost 时必须拒绝且不扣费：期望 {initial_qi}，实际 {}",
+                cultivation.qi_current
+            );
+            let known = app.world().get::<KnownTechniques>(entity).unwrap();
+            assert!(
+                known.entries.is_empty(),
+                "configured-cost 不足路径不得创建或增长 proficiency entry，实际 {known:?}"
+            );
+            let zone_after = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi;
+            assert_eq!(
+                zone_after, zone_before,
+                "configured-cost 不足路径不得向 zone 入账：before={zone_before}，after={zone_after}"
+            );
+            let transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .collect();
+            assert!(
+                transfers.is_empty(),
+                "configured-cost 不足路径不得 emit QiTransfer，实际 {} 条",
+                transfers.len()
             );
         }
 
@@ -935,7 +1062,7 @@ mod tests {
             let cultivation = app.world().get::<Cultivation>(entity).unwrap();
             assert_eq!(
                 cultivation.qi_current,
-                5.0 - GUANGBO_TICAO_QI_COST,
+                5.0 - GUANGBO_TICAO_TEST_QI_COST,
                 "无 CurrentDimension 时真元仍应被扣，实际 {}",
                 cultivation.qi_current
             );

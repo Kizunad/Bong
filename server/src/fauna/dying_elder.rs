@@ -51,7 +51,7 @@ use crate::qi_physics::ledger::{
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
 use crate::social::components::Renown;
-use crate::world::dimension::{DimensionKind, DimensionLayers};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::tsy_drain::compute_drain_per_tick;
 use crate::world::zone::ZoneRegistry;
 
@@ -407,6 +407,7 @@ pub(crate) fn dying_elder_apply_spawn_system(
                     Transform::from_xyz(pos.x as f32, pos.y as f32, pos.z as f32),
                     GlobalTransform::default(),
                     NpcMarker,
+                    CurrentDimension(DimensionKind::Tsy),
                     DyingElderState::Plea,
                     bb.clone(),
                     NpcArchetype::DyingElder,
@@ -417,6 +418,7 @@ pub(crate) fn dying_elder_apply_spawn_system(
             commands
                 .spawn((
                     NpcMarker,
+                    CurrentDimension(DimensionKind::Tsy),
                     Position::new([pos.x, pos.y, pos.z]),
                     DyingElderState::Plea,
                     bb.clone(),

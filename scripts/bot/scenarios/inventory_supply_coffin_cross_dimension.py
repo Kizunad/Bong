@@ -8,6 +8,7 @@ from bot.bot import BotAssertionError
 
 from ._inventory_helpers import (
     first_free_cell,
+    wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
     wait_join_and_inventory,
 )
@@ -149,7 +150,13 @@ def run(env) -> None:
             instance_id,
             context="合法 move 后供陈旧请求攻击的第二个棺内实例",
         )
-        moved_snapshot = wait_inventory_snapshot_after(bot, move_sent_at, timeout=10.0)
+        moved_snapshot = wait_inventory_revision_after_matching(
+            bot,
+            open_snapshot["revision"],
+            lambda candidate: bool(_inventory_locations(candidate, moved_instance_id)),
+            f"合法 move 后实例 {moved_instance_id} 出现在权威玩家背包",
+            timeout=10.0,
+        )
         _assert_instance_present_in_inventory(moved_snapshot, moved_instance_id)
         stale_destination_container_id, stale_destination_row, stale_destination_col = (
             _first_free_destination(
