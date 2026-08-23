@@ -34,6 +34,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from bot import _redis_helpers  # noqa: E402
+from bot import _server_log  # noqa: E402
 from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
@@ -2015,6 +2017,64 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
+    def test_proto_carrier_state_decodes_wire_id(self):
+        # field 49 CarrierState —— carrier 是本 bot 的线缆 wire id（player:{uuid}）。
+        # 场景靠它把 bong:anqi/container_swap 事件归属到本 bot（findings 修复）。
+        decoded = decode_server_data_payload(
+            _server_data_carrier_state_bytes(
+                carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                phase=3,
+                progress=0.5,
+                sealed_qi=30.0,
+                sealed_qi_initial=60.0,
+                half_life_remaining_ticks=120,
+                item_instance_id=9,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "carrier_state")
+        self.assertEqual(decoded["carrier"], "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f")
+        self.assertEqual(decoded["phase"], "charged")
+        self.assertAlmostEqual(decoded["progress"], 0.5)
+        self.assertAlmostEqual(decoded["sealed_qi"], 30.0)
+        self.assertAlmostEqual(decoded["sealed_qi_initial"], 60.0)
+        self.assertEqual(decoded["half_life_remaining_ticks"], 120)
+        self.assertEqual(decoded["item_instance_id"], 9)
+
+    def test_proto_carrier_state_decodes_every_charge_phase(self):
+        # CARRIER_CHARGE_PHASE_NAMES 是本次引入的完整 wire→domain 契约：每个 phase
+        # 值都必须解出正确名称，未知值回退 unspecified（findings：原测试只覆盖 phase=2，
+        # idle/charging 映射错或未知值不回退都测不出来）。
+        cases = {
+            0: "unspecified",
+            1: "idle",
+            2: "charging",
+            3: "charged",
+            9: "unspecified",
+        }
+        for phase, expected in cases.items():
+            with self.subTest(phase=phase):
+                decoded = decode_server_data_payload(
+                    _server_data_carrier_state_bytes(
+                        carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                        phase=phase,
+                        progress=0.5,
+                        sealed_qi=30.0,
+                        sealed_qi_initial=60.0,
+                        half_life_remaining_ticks=120,
+                        item_instance_id=None,
+                    )
+                )
+                self.assertEqual(decoded["type"], "carrier_state")
+                self.assertEqual(decoded["phase"], expected)
+                # 构造边界本来就是 item_instance_id=None（field 7 缺省）；缺省的可选
+                # protobuf 字段必须解成 None，而不是 0 / 残留旧值（review finding
+                # [major]：absent item_instance_id is encoded but never asserted——
+                # 错把缺省当 0 会让消费者把无实例快照误读为 instance 0）。
+                self.assertIsNone(
+                    decoded["item_instance_id"],
+                    f"phase={phase} 时 field 7 缺省应解出 None，实际 {decoded['item_instance_id']!r}",
+                )
 
 
 class CombatServerDataGateTest(unittest.TestCase):
@@ -2866,6 +2926,24 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
 
+    def test_anqi_all_gate_is_wired_and_reuse_log_is_preserved(self):
+        # The three anqi scenarios are dedicated because they need Redis plus
+        # a server log.  The harness must export the gate only after those
+        # prerequisites are owned/available, and reuse mode must not overwrite
+        # a caller-provided BONG_SERVER_LOG.
+        self.assertIn('export BOT_E2E_ANQI_REDIS=1', self.source)
+        self.assertIn('CALLER_SERVER_LOG="${BONG_SERVER_LOG:-}"', self.source)
+        self.assertIn('SERVER_LOG="$CALLER_SERVER_LOG"', self.source)
+        self.assertIn('unset BOT_E2E_ANQI_REDIS', self.source)
+        for name in (
+            "combat_anqi_charge_carrier",
+            "combat_anqi_container_switch",
+            "combat_anqi_throw_carrier",
+        ):
+            module = discover_scenarios()[name]
+            self.assertFalse(module.DEFAULT_ENABLED)
+            self.assertEqual(module.RUN_IN_ALL_WHEN_ENV, "BOT_E2E_ANQI_REDIS")
+
     def test_ci_runs_owned_rasterless_fallback_stage(self):
         stage_start = self.workflow_source.index('Bot fallback-flat e2e stage')
         stage_end = self.workflow_source.index(
@@ -3017,7 +3095,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
-        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
+        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" BONG_SERVER_LOG="$SERVER_LOG" \\
   python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
@@ -6507,6 +6585,30 @@ def _server_data_morph_state_bytes(
     return _pb_message(142, state)
 
 
+def _server_data_carrier_state_bytes(
+    *,
+    carrier: str,
+    phase: int,
+    progress: float,
+    sealed_qi: float,
+    sealed_qi_initial: float,
+    half_life_remaining_ticks: int,
+    item_instance_id: int | None,
+) -> bytes:
+    """field 49 `carrier_state`（见 proto/bong/envelope.proto:1896 `CarrierState`）。"""
+    state = (
+        _pb_string(1, carrier)
+        + _pb_varint(2, phase)
+        + _pb_fixed32(3, progress)
+        + _pb_fixed32(4, sealed_qi)
+        + _pb_fixed32(5, sealed_qi_initial)
+        + _pb_varint(6, half_life_remaining_ticks)
+    )
+    if item_instance_id is not None:
+        state += _pb_varint(7, item_instance_id)
+    return _pb_message(49, state)
+
+
 def _pb_key(field: int, wire: int) -> bytes:
     return _pb_raw_varint((field << 3) | wire)
 
@@ -9018,6 +9120,1196 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["current_index"], 0)
 
 
+class _FakeSocket:
+    """把 socketpair 一端包成可控制 recv 的代理。
+
+    Python 3.13 下 C socket 方法（recv/sendall）不可 mock.patch.object（只读
+    属性）。测试要确定性制造 EOF / OSError 时，把 `_mode` 切成 eof / raise：
+    - real：委托真 socket（正常读）；
+    - eof：recv 返回 b""（对端关闭）；
+    - raise：recv 抛 OSError（连接重置）。
+    """
+
+    def __init__(self, real: socket.socket):
+        object.__setattr__(self, "_real", real)
+        self._mode = "real"
+
+    def recv(self, *args, **kwargs):
+        if self._mode == "eof":
+            return b""
+        if self._mode == "raise":
+            raise OSError("reset")
+        return object.__getattribute__(self, "_real").recv(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_real"), name)
+
+
+class RedisPubSubTest(unittest.TestCase):
+    """_redis_helpers：RESP2 帧编解码 + SUBSCRIBE ack 等待 + 消息泵（纯 stdlib，无需 redis 服务）。"""
+
+    def _pubsub_with_pair(self, max_events: int = 5000):
+        server, client = socket.socketpair()
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379, max_events=max_events)
+        return pubsub, server, client
+
+    def _wait_for(self, pubsub, channel, predicate, timeout=5.0):
+        """轮询 events_for 直到谓词命中（全历史匹配，无等待窗口语义）。
+
+        泵线程是独立线程，send 后事件何时入队不确定；这里确定性等它入队，
+        用于验证“投递”本身，与 wait_event 的窗口语义无关。
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for evt in pubsub.events_for(channel):
+                if predicate(evt):
+                    return evt
+            time.sleep(0.05)
+        raise AssertionError(f"事件未在 {timeout:.0f}s 内入队: channel={channel}")
+
+    def test_resp_frames_simple_string_integer_null(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"+PONG\r\n:42\r\n$-1\r\n")
+        self.assertEqual(frames.next_frame(), "PONG")
+        self.assertEqual(frames.next_frame(), 42)
+        self.assertIsNone(frames.next_frame())
+
+    def test_resp_frames_array_of_bulk(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
+        self.assertIsNone(frames.next_frame())
+
+    def test_resp_frames_subscribed_pong_shape(self):
+        # RESP2 subscribed PING replies as the two-element pubsub array
+        # ["pong", ""], not the ordinary +PONG simple string.
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+        self.assertEqual(frames.next_frame(), [b"pong", b""])
+        self.assertIsNone(frames.next_frame())
+
+    def test_subscribed_pong_establishes_delivery_barrier(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def server_loop():
+                try:
+                    while True:
+                        data = server.recv(4096)
+                        if not data:
+                            return
+                        server.sendall(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+                except OSError:
+                    return
+
+            thread = threading.Thread(target=server_loop, daemon=True)
+            thread.start()
+            pubsub.settle(0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_producer_fence_waits_for_matching_server_ack(self):
+        # The fence must invoke a producer-side request and accept only the
+        # matching ack; this is intentionally independent of socket timing.
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._host = "127.0.0.1"
+        pubsub._port = 6379
+        pubsub._username = None
+        pubsub._password = None
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._events = []
+        pubsub._oldest_retained_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        called = {}
+
+        def fake_request(token, timeout):
+            called["token"] = token
+            called["timeout"] = timeout
+            payload = json.dumps({"v": 1, "ok": True, "token": token}).encode()
+            pubsub._handle_frame(
+                [
+                    b"message",
+                    _redis_helpers.DELIVERY_FENCE_ACK_CHANNEL.encode(),
+                    payload,
+                ]
+            )
+
+        pubsub._publish_fence_request = fake_request
+        ack = pubsub.producer_fence(timeout=1.0)
+        self.assertTrue(ack["ok"])
+        self.assertEqual(ack["token"], called["token"])
+        self.assertEqual(called["timeout"], 1.0)
+
+    def test_resp_frames_partial_feeds(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$9\r\nsub")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"scribe\r\n$7\r\nmy_ch")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"an\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
+
+    def test_resp_frames_bulk_payload_split(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$5\r\nhel")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"lo\r\n")
+        self.assertEqual(frames.next_frame(), b"hello")
+
+    def test_oversized_bulk_frame_rejected_at_length(self):
+        # 回归：review finding [major]——解码器信任对端自报的 bulk 长度，为
+        # `length + 2` 字节无限累积 _buf。封顶后，仅长度头（不送本体）就必须
+        # 在长度阶段抛错，不得进入等待更多分片的缓冲路径。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$%d\r\n" % (_redis_helpers.MAX_BULK_LEN + 1))
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_BULK_LEN", str(ctx.exception))
+
+    def test_resp_buffer_cap_rejects_runaway_feed(self):
+        # 回归：review finding [major] 的第二道兜底——即使没有单个超大 bulk，
+        # 海量小分片同样不能无限撑大 _buf。
+        frames = _redis_helpers.RespFrames()
+        with self.assertRaises(ValueError) as ctx:
+            frames.feed(b"x" * (_redis_helpers.MAX_BUF_LEN + 1))
+        self.assertIn("MAX_BUF_LEN", str(ctx.exception))
+
+    def test_non_object_json_payloads_are_ignored(self):
+        # 回归：review finding [minor]——订阅的全局频道上任意发布者可投递合法
+        # JSON 的非对象值（null/[]/"x"/数字）。事件契约要求对象：非 dict 必须
+        # 被忽略，否则 wait_event 谓词与 events_for 推导里的 e.get() 会抛
+        # AttributeError 让场景崩溃。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            for raw in (b"null", b"[]", b'"x"', b"42"):
+                msg = (
+                    b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                    % (len(raw), raw)
+                )
+                server.sendall(msg)
+            good = json.dumps({"tick": 7}).encode()
+            msg = (
+                b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                % (len(good), good)
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+            self.assertEqual(
+                len(pubsub.events_for("my_chan")),
+                1,
+                "非 dict JSON 应被忽略，只留合法对象事件",
+            )
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_oversized_bulk_on_subscribed_channel_is_fatal(self):
+        # 回归：review finding [major]——超大 bulk 到达订阅连接时，泵线程不得
+        # 静默死掉（那样 wait_event 只会一直超时）；必须封顶并记录致命错误，
+        # 由 events_for/wait_event 上报为明确失败。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            huge = _redis_helpers.MAX_BULK_LEN + 1
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n" % huge
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(
+                fatal_msg, "超大 bulk 帧应使 events_for 上报致命错误而非静默"
+            )
+            self.assertIn("MAX_BULK_LEN", fatal_msg)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_resp_negative_length_below_null_rejected(self):
+        # 回归：review finding [minor]——RESP2 只允许 -1 表示 null；$-2/-3 等
+        # 负长度与 *-2 负计数若当空值放行，结束偏移会倒退、后续流错位。
+        for bad in (b"$-2\r\n", b"*-2\r\n", b"$-3\r\n"):
+            frames = _redis_helpers.RespFrames()
+            frames.feed(bad)
+            with self.assertRaises(ValueError):
+                frames.next_frame()
+
+    def test_resp_bulk_missing_crlf_terminator_rejected(self):
+        # 回归：review finding [minor]——bulk 载荷末尾必须跟 CRLF；只按声明长度
+        # 跳两字节会吞掉畸形流并从错误边界继续解析。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            frames.next_frame()
+
+    def test_resp_array_nesting_depth_bounded(self):
+        # 回归：review finding [major]——*1 深嵌套链会触发 Python 递归爆栈；
+        # 嵌套深度必须封顶，超限即致命协议错误。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*1\r\n" * (_redis_helpers.MAX_RESP_DEPTH + 1))
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_RESP_DEPTH", str(ctx.exception))
+
+    def test_resp_array_element_count_bounded(self):
+        # 回归：review finding [major]——对端可自报海量小元素，在 16MiB 字节
+        # 上限内膨胀出大得多的 Python list，且不完整数组每次 recv 重解析全部
+        # 前驱元素（二次方 CPU）。元素总数封顶后超限即致命协议错误。
+        count = _redis_helpers.MAX_RESP_ARRAY_ITEMS + 1
+        body = b"*%d\r\n" % count + b":1\r\n" * count
+        frames = _redis_helpers.RespFrames()
+        frames.feed(body)
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_RESP_ARRAY_ITEMS", str(ctx.exception))
+
+    def test_resp_array_within_bounds_still_parses(self):
+        # 上限不得误伤合法帧：订阅消息是长度 3 的浅数组，边界内照常解码。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"message", b"my_chan", 1])
+
+    def test_pump_eof_is_fatal(self):
+        # 回归：review finding [major]——订阅连接被对端关闭（EOF）时，若泵线程
+        # 只是静默退出，events_for/wait_event 会继续返回冻结事件列表，负向断言
+        # （无事件）在死订阅上照常通过。EOF 必须记录为致命错误。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            # 泵此刻阻塞在真 recv 上。先切 eof 再发一条无害 PONG 解阻塞：泵读到
+            # PONG（_handle_frame 忽略非 message 帧）后循环，下一次 recv 走 fake
+            # → EOF。切换先于解阻塞字节，故泵的第二次 recv 必然命中 eof。
+            fake._mode = "eof"
+            server.sendall(b"+PONG\r\n")
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(fatal_msg, "EOF 应使 events_for 上报致命错误而非静默")
+            self.assertIn("EOF", fatal_msg)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_socket_error_is_fatal(self):
+        # 回归：review finding [major]——recv 抛 OSError（连接重置/断线）同样
+        # 不能静默退出泵线程，否则负向断言在死订阅上照常通过。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            # 同 EOF 测试：先切 raise 再发 PONG 解阻塞泵的第一次真 recv。
+            fake._mode = "raise"
+            server.sendall(b"+PONG\r\n")
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(fatal_msg, "socket 错误应使 events_for 上报致命错误")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_peer_close_is_immediate_error(self):
+        # 回归：review finding [minor]——握手阶段对端关闭（EOF）时，旧代码会空读
+        # 空转烧 CPU 直到 5s 超时；现在应立即抛错而非空转。recv 注入 EOF 使路径
+        # 确定性落在 AUTH→EOF（AUTH 命令本身由真 socket sendall 发出）。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        fake._mode = "eof"
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            with self.assertRaises(RuntimeError) as ctx:
+                _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="hunter2")
+        self.assertIn("EOF", str(ctx.exception))
+        server.close()
+        client.close()
+
+    def test_subscribe_ack_wait_and_message_pump(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"full_charge": False, "tick": 7}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+            self.assertEqual(pubsub.events_for("other"), [])
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_timeout_raises(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event("my_chan", lambda e: False, timeout=0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_survives_idle_timeout_and_still_delivers_later_message(self):
+        # 回归：review finding [2]——ack 循环临时装的超时若残留在长连接上，
+        # _pump 会把 socket.timeout 当 OSError 永久退出，之后发布的订阅消息
+        # 永远收不到。修复后：(a) subscribe() 把连接恢复为阻塞（无超时残留）；
+        # (b) 即便仍有有限超时，_pump 也把 timeout 当非终止信号继续等。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            self.assertIsNone(
+                client.gettimeout(),
+                "subscribe 确认后长连接不应残留 ack 用有限超时（空闲 5s 会杀线程）",
+            )
+
+            # 人为模拟超时仍残留：旧代码 _pump 在首个空闲超时即退出。
+            client.settimeout(0.1)
+            time.sleep(0.35)
+
+            payload = json.dumps({"tick": 42}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 42)
+            self.assertEqual(pubsub.events_for("my_chan")[0]["tick"], 42)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_message_coalesced_with_final_subscribe_ack_is_delivered(self):
+        # 回归：review finding [major]——ack 循环的一次 recv(4096) 可能同时读到
+        # 「最终订阅确认 + 首条已发布消息」，但它只解析 ack 就退出（remaining 空）。
+        # 若 _pump 先阻塞 recv 再解析缓冲，这条已入缓冲的消息要等下一次网络流量
+        # 才会被处理；这是唯一一次发布时 wait_event 会一直超时。修复：_pump 先
+        # 消费缓冲帧再收新数据。这里 ack 与消息同一次 sendall，且之后不再有
+        # 任何网络流量——消息必须被泵线程立即解析入队。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            payload = json.dumps({"tick": 99}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(ack + msg)
+            pubsub.subscribe("my_chan")
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 99, timeout=2.0)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_message_published_between_subscribe_acks_is_not_discarded(self):
+        # 回归：review finding [minor]——依次 SUBSCRIBE 多频道时，发布者可在首个
+        # ack 之后、末个 ack 之前发布消息。ack 循环若只认 subscribe 帧、把穿插的
+        # message 帧当噪声丢弃，wait_event 会在这条真实消息上超时。订阅确认与
+        # 穿插消息同批到达，subscribe 返回后消息必须已在事件流中。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack_a = b"*3\r\n$9\r\nsubscribe\r\n$4\r\nch_a\r\n:1\r\n"
+            ack_b = b"*3\r\n$9\r\nsubscribe\r\n$4\r\nch_b\r\n:2\r\n"
+            payload = json.dumps({"tick": 11}).encode()
+            msg_a = b"*3\r\n$7\r\nmessage\r\n$4\r\nch_a\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            # 先 ack ch_a，穿插 ch_a 上的消息，再 ack ch_b——一次 recv 全到。
+            server.sendall(ack_a + msg_a + ack_b)
+            pubsub.subscribe("ch_a", "ch_b")
+            self._wait_for(pubsub, "ch_a", lambda e: e.get("tick") == 11, timeout=2.0)
+            self.assertEqual(len(pubsub.events_for("ch_a")), 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_parse_redis_url_strips_components_and_keeps_credentials(self):
+        # 回归：review finding [2]/[3]——(a) REDIS_URL 带 db 路径/query 时转端口
+        # 会 int('6379/0') ValueError；query-only（无路径）URL 的 '?x=1' 会残留
+        # 在 authority 里同样炸端口解析；fragment 同理。SUBSCRIBE 不需要选库，
+        # 应在 authority 边界（/ ? #）处剥离。(b) userinfo（user:pass@）不再丢弃，
+        # 返回给 RedisPubSub 连接后 AUTH。
+        cases = {
+            "redis://127.0.0.1:6379/0": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1:6379/0?x=1&y=2": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1:6379?x=1": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1:6379#frag": ("127.0.0.1", 6379, None, None),
+            "redis://user:pass@127.0.0.1:6380/3": ("127.0.0.1", 6380, "user", "pass"),
+            "redis://user@127.0.0.1:6380": ("127.0.0.1", 6380, "user", None),
+            "redis://alice:s3cret@127.0.0.1:6379?x=1": (
+                "127.0.0.1",
+                6379,
+                "alice",
+                "s3cret",
+            ),
+            "": ("127.0.0.1", 6379, None, None),
+        }
+        for url, expected in cases.items():
+            self.assertEqual(_redis_helpers._parse_redis_url(url), expected)
+
+    def test_unsupported_redis_scheme_error_redacts_credentials(self):
+        # 回归：review finding [major]——不支持的 scheme 报错若回填完整 URL，
+        # `rediss://alice:s3cret@...` 会把密码打印进 CI/运维日志。修复后只报
+        # scheme，不得泄漏 userinfo（用户名 / 密码）。
+        with self.assertRaises(ValueError) as ctx:
+            _redis_helpers._parse_redis_url("rediss://alice:s3cret@redis.example:6380")
+        message = str(ctx.exception)
+        self.assertIn(
+            "rediss", message,
+            "异常应点明不支持的 scheme，便于运维定位；实际={message!r}",
+        )
+        self.assertNotIn(
+            "s3cret", message,
+            "异常不得包含密码；实际={message!r}",
+        )
+        self.assertNotIn(
+            "alice", message,
+            "异常不得包含用户名；实际={message!r}",
+        )
+        self.assertNotIn(
+            "redis.example", message,
+            "异常不得包含完整 host（无关凭据也一并避免）；实际={message!r}",
+        )
+
+    def test_auth_issued_on_connect_with_credentials(self):
+        # 回归：review finding [3]——带凭据的 REDIS_URL 之前静默丢弃 userinfo，
+        # 连上后直接 SUBSCRIBE，认证服务器回 -NOAUTH 使场景全废；修复后连接即
+        # AUTH（有用户名用 `AUTH <user> <pass>`，Redis 6+ ACL）。+OK 才继续。
+        # 断言对齐 _frame_command 的 RESP2 数组框架（review finding [major]：
+        # 旧 inline 文本 `AUTH alice s3cret` 会被空格拆参/注入，框架已改）。
+        server, client = socket.socketpair()
+        server.sendall(b"+OK\r\n")
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub(
+                "127.0.0.1", 6379, username="alice", password="s3cret"
+            )
+        try:
+            expected = _redis_helpers._frame_command(["AUTH", "alice", "s3cret"])
+            cmd = b""
+            while len(cmd) < len(expected):
+                cmd += server.recv(1024)
+            self.assertEqual(cmd, expected, "连接后应先发 RESP2 数组框架的 AUTH 而非 SUBSCRIBE")
+            # AUTH 确认后仍能正常订阅并收到消息。
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"tick": 9}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 9)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_password_only_uses_default_user(self):
+        # 无用户名时退化为 `AUTH <pass>`（默认用户），同样走 RESP2 数组框架。
+        server, client = socket.socketpair()
+        server.sendall(b"+OK\r\n")
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="hunter2")
+        try:
+            expected = _redis_helpers._frame_command(["AUTH", "hunter2"])
+            cmd = b""
+            while len(cmd) < len(expected):
+                cmd += server.recv(1024)
+            self.assertEqual(cmd, expected)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_failure_raises_on_connect(self):
+        # 回归：review finding [3]——错误凭据必须连接阶段立即暴露（RuntimeError），
+        # 不能让 -NOAUTH/-WRONGPASS 错误帧被静默吞掉后场景跑起来才莫名失败。
+        server, client = socket.socketpair()
+        server.sendall(b"-NOAUTH Authentication required\r\n")
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            with self.assertRaises(RuntimeError):
+                _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="wrong")
+        server.close()
+        client.close()
+
+    def test_events_buffer_is_bounded(self):
+        # 回归：review finding [2]——_events 无上限会随全局频道累积撑爆内存；
+        # max_events 裁剪应丢弃最旧条目。
+        pubsub, server, client = self._pubsub_with_pair(max_events=2)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            for i in range(3):
+                payload = json.dumps({"seq": i}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+            # 等三条全部入队（seq 2 可见即裁剪已发生——裁剪与追加同锁），再断言。
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 2)
+            got = [e["seq"] for e in pubsub.events_for("my_chan")]
+            self.assertEqual(len(got), 2)
+            self.assertNotIn(0, got, "max_events 裁剪应丢弃最旧条目")
+            with self.assertRaises(AssertionError) as ctx:
+                pubsub.window_events("my_chan", after=0)
+            self.assertIn("淘汰", str(ctx.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_events_byte_budget_trims_oldest_by_bytes(self):
+        # 回归：review finding [major]——max_events 只按条数裁剪，单事件可接近
+        # MAX_BULK_LEN（1 MiB），5000 条 × 近 1 MiB = 数 GiB 保留会耗尽 bot
+        # runner 内存。累积字节预算把保留内存压到可控量级；超预算裁剪最旧条目。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("ch")
+            # 手工压低字节预算：3 条各 ~51 字节 wire 的载荷总和超预算即裁剪最旧。
+            pubsub._max_event_bytes = 60
+            for i in range(3):
+                payload = json.dumps({"seq": i, "pad": "x" * 30}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+            self._wait_for(pubsub, "ch", lambda e: e.get("seq") == 2, timeout=2.0)
+            got = [e["seq"] for e in pubsub.events_for("ch")]
+            self.assertNotIn(0, got, "字节预算应裁剪最旧条目")
+            self.assertLessEqual(len(got), 2)
+            self.assertLessEqual(pubsub._event_bytes, 60)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_returns_event_received_during_wait(self):
+        # wait_event 的等待窗口从调用时起算：事件须在窗口内到达才被命中。
+        # 用生产者线程在 wait 开始后再投递，避免“先 send 后 wait”时泵线程抢先
+        # 入队、事件落出窗口（那正是 review finding [2] 要消除的重扫行为）。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def _produce():
+                time.sleep(0.2)
+                payload = json.dumps({"tick": 7}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+
+            producer = threading.Thread(target=_produce)
+            producer.start()
+            evt = pubsub.wait_event(
+                "my_chan", lambda e: e.get("tick") == 7, timeout=5.0
+            )
+            producer.join()
+            self.assertEqual(evt["tick"], 7)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_scans_only_events_since_wait_start(self):
+        # 回归：review finding [2]——wait_event 若重扫全频道历史，等待开始前的
+        # 旧事件也会被谓词命中；应只匹配本次等待期间新增的事件。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"seq": 0}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 0)
+            # 旧事件已入队但不在本次等待窗口内，不应再被命中。
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event("my_chan", lambda e: e.get("seq") == 0, timeout=0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_honors_anchor_taken_before_action(self):
+        # 回归：review finding [1]/[4]——"trigger 先于 wait_event"的调用顺序下，
+        # 服务端响应可能在 wait_event 记录窗口前被泵线程入队，被 seq >= start_seq
+        # 排除而超时。修复后调用方可在发触发 intent **之前** anchor() 取锚点并传
+        # wait_event(after=anchor)：锚点与等待之间入队的事件同样被窗口包含。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            # 1) 发送触发「动作」前先锚定（场景里对应 _switch(intent) 之前）。
+            anchor = pubsub.anchor()
+
+            # 2) 动作触发后，事件在 wait_event 调用**之前**就被泵线程入队——
+            #    正是 review finding [1] 指出的竞态窗口。
+            payload = json.dumps({"tick": 7}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+
+            # 3) 窗口从调用时起算会漏掉它；after=anchor 让窗口从动作前的锚点起算。
+            evt = pubsub.wait_event(
+                "my_chan", lambda e: e.get("tick") == 7, timeout=5.0, after=anchor
+            )
+            self.assertEqual(evt["tick"], 7)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_after_still_excludes_events_before_anchor(self):
+        # after= 语义与默认窗口一致：锚点**之前**入队的事件仍被排除（只是把窗口
+        # 起点从调用时前移到锚定时，不改变"只扫新增"的契约）。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"seq": 0}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 0)
+            # 锚定发生在 seq0 事件入队**之后**：该事件仍在窗口外。
+            anchor = pubsub.anchor()
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event(
+                    "my_chan",
+                    lambda e: e.get("seq") == 0,
+                    timeout=0.5,
+                    after=anchor,
+                )
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_feed_appends_in_place_no_quadratic_rebuild(self):
+        # 回归：review finding [minor]——_buf 若是不可变 bytes，feed 每次 `+=` 都
+        # 复制整段累计缓冲，分片到达时呈二次方拷贝。改为 bytearray 后原地追加。
+        frames = _redis_helpers.RespFrames()
+        buf_ref = frames._buf
+        for _ in range(50):
+            frames.feed(b"x" * 4096)
+        self.assertIs(
+            frames._buf,
+            buf_ref,
+            "feed 必须原地追加，不得重建缓冲对象（bytearray 而非 bytes）",
+        )
+        self.assertEqual(len(frames._buf), 50 * 4096)
+
+    def test_wait_event_excludes_events_enqueued_after_deadline(self):
+        # 回归：review finding [minor]——最终扫描只用 seq 边界，无法区分「截止前
+        # 到达」与「截止后入队」；事件入队时间戳 <= deadline 才被接受。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        # 匹配事件在 deadline（≈now+0.01s）之后才入队：ts 在未来，必须被排除。
+        pubsub._events = [
+            (0, "my_chan", {"ok": True}, time.monotonic() + 1000.0, 4)
+        ]
+        with self.assertRaises(AssertionError):
+            pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=0.01)
+
+    def test_wait_event_accepts_events_within_deadline(self):
+        # 同一 seq 窗口内的匹配事件，入队时刻 <= deadline 时仍应被接受（过滤
+        # 只排除截止后入队，不误伤截止前到达）。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        pubsub._events = [
+            (0, "my_chan", {"ok": True}, time.monotonic() - 1.0, 4)
+        ]
+        evt = pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=5.0)
+        self.assertEqual(evt["ok"], True)
+
+    def test_window_events_bounds_by_anchor_and_enqueue_ts(self):
+        # 负向断言的最终窗口化扫描基础：after 锚点之前的事件与 max_ts 之后入队的
+        # 事件都被排除——最终扫描不得把窗口外事件误判为窗口内（review finding
+        # [major]：最终 despawn 检查缺窗口化扫描）。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 3
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        now = time.monotonic()
+        pubsub._events = [
+            (0, "ch", {"seq": "pre"}, now, 4),
+            (1, "ch", {"seq": "in"}, now, 4),
+            (2, "ch", {"seq": "late"}, now + 1000.0, 4),
+        ]
+        got = [
+            e["seq"]
+            for e in pubsub.window_events("ch", after=1, max_ts=now + 500.0)
+        ]
+        self.assertEqual(got, ["in"])
+
+    def test_settle_drains_buffered_frames_as_delivery_barrier(self):
+        # 回归：review finding [major]——负向断言的最终扫描若缺投递屏障，截止判定
+        # 与 pump 入队之间的帧会被漏掉。settle 现在以 PING/PONG 正同步证明投递
+        # 完成：PING 写入订阅连接后，pump 必须消费到应答 PONG（Redis 按入站命令
+        # 顺序处理，PONG 之前的 message 帧字节必已先于 PONG 到达），屏障返回即
+        # 已缓冲帧全部消费入队。此测试验证完整通路：真实 pump 线程 + 对端回 PONG。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def server_loop():
+                # 对客户端每次读取回一条 PONG（真 redis-server 按入站命令顺序
+                # 应答，这里只模拟"读到命令必有应答"的应答面）。
+                try:
+                    while True:
+                        data = server.recv(4096)
+                        if not data:
+                            return
+                        server.sendall(b"+PONG\r\n")
+                except OSError:
+                    return
+
+            thread = threading.Thread(target=server_loop, daemon=True)
+            thread.start()
+
+            # 模拟"截止前发布、字节已入订阅连接但 pump 尚未消费"的帧：直接推入
+            # _frames（等价于 pump 已 recv 未 drain 的状态），settle 的 PONG 屏障
+            # 返回后必须已被消费入队。
+            frames = _redis_helpers.RespFrames()
+            payload = json.dumps({"owner": "player:x", "tick": 1}).encode()
+            frames.feed(
+                b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                % (len(payload), payload)
+            )
+            with pubsub._frame_lock:
+                pubsub._frames = frames
+
+            pubsub.settle(0.5)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+            self.assertEqual(pubsub.events_for("my_chan")[0]["tick"], 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_settle_fails_closed_when_pong_not_consumed(self):
+        # 回归：review finding [major]——settle 的投递屏障未成立（PONG 未被 pump
+        # 消费）时必须抛错而非静默返回：负向断言不得建立在未证明的投递完成上。
+        # 对端不读不回，PING 的 PONG 应答永不出现，屏障必然超时。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            with self.assertRaises(AssertionError) as cm:
+                pubsub.settle(0.05)
+            self.assertIn("投递屏障未成立", str(cm.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_settle_fails_closed_on_fatal_connection(self):
+        # 回归：review finding [major]——连接已 fatal（泵线程记录协议异常）时
+        # settle 不得静默返回：负向断言不可信，必须抛错。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            pubsub._fatal_error = RuntimeError("protocol exploded")
+            with self.assertRaises(AssertionError) as cm:
+                pubsub.settle(0.05)
+            self.assertIn("protocol exploded", str(cm.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_deep_json_recursion_error_is_fatal(self):
+        # 回归：review finding [major]——json.loads 对超深嵌套列表抛 RecursionError，
+        # 不在 _handle_frame 的 ValueError/TypeError 捕获之列，此前会让泵线程静默
+        # 退出、负向断言在死订阅上照常通过。泵线程兜底失败边界必须把它记为 fatal。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            deep = b"[" * 100000 + b"]" * 100000
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(deep),
+                deep,
+            )
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    # str(RecursionError) 是消息文本而非类型名；RecursionError 不是
+                    # ValueError/TypeError 子类，必须落到泵线程的兜底 except Exception。
+                    self.assertIn("maximum recursion depth", str(exc))
+                    return
+                time.sleep(0.05)
+            self.fail("超深 JSON 载荷未让泵线程把 RecursionError 记为 fatal")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_catch_all_marks_fatal_on_unexpected_frame_exception(self):
+        # 兜底失败边界（review finding [major]）：泵线程捕获不到协议/socket 例外
+        # 以外的任何异常时，必须 _set_fatal 而不是静默退出守护线程。用子类让
+        # _handle_frame 抛非 ValueError/TypeError/OSError 的意外异常验证该边界。
+        class Boom(_redis_helpers.RedisPubSub):
+            def _handle_frame(self, frame):
+                raise RuntimeError("boom")
+
+        server, client = socket.socketpair()
+        with mock.patch(
+            "bot._redis_helpers.socket.create_connection", return_value=client
+        ):
+            pubsub = Boom("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$2\r\n{}\r\n"
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    self.assertIn("boom", str(exc))
+                    return
+                time.sleep(0.05)
+            self.fail("泵线程未把意外帧处理异常记为 fatal")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+
+class ThrowCarrierGuardMarkerTest(unittest.TestCase):
+    """combat_anqi_throw_carrier：消费者 guard 日志按 carrier 线缆 id 归属解析。
+
+    回归 review findings [major]：正向派发证据不得依赖不唯一的 payload 字节数，
+    必须由 throw_carrier_intents 在空手早退处发出的 guard 日志按本 bot 线缆 id
+    归属。此测试钉住解析逻辑（按 carrier 过滤 + reason 提取）。
+    """
+
+    def _scenario_module(self):
+        from bot.scenarios import combat_anqi_throw_carrier as mod
+
+        return mod
+
+    def _write_log(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def _scan(self, path: str, mod) -> "_server_log.ServerLogScanner":
+        scanner = _server_log.ServerLogScanner(path, mod._GUARD_RE)
+        scanner.scan()
+        return scanner
+
+    def test_guard_markers_filtered_to_own_carrier(self):
+        mod = self._scenario_module()
+        own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
+        other = "player:11111111-2222-3333-4444-555555555555"
+        path = self._write_log(
+            [
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
+                f"[bong][combat] throw_carrier guard carrier={other} slot=MainHand reason=no_carrier_item",
+                "[bong][network] client_request received entity=5v1 payload_bytes=77",
+            ]
+        )
+        scanner = self._scan(path, mod)
+        self.assertEqual(
+            scanner.guard_markers(own),
+            ["no_anqi_imprint"],
+            "只应解析出归属本 bot 的 guard 标记",
+        )
+        self.assertEqual(
+            scanner.guard_markers(other),
+            ["no_carrier_item"],
+        )
+        self.assertEqual(scanner.guard_markers("player:missing"), [])
+
+    def test_guard_reasons_whitelist_accepts_both_guards(self):
+        mod = self._scenario_module()
+        own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
+        path = self._write_log(
+            [
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_carrier_item",
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
+            ]
+        )
+        reasons = self._scan(path, mod).guard_markers(own)
+        for reason in reasons:
+            self.assertIn(
+                reason,
+                mod._GUARD_REASONS,
+                f"reason {reason!r} 不在空手护栏白名单 {mod._GUARD_REASONS!r} 内",
+            )
+
+
+class ServerLogScannerTest(unittest.TestCase):
+    """_server_log.ServerLogScanner：增量扫描 + user= 精确归属。"""
+
+    def _write_log(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_incremental_scan_does_not_reprocess_old_lines(self):
+        # 回归：review finding [minor]——guard 轮询若每次从头全扫整个无界 server
+        # 日志，窗口内几十次全量读产生几十 GB I/O。按偏移增量扫描不得重复解析
+        # 旧行，且追加段须在下一次 scan() 里被读到。
+        path = self._write_log(
+            [
+                "[bong][combat] throw_carrier guard carrier=player:aaa "
+                "slot=MainHand reason=no_carrier_item",
+            ]
+        )
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        self.assertEqual(scanner.guard_markers("player:aaa"), ["no_carrier_item"])
+        scanner.scan()  # 无新增：不得重复累计旧行
+        self.assertEqual(
+            scanner.guard_markers("player:aaa"),
+            ["no_carrier_item"],
+            "重复 scan 不得重新解析旧行",
+        )
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(
+                "[bong][combat] throw_carrier guard carrier=player:bbb "
+                "slot=MainHand reason=no_anqi_imprint\n"
+            )
+        scanner.scan()
+        self.assertEqual(scanner.guard_markers("player:aaa"), ["no_carrier_item"])
+        self.assertEqual(scanner.guard_markers("player:bbb"), ["no_anqi_imprint"])
+
+    def test_deserialize_failed_attribution_is_exact_not_substring(self):
+        # 回归：review finding [minor]——`username in line` 子串匹配会让 Throw
+        # 被 Throw2 的失败误归因。按结构化 user=<name> 字段精确匹配。
+        path = self._write_log(
+            [
+                "[bong][network] client_request deserialize failed from 2v1 "
+                "(user=Throw2): bad; payload_bytes=10",
+            ]
+        )
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(r"throw_carrier guard carrier=(\S+)"),
+        )
+        scanner.scan()
+        self.assertEqual(
+            scanner.deserialize_failed("Throw"),
+            0,
+            "Throw 不得被 Throw2 的 user= 字段子串命中",
+        )
+        self.assertEqual(scanner.deserialize_failed("Throw2"), 1)
+
+    def test_same_inode_equal_or_larger_rewrite_resets_to_new_head(self):
+        path = self._write_log(["old line A", "old line B"])
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        with open(path, "r+b") as fh:
+            fh.seek(0)
+            replacement = (
+                "throw_carrier guard carrier=player:same slot=MainHand "
+                "reason=no_carrier_item\n" + "x" * 80 + "\n"
+            ).encode()
+            fh.write(replacement)
+            fh.truncate()
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("player:same"),
+            ["no_carrier_item"],
+            "同 inode 且新内容不短于旧偏移时也必须识别 copytruncate/rewrite 并从头扫描",
+        )
+
+    def test_rotation_to_larger_replacement_resets_to_new_head(self):
+        # 回归：review finding [minor]——日志被替换成更大的新文件（轮转）时，旧
+        # 实现只按 offset <= size 判定文件身份，会 seek 到旧偏移 N 并跳过新文件
+        # N 之前的全部行。把 guard 关键字横跨旧偏移 N 摆放：seek(N) 后 re.search
+        # 只看到被截断的后缀，guard 证据永久丢失。修复后按 dev/inode 判定文件
+        # 身份，替换后从头重读。
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("old line A\nold line B\n")  # 22 字节 → 旧偏移 N=22
+        self.addCleanup(os.remove, path)
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        # 轮转：旧文件改名移走，同路径新建（新 inode）。新文件更大，guard 关键字
+        # 横跨字节 22（"HEADERZZZZ\n" 占 11 字节，throw_carrier 起于 11）——
+        # seek(22) 只能读到 "er guard carrier=..." 后缀，re.search 找不到完整关键字。
+        os.rename(path, path + ".rotated")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "HEADERZZZZ\n"
+                "throw_carrier guard carrier=player:new slot=MainHand "
+                "reason=no_carrier_item\n"
+                "line C\nline D\nline E\n"
+            )
+        self.addCleanup(os.remove, path + ".rotated")
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("player:new"),
+            ["no_carrier_item"],
+            "轮转成更大的替换文件后必须从头重读，guard 不得被旧偏移跳过",
+        )
+
+    def test_partial_multibyte_line_rewinds_to_line_start(self):
+        # 回归：review finding [minor]——文本模式的 fh.tell() 记录字节流 cookie，
+        # 而旧 rewind 按 len(data)（字符数）回退：未写完的多字节 UTF-8 行会把偏移
+        # 算到行中间，续写后 seek 从半行开始，guard 标记被跳过或只解出后缀。修复
+        # 后按字节扫描，未完成行回退到字节级行起点（最后一个 \n 之后）。
+        fd, path = tempfile.mkstemp(suffix=".log")
+        self.addCleanup(os.remove, path)
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        head = "line one\n"
+        # 未完成行：2 个多字节字符（玩家 = 6 字节）且无结尾换行。
+        partial = "throw_carrier guard carrier=玩家"
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(head + partial)
+        scanner.scan()
+        # 行起点 = head 的字节长（9）；修复后 _offset 必须精确落在行起点。
+        self.assertEqual(
+            scanner._offset,
+            len(head.encode("utf-8")),
+            "未完成多字节行回退后偏移必须落在字节级行起点",
+        )
+        self.assertEqual(scanner.guard_markers("玩家"), [])
+        # 续写完整行 + 换行：从行起点重读，guard 完整解析。
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(" reason=no_carrier_item\n")
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("玩家"),
+            ["no_carrier_item"],
+            "未完成多字节行续写后必须从行起点重读，guard 不得被跳过",
+        )
+
 class NewServerDataDecoderContractTest(unittest.TestCase):
     """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
 
@@ -9615,7 +10907,5 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=1)

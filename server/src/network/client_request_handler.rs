@@ -554,8 +554,18 @@ pub fn handle_client_request_payloads(
         let request: ClientRequestV1 = match serde_json::from_str(payload) {
             Ok(r) => r,
             Err(err) => {
+                // 带 user= 关联键：deserialize-failed 是全局频道共有的 warn，bot
+                // 场景要按本 bot 归属计数（否则同窗其他客户端的畸形请求会让
+                // 载体作用域断言跨客户端误红，review finding [minor]：全局
+                // 反序列化失败计数）。登录中/断连瞬间拿不到 Username 时用
+                // <unknown> 占位，不影响正常归属。
+                let client_user = clients
+                    .get(ev.client)
+                    .ok()
+                    .map(|(username, _)| username.0.as_str())
+                    .unwrap_or("<unknown>");
                 tracing::warn!(
-                    "[bong][network] client_request deserialize failed from {:?}: {err}; payload_bytes={}",
+                    "[bong][network] client_request deserialize failed from {:?} (user={client_user}): {err}; payload_bytes={}",
                     ev.client,
                     ev.data.len()
                 );
@@ -2209,6 +2219,28 @@ pub fn handle_client_request_payloads(
                         cycle_container_slot(world, entity, tick)
                     };
                     if switched.is_none() {
+                        // e2e fenglinghe 拒收护栏的正向证据：switch_container_slot 的
+                        // 拒收早退（!allows_combat_swap，仅 fenglinghe）处发
+                        // carrier 线缆 id 归属的 guard 标记。场景据此区分「拒收分支
+                        // 被走」与「请求在 schema/反序列化/派发环节被丢」——单靠
+                        // 无 container_swap 事件无法证明到达了 switch 系统（review
+                        // finding [major]：fenglinghe 静默在请求未达 switch 系统时
+                        // 照样通过）。经 GuardLogDedup 按 tick 窗口去重：恶意客户端
+                        // 反复发同一拒收请求不制造无界日志，且窗口外自动剪除。
+                        let wire_id = crate::combat::woliu::entity_wire_id(
+                            world.get::<UniqueId>(entity),
+                            entity,
+                        );
+                        let emit = world
+                            .get_resource_mut::<crate::combat::guard_log::GuardLogDedup>()
+                            .map(|mut g| g.should_emit(&wire_id, "rejected", tick))
+                            .unwrap_or(true);
+                        if emit {
+                            tracing::info!(
+                                "[bong][combat] container_switch guard carrier={} reason=rejected",
+                                wire_id
+                            );
+                        }
                         tracing::warn!(
                             ?entity,
                             ?target_container,

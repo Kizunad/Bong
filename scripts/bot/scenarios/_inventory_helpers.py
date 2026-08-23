@@ -174,13 +174,39 @@ def _inventory_snapshot_events(bot) -> list[Any]:
     ]
 
 
-def wait_inventory_contains(bot, item_id: str, timeout: float = 10.0) -> dict[str, Any]:
+def wait_inventory_contains(
+    bot,
+    item_id: str,
+    timeout: float = 10.0,
+    *,
+    after_t: float | None = None,
+    after_revision: int | None = None,
+) -> dict[str, Any]:
+    """Wait for a matching snapshot after an explicit request watermark.
+
+    A fresh call must not silently reuse the pre-request snapshot already in
+    the bot history.  Rejection/resync callers pass the send timestamp and the
+    previous revision; requiring both when supplied makes the post-response
+    inventory observation explicit.
+    """
+    def matches(event) -> bool:
+        if event.kind != "server_data" or event.data["payload_type"] != "inventory_snapshot":
+            return False
+        if after_t is not None and event.t <= after_t:
+            return False
+        payload = event.data["payload"]
+        if after_revision is not None and int(payload["revision"]) <= after_revision:
+            return False
+        return find_item(payload, item_id) is not None
+
     event = bot.wait_for(
-        lambda e: e.kind == "server_data"
-        and e.data["payload_type"] == "inventory_snapshot"
-        and find_item(e.data["payload"], item_id) is not None,
+        matches,
         timeout=timeout,
-        description=f"包含 item_id={item_id} 的 inventory_snapshot",
+        description=(
+            f"{item_id} 的 inventory_snapshot"
+            + (f"（t>{after_t:.3f}）" if after_t is not None else "")
+            + (f"（revision>{after_revision}）" if after_revision is not None else "")
+        ),
     )
     return event.data["payload"]
 
