@@ -1018,7 +1018,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events)
-                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system)
+                .after(crate::social::SocialSystemSet::TradeOfferResponse),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,

@@ -17,7 +17,7 @@ use valence::prelude::bevy_ecs::system::ParamSet;
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, DiggingEvent,
     DiggingState, Entity, EventReader, EventWriter, Events, IntoSystemConfigs, Or, Position, Query,
-    Res, ResMut, Resource, Update, Username, With, Without,
+    Res, ResMut, Resource, SystemSet, Update, Username, With, Without,
 };
 
 use self::components::{
@@ -140,6 +140,11 @@ struct TradeOfferRegistry {
     pending: HashMap<String, PendingTradeOffer>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) enum SocialSystemSet {
+    TradeOfferResponse,
+}
+
 #[derive(Debug, Default, Resource)]
 pub(crate) struct SpiritNicheRegistry {
     niches: HashMap<String, SpiritNiche>,
@@ -255,7 +260,9 @@ pub fn register(app: &mut App) {
         (
             handle_sparring_invite_responses.after(dispatch_sparring_invites),
             dispatch_trade_offers,
-            handle_trade_offer_responses.after(dispatch_trade_offers),
+            handle_trade_offer_responses
+                .after(dispatch_trade_offers)
+                .in_set(SocialSystemSet::TradeOfferResponse),
             expire_sparring_sessions.after(handle_sparring_invite_responses),
             expire_trade_offers.after(handle_trade_offer_responses),
         ),
@@ -945,6 +952,33 @@ fn handle_sparring_invite_responses(
     mut clients: Query<&mut Client, With<Client>>,
 ) {
     for response in responses.read() {
+        let Some(pending_target) = registry
+            .pending
+            .get(response.invite_id.as_str())
+            .map(|pending| pending.target)
+        else {
+            if response.kind == SparringInviteResponseKind::Accept {
+                tracing::warn!(
+                    "[bong][social] rejected unknown sparring invite id `{}`",
+                    response.invite_id
+                );
+            } else if let Ok(mut client) = clients.get_mut(response.player) {
+                client.send_chat_message(match response.kind {
+                    SparringInviteResponseKind::Decline => "切磋已拒绝",
+                    SparringInviteResponseKind::Timeout => "切磋邀请已逾时",
+                    SparringInviteResponseKind::Accept => "",
+                });
+            }
+            continue;
+        };
+        if response.player != pending_target {
+            tracing::warn!(
+                "[bong][social] rejected sparring invite response from non-target {:?} for `{}`",
+                response.player,
+                response.invite_id
+            );
+            continue;
+        }
         let Ok((target_entity, target_lifecycle, target_sparring)) = players.get(response.player)
         else {
             continue;
@@ -967,16 +1001,10 @@ fn handle_sparring_invite_responses(
             continue;
         }
 
-        let Some(pending) = registry.pending.remove(response.invite_id.as_str()) else {
-            tracing::warn!(
-                "[bong][social] rejected unknown sparring invite id `{}`",
-                response.invite_id
-            );
-            continue;
-        };
-        if pending.target != target_entity {
-            continue;
-        }
+        let pending = registry
+            .pending
+            .remove(response.invite_id.as_str())
+            .expect("authenticated sparring invite must remain pending until consumption");
         if response.tick.saturating_sub(pending.created_at_tick) > SPARRING_INVITE_TIMEOUT_TICKS {
             if let Ok(mut client) = clients.get_mut(response.player) {
                 client.send_chat_message("切磋邀请已过期");
@@ -1124,15 +1152,19 @@ fn handle_trade_offer_responses(
         With<Client>,
     >,
     mut clients: Query<(&Username, &mut Client), With<Client>>,
-    player_states: Query<&PlayerState>,
-    cultivations: Query<&Cultivation>,
     mut exposures: EventWriter<SocialExposureEvent>,
 ) {
     for response in responses.read() {
+        let Some(pending) = registry.pending.get(response.offer_id.as_str()).cloned() else {
+            continue;
+        };
+        if response.player != pending.target {
+            continue;
+        }
         let Some(pending) = registry.pending.remove(response.offer_id.as_str()) else {
             continue;
         };
-        if response.player != pending.target || !response.accepted {
+        if !response.accepted {
             continue;
         }
         let Some(requested_instance_id) = response.requested_instance_id else {
@@ -1168,10 +1200,12 @@ fn handle_trade_offer_responses(
             else {
                 continue;
             };
+            let mut next_initiator_inventory = initiator_inventory.clone();
+            let mut next_target_inventory = target_inventory.clone();
             if let Err(error) = exchange_inventory_items(
-                &mut initiator_inventory,
+                &mut next_initiator_inventory,
                 pending.offered_instance_id,
-                &mut target_inventory,
+                &mut next_target_inventory,
                 requested_instance_id,
             ) {
                 tracing::warn!(
@@ -1180,6 +1214,8 @@ fn handle_trade_offer_responses(
                 );
                 continue;
             }
+            *initiator_inventory = next_initiator_inventory;
+            *target_inventory = next_target_inventory;
             if let Some(mut life_record) = initiator_life_record {
                 life_record.push(BiographyEntry::TradeCompleted {
                     counterparty_id: pending.target_char_id.clone(),
@@ -1195,36 +1231,6 @@ fn handle_trade_offer_responses(
                     received_item: offered_item.display_name.clone(),
                     tick: response.tick,
                 });
-            }
-            if let (Ok((username, mut client)), Ok(player_state), Ok(cultivation)) = (
-                clients.get_mut(pending.initiator),
-                player_states.get(pending.initiator),
-                cultivations.get(pending.initiator),
-            ) {
-                send_inventory_snapshot_to_client(
-                    pending.initiator,
-                    &mut client,
-                    username.0.as_str(),
-                    &initiator_inventory,
-                    player_state,
-                    cultivation,
-                    "trade",
-                );
-            }
-            if let (Ok((username, mut client)), Ok(player_state), Ok(cultivation)) = (
-                clients.get_mut(pending.target),
-                player_states.get(pending.target),
-                cultivations.get(pending.target),
-            ) {
-                send_inventory_snapshot_to_client(
-                    pending.target,
-                    &mut client,
-                    username.0.as_str(),
-                    &target_inventory,
-                    player_state,
-                    cultivation,
-                    "trade",
-                );
             }
             exchanged = true;
         }
@@ -3678,8 +3684,13 @@ mod tests {
         );
     }
 
-    fn spawn_trade_player(app: &mut App, name: &str, character_id: &str, x: f64) -> Entity {
-        let (mut bundle, _helper) = create_mock_client(name);
+    fn spawn_trade_player_with_helper(
+        app: &mut App,
+        name: &str,
+        character_id: &str,
+        x: f64,
+    ) -> (Entity, MockClientHelper) {
+        let (mut bundle, helper) = create_mock_client(name);
         bundle.player.position = Position::new([x, 64.0, 0.0]);
         let entity = app.world_mut().spawn(bundle).id();
         app.world_mut().entity_mut(entity).insert((
@@ -3692,7 +3703,11 @@ mod tests {
             Cultivation::default(),
             LifeRecord::new(character_id),
         ));
-        entity
+        (entity, helper)
+    }
+
+    fn spawn_trade_player(app: &mut App, name: &str, character_id: &str, x: f64) -> Entity {
+        spawn_trade_player_with_helper(app, name, character_id, x).0
     }
 
     fn setup_trade_app() -> App {
@@ -3707,6 +3722,8 @@ mod tests {
                 dispatch_trade_offers,
                 handle_trade_offer_responses.after(dispatch_trade_offers),
                 apply_social_exposures.after(handle_trade_offer_responses),
+                crate::network::inventory_snapshot_emit::emit_changed_inventory_snapshots
+                    .after(handle_trade_offer_responses),
             ),
         );
         app
@@ -4668,6 +4685,138 @@ mod tests {
         assert_eq!(initiator_state.invite_id, target_state.invite_id);
     }
 
+    fn spawn_sparring_player(app: &mut App, name: &str, character_id: &str) -> Entity {
+        let (bundle, _helper) = create_mock_client(name);
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            character_id: character_id.to_string(),
+            ..Default::default()
+        });
+        entity
+    }
+
+    fn setup_pending_sparring_app(created_at_tick: u64, clock_tick: u64) -> (App, Entity, Entity) {
+        let mut app = qi_test_app();
+        app.init_resource::<SparringInviteRegistry>();
+        app.insert_resource(CombatClock { tick: clock_tick });
+        app.add_event::<SparringInviteResponseEvent>();
+        app.add_systems(
+            Update,
+            (
+                handle_sparring_invite_responses,
+                expire_sparring_sessions.after(handle_sparring_invite_responses),
+            ),
+        );
+        let initiator = spawn_sparring_player(&mut app, "Initiator", "char:initiator");
+        let target = spawn_sparring_player(&mut app, "Target", "char:target");
+        app.world_mut()
+            .resource_mut::<SparringInviteRegistry>()
+            .pending
+            .insert(
+                "sparring:test".to_string(),
+                PendingSparringInvite {
+                    initiator,
+                    target,
+                    created_at_tick,
+                },
+            );
+        (app, initiator, target)
+    }
+
+    #[test]
+    fn sparring_accepts_at_exact_expiry_boundary_and_expires_one_tick_later() {
+        let created_at_tick = 100;
+        let expiry_tick = created_at_tick + SPARRING_INVITE_TIMEOUT_TICKS;
+        let (mut boundary_app, initiator, target) =
+            setup_pending_sparring_app(created_at_tick, expiry_tick);
+        boundary_app
+            .world_mut()
+            .send_event(SparringInviteResponseEvent {
+                player: target,
+                invite_id: "sparring:test".to_string(),
+                kind: SparringInviteResponseKind::Accept,
+                tick: expiry_tick,
+            });
+
+        boundary_app.update();
+
+        assert!(boundary_app
+            .world()
+            .get::<SparringState>(initiator)
+            .is_some());
+        assert!(boundary_app.world().get::<SparringState>(target).is_some());
+        assert!(boundary_app
+            .world()
+            .resource::<SparringInviteRegistry>()
+            .pending
+            .is_empty());
+
+        let (mut expired_app, _initiator, _target) =
+            setup_pending_sparring_app(created_at_tick, expiry_tick + 1);
+        expired_app.update();
+        assert!(
+            expired_app
+                .world()
+                .resource::<SparringInviteRegistry>()
+                .pending
+                .is_empty(),
+            "invite must be garbage-collected immediately after the inclusive expiry boundary"
+        );
+    }
+
+    #[test]
+    fn unauthorized_sparring_responses_leave_invite_consumable_by_target() {
+        for kind in [
+            SparringInviteResponseKind::Accept,
+            SparringInviteResponseKind::Decline,
+            SparringInviteResponseKind::Timeout,
+        ] {
+            let (mut app, initiator, target) = setup_pending_sparring_app(100, 110);
+            let intruder = spawn_sparring_player(&mut app, "Intruder", "char:intruder");
+            app.world_mut().send_event(SparringInviteResponseEvent {
+                player: intruder,
+                invite_id: "sparring:test".to_string(),
+                kind,
+                tick: 110,
+            });
+
+            app.update();
+
+            assert!(
+                app.world()
+                    .resource::<SparringInviteRegistry>()
+                    .pending
+                    .contains_key("sparring:test"),
+                "third-party {kind:?} must not consume the target's pending invite"
+            );
+            assert!(app.world().get::<SparringState>(intruder).is_none());
+
+            app.world_mut().send_event(SparringInviteResponseEvent {
+                player: target,
+                invite_id: "sparring:test".to_string(),
+                kind: SparringInviteResponseKind::Accept,
+                tick: 111,
+            });
+            app.update();
+
+            let initiator_state = app
+                .world()
+                .get::<SparringState>(initiator)
+                .expect("real target must still be able to accept after an unauthorized response");
+            let target_state = app
+                .world()
+                .get::<SparringState>(target)
+                .expect("real target acceptance must create its sparring state");
+            assert_eq!(initiator_state.partner, target);
+            assert_eq!(target_state.partner, initiator);
+            assert!(app
+                .world()
+                .resource::<SparringInviteRegistry>()
+                .pending
+                .is_empty());
+        }
+    }
+
     #[test]
     fn trade_offer_dispatches_payload_only_to_target_and_hides_ids() {
         let mut app = qi_test_app();
@@ -5009,6 +5158,227 @@ mod tests {
             .resource::<TradeOfferRegistry>()
             .pending
             .is_empty());
+    }
+
+    #[test]
+    fn non_target_trade_response_does_not_consume_offer_before_target_accepts() {
+        let mut app = setup_trade_app();
+        let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+        let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+        let intruder = spawn_trade_player(&mut app, "Intruder", "char:intruder", 20.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: intruder,
+            offer_id: offer_id.clone(),
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<TradeOfferRegistry>()
+                .pending
+                .contains_key(&offer_id),
+            "非目标 responder 不得消费 pending offer，否则真实目标无法随后响应"
+        );
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(initiator).unwrap(),
+            1001
+        )
+        .is_some());
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(target).unwrap(),
+            2002
+        )
+        .is_some());
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 51,
+        });
+        app.update();
+
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(initiator).unwrap(),
+            2002
+        )
+        .is_some());
+        assert!(inventory_item_by_instance(
+            app.world().get::<PlayerInventory>(target).unwrap(),
+            1001
+        )
+        .is_some());
+        assert!(app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .is_empty());
+    }
+
+    #[test]
+    fn successful_trade_emits_one_final_snapshot_per_player_over_bounded_window() {
+        let mut app = setup_trade_app();
+        let (initiator, mut initiator_helper) =
+            spawn_trade_player_with_helper(&mut app, "Initiator", "char:initiator", 0.0);
+        let (target, mut target_helper) =
+            spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let _ = collect_server_data_payloads(&mut initiator_helper);
+        let _ = collect_server_data_payloads(&mut target_helper);
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+
+        for _ in 0..4 {
+            app.update();
+            flush_all_client_packets(&mut app);
+        }
+
+        for (label, helper, received_id, absent_id) in [
+            ("initiator", &mut initiator_helper, 2002, 1001),
+            ("target", &mut target_helper, 1001, 2002),
+        ] {
+            let snapshots = collect_server_data_payloads(helper)
+                .into_iter()
+                .filter_map(|payload| match payload.payload {
+                    ServerDataPayloadV1::InventorySnapshot(snapshot) => Some(snapshot),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                snapshots.len(),
+                1,
+                "{label} must receive exactly one final inventory snapshot across the full post-response window"
+            );
+            let snapshot = &snapshots[0];
+            assert_eq!(snapshot.revision, 1);
+            assert!(snapshot
+                .placed_items
+                .iter()
+                .any(|placed| placed.item.instance_id == received_id));
+            assert!(!snapshot
+                .placed_items
+                .iter()
+                .any(|placed| placed.item.instance_id == absent_id));
+        }
+    }
+
+    #[test]
+    fn capacity_rejected_trade_does_not_emit_unchanged_inventory_snapshots() {
+        let mut app = setup_trade_app();
+        let (initiator, mut initiator_helper) =
+            spawn_trade_player_with_helper(&mut app, "Initiator", "char:initiator", 0.0);
+        let (target, mut target_helper) =
+            spawn_trade_player_with_helper(&mut app, "Target", "char:target", 10.0);
+        {
+            let mut initiator_inventory = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(initiator)
+                .unwrap();
+            initiator_inventory.containers[0].rows = 1;
+            initiator_inventory.containers[0].cols = 1;
+        }
+        app.world_mut()
+            .get_mut::<PlayerInventory>(target)
+            .unwrap()
+            .containers[0]
+            .items[0]
+            .instance
+            .grid_w = 2;
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let _ = collect_server_data_payloads(&mut initiator_helper);
+        let _ = collect_server_data_payloads(&mut target_helper);
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        for _ in 0..4 {
+            app.update();
+            flush_all_client_packets(&mut app);
+        }
+
+        for (label, helper) in [
+            ("initiator", &mut initiator_helper),
+            ("target", &mut target_helper),
+        ] {
+            let snapshots = collect_server_data_payloads(helper)
+                .into_iter()
+                .filter(|payload| {
+                    matches!(payload.payload, ServerDataPayloadV1::InventorySnapshot(_))
+                })
+                .count();
+            assert_eq!(
+                snapshots, 0,
+                "{label} 在容量拒绝后不得收到内容与 revision 均未变化的 inventory_snapshot"
+            );
+        }
+        let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+        assert_eq!(initiator_inventory.revision, InventoryRevision(0));
+        assert_eq!(target_inventory.revision, InventoryRevision(0));
+        assert!(inventory_item_by_instance(initiator_inventory, 1001).is_some());
+        assert!(inventory_item_by_instance(target_inventory, 2002).is_some());
     }
 
     #[test]

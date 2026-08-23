@@ -185,6 +185,32 @@ def wait_inventory_contains(bot, item_id: str, timeout: float = 10.0) -> dict[st
     return event.data["payload"]
 
 
+def inventory_instance_map(snapshot: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    """Return every authoritative inventory item keyed by globally unique instance_id."""
+    items: dict[int, dict[str, Any]] = {}
+
+    def add(item: dict[str, Any]) -> None:
+        instance_id = int(item["instance_id"])
+        if instance_id in items:
+            raise BotAssertionError(
+                f"inventory_snapshot 内 instance_id={instance_id} 重复出现，无法证明唯一所有权"
+            )
+        items[instance_id] = item
+
+    for placed in snapshot.get("placed_items", []):
+        add(placed["item"])
+    for slot, values in snapshot.get("equipped", {}).items():
+        if slot.endswith("_worn"):
+            for item in values:
+                add(item)
+        elif slot.endswith("_held") and values:
+            add(values)
+    for item in snapshot.get("hotbar", []):
+        if item:
+            add(item)
+    return items
+
+
 def find_items(snapshot: dict[str, Any], item_id: str) -> list[dict[str, Any]]:
     """snapshot 中 item_id 的**全部**匹配（placed/equipped/hotbar 全遍历）。
 

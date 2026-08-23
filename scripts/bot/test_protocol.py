@@ -1457,7 +1457,51 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "inventory_snapshot")
         self.assertEqual(decoded["revision"], 12)
         self.assertEqual(decoded["containers"][0]["id"], "body_pocket")
-        self.assertEqual(decoded["equipped"]["chest_worn"][0]["item_id"], "worn_grass_pouch")
+        item = decoded["equipped"]["chest_worn"][0]
+        self.assertEqual(item["item_id"], "worn_grass_pouch")
+        self.assertEqual(item["mineral_id"], "za_gang")
+        self.assertEqual(item["scroll_kind"], "skill_scroll")
+        self.assertEqual(item["scroll_skill_id"], "forging")
+        self.assertEqual(item["scroll_xp_grant"], 500)
+        self.assertEqual(item["charges"], 7)
+        self.assertAlmostEqual(item["forge_quality"], 0.75, places=6)
+        self.assertEqual(item["forge_color"], 1)
+        self.assertEqual(item["forge_side_effects"], ["brittle_edge", "qi_shear"])
+        self.assertEqual(item["forge_achieved_tier"], 3)
+        self.assertEqual(
+            item["alchemy"],
+            {
+                "kind": "pill",
+                "recipe_id": "qing_xin_dan",
+                "quality_tier": 2,
+                "effect_multiplier": 0.9,
+                "consecrated": True,
+                "side_effect": {
+                    "tag": "qi_drain_mild",
+                    "duration_s": 30,
+                    "weight": 1,
+                    "perm": False,
+                    "color": 2,
+                    "amount": 1.5,
+                },
+                "fragment": None,
+                "hint": None,
+                "residue_kind": None,
+                "produced_at_tick": None,
+                "expires_at_tick": None,
+            },
+        )
+        self.assertEqual(
+            item["freshness"],
+            {
+                "created_at_tick": 123,
+                "initial_qi": 0.5,
+                "track": "Decay",
+                "profile": "mineral_decay_v1",
+                "frozen_accumulated": 17,
+                "frozen_since_tick": 140,
+            },
+        )
 
     def test_proto_inventory_event_moved_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_inventory_event_moved_bytes())
@@ -6273,6 +6317,30 @@ def _server_data_zone_info_bytes() -> bytes:
 
 
 def _server_data_inventory_snapshot_bytes() -> bytes:
+    side_effect = (
+        _pb_string(1, "qi_drain_mild")
+        + _pb_varint(2, 30)
+        + _pb_varint(3, 1)
+        + _pb_varint(4, 0)
+        + _pb_varint(5, 2)
+        + _pb_fixed64(6, 1.5)
+    )
+    alchemy = (
+        _pb_string(1, "pill")
+        + _pb_string(2, "qing_xin_dan")
+        + _pb_varint(3, 2)
+        + _pb_fixed64(4, 0.9)
+        + _pb_varint(5, 1)
+        + _pb_message(6, side_effect)
+    )
+    freshness = (
+        _pb_varint(1, 123)
+        + _pb_fixed32(2, 0.5)
+        + _pb_string(3, "Decay")
+        + _pb_string(4, "mineral_decay_v1")
+        + _pb_varint(5, 17)
+        + _pb_varint(6, 140)
+    )
     item = (
         _pb_varint(1, 9)
         + _pb_string(2, "worn_grass_pouch")
@@ -6285,6 +6353,18 @@ def _server_data_inventory_snapshot_bytes() -> bytes:
         + _pb_varint(9, 1)
         + _pb_fixed64(10, 0.0)
         + _pb_fixed64(11, 0.3)
+        + _pb_string(12, "za_gang")
+        + _pb_string(13, "skill_scroll")
+        + _pb_string(14, "forging")
+        + _pb_varint(15, 500)
+        + _pb_varint(16, 7)
+        + _pb_fixed32(17, 0.75)
+        + _pb_varint(18, 1)
+        + _pb_string(19, "brittle_edge")
+        + _pb_string(19, "qi_shear")
+        + _pb_varint(20, 3)
+        + _pb_message(21, alchemy)
+        + _pb_message(22, freshness)
     )
     container = (
         _pb_string(1, "body_pocket")
@@ -6471,6 +6551,17 @@ def _pb_varint_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + mc.write_varint(value)
 
 
+def _pb_u64_varint_field(number: int, value: int) -> bytes:
+    """protobuf uint64 字段（mc.write_varint 是 32 位 MC varint，装不下 u64）。"""
+    body = bytearray()
+    remaining = value
+    while remaining >= 0x80:
+        body.append((remaining & 0x7F) | 0x80)
+        remaining >>= 7
+    body.append(remaining)
+    return mc.write_varint(number << 3) + bytes(body)
+
+
 def _pb_len_field(number: int, value: bytes) -> bytes:
     return mc.write_varint((number << 3) | 2) + mc.write_varint(len(value)) + value
 
@@ -6549,6 +6640,68 @@ class ProtoMinTest(unittest.TestCase):
 
         refs = proto_min.inventory_item_refs(envelope)
         self.assertEqual(refs[0].location, {"kind": "equip", "slot": "main_hand", "state": "held"})
+
+    def test_trade_offer_decodes_offer_and_item_summaries(self):
+        offered = (
+            _pb_u64_varint_field(1, 1001)
+            + _pb_len_field(2, b"starter_talisman")
+            + _pb_len_field(3, b"talisman")
+            + _pb_varint_field(4, 1)
+        )
+        requested = (
+            _pb_u64_varint_field(1, 2002)
+            + _pb_len_field(2, b"huiyuan_pill")
+            + _pb_len_field(3, b"pill")
+            + _pb_varint_field(4, 3)
+        )
+        trade_offer = (
+            _pb_len_field(1, b"trade:00000000-0000-7000-8000-000000000000")
+            + _pb_len_field(2, b"char:alice")
+            + _pb_len_field(3, b"char:bob")
+            + _pb_len_field(4, offered)
+            + _pb_len_field(5, requested)
+            + _pb_u64_varint_field(6, 9876543210)
+        )
+        envelope = _pb_len_field(65, trade_offer)
+
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "trade_offer")
+        payload = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(payload["type"], "trade_offer")
+        self.assertEqual(payload["offer_id"], "trade:00000000-0000-7000-8000-000000000000")
+        self.assertEqual(payload["initiator"], "char:alice")
+        self.assertEqual(payload["target"], "char:bob")
+        self.assertEqual(
+            payload["offered_item"],
+            {"instance_id": 1001, "item_id": "starter_talisman", "display_name": "talisman", "stack_count": 1},
+        )
+        self.assertEqual(
+            payload["requested_items"],
+            [{"instance_id": 2002, "item_id": "huiyuan_pill", "display_name": "pill", "stack_count": 3}],
+        )
+        self.assertEqual(payload["expires_at_ms"], 9876543210)
+
+    def test_sparring_invite_decodes_all_fields(self):
+        sparring_invite = (
+            _pb_len_field(1, b"sparring:00000000-0000-7000-8000-000000000000")
+            + _pb_len_field(2, b"char:alice")
+            + _pb_len_field(3, b"char:bob")
+            + _pb_len_field(4, b"condense_solidify")
+            + _pb_len_field(5, "气息相试".encode())
+            + _pb_len_field(6, "点到为止".encode())
+            + _pb_u64_varint_field(7, 9876543210)
+        )
+        envelope = _pb_len_field(64, sparring_invite)
+
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "sparring_invite")
+        payload = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(payload["type"], "sparring_invite")
+        self.assertEqual(payload["invite_id"], "sparring:00000000-0000-7000-8000-000000000000")
+        self.assertEqual(payload["initiator"], "char:alice")
+        self.assertEqual(payload["target"], "char:bob")
+        self.assertEqual(payload["realm_band"], "condense_solidify")
+        self.assertEqual(payload["breath_hint"], "气息相试")
+        self.assertEqual(payload["terms"], "点到为止")
+        self.assertEqual(payload["expires_at_ms"], 9876543210)
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:
@@ -8457,6 +8610,20 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             _pb_message(81, _pb_message(1, entry))
         )
         self.assertIsNone(decoded["drops"][0]["item"]["freshness"])
+
+    def test_inventory_item_decodes_forge_quality_for_trade_identity_evidence(self):
+        forge_quality = struct.unpack("<f", struct.pack("<I", 0x3F666667))[0]
+        item = (
+            _pb_varint(1, 77)
+            + _pb_string(2, "forged_blade")
+            + _pb_varint(9, 1)
+            + _pb_fixed32(17, forge_quality)
+        )
+        entry = _pb_varint(1, 77) + _pb_message(8, item)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(81, _pb_message(1, entry))
+        )
+        self.assertEqual(decoded["drops"][0]["item"]["forge_quality"], forge_quality)
 
     def test_lumber_progress_tag29_decodes_terminal_contract(self):
         progress = (
