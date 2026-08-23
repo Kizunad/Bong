@@ -238,8 +238,20 @@ gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments \
 #    使用指南里就带着 `@kody start-review` 字样，contains 会把它当成触发评论，
 #    于是 TRIGGER_AT 永远等于最新那条 Kody 评论，这个校验就自废了（实测 #2061
 #    上 contains 命中 3 条、全是 Kody 自己发的；精确匹配命中 0 条才是对的）。
+#    还要注意 `-s`：`--paginate` 是**每页一个 JSON 数组**，不加 -s 的话 `max`
+#    会逐页各算一个、输出多行，TRIGGER_AT 变成多行字符串后比较全乱。上面两条
+#    查询只做过滤不做聚合（`.[]` 逐页发射匹配项，结果正确），只有这里要聚合。
 TRIGGER_AT=$(gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
-  | jq -r '[.[] | select(.body | test("^\\s*@kody start-review\\s*$")) | .created_at] | max')
+  | jq -sr '[.[][] | select(.body | test("^\\s*@kody start-review\\s*$")) | .created_at] | max // empty')
+
+# ⚠️ 空值必须显式挡掉，别直接把空串喂给下面的 --arg t：
+#    `.created_at > ""` 对**所有**评论都成立 ⇒ 整轮 fail-open，比不做这个校验更糟。
+#    （不加 `// empty` 时 jq 给的是字符串 "null"，`"2026..." > "null"` 恰好为 false
+#      而侥幸 fail-closed —— 别依赖这个 ASCII 巧合。）
+if [ -z "$TRIGGER_AT" ]; then
+  echo "本轮没发过 @kody start-review ⇒ 没有可采信的 clean 结论，先补发触发评论" >&2
+  exit 1
+fi
 gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
   | jq -r --arg t "$TRIGGER_AT" --argjson uid "$OWNER_ID" '.[]
       | select((.body | contains("<!-- kody-codereview"))
