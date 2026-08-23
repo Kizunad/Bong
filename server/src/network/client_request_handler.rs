@@ -774,9 +774,8 @@ fn evaluate_live_gate(
         }
         ClientRequestV1::LingtianStartTill { x, y, z, .. } => {
             let target_block = BlockPos::new(*x, *y, *z);
-            let plot_index =
-                lingtian_plot_index.ok_or(GateDenialReason::MissingAuthorityContext)?;
-            let target_exists = plot_index.contains(&target_block)
+            let target_exists = lingtian_plot_index
+                .is_some_and(|index| index.contains(&target_block))
                 || ingress
                     .chunk_layers
                     .iter()
