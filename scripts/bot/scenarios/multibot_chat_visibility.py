@@ -14,6 +14,12 @@ from bot.scenarios._combat_helpers import (
     wait_for_ready,
 )
 
+# CI 上这些等的是 server 对具体请求的响应，而不是本地计算：实测挂掉那次进程里已经
+# 收了 3000~15000 条事件，10s 窗口在满载 runner 上不够用（同一 commit 重跑就换了个
+# 场景挂）。放宽只在**失败**路径上多花时间——成功时 wait_for 收到事件立刻返回，
+# 绿色用例的墙钟不变。
+SERVER_RESPONSE_TIMEOUT = 25.0
+
 DESCRIPTION = "两个 Bot 互见 PlayerSpawn，并对共同观察到的同一 passive NPC 各自产生 outgoing typed hit"
 MODULES = ["network", "multibot", "combat", "npc"]
 
@@ -25,7 +31,7 @@ def _wait_for_peer(bot, peer_username: str):
             event.data.get("username") == peer_username
             or bot.player_names.get(event.data.get("uuid")) == peer_username
         ),
-        timeout=15.0,
+        timeout=SERVER_RESPONSE_TIMEOUT,
         description=f"PlayerList+PlayerSpawn 权威关联到在线 peer `{peer_username}`",
     )
 
@@ -37,17 +43,19 @@ def _rendezvous_in_spawn(bot) -> None:
         lambda event: event.kind == "chat"
         and event.t > anchor
         and event.data.get("text") == "Teleported to zone `spawn`.",
-        timeout=10.0,
+        timeout=SERVER_RESPONSE_TIMEOUT,
         description="/tpzone spawn 权威命令回执",
     )
     bot.wait_for(
         lambda event: event.kind == "pos_look" and event.t > anchor,
-        timeout=10.0,
+        timeout=SERVER_RESPONSE_TIMEOUT,
         description="/tpzone spawn 后 server 权威 PositionLook",
     )
 
 
-def _attack_until_positive_hit(bot, spawn, target_id: int, timeout: float = 10.0) -> None:
+def _attack_until_positive_hit(
+    bot, spawn, target_id: int, timeout: float = SERVER_RESPONSE_TIMEOUT
+) -> None:
     """追踪同一协议实体重试近战，覆盖击退同步和服务端 10 tick GCD。"""
     # /tpzone 后玩家可能仍在从传送高度落向地面；这次必要的真实定位不应
     # 抢占攻击重试预算，否则首轮移动就会耗尽整个窗口。
@@ -121,7 +129,7 @@ def run(env) -> None:
             bob_spawn = bob.wait_for(
                 lambda event: event.kind == "entity_spawn"
                 and event.data.get("entity_id") == target_id,
-                timeout=15.0,
+                timeout=SERVER_RESPONSE_TIMEOUT,
                 description=f"Bob 观察到 Alice 所见的同一 passive NPC entity_id={target_id}",
             )
             if alice_spawn.data["uuid"] != bob_spawn.data["uuid"]:
@@ -135,14 +143,14 @@ def run(env) -> None:
             alice.attack_entity(target_id)
             alice.wait_for(
                 lambda event: event.t > alice_anchor and is_outgoing_positive_hit(event),
-                timeout=10.0,
+                timeout=SERVER_RESPONSE_TIMEOUT,
                 description="Alice 的专属 outgoing=true positive hit",
             )
             alice.wait_for(
                 lambda event: event.kind == "entity_move"
                 and event.t > alice_anchor
                 and event.data.get("entity_id") == target_id,
-                timeout=10.0,
+                timeout=SERVER_RESPONSE_TIMEOUT,
                 description=f"Alice 命中后精确共享 NPC entity_id={target_id} 产生 knockback",
             )
 
