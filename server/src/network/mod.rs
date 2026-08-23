@@ -43,6 +43,7 @@ pub mod forge_snapshot_emit;
 pub mod freshness_probe_emit;
 pub mod full_power_emit;
 pub mod gameplay_vfx;
+pub mod gate;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_move_rejected_emit;
