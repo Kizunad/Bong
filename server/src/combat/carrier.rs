@@ -834,17 +834,23 @@ fn degrade_equipped_instance(
     transform_equipped_item(inventory, registry, slot, material_template)
 }
 
+type ThrowCarrierActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        &'static mut PlayerInventory,
+        &'static mut CarrierStore,
+        Option<&'static mut Stamina>,
+        Option<&'static UniqueId>,
+    ),
+>;
+
 fn throw_carrier_intents(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut intents: EventReader<ThrowCarrierIntent>,
-    mut actors: Query<(
-        &Position,
-        &mut PlayerInventory,
-        &mut CarrierStore,
-        Option<&mut Stamina>,
-        Option<&UniqueId>,
-    )>,
+    mut actors: ThrowCarrierActorQuery<'_, '_>,
     // 护栏 guard info! 按 (carrier, reason) 去重：e2e 场景只需一条关联标记，
     // 而任意连接可反复发 throw_carrier 空手请求——若每条都写 info 日志，
     // 无操作请求就被转换成无界日志输出。去重经共享资源 GuardLogDedup 按 tick
