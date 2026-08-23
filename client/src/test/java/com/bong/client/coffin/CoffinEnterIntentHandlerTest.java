@@ -3,6 +3,7 @@ package com.bong.client.coffin;
 import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.input.InteractCandidate;
 import com.bong.client.input.InteractIntent;
+import com.bong.client.input.ReservedInteractionIntents;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -181,6 +182,75 @@ class CoffinEnterIntentHandlerTest {
             -1, id,
             "candidateEntityId should return -1 when suffix is non-numeric 'not_a_number'; " +
             "期望 -1（NumberFormatException caught），实得 " + id
+        );
+    }
+
+    // ─── review finding [1]：合法 marker 的候选门控正面按压 ───────────────────
+
+    /**
+     * 合法 marker（COFFIN_MUNDANE + 距离 36.0 内）不得让 candidate 返回 empty。
+     * 背景：Python GAP11 场景是 server 端点镜像，测不到「candidate 对合法 marker 恒返
+     * empty」的编译级变异；本正面用例在 Java 生产 gate（candidateForCoffin，candidate
+     * 直接调用）上锁死。
+     */
+    @Test
+    void validMundaneMarkerProducesCandidate() {
+        Optional<InteractCandidate> result =
+            CoffinEnterIntentHandler.candidateForCoffin(BongEntityModelKind.COFFIN_MUNDANE, 4.0, 42);
+        assertTrue(
+            result.isPresent(),
+            "合法 marker（COFFIN_MUNDANE、d2=4.0）必须产出 OpenContainer candidate，" +
+            "否则 G 键对合法 marker 打开不了菜单（review finding [1] 的合法候选空返回攻击面）"
+        );
+        assertEquals("coffin_enter:42", result.orElseThrow().debugLabel());
+        assertEquals(InteractIntent.OpenContainer, result.orElseThrow().intent());
+        assertEquals(
+            ReservedInteractionIntents.OPEN_CONTAINER_PRIORITY,
+            result.orElseThrow().priority(),
+            "延寿棺 G 派发应走 OPEN_CONTAINER 优先级层"
+        );
+    }
+
+    /**
+     * 恰在交互半径边界（d2=36.0）的合法 marker 必须产出 candidate（`<=` 语义，非 `<`）。
+     */
+    @Test
+    void candidateAtBoundaryDistanceSq36Present() {
+        assertTrue(
+            CoffinEnterIntentHandler
+                .candidateForCoffin(BongEntityModelKind.COFFIN_JADE, 36.0, 7)
+                .isPresent(),
+            "d2=36.0 恰在 6 格边界时必须产出 candidate（MAX_INTERACT_DISTANCE_SQ 为 <= 语义）"
+        );
+    }
+
+    /**
+     * 距离略超边界（d2=37.0）必须返回 empty（off-by-one 拒收）。
+     */
+    @Test
+    void candidateOutsideBoundaryDistanceSq37Empty() {
+        assertFalse(
+            CoffinEnterIntentHandler
+                .candidateForCoffin(BongEntityModelKind.COFFIN_BRONZE, 37.0, 7)
+                .isPresent(),
+            "d2=37.0 超出 6 格边界必须返回 empty，否则远程也可 G 开菜单"
+        );
+    }
+
+    /**
+     * 物资棺 / null kind 不应产出 candidate（非延寿棺 gate）。
+     */
+    @Test
+    void supplyCoffinAndNullKindProduceNoCandidate() {
+        assertFalse(
+            CoffinEnterIntentHandler
+                .candidateForCoffin(BongEntityModelKind.COFFIN_COMMON, 1.0, 7)
+                .isPresent(),
+            "物资棺 COFFIN_COMMON 不属延寿棺，不得产出 G 菜单 candidate"
+        );
+        assertFalse(
+            CoffinEnterIntentHandler.candidateForCoffin(null, 1.0, 7).isPresent(),
+            "null kind 必须 fail-closed 返回 empty"
         );
     }
 }

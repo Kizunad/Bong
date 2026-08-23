@@ -27,8 +27,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{
-    bevy_ecs, Added, App, Component, Entity, IntoSystemConfigs, Query, Res, ResMut, Resource,
-    Update, Username, With,
+    bevy_ecs, Added, App, Component, Entity, IntoSystemConfigs, Or, Query, Res, ResMut, Resource,
+    Update, Username, With, Without,
 };
 
 use crate::cultivation::components::Realm;
@@ -291,7 +291,14 @@ type JoinedClientIdentityQuery<'world, 'state> = Query<
     'world,
     'state,
     (Entity, &'static Username),
-    (Added<Username>, With<valence::prelude::Client>),
+    (
+        Or<(
+            Added<Username>,
+            Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        )>,
+        With<valence::prelude::Client>,
+        Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+    ),
 >;
 
 fn attach_identity_bundle_to_joined_clients(

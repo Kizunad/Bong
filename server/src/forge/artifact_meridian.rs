@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Position, Query, Res,
-    ResMut,
+    bevy_ecs, Commands, Component, DetectChangesMut, Entity, Event, EventReader, EventWriter,
+    Position, Query, Res, ResMut,
 };
 
 use super::artifact_color::ArtifactColor;
@@ -765,8 +765,9 @@ pub fn artifact_color_evolve_tick(
         return;
     }
     for mut inventory in &mut inventories {
+        let inventory_data = inventory.bypass_change_detection();
         let mut changed = false;
-        changed |= for_each_artifact_item_mut(&mut inventory, |item| {
+        changed |= for_each_artifact_item_mut(inventory_data, |item| {
             let Some(mut state) = artifact_state_from_item(item) else {
                 return false;
             };
@@ -786,7 +787,8 @@ pub fn artifact_color_evolve_tick(
             true
         });
         if changed {
-            bump_revision(&mut inventory);
+            bump_revision(inventory_data);
+            inventory.set_changed();
         }
     }
 }
@@ -806,6 +808,7 @@ pub fn artifact_meridian_maintenance_tick(
         return;
     }
     for (entity, mut inventory, cultivation, position) in &mut inventories {
+        let inventory_data = inventory.bypass_change_detection();
         // 守恒门卫：WorldQiAccount 缺失时跳过整段养护（不扣 qi_current），
         // 绝不出现「qi 已扣但 ledger 未记账」的孤立路径。
         let Some(ref mut account) = qi_account else {
@@ -831,7 +834,7 @@ pub fn artifact_meridian_maintenance_tick(
                 QiAccountId::overflow(format!("artifact_maintenance_no_zone:{}", entity.to_bits()))
             });
 
-        changed |= for_each_artifact_item_mut(&mut inventory, |item| {
+        changed |= for_each_artifact_item_mut(inventory_data, |item| {
             let Some(mut state) = artifact_state_from_item(item) else {
                 return false;
             };
@@ -875,7 +878,8 @@ pub fn artifact_meridian_maintenance_tick(
             let _ = qi_before; // 已在 loop 内按法器粒度 credit，此处只用于 clamp。
         }
         if changed {
-            bump_revision(&mut inventory);
+            bump_revision(inventory_data);
+            inventory.set_changed();
         }
     }
 }

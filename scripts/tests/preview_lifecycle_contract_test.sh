@@ -14,7 +14,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$TMP_ROOT/runtime" "$TMP_ROOT/target/release" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
+source "$REPO_ROOT/scripts/lib/bong-cargo-target.sh"
+export CARGO_TARGET_DIR="$TMP_ROOT/target"
+SCOPED_TARGET="$(bong_scoped_cargo_target "$REPO_ROOT/server")"
+
+mkdir -p "$TMP_ROOT/runtime" "$SCOPED_TARGET/release" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
 chmod 700 "$TMP_ROOT/runtime" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
 cat >"$TMP_ROOT/fake-src/server.c" <<'EOF'
 #define _GNU_SOURCE
@@ -47,7 +51,7 @@ int main(void) {
 }
 EOF
 # Compile a native executable so /proc/<pid>/exe matches the selected artifact.
-gcc "$TMP_ROOT/fake-src/server.c" -o "$TMP_ROOT/target/release/bong-server"
+gcc "$TMP_ROOT/fake-src/server.c" -o "$SCOPED_TARGET/release/bong-server"
 cat >"$TMP_ROOT/bin/cargo" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -65,7 +69,6 @@ EOF
 chmod 700 "$TMP_ROOT/bin/cargo"
 
 export PATH="$TMP_ROOT/bin:$PATH"
-export CARGO_TARGET_DIR="$TMP_ROOT/target"
 export BONG_BUILD_TOKEN_TEST_MODE=1
 export BONG_BUILD_TOKEN_DIR="$TMP_ROOT/build-token"
 export BONG_PREVIEW_PID_FILE="$TMP_ROOT/runtime/server.pid"
@@ -153,14 +156,14 @@ fi
 # （'build --locked'），且解析/启动的产物必须是 target/debug/bong-server。忽略
 # --debug（仍用 release 产物与 release build 命令）的实现在此红。debug fake 同样
 # 编译为原生可执行文件，/proc/<pid>/exe 才能匹配上钉扎的 debug artifact。
-mkdir -p "$TMP_ROOT/target/debug"
-gcc "$TMP_ROOT/fake-src/server.c" -o "$TMP_ROOT/target/debug/bong-server"
+mkdir -p "$SCOPED_TARGET/debug"
+gcc "$TMP_ROOT/fake-src/server.c" -o "$SCOPED_TARGET/debug/bong-server"
 : >"$TMP_ROOT/cargo-invocations.log"
 run_preview 5 --debug >/dev/null
 [ -f "$BONG_PREVIEW_PID_FILE" ]
 debug_pid="$(sed -n 's/^pid=//p' "$BONG_PREVIEW_PID_FILE")"
 debug_exe="$(readlink -f -- "/proc/$debug_pid/exe" 2>/dev/null || true)"
-[ "$debug_exe" = "$TMP_ROOT/target/debug/bong-server" ] || {
+[ "$debug_exe" = "$SCOPED_TARGET/debug/bong-server" ] || {
   echo "--debug launch did not start the debug artifact (ignored --debug or wrong profile)" >&2
   exit 1
 }
@@ -213,7 +216,7 @@ timeout_pid="$(sed -n 's/.*PID=\([0-9][0-9]*\).*/\1/p' <<<"$timeout_out" | head 
   exit 1
 }
 timeout_exe="$(readlink -f -- "/proc/$timeout_pid/exe" 2>/dev/null || true)"
-[ "$timeout_exe" != "$TMP_ROOT/target/release/bong-server" ] || {
+[ "$timeout_exe" != "$SCOPED_TARGET/release/bong-server" ] || {
   echo "timeout rollback left the untracked server process alive (PID $timeout_pid)" >&2
   exit 1
 }
@@ -373,7 +376,7 @@ fake_server_pids() {
   local pd exe
   for pd in $(pgrep -x bong-server 2>/dev/null || true); do
     exe="$(readlink -f -- "/proc/$pd/exe" 2>/dev/null || true)"
-    [ "$exe" = "$TMP_ROOT/target/release/bong-server" ] && printf '%s\n' "$pd"
+    [ "$exe" = "$SCOPED_TARGET/release/bong-server" ] && printf '%s\n' "$pd"
   done
   return 0  # 无匹配时循环末命令 [ ] 返回非零；set -euo pipefail 下独立赋值
            # `x="$(fake_server_pids | head -1)"` 会继承该非零直接 abort（实测坑）。
@@ -676,7 +679,7 @@ unrelated_pid=$!
 cat >"$BONG_PREVIEW_PID_FILE" <<EOF
 pid=$unrelated_pid
 starttime=1
-executable=$TMP_ROOT/target/release/bong-server
+executable=$SCOPED_TARGET/release/bong-server
 executable_identity=0:1
 EOF
 chmod 600 "$BONG_PREVIEW_PID_FILE"
@@ -701,7 +704,7 @@ rm -f "$BONG_PREVIEW_PID_FILE"
 cat >"$BONG_PREVIEW_PID_FILE" <<EOF
 pid=99999999
 starttime=1
-executable=$TMP_ROOT/target/release/bong-server
+executable=$SCOPED_TARGET/release/bong-server
 executable_identity=0:1
 EOF
 chmod 600 "$BONG_PREVIEW_PID_FILE"
@@ -724,7 +727,7 @@ fi
 cat >"$BONG_PREVIEW_PID_FILE" <<EOF
 pid=99999999
 starttime=1
-executable=$TMP_ROOT/target/release/bong-server
+executable=$SCOPED_TARGET/release/bong-server
 executable_identity=0:1
 EOF
 chmod 600 "$BONG_PREVIEW_PID_FILE"
@@ -768,7 +771,7 @@ launch_unrelated_pid=$!
 cat >"$BONG_PREVIEW_PID_FILE" <<EOF
 pid=$launch_unrelated_pid
 starttime=1
-executable=$TMP_ROOT/target/release/bong-server
+executable=$SCOPED_TARGET/release/bong-server
 executable_identity=0:1
 EOF
 chmod 600 "$BONG_PREVIEW_PID_FILE"
@@ -806,7 +809,7 @@ launch_unconfirmable_identity="$("$REAL_STAT" -Lc '%d:%i' -- "/proc/$launch_unco
 cat >"$BONG_PREVIEW_PID_FILE" <<EOF
 pid=$launch_unconfirmable_pid
 starttime=$launch_unconfirmable_starttime
-executable=$TMP_ROOT/target/release/bong-server
+executable=$SCOPED_TARGET/release/bong-server
 executable_identity=$launch_unconfirmable_identity
 EOF
 chmod 600 "$BONG_PREVIEW_PID_FILE"

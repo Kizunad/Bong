@@ -3,7 +3,7 @@
 > **一句话主题**：新增 5 变种世界散布 LootCrate（骨扎皮箱/符封遗匣/锈铁行军箱/藤蚀腐木箱/残灰陶瓮，bbmodel 资产已产出），**镜像供应棺全链路**（refresh tick 自动散布 + `ExternalContainer` 会话开箱 + 超时碎裂进冷却重刷），零新 proto——把"搜打撤捡箱子"体验从剑冢单 zone 扩展到全世界，按 zone 危险度分变种分品质。
 
 **状态**：骨架（skeleton）。升 active 前按 docs/CLAUDE.md §五 收口 §8。
-**资产**：5 个 bbmodel 生成器已落地 `scripts/models/gen_loot_crates.py`（本 PR 附带，3 轮打磨 + 真渲染核验，黑盒测试 `test_gen_loot_crates.py` 11 例），`local_models/lootcrate/LootCrate*.bbmodel` 供 Blockbench 手调，真渲染总览 `scripts/models/render_loot_crates_all.png`（三视图示意拼版为 `loot_crates_preview_all.png`）。
+**资产**：5 个 bbmodel 生成器已落地 `modelScript/generators/gen_loot_crates.py`（本 PR 附带，3 轮打磨 + 真渲染核验，黑盒测试 `test_gen_loot_crates.py` 11 例），`modelScript/models/lootcrate/LootCrate*.bbmodel` 供 Blockbench 手调，真渲染总览 `modelScript/out/render_loot_crates_all.png`（跑生成器即出，不入库）。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
@@ -28,7 +28,7 @@
 
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
-- **进料**：`ExternalContainerRegistry`/`ExternalContainer`（容器抽象，与 supply_coffin/placeable-containers 共用）；`TerrainProvider::query_surface`（地表吸附）；`ZoneRegistry`（分布配置按 zone）；`loot_pools.json` + `LootPoolRegistry`（`world/loot_pool.rs:21-94`）；`scripts/models/export_container_assets.py`（bbmodel→client geo/texture 导出管线）。
+- **进料**：`ExternalContainerRegistry`/`ExternalContainer`（容器抽象，与 supply_coffin/placeable-containers 共用）；`TerrainProvider::query_surface`（地表吸附）；`ZoneRegistry`（分布配置按 zone）；`loot_pools.json` + `LootPoolRegistry`（`world/loot_pool.rs:21-94`）；`modelScript/exporters/export_container_assets.py`（bbmodel→client geo/texture 导出管线）。
 - **出料**：loot 进 `PlayerInventory`（复用 `pack_loot_into_grid`）；开箱/碎裂 emit 既有音效/粒子事件；`SupplyCoffinOpened` 类事件供天道 narration（可选）。
 - **共享类型 / event**：`ExternalContainerKind` 加 `LootCrate { variant: LootCrateVariant }`（不复用 SupplyCoffin 变体——lifecycle 分支语义不同档）；**C2S 复用 `SupplyCoffinOpenReq`(87) 或泛化前缀**（见 §8 #1）；S2C 复用 `LootContainerOpen`(119)/`LootContainerClose`(121)。**零新 proto oneof**。
 - **跨仓库契约**：wire 零改动；client 仅新增实体渲染注册（EntityKind **169~173**，紧接 DEAD_DROP_BOX=168）+ 资源包资产。`entity_model.rs:655` 的 server↔client raw_id 契约测试同步扩展。
@@ -59,7 +59,7 @@
 
 - `BongEntityModelKind.java` 追加 5 enum（raw_id 169~173，textureState `intact`）+ 5 个 renderer + `BongEntityRenderBootstrap` deferred 注册。
 - 资产管线：`export_container_assets.py` 的 CONTAINERS 元组加 5 项 → `assets/bong/{geo,textures/entity}`；**重打包资源包 zip + 同步 `resourcepack.rs` sha1/size**（CI 红线）。
-- bbmodel 源以 `local_models/LootCrate*.bbmodel`（用户 Blockbench 手调后）为准，勿重跑生成器覆盖手调稿。
+- bbmodel 源以 `modelScript/models/lootcrate/LootCrate*.bbmodel`（用户 Blockbench 手调后）为准，勿重跑生成器覆盖手调稿。
 - **测试**：raw_id 对齐（双端契约测试）；资源包构建 CI。
 
 ## P3 视听 + 平衡 ⬜
