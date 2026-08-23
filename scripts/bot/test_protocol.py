@@ -7963,6 +7963,14 @@ class RunnerLogicTest(unittest.TestCase):
                 elif isinstance(node.func, ast.Name):
                     function_name = node.func.id
                 if function_name in raw_server_data_calls:
+                    # remains_loot 的负向契约必须扫描未注册的 RemainsSync(field 139)
+                    # raw 帧；该场景同时扫描已解码 server_data，raw helper 只用于防止
+                    # 未知 oneof 被静默吞掉。其他默认玩法场景仍禁止把 transport 当行为证据。
+                    if (
+                        path.name == "remains_loot_invalid_quiet_reject.py"
+                        and function_name == "server_data_payload_name"
+                    ):
+                        continue
                     failures.append(
                         f"{path.name}:{node.lineno}: {function_name} 只识别 transport/oneof，"
                         "玩法验收必须断言 kind=server_data 的深解码字段"
@@ -8740,6 +8748,13 @@ def _pb_int32_field(number: int, value: int) -> bytes:
     forge station_pos_x/y/z 断言负坐标（末法残土常见）时必须用这个而非
     `_pb_varint_field`。"""
     return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
+
+
+def _pb_sint32_field(number: int, value: int) -> bytes:
+    """protobuf `sint32`（zigzag）字段 wire 编码——WorkbenchOpen 坐标可为负。"""
+    return mc.write_varint(number << 3) + _pb_raw_varint(
+        (value << 1) ^ (value >> 63)
+    )
 
 
 def _proto_message_body(source: str, message_name: str) -> str:
@@ -11452,6 +11467,38 @@ class PlayerPacketContractTest(unittest.TestCase):
         self.assertEqual(event.data["yaw"], 0)
         self.assertEqual(event.data["pitch"], 0)
 
+    def test_player_spawn_exact_event_and_entities(self):
+        # central-review 2029 #1：packet 级 pin 完整解码契约——已知 uuid + 正负坐标，
+        # 逐字段精确还原 emitted event 与 self.entities 位置登记；坐标读取提前跳
+        # 15/17 字节等错误布局会在此撞红（不只是 entity_id 为正）。
+        bot = _bare_bot()
+        alice = uuid.UUID(int=424242)
+        spawn = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(900)
+            + alice.bytes
+            + struct.pack(">ddd", 12.5, 64.0, -33.25)
+            + b"\x2a\x4b"  # yaw=42, pitch=75
+        )
+        bot._dispatch(spawn)
+        self.assertEqual(bot.entity_pos(900), (12.5, 64.0, -33.25))
+        self.assertEqual(bot.player_entity_uuids[900], str(alice))
+        event = bot.events_of("player_spawn")[-1]
+        self.assertEqual(
+            event.data,
+            {
+                "entity_id": 900,
+                "uuid": str(alice),
+                "username": None,
+                "x": 12.5,
+                "y": 64.0,
+                "z": -33.25,
+                "yaw": 42,
+                "pitch": 75,
+            },
+            "player_spawn 必须逐字段精确还原（含正负坐标、UUID 与实体位置登记）",
+        )
+
     def test_destroy_removes_entity_to_player_mapping(self):
         bot = _bare_bot()
         alice = uuid.UUID(int=1)
@@ -11625,5 +11672,359 @@ class NpcDialogueHelperContractTest(unittest.TestCase):
             ["skill_scroll_herbalism_baicao_can", "skill_scroll_herbalism_baicao_can"],
             "越界恢复必须重发当前 metadata offer，不得 advance/结束该商品",
         )
+
+class ProbePayloadDecodeTest(unittest.TestCase):
+    """实体/空间探知流 S2C 解码 pin（field 74/77/129/130/132）。
+
+    这些 payload_type 此前不在 proto_min 白名单里，bot 即使收到包也解不出
+    `server_data` 事件，`expect_server_data("event_alert" / "qi_color_observed" /
+    "mineral_probe_result" / "freshness_update" / "workbench_open")` 会静默超时。
+    本类锁定字段号与字段映射，防 wire/label 失配。
+    """
+
+    def test_workbench_open_field_132_decodes_position_zigzag(self):
+        inner = (
+            _pb_varint_field(1, 999)
+            + _pb_sint32_field(2, -3)
+            + _pb_sint32_field(3, 71)
+            + _pb_sint32_field(4, -8)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(132, inner))
+        self.assertEqual(decoded["type"], "workbench_open")
+        self.assertEqual(decoded["entity_id"], 999)
+        self.assertEqual(decoded["position"], [-3, 71, -8], "sint32 负坐标应 zigzag 还原")
+
+    def test_qi_color_observed_field_74_decodes_all_color_kinds(self):
+        # central-review 2029 #4：只 pin (field3=3→Mellow) 会让「其余 9 个 ColorKind
+        # 映射错误」的实现也通过——穷举全部 10 个枚举成员逐一 pin 名字映射。
+        kinds = {
+            1: "Sharp",
+            2: "Heavy",
+            3: "Mellow",
+            4: "Solid",
+            5: "Light",
+            6: "Intricate",
+            7: "Gentle",
+            8: "Insidious",
+            9: "Violent",
+            10: "Turbid",
+        }
+        for raw, expected in kinds.items():
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, raw)
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                expected,
+                f"field3={raw} 应解码为 {expected}",
+            )
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_unspecified_default(self):
+        # central-review 2029 #1：ColorKind 是 protobuf enum，field3 合法地可以缺省
+        # （默认值 0）或显式编码为 0。`_varint(fields, 3)` 缺省时返回 0，
+        # ColorKind=0 是合法默认值，映射为 "unspecified"；穷举 1..=10
+        # 只 pin 非默认 gameplay 色，会放走「0 也映射成某种玩法色 / 大小写错误 /
+        # 直接 raise」的坏解码器——合法 default-valued 载荷会产出错误的
+        # qi_color_observed.main。两个子形都要 pin：显式 0 与字段缺省。
+        for label, field3_bytes in (
+            ("field3=0（protobuf enum 默认值）", _pb_varint_field(3, 0)),
+            ("field3 缺省", b""),
+        ):
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + field3_bytes
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                "unspecified",
+                f"{label} 应解码为 main=unspecified（默认/兜底映射），实际 {decoded['main']}",
+            )
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_unknown_enum_values(self):
+        # central-review 2029 #2：ColorKind 是 protobuf enum，未来/未知的非零 wire 值
+        # （如 11）是合法载荷。只 pin 1..=10 与 0/缺省，会放走「特殊处理 0 但对非零
+        # 未知值用 COLOR_KIND_PASCAL_NAMES[raw] 直取/raise」的坏解码器——它 decode 到
+        # 未知枚举值时崩溃，qi_color_observed 事件根本送不到。main/secondary 两个槽位
+        # 的未知值身份都要 pin；secondary 携带未知值应映射 "unknown_N" 而非 None
+        # （None 只留给字段缺省，proto_min.py 同款 presence 约定）。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 11)  # 未知 main
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(
+            decoded["main"],
+            "unknown_11",
+            "未知 main ColorKind 应保留 unknown_N 身份，实际值不可伪装成默认 unspecified",
+        )
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+        )
+
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 11)  # 未知 secondary
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "unknown_11",
+            "未知 secondary ColorKind 应保留 unknown_N 身份（None 只留给缺省）",
+        )
+
+    def test_qi_color_observed_field_74_wrong_wire_optional_secondary_is_absent(self):
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)
+            + _pb_string(4, "wrong-wire-secondary")
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "wrong-wire optional secondary must be ignored, not fabricated as unspecified",
+        )
+
+    def test_qi_color_observed_field_74_decodes_present_secondary(self):
+        # central-review 2029 #4：secondary 是可选字段，缺省路径之上还须 pin 携带
+        # 路径——恒返回 None 的错误实现（present 也丢）会在此撞红。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 9)  # secondary=VIOLENT
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "Violent",
+            "携带 secondary(field4=9) 时应解码为 Violent",
+        )
+        self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+        self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+        self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_boolean_flags(self):
+        # central-review 2029 #4：此前 fixtures 一律 field5/field6=0 且不断言，
+        # 恒硬编码两字段为 false / 掉字段 / 交换编号的实现全都会通过。逐档 pin：
+        # field5=1→is_chaotic=true、field6=1→is_hunyuan=true；单真 + 双真全解形，
+        # 并断言完整解码形状（main/secondary/realm_diff/两 canonical id）。
+        cases = [
+            (True, False),
+            (False, True),
+            (True, True),
+        ]
+        for exp_chaotic, exp_hunyuan in cases:
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, 3)  # main=MELLOW
+                + _pb_varint_field(4, 9)  # secondary=VIOLENT
+                + _pb_varint_field(5, 1 if exp_chaotic else 0)
+                + _pb_varint_field(6, 1 if exp_hunyuan else 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(decoded["main"], "Mellow")
+            self.assertEqual(decoded["secondary"], "Violent")
+            self.assertEqual(
+                decoded["is_chaotic"],
+                exp_chaotic,
+                "field5 布尔值应解码为 is_chaotic（map 到字段号 5）",
+            )
+            self.assertEqual(
+                decoded["is_hunyuan"],
+                exp_hunyuan,
+                "field6 布尔值应解码为 is_hunyuan（map 到字段号 6）",
+            )
+            self.assertEqual(decoded["realm_diff"], 2)
+            self.assertEqual(decoded["observer"], "offline:BGD9QiH")
+            self.assertEqual(decoded["observed"], "offline:BGD9QiV")
+
+    def test_event_alert_field_77_decodes_message(self):
+        inner = (
+            _pb_varint_field(1, 0)
+            + _pb_string(2, "神识未及，凝脉方可感知保鲜")
+            + _pb_varint_field(4, 70)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIn("神识未及", decoded["message"])
+        self.assertIsNone(decoded["zone"], "未携带 zone 时保持 None")
+        self.assertEqual(decoded["duration_ticks"], 70)
+
+    def test_event_alert_field_77_absent_duration_stays_none(self):
+        # central-review 2029 #7：duration_ticks 是可选字段（_optional_varint 缺省
+        # 返回 None）。现有 fixtures 都携带 field4，用普通 defaulting varint 访问器
+        # 的坏解码器（缺省返回 0）能通过全部旧断言——合法无 duration 的告警会被
+        # 解码成 duration_ticks=0 的错误形状。缺省分支必须 pin：absent→None；另 pin
+        # 携带但值为 0 → 0（与缺省可区分，ordinary defaulting 访问器两者都出 0）。
+        absent = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_string(2, "神识未及，凝脉方可感知保鲜"))
+        )
+        self.assertEqual(absent["type"], "event_alert")
+        self.assertIn("神识未及", absent["message"])
+        self.assertIsNone(absent["duration_ticks"], "缺省 duration_ticks 必须为 None")
+
+        present_zero = proto_min.decode_server_data_envelope(
+            _pb_message(
+                77,
+                _pb_string(2, "神识未及，凝脉方可感知保鲜") + _pb_varint_field(4, 0),
+            )
+        )
+        self.assertEqual(present_zero["type"], "event_alert")
+        self.assertEqual(
+            present_zero["duration_ticks"],
+            0,
+            "携带 field4=0 时应解码为 duration_ticks=0（区别于缺省 None）",
+        )
+
+    def test_event_alert_field_77_unknown_event_kind_preserves_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_varint_field(1, 99))
+        )
+        self.assertEqual(
+            decoded["event"],
+            "unknown_99",
+            "未知 EventKind 必须保留诊断身份，不能伪装成 unspecified",
+        )
+
+    def test_event_alert_field_77_wrong_wire_optional_fields_are_absent(self):
+        # field 1/4 are varint and field 3 is length-delimited; malformed wire
+        # values must not fabricate presence or default values.
+        inner = (
+            _pb_string(2, "告警")
+            + _pb_string(1, "wrong-wire-event")
+            + _pb_varint_field(3, 7)
+            + _pb_string(4, "wrong-wire-duration")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIsNone(decoded["zone"])
+        self.assertIsNone(decoded["duration_ticks"])
+
+    def test_mineral_probe_result_field_129_wrong_wire_optional_fields_are_absent(self):
+        inner = (
+            _pb_string(1, "denied")
+            + _pb_varint_field(2, 7)
+            + _pb_string(3, "wrong-wire-count")
+            + _pb_varint_field(4, 8)
+            + _pb_varint_field(5, 9)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+        self.assertIsNone(decoded["denial_reason"])
+
+    def test_event_alert_field_77_decodes_event_kind_and_zone(self):
+        inner = (
+            _pb_varint_field(1, 1)  # EVENT_KIND_THUNDER_TRIBULATION
+            + _pb_string(2, "雷劫将至")
+            + _pb_string(3, "jiuzong_taichu_ruin")
+            + _pb_varint_field(4, 120)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(
+            decoded["event"],
+            "thunder_tribulation",
+            "event kind 应映射为 server/agent 契约的 snake_case canonical name",
+        )
+        self.assertIn("雷劫将至", decoded["message"])
+        self.assertEqual(decoded["zone"], "jiuzong_taichu_ruin", "present-zone 应还原 field 3")
+        self.assertEqual(decoded["duration_ticks"], 120)
+
+    def test_mineral_probe_result_field_129_decodes_denial_reason(self):
+        inner = _pb_string(1, "denied") + _pb_string(5, "not_mineral_ore")
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "denied")
+        self.assertEqual(decoded["denial_reason"], "not_mineral_ore")
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+
+    def test_mineral_probe_result_field_129_decodes_found_variant(self):
+        inner = (
+            _pb_string(1, "found")
+            + _pb_string(2, "mineral.ore.lingshi")
+            + _pb_varint_field(3, 42)
+            + _pb_string(4, "灵石矿")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "found")
+        self.assertEqual(decoded["mineral_id"], "mineral.ore.lingshi")
+        self.assertEqual(decoded["remaining_units"], 42)
+        self.assertEqual(decoded["display_name_zh"], "灵石矿")
+        self.assertIsNone(decoded["denial_reason"])
+
+    def test_freshness_update_field_130_decodes_float_profile(self):
+        inner = (
+            _pb_string(1, "59")
+            + _pb_float32_field(2, 0.75)
+            + _pb_string(3, "food_spoil_mundane_meat_v1")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(130, inner))
+        self.assertEqual(decoded["type"], "freshness_update")
+        self.assertEqual(decoded["item_uuid"], "59")
+        self.assertAlmostEqual(decoded["freshness"], 0.75, places=4)
+        self.assertEqual(decoded["profile_name"], "food_spoil_mundane_meat_v1")
 if __name__ == "__main__":
     unittest.main(verbosity=1)

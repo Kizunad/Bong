@@ -301,6 +301,10 @@ class Bot:
             data = reader.rest()
             self._emit("payload", {"channel": channel, "data": data})
             if channel == "bong:server_data":
+                # Keep the raw frame observable even when proto_min does not know
+                # the payload field yet. Scenario quiet assertions must not turn
+                # unknown/malformed server_data into an invisible event.
+                self._emit("server_data_raw", {"channel": channel, "data": data})
                 try:
                     payload = decode_server_data_payload(data)
                 except Exception as error:
