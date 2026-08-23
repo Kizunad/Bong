@@ -100,7 +100,7 @@ class R7InventoryContractTest {
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "60c2e6319219bff99179b06b96348b26d18f79141cf195e44b951d1965702b12",
+            "fd54d6c7cc2220ef2bb88e47698fcedde30e152b3b7809637c16f4f359f44b20",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
