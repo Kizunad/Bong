@@ -50,6 +50,7 @@ use crate::combat::status::has_active_status;
 use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{GameTick, MovementController};
 use crate::npc::perf::NpcPerfProbe;
+use crate::npc::scenario::PassiveTarget;
 use crate::npc::spawn::NpcMarker;
 use crate::world::dimension::OverworldLayer;
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
@@ -311,6 +312,7 @@ pub fn navigator_tick_system(
             Option<&StatusEffects>,
             Option<&EntityLayerId>,
             Option<&NpcLodTier>,
+            Option<&PassiveTarget>,
         ),
         With<NpcMarker>,
     >,
@@ -342,8 +344,16 @@ pub fn navigator_tick_system(
         status_effects,
         npc_layer,
         lod_tier,
+        passive_target,
     ) in &mut npcs
     {
+        // A passive scenario target is damageable but stationary by contract.
+        // Do this before idle ground snapping too: its Position must remain exactly
+        // where the command spawned it while the lifecycle test is running.
+        if passive_target.is_some() {
+            continue;
+        }
+
         // If an Override ability (Dash, Leap, etc.) is active, it owns Position
         // this tick. Navigator must not interfere.
         let movement_ctrl = movement_ctrl.cloned().unwrap_or_default();

@@ -1,12 +1,11 @@
 package com.bong.client.cultivation.voidaction;
 
 import com.bong.client.BongClient;
+import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import org.lwjgl.glfw.GLFW;
 
 public final class VoidActionScreenBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
@@ -18,7 +17,7 @@ public final class VoidActionScreenBootstrap {
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(VoidActionScreenBootstrap::onEndClientTick);
-        BongClient.LOGGER.info("Registered void action screen bootstrap on key: O");
+        BongClient.LOGGER.info("Registered void action screen bootstrap on key: UNKNOWN");
     }
 
     private static void onEndClientTick(MinecraftClient client) {
@@ -34,8 +33,14 @@ public final class VoidActionScreenBootstrap {
 
     private static KeyBinding keyBinding() {
         if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_O, CATEGORY)
+            openScreenKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("void_action.open_screen"),
+                    OPEN_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    InputUtil.UNKNOWN_KEY.getCode(),
+                    CATEGORY
+                )
             );
         }
         return openScreenKey;

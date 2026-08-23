@@ -10,14 +10,14 @@
 //! 进新请求时若已有活 session 直接拒。
 //!
 //! plot 实体：当前切片把 LingtianPlot 作为独立 Entity（`spawn(LingtianPlot, ...)`）
-//! 而非真正的 valence BlockEntity（后者依 plan-persistence-v1）。Renew 通过
-//! `Query<&mut LingtianPlot>` 按 BlockPos 反查匹配 plot。
+//! 而非真正的 valence BlockEntity（后者依 plan-persistence-v1）。Renew 在准入时
+//! 绑定匹配的 plot Entity，结算时按实体复验，避免 session 期间位置复用导致误操作。
 
 use std::collections::{HashMap, HashSet};
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Added, BlockState, ChunkLayer, Client, Commands, DVec3, Despawned, Entity,
+    bevy_ecs, Added, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, Despawned, Entity,
     EventReader, EventWriter, Events, ParamSet, Position, Query, Res, ResMut, Resource, Username,
     With, Without,
 };
@@ -79,6 +79,52 @@ const LING_SHUI_ITEM_ID: &str = "ling_shui";
 const BEAST_CORE_ITEM_ID: &str = "mutant_beast_core";
 
 const MAIN_HAND_SLOT: &str = "main_hand";
+
+#[cfg(test)]
+#[derive(Resource, Default)]
+pub(crate) struct StartHandlerPlotScanCount {
+    index_builds: usize,
+    scanned_plots: usize,
+}
+
+#[cfg(not(test))]
+fn build_start_plot_index<'a>(
+    plots: impl Iterator<Item = &'a LingtianPlot>,
+) -> HashMap<BlockPos, Vec<&'a LingtianPlot>> {
+    plots.fold(HashMap::new(), |mut index, plot| {
+        index.entry(plot.pos).or_default().push(plot);
+        index
+    })
+}
+
+fn build_start_plot_entity_index<'a>(
+    plots: impl Iterator<Item = (Entity, &'a LingtianPlot)>,
+) -> HashMap<BlockPos, Vec<(Entity, &'a LingtianPlot)>> {
+    plots.fold(HashMap::new(), |mut index, (entity, plot)| {
+        index.entry(plot.pos).or_default().push((entity, plot));
+        index
+    })
+}
+
+#[cfg(test)]
+fn build_start_plot_index<'a>(
+    plots: impl Iterator<Item = &'a LingtianPlot>,
+    mut plot_scan_count: Option<&mut StartHandlerPlotScanCount>,
+) -> HashMap<BlockPos, Vec<&'a LingtianPlot>> {
+    if let Some(count) = plot_scan_count.as_deref_mut() {
+        count.index_builds += 1;
+    }
+    plots
+        .inspect(|_| {
+            if let Some(count) = plot_scan_count.as_deref_mut() {
+                count.scanned_plots += 1;
+            }
+        })
+        .fold(HashMap::new(), |mut index, plot| {
+            index.entry(plot.pos).or_default().push(plot);
+            index
+        })
+}
 
 fn plot_zone_key(plot: &LingtianPlot) -> &str {
     let zone = plot.zone.trim();
@@ -518,7 +564,17 @@ pub fn handle_start_till(
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // fix-spec-1901-v2 #8（central review 1984-31332727941 finding [4]）— 每批
+    // 请求快照一次 plot 位置索引，共用 O(1) 查找；空闲 tick 不触碰 plot query。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         // fix-spec-1901-v2 §4.4 — 距离/维度 gate 已由唯一 post-transfer validator
         // 完成；本 handler 只做业务前置。直接注入本 event 的测试只能算
@@ -530,7 +586,7 @@ pub fn handle_start_till(
             );
             continue;
         }
-        let plot_exists = plots.iter().any(|plot| plot.pos == req.pos);
+        let plot_exists = plot_positions.contains_key(&req.pos);
         let Ok(inv) = inventories.get(req.player) else {
             tracing::warn!(
                 "[bong][lingtian] StartTillRequest rejected: player={:?} has no PlayerInventory",
@@ -571,8 +627,14 @@ pub fn handle_start_renew(
     mut events: EventReader<StartRenewRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
-    plots: Query<&LingtianPlot>,
+    plots: Query<(Entity, &LingtianPlot)>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    let plot_positions = build_start_plot_entity_index(plots.iter());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -601,15 +663,19 @@ pub fn handle_start_renew(
             continue;
         }
         // 必须有处于"贫瘠"状态的 plot
-        let barren = plots.iter().any(|p| p.pos == req.pos && p.is_barren());
-        if !barren {
+        let Some(plot_entity) = plot_positions.get(&req.pos).and_then(|plots| {
+            plots
+                .iter()
+                .find(|(_, plot)| plot.is_barren())
+                .map(|(entity, _)| *entity)
+        }) else {
             tracing::warn!(
                 "[bong][lingtian] StartRenewRequest rejected: no barren plot at {:?}",
                 req.pos
             );
             continue;
-        }
-        let session = RenewSession::new(req.pos, kind, instance_id);
+        };
+        let session = RenewSession::new(req.pos, plot_entity, kind, instance_id);
         sessions.try_insert(req.player, ActiveSession::Renew(session));
     }
 }
@@ -620,7 +686,17 @@ pub fn handle_start_planting(
     seeds: Res<SeedRegistry>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -648,9 +724,11 @@ pub fn handle_start_planting(
             continue;
         }
         // 目标 plot 必须存在 + 空 + 未贫瘠
-        let target_ok = plots
-            .iter()
-            .any(|p| p.pos == req.pos && p.is_empty() && !p.is_barren());
+        let target_ok = plot_positions.get(&req.pos).is_some_and(|plots| {
+            plots
+                .iter()
+                .any(|plot| plot.is_empty() && !plot.is_barren())
+        });
         if !target_ok {
             tracing::warn!(
                 "[bong][lingtian] StartPlantingRequest rejected: no empty/non-barren plot at {:?}",
@@ -667,7 +745,17 @@ pub fn handle_start_drain_qi(
     mut events: EventReader<StartDrainQiRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     plots: Query<&LingtianPlot>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -676,7 +764,9 @@ pub fn handle_start_drain_qi(
             );
             continue;
         }
-        let exists_with_qi = plots.iter().any(|p| p.pos == req.pos && p.plot_qi > 0.0);
+        let exists_with_qi = plot_positions
+            .get(&req.pos)
+            .is_some_and(|plots| plots.iter().any(|plot| plot.plot_qi > 0.0));
         if !exists_with_qi {
             tracing::warn!(
                 "[bong][lingtian] StartDrainQiRequest rejected: no plot with plot_qi at {:?}",
@@ -697,7 +787,17 @@ pub fn handle_start_harvest(
     plots: Query<&LingtianPlot>,
     cultivations: Query<&Cultivation>,
     skill_sets: Query<&SkillSet>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -727,10 +827,10 @@ pub fn handle_start_harvest(
                 continue;
             }
         }
-        let plant_id = plots
-            .iter()
-            .find(|p| p.pos == req.pos)
-            .and_then(|p| p.crop.as_ref())
+        let plant_id = plot_positions
+            .get(&req.pos)
+            .and_then(|plots| plots.first().copied())
+            .and_then(|plot| plot.crop.as_ref())
             .filter(|c| c.is_ripe())
             .map(|c| c.kind.clone());
         let Some(plant_id) = plant_id else {
@@ -753,8 +853,18 @@ pub fn handle_start_replenish(
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
     zone_qi: Res<ZoneQiAccount>,
+    #[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>,
 ) {
+    if events.is_empty() {
+        return;
+    }
     let residue_tick = time.residue_tick();
+    // central review 1984-31332727941 finding [4] — 与 handle_start_till 同款：
+    // 每批请求快照一次 plot 位置索引；空闲 tick 不扫描，批内不做二次方扫描。
+    #[cfg(not(test))]
+    let plot_positions = build_start_plot_index(plots.iter());
+    #[cfg(test)]
+    let plot_positions = build_start_plot_index(plots.iter(), plot_scan_count.as_deref_mut());
     for req in events.read() {
         if sessions.has_session(req.player) {
             tracing::warn!(
@@ -763,7 +873,10 @@ pub fn handle_start_replenish(
             );
             continue;
         }
-        let Some(plot) = plots.iter().find(|p| p.pos == req.pos) else {
+        let Some(plot) = plot_positions
+            .get(&req.pos)
+            .and_then(|plots| plots.first().copied())
+        else {
             tracing::warn!(
                 "[bong][lingtian] StartReplenishRequest rejected: no plot at {:?}",
                 req.pos
@@ -976,11 +1089,20 @@ pub fn apply_completed_sessions(
                 emit_lingtian_skill_xp(&mut skill_xp_events, player, 1, "till");
             }
             ActiveSession::Renew(s) => {
-                if let Ok(mut inv) = inventories.get_mut(player) {
-                    wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
-                }
-                if let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| p.pos == s.pos) {
-                    plot.renew();
+                let renewed = if let Ok((_entity, mut plot)) = plots.get_mut(s.plot_entity) {
+                    if plot.pos == s.pos && plot.is_barren() {
+                        plot.renew();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if renewed {
+                    if let Ok(mut inv) = inventories.get_mut(player) {
+                        wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
+                    }
                     // 翻新后从"贫瘠"（CoarseDirt）回到 Farmland 可耕状态。
                     if let Ok(mut layer) = layers.get_single_mut() {
                         layer.set_block(s.pos, BlockState::FARMLAND);
@@ -1176,10 +1298,13 @@ pub fn release_lingtian_plot_owner_on_npc_death(
 #[derive(Debug, Default, Resource)]
 pub struct PendingPlotZones {
     entities: HashSet<Entity>,
-    /// fix-spec-1901-v2 §7.1 — 上次处理的 `ZoneRegistry::spatial_revision`。
-    /// 只有 revision 真正变化（zone membership / bounds 变化）才重试 unresolved
-    /// set；heartbeat qi 的每 tick mutable borrow 不再触发全量扫描。
-    last_seen_spatial_revision: u64,
+    /// fix-spec-1901-v2 §7.1 — 上次观察到的 `ZoneRegistry::spatial_revision`。
+    /// `None` = 注册表从未被观察到（此前不在场）——任何新插入（哪怕 revision 0
+    /// 基线）都必须重试 unresolved set；`Some(seen)` 仅在 revision 真正变化
+    /// （zone membership / bounds 变化）时重试。区分"注册表刚插入（revision 0）"
+    /// 与"revision 0 已观察过"，避免新插入的注册表因默认同为 0 而永不重试
+    /// pending plot；heartbeat qi 的每 tick mutable borrow 仍不触发全量扫描。
+    last_seen_spatial_revision: Option<u64>,
 }
 
 /// Resolve newly-added plots once and retry unresolved plots only when the zone
@@ -1192,13 +1317,19 @@ pub fn auto_set_plot_zone(
 ) {
     let new_entities: Vec<Entity> = plot_queries.p0().iter().collect();
     let Some(zr) = zone_registry.as_deref() else {
+        pending.last_seen_spatial_revision = None;
         pending.entities.extend(new_entities);
         return;
     };
 
-    let revision_changed = zr.spatial_revision != pending.last_seen_spatial_revision;
+    // `None`（注册表此前不在场）视为必然变化：新插入的 revision-zero 注册表
+    // 必须触发一次 retry，否则默认同为 0 会让 pending plot 永远得不到 zone。
+    let revision_changed = match pending.last_seen_spatial_revision {
+        Some(seen) => zr.spatial_revision != seen,
+        None => true,
+    };
     let candidates = if revision_changed {
-        pending.last_seen_spatial_revision = zr.spatial_revision;
+        pending.last_seen_spatial_revision = Some(zr.spatial_revision);
         pending.entities.extend(new_entities);
         pending.entities.drain().collect::<Vec<_>>()
     } else {
@@ -1443,7 +1574,10 @@ fn apply_drain_qi_completion(
     qi_transfers: &mut EventWriter<QiTransfer>,
 ) {
     let (plot_owner, drained, to_player, to_zone, zone_key) = {
-        let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
+        let Some((_e, mut plot)) = plots
+            .iter_mut()
+            .find(|(_, p)| &p.pos == pos && p.plot_qi > 0.0)
+        else {
             tracing::warn!("[bong][lingtian] DrainQiSession finished but plot at {pos:?} vanished");
             return;
         };
@@ -2211,6 +2345,237 @@ mod tests {
                     .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
+    }
+
+    #[test]
+    fn start_plot_index_preserves_all_plots_at_duplicate_position() {
+        let pos = BlockPos::new(7, 64, -3);
+        let mut first = LingtianPlot::new(pos, None);
+        first.plot_qi = 0.25;
+        let mut second = LingtianPlot::new(pos, None);
+        second.plot_qi = 0.75;
+        let plots = vec![first, second];
+
+        let index = build_start_plot_index(plots.iter(), None);
+        let candidates = index
+            .get(&pos)
+            .expect("duplicate-position fixture must be indexed");
+        assert_eq!(candidates.len(), 2, "同一位置的 plot 候选不能在索引中丢失");
+        let selected = candidates
+            .first()
+            .copied()
+            .expect("duplicate-position fixture must preserve the first plot");
+
+        assert!(
+            std::ptr::eq(selected, &plots[0]),
+            "duplicate BlockPos must preserve the first plot, matching the previous find semantics"
+        );
+        assert_eq!(selected.plot_qi, 0.25);
+    }
+
+    #[test]
+    fn renew_accepts_later_barren_duplicate_plot() {
+        let mut app = build_app();
+        let pos = BlockPos::new(8, 64, -3);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
+            pos,
+        );
+        let mut first_plot = LingtianPlot::new(pos, Some(player));
+        first_plot.harvest_count = super::super::plot::N_RENEW - 1;
+        let first_plot_entity = app.world_mut().spawn(first_plot).id();
+        let mut barren = LingtianPlot::new(pos, Some(player));
+        barren.harvest_count = super::super::plot::N_RENEW;
+        let barren_plot_entity = app.world_mut().spawn(barren).id();
+
+        app.world_mut().send_event(StartRenewRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+        });
+        for _ in 0..RENEW_TICKS {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            0,
+            "Renew 结算后 session 应清理"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(first_plot_entity)
+                .unwrap()
+                .harvest_count,
+            super::super::plot::N_RENEW - 1,
+            "Renew 不应修改同位置首个非贫瘠 plot"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(barren_plot_entity)
+                .unwrap()
+                .harvest_count,
+            0,
+            "Renew 应修改准入时命中的贫瘠 plot"
+        );
+    }
+
+    #[test]
+    fn renew_does_not_fallback_to_other_plot_when_bound_target_changes() {
+        let mut app = build_app();
+        let pos = BlockPos::new(8, 64, -4);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
+            pos,
+        );
+        let mut target = LingtianPlot::new(pos, Some(player));
+        target.harvest_count = super::super::plot::N_RENEW;
+        let target_entity = app.world_mut().spawn(target).id();
+
+        app.world_mut().send_event(StartRenewRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+        });
+        app.update();
+        app.world_mut()
+            .get_mut::<LingtianPlot>(target_entity)
+            .unwrap()
+            .harvest_count = super::super::plot::N_RENEW - 1;
+        let fallback_entity = app
+            .world_mut()
+            .spawn({
+                let mut plot = LingtianPlot::new(pos, Some(player));
+                plot.harvest_count = super::super::plot::N_RENEW;
+                plot
+            })
+            .id();
+
+        for _ in 0..RENEW_TICKS - 1 {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(target_entity)
+                .unwrap()
+                .harvest_count,
+            super::super::plot::N_RENEW - 1,
+            "准入实体状态变化后 Renew 不应继续翻新该实体"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(fallback_entity)
+                .unwrap()
+                .harvest_count,
+            super::super::plot::N_RENEW,
+            "Renew 不应回退到同位置的其他 plot"
+        );
+        let durability = app.world().get::<PlayerInventory>(player).unwrap().equipped
+            [MAIN_HAND_SLOT]
+            .held
+            .as_ref()
+            .unwrap()
+            .durability;
+        assert_eq!(durability, 1.0, "目标失效时不应扣锄耐久");
+    }
+
+    #[test]
+    fn planting_accepts_later_empty_duplicate_plot() {
+        let mut app = build_planting_app();
+        let pos = BlockPos::new(9, 64, -3);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 2),
+            pos,
+        );
+        let mut blocked = LingtianPlot::new(pos, Some(player));
+        blocked.crop = Some(CropInstance::new("ning_mai_cao".into()));
+        let blocked_plot_entity = app.world_mut().spawn(blocked).id();
+        let empty_plot_entity = app
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, Some(player)))
+            .id();
+
+        app.world_mut().send_event(StartPlantingRequest {
+            player,
+            pos,
+            plant_id: "ci_she_hao".into(),
+        });
+        for _ in 0..PLANTING_TICKS {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            0,
+            "Planting 结算后 session 应清理"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(blocked_plot_entity)
+                .unwrap()
+                .crop
+                .as_ref()
+                .map(|crop| crop.kind.as_str()),
+            Some("ning_mai_cao"),
+            "Planting 不应修改同位置首个已占用 plot"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(empty_plot_entity)
+                .unwrap()
+                .crop
+                .as_ref()
+                .map(|crop| crop.kind.as_str()),
+            Some("ci_she_hao"),
+            "Planting 应修改准入时命中的空 plot"
+        );
+    }
+
+    #[test]
+    fn drain_qi_accepts_later_nonzero_duplicate_plot() {
+        let mut app = build_app();
+        let pos = BlockPos::new(10, 64, -3);
+        let player = valid_test_player(
+            &mut app,
+            (empty_inventory_8x8(), LifeRecord::new("duplicate-drain")),
+            pos,
+        );
+        let empty_plot_entity = app.world_mut().spawn(LingtianPlot::new(pos, None)).id();
+        let mut charged = LingtianPlot::new(pos, None);
+        charged.plot_qi = 0.5;
+        let charged_plot_entity = app.world_mut().spawn(charged).id();
+
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player, pos });
+        for _ in 0..DRAIN_QI_TICKS {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            0,
+            "DrainQi 结算后 session 应清理"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(empty_plot_entity)
+                .unwrap()
+                .plot_qi,
+            0.0,
+            "DrainQi 不应修改同位置首个空 plot"
+        );
+        assert_eq!(
+            app.world()
+                .get::<LingtianPlot>(charged_plot_entity)
+                .unwrap()
+                .plot_qi,
+            0.0,
+            "DrainQi 应修改准入时命中的有真元 plot"
+        );
     }
 
     #[test]
@@ -5123,36 +5488,167 @@ mod tests {
         queue_test_request(&mut app, "replenish", actor, pos);
         queue_test_request(&mut app, "drain_qi", actor, pos);
 
-        app.update();
-        assert_eq!(
-            app.world_mut()
-                .resource_mut::<Events<StartTillRequest>>()
-                .drain()
-                .count(),
-            1,
-            "first ingress action must be Till"
-        );
-        assert_eq!(
-            app.world_mut()
-                .resource_mut::<Events<StartRenewRequest>>()
-                .drain()
-                .count(),
-            0,
-            "later same-actor action must remain deferred"
-        );
-        assert_eq!(app.world().resource::<PendingLingtianRequests>().len(), 5);
+        // central review 1984-31332727941 finding [5]：先前只验证前两条，后四条被
+        // 重排（如 DrainQi 抢在 Planting 前）仍会通过。这里把六种 action 全部推进
+        // 到底，每 tick 必须恰好 dispatch 入队顺序对应的那一种类型，且队列每 tick
+        // 精确收缩 1 条（6→0）。任何乱序 dispatch 都会在它应出队的那一轮返回 0。
+        // central review 1984-31447628937 finding [1]：每轮把**全部六种**事件资源
+        // 排空计数——不只断言本轮应 dispatch 的那种恰好 1 条，还断言其余五种为 0。
+        // 只检查应 dispatch 资源会把「正确弹出队列请求、但每 tick 额外多发一种
+        // 事件」的坏实现放行（发错类型的多余事件从不落在被检查的资源上，或落在
+        // 上一轮已被排空、此后不再检查的资源上）；排空全部资源使跨类型重复/多发
+        // 在发生的当轮立刻暴露。
+        let expected_order = [
+            "till",
+            "renew",
+            "planting",
+            "harvest",
+            "replenish",
+            "drain_qi",
+        ];
+        for (turn, action) in expected_order.into_iter().enumerate() {
+            app.update();
+            let dispatched_counts = [
+                (
+                    "till",
+                    app.world_mut()
+                        .resource_mut::<Events<StartTillRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "renew",
+                    app.world_mut()
+                        .resource_mut::<Events<StartRenewRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "planting",
+                    app.world_mut()
+                        .resource_mut::<Events<StartPlantingRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "harvest",
+                    app.world_mut()
+                        .resource_mut::<Events<StartHarvestRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "replenish",
+                    app.world_mut()
+                        .resource_mut::<Events<StartReplenishRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "drain_qi",
+                    app.world_mut()
+                        .resource_mut::<Events<StartDrainQiRequest>>()
+                        .drain()
+                        .count(),
+                ),
+            ];
+            for (name, count) in dispatched_counts {
+                if name == action {
+                    assert_eq!(
+                        count, 1,
+                        "update {}: exactly one `{action}` must dispatch (per-actor FIFO), got {count}",
+                        turn + 1
+                    );
+                } else {
+                    assert_eq!(
+                        count,
+                        0,
+                        "update {}: `{name}` must NOT dispatch on the `{action}` tick \
+                         (exactly one action per tick), got {count}",
+                        turn + 1
+                    );
+                }
+            }
+            assert_eq!(
+                app.world().resource::<PendingLingtianRequests>().len(),
+                6 - turn - 1,
+                "update {}: queue must shrink by one per tick (FIFO)",
+                turn + 1
+            );
+        }
+    }
+
+    #[test]
+    fn start_handlers_index_plots_only_for_matching_event_ticks() {
+        let mut app = App::new();
+        app.insert_resource(ActiveLingtianSessions::new())
+            .insert_resource(SeedRegistry::new())
+            .insert_resource(ZoneQiAccount::new())
+            .insert_resource(LingtianClock::default())
+            .insert_resource(StartHandlerPlotScanCount::default())
+            .add_event::<StartTillRequest>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<StartDrainQiRequest>()
+            .add_systems(
+                Update,
+                (
+                    handle_start_till,
+                    handle_start_renew,
+                    handle_start_planting,
+                    handle_start_harvest,
+                    handle_start_replenish,
+                    handle_start_drain_qi,
+                )
+                    .chain(),
+            );
+
+        let plot_count = 7;
+        for x in 0..plot_count {
+            let mut plot = LingtianPlot::new(BlockPos::new(x, 64, 0), None);
+            plot.plot_qi = 0.5;
+            app.world_mut().spawn(plot);
+        }
 
         app.update();
+        app.update();
+        let idle_count = app.world().resource::<StartHandlerPlotScanCount>();
         assert_eq!(
-            app.world_mut()
-                .resource_mut::<Events<StartRenewRequest>>()
-                .drain()
-                .count(),
-            1,
-            "second ingress action must be Renew after Till gets its turn"
+            (idle_count.index_builds, idle_count.scanned_plots),
+            (0, 0),
+            "six idle start handlers must not build an index or scan any plot"
         );
-        assert_eq!(app.world().resource::<PendingLingtianRequests>().len(), 4);
+
+        app.world_mut().send_event(StartDrainQiRequest {
+            player: Entity::from_raw(100),
+            pos: BlockPos::new(0, 64, 0),
+        });
+        app.world_mut().send_event(StartDrainQiRequest {
+            player: Entity::from_raw(101),
+            pos: BlockPos::new(1, 64, 0),
+        });
+        app.update();
+        let event_count = app.world().resource::<StartHandlerPlotScanCount>();
+        assert_eq!(
+            event_count.index_builds, 1,
+            "only the handler with matching events may build a plot index on this tick"
+        );
+        assert_eq!(
+            event_count.scanned_plots, plot_count as usize,
+            "one event batch must scan each plot once, not once per request or idle handler"
+        );
+
+        app.update();
+        let next_idle_count = app.world().resource::<StartHandlerPlotScanCount>();
+        assert_eq!(
+            (next_idle_count.index_builds, next_idle_count.scanned_plots),
+            (1, plot_count as usize),
+            "after the batch is consumed, the next idle tick must not scan or re-index plots"
+        );
     }
+
     #[test]
     fn every_start_handler_fails_closed_for_wrong_or_missing_authority_components() {
         for (action_index, action) in [
@@ -6156,19 +6652,19 @@ mod tests {
             plot.zone
         );
 
-        // Now insert the registry. The pending-entity cache is retried when the
-        // registry changes, without rescanning historical plots every frame.
+        // Now insert the registry at its normal revision-zero baseline. The
+        // pending-entity cache must retry because the registry was previously
+        // unobserved (`last_seen_spatial_revision = None`), NOT because the
+        // revision differs — a fresh insert must not be conflated with an
+        // already-observed revision 0. Previously this fixture had to fake
+        // `spatial_revision: 1` to force the retry, masking the production bug.
         app.insert_resource(ZoneRegistry {
             zones: vec![zone_named(
                 "spawn_zone",
                 DVec3::new(0.0, 0.0, 0.0),
                 DVec3::new(100.0, 100.0, 100.0),
             )],
-            // fix-spec-1901-v2 §7.1 — 注册表刚插入视为 revision 0 基线；
-            // `PendingPlotZones::default()` 的 last_seen 也是 0，首个 update
-            // 会因 `revision_changed` 为 false 而不会重试 pending。
-            // 为了让"插入即重试"语义保持，插入时递增到 1。
-            spatial_revision: 1,
+            spatial_revision: 0,
         });
 
         app.update();
