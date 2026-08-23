@@ -3359,6 +3359,27 @@ fn handle_learn_technique_scroll(
         });
     }
 
+    // central-review 2012 #3：拒绝原因必须在 wire 上可观察——只下发不变快照时，
+    // client 无法区分「RealmTooLow 拒绝」与「静默忽略/错误原因拒绝」。非习得拒绝
+    // 走既有 `InventoryMoveRejectedV1` 契约（reason=realm_too_low / race_mismatch，
+    // RealmTooLow 带 required_realm），bot 场景据 reason 断言具体原因。
+    if let Some(reject_reason) = match &outcome {
+        ScrollReadOutcome::RealmTooLow { required, .. } => {
+            Some(InventoryMoveRejectReason::RealmTooLow {
+                required_realm: crate::schema::cultivation::realm_to_string(*required).to_string(),
+            })
+        }
+        ScrollReadOutcome::RaceMismatch => Some(InventoryMoveRejectReason::RaceMismatch),
+        ScrollReadOutcome::Learned
+        | ScrollReadOutcome::AlreadyKnown
+        | ScrollReadOutcome::MeridianSevered { .. }
+        | ScrollReadOutcome::MeridianMissing { .. }
+        | ScrollReadOutcome::FormAnchorClosed
+        | ScrollReadOutcome::InvalidScroll => None,
+    } {
+        emit_inventory_move_rejected(entity, &reject_reason, clients);
+    }
+
     resync_technique_scroll_use(
         entity,
         inventories,
@@ -9173,6 +9194,300 @@ mod tests {
     }
 
     #[test]
+    fn use_quick_slot_unbound_slot_preserves_active_cross_slot_cast() {
+        // central-review 2012 #1 回归：未绑定槽 use 必须静默忽略且**不得打断**
+        // 进行中的异槽 cast。旧实现先走 cast 闸门（异槽 → cancel_previous_cast 发
+        // cast_sync{Interrupt, UserCancel} 并 remove Casting），再发现槽 5 无绑定
+        // 才返回——活动 cast 被无谓取消。契约（network_quickslot_config.py docstring：
+        // 无绑定 → 静默忽略）下无绑定请求是无副作用的 no-op。
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "guyuan_pill".to_string(),
+            ItemTemplate {
+                id: "guyuan_pill".to_string(),
+                display_name: "guyuan_pill".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 64,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+            },
+        )])));
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+
+        // 请求 1：启动 slot 0 cast。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "前置：slot 0 应处于 casting 状态"
+        );
+
+        // 请求 2：slot 0 仍在 cast 时使用未绑定槽 5。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        // 活动 cast 必须原样保留（未被打断）。
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("未绑定槽 use 不得取消进行中的 slot 0 cast");
+        assert_eq!(casting.slot, 0);
+        // 且不得下发 slot 0 的 Interrupt（UserCancel）cast_sync。
+        let syncs = collect_cast_syncs(&mut helper);
+        assert!(
+            !syncs.iter().any(|s| s.phase == CastPhaseV1::Interrupt),
+            "未绑定槽 use 不得产生任何 interrupt cast_sync，实际 {syncs:?}"
+        );
+    }
+
+    #[test]
+    fn use_quick_slot_on_cooldown_slot_preserves_active_cross_slot_cast() {
+        // central-review 2012 #4 回归：handler 把「冷却未到期」早返回移到 cast 闸门
+        // 之前——旧顺序下用冷却中的异槽会先 cancel_previous_cast（发
+        // cast_sync{Interrupt, UserCancel} 并 remove Casting）再返回，活动 cast 被
+        // 无谓打断。此前只有未绑定分支有测试，冷却分支完全没保护。本测试在 slot 0
+        // 进行 cast 时 use 冷却中的 slot 5，断言 slot 0 cast 原样保留、无 interrupt。
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "guyuan_pill".to_string(),
+            ItemTemplate {
+                id: "guyuan_pill".to_string(),
+                display_name: "guyuan_pill".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 64,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+            },
+        )])));
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+        // slot 5 绑定同实例但处于冷却中（until_tick 设到远离默认 tick 0 的 u64::MAX）。
+        assert!(quick_slots.set(5, Some(77)));
+        quick_slots.set_cooldown(5, u64::MAX);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+
+        // 请求 1：启动 slot 0 cast。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "前置：slot 0 应处于 casting 状态"
+        );
+
+        // 请求 2：slot 0 仍在 cast 时使用冷却中的 slot 5。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("冷却中的异槽 use 不得取消进行中的 slot 0 cast");
+        assert_eq!(casting.slot, 0);
+        let syncs = collect_cast_syncs(&mut helper);
+        assert!(
+            !syncs.iter().any(|s| s.phase == CastPhaseV1::Interrupt),
+            "冷却中的异槽 use 不得产生任何 interrupt cast_sync，实际 {syncs:?}"
+        );
+    }
+
+    #[test]
+    fn use_quick_slot_stale_binding_missing_instance_preserves_active_cross_slot_cast() {
+        // central-review 2012 #4 回归：绑定实例已不在背包（player 拖出去了）时 use
+        // 必须静默忽略且不得打断进行中的异槽 cast。此前没有任何测试构造陈旧绑定
+        // 覆盖 missing-instance 早返回分支——旧顺序把它放回 cast 闸门之后，用失效
+        // 绑定的异槽会在活动 cast 期间先 cancel_previous_cast 再返回。本测试在
+        // slot 0 进行 cast 时 use 绑定已失效实例（999，不在背包）的 slot 5，断言
+        // slot 0 cast 原样保留、无 interrupt。
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "guyuan_pill".to_string(),
+            ItemTemplate {
+                id: "guyuan_pill".to_string(),
+                display_name: "guyuan_pill".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 64,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+            },
+        )])));
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+        // slot 5 绑定陈旧实例 999（不在背包），且不在冷却——恰好命中 missing-instance
+        // 早返回分支（越过 cooldown 与 unbound 两个更靠前的检查）。
+        assert!(quick_slots.set(5, Some(999)));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+
+        // 请求 1：启动 slot 0 cast。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "前置：slot 0 应处于 casting 状态"
+        );
+
+        // 请求 2：slot 0 仍在 cast 时使用绑定失效实例的 slot 5。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("陈旧绑定（实例不在背包）use 不得取消进行中的 slot 0 cast");
+        assert_eq!(casting.slot, 0);
+        let syncs = collect_cast_syncs(&mut helper);
+        assert!(
+            !syncs.iter().any(|s| s.phase == CastPhaseV1::Interrupt),
+            "陈旧绑定 use 不得产生任何 interrupt cast_sync，实际 {syncs:?}"
+        );
+    }
+
+    #[test]
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
@@ -9515,6 +9830,102 @@ mod tests {
         assert_eq!(prefs["skill_bar"][3]["kind"], "item");
         assert_eq!(prefs["skill_bar"][3]["template_id"], "earth_crumb");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn quick_slot_bind_accepts_128_cjk_request_id_and_rejects_129() {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        // 128 个 '界' 字符（每个 3 字节，共 384 字节）必须被视为合法长度并接受
+        let rid128 = "界".repeat(128);
+        send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), &rid128);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(88)
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(configs.iter().any(|c| {
+            c.ack_request_id.as_deref() == Some(&rid128) && c.bind_accepted == Some(true)
+        }));
+
+        // 129 个 '界' 字符必须被静默拒绝且不产生状态变异
+        let rid129 = "界".repeat(129);
+        send_quick_slot_bind_request(&mut app, entity, 4, Some("earth_crumb"), &rid129);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(4),
+            None
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_rejects_empty_string_item_id_without_unbinding() {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(3, Some(88)));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                quick_slots,
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+
+        // 发送 raw JSON item_id=""（非 null），必须被拒绝（bind_accepted=false）且已有绑定保持原样
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"","request_id":"empty-item-id"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        // 槽 3 上的已有绑定 88 必须保持，不得被清空
+        assert_eq!(
+            app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+            Some(88),
+            "item_id=\"\" 畸形请求不得清空既有绑定"
+        );
+        let configs = collect_quickslot_configs(&mut helper);
+        assert!(
+            configs.iter().any(|c| {
+                c.ack_request_id.as_deref() == Some("empty-item-id")
+                    && c.bind_accepted == Some(false)
+            }),
+            "item_id=\"\" 请求应下发 bind_accepted=false 的 quickslot_config 回执"
+        );
     }
 
     #[test]
@@ -10682,6 +11093,103 @@ mod tests {
                 .next()
                 .is_none(),
             "a technique-only scroll must not unlock a craft recipe"
+        );
+    }
+
+    #[test]
+    fn technique_scroll_realm_too_low_emits_structured_rejection() {
+        // central-review 2012 #3 回归：fresh Awaken 用 sword.infuse（required
+        // realm=Induce）→ RealmTooLow 拒绝，必须下发 InventoryMoveRejectedV1
+        // {reason:"realm_too_low", required_realm:"Induce"}——只回推不变快照时
+        // client 无法区分「境界拒绝」与「静默忽略/错误原因拒绝」。
+        let mut app = production_scroll_request_app();
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_technique_sword_infuse")),
+                KnownTechniques {
+                    entries: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let rejected = collect_inventory_move_rejected(&mut helper);
+        assert_eq!(
+            rejected,
+            vec![crate::schema::server_data::InventoryMoveRejectedV1 {
+                reason: "realm_too_low".to_string(),
+                required_realm: Some("Induce".to_string()),
+                slot: None,
+                cap: None,
+            }],
+            "Awaken 用 sword.infuse 应下发恰好一条 realm_too_low 拒绝回执"
+        );
+    }
+
+    #[test]
+    fn technique_scroll_race_mismatch_emits_structured_rejection() {
+        // central-review 2012 #3 回归：RaceMismatch 拒绝必须同样下发结构化
+        // InventoryMoveRejectedV1 {reason:"race_mismatch"}——非人形本体
+        // （is_humanoid=false）用 sword.infuse（RaceGate::Humanoid）时 realm 已到
+        // Induce 满足境界门（否则被 RealmTooLow 掩盖），race gate 是唯一拒因。
+        let mut app = production_scroll_request_app();
+        let (body_plans, races) = non_humanoid_race_fixture("test_whale");
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_technique_sword_infuse")),
+                KnownTechniques {
+                    entries: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    // central-review 2012 #9：`non_humanoid_race_fixture("test_whale")`
+                    // 以 "test_whale" 为键注册了非人形构型——玩家 race 必须指向该真实
+                    // race id，生产 `resolve_body_plan` 才选到 is_humanoid=false 本体；
+                    // 若停在 HUMAN_RACE_ID（指向同一非人形构型）则人形 gate 通过、不会
+                    // 触发 race_mismatch，断言虽过但测的不是 reviewer 描述的路径。
+                    race: crate::body_plan::RaceId::new("test_whale"),
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let rejected = collect_inventory_move_rejected(&mut helper);
+        assert_eq!(
+            rejected,
+            vec![crate::schema::server_data::InventoryMoveRejectedV1 {
+                reason: "race_mismatch".to_string(),
+                required_realm: None,
+                slot: None,
+                cap: None,
+            }],
+            "非人形本体用 sword.infuse 应下发恰好一条 race_mismatch 拒绝回执"
         );
     }
 
@@ -13790,17 +14298,26 @@ mod tests {
         let plan_id = plan.id.clone();
         let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
         // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
-        // 默认条目——复用 `combat::resolve` 同款手法：让这条 "human" 条目指向本
-        // fixture 的 is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为
-        // HUMAN_RACE_ID 即可解析出非人形本体（是否人形只看 body plan，不看 race id
-        // 字面意义）。
+        // 默认条目（是否人形只看 body plan，不看 race id 字面意义）。fixture 注册
+        // 两条 race：① id=race_id 指向 is_humanoid=false 构型——被测方（如
+        // central-review 2012 #9 的 sword.infuse）把 `Cultivation.race` 设为该真实
+        // race id，生产 `resolve_body_plan` 路径即按此 id 解析出非人形本体；② 必需的
+        // HUMAN_RACE_ID 占位条目指向同一非人形构型，满足表加载校验。
         let races = RaceRegistry::from_parts_for_test(
-            vec![RaceEntry {
-                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
-                display_name: format!("测试非人形种族({race_id})"),
-                body_plan_id: plan_id,
-                beast_kinds: vec![],
-            }],
+            vec![
+                RaceEntry {
+                    id: RaceId::new(race_id),
+                    display_name: format!("测试非人形种族({race_id})"),
+                    body_plan_id: plan_id.clone(),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    display_name: "默认人形占位".to_string(),
+                    body_plan_id: plan_id,
+                    beast_kinds: vec![],
+                },
+            ],
             vec![],
             &body_plans,
         )
@@ -13831,15 +14348,18 @@ mod tests {
             },
         );
         let entity = app.world_mut().spawn(client_bundle).id();
-        // race 恒为 HUMAN_RACE_ID：`non_humanoid_race_fixture` 复用该 id 指向
-        // is_humanoid=false 构型（`RaceRegistry` 校验要求默认 human 条目必须存在，
-        // 见该 fn 注释）；未插入 fixture 时同一 id 退化到 humanoid 单例。是否人形
-        // 完全由「是否插入非人形 fixture」决定，不看 race 字符串字面意义。
+        // `Some(race_id)` 时 `Cultivation.race` 设为该真实 race id（fixture 以它为
+        // 键注册了 is_humanoid=false 构型，生产 `resolve_body_plan` 即解析出非人形
+        // 本体）；`None` 时不插 fixture，退化到 humanoid 单例（HUMAN_RACE_ID）。
+        // 是否人形由「race 是否落在非人形 fixture」决定，不看 id 字符串字面意义。
         let cultivation = crate::cultivation::components::Cultivation {
             realm: Realm::Induce,
             qi_current: 42.0,
             qi_max: 100.0,
-            race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            race: match race {
+                Some(race_id) => crate::body_plan::RaceId::new(race_id),
+                None => crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            },
             ..Default::default()
         };
         app.world_mut().entity_mut(entity).insert((
@@ -15155,27 +15675,11 @@ fn handle_use_quick_slot(
         );
         return;
     }
-    // plan §4.2: 已 cast 时——同来源同 slot 静默忽略；否则 UserCancel + 启新 cast。
-    if let Ok(prev) = combat_params.casting_q.get(entity) {
-        if prev.source == CastSource::QuickSlot && prev.slot == slot {
-            tracing::debug!(
-                "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: same-slot during cast"
-            );
-            return;
-        }
-        let prev = CastCancelSnapshot::from(prev);
-        cancel_previous_cast(
-            entity,
-            prev,
-            clock,
-            commands,
-            clients,
-            combat_params,
-            vfx_events,
-            slot,
-        );
-        // 继续到下面启动新 cast。
-    }
+    // 契约顺序（network_quickslot_config.py docstring：slot>=9 / 无绑定 / 冷却 /
+    // 同槽 cast 中 → 静默忽略）：与「异槽 cast 中 UserCancel + 启新」互斥的忽略
+    // 条件必须**先行**判定。旧顺序先做 cast 闸门——未绑定/冷却中的请求会先打断
+    // 进行中的异槽 cast 再被忽略（central-review 2012 #1 根因：use_quick_slot
+    // 未绑定槽不得取消活动 cast，无绑定/冷却/实例缺失都不得扰动异槽 cast）。
     let (bound_instance_id, on_cooldown) = combat_params
         .bindings_q
         .get(entity)
@@ -15202,6 +15706,27 @@ fn handle_use_quick_slot(
             );
             return;
         }
+    }
+    // plan §4.2 cast 状态闸门：同槽 cast 中静默忽略；异槽 cast 中 UserCancel + 启新。
+    if let Ok(prev) = combat_params.casting_q.get(entity) {
+        if prev.source == CastSource::QuickSlot && prev.slot == slot {
+            tracing::debug!(
+                "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: same-slot during cast"
+            );
+            return;
+        }
+        let prev = CastCancelSnapshot::from(prev);
+        cancel_previous_cast(
+            entity,
+            prev,
+            clock,
+            commands,
+            clients,
+            combat_params,
+            vfx_events,
+            slot,
+        );
+        // 继续到下面启动新 cast。
     }
     // 取真实 cast_duration_ms / cooldown_ms：从背包找到 instance → template_id → registry。
     let (duration_ms, cooldown_ms) = inventories
@@ -15348,10 +15873,10 @@ fn handle_quick_slot_bind(
 ) {
     let (entity, slot, item_id, request_id) = request;
     let (item_registry, persistence, combat_clock) = runtime;
-    if request_id.is_empty() || request_id.len() > 128 {
+    if request_id.chars().count() == 0 || request_id.chars().count() > 128 {
         tracing::warn!(
-            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id length={}",
-            request_id.len()
+            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id chars={}",
+            request_id.chars().count()
         );
         return;
     }
@@ -15380,7 +15905,26 @@ fn handle_quick_slot_bind(
             return;
         }
     };
-    let requested_template = item_id.as_deref().filter(|item_id| !item_id.is_empty());
+    let requested_template = match item_id.as_deref() {
+        Some("") => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: empty item_id string"
+            );
+            send_quick_slot_bind_response(
+                entity,
+                request_id,
+                false,
+                bindings_q,
+                inventories,
+                item_registry,
+                combat_clock,
+                clients,
+            );
+            return;
+        }
+        Some(template) => Some(template),
+        None => None,
+    };
     let instance_id = match requested_template {
         None => None,
         Some(template) => {

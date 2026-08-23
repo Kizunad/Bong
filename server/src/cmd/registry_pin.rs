@@ -160,6 +160,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "whale spawn",
     "wound add <part:string>",
     "wound add <part:string> <severity:float>",
+    "zone_qi get",
     "zone_qi set <name:string> <value:double>",
     "zones",
 ];
