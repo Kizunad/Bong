@@ -21,9 +21,9 @@ pub enum ZoneQiCmd {
 
 impl Command for ZoneQiCmd {
     fn assemble_graph(graph: &mut CommandGraphBuilder<Self>) {
+        let zone_qi = graph.root().literal("zone_qi").id();
         graph
-            .root()
-            .literal("zone_qi")
+            .at(zone_qi)
             .literal("set")
             .argument("name")
             .with_parser::<String>()
@@ -34,8 +34,7 @@ impl Command for ZoneQiCmd {
                 value: f64::parse_arg(input).unwrap(),
             });
         graph
-            .root()
-            .literal("zone_qi")
+            .at(zone_qi)
             .literal("get")
             .with_executable(|_| ZoneQiCmd::GetCurrent);
     }
