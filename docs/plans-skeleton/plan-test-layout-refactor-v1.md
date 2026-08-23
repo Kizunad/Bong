@@ -4,7 +4,7 @@
 >
 > **当前状态**：骨架（skeleton），T0 设计盘点已完成；未创建统一脚本，未修改现有测试路径、workflow、构建配置或测试代码。
 >
-> **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `test-refactor-init`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。
+> **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `plan-test-layout-refactor-v1`，基于当前 `origin/main`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
@@ -19,6 +19,13 @@
 - 这不是某个业务模块的测试补充，而是跨 `server/`、`client/`、`agent/`、`worldgen/` 和 `.github/workflows/` 的测试基础设施设计；与现有 feature plan 及 `plan-refactor-master-v1` 的代码所有权不同。
 - 当前已有多个局部入口：`scripts/smoke-test.sh`、`scripts/smoke-test-e2e.sh`、`scripts/smoke-tiandao-fullstack.sh`、worldgen preview、resource-pack 与 script-contract workflow。直接改其中任一入口会把盘点、迁移和行为改变混在一个 PR，故先独立冻结基线。
 - 本 skeleton 不占用任何现有测试目录，不给既有测试重新命名，也不回写 `docs/CLAUDE.md`、`docs/worldview.md` 或其他 plan。
+
+## 立 plan 前预检记录（T0，2026-08-23）
+
+- **`docs/worldview.md`**：文件存在（1734 行）；按 test layout、test-all、测试布局/所有权/统一入口、CI 关键词扫描，未发现测试基础设施的世界观锚点。本 plan 不修改 worldview。
+- **`docs/finished_plans/`**：共 359 份归档 plan；相关关键词命中的是业务 plan 内的测试段（如 `plan-dandao-path-v1`、`plan-shield-block-combat-event-feedback-v1`），没有覆盖四栈测试布局、统一入口或 artifact ownership 的既有 plan，因此不并入。
+- **当前 active `docs/plan-*.md`**：逐项检查了 `plan-bot-e2e-coverage-v1`、`plan-ci-redis-pull-resilience-v1`、`plan-refactor-master-v1` 及其他 active plan；前者负责 bot 场景覆盖，后者负责 CI Redis 稳定性，`plan-refactor-master-v1` 的矩阵是代码 ownership，均不拥有四栈测试目录/报告编排，不重复其 scope。
+- **`docs/plans-skeleton/` 与 `reminder.md`**：立项前有 166 个 skeleton；无同名 `plan-test-layout-refactor-*` 或四栈测试布局主题骨架，`docs/plans-skeleton/reminder.md` 也无匹配待办。本文件因此作为独立 skeleton 新建。
 
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
@@ -38,8 +45,8 @@
 | 测试目录 | 内联单测分布在 `server/src/**`（当前约 35 个 test-like Rust source，如 `*/tests.rs`、`*_test.rs`、`tests/` 模块）；外部集成测试在 `server/tests/*.rs`（当前 5 个入口文件）；性能基准在 `server/benches/chunk_generation.rs`、`server/benches/nbt_stamp.rs`。库+bin 拆分让 bench 直接调用生产代码，见 `server/src/lib.rs:1-10`。 |
 | 依赖/配置 | `[dev-dependencies]` 使用 `wiremock` 与 Criterion HTML reports，`server/Cargo.toml:71-84`；Valence/Bevy 等运行时依赖仍由 Cargo 管理。 |
 | 本地命令 | `cd server && ../scripts/build-token.sh cargo fmt --check`；`cargo clippy --all-targets -- -D warnings`；`cargo test`（默认完整单元+集成）；定向 `cargo test <filter>` / `cargo test --test <name>`；基准 `cargo bench --bench chunk_generation` 或 `nbt_stamp`。完整仓库 smoke 由 `scripts/smoke-test.sh:16-23` 调用。 |
-| CI job | 当前基线的 `.github/workflows/e2e.yml` 只有一个 90 分钟 `e2e` job，顺序执行 proto/build-token contract、client、schema、tiandao、server build/test、Redis smoke、bot e2e、chat-window；`script-contracts.yml` 另测 cargo profile、slot registry、wt janitor；`worldgen-preview.yml` 的 `snapshot` 还会 release-build server。 |
-| 报告/产物 | Cargo 默认 stdout/stderr；本地编译/测试文件在 `server/target/**`，Criterion HTML 在 `server/target/criterion/**`（不承诺 CI 上传）；当前 E2E 只上传单一 `e2e-evidence`（`.sisyphus/evidence/**`），release binary 在同一 job 内消费、不上传 `bong-server-release`；preview 失败时上传 `bong-preview-server-log-*`。 |
+| CI job | `.github/workflows/e2e.yml`：`preflight`、`server-test`（`cargo test`）、`build-release`（release binary）、`smoke`；`bot-e2e` 两 shard 和 `chat-window` 通过 artifact 消费 server/schema。`script-contracts.yml` 另测 cargo 配置、slot、janitor、provenance、owned-artifacts；`worldgen-preview.yml` 的 `snapshot` 还会 release-build server。 |
+| 报告/产物 | Cargo 默认 stdout/stderr；本地编译/测试文件在 `server/target/**`，Criterion HTML 在 `server/target/criterion/**`（不承诺 CI 上传）；E2E 上传 `.sisyphus/evidence/**`（`evidence-server-test`、`evidence-smoke`、`evidence-bot-shard-*`、`evidence-chat-window`）；`build-release` 上传 `bong-server-release`（binary + `manifest.json`）；preview 失败时上传 `bong-preview-server-log-*`。 |
 | 冻结 owner | **Server owner** 负责 `server/src/**`、`server/tests/**`、`server/benches/**` 的测试语义和命令；**CI/DevEx owner** 负责脚本 wrapper、日志收集和 artifact plumbing。统一入口不得把 server 测试移入 `scripts/`。 |
 
 ### 2. Client（Fabric / Gradle / JUnit + GameTest）
@@ -49,8 +56,8 @@
 | 测试目录 | `client/src/test/java/**` 当前 518 个 Java 测试源文件，资源 fixture 在 `client/src/test/resources/**`；独立 GameTest 源在 `client/src/gametest/java/**`（当前 1 个入口）。 |
 | 依赖/配置 | JUnit Jupiter 5.10，Java 17，见 `client/build.gradle:84-92`；`test` 使用 JUnit Platform，且显式 `dependsOn(runGametest)`，见 `client/build.gradle:202-217`。GameTest 报告路径由 `fabric-api.gametest.report-file` 固定为 `client/build/gametest-results.xml`（`:126-134`）。 |
 | 本地命令 | `cd client && ../scripts/build-token.sh gradle test`（包含 GameTest）；`gradle build`；定向 `gradle test --tests '<pattern>'`；GameTest 可单独 `gradle runGametest`；worldgen 预览使用 `gradle runClientPreview`（xvfb）。仓库 smoke 的 `test build` 入口见 `scripts/smoke-test.sh:45-59`。 |
-| CI job | `.github/workflows/e2e.yml` 的单一 `e2e` job 执行 `gradle test`；`worldgen-preview.yml` 的 `snapshot` 执行 `runClientPreview` 并截图；smoke/bot/chat 是同一 E2E job 的后续 stage，不替代 client 单测。 |
-| 报告/产物 | Gradle 原生 `client/build/test-results/test/**/*.xml` 与 `client/build/reports/tests/test/**`；GameTest `client/build/gametest-results.xml`；预览截图 `client/run/screenshots/preview-*.png` 与 `preview-grid.png`；当前 E2E evidence 统一进入 `e2e-evidence`，worldgen preview 单独上传 `worldgen-snapshot-*`。统一入口只复制/索引这些产物，不改变 Gradle 的原生路径。 |
+| CI job | `.github/workflows/e2e.yml` 的 `client` job 执行 `gradle test`；`worldgen-preview.yml` 的 `snapshot` 执行 `runClientPreview` 并截图；`smoke`/bot/chat jobs 消费已构建 server，不替代 client 单测。 |
+| 报告/产物 | Gradle 原生 `client/build/test-results/test/**/*.xml` 与 `client/build/reports/tests/test/**`；GameTest `client/build/gametest-results.xml`；预览截图 `client/run/screenshots/preview-*.png` 与 `preview-grid.png`；CI 另上传 `evidence-client` 和 `worldgen-snapshot-*`。统一入口只复制/索引这些产物，不改变 Gradle 的原生路径。 |
 | 冻结 owner | **Client owner** 负责 Java/Gametest/fixture 的分类、JUnit/Gradle 选择器和视觉断言；**Worldgen owner** 只消费 preview harness 产物，不取得 client 单测源的所有权。 |
 
 ### 3. Agent（TypeScript / Vitest）
@@ -60,8 +67,8 @@
 | 测试目录 | `agent/packages/schema/tests/**` 当前 31 个测试文件；`agent/packages/tiandao/tests/**` 当前 67 个测试文件。两包均以 `*.test.ts` 为主，fixture/sample 另位于各包源码与 `agent/packages/schema/samples/**`。 |
 | 依赖/配置 | workspace 根 `agent/package.json` 只有跨包 build；schema 的 `build/check/generate/generate:check/test` 在 `agent/packages/schema/package.json:19-24`；tiandao 的 `build/check/test/start:mock` 在 `agent/packages/tiandao/package.json:7-14`。`npm test` 对 tiandao 先跑 `tsc -p tsconfig.test.json --noEmit` 再 `vitest run`。 |
 | 本地命令 | `cd agent && npm ci`；schema：`npm run build`、`npm run check`、`npm test`、`npm run generate`；tiandao：`npm run check`、`npm test`、可选 `npm run start:mock`；定向 Vitest 过滤器通过 `npm test -- <pattern>` 传递。 |
-| CI job | `c2s-gate-matrix.yml` 的 `contract` 执行 schema `npm run check` + Python gate test；当前 `e2e.yml` 的单一 `e2e` job 在 Redis 启动前后执行 schema build/check/test/generate、tiandao check/test，并在同一 job 内消费生成结果；smoke、bot、chat 是该 job 的后续 stage。 |
-| 报告/产物 | Vitest 默认 stdout（当前没有统一 coverage/JUnit reporter）；当前 E2E 不上传独立 `schema-dist`，只上传聚合的 `e2e-evidence`；`npm run generate` 的 generated JSON 是契约产物，不是测试报告。 |
+| CI job | `c2s-gate-matrix.yml` 的 `contract` 执行 schema `npm run check` + Python gate test；`e2e.yml` 的 `schema` 执行 build/check/test/generate 并产出 schema-dist，`agent` 下载 schema-dist 后执行 tiandao check/test；`smoke`、`chat-window` 和 bot jobs 执行 Redis/agent 联调。 |
+| 报告/产物 | Vitest 默认 stdout（当前没有统一 coverage/JUnit reporter）；schema CI artifact `schema-dist` 包含 `agent/packages/schema/dist/**` 和 `generated/**`；失败/证据目录为 `evidence-schema`、`evidence-agent`、`evidence-smoke`、`evidence-chat-window` 下的 `.sisyphus/evidence/**`。`npm run generate` 的 generated JSON 是契约产物，不是测试报告。 |
 | 冻结 owner | **Schema owner** 负责 TypeBox/source、samples、generated 对拍和 schema job；**Tiandao owner** 负责 `packages/tiandao/tests/**`、Redis/mock runtime；跨包 contract 由两者共同 review，不能在统一入口中偷偷重生成或覆盖 samples。 |
 
 ### 4. Worldgen（Python terrain pipeline + console）
@@ -81,14 +88,14 @@
 
 | Workflow | Jobs / 关键测试命令 | 主要 artifact / 报告 | 当前 owner |
 |---|---|---|---|
-| `.github/workflows/e2e.yml` | 单一 90 分钟 `e2e` job：proto lint/breaking、build-token contract、client `gradle test`、Redis、schema build/check/test/generate、tiandao check/test、server release build/test、`smoke-test-e2e.sh`、`bot-e2e.sh`、`e2e-chat-signal-window.sh` | `e2e-evidence`（`.sisyphus/evidence/**`）；release binary 与 generated schema 仅在 job 内传递 | 各栈 owner 提供阶段语义；CI/DevEx owner 维护顺序、Redis、cleanup 和 aggregate artifact |
+| `.github/workflows/e2e.yml` | `preflight`（proto/build-token/signal/preview contract）；`client`（Gradle test）；`schema`（schema build/check/test/generate）；`agent`（tiandao check/test）；`server-test`（Cargo test）；`build-release`；`smoke`（Redis full smoke）；`bot-e2e` shard 1/2；`chat-window` | `schema-dist`、`bong-server-release`、`evidence-client/schema/agent/server-test/smoke/bot-shard-* /chat-window` | 各栈 owner + CI/DevEx；DAG 依赖由 CI/DevEx owner 维护 |
 | `.github/workflows/worldgen-preview.yml` | `snapshot`：worldgen 专项 unittest + preview validator + pipeline + release server + headless client + R1/R2/R3 内容校验 | `worldgen-snapshot-*`、失败 `bong-preview-server-log-*` | Worldgen owner（pipeline/validator），Client owner（preview harness） |
 | `.github/workflows/build-resourcepack.yml` | `build`：resourcepack/model Python unittest、构包、manifest/SHA1/server default 对拍；`publish-release` | `bong-resourcepack-<sha>`（zip、`.sha1`、manifest），随后发布 release asset | Client/asset owner + CI/DevEx |
 | `.github/workflows/c2s-gate-matrix.yml` | `contract`：schema `npm run check` + `check_c2s_gate_matrix.py` + `scripts/tests/check_c2s_gate_matrix_test.py` | 当前无 upload artifact，失败日志为 job log | Schema owner + Server network owner |
-| `.github/workflows/script-contracts.yml` | `script-contracts`：cargo profile、slot registry、wt janitor contract（当前基线的三项 shell tests） | 当前无 upload artifact，失败日志为 job log | CI/DevEx owner |
+| `.github/workflows/script-contracts.yml` | `script-contracts`：cargo profile、slot registry、wt janitor、provenance、owned-artifacts shell/Python tests | 当前无 upload artifact，失败日志为 job log | CI/DevEx owner |
 | `.github/workflows/review-consumer-tests.yml` | `test`：固定 central/provider review contract checkout、Node `node --test`、central contract `npm test` | 当前无 upload artifact，失败日志为 job log；不属于四栈 gameplay 测试 | CI/DevEx/review-infra owner |
 
-根脚本的额外入口（`scripts/smoke-test.sh`、`scripts/smoke-test-e2e.sh`、`scripts/smoke-tiandao-fullstack.sh`、`scripts/smoke-law-engine.sh`、`scripts/bot-e2e.sh`、`scripts/e2e-*.sh`、`scripts/tests/**`）继续保留原命令和场景语义；当前 `scripts/tests/` 有 6 个 contract 文件，`scripts/preview/` 有 1 个 validator test，根 `scripts/` 另有 12 个 Python 与 17 个 shell test-like 文件。T0 不把它们改造成互相调用的套娃，也不把脚本测试复制进四栈目录。
+根脚本的额外入口（`scripts/smoke-test.sh`、`scripts/smoke-test-e2e.sh`、`scripts/smoke-tiandao-fullstack.sh`、`scripts/smoke-law-engine.sh`、`scripts/bot-e2e.sh`、`scripts/e2e-*.sh`、`scripts/tests/**`）继续保留原命令和场景语义；当前 `scripts/tests/` 有 13 个 contract 文件，`scripts/preview/` 有 1 个 validator test，根 `scripts/` 另有 12 个 Python 与 20 个 shell test-like 文件。T0 不把它们改造成互相调用的套娃，也不把脚本测试复制进四栈目录。
 
 ## T0 冻结：测试所有权 / 产物所有权矩阵 v1
 
@@ -137,7 +144,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 
 ## P2/P3/P4 预留交付物（当前不实施）
 
-- **P2 CI 兼容接入**：先针对当前单体 `e2e` job 做 explicit suite mapping/shadow run，再评估是否拆 DAG；保留现有 `e2e-evidence`、`worldgen-snapshot-*`、resourcepack artifact 的生产/消费关系。若未来拆出 `schema-dist`/`bong-server-release`，必须先补 artifact contract 和回滚窗口。
+- **P2 CI 兼容接入**：为每个现有 DAG job 写 explicit suite mapping，先 shadow run，再逐 job 切换；保留 `schema-dist`、`bong-server-release`、`evidence-*`、`worldgen-snapshot-*`、resourcepack artifact 的生产/消费关系。
 - **P3 报告统一**：对比 stdout、JUnit XML、Criterion HTML、Vitest stdout、unittest stdout、raster/PNG/MCA 与 `.sisyphus/evidence/**` 的诊断价值；只有确实需要跨 job 汇总时才增加 JUnit/coverage 转换器，转换器归 CI/DevEx owner，不修改源测试。
 - **P4 路径整理评估**：只在 P1-P3 完成、CI 对拍和 owner 签字后评估；默认结论是“无需搬路径”。若确有迁移，必须另列迁移表、双跑窗口、回滚方案和 artifact 兼容期，不能借本 plan 的 T0/P1 顺手移动文件。
 
@@ -155,7 +162,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 2. **统一入口是否并行**：server/client 编译并发、共享 Cargo target、Gradle daemon 和 worldgen 输出的资源上限需用一轮实测决定；在此之前只承诺 DAG，不承诺并行度。
 3. **Vitest/pytest 是否引入统一 JUnit reporter**：现状 schema/tiandao/console 依赖 stdout，worldgen 仅少数 pytest；需先确认 GitHub artifact/检查器是否真正消费 JUnit，不能为格式统一而新增无消费者产物。
 4. **CI 接入策略**：shadow run 的 job 选择、重复执行预算和失败归因窗口需要拍板；未经对拍不得删除现有显式命令。
-5. **artifact retention 与命名是否冻结为现状**：当前已被 job/PR comment 消费的是 `e2e-evidence`、`worldgen-snapshot-*`、`bong-resourcepack-*`；未来拆 DAG 可能引入 `schema-dist`/`bong-server-release`，其保留期和命名必须先由 CI/DevEx 与各栈 owner 共同决议。
+5. **artifact retention 与命名是否冻结为现状**：`evidence-*`、`schema-dist`、`bong-server-release`、`worldgen-snapshot-*`、`bong-resourcepack-*` 已被 job/PR comment 消费，保留期和命名变更需 CI/DevEx 与各栈 owner 共同决议。
 6. **worldgen console 的归属边界**：继续作为 worldgen 子包由独立 `package-lock.json` 管理，还是未来纳入 agent workspace；T0 结论是继续独立，改变需另行决议。
 7. **矩阵的 owner 粒度**：当前按栈/基础设施角色冻结，不写个人姓名；若仓库建立 CODEOWNERS 或 team slug，P1 应把角色映射到可执行 reviewer，而不是改变测试路径。
 
