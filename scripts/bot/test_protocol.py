@@ -4459,6 +4459,29 @@ class RejectionHelperTest(unittest.TestCase):
         )
         assert_no_gameplay_side_effect_since(bitten, since_t=1.0, label="测试")
 
+    def test_full_rat_bite_triplet_is_ambient(self):
+        # 一次环境咬击同时产生三件：combat_event(incoming) + play_entity_anim +
+        # spawn_particle(bong:rat_bite_nip)。三件必须一起豁免——只补前两件的话
+        # 第三件仍会让场景变红（CI 上实证过一次）。
+        bitten = _RejectionFakeBot(
+            [
+                _FakeEvent(3.0, "server_data", {
+                    "payload_type": "combat_event",
+                    "payload": {"v": 1, "type": "combat_event",
+                                "events": [{"kind": "qi_damage", "amount": 0.04, "outgoing": False}]},
+                }),
+                _FakeEvent(3.1, "vfx_event", {
+                    "v": 1, "type": "play_entity_anim", "entity_id": 338,
+                    "anim": "animation.bong.devour_rat.claw", "duration_ticks": 12,
+                }),
+                _FakeEvent(3.2, "vfx_event", {
+                    "v": 1, "type": "spawn_particle", "event_id": "bong:rat_bite_nip",
+                    "origin": [-187.7, 74.2, -178.1], "count": 4, "duration_ticks": 8,
+                }),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(bitten, since_t=1.0, label="测试")
+
     def test_outgoing_damage_in_probe_window_is_still_a_side_effect(self):
         # 豁免必须只覆盖"bot 挨打"。bot **打出**伤害只可能来自被处理的请求，
         # 仍要撞红——否则这条豁免会把真 bug 一起放过。
