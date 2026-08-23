@@ -285,29 +285,44 @@ API 层没有任何字段能把它和真人分开：review 对象 body 为空（
 （实测 `body_len=0`），认不出是不是它发的，所以不拿它当权威——真要用得靠行内意见的
 `pull_request_review_id` 反查。直接走上面的行内意见更简单。
 
-**别把触发当成唯一出路（会死锁）**：Kody 常在你 push 后十几秒就自动审完。
-这时候你再补一条 `@kody start-review`，它可能**不会**重跑——于是"结论必须晚于触发"
-永远不成立，PR 卡死。#2061 实测：HEAD 03:09:41 push，verdict 03:10:00 与 03:10:21，
-我的触发 03:10:23 落在结论**之后**，Kody 没再跑。
+**先把两件事分开：能证的 vs 证不了的。**
 
-所以判"这条 clean 结论算不算当前 HEAD 的"，按下面顺序：
+- **能证（这是阻塞判据）**：行内意见带 `original_commit_id`，SHA 对得上就是对得上。
+  当前 HEAD 只要还有行内意见 ⇒ **没过**，不用讨论归属。
+- **证不了**：Kody 查无问题时只发一条 issue comment，既不产生 review 对象、正文也
+  不带任何 commit SHA。**API 层没有任何字段能把这条 clean 结论绑到某个 HEAD 上。**
+  所以下面全是**启发式**，不是证明——用它可以，但别说成"已验证通过"。
 
-1. **配对法（首选，无需触发）**：把本 PR 每个 commit 的时间与每条 verdict 时间排在一起，
-   若**每个更早的 commit 都已经各自配到过一条 verdict**，那么晚于当前 HEAD push 的
-   verdict 就只能是当前 HEAD 的——旧 HEAD 的延迟结论已经被它自己那条认领掉了。
-   ```bash
-   gh pr view <PR> --json commits --jq '.commits[] | "commit  \(.committedDate)  \(.oid[:9])"'
-   gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
-     | jq -r --argjson uid "$OWNER_ID" '.[]
-         | select((.body|test("<!-- kody-codereview-completed-[0-9]+-[a-z0-9]+ -->")) and .user.id==$uid)
-         | "verdict \(.created_at)"'
-   ```
-   两列合并按时间排序，检查是不是 commit→verdict 交替出现、没有哪个 commit 光秃秃。
-2. **配对不干净时**（有 commit 没配到 verdict、或时间交错分不清）才发
-   `@kody start-review`，并要求 verdict 晚于该触发评论（用上面 TRIGGER_AT 那套）。
-3. 两条都不成立就如实说"当前 HEAD 的审查归属无法确认"，别猜。
+**为什么不能改成"只认触发后的新 verdict"**：那会死锁。Kody 常在 push 后十几秒就
+自动审完，这时再补 `@kody start-review` 它**不重跑**。#2061 实测 HEAD 03:09:41 push、
+verdict 03:10:00，我的触发 03:10:23 落在结论之后，之后再没有新 verdict——按"必须晚于
+触发"这条 PR 永远过不了。#2066 上手动触发同样没催出额外 verdict。
 
-**"无问题"那一轮没有 SHA 可核**：Kody 查无问题时只发一条 issue comment，不产生 review 对象，而 issue comment 不带 commit SHA（#2058 实测：`c8e57c24a` 上零 review 对象，只有一条"未发现问题"评论）。这时唯一能收紧的办法是 **push 后显式发 `@kody start-review`**，把这一轮绑到自己的一个已知动作上，再要求那条 clean 评论**晚于该触发评论**，而不是仅仅晚于 push。做不到就别宣称"当前 HEAD 已通过审查"，如实说「Kody 对当前 HEAD 只给了不带 SHA 的 clean 评论」。
+**启发式（用时必须连同它的失效条件一起讲）**：把每个 commit 时间与每条 verdict 时间
+排在一起，若每个更早的 commit 都已各自配到过一条 verdict，就把晚于当前 HEAD push 的
+verdict 当作当前 HEAD 的。
+
+```bash
+{ gh pr view <PR> --json commits --jq '.commits[] | "\(.committedDate) COMMIT  \(.oid[:9])"'
+  gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
+    | jq -r --argjson uid "$OWNER_ID" '.[]
+        | select((.body|test("<!-- kody-codereview-completed-[0-9]+-[a-z0-9]+ -->"))
+                 and .user.id==$uid)
+        | "\(.created_at) verdict"'; } | sort
+```
+
+**它什么时候会骗你**：这套只在"一个 commit 恰好一条 verdict"时成立，而这只是对第三方
+服务的**观察**（#2061 6:6、#2066 4:4），不是任何地方保证的不变式。只要某个旧 HEAD 出了
+第二条 verdict 并迟到落在新 push 之后，计数就对齐不上，你会把旧结论认领给新 HEAD ——
+这正是 Kody 在 #2061 上指出的漏洞，成立。
+
+**需要确定性时**：不要靠这个启发式，也别指望触发——**推一个新 commit**（哪怕
+`--allow-empty`），让 Kody 对新 HEAD 自动跑一轮，此时未结清的 push 只有这一个，
+新 verdict 的归属就没有歧义。
+
+**汇报口径**：走启发式而没走"新 commit"那条路时，说法只能是「当前 HEAD 无行内意见，
+clean 结论按时间配对推定属于本 HEAD」，**不许说成「已验证通过审查」**。
+（#2058 实证过这个缺口：`c8e57c24a` 上零 review 对象，只有一条不带 SHA 的"未发现问题"。）
 
 **等待节奏硬约束**：
 
