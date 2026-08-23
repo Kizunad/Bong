@@ -42,8 +42,7 @@ impl GuardLogDedup {
     }
 
     fn gc(&mut self, tick: u64) {
-        self.last_emit_tick.retain(|_, last| {
-            tick.saturating_sub(*last) < GUARD_LOG_DEDUP_WINDOW_TICKS
-        });
+        self.last_emit_tick
+            .retain(|_, last| tick.saturating_sub(*last) < GUARD_LOG_DEDUP_WINDOW_TICKS);
     }
 }

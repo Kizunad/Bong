@@ -25,7 +25,6 @@ use crate::schema::baomai_v4::{
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_UI_CMD, CH_AGENT_UI_RESPONSE,
-    CH_BOT_DELIVERY_FENCE_ACK, CH_BOT_DELIVERY_FENCE_REQUEST,
     CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT, CH_ALCHEMY_INTERVENTION_RESULT,
     CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START, CH_ANQI_CARRIER_ABRASION,
     CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL,
@@ -35,11 +34,12 @@ use crate::schema::channels::{
     CH_BAOMAI_V4_IRON_COCOON_STAGE_UP, CH_BAOMAI_V4_RESONANCE_LOCK,
     CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
     CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY,
-    CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
-    CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_ANTIDOTE_RESULT,
-    CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE,
-    CH_DUO_SHE_EVENT, CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR,
-    CH_FAUNA_ECOLOGY, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE,
+    CH_BOT_DELIVERY_FENCE_ACK, CH_BOT_DELIVERY_FENCE_REQUEST, CH_BREAKTHROUGH_CINEMATIC,
+    CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH,
+    CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_ANTIDOTE_RESULT, CH_DUGU_POISON_PROGRESS,
+    CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT,
+    CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR, CH_FAUNA_ECOLOGY,
+    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE,
     CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
     CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT,
     CH_NAMED_FACTION_STATE, CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN,
@@ -321,7 +321,9 @@ pub enum RedisOutbound {
     // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
     /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
     AgentUiResponse(AgentUiResponsePayloadV1),
-    BotDeliveryFenceAck { token: String },
+    BotDeliveryFenceAck {
+        token: String,
+    },
     // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────
     /// 半步化虚重渡触发（bong:tribulation/halfstep_rechallenge），agent narration 用。
     HalfStepRechallengeTrigger(
@@ -2200,9 +2202,10 @@ async fn connect_bridge_session(
 
     let tx_to_game_clone = tx_to_game.clone();
     let tx_fence_clone = tx_fence.clone();
-    let sub_task = tokio::spawn(async move {
-        run_subscriber_task(pubsub, tx_to_game_clone, tx_fence_clone).await
-    });
+    let sub_task =
+        tokio::spawn(
+            async move { run_subscriber_task(pubsub, tx_to_game_clone, tx_fence_clone).await },
+        );
 
     Ok((pub_conn, sub_task))
 }
@@ -2282,13 +2285,9 @@ async fn run_bridge_session(
         }
 
         while let Ok(request) = rx_fence.try_recv() {
-            if let Err(control) = flush_and_ack_delivery_fence(
-                rx_from_game,
-                pending_command,
-                &mut pub_conn,
-                request,
-            )
-            .await
+            if let Err(control) =
+                flush_and_ack_delivery_fence(rx_from_game, pending_command, &mut pub_conn, request)
+                    .await
             {
                 abort_subscriber_task(sub_task).await;
                 return control;
@@ -2318,11 +2317,15 @@ async fn flush_and_ack_delivery_fence(
         }
     }
     let payload = serde_json::json!({"v": 1, "ok": true, "token": request.token});
-    execute_publish(pub_conn, CH_BOT_DELIVERY_FENCE_ACK, payload.to_string().as_str())
-        .await
-        .map_err(|error| BridgeLoopControl::Reconnect {
-            reason: format!("delivery_fence_ack_failed: {error}"),
-        })
+    execute_publish(
+        pub_conn,
+        CH_BOT_DELIVERY_FENCE_ACK,
+        payload.to_string().as_str(),
+    )
+    .await
+    .map_err(|error| BridgeLoopControl::Reconnect {
+        reason: format!("delivery_fence_ack_failed: {error}"),
+    })
 }
 
 async fn abort_subscriber_task(sub_task: tokio::task::JoinHandle<SubscriberTaskExit>) {
@@ -2405,7 +2408,9 @@ async fn run_subscriber_task(
                 continue;
             };
             if token.is_empty() || token.len() > 128 {
-                tracing::warn!("[bong][redis] dropped delivery fence request with invalid token length");
+                tracing::warn!(
+                    "[bong][redis] dropped delivery fence request with invalid token length"
+                );
                 continue;
             }
             if tx_fence
@@ -2414,7 +2419,9 @@ async fn run_subscriber_task(
                 })
                 .is_err()
             {
-                tracing::warn!("[bong][redis] delivery fence channel closed; stopping subscriber task");
+                tracing::warn!(
+                    "[bong][redis] delivery fence channel closed; stopping subscriber task"
+                );
                 return SubscriberTaskExit::GameChannelClosed;
             }
             continue;

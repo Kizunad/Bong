@@ -16,11 +16,11 @@ use crate::combat::components::{
 };
 use crate::combat::decay::{hit_qi_ratio, CarrierGrade};
 use crate::combat::events::CombatEvent;
+use crate::combat::guard_log::GuardLogDedup;
 use crate::combat::projectile::{
     residual_qi_after_miss, segment_point_distance, AnqiProjectileFlight, ProjectileDespawnReason,
     QiProjectile,
 };
-use crate::combat::guard_log::GuardLogDedup;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, QiColor, Realm,
