@@ -7963,6 +7963,14 @@ class RunnerLogicTest(unittest.TestCase):
                 elif isinstance(node.func, ast.Name):
                     function_name = node.func.id
                 if function_name in raw_server_data_calls:
+                    # remains_loot 的负向契约必须扫描未注册的 RemainsSync(field 139)
+                    # raw 帧；该场景同时扫描已解码 server_data，raw helper 只用于防止
+                    # 未知 oneof 被静默吞掉。其他默认玩法场景仍禁止把 transport 当行为证据。
+                    if (
+                        path.name == "remains_loot_invalid_quiet_reject.py"
+                        and function_name == "server_data_payload_name"
+                    ):
+                        continue
                     failures.append(
                         f"{path.name}:{node.lineno}: {function_name} 只识别 transport/oneof，"
                         "玩法验收必须断言 kind=server_data 的深解码字段"
