@@ -16646,9 +16646,7 @@ fn dimension_kind_for(dimensions: &Query<&CurrentDimension>, entity: Entity) -> 
         .unwrap_or_default()
 }
 
-fn dying_elder_can_receive_dan(
-    state: &crate::fauna::dying_elder::DyingElderState,
-) -> bool {
+fn dying_elder_can_receive_dan(state: &crate::fauna::dying_elder::DyingElderState) -> bool {
     match state {
         crate::fauna::dying_elder::DyingElderState::Plea => true,
         crate::fauna::dying_elder::DyingElderState::Recovering { dan_received } => {
@@ -20845,10 +20843,7 @@ fn handle_give_dan_to_elder(
     positions: &Query<&valence::prelude::Position>,
     dimensions: &Query<&CurrentDimension>,
     dying_elder_targets: &Query<
-        (
-            &crate::fauna::dying_elder::DyingElderState,
-            &NpcArchetype,
-        ),
+        (&crate::fauna::dying_elder::DyingElderState, &NpcArchetype),
         (With<NpcMarker>, Without<Client>),
     >,
 ) {
@@ -20914,9 +20909,7 @@ fn handle_give_dan_to_elder(
         );
         return;
     };
-    if *elder_archetype != NpcArchetype::DyingElder
-        || !dying_elder_can_receive_dan(elder_state)
-    {
+    if *elder_archetype != NpcArchetype::DyingElder || !dying_elder_can_receive_dan(elder_state) {
         reject_give_dan_target(
             &mut clients,
             player_entity,
