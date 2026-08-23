@@ -6,7 +6,7 @@ use valence::prelude::{bevy_ecs, Resource};
 
 use crate::combat::components::Casting;
 use crate::cultivation::components::MeridianId;
-use crate::cultivation::known_techniques::technique_definition;
+use crate::cultivation::known_techniques::TechniqueRegistry;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -224,6 +224,7 @@ pub fn validate_skill_config(
 }
 
 pub fn handle_config_intent(
+    techniques: &TechniqueRegistry,
     player_id: &str,
     skill_id: &str,
     config: BTreeMap<String, Value>,
@@ -231,7 +232,7 @@ pub fn handle_config_intent(
     store: &mut SkillConfigStore,
     schemas: &SkillConfigSchemas,
 ) -> Result<SkillConfigSnapshot, SkillConfigRejectReason> {
-    if technique_definition(skill_id).is_none() {
+    if techniques.get(skill_id).is_none() {
         return Err(SkillConfigRejectReason::UnknownSkill);
     }
     if current_casting
@@ -325,6 +326,7 @@ fn validate_field_value(field: &ConfigField, value: &Value) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::known_techniques::TechniqueDefinition;
     use serde_json::json;
 
     fn test_schemas() -> SkillConfigSchemas {
@@ -487,6 +489,7 @@ mod tests {
         config.insert("meridian_id".to_string(), json!("Pericardium"));
 
         let snapshot = handle_config_intent(
+            &TechniqueRegistry::load_for_tests(),
             "offline:Azure",
             "burst_meridian.beng_quan",
             config,
@@ -518,6 +521,7 @@ mod tests {
         };
         assert_eq!(
             handle_config_intent(
+                &TechniqueRegistry::load_for_tests(),
                 "offline:Azure",
                 "burst_meridian.beng_quan",
                 BTreeMap::from([("stance".to_string(), json!("long"))]),
@@ -530,6 +534,7 @@ mod tests {
         );
 
         let snapshot = handle_config_intent(
+            &TechniqueRegistry::load_for_tests(),
             "offline:Azure",
             "burst_meridian.beng_quan",
             BTreeMap::new(),
@@ -615,6 +620,7 @@ mod tests {
         let schemas = SkillConfigSchemas::default();
         let mut store = SkillConfigStore::default();
         let snapshot = handle_config_intent(
+            &TechniqueRegistry::load_for_tests(),
             "offline:Azure",
             "zhenmai.sever_chain",
             BTreeMap::from([
@@ -628,5 +634,65 @@ mod tests {
         .unwrap();
 
         assert!(snapshot.configs.contains_key("zhenmai.sever_chain"));
+    }
+
+    #[test]
+    fn config_validation_uses_injected_registry_membership() {
+        // M09：unknown-skill 校验必须用注入的 runtime registry 实例——runtime-only
+        // 招式只在注入实例里存在（应放行），默认 catalog 里的招式被剔除后（应
+        // UnknownSkill），证明 handler 不是对静态/默认 catalog 校验。
+        let schemas = SkillConfigSchemas::default();
+        let mut store = SkillConfigStore::default();
+        let runtime_registry =
+            TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+                id: "runtime.only".to_string(),
+                display_name: "运行时专属".to_string(),
+                grade: "common".to_string(),
+                description: "只存在于注入 registry 的 runtime-only 招式（M09 契约）。".to_string(),
+                required_realm: "Awaken".to_string(),
+                required_meridians: Vec::new(),
+                required_race: crate::body_plan::RaceGateOwned::Any,
+                qi_cost: 1.0,
+                stamina_cost: 1.0,
+                cast_ticks: 10,
+                cooldown_ticks: 20,
+                range: 3.0,
+                icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                    .to_string(),
+                category: crate::cultivation::known_techniques::SkillCategory::Attack,
+                dispatch: crate::cultivation::known_techniques::TechniqueDispatch::DirectGeneric,
+            });
+
+        // 正向：runtime-only 招式（不在默认 catalog）必须通过 unknown-skill 校验。
+        // 空 config 走 clear 路径，但 UnknownSkill 门在 `handle_config_intent` 开头
+        // （`techniques.get`）先于任何 config 分支执行——能返回 Ok 就证明注入 registry
+        // 放行了 runtime-only（若 handler 改读静态 catalog，这里会 UnknownSkill 撞红）。
+        handle_config_intent(
+            &runtime_registry,
+            "offline:Azure",
+            "runtime.only",
+            BTreeMap::new(),
+            None,
+            &mut store,
+            &schemas,
+        )
+        .expect("runtime-only 招式必须被注入 registry 放行（M09）");
+
+        // 反向：注入 registry 中真正不存在的 ID 必须拒绝，避免 handler 对未知技能
+        // 静默创建空配置。
+        let result = handle_config_intent(
+            &runtime_registry,
+            "offline:Azure",
+            "missing.runtime.only",
+            BTreeMap::new(),
+            None,
+            &mut store,
+            &schemas,
+        );
+        assert_eq!(
+            result,
+            Err(SkillConfigRejectReason::UnknownSkill),
+            "注入 registry 里不存在的 ID 必须 UnknownSkill（M09 反向）"
+        );
     }
 }

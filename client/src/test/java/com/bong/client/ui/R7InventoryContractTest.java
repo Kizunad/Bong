@@ -98,20 +98,18 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
+    void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "e0fa6418061c66dc993738636bdd7f4ca76b41ed14407bcd0c776b91a9e7c9f3",
+            "60c2e6319219bff99179b06b96348b26d18f79141cf195e44b951d1965702b12",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "P0 is docs/tests/resources only; every shipped production path and byte must match the frozen baseline"
+            "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
     }
 
     @Test
-    void p0AddsNoProductionFoundationOrScreenMigration() throws IOException {
+    void p1AddsOnlyTheRequestedKeybindFoundationWithoutScreenMigration() throws IOException {
         Set<String> forbiddenProductionTypes = Set.of(
             "BongScreenBase.java",
-            "DiffListWidget.java",
-            "BongKeybindRegistry.java",
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -122,7 +120,8 @@ class R7InventoryContractTest {
                 .filter(forbiddenProductionTypes::contains)
                 .forEach(discovered::add);
         }
-        assertTrue(discovered.isEmpty(), "P0 is docs/tests/resources only; production foundation found=" + discovered);
+        assertTrue(discovered.isEmpty(),
+            "R7 P1 must not add an unapproved foundation type: " + discovered);
 
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
@@ -297,10 +296,12 @@ class R7InventoryContractTest {
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
-            "npc/NpcTradeScreen.java:163"
+            "npc/NpcTradeScreen.java:163",
+            "ui/DiffListWidget.java:120",
+            "ui/DiffListWidget.java:124"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(15, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(17, sites.size(), "the frozen executable clearChildren inventory changed");
         assertEquals(sites.stream().sorted().toList(), actual,
             "the inventory must match every executable zero-argument production clearChildren call");
     }

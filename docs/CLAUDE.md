@@ -186,7 +186,7 @@ Agent(
 for pr_n in [PR-1..PR-N]:
     result = Agent(...subagent, prompt 含本 PR 范围 + 必读 §10.1 多轮 + 测试要求...)
     pr_url = parse(result)
-    # 等 CR review（§6.5）
+    # 等 Kody/CodeRabbit 自动 review（§6.5）
     while gh pr checks pr_url == "pending":
         ScheduleWakeup(1200, "等 CR PR #N")
     if has_review_issues:
@@ -205,22 +205,23 @@ for pr_n in [PR-1..PR-N]:
 - subagent 只负责**实施 + 提 PR**，**不等 review**（subagent 是 single-call，没有跨调用 ScheduleWakeup 能力；等待逻辑归主线）
 - 主线 merge 命令简单不消耗 context，主线亲自做
 
-### 6.5 CodeRabbit ScheduleWakeup 等待协议
+### 6.5 Kody / CodeRabbit review 等待协议
 
-CodeRabbit 是 GitHub Actions check run，`gh pr checks <PR>` 看状态：
+PR 创建或有新提交/变动时，Kody 与 CodeRabbit 默认自动 review；用 `gh pr checks <PR>` 查看状态：
 
 | 状态 | 含义 | 动作 |
 |------|------|------|
 | `pass` | review 通过 | 进 merge |
-| `pending` | 仍在跑（典型 ~20 min） | `ScheduleWakeup delaySeconds=1200` 等下回合 |
+| `pending` | 仍在跑 | `ScheduleWakeup delaySeconds=1200` 等下回合 |
 | `fail` | 不通过 | 按 skills/consume-plan/SKILL.md step 7 严重性桶处理 |
 
 **等待节奏硬约束**：
 
 - **禁止 sleep loop / busy poll**——必须 `ScheduleWakeup`
-- 每回合 1200s（20 min，对齐 CR 单回合典型耗时）
+- 每回合 1200s（20 min，避免忙轮询）
 - 最多 3 回合 = 总 60 min 卡死才停交人工
-- 修完 review 意见**必须重新等 CR re-review**，不自行判定"我修好了应该过"（对齐 memory `feedback_wait_coderabbit_approve.md`）
+- 修完 review 意见**必须重新等 Kody/CodeRabbit re-review**，不自行判定"我修好了应该过"。
+- 若自动 review 未启动、被暂停，或需要针对最新 HEAD 显式复审，在 PR 根评论执行 `@kody start-review`；不再使用已废弃的 `/review-next`。
 - 多 PR 场景每个 PR 各自走完整等待协议，前一个未 APPROVED/收敛不开下一个
 
 ### 6.6 §10 章节模板
