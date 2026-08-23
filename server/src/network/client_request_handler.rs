@@ -7054,6 +7054,8 @@ mod tests {
             .spawn((
                 EntityKind::new(164),
                 EntityId::default(),
+                crate::npc::lifecycle::NpcArchetype::DyingElder,
+                crate::npc::spawn::NpcMarker,
                 Position::new(DVec3::new(0.5, 64.0, 0.5)),
                 OldPosition::new(DVec3::new(0.5, 64.0, 0.5)),
                 CurrentDimension(DimensionKind::Overworld),
