@@ -924,7 +924,10 @@ fn evaluate_live_gate(
             if opened_by.is_none() {
                 return Err(GateDenialReason::NotOwner);
             }
-            if crate::supply_coffin::current_wall_clock_secs() >= timeout_wall_secs {
+            if external_session_is_expired(
+                timeout_wall_secs,
+                crate::supply_coffin::current_wall_clock_secs(),
+            ) {
                 return Err(GateDenialReason::Expired);
             }
         }
@@ -932,6 +935,13 @@ fn evaluate_live_gate(
     }
 
     Ok(())
+}
+
+/// Generic external containers use `0` to mean that no wall-clock expiry is
+/// configured.  Supply-coffin sessions always carry a positive deadline, so
+/// this keeps the live gate aligned with the existing lifecycle contract.
+fn external_session_is_expired(timeout_wall_secs: u64, now_wall_secs: u64) -> bool {
+    timeout_wall_secs != 0 && now_wall_secs >= timeout_wall_secs
 }
 
 fn gate_feedback_message(reason: GateDenialReason) -> &'static str {
@@ -974,16 +984,17 @@ fn live_gate_feedback(
             pill_instance_id, ..
         } => {
             if let Some(inventories) = inventories {
-                let item = inventories.get_mut(client).ok().and_then(|inventory| {
+                let template_id = inventories.get_mut(client).ok().and_then(|inventory| {
                     crate::inventory::inventory_item_by_instance_borrow(
                         &inventory,
                         *pill_instance_id,
                     )
+                    .map(|item| item.template_id.clone())
                 });
-                let Some(item) = item else {
+                let Some(template_id) = template_id else {
                     return LiveGateFeedback::Chat("§c[垂死大能] 背包中未找到该回元丹。");
                 };
-                if item.template_id != "huiyuan_pill" {
+                if template_id != "huiyuan_pill" {
                     return LiveGateFeedback::Chat("§c[垂死大能] 只接受回元丹。");
                 }
             }
@@ -1008,6 +1019,7 @@ fn live_gate_feedback(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn report_live_gate_denial(
     client: Entity,
     tick: u64,
@@ -1017,9 +1029,9 @@ fn report_live_gate_denial(
     inventories: Option<&mut Query<&mut PlayerInventory>>,
     budget: Option<&mut ClientRequestBudget>,
     clients: &mut Query<(&Username, &mut Client)>,
-) {
+) -> bool {
     let Some(budget) = budget else {
-        return;
+        return false;
     };
     let feedback = budget
         .store
@@ -1037,14 +1049,14 @@ fn report_live_gate_denial(
     }
     let feedback_mode = live_gate_feedback(request, reason, client, inventories);
     if !feedback.emit || feedback_mode == LiveGateFeedback::Silent {
-        return;
+        return false;
     }
 
     if let LiveGateFeedback::Chat(message) = feedback_mode {
         if let Ok((_username, mut client)) = clients.get_mut(client) {
             client.send_chat_message(message);
         }
-        return;
+        return true;
     }
 
     let payload = ServerDataV1::new(ServerDataPayloadV1::EventAlert {
@@ -1059,11 +1071,54 @@ fn report_live_gate_denial(
             request_kind,
             "live C2S rejection feedback serialization failed"
         );
-        return;
+        return false;
     };
     if let Ok((_username, mut client)) = clients.get_mut(client) {
         send_server_data_payload(&mut client, bytes.as_slice());
     }
+    true
+}
+
+/// Preserve the external-container recovery payload on a gate rejection
+/// without entering `handle_external_container_move`.  These snapshots are
+/// read-only feedback; the mutation barrier remains closed and the inventory
+/// revision/container contents are untouched.
+#[allow(clippy::too_many_arguments)]
+fn resync_external_container_after_gate_denial(
+    player: Entity,
+    session_id: u64,
+    dispatch: &ClientRequestDispatchParams<'_>,
+    combat_params: &mut CombatRequestParams<'_, '_>,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    let Some(registry) = dispatch.ext_container_registry.as_deref() else {
+        resync_inventory_only(player, inventories, player_states, cultivations, clients);
+        return;
+    };
+    let Some(&container_entity) = registry.sessions.get(&session_id) else {
+        resync_inventory_only(player, inventories, player_states, cultivations, clients);
+        return;
+    };
+    let external = combat_params
+        .ext_containers
+        .get(container_entity)
+        .ok()
+        .cloned();
+    let Some(external) = external else {
+        resync_inventory_only(player, inventories, player_states, cultivations, clients);
+        return;
+    };
+    resync_ext_and_inventory(
+        player,
+        &external,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
@@ -1292,7 +1347,7 @@ pub fn handle_client_request_payloads(
                 &mut inventories,
                 &mut clients,
             ) {
-                report_live_gate_denial(
+                let feedback_admitted = report_live_gate_denial(
                     ev.client,
                     ingress.combat_clock.tick,
                     request_kind,
@@ -1302,6 +1357,20 @@ pub fn handle_client_request_payloads(
                     ingress.budget.as_deref_mut(),
                     &mut clients,
                 );
+                if feedback_admitted {
+                    if let ClientRequestV1::ExternalContainerMove { session_id, .. } = &request {
+                        resync_external_container_after_gate_denial(
+                            ev.client,
+                            *session_id,
+                            &dispatch,
+                            &mut combat_params,
+                            &mut inventories,
+                            &player_states,
+                            &skill_scroll_params.cultivations,
+                            &mut clients,
+                        );
+                    }
+                }
                 continue;
             }
         }
@@ -5425,10 +5494,9 @@ mod tests {
             "live gate rejection must use the bounded feedback path; payloads={payload_types:?}"
         );
         assert!(
-            payload_types.iter().all(|ty| {
-                ty != "loot_container_update" && ty != "inventory_snapshot"
-            }),
-            "a gate rejection must not enter the external-container handler; payloads={payload_types:?}"
+            payload_types.iter().any(|ty| ty == "loot_container_update")
+                && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "a gate rejection must keep the existing read-only external/inventory resync contract without entering the mutation handler; payloads={payload_types:?}"
         );
     }
 
@@ -5525,10 +5593,9 @@ mod tests {
             "non-owner live gate rejection must emit bounded feedback; payloads={payload_types:?}"
         );
         assert!(
-            payload_types.iter().all(|ty| {
-                ty != "loot_container_update" && ty != "inventory_snapshot"
-            }),
-            "non-owner rejection must not enter the external-container handler; payloads={payload_types:?}"
+            payload_types.iter().any(|ty| ty == "loot_container_update")
+                && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "non-owner rejection must use the read-only external/inventory resync contract without entering the mutation handler; payloads={payload_types:?}"
         );
     }
 
@@ -5771,6 +5838,22 @@ mod tests {
                 .iter()
                 .any(|item| item.instance.instance_id == 7001)),
             "storage-crate move contract must remain unchanged"
+        );
+    }
+
+    #[test]
+    fn external_session_zero_timeout_is_not_expired_but_finite_deadline_is_inclusive() {
+        assert!(
+            !external_session_is_expired(0, u64::MAX),
+            "zero timeout is the established no-expiry value for generic external containers"
+        );
+        assert!(
+            !external_session_is_expired(101, 100),
+            "a finite external session remains live before its deadline"
+        );
+        assert!(
+            external_session_is_expired(100, 100),
+            "a finite external session expires exactly at its inclusive deadline"
         );
     }
 
