@@ -173,9 +173,32 @@ impl DistanceRule {
 
                 match metric {
                     DistanceMetric::Euclidean3dSquared => {
-                        let radius_squared = max_blocks * max_blocks;
-                        let distance_squared = dx * dx + dy * dy + dz * dz;
-                        distance_squared <= radius_squared
+                        // Normalize by the largest delta before squaring.  A
+                        // direct comparison of the two squared values can
+                        // turn both sides into `INFINITY` and accidentally
+                        // allow a target that is out of range.
+                        let scale = dx.abs().max(dy.abs()).max(dz.abs());
+                        if !scale.is_finite() {
+                            return false;
+                        }
+                        if scale == 0.0 {
+                            return true;
+                        }
+
+                        let normalized_dx = dx / scale;
+                        let normalized_dy = dy / scale;
+                        let normalized_dz = dz / scale;
+                        let normalized_distance_squared = normalized_dx * normalized_dx
+                            + normalized_dy * normalized_dy
+                            + normalized_dz * normalized_dz;
+                        let normalized_radius = max_blocks / scale;
+
+                        // The normalized distance squared is at most 3.0.
+                        // Avoid squaring a very large normalized radius; a
+                        // radius of at least 2.0 already contains the whole
+                        // normalized three-dimensional cube.
+                        normalized_radius >= 2.0
+                            || normalized_distance_squared <= normalized_radius * normalized_radius
                     }
                     DistanceMetric::Chebyshev3d => {
                         let distance = dx.abs().max(dy.abs()).max(dz.abs());
@@ -551,6 +574,21 @@ mod tests {
         assert!(rule.allows([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]));
         assert!(rule.allows([0.0, 0.0, 0.0], [1.0, 2.0, 2.0]));
         assert!(!rule.allows([0.0, 0.0, 0.0], [3.0, 4.0 + EPSILON, 0.0]));
+    }
+
+    #[test]
+    fn euclidean_squared_rejects_overflowing_out_of_range_distance() {
+        let max = f64::MAX;
+        let rule = DistanceRule::euclidean3d_squared(max);
+
+        assert!(
+            rule.allows([0.0, 0.0, 0.0], [max, 0.0, 0.0]),
+            "a finite distance exactly at the largest finite radius must remain allowed"
+        );
+        assert!(
+            !rule.allows([max, 0.0, 0.0], [-max, 0.0, 0.0]),
+            "an overflowing distance beyond the finite radius must fail closed"
+        );
     }
 
     #[test]
