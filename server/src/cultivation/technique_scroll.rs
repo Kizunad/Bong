@@ -247,6 +247,7 @@ pub fn parse_meridian_id(raw: &str) -> Option<MeridianId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
     use crate::inventory::{
         ItemCategory, ItemRarity, TechniqueScrollSpec, DEFAULT_CAST_DURATION_MS,
         DEFAULT_COOLDOWN_MS,
@@ -719,5 +720,138 @@ mod tests {
 
         assert_eq!(outcome, ScrollReadOutcome::RaceMismatch);
         assert!(known.entries.is_empty());
+    }
+
+    // ─── M11：learning gate 必须消费注入 registry 的 override 值 ────────────────
+    //
+    // 若学习门改读默认/静态 catalog 的 realm/race/meridian 要求，以下三个 override
+    // 测试会全部撞红——它们把 woliu.vortex 的 prerequisite 改成与 checked-in 完全
+    // 不同的值，证明 shared scroll 门跟随权威 registry 而非历史常量。
+
+    #[test]
+    fn overridden_required_realm_drives_scroll_gate() {
+        // checked-in woliu.vortex 是 Awaken；override 成 Void 后，Condense 玩家
+        // 必须被拒绝——若门用默认 catalog 的 Awaken 就会错误放行。
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("woliu.vortex", |definition| {
+                definition.required_realm = "Void".to_string();
+            });
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
+
+        let outcome = read_combat_technique_scroll(
+            &registry,
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
+        );
+
+        assert_eq!(
+            outcome,
+            ScrollReadOutcome::RealmTooLow {
+                required: Realm::Void,
+                current: Realm::Condense,
+            }
+        );
+        assert!(known.entries.is_empty());
+    }
+
+    #[test]
+    fn overridden_required_race_drives_scroll_gate() {
+        // checked-in woliu.vortex 是 any race；override 成仅 whale 后，human 玩家
+        // 必须被拒绝。
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("woliu.vortex", |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            });
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
+
+        let outcome = read_combat_technique_scroll(
+            &registry,
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            &template("scroll_woliu_vortex", "woliu.vortex"),
+            true,
+            None,
+        );
+
+        assert_eq!(outcome, ScrollReadOutcome::RaceMismatch);
+        assert!(known.entries.is_empty());
+    }
+
+    #[test]
+    fn overridden_required_meridian_drives_scroll_gate() {
+        // checked-in woliu.vortex 需要 Lung；override 成 GallBladder 后，只有
+        // GallBladder 未开的玩家被拒绝，而 Lung 开/关不影响结果——证明门读的是
+        // registry 里 override 的 meridian 列表而不是硬编码 Lung。
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("woliu.vortex", |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "GallBladder".to_string(),
+                    min_health: 0.5,
+                }];
+            });
+        let mut known = KnownTechniques::default();
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            ..Default::default()
+        };
+        let meridians = MeridianSystem::default(); // GallBladder 未开
+
+        let outcome = learn_technique_if_allowed(
+            &registry,
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            true,
+            None,
+        );
+
+        assert_eq!(
+            outcome,
+            ScrollReadOutcome::MeridianMissing {
+                channel: crate::cultivation::components::MeridianId::Gallbladder
+            }
+        );
+        assert!(known.entries.is_empty());
+
+        // 打开 GallBladder → 学习成功（Lung 保持关闭也无关，证明门绑定 override 的
+        // meridian 而非 checked-in 常量）。
+        let mut meridians = MeridianSystem::default();
+        open_required_meridians(&registry, &mut meridians, "woliu.vortex");
+        let outcome = learn_technique_if_allowed(
+            &registry,
+            &mut known,
+            &cultivation,
+            &meridians,
+            None,
+            "woliu.vortex",
+            0.0,
+            true,
+            None,
+        );
+        assert_eq!(outcome, ScrollReadOutcome::Learned);
     }
 }

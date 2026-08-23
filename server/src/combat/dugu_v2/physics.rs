@@ -101,7 +101,7 @@ pub fn skill_spec_with_definition(
     };
     DuguSkillSpec {
         skill,
-        qi_cost: f64::from(definition.qi_cost),
+        qi_cost: definition.qi_cost,
         cooldown_ticks: u64::from(definition.cooldown_ticks),
         cast_ticks: definition.cast_ticks,
     }

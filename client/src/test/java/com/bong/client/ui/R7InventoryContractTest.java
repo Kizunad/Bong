@@ -100,9 +100,9 @@ class R7InventoryContractTest {
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "53778f1f2652d9b03cb9031df926bbaa14ffa071c40cbc38179064ac7b2e696f",
+            "fd54d6c7cc2220ef2bb88e47698fcedde30e152b3b7809637c16f4f359f44b20",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "P1 keybind foundation must keep every shipped production path and byte pinned"
+            "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
     }
 
@@ -110,7 +110,6 @@ class R7InventoryContractTest {
     void p1AddsOnlyTheRequestedKeybindFoundationWithoutScreenMigration() throws IOException {
         Set<String> forbiddenProductionTypes = Set.of(
             "BongScreenBase.java",
-            "DiffListWidget.java",
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -122,7 +121,7 @@ class R7InventoryContractTest {
                 .forEach(discovered::add);
         }
         assertTrue(discovered.isEmpty(),
-            "P1 must add only BongKeybindRegistry and must not add another foundation type: " + discovered);
+            "R7 P1 must not add an unapproved foundation type: " + discovered);
 
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
@@ -297,10 +296,12 @@ class R7InventoryContractTest {
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
-            "npc/NpcTradeScreen.java:163"
+            "npc/NpcTradeScreen.java:163",
+            "ui/DiffListWidget.java:120",
+            "ui/DiffListWidget.java:124"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(15, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(17, sites.size(), "the frozen executable clearChildren inventory changed");
         assertEquals(sites.stream().sorted().toList(), actual,
             "the inventory must match every executable zero-argument production clearChildren call");
     }

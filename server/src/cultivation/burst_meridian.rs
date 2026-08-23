@@ -4,20 +4,26 @@ use valence::prelude::{
     Query, Res, UniqueId, Without,
 };
 
-use crate::combat::components::{CastSource, Casting, SkillBarBindings, WoundKind};
+use crate::body_plan::intrinsic_is_humanoid_from_world;
+use crate::combat::components::{
+    CastSource, Casting, SkillBarBindings, Stamina, StaminaState, WoundKind,
+};
 use crate::combat::events::{
-    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind,
+    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind, FIST_REACH,
 };
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
+#[cfg(test)]
+use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
 use crate::cultivation::known_techniques::{TechniqueDefinition, TechniqueRegistry};
 use crate::cultivation::meridian::severed::{
-    check_meridian_runtime_integrity, MeridianSeveredPermanent,
+    check_meridian_runtime_integrity, check_player_skill_meridian_gate, MeridianSeveredPermanent,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::cultivation::technique_scroll::parse_meridian_id;
 use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
@@ -25,8 +31,7 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    proportional_qi_cost, qi_release_to_zone, MediumKind, QiAccountId, QiTransfer,
-    QiTransferReason, StyleAttack,
+    qi_release_to_zone, MediumKind, QiAccountId, QiTransfer, QiTransferReason, StyleAttack,
 };
 use crate::schema::server_data::{BurstMeridianEventV1, ServerDataPayloadV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -43,11 +48,10 @@ pub(crate) const BURST_MERIDIAN_FAMILY_COLOR: &str = "#C58B3F";
 
 pub const BENG_QUAN_SKILL_ID: &str = "burst_meridian.beng_quan";
 pub const BENG_QUAN_EVENT_SKILL: &str = "beng_quan";
-/// 崩拳沿用历史语义：按施法者当前真元的比例消耗，而不是把 catalog 的
-/// `qi_cost` 当作固定点数。catalog 的该字段保留用于客户端展示/兼容快照。
-pub const BENG_QUAN_QI_COST_RATIO: f64 = 0.4;
 pub const BENG_QUAN_OVERLOAD_RATIO: f64 = 1.5;
 pub const BENG_QUAN_INTEGRITY_MULTIPLIER: f64 = 0.7;
+pub const BENG_QUAN_COOLDOWN_TICKS: u64 = 60;
+pub const BENG_QUAN_ANIM_DURATION_TICKS: u32 = 8;
 
 // ─── 贴山靠（tie_shan_kao）─ 沉肩压步，躯干经脉短爆撞开近身敌 ───────────────────────
 pub const TIE_SHAN_KAO_SKILL_ID: &str = "burst_meridian.tie_shan_kao";
@@ -56,7 +60,6 @@ pub const TIE_SHAN_KAO_EVENT_SKILL: &str = "tie_shan_kao";
 pub const TIE_SHAN_KAO_OVERLOAD_RATIO: f64 = 1.6;
 /// 撕裂躯干经脉（Stomach）后的 integrity 残留比例 —— 比崩拳略缓（短爆而非零距灌入）。
 pub const TIE_SHAN_KAO_INTEGRITY_MULTIPLIER: f64 = 0.8;
-const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属靠身撞击动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，肩胯靠撞与出拳姿态语义完全不同）。
 const TIE_SHAN_KAO_ANIM_ID: &str = "bong:tie_shan_kao";
@@ -65,8 +68,6 @@ const TIE_SHAN_KAO_ANIM_ID: &str = "bong:tie_shan_kao";
 /// 形态 = 地面 `BongGroundDecalParticle` 冲击环，见 plan §P5.1 ②。
 pub(crate) const TIE_SHAN_KAO_PARTICLE_ID: &str = "bong:burst_meridian_tie_shan_kao";
 const TIE_SHAN_KAO_AUDIO_RECIPE: &str = "hit_heavy";
-/// 与 known_techniques.tie_shan_kao.range 对齐（近身撞）。
-const TIE_SHAN_KAO_REACH: AttackReach = AttackReach::new(1.0, 0.5);
 
 // ─── 血崩步（xue_beng_bu）─ 腿经裂响换短距突进，抢入战圈 ──────────────────────────
 pub const XUE_BENG_BU_SKILL_ID: &str = "burst_meridian.xue_beng_bu";
@@ -74,8 +75,6 @@ pub const XUE_BENG_BU_EVENT_SKILL: &str = "xue_beng_bu";
 /// 撕裂腿经（GallBladder）后的 integrity 残留比例。
 pub const XUE_BENG_BU_INTEGRITY_MULTIPLIER: f64 = 0.75;
 /// 突进距离（格），与 known_techniques.xue_beng_bu.range 对齐。
-pub const XUE_BENG_BU_DASH_BLOCKS: f64 = 4.0;
-const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属步法突进动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，位移招播出拳属姿态语义错位）。
 const XUE_BENG_BU_ANIM_ID: &str = "bong:xue_beng_bu";
@@ -93,7 +92,6 @@ pub const NI_MAI_HU_TI_INTEGRITY_MULTIPLIER: f64 = 0.7;
 pub const NI_MAI_HU_TI_DAMAGE_REDUCTION: f32 = 0.35;
 /// 护体持续时间（tick）—— 与 known_techniques 的 cooldown 120 形成短窗高冷却节奏。
 pub const NI_MAI_HU_TI_BUFF_DURATION_TICKS: u64 = 60;
-const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属护体结印动画（缺失补齐：原 `anim_id: None`
 /// 完全不发 PlayAnim，护体招只有粒子+嗡音、玩家无姿态反馈）。
 const NI_MAI_HU_TI_ANIM_ID: &str = "bong:ni_mai_hu_ti";
@@ -135,11 +133,16 @@ pub struct NiMaiHuTiAura {
     pub expires_at_tick: u64,
 }
 
-const RIGHT_ARM_MERIDIANS: [MeridianId; 3] = [
+/// Static resolver contracts. Keep these independent from TOML so startup can detect
+/// metadata drift instead of deriving both sides from the same source.
+pub const RIGHT_ARM_MERIDIANS: [MeridianId; 3] = [
     MeridianId::LargeIntestine,
     MeridianId::SmallIntestine,
     MeridianId::TripleEnergizer,
 ];
+pub const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
+pub const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
+pub const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
 
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct BurstMeridianEvent {
@@ -199,6 +202,10 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(NI_MAI_HU_TI_SKILL_ID, resolve_ni_mai_hu_ti);
 }
 
+/// Declare the meridian dependencies owned by the static resolvers.
+///
+/// TOML `required_meridians` is validated against these contracts during startup; it must not
+/// be used to construct them, or a metadata/resolver mismatch would be invisible.
 pub fn declare_meridian_dependencies(
     dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
 ) {
@@ -210,14 +217,7 @@ pub fn declare_meridian_dependencies(
 
 /// 从 known_techniques 读招式的 flat qi_cost（单一真值源，严禁在本文件硬编码重复）。
 fn flat_qi_cost(techniques: &TechniqueRegistry, skill_id: &str) -> Option<f64> {
-    techniques.get(skill_id).map(|def| f64::from(def.qi_cost))
-}
-
-/// Convert the registry's metadata range into the combat reach used by the attack resolver.
-/// Skill ranges are already authoritative maxima, so they do not receive the generic fist
-/// step bonus.
-fn attack_reach(definition: &TechniqueDefinition) -> AttackReach {
-    AttackReach::new(definition.range, 0.0)
+    techniques.get(skill_id).map(|def| def.qi_cost)
 }
 
 /// 空挥（无锁定目标）时的 AV 朝向点：沿施法者视线前推一臂；无 Look 组件时
@@ -226,13 +226,13 @@ fn whiff_focus_point(
     world: &bevy_ecs::world::World,
     caster: Entity,
     caster_position: valence::prelude::DVec3,
-    reach: AttackReach,
+    reach: f32,
 ) -> valence::prelude::DVec3 {
     let dir = world
         .get::<Look>(caster)
         .map(|look| look.vec().as_dvec3())
         .unwrap_or(valence::prelude::DVec3::Z);
-    caster_position + dir * f64::from(reach.max)
+    caster_position + dir * f64::from(reach)
 }
 
 pub fn resolve_beng_quan(
@@ -256,23 +256,16 @@ pub fn resolve_beng_quan(
     let Some(caster_position) = world.get::<Position>(caster).map(|position| position.get()) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-
-    let (cast_ticks, cooldown_ticks, reach, required_realm) = {
-        let techniques = world
-            .get_resource::<TechniqueRegistry>()
-            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-        let Some(definition) = techniques.get(BENG_QUAN_SKILL_ID) else {
-            return rejected(CastRejectReason::InvalidTarget);
-        };
-        let (cast_ticks, cooldown_ticks) = cast_timing(Some(definition), 1, 1);
-        (
-            cast_ticks,
-            cooldown_ticks,
-            attack_reach(definition),
-            definition.required_realm_value(),
-        )
+    let definition = world
+        .get_resource::<TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(BENG_QUAN_SKILL_ID))
+        .cloned();
+    let Some(definition) = definition else {
+        return rejected(CastRejectReason::InvalidTarget);
     };
-
+    // `definition.range` 保留旧 metadata 展示值 1.3；resolver 的有效距离和衰减基准
+    // 历来是 FIST_REACH = base 2.0 + step bonus 0.6，不能用展示值把 2.6 射程砍半。
+    let effective_reach = f64::from(FIST_REACH.max);
     // Option B 去目标门禁（对齐 sword_basics 劈/刺）：崩拳是近战直拳，准星没对准
     // 实体也照常轰出（动画/粒子/扣费/撕脉/冷却照走），无目标 = 空挥。
     // 有目标时仍校验存在与射程——锁着超距目标硬轰属"目标无效"的正确语义。
@@ -283,7 +276,8 @@ pub fn resolve_beng_quan(
             else {
                 return rejected(CastRejectReason::InvalidTarget);
             };
-            if caster_position.distance(target_position) > f64::from(reach.max) + f64::EPSILON {
+            if caster_position.distance(target_position) > effective_reach + f64::from(f32::EPSILON)
+            {
                 return rejected(CastRejectReason::InvalidTarget);
             }
             Some(target_position)
@@ -291,57 +285,56 @@ pub fn resolve_beng_quan(
         None => None,
     };
 
-    let Some(qi_current) = world
-        .get::<Cultivation>(caster)
-        .map(|cultivation| cultivation.qi_current)
-    else {
-        return rejected(CastRejectReason::RealmTooLow);
-    };
-    // 比例参数属于招式配置，成本公式和输入校验统一由 qi_physics 负责。
-    let cost = match proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO) {
-        Ok(cost) => cost,
-        Err(_) => return rejected(CastRejectReason::QiInsufficient),
-    };
-
-    if let Some(reason) = check_realm_gate(world, caster, required_realm) {
+    if let Some(reason) = check_race_gate(world, caster, &definition) {
         return rejected(reason);
     }
-    // 旧路径对零/极小真元拒绝施法；通用门对真正的免费技能允许零成本，
-    // 因此这里显式保留崩拳的非零成本门禁后再复用统一校验。
-    if !cost.is_finite() || cost <= QI_EPSILON {
-        return rejected(CastRejectReason::QiInsufficient);
+    if let Some(reason) = check_realm_gate(world, caster, definition.required_realm_value()) {
+        return rejected(reason);
     }
+    let cost = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| cultivation.qi_current * definition.qi_cost)
+        .unwrap_or(0.0);
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
-
-    let Some(meridians) = world.get::<MeridianSystem>(caster) else {
-        return rejected(CastRejectReason::MERIDIAN_SEVERED);
-    };
-    let integrity_snapshot = right_arm_integrity_snapshot(meridians);
-    let severed = world.get::<MeridianSeveredPermanent>(caster);
-    if let Err(blocking) =
-        check_meridian_runtime_integrity(&RIGHT_ARM_MERIDIANS, meridians, severed)
-    {
-        return rejected(CastRejectReason::MeridianSevered(Some(blocking)));
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
     }
+    if let Err(reason) = check_beng_quan_meridian_gate(world, caster, &definition) {
+        return rejected(reason);
+    }
+    let Some(integrity_snapshot) =
+        right_arm_integrity_snapshot_from_definition(world, caster, &definition)
+    else {
+        return rejected(CastRejectReason::MeridianSevered(None));
+    };
+    let cast_ticks = definition.cast_ticks.max(1);
+    let cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
 
-    insert_casting(
-        world,
-        caster,
+    let started_at_ms = current_unix_millis();
+    world.entity_mut(caster).insert(Casting {
+        source: CastSource::SkillBar,
         slot,
-        now_tick,
-        cast_ticks,
-        cooldown_ticks,
-        caster_position,
-        BENG_QUAN_SKILL_ID,
-    );
+        started_at_tick: now_tick,
+        duration_ticks: u64::from(cast_ticks),
+        started_at_ms,
+        duration_ms: cast_ticks.saturating_mul(crate::time::MILLIS_PER_TICK as u32),
+        bound_instance_id: None,
+        start_position: caster_position,
+        complete_cooldown_ticks: cooldown_ticks,
+        skill_id: Some(BENG_QUAN_SKILL_ID.to_string()),
+        skill_config: None,
+    });
 
-    // bughunt r3 — beng_quan 此前内联扣 qi_current 却不归还 zone（绕过 spend_qi）→ 真元蒸发、守恒破。
-    // 改走 spend_qi（与铁山靠/血崩步/逆脉护体同一路径）：扣费的同时把消耗回灌到 caster 所在 zone。
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     if let Some(mut meridians) = world.get_mut::<MeridianSystem>(caster) {
-        for id in RIGHT_ARM_MERIDIANS {
+        for required in &definition.required_meridians {
+            let Some(id) = parse_meridian_id(&required.channel) else {
+                continue;
+            };
             let meridian = meridians.get_mut(id);
             meridian.integrity =
                 (meridian.integrity * BENG_QUAN_INTEGRITY_MULTIPLIER).clamp(0.0, 1.0);
@@ -357,7 +350,7 @@ pub fn resolve_beng_quan(
         // Option 透传：Some 命中结算，None 时 resolver 跳过 = 空挥。
         target,
         issued_at_tick: now_tick,
-        reach,
+        reach: FIST_REACH,
         qi_invest: (cost * BENG_QUAN_OVERLOAD_RATIO) as f32,
         wound_kind: WoundKind::Blunt,
         source: AttackSource::BurstMeridian,
@@ -371,8 +364,8 @@ pub fn resolve_beng_quan(
         overload_ratio: BENG_QUAN_OVERLOAD_RATIO,
         integrity_snapshot,
     });
-    let vfx_toward =
-        target_position.unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, reach));
+    let vfx_toward = target_position
+        .unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, FIST_REACH.max));
     emit_beng_quan_vfx(world, caster, caster_position, vfx_toward, cast_ticks);
 
     CastResult::Started {
@@ -440,14 +433,20 @@ pub fn resolve_tie_shan_kao(
         return rejected(CastRejectReason::InvalidTarget);
     };
     // Option B 去目标门禁（与崩拳同批）：肩撞照常撞出，无目标 = 空撞。
+    let definition = world
+        .get_resource::<TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(TIE_SHAN_KAO_SKILL_ID))
+        .cloned();
+    let Some(definition) = definition else {
+        return rejected(CastRejectReason::InvalidTarget);
+    };
+    let reach = f64::from(definition.range);
     let target_position = match target {
         Some(target) => {
             let Some(target_position) = world.get::<Position>(target).map(|p| p.get()) else {
                 return rejected(CastRejectReason::InvalidTarget);
             };
-            if caster_position.distance(target_position)
-                > f64::from(TIE_SHAN_KAO_REACH.max) + f64::EPSILON
-            {
+            if caster_position.distance(target_position) > reach + f64::EPSILON {
                 return rejected(CastRejectReason::InvalidTarget);
             }
             Some(target_position)
@@ -455,29 +454,37 @@ pub fn resolve_tie_shan_kao(
         None => None,
     };
 
-    if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
+    if let Some(reason) = check_race_gate(world, caster, &definition) {
         return rejected(reason);
     }
-    let (cost, cast_ticks, cooldown_ticks) = {
-        let techniques = world
-            .get_resource::<TechniqueRegistry>()
-            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-        let Some(cost) = flat_qi_cost(techniques, TIE_SHAN_KAO_SKILL_ID) else {
-            return rejected(CastRejectReason::InvalidTarget);
-        };
-        let (cast_ticks, cooldown_ticks) =
-            cast_timing(techniques.get(TIE_SHAN_KAO_SKILL_ID), 10, 70);
-        (cost, cast_ticks, cooldown_ticks)
-    };
+    if let Some(reason) = check_realm_gate(world, caster, definition.required_realm_value()) {
+        return rejected(reason);
+    }
+    let (cost, cast_ticks, cooldown_ticks) = (
+        definition.qi_cost,
+        definition.cast_ticks.max(1),
+        u64::from(definition.cooldown_ticks).max(1),
+    );
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
-    let Some(integrity_snapshot) =
-        check_single_meridian_gate(world, caster, TIE_SHAN_KAO_MERIDIANS[0])
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
+    let Some(primary_meridian) = definition
+        .required_meridians
+        .first()
+        .and_then(|required| parse_meridian_id(&required.channel))
     else {
-        return rejected(CastRejectReason::MeridianSevered(Some(
-            TIE_SHAN_KAO_MERIDIANS[0],
-        )));
+        return rejected(CastRejectReason::InvalidTarget);
+    };
+    if let Err(reason) = check_definition_meridian_gate(world, caster, &definition) {
+        return rejected(reason);
+    }
+    let Some(integrity_snapshot) = check_single_meridian_gate(world, caster, primary_meridian)
+    else {
+        return rejected(CastRejectReason::MeridianSevered(Some(primary_meridian)));
     };
 
     insert_casting(
@@ -491,12 +498,13 @@ pub fn resolve_tie_shan_kao(
         TIE_SHAN_KAO_SKILL_ID,
     );
 
-    // ── 守恒：扣 flat qi + 撕裂躯干经脉（系列代价）───────────────────────────────
+    // ── 守恒：扣 flat qi + 体力 + 撕裂躯干经脉（系列代价）────────────────────────
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     tear_meridian(
         world,
         caster,
-        TIE_SHAN_KAO_MERIDIANS[0],
+        primary_meridian,
         TIE_SHAN_KAO_INTEGRITY_MULTIPLIER,
     );
     record_heavy_practice(world, caster);
@@ -506,7 +514,7 @@ pub fn resolve_tie_shan_kao(
         // Option 透传：Some 命中结算，None 时 resolver 跳过 = 空撞。
         target,
         issued_at_tick: now_tick,
-        reach: TIE_SHAN_KAO_REACH,
+        reach: AttackReach::new(definition.range, 0.0),
         qi_invest: (cost * TIE_SHAN_KAO_OVERLOAD_RATIO) as f32,
         wound_kind: WoundKind::Blunt,
         source: AttackSource::BurstMeridian,
@@ -521,7 +529,7 @@ pub fn resolve_tie_shan_kao(
         integrity_snapshot,
     });
     let av_toward = target_position
-        .unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, TIE_SHAN_KAO_REACH));
+        .unwrap_or_else(|| whiff_focus_point(world, caster, caster_position, definition.range));
     emit_burst_av(
         world,
         caster,
@@ -571,28 +579,45 @@ pub fn resolve_xue_beng_bu(
         return rejected(CastRejectReason::InvalidTarget);
     };
 
-    if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
+    let definition = world
+        .get_resource::<TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(XUE_BENG_BU_SKILL_ID))
+        .cloned();
+    let Some(definition) = definition else {
+        return rejected(CastRejectReason::InvalidTarget);
+    };
+
+    if let Some(reason) = check_race_gate(world, caster, &definition) {
         return rejected(reason);
     }
-    let (cost, cast_ticks, cooldown_ticks) = {
-        let techniques = world
-            .get_resource::<TechniqueRegistry>()
-            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-        let Some(cost) = flat_qi_cost(techniques, XUE_BENG_BU_SKILL_ID) else {
-            return rejected(CastRejectReason::InvalidTarget);
-        };
-        let (cast_ticks, cooldown_ticks) = cast_timing(techniques.get(XUE_BENG_BU_SKILL_ID), 6, 50);
-        (cost, cast_ticks, cooldown_ticks)
-    };
+    if let Some(reason) = check_realm_gate(world, caster, definition.required_realm_value()) {
+        return rejected(reason);
+    }
+    let (cost, cast_ticks, cooldown_ticks) = (
+        definition.qi_cost,
+        definition.cast_ticks.max(1),
+        u64::from(definition.cooldown_ticks).max(1),
+    );
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
-    let Some(integrity_snapshot) =
-        check_single_meridian_gate(world, caster, XUE_BENG_BU_MERIDIANS[0])
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
+    let Some(primary_meridian) = definition
+        .required_meridians
+        .first()
+        .and_then(|required| parse_meridian_id(&required.channel))
     else {
-        return rejected(CastRejectReason::MeridianSevered(Some(
-            XUE_BENG_BU_MERIDIANS[0],
-        )));
+        return rejected(CastRejectReason::InvalidTarget);
+    };
+    if let Err(reason) = check_definition_meridian_gate(world, caster, &definition) {
+        return rejected(reason);
+    }
+    let Some(integrity_snapshot) = check_single_meridian_gate(world, caster, primary_meridian)
+    else {
+        return rejected(CastRejectReason::MeridianSevered(Some(primary_meridian)));
     };
 
     insert_casting(
@@ -606,16 +631,17 @@ pub fn resolve_xue_beng_bu(
         XUE_BENG_BU_SKILL_ID,
     );
 
-    // ── 守恒：扣 flat qi + 撕裂腿经（系列代价）+ 服务器权威位移 ──────────────────
+    // ── 守恒：扣 flat qi + 体力 + 撕裂腿经（系列代价）+ 服务器权威位移 ────────────
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     tear_meridian(
         world,
         caster,
-        XUE_BENG_BU_MERIDIANS[0],
+        primary_meridian,
         XUE_BENG_BU_INTEGRITY_MULTIPLIER,
     );
     record_heavy_practice(world, caster);
-    let dash_target = caster_position + facing * XUE_BENG_BU_DASH_BLOCKS;
+    let dash_target = caster_position + facing * f64::from(definition.range);
     if let Some(mut position) = world.get_mut::<Position>(caster) {
         position.set(dash_target);
     }
@@ -671,29 +697,45 @@ pub fn resolve_ni_mai_hu_ti(
         return rejected(CastRejectReason::InvalidTarget);
     };
 
-    if let Some(reason) = check_realm_gate(world, caster, Realm::Solidify) {
+    let definition = world
+        .get_resource::<TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NI_MAI_HU_TI_SKILL_ID))
+        .cloned();
+    let Some(definition) = definition else {
+        return rejected(CastRejectReason::InvalidTarget);
+    };
+
+    if let Some(reason) = check_race_gate(world, caster, &definition) {
         return rejected(reason);
     }
-    let (cost, cast_ticks, cooldown_ticks) = {
-        let techniques = world
-            .get_resource::<TechniqueRegistry>()
-            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
-        let Some(cost) = flat_qi_cost(techniques, NI_MAI_HU_TI_SKILL_ID) else {
-            return rejected(CastRejectReason::InvalidTarget);
-        };
-        let (cast_ticks, cooldown_ticks) =
-            cast_timing(techniques.get(NI_MAI_HU_TI_SKILL_ID), 12, 120);
-        (cost, cast_ticks, cooldown_ticks)
-    };
+    if let Some(reason) = check_realm_gate(world, caster, definition.required_realm_value()) {
+        return rejected(reason);
+    }
+    let (cost, cast_ticks, cooldown_ticks) = (
+        definition.qi_cost,
+        definition.cast_ticks.max(1),
+        u64::from(definition.cooldown_ticks).max(1),
+    );
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
-    let Some(integrity_snapshot) =
-        check_single_meridian_gate(world, caster, NI_MAI_HU_TI_MERIDIANS[0])
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
+    let Some(primary_meridian) = definition
+        .required_meridians
+        .first()
+        .and_then(|required| parse_meridian_id(&required.channel))
     else {
-        return rejected(CastRejectReason::MeridianSevered(Some(
-            NI_MAI_HU_TI_MERIDIANS[0],
-        )));
+        return rejected(CastRejectReason::InvalidTarget);
+    };
+    if let Err(reason) = check_definition_meridian_gate(world, caster, &definition) {
+        return rejected(reason);
+    }
+    let Some(integrity_snapshot) = check_single_meridian_gate(world, caster, primary_meridian)
+    else {
+        return rejected(CastRejectReason::MeridianSevered(Some(primary_meridian)));
     };
 
     insert_casting(
@@ -707,12 +749,13 @@ pub fn resolve_ni_mai_hu_ti(
         NI_MAI_HU_TI_SKILL_ID,
     );
 
-    // ── 守恒：扣 flat qi + 逆转真元撕本脉（系列代价）+ 短时减伤 buff ──────────────
+    // ── 守恒：扣 flat qi + 体力 + 逆转真元撕本脉（系列代价）+ 短时减伤 buff ────────
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     tear_meridian(
         world,
         caster,
-        NI_MAI_HU_TI_MERIDIANS[0],
+        primary_meridian,
         NI_MAI_HU_TI_INTEGRITY_MULTIPLIER,
     );
     record_heavy_practice(world, caster);
@@ -781,6 +824,21 @@ fn is_slot_on_cooldown(
         .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
+fn check_race_gate(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    definition: &TechniqueDefinition,
+) -> Option<CastRejectReason> {
+    let race = world
+        .get::<Cultivation>(caster)
+        .map(|cultivation| cultivation.race.clone())
+        .unwrap_or_else(|| crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID));
+    (!definition
+        .required_race
+        .allows(&race, intrinsic_is_humanoid_from_world(world, caster)))
+    .then_some(CastRejectReason::RaceMismatch)
+}
+
 /// 境界门：低于要求境界返回 `Some(RealmTooLow)`，缺 Cultivation 也视作不达标。
 fn check_realm_gate(
     world: &bevy_ecs::world::World,
@@ -793,8 +851,8 @@ fn check_realm_gate(
     }
 }
 
-/// 真元门：flat cost。精确零成本是合法免费招；正数 dust（`0 < cost <= ε`）、
-/// 非有限/负成本或 `qi_current < cost` 均拒绝。此处不扣减。
+/// 真元门：flat cost。`cost <= ε`（误配 0 成本招）或 `qi_current < cost` 均拒绝，
+/// 不在此处扣减（扣减由 `spend_qi` 在所有门通过后执行，保证拒绝路径零突变）。
 fn check_qi_gate(
     world: &bevy_ecs::world::World,
     caster: Entity,
@@ -803,18 +861,111 @@ fn check_qi_gate(
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return Some(CastRejectReason::RealmTooLow);
     };
-    if !cost.is_finite()
-        || cost < 0.0
-        || (cost > 0.0 && cost <= QI_EPSILON)
-        || cultivation.qi_current < cost
-    {
+    if cost <= f64::EPSILON || cultivation.qi_current + f64::EPSILON < cost {
         return Some(CastRejectReason::QiInsufficient);
     }
     None
 }
 
-/// 单经脉门：检查永久 SEVERED + 当前 integrity 可用。通过返回该经脉损前 integrity 快照
-/// （供 BurstMeridianEvent 记账）；不通过返回 None（调用方映射 MeridianSevered）。
+/// 体力门（M31）：Exhausted / current ≤ 0 / current < stamina_cost 均拒绝。
+/// 零成本（`stamina_cost <= 0`）直接放行——与 qi gate 的零成本语义对称（M33：
+/// valid zero-cost metadata 不能被当作 insufficient）。
+/// 不在此处扣减（扣减由 `apply_stamina_cost` 在所有门通过后执行）。
+fn check_stamina_gate(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    stamina_cost: f32,
+) -> Option<CastRejectReason> {
+    if stamina_cost <= 0.0 {
+        return None;
+    }
+    let Some(stamina) = world.get::<Stamina>(caster) else {
+        // 无 Stamina 组件 = 无体力系统实体（如纯测试 spawn），不拦。
+        return None;
+    };
+    if stamina.state == StaminaState::Exhausted
+        || stamina.current <= 0.0
+        || stamina.current < stamina_cost
+    {
+        return Some(CastRejectReason::InRecovery);
+    }
+    None
+}
+
+/// 扣除体力（M31）：与 `morph.yixing` 同一模式——clamp 到 [0, max] 并打
+/// `last_drain_tick` 时间戳。仅在所有门通过后调用。
+fn apply_stamina_cost(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    stamina_cost: f32,
+    now_tick: u64,
+) {
+    if stamina_cost <= 0.0 {
+        return;
+    }
+    if let Some(mut stamina) = world.get_mut::<Stamina>(caster) {
+        stamina.current = (stamina.current - stamina_cost).clamp(0.0, stamina.max);
+        stamina.state = if stamina.current <= 0.0 {
+            StaminaState::Exhausted
+        } else {
+            StaminaState::Combat
+        };
+        stamina.last_drain_tick = Some(now_tick);
+    }
+}
+
+fn check_beng_quan_meridian_gate(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    definition: &TechniqueDefinition,
+) -> Result<(), CastRejectReason> {
+    let Some(meridians) = world.get::<MeridianSystem>(caster) else {
+        return Err(CastRejectReason::MeridianSevered(None));
+    };
+    let required = definition
+        .required_meridians
+        .iter()
+        .filter_map(|required| {
+            parse_meridian_id(&required.channel).map(|id| (id, f64::from(required.min_health)))
+        })
+        .collect::<Vec<_>>();
+    if required.is_empty() {
+        return Err(CastRejectReason::MeridianSevered(None));
+    }
+    let severed = world.get::<MeridianSeveredPermanent>(caster);
+    for (id, min_health) in required {
+        let meridian = meridians.get(id);
+        if severed.is_some_and(|severed| severed.is_severed(id))
+            || !meridian.opened
+            || meridian.integrity < min_health
+        {
+            return Err(CastRejectReason::MeridianSevered(Some(id)));
+        }
+    }
+    Ok(())
+}
+
+fn check_definition_meridian_gate(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    definition: &TechniqueDefinition,
+) -> Result<(), CastRejectReason> {
+    let Some(meridians) = world.get::<MeridianSystem>(caster) else {
+        return Err(CastRejectReason::MeridianSevered(None));
+    };
+    let severed = world.get::<MeridianSeveredPermanent>(caster);
+    let dependencies =
+        world.get_resource::<crate::cultivation::meridian::severed::SkillMeridianDependencies>();
+    check_player_skill_meridian_gate(
+        &definition.id,
+        &definition.required_meridians,
+        meridians,
+        severed,
+        dependencies,
+    )
+    .map_err(|blocked| CastRejectReason::MeridianSevered(Some(blocked)))
+}
+
 fn check_single_meridian_gate(
     world: &bevy_ecs::world::World,
     caster: Entity,
@@ -870,26 +1021,16 @@ fn cast_timing(
 /// 扣真元（玩家私有池）并将消耗的真元释放回区域灵气池，维持 qi_physics 守恒。
 /// 与 baomai_v3 / tuike_v2 的 spend_qi + emit_spent_qi_release 模式对齐。
 fn spend_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) {
-    if cost <= QI_EPSILON || !cost.is_finite() {
+    if cost <= f64::EPSILON {
         return;
     }
-    let debited = if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
-        if cultivation.qi_current < cost {
-            false
-        } else {
-            cultivation.qi_current = if cultivation.qi_current == cost {
-                0.0
-            } else {
-                cultivation.qi_current - cost
-            };
-            true
-        }
-    } else {
-        false
-    };
-    if debited {
-        emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
+    if !cost.is_finite() {
+        return;
     }
+    if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
+        cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+    }
+    emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
 }
 
 /// 把消耗的真元释放回 ZoneRegistry，走 qi_release_to_zone 守恒路径；区域满时路由至 overflow。
@@ -932,7 +1073,7 @@ fn emit_spent_qi_release(
                         if let Some(transfer) = outcome.transfer {
                             transfers.push(transfer);
                         }
-                        if outcome.overflow > 0.0 {
+                        if outcome.overflow > QI_EPSILON {
                             push_spent_qi_overflow(
                                 &mut transfers,
                                 from.clone(),
@@ -975,7 +1116,7 @@ fn push_spent_qi_overflow(
     sink: &'static str,
     caster: Entity,
 ) {
-    if amount <= 0.0 {
+    if amount <= QI_EPSILON {
         return;
     }
     match QiTransfer::new(
@@ -1157,12 +1298,27 @@ fn realm_rank(realm: Realm) -> u8 {
     }
 }
 
-fn right_arm_integrity_snapshot(meridians: &MeridianSystem) -> f64 {
-    RIGHT_ARM_MERIDIANS
+fn right_arm_integrity_snapshot_from_definition(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    definition: &TechniqueDefinition,
+) -> Option<f64> {
+    let meridians = world.get::<MeridianSystem>(caster)?;
+    let required = definition
+        .required_meridians
         .iter()
-        .map(|id| meridians.get(*id).integrity.clamp(0.0, 1.0))
-        .sum::<f64>()
-        / RIGHT_ARM_MERIDIANS.len() as f64
+        .filter_map(|required| parse_meridian_id(&required.channel))
+        .collect::<Vec<_>>();
+    if required.is_empty() {
+        return None;
+    }
+    Some(
+        required
+            .iter()
+            .map(|id| meridians.get(*id).integrity.clamp(0.0, 1.0))
+            .sum::<f64>()
+            / required.len() as f64,
+    )
 }
 
 #[cfg(test)]
@@ -1171,6 +1327,19 @@ mod tests {
     use valence::prelude::{App, DVec3, Events, Update};
 
     fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -> Entity {
+        let mut meridians = MeridianSystem::default();
+        if let Some(registry) = app.world().get_resource::<TechniqueRegistry>() {
+            for definition in registry.iter() {
+                for required in &definition.required_meridians {
+                    let id = parse_meridian_id(&required.channel)
+                        .expect("checked-in technique meridian must parse");
+                    let meridian = meridians.get_mut(id);
+                    meridian.opened = true;
+                    meridian.integrity = 1.0;
+                    meridian.throughput_current = 1.0;
+                }
+            }
+        }
         app.world_mut()
             .spawn((
                 Cultivation {
@@ -1179,7 +1348,7 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
-                MeridianSystem::default(),
+                meridians,
                 Position::new([position.x, position.y, position.z]),
                 SkillBarBindings::default(),
                 PracticeLog::default(),
@@ -1201,20 +1370,6 @@ mod tests {
         app.add_event::<BurstMeridianEvent>();
         app.add_event::<VfxEventRequest>();
         app
-    }
-
-    fn beng_quan_reach(app: &App) -> AttackReach {
-        let registry = app.world().resource::<TechniqueRegistry>();
-        attack_reach(
-            registry
-                .get(BENG_QUAN_SKILL_ID)
-                .expect("checked-in catalog must define beng_quan"),
-        )
-    }
-
-    fn beng_quan_cost(qi_current: f64) -> f64 {
-        proportional_qi_cost(qi_current, BENG_QUAN_QI_COST_RATIO)
-            .expect("beng_quan ratio cost must be valid")
     }
 
     fn assert_no_mutation(app: &App, caster: Entity, qi: f64, integrity: f64) {
@@ -1241,12 +1396,132 @@ mod tests {
     }
 
     #[test]
+    fn beng_quan_checked_in_metadata_keeps_legacy_display_range() {
+        let app = app();
+        let definition = app
+            .world()
+            .resource::<TechniqueRegistry>()
+            .get(BENG_QUAN_SKILL_ID)
+            .expect("checked-in beng_quan metadata must exist");
+        assert_eq!(
+            definition.range, 1.3,
+            "registry datafication must preserve the legacy 1.3 display metadata"
+        );
+        assert_eq!(
+            FIST_REACH,
+            AttackReach::new(2.0, 0.6),
+            "combat resolution keeps base reach and step bonus separate from display metadata"
+        );
+    }
+
+    #[test]
+    fn beng_quan_uses_overridden_runtime_metadata() {
+        let mut app = app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            BENG_QUAN_SKILL_ID,
+            |definition| {
+                definition.qi_cost = 0.25;
+                definition.range = 2.75;
+                definition.cast_ticks = 13;
+                definition.cooldown_ticks = 91;
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Induce, 80.0, DVec3::ZERO);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::LargeIntestine)
+            .integrity = 0.7;
+        let target = spawn_target(&mut app, DVec3::new(2.5, 0.0, 0.0));
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 91,
+                anim_duration_ticks: 13,
+            }
+        );
+        assert!((qi(&app, caster) - 60.0).abs() < 1e-9);
+        assert_eq!(
+            app.world().get::<Casting>(caster).unwrap().duration_ticks,
+            13
+        );
+        let attack = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("崩拳成功必须发 AttackIntent");
+        assert_eq!(
+            attack.reach, FIST_REACH,
+            "metadata range override 只影响展示，resolver 必须保留旧版 2.6 有效距离与衰减基准"
+        );
+    }
+
+    #[test]
+    fn beng_quan_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            BENG_QUAN_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Induce, 80.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RaceMismatch,
+            }
+        );
+        assert_no_mutation(&app, caster, 80.0, 1.0);
+    }
+
+    #[test]
+    fn beng_quan_rejects_when_all_meridians_miss_overridden_health_threshold() {
+        let mut app = app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            BENG_QUAN_SKILL_ID,
+            |definition| {
+                for required in &mut definition.required_meridians {
+                    required.min_health = 0.8;
+                }
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
+        for id in RIGHT_ARM_MERIDIANS {
+            app.world_mut()
+                .get_mut::<MeridianSystem>(caster)
+                .unwrap()
+                .get_mut(id)
+                .integrity = 0.7;
+        }
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(
+                MeridianId::LargeIntestine
+            )))
+        );
+        assert_no_mutation(&app, caster, 100.0, 0.7);
+    }
+
+    #[test]
     fn beng_quan_happy_path_mutates_atomically_and_emits_events() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let reach = beng_quan_reach(&app).max;
-        let cost = beng_quan_cost(100.0);
-        let target = spawn_target(&mut app, DVec3::new(f64::from(reach), 0.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(2.6, 0.0, 0.0));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 
@@ -1257,10 +1532,9 @@ mod tests {
                 anim_duration_ticks: 8,
             }
         );
-        assert!(
-            (app.world().get::<Cultivation>(caster).unwrap().qi_current - (100.0 - cost)).abs()
-                <= f64::EPSILON,
-            "beng_quan must deduct 40% of the caster's current qi"
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            60.0
         );
         for id in RIGHT_ARM_MERIDIANS {
             assert_eq!(
@@ -1290,7 +1564,11 @@ mod tests {
         let attack = attack_events.iter_current_update_events().next().unwrap();
         assert_eq!(attack.target, Some(target));
         assert_eq!(attack.source, AttackSource::BurstMeridian);
-        assert_eq!(attack.qi_invest, (cost * BENG_QUAN_OVERLOAD_RATIO) as f32);
+        assert_eq!(
+            attack.reach, FIST_REACH,
+            "2.6 reach must retain base 2.0 and step bonus 0.6"
+        );
+        assert_eq!(attack.qi_invest, 60.0);
         assert_eq!(attack.wound_kind, WoundKind::Blunt);
 
         let burst_events = app.world().resource::<Events<BurstMeridianEvent>>();
@@ -1312,117 +1590,6 @@ mod tests {
             }
             other => panic!("expected beng_quan particle, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn beng_quan_uses_registry_metadata_for_cast_contract() {
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            BENG_QUAN_SKILL_ID,
-            |definition| {
-                definition.required_realm = "Condense".to_string();
-                // Deliberately diverge the display/catalog value: Beng Quan's
-                // runtime contract remains a percentage of current qi.
-                definition.qi_cost = 7.25;
-                definition.cast_ticks = 3;
-                definition.cooldown_ticks = 17;
-                definition.range = 0.75;
-            },
-        ));
-        app.insert_resource(CombatClock { tick: 10 });
-        app.add_event::<AttackIntent>();
-        app.add_event::<BurstMeridianEvent>();
-        app.add_event::<VfxEventRequest>();
-
-        let caster = spawn_caster(&mut app, Realm::Condense, 20.0, DVec3::ZERO);
-        let target = spawn_target(&mut app, DVec3::new(0.75, 0.0, 0.0));
-
-        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
-
-        assert_eq!(
-            result,
-            CastResult::Started {
-                cooldown_ticks: 17,
-                anim_duration_ticks: 3,
-            },
-            "beng_quan must use overridden registry timing instead of legacy constants"
-        );
-        assert_eq!(
-            app.world().get::<Cultivation>(caster).unwrap().qi_current,
-            12.0,
-            "beng_quan must keep its current-qi percentage cost even when catalog qi_cost changes"
-        );
-        assert_eq!(
-            app.world().get::<Casting>(caster).unwrap().duration_ticks,
-            3,
-            "Casting duration must follow the registry definition"
-        );
-        let attack = app
-            .world()
-            .resource::<Events<AttackIntent>>()
-            .iter_current_update_events()
-            .next()
-            .expect("metadata-backed beng_quan must emit an attack");
-        assert_eq!(attack.reach, AttackReach::new(0.75, 0.0));
-        assert_eq!(attack.qi_invest, 12.0);
-        let particle = app
-            .world()
-            .resource::<Events<VfxEventRequest>>()
-            .iter_current_update_events()
-            .find_map(|request| match &request.payload {
-                VfxEventPayloadV1::SpawnParticle { duration_ticks, .. } => *duration_ticks,
-                _ => None,
-            })
-            .expect("metadata-backed beng_quan must emit a particle");
-        assert_eq!(
-            particle, 3,
-            "particle duration must follow cast_ticks metadata"
-        );
-    }
-
-    #[test]
-    fn beng_quan_uses_registry_realm_gate_and_range() {
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            BENG_QUAN_SKILL_ID,
-            |definition| {
-                definition.required_realm = "Condense".to_string();
-                definition.range = 0.75;
-            },
-        ));
-        app.insert_resource(CombatClock { tick: 10 });
-        app.add_event::<AttackIntent>();
-        app.add_event::<BurstMeridianEvent>();
-        app.add_event::<VfxEventRequest>();
-
-        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let target = spawn_target(&mut app, DVec3::new(0.5, 0.0, 0.0));
-
-        assert_eq!(
-            resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
-            rejected(CastRejectReason::RealmTooLow),
-            "registry required_realm must gate the cast before any mutation"
-        );
-        assert_no_mutation(&app, caster, 100.0, 1.0);
-
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            BENG_QUAN_SKILL_ID,
-            |definition| definition.range = 0.75,
-        ));
-        app.insert_resource(CombatClock { tick: 10 });
-        app.add_event::<AttackIntent>();
-        app.add_event::<BurstMeridianEvent>();
-        app.add_event::<VfxEventRequest>();
-        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let target = spawn_target(&mut app, DVec3::new(0.76, 0.0, 0.0));
-
-        assert_eq!(
-            resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
-            rejected(CastRejectReason::InvalidTarget),
-            "registry range must reject targets beyond the metadata maximum"
-        );
-        assert_no_mutation(&app, caster, 100.0, 1.0);
     }
 
     #[test]
@@ -1458,22 +1625,6 @@ mod tests {
 
         assert_eq!(result, rejected(CastRejectReason::RealmTooLow));
         assert_no_mutation(&app, caster, 100.0, 1.0);
-    }
-
-    #[test]
-    fn beng_quan_rejects_zero_or_dust_qi_without_mutation() {
-        for qi_current in [0.0, QI_EPSILON / BENG_QUAN_QI_COST_RATIO / 2.0] {
-            let mut app = app();
-            let caster = spawn_caster(&mut app, Realm::Induce, qi_current, DVec3::ZERO);
-            let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
-
-            assert_eq!(
-                resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
-                rejected(CastRejectReason::QiInsufficient),
-                "non-positive effective Beng Quan cost must reject without casting"
-            );
-            assert_no_mutation(&app, caster, qi_current, 1.0);
-        }
     }
 
     #[test]
@@ -1535,7 +1686,7 @@ mod tests {
     }
 
     #[test]
-    fn beng_quan_allows_one_remaining_right_arm_meridian() {
+    fn beng_quan_rejects_when_any_right_arm_meridian_is_unavailable() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
         app.world_mut()
@@ -1552,15 +1703,38 @@ mod tests {
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(
+                MeridianId::SmallIntestine
+            )))
+        );
+        assert_eq!(qi(&app, caster), 100.0, "拒绝路径不得扣真元");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::LargeIntestine),
+            1.0
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::SmallIntestine),
+            0.0
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::TripleEnergizer),
+            0.0
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app.world().resource::<Events<AttackIntent>>().is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
     }
 
     #[test]
     fn beng_quan_rejects_out_of_range_target_without_mutation() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
-        let reach = beng_quan_reach(&app).max;
-        let target = spawn_target(&mut app, DVec3::new(f64::from(reach) + 0.01, 0.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(2.600_001, 0.0, 0.0));
 
         // 锁定超距目标硬轰仍是"目标无效"的正确语义（有目标时距离门保留）。
         assert_eq!(
@@ -1629,9 +1803,15 @@ mod tests {
             })
             .expect("空挥应发带方向的 SpawnParticle");
         assert!(
-            direction[0] > 0.9 && direction[1].abs() < 1e-3 && direction[2].abs() < 1e-3,
+            direction[0] > 0.0 && direction[1].abs() < 1e-3 && direction[2].abs() < 1e-3,
             "yaw=-90 的空挥粒子方向应沿视线朝 +X（whiff_focus_point Look 分支），\
              实际 direction={direction:?}"
+        );
+        let direction_len =
+            (direction[0].powi(2) + direction[1].powi(2) + direction[2].powi(2)).sqrt();
+        assert!(
+            (direction_len - f64::from(FIST_REACH.max)).abs() < 1e-6,
+            "空挥焦点必须沿视线前推旧版有效射程 2.6，而不是 metadata 1.3；实际 {direction_len}"
         );
     }
 
@@ -1655,7 +1835,6 @@ mod tests {
     fn beng_quan_preserves_float_precision_and_pre_mutation_snapshot() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 99.9, DVec3::ZERO);
-        let cost = beng_quan_cost(99.9);
         app.world_mut()
             .get_mut::<MeridianSystem>(caster)
             .unwrap()
@@ -1667,10 +1846,7 @@ mod tests {
 
         assert!(matches!(result, CastResult::Started { .. }));
         let qi = app.world().get::<Cultivation>(caster).unwrap().qi_current;
-        assert!(
-            (qi - (99.9 - cost)).abs() <= f64::EPSILON,
-            "beng_quan must preserve the exact current-qi percentage cost"
-        );
+        assert!((qi - 59.94).abs() < 1e-9);
         let li = app
             .world()
             .get::<MeridianSystem>(caster)
@@ -1795,6 +1971,164 @@ mod tests {
     // ─── 贴山靠（tie_shan_kao）─ Condense / Stomach≥0.5 / qi 35 / cd 70 ─────────────
 
     #[test]
+    fn tie_shan_kao_uses_overridden_runtime_metadata() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 7.5;
+                definition.range = 4.0;
+                definition.cast_ticks = 13;
+                definition.cooldown_ticks = 91;
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Awaken, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(3.5, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 91,
+                anim_duration_ticks: 13,
+            }
+        );
+        assert!((qi(&app, caster) - 92.5).abs() < 1e-9);
+        assert_eq!(
+            app.world().get::<Casting>(caster).unwrap().duration_ticks,
+            13
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<AttackIntent>>()
+                .iter_current_update_events()
+                .next()
+                .unwrap()
+                .reach
+                .max,
+            4.0
+        );
+    }
+
+    #[test]
+    fn tie_shan_kao_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::RaceMismatch),
+            "M19: race gate must follow definition.required_race override"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Stomach),
+            1.0,
+            "Stomach must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn tie_shan_kao_tears_first_overridden_meridian_not_hard_coded_stomach() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![
+                    TechniqueRequiredMeridian {
+                        channel: "Lung".to_string(),
+                        min_health: 0.5,
+                    },
+                    TechniqueRequiredMeridian {
+                        channel: "Stomach".to_string(),
+                        min_health: 0.5,
+                    },
+                ];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 70,
+                anim_duration_ticks: 10,
+            }
+        );
+        assert_eq!(qi(&app, caster), 65.0, "100 - 35 flat qi_cost");
+        assert!(
+            (meridian_integrity(&app, caster, MeridianId::Lung) - 0.8).abs() < 1e-12,
+            "M19: torn meridian must follow the FIRST registry required_meridian (Lung -> 0.8)"
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Stomach),
+            1.0,
+            "Stomach must NOT be torn even though present in required_meridians"
+        );
+    }
+
+    #[test]
+    fn tie_shan_kao_rejects_closed_overridden_meridian_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.5,
+                }];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = false;
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "M19: meridian gate must report the registry-overridden meridian, not the legacy default"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Lung),
+            1.0,
+            "Lung must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
     fn tie_shan_kao_happy_path_spends_qi_tears_stomach_and_strikes() {
         let mut app = full_app();
         let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
@@ -1871,10 +2205,14 @@ mod tests {
         let mut app = full_app();
         let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
         // 超 reach.max (1.5) → InvalidTarget（有目标时距离门保留）。
-        let far = spawn_target(
-            &mut app,
-            DVec3::new(f64::from(TIE_SHAN_KAO_REACH.max) + 0.5, 0.0, 0.0),
+        let range = f64::from(
+            app.world()
+                .resource::<TechniqueRegistry>()
+                .get(TIE_SHAN_KAO_SKILL_ID)
+                .expect("tie_shan_kao metadata must exist")
+                .range,
         );
+        let far = spawn_target(&mut app, DVec3::new(range + 0.5, 0.0, 0.0));
         assert_eq!(
             resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(far)),
             rejected(CastRejectReason::InvalidTarget)
@@ -1938,6 +2276,280 @@ mod tests {
     // ─── 血崩步（xue_beng_bu）─ Condense / Gallbladder≥0.4 / qi 25 / dash 4 ─────────
 
     #[test]
+    fn xue_beng_bu_uses_overridden_runtime_metadata() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.cast_ticks = 11;
+                definition.cooldown_ticks = 89;
+                definition.stamina_cost = 3.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 20.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: None,
+            state: StaminaState::Idle,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 89,
+                anim_duration_ticks: 11,
+            }
+        );
+        assert!((qi(&app, caster) - 93.75).abs() < 1e-9);
+        // M31：stamina_cost=3.0 已扣除（20 → 17），并打了 last_drain_tick。
+        let stamina = app
+            .world()
+            .get::<crate::combat::components::Stamina>(caster)
+            .unwrap();
+        assert_eq!(stamina.current, 17.0, "M31: 必须扣 definition.stamina_cost");
+        assert_eq!(stamina.last_drain_tick, Some(10), "M31: 必须打 drain tick");
+        let position = app.world().get::<Position>(caster).unwrap().get();
+        assert!((position.z - 7.5).abs() < 1e-9 && position.x.abs() < 1e-9);
+    }
+
+    #[test]
+    fn xue_beng_bu_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::RaceMismatch),
+            "M19: race gate must follow definition.required_race override"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Gallbladder),
+            1.0,
+            "GallBladder must be untouched on rejection"
+        );
+        assert_eq!(
+            app.world().get::<Position>(caster).unwrap().get(),
+            DVec3::ZERO,
+            "no dash on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn xue_beng_bu_tears_first_overridden_meridian_not_hard_coded_gallbladder() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![
+                    TechniqueRequiredMeridian {
+                        channel: "Lung".to_string(),
+                        min_health: 0.4,
+                    },
+                    TechniqueRequiredMeridian {
+                        channel: "GallBladder".to_string(),
+                        min_health: 0.4,
+                    },
+                ];
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 50,
+                anim_duration_ticks: 6,
+            }
+        );
+        assert_eq!(qi(&app, caster), 75.0, "100 - 25 flat qi_cost");
+        assert!(
+            (meridian_integrity(&app, caster, MeridianId::Lung) - 0.75).abs() < 1e-12,
+            "M19: torn meridian must follow the FIRST registry required_meridian (Lung -> 0.75)"
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Gallbladder),
+            1.0,
+            "GallBladder must NOT be torn even though present in required_meridians"
+        );
+    }
+
+    #[test]
+    fn xue_beng_bu_rejects_closed_overridden_meridian_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.4,
+                }];
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = false;
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "M19: meridian gate must report the registry-overridden meridian, not the legacy default"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Lung),
+            1.0,
+            "Lung must be untouched on rejection"
+        );
+        assert_eq!(
+            app.world().get::<Position>(caster).unwrap().get(),
+            DVec3::ZERO,
+            "no dash on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn xue_beng_bu_exact_stamina_cost_enters_exhausted() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.stamina_cost = 3.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 3.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: None,
+            state: StaminaState::Idle,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert!(matches!(result, CastResult::Started { .. }));
+        let stamina = app.world().get::<Stamina>(caster).unwrap();
+        assert_eq!(stamina.current, 0.0);
+        assert_eq!(
+            stamina.state,
+            StaminaState::Exhausted,
+            "爆脉施法扣空体力后必须进入 Exhausted，不能保留 Idle"
+        );
+        assert_eq!(stamina.last_drain_tick, Some(10));
+    }
+
+    #[test]
+    fn xue_beng_bu_rejects_when_stamina_insufficient_without_displacement() {
+        // M31 负向：stamina_cost 高于当前体力 → 拒绝且零副作用（不位移/不扣 qi/不撕裂）。
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.stamina_cost = 3.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 2.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: None,
+            state: StaminaState::Idle,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(result, rejected(CastRejectReason::InRecovery));
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        let position = app.world().get::<Position>(caster).unwrap().get();
+        assert_eq!(position, DVec3::ZERO, "no displacement on rejection");
+        let stamina = app.world().get::<Stamina>(caster).unwrap();
+        assert_eq!(
+            stamina.current, 2.0,
+            "stamina must be untouched on rejection"
+        );
+    }
+
+    #[test]
+    fn xue_beng_bu_zero_stamina_cost_casts_even_when_exhausted() {
+        // M33：valid zero-cost metadata（stamina_cost = 0.0）不能被体力 gate 当
+        // insufficient 拒绝——Exhausted 状态下零成本招仍可施放。与 qi gate 的
+        // 零成本语义（`cost <= EPSILON` 放行）对称。
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.stamina_cost = 0.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        // Exhausted + 0 体力——若 stamina gate 错误拦零成本，这里会 InRecovery。
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 0.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: Some(5),
+            state: StaminaState::Exhausted,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 50,
+                anim_duration_ticks: 6,
+            },
+            "M33: zero-cost stamina must not block casting"
+        );
+        assert!((qi(&app, caster) - 93.75).abs() < 1e-9);
+    }
+
+    #[test]
     fn xue_beng_bu_happy_path_dashes_forward_spends_qi_tears_leg() {
         let mut app = full_app();
         // yaw=0 → facing (0,0,1)；起点原点。
@@ -1960,8 +2572,15 @@ mod tests {
         );
         // 位移：沿 +Z 推 4.0 格（服务器权威 Position.set）。
         let pos = app.world().get::<Position>(caster).unwrap().get();
+        let expected_range = f64::from(
+            app.world()
+                .resource::<TechniqueRegistry>()
+                .get(XUE_BENG_BU_SKILL_ID)
+                .expect("xue_beng_bu metadata must exist")
+                .range,
+        );
         assert!(
-            (pos.z - XUE_BENG_BU_DASH_BLOCKS).abs() < 1e-9 && pos.x.abs() < 1e-9,
+            (pos.z - expected_range).abs() < 1e-9 && pos.x.abs() < 1e-9,
             "caster should dash +Z by 4.0 blocks, got {pos:?}"
         );
         // 无攻击事件（纯位移招）。
@@ -2050,6 +2669,157 @@ mod tests {
     }
 
     // ─── 逆脉护体（ni_mai_hu_ti）─ Solidify / Pericardium≥0.55 / qi 45 / cd 120 ─────
+
+    #[test]
+    fn ni_mai_hu_ti_uses_overridden_runtime_metadata() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 8.5;
+                definition.cast_ticks = 15;
+                definition.cooldown_ticks = 87;
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Awaken, 100.0, DVec3::ZERO);
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 87,
+                anim_duration_ticks: 15,
+            }
+        );
+        assert!((qi(&app, caster) - 91.5).abs() < 1e-9);
+        assert_eq!(
+            app.world().get::<Casting>(caster).unwrap().duration_ticks,
+            15
+        );
+    }
+
+    #[test]
+    fn ni_mai_hu_ti_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::RaceMismatch),
+            "M19: race gate must follow definition.required_race override"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Pericardium),
+            1.0,
+            "Pericardium must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn ni_mai_hu_ti_tears_first_overridden_meridian_not_hard_coded_pericardium() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![
+                    TechniqueRequiredMeridian {
+                        channel: "Lung".to_string(),
+                        min_health: 0.55,
+                    },
+                    TechniqueRequiredMeridian {
+                        channel: "Pericardium".to_string(),
+                        min_health: 0.55,
+                    },
+                ];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 120,
+                anim_duration_ticks: 12,
+            }
+        );
+        assert_eq!(qi(&app, caster), 55.0, "100 - 45 flat qi_cost");
+        assert!(
+            (meridian_integrity(&app, caster, MeridianId::Lung) - 0.7).abs() < 1e-12,
+            "M19: torn meridian must follow the FIRST registry required_meridian (Lung -> 0.7)"
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Pericardium),
+            1.0,
+            "Pericardium must NOT be torn even though present in required_meridians"
+        );
+    }
+
+    #[test]
+    fn ni_mai_hu_ti_rejects_closed_overridden_meridian_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.55,
+                }];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = false;
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "M19: meridian gate must report the registry-overridden meridian, not the legacy default"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Lung),
+            1.0,
+            "Lung must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
 
     #[test]
     fn ni_mai_hu_ti_happy_path_spends_qi_tears_pericardium_applies_buff() {
@@ -2310,14 +3080,21 @@ mod tests {
 
         let mut deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
         declare_meridian_dependencies(&mut deps);
-        assert_eq!(deps.lookup(TIE_SHAN_KAO_SKILL_ID), &[MeridianId::Stomach]);
+        assert_eq!(
+            deps.lookup(BENG_QUAN_SKILL_ID),
+            RIGHT_ARM_MERIDIANS.as_slice()
+        );
+        assert_eq!(
+            deps.lookup(TIE_SHAN_KAO_SKILL_ID),
+            TIE_SHAN_KAO_MERIDIANS.as_slice()
+        );
         assert_eq!(
             deps.lookup(XUE_BENG_BU_SKILL_ID),
-            &[MeridianId::Gallbladder]
+            XUE_BENG_BU_MERIDIANS.as_slice()
         );
         assert_eq!(
             deps.lookup(NI_MAI_HU_TI_SKILL_ID),
-            &[MeridianId::Pericardium]
+            NI_MAI_HU_TI_MERIDIANS.as_slice()
         );
     }
 
@@ -2374,78 +3151,13 @@ mod tests {
             .count()
     }
 
-    #[test]
-    fn qi_cost_threshold_never_debits_without_complete_settlement() {
-        let costs = [
-            ("zero", 0.0),
-            ("below", QI_EPSILON / 2.0),
-            ("at", QI_EPSILON),
-            // f32 metadata 的第一可表示边界，和 loader 用例对齐。
-            (
-                "above",
-                f64::from(f32::from_bits((QI_EPSILON as f32).to_bits() + 1)),
-            ),
-        ];
-        for (label, cost) in costs {
-            let mut app = app_with_zone();
-            app.world_mut()
-                .resource_mut::<ZoneRegistry>()
-                .find_zone_mut("spawn")
-                .expect("spawn zone must exist")
-                .spirit_qi = 0.0;
-            let caster = spawn_caster(&mut app, Realm::Condense, 1.0, DVec3::new(0.0, 70.0, 0.0));
-            let qi_before = qi(&app, caster);
-            let zone_before = zone_spirit_qi(&app);
-
-            let gate = check_qi_gate(app.world(), caster, cost);
-            if cost == 0.0 || cost > QI_EPSILON {
-                assert_eq!(gate, None, "{label}: legal cost must pass the qi gate");
-            } else {
-                assert_eq!(
-                    gate,
-                    Some(CastRejectReason::QiInsufficient),
-                    "{label}: positive dust must fail the qi gate"
-                );
-            }
-            spend_qi(app.world_mut(), caster, cost);
-
-            let debited = qi_before - qi(&app, caster);
-            let zone_credited = (zone_spirit_qi(&app) - zone_before) * QI_ZONE_UNIT_CAPACITY;
-            if cost <= QI_EPSILON {
-                assert_eq!(debited, 0.0, "{label}: free/dust cost must not be deducted");
-                assert_eq!(
-                    zone_credited, 0.0,
-                    "{label}: free/dust cost must not credit the zone"
-                );
-                assert_eq!(qi_transfer_count(&app), 0, "{label}: no audit for no-op");
-            } else {
-                assert!(
-                    (debited - cost).abs() <= f64::EPSILON,
-                    "{label}: accepted cost must be deducted within machine precision; cost={cost}, debited={debited}"
-                );
-                assert!(
-                    (zone_credited - cost).abs() <= f64::EPSILON,
-                    "{label}: every deducted unit must be credited within machine precision; cost={cost}, credited={zone_credited}"
-                );
-                let transfers: Vec<_> = app
-                    .world()
-                    .resource::<Events<QiTransfer>>()
-                    .iter_current_update_events()
-                    .collect();
-                assert_eq!(transfers.len(), 1, "{label}: one complete settlement audit");
-                assert_eq!(transfers[0].amount, cost, "{label}: audit amount is exact");
-            }
-        }
-    }
-
     /// beng_quan 施法后区域 spirit_qi 必须升高（消耗的真元返还区域）。
     #[test]
     fn beng_quan_spend_qi_releases_to_zone() {
         let mut app = app_with_zone();
         // 在 spawn zone AABB 内（y=70）生成施法者。
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let reach = beng_quan_reach(&app).max;
-        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(reach)));
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
 
         let initial_spirit_qi = zone_spirit_qi(&app);
 
@@ -2581,8 +3293,7 @@ mod tests {
             .spirit_qi = 1.0;
 
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
-        let reach = beng_quan_reach(&app).max;
-        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(reach)));
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
 
         let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
 

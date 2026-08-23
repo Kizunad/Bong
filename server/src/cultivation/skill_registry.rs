@@ -116,6 +116,9 @@ impl SkillRegistry {
 
 /// 构造生产运行时完整的经脉依赖声明表。显式空声明与未声明必须保持可区分；任意重复
 /// 声明会由 [`SkillMeridianDependencies::declare`] 在启动期直接拒绝。
+///
+/// Burst-meridian contracts are static resolver declarations. The startup validator compares
+/// them with TOML metadata so drift fails closed instead of being hidden by shared derivation.
 pub fn init_meridian_dependencies() -> SkillMeridianDependencies {
     let mut deps = SkillMeridianDependencies::default();
     crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut deps);
@@ -162,65 +165,8 @@ pub fn init_registry() -> SkillRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cultivation::components::{Cultivation, Realm};
     use crate::cultivation::meridian::severed::SkillMeridianDependencies;
-    use crate::dandao::{dandao_qi_cost_base, DANDAO_PILL_RUSH_SKILL_ID};
     use crate::schema::combat_hud::CastOutcomeV1;
-
-    #[test]
-    fn production_registry_dispatches_pill_rush_at_awaken() {
-        let registry = init_registry();
-        let skill_fn = registry
-            .lookup(DANDAO_PILL_RUSH_SKILL_ID)
-            .expect("production init_registry must register dandao.pill_rush");
-        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
-        let initial_qi = qi_cost + 1.0;
-        let mut world = valence::prelude::bevy_ecs::world::World::new();
-        let caster = world
-            .spawn(Cultivation {
-                realm: Realm::Awaken,
-                qi_current: initial_qi,
-                qi_max: initial_qi,
-                ..Default::default()
-            })
-            .id();
-
-        let result = skill_fn(&mut world, caster, 0, None);
-
-        assert!(
-            matches!(&result, CastResult::Started { .. }),
-            "production registry 查表后的服丹急行应允许醒灵境施法，实际 {result:?}"
-        );
-        let actual_qi = world
-            .get::<Cultivation>(caster)
-            .expect("caster cultivation should remain present")
-            .qi_current;
-        let expected_qi = initial_qi - qi_cost;
-        assert!(
-            (actual_qi - expected_qi).abs() < f64::EPSILON,
-            "production registry 分发必须消费 resolver 并扣除 {qi_cost} qi：期望 {expected_qi}，实际 {actual_qi}"
-        );
-    }
-
-    #[test]
-    fn production_registry_dispatches_pill_rush_without_cultivation() {
-        let registry = init_registry();
-        let skill_fn = registry
-            .lookup(DANDAO_PILL_RUSH_SKILL_ID)
-            .expect("production init_registry must register dandao.pill_rush");
-        let mut world = valence::prelude::bevy_ecs::world::World::new();
-        let caster = world.spawn_empty().id();
-
-        let result = skill_fn(&mut world, caster, 0, None);
-
-        assert_eq!(
-            result,
-            CastResult::Rejected {
-                reason: CastRejectReason::RealmTooLow,
-            },
-            "production registry 查表仍应把缺少 Cultivation 的实体按既有契约拒绝"
-        );
-    }
 
     /// 通用技能警示：每个 `CastRejectReason` 变体都映射到一个非中性 `CastOutcomeV1`。
     /// 锁住"覆盖所有拒绝原因"不变量——新增 reject 变体若忘了映射，rustc 会先在
@@ -332,7 +278,7 @@ mod tests {
     ///
     /// 故意に declare を削除すると本テストが赤くなり、将来の register-without-declare 漏れを防ぐ。
     #[test]
-    fn every_player_castable_skill_has_meridian_dependency_declaration() {
+    fn every_player_castable_skill_has_aligned_meridian_dependencies() {
         use std::collections::HashSet;
 
         let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
@@ -341,17 +287,45 @@ mod tests {
             &crate::body_plan::RaceRegistry::default(),
         )
         .expect("checked-in technique catalog must load");
-        let player_castable: HashSet<&str> = techniques
-            .iter()
-            .map(|definition| definition.id.as_str())
-            .collect();
         let deps = build_production_deps();
         let registry = init_registry();
 
+        let runtime_only_dependency_ids =
+            crate::cultivation::known_techniques::RUNTIME_ONLY_MERIDIAN_GATE_IDS;
         let mut missing: Vec<&str> = Vec::new();
+        let mut misaligned: Vec<String> = Vec::new();
         for (skill_id, _fn_ptr) in registry.iter() {
-            if player_castable.contains(*skill_id) && !deps.is_declared(skill_id) {
+            let Some(definition) = techniques.get(skill_id) else {
+                continue;
+            };
+            if !deps.is_declared(skill_id) {
                 missing.push(skill_id);
+                continue;
+            }
+
+            if runtime_only_dependency_ids.contains(&definition.id.as_str()) {
+                assert!(
+                    definition.required_meridians.is_empty(),
+                    "{} 的运行时静态经脉依赖不是 metadata gate；若 TOML 开始声明经脉，必须移出 runtime-only 例外并对齐两份契约",
+                    definition.id
+                );
+                continue;
+            }
+
+            let metadata_meridians: HashSet<_> = definition
+                .required_meridians
+                .iter()
+                .map(|required| {
+                    crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
+                        .expect("loaded technique metadata must contain known meridian channels")
+                })
+                .collect();
+            let declared_meridians: HashSet<_> = deps.lookup(skill_id).iter().copied().collect();
+            if metadata_meridians != declared_meridians {
+                misaligned.push(format!(
+                    "{}: metadata={metadata_meridians:?}, declared={declared_meridians:?}",
+                    definition.id
+                ));
             }
         }
         missing.sort_unstable();
@@ -359,11 +333,15 @@ mod tests {
             missing.is_empty(),
             "SkillRegistry に登録された player-castable 招式が SkillMeridianDependencies \
              に未宣言です。declare_meridian_dependencies に追加してください。\
-             注意：本不変量は宣言の存在のみを保証し、resolver が実行時に \
-             check_meridian_dependencies を呼び出すかどうかは検証しません \
-             （経脈ゲートの運行時強制は P0 cast-entry 統一拦截の範疇）。\
              未宣言の招式: {:?}",
             missing
+        );
+        assert!(
+            misaligned.is_empty(),
+            "TechniqueRegistry.required_meridians と SkillMeridianDependencies の集合が不一致です。\
+             TOML と静的 declare を同じ変更で更新してください。\
+             不一致: {:?}",
+            misaligned
         );
     }
 

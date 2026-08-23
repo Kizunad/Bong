@@ -113,7 +113,7 @@ fn cast_condense_edge(
 
     // 去掉"目标无效"门禁（Option B）：凝锋是近战剑势，准星没对准也照常挥出，
     // target 透传 Option —— 有目标命中、无目标 resolver 跳过即空挥（不命中、无误伤）。
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -163,7 +163,7 @@ fn cast_qi_slash(
 
     // 去掉"目标无效"门禁（Option B）：剑气斩是方向招，准星没对准也照常释放，target
     // 透传 Option —— 有目标命中、无目标 resolver 跳过即空斩；朝向无目标时落到玩家面朝向。
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -178,7 +178,7 @@ fn cast_qi_slash(
         target,
         issued_at_tick: ctx.now_tick,
         reach: AttackReach::new(ctx.definition.range, 0.0),
-        qi_invest: ctx.definition.qi_cost,
+        qi_invest: ctx.definition.qi_cost as f32,
         wound_kind: WoundKind::Cut,
         source: AttackSource::SwordPathQiSlash,
         debug_command: None,
@@ -242,7 +242,7 @@ fn cast_resonance(
         Err(reason) => return CastResult::Rejected { reason },
     };
 
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -307,7 +307,7 @@ fn cast_manifest(
     };
     // 去掉"目标无效"门禁（Option B）：化形是方向招，准星没对准也照常释放，target 透传
     // Option —— 有目标命中、无目标 resolver 跳过即空放（不命中、无误伤）。
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -1267,7 +1267,7 @@ mod tests {
     #[test]
     fn qi_slash_runtime_consumes_overridden_metadata_fields() {
         let (mut app, caster) = setup_app();
-        let configured_qi_cost = 7.25_f32;
+        let configured_qi_cost = 7.25_f64;
         let configured_stamina_cost = 4.5_f32;
         let configured_cast_ticks = 17;
         let configured_cooldown_ticks = 29;
@@ -1301,7 +1301,7 @@ mod tests {
         );
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - f64::from(configured_qi_cost)).abs() < 1e-6,
+            (qi_before - qi_after - configured_qi_cost).abs() < 1e-6,
             "qi charge must use overridden metadata: {qi_before} -> {qi_after}"
         );
         let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
@@ -1320,7 +1320,7 @@ mod tests {
             "attack reach must use overridden metadata range"
         );
         assert_eq!(
-            attack.qi_invest, configured_qi_cost,
+            attack.qi_invest as f64, configured_qi_cost,
             "attack qi investment must use the same overridden qi cost"
         );
         let casting = app
@@ -1790,9 +1790,9 @@ mod tests {
 
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - f64::from(qi_slash.qi_cost)).abs() < 1e-6,
-            "qi_current 应扣 {} (f64::from(qi_slash.qi_cost))，实际差值 {}",
-            f64::from(qi_slash.qi_cost),
+            (qi_before - qi_after - qi_slash.qi_cost).abs() < 1e-6,
+            "qi_current 应扣 {}，实际差值 {}",
+            qi_slash.qi_cost,
             qi_before - qi_after
         );
         let intent = app
@@ -2140,16 +2140,16 @@ mod tests {
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
 
-        // qi_current 应减少 f64::from(qi_slash.qi_cost)。
+        // qi_current 应减少 qi_slash.qi_cost。
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
-            "qi_current 应扣 {} (f64::from(qi_slash.qi_cost))，实际差 {}",
-            f64::from(qi_slash.qi_cost),
+            (qi_before - qi_after - qi_slash.qi_cost).abs() < 1e-9,
+            "qi_current 应扣 {}，实际差 {}",
+            qi_slash.qi_cost,
             qi_before - qi_after,
         );
 
-        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = f64::from(qi_slash.qi_cost)。
+        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = qi_slash.qi_cost。
         let release: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
@@ -2163,9 +2163,9 @@ mod tests {
             release.len()
         );
         assert!(
-            (release[0].amount - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
-            "ReleaseToZone.amount 应等于 f64::from(qi_slash.qi_cost)={:.1}（全额归 zone），实际 {}",
-            f64::from(qi_slash.qi_cost),
+            (release[0].amount - qi_slash.qi_cost).abs() < 1e-9,
+            "ReleaseToZone.amount 应等于 qi_slash.qi_cost={:.1}（全额归 zone），实际 {}",
+            qi_slash.qi_cost,
             release[0].amount,
         );
 
@@ -2227,7 +2227,7 @@ mod tests {
             "有 bond 时应有 1 笔 Channeling audit event，实际 {}",
             channeling.len()
         );
-        let expected_injected = f64::from(qi_slash.qi_cost) * super::super::bond::QI_INJECT_RATIO;
+        let expected_injected = qi_slash.qi_cost * super::super::bond::QI_INJECT_RATIO;
         assert!(
             (channeling[0].amount - expected_injected).abs() < 1e-9,
             "Channeling amount = cost × QI_INJECT_RATIO = {expected_injected:.2}，实际 {}",
@@ -2240,7 +2240,7 @@ mod tests {
             "有 bond 时仍应有 1 笔 ReleaseToZone，实际 {}",
             release.len()
         );
-        let expected_remainder = f64::from(qi_slash.qi_cost) - expected_injected;
+        let expected_remainder = qi_slash.qi_cost - expected_injected;
         assert!(
             (release[0].amount - expected_remainder).abs() < 1e-9,
             "ReleaseToZone amount = cost - injected = {expected_remainder:.2}，实际 {}",
@@ -2296,9 +2296,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "Mortal 灵剑全部 cost 归 zone");
         assert!(
-            (release[0].amount - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
-            "全额归 zone = f64::from(qi_slash.qi_cost)={:.1}，实际 {}",
-            f64::from(qi_slash.qi_cost),
+            (release[0].amount - qi_slash.qi_cost).abs() < 1e-9,
+            "全额归 zone = qi_slash.qi_cost={:.1}，实际 {}",
+            qi_slash.qi_cost,
             release[0].amount,
         );
     }
@@ -2337,9 +2337,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "剑鸣无 bond 应有 1 笔 ReleaseToZone");
         assert!(
-            (release[0].amount - f64::from(resonance.qi_cost)).abs() < 1e-9,
-            "ReleaseToZone = f64::from(resonance.qi_cost)={:.1}，实际 {}",
-            f64::from(resonance.qi_cost),
+            (release[0].amount - resonance.qi_cost).abs() < 1e-9,
+            "ReleaseToZone = resonance.qi_cost={:.1}，实际 {}",
+            resonance.qi_cost,
             release[0].amount,
         );
     }
@@ -2364,9 +2364,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "化形无 bond 应有 1 笔 ReleaseToZone");
         assert!(
-            (release[0].amount - f64::from(manifest.qi_cost)).abs() < 1e-9,
-            "ReleaseToZone = f64::from(manifest.qi_cost)={:.1}，实际 {}",
-            f64::from(manifest.qi_cost),
+            (release[0].amount - manifest.qi_cost).abs() < 1e-9,
+            "ReleaseToZone = manifest.qi_cost={:.1}，实际 {}",
+            manifest.qi_cost,
             release[0].amount,
         );
     }

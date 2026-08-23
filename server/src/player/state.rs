@@ -13,7 +13,9 @@ use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::{KnownTechniques, TechniqueDispatch, TechniqueRegistry};
+use crate::cultivation::known_techniques::{
+    has_dedicated_input_consumer, KnownTechniques, TechniqueDispatch, TechniqueRegistry,
+};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
@@ -110,9 +112,10 @@ impl PlayerUiPrefs {
             let SkillSlotPersist::Skill { skill_id } = persist else {
                 continue;
             };
-            let invalid = registry
-                .get(skill_id)
-                .is_none_or(|definition| definition.dispatch == TechniqueDispatch::DedicatedInput);
+            let invalid = has_dedicated_input_consumer(skill_id)
+                || registry.get(skill_id).is_none_or(|definition| {
+                    definition.dispatch == TechniqueDispatch::DedicatedInput
+                });
             if invalid {
                 *persist = SkillSlotPersist::Empty;
                 changed = true;
@@ -137,11 +140,12 @@ impl PlayerUiPrefs {
                     .map(|instance_id| SkillSlot::Item { instance_id })
                     .unwrap_or_default(),
                 SkillSlotPersist::Skill { skill_id } => {
-                    let valid = registry.is_none_or(|registry| {
-                        registry.get(skill_id).is_some_and(|definition| {
-                            definition.dispatch != TechniqueDispatch::DedicatedInput
-                        })
-                    });
+                    let valid = !has_dedicated_input_consumer(skill_id)
+                        && registry.is_none_or(|registry| {
+                            registry.get(skill_id).is_some_and(|definition| {
+                                definition.dispatch != TechniqueDispatch::DedicatedInput
+                            })
+                        });
                     if valid {
                         SkillSlot::Skill {
                             skill_id: skill_id.clone(),

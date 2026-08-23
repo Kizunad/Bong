@@ -84,7 +84,7 @@ cooldown_ticks = 40
 range = 2.8
 icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
 category = "attack"
-dispatch = "dedicated_input"
+dispatch = "direct_generic"
 
 [[techniques]]
 id = "shield_block"
@@ -101,7 +101,7 @@ cooldown_ticks = 0
 range = 0.0
 icon_texture = "bong-client:textures/gui/items/skill_scroll_shield_block.png"
 category = "defense"
-dispatch = "dedicated_input"
+dispatch = "direct_generic"
 
 [[techniques]]
 id = "burst_meridian.beng_quan"
@@ -760,6 +760,7 @@ required_race = { kind = "humanoid" }
 qi_cost = 0.0
 stamina_cost = 0.0
 cast_ticks = 80
+# u32::MAX is the protocol sentinel for a one-shot cooldown.
 cooldown_ticks = 4294967295
 range = 100.0
 icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_heaven_gate.png"
