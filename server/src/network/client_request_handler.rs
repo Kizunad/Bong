@@ -16,9 +16,9 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, BlockPos, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager,
-    EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
-    UniqueId, Username, With, Without,
+    bevy_ecs, BlockPos, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager, EventReader,
+    EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource, UniqueId,
+    Username, With, Without,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -94,8 +94,8 @@ use crate::inventory::{
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
 use crate::lingtian::requests::PendingLingtianRequest;
-use crate::lingtian::LingtianPlot;
 use crate::lingtian::session::{ReplenishSource, SessionMode};
+use crate::lingtian::LingtianPlot;
 use crate::mineral::probe::is_probe_target_in_range;
 use crate::mineral::MineralProbeIntent;
 use crate::movement::{MovementAction, MovementActionIntent};
@@ -6721,10 +6721,12 @@ mod tests {
             .spawn((
                 client_bundle,
                 Lifecycle::default(),
-                Position::new(DVec3::new(0.5, 64.5, 0.5)),
                 CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
 
         send_gate_test_payload(
             &mut app,
@@ -6775,6 +6777,8 @@ mod tests {
         app.world_mut()
             .entity_mut(client)
             .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(1, 64, 0), None));
 
         let send = |app: &mut App, payload: serde_json::Value| {
             app.world_mut()
@@ -6897,6 +6901,8 @@ mod tests {
         app.world_mut()
             .entity_mut(client)
             .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(0, 64, 0), None));
         app.world_mut()
             .resource_mut::<Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
@@ -7117,6 +7123,63 @@ mod tests {
                 .is_none(),
             "out-of-reach workbench must be rejected before the open event"
         );
+
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
+        app.world_mut()
+            .entity_mut(workbench)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({ "type": "workbench_open", "v": 1, "entity_id": entity_id }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::craft::WorkbenchOpenRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "cross-dimension workbench must be rejected before the open event"
+        );
+
+        app.world_mut()
+            .entity_mut(workbench)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .entity_mut(workbench)
+            .remove::<WorkbenchBlock>();
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({ "type": "workbench_open", "v": 1, "entity_id": entity_id }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::craft::WorkbenchOpenRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "a target without WorkbenchBlock must be rejected before the open event"
+        );
+
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({ "type": "workbench_open", "v": 1, "entity_id": entity_id + 999 }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::craft::WorkbenchOpenRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "an unresolved workbench entity id must be rejected before the open event"
+        );
     }
 
     #[test]
@@ -7208,6 +7271,84 @@ mod tests {
             app.world().get::<PlayerInventory>(client).unwrap().revision,
             revision_before,
             "gate rejection must leave the pill inventory revision unchanged"
+        );
+
+        app.world_mut()
+            .entity_mut(elder)
+            .insert(DyingElderState::Plea);
+        app.world_mut()
+            .entity_mut(elder)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "give_dan_to_elder",
+                "v": 1,
+                "pill_instance_id": 9001,
+                "elder_entity_id": elder_id
+            }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::fauna::dying_elder::GiveDanToElderIntent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "cross-dimension elder must be rejected before the give-dan intent"
+        );
+
+        app.world_mut()
+            .entity_mut(elder)
+            .insert(CurrentDimension(DimensionKind::Overworld))
+            .insert(Position::new(DVec3::new(100.0, 64.0, 100.0)));
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "give_dan_to_elder",
+                "v": 1,
+                "pill_instance_id": 9001,
+                "elder_entity_id": elder_id
+            }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::fauna::dying_elder::GiveDanToElderIntent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "out-of-reach elder must be rejected before the give-dan intent"
+        );
+
+        app.world_mut()
+            .entity_mut(elder)
+            .insert(Position::new(DVec3::new(0.5, 64.0, 0.5)));
+        send_gate_test_payload(
+            &mut app,
+            client,
+            serde_json::json!({
+                "type": "give_dan_to_elder",
+                "v": 1,
+                "pill_instance_id": 9001,
+                "elder_entity_id": elder_id + 999
+            }),
+        );
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<crate::fauna::dying_elder::GiveDanToElderIntent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "an unresolved elder entity id must be rejected before the give-dan intent"
+        );
+        assert_eq!(
+            app.world().get::<PlayerInventory>(client).unwrap().revision,
+            revision_before,
+            "all live gate denials must preserve the pill inventory revision"
         );
     }
 
