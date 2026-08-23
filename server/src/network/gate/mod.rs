@@ -6,6 +6,8 @@
 //! [`GateContext`].  In particular, an absent requester component is never
 //! interpreted as a safe default.
 
+pub mod budget;
+
 use crate::world::dimension::DimensionKind;
 use valence::prelude::DVec3;
 
