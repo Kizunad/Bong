@@ -233,7 +233,10 @@ gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments \
                and (.body | contains("<!-- kody-codereview")))
       | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
 
-# ② 无意见那一轮只有 issue comment、不带 SHA，必须靠"晚于本轮触发评论"来绑定：
+# ② 无意见那一轮只有 issue comment、不带 SHA。**这段是"配对不干净时"才用的备选**
+#    （主路径见下面「能证 vs 证不了」一节：先看 ① 有没有行内意见，再按配对法推定；
+#     Kody 常在 push 后自动审完、补发触发它不重跑，所以别把这段当成必经之路）。
+#    用它时靠"晚于本轮触发评论"来绑定：
 #    触发评论必须**精确匹配**，不能用 contains：Kody 自己那条"代码审查完成"的
 #    使用指南里就带着 `@kody start-review` 字样，contains 会把它当成触发评论，
 #    于是 TRIGGER_AT 永远等于最新那条 Kody 评论，这个校验就自废了（实测 #2061
@@ -249,7 +252,7 @@ TRIGGER_AT=$(gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
 #    （不加 `// empty` 时 jq 给的是字符串 "null"，`"2026..." > "null"` 恰好为 false
 #      而侥幸 fail-closed —— 别依赖这个 ASCII 巧合。）
 if [ -z "$TRIGGER_AT" ]; then
-  echo "本轮没发过 @kody start-review ⇒ 没有可采信的 clean 结论，先补发触发评论" >&2
+  echo "本轮没发过 @kody start-review ⇒ 这条备选路径不成立，回主路径（配对法/推新 commit）" >&2
   exit 1
 fi
 #    这里认的是 `<!-- kody-codereview-completed-`（**带 -completed-**），不是裸标记。
