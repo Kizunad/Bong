@@ -37,6 +37,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "season",
     "shader_push",
     "shrine",
+    // bot e2e sparring 场景的 dev 通道（/sparring invite <username>）
+    "sparring",
     "spawn",
     "stamina",
     // plan-worldgen-v4 P5：画廊审阅闭环 save 命令（/structure save <name>）
@@ -122,6 +124,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "shader_push broadcast",
     "shader_push set <name:string> <value:double>",
     "shrine <action:string>",
+    "sparring invite <target:string>",
     "spawn",
     "stamina set <value:float>",
     // plan-worldgen-v4 P5：画廊审阅闭环 save 命令（覆盖原 .nbt）
@@ -207,6 +210,7 @@ mod tests {
                 "season",
                 "shader_push",
                 "shrine",
+                "sparring",
                 "spawn",
                 "stamina",
                 "structure",

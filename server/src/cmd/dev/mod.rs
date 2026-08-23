@@ -28,6 +28,7 @@ pub mod riskmap;
 pub mod season;
 pub mod shader_push;
 pub mod shrine;
+pub mod sparring;
 pub mod spawn;
 pub mod stamina;
 pub mod supply_coffin;
@@ -168,6 +169,7 @@ pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     tppoi::register(app);
     tpzone::register(app);
     shrine::register(app);
+    sparring::register(app);
     wound::register(app);
     tsy_spawn::register(app);
     npc_scenario::register(app);

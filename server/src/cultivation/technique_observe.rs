@@ -225,6 +225,44 @@ mod tests {
     }
 
     #[test]
+    fn observe_uses_overridden_registry_grade_for_chance() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("woliu.burst", |definition| {
+                definition.grade = "profound".to_string()
+            });
+        let mut meridians = MeridianSystem::default();
+        for id in [MeridianId::Lung, MeridianId::Heart] {
+            meridians.get_mut(id).opened = true;
+            meridians.get_mut(id).integrity = 1.0;
+        }
+
+        let outcome = evaluate_observe_attempt(
+            &registry,
+            &KnownTechniques::default(),
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &meridians,
+            None,
+            ObserveLearnerContext {
+                observer_color: &QiColor::default(),
+                practice_log: None,
+                insight_modifiers: &InsightModifiers::new(),
+            },
+            ObserveAttemptContext {
+                technique_id: "woliu.burst",
+                distance_blocks: 4.0,
+                has_line_of_sight: true,
+                cooldown_ready: true,
+            },
+            true,
+        );
+
+        assert_eq!(outcome, ObserveOutcome::Eligible { chance: 0.01 });
+    }
+
+    #[test]
     fn observe_yellow_technique_base_chance_0_05() {
         let chance = observe_learn_chance(
             TechniqueGrade::Yellow,

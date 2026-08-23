@@ -613,6 +613,9 @@ mod tests {
         );
         app.insert_resource(crate::qi_physics::WorldQiAccount::default());
         app.add_event::<crate::qi_physics::QiTransfer>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::npc::lifecycle::register(&mut app);
         brain::register(&mut app);
         app.insert_resource(CapturedAttackIntents::default());
@@ -1118,6 +1121,69 @@ mod tests {
             .world()
             .get::<ThinkerBuilder>(disciple)
             .expect("disciple should carry the live faction/social thinker");
+    }
+
+    #[test]
+    fn spawned_relic_guard_loadout_uses_injected_registry() {
+        let mut baseline = App::new();
+        baseline.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
+        baseline.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        baseline.update();
+        baseline.update();
+        let baseline_guard = only_spawned_npc(&mut baseline);
+        assert!(
+            baseline
+                .world()
+                .get::<crate::cultivation::known_techniques::KnownTechniques>(baseline_guard)
+                .expect("baseline relic guard must carry a technique loadout")
+                .entries
+                .iter()
+                .any(|entry| entry.id == "npc.heal_basic"),
+            "默认 registry 下守卫必须持有 npc.heal_basic，否则排除断言恒真"
+        );
+
+        let registry =
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
+                "npc.heal_basic",
+                |definition| {
+                    definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                        species: vec![crate::body_plan::RaceId::new("whale")],
+                    };
+                },
+            );
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+        let known = app
+            .world()
+            .get::<crate::cultivation::known_techniques::KnownTechniques>(guard)
+            .expect("spawned relic guard must carry a technique loadout");
+        assert!(
+            known
+                .entries
+                .iter()
+                .all(|entry| entry.id != "npc.heal_basic"),
+            "human relic guard must exclude runtime whale-only technique; loadout={:?}",
+            known.entries
+        );
     }
 
     #[test]
@@ -2213,6 +2279,9 @@ mod tests {
         );
         app.insert_resource(crate::qi_physics::WorldQiAccount::default());
         app.add_event::<crate::qi_physics::QiTransfer>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::npc::lifecycle::register(&mut app);
         app.insert_resource(RoguePopulationSeedConfig {
             target_count: 0,

@@ -1,20 +1,22 @@
 //! Contract-first primitives for C2S request gates.
 //!
-//! This module is deliberately independent from wire decoding, ECS queries,
-//! and gameplay mutation.  An adapter resolves the requester's and target's
-//! authoritative facts into [`GateContext`]; this module only evaluates the
-//! pure declaration against those facts.
+//! This module deliberately has no ECS queries, wire decoding, or mutation
+//! hooks.  A gate specification describes what a later adapter must prove;
+//! this module only evaluates the proofs that are already present in a
+//! [`GateContext`].  In particular, an absent requester component is never
+//! interpreted as a safe default.
 
 use crate::world::dimension::DimensionKind;
 use valence::prelude::DVec3;
 
-/// Small, allocation-free position representation used by the pure rules.
+/// A position accepted by the pure distance predicates.
 pub type GatePosition = [f64; 3];
 
-/// Stable identity supplied by an authenticated authority adapter.
+/// A stable identity supplied by an authenticated authority adapter.
 pub type GateAuthority = String;
 
-/// Convert common server position types into the pure gate representation.
+/// Convert the position types used by server systems into the small, pure
+/// representation used by this module.
 pub trait IntoGatePosition {
     fn into_gate_position(self) -> GatePosition;
 }
@@ -37,47 +39,39 @@ impl IntoGatePosition for DVec3 {
     }
 }
 
-/// Geometry used by a distance profile.
+/// The way a distance profile measures a requester-target pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistanceMetric {
-    /// Compare squared Euclidean distance, avoiding a square root.
+    /// Compare the squared Euclidean distance, avoiding a square root.
     Euclidean3dSquared,
-    /// Compare the largest absolute difference on any axis.
+    /// Compare the largest absolute component difference.
     Chebyshev3d,
 }
 
-/// Spatial policy attached to a [`GateSpec`].
+/// Distance policy attached to a [`GateSpec`].
+///
+/// `Profile` intentionally carries both the metric and radius at the call
+/// site.  This prevents a radius-only helper from silently changing the shape
+/// of an interaction region.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum DistanceRule {
-    /// This request has no spatial target.
+    /// No spatial target is required by this gate.
     #[default]
     None,
-    /// A metric-aware, inclusive radius.  The caller must provide both parts
-    /// so a radius cannot silently change the shape of the interaction area.
+    /// A named policy's metric and inclusive radius.
     Profile {
         metric: DistanceMetric,
         max_blocks: f64,
     },
 }
 
-/// Frozen Workbench reach in blocks.
-pub const WORKBENCH_MAX_BLOCKS: f64 = 3.0;
-/// Frozen dropped-loot reach in blocks.
-pub const DROPPED_LOOT_MAX_BLOCKS: f64 = 2.5;
-/// Frozen supply-coffin opening reach in blocks.
-pub const SUPPLY_COFFIN_OPEN_MAX_BLOCKS: f64 = 4.5;
-/// Frozen external-session tolerance in blocks.
-pub const EXTERNAL_SESSION_MAX_BLOCKS: f64 = 6.5;
-/// Frozen nearby-interaction reach in blocks.
-pub const NEARBY_INTERACT_MAX_BLOCKS: f64 = 6.0;
-
 impl DistanceRule {
-    /// Generic metric-aware profile constructor.
+    /// Construct a profile without allowing a caller to forget its metric.
     pub const fn profile(metric: DistanceMetric, max_blocks: f64) -> Self {
         Self::Profile { metric, max_blocks }
     }
 
-    /// Frozen Workbench profile: Chebyshev3d, 3.0 blocks.
+    /// The server-authoritative Workbench reach profile.
     pub const fn workbench() -> Self {
         Self::Profile {
             metric: DistanceMetric::Chebyshev3d,
@@ -85,38 +79,34 @@ impl DistanceRule {
         }
     }
 
-    /// Frozen DroppedLoot profile: Euclidean3dSquared, 2.5 blocks.
+    /// The existing dropped-loot pickup reach profile.
     pub const fn dropped_loot() -> Self {
         Self::euclidean3d_squared(DROPPED_LOOT_MAX_BLOCKS)
     }
 
-    /// Frozen SupplyCoffinOpen profile: Euclidean3dSquared, 4.5 blocks.
+    /// The existing supply-coffin opening reach profile.
     pub const fn supply_coffin_open() -> Self {
         Self::euclidean3d_squared(SUPPLY_COFFIN_OPEN_MAX_BLOCKS)
     }
 
-    /// Frozen ExternalSession profile: Euclidean3dSquared, 6.5 blocks.
+    /// The existing external-session tolerance profile.
     pub const fn external_session() -> Self {
         Self::euclidean3d_squared(EXTERNAL_SESSION_MAX_BLOCKS)
     }
 
-    /// Frozen NearbyInteract profile: Euclidean3dSquared, 6.0 blocks.
+    /// The common nearby-interaction reach profile.
     pub const fn nearby_interact() -> Self {
         Self::euclidean3d_squared(NEARBY_INTERACT_MAX_BLOCKS)
     }
 
-    /// Named constant for callers that prefer a value over a constructor.
+    /// Named constants for callers that prefer frozen values over constructors.
     pub const WORKBENCH: Self = Self::workbench();
-    /// Named constant for callers that prefer a value over a constructor.
     pub const DROPPED_LOOT: Self = Self::dropped_loot();
-    /// Named constant for callers that prefer a value over a constructor.
     pub const SUPPLY_COFFIN_OPEN: Self = Self::supply_coffin_open();
-    /// Named constant for callers that prefer a value over a constructor.
     pub const EXTERNAL_SESSION: Self = Self::external_session();
-    /// Named constant for callers that prefer a value over a constructor.
     pub const NEARBY_INTERACT: Self = Self::nearby_interact();
 
-    /// Construct a squared-Euclidean profile.
+    /// Euclidean profile constructor.  The comparison remains squared.
     pub const fn euclidean3d_squared(max_blocks: f64) -> Self {
         Self::Profile {
             metric: DistanceMetric::Euclidean3dSquared,
@@ -124,7 +114,7 @@ impl DistanceRule {
         }
     }
 
-    /// Construct a Chebyshev profile.
+    /// Chebyshev profile constructor.
     pub const fn chebyshev3d(max_blocks: f64) -> Self {
         Self::Profile {
             metric: DistanceMetric::Chebyshev3d,
@@ -132,7 +122,7 @@ impl DistanceRule {
         }
     }
 
-    /// Return the metric and inclusive radius, if this is a spatial profile.
+    /// Return the metric and radius for a profile.
     pub const fn profile_parts(self) -> Option<(DistanceMetric, f64)> {
         match self {
             Self::None => None,
@@ -140,11 +130,11 @@ impl DistanceRule {
         }
     }
 
-    /// Check a resolved requester-target pair.
+    /// Check an already-resolved requester and target position.
     ///
-    /// Both the boundary and negative coordinates are handled naturally by
-    /// the delta calculation.  Invalid radii and non-finite coordinates fail
-    /// closed so NaN cannot turn into an accidental allow.
+    /// The boundary is inclusive.  Invalid radii (negative, NaN, or
+    /// otherwise non-finite) fail closed instead of accidentally becoming an
+    /// unbounded gate.
     pub fn allows<P, Q>(self, requester: P, target: Q) -> bool
     where
         P: IntoGatePosition,
@@ -159,6 +149,7 @@ impl DistanceRule {
                 if !max_blocks.is_finite() || max_blocks < 0.0 {
                     return false;
                 }
+
                 if requester
                     .iter()
                     .chain(target.iter())
@@ -201,15 +192,16 @@ impl DistanceRule {
                             || normalized_distance_squared <= normalized_radius * normalized_radius
                     }
                     DistanceMetric::Chebyshev3d => {
-                        let distance = dx.abs().max(dy.abs()).max(dz.abs());
-                        distance <= max_blocks
+                        let chebyshev = dx.abs().max(dy.abs()).max(dz.abs());
+                        chebyshev <= max_blocks
                     }
                 }
             }
         }
     }
 
-    /// Check positions already resolved into a [`GateContext`].
+    /// Check the position fields from a context, failing closed when a
+    /// spatial profile has not been resolved yet.
     pub fn allows_context(self, context: &GateContext) -> bool {
         match self {
             Self::None => true,
@@ -221,17 +213,25 @@ impl DistanceRule {
     }
 }
 
-/// How the target dimension relates to the requester's dimension.
+/// Workbench interaction radius in blocks.
+pub const WORKBENCH_MAX_BLOCKS: f64 = 3.0;
+pub const DROPPED_LOOT_MAX_BLOCKS: f64 = 2.5;
+pub const SUPPLY_COFFIN_OPEN_MAX_BLOCKS: f64 = 4.5;
+pub const EXTERNAL_SESSION_MAX_BLOCKS: f64 = 6.5;
+pub const NEARBY_INTERACT_MAX_BLOCKS: f64 = 6.0;
+
+/// How the target dimension relates to the requester dimension.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DimensionRule {
-    /// Both dimensions must be present, but they may differ.
+    /// The target may be in any dimension, but both dimensions still need to
+    /// be present so a missing component cannot bypass a gate.
     Any,
-    /// Requester and target must share a dimension.
+    /// Requester and target must be in the same logical dimension.
     #[default]
     Same,
-    /// Both requester and target must be in the Overworld.
+    /// The requester and target must both be in the Overworld.
     OverworldOnly,
-    /// Both requester and target must be in the given dimension.
+    /// Both sides must be in the specified dimension.
     Exact(DimensionKind),
 }
 
@@ -252,34 +252,32 @@ impl DimensionRule {
         }
     }
 
-    /// Evaluate the dimensions stored in a context.
     pub fn allows_context(self, context: &GateContext) -> bool {
         self.allows(context.dimension, context.target_dimension)
     }
 }
 
-/// Authenticated ownership relationship required by a gate.
+/// Which authenticated identity relationship a request must prove.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OwnershipRule {
-    /// No target-owner comparison is needed.
+    /// No target-owner comparison is required.  The requester authority is
+    /// still required by [`GateSpec::check`].
     #[default]
     None,
-    /// The resolved target is public.
+    /// The target is public once it has been resolved.
     Any,
-    /// Target authority must equal the requester's authority.
+    /// Target authority must match the requester authority.
     Requester,
-    /// Durable owner authority must equal the requester's authority.
+    /// Alias used by durable owner adapters.
     Owner,
-    /// Session participant authority must equal the requester's authority.
+    /// A session participant/owner adapter has supplied the same identity on
+    /// both sides.
     Participant,
-    /// Explicit spelling for an authenticated owner adapter.
+    /// Explicit authenticated-owner spelling for contract readers.
     AuthenticatedOwner,
 }
 
 impl OwnershipRule {
-    /// Evaluate ownership facts.  A requester authority is required even for
-    /// public/no-owner rules; [`GateSpec::check`] reports that missing fact as
-    /// [`GateDenialReason::MissingAuthorityContext`] before calling this.
     pub fn allows(self, context: &GateContext) -> bool {
         let Some(requester) = context.authority.as_deref() else {
             return false;
@@ -294,8 +292,8 @@ impl OwnershipRule {
     }
 }
 
-/// Authoritative target resolution mode.  These variants describe how a
-/// later adapter resolves a target; they do not store client-provided ids.
+/// Authoritative target resolution mode.  These variants do not store
+/// client-provided ids or entities; adapters resolve them before evaluation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GateTarget {
     #[default]
@@ -311,14 +309,25 @@ pub enum GateTarget {
     ZoneId,
 }
 
-/// Domain state prerequisites declared by a gate and evaluated by a later
-/// domain adapter.
+impl GateTarget {
+    fn needs_target_position(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    fn needs_target_dimension(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// State adapters use this id list to express preconditions without putting
+/// domain-specific state machines into the gate primitive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StateGateId {
     PlayerAlive,
     TargetExists,
     SessionOpen,
     SessionParticipant,
+    SessionOwner,
     OwnerAuthenticated,
     InventoryOpen,
     WorkbenchPresent,
@@ -329,7 +338,8 @@ pub enum StateGateId {
     Custom(&'static str),
 }
 
-/// Stable internal denial reasons.  These are not client-facing text.
+/// Stable internal denial reasons.  The list is intentionally independent of
+/// client-facing text; callers can safely fold target-resolution reasons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GateDenialReason {
     UnsupportedVersion,
@@ -346,8 +356,10 @@ pub enum GateDenialReason {
     RateLimited,
 }
 
+/// Compatibility spelling used by the frozen `RequestGate::NoGate` contract.
+pub type NoGateReason = GateDenialReason;
+
 impl GateDenialReason {
-    /// Stable machine-readable spelling for logs and future reject adapters.
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnsupportedVersion => "unsupported_version",
@@ -372,14 +384,11 @@ impl std::fmt::Display for GateDenialReason {
     }
 }
 
-/// Reason carried by an explicit `RequestGate::NoGate` declaration.
+/// Resolved requester/target facts supplied by an authority adapter.
 ///
-/// It is an alias of the stable denial vocabulary for this contract-first
-/// slice: a no-gate declaration is never implicit allow, and the reason is
-/// still machine-readable by the future middleware.
-pub type NoGateReason = GateDenialReason;
-
-/// Facts resolved by an authority adapter before a [`GateSpec`] is checked.
+/// All fields are optional because ECS queries and session lookups can fail.
+/// `GateSpec::check` treats missing requester position, dimension, or
+/// authority as [`GateDenialReason::MissingAuthorityContext`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GateContext {
     pub position: Option<GatePosition>,
@@ -391,7 +400,6 @@ pub struct GateContext {
 }
 
 impl GateContext {
-    /// Create a context with requester facts and no resolved target.
     pub fn new(
         position: Option<GatePosition>,
         dimension: Option<DimensionKind>,
@@ -405,7 +413,6 @@ impl GateContext {
         }
     }
 
-    /// Add resolved target facts.
     pub fn with_target(
         mut self,
         position: Option<GatePosition>,
@@ -418,16 +425,8 @@ impl GateContext {
         self
     }
 
-    /// Set a requester position from a common server position type.
-    pub fn with_requester_position<P>(mut self, position: P) -> Self
-    where
-        P: IntoGatePosition,
-    {
-        self.position = Some(position.into_gate_position());
-        self
-    }
-
-    /// Set a target position from a common server position type.
+    /// Builder for callers that already have a concrete position type such as
+    /// Valence's `DVec3`.
     pub fn with_target_position<P>(mut self, position: P) -> Self
     where
         P: IntoGatePosition,
@@ -436,12 +435,20 @@ impl GateContext {
         self
     }
 
-    fn requester_complete(&self) -> bool {
+    pub fn with_requester_position<P>(mut self, position: P) -> Self
+    where
+        P: IntoGatePosition,
+    {
+        self.position = Some(position.into_gate_position());
+        self
+    }
+
+    pub fn requester_complete(&self) -> bool {
         self.position.is_some() && self.dimension.is_some() && self.authority.is_some()
     }
 }
 
-/// Complete, immutable declaration consumed by a future request middleware.
+/// A complete declaration consumed by the future request middleware.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GateSpec {
     pub target: GateTarget,
@@ -452,24 +459,23 @@ pub struct GateSpec {
 }
 
 impl GateSpec {
-    /// Check the pure gate facts in deterministic order.
+    /// Evaluate the pure portion of a gate in deterministic order.
     pub fn check(&self, context: &GateContext) -> Result<(), GateDenialReason> {
         if !context.requester_complete() {
             return Err(GateDenialReason::MissingAuthorityContext);
         }
 
-        let has_target = !matches!(self.target, GateTarget::None);
-        if has_target && context.target_dimension.is_none() {
+        if self.target.needs_target_dimension() && context.target_dimension.is_none() {
             return Err(GateDenialReason::TargetNotFound);
         }
-        if has_target
-            && !matches!(self.distance, DistanceRule::None)
-            && context.target_position.is_none()
+
+        if !matches!(self.distance, DistanceRule::None)
+            && (self.target.needs_target_position() && context.target_position.is_none())
         {
             return Err(GateDenialReason::TargetNotFound);
         }
 
-        let dimension_allowed = if has_target {
+        let dimension_allowed = if self.target.needs_target_dimension() {
             self.dimension.allows_context(context)
         } else {
             // A target-less request has no target dimension to compare.  The
@@ -487,12 +493,13 @@ impl GateSpec {
         if !self.distance.allows_context(context) {
             return Err(GateDenialReason::OutOfReach);
         }
+
         if !self.ownership.allows(context) {
             return Err(GateDenialReason::NotOwner);
         }
 
-        // `state` is a declaration only.  Domain adapters evaluate these ids
-        // immediately before dispatch and mutation in a later slice.
+        // State ids are declarations only.  Their domain adapters are applied
+        // after this primitive and before the eventual mutation.
         Ok(())
     }
 
@@ -501,7 +508,8 @@ impl GateSpec {
     }
 }
 
-/// Either a gate specification or an explicit fail-closed no-gate reason.
+/// A request either declares a gate or explicitly records why no gate can be
+/// used.  `NoGate` never means "implicitly allow".
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RequestGate {
     Spec(GateSpec),
@@ -527,53 +535,60 @@ mod tests {
 
     const EPSILON: f64 = 1.0e-9;
 
-    fn profile_parts(rule: DistanceRule) -> (DistanceMetric, f64) {
-        rule.profile_parts()
-            .expect("frozen profile must carry metric and radius")
-    }
-
     #[test]
-    fn frozen_profiles_pin_metric_and_radius() {
-        assert_eq!(
-            profile_parts(DistanceRule::workbench()),
-            (DistanceMetric::Chebyshev3d, WORKBENCH_MAX_BLOCKS)
-        );
-        assert_eq!(
-            profile_parts(DistanceRule::dropped_loot()),
-            (DistanceMetric::Euclidean3dSquared, DROPPED_LOOT_MAX_BLOCKS)
-        );
-        assert_eq!(
-            profile_parts(DistanceRule::supply_coffin_open()),
-            (
-                DistanceMetric::Euclidean3dSquared,
-                SUPPLY_COFFIN_OPEN_MAX_BLOCKS
-            )
-        );
-        assert_eq!(
-            profile_parts(DistanceRule::external_session()),
-            (
-                DistanceMetric::Euclidean3dSquared,
-                EXTERNAL_SESSION_MAX_BLOCKS
-            )
-        );
-        assert_eq!(
-            profile_parts(DistanceRule::nearby_interact()),
-            (
-                DistanceMetric::Euclidean3dSquared,
-                NEARBY_INTERACT_MAX_BLOCKS
-            )
-        );
-        assert_eq!(DistanceRule::WORKBENCH, DistanceRule::workbench());
-        assert_eq!(DistanceRule::DROPPED_LOOT, DistanceRule::dropped_loot());
-    }
-
-    #[test]
-    fn euclidean_squared_is_inclusive_and_uses_all_three_axes() {
+    fn euclidean_profile_accepts_inside_exact_boundary_and_rejects_outside() {
         let rule = DistanceRule::euclidean3d_squared(5.0);
 
         assert!(rule.allows([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]));
         assert!(rule.allows([0.0, 0.0, 0.0], [1.0, 2.0, 2.0]));
         assert!(!rule.allows([0.0, 0.0, 0.0], [3.0, 4.0 + EPSILON, 0.0]));
+    }
+
+    #[test]
+    fn frozen_profiles_pin_metric_radius_and_named_constants() {
+        assert_eq!(
+            DistanceRule::workbench().profile_parts(),
+            Some((DistanceMetric::Chebyshev3d, WORKBENCH_MAX_BLOCKS))
+        );
+        assert_eq!(
+            DistanceRule::dropped_loot().profile_parts(),
+            Some((DistanceMetric::Euclidean3dSquared, DROPPED_LOOT_MAX_BLOCKS))
+        );
+        assert_eq!(
+            DistanceRule::supply_coffin_open().profile_parts(),
+            Some((
+                DistanceMetric::Euclidean3dSquared,
+                SUPPLY_COFFIN_OPEN_MAX_BLOCKS
+            ))
+        );
+        assert_eq!(
+            DistanceRule::external_session().profile_parts(),
+            Some((
+                DistanceMetric::Euclidean3dSquared,
+                EXTERNAL_SESSION_MAX_BLOCKS
+            ))
+        );
+        assert_eq!(
+            DistanceRule::nearby_interact().profile_parts(),
+            Some((
+                DistanceMetric::Euclidean3dSquared,
+                NEARBY_INTERACT_MAX_BLOCKS
+            ))
+        );
+        assert_eq!(DistanceRule::WORKBENCH, DistanceRule::workbench());
+        assert_eq!(DistanceRule::DROPPED_LOOT, DistanceRule::dropped_loot());
+        assert_eq!(
+            DistanceRule::SUPPLY_COFFIN_OPEN,
+            DistanceRule::supply_coffin_open()
+        );
+        assert_eq!(
+            DistanceRule::EXTERNAL_SESSION,
+            DistanceRule::external_session()
+        );
+        assert_eq!(
+            DistanceRule::NEARBY_INTERACT,
+            DistanceRule::nearby_interact()
+        );
     }
 
     #[test]
@@ -606,11 +621,8 @@ mod tests {
         let chebyshev = DistanceRule::workbench();
         let euclidean = DistanceRule::euclidean3d_squared(3.0);
 
-        // Chebyshev accepts the cube corner; Euclidean does not.
         assert!(chebyshev.allows([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]));
         assert!(!euclidean.allows([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]));
-        // Euclidean accepts a 3-4-0 point at radius 5; Chebyshev radius 3
-        // rejects the same shape because one axis exceeds the cube.
         assert!(DistanceRule::euclidean3d_squared(5.0).allows([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]));
         assert!(!chebyshev.allows([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]));
     }
@@ -628,25 +640,85 @@ mod tests {
     }
 
     #[test]
-    fn none_distance_rule_does_not_require_or_inspect_positions() {
-        let rule = DistanceRule::None;
+    fn none_distance_rule_ignores_positions_and_invalid_profiles_fail_closed() {
+        assert!(DistanceRule::None.allows([f64::NAN, f64::INFINITY, -1.0], [0.0, 0.0, 0.0]));
+        assert!(DistanceRule::None.allows_context(&GateContext::default()));
+        assert_eq!(DistanceRule::None.profile_parts(), None);
 
-        assert!(rule.allows([f64::NAN, f64::INFINITY, -1.0], [0.0, 0.0, 0.0]));
-        assert!(rule.allows_context(&GateContext::default()));
-        assert_eq!(rule.profile_parts(), None);
-    }
-
-    #[test]
-    fn invalid_profiles_and_non_finite_coordinates_fail_closed() {
-        let zero = DistanceRule::euclidean3d_squared(0.0);
-
-        assert!(zero.allows([1.0, -2.0, 3.0], [1.0, -2.0, 3.0]));
+        assert!(DistanceRule::euclidean3d_squared(0.0).allows([1.0, -2.0, 3.0], [1.0, -2.0, 3.0]));
         assert!(!DistanceRule::euclidean3d_squared(-1.0).allows([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]));
         assert!(
             !DistanceRule::euclidean3d_squared(f64::NAN).allows([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
         );
-        assert!(!DistanceRule::workbench().allows([f64::NAN, 0.0, 0.0], [0.0, 0.0, 0.0]));
-        assert!(!DistanceRule::workbench().allows([0.0, 0.0, 0.0], [0.0, f64::INFINITY, 0.0]));
+    }
+
+    #[test]
+    fn chebyshev_workbench_accepts_three_axis_boundary() {
+        let rule = DistanceRule::workbench();
+
+        assert!(rule.allows([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]));
+        assert!(rule.allows([0.0, 0.0, 0.0], [-3.0, 0.0, 2.5]));
+        assert!(!rule.allows([0.0, 0.0, 0.0], [3.0 + EPSILON, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn non_finite_coordinates_are_rejected() {
+        let chebyshev = DistanceRule::workbench();
+        let euclidean = DistanceRule::euclidean3d_squared(3.0);
+
+        assert!(!chebyshev.allows([f64::NAN, 0.0, 0.0], [0.0, 0.0, 0.0]));
+        assert!(!chebyshev.allows([0.0, 0.0, 0.0], [0.0, f64::NAN, 0.0]));
+        assert!(!euclidean.allows([f64::INFINITY, 0.0, 0.0], [0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn missing_position_dimension_or_authority_rejects_by_default() {
+        let spec = GateSpec {
+            target: GateTarget::BlockPosition,
+            distance: DistanceRule::workbench(),
+            dimension: DimensionRule::Same,
+            ownership: OwnershipRule::Requester,
+            state: &[],
+        };
+
+        let complete = GateContext::new(
+            Some([0.0, 0.0, 0.0]),
+            Some(DimensionKind::Overworld),
+            Some("player-1".to_owned()),
+        )
+        .with_target(
+            Some([3.0, 3.0, 3.0]),
+            Some(DimensionKind::Overworld),
+            Some("player-1".to_owned()),
+        );
+        assert!(spec.allows(&complete));
+
+        let missing_position = GateContext {
+            position: None,
+            ..complete.clone()
+        };
+        assert_eq!(
+            spec.check(&missing_position),
+            Err(GateDenialReason::MissingAuthorityContext)
+        );
+
+        let missing_dimension = GateContext {
+            dimension: None,
+            ..complete.clone()
+        };
+        assert_eq!(
+            spec.check(&missing_dimension),
+            Err(GateDenialReason::MissingAuthorityContext)
+        );
+
+        let missing_authority = GateContext {
+            authority: None,
+            ..complete
+        };
+        assert_eq!(
+            spec.check(&missing_authority),
+            Err(GateDenialReason::MissingAuthorityContext)
+        );
     }
 
     fn complete_context() -> GateContext {
@@ -698,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_requester_or_target_facts_fail_closed() {
+    fn missing_target_facts_fail_closed_for_targeted_specs() {
         let spec = GateSpec {
             target: GateTarget::ProtocolEntityId,
             distance: DistanceRule::nearby_interact(),
@@ -707,27 +779,6 @@ mod tests {
             state: &[],
         };
         let complete = complete_context();
-
-        for missing in [
-            GateContext {
-                position: None,
-                ..complete.clone()
-            },
-            GateContext {
-                dimension: None,
-                ..complete.clone()
-            },
-            GateContext {
-                authority: None,
-                ..complete.clone()
-            },
-        ] {
-            assert_eq!(
-                spec.check(&missing),
-                Err(GateDenialReason::MissingAuthorityContext),
-                "missing requester authority context must not pass a gate"
-            );
-        }
 
         assert_eq!(
             spec.check(&GateContext {
@@ -743,16 +794,6 @@ mod tests {
             }),
             Err(GateDenialReason::TargetNotFound)
         );
-    }
-
-    #[test]
-    fn dimension_and_ownership_rules_fail_closed_on_missing_context() {
-        let empty = GateContext::default();
-
-        assert!(!DimensionRule::Any.allows_context(&empty));
-        assert!(!OwnershipRule::Any.allows(&empty));
-        assert!(!DistanceRule::workbench().allows_context(&empty));
-        assert!(DistanceRule::None.allows_context(&empty));
     }
 
     #[test]
@@ -774,14 +815,20 @@ mod tests {
     }
 
     #[test]
+    fn dimension_and_ownership_rules_fail_closed_on_missing_context() {
+        let context = GateContext::default();
+        assert!(!DimensionRule::Any.allows_context(&context));
+        assert!(!OwnershipRule::Any.allows(&context));
+        assert!(!DistanceRule::workbench().allows_context(&context));
+    }
+
+    #[test]
     fn request_gate_no_gate_is_an_explicit_denial() {
         let gate = RequestGate::NoGate(GateDenialReason::InvalidState);
-
         assert_eq!(
             gate.check(&GateContext::default()),
             Err(GateDenialReason::InvalidState)
         );
         assert!(!gate.allows(&GateContext::default()));
-        assert_eq!(GateDenialReason::OutOfReach.code(), "out_of_reach");
     }
 }

@@ -81,12 +81,14 @@ BOT_E2E_RUN_TAG="${BOT_E2E_RUN_TAG:-$(( $$ % 100000 ))}"
 export BOT_E2E_RUN_TAG
 BOT_E2E_OPERATOR_TAGS=(
   RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim
-  MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi FoRq
+  MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
   Zlb Zre Alc Bob CoPl Coffin
   Big Typ Rng Stl
   Rein Term NewCh CoEn CoEnB CoLv CoLvB BR1 BR2 RW1 RW2 OO1 OO2 NRift
   GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux FoCj
   FoSc
+  TA TB DA DB SA
+  Charge Throw Switch
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
@@ -163,6 +165,7 @@ EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"
 EVIDENCE_DIR=""
 RUN_ID=""
 SERVER_LOG=""
+CALLER_SERVER_LOG="${BONG_SERVER_LOG:-}"
 SERVER_RUNTIME_DIR=""
 BOT_NOVICE_RASTER_DIR=""
 BOT_RASTER_READY_PAYLOAD=""
@@ -642,6 +645,28 @@ if [ "$server_ready" != "1" ]; then
   exit 1
 fi
 
+# Reuse mode does not start a child server, so keep the caller-owned log as the
+# evidence source. Never overwrite it with this run's unwritten evidence path;
+# without a readable caller log, the log-backed anqi scenarios remain disabled.
+if [ "$REUSE" = "1" ]; then
+  if [ -n "$CALLER_SERVER_LOG" ] && [ -r "$CALLER_SERVER_LOG" ]; then
+    SERVER_LOG="$CALLER_SERVER_LOG"
+  else
+    SERVER_LOG=""
+  fi
+fi
+
+# The anqi scenarios are part of --all when this harness owns both prerequisites:
+# Redis is reachable and a readable server log is available for consumer guards.
+# CI sets the same gate explicitly; this local guard prevents reuse mode without
+# an external log from pretending its negative evidence is covered.
+if [ -n "$SERVER_LOG" ] && [ -r "$SERVER_LOG" ] \
+  && { [ -n "${REDIS_URL:-}" ] || port_open 127.0.0.1 6379; }; then
+  export BOT_E2E_ANQI_REDIS=1
+else
+  unset BOT_E2E_ANQI_REDIS
+fi
+
 # ---- 场景 ----
 EXIT_CODE=0
 SCENARIOS_LOG="$EVIDENCE_DIR/scenarios.log"
@@ -703,7 +728,10 @@ elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then
 fi
 
 set +e
-BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \
+# BONG_SERVER_LOG 交给场景做正向派发证据：combat_anqi_throw_carrier 的空手
+# no-op 契约对 server→client 无可观测副作用，只能用 server 日志的
+# `client_request received` 证明意图确实抵达并反序列化成功。
+BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" BONG_SERVER_LOG="$SERVER_LOG" \
   python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1 | tee "$SCENARIOS_LOG"
 pipeline_status=("${PIPESTATUS[@]}")
 if [ "${pipeline_status[0]}" -ne 0 ]; then

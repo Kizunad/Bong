@@ -8,7 +8,7 @@
 //! icon_texture 恒为空串是显式契约（plan-skill-av-relink-v1 P0 决议，修正 plan
 //! 原文"从 technique_definition 取值"的前提错误）：quickslot 是纯 Item 槽
 //! （`QuickSlotBindings` 只绑 instance_id→template，无 Skill 变体，
-//! TechniqueRegistry 中不含 item template id），client 对空串按 item_id 走
+//! TechniqueRegistry 中不含 item template id，client 对空串按 item_id 走
 //! ItemIconRegistry 富解析（tools/ 子目录映射、armor tint、存在性探测、
 //! broken_artifact 兜底）；server 若回填 naive 模板路径，client 会走裸
 //! texture() 分支绕过富解析，造成工具/护甲类图标回归。只发给本人，不广播。

@@ -15,6 +15,12 @@ from bot.scenarios._combat_helpers import (
     wait_for_skill_binding,
 )
 
+# CI 上这些等的是 server 对具体请求的响应，而不是本地计算：实测挂掉那次进程里已经
+# 收了 3000~15000 条事件，10s 窗口在满载 runner 上不够用（同一 commit 重跑就换了个
+# 场景挂）。放宽只在**失败**路径上多花时间——成功时 wait_for 收到事件立刻返回，
+# 绿色用例的墙钟不变。
+SERVER_RESPONSE_TIMEOUT = 25.0
+
 DESCRIPTION = "/technique give 后用 skill_bar_bind/cast 施放 dugu.shoot_needle，并断言权威绑定、cast_sync、专属 VFX/战斗反馈"
 MODULES = ["combat", "skill", "network", "cmd"]
 
@@ -67,7 +73,7 @@ def _wait_authoritative_qi_state(
 
     return bot.wait_for(
         matches,
-        timeout=12.0,
+        timeout=SERVER_RESPONSE_TIMEOUT,
         description=(
             "t>%.3fs 后权威 player_state.spirit_qi=%.2f, "
             "spirit_qi_max=%.2f" % (anchor, expected_qi, expected_qi_max)
@@ -114,7 +120,7 @@ def _wait_successful_cast_sequence(bot, anchor: float):
         and event.data.get("payload", {}).get("slot") == SLOT
         and event.data.get("payload", {}).get("phase") == "casting"
         and event.data.get("payload", {}).get("outcome") == "none",
-        timeout=10.0,
+        timeout=SERVER_RESPONSE_TIMEOUT,
         description="凝针施放须先收到 slot=0 phase=casting outcome=none 的 typed cast_sync",
     )
 
@@ -136,7 +142,7 @@ def _wait_successful_cast_sequence(bot, anchor: float):
 
     return bot.wait_for(
         is_complete_after_casting,
-        timeout=10.0,
+        timeout=SERVER_RESPONSE_TIMEOUT,
         description="凝针施放须终止于 slot=0 phase=complete outcome=completed",
     )
 
@@ -147,13 +153,13 @@ def run(env) -> None:
 
         # 独孤凝针要求引气境和至少 1 真元；这些 dev 命令只做 bot e2e 铺垫。
         bot.cmd("realm set induce")
-        bot.expect_chat("[dev] realm set", timeout=10.0)
+        bot.expect_chat("[dev] realm set", timeout=SERVER_RESPONSE_TIMEOUT)
         bot.cmd("qi max 20")
-        bot.expect_chat("[dev] qi max", timeout=10.0)
+        bot.expect_chat("[dev] qi max", timeout=SERVER_RESPONSE_TIMEOUT)
         bot.cmd("qi set 10")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        bot.expect_chat("[dev] qi set", timeout=SERVER_RESPONSE_TIMEOUT)
         bot.cmd(f"technique give {SKILL_ID}")
-        bot.expect_chat(f"[dev] technique give `{SKILL_ID}`", timeout=10.0)
+        bot.expect_chat(f"[dev] technique give `{SKILL_ID}`", timeout=SERVER_RESPONSE_TIMEOUT)
 
         queue_npc_scenario(bot, "clear")
         spawn = queue_fight_target(bot)
@@ -173,11 +179,11 @@ def run(env) -> None:
         # 先锁定真元上限再清零，避免修炼恢复 tick 在施法解析前回填真元。
         max_zero_anchor = last_event_time(bot)
         bot.cmd("qi max 0")
-        bot.expect_chat("[dev] qi max", timeout=10.0)
+        bot.expect_chat("[dev] qi max", timeout=SERVER_RESPONSE_TIMEOUT)
         _wait_authoritative_qi_state(bot, max_zero_anchor, 0.0, 0.0)
         set_zero_anchor = last_event_time(bot)
         bot.cmd("qi set 0")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        bot.expect_chat("[dev] qi set", timeout=SERVER_RESPONSE_TIMEOUT)
         _wait_authoritative_qi_state(bot, set_zero_anchor, 0.0, 0.0)
         reject_anchor = last_event_time(bot)
         bot.intent(
@@ -195,7 +201,7 @@ def run(env) -> None:
             and event.data.get("payload", {}).get("slot") == SLOT
             and event.data.get("payload", {}).get("phase") == "idle"
             and event.data.get("payload", {}).get("outcome") == "reject_qi_insufficient",
-            timeout=10.0,
+            timeout=SERVER_RESPONSE_TIMEOUT,
             description="真元清零后凝针须 typed cast_sync 明确拒绝为 reject_qi_insufficient",
         )
 
@@ -203,11 +209,11 @@ def run(env) -> None:
         # resolver 按 OnCooldown→QiInsufficient 的既定门顺序遮住目标拒绝证据。
         max_restore_anchor = last_event_time(bot)
         bot.cmd("qi max 20")
-        bot.expect_chat("[dev] qi max", timeout=10.0)
+        bot.expect_chat("[dev] qi max", timeout=SERVER_RESPONSE_TIMEOUT)
         _wait_authoritative_qi_state(bot, max_restore_anchor, 0.0, 20.0)
         set_restore_anchor = last_event_time(bot)
         bot.cmd("qi set 10")
-        bot.expect_chat("[dev] qi set", timeout=10.0)
+        bot.expect_chat("[dev] qi set", timeout=SERVER_RESPONSE_TIMEOUT)
         _wait_authoritative_qi_state(bot, set_restore_anchor, 10.0, 20.0)
         anchor = last_event_time(bot)
         bot.intent(
@@ -225,7 +231,7 @@ def run(env) -> None:
             and event.t > anchor
             and event.data.get("type") == "play_anim"
             and event.data.get("anim_id") == ANIMATION_ID,
-            timeout=10.0,
+            timeout=SERVER_RESPONSE_TIMEOUT,
             description=(
                 "凝针 skill cast 后 typed VFX type=play_anim 且 anim_id 精确等于 "
                 f"{ANIMATION_ID}"
@@ -236,7 +242,7 @@ def run(env) -> None:
             and event.t > anchor
             and event.data.get("type") == "spawn_particle"
             and event.data.get("event_id") == PARTICLE_ID,
-            timeout=10.0,
+            timeout=SERVER_RESPONSE_TIMEOUT,
             description=(
                 "凝针 skill cast 后 typed VFX type=spawn_particle 且 event_id 精确等于 "
                 f"{PARTICLE_ID}"
@@ -244,7 +250,7 @@ def run(env) -> None:
         )
         bot.wait_for(
             lambda event: _is_dugu_audio_play(event, anchor),
-            timeout=10.0,
+            timeout=SERVER_RESPONSE_TIMEOUT,
             description=(
                 "凝针 skill cast 后 bong:audio/play JSON 须同时匹配 "
                 f"recipe_id={AUDIO_RECIPE_ID} 与 flag={AUDIO_FLAG}"
@@ -252,7 +258,7 @@ def run(env) -> None:
         )
         bot.wait_for(
             lambda event: event.t > anchor and is_outgoing_positive_hit(event),
-            timeout=10.0,
+            timeout=SERVER_RESPONSE_TIMEOUT,
             description="凝针 skill cast 后本 Bot 的 combat_event hit/outgoing=true/amount>0",
         )
         bot.assert_alive("技能栏施放凝针真元不足拒绝分支与正分支之后")

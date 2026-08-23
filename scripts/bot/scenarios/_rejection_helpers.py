@@ -65,11 +65,39 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
 # 在 Added<FaunaVisualKind> 上触发、fauna/mundane.rs mundane_fauna_negative_zone_wither_system
 # 在世界 qi 驱动下触发——均为 ambient 调度器/世界状态驱动，与任何 client_request
 # 无关）。其余 vfx（combat/forge/alchemy/breakthrough 等）均为请求驱动。
+# bong:rat_bite_nip 是 plan-ambient-threat-v1 的环境威胁咬击 AV
+# （server/src/combat/rat_bite.rs::emit_rat_bite_nip_av，由噬元鼠 AI 自发触发、
+# 跟任何 client_request 无关）。一次咬击会同时产生**三件**东西：
+#   ① combat_event(qi_damage, outgoing=false)   —— 见 _is_ambient_fauna_combat
+#   ② vfx_event(play_entity_anim, devour_rat.claw) —— 见 is_gameplay_side_effect
+#   ③ vfx_event(spawn_particle, bong:rat_bite_nip) —— 就是这里
+# 三件缺一个漏网，拒绝路径场景就会在 CI 上随机变红（①② 修完后 ③ 又挂了一次）。
 _AMBIENT_VFX_EVENT_IDS = frozenset(
-    {"bong:cultivation_absorb", "bong:fauna_spawn_dust"}
+    {"bong:cultivation_absorb", "bong:fauna_spawn_dust", "bong:rat_bite_nip"}
 )
 _AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage__",)
 
+
+
+def _is_ambient_fauna_combat(payload) -> bool:
+    """`combat_event` 是否是「bot 单纯挨打」—— 环境生物 AI 行为，非请求副作用。
+
+    实测（PR #2058 的 e2e）：野生噬元鼠会在探针窗口内跑过来咬 bot，产生
+    `combat_event{kind:qi_damage, outgoing:false}` + `vfx_event{play_entity_anim,
+    devour_rat.claw}`，把干净拒绝误判成"有玩法副作用"。同一 commit 连跑两次挂在
+    不同场景上，确认是环境噪声而不是代码问题。
+
+    这里按**归因**豁免而不是按 payload type 一刀切：只有全部条目都
+    `outgoing=false`（伤害是打到 bot 身上的）才算环境。任何 `outgoing=true`
+    说明 bot **打出了**伤害——那只可能来自被处理的请求，必须继续算副作用。
+    条目为空或结构不符一律返回 False（宁严勿松）。
+    """
+    if not isinstance(payload, dict):
+        return False
+    events = payload.get("events")
+    if not isinstance(events, list) or not events:
+        return False
+    return all(isinstance(e, dict) and e.get("outgoing") is False for e in events)
 
 
 def is_gameplay_side_effect(
@@ -104,8 +132,15 @@ def is_gameplay_side_effect(
             if not isinstance(payload, dict):
                 return True
             return inventory_fingerprint(payload) != inventory_fingerprint(baseline_snapshot)
+        if payload_type == "combat_event" and _is_ambient_fauna_combat(event.data.get("payload")):
+            return False
         return payload_type not in ambient_data
     if event.kind == "vfx_event":
+        # `play_entity_anim` 按 schema 定义就是**非玩家实体**（GeckoLib FaunaEntity）的
+        # 招式动画（server/src/schema/vfx_event.rs），由 NPC 自身 AI 驱动，且不带
+        # event_id（走 type 判别）——不豁免的话每次野兽在窗口内出手都会误报。
+        if event.data.get("type") == "play_entity_anim":
+            return False
         event_id = event.data.get("event_id")
         if not event_id:
             return True

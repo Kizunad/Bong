@@ -21,15 +21,15 @@ RUNTIME_PATH="$PATH"
 
 SESSION="bong"
 
-# 地形 raster manifest（server 读 BONG_TERRAIN_RASTER_PATH 决定是否加载真实地图）
-RASTER_MANIFEST="$ROOT/worldgen/generated/terrain-gen/rasters/manifest.json"
+# 地形 raster manifest（生成器已迁出；可用环境变量指定外部产物）
+RASTER_MANIFEST="${BONG_TERRAIN_RASTER_PATH:-$ROOT/generated/terrain-gen/rasters/manifest.json}"
 if [ -f "$RASTER_MANIFEST" ]; then
   BONG_TERRAIN_RASTER_PATH="$RASTER_MANIFEST"
   echo "[bong] terrain raster: $RASTER_MANIFEST"
 else
   BONG_TERRAIN_RASTER_PATH=""
   echo "[bong] WARN: raster manifest not found at $RASTER_MANIFEST — 将 fallback 扁平世界"
-  echo "       先跑: bash scripts/dev-reload.sh  (或 cd worldgen && .venv/bin/python -m scripts.terrain_gen --backend raster)"
+  echo "       先在 ../BongWorldGen 生成 raster，或设置 BONG_TERRAIN_RASTER_PATH 指向 manifest.json"
 fi
 
 # 检查 Redis

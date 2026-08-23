@@ -397,6 +397,17 @@ impl PersistenceSettings {
         }
     }
 
+    /// 旧测试夹具兼容构造器。亡者索引已并入 SQLite，历史调用方传入的目录不再参与
+    /// 持久化；保留该入口可让跨模块回归测试继续复用同一套 fixture。
+    #[cfg(test)]
+    pub fn with_paths(
+        db_path: impl Into<PathBuf>,
+        _deceased_dir: impl Into<PathBuf>,
+        server_run_id: impl Into<String>,
+    ) -> Self {
+        Self::with_db_path(db_path, server_run_id)
+    }
+
     pub fn db_path(&self) -> &Path {
         self.db_path.as_path()
     }

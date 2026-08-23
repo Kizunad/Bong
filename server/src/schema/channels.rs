@@ -1,6 +1,11 @@
 /// Redis channel names — must match @bong/schema channels.ts
 pub const CH_WORLD_STATE: &str = "bong:world_state";
 pub const CH_PLAYER_CHAT: &str = "bong:player_chat";
+// Bot e2e producer-side delivery fence. These are internal harness channels:
+// the request is consumed by the server bridge and the ack is queued after all
+// gameplay outbound messages already produced for the current tick.
+pub const CH_BOT_DELIVERY_FENCE_REQUEST: &str = "bong:bot/delivery_fence/request";
+pub const CH_BOT_DELIVERY_FENCE_ACK: &str = "bong:bot/delivery_fence/ack";
 pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
 pub const CH_TIANDAO_HUNT_NARRATION_REQUEST: &str = "bong:tiandao_hunt_narration_request";

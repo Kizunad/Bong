@@ -664,8 +664,8 @@ mod tests {
 
     #[test]
     fn iron_sword_v0_fan_tie_available_in_spawn_mineral_anchor() {
-        let anchors_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../worldgen/blueprint/mineral_anchors.json");
+        let anchors_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/mineral_anchors.json");
         let content =
             std::fs::read_to_string(&anchors_path).expect("mineral_anchors.json should exist");
         let root: serde_json::Value =
