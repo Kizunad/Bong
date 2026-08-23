@@ -208,6 +208,10 @@ class Bot:
         self._new_event = threading.Condition(self._lock)
         self._send_lock = threading.Lock()
         self._closing = False
+        # 是否应答 KeepAlive。默认 True（最大化宽容回归面是「不发 ClientSettings
+        # 但持续心跳」）；idle-timeout 场景要观察 server 侧的失联清理，须调 silent()
+        # 停掉心跳应答，让 server 的 keepalive 超时路径把连接判死。
+        self.respond_keepalive = True
 
         # 便捷状态镜像（都能从 events 重建，仅为场景少写样板）
         self.position: tuple[float, float, float] | None = None
@@ -233,6 +237,14 @@ class Bot:
         self._closing = True
         self.conn.close()
         self._reader_thread.join(timeout=2.0)
+
+    def silent(self) -> None:
+        """停掉 KeepAlive 应答（保持读取，观察 server 侧失联清理）。
+
+        用于 idle-timeout 场景：server 在最后一个未应答 KeepAlive 后 ~8s 会移除
+        Client 并关连接（valence keepalive.rs 8s period + 无应答判死）。
+        """
+        self.respond_keepalive = False
 
     @property
     def alive(self) -> bool:
@@ -268,7 +280,8 @@ class Bot:
 
         if packet_id == mc.S2C_KEEP_ALIVE:
             ka_id = reader.i64()
-            self._send(mc.C2S_KEEP_ALIVE, struct.pack(">q", ka_id))
+            if self.respond_keepalive:
+                self._send(mc.C2S_KEEP_ALIVE, struct.pack(">q", ka_id))
             self._emit("keepalive", {"id": ka_id})
         elif packet_id == mc.S2C_PLAYER_ACTION_RESPONSE:
             self._emit("player_action_response", {"sequence": reader.varint()})

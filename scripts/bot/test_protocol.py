@@ -117,6 +117,24 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
+    MOVE_DISTANCE,
+    MOVE_VERIFY_TOLERANCE,
+    POSITION_TOLERANCE,
+    _assert_restored_position,
+    _move_and_record,
+    _position_from_authoritative_event,
+)
+from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
+    _assert_surviving_connection,
+    _wait_keepalive_after,
+)
+from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
+    _wait_before_deadline,
+)
+from bot.scenarios.network_lifecycle_stale_session import (  # noqa: E402
+    _assert_inactive_session_state,
+)
 from bot.scenarios._npc_dialogue_helpers import (  # noqa: E402
     _scenario_spawn_matches,
     _trade_metadata,
@@ -4665,6 +4683,252 @@ class _CommandFakeBot(_FakeBot):
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
 
+
+class LifecycleReviewContractTest(unittest.TestCase):
+    def test_move_probe_rejects_partial_server_movement_even_when_local_mirror_reaches_target(self):
+        class MoveProbeFakeBot:
+            def __init__(self, authoritative_x: float):
+                self.authoritative_x = authoritative_x
+                self.events = [
+                    _FakeEvent(
+                        1.0,
+                        "pos_look",
+                        {"x": 100.0, "y": 72.0, "z": 8.0, "flags": 0},
+                    ),
+                    # Same Y as the /top response, but received before its chat
+                    # watermark; this stale frame must not be consumed as the probe.
+                    _FakeEvent(
+                        1.9,
+                        "pos_look",
+                        {"x": 101.0, "y": 90.0, "z": 8.0, "flags": 0},
+                    ),
+                ]
+                self.position = (100.0, 72.0, 8.0)
+
+            def events_of(self, kind: str):
+                return [event for event in self.events if event.kind == kind]
+
+            def move_to(self, x: float, y: float, z: float, **_kwargs):
+                # Model the local client mirror reaching x+5 even though the server
+                # later reports only x+1 through the authoritative probe.
+                self.position = (x, y, z)
+
+            def cmd(self, command: str):
+                assert command == "top"
+                self.events.extend(
+                    [
+                        # This same-Y frame arrives after the old pre-command
+                        # watermark but before the command feedback. A probe
+                        # anchored before the chat would incorrectly consume it.
+                        _FakeEvent(
+                            1.9,
+                            "pos_look",
+                            {"x": 105.0, "y": 90.0, "z": 8.0, "flags": 0},
+                        ),
+                        _FakeEvent(2.0, "chat", {"text": "Teleported to top at Y=90."}),
+                        _FakeEvent(
+                            2.1,
+                            "pos_look",
+                            {
+                                "x": self.authoritative_x,
+                                "y": 90.0,
+                                "z": 8.0,
+                                "flags": 0,
+                            },
+                        ),
+                    ]
+                )
+
+            def expect_chat(self, substring: str, timeout: float = 5.0):
+                return self.wait_for(
+                    lambda event: event.kind == "chat"
+                    and substring in event.data["text"],
+                    timeout,
+                    f"chat/{substring}",
+                )
+
+            def wait_for(self, predicate, timeout: float, description: str):
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"
+        ), self.assertRaisesRegex(AssertionError, "server 权威移动"):
+            _move_and_record(MoveProbeFakeBot(authoritative_x=101.0))
+
+        with mock.patch("bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"):
+            moved = _move_and_record(MoveProbeFakeBot(authoritative_x=105.0))
+        self.assertEqual(
+            moved,
+            (105.0, 90.0, 8.0),
+            "断连锚点必须使用 server PositionLook 的坐标，而不是客户端本地 mirror",
+        )
+
+    def test_restore_window_rejects_four_meter_reset_after_minimum_accepted_move(self):
+        # A 4m authoritative move is exactly the lower edge accepted by the
+        # 5m ±1m movement oracle. The restored-origin distance must nevertheless
+        # exceed the narrower restore window, so this boundary cannot false-pass.
+        partial_move = MOVE_DISTANCE - MOVE_VERIFY_TOLERANCE
+        self.assertEqual(partial_move, 4.0)
+        with self.assertRaisesRegex(AssertionError, "水平偏差"):
+            _assert_restored_position(
+                (100.0 + partial_move, 72.0, 8.0),
+                (100.0, 90.0, 8.0),
+            )
+        _assert_restored_position(
+            (100.0 + POSITION_TOLERANCE, 72.0, 8.0),
+            (100.0, 90.0, 8.0),
+        )
+
+    def test_authoritative_position_requires_absolute_xyz_position_look(self):
+        event = _FakeEvent(
+            3.0,
+            "pos_look",
+            {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 0},
+        )
+        self.assertEqual(
+            _position_from_authoritative_event(event, "移动后"),
+            (105.0, 72.0, 8.0),
+        )
+        with self.assertRaisesRegex(BotAssertionError, "绝对 XYZ"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "pos_look", {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 1}),
+                "移动后",
+            )
+        with self.assertRaisesRegex(BotAssertionError, "PositionLook"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "keepalive", {"id": 1}),
+                "移动后",
+            )
+
+    def test_inactive_craft_session_requires_cleared_join_state(self):
+        _assert_inactive_session_state(
+            {
+                "active": False,
+                "recipe_id": None,
+                "elapsed_ticks": 0,
+                "total_ticks": 0,
+                "completed_count": 0,
+                "total_count": 0,
+            },
+            "最终重连",
+        )
+        with self.assertRaisesRegex(AssertionError, "active=false"):
+            _assert_inactive_session_state(
+                {
+                    "active": True,
+                    "recipe_id": "workbench.weapon.stone_knife",
+                    "elapsed_ticks": 1,
+                    "total_ticks": 10,
+                    "completed_count": 0,
+                    "total_count": 2,
+                },
+                "最终重连",
+            )
+        with self.assertRaisesRegex(AssertionError, "recipe_id"):
+            _assert_inactive_session_state(
+                {
+                    "active": False,
+                    "recipe_id": "stale",
+                    "elapsed_ticks": 0,
+                    "total_ticks": 0,
+                    "completed_count": 0,
+                    "total_count": 0,
+                },
+                "最终重连",
+            )
+
+    def test_double_login_cross_connection_liveness_rejects_lost_peer(self):
+        class ProbeBot(_FakeBot):
+            def assert_alive(self, _context: str) -> None:
+                return None
+
+        bot = ProbeBot([_FakeEvent(4.0, "connection_lost", {})])
+        with self.assertRaisesRegex(AssertionError, "connection_lost"):
+            _assert_surviving_connection(bot, "并发阶段")
+
+
+class DoubleLoginScenarioTest(unittest.TestCase):
+    def test_keepalive_probe_rejects_historical_and_boundary_events(self):
+        marker = 2.0
+        bot = _FakeBot(
+            [
+                _FakeEvent(1.0, "keepalive", {"id": 1}),
+                _FakeEvent(marker, "keepalive", {"id": 2}),
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"t>2\.000s",
+            msg=(
+                "join/cleanup phase marker 之前或恰好 marker 时收到的 KeepAlive"
+                " 不得冒充该阶段的 surviving-connection 连续性证据"
+            ),
+        ):
+            _wait_keepalive_after(bot, marker, "重复登录阶段")
+
+    def test_keepalive_probe_returns_only_a_strictly_new_event(self):
+        marker = 2.0
+        new_event = _FakeEvent(2.001, "keepalive", {"id": 3})
+        bot = _FakeBot(
+            [
+                _FakeEvent(1.0, "keepalive", {"id": 1}),
+                _FakeEvent(marker, "keepalive", {"id": 2}),
+                new_event,
+            ]
+        )
+
+        observed = _wait_keepalive_after(bot, marker, "重复登录阶段")
+
+        self.assertIs(
+            observed,
+            new_event,
+            "KeepAlive 断言必须返回严格晚于 marker 的新事件，而不是历史/边界事件",
+        )
+
+    def test_post_cross_probe_requires_second_connection_heartbeat(self):
+        # The second connection had a heartbeat before first's cross-probe, then
+        # was removed. A second heartbeat after the probe is the only observation
+        # that closes that race; the stricter phase must reject this event stream.
+        bot = _FakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(3.0, "connection_lost", {}),
+            ]
+        )
+        with self.assertRaisesRegex(AssertionError, r"t>2\.500s"):
+            _wait_keepalive_after(bot, 2.5, "第一连接 cross-probe 后第二连接")
+
+
+class IdleTimeoutScenarioTest(unittest.TestCase):
+    def test_idle_waits_share_one_absolute_deadline(self):
+        class TimeoutCaptureBot:
+            def __init__(self):
+                self.timeouts = []
+
+            def wait_for(self, _predicate, timeout: float, description: str):
+                self.timeouts.append((timeout, description))
+                raise AssertionError("测试 fake 不提供事件")
+
+        bot = TimeoutCaptureBot()
+        deadline = 130.0
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_idle_timeout.time.monotonic",
+            side_effect=[100.0, 112.0],
+        ):
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "首个等待")
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "第二个等待")
+
+        self.assertEqual(
+            [timeout for timeout, _description in bot.timeouts],
+            [30.0, 18.0],
+            "第二个 idle 等待必须消费同一 absolute deadline 的剩余预算，不能重置为 30s",
+        )
 
 class _ReaderAlive:
     def __init__(self, alive: bool):
