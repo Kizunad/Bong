@@ -22,6 +22,47 @@ fail() {
     exit 1
 }
 
+# The reserved-id boundary is security-critical and must be pinned independently
+# from record metadata, permissions, or /proc fixtures.
+for signal_id in 0 1 -1 '' not-a-pid 1.5; do
+    if bong_server_validate_signal_id "$signal_id"; then
+        fail "reserved or malformed signal id '$signal_id' was accepted"
+    fi
+done
+for signal_id in 2 2147483647; do
+    bong_server_validate_signal_id "$signal_id" \
+        || fail "valid positive signal id '$signal_id' was rejected"
+done
+for reserved_pgid in 0 1; do
+    if bong_server_pidfd_signal 2 0 0:0 TERM "$reserved_pgid"; then
+        fail "reserved PGID '$reserved_pgid' reached pidfd signaling"
+    else
+        signal_status=$?
+    fi
+    [ "$signal_status" -eq 2 ] \
+        || fail "reserved PGID '$reserved_pgid' must fail closed with status 2, got $signal_status"
+done
+for reserved_id in 0 1; do
+    if python3 "$ROOT/scripts/lib/bong-pidfd-signal.py" \
+        "$reserved_id" 0 0:0 TERM; then
+        fail "Python pidfd helper accepted reserved PID '$reserved_id'"
+    else
+        helper_status=$?
+    fi
+    [ "$helper_status" -eq 2 ] \
+        || fail "reserved PID '$reserved_id' must fail closed in Python helper with status 2, got $helper_status"
+done
+for reserved_pgid in 0 1; do
+    if python3 "$ROOT/scripts/lib/bong-pidfd-signal.py" \
+        2 0 0:0 TERM "$reserved_pgid"; then
+        fail "Python pidfd helper accepted reserved PGID '$reserved_pgid'"
+    else
+        helper_status=$?
+    fi
+    [ "$helper_status" -eq 2 ] \
+        || fail "reserved PGID '$reserved_pgid' must fail closed in Python helper with status 2, got $helper_status"
+done
+
 spawn_fixture() {
     local mode="$1"
     local marker="$2"
@@ -693,7 +734,8 @@ wait "$tree_root_pid" 2>/dev/null || true
 runtime_root="$TEST_ROOT/runtime"
 mkdir -p "$runtime_root"
 chmod 700 "$runtime_root"
-XDG_RUNTIME_DIR="$runtime_root" default_runtime="$(bong_server_runtime_dir)" \
+export XDG_RUNTIME_DIR="$runtime_root"
+default_runtime="$(bong_server_runtime_dir)" \
     || fail "secure XDG runtime directory must create a private bong leaf"
 [ "$(stat -Lc '%a' "$default_runtime")" = 700 ] \
     || fail "default runtime leaf must be mode 0700"
@@ -2306,19 +2348,12 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
-
-# The moved S3 signal-boundary contract lives as a checked-in Python suite. The
-# lifecycle entrypoint is where the real CI path reaches it: smoke-test-e2e.sh ->
-# this script -> the delegated Python suite. The suite is CARGO_TARGET_DIR safe
-# (the copy-failure fixture pins its own environment); wiring it here means the
-# rollback / signal / target-resolution / artifact-cleanup contracts can no
-# longer regress while the normal CI entrypoint stays green.
+# Keep the S3 signal-boundary suite on the lifecycle entrypoint as well as the
+# preflight job; this path exercises the same owner/rollback contract from the
+# production-style shell harness.
 python3 "$ROOT/scripts/tests/s3_lifecycle_signal_boundary_contract_test.py"
-if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    # CI 必须显式启用真实的 tmux 关停顺序契约：默认 CI 运行不得静默跳过它。
-    # 若 workflow 忘记设置 opt-in，这里直接 fail 而不是打印 SKIP，保住覆盖。
-    [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ] \
-        || fail "GitHub Actions CI must enable BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST=1 for the real tmux shutdown-order contract"
+if [ "${GITHUB_ACTIONS:-}" = true ] \
+    && [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ]; then
     "$ROOT/scripts/test-tmux-shutdown-order.sh"
 else
     printf 'SKIP: tmux shutdown-order signal test is quarantined to opted-in GitHub Actions e2e\n'
@@ -2332,18 +2367,14 @@ supervisor_fixture_descendant="$supervisor_fixture_dir/descendant.pid"
 supervisor_fixture_cargo="$supervisor_fixture_bin/cargo"
 supervisor_fixture_build_token="$supervisor_fixture_dir/build-token.sh"
 supervisor_fixture_build_token_args="$supervisor_fixture_dir/build-token.args"
-mkdir -p "$supervisor_fixture_bin" "$supervisor_fixture_dir/server"
+supervisor_fixture_target="$supervisor_fixture_dir/target"
+mkdir -p "$supervisor_fixture_bin" "$supervisor_fixture_dir/server" \
+    "$supervisor_fixture_target"
 cat > "$supervisor_fixture_cargo" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
-: "${SUPERVISOR_FIXTURE_MARKER:?}"
-: "${SUPERVISOR_FIXTURE_TERM_MARKER:?}"
-: "${SUPERVISOR_FIXTURE_DESCENDANT:?}"
+[ "$#" -eq 2 ] && [ "$1" = build ] && [ "$2" = --release ] || exit 43
 : "${CARGO_TARGET_DIR:?}"
-if IFS= read -r -t 0.2 _; then
-    printf 'control-stdin-leaked\n' > "$SUPERVISOR_FIXTURE_MARKER"
-    exit 41
-fi
 mkdir -p "$CARGO_TARGET_DIR/release"
 cat > "$CARGO_TARGET_DIR/release/bong-server" <<'SERVER'
 #!/usr/bin/env bash
@@ -2351,6 +2382,10 @@ set -euo pipefail
 : "${SUPERVISOR_FIXTURE_MARKER:?}"
 : "${SUPERVISOR_FIXTURE_TERM_MARKER:?}"
 : "${SUPERVISOR_FIXTURE_DESCENDANT:?}"
+if IFS= read -r -t 0.2 _; then
+    printf 'control-stdin-leaked\n' > "$SUPERVISOR_FIXTURE_MARKER"
+    exit 41
+fi
 trap 'kill "$(cat "$SUPERVISOR_FIXTURE_DESCENDANT")" 2>/dev/null || true; exit 0' TERM
 (
     trap '' TERM
@@ -2378,15 +2413,21 @@ start_supervisor_fixture() {
     local control_fd ready_fd ready_line
 
     rm -f -- "$supervisor_fixture_build_token_args"
+    env \
+        CARGO_TARGET_DIR="$supervisor_fixture_target" \
+        PATH="$supervisor_fixture_bin:$PATH" \
+        SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$supervisor_fixture_build_token_args" \
+        "$supervisor_fixture_build_token" cargo build --release </dev/null \
+        || fail "startup supervisor fixture release build failed"
+    [ -x "$supervisor_fixture_target/release/bong-server" ] \
+        || fail "startup supervisor fixture did not build an executable server"
     coproc LIFECYCLE_SUPERVISOR_FIXTURE {
         exec env \
-            PATH="$supervisor_fixture_bin:$PATH" \
-            CARGO_TARGET_DIR="$supervisor_fixture_dir/server/target" \
             SUPERVISOR_FIXTURE_MARKER="$supervisor_fixture_marker" \
             SUPERVISOR_FIXTURE_TERM_MARKER="$supervisor_fixture_term_marker" \
             SUPERVISOR_FIXTURE_DESCENDANT="$supervisor_fixture_descendant" \
-            SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$supervisor_fixture_build_token_args" \
-            python3 "$supervisor" "$supervisor_fixture_dir/server" "$supervisor_fixture_build_token" \
+            python3 "$supervisor" "$supervisor_fixture_dir/server" \
+                "$supervisor_fixture_target/release/bong-server" \
             2>"$supervisor_fixture_dir/supervisor.log"
     }
     SUPERVISOR_FIXTURE_PID="$LIFECYCLE_SUPERVISOR_FIXTURE_PID"
@@ -2410,7 +2451,7 @@ start_supervisor_fixture() {
     [ -s "$supervisor_fixture_build_token_args" ] \
         || fail "startup supervisor build-token fixture did not publish argv"
     [ "$(tr '\n' ' ' < "$supervisor_fixture_build_token_args")" = "cargo build --release " ] \
-        || fail "startup supervisor must route exact cargo build --release argv through build-token"
+        || fail "startup fixture must route exact cargo build --release argv through build-token"
 }
 
 read_supervisor_ack() {
@@ -2453,7 +2494,7 @@ assert_supervisor_rollback "$rollback_owner" "$rollback_pgid" "$rollback_descend
 [ ! -f "$supervisor_fixture_term_marker" ] \
     || fail "TERM-ignoring rollback descendant unexpectedly handled TERM"
 [ "$(cat "$supervisor_fixture_marker")" = started ] \
-    || fail "cargo child inherited and consumed the supervisor control pipe"
+    || fail "server artifact inherited and consumed the supervisor control pipe"
 
 rm -f -- "$supervisor_fixture_marker" "$supervisor_fixture_term_marker" \
     "$supervisor_fixture_descendant"
@@ -2482,14 +2523,14 @@ fi
     || fail "committed startup fixture must report forced cleanup when its TERM-ignoring descendant is killed"
 unset -f bong_server_port_is_open
 [ "$(cat "$supervisor_fixture_marker")" = started ] \
-    || fail "committed cargo child inherited and consumed the supervisor control pipe"
+    || fail "committed server artifact inherited and consumed the supervisor control pipe"
 
 # The executable supervisor protocol has one reader and exact acknowledgement;
 # static pins also prevent future e2e changes from publishing pre-ACK authority.
 grep -Fq 'stdin=subprocess.DEVNULL' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
-    || fail "cargo must retain /dev/null stdin before and after commit"
+    || fail "server artifact must retain /dev/null stdin before and after commit"
 grep -Fq 'close_fds=True' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
-    || fail "cargo must not inherit protocol descriptors"
+    || fail "server artifact must not inherit protocol descriptors"
 grep -Fq 'sys.stdout.buffer.write(b"COMMITTED\n")' "$ROOT/scripts/lib/bong-process-group-supervisor.py" \
     || fail "supervisor must emit exact COMMITTED acknowledgement"
 
@@ -2511,39 +2552,40 @@ server_ready_path="$TEST_ROOT/start-cleanup.ready"
 SESSION=bong-cleanup-fixture
 server_pid=424242
 server_starttime=1
+server_executable=/bin/bash
 server_executable_identity=1:1
-server_executable=""
 server_identity_pinned=0
 tmux_kill_calls=0
-pinned_stop_calls=0
+rollback_calls=0
 tmux() { [ "${1:-}" = kill-session ] && tmux_kill_calls=$((tmux_kill_calls + 1)); }
-bong_server_rollback_pinned_managed_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return 0; }
+bong_server_rollback_pinned_managed_process() { rollback_calls=$((rollback_calls + 1)); return 0; }
 if cleanup_pinned_server_or_preserve_tmux "identity pin failed"; then
     fail "unverified production startup cleanup must fail closed"
 fi
-[ "$pinned_stop_calls" -eq 0 ] \
+[ "$rollback_calls" -eq 0 ] \
     || fail "unverified production startup cleanup must not signal a guessed PID"
 [ "$tmux_kill_calls" -eq 0 ] \
     || fail "unverified production startup cleanup must preserve tmux instead of HUP"
 server_identity_pinned=1
 cleanup_pinned_server_or_preserve_tmux "readiness failed" \
-    || fail "verified production startup cleanup should accept a safe pinned stop"
-[ "$pinned_stop_calls" -eq 1 ] \
-    || fail "verified production startup cleanup must use pinned TERM/wait/KILL"
+    || fail "verified production cleanup should accept a safe pinned rollback"
+[ "$rollback_calls" -eq 1 ] \
+    || fail "verified production cleanup must use the managed rollback wrapper"
 [ "$tmux_kill_calls" -eq 1 ] \
-    || fail "verified production startup cleanup may destroy tmux only after graceful stop"
-bong_server_rollback_pinned_managed_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return "$BONG_SERVER_STOP_FORCED"; }
-if cleanup_pinned_server_or_preserve_tmux "forced shutdown"; then
-    fail "force-stopped startup cleanup must not authorize tmux teardown"
-fi
-[ "$tmux_kill_calls" -eq 1 ] \
-    || fail "force-stopped startup cleanup must preserve tmux"
-bong_server_rollback_pinned_managed_process() { pinned_stop_calls=$((pinned_stop_calls + 1)); return 2; }
+    || fail "verified production cleanup may destroy tmux only after rollback"
+bong_server_rollback_pinned_managed_process() { rollback_calls=$((rollback_calls + 1)); return 0; }
+cleanup_pinned_server_or_preserve_tmux "forced shutdown" \
+    || fail "identity-safe forced rollback should authorize tmux teardown"
+[ "$rollback_calls" -eq 2 ] \
+    || fail "forced rollback must use the managed rollback wrapper"
+[ "$tmux_kill_calls" -eq 2 ] \
+    || fail "forced rollback must destroy tmux only after exact process cleanup"
+bong_server_rollback_pinned_managed_process() { rollback_calls=$((rollback_calls + 1)); return 2; }
 if cleanup_pinned_server_or_preserve_tmux "inspection failed"; then
     fail "uninspectable pinned startup cleanup must fail closed"
 fi
-[ "$tmux_kill_calls" -eq 1 ] \
-    || fail "uninspectable pinned startup cleanup must preserve tmux"
+[ "$tmux_kill_calls" -eq 2 ] \
+    || fail "uninspectable pinned cleanup must preserve tmux"
 unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_rollback_pinned_managed_process
 
 # The three production entrypoints must execute the same tri-state contract, not
@@ -2551,6 +2593,15 @@ unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_rollback_pinned
 # preserving 1/2; stop completes non-server teardown and returns status 3 so an
 # operator can observe that AppExit/Last was not proven.
 source "$ROOT/scripts/dev-reload.sh"
+
+manifest_path_fixture="$TEST_ROOT/raster-path"
+mkdir -p "$manifest_path_fixture"
+touch "$manifest_path_fixture/manifest.json"
+absolute_manifest_path="$(realpath -- "$manifest_path_fixture/manifest.json")"
+resolved_manifest_path="$(resolve_raster_manifest_path "$absolute_manifest_path")"
+[ "$resolved_manifest_path" = "$absolute_manifest_path" ] \
+    || fail "dev-reload must preserve an absolute raster manifest path"
+
 production_managed_status=0
 bong_server_stop_managed() { return "$production_managed_status"; }
 for production_managed_status in 0 "$BONG_SERVER_STOP_FORCED"; do
@@ -2862,7 +2913,7 @@ grep -Fq 'bong-process-group-supervisor.py' "$ROOT/scripts/e2e-redis.sh" \
 ! grep -Fq 'setsid --fork' "$ROOT/scripts/e2e-redis.sh" \
     || fail "e2e launch must not recover authority through a replaceable pathname"
 grep -Fq 'bong_server_rollback_pinned_managed_process \' "$ROOT/scripts/start.sh" \
-    || fail "production startup cleanup must delegate to the pinned TERM/wait/KILL helper"
+    || fail "production startup cleanup must delegate to the pinned managed rollback helper"
 grep -Fq 'cleanup_pinned_server_or_preserve_tmux \' "$ROOT/scripts/start.sh" \
     || fail "readiness and record failure paths must use safe pinned cleanup"
 grep -Fq 'preserving tmux for diagnosis' "$ROOT/scripts/start.sh" \

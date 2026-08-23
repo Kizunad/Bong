@@ -1,0 +1,836 @@
+# Generated from the pre-datafication Rust catalog.
+# Declaration order is a runtime contract for NPC deterministic selection and dev grants.
+
+[[techniques]]
+id = "sword.cleave"
+display_name = "劈"
+grade = "common"
+description = "基础劈砍。举剑过顶，顺势劈下。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 8.0
+cast_ticks = 16
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword.thrust"
+display_name = "刺"
+grade = "common"
+description = "基础突刺。收肘蓄力，直线捅出。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 4.0
+cast_ticks = 10
+cooldown_ticks = 20
+range = 3.5
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_thrust.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword.parry"
+display_name = "格"
+grade = "common"
+description = "基础格挡。以剑身格开来袭，时机精准可反震对手。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 6.0
+cast_ticks = 4
+cooldown_ticks = 40
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_parry.png"
+category = "defense"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword.infuse"
+display_name = "注剑"
+grade = "common"
+description = "将真元注入剑身。持续期间命中附带真元污染。"
+required_realm = "Induce"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 3.0
+cast_ticks = 40
+cooldown_ticks = 100
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_infuse.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "movement.dash"
+display_name = "闪避"
+grade = "common"
+description = "短距闪身，熟练后体力消耗与冷却下降、位移距离增加。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 0.0
+stamina_cost = 15.0
+cast_ticks = 0
+cooldown_ticks = 40
+range = 2.8
+icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
+category = "attack"
+dispatch = "direct_generic"
+
+[[techniques]]
+id = "shield_block"
+display_name = "盾挡"
+grade = "common"
+description = "以盾承受敌方攻击。熟练后格挡比例上升、体力消耗下降。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 0
+cooldown_ticks = 0
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_shield_block.png"
+category = "defense"
+dispatch = "direct_generic"
+
+[[techniques]]
+id = "burst_meridian.beng_quan"
+display_name = "崩拳"
+grade = "yellow"
+description = "主动撕裂右臂手三阳，零距灌入一记沉重短拳。"
+required_realm = "Induce"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }, { channel = "SmallIntestine", min_health = 0.01 }, { channel = "TripleEnergizer", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 0.4
+stamina_cost = 0.0
+cast_ticks = 8
+cooldown_ticks = 60
+range = 1.3
+icon_texture = "bong-client:textures/gui/items/skill_scroll_burst_meridian_beng_quan.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "burst_meridian.tie_shan_kao"
+display_name = "贴山靠"
+grade = "yellow"
+description = "沉肩压步，以躯干经脉短爆撞开近身敌。"
+required_realm = "Condense"
+required_meridians = [{ channel = "Stomach", min_health = 0.5 }]
+required_race = { kind = "humanoid" }
+qi_cost = 35.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 70
+range = 1.5
+icon_texture = "bong-client:textures/gui/items/skill_scroll_burst_meridian_tie_shan_kao.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "burst_meridian.xue_beng_bu"
+display_name = "血崩步"
+grade = "yellow"
+description = "以腿经裂响换取短距突进，适合抢入战圈。"
+required_realm = "Condense"
+required_meridians = [{ channel = "GallBladder", min_health = 0.4 }]
+required_race = { kind = "humanoid" }
+qi_cost = 25.0
+stamina_cost = 0.0
+cast_ticks = 6
+cooldown_ticks = 50
+range = 4.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_burst_meridian_xue_beng_bu.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "burst_meridian.ni_mai_hu_ti"
+display_name = "逆脉护体"
+grade = "profound"
+description = "逆转真元护住要害，短时压住外伤冲击。"
+required_realm = "Solidify"
+required_meridians = [{ channel = "Pericardium", min_health = 0.55 }]
+required_race = { kind = "humanoid" }
+qi_cost = 45.0
+stamina_cost = 0.0
+cast_ticks = 12
+cooldown_ticks = 120
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_burst_meridian_ni_mai_hu_ti.png"
+category = "defense"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "baomai.full_power_charge"
+display_name = "全力一击·蓄"
+grade = "profound"
+description = "把当前真元池逐 tick 灌入一击，蓄力期间被命中会损失部分真元。"
+required_realm = "Induce"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 100.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 0
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_baomai_full_power_charge.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "baomai.full_power_release"
+display_name = "全力一击·放"
+grade = "profound"
+description = "释放已蓄真元，按双方境界池子差距换算伤害，随后进入虚脱。"
+required_realm = "Induce"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 20
+range = 8.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_baomai_full_power_release.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "zhenmai.parry"
+display_name = "极限弹反"
+grade = "yellow"
+description = "受击前短时预备，皮下震爆异种真元，以血肉自伤换接触式反震。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 8.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 600
+range = 0.0
+icon_texture = "bong-client:textures/gui/skill/zhenmai_parry.png"
+category = "defense"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "zhenmai.neutralize"
+display_name = "局部中和"
+grade = "yellow"
+description = "点按一条经脉，以自身真元亏损清掉异种污染余响。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 18.0
+stamina_cost = 0.0
+cast_ticks = 4
+cooldown_ticks = 200
+range = 0.0
+icon_texture = "bong-client:textures/gui/skill/zhenmai_neutralize.png"
+category = "heal"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "zhenmai.multipoint"
+display_name = "多点反震"
+grade = "profound"
+description = "展开多处皮下震爆点，群战接触时分散反震并承担小额自伤。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 12.0
+stamina_cost = 0.0
+cast_ticks = 6
+cooldown_ticks = 600
+range = 0.0
+icon_texture = "bong-client:textures/gui/skill/zhenmai_multipoint.png"
+category = "defense"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "zhenmai.harden"
+display_name = "护脉"
+grade = "profound"
+description = "临时硬化选定经脉，降低经脉伤损但持续消耗真元。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 8.0
+stamina_cost = 0.0
+cast_ticks = 5
+cooldown_ticks = 300
+range = 0.0
+icon_texture = "bong-client:textures/gui/skill/zhenmai_harden.png"
+category = "defense"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "zhenmai.sever_chain"
+display_name = "绝脉断链"
+grade = "yellow"
+description = "主动永久断一条经脉；通灵以上获得 60s 指定攻击类型反震放大。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 50.0
+stamina_cost = 0.0
+cast_ticks = 8
+cooldown_ticks = 1200
+range = 1.0
+icon_texture = "bong-client:textures/gui/skill/zhenmai_sever_chain.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.vortex"
+display_name = "绝灵涡流"
+grade = "profound"
+description = "掌心强造相对负灵域，持涡抽干飞入真元，久持则反噬手经。"
+required_realm = "Condense"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 20
+range = 0.0
+icon_texture = "bong:textures/gui/skill/woliu_vortex.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.hold"
+display_name = "持涡"
+grade = "profound"
+description = "掌心维持涡流伞，抽干飞行真元载体并将九成九甩成紊流场。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 10
+range = 0.0
+icon_texture = "bong:textures/gui/skill/woliu_hold.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.burst"
+display_name = "瞬涡"
+grade = "yellow"
+description = "二百毫秒负压弹反窗口，反吸攻方真元并触发差异化涡刃反馈。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 8.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 100
+range = 1.0
+icon_texture = "bong:textures/gui/skill/woliu_burst.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.mouth"
+display_name = "涡口"
+grade = "profound"
+description = "在目标处开远程低压点，按 1/r^2 抽取并在目标所在处留下紊流禁区。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 12.0
+stamina_cost = 0.0
+cast_ticks = 6
+cooldown_ticks = 160
+range = 30.0
+icon_texture = "bong:textures/gui/skill/woliu_mouth.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.pull"
+display_name = "涡引"
+grade = "profound"
+description = "只拉有真元目标，按 caster/target 真元压强比计算位移并拖出紊流尾迹。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 25.0
+stamina_cost = 0.0
+cast_ticks = 5
+cooldown_ticks = 600
+range = 30.0
+icon_texture = "bong:textures/gui/skill/woliu_pull.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.heart"
+display_name = "涡心"
+grade = "earth"
+description = "半步化虚以上质变招，主动山谷级负压场；坍缩渊内强制断经反噬。"
+required_realm = "Condense"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 50.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 400
+range = 100.0
+icon_texture = "bong:textures/gui/skill/woliu_heart.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.vacuum_palm"
+display_name = "吸涡掌"
+grade = "yellow"
+description = "近距展掌开涡，把单个有真元目标拉近并抽取少量真元回掌。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 20.0
+stamina_cost = 0.0
+cast_ticks = 6
+cooldown_ticks = 60
+range = 8.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_palm.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.vortex_shield"
+display_name = "涡流护体"
+grade = "yellow"
+description = "身周撑开真空层，偏转来袭真元并制造淡紫紊流护罩。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 50.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 240
+range = 2.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_woliu_vortex_shield.png"
+category = "defense"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.vacuum_lock"
+display_name = "真空锁"
+grade = "profound"
+description = "在目标周身合拢真空笼，短时锁住行动并加速其真元逸散。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 35.0
+stamina_cost = 0.0
+cast_ticks = 8
+cooldown_ticks = 300
+range = 12.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_woliu_vacuum_lock.png"
+category = "control"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.vortex_resonance"
+display_name = "涡流共振"
+grade = "profound"
+description = "以自身为心铺开群体涡旋，把多目标卷入同一低压场。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 50.0
+stamina_cost = 0.0
+cast_ticks = 80
+cooldown_ticks = 400
+range = 6.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_woliu_vortex_resonance.png"
+category = "control"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "woliu.turbulence_burst"
+display_name = "紊流爆发"
+grade = "earth"
+description = "蓄出真空场后瞬间碎裂，向外释放物理冲击与高强紊流。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 80.0
+stamina_cost = 0.0
+cast_ticks = 40
+cooldown_ticks = 600
+range = 6.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_woliu_turbulence_burst.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "dugu.shoot_needle"
+display_name = "凝针"
+grade = "yellow"
+description = "以一点真元凝作细针，远距直刺，不带毒蛊即只是普通真元投射。"
+required_realm = "Induce"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 12
+range = 50.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_dugu_shoot_needle.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "dugu.infuse_poison"
+display_name = "灌毒蛊"
+grade = "profound"
+description = "将失谐真元覆入下一次飞针，命中后慢性蚀损对方经脉。"
+required_realm = "Induce"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 5.0
+stamina_cost = 0.0
+cast_ticks = 1
+cooldown_ticks = 40
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_dugu_infuse_poison.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "tuike.don"
+display_name = "着壳"
+grade = "yellow"
+description = "把当前伪灵皮贴入气息外壳，形成可蜕落的钱包防线。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 12
+cooldown_ticks = 20
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_tuike_don.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "tuike.shed"
+display_name = "蜕一层"
+grade = "profound"
+description = "弃掉最外层伪皮，带走承载的伤与污染，启动成本走当前真元池。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 8
+cooldown_ticks = 160
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_tuike_shed.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "tuike.transfer_taint"
+display_name = "转移污染"
+grade = "profound"
+description = "把经脉里已入侵的异种真元推到伪皮，化虚上古皮可吸永久标记。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 100
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "anqi.charge_carrier"
+display_name = "封骨"
+grade = "yellow"
+description = "静坐二十息，将真元封入手中异变兽骨，备作远射暗器。"
+required_realm = "Induce"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 400
+cooldown_ticks = 400
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_anqi_charge_carrier.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "anqi.single_snipe"
+display_name = "单射狙击"
+grade = "yellow"
+description = "以单根载体封元远射，释放瞬间读取目向，命中后注入封存真元。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }, { channel = "Pericardium", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 0.25
+stamina_cost = 0.0
+cast_ticks = 6
+cooldown_ticks = 60
+range = 80.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_anqi_single_snipe.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "anqi.multi_shot"
+display_name = "多发齐射"
+grade = "yellow"
+description = "五支灵木载体扇形齐发，每条弹道独立结算。"
+required_realm = "Awaken"
+required_meridians = [{ channel = "Pericardium", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 0.4
+stamina_cost = 0.0
+cast_ticks = 30
+cooldown_ticks = 240
+range = 30.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_anqi_multi_shot.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "anqi.soul_inject"
+display_name = "凝魂注射"
+grade = "profound"
+description = "凝实色载体高密度封存，命中后按颜色匹配放大伤口与污染。"
+required_realm = "Condense"
+required_meridians = [{ channel = "Spleen", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 0.35
+stamina_cost = 0.0
+cast_ticks = 20
+cooldown_ticks = 360
+range = 50.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_anqi_soul_inject.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "anqi.armor_pierce"
+display_name = "破甲注射"
+grade = "profound"
+description = "封灵匣骨超功率封存，穿透目标防御后有载体碎裂风险。"
+required_realm = "Solidify"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 0.45
+stamina_cost = 0.0
+cast_ticks = 40
+cooldown_ticks = 500
+range = 80.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_anqi_armor_pierce.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "anqi.echo_fractal"
+display_name = "诱饵分形"
+grade = "earth"
+description = "化虚真元浓度场将上古残骨分形为多条真实 echo 弹道。"
+required_realm = "Void"
+required_meridians = [{ channel = "Du", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 0.6
+stamina_cost = 0.0
+cast_ticks = 60
+cooldown_ticks = 6000
+range = 150.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_anqi_echo_fractal.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "body.guangbo_ticao"
+display_name = "广播体操"
+grade = "common"
+description = "一套古怪的伸展动作。勤练者四肢筋骨渐强，步履亦轻。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 1.0
+stamina_cost = 5.0
+cast_ticks = 60
+cooldown_ticks = 200
+range = 0.0
+icon_texture = "bong:textures/gui/skill/body_guangbo_ticao.png"
+category = "buff"
+dispatch = "direct_generic"
+
+[[techniques]]
+id = "sword_path.condense_edge"
+display_name = "剑意·凝锋"
+grade = "yellow"
+description = "凝聚剑势。下一次命中附带凝实剑意，威力提升并破甲。"
+required_realm = "Induce"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }, { channel = "SmallIntestine", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 8.0
+cast_ticks = 12
+cooldown_ticks = 40
+range = 4.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_condense_edge.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword_path.qi_slash"
+display_name = "剑气·斩"
+grade = "yellow"
+description = "凝脉之上挥剑出气，直线远袭。距离越远剑气越薄。"
+required_realm = "Condense"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }, { channel = "SmallIntestine", min_health = 0.01 }, { channel = "TripleEnergizer", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 3.0
+stamina_cost = 12.0
+cast_ticks = 20
+cooldown_ticks = 60
+range = 8.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_qi_slash.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword_path.resonance"
+display_name = "共鸣·剑鸣"
+grade = "profound"
+description = "固元剑修以剑鸣震慑四方，打断敌方法术并使其僵滞。"
+required_realm = "Solidify"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }, { channel = "SmallIntestine", min_health = 0.01 }, { channel = "TripleEnergizer", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 20.0
+stamina_cost = 15.0
+cast_ticks = 30
+cooldown_ticks = 120
+range = 6.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_resonance.png"
+category = "control"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword_path.manifest"
+display_name = "归一·剑意化形"
+grade = "profound"
+description = "通灵剑修将剑意凝为实体，自动追击最近敌方。结束后人剑共鸣略损。"
+required_realm = "Spirit"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }, { channel = "SmallIntestine", min_health = 0.01 }, { channel = "TripleEnergizer", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 40.0
+stamina_cost = 20.0
+cast_ticks = 40
+cooldown_ticks = 200
+range = 5.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_manifest.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "sword_path.heaven_gate"
+display_name = "天门·一剑开天"
+grade = "earth"
+description = "化虚禁招。倾尽真元一击劈空，事后跌境碎剑、藏于天道盲区五分钟。"
+required_realm = "Void"
+required_meridians = [{ channel = "LargeIntestine", min_health = 0.01 }, { channel = "SmallIntestine", min_health = 0.01 }, { channel = "TripleEnergizer", min_health = 0.01 }, { channel = "Du", min_health = 0.01 }]
+required_race = { kind = "humanoid" }
+qi_cost = 0.0
+stamina_cost = 0.0
+cast_ticks = 80
+# u32::MAX is the protocol sentinel for a one-shot cooldown.
+cooldown_ticks = 4294967295
+range = 100.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_path_heaven_gate.png"
+category = "attack"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "npc.heal_basic"
+display_name = "基础回血"
+grade = "common"
+description = "NPC 真元调理伤势，降低伤口严重度并恢复生命值。"
+required_realm = "Induce"
+required_meridians = [{ channel = "Spleen", min_health = 0.01 }, { channel = "Kidney", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 8.0
+stamina_cost = 0.0
+cast_ticks = 20
+cooldown_ticks = 200
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_npc_heal_basic.png"
+category = "heal"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "npc.buff_speed"
+display_name = "疾行术"
+grade = "common"
+description = "NPC 以真元加速经脉运转，短时提升移动速度。"
+required_realm = "Condense"
+required_meridians = [{ channel = "Stomach", min_health = 0.01 }, { channel = "Bladder", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 5.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 400
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_npc_buff_speed.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "npc.buff_defense"
+display_name = "护体术"
+grade = "common"
+description = "NPC 以真元凝护周身，短时减免受到的伤害。"
+required_realm = "Condense"
+required_meridians = [{ channel = "Lung", min_health = 0.01 }, { channel = "Heart", min_health = 0.01 }]
+required_race = { kind = "any" }
+qi_cost = 6.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 400
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_npc_buff_defense.png"
+category = "buff"
+dispatch = "metadata_backed"
+
+[[techniques]]
+id = "morph.yixing"
+display_name = "易形"
+grade = "rare"
+description = "重塑己身经络流转之形，暂借他相外壳，任督二脉需先行贯通方可施为。"
+required_realm = "Solidify"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 40.0
+stamina_cost = 20.0
+cast_ticks = 60
+cooldown_ticks = 600
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_morph_yixing.png"
+category = "buff"
+dispatch = "metadata_backed"

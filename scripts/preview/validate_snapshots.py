@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""validate_snapshots.py — Snapshot 内容验收闸（plan-worldgen-snapshot-v1 §4.1）。
+"""validate_snapshots.py — Bong client preview screenshot 内容验收闸。
+
+本 validator 只读取 client 截图，不读取或生成外部 raster；raster handoff 由
+compose_grid.py 通过显式 --raster-dir 负责拼图。
 
 CI 不再只看"截图文件存在"就 pass，必须实地核验图像内容。截图全空 → CI 红。
 
@@ -207,7 +210,7 @@ def validate(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate Bong worldgen preview screenshots.")
+    parser = argparse.ArgumentParser(description="Validate Bong client preview screenshots.")
     parser.add_argument(
         "--client-dir",
         required=True,

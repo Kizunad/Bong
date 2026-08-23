@@ -119,43 +119,17 @@ def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
     return True
 
 
-def build_server_binary(
-    server_directory: Path, build_token: Path, timeout: float = 1200.0
-) -> Path:
-    environment = os.environ.copy()
-    target_root = Path(
-        environment.get("CARGO_TARGET_DIR", str(server_directory / "target"))
-    )
-    if not target_root.is_absolute():
-        target_root = server_directory / target_root
-    # The build/token phase is an explicit bounded lifecycle. A cold release
-    # build or build-token lock contention must terminate (TimeoutExpired ->
-    # rollback) instead of leaving an unpinned build alive after the parent's
-    # readiness deadline. If the deadline itself expires first, the parent has
-    # already pinned this supervisor and stops the whole private group.
-    subprocess.run(
-        [str(build_token), "cargo", "build", "--release"],
-        cwd=server_directory,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-        check=True,
-        close_fds=True,
-        timeout=timeout,
-    )
-    built_binary = target_root / "release" / "bong-server"
+def pin_server_binary(built_binary: Path) -> Path:
     if not built_binary.is_file():
-        raise RuntimeError(f"successful cargo build did not produce {built_binary}")
+        raise RuntimeError(f"prebuilt server binary does not exist: {built_binary}")
     artifact_dir = Path(tempfile.mkdtemp(prefix="bong-e2e-server-"))
     artifact = artifact_dir / "bong-server"
     try:
         shutil.copy2(built_binary, artifact)
         artifact.chmod(0o700)
     except Exception:
-        # Ownership of the temporary directory transfers to the caller only after
-        # all fallible artifact setup has completed; a copy/chmod failure must not
-        # leak a bong-e2e-server-* directory in the system temporary area.
+        # The temporary directory is owned by this call until the complete
+        # artifact setup succeeds; a copy/chmod failure must not leak it.
         shutil.rmtree(artifact_dir, ignore_errors=True)
         raise
     return artifact
@@ -171,20 +145,10 @@ def remove_artifact(artifact: Path | None) -> None:
         print(f"failed to remove immutable server artifact: {error}", file=sys.stderr)
 
 
-def abort_startup(artifact: Path | None, server: subprocess.Popen[bytes] | None) -> int:
-    # Remove the temporary artifact before rollback: a stubborn server makes
-    # rollback escalate to SIGKILL of this entire private group, including the
-    # supervisor itself, so nothing after the rollback call is guaranteed to run.
-    # Once the server has been spawned, the copied binary has no further use.
-    remove_artifact(artifact)
-    rolled_back = rollback_server(server)
-    return 2 if rolled_back else 3
-
-
 def main() -> int:
     if len(sys.argv) != 3:
         print(
-            "usage: bong-process-group-supervisor.py SERVER_DIRECTORY BUILD_TOKEN",
+            "usage: bong-process-group-supervisor.py SERVER_DIRECTORY BUILT_BINARY",
             file=sys.stderr,
         )
         return 2
@@ -201,33 +165,12 @@ def main() -> int:
     for signal_number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
         signal.signal(signal_number, ignore_signal)
 
-    server_directory = Path(sys.argv[1]).resolve(strict=True)
-    build_token = Path(sys.argv[2]).resolve(strict=True)
-
-    # Publish the owner pin BEFORE the build/token phase. READY no longer means
-    # "server running" (COMMITTED is that ack); it lets the parent pin this PID,
-    # starttime, executable identity, and PGID immediately so an overrunning or
-    # stuck build can never leave an unpinned, orphaned supervisor. When the
-    # parent's readiness deadline expires it stops this pinned private group.
-    try:
-        sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
-        sys.stdout.buffer.flush()
-    except (OSError, BrokenPipeError) as error:
-        print(f"failed to publish startup owner pin: {error}", file=sys.stderr)
-        return abort_startup(None, None)
-
     server: subprocess.Popen[bytes] | None = None
     artifact: Path | None = None
     try:
-        build_timeout = float(os.environ.get("BONG_E2E_BUILD_TIMEOUT", "1200"))
-    except ValueError:
-        build_timeout = 1200.0
-    if build_timeout <= 0:
-        build_timeout = 1200.0
-    try:
-        artifact = build_server_binary(
-            server_directory, build_token, timeout=build_timeout
-        )
+        server_directory = Path(sys.argv[1]).resolve(strict=True)
+        built_binary = Path(sys.argv[2]).resolve(strict=True)
+        artifact = pin_server_binary(built_binary)
         server = subprocess.Popen(
             [str(artifact)],
             cwd=server_directory,
@@ -236,9 +179,13 @@ def main() -> int:
             stdout=sys.stderr,
             stderr=sys.stderr,
         )
-    except (OSError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        print(f"failed to build or launch release server: {error}", file=sys.stderr)
-        return abort_startup(artifact, server)
+        sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
+        sys.stdout.buffer.flush()
+    except (OSError, RuntimeError, BrokenPipeError) as error:
+        print(f"failed to launch or publish release server readiness: {error}", file=sys.stderr)
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     # Authority is not committed until the parent has pinned this PID, starttime,
     # executable identity, and PGID. EOF, read failure, or any byte other than C
@@ -247,9 +194,13 @@ def main() -> int:
         command = sys.stdin.buffer.read(1)
     except OSError as error:
         print(f"failed to read startup commit command: {error}", file=sys.stderr)
-        return abort_startup(artifact, server)
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
     if command != b"C":
-        return abort_startup(artifact, server)
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     # Publishing authority requires a second, post-consumption boundary: the
     # parent only trusts this exact flushed acknowledgement.
@@ -258,7 +209,9 @@ def main() -> int:
         sys.stdout.buffer.flush()
     except (OSError, BrokenPipeError) as error:
         print(f"failed to publish startup commit acknowledgement: {error}", file=sys.stderr)
-        return abort_startup(artifact, server)
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     server.wait()
     remove_artifact(artifact)

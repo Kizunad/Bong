@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""compose_grid.py — 把 client 5 角度截图 + worldgen raster PNG 拼成 PR comment 总览图。
+"""compose_grid.py — 把 client 5 角度截图 + 外部 raster PNG 拼成预览总览图。
 
-plan-worldgen-snapshot-v1 §3.1。
+只消费 BongWorldGen 已生成的 raster handoff，不启动或修改外部生成器。
 
 输入:
   - client/run/screenshots/preview-{top,iso_ne,iso_nw,iso_se,iso_sw}.png
-  - worldgen/generated/snapshot/focus-layout-preview.png
-  - worldgen/generated/snapshot/focus-surface-preview.png
+  - $BONG_TERRAIN_RASTER_DIR/focus-layout-preview.png
+  - $BONG_TERRAIN_RASTER_DIR/focus-surface-preview.png
 
 输出:
   - <out_dir>/preview-grid.png
@@ -20,14 +20,14 @@ plan-worldgen-snapshot-v1 §3.1。
   | raster surface (full width)   |
   +-------------------------------+
 
-只依赖 stdlib (zlib + struct) 出 PNG —— 仿 worldgen/exporters.py 风格,
+只依赖 stdlib (zlib + struct) 出 PNG —— 保持与外部 raster 导出物兼容,
 避免 PIL/matplotlib 依赖。简化:不做色彩混合 / 文字 caption (caption 让
 post_comment.py 在 markdown 里加),纯像素拼接。
 
 用法:
   python3 scripts/preview/compose_grid.py \\
     --client-dir client/run/screenshots \\
-    --raster-dir worldgen/generated/snapshot \\
+    --raster-dir "$BONG_TERRAIN_RASTER_DIR" \\
     --out-dir <output>
 
 如果某张子图缺失,用单色占位（# 为提示「missing: <name>」），其他正常拼。
@@ -36,9 +36,10 @@ post_comment.py 在 markdown 里加),纯像素拼接。
 from __future__ import annotations
 
 import argparse
+import os
+import struct
 import sys
 import zlib
-import struct
 from pathlib import Path
 
 
@@ -51,7 +52,7 @@ def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
 def _read_png(path: Path) -> tuple[int, int, bytes] | None:
     """读 PNG → (width, height, RGBA bytes 行优先)。失败返回 None。
 
-    简化版:仅支持 8-bit RGBA(color type 6) PNG。worldgen exporters.py 出的是 RGB
+    简化版:仅支持 8-bit RGBA(color type 6) PNG。外部 raster exporter 输出的是 RGB
     (color type 2)+ 4 行 width*3 字节 -> 需要也兼容 RGB / 灰度等。这里做最 robust
     的:不解 PNG,直接当二进制读。但拼图必须知道 width/height + 像素 -- 所以仍需解。
 
@@ -95,7 +96,7 @@ def _resize_rgba(data: bytes, src_w: int, src_h: int, dst_w: int, dst_h: int) ->
 
 
 def _write_png(path: Path, width: int, height: int, rgba: bytes) -> None:
-    """RGBA bytes → PNG 文件。仿 worldgen/exporters.py。"""
+    """RGBA bytes → PNG 文件。"""
     sig = b"\x89PNG\r\n\x1a\n"
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)  # 8bpc RGBA
     ihdr_chunk = _png_chunk(b"IHDR", ihdr)
@@ -205,15 +206,38 @@ def compose_grid(client_dir: Path, raster_dir: Path, out_path: Path) -> int:
     return 0
 
 
+def _default_raster_dir() -> Path:
+    """Resolve the explicitly supplied read-only external raster handoff."""
+    raster_dir = os.environ.get("BONG_TERRAIN_RASTER_DIR")
+    if raster_dir:
+        return Path(raster_dir)
+    manifest = os.environ.get("BONG_TERRAIN_RASTER_PATH")
+    if manifest:
+        return Path(manifest).parent
+    raise ValueError(
+        "BLOCKED: BONG_TERRAIN_RASTER_DIR or BONG_TERRAIN_RASTER_PATH is required"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="compose_grid.py")
     parser.add_argument("--client-dir", type=Path, default=Path("client/run/screenshots"))
-    parser.add_argument("--raster-dir", type=Path, default=Path("worldgen/generated/snapshot"))
+    parser.add_argument(
+        "--raster-dir",
+        type=Path,
+        default=None,
+        help="只读外部 raster 目录（或使用 BONG_TERRAIN_RASTER_DIR/PATH）",
+    )
     parser.add_argument(
         "--out", type=Path, default=Path("client/run/screenshots/preview-grid.png")
     )
     args = parser.parse_args()
-    return compose_grid(args.client_dir, args.raster_dir, args.out)
+    try:
+        raster_dir = args.raster_dir or _default_raster_dir()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return compose_grid(args.client_dir, raster_dir, args.out)
 
 
 if __name__ == "__main__":

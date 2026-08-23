@@ -154,6 +154,8 @@ fixture_target="$fixture_dir/target"
 cargo_pid_file="$fixture_dir/server.pid"
 descendant_pid_file="$fixture_dir/descendant.pid"
 build_token_args_file="$fixture_dir/build-token.args"
+build_stdin_record="$fixture_dir/build-stdin.record"
+build_fd_record="$fixture_dir/build-fd.record"
 build_token="$fixture_dir/build-token.sh"
 mkdir -p "$fixture_bin" "$fixture_server" "$fixture_target"
 cat > "$fixture_bin/cargo" <<'FIXTURE'
@@ -161,15 +163,27 @@ cat > "$fixture_bin/cargo" <<'FIXTURE'
 set -euo pipefail
 [ "$#" -eq 2 ] && [ "$1" = build ] && [ "$2" = --release ] || exit 43
 : "${CARGO_TARGET_DIR:?}"
-if [ -n "${SUPERVISOR_FIXTURE_SUPERVISOR_PID:-}" ]; then
-    printf '%s\n' "$PPID" > "$SUPERVISOR_FIXTURE_SUPERVISOR_PID"
+printf 'fixture release build completed\n' >&2
+if [ -n "${SUPERVISOR_FIXTURE_BUILD_STDIN_RECORD:-}" ]; then
+    readlink -f -- /proc/self/fd/0 > "$SUPERVISOR_FIXTURE_BUILD_STDIN_RECORD"
 fi
-# The bounded-build control slows this fixture cargo so the parent's READY->C->
-# COMMITTED window must span the build (finding: cover the sync build before
-# expiring READY). Delay defaults to 0 so every other control stays fast.
-if [ -n "${SUPERVISOR_FIXTURE_BUILD_DELAY:-}" ] && (( SUPERVISOR_FIXTURE_BUILD_DELAY > 0 )); then
-    sleep "$SUPERVISOR_FIXTURE_BUILD_DELAY"
+if [ -n "${SUPERVISOR_FIXTURE_EXPECT_CLOSED_FD:-}" ]; then
+    if [ -e "/proc/self/fd/$SUPERVISOR_FIXTURE_EXPECT_CLOSED_FD" ]; then
+        printf inherited > "${SUPERVISOR_FIXTURE_BUILD_FD_RECORD:?}"
+    else
+        printf closed > "${SUPERVISOR_FIXTURE_BUILD_FD_RECORD:?}"
+    fi
 fi
+if [ -n "${SUPERVISOR_FIXTURE_BUILD_TIMEOUT_PID_FILE:-}" ]; then
+    printf '%s\n' "$BASHPID" > "$SUPERVISOR_FIXTURE_BUILD_TIMEOUT_PID_FILE"
+    (
+        trap '' TERM
+        printf '%s\n' "$BASHPID" > "${SUPERVISOR_FIXTURE_BUILD_TIMEOUT_DESCENDANT_FILE:?}"
+        while :; do sleep 1; done
+    ) &
+    wait
+fi
+sleep "${SUPERVISOR_FIXTURE_BUILD_DELAY_SECONDS:-0}"
 mkdir -p "$CARGO_TARGET_DIR/release"
 cat > "$CARGO_TARGET_DIR/release/bong-server" <<'SERVER'
 #!/usr/bin/env bash
@@ -196,21 +210,40 @@ set -euo pipefail
 printf '%s\n' "$@" > "$SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS"
 [ "$#" -ge 1 ] && [ "$1" = cargo ] || exit 42
 shift
-exec cargo "$@"
+cargo "$@"
+if [ -n "${BONG_BUILD_TOKEN_SERVER_ARTIFACT:-}" ]; then
+    install -m 700 -- "$CARGO_TARGET_DIR/release/bong-server" \
+        "$BONG_BUILD_TOKEN_SERVER_ARTIFACT"
+fi
 FIXTURE
 chmod +x "$build_token"
 
+build_fixture_server() {
+    local delay_seconds="${1:-0}"
+    rm -f -- "$build_token_args_file"
+    env \
+        CARGO_TARGET_DIR="$fixture_target" \
+        PATH="$fixture_bin:$PATH" \
+        SUPERVISOR_FIXTURE_BUILD_DELAY_SECONDS="$delay_seconds" \
+        SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+        "$build_token" cargo build --release
+    wait_for_file "$build_token_args_file" || fail "build-token fixture did not publish argv"
+    [ "$(tr '\n' ' ' < "$build_token_args_file")" = "cargo build --release " ] \
+        || fail "fixture did not route exact cargo build --release argv through build-token"
+    [ -x "$fixture_target/release/bong-server" ] \
+        || fail "fixture build did not produce an executable server artifact"
+}
+
 start_direct_supervisor() {
-    local ready_line="" target_dir="${1:-$fixture_target}"
-    rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
+    local ready_line=""
+    rm -f -- "$cargo_pid_file" "$descendant_pid_file"
+    build_fixture_server
     coproc DIRECT_SUPERVISOR {
         exec env \
-            CARGO_TARGET_DIR="$target_dir" \
-            PATH="$fixture_bin:$PATH" \
             SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
             SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
-            SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
-            python3 "$SUPERVISOR" "$fixture_server" "$build_token" \
+            python3 "$SUPERVISOR" "$fixture_server" \
+                "$fixture_target/release/bong-server" \
             2>"$fixture_dir/supervisor.log"
     }
     DIRECT_OWNER_PID=""
@@ -222,9 +255,6 @@ start_direct_supervisor() {
         || fail "supervisor published malformed READY: $ready_line"
     DIRECT_OWNER_PID="${ready_line#READY pid=}"
     track_active_owner "$DIRECT_OWNER_PID"
-    wait_for_file "$build_token_args_file" || fail "build-token fixture did not publish argv"
-    [ "$(tr '\n' ' ' < "$build_token_args_file")" = "cargo build --release " ] \
-        || fail "supervisor did not route exact cargo build --release argv through build-token"
     wait_for_file "$cargo_pid_file" || fail "server artifact did not publish its PID"
     wait_for_file "$descendant_pid_file" || fail "server descendant did not publish its PID"
     DIRECT_CARGO_PID="$(<"$cargo_pid_file")"
@@ -253,18 +283,6 @@ assert_direct_rollback
 
 start_direct_supervisor
 printf X >&"$DIRECT_CONTROL_FD" || fail "could not send invalid control byte"
-assert_direct_rollback
-
-# Relative CARGO_TARGET_DIR must resolve against the server directory (finding 4):
-# build_server_binary resolves it as "$fixture_server/<relative>", and the fixture
-# cargo (cwd=server_directory) places the binary at that same path. A supervisor
-# that resolved a relative target against its own invocation directory would fail
-# to find the built binary and never publish READY.
-fixture_rel_target="custom-target"
-rm -rf -- "$fixture_server/$fixture_rel_target"
-start_direct_supervisor "$fixture_rel_target"
-[ -f "$fixture_server/$fixture_rel_target/release/bong-server" ] \
-    || fail "relative CARGO_TARGET_DIR must place the built binary under the server directory"
 assert_direct_rollback
 
 # The exact C -> COMMITTED boundary keeps the supervisor as the persistent owner.
@@ -298,11 +316,12 @@ from pathlib import Path
 import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-start = text.index("start_server_process_group() {")
+start = text.index("resolve_server_cargo_target() {")
 end = text.index("\n}\n\nstop_server() {", start) + 2
 print(text[start:end])
 PY
 # shellcheck source=/dev/null
+source "$ROOT/scripts/lib/bong-cargo-target.sh"
 source "$parent_fixture"
 RUST_PATH="$fixture_bin:$PATH"
 SERVER_PID=""
@@ -313,9 +332,45 @@ SERVER_AUTHORITY_UNCERTAIN=1
 SERVER_STARTUP_CONTROL_FD=""
 SERVER_STARTUP_READY_FD=""
 
+expected_default_target="$(env -u CARGO_TARGET_DIR bash -c \
+    'source "$1"; bong_scoped_cargo_target "$2"' _ \
+    "$ROOT/scripts/lib/bong-cargo-target.sh" "$fixture_server")"
+[ "$(env -u CARGO_TARGET_DIR bash -c \
+    'source "$1"; source "$2"; resolve_server_cargo_target "$3"' _ \
+    "$ROOT/scripts/lib/bong-cargo-target.sh" "$parent_fixture" "$fixture_server")" \
+    = "$expected_default_target" ] \
+    || fail "unset CARGO_TARGET_DIR must resolve to a checkout-scoped target"
+expected_relative_target="$(CARGO_TARGET_DIR=relative-target bong_scoped_cargo_target "$fixture_server")"
+[ "$(CARGO_TARGET_DIR=relative-target resolve_server_cargo_target "$fixture_server")" \
+    = "$expected_relative_target" ] \
+    || fail "relative CARGO_TARGET_DIR must resolve to a checkout-scoped target"
+
+default_target_probe="$fixture_dir/default-target-probe.sh"
+default_target_record="$fixture_dir/default-target.record"
+cat > "$default_target_probe" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${CARGO_TARGET_DIR:-missing}" > "${SUPERVISOR_FIXTURE_DEFAULT_TARGET_RECORD:?}"
+exit 44
+PROBE
+chmod +x "$default_target_probe"
+if (
+    unset CARGO_TARGET_DIR
+    SUPERVISOR_FIXTURE_DEFAULT_TARGET_RECORD="$default_target_record" \
+    BONG_E2E_SUPERVISOR_TEST_MODE=1 \
+    BONG_E2E_SUPERVISOR="$SUPERVISOR" \
+    BONG_E2E_BUILD_TOKEN="$default_target_probe" \
+    BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
+    start_server_process_group "$TEST_ROOT/parent-default-target.log" 0 1
+); then
+    fail "default-target build probe unexpectedly succeeded"
+fi
+[ "$(<"$default_target_record")" = "$expected_default_target" ] \
+    || fail "unset CARGO_TARGET_DIR was not explicitly passed as the checkout-scoped target"
+
 assert_parent_unpublished() {
     [ "$SERVER_AUTHORITY_UNCERTAIN" -eq 1 ] \
-        || fail "failed startup must retain uncertain authority"
+        || fail "failed READY transaction must retain uncertain authority"
     [ -z "$SERVER_PID" ] && [ -z "$SERVER_PGID" ] \
         && [ -z "$SERVER_OWNER_STARTTIME" ] \
         && [ -z "$SERVER_OWNER_EXECUTABLE_IDENTITY" ] \
@@ -324,18 +379,79 @@ assert_parent_unpublished() {
         || fail "failed startup must close and clear protocol descriptors"
 }
 
-# Happy path uses the production supervisor and publishes only after exact ACK.
-rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
-CARGO_TARGET_DIR="$fixture_target" \
-SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
-SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
+# A failed pre-handshake build owns no server process authority. Even a
+# TERM-resistant descendant is bounded inside the helper's private build group.
+timeout_build_pid_file="$fixture_dir/timeout-build.pid"
+timeout_build_descendant_file="$fixture_dir/timeout-build-descendant.pid"
+rm -f -- "$timeout_build_pid_file" "$timeout_build_descendant_file"
+SERVER_AUTHORITY_UNCERTAIN=1
+if CARGO_TARGET_DIR="$fixture_target" \
 SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+SUPERVISOR_FIXTURE_BUILD_TIMEOUT_PID_FILE="$timeout_build_pid_file" \
+SUPERVISOR_FIXTURE_BUILD_TIMEOUT_DESCENDANT_FILE="$timeout_build_descendant_file" \
+BONG_E2E_BUILD_TIMEOUT_SECONDS=1 \
 BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$SUPERVISOR" \
 BONG_E2E_BUILD_TOKEN="$build_token" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
+start_server_process_group "$TEST_ROOT/parent-build-timeout.log" 0 1; then
+    fail "parent accepted a timed-out release build"
+fi
+[ "$SERVER_AUTHORITY_UNCERTAIN" -eq 0 ] \
+    || fail "pre-handshake build failure must retain certain empty authority"
+[ -z "$SERVER_PID$SERVER_PGID$SERVER_OWNER_STARTTIME$SERVER_OWNER_EXECUTABLE_IDENTITY" ] \
+    || fail "pre-handshake build failure published server authority"
+wait_for_file "$timeout_build_pid_file" || fail "timeout build did not publish its PID"
+wait_for_file "$timeout_build_descendant_file" \
+    || fail "timeout build did not publish its descendant PID"
+for stopped_pid_file in "$timeout_build_pid_file" "$timeout_build_descendant_file"; do
+    stopped_pid="$(<"$stopped_pid_file")"
+    for _ in $(seq 1 100); do
+        if ! kill -0 "$stopped_pid" 2>/dev/null; then
+            break
+        fi
+        stopped_state="$(ps -o stat= -p "$stopped_pid" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$stopped_state" = Z* ]] && break
+        sleep 0.01
+    done
+    if kill -0 "$stopped_pid" 2>/dev/null; then
+        stopped_state="$(ps -o stat= -p "$stopped_pid" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$stopped_state" = Z* ]] \
+            || fail "timed-out build process $stopped_pid survived bounded group cleanup"
+    fi
+done
+
+# A build slower than the five-second READY budget completes first into a target
+# relative to a relative server override; only then does the handshake begin.
+parent_target_relative=relative-target
+parent_target="$fixture_server/$parent_target_relative"
+relative_fixture_server="$(realpath --relative-to="$PWD" "$fixture_server")"
+rm -rf -- "$parent_target"
+rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file" \
+    "$build_stdin_record" "$build_fd_record"
+exec 19>"$fixture_dir/parent-private-fd"
+CARGO_TARGET_DIR="$parent_target_relative" \
+SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
+SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
+SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+SUPERVISOR_FIXTURE_BUILD_STDIN_RECORD="$build_stdin_record" \
+SUPERVISOR_FIXTURE_EXPECT_CLOSED_FD=19 \
+SUPERVISOR_FIXTURE_BUILD_FD_RECORD="$build_fd_record" \
+SUPERVISOR_FIXTURE_BUILD_DELAY_SECONDS=6 \
+BONG_E2E_BUILD_TIMEOUT_SECONDS=10 \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
+BONG_E2E_SUPERVISOR="$SUPERVISOR" \
+BONG_E2E_BUILD_TOKEN="$build_token" \
+BONG_E2E_SERVER_DIRECTORY="$relative_fixture_server" \
 start_server_process_group "$TEST_ROOT/parent-normal.log" 0 1 \
-    || fail "parent rejected the production READY -> C -> COMMITTED protocol"
+    || fail "parent included a slow successful build in the READY handshake budget"
+exec 19>&-
+[ "$(<"$build_stdin_record")" = /dev/null ] \
+    || fail "pre-handshake build stdin was not isolated to /dev/null"
+[ "$(<"$build_fd_record")" = closed ] \
+    || fail "pre-handshake build inherited a parent-private descriptor"
+grep -Fq 'fixture release build completed' "$TEST_ROOT/parent-normal.log" \
+    || fail "supervisor launch truncated the pre-handshake build diagnostics"
 [ "$SERVER_AUTHORITY_UNCERTAIN" -eq 0 ] \
     || fail "successful startup must publish certain authority"
 [ "$SERVER_PID" = "$SERVER_PGID" ] \
@@ -357,70 +473,6 @@ bong_server_stop_owned_process_group_and_release_port \
 unset -f bong_server_port_is_open
 clear_active_owner
 
-# The build/token phase must not expire the parent's readiness deadline.
-# Finding: the supervisor used to build synchronously before READY while the
-# parent gave READY five seconds, so a cold or contended build failed startup
-# with no pinned owner to clean up. READY is now published before the build and
-# the parent's COMMITTED wait spans the bounded build. A build that outlasts the
-# old five-second budget must publish authority instead of failing.
-rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
-CARGO_TARGET_DIR="$fixture_target" \
-SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
-SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
-SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
-SUPERVISOR_FIXTURE_BUILD_DELAY="${BONG_E2E_FIXTURE_BUILD_DELAY:-6}" \
-BONG_E2E_SUPERVISOR_TEST_MODE=1 \
-BONG_E2E_SUPERVISOR="$SUPERVISOR" \
-BONG_E2E_BUILD_TOKEN="$build_token" \
-BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
-start_server_process_group "$TEST_ROOT/parent-slow-build.log" 0 1 \
-    || fail "parent must wait out a slow build within the bounded build lifecycle"
-[ "$SERVER_AUTHORITY_UNCERTAIN" -eq 0 ] \
-    || fail "slow build within the bounded lifecycle must still publish certain authority"
-[ "$SERVER_PID" = "$SERVER_PGID" ] \
-    || fail "slow-build supervisor must remain process-group owner"
-wait_for_file "$descendant_pid_file" || fail "slow-build fixture did not spawn its descendant"
-assert_dev_null_fd0 "$(<"$cargo_pid_file")" "slow-build server artifact after commit"
-bong_server_port_is_open() { return 1; }
-bong_server_stop_owned_process_group_and_release_port \
-    "$SERVER_PID" "$SERVER_OWNER_STARTTIME" "$SERVER_OWNER_EXECUTABLE_IDENTITY" \
-    "$SERVER_PGID" 25565 \
-    || fail "slow-build published authority did not support teardown"
-unset -f bong_server_port_is_open
-clear_active_owner
-
-# When the readiness deadline truly expires (build overrun beyond the bounded
-# window), the parent must still stop the ALREADY-PINNED supervisor group instead
-# of leaving an orphaned build alive after returning.
-supervisor_pid_file="$TEST_ROOT/slow-build-supervisor.pid"
-rm -f -- "$supervisor_pid_file" "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
-bong_server_port_is_open() { return 1; }
-CARGO_TARGET_DIR="$fixture_target" \
-SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
-SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
-SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
-SUPERVISOR_FIXTURE_SUPERVISOR_PID="$supervisor_pid_file" \
-SUPERVISOR_FIXTURE_BUILD_DELAY="${BONG_E2E_FIXTURE_BUILD_DELAY_EXPIRY:-8}" \
-BONG_E2E_SUPERVISOR_TEST_MODE=1 \
-BONG_E2E_SUPERVISOR="$SUPERVISOR" \
-BONG_E2E_BUILD_TOKEN="$build_token" \
-BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
-BONG_E2E_COMMIT_TIMEOUT="${BONG_E2E_FIXTURE_COMMIT_TIMEOUT:-1}" \
-start_server_process_group "$TEST_ROOT/parent-slow-build-expiry.log" 0 1 \
-    && fail "parent must fail when the readiness deadline expires during the build"
-assert_parent_unpublished
-wait_for_file "$supervisor_pid_file" || fail "delayed build did not publish its supervisor owner"
-expired_owner="$(<"$supervisor_pid_file")"
-for _ in $(seq 1 300); do
-    if ! kill -0 "$expired_owner" 2>/dev/null; then
-        break
-    fi
-    sleep 0.05
-done
-kill -0 "$expired_owner" 2>/dev/null \
-    && fail "expired readiness deadline left the pinned supervisor group alive"
-unset -f bong_server_port_is_open
-
 fake_supervisor="$TEST_ROOT/fake-supervisor.py"
 cat > "$fake_supervisor" <<'PY'
 #!/usr/bin/env python3
@@ -428,6 +480,10 @@ import os
 import signal
 import sys
 import time
+
+if len(sys.argv) != 3:
+    print("usage: fake-supervisor.py SERVER_DIRECTORY BUILT_BINARY", file=sys.stderr)
+    raise SystemExit(2)
 
 os.setsid()
 for signal_number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
@@ -455,13 +511,25 @@ chmod +x "$fake_supervisor"
 fake_pid_file="$TEST_ROOT/fake-supervisor.pid"
 bong_server_port_is_open() { return 1; }
 
+# The strict fake accepts the same SERVER_DIRECTORY + BUILT_BINARY pair as production.
+# An accidental third argv must fail before READY so caller/supervisor drift cannot hide.
+if python3 "$fake_supervisor" "$fixture_server" "$fixture_target/release/bong-server" extra \
+    >"$TEST_ROOT/fake-extra-argv.out" 2>"$TEST_ROOT/fake-extra-argv.err"; then
+    fail "strict fake supervisor accepted an unexpected third argument"
+fi
+grep -Fq "usage: fake-supervisor.py SERVER_DIRECTORY BUILT_BINARY" "$TEST_ROOT/fake-extra-argv.err" \
+    || fail "strict fake supervisor did not reject extra argv with its two-argument usage"
+
 run_failed_parent_mode() {
     local mode="$1" after_commit_hook="${2:-}" after_ack_hook="${3:-}" owner wait_status=0
     rm -f -- "$fake_pid_file"
     if FAKE_SUPERVISOR_MODE="$mode" \
         FAKE_SUPERVISOR_PID_FILE="$fake_pid_file" \
+        CARGO_TARGET_DIR="$fixture_target" \
+        SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
         BONG_E2E_SUPERVISOR_TEST_MODE=1 \
         BONG_E2E_SUPERVISOR="$fake_supervisor" \
+        BONG_E2E_BUILD_TOKEN="$build_token" \
         BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
         BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$after_commit_hook" \
         BONG_E2E_TEST_AFTER_ACK_HOOK="$after_ack_hook" \
@@ -514,8 +582,11 @@ chmod +x "$no_ack_supervisor"
 rm -f -- "$fake_pid_file"
 stop_marker="$TEST_ROOT/fake-supervisor.stopped"
 FAKE_SUPERVISOR_PID_FILE="$fake_pid_file" \
+CARGO_TARGET_DIR="$fixture_target" \
+SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
 BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$no_ack_supervisor" \
+BONG_E2E_BUILD_TOKEN="$build_token" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
 BONG_TEST_STOP_MARKER="$stop_marker" \
 BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$stop_before_commit_hook" \

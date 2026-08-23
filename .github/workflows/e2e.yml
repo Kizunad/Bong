@@ -23,35 +23,50 @@ on:
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
+# split 原则（不改任何测试脚本/场景代码）：
+# - 原单体 90min job 拆为 DAG，合入 main 新增的 fallback/契约测试后重解
+# - contract 预检中的重复 build-token 入口按 main 最新收敛
+# - 新增 BOT_E2E_FALLBACK_MODE=1 的 bot 片需独立 runner（与原 ambient fixture 互斥）
+
 jobs:
-  e2e:
+  preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      RUN_LABEL: ci
-      REDIS_URL: redis://127.0.0.1:6379
-      CARGO_TERM_COLOR: always
-      CARGO_TARGET_DIR: /tmp/bong-target
-      BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: |
-            agent/package-lock.json
-            agent/packages/schema/package-lock.json
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - working-directory: proto
+        run: buf lint
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: bash scripts/check-proto-breaking.sh
+      - name: Build-token and signal-boundary contract tests
+        run: |
+          bash scripts/tests/build_token_test.sh
+          python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/signal_boundary_contract_test.py
+          python3 scripts/tests/fallback_world_readiness_contract_test.py
+          python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+          bash scripts/tests/preview_lifecycle_contract_test.sh
+          bash scripts/tests/cargo_target_scope_test.sh
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Java 17
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+  client:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
           distribution: temurin
           java-version: "17"
@@ -60,116 +75,354 @@ jobs:
             client/*.gradle
             client/gradle.properties
             client/gradle/wrapper/gradle-wrapper.properties
+      - run: ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle test
+        working-directory: client
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-client
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
 
-      - name: Install system test dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tmux
+  schema:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - working-directory: agent
+        run: npm ci
+      - working-directory: agent/packages/schema
+        run: |
+          npm run build
+          npm run check
+          npm test
+          npm run generate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: schema-dist
+          path: |
+            agent/packages/schema/dist/**
+            agent/packages/schema/generated/**
+          if-no-files-found: error
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-schema
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
 
-      - name: Cache Rust target
-        uses: actions/cache@v4
+  agent:
+    needs: [preflight, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - working-directory: agent/packages/tiandao
+        run: |
+          npm run check
+          npm test
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-agent
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+
+  server-test:
+    needs: [preflight, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
         with:
           path: |
             /tmp/bong-target
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install buf
-        uses: bufbuild/buf-action@v1
-        with:
-          setup_only: true
-
-      - name: Proto lint (buf)
-        working-directory: proto
-        run: buf lint
-
-      - name: Proto breaking change check (buf)
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: bash scripts/check-proto-breaking.sh
-
-      - name: Proto breaking base-ref contract test
-        run: python3 scripts/tests/proto_breaking_base_ref_contract_test.py
-
-      - name: Install agent workspace dependencies
-        working-directory: agent
+          restore-keys: ${{ runner.os }}-cargo-
+      - working-directory: agent
         run: npm ci
-
-      - name: Build-token contract
-        run: bash scripts/tests/build_token_test.sh
-
-      - name: Client stage (gradlew test)
-        working-directory: client
-        run: ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle test
-
-      - name: Pre-pull Redis image with retry
-        run: |
-          for attempt in 1 2 3; do
-            if docker compose -f docker-compose.test.yml pull redis; then
-              exit 0
-            fi
-            delay=$((attempt * 10))
-            echo "redis image pull failed on attempt ${attempt}; retrying in ${delay}s"
-            sleep "${delay}"
-          done
-          docker compose -f docker-compose.test.yml pull redis
-
-      - name: Bring up Redis test service
-        run: docker compose -f docker-compose.test.yml up -d redis --wait
-
-      - name: Schema stage (build + check + test + generate)
-        working-directory: agent/packages/schema
-        run: |
-          npm run build
-          npm run check
-          npm test
-          npm run generate
-
-      - name: Agent stage (check + test)
-        working-directory: agent/packages/tiandao
-        run: |
-          npm run check
-          npm test
-
-      - name: Build server release binary
-        working-directory: server
-        run: ../scripts/build-token.sh cargo build --release
-
-      - name: Server stage (build-token cargo test)
-        working-directory: server
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - working-directory: server
         run: ../scripts/build-token.sh cargo test
-
-      - name: Smoke/E2E stage (Task 13 harness)
-        env:
-          RUN_LABEL: ci-smoke
-        run: bash scripts/smoke-test-e2e.sh
-
-      # AGENTS.md §15 —— 协议级黑盒玩家场景（复用上面已构建的 release 二进制和 redis）
-      - name: Bot e2e stage (protocol-level player scenarios)
-        env:
-          BOT_E2E_RUN_TAG: ci
-          BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
-        run: bash scripts/bot-e2e.sh
-
-      - name: Bot chat timestamp → Tiandao window e2e
-        env:
-          CHAT_WINDOW_E2E_PROFILE: release
-        run: bash scripts/e2e-chat-signal-window.sh
-
-      - name: Upload e2e evidence artifacts
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-evidence
+          name: evidence-server-test
           path: .sisyphus/evidence/**
           if-no-files-found: warn
 
-      - name: Dump compose logs on failure
-        if: failure()
-        run: docker compose -f docker-compose.test.yml logs redis
+  build-release:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      manifest: ${{ steps.server-release-artifact.outputs.manifest }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Build one sequential server release artifact
+        id: server-release-artifact
+        working-directory: server
+        run: |
+          set -euo pipefail
+          build_binary="${CARGO_TARGET_DIR:?}/release/bong-server"
+          artifact_dir="${CARGO_TARGET_DIR:?}/release"
+          manifest="$artifact_dir/manifest.json"
+          mkdir -p -- "$artifact_dir"
+          rm -f -- "$manifest"
+          ../scripts/build-token.sh cargo build --release
+          test -f "$build_binary"
+          test ! -L "$build_binary"
+          commit="${GITHUB_SHA:?GITHUB_SHA must be provided by GitHub Actions}"
+          test "$(git rev-parse HEAD)" = "$commit"
+          sha256="$(sha256sum "$build_binary" | awk '{print $1}')"
+          python3 - "$manifest" "$build_binary" "$commit" "$sha256" <<'PY'
+          import json
+          import pathlib
+          import sys
 
-      - name: Tear down Redis test service
-        if: always()
+          pathlib.Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "binary": str(pathlib.Path(sys.argv[2]).resolve(strict=True)),
+                      "commit": sys.argv[3],
+                      "profile": "release",
+                      "sha256": sys.argv[4],
+                  },
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python3 ../scripts/lib/bong_server_provenance.py check "$manifest" "$GITHUB_WORKSPACE"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "server release artifact commit=$commit sha256=$sha256 manifest=$manifest"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bong-server-release
+          path: |
+            /tmp/bong-target/release/bong-server
+            /tmp/bong-target/release/manifest.json
+          if-no-files-found: error
+
+  smoke:
+    needs: [schema, agent, server-test, build-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUN_LABEL: ci-smoke
+      REDIS_URL: redis://127.0.0.1:6379
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+      BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tmux
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bong-server-release
+          path: /tmp/bong-target/release
+      - run: chmod +x /tmp/bong-target/release/bong-server
+      - run: |
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.test.yml pull redis; then exit 0; fi
+            sleep $((attempt * 10))
+          done
+          docker compose -f docker-compose.test.yml pull redis
+      - run: docker compose -f docker-compose.test.yml up -d redis --wait
+      - run: bash scripts/smoke-test-e2e.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-smoke
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+      - if: failure()
+        run: docker compose -f docker-compose.test.yml logs redis
+      - if: always()
+        run: docker compose -f docker-compose.test.yml down -v --remove-orphans
+
+  # Bot e2e stage (protocol-level player scenarios)
+  bot-e2e:
+    needs: [build-release, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      BOT_E2E_RUN_TAG: ci
+      CARGO_TARGET_DIR: /tmp/bong-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bong-server-release
+          path: /tmp/bong-target/release
+      - run: chmod +x /tmp/bong-target/release/bong-server
+      # Sharding is by fixture mode (mutually exclusive world ownership),
+      # not by scenario list — each mode has independent evidence and cannot share a runner.
+      - if: matrix.shard == 1
+        env:
+          BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}
+        run: bash scripts/bot-e2e.sh
+      # Bot fallback-flat e2e stage (spawn distribution coverage)
+      # BOT_E2E_RUN_TAG: ci
+      - if: matrix.shard == 2
+        env:
+          BOT_E2E_FALLBACK_MODE: "1"
+          BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}
+        run: bash scripts/bot-e2e.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-bot-shard-${{ matrix.shard }}
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+
+  chat-window:
+    needs: [build-release, schema]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+      CHAT_WINDOW_E2E_PROFILE: release
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - working-directory: agent
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-dist
+          path: agent/packages/schema
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: bong-server-release
+          path: /tmp/bong-target/release
+      - run: chmod +x /tmp/bong-target/release/bong-server
+      - run: |
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.test.yml pull redis; then exit 0; fi
+            sleep $((attempt * 10))
+          done
+          docker compose -f docker-compose.test.yml pull redis
+      - run: docker compose -f docker-compose.test.yml up -d redis --wait
+      # Bot chat timestamp -> Tiandao window e2e
+      - run: bash scripts/e2e-chat-signal-window.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-chat-window
+          path: .sisyphus/evidence/**
+          if-no-files-found: warn
+      - if: always()
         run: docker compose -f docker-compose.test.yml down -v --remove-orphans

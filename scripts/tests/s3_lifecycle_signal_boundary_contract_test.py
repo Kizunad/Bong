@@ -247,16 +247,15 @@ fi
 
 
 class SupervisorBuildArtifactContractTest(unittest.TestCase):
-    """build_server_binary 路径解析与失败清理的聚焦契约（finding 4/7）。"""
+    """预构建 artifact pin 与失败清理的聚焦契约。"""
 
-    def _fake_built_binary(self, server_directory, relative_target):
-        release = server_directory / relative_target / "release"
-        release.mkdir(parents=True, exist_ok=True)
-        built = release / "bong-server"
+    def _fake_built_binary(self, server_directory):
+        built = server_directory / "bong-server"
         built.write_text("#!/bin/sh\nexit 0\n")
+        built.chmod(0o700)
         return built
 
-    def test_build_server_binary_resolves_relative_cargo_target_dir(self):
+    def test_pin_server_binary_copies_prebuilt_artifact(self):
         supervisor = load_supervisor_module()
         server_directory = pathlib.Path(
             tempfile.mkdtemp(prefix="bong-supervisor-unit-")
@@ -266,24 +265,16 @@ class SupervisorBuildArtifactContractTest(unittest.TestCase):
             tempfile.mkdtemp(prefix="bong-e2e-server-unit-")
         )
         self.addCleanup(shutil.rmtree, artifact_parent, ignore_errors=True)
-        self._fake_built_binary(server_directory, "custom-target")
-
-        environment = os.environ.copy()
-        environment["CARGO_TARGET_DIR"] = "custom-target"
+        built_binary = self._fake_built_binary(server_directory)
         with (
-            mock.patch.object(supervisor.os, "environ", environment),
-            mock.patch.object(supervisor.subprocess, "run"),
             mock.patch.object(
                 supervisor.tempfile, "mkdtemp", return_value=str(artifact_parent)
             ),
         ):
-            artifact = supervisor.build_server_binary(
-                server_directory, pathlib.Path("/unused/build-token")
-            )
+            artifact = supervisor.pin_server_binary(built_binary)
 
-        # 相对 CARGO_TARGET_DIR 必须按 server 目录解析；若按 supervisor 调用目录
-        # 解析，built_binary 找不到会先抛 RuntimeError，此断言根本走不到。
-        self.assertTrue(artifact.is_file(), "相对 CARGO_TARGET_DIR 必须解析到 server 目录")
+        self.assertTrue(artifact.is_file(), "预构建 server artifact 必须被复制并 pin")
+        self.assertEqual(artifact.stat().st_mode & 0o777, 0o700)
 
     def test_failed_artifact_copy_removes_artifact_directory(self):
         supervisor = load_supervisor_module()
@@ -291,26 +282,12 @@ class SupervisorBuildArtifactContractTest(unittest.TestCase):
             tempfile.mkdtemp(prefix="bong-supervisor-unit-")
         )
         self.addCleanup(shutil.rmtree, server_directory, ignore_errors=True)
-        # This fixture targets the repository-default relative target (the fake
-        # binary lives under server_directory/target), but build_server_binary
-        # resolves the expected binary from the ambient CARGO_TARGET_DIR when one
-        # is set (CI sets /tmp/bong-target at job level). Isolate the copy-failure
-        # cleanup branch from that ambient value so the test exercises the mocked
-        # copy error instead of raising RuntimeError before reaching the cleanup
-        # assertion (finding: run the moved signal-boundary suite in CI).
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if key != "CARGO_TARGET_DIR"
-        }
-        self._fake_built_binary(server_directory, "target")
+        built_binary = self._fake_built_binary(server_directory)
         artifact_parent = pathlib.Path(
             tempfile.mkdtemp(prefix="bong-e2e-server-unit-")
         )
 
         with (
-            mock.patch.object(supervisor.os, "environ", environment),
-            mock.patch.object(supervisor.subprocess, "run"),
             mock.patch.object(
                 supervisor.tempfile, "mkdtemp", return_value=str(artifact_parent)
             ),
@@ -319,9 +296,7 @@ class SupervisorBuildArtifactContractTest(unittest.TestCase):
             ),
         ):
             with self.assertRaises(OSError):
-                supervisor.build_server_binary(
-                    server_directory, pathlib.Path("/unused/build-token")
-                )
+                supervisor.pin_server_binary(built_binary)
 
         self.assertFalse(
             artifact_parent.exists(),
