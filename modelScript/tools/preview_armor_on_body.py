@@ -286,7 +286,9 @@ def build_player_bbmodel(part: ArmorPart, skin: Image.Image,
     from armor_model_common import MOUNT_PIVOT, MOUNT_X
 
     elements: list[dict] = []
-    assemblies: dict[str, list[str]] = {}
+    # 挂点 → 装配名 → uuid。leggings / boots 的每个装配都同时含左右两侧，
+    # 只按装配名分组会让右侧跟着左侧的枢轴转，所以挂点必须是更外面的一级。
+    assemblies: dict[str, dict[str, list[str]]] = {}
     for cube in part.cubes:
         origin = (cube.origin[0] + MOUNT_X[cube.mount], cube.origin[1], cube.origin[2])
         element = _cube(cube.name, origin, cube.size, cube.uv, MOUNT_PIVOT[cube.mount])
@@ -296,7 +298,8 @@ def build_player_bbmodel(part: ArmorPart, skin: Image.Image,
         element["rescale"] = False
         element["locked"] = False
         elements.append(element)
-        assemblies.setdefault(cube.name.split("_", 1)[0], []).append(element["uuid"])
+        assembly = cube.name.split("_", 1)[0]
+        assemblies.setdefault(cube.mount, {}).setdefault(assembly, []).append(element["uuid"])
 
     player_groups = []
     for index, (name, origin, size, uv, pivot) in enumerate(PLAYER):
@@ -309,11 +312,27 @@ def build_player_bbmodel(part: ArmorPart, skin: Image.Image,
         player_groups.append(_group(name, pivot, 6 + index % 2, f"player/{name}",
                                     [element["uuid"]]))
 
-    armor_children = [
-        _group(assembly, MOUNT_PIVOT[part.cubes[0].mount], index % 8,
-               f"{part.key}/{assembly}", ids)
-        for index, (assembly, ids) in enumerate(assemblies.items())
-    ]
+    def _assembly_groups(mount: str, groups: dict[str, list[str]], prefix: str):
+        return [
+            _group(assembly, MOUNT_PIVOT[mount], index % 8,
+                   f"{prefix}/{assembly}", ids)
+            for index, (assembly, ids) in enumerate(groups.items())
+        ]
+
+    if len(assemblies) == 1:
+        # 单挂点（helmet / chestplate）：装配直接挂在甲件下，不多套一层
+        mount, groups = next(iter(assemblies.items()))
+        armor_children = _assembly_groups(mount, groups, part.key)
+        armor_pivot = MOUNT_PIVOT[mount]
+    else:
+        # 跨挂点（leggings / boots）：先按挂点分，各自带自己的枢轴
+        armor_children = [
+            _group(mount, MOUNT_PIVOT[mount], index % 8, f"{part.key}/{mount}",
+                   _assembly_groups(mount, groups, f"{part.key}/{mount}"))
+            for index, (mount, groups) in enumerate(assemblies.items())
+        ]
+        # 混挂点时没有单一正确的枢轴，取身体中心，别假装是左腿
+        armor_pivot = (0.0, 24.0, 0.0)
 
     texture = build_preview_texture(armor_texture, skin)
     buf = io.BytesIO()
@@ -326,7 +345,7 @@ def build_player_bbmodel(part: ArmorPart, skin: Image.Image,
         "resolution": {"width": PREVIEW_RES, "height": PREVIEW_RES},
         "elements": elements,
         "outliner": [
-            _group(part.key, MOUNT_PIVOT[part.cubes[0].mount], 0, part.key, armor_children),
+            _group(part.key, armor_pivot, 0, part.key, armor_children),
             _group("player", (0, 24, 0), 7, "player", player_groups),
         ],
         "textures": [{
@@ -482,9 +501,10 @@ def main() -> None:
                         help="逐面采样报哪个身体部位还露在甲外面")
     args = parser.parse_args()
 
-    here = Path(__file__).resolve().parent
+    out_dir = Path(__file__).resolve().parents[1] / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
     if args.dump_skin:
-        path = here / "preview_player_skin.png"
+        path = out_dir / "preview_player_skin.png"
         make_player_skin().save(path)
         print(path)
 
@@ -507,7 +527,7 @@ def main() -> None:
         if args.no_render:
             continue
         suffix = "_full" if args.full_body else ("_zoom" if args.zoom != 1.0 else "")
-        out = here / f"{part.key}_on_player{suffix}.png"
+        out = out_dir / f"{part.key}_on_player{suffix}.png"
         print(render_on_body(part, args.slot, texture, out, args.size,
                              args.shading, args.grey, args.full_body, args.zoom))
 

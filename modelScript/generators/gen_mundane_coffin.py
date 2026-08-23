@@ -410,6 +410,7 @@ def render_preview(cubes, tex, out=PREVIEW_OUT):
     d = ImageDraw.Draw(canvas)
     d.text((gap * 2 + iso_im.width, th + gap * 2 - 12), "TEXTURE 64x64 (x2)",
            fill=(200, 200, 200))
+    out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out)
     return out
 

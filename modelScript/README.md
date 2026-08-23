@@ -71,7 +71,7 @@ python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 | 不入库 | 理由 |
 |--------|------|
 | `models/{dainu_lion,fuyu_vulture,horse,kekeda_goose,mimic_spider}/` | 生物流水线产物，动辄上百 M；跑 4 步脚本就从零重建（已实测） |
-| `out/` | 全部渲染产物 |
+| `out/` | 全部渲染产物；不入库意味着**干净 checkout 上它不存在**，落盘前一律 `mkdir(parents=True, exist_ok=True)` |
 
 改 `.gitignore` 加新目录时记住这条判据：**问"删了能不能用脚本重造出来"，不能就必须入库。**
 

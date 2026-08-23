@@ -343,6 +343,7 @@ def grid(cells, per_row, size, out: Path, title=None):
         cy = head + gap + (i // per_row) * (size + lab + gap)
         d.text((cx + 2, cy), label, fill=(214, 212, 204), font=f)
         cv.paste(im, (cx, cy + lab))
+    out.parent.mkdir(parents=True, exist_ok=True)
     cv.save(out)
     return out
 

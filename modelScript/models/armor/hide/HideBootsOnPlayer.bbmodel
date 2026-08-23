@@ -4329,8 +4329,8 @@
   {
    "name": "hide_boots",
    "origin": [
-    1.9,
-    12.0,
+    0.0,
+    24.0,
     0.0
    ],
    "color": 0,
@@ -4343,14 +4343,14 @@
    "autouv": 0,
    "children": [
     {
-     "name": "shaft",
+     "name": "LEFT_FOOT",
      "origin": [
       1.9,
       12.0,
       0.0
      ],
      "color": 0,
-     "uuid": "7f671c66-05eb-51e6-85cb-f9edc7df6266",
+     "uuid": "7e6aa3a5-d449-5a07-9ad2-04f36b8d3c0f",
      "export": true,
      "mirror_uv": false,
      "isOpen": true,
@@ -4358,27 +4358,203 @@
      "visibility": true,
      "autouv": 0,
      "children": [
-      "ac7f170b-8dcd-5934-a4c1-7444fe705f49",
-      "1afe6b09-2642-5c49-9c57-5bf129d5d66b",
-      "e5ff80d5-ae09-5d6e-b4c6-b5f0a7806912",
-      "a259a8f6-22a7-51fd-a992-90a22165a56c",
-      "57d24f90-54b7-5872-b107-795ee20ed644",
-      "19a0b271-0923-5fd3-9b72-cc9d0ffc61e2",
-      "fa138f07-3b7a-588d-a9d4-c0ae7b042bbe",
-      "614822a0-d64e-5bb3-9309-7325921216e4",
-      "2aecb773-6ce0-564f-a29c-8a86c3941719",
-      "747673d8-0f92-5624-92dd-1329a2fe1b0d"
+      {
+       "name": "shaft",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 0,
+       "uuid": "74846466-2bc7-51fc-b3fc-1be970f1156f",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "ac7f170b-8dcd-5934-a4c1-7444fe705f49",
+        "1afe6b09-2642-5c49-9c57-5bf129d5d66b",
+        "e5ff80d5-ae09-5d6e-b4c6-b5f0a7806912",
+        "a259a8f6-22a7-51fd-a992-90a22165a56c",
+        "57d24f90-54b7-5872-b107-795ee20ed644"
+       ]
+      },
+      {
+       "name": "foot",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 1,
+       "uuid": "ce873be0-7099-59cf-9a59-8e8955eaaf34",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "6f712d49-00ff-5534-920e-a45cc426845f"
+       ]
+      },
+      {
+       "name": "toe",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 2,
+       "uuid": "a8a74cb6-a036-5384-9656-b7f1d5fe535a",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "29909825-4122-5fbc-9c9d-42e210e66f4d",
+        "05807f73-c7ea-516b-890c-cad29664e739"
+       ]
+      },
+      {
+       "name": "vamp",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 3,
+       "uuid": "67ad52e8-f185-56ff-8cf5-67432d8a758a",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "5c964fe5-b6cc-53e0-a9b0-1664d59394bc"
+       ]
+      },
+      {
+       "name": "sole",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 4,
+       "uuid": "647c0b23-6eb7-5a25-8219-9f01bb912466",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "3da496c7-1017-5b50-8148-93d2443a1826",
+        "468a9e7c-b2fb-5601-a79b-c873df7eec30",
+        "b0be4c49-03a9-5824-a879-41a2c935429a"
+       ]
+      },
+      {
+       "name": "heel",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 5,
+       "uuid": "4d301fb1-1c14-5fec-bbd9-e71c0793719e",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "dbebdc43-ccb5-58a1-8297-c73fddc998d0"
+       ]
+      },
+      {
+       "name": "patch",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 6,
+       "uuid": "f59c1739-74ae-563b-b463-6cc836570116",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "80ab0067-f86d-5a26-aed8-78abc74e5729",
+        "2346096c-17c3-5ef3-adf0-3e3273bd56f5"
+       ]
+      },
+      {
+       "name": "lace",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 7,
+       "uuid": "cad92b05-da7d-57e3-8f2a-d8ae1ab022fe",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "1b87fdbc-5087-5224-8045-3be5597cfcd2",
+        "31ac3bc5-6911-57c4-80b9-024be068c9b5",
+        "d2f3c6ed-276d-530f-b82b-acfa85fd8994",
+        "9a54b0c9-1336-5dbf-b748-edfde72f2beb"
+       ]
+      },
+      {
+       "name": "bow",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 0,
+       "uuid": "5bb62c74-6fca-5ef6-b88e-cf9560b836e1",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "089ccf9a-69b9-557f-9d35-6e7b43df5270",
+        "970402bb-c59e-59d9-807b-abc7af1c906f",
+        "a1a8e3be-0431-5fd8-8491-333b9566af84",
+        "13bd255f-107f-5063-a8ba-8db41875c39a",
+        "289984c6-a4fb-5a0a-b5eb-987be07a01af"
+       ]
+      }
      ]
     },
     {
-     "name": "foot",
+     "name": "RIGHT_FOOT",
      "origin": [
-      1.9,
+      -1.9,
       12.0,
       0.0
      ],
      "color": 1,
-     "uuid": "e8c83644-4c0b-5889-9ff9-07318e6a97c4",
+     "uuid": "7a9d7982-2b26-5eb4-9df7-b41597173e8a",
      "export": true,
      "mirror_uv": false,
      "isOpen": true,
@@ -4386,170 +4562,192 @@
      "visibility": true,
      "autouv": 0,
      "children": [
-      "6f712d49-00ff-5534-920e-a45cc426845f",
-      "daf70aba-af26-5fa0-8bba-3da1784af24d"
-     ]
-    },
-    {
-     "name": "toe",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 2,
-     "uuid": "dae433c7-b615-5716-8e74-9240564b715c",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "29909825-4122-5fbc-9c9d-42e210e66f4d",
-      "05807f73-c7ea-516b-890c-cad29664e739",
-      "11ba10ea-88eb-5ccc-8a54-4045a0988a1c",
-      "4b7faf1a-d102-5ec8-b3f2-cb6914ee5f55"
-     ]
-    },
-    {
-     "name": "vamp",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 3,
-     "uuid": "40fc2a47-c993-5277-ae2b-cce4114e8ba1",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "5c964fe5-b6cc-53e0-a9b0-1664d59394bc",
-      "049ba2a2-12af-5b32-b6ae-78d9fdbffd8a"
-     ]
-    },
-    {
-     "name": "sole",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 4,
-     "uuid": "698e7199-7d33-50e9-91d2-53e3bf7f26cd",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "3da496c7-1017-5b50-8148-93d2443a1826",
-      "468a9e7c-b2fb-5601-a79b-c873df7eec30",
-      "b0be4c49-03a9-5824-a879-41a2c935429a",
-      "87a2d4e9-8ac6-53ec-a76e-5a56a12c2372",
-      "38b611ba-a1d4-5c9c-bed5-0ba65f31e8a3",
-      "bf6c98a8-8c9e-5802-bece-ffbc7e1ca699"
-     ]
-    },
-    {
-     "name": "heel",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 5,
-     "uuid": "bfe9fc56-c6fa-5a24-8c0d-5c1514814afc",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "dbebdc43-ccb5-58a1-8297-c73fddc998d0",
-      "63a0bd1a-ffda-5a28-b983-a8fddc40143f"
-     ]
-    },
-    {
-     "name": "patch",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 6,
-     "uuid": "2dd0847f-990b-59fd-8d20-a94800c678c4",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "80ab0067-f86d-5a26-aed8-78abc74e5729",
-      "2346096c-17c3-5ef3-adf0-3e3273bd56f5",
-      "6d977f41-57ea-5be9-b310-6ac09835c946",
-      "9a662db7-682d-5127-b592-e70d7e75b3c4"
-     ]
-    },
-    {
-     "name": "lace",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 7,
-     "uuid": "3f70ddef-b8fb-5282-82fc-60105c878ce2",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "1b87fdbc-5087-5224-8045-3be5597cfcd2",
-      "31ac3bc5-6911-57c4-80b9-024be068c9b5",
-      "d2f3c6ed-276d-530f-b82b-acfa85fd8994",
-      "9a54b0c9-1336-5dbf-b748-edfde72f2beb",
-      "d10ee4f0-b561-5702-85af-764c71b21e1d",
-      "06a6de8f-7f11-5770-b90c-472896562ee5",
-      "410b7f43-3e7c-58ac-9cf5-fa6219659063",
-      "789ee310-fdb5-57a4-9a5d-007cdd570c1d"
-     ]
-    },
-    {
-     "name": "bow",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 0,
-     "uuid": "d429d415-d573-59ce-bd1d-6fa6e5189044",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "089ccf9a-69b9-557f-9d35-6e7b43df5270",
-      "970402bb-c59e-59d9-807b-abc7af1c906f",
-      "a1a8e3be-0431-5fd8-8491-333b9566af84",
-      "13bd255f-107f-5063-a8ba-8db41875c39a",
-      "289984c6-a4fb-5a0a-b5eb-987be07a01af",
-      "1eafcb2c-0888-55c2-bd9f-65a132bda36f",
-      "320b2138-765e-58b4-a977-f77a2cee600a",
-      "df596f35-8ac7-5926-9b23-8675e9cee777",
-      "3c1df77b-e558-5046-952c-b202768fe7ee",
-      "a2578b6e-85f5-57f0-b77d-a4e7621200b5"
+      {
+       "name": "shaft",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 0,
+       "uuid": "6a53a72e-47c4-5b57-a3fe-f0d834642041",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "19a0b271-0923-5fd3-9b72-cc9d0ffc61e2",
+        "fa138f07-3b7a-588d-a9d4-c0ae7b042bbe",
+        "614822a0-d64e-5bb3-9309-7325921216e4",
+        "2aecb773-6ce0-564f-a29c-8a86c3941719",
+        "747673d8-0f92-5624-92dd-1329a2fe1b0d"
+       ]
+      },
+      {
+       "name": "foot",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 1,
+       "uuid": "d880fa36-f6e5-5f4e-8a30-d9dcf02ee6ba",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "daf70aba-af26-5fa0-8bba-3da1784af24d"
+       ]
+      },
+      {
+       "name": "toe",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 2,
+       "uuid": "54d3693e-593a-5dce-a1c2-e712c9d1f471",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "11ba10ea-88eb-5ccc-8a54-4045a0988a1c",
+        "4b7faf1a-d102-5ec8-b3f2-cb6914ee5f55"
+       ]
+      },
+      {
+       "name": "vamp",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 3,
+       "uuid": "4ee80564-b4e7-5b3f-9534-bf2a18624350",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "049ba2a2-12af-5b32-b6ae-78d9fdbffd8a"
+       ]
+      },
+      {
+       "name": "sole",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 4,
+       "uuid": "e6ee28e6-affd-5062-8a26-54ef5961864e",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "87a2d4e9-8ac6-53ec-a76e-5a56a12c2372",
+        "38b611ba-a1d4-5c9c-bed5-0ba65f31e8a3",
+        "bf6c98a8-8c9e-5802-bece-ffbc7e1ca699"
+       ]
+      },
+      {
+       "name": "heel",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 5,
+       "uuid": "b527cd14-2001-5b17-93e3-b5b827505c5e",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "63a0bd1a-ffda-5a28-b983-a8fddc40143f"
+       ]
+      },
+      {
+       "name": "patch",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 6,
+       "uuid": "139b4af3-be39-562d-b604-aa087c975e95",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "6d977f41-57ea-5be9-b310-6ac09835c946",
+        "9a662db7-682d-5127-b592-e70d7e75b3c4"
+       ]
+      },
+      {
+       "name": "lace",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 7,
+       "uuid": "ca2ce74e-4426-5d80-b9a6-73eeae6bae7a",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "d10ee4f0-b561-5702-85af-764c71b21e1d",
+        "06a6de8f-7f11-5770-b90c-472896562ee5",
+        "410b7f43-3e7c-58ac-9cf5-fa6219659063",
+        "789ee310-fdb5-57a4-9a5d-007cdd570c1d"
+       ]
+      },
+      {
+       "name": "bow",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 0,
+       "uuid": "18fe53fb-b444-568a-ac6f-129c918c01e5",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "1eafcb2c-0888-55c2-bd9f-65a132bda36f",
+        "320b2138-765e-58b4-a977-f77a2cee600a",
+        "df596f35-8ac7-5926-9b23-8675e9cee777",
+        "3c1df77b-e558-5046-952c-b202768fe7ee",
+        "a2578b6e-85f5-57f0-b77d-a4e7621200b5"
+       ]
+      }
      ]
     }
    ]

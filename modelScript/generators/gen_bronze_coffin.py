@@ -353,6 +353,7 @@ def render_part(name, out=None):
     views = ["face", "iso"] if name == "taotie" else ["front", "side", "iso"]
     cv = _hcat([_view(cubes, m, scale=9 if name == "taotie" else 7, title=f"{name}·{m}") for m in views])
     out = out or PREVIEW_DIR / f"bronze_part_{name}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
     cv.save(out)
     return out, len(cubes)
 
@@ -362,6 +363,7 @@ def render_full(cubes, tex, out=None):
     tb = tex.resize((RES * 2, RES * 2), Image.NEAREST)
     cv = _hcat(row + [tb])
     out = out or PREVIEW_DIR / "bronze_coffin_preview.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
     cv.save(out)
     return out
 

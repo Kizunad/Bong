@@ -328,7 +328,7 @@ def build_atlas(weapon_tex: Image.Image) -> np.ndarray:
 def render_scene(tris, tex_arr, yaw, pitch, size, bg=(26, 27, 31)):
     validate_render_size(size)
     orig = R.load_bbmodel
-    R.load_bbmodel = lambda _p: (tris, tex_arr, (ATLAS, ATLAS), "in_hand")
+    R.load_bbmodel = lambda _p, xform=None: (tris, tex_arr, (ATLAS, ATLAS), "in_hand")
     try:
         im, _ = R.render("<synthetic>", yaw=yaw, pitch=pitch, size=size, bg=bg)
     finally:
@@ -394,6 +394,7 @@ def main():
         d.text((cx + 4, cy + 2), label, fill=(224, 222, 214), font=font)
         canvas.paste(im, (cx, cy + lab_h))
     out = OUT if len(scales) == 1 else OUT.with_name("render_jian_in_hand_scales.png")
+    out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out)
     print(f"→ {out.relative_to(REPO)}")
 

@@ -4649,8 +4649,8 @@
   {
    "name": "hide_leggings",
    "origin": [
-    1.9,
-    12.0,
+    0.0,
+    24.0,
     0.0
    ],
    "color": 0,
@@ -4663,14 +4663,14 @@
    "autouv": 0,
    "children": [
     {
-     "name": "band",
+     "name": "LEFT_LEG",
      "origin": [
       1.9,
       12.0,
       0.0
      ],
      "color": 0,
-     "uuid": "ae930cd4-8d85-5759-82a7-05181569eb84",
+     "uuid": "c372c9d6-061b-50e4-ab64-b902ee916cbf",
      "export": true,
      "mirror_uv": false,
      "isOpen": true,
@@ -4678,33 +4678,133 @@
      "visibility": true,
      "autouv": 0,
      "children": [
-      "7563b02f-9e02-526b-955d-d0037e5d7ffb",
-      "01438285-121c-5474-9c72-ef41611b1157",
-      "0b74dc3f-fd5a-5053-b0c3-4267317aec65",
-      "71add669-167b-506f-8fba-2a27bd00beb9",
-      "3b7489d1-5c17-512c-bfa2-35f1747158eb",
-      "70b2463b-8c04-5c02-995e-f41d2f23a0c6",
-      "fa783bbe-c8ec-54be-9786-d032023ff585",
-      "6150009c-74a9-56df-b04c-2a5ab8ddba0e",
-      "6dd0c282-7e82-5467-9d15-1a72a1b2cce6",
-      "fbcf351b-d07a-5a58-ae86-07540f0460dc",
-      "e9e53e5c-7a66-5610-8c8e-537fb52b87b6",
-      "3e0752ae-bb1c-5971-9105-1483ff3a39c6",
-      "f3579e47-7ae5-517b-85e8-648f26166784",
-      "af287651-f22f-5117-8c04-1b9d9a5b7c1a",
-      "cf331d89-e7bb-5259-85c2-84e60eca53da",
-      "94d4b5c1-5c89-51b0-aef0-2f61939251a0"
+      {
+       "name": "band",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 0,
+       "uuid": "533f3db0-468e-5f41-bdcd-eb736d9d871a",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "7563b02f-9e02-526b-955d-d0037e5d7ffb",
+        "01438285-121c-5474-9c72-ef41611b1157",
+        "0b74dc3f-fd5a-5053-b0c3-4267317aec65",
+        "71add669-167b-506f-8fba-2a27bd00beb9",
+        "3b7489d1-5c17-512c-bfa2-35f1747158eb",
+        "70b2463b-8c04-5c02-995e-f41d2f23a0c6",
+        "fa783bbe-c8ec-54be-9786-d032023ff585",
+        "6150009c-74a9-56df-b04c-2a5ab8ddba0e"
+       ]
+      },
+      {
+       "name": "splint",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 1,
+       "uuid": "a2d5c3eb-734a-5885-85ee-2f6bb0391e03",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "a1e74a4c-a742-50f3-ae5b-1eeea5654e53",
+        "a5d70c57-2871-53e6-bf68-783d3feb54e4",
+        "a6a49b75-2bf0-5b8b-8bde-b8851c680a82",
+        "65870c73-93d2-5a79-b418-34a706c75c63",
+        "c47ced94-dead-54b1-8284-5672d2d0bbb8",
+        "9dbe891f-f500-595a-a29f-d323d653eccc"
+       ]
+      },
+      {
+       "name": "knee",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 2,
+       "uuid": "50f9d836-fef0-5f98-868a-a61c1d45a28f",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "6eb80759-c9e6-5d8d-b572-1b78a08d4b04",
+        "6051ec22-d184-5f7d-b1a9-0d6594828736",
+        "2edc578c-d416-5873-8130-c5223a2b4dab"
+       ]
+      },
+      {
+       "name": "strap",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 3,
+       "uuid": "5ff105a0-1274-5ab5-a2d3-6f68a74a112e",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "d271c6f0-b8f8-5cc1-b854-dc5b802c4d71",
+        "060b54ff-2137-5f1a-994d-6c0976dc325e"
+       ]
+      },
+      {
+       "name": "cross",
+       "origin": [
+        1.9,
+        12.0,
+        0.0
+       ],
+       "color": 4,
+       "uuid": "f0d9df46-8d77-5ff9-a7c4-c82e75f9d954",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "c9cfff1e-b5d6-551c-b187-faa84b9b1f5b",
+        "fe34c7b0-9a2a-5a57-ac8d-4bdd79857a3f",
+        "bf67afbd-b46c-58a4-b802-3286a72d1dd0",
+        "1115045a-a48d-5a86-8594-bcaf829613c5",
+        "1f878471-a4e8-5e67-b8ff-a6ec90bedee8",
+        "4e3dfb75-d062-5196-bef3-aece9f205f7c",
+        "12e0e9cf-9bf6-5327-8ecc-b55bed372453"
+       ]
+      }
      ]
     },
     {
-     "name": "splint",
+     "name": "RIGHT_LEG",
      "origin": [
-      1.9,
+      -1.9,
       12.0,
       0.0
      ],
      "color": 1,
-     "uuid": "6072be94-ab7b-57ba-8dcc-256bfc0360c2",
+     "uuid": "c5fb2098-e8fd-5391-9e15-ef8eafc1cafa",
      "export": true,
      "mirror_uv": false,
      "isOpen": true,
@@ -4712,96 +4812,122 @@
      "visibility": true,
      "autouv": 0,
      "children": [
-      "a1e74a4c-a742-50f3-ae5b-1eeea5654e53",
-      "a5d70c57-2871-53e6-bf68-783d3feb54e4",
-      "a6a49b75-2bf0-5b8b-8bde-b8851c680a82",
-      "65870c73-93d2-5a79-b418-34a706c75c63",
-      "c47ced94-dead-54b1-8284-5672d2d0bbb8",
-      "9dbe891f-f500-595a-a29f-d323d653eccc",
-      "561712ed-1298-5aad-a3d0-75f15030ad0a",
-      "46363f6e-35ac-5b80-aca3-f23eb5cd0177",
-      "03f205c7-7563-5a7a-8c1f-c0655c7a7862",
-      "6bb71909-8627-5f67-a4fe-19e3fe558cbd",
-      "ab3d841e-7ce3-5585-aac7-a97ceb6df677",
-      "888a811b-a621-5df9-9d38-423036638c37"
-     ]
-    },
-    {
-     "name": "knee",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 2,
-     "uuid": "f883ad8e-973c-5957-9c0b-6024fc7ade63",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "6eb80759-c9e6-5d8d-b572-1b78a08d4b04",
-      "6051ec22-d184-5f7d-b1a9-0d6594828736",
-      "2edc578c-d416-5873-8130-c5223a2b4dab",
-      "f832fba9-0dbe-5e90-9600-c7060eda02e8",
-      "45fbc804-8aa9-51c3-904f-271d7207fd38",
-      "d2ab4f9e-28d7-58bd-a17a-c362de9d4a1c"
-     ]
-    },
-    {
-     "name": "strap",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 3,
-     "uuid": "c319371d-e6cf-528e-9a3d-940512866c48",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "d271c6f0-b8f8-5cc1-b854-dc5b802c4d71",
-      "060b54ff-2137-5f1a-994d-6c0976dc325e",
-      "b2cf3ad9-e6b9-50b2-af1d-7d7e7d4eab0c",
-      "d04dc9ac-5125-5f31-88a1-b9926ea73444"
-     ]
-    },
-    {
-     "name": "cross",
-     "origin": [
-      1.9,
-      12.0,
-      0.0
-     ],
-     "color": 4,
-     "uuid": "21f3cdf0-d9f9-5f82-a384-0f3ced489fc9",
-     "export": true,
-     "mirror_uv": false,
-     "isOpen": true,
-     "locked": false,
-     "visibility": true,
-     "autouv": 0,
-     "children": [
-      "c9cfff1e-b5d6-551c-b187-faa84b9b1f5b",
-      "fe34c7b0-9a2a-5a57-ac8d-4bdd79857a3f",
-      "bf67afbd-b46c-58a4-b802-3286a72d1dd0",
-      "1115045a-a48d-5a86-8594-bcaf829613c5",
-      "1f878471-a4e8-5e67-b8ff-a6ec90bedee8",
-      "4e3dfb75-d062-5196-bef3-aece9f205f7c",
-      "12e0e9cf-9bf6-5327-8ecc-b55bed372453",
-      "b5c1747a-02b3-58a4-8821-e8016d789ba3",
-      "c50cee44-5fed-57c0-955b-24caf58a87ce",
-      "035fa5ab-d396-507f-810c-8ffecdb8fa27",
-      "90904830-a754-5589-b8fd-25b278c0755b",
-      "3fcb31fc-3ef1-57e5-af61-7011066fe9d8",
-      "fc8c0fab-7d9d-551d-b35e-fd0a75720fb9",
-      "0b96f9cb-d578-5164-b14b-702d222be0f3"
+      {
+       "name": "band",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 0,
+       "uuid": "100716eb-40a1-54d9-b002-a2a1e3810a4e",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "6dd0c282-7e82-5467-9d15-1a72a1b2cce6",
+        "fbcf351b-d07a-5a58-ae86-07540f0460dc",
+        "e9e53e5c-7a66-5610-8c8e-537fb52b87b6",
+        "3e0752ae-bb1c-5971-9105-1483ff3a39c6",
+        "f3579e47-7ae5-517b-85e8-648f26166784",
+        "af287651-f22f-5117-8c04-1b9d9a5b7c1a",
+        "cf331d89-e7bb-5259-85c2-84e60eca53da",
+        "94d4b5c1-5c89-51b0-aef0-2f61939251a0"
+       ]
+      },
+      {
+       "name": "splint",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 1,
+       "uuid": "9febf8f7-115f-569c-ac39-d6a8b3d0f98f",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "561712ed-1298-5aad-a3d0-75f15030ad0a",
+        "46363f6e-35ac-5b80-aca3-f23eb5cd0177",
+        "03f205c7-7563-5a7a-8c1f-c0655c7a7862",
+        "6bb71909-8627-5f67-a4fe-19e3fe558cbd",
+        "ab3d841e-7ce3-5585-aac7-a97ceb6df677",
+        "888a811b-a621-5df9-9d38-423036638c37"
+       ]
+      },
+      {
+       "name": "knee",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 2,
+       "uuid": "ede1debb-d763-5c13-b295-b119ed0dd711",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "f832fba9-0dbe-5e90-9600-c7060eda02e8",
+        "45fbc804-8aa9-51c3-904f-271d7207fd38",
+        "d2ab4f9e-28d7-58bd-a17a-c362de9d4a1c"
+       ]
+      },
+      {
+       "name": "strap",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 3,
+       "uuid": "f046c1b2-96c5-590a-a1e2-3c6881bc8912",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "b2cf3ad9-e6b9-50b2-af1d-7d7e7d4eab0c",
+        "d04dc9ac-5125-5f31-88a1-b9926ea73444"
+       ]
+      },
+      {
+       "name": "cross",
+       "origin": [
+        -1.9,
+        12.0,
+        0.0
+       ],
+       "color": 4,
+       "uuid": "70399f87-a5a7-52fb-86d7-6942036071f8",
+       "export": true,
+       "mirror_uv": false,
+       "isOpen": true,
+       "locked": false,
+       "visibility": true,
+       "autouv": 0,
+       "children": [
+        "b5c1747a-02b3-58a4-8821-e8016d789ba3",
+        "c50cee44-5fed-57c0-955b-24caf58a87ce",
+        "035fa5ab-d396-507f-810c-8ffecdb8fa27",
+        "90904830-a754-5589-b8fd-25b278c0755b",
+        "3fcb31fc-3ef1-57e5-af61-7011066fe9d8",
+        "fc8c0fab-7d9d-551d-b35e-fd0a75720fb9",
+        "0b96f9cb-d578-5164-b14b-702d222be0f3"
+       ]
+      }
      ]
     }
    ]

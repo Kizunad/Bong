@@ -274,6 +274,7 @@ def main():
             d.text((x + 4, 6), nm, fill=(220, 220, 210))
             x += im.width + gap
         out = OUTDIR / "coffins_render_all.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
         cv.save(out)
         print(f"→ {out.relative_to(REPO)}")
         return
@@ -285,6 +286,7 @@ def main():
     else:
         im, name = render(fp, args.yaw, args.pitch, size=args.size)
         out = OUTDIR / f"render_{Path(fp).stem}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
     im.save(out)
     print(f"→ {out.relative_to(REPO)}  ({name}, {render_mode_summary(args.three_view, args.yaw, args.pitch)})")
 

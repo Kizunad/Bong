@@ -54,6 +54,14 @@ def build_texture():
 
 
 def main():
+    if not SRC.is_file():
+        raise SystemExit(
+            f"缺少输入源 {SRC}\n"
+            "这一档是噬元鼠链路的一次性中间件：输入是用户在 Blockbench 里手存的稿子，"
+            "从来没入过库（origin/main 同样没有），成品已经落到 "
+            "client/src/main/resources/assets/bong/geo/devour_rat.geo.json。\n"
+            "要重跑就先把那份手存稿放回上面这个路径。"
+        )
     d = json.loads(SRC.read_text())
     els = {e["uuid"]: e for e in d["elements"]}
     root = d["outliner"][0]

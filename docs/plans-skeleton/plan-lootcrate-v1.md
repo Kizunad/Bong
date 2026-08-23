@@ -59,7 +59,7 @@
 
 - `BongEntityModelKind.java` 追加 5 enum（raw_id 169~173，textureState `intact`）+ 5 个 renderer + `BongEntityRenderBootstrap` deferred 注册。
 - 资产管线：`export_container_assets.py` 的 CONTAINERS 元组加 5 项 → `assets/bong/{geo,textures/entity}`；**重打包资源包 zip + 同步 `resourcepack.rs` sha1/size**（CI 红线）。
-- bbmodel 源以 `modelScript/models/LootCrate*.bbmodel`（用户 Blockbench 手调后）为准，勿重跑生成器覆盖手调稿。
+- bbmodel 源以 `modelScript/models/lootcrate/LootCrate*.bbmodel`（用户 Blockbench 手调后）为准，勿重跑生成器覆盖手调稿。
 - **测试**：raw_id 对齐（双端契约测试）；资源包构建 CI。
 
 ## P3 视听 + 平衡 ⬜
