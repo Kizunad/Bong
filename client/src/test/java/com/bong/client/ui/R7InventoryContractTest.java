@@ -98,20 +98,19 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
+    void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "8fde0305098e1500db8a454a76abff479d1426a7cf9204484e47b0f952a761bc",
+            "caeb42e9867fb7f9b4725c973575ff51f51567a92d059b1bf56ba96ae3770572",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "P0 is docs/tests/resources only; every shipped production path and byte must match the frozen baseline"
+            "P1 keybind foundation must keep every shipped production path and byte pinned"
         );
     }
 
     @Test
-    void p0AddsNoProductionFoundationOrScreenMigration() throws IOException {
+    void p1AddsOnlyTheRequestedKeybindFoundationWithoutScreenMigration() throws IOException {
         Set<String> forbiddenProductionTypes = Set.of(
             "BongScreenBase.java",
             "DiffListWidget.java",
-            "BongKeybindRegistry.java",
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -122,7 +121,8 @@ class R7InventoryContractTest {
                 .filter(forbiddenProductionTypes::contains)
                 .forEach(discovered::add);
         }
-        assertTrue(discovered.isEmpty(), "P0 is docs/tests/resources only; production foundation found=" + discovered);
+        assertTrue(discovered.isEmpty(),
+            "P1 must add only BongKeybindRegistry and must not add another foundation type: " + discovered);
 
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
