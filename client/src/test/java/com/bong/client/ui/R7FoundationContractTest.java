@@ -41,6 +41,13 @@ class R7FoundationContractTest {
     private static final Path CLIENT_ROOT = R7SourceScan.productionRoot();
     private static final Path REPOSITORY_ROOT = R7SourceScan.repositoryRoot();
     private static final Path PLAN = REPOSITORY_ROOT.resolve("docs/plan-refactor-client-ui-base-v1.md");
+    private static final Set<String> REGISTRY_MIGRATED_OWNER_IDS = Set.of(
+        "identity.open_panel",
+        "void_action.open_screen",
+        "forge.open_screen",
+        "tsy.extract_start",
+        "tsy.extract_cancel"
+    );
 
     @Test
     void fixtureLoaderSkipsPlainAndOrdinalPrefixedHeaders() {
@@ -318,13 +325,19 @@ class R7FoundationContractTest {
         assertEquals(List.of(), conflictExemptionRows(), "physical-default exemptions must remain empty");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
+        List<KeybindProductionSiteRow> directExpected = expected.stream()
+            .filter(row -> !REGISTRY_MIGRATED_OWNER_IDS.contains(row.ownerId()))
+            .toList();
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
-        assertEquals(26, actualSites.size(), "production KeyBinding constructor-site count changed");
-        assertEquals(26, expected.size(), "each constructor source site must have one exact binding contract");
+        assertEquals(21, actualSites.size(),
+            "remaining direct KeyBinding constructor-site count changed after registry migration");
+        assertEquals(26, expected.size(), "the production-site manifest must retain all 26 logical bindings");
+        assertEquals(21, directExpected.size(),
+            "the direct-constructor subset must exclude exactly the five registry-migrated bindings");
         assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "every logical binding needs one globally unique BindingOwner id");
-        Set<SourceSiteIdentity> expectedIdentities = expected.stream()
+        Set<SourceSiteIdentity> expectedIdentities = directExpected.stream()
             .map(row -> new SourceSiteIdentity(row.sourcePath(), row.sourceSite()))
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         Set<SourceSiteIdentity> actualIdentities = actualSites.stream()
@@ -335,15 +348,15 @@ class R7FoundationContractTest {
         assertEquals(resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
-        assertEquals(34, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
-            "the pinned 26 constructors must expand to exactly 34 runtime bindings");
+        assertEquals(29, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "the remaining 21 direct constructors must expand to exactly 29 runtime bindings");
         Set<String> expandedTranslationKeys = new TreeSet<>();
         for (KeybindingSourceSite site : actualSites) {
             expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        assertEquals(34, expandedTranslationKeys.size(),
-            "every pinned runtime binding must have a unique effective translation key");
-        for (KeybindProductionSiteRow row : expected) {
+        assertEquals(29, expandedTranslationKeys.size(),
+            "every remaining direct runtime binding must have a unique effective translation key");
+        for (KeybindProductionSiteRow row : directExpected) {
             KeybindingSourceSite actual = actualSites.stream()
                 .filter(site -> site.sourcePath().equals(row.sourcePath())
                     && site.sourceSite().equals(row.sourceSite()))
@@ -363,10 +376,10 @@ class R7FoundationContractTest {
                 "expanded runtime translation keys drifted for " + row.ownerId());
         }
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
-            expected, actualSites, keybindRows()
+            directExpected, actualSites, keybindRows()
         );
-        assertEquals(34, expandedDefaults.size(),
-            "the collision audit must inspect every expanded runtime production default, including UNKNOWN entries");
+        assertEquals(29, expandedDefaults.size(),
+            "the direct-site collision audit must inspect every remaining expanded default");
         Set<DefaultCollision> collisions = new TreeSet<>();
         for (int first = 0; first < expandedDefaults.size(); first++) {
             ExpandedProductionDefault left = expandedDefaults.get(first);

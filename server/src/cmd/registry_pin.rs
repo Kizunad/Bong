@@ -5,6 +5,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
     "baolongwang",
     "bong",
+    // plan-bot-e2e-coverage-v1 P4：确定性真实 Plant 采集夹具
+    "botany_spawn",
     "clearinv",
     // plan-coffin-tiers-v1 P4：延寿棺档级直写 dev 命令
     "coffin",
@@ -35,6 +37,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "season",
     "shader_push",
     "shrine",
+    // bot e2e sparring 场景的 dev 通道（/sparring invite <username>）
+    "sparring",
     "spawn",
     "stamina",
     // plan-worldgen-v4 P5：画廊审阅闭环 save 命令（/structure save <name>）
@@ -68,6 +72,8 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "bong breakthrough",
     "bong combat <target:string> <qi_invest:double>",
     "bong gather <resource:string>",
+    // plan-bot-e2e-coverage-v1 P4：确定性真实 Plant 采集夹具
+    "botany_spawn spirit_grass",
     "clearinv",
     "clearinv <scope:string>",
     // plan-coffin-tiers-v1 P4：延寿棺档级直写 dev 命令
@@ -118,6 +124,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "shader_push broadcast",
     "shader_push set <name:string> <value:double>",
     "shrine <action:string>",
+    "sparring invite <target:string>",
     "spawn",
     "stamina set <value:float>",
     // plan-worldgen-v4 P5：画廊审阅闭环 save 命令（覆盖原 .nbt）
@@ -179,6 +186,7 @@ mod tests {
                 "balance",
                 "baolongwang",
                 "bong",
+                "botany_spawn",
                 "clearinv",
                 "coffin",
                 "faction",
@@ -203,6 +211,7 @@ mod tests {
                 "season",
                 "shader_push",
                 "shrine",
+                "sparring",
                 "spawn",
                 "stamina",
                 "structure",

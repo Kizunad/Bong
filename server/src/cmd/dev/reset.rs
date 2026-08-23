@@ -2,7 +2,7 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Update};
+use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Res, Update};
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::body_mass::{BodyMass, Stance};
@@ -25,7 +25,9 @@ use crate::cultivation::full_power_strike::{ChargingState, FullPowerChargeRateOv
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::insight_flow::PendingInsightOffer;
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{
+    KnownTechniques, TechniqueRegistry as DevTechniqueRegistry,
+};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -35,7 +37,9 @@ use crate::cultivation::tribulation::{
     HeartDemonResolution, JueBiRuntimeContext, PendingHeartDemonOffer, TribulationOriginDimension,
     TribulationState,
 };
-use crate::inventory::{clear_player_inventory, ClearScope, OverloadedMarker, PlayerInventory};
+use crate::inventory::{
+    clear_player_inventory, ClearScope, ItemRegistry, OverloadedMarker, PlayerInventory,
+};
 use crate::movement::{player_knockback::ActivePlayerKnockback, MovementState};
 use crate::network::craft_emit::{CraftSessionPersistenceDirty, CraftSessionStateDirty};
 use crate::player::state::PlayerState;
@@ -247,6 +251,7 @@ type ProgressionResetItem<'a> = (
 fn reset_progression_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
     mut players: Query<ProgressionResetItem<'_>>,
+    technique_registry: Option<Res<DevTechniqueRegistry>>,
 ) {
     for event in events.read() {
         let Ok((
@@ -286,12 +291,28 @@ fn reset_progression_state(
             *dugu = DuguPractice::default();
         }
         if let Some(mut techniques) = techniques {
-            *techniques = KnownTechniques::default();
+            *techniques = dev_reset_known_techniques(technique_registry.as_deref());
         }
         if let Some(mut skill_set) = skill_set {
             *skill_set = SkillSet::default();
         }
     }
+}
+
+/// M36 修复：`/reset` 的功法重置与 fresh-player join 同源——dev-techniques 构建下
+/// 授予**当前权威 registry** 的全量（而非 derive 的无条件空表），否则 dev 玩家
+/// `/reset` 后功法全清、与加入时的授予行为自相矛盾；非 dev 构建保持空表。
+fn dev_reset_known_techniques(
+    #[cfg_attr(not(feature = "dev-techniques"), allow(unused_variables))]
+    technique_registry: Option<&DevTechniqueRegistry>,
+) -> KnownTechniques {
+    #[cfg(feature = "dev-techniques")]
+    {
+        if let Some(registry) = technique_registry {
+            return KnownTechniques::dev_default(registry);
+        }
+    }
+    KnownTechniques::default()
 }
 
 type InventoryResetItem<'a> = (
@@ -306,6 +327,7 @@ type InventoryResetItem<'a> = (
 fn reset_inventory_and_ui_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
     mut players: Query<InventoryResetItem<'_>>,
+    registry: Option<Res<ItemRegistry>>,
 ) {
     for event in events.read() {
         let Ok((inventory, player_state, movement, quick_slots, skill_bar, styles)) =
@@ -314,8 +336,8 @@ fn reset_inventory_and_ui_state(
             continue;
         };
 
-        if let Some(mut inventory) = inventory {
-            clear_player_inventory(&mut inventory, ClearScope::All);
+        if let (Some(mut inventory), Some(registry)) = (inventory, registry.as_deref()) {
+            clear_player_inventory(&mut inventory, ClearScope::All, registry);
         }
         if let Some(mut player_state) = player_state {
             *player_state = PlayerState::default();
@@ -417,8 +439,37 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use valence::prelude::{DVec3, Events};
 
+    #[cfg(feature = "dev-techniques")]
+    fn runtime_registry() -> DevTechniqueRegistry {
+        DevTechniqueRegistry::load_for_tests_with_definition(
+            crate::cultivation::known_techniques::TechniqueDefinition {
+                id: "runtime.only".to_string(),
+                display_name: "运行时专属".to_string(),
+                grade: "common".to_string(),
+                description: "只存在于注入 registry 的 runtime-only 招式".to_string(),
+                required_realm: "Awaken".to_string(),
+                required_meridians: Vec::new(),
+                required_race: crate::body_plan::RaceGateOwned::Any,
+                qi_cost: 1.0,
+                stamina_cost: 1.0,
+                cast_ticks: 10,
+                cooldown_ticks: 20,
+                range: 3.0,
+                icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                    .to_string(),
+                category: crate::cultivation::known_techniques::SkillCategory::Attack,
+                dispatch: crate::cultivation::known_techniques::TechniqueDispatch::DirectGeneric,
+            },
+        )
+    }
+
     fn setup_app() -> App {
         let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("real item registry should load"),
+        );
+        #[cfg(feature = "dev-techniques")]
+        app.insert_resource(runtime_registry());
         app.add_event::<CommandResultEvent<ResetCmd>>();
         register_systems(&mut app);
         app
@@ -608,6 +659,41 @@ mod tests {
             skill_bar,
         ));
         player
+    }
+
+    #[cfg(feature = "dev-techniques")]
+    #[test]
+    fn reset_rebuilds_known_techniques_from_injected_registry() {
+        let mut app = setup_app();
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        app.world_mut().entity_mut(player).insert(KnownTechniques {
+            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                id: "legacy.stale".to_string(),
+                proficiency: 0.9,
+                active: false,
+            }],
+        });
+
+        send(&mut app, player);
+        run_update(&mut app);
+
+        let expected = KnownTechniques::dev_default(app.world().resource::<DevTechniqueRegistry>());
+        let actual = app.world().get::<KnownTechniques>(player).unwrap();
+        assert_eq!(
+            actual, &expected,
+            "reset 必须从当前注入的 TechniqueRegistry 重建 KnownTechniques，不能回退默认 catalog 或空表"
+        );
+        assert!(
+            actual
+                .entries
+                .iter()
+                .any(|entry| entry.id == "runtime.only"),
+            "reset 后必须保留只存在于注入 registry 的 runtime.only"
+        );
+        assert!(
+            actual.entries.iter().all(|entry| entry.active),
+            "dev reset 授予的 registry entries 必须处于 active 状态"
+        );
     }
 
     #[test]

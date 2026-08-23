@@ -11,7 +11,10 @@ use crate::world::zone::ZoneRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ZoneQiCmd {
-    Set { name: String, value: f64 },
+    Set {
+        name: String,
+        value: f64,
+    },
     /// 回显执行者当前所在 zone 的权威 spirit_qi（只读探针）。
     GetCurrent,
 }
@@ -89,7 +92,8 @@ pub fn handle_zone_qi(
                         .map(|zone| zone.name.as_str())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    client.send_chat_message(format!("[dev] unknown zone `{name}`; known: {hints}"));
+                    client
+                        .send_chat_message(format!("[dev] unknown zone `{name}`; known: {hints}"));
                 }
             }
             ZoneQiCmd::GetCurrent => {
@@ -109,9 +113,7 @@ pub fn handle_zone_qi(
                     .unwrap_or(crate::world::dimension::DimensionKind::Overworld);
                 let Some(zone) = zones.find_zone(dimension, position.0) else {
                     if let Ok(mut client) = clients.get_mut(event.executor) {
-                        client.send_chat_message(
-                            "[dev] zone_qi get: no zone at executor position",
-                        );
+                        client.send_chat_message("[dev] zone_qi get: no zone at executor position");
                     }
                     continue;
                 };
@@ -419,9 +421,9 @@ mod tests {
 
         let chats = collected_chat(&mut app, &mut helper);
         assert!(
-            chats.iter().any(|chat| {
-                chat.contains("[dev] zone_qi get: no zone at executor position")
-            }),
+            chats
+                .iter()
+                .any(|chat| { chat.contains("[dev] zone_qi get: no zone at executor position") }),
             "zone 外执行者的 `zone_qi get` 必须回显 no-zone 消息，实际 {chats:?}"
         );
         assert!(

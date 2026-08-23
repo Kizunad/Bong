@@ -26,8 +26,8 @@ use valence::entity::entity::NoGravity;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, EntityLayerId, EventReader, IntoSystemConfigs,
-    Look, Position, Query, ResMut, Update, With,
+    bevy_ecs, App, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter,
+    IntoSystemConfigs, Look, Position, Query, ResMut, Update,
 };
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
@@ -68,7 +68,10 @@ pub enum SupplyCoffinCmd {
     Barrier,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(bevy_ecs::event::Event, Debug, Clone, Copy, PartialEq, Eq)]
+struct SupplyCoffinBarrierRequested;
+
+#[derive(bevy_ecs::component::Component, Debug, Default)]
 struct SupplyCoffinBarrierPending;
 
 impl Command for SupplyCoffinCmd {
@@ -131,6 +134,7 @@ impl Command for SupplyCoffinCmd {
 
 pub fn register(app: &mut App) {
     app.add_command::<SupplyCoffinCmd>()
+        .add_event::<SupplyCoffinBarrierRequested>()
         .add_systems(
             Update,
             handle_supply_coffin_cmd
@@ -138,18 +142,23 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             Update,
-            flush_supply_coffin_barriers
+            queue_supply_coffin_barriers
                 .after(handle_supply_coffin_cmd)
                 .after(crate::network::client_request_handler::handle_client_request_payloads)
                 .after(crate::supply_coffin::interact::handle_supply_coffin_interact)
                 .after(crate::supply_coffin::lifecycle::external_container_lifecycle_tick),
         );
+    app.add_systems(
+        Update,
+        flush_supply_coffin_barriers.after(queue_supply_coffin_barriers),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn handle_supply_coffin_cmd(
     mut commands: Commands,
     mut events: EventReader<CommandResultEvent<SupplyCoffinCmd>>,
+    mut barriers: EventWriter<SupplyCoffinBarrierRequested>,
     registry: Option<ResMut<SupplyCoffinRegistry>>,
     mut clients: Query<&mut Client>,
     layers: Option<valence::prelude::Res<crate::world::dimension::DimensionLayers>>,
@@ -358,22 +367,33 @@ pub fn handle_supply_coffin_cmd(
                 );
             }
             SupplyCoffinCmd::Barrier => {
-                // The marker is applied at the end of this schedule pass. The flush system runs
-                // after request/open/lifecycle systems, so its chat reply on the next pass is a
-                // deterministic black-box watermark for every earlier packet from this client.
-                commands
-                    .entity(event.executor)
-                    .insert(SupplyCoffinBarrierPending);
+                // Queue a typed request; the queue system adds a deferred marker and the flush
+                // system broadcasts it on the next Update so every observer gets a local marker.
+                barriers.send(SupplyCoffinBarrierRequested);
             }
+        }
+    }
+}
+
+fn queue_supply_coffin_barriers(
+    mut barriers: EventReader<SupplyCoffinBarrierRequested>,
+    mut commands: Commands,
+    clients: Query<Entity, bevy_ecs::query::With<Client>>,
+) {
+    for _ in barriers.read() {
+        for entity in &clients {
+            commands.entity(entity).insert(SupplyCoffinBarrierPending);
         }
     }
 }
 
 fn flush_supply_coffin_barriers(
     mut commands: Commands,
-    mut pending: Query<(valence::prelude::Entity, &mut Client), With<SupplyCoffinBarrierPending>>,
+    mut clients: Query<(Entity, &mut Client), bevy_ecs::query::Added<SupplyCoffinBarrierPending>>,
 ) {
-    for (entity, mut client) in &mut pending {
+    // The marker is deferred by the queue system, so this runs in the next Update. Broadcasting
+    // then gives every socket its own local timestamp for a reliable cross-connection watermark.
+    for (entity, mut client) in &mut clients {
         client.send_chat_message("[dev] supply_coffin barrier passed");
         commands
             .entity(entity)
@@ -402,6 +422,7 @@ mod tests {
     fn setup_app(with_layers: bool) -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        app.add_event::<SupplyCoffinBarrierRequested>();
         app.insert_resource(SupplyCoffinRegistry::new(
             (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
             65.0,
@@ -505,26 +526,67 @@ mod tests {
     }
 
     #[test]
-    fn barrier_command_defers_reply_marker_until_flush_system() {
+    fn barrier_command_queues_typed_request_for_flush_system() {
+        use valence::protocol::packets::play::GameMessageS2c;
+        use valence::testing::create_mock_client;
+
         let mut app = setup_app(false);
-        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        let (mut bundle, mut helper) = create_mock_client("Alice");
+        bundle.player.position = valence::prelude::Position::new([0.0, 0.0, 0.0]);
+        let player = app.world_mut().spawn(bundle).id();
 
         send(&mut app, player, SupplyCoffinCmd::Barrier);
         run_update(&mut app);
-        assert!(
-            app.world()
-                .get::<SupplyCoffinBarrierPending>(player)
-                .is_some(),
-            "barrier command must persist a marker into the next schedule pass"
+        let requested = app
+            .world()
+            .resource::<Events<SupplyCoffinBarrierRequested>>();
+        assert_eq!(
+            requested.len(),
+            1,
+            "barrier command must enqueue one typed request for the ordered flush system"
         );
 
-        app.add_systems(Update, flush_supply_coffin_barriers);
+        app.add_systems(
+            Update,
+            (queue_supply_coffin_barriers, flush_supply_coffin_barriers),
+        );
         run_update(&mut app);
+        run_update(&mut app);
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("barrier chat should flush to the mock client");
+        }
+        let chat = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            chat,
+            vec!["[dev] supply_coffin barrier passed"],
+            "typed barrier request must produce exactly one authoritative chat watermark"
+        );
+
+        run_update(&mut app);
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("second barrier flush should succeed");
+        }
         assert!(
-            app.world()
-                .get::<SupplyCoffinBarrierPending>(player)
-                .is_none(),
-            "barrier flush must acknowledge once and remove the pending marker"
+            helper.collect_received().0.is_empty(),
+            "one barrier request must not produce duplicate acknowledgements"
         );
     }
 
@@ -642,6 +704,7 @@ mod tests {
         // 用与 cmd::tests 同型的最小化 App：不 insert SupplyCoffinRegistry
         let mut app = App::new();
         app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        app.add_event::<SupplyCoffinBarrierRequested>();
         // 不 insert SupplyCoffinRegistry —— 模拟 cmd::register 早于运行时 register 的窗口
         app.add_systems(Update, handle_supply_coffin_cmd);
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);

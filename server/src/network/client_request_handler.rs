@@ -47,7 +47,7 @@ use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechniques, TechniqueDefinition,
+    KnownTechniques, TechniqueDefinition, TechniqueRegistry,
 };
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian::severed::{
@@ -223,6 +223,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub unique_ids: Query<'w, 's, &'static UniqueId>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
+    pub technique_registry: Res<'w, TechniqueRegistry>,
     pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
     pub skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
     pub entity_manager: Option<Res<'w, EntityManager>>,
@@ -407,7 +408,8 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub inscription_scroll_tx: Option<ResMut<'w, Events<InscriptionScrollSubmit>>>,
     pub forge_sessions: Option<Res<'w, ForgeSessions>>,
     pub item_registry: Res<'w, ItemRegistry>,
-    /// plan-forge-session-entry-wiring-v1 §4.1#3 — station_pos → Entity 寻址（对齐
+    pub technique_registry: Res<'w, TechniqueRegistry>,
+    /// forge station 查找：station_pos → Entity 寻址（对齐
     /// `with_owned_furnace_mut` 的 BlockPos 寻址模式）。
     pub forge_stations: Query<'w, 's, (Entity, &'static WeaponForgeStation)>,
     /// plan-forge-session-entry-wiring-v1 §4.1#2 — 翻页后回推 `forge_blueprint_book` 需要
@@ -552,8 +554,18 @@ pub fn handle_client_request_payloads(
         let request: ClientRequestV1 = match serde_json::from_str(payload) {
             Ok(r) => r,
             Err(err) => {
+                // 带 user= 关联键：deserialize-failed 是全局频道共有的 warn，bot
+                // 场景要按本 bot 归属计数（否则同窗其他客户端的畸形请求会让
+                // 载体作用域断言跨客户端误红，review finding [minor]：全局
+                // 反序列化失败计数）。登录中/断连瞬间拿不到 Username 时用
+                // <unknown> 占位，不影响正常归属。
+                let client_user = clients
+                    .get(ev.client)
+                    .ok()
+                    .map(|(username, _)| username.0.as_str())
+                    .unwrap_or("<unknown>");
                 tracing::warn!(
-                    "[bong][network] client_request deserialize failed from {:?}: {err}; payload_bytes={}",
+                    "[bong][network] client_request deserialize failed from {:?} (user={client_user}): {err}; payload_bytes={}",
                     ev.client,
                     ev.data.len()
                 );
@@ -2207,6 +2219,28 @@ pub fn handle_client_request_payloads(
                         cycle_container_slot(world, entity, tick)
                     };
                     if switched.is_none() {
+                        // e2e fenglinghe 拒收护栏的正向证据：switch_container_slot 的
+                        // 拒收早退（!allows_combat_swap，仅 fenglinghe）处发
+                        // carrier 线缆 id 归属的 guard 标记。场景据此区分「拒收分支
+                        // 被走」与「请求在 schema/反序列化/派发环节被丢」——单靠
+                        // 无 container_swap 事件无法证明到达了 switch 系统（review
+                        // finding [major]：fenglinghe 静默在请求未达 switch 系统时
+                        // 照样通过）。经 GuardLogDedup 按 tick 窗口去重：恶意客户端
+                        // 反复发同一拒收请求不制造无界日志，且窗口外自动剪除。
+                        let wire_id = crate::combat::woliu::entity_wire_id(
+                            world.get::<UniqueId>(entity),
+                            entity,
+                        );
+                        let emit = world
+                            .get_resource_mut::<crate::combat::guard_log::GuardLogDedup>()
+                            .map(|mut g| g.should_emit(&wire_id, "rejected", tick))
+                            .unwrap_or(true);
+                        if emit {
+                            tracing::info!(
+                                "[bong][combat] container_switch guard carrier={} reason=rejected",
+                                wire_id
+                            );
+                        }
                         tracing::warn!(
                             ?entity,
                             ?target_container,
@@ -2273,6 +2307,7 @@ pub fn handle_client_request_payloads(
                     &inventories,
                     &clients,
                     persistence.as_deref(),
+                    &skill_scroll_params.technique_registry,
                     &skill_scroll_params.known_techniques,
                 );
             }
@@ -3240,6 +3275,7 @@ fn handle_learn_technique_scroll(
             skill_scroll_params.race_registry.as_deref(),
         );
         can_learn_technique(
+            &skill_scroll_params.technique_registry,
             known,
             cultivation,
             &meridians,
@@ -3288,6 +3324,7 @@ fn handle_learn_technique_scroll(
             );
             matches!(
                 learn_technique_if_allowed(
+                    &skill_scroll_params.technique_registry,
                     &mut known,
                     cultivation,
                     &meridians,
@@ -3329,8 +3366,7 @@ fn handle_learn_technique_scroll(
     if let Some(reject_reason) = match &outcome {
         ScrollReadOutcome::RealmTooLow { required, .. } => {
             Some(InventoryMoveRejectReason::RealmTooLow {
-                required_realm: crate::schema::cultivation::realm_to_string(*required)
-                    .to_string(),
+                required_realm: crate::schema::cultivation::realm_to_string(*required).to_string(),
             })
         }
         ScrollReadOutcome::RaceMismatch => Some(InventoryMoveRejectReason::RaceMismatch),
@@ -3392,7 +3428,13 @@ fn resync_technique_scroll_use(
         );
     }
     if let Ok(known) = skill_scroll_params.known_techniques.get(entity) {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &skill_scroll_params.technique_registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
@@ -4565,6 +4607,29 @@ mod tests {
         session_registered: bool,
         owner_is_player: bool,
     ) -> (App, Entity, Entity, Vec<String>) {
+        run_external_container_move_case_with_source(
+            player_dimension,
+            player_pos,
+            source_kind,
+            source_active,
+            session_registered,
+            owner_is_player,
+            0,
+            0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_external_container_move_case_with_source(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+        source_kind: crate::inventory::external_container::ExternalContainerKind,
+        source_active: bool,
+        session_registered: bool,
+        owner_is_player: bool,
+        source_row: u64,
+        source_col: u64,
+    ) -> (App, Entity, Entity, Vec<String>) {
         use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
         use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
 
@@ -4650,7 +4715,7 @@ mod tests {
                 client: player,
                 channel: ident!("bong:client_request").into(),
                 data: format!(
-                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":0,"col":0}},"to":{{"kind":"container","container_id":"main_pack","row":0,"col":0}}}}"#
+                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":{source_row},"col":{source_col}}},"to":{{"kind":"container","container_id":"main_pack","row":0,"col":0}}}}"#
                 )
                 .into_bytes()
                 .into_boxed_slice(),
@@ -4901,6 +4966,152 @@ mod tests {
                 && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
             "successful move must keep existing update + inventory snapshot contract; payloads={payload_types:?}"
         );
+    }
+
+    #[test]
+    fn external_move_rejects_forged_external_source_coordinates_without_mutation() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case_with_source(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                is_herb: false,
+            },
+            false,
+            true,
+            true,
+            0,
+            1,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_update"),
+            "authorized owner with forged source coordinates must receive authoritative external resync; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "forged source rejection must resync player inventory; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn external_move_rejects_forged_player_source_container_and_coordinates_without_mutation() {
+        for (label, source_container_id, source_row, source_col) in [
+            ("container", "body_pocket", 0, 0),
+            ("row", "main_pack", 1, 0),
+            ("column", "main_pack", 0, 1),
+        ] {
+            let (app, player, coffin, payload_types) = run_player_to_external_move_case_with_source(
+                source_container_id,
+                source_row,
+                source_col,
+            );
+            let inventory = app
+                .world()
+                .get::<PlayerInventory>(player)
+                .expect("test player keeps inventory component");
+            assert_eq!(
+                inventory.revision,
+                InventoryRevision(0),
+                "forged player {label} source must not advance inventory revision"
+            );
+            assert!(
+                inventory.containers.iter().any(|container| {
+                    container.id == "main_pack"
+                        && container.items.iter().any(|item| {
+                            item.instance.instance_id == 7001 && item.row == 0 && item.col == 0
+                        })
+                }),
+                "forged player {label} source must keep instance 7001 at its authoritative slot"
+            );
+            let ext = app
+                .world()
+                .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+                .expect("external container must remain attached after rejection");
+            assert!(
+                ext.container.items.is_empty(),
+                "forged player {label} source must not move instance 7001 into external storage"
+            );
+            assert!(
+                payload_types.iter().any(|ty| ty == "loot_container_update"),
+                "forged player {label} source must resync external state; payloads={payload_types:?}"
+            );
+            assert!(
+                payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+                "forged player {label} source must resync player state; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_player_to_external_move_case_with_source(
+        source_container_id: &str,
+        source_row: u64,
+        source_col: u64,
+    ) -> (App, Entity, Entity, Vec<String>) {
+        use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+
+        const SESSION_ID: u64 = 77;
+        const INSTANCE_ID: u64 = 7001;
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut inventory = empty_inventory();
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: inventory_test_item(INSTANCE_ID, "spiritual_ore", 1),
+        });
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory,
+                Cultivation::default(),
+                PlayerState::default(),
+            ))
+            .id();
+        let coffin = app
+            .world_mut()
+            .spawn(ExternalContainer {
+                session_id: SESSION_ID,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(SESSION_ID),
+                    name: "external_test".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: Some(player),
+                timeout_wall_secs: u64::MAX,
+                source_kind:
+                    crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                        is_herb: false,
+                    },
+            })
+            .id();
+        app.insert_resource(ExternalContainerRegistry {
+            next_session_id: SESSION_ID + 1,
+            sessions: [(SESSION_ID, coffin)].into_iter().collect(),
+        });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: format!(
+                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"{source_container_id}","row":{source_row},"col":{source_col}}},"to":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":0,"col":0}}}}"#
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        (app, player, coffin, payload_types)
     }
 
     #[test]
@@ -6145,6 +6356,7 @@ mod tests {
     fn register_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
         app.insert_resource(SkillMeridianDependencies::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -8441,6 +8653,7 @@ mod tests {
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedBreakthroughRequests::default());
         app.insert_resource(CapturedForgeRequests::default());
         app.insert_resource(CapturedInsightChoices::default());
@@ -9708,7 +9921,8 @@ mod tests {
         let configs = collect_quickslot_configs(&mut helper);
         assert!(
             configs.iter().any(|c| {
-                c.ack_request_id.as_deref() == Some("empty-item-id") && c.bind_accepted == Some(false)
+                c.ack_request_id.as_deref() == Some("empty-item-id")
+                    && c.bind_accepted == Some(false)
             }),
             "item_id=\"\" 请求应下发 bind_accepted=false 的 quickslot_config 回执"
         );
@@ -10196,6 +10410,7 @@ mod tests {
     fn mineral_probe_request_emits_probe_intent() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10264,6 +10479,7 @@ mod tests {
     fn spirit_niche_place_request_emits_place_intent() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedSpiritNichePlaces::default());
         app.insert_resource(CombatClock { tick: 88 });
         app.insert_resource(GameplayActionQueue::default());
@@ -10501,6 +10717,7 @@ mod tests {
     fn spirit_niche_coordinate_requests_emit_reveal_intents() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedSpiritNicheCoordinateReveals::default());
         app.insert_resource(CombatClock { tick: 89 });
         app.insert_resource(GameplayActionQueue::default());
@@ -10587,6 +10804,7 @@ mod tests {
     fn mineral_probe_request_out_of_range_is_rejected() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10649,6 +10867,7 @@ mod tests {
     fn mineral_probe_request_uses_player_dimension() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10889,10 +11108,7 @@ mod tests {
             .world_mut()
             .spawn((
                 client_bundle,
-                inventory_with_skill_scroll(skill_scroll_item(
-                    42,
-                    "scroll_technique_sword_infuse",
-                )),
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_technique_sword_infuse")),
                 KnownTechniques {
                     entries: Vec::new(),
                 },
@@ -10939,10 +11155,7 @@ mod tests {
             .world_mut()
             .spawn((
                 client_bundle,
-                inventory_with_skill_scroll(skill_scroll_item(
-                    42,
-                    "scroll_technique_sword_infuse",
-                )),
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_technique_sword_infuse")),
                 KnownTechniques {
                     entries: Vec::new(),
                 },
@@ -11240,6 +11453,7 @@ mod tests {
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -11330,6 +11544,7 @@ mod tests {
     fn learn_skill_scroll_duplicate_does_not_consume_item() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -11422,6 +11637,7 @@ mod tests {
     fn learn_blueprint_consumes_scroll_item() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -11980,6 +12196,7 @@ mod tests {
     fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12061,6 +12278,7 @@ mod tests {
     fn forge_inscription_scroll_rejects_invalid_session_before_consuming_item() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12134,6 +12352,7 @@ mod tests {
     fn forge_tempering_hit_emits_event() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12198,6 +12417,7 @@ mod tests {
     fn forge_tempering_hit_rejects_unknown_beat() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12258,6 +12478,7 @@ mod tests {
     fn forge_consecration_inject_emits_event() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12322,6 +12543,7 @@ mod tests {
     fn forge_consecration_inject_rejects_negative_qi() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12382,6 +12604,7 @@ mod tests {
     fn forge_step_advance_emits_event() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedStepAdvances::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -12445,6 +12668,7 @@ mod tests {
     fn forge_session_inputs_reject_wrong_caster() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CapturedStepAdvances::default());
@@ -12613,6 +12837,127 @@ mod tests {
         assert_eq!(casting.bound_instance_id, None);
         assert_eq!(casting.duration_ticks, 8);
         assert_eq!(casting.complete_cooldown_ticks, 60);
+    }
+
+    #[test]
+    fn runtime_only_direct_generic_can_be_learned_bound_and_cast() {
+        const TECHNIQUE_ID: &str = "test.runtime_only_direct";
+        const SCROLL_TEMPLATE_ID: &str = "test_runtime_only_direct_scroll";
+        const SCROLL_INSTANCE_ID: u64 = 91_001;
+
+        let mut definition = TechniqueRegistry::load_for_tests()
+            .get("movement.dash")
+            .expect("direct-generic fixture must exist")
+            .clone();
+        definition.id = TECHNIQUE_ID.to_string();
+        definition.display_name = "运行时直施".to_string();
+        definition.cast_ticks = 17;
+        definition.cooldown_ticks = 83;
+        definition.required_meridians.clear();
+        let registry = TechniqueRegistry::load_for_tests_with_definition(definition);
+
+        let mut scroll_template = ItemTemplate::minimal_for_test(SCROLL_TEMPLATE_ID);
+        scroll_template.category = ItemCategory::Scroll;
+        scroll_template.technique_scroll_spec = Some(crate::inventory::TechniqueScrollSpec {
+            kind: "technique".to_string(),
+            skill_id: TECHNIQUE_ID.to_string(),
+        });
+        let item_registry = ItemRegistry::from_map(HashMap::from([(
+            SCROLL_TEMPLATE_ID.to_string(),
+            scroll_template,
+        )]));
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(registry);
+        app.insert_resource(item_registry);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::MeridianSystem::default(),
+                SkillBarBindings::default(),
+                QuickSlotBindings::default(),
+                inventory_with_skill_scroll(skill_scroll_item(
+                    SCROLL_INSTANCE_ID,
+                    SCROLL_TEMPLATE_ID,
+                )),
+                KnownTechniques::default(),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::TechniqueScrollUse {
+                    v: 1,
+                    instance_id: SCROLL_INSTANCE_ID,
+                })
+                .expect("technique-scroll request should serialize")
+                .into_boxed_slice(),
+            });
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(entity).unwrap();
+        assert!(
+            known
+                .entries
+                .iter()
+                .any(|entry| entry.id == TECHNIQUE_ID && entry.active),
+            "request-level scroll use must learn and activate a runtime-only technique"
+        );
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance_borrow(inventory, SCROLL_INSTANCE_ID).is_none(),
+            "successful request-level learning must consume the exact scroll instance"
+        );
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"test.runtime_only_direct"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(matches!(
+            app.world()
+                .get::<SkillBarBindings>(entity)
+                .unwrap()
+                .get(0),
+            Some(SkillSlot::Skill { skill_id }) if skill_id == "test.runtime_only_direct"
+        ));
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("runtime-only direct-generic cast must start");
+        assert_eq!(
+            casting.skill_id.as_deref(),
+            Some("test.runtime_only_direct")
+        );
+        assert_eq!(casting.duration_ticks, 17);
+        assert_eq!(casting.complete_cooldown_ticks, 83);
     }
 
     /// 槽位 3 绑定崩拳——「主动切槽取消」用例里那条**通过全部门禁**的新 cast
@@ -14147,7 +14492,7 @@ mod tests {
             1,
         );
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result =
@@ -14171,7 +14516,7 @@ mod tests {
             lung.integrity = 0.3;
         }
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -14223,7 +14568,7 @@ mod tests {
         ms.get_mut(crate::cultivation::components::MeridianId::Lung)
             .integrity = 1.0;
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -14268,7 +14613,7 @@ mod tests {
             lung.integrity = 0.8; // ≥ min_health=0.5
         }
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -15797,7 +16142,7 @@ fn handle_skill_bar_cast(
         );
         return;
     };
-    let Some(definition) = technique_definition(&skill_id) else {
+    let Some(definition) = combat_params.technique_registry.get(&skill_id).cloned() else {
         tracing::warn!(
             "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: unknown skill `{skill_id}`"
         );
@@ -15944,7 +16289,7 @@ fn handle_skill_bar_cast(
         if let Some(meridians) = meridians_ok {
             if let Err(blocked) = check_player_skill_meridian_gate(
                 &skill_id,
-                definition.required_meridians,
+                &definition.required_meridians,
                 meridians,
                 severed,
                 deps_table,
@@ -16029,7 +16374,7 @@ fn handle_skill_bar_cast(
             entity,
             slot,
             &skill_id,
-            definition,
+            &definition,
             clock,
             commands,
             clients,
@@ -16618,6 +16963,7 @@ fn handle_skill_config_intent_request(
         return;
     };
     let snapshot = match handle_config_intent(
+        &combat_params.technique_registry,
         player_id.as_str(),
         skill_id.as_str(),
         config,
@@ -16679,6 +17025,7 @@ fn handle_skill_bar_bind(
     inventories: &Query<&mut PlayerInventory>,
     clients: &Query<(&Username, &mut Client)>,
     persistence: Option<&PlayerStatePersistence>,
+    technique_registry: &TechniqueRegistry,
     known_techniques: &Query<&mut KnownTechniques>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
@@ -16701,7 +17048,7 @@ fn handle_skill_bar_bind(
             SkillSlot::Item { instance_id }
         }
         Some(SkillBarBindingV1::Skill { skill_id }) => {
-            if technique_definition(skill_id).is_none() {
+            if technique_registry.get(skill_id).is_none() {
                 tracing::warn!(
                     "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
                 );
@@ -19876,6 +20223,34 @@ fn handle_external_container_move(
             return;
         };
 
+        let authoritative_source = ext.container.items.iter().find(|placed| {
+            placed.instance.instance_id == instance_id
+                && matches!(
+                    from,
+                    InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } if *container_id == ext_container_id
+                        && *row == u64::from(placed.row)
+                        && *col == u64::from(placed.col)
+                )
+        });
+        if authoritative_source.is_none() {
+            tracing::warn!(
+                "[bong][network] external_container_move: instance {instance_id} source location does not match authoritative external placement"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
+
         let Some(removed) = remove_item_from_container(&mut ext.container, instance_id) else {
             tracing::warn!(
                 "[bong][network] external_container_move: instance {instance_id} not found in ext container"
@@ -20028,6 +20403,26 @@ fn handle_external_container_move(
     } else {
         // 玩家背包 → 外部容器
         let InventoryLocationV1::Container {
+            container_id: from_container_id,
+            row: from_row,
+            col: from_col,
+        } = from
+        else {
+            tracing::warn!(
+                "[bong][network] external_container_move: player source must be container slot"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+
+        let InventoryLocationV1::Container {
             row: to_row,
             col: to_col,
             ..
@@ -20051,21 +20446,17 @@ fn handle_external_container_move(
             return;
         };
 
-        let mut found_item = None;
-        for container in inventory.containers.iter_mut() {
-            if let Some(idx) = container
-                .items
-                .iter()
-                .position(|p| p.instance.instance_id == instance_id)
-            {
-                found_item = Some(container.items.remove(idx));
-                break;
-            }
-        }
-
-        let Some(removed) = found_item else {
+        let authoritative_source = inventory.containers.iter().position(|container| {
+            container.id == *from_container_id
+                && container.items.iter().any(|placed| {
+                    placed.instance.instance_id == instance_id
+                        && u64::from(placed.row) == *from_row
+                        && u64::from(placed.col) == *from_col
+                })
+        });
+        let Some(source_container_index) = authoritative_source else {
             tracing::warn!(
-                "[bong][network] external_container_move: instance {instance_id} not in player inventory"
+                "[bong][network] external_container_move: instance {instance_id} source location does not match authoritative player placement"
             );
             resync_ext_and_inventory(
                 player_entity,
@@ -20077,6 +20468,18 @@ fn handle_external_container_move(
             );
             return;
         };
+        let source_item_index = inventory.containers[source_container_index]
+            .items
+            .iter()
+            .position(|placed| {
+                placed.instance.instance_id == instance_id
+                    && u64::from(placed.row) == *from_row
+                    && u64::from(placed.col) == *from_col
+            })
+            .expect("authoritative source search found matching item and placement");
+        let removed = inventory.containers[source_container_index]
+            .items
+            .remove(source_item_index);
 
         let (to_row, to_col) = match (u8::try_from(*to_row), u8::try_from(*to_col)) {
             (Ok(r), Ok(c)) => (r, c),
@@ -21232,6 +21635,7 @@ mod freshness_probe_handler_tests {
     fn setup_freshness_probe_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedFreshnessProbes::default());
         app.insert_resource(CombatClock { tick: 42 });
         app.insert_resource(GameplayActionQueue::default());
@@ -21585,6 +21989,7 @@ mod freshness_probe_handler_tests {
     fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedRaiseShieldIntents::default());
         app.insert_resource(CapturedLowerShieldIntents::default());
         app.insert_resource(CombatClock::default());

@@ -59,6 +59,13 @@ pub const BUFF_DEFENSE_MAGNITUDE: f32 = 0.2;
 pub const BUFF_DURATION_TICKS: u64 = 200;
 pub const BUFF_COOLDOWN_TICKS: u64 = 400;
 
+/// M08：resolver 从权威 registry 读 qi_cost/cooldown 用的 skill id（与
+/// `register_npc_skills` 的注册 id 一一对应；测试断言仍可用 HEAL_* 常量作
+/// checked-in 期望值，运行时成本以 registry 为准）。
+pub const NPC_HEAL_SKILL_ID: &str = "npc.heal_basic";
+pub const NPC_BUFF_SPEED_SKILL_ID: &str = "npc.buff_speed";
+pub const NPC_BUFF_DEFENSE_SKILL_ID: &str = "npc.buff_defense";
+
 fn npc_qi_account(caster: Entity) -> QiAccountId {
     QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()))
 }
@@ -287,9 +294,9 @@ fn emit_npc_skill_av(
 }
 
 pub fn register_npc_skills(registry: &mut SkillRegistry) {
-    registry.register("npc.heal_basic", npc_heal_basic);
-    registry.register("npc.buff_speed", npc_buff_speed);
-    registry.register("npc.buff_defense", npc_buff_defense);
+    registry.register(NPC_HEAL_SKILL_ID, npc_heal_basic);
+    registry.register(NPC_BUFF_SPEED_SKILL_ID, npc_buff_speed);
+    registry.register(NPC_BUFF_DEFENSE_SKILL_ID, npc_buff_defense);
 }
 
 pub fn declare_npc_skill_meridian_deps(deps: &mut SkillMeridianDependencies) {
@@ -322,7 +329,21 @@ fn npc_heal_basic(
         }
     };
 
-    if cultivation.qi_current < HEAL_QI_COST {
+    // M08：resolver 必须消费权威 registry 的 qi_cost/cooldown——selector 已经按
+    // registry 成本选择（npc/technique.rs），executor 若继续用硬编码常量就会
+    // 出现「selector 认为可负担 → resolver 拒绝」或双重扣费的分裂契约。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_HEAL_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
@@ -332,10 +353,10 @@ fn npc_heal_basic(
     let heal_grades = (heal_amount / 0.25).round().clamp(0.0, f64::from(u8::MAX)) as u8;
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - HEAL_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, HEAL_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     if let Some(mut wounds) = world.get_mut::<Wounds>(caster) {
         crate::alchemy::pill::apply_wound_heal(&mut wounds, None, heal_grades);
@@ -350,7 +371,7 @@ fn npc_heal_basic(
     );
 
     CastResult::Started {
-        cooldown_ticks: HEAL_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 20,
     }
 }
@@ -370,17 +391,29 @@ fn npc_buff_speed(
         }
     };
 
-    if cultivation.qi_current < BUFF_SPEED_QI_COST {
+    // M08：同 npc_heal_basic——executor 必须与 selector 共用同一 registry 成本。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_BUFF_SPEED_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - BUFF_SPEED_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, BUFF_SPEED_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -406,7 +439,7 @@ fn npc_buff_speed(
     );
 
     CastResult::Started {
-        cooldown_ticks: BUFF_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 10,
     }
 }
@@ -426,17 +459,29 @@ fn npc_buff_defense(
         }
     };
 
-    if cultivation.qi_current < BUFF_DEFENSE_QI_COST {
+    // M08：同 npc_heal_basic——executor 必须与 selector 共用同一 registry 成本。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_BUFF_DEFENSE_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - BUFF_DEFENSE_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, BUFF_DEFENSE_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -462,7 +507,7 @@ fn npc_buff_defense(
     );
 
     CastResult::Started {
-        cooldown_ticks: BUFF_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks),
         anim_duration_ticks: 10,
     }
 }
@@ -483,6 +528,10 @@ mod tests {
         world.insert_resource(Events::<QiTransfer>::default());
         world.insert_resource(Events::<VfxEventRequest>::default());
         world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+        // M08：resolver 从注入 registry 读成本——测试必须安装与生产一致的 registry。
+        world.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         world
     }
 
@@ -1415,6 +1464,218 @@ mod tests {
             collected_audio(&world).is_empty(),
             "rejected cast must not emit audio AV"
         );
+    }
+
+    // === M08 override：selector 到 resolver 共享同一注入 registry 成本/冷却 ===
+
+    fn world_with_override(
+        id: &str,
+        override_definition: impl FnOnce(&mut crate::cultivation::known_techniques::TechniqueDefinition),
+    ) -> bevy_ecs::world::World {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(Events::<ApplyStatusEffectIntent>::default());
+        world.insert_resource(Events::<QiTransfer>::default());
+        world.insert_resource(Events::<VfxEventRequest>::default());
+        world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+        world.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
+                id,
+                override_definition,
+            ),
+        );
+        world
+    }
+
+    #[test]
+    fn heal_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.heal_basic 成本到 40.0/冷却 77——qi=20（旧常量 8.0
+        // 本可负担）必须被拒；qi=40 才放行且 cooldown 取 77（旧常量 200 必撞红），
+        // 证明 resolver 结算读的是注入 registry 而非硬编码常量。
+        let mut world = world_with_override(NPC_HEAL_SKILL_ID, |definition| {
+            definition.qi_cost = 40.0;
+            definition.cooldown_ticks = 77;
+        });
+
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 20.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "overridden cost 40.0 must reject qi=20 (constant 8.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 40.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 77,
+                    anim_duration_ticks: 20
+                }
+            ),
+            "overridden cooldown 77 must be returned (constant 200 would fail); got {result:?}"
+        );
+        let cult = world.get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cult.qi_current - 0.0).abs() < f64::EPSILON,
+            "qi must be charged by overridden cost 40.0, got {}",
+            cult.qi_current
+        );
+    }
+
+    #[test]
+    fn buff_speed_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.buff_speed 成本到 30.0/冷却 88——qi=6（旧常量 5.0
+        // 本可负担）必须被拒；qi=30 才放行、冷却取 88、且发出 SpeedBoost intent。
+        let mut world = world_with_override(NPC_BUFF_SPEED_SKILL_ID, |definition| {
+            definition.qi_cost = 30.0;
+            definition.cooldown_ticks = 88;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 6.0), make_position()))
+            .id();
+        let result = npc_buff_speed(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "overridden cost 30.0 must reject qi=6 (constant 5.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 30.0), make_position()))
+            .id();
+        let result = npc_buff_speed(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 88,
+                    anim_duration_ticks: 10
+                }
+            ),
+            "overridden cooldown 88 must be returned (constant 400 would fail); got {result:?}"
+        );
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        let intents = reader.read(intents).collect::<Vec<_>>();
+        assert_eq!(intents.len(), 1, "SpeedBoost intent must fire on success");
+        assert_eq!(intents[0].kind, StatusEffectKind::SpeedBoost);
+    }
+
+    #[test]
+    fn buff_defense_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.buff_defense 成本到 25.0/冷却 99——qi=7（旧常量 6.0
+        // 本可负担）必须被拒；qi=25 才放行、冷却取 99、且发出 DamageReduction intent。
+        let mut world = world_with_override(NPC_BUFF_DEFENSE_SKILL_ID, |definition| {
+            definition.qi_cost = 25.0;
+            definition.cooldown_ticks = 99;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 7.0), make_position()))
+            .id();
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "overridden cost 25.0 must reject qi=7 (constant 6.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 25.0), make_position()))
+            .id();
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 99,
+                    anim_duration_ticks: 10
+                }
+            ),
+            "overridden cooldown 99 must be returned (constant 400 would fail); got {result:?}"
+        );
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        let intents = reader.read(intents).collect::<Vec<_>>();
+        assert_eq!(
+            intents.len(),
+            1,
+            "DamageReduction intent must fire on success"
+        );
+        assert_eq!(intents[0].kind, StatusEffectKind::DamageReduction);
+    }
+
+    #[test]
+    fn npc_resolvers_preserve_zero_registry_cooldown() {
+        let mut heal_world = world_with_override(NPC_HEAL_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let heal_entity = heal_world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        assert!(matches!(
+            npc_heal_basic(&mut heal_world, heal_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
+
+        let mut speed_world = world_with_override(NPC_BUFF_SPEED_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let speed_entity = speed_world
+            .spawn((make_cultivation(Realm::Induce, 50.0),))
+            .id();
+        assert!(matches!(
+            npc_buff_speed(&mut speed_world, speed_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
+
+        let mut defense_world = world_with_override(NPC_BUFF_DEFENSE_SKILL_ID, |definition| {
+            definition.cooldown_ticks = 0;
+        });
+        let defense_entity = defense_world
+            .spawn((make_cultivation(Realm::Induce, 50.0),))
+            .id();
+        assert!(matches!(
+            npc_buff_defense(&mut defense_world, defense_entity, 0, None),
+            CastResult::Started {
+                cooldown_ticks: 0,
+                ..
+            }
+        ));
     }
 
     #[test]

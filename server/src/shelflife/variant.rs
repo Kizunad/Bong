@@ -249,6 +249,14 @@ fn switch_template(item: &mut ItemInstance, template_id: &str, registry: &ItemRe
         return false;
     };
 
+    if item.template_id == template_id
+        && item.display_name == template.display_name
+        && item.description == template.description
+        && item.rarity == template.rarity
+    {
+        return false;
+    }
+
     item.template_id = template_id.to_string();
     item.display_name = template.display_name.clone();
     item.description = template.description.clone();
@@ -515,6 +523,12 @@ mod tests {
         ));
         assert_eq!(item.template_id, "dead_mineral_ling_shi_fan");
         assert_eq!(item.display_name, "死·dead_mineral_ling_shi_fan");
+        let after_first_switch = item.clone();
+        assert!(
+            !apply_variant_switch(&mut item, &profile_r, &item_r, now, 1.0),
+            "a second dead-template switch with every target field already matching must be a no-op"
+        );
+        assert_eq!(item, after_first_switch);
     }
 
     #[test]
