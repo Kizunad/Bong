@@ -90,8 +90,10 @@ fn full_app_startup_smoke_initializes_core_resources_and_ticks_once() {
 }
 
 #[test]
-fn full_app_startup_smoke_accepts_resolver_backed_technique_extension() {
-    let assets_root = copied_assets_root("resolver-backed-technique-extension");
+fn full_app_startup_smoke_rejects_arbitrary_data_only_technique_extension() {
+    // DirectGeneric only provides the generic skill-bar lifecycle. A copied deployment asset
+    // with a new id has no gameplay consumer and must fail the real production wiring gate.
+    let assets_root = copied_assets_root("technique-extension");
     let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
     let mut techniques =
         fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
@@ -99,44 +101,10 @@ fn full_app_startup_smoke_accepts_resolver_backed_technique_extension() {
         r#"
 
 [[techniques]]
-id = "dugu.eclipse"
-display_name = "蚀针"
-grade = "yellow"
-description = "由既有蛊道 resolver 接管的新增 metadata 条目。"
-required_realm = "Awaken"
-required_meridians = [{ channel = "Liver", min_health = 0.01 }]
-required_race = { kind = "any" }
-qi_cost = 1.0
-stamina_cost = 0.0
-cast_ticks = 1
-cooldown_ticks = 20
-range = 8.0
-icon_texture = "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
-category = "attack"
-dispatch = "metadata_backed"
-"#,
-    );
-    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
-
-    let output = run_full_app_startup(&assets_root);
-    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
-    assert_startup_succeeds(&output);
-}
-
-#[test]
-fn full_app_startup_smoke_rejects_consumerless_direct_generic_extension() {
-    let assets_root = copied_assets_root("consumerless-direct-generic-technique");
-    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
-    let mut techniques =
-        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
-    techniques.push_str(
-        r#"
-
-[[techniques]]
-id = "test.consumerless_direct_generic_startup_smoke"
+id = "test.data_only_startup_smoke"
 display_name = "数据扩展探针"
 grade = "common"
-description = "没有真实完成消费者的 generic cast 条目必须被完整启动拒绝。"
+description = "仅由 TOML 增加、无任何 gameplay 消费者，必须被启动期 wiring 门拒绝。"
 required_realm = "Awaken"
 required_meridians = []
 required_race = { kind = "any" }
@@ -154,18 +122,279 @@ dispatch = "direct_generic"
 
     let output = run_full_app_startup(&assets_root);
     fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
-
     assert!(
         !output.status.success(),
-        "consumerless direct_generic metadata must fail full startup; stdout:\n{}\nstderr:\n{}",
+        "startup must reject arbitrary direct_generic without a gameplay consumer; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
-        stderr.contains("test.consumerless_direct_generic_startup_smoke")
-            && stderr.contains("no registered completion consumer"),
-        "startup failure must identify the consumerless technique and contract; stderr:\n{stderr}"
+        combined.contains("no gameplay consumer"),
+        "startup failure must identify the direct_generic consumer gate; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_dangling_technique_scroll_reference() {
+    let assets_root = copied_assets_root("dangling-scroll");
+    let items_path = assets_root.join("assets/items/dangling_scroll_test.toml");
+    fs::write(
+        &items_path,
+        r#"
+[[item]]
+id = "test_dangling_scroll"
+name = "悬空残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "只用于启动引用完整性回归。"
+[item.technique_scroll]
+skill_id = "missing.runtime.technique"
+"#,
+    )
+    .expect("dangling scroll catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject a dangling technique-scroll reference; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique scroll references"),
+        "startup failure must identify the scroll-reference validator; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_resolver_static_metadata_promotion() {
+    // dandao resolvers currently keep realm/meridian/cost/timing semantics in Rust. A copied
+    // asset must not promote conflicting TOML metadata that the resolver ignores.
+    let assets_root = copied_assets_root("wiring-resolver-static-metadata");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    techniques.push_str(
+        r#"
+
+[[techniques]]
+id = "dandao.pill_rush"
+display_name = "服丹急行元数据探针"
+grade = "common"
+description = "resolver-static metadata must be rejected before startup"
+required_realm = "Void"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 999.0
+stamina_cost = 99.0
+cast_ticks = 1
+cooldown_ticks = 1
+range = 99.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#,
+    );
+    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject resolver-static dandao metadata; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("resolver-static"),
+        "startup failure must identify ignored resolver metadata; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_metadata_backed_without_resolver() {
+    let assets_root = copied_assets_root("wiring-missing-resolver");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    techniques.push_str(
+        r#"
+
+[[techniques]]
+id = "test.wiring_no_resolver_smoke"
+display_name = "断链探针"
+grade = "common"
+description = "metadata_backed 但无 SkillRegistry resolver，必须被启动期 wiring 门拒绝。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 0
+cooldown_ticks = 0
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#,
+    );
+    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject metadata_backed without resolver; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique wiring"),
+        "startup failure must identify the wiring validator; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_metadata_backed_without_resolver_when_dependency_declared() {
+    // 「有 resolver、无依赖」负例在 full-app 层不可构造：生产 `init_registry` 的所有
+    // resolver id 都在 `init_meridian_dependencies` 有声明（checked-in wiring 测试锁住），
+    // 而 full-app 无法注入新 resolver。该分支的拒绝语义已由单元测试
+    // `startup_wiring_rejects_each_metadata_relationship_violation_with_the_id` 锁定。
+    //
+    // 这里改用「缺 resolver 但依赖声明存在」的变体：把既有 `movement.dash`
+    // （direct_generic、无 resolver、有依赖声明）整条改为 metadata_backed——
+    // 依赖声明按 id 匹配仍然存在，resolver 缺失，命中 wiring 门的缺 resolver 分支，
+    // 同样证明生产 `cultivation::register` 在 full-app 启动时执行了 wiring 校验。
+    let assets_root = copied_assets_root("wiring-missing-resolver-with-dependency");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    let dash_start = techniques
+        .find("id = \"movement.dash\"")
+        .expect("checked-in catalog must contain movement.dash");
+    let dash_end = techniques[dash_start..]
+        .find("\n[[techniques]]")
+        .map(|offset| dash_start + offset)
+        .unwrap_or(techniques.len());
+    let entry = &techniques[dash_start..dash_end];
+    assert!(
+        entry.contains("dispatch = \"direct_generic\""),
+        "movement.dash entry must be direct_generic, got: {entry}"
+    );
+    techniques = format!(
+        "{}{}{}",
+        &techniques[..dash_start],
+        entry.replace(
+            "dispatch = \"direct_generic\"",
+            "dispatch = \"metadata_backed\"",
+        ),
+        &techniques[dash_end..]
+    );
+    fs::write(&techniques_path, techniques).expect("modified technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject metadata_backed without resolver; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique wiring"),
+        "startup failure must identify the wiring validator; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_direct_generic_resolver_conflict() {
+    // 把既有 metadata_backed 且带 resolver 的条目 `sword_path.qi_slash` 改为
+    // direct_generic——resolver 已注册，dispatch 却声明 direct_generic，命中冲突分支。
+    let assets_root = copied_assets_root("wiring-direct-generic-conflict");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    // 找到 qi_slash 条目块并替换其 dispatch。
+    let qi_slash_start = techniques
+        .find("id = \"sword_path.qi_slash\"")
+        .expect("checked-in catalog must contain sword_path.qi_slash");
+    let qi_slash_end = techniques[qi_slash_start..]
+        .find("\n[[techniques]]")
+        .map(|offset| qi_slash_start + offset)
+        .unwrap_or(techniques.len());
+    let entry = &techniques[qi_slash_start..qi_slash_end];
+    assert!(
+        entry.contains("dispatch = \"metadata_backed\""),
+        "sword_path.qi_slash entry must be metadata_backed, got: {entry}"
+    );
+    techniques = format!(
+        "{}{}{}",
+        &techniques[..qi_slash_start],
+        entry.replace(
+            "dispatch = \"metadata_backed\"",
+            "dispatch = \"direct_generic\""
+        ),
+        &techniques[qi_slash_end..]
+    );
+    fs::write(&techniques_path, techniques).expect("modified technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject direct_generic with a registered resolver; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique wiring"),
+        "startup failure must identify the wiring validator; output:\n{combined}"
     );
 }
 

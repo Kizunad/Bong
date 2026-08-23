@@ -318,6 +318,22 @@ fn assert_full_app_core_resources(app: &App) {
         technique_registry.len(),
         "TechniqueRegistry must preserve every validated TOML entry exactly once"
     );
+    let technique_registry = world
+        .get_resource::<cultivation::known_techniques::TechniqueRegistry>()
+        .expect("full server App must install TechniqueRegistry after strict TOML startup loading");
+    assert!(
+        !technique_registry.is_empty(),
+        "TechniqueRegistry must contain data-owned metadata after strict TOML startup loading"
+    );
+    let unique_ids = technique_registry
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        unique_ids.len(),
+        technique_registry.len(),
+        "TechniqueRegistry must preserve every validated TOML entry exactly once"
+    );
     // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
     // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产
     // `network::register()` 从未 `init_resource::<MorphStateEmitState>()`（只在

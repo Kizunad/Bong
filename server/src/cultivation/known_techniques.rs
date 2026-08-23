@@ -16,7 +16,10 @@ use crate::body_plan::{RaceGateOwned, RaceRegistry};
 use crate::cultivation::components::Realm;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::SkillRegistry;
-use crate::qi_physics::constants::QI_EPSILON;
+use crate::schema::combat_hud::{
+    TechniqueEntryV1, TechniqueRequiredMeridianV1, TechniquesSnapshotV1,
+};
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 /// 相对 server assets 根目录的功法 metadata 文件。
 pub const DEFAULT_TECHNIQUES_PATH: &str = "assets/cultivation/techniques.toml";
@@ -47,9 +50,9 @@ pub struct KnownTechniquesLoadFailed;
 #[derive(Debug, Component)]
 pub struct KnownTechniquesReconnectBlocked;
 
-/// Reconnect handoff failed after the retry policy exhausted its current attempt.  The marker
-/// is deliberately separate from `KnownTechniquesLoadFailed`: the latter protects a durable
-/// row from being overwritten, while this one records a reconnect state for the dispatcher.
+/// Reconnect handoff failed after the retry policy exhausted its current attempt. The marker is
+/// separate from `KnownTechniquesLoadFailed`: the latter protects a durable row from being
+/// overwritten, while this one records a reconnect state for the dispatcher.
 #[derive(Debug, Component)]
 pub struct KnownTechniquesReconnectFailed;
 
@@ -74,8 +77,8 @@ impl KnownTechniques {
     }
 
     /// Construct the progression-reset value from the same runtime catalog that the server
-    /// injected at startup. Development builds intentionally preserve their historical
-    /// "grant the full catalog" behavior; production builds keep the empty progression reset.
+    /// injected at startup. Development builds preserve their historical full-catalog reset;
+    /// production builds keep the empty progression reset.
     pub fn progression_reset(registry: &TechniqueRegistry) -> Self {
         #[cfg(feature = "dev-techniques")]
         {
@@ -99,9 +102,8 @@ pub enum SkillCategory {
     Defense,
 }
 
-/// metadata 与执行入口的接线分类。`MetadataBacked` 由 `SkillRegistry` resolver
-/// 执行；`DirectGeneric` 走通用 skill-bar cast 生命周期且必须登记自然完成消费者；
-/// `DedicatedInput` 由独立 C2S intent 驱动，禁止绑定或施放到 skill bar。
+/// metadata 与 resolver 的接线分类。`MetadataBacked` 由 `SkillRegistry` resolver
+/// 执行；`DirectGeneric` 则走通用 skill-bar cast 生命周期。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TechniqueDispatch {
@@ -110,11 +112,8 @@ pub enum TechniqueDispatch {
     DedicatedInput,
 }
 
-/// 由真正拥有独立 C2S / gameplay 入口的模块声明的 dedicated-input 功法。
-///
-/// 这不是历史 catalog 的数量白名单：它是 code-owned consumer registry。新增独立输入
-/// 入口时，必须在其 owner 模块导出稳定 ID 并把它接入这里；启动校验会同时保证 registry
-/// 中的每个 ID 都有 TOML metadata，且 metadata 明确标成 `dedicated_input`。
+/// 由独立 C2S / gameplay 入口驱动、禁止绑定到 skill bar 的功法。保留该扩展点与主线
+/// 持久化切片的清洗契约一致；当前 catalog 中的历史条目仍按 `direct_generic` 兼容语义。
 pub const DEDICATED_INPUT_CONSUMER_IDS: &[&str] = &[
     crate::movement::dash_proficiency::DASH_TECHNIQUE_ID,
     crate::combat::shield_block::SHIELD_BLOCK_TECHNIQUE_ID,
@@ -123,6 +122,52 @@ pub const DEDICATED_INPUT_CONSUMER_IDS: &[&str] = &[
 pub fn has_dedicated_input_consumer(skill_id: &str) -> bool {
     DEDICATED_INPUT_CONSUMER_IDS.contains(&skill_id)
 }
+
+/// `direct_generic` 招式 id 的严格白名单（M11 契约）。
+///
+/// `DirectGeneric` 只有通用 skill-bar cast 生命周期；任意新 id 会被呈现为“可施放”却
+/// 没有 gameplay 消费者，等于把 data-only 占位符静默变成玩家可见的假招式。白名单内
+/// 三个 id 都有独立的真实消费者：`movement.dash` 由闪身/首击学习路径消费，
+/// `shield_block` 由举盾与格挡结算消费，`body.guangbo_ticao` 由广播体操练习与
+/// 身体 conditioning 消费。新增直通招式必须先接入消费者，再进白名单，不能只加 TOML。
+pub const DIRECT_GENERIC_ALLOWLIST: &[&str] =
+    &["movement.dash", "shield_block", "body.guangbo_ticao"];
+
+/// NPC 明确允许保留、但不应进入主动施法池的 direct-generic 被动功法。
+///
+/// 这些条目由各自的被动 gameplay consumer 读取；它们必须走独立的 NPC passive 注入
+/// 路径，不能因为出现在 `TechniqueRegistry` 就被当成可由 `SkillRegistry` 施放的招式。
+pub const NPC_PASSIVE_TECHNIQUE_IDS: &[&str] = &["body.guangbo_ticao"];
+
+/// Resolver-backed metadata promotion is intentionally blocked for these IDs until their
+/// resolver consumes the corresponding `TechniqueRegistry` fields. The current dandao
+/// resolvers use static realm/meridian/cost/timing rules, so advertising a TOML override would
+/// make the snapshot and ingress contract disagree with execution.
+pub const RESOLVER_STATIC_METADATA_IDS: &[&str] =
+    &["dandao.pill_rush", "dandao.pill_bomb", "dandao.pill_mist"];
+
+/// Metadata that production systems dereference after startup and therefore cannot be deleted
+/// independently of their runtime consumers. Direct-generic entries are included because their
+/// allowlist is also a positive runtime contract, not merely a dispatch filter.
+pub const RUNTIME_REQUIRED_TECHNIQUE_IDS: &[&str] = &[
+    "movement.dash",
+    "shield_block",
+    "body.guangbo_ticao",
+    "morph.yixing",
+    "sword_path.condense_edge",
+    "sword_path.qi_slash",
+    "sword_path.resonance",
+    "sword_path.manifest",
+    "sword_path.heaven_gate",
+];
+
+/// These resolvers intentionally apply additional runtime-only gates. Their TOML metadata must
+/// remain empty so the exception cannot silently become two conflicting sources.
+pub const RUNTIME_ONLY_MERIDIAN_GATE_IDS: &[&str] = &[
+    "zhenmai.multipoint",
+    "baomai.full_power_charge",
+    "baomai.full_power_release",
+];
 
 /// 运行时 owned metadata。所有字符串与经脉列表均来自启动期 TOML，不能借用临时解析缓冲区。
 #[derive(Debug, Clone, PartialEq)]
@@ -135,7 +180,7 @@ pub struct TechniqueDefinition {
     pub required_realm: String,
     pub required_meridians: Vec<TechniqueRequiredMeridian>,
     pub required_race: RaceGateOwned,
-    pub qi_cost: f32,
+    pub qi_cost: f64,
     pub stamina_cost: f32,
     pub cast_ticks: u32,
     pub cooldown_ticks: u32,
@@ -195,14 +240,25 @@ impl TechniqueRegistry {
     pub(crate) fn load_for_tests_with_definition(definition: TechniqueDefinition) -> Self {
         let mut registry = Self::load_for_tests();
         assert!(
-            registry.get(&definition.id).is_none(),
-            "test definition must use an id absent from the checked-in catalog: {}",
+            !registry.id_to_index.contains_key(&definition.id),
+            "test extension duplicates technique {:?}",
             definition.id
         );
         let index = registry.definitions.len();
         registry.id_to_index.insert(definition.id.clone(), index);
         registry.definitions.push(definition);
         registry
+    }
+
+    /// 从任意 TOML 文本构造 registry（仅测试用），让其他模块的测试能直接 pin loader
+    /// 的拒绝边界。
+    #[cfg(test)]
+    pub(crate) fn load_from_contents_for_tests(text: &str) -> Result<Self, TechniqueLoadError> {
+        Self::from_toml_contents(
+            Path::new("test-techniques.toml"),
+            text,
+            &RaceRegistry::default(),
+        )
     }
 
     pub fn get(&self, id: &str) -> Option<&TechniqueDefinition> {
@@ -225,6 +281,60 @@ impl TechniqueRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.definitions.is_empty()
+    }
+
+    /// 最坏情况下（玩家学会全部 catalog 条目）techniques_snapshot 聚合 payload 的
+    /// protobuf 字节上界。生产发送端与这里共用 `ServerDataV1::to_proto_bytes()` 的
+    /// encoder；所有可省略的 scalar 字段都用非默认值构造，避免启动门禁因默认值省略
+    /// 而低估真实 wire 大小。这样估算与实际 `MAX_PAYLOAD_BYTES` gate 使用同一编码，
+    /// 不会用 JSON 转义开销误拒绝合法 catalog。
+    pub fn aggregate_snapshot_size(&self) -> usize {
+        let snapshot = TechniquesSnapshotV1 {
+            entries: self
+                .definitions
+                .iter()
+                .map(|definition| TechniqueEntryV1 {
+                    id: definition.id.clone(),
+                    display_name: definition.display_name.clone(),
+                    grade: definition.grade.clone(),
+                    proficiency: 1.0,
+                    proficiency_label: "化境".to_string(),
+                    active: true,
+                    description: definition.description.clone(),
+                    required_realm: definition.required_realm.clone(),
+                    required_meridians: definition
+                        .required_meridians
+                        .iter()
+                        .map(|meridian| TechniqueRequiredMeridianV1 {
+                            channel: meridian.channel.clone(),
+                            min_health: 1.0,
+                        })
+                        .collect(),
+                    // Loader bounds qi_cost to f32::MAX; narrow at the unchanged legacy
+                    // TechniqueEntryV1/fixed32 wire boundary just like the live emitter.
+                    qi_cost: if definition.qi_cost == 0.0 {
+                        1.0
+                    } else {
+                        definition.qi_cost as f32
+                    },
+                    stamina_cost: if definition.stamina_cost == 0.0 {
+                        1.0
+                    } else {
+                        definition.stamina_cost
+                    },
+                    cast_ticks: u32::MAX,
+                    cooldown_ticks: u32::MAX,
+                    range: if definition.range == 0.0 {
+                        1.0
+                    } else {
+                        definition.range
+                    },
+                })
+                .collect(),
+        };
+        ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot))
+            .to_proto_bytes()
+            .len()
     }
 
     /// 读取并验证任意 techniques TOML。读取、反序列化、跨表验证完成前不会构造任何可见
@@ -263,6 +373,20 @@ impl TechniqueRegistry {
                 path,
                 None,
                 "techniques must not be empty",
+            ));
+        }
+        // M18：catalog 总量同样受 `MAX_PAYLOAD_BYTES` 聚合边界约束。checked-in catalog
+        // 是 49 条，512 条是约 10 倍余量——单条小成本 × 数千条也能撑爆 32 KiB 聚合
+        // payload，因此先卡总量再在启动期量一次真实编码大小。
+        const MAX_CATALOG_ENTRIES: usize = 512;
+        if parsed.techniques.len() > MAX_CATALOG_ENTRIES {
+            return Err(TechniqueLoadError::invalid(
+                path,
+                None,
+                format!(
+                    "techniques catalog must not exceed {MAX_CATALOG_ENTRIES} entries, got {}",
+                    parsed.techniques.len()
+                ),
             ));
         }
 
@@ -365,7 +489,7 @@ struct TechniqueToml {
     required_realm: String,
     required_meridians: Vec<TechniqueRequiredMeridianToml>,
     required_race: RaceGateOwned,
-    qi_cost: f32,
+    qi_cost: f64,
     stamina_cost: f32,
     cast_ticks: u32,
     cooldown_ticks: u32,
@@ -404,6 +528,68 @@ fn validate_and_convert(
             ));
         }
     }
+    // M18：description 会原样进 techniques_snapshot 的聚合 payload（上限
+    // `MAX_PAYLOAD_BYTES = 32_768`）。单个字段不设上限时，一条超长 description 就能让
+    // 已接受的 catalog 在发送端被 `PayloadBuildError::Oversize` 整包丢弃。这里按
+    // UTF-8 字节数封顶（checked-in catalog 实测最长 41 字节，1024 留 25 倍余量）；
+    // 截断语义违背"发送什么就是什么"的契约，因此拒绝而不是静默截断。catalog
+    // 总数（`definitions` 声明上限）与聚合编码大小由启动期 `aggregate_snapshot_size`
+    // 一并门禁。
+    const MAX_DESCRIPTION_BYTES: usize = 1024;
+    if raw.description.len() > MAX_DESCRIPTION_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "description must not exceed {MAX_DESCRIPTION_BYTES} bytes (UTF-8), got {}",
+                raw.description.len()
+            ),
+        ));
+    }
+    const MAX_DISPLAY_NAME_BYTES: usize = 256;
+    if raw.display_name.len() > MAX_DISPLAY_NAME_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "display_name must not exceed {MAX_DISPLAY_NAME_BYTES} bytes (UTF-8), got {}",
+                raw.display_name.len()
+            ),
+        ));
+    }
+    const MAX_ID_BYTES: usize = 128;
+    if raw.id.len() > MAX_ID_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "id must not exceed {MAX_ID_BYTES} bytes (UTF-8), got {}",
+                raw.id.len()
+            ),
+        ));
+    }
+    const MAX_ICON_TEXTURE_BYTES: usize = 512;
+    if raw.icon_texture.len() > MAX_ICON_TEXTURE_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "icon_texture must not exceed {MAX_ICON_TEXTURE_BYTES} bytes (UTF-8), got {}",
+                raw.icon_texture.len()
+            ),
+        ));
+    }
+
+    if !is_valid_icon_texture(&raw.icon_texture) {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "icon_texture must be a Minecraft GUI PNG identifier, got {:?}",
+                raw.icon_texture
+            ),
+        ));
+    }
 
     if parse_required_realm(&raw.required_realm).is_none() {
         return Err(TechniqueLoadError::invalid(
@@ -425,8 +611,8 @@ fn validate_and_convert(
 
     for (field, value) in [
         ("qi_cost", raw.qi_cost),
-        ("stamina_cost", raw.stamina_cost),
-        ("range", raw.range),
+        ("stamina_cost", f64::from(raw.stamina_cost)),
+        ("range", f64::from(raw.range)),
     ] {
         if !value.is_finite() || value < 0.0 {
             return Err(TechniqueLoadError::invalid(
@@ -436,14 +622,54 @@ fn validate_and_convert(
             ));
         }
     }
-    if raw.qi_cost != 0.0 && f64::from(raw.qi_cost) <= QI_EPSILON {
+    if raw.qi_cost > f64::from(f32::MAX) {
         return Err(TechniqueLoadError::invalid(
             path,
             Some(technique_id.clone()),
             format!(
-                "qi_cost must be exactly zero or greater than QI_EPSILON ({QI_EPSILON}), got {}",
+                "qi_cost must fit the legacy TechniqueEntry float/fixed32 wire field, got {}",
                 raw.qi_cost
             ),
+        ));
+    }
+    if raw.id == "body.guangbo_ticao" && raw.qi_cost <= 0.0 {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            "body.guangbo_ticao qi_cost must be strictly positive",
+        ));
+    }
+    // qi ledger quantum 边界：`release_qi_amount_to_zone` 对 `amount <= QI_EPSILON` 直接
+    // 返回（不落 zone/overflow、不发 QiTransfer）。若接受 `0 < qi_cost <= QI_EPSILON`，
+    // 消费方会先扣玩家真元再以同一金额回灌——release helper 提前返回造成单边扣减、
+    // 真元永久销毁（M01 blocker）。因此任何非零 qi_cost 必须大于 ledger quantum；
+    // `body.guangbo_ticao` 上方的 `<= 0.0` 特判保持零成本专属拒绝语义。
+    if raw.qi_cost > 0.0 && raw.qi_cost <= crate::qi_physics::constants::QI_EPSILON {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "qi_cost must be zero or exceed the qi ledger quantum ({}), got {}",
+                crate::qi_physics::constants::QI_EPSILON,
+                raw.qi_cost
+            ),
+        ));
+    }
+    if raw.id == "sword_path.heaven_gate" && raw.range > 100.0 {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            "sword_path.heaven_gate range must not exceed 100 blocks",
+        ));
+    }
+    // M30：`sword_path.resonance` 是全世界 entity fan-out（扫 Position+StatusEffects），
+    // 无界 range 会让一次 cast 入队 O(world entities) 事件。给该招式加 operational
+    // 上限（checked-in 6 格远低于 30 上限），与 heaven_gate 的 100 上限同一类防护。
+    if raw.id == "sword_path.resonance" && raw.range > 30.0 {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            "sword_path.resonance range must not exceed 30 blocks (entity fan-out bound)",
         ));
     }
 
@@ -513,6 +739,25 @@ fn validate_and_convert(
     })
 }
 
+fn is_valid_icon_texture(value: &str) -> bool {
+    let Some((namespace, path)) = value.split_once(':') else {
+        return false;
+    };
+    !namespace.is_empty()
+        && !path.is_empty()
+        && path.starts_with("textures/gui/")
+        && path.ends_with(".png")
+        && namespace
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.'))
+        && path.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '/' | '.')
+        })
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
 fn validate_race_gate(
     path: &Path,
     technique_id: &str,
@@ -577,17 +822,50 @@ impl std::fmt::Display for TechniqueWiringError {
 
 impl std::error::Error for TechniqueWiringError {}
 
-/// 验证当前 metadata、resolver、独立输入消费者与经脉依赖表的逐条关系。只有四份候选
-/// 都完整构造后才可调用；调用者必须在成功后才把它们 insert 为 Bevy resources。
-/// resolver-only 与 dependency-only 条目有意合法，不强迫非 metadata 内容反向补表。
+/// 验证当前 metadata、resolver 与经脉依赖表的逐条关系。只有三份候选都完整构造后才可
+/// 调用；调用者必须在成功后才把它们 insert 为 Bevy resources。resolver-only 与
+/// dependency-only 条目有意合法，不强迫非 metadata 内容反向补表。
 pub fn validate_startup_wiring(
     techniques: &TechniqueRegistry,
     skills: &SkillRegistry,
     dependencies: &SkillMeridianDependencies,
 ) -> Result<(), TechniqueWiringError> {
+    validate_startup_relationships(techniques, skills, dependencies)?;
+    for required_id in RUNTIME_REQUIRED_TECHNIQUE_IDS {
+        if techniques.get(required_id).is_none() {
+            return Err(TechniqueWiringError(format!(
+                "runtime-required technique {required_id:?} is missing from the metadata catalog"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_startup_relationships(
+    techniques: &TechniqueRegistry,
+    skills: &SkillRegistry,
+    dependencies: &SkillMeridianDependencies,
+) -> Result<(), TechniqueWiringError> {
+    // M18：catalog 被接受 ⇒ 学会全部条目的玩家必能收到完整快照。编码检查（发送端
+    // `PayloadBuildError::Oversize`）是逐玩家逐 tick 的，启动期必须先行量一次最坏
+    // 聚合大小，否则超限 catalog 会让快照在发送端被整包丢弃。
+    let aggregate = techniques.aggregate_snapshot_size();
+    if aggregate > crate::schema::common::MAX_PAYLOAD_BYTES {
+        return Err(TechniqueWiringError(format!(
+            "techniques catalog worst-case snapshot is ~{aggregate} bytes, exceeding MAX_PAYLOAD_BYTES = {}; \
+             reduce catalog size or per-entry text before startup",
+            crate::schema::common::MAX_PAYLOAD_BYTES
+        )));
+    }
     for definition in techniques.iter() {
         match definition.dispatch {
             TechniqueDispatch::MetadataBacked => {
+                if RESOLVER_STATIC_METADATA_IDS.contains(&definition.id.as_str()) {
+                    return Err(TechniqueWiringError(format!(
+                        "metadata_backed technique {:?} is resolver-static and cannot advertise TOML metadata overrides; datafy the resolver before promoting this id",
+                        definition.id
+                    )));
+                }
                 if skills.lookup(&definition.id).is_none() {
                     return Err(TechniqueWiringError(format!(
                         "metadata_backed technique {:?} has no SkillRegistry resolver",
@@ -600,19 +878,53 @@ pub fn validate_startup_wiring(
                         definition.id
                     )));
                 }
-            }
-            TechniqueDispatch::DirectGeneric => {
-                if skills.lookup(&definition.id).is_some() {
+
+                if RUNTIME_ONLY_MERIDIAN_GATE_IDS.contains(&definition.id.as_str()) {
+                    if !definition.required_meridians.is_empty() {
+                        return Err(TechniqueWiringError(format!(
+                            "runtime-only meridian gate {:?} must keep TOML required_meridians empty",
+                            definition.id
+                        )));
+                    }
+                    continue;
+                }
+
+                let metadata_meridians: HashSet<_> = definition
+                    .required_meridians
+                    .iter()
+                    .map(|required| {
+                        crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
+                            .expect(
+                                "loaded technique metadata must contain known meridian channels",
+                            )
+                    })
+                    .collect();
+                let declared_meridians: HashSet<_> = dependencies
+                    .lookup(&definition.id)
+                    .iter()
+                    .copied()
+                    .collect();
+                if metadata_meridians != declared_meridians {
                     return Err(TechniqueWiringError(format!(
-                        "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
+                        "technique {:?} required_meridians mismatch: metadata={metadata_meridians:?}, declared={declared_meridians:?}",
                         definition.id
                     )));
                 }
-                if !crate::network::cast_emit::has_direct_generic_completion_consumer(
-                    &definition.id,
-                ) {
+            }
+            TechniqueDispatch::DirectGeneric => {
+                if !DIRECT_GENERIC_ALLOWLIST.contains(&definition.id.as_str()) {
                     return Err(TechniqueWiringError(format!(
-                        "direct_generic technique {:?} has no registered completion consumer",
+                        "direct_generic technique {:?} has no gameplay consumer; direct_generic is restricted to the allowlist {}",
+                        definition.id,
+                        DIRECT_GENERIC_ALLOWLIST.join(", ")
+                    )));
+                }
+                // The generic skill-bar lifecycle is only one part of each allowlisted skill's
+                // contract; a resolver would create an ambiguous second consumer and must fail
+                // closed. The allowlist itself documents the specialized gameplay consumers.
+                if skills.lookup(&definition.id).is_some() {
+                    return Err(TechniqueWiringError(format!(
+                        "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
                         definition.id
                     )));
                 }
@@ -620,7 +932,7 @@ pub fn validate_startup_wiring(
             TechniqueDispatch::DedicatedInput => {
                 if !has_dedicated_input_consumer(&definition.id) {
                     return Err(TechniqueWiringError(format!(
-                        "dedicated_input technique {:?} has no registered dedicated input consumer",
+                        "dedicated_input technique {:?} has no registered gameplay consumer",
                         definition.id
                     )));
                 }
@@ -630,29 +942,7 @@ pub fn validate_startup_wiring(
                         definition.id
                     )));
                 }
-                if crate::network::cast_emit::has_direct_generic_completion_consumer(&definition.id)
-                {
-                    return Err(TechniqueWiringError(format!(
-                        "dedicated_input technique {:?} unexpectedly has a generic completion consumer",
-                        definition.id
-                    )));
-                }
             }
-        }
-    }
-
-    for &consumer_id in DEDICATED_INPUT_CONSUMER_IDS {
-        let Some(definition) = techniques.get(consumer_id) else {
-            return Err(TechniqueWiringError(format!(
-                "dedicated input consumer {:?} has no technique metadata",
-                consumer_id
-            )));
-        };
-        if definition.dispatch != TechniqueDispatch::DedicatedInput {
-            return Err(TechniqueWiringError(format!(
-                "dedicated input consumer {:?} is declared as {:?}, expected dedicated_input",
-                consumer_id, definition.dispatch
-            )));
         }
     }
 
@@ -729,7 +1019,7 @@ dispatch = "metadata_backed"
             "new metadata may be inserted, but historical entries must retain relative order"
         );
 
-        let historical_dedicated_input = ["movement.dash", "shield_block"];
+        let historical_direct_generic = ["movement.dash", "shield_block", "body.guangbo_ticao"];
         for legacy in LEGACY_TECHNIQUE_DEFINITIONS {
             let actual = registry
                 .get(legacy.id)
@@ -761,10 +1051,12 @@ dispatch = "metadata_backed"
                 "race gate mismatch for {}",
                 legacy.id
             );
-            assert_eq!(
-                actual.qi_cost, legacy.qi_cost,
-                "qi_cost mismatch for {}",
-                legacy.id
+            assert!(
+                (actual.qi_cost - f64::from(legacy.qi_cost)).abs() <= f64::from(f32::EPSILON),
+                "qi_cost mismatch for {}: runtime={} legacy={}",
+                legacy.id,
+                actual.qi_cost,
+                legacy.qi_cost
             );
             assert_eq!(
                 actual.stamina_cost, legacy.stamina_cost,
@@ -818,9 +1110,7 @@ dispatch = "metadata_backed"
                     legacy.id
                 );
             }
-            let expected_dispatch = if historical_dedicated_input.contains(&legacy.id) {
-                TechniqueDispatch::DedicatedInput
-            } else if legacy.id == "body.guangbo_ticao" {
+            let expected_dispatch = if historical_direct_generic.contains(&legacy.id) {
                 TechniqueDispatch::DirectGeneric
             } else {
                 TechniqueDispatch::MetadataBacked
@@ -853,6 +1143,48 @@ dispatch = "metadata_backed"
             .entries
             .iter()
             .all(|entry| { entry.active && (entry.proficiency - 0.5).abs() <= f32::EPSILON }));
+        // M10：序列化必须钉住完整 persistence shape（含 `active` key）——若把 active
+        // 序列化成别的名字或省略，旧存档 JSON 就无法按既有契约加载，这里直接撞红。
+        let json = serde_json::to_string(&known).expect("KnownTechniques must serialize");
+        let first_entry_id = known
+            .entries
+            .first()
+            .expect("dev_default grants the full catalog")
+            .id
+            .as_str();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("serialized JSON must parse");
+        let entries = parsed
+            .get("entries")
+            .expect("persistence shape must keep top-level `entries` key");
+        assert_eq!(
+            entries
+                .get(0)
+                .and_then(|entry| entry.get("id"))
+                .and_then(serde_json::Value::as_str),
+            Some(first_entry_id),
+            "persisted entries[0].id must match the registry-first technique"
+        );
+        assert_eq!(
+            entries
+                .get(0)
+                .and_then(|entry| entry.get("active"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true),
+            "persistence shape must keep per-entry `active` key (M10)"
+        );
+        assert!(
+            entries
+                .get(0)
+                .and_then(|entry| entry.get("proficiency"))
+                .and_then(serde_json::Value::as_f64)
+                .is_some(),
+            "persistence shape must keep per-entry `proficiency` key"
+        );
+        // 反序列化 round-trip：序列化产物必须能被既有存档加载路径读回。
+        let round_trip: KnownTechniques =
+            serde_json::from_str(&json).expect("serialized shape must round-trip");
+        assert_eq!(round_trip, known);
     }
 
     #[test]
@@ -932,6 +1264,60 @@ dispatch = "metadata_backed"
     }
 
     #[test]
+    fn rejects_blank_required_text_fields_per_field() {
+        let blank_id = minimal_toml().replace("id = \"test.skill\"", "id = \"\"");
+        let whitespace_id = minimal_toml().replace("id = \"test.skill\"", "id = \"  \"");
+        let blank_display_name =
+            minimal_toml().replace("display_name = \"测试\"", "display_name = \"\"");
+        let whitespace_display_name =
+            minimal_toml().replace("display_name = \"测试\"", "display_name = \" \t \"");
+        let blank_description =
+            minimal_toml().replace("description = \"测试功法\"", "description = \"\"");
+        for text in [
+            blank_id,
+            whitespace_id,
+            blank_display_name,
+            whitespace_display_name,
+            blank_description,
+        ] {
+            assert!(
+                load(&text).is_err(),
+                "blank or whitespace-only required text field must reject: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_each_numeric_field_invalid_value_class_independently() {
+        let negative_qi = minimal_toml().replace("qi_cost = 0.0", "qi_cost = -0.1");
+        let nonfinite_qi = minimal_toml().replace("qi_cost = 0.0", "qi_cost = inf");
+        let above_wire_max = minimal_toml().replace("qi_cost = 0.0", "qi_cost = 1e40");
+        let negative_stamina = minimal_toml().replace("stamina_cost = 0.0", "stamina_cost = -0.1");
+        let nonfinite_stamina = minimal_toml().replace("stamina_cost = 0.0", "stamina_cost = nan");
+        let negative_range = minimal_toml().replace("range = 0.0", "range = -1.0");
+        let nonfinite_range = minimal_toml().replace("range = 0.0", "range = inf");
+        let nonfinite_health = minimal_toml().replace(
+            "required_meridians = []",
+            "required_meridians = [{ channel = \"Lung\", min_health = nan }]",
+        );
+        for text in [
+            negative_qi,
+            nonfinite_qi,
+            above_wire_max,
+            negative_stamina,
+            nonfinite_stamina,
+            negative_range,
+            nonfinite_range,
+            nonfinite_health,
+        ] {
+            assert!(
+                load(&text).is_err(),
+                "invalid numeric value class must reject independently: {text}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_invalid_numbers_and_bad_meridian_references() {
         let negative_cost = minimal_toml().replace("qi_cost = 0.0", "qi_cost = -0.1");
         let nan_range = minimal_toml().replace("range = 0.0", "range = nan");
@@ -988,6 +1374,184 @@ dispatch = "metadata_backed"
         }
     }
 
+    #[test]
+    fn accepts_known_species_gate() {
+        // `RaceRegistry::default()` 是空注册表——物种门对未知 race 必须拒绝，
+        // 而"已知"需要真实注册表。这里构造带 human race 的注册表证明非空物种门
+        // 能被接受（区别于 `rejects_species_gates_that_are_empty_duplicate_or_unknown`）。
+        let input = minimal_toml().replace(
+            "required_race = { kind = \"any\" }",
+            "required_race = { kind = \"species\", species = [\"human\"] }",
+        );
+        let body_plans = crate::body_plan::BodyPlanRegistry::from_plans(vec![
+            (*crate::body_plan::humanoid_plan_static()).clone(),
+        ])
+        .expect("humanoid plan must validate");
+        let races = crate::body_plan::RaceRegistry::from_parts_for_test(
+            vec![crate::body_plan::race_registry::RaceEntry {
+                id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: "人族".to_string(),
+                body_plan_id: crate::body_plan::BodyPlanId::new("humanoid"),
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("human-only test registry must validate");
+        let registry = TechniqueRegistry::from_toml_contents(
+            Path::new("test-techniques.toml"),
+            &input,
+            &races,
+        )
+        .expect("known non-empty species gate must load");
+        let definition = registry.get("test.skill").unwrap();
+        assert!(definition
+            .required_race
+            .allows(&RaceId::new("human"), false));
+        assert!(!definition
+            .required_race
+            .allows(&RaceId::new("whale"), false));
+    }
+
+    #[test]
+    fn rejects_invalid_gui_icon_identifiers() {
+        for icon in [
+            "missing_namespace.png",
+            "Bong:textures/gui/skill.png",
+            "bong:textures/item/skill.png",
+            "bong:textures/gui/skill.jpg",
+            "bong:textures/gui/Skill.png",
+            "bong:textures/gui/skill icon.png",
+        ] {
+            let input = minimal_toml().replace(
+                "bong-client:textures/gui/items/skill_scroll_test_skill.png",
+                icon,
+            );
+            let error = load(&input).expect_err("invalid runtime icon must reject catalog");
+            assert!(
+                error.to_string().contains("icon_texture"),
+                "error must identify icon_texture, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_gui_icon_path_traversal_and_empty_segments() {
+        for icon in [
+            "bong:textures/gui/../secret.png",
+            "bong:textures/gui/./secret.png",
+            "bong:textures/gui//secret.png",
+        ] {
+            let input = minimal_toml().replace(
+                "bong-client:textures/gui/items/skill_scroll_test_skill.png",
+                icon,
+            );
+            let error = load(&input).expect_err("unsafe GUI icon path must reject catalog");
+            assert!(
+                error.to_string().contains("icon_texture"),
+                "error must identify icon_texture, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_catalog_file_surfaces_io_error_with_path() {
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/cultivation/__absent_for_review__.toml");
+        let error = TechniqueRegistry::load_from_path(&missing, &RaceRegistry::default())
+            .expect_err("missing catalog file must fail to load");
+        assert!(matches!(error, TechniqueLoadError::Io { .. }));
+        assert!(error.to_string().contains("__absent_for_review__.toml"));
+    }
+
+    #[test]
+    fn rejects_sub_epsilon_qi_costs_but_accepts_zero_and_above_epsilon() {
+        // M01 blocker 边界：`release_qi_amount_to_zone` 对 `amount <= QI_EPSILON` 直接
+        // 返回，接受 `0 < qi_cost <= QI_EPSILON` 会造成扣玩家却不落目的账户的单边销毁。
+        // 因此非零 qi_cost 必须大于 ledger quantum。
+        let sub_epsilon = minimal_toml().replace("qi_cost = 0.0", "qi_cost = 0.0000005");
+        let exactly_epsilon = minimal_toml().replace(
+            "qi_cost = 0.0",
+            &format!("qi_cost = {}", crate::qi_physics::constants::QI_EPSILON),
+        );
+        for text in [sub_epsilon, exactly_epsilon] {
+            assert!(
+                load(&text).is_err(),
+                "non-zero qi_cost at or below the ledger quantum must reject: {text}"
+            );
+        }
+
+        // 零成本仍合法（免费招，由各消费方决定 zero-cost 语义）；刚好超过 epsilon 合法。
+        let zero_cost = load(&minimal_toml()).expect("zero qi_cost remains a valid catalog value");
+        assert_eq!(zero_cost.get("test.skill").unwrap().qi_cost, 0.0);
+        let above_epsilon = minimal_toml().replace(
+            "qi_cost = 0.0",
+            &format!(
+                "qi_cost = {}",
+                crate::qi_physics::constants::QI_EPSILON * 2.0
+            ),
+        );
+        assert!(
+            load(&above_epsilon).is_ok(),
+            "qi_cost strictly above the ledger quantum must load"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_cost_guangbo_and_oversized_heaven_gate() {
+        let zero_cost_guangbo =
+            minimal_toml().replace("id = \"test.skill\"", "id = \"body.guangbo_ticao\"");
+        let oversized_heaven_gate = minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"sword_path.heaven_gate\"")
+            .replace("range = 0.0", "range = 100.01");
+
+        let guangbo_error = load(&zero_cost_guangbo)
+            .expect_err("body.guangbo_ticao must not admit a free proficiency loop");
+        assert!(guangbo_error.to_string().contains("strictly positive"));
+        let heaven_gate_error =
+            load(&oversized_heaven_gate).expect_err("global entity fan-out range must be bounded");
+        assert!(heaven_gate_error.to_string().contains("100 blocks"));
+    }
+
+    #[test]
+    fn rejects_oversized_resonance_fan_out_range() {
+        // M30：resonance 是世界级 entity fan-out，range 必须有 operational 上限。
+        let oversized = minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"sword_path.resonance\"")
+            .replace("range = 0.0", "range = 30.01");
+        let error = load(&oversized)
+            .expect_err("sword_path.resonance range must be bounded to prevent world fan-out");
+        assert!(error.to_string().contains("30 blocks"));
+
+        // 恰好 30 与 6（checked-in 值）仍合法。
+        for valid in ["30.0", "6.0"] {
+            let input = minimal_toml()
+                .replace("id = \"test.skill\"", "id = \"sword_path.resonance\"")
+                .replace("range = 0.0", &format!("range = {valid}"));
+            assert!(
+                load(&input).is_ok(),
+                "resonance range {valid} must remain valid"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_min_health_at_exact_upper_bound() {
+        // min_health 契约是 (0, 1]：上界 1.0 必须可加载（旧测试只钉了下界 0 与越界 1.1）。
+        let input = minimal_toml().replace(
+            "required_meridians = []",
+            "required_meridians = [{ channel = \"Lung\", min_health = 1.0 }]",
+        );
+        let registry = load(&input).expect("min_health == 1.0 is the valid (0,1] upper bound");
+        let definition = registry.get("test.skill").expect("technique must load");
+        assert_eq!(definition.required_meridians.len(), 1);
+        assert_eq!(definition.required_meridians[0].channel, "Lung");
+        assert_eq!(
+            definition.required_meridians[0].min_health, 1.0,
+            "exact upper bound must survive load"
+        );
+    }
+
     fn noop_skill(
         _world: &mut bevy_ecs::world::World,
         _caster: bevy_ecs::entity::Entity,
@@ -998,110 +1562,64 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn qi_cost_accepts_only_exact_zero_or_values_above_epsilon() {
-        let zero = load(&minimal_toml()).expect("exact zero is a legal free technique");
-        assert_eq!(zero.get("test.skill").unwrap().qi_cost, 0.0);
-
-        let at = QI_EPSILON as f32;
-        let below = f32::from_bits(at.to_bits() - 1);
-        let above = f32::from_bits(at.to_bits() + 1);
-        for (label, value) in [("below", below), ("at", at)] {
-            let error =
-                load(&minimal_toml().replace("qi_cost = 0.0", &format!("qi_cost = {value}")))
-                    .expect_err("positive qi dust that settlement would omit must be rejected");
-            assert!(
-                error.to_string().contains("exactly zero or greater"),
-                "{label} threshold rejection should explain the atomic qi contract: {error}"
-            );
-        }
-        let accepted =
-            load(&minimal_toml().replace("qi_cost = 0.0", &format!("qi_cost = {above}")))
-                .expect("the first representable f32 above QI_EPSILON must load");
-        assert!(f64::from(accepted.get("test.skill").unwrap().qi_cost) > QI_EPSILON);
-    }
-
-    #[test]
-    fn consumerless_dispatches_are_rejected_and_code_owned_consumers_are_admitted() {
-        let direct_generic = load(&minimal_toml().replace(
+    fn arbitrary_direct_generic_metadata_is_rejected_without_a_gameplay_consumer() {
+        // DirectGeneric 的通用 cast 生命周期不会替代 gameplay consumer；任意新 id
+        // 若启动期放行，会呈现为“可施放”却只产生空的计时动画。
+        let registry = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"direct_generic\"",
         ))
-        .expect("dispatch syntax is valid before cross-registry wiring validation");
-        let error = validate_startup_wiring(
-            &direct_generic,
+        .expect("an arbitrary valid id may parse as direct_generic metadata");
+        let error = validate_startup_relationships(
+            &registry,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),
         )
-        .expect_err("consumerless direct_generic must fail startup");
+        .expect_err("arbitrary direct_generic without a gameplay consumer must be rejected");
         assert!(error.to_string().contains("test.skill"));
-        assert!(error
-            .to_string()
-            .contains("no registered completion consumer"));
+        assert!(error.to_string().contains("no gameplay consumer"));
 
-        let arbitrary_dedicated_input = load(&minimal_toml().replace(
-            "dispatch = \"metadata_backed\"",
-            "dispatch = \"dedicated_input\"",
-        ))
-        .expect("dedicated input syntax is valid before cross-registry wiring validation");
-        let error = validate_startup_wiring(
-            &arbitrary_dedicated_input,
-            &SkillRegistry::default(),
-            &SkillMeridianDependencies::default(),
-        )
-        .expect_err("arbitrary dedicated_input metadata must fail startup");
-        assert!(error.to_string().contains("test.skill"));
-        assert!(error
-            .to_string()
-            .contains("no registered dedicated input consumer"));
+        // 即使声明了 resolver-less empty dependency，也不能绕过消费者白名单。
+        let mut dependencies = SkillMeridianDependencies::default();
+        dependencies.declare("test.skill", Vec::new());
+        let error =
+            validate_startup_relationships(&registry, &SkillRegistry::default(), &dependencies)
+                .expect_err("dependency declaration must not admit a fake direct_generic skill");
+        assert!(error.to_string().contains("no gameplay consumer"));
 
-        let production = production_registry();
-        validate_startup_wiring(
-            &production,
-            &SkillRegistry::default(),
-            &SkillMeridianDependencies::default(),
-        )
-        .expect_err("production metadata without runtime wiring must not be admitted");
-        let skills = crate::cultivation::skill_registry::init_registry();
-        let dependencies = crate::cultivation::skill_registry::init_meridian_dependencies();
-        validate_startup_wiring(&production, &skills, &dependencies)
-            .expect("code-owned dedicated inputs must have a positive startup admission path");
-
-        let missing_consumer_metadata = load(
+        // 真实 allowlisted direct_generic 仍可通过，但 resolver 冲突必须继续失败。
+        let allowlisted = load(
             &minimal_toml()
-                .replace("id = \"test.skill\"", "id = \"shield_block\"")
+                .replace("id = \"test.skill\"", "id = \"movement.dash\"")
                 .replace(
                     "dispatch = \"metadata_backed\"",
-                    "dispatch = \"dedicated_input\"",
+                    "dispatch = \"direct_generic\"",
                 ),
         )
-        .expect("a partial dedicated-input catalog is syntactically valid");
-        let error = validate_startup_wiring(
-            &missing_consumer_metadata,
+        .expect("allowlisted direct_generic id must parse");
+        validate_startup_relationships(
+            &allowlisted,
             &SkillRegistry::default(),
             &SkillMeridianDependencies::default(),
         )
-        .expect_err("every code-owned dedicated input must have metadata");
+        .expect("allowlisted direct_generic without resolver must pass");
+        let mut skills = SkillRegistry::default();
+        skills.register("movement.dash", noop_skill);
+        let error = validate_startup_relationships(
+            &allowlisted,
+            &skills,
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("allowlisted direct_generic with a resolver must fail closed");
         assert!(error.to_string().contains("movement.dash"));
-        assert!(error.to_string().contains("has no technique metadata"));
+        assert!(error
+            .to_string()
+            .contains("unexpectedly has a SkillRegistry resolver"));
     }
 
     #[test]
     fn metadata_backed_accepts_data_only_metadata_when_runtime_wiring_exists() {
-        let dedicated_input = |id: &str| {
-            minimal_toml()
-                .replace("id = \"test.skill\"", &format!("id = \"{id}\""))
-                .replace(
-                    "dispatch = \"metadata_backed\"",
-                    "dispatch = \"dedicated_input\"",
-                )
-        };
-        let registry_source = format!(
-            "{}\n{}\n{}",
-            minimal_toml(),
-            dedicated_input("movement.dash"),
-            dedicated_input("shield_block")
-        );
-        let registry = load(&registry_source).expect("minimal metadata loads");
+        let registry = load(&minimal_toml()).expect("minimal metadata loads");
         let mut skills = SkillRegistry::default();
         skills.register("test.skill", noop_skill);
         skills.register("resolver.only", noop_skill);
@@ -1109,9 +1627,35 @@ dispatch = "metadata_backed"
         dependencies.declare("test.skill", Vec::new());
         dependencies.declare("dependency.only", Vec::new());
 
-        validate_startup_wiring(&registry, &skills, &dependencies).expect(
+        validate_startup_relationships(&registry, &skills, &dependencies).expect(
             "existing resolver plus explicit empty dependency must admit metadata without Rust allowlists",
         );
+    }
+
+    #[test]
+    fn resolver_static_dandao_metadata_is_rejected_before_wiring_can_admit_it() {
+        // dandao resolvers currently use static realm/meridian/cost/timing semantics. Every
+        // promoted dandao ID must therefore fail closed instead of advertising fields the
+        // resolver ignores.
+        for &id in RESOLVER_STATIC_METADATA_IDS {
+            let registry =
+                load(&minimal_toml().replace("id = \"test.skill\"", &format!("id = \"{id}\"")))
+                    .expect("dandao metadata probe must parse before startup wiring validation");
+            let mut skills = SkillRegistry::default();
+            skills.register(id, noop_skill);
+            let mut dependencies = SkillMeridianDependencies::default();
+            dependencies.declare(id, Vec::new());
+            let error = validate_startup_relationships(&registry, &skills, &dependencies)
+                .expect_err("resolver-static dandao metadata must not be admitted");
+            assert!(
+                error.to_string().contains(id),
+                "static resolver rejection must identify the exact technique {id}: {error}"
+            );
+            assert!(
+                error.to_string().contains("resolver-static"),
+                "static resolver rejection must explain that metadata would be ignored: {error}"
+            );
+        }
     }
 
     #[test]
@@ -1120,8 +1664,9 @@ dispatch = "metadata_backed"
         let no_skills = SkillRegistry::default();
         let mut declared = SkillMeridianDependencies::default();
         declared.declare("test.skill", Vec::new());
-        let missing_resolver = validate_startup_wiring(&metadata_backed, &no_skills, &declared)
-            .expect_err("metadata_backed without resolver must fail");
+        let missing_resolver =
+            validate_startup_relationships(&metadata_backed, &no_skills, &declared)
+                .expect_err("metadata_backed without resolver must fail");
         assert!(missing_resolver.to_string().contains("test.skill"));
         assert!(missing_resolver
             .to_string()
@@ -1129,7 +1674,7 @@ dispatch = "metadata_backed"
 
         let mut skills = SkillRegistry::default();
         skills.register("test.skill", noop_skill);
-        let missing_dependency = validate_startup_wiring(
+        let missing_dependency = validate_startup_relationships(
             &metadata_backed,
             &skills,
             &SkillMeridianDependencies::default(),
@@ -1140,31 +1685,140 @@ dispatch = "metadata_backed"
             .to_string()
             .contains("explicit meridian dependency declaration"));
 
-        let direct_generic = load(&minimal_toml().replace(
-            "dispatch = \"metadata_backed\"",
-            "dispatch = \"direct_generic\"",
-        ))
-        .expect("direct_generic metadata loads");
-        let resolver_conflict = validate_startup_wiring(
+        // A resolver conflict remains rejected independently of the historical ID. Use an
+        // allowlisted direct_generic so the resolver conflict, rather than the consumer gate,
+        // is the first failure.
+        let direct_generic = load(
+            &minimal_toml()
+                .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+                .replace(
+                    "dispatch = \"metadata_backed\"",
+                    "dispatch = \"direct_generic\"",
+                ),
+        )
+        .expect("direct_generic fixture must load");
+        skills.register("movement.dash", noop_skill);
+        let resolver_conflict = validate_startup_relationships(
             &direct_generic,
             &skills,
             &SkillMeridianDependencies::default(),
         )
         .expect_err("direct_generic with a resolver must fail");
-        assert!(resolver_conflict.to_string().contains("test.skill"));
+        assert!(resolver_conflict.to_string().contains("movement.dash"));
         assert!(resolver_conflict
             .to_string()
             .contains("unexpectedly has a SkillRegistry resolver"));
     }
 
+    fn production_registry_without(id: &str) -> TechniqueRegistry {
+        let mut registry = production_registry();
+        registry
+            .definitions
+            .retain(|definition| definition.id != id);
+        registry.id_to_index = registry
+            .definitions
+            .iter()
+            .enumerate()
+            .map(|(index, definition)| (definition.id.clone(), index))
+            .collect();
+        registry
+    }
+
+    fn production_wiring_for() -> (SkillRegistry, SkillMeridianDependencies) {
+        (
+            crate::cultivation::skill_registry::init_registry(),
+            crate::cultivation::skill_registry::init_meridian_dependencies(),
+        )
+    }
+
     #[test]
     fn checked_in_production_wiring_satisfies_dynamic_relationships() {
         let techniques = production_registry();
-        let skills = crate::cultivation::skill_registry::init_registry();
-        let dependencies = crate::cultivation::skill_registry::init_meridian_dependencies();
+        let (skills, dependencies) = production_wiring_for();
 
         validate_startup_wiring(&techniques, &skills, &dependencies)
             .expect("checked-in metadata, resolvers, and dependencies must satisfy startup wiring");
+    }
+
+    #[test]
+    fn public_startup_wiring_rejects_deleted_runtime_required_techniques() {
+        for missing_id in ["body.guangbo_ticao", "sword_path.heaven_gate"] {
+            let techniques = production_registry_without(missing_id);
+            let (skills, dependencies) = production_wiring_for();
+            let error = validate_startup_wiring(&techniques, &skills, &dependencies)
+                .expect_err("production startup must reject deleted runtime metadata");
+            assert!(
+                error.to_string().contains(missing_id),
+                "missing runtime id must appear in the startup diagnostic: {error}"
+            );
+            assert!(error.to_string().contains("runtime-required"));
+        }
+    }
+
+    #[test]
+    fn startup_wiring_rejects_meridian_mismatch_in_both_directions() {
+        let metadata_requires_lung = load(&minimal_toml().replace(
+            "required_meridians = []",
+            "required_meridians = [{ channel = \"Lung\", min_health = 0.5 }]",
+        ))
+        .expect("valid Lung metadata must load");
+        let mut skills = SkillRegistry::default();
+        skills.register("test.skill", noop_skill);
+        let mut declared_empty = SkillMeridianDependencies::default();
+        declared_empty.declare("test.skill", Vec::new());
+        let error =
+            validate_startup_relationships(&metadata_requires_lung, &skills, &declared_empty)
+                .expect_err("metadata-only Lung dependency must be rejected");
+        assert!(error.to_string().contains("required_meridians mismatch"));
+        assert!(error.to_string().contains("test.skill"));
+
+        let metadata_empty = load(&minimal_toml()).expect("empty metadata must load");
+        let mut declared_lung = SkillMeridianDependencies::default();
+        declared_lung.declare(
+            "test.skill",
+            vec![crate::cultivation::components::MeridianId::Lung],
+        );
+        let error = validate_startup_relationships(&metadata_empty, &skills, &declared_lung)
+            .expect_err("declaration-only Lung dependency must be rejected");
+        assert!(error.to_string().contains("required_meridians mismatch"));
+        assert!(error.to_string().contains("test.skill"));
+    }
+
+    #[test]
+    fn public_startup_wiring_rejects_static_burst_contract_drift() {
+        let techniques = TechniqueRegistry::load_for_tests_with_override(
+            crate::cultivation::burst_meridian::TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Liver".to_string(),
+                    min_health: 0.5,
+                }];
+            },
+        );
+        let (skills, dependencies) = production_wiring_for();
+        let error = validate_startup_wiring(&techniques, &skills, &dependencies)
+            .expect_err("public startup must reject TOML drift from static resolver dependencies");
+        assert!(error.to_string().contains("burst_meridian.tie_shan_kao"));
+        assert!(error.to_string().contains("required_meridians mismatch"));
+        assert!(error.to_string().contains("Stomach"));
+    }
+
+    #[test]
+    fn startup_wiring_rejects_nonempty_runtime_only_metadata_gate() {
+        let techniques =
+            TechniqueRegistry::load_for_tests_with_override("zhenmai.multipoint", |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.5,
+                }];
+            });
+        let (skills, dependencies) = production_wiring_for();
+        let error = validate_startup_wiring(&techniques, &skills, &dependencies)
+            .expect_err("runtime-only exceptions must keep TOML required_meridians empty");
+        assert!(error.to_string().contains("zhenmai.multipoint"));
+        assert!(error
+            .to_string()
+            .contains("must keep TOML required_meridians empty"));
     }
 
     #[test]
@@ -1179,6 +1833,113 @@ dispatch = "metadata_backed"
                 .unwrap()
                 .cooldown_ticks,
             u32::MAX
+        );
+    }
+
+    #[test]
+    fn oversize_aggregate_snapshot_is_rejected_at_startup_wiring() {
+        // M18：catalog 聚合快照超过 `MAX_PAYLOAD_BYTES`（32 KiB）时必须启动期拒绝，
+        // 而不是等发送端把 protobuf 整包丢弃。单条 1024 字节上限与 512 条总量上限
+        // 都放行时，聚合大小门禁是最后一道防线——这里用 400 条 description 都顶到
+        // 900 字节（仍低于 1024 单条上限）来压过 32 KiB 上限。
+        let mut catalog = String::new();
+        for index in 0..400 {
+            catalog.push_str(&format!(
+                r#"
+[[techniques]]
+id = "bulk.{index}"
+display_name = "批量功法"
+grade = "common"
+description = "{}"
+required_realm = "Awaken"
+required_meridians = []
+required_race = {{ kind = "any" }}
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "direct_generic"
+"#,
+                "刀".repeat(300)
+            ));
+        }
+        let registry = load(&catalog).expect("bulk catalog within per-entry limits must load");
+        assert!(
+            registry.aggregate_snapshot_size() > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "400×1000-byte descriptions must exceed the 32 KiB wire limit (aggregate = {})",
+            registry.aggregate_snapshot_size()
+        );
+        let error = validate_startup_relationships(
+            &registry,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("oversize aggregate snapshot must fail startup wiring");
+        assert!(
+            error.to_string().contains("MAX_PAYLOAD_BYTES"),
+            "wiring rejection should name the payload limit, got {error}"
+        );
+    }
+
+    #[test]
+    fn protobuf_sized_short_catalog_encodes_within_wire_limit() {
+        let mut catalog = String::new();
+        for index in 0..102 {
+            catalog.push_str(&format!(
+                r#"
+[[techniques]]
+ id = "bulk.{index}"
+ display_name = "批"
+ grade = "common"
+ description = "短"
+ required_realm = "Awaken"
+ required_meridians = []
+ required_race = {{ kind = "any" }}
+ qi_cost = 0.0
+ stamina_cost = 0.0
+ cast_ticks = 0
+ cooldown_ticks = 0
+ range = 0.0
+ icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+ category = "attack"
+ dispatch = "direct_generic"
+"#
+            ));
+        }
+        let registry = load(&catalog).expect("short direct_generic catalog must load");
+        let aggregate = registry.aggregate_snapshot_size();
+        assert!(
+            aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
+            "protobuf-sized short catalog must fit the wire limit, aggregate={aggregate}"
+        );
+        // This fixture intentionally contains synthetic IDs, so the gameplay-wiring gate is
+        // not the subject under test. The startup validator has a separate direct-generic
+        // consumer contract; this assertion only pins the protobuf size calculation.
+    }
+
+    #[test]
+    fn aggregate_snapshot_narrows_nonzero_f64_qi_cost_at_legacy_wire_boundary() {
+        let techniques = TechniqueRegistry::load_for_tests_with_override("sword.cleave", |def| {
+            def.qi_cost = 0.4_f64;
+        });
+        let aggregate = techniques.aggregate_snapshot_size();
+        assert!(
+            aggregate > 0,
+            "aggregate snapshot with a nonzero f64 qi_cost must encode through the f32 wire field"
+        );
+    }
+
+    #[test]
+    fn checked_in_catalog_aggregate_snapshot_fits_wire_limit() {
+        let techniques = production_registry();
+        let aggregate = techniques.aggregate_snapshot_size();
+        assert!(
+            aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
+            "checked-in catalog worst-case snapshot ~{aggregate} bytes must fit {}",
+            crate::schema::common::MAX_PAYLOAD_BYTES
         );
     }
 }

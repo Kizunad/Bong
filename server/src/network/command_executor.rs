@@ -2119,6 +2119,67 @@ mod command_executor_tests {
     }
 
     #[test]
+    fn agent_spawn_npc_propagates_authoritative_registry_to_loadout() {
+        // M06：agent-command NPC spawn 必须把注入的权威 registry 传给 constructor，
+        // 产出的 loadout 跟随 runtime override。若 execute_spawn_npc 忽略参数并改读
+        // 默认/静态 catalog，runtime-only 招式会从 spawn 出的 NPC KnownTechniques
+        // 里消失并撞红。
+        let mut app = setup_executor_app();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_from_contents_for_tests(
+                r#"
+[[techniques]]
+ id = "runtime.only"
+ display_name = "运行时专属"
+ grade = "common"
+ description = "只存在于注入 registry 的 runtime-only 招式（M06 契约）。"
+ required_realm = "Awaken"
+ required_meridians = []
+ required_race = { kind = "any" }
+ qi_cost = 1.0
+ stamina_cost = 1.0
+ cast_ticks = 10
+ cooldown_ticks = 20
+ range = 3.0
+ icon_texture = "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+ category = "attack"
+ dispatch = "metadata_backed"
+"#,
+            )
+            .expect("runtime-only test catalog must load"),
+        );
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("rogue"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_rogue_runtime",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let npc = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).next().map(|(e, a)| (e, *a)).unwrap()
+        };
+        assert_eq!(npc.1, NpcArchetype::Rogue);
+        let known = app
+            .world()
+            .get::<crate::cultivation::known_techniques::KnownTechniques>(npc.0)
+            .expect("spawned NPC must carry KnownTechniques loadout");
+        assert!(
+            known.entries.iter().any(|entry| entry.id == "runtime.only"),
+            "spawned NPC loadout must follow the injected authoritative registry (M06)"
+        );
+    }
+
+    #[test]
     fn spawn_npc_count_spawns_batch_and_clamps_to_remaining_budget() {
         let mut app = setup_executor_app();
 
