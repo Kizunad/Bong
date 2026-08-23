@@ -40,6 +40,24 @@ from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
+from bot._agent_ui_helpers import (  # noqa: E402
+    DEFAULT_UI_XML,
+    REQUEST_TIMEOUT_MAX,
+    REQUEST_TIMEOUT_MIN,
+    REQUEST_XML_MAX_BYTES,
+    assert_request_shape,
+    build_cmd,
+    expect_agent_ui_close,
+    expect_agent_ui_request,
+    expect_redis_response,
+    response_matches,
+)
+from bot._redis_client_helpers import (  # noqa: E402
+    RedisClient,
+    RespFrames,
+    _INCOMPLETE_FRAME,
+    _encode_command,
+)
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._combat_helpers import (  # noqa: E402
@@ -11936,6 +11954,969 @@ class NpcDialogueHelperContractTest(unittest.TestCase):
             ["skill_scroll_herbalism_baicao_can", "skill_scroll_herbalism_baicao_can"],
             "越界恢复必须重发当前 metadata offer，不得 advance/结束该商品",
         )
+
+# ── agent_ui 场景底座（_redis_client_helpers / _agent_ui_helpers）单测 ──────────────
+
+
+class RespFramesTest(unittest.TestCase):
+    """RESP2 编解码器：feed 字节流 → 按帧取回值（纯 stdlib，无需 redis）。"""
+
+    def test_integer_reply(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "帧取完后应返回 _INCOMPLETE_FRAME",
+        )
+
+    def test_simple_string(self):
+        parser = RespFrames()
+        parser.feed(b"+OK\r\n")
+        self.assertEqual(parser.next_frame(), "OK")
+
+    def test_error_string(self):
+        parser = RespFrames()
+        parser.feed(b"-ERR bad\r\n")
+        self.assertEqual(parser.next_frame(), "ERR bad")
+
+    def test_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), b"hello")
+
+    def test_empty_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), b"")
+
+    def test_nil_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$-1\r\n:42\r\n")
+        frame = parser.next_frame()
+        self.assertIsNone(frame, "nil bulk 应解析为 None")
+        self.assertIsNot(
+            frame,
+            _INCOMPLETE_FRAME,
+            "完整 nil 帧是已解析的值，不是数据不足哨兵",
+        )
+        self.assertEqual(
+            parser.next_frame(),
+            42,
+            "nil bulk 帧必须被消费，后续帧才能继续解析",
+        )
+
+    def test_nil_bulk_distinct_from_incomplete(self):
+        # finding：完整 nil 帧（$-1）返回 None 但已消费，与「还需更多字节」
+        # 必须可区分。旧实现两者都返回 None，调用方无法判断收全了一条 nil。
+        parser = RespFrames()
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "空缓冲 = 数据不足，不应出帧",
+        )
+        parser.feed(b"$-1\r\n")
+        self.assertIsNone(parser.next_frame(), "完整 nil 帧应解析为 None")
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "nil 帧消费后回到数据不足",
+        )
+
+    def test_malformed_bulk_terminator_rejected(self):
+        # finding：$3\r\nabcXX 的 body 后两字节不是 \r\n，是协议违例，必须拒绝；
+        # 旧实现只确认有 2 字节就消费，把 b"abc" 当合法帧返回。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_malformed_bulk_terminator_desync_rejected(self):
+        # finding：body 后两字节非 \r\n 会让帧边界错位；拼接输入也必须整体拒绝，
+        # 不得把后面的 :1 当作独立整数帧吞掉。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX:1\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$9\r\nsubscribe\r\n$6\r\nbong:x\r\n:1\r\n")
+        self.assertEqual(parser.next_frame(), [b"subscribe", b"bong:x", 1])
+
+    def test_bulk_negative_length_below_nil_rejected(self):
+        # finding：RESP2 长度只允许 -1（nil）或非负。$-2 会被误当成 body 长度 0
+        # 把头部 CRLF 认作终止符返回 b''；必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"$-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_negative_count_below_nil_rejected(self):
+        # finding：*-2 的 range(-2) 不迭代，被误解析为空数组 []；RESP2 不允许，
+        # 必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"*-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_message_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_partial_feeds(self):
+        parser = RespFrames()
+        raw = b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n"
+        for i in range(0, len(raw), 3):
+            self.assertIs(
+                parser.next_frame(),
+                _INCOMPLETE_FRAME,
+                "字节未喂全时不应出帧",
+            )
+            parser.feed(raw[i : i + 3])
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_concatenated_frames(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b""])
+
+    def test_unknown_marker_rejected(self):
+        parser = RespFrames()
+        parser.feed(b"?nonsense\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_json_payload_in_message_frame(self):
+        payload = b'{"request_id":"req_1","action":"button_click","params":{}}'
+        raw = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(payload)).encode("ascii")
+            + b"\r\n"
+            + payload
+            + b"\r\n"
+        )
+        parser = RespFrames()
+        parser.feed(raw)
+        frame = parser.next_frame()
+        self.assertEqual(frame[0], b"message")
+        self.assertEqual(json.loads(frame[2].decode("utf-8"))["request_id"], "req_1")
+
+    def test_fragmented_large_bulk(self):
+        # 大 bulk 分 4096 块喂入：多次 partial feed 后仍须正确拼回。feed 走
+        # bytearray.extend（摊还线性）；若退回 ``bytes += `` 就会逐块整拷积压缓冲，
+        # 大消息退化为二次拷贝。
+        payload = b"x" * (64 * 1024)
+        raw = b"$" + str(len(payload)).encode("ascii") + b"\r\n" + payload + b"\r\n"
+        parser = RespFrames()
+        for i in range(0, len(raw), 4096):
+            parser.feed(raw[i : i + 4096])
+        self.assertEqual(parser.next_frame(), payload)
+
+    def test_bulk_declared_oversize_rejected(self):
+        # 单条 bulk 声明长度超上限：帧未收全也必须立刻拒绝（防超限帧占用合法化）。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$9\r\n123456789\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_bulk_declared_at_max_accepted(self):
+        # 上界合法等值边界：声明长度恰好 == max_bulk_size 必须完整接受（> 上限才拒绝）。
+        # 缺此断言时，把 >= 当 > 的 off-by-one 实现能通过全套却拒绝恰好到顶的合法载荷。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$8\r\n12345678\r\n")
+        self.assertEqual(parser.next_frame(), b"12345678")
+
+    def test_buffer_oversize_rejected(self):
+        # 永不收尾的帧反复 feed，积压缓冲越过上限必须抛错（防外部消息撑爆进程内存）。
+        parser = RespFrames(max_buffer_size=16)
+        parser.feed(b"$100\r\n0123456789")  # 15 bytes，帧未完整
+        with self.assertRaises(ValueError):
+            parser.feed(b"0123456789")  # 累计 25 > 16
+
+
+class RedisCommandEncodeTest(unittest.TestCase):
+    """PUBLISH / SUBSCRIBE 命令编码（与 RESP2 协议字节精确对拍）。"""
+
+    def test_publish_encoding(self):
+        self.assertEqual(
+            _encode_command("PUBLISH", "bong:agent_ui_cmd", '{"a":1}'),
+            b'*3\r\n$7\r\nPUBLISH\r\n$17\r\nbong:agent_ui_cmd\r\n$7\r\n{"a":1}\r\n',
+        )
+
+    def test_subscribe_encoding(self):
+        self.assertEqual(
+            _encode_command("SUBSCRIBE", "bong:agent_ui_response"),
+            b"*2\r\n$9\r\nSUBSCRIBE\r\n$22\r\nbong:agent_ui_response\r\n",
+        )
+
+
+class _FakeTimeoutSocket:
+    """recv 先按 settimeout 配置真实阻塞再抛 TimeoutError 的假 socket。
+
+    若 recv 恒立即抛错，wait_message 把 socket 超时设成整个 io_timeout（或漏调
+    settimeout）也无法被测出——墙钟只由循环里的 deadline 检查决定。这里 recv
+    实际睡 self.timeout 秒再抛，超时值超界会把等待拉长到可断言；同时记录每次
+    settimeout 值，供测试校验其受剩余 deadline 约束。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError(
+                "recv 被调用但未先 settimeout（wait_message 漏设 socket 超时）"
+            )
+        time.sleep(self.timeout)
+        raise TimeoutError("timed out")
+
+
+class _FakeDripPartialSocket:
+    """recv 每次成功返回一小块「永不收尾」的部分 RESP 帧字节的假 socket。
+
+    帧重组路径：分片持续到达（每次 recv 都有数据、从不抛 TimeoutError），socket
+    超时永远触发不了，只有 ``_next_frame`` 内部逐次核对绝对 deadline 才能让
+    ``wait_message`` 按时返回——靠外层循环 deadline 检查兜底的实现会无限 recv 下去。
+    首块喂声明 2MB bulk 的长度头，之后每块只给 512B body，单帧永远重组不完。
+    记录每次 settimeout 值供测试校验其受剩余 deadline 约束；recv 设上限兜底，防
+    回归实现让测试无限挂起。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+        self._recvs = 0
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError("recv 被调用但未先 settimeout")
+        self._recvs += 1
+        if self._recvs > 2000:
+            raise AssertionError(
+                "部分帧被持续喂入但绝对 deadline 未被强制：wait_message 应按时返回"
+            )
+        # 每块在 socket 超时内到达（睡极短时间），触发不了 socket 级 TimeoutError。
+        time.sleep(min(self.timeout, 0.001))
+        if self._recvs == 1:
+            return b"$2000000\r\n"
+        return b"z" * 512
+
+
+class RedisClientWaitDeadlineTest(unittest.TestCase):
+    """wait_message 的 recv 窗口必须受调用方 deadline 约束。
+
+    回归：io_timeout(10s) 大于负向断言窗口(2s)时，固定 10s 阻塞 recv 会直接抛
+    TimeoutError 崩掉场景，而不是按 deadline 返回 None / 抛 AssertionError。
+    """
+
+    def _redis_with_timeout_socket(self, timeout: float = 2.0) -> RedisClient:
+        redis = RedisClient(io_timeout=timeout)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        return redis
+
+    def _assert_timeouts_bounded(self, sock: _FakeTimeoutSocket, window: float) -> None:
+        """socket 超时值必须受调用方 deadline（window）约束，不能退化成 io_timeout。"""
+        self.assertTrue(
+            sock._settimeouts,
+            "wait_message 必须按剩余 deadline 调用 settimeout，不能漏设",
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            window + 0.05,
+            "socket 超时绝不能超过调用方 deadline，不能设成整个 io_timeout",
+        )
+
+    def test_negative_window_returns_none_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "负向窗口超时应返回 None，而不是抛 TimeoutError")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 1.5, "负向窗口应约在 deadline 处返回，不拖满 io_timeout"
+        )
+        self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_positive_window_raises_assertion_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(
+            elapsed, 0.2, "正窗口断言必须等满 deadline 才抛，不能提前抛"
+        )
+        self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_non_dict_json_payload_skipped_not_crashed(self):
+        # finding：bong:agent_ui_response 上合法的非对象 JSON（null/数组/字符串/数字）
+        # 会让 expect_redis_response.matches 对 payload 调 .get() 抛 AttributeError
+        # 崩掉整个场景。必须当作无关发布者消息跳过（与频道不符/无效 JSON 同款），
+        # 而不是传给 predicate。喂一帧 payload 为 JSON 数组的 message 帧，随后窗口
+        # 走满：无崩溃 + 负向返回 None，即证明非 dict 被跳过。
+        redis = RedisClient(io_timeout=2.0)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        json_bytes = b'["not","a","dict"]'
+        frame = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(json_bytes)).encode("ascii")
+            + b"\r\n"
+            + json_bytes
+            + b"\r\n"
+        )
+        redis._frames.feed(frame)
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response",
+            lambda payload: True,
+            timeout=0.2,
+            expect=False,
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(
+            got, "非 dict JSON 消息应被跳过（继续等满窗口），而不是抛 AttributeError"
+        )
+        self.assertGreaterEqual(elapsed, 0.2, "跳过非 dict 后仍须等满负向窗口")
+
+    def test_partial_frame_respects_absolute_deadline_negative(self):
+        # finding：deadline 测试只覆盖完全空闲的 socket（recv 即抛 TimeoutError），
+        # 帧重组路径（一次 _next_frame 内多次成功 recv）没测到——分片持续喂入、
+        # socket 超时永不触发，只有绝对 deadline 被强制才按 0.2s 返回 None；
+        # io_timeout=10s 明显大于窗口，若按 io_timeout 兜底会拖满 10s。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "部分帧持续喂入时负向窗口仍须按时返回 None")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 3.0, "部分帧不得拖过调用方 deadline（io_timeout=10s 更大）"
+        )
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            0.2 + 0.05,
+            "帧重组期间的每次 socket 超时都必须受剩余 deadline 约束",
+        )
+
+    def test_partial_frame_respects_absolute_deadline_positive(self):
+        # 正向路径同款：部分帧持续喂入时，断言必须在 deadline 处抛 AssertionError，
+        # 而不是被无限重组拖住。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.2, "正窗口断言必须等满 deadline 才抛")
+        self.assertLess(elapsed, 3.0, "部分帧不得拖过调用方 deadline（正向断言）")
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+
+
+class _AgentUiFakeBot(_FakeBot):
+    """wait_for 模拟真实 Bot 的 temporal wait 契约，供负向/时序断言测。
+
+    真实 ``Bot.wait_for``（bot.py:389）以调用时刻为起点等到 deadline，窗口内
+    到达即命中、窗口关闭后才到达不得命中。本 fake 用事件时间戳 ``t`` 建模同一条：
+    ``t <= start`` 的事件视为观测前已送达（顺序消费，不得二次命中），``t > deadline``
+    的事件视为窗口关闭后才到。这样负向断言能区分「窗口内迟到事件」（必须失败）
+    与「窗口外事件」（返回 None），而不是对固定事件列表做一次扫描——后者会让
+    「helper 立即返回 / 零超时 / 只快照当前事件」的错实现照样绿。
+    """
+
+    def __init__(self, events: list[_FakeEvent]) -> None:
+        super().__init__(events)
+        self._now = 0.0
+
+    def wait_for(self, predicate, timeout: float, description: str):
+        start = self._now
+        deadline = start + timeout
+        for event in self.events:
+            if start < event.t <= deadline and predicate(event):
+                self._now = event.t
+                return event
+        self._now = deadline
+        raise BotAssertionError(f"未找到 {description}; events={self.events}")
+
+
+def _req_event(t: float, request_id: str, **payload_overrides) -> _FakeEvent:
+    payload = json.dumps(
+        {
+            "request_id": request_id,
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+            **payload_overrides,
+        }
+    ).encode("utf-8")
+    return _FakeEvent(
+        t, "payload", {"channel": "bong:agent_ui_request", "data": payload}
+    )
+
+
+class AgentUiHelperTest(unittest.TestCase):
+    """_agent_ui_helpers 纯逻辑：cmd 构造 / S2C 形状断言 / 回执匹配 / 负向等待。"""
+
+    def test_build_cmd_exact_six_fields(self):
+        cmd = build_cmd("req_1", "offline:Fake")
+        self.assertEqual(
+            set(cmd),
+            {
+                "request_id",
+                "target_player",
+                "xml",
+                "timeout_ticks",
+                "realm_gate",
+                "allowed_button_ids",
+            },
+            "AgentUiRequestCommandV1 六个字段全必填（server serde deny_unknown_fields）",
+        )
+        self.assertEqual(cmd["request_id"], "req_1")
+        self.assertEqual(cmd["allowed_button_ids"], ["enter_realm", "cancel"])
+        self.assertEqual(cmd["realm_gate"], 0)
+        self.assertEqual(cmd["timeout_ticks"], 600, "默认 timeout_ticks 钉死 600")
+        self.assertEqual(cmd["xml"], DEFAULT_UI_XML, "默认 xml 钉死 DEFAULT_UI_XML")
+
+    def test_build_cmd_overrides(self):
+        cmd = build_cmd(
+            "req_2",
+            "offline:Fake",
+            timeout_ticks=20,
+            realm_gate=6,
+            allowed_button_ids=("ok",),
+            xml="<x/>",
+        )
+        self.assertEqual(cmd["timeout_ticks"], 20)
+        self.assertEqual(cmd["realm_gate"], 6)
+        self.assertEqual(cmd["allowed_button_ids"], ["ok"])
+        self.assertEqual(cmd["xml"], "<x/>")
+
+    def test_build_cmd_json_roundtrip(self):
+        cmd = build_cmd("req_3", "offline:Fake")
+        self.assertEqual(json.loads(json.dumps(cmd)), cmd)
+
+    def test_assert_request_shape_accepts_valid_payload(self):
+        payload = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_security_field_leak(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "realm_gate": 3}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(
+                {**base, "allowed_button_ids": ["enter_realm"]}, "req_1"
+            )
+
+    def test_assert_request_shape_rejects_wrong_request_id(self):
+        payload = {
+            "request_id": "other",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_target_player(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_xml(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_non_int_timeout_ticks(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": "600"}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": True}, "req_1")
+
+    def test_assert_request_shape_pins_closed_fields_and_boundaries(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": REQUEST_TIMEOUT_MIN,
+        }
+        assert_request_shape(base, "req_1")
+        assert_request_shape(
+            {**base, "timeout_ticks": REQUEST_TIMEOUT_MAX}, "req_1"
+        )
+        for bad_ticks in (REQUEST_TIMEOUT_MIN - 1, REQUEST_TIMEOUT_MAX + 1):
+            with self.subTest(timeout_ticks=bad_ticks), self.assertRaisesRegex(
+                BotAssertionError, "timeout_ticks"
+            ):
+                assert_request_shape({**base, "timeout_ticks": bad_ticks}, "req_1")
+
+        assert_request_shape(
+            {**base, "xml": "x" * REQUEST_XML_MAX_BYTES}, "req_1"
+        )
+        with self.assertRaisesRegex(BotAssertionError, "UTF-8 字节数"):
+            assert_request_shape(
+                {**base, "xml": "x" * (REQUEST_XML_MAX_BYTES + 1)}, "req_1"
+            )
+        with self.assertRaisesRegex(BotAssertionError, "额外"):
+            assert_request_shape({**base, "unexpected": True}, "req_1")
+
+    def test_assert_request_shape_compares_published_command_values(self):
+        cmd = build_cmd(
+            "req_cmd",
+            "offline:Expected",
+            timeout_ticks=2400,
+            xml="<owo-ui><label>expected</label></owo-ui>",
+        )
+        payload = {field: cmd[field] for field in (
+            "request_id",
+            "target_player",
+            "xml",
+            "timeout_ticks",
+        )}
+        assert_request_shape(payload, "req_cmd", expected_cmd=cmd)
+        for field, wrong in (
+            ("target_player", "offline:Other"),
+            ("xml", "<owo-ui><label>wrong</label></owo-ui>"),
+            ("timeout_ticks", 20),
+        ):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                BotAssertionError, field
+            ):
+                assert_request_shape(
+                    {**payload, field: wrong}, "req_cmd", expected_cmd=cmd
+                )
+
+    def test_expect_redis_response_rejects_wrong_same_request_before_expected(self):
+        class FakeRedis:
+            def wait_message(self, _channel, predicate, **_kwargs):
+                for payload in (
+                    {
+                        "request_id": "req_same",
+                        "action": "dismissed",
+                        "params": {},
+                    },
+                    {
+                        "request_id": "req_same",
+                        "action": "timeout",
+                        "params": {},
+                    },
+                ):
+                    if predicate(payload):
+                        return payload
+                return None
+
+        with self.assertRaisesRegex(BotAssertionError, "不匹配的同请求回执"):
+            expect_redis_response(FakeRedis(), "req_same", action="timeout")
+
+    def test_response_matches_action_and_params(self):
+        self.assertTrue(
+            response_matches(
+                {
+                    "request_id": "r",
+                    "action": "button_click",
+                    "params": {"button_id": "ok"},
+                },
+                action="button_click",
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x", "extra": "y"}},
+                params_subset={"reason": "x"},
+            ),
+            "params 子集匹配",
+        )
+        self.assertFalse(
+            response_matches({"action": "dismissed"}, action="button_click")
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "y"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": "not-a-dict"},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches({"action": "timeout", "params": {}}, params_subset={}),
+            "空子集要求 params 恰好为空",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "timeout", "params": {"unexpected": "value"}},
+                params_subset={},
+            ),
+            "声明空 params 时，额外参数必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "timeout"}, params_subset={}),
+            "声明空 params 时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "error"}, params_subset={"reason": "x"}),
+            "声明 params 子集时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {}},
+                params_subset={"reason": None},
+            ),
+            "子集匹配要求 key 存在：缺 reason 不能把缺失当显式 null 放行",
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": None}},
+                params_subset={"reason": None},
+            ),
+            "显式 null 的 reason 应匹配（key 存在且值为 None）",
+        )
+
+    def test_response_matches_params_exact(self):
+        # 原样转发契约：params 必须逐键精确相等，额外字段即违约（subset 会放行）。
+        self.assertTrue(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "owo_parse_failed"}},
+                action="parse_error",
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {
+                    "action": "parse_error",
+                    "params": {"reason": "owo_parse_failed", "button_id": "injected"},
+                },
+                params_exact={"reason": "owo_parse_failed"},
+            ),
+            "精确匹配拒绝额外字段：注入 button_id 不得满足原样转发契约",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "other"}},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error"}, params_exact={"reason": "owo_parse_failed"}
+            ),
+            "精确匹配要求 params 字段存在",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": "not-a-dict"},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        with self.assertRaises(ValueError):
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+                params_exact={"reason": "x"},
+            )
+
+    def test_expect_agent_ui_request_positive(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        payload = expect_agent_ui_request(bot, "req_1", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_1")
+        self.assertEqual(payload["target_player"], "offline:Fake")
+
+    def test_expect_agent_ui_request_negative_when_truly_absent(self):
+        # 窗口内完全没有 payload 事件：负向断言超时返回 None（干净）。
+        bot = _AgentUiFakeBot([])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False),
+            "窗口内无任何 payload 时负向断言应返回 None",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_when_present(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_1", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_other_request_id(self):
+        # finding：拒绝路径契约是「面板不下发」，不是「不下发指定 request_id 的面板」。
+        # request_id 与期望不符的 payload 在窗口内到达仍是错误下发，负向断言必须失败
+        # —— 不能靠 request_id 过滤把它当干净拒绝（唯一 request_id 防跨 run 碰撞，
+        # 但不能豁免同 bot 收到的其它下发）。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_other")])
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_missing_request_id(self):
+        # 漏掉 request_id 字段的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"target_player":"offline:Fake","xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_corrupted_request_id(self):
+        # request_id 被损坏（非字符串）的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"request_id":42,"target_player":"offline:Fake",'
+            b'"xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_non_object_json(self):
+        # 合法非对象 JSON（数组）到达：既不能崩（对非 dict 调 .get 抛 AttributeError），
+        # 也不能被 request_id 过滤当干净——它是错误下发的 payload，必须失败并报告形状。
+        raw = b'["not","a","dict"]'
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "而非 JSON 对象"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_invalid_json(self):
+        raw = b"not json at all"
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不是合法 JSON"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_positive_skips_non_dict_payloads(self):
+        # 正向匹配器对非对象 JSON 不得崩（.get 抛 AttributeError）：跳过噪音，
+        # 继续等真正匹配的 payload。
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": b'["noise"]'},
+                ),
+                _req_event(2.0, "req_real"),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_real", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_real")
+        self.assertEqual(bot._now, 2.0, "正向匹配必须消费到真正的匹配事件")
+
+    def test_expect_agent_ui_request_after_mark(self):
+        # 同一 request_id 在 marker 前后各一：request-id 过滤无法区分二者，
+        # 只有 after 语义能选中 marker 之后那条——忽略 after 的实现会错拿 marker 前的事件。
+        bot = _AgentUiFakeBot(
+            [
+                _req_event(1.0, "req_same", timeout_ticks=100),
+                _req_event(5.0, "req_same", timeout_ticks=900),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_same", after=2.0, timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_same")
+        self.assertEqual(payload["timeout_ticks"], 900, "必须取 marker 之后的同 request_id 事件")
+
+    def test_expect_agent_ui_request_after_mark_ignores_predating_only_match(self):
+        # 唯一匹配发生在 marker 之前：after 语义应拒绝它，返回 None。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_predates")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_predates", after=2.0, timeout=5.0, expect=False),
+            "marker 之前唯一匹配应被 after 拒绝",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_for_late_match_in_window(self):
+        # 匹配事件在观测窗口内（t=3.0 ∈ (0, 5.0]）才送达：负向断言必须失败。
+        # 若 fake 只做一次扫描、或 helper 立即返回 None / 零超时，这条会漏过——
+        # 正是「迟到、安全敏感的下发在断言窗口内到达仍产生 false passing audit」的点。
+        bot = _AgentUiFakeBot([_req_event(3.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_ok_when_match_after_window(self):
+        # 匹配事件在窗口关闭后（t=6.0 > deadline 5.0）才送达：负向断言返回 None，
+        # 证明观察窗口真的以 timeout 为界，而不是把任何时刻的事件都算作命中。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False),
+            "窗口外事件不得使负向断言失败",
+        )
+
+    def test_expect_agent_ui_request_positive_rejects_match_after_window(self):
+        # 匹配事件在窗口外到达：正向 wait 必须超时抛错，而不是错拿窗口外事件。
+        # 钉死 timeout 参数确实约束了观察边界（finding：无断言记录传给 wait_for 的 timeout）。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_assert(self):
+        # 负向断言必须因 reason 失配而红。旧版只有一条事件：正向断言消费它之后，
+        # 第二条断言只是"事件耗尽超时"，忽略 reason 的实现照样绿。改喂两条事件，
+        # 第二条 reason 明确不符（非 null），让第二条断言真正在 reason 值上失配。
+        close_ok = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"invalid_button_id"}',
+            },
+        )
+        close_wrong = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"other_button_id"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_ok, close_wrong])
+        expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_null(self):
+        close = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":null}',
+            },
+        )
+        bot = _AgentUiFakeBot([close])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_absent_means_replaced(self):
+        # 契约（schema AgentUiClosePayloadV1 的 reason=Type.Optional；shared wire
+        # fixture agent-ui-close.channel-wire.sample.json 的 replaced case）：reason
+        # 缺省 = Replaced，期望 None 时必须放行。期望具体 reason 时必须失败，且值
+        # 分支真正检查到 payload（_now 前移到 close_2.t=2.0），而非事件耗尽超时凑绿。
+        close_1 = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1"}',
+            },
+        )
+        close_2 = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_2"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_1, close_2])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_2", reason="invalid_button_id", timeout=5.0)
+        self.assertEqual(bot._now, close_2.t, "第二条断言必须检查到 close_2 事件")
 
 class ProbePayloadDecodeTest(unittest.TestCase):
     """实体/空间探知流 S2C 解码 pin（field 74/77/129/130/132）。
