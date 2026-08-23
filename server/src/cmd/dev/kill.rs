@@ -104,13 +104,9 @@ mod tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         let run_id = format!("dev-kill-{test_name}");
         bootstrap_sqlite(&db_path, &run_id).expect("sqlite bootstrap should succeed");
-        (
-            PersistenceSettings::with_paths(&db_path, &deceased_dir, run_id),
-            root,
-        )
+        (PersistenceSettings::with_db_path(&db_path, run_id), root)
     }
 
     /// 只跑 handle_kill 本身（不接死亡链路下游），用于锁住"这条 dev 命令做了什么"的窄契约：

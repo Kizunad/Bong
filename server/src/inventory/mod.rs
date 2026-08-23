@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, Despawned, Entity, EntityInteraction,
-    EntityLayerId, Hand, InteractEntityEvent, IntoSystemConfigs, Position, Query, Res, ResMut,
-    Resource, Startup, Update, Username, Without,
+    EntityLayerId, Hand, InteractEntityEvent, IntoSystemConfigs, Or, Position, Query, Res, ResMut,
+    Resource, Startup, Update, Username, With, Without,
 };
 
 use crate::body_plan::race_registry::HUMAN_RACE_ID;
@@ -118,7 +118,16 @@ pub const BODY_POCKET_COLS: u8 = 3;
 #[allow(dead_code)]
 pub const BASE_CARRY_CAPACITY: f64 = 15.0;
 
-type JoinedClientsWithoutInventoryFilter = (Added<Client>, Without<PlayerInventory>);
+type JoinedClientsWithoutInventoryFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+        Added<crate::player::state::PlayerState>,
+    )>,
+    With<crate::player::state::PlayerState>,
+    Without<PlayerInventory>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRevision(pub u64);
@@ -805,15 +814,19 @@ pub enum ClearScope {
     All,
 }
 
-pub fn clear_player_inventory(inventory: &mut PlayerInventory, scope: ClearScope) {
+pub fn clear_player_inventory(
+    inventory: &mut PlayerInventory,
+    scope: ClearScope,
+    registry: &ItemRegistry,
+) {
     match scope {
         ClearScope::PackOnly => {
-            if let Some(container) = inventory
-                .containers
-                .iter_mut()
-                .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
-            {
-                container.items.clear();
+            for container in &mut inventory.containers {
+                if container.id == MAIN_PACK_CONTAINER_ID
+                    || worn_pack_instance_from_container_id(&container.id).is_some()
+                {
+                    container.items.clear();
+                }
             }
         }
         ClearScope::PackAndHotbar => {
@@ -831,6 +844,20 @@ pub fn clear_player_inventory(inventory: &mut PlayerInventory, scope: ClearScope
             inventory.equipped.clear();
         }
     }
+
+    // Clearing equipment or carried packs can change the authoritative topology and capacity.
+    // The containers were emptied above, so rebuild must never need to spill an item.
+    let overflow = rebuild_containers_from_equipment(inventory, registry);
+    if !overflow.is_empty() {
+        tracing::error!(
+            ?overflow,
+            "clear_player_inventory: emptied inventory unexpectedly produced rebuild overflow"
+        );
+    }
+    debug_assert!(
+        overflow.is_empty(),
+        "clear_player_inventory: empty containers produced rebuild overflow: {overflow:?}"
+    );
     bump_revision(inventory);
 }
 
@@ -1632,7 +1659,7 @@ fn inject_vanilla_block_templates(
 }
 
 pub fn load_item_registry() -> Result<ItemRegistry, String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ITEMS_DIR);
+    let path = crate::body_plan::resolve_assets_root().join(DEFAULT_ITEMS_DIR);
     load_item_registry_from_dir(path)
 }
 
@@ -1725,7 +1752,7 @@ fn collect_item_toml_paths(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), St
 }
 
 pub fn load_default_loadout(registry: &ItemRegistry) -> Result<LoadoutSpec, String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_LOADOUT_PATH);
+    let path = crate::body_plan::resolve_assets_root().join(DEFAULT_LOADOUT_PATH);
     load_default_loadout_from_path(path, registry)
 }
 
@@ -1773,6 +1800,39 @@ impl ItemRegistry {
     /// 迭代全部模板（无序）— dev 命令 Tab 补全等需要枚举全量 id 的场景用。
     pub fn iter_templates(&self) -> impl Iterator<Item = &ItemTemplate> {
         self.templates.values()
+    }
+}
+
+/// 在 technique metadata registry 可用后，校验所有功法卷轴的跨表引用。
+///
+/// ItemRegistry 先于 cultivation 注册，因此 item TOML 的 leaf parser 只校验字段语法；
+/// 完整引用闭包在启动期由 cultivation::register 一次性执行。错误按 item id 排序汇总，
+/// 保证同一坏数据集产生稳定、可操作的诊断。
+pub(crate) fn validate_technique_scroll_references(
+    items: &ItemRegistry,
+    techniques: &crate::cultivation::known_techniques::TechniqueRegistry,
+) -> Result<(), String> {
+    let mut missing = items
+        .iter_templates()
+        .filter_map(|template| {
+            let scroll = template.technique_scroll_spec.as_ref()?;
+            techniques.get(&scroll.skill_id).is_none().then(|| {
+                format!(
+                    "item `{}` references unknown technique_scroll.skill_id `{}`",
+                    template.id, scroll.skill_id
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    missing.sort();
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid technique scroll references:\n- {}",
+            missing.join("\n- ")
+        ))
     }
 }
 
@@ -2851,12 +2911,6 @@ pub fn parse_technique_scroll_spec(
         source_path,
         &format!("item `{item_id}` technique_scroll.skill_id"),
     )?;
-    if crate::cultivation::known_techniques::technique_definition(skill_id.as_str()).is_none() {
-        return Err(format!(
-            "{} item `{item_id}` references unknown technique_scroll.skill_id `{skill_id}`",
-            source_path.display()
-        ));
-    }
     Ok(TechniqueScrollSpec { kind, skill_id })
 }
 
@@ -5402,7 +5456,9 @@ pub fn discard_inventory_item_to_dropped_loot(
         }
     };
 
-    let next_idx = registry.entries.len();
+    // Keep the visual spread local to the player. Using the global registry length here
+    // eventually puts a fresh drop outside the 2.5-block pickup radius during long e2e runs.
+    let next_idx = registry.entries.len().min(8);
     let dropped = DroppedLootEntry {
         instance_id,
         source_container_id,
@@ -6974,33 +7030,48 @@ mod tests {
         }
     }
 
-    fn populated_clear_inventory() -> PlayerInventory {
-        let mut inv = empty_inventory(2, 2);
-        inv.containers[0].items.push(PlacedItemState {
-            row: 0,
-            col: 0,
-            instance: make_test_item_instance(1, "main_item"),
-        });
-        inv.containers.push(ContainerState {
-            quick_access: false,
-            id: "side_pack".to_string(),
-            name: "侧袋".to_string(),
+    fn clear_inventory_fixture() -> (ItemRegistry, PlayerInventory, u64) {
+        let registry = load_item_registry().expect("real item registry should load");
+        let loadout = load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
+            .expect("default inventory should instantiate");
+        let pack_instance_id = inventory
+            .equipped
+            .get(EQUIP_SLOT_CHEST)
+            .and_then(|slot| {
+                slot.worn
+                    .iter()
+                    .find(|item| item.template_id == "worn_grass_pouch")
+            })
+            .expect("starter worn_grass_pouch must exist")
+            .instance_id;
+        inventory
+            .containers
+            .iter_mut()
+            .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body_pocket must exist")
+            .items
+            .push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(90_001, "body_sentinel"),
+            });
+        inventory.hotbar[8] = Some(make_test_item_instance(90_002, "hotbar_sentinel"));
+        inventory.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.to_string(),
+            name: "legacy main pack".to_string(),
             rows: 1,
             cols: 1,
             items: vec![PlacedItemState {
                 row: 0,
                 col: 0,
-                instance: make_test_item_instance(2, "side_item"),
+                instance: make_test_item_instance(90_003, "legacy_sentinel"),
             }],
-
             owner_instance_id: None,
+            quick_access: false,
         });
-        inv.hotbar[0] = Some(make_test_item_instance(3, "hotbar_item"));
-        inv.equipped.insert(
-            EQUIP_SLOT_MAIN_HAND.to_string(),
-            SlotContents::held_single(make_test_item_instance(4, "sword")),
-        );
-        inv
+        (registry, inventory, pack_instance_id)
     }
 
     fn assert_container_has_no_overlaps(container: &ContainerState) {
@@ -7017,46 +7088,116 @@ mod tests {
     }
 
     #[test]
-    fn clear_player_inventory_pack_only_preserves_other_storage() {
-        let mut inv = populated_clear_inventory();
+    fn clear_player_inventory_pack_only_clears_dynamic_pack_and_legacy_main_pack() {
+        let (registry, mut inventory, pack_instance_id) = clear_inventory_fixture();
+        let previous_revision = inventory.revision;
+        let pack_container_id = container_id_for_worn_pack(pack_instance_id);
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .find(|container| container.id == pack_container_id)
+                .is_some_and(|container| !container.items.is_empty()),
+            "fixture dynamic pack must start non-empty"
+        );
 
-        clear_player_inventory(&mut inv, ClearScope::PackOnly);
+        clear_player_inventory(&mut inventory, ClearScope::PackOnly, &registry);
 
-        assert!(inv.containers[0].items.is_empty());
-        assert_eq!(inv.containers[1].items.len(), 1);
-        assert!(inv.hotbar[0].is_some());
-        assert_eq!(inv.equipped.len(), 1);
-        assert_eq!(inv.revision, InventoryRevision(1));
+        assert!(inventory
+            .containers
+            .iter()
+            .filter(|container| {
+                container.id == MAIN_PACK_CONTAINER_ID
+                    || worn_pack_instance_from_container_id(&container.id).is_some()
+            })
+            .all(|container| container.items.is_empty()));
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+                .expect("body_pocket must remain")
+                .items
+                .iter()
+                .any(|placed| placed.instance.instance_id == 90_001),
+            "pack-only clear must preserve body pocket sentinel instance=90001"
+        );
+        assert_eq!(
+            inventory.hotbar[8].as_ref().map(|item| item.instance_id),
+            Some(90_002),
+            "pack-only clear must preserve hotbar"
+        );
+        let dynamic_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == pack_container_id)
+            .expect("worn pack dynamic container must remain");
+        assert_eq!(dynamic_pack.owner_instance_id, Some(pack_instance_id));
+        assert_eq!(inventory.revision.0, previous_revision.0 + 1);
     }
 
     #[test]
-    fn clear_player_inventory_pack_and_hotbar_preserves_equipment() {
-        let mut inv = populated_clear_inventory();
+    fn clear_player_inventory_pack_and_hotbar_preserves_pack_topology_and_capacity() {
+        let (registry, mut inventory, pack_instance_id) = clear_inventory_fixture();
+        let previous_revision = inventory.revision;
+        let pack_container_id = container_id_for_worn_pack(pack_instance_id);
 
-        clear_player_inventory(&mut inv, ClearScope::PackAndHotbar);
+        clear_player_inventory(&mut inventory, ClearScope::PackAndHotbar, &registry);
 
-        assert!(inv
+        assert!(inventory
             .containers
             .iter()
             .all(|container| container.items.is_empty()));
-        assert!(inv.hotbar.iter().all(Option::is_none));
-        assert_eq!(inv.equipped.len(), 1);
-        assert_eq!(inv.revision, InventoryRevision(1));
+        assert!(inventory.hotbar.iter().all(Option::is_none));
+        assert!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_CHEST)
+                .is_some_and(|slot| slot
+                    .worn
+                    .iter()
+                    .any(|item| item.instance_id == pack_instance_id)),
+            "pack-and-hotbar clear must preserve worn pack equipment"
+        );
+        let dynamic_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == pack_container_id)
+            .expect("worn pack dynamic container must remain");
+        assert_eq!(dynamic_pack.owner_instance_id, Some(pack_instance_id));
+        assert!((inventory.max_weight - 23.0).abs() < f64::EPSILON);
+        assert_eq!(inventory.revision.0, previous_revision.0 + 1);
     }
 
     #[test]
-    fn clear_player_inventory_all_removes_equipment() {
-        let mut inv = populated_clear_inventory();
+    fn clear_player_inventory_all_removes_pack_topology_and_restores_base_capacity() {
+        let (registry, mut inventory, _) = clear_inventory_fixture();
+        let previous_revision = inventory.revision;
 
-        clear_player_inventory(&mut inv, ClearScope::All);
+        clear_player_inventory(&mut inventory, ClearScope::All, &registry);
 
-        assert!(inv
+        assert!(inventory
             .containers
             .iter()
             .all(|container| container.items.is_empty()));
-        assert!(inv.hotbar.iter().all(Option::is_none));
-        assert!(inv.equipped.is_empty());
-        assert_eq!(inv.revision, InventoryRevision(1));
+        assert!(inventory.hotbar.iter().all(Option::is_none));
+        assert!(inventory.equipped.is_empty());
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .all(|container| worn_pack_instance_from_container_id(&container.id).is_none()),
+            "all clear must remove orphan dynamic pack containers"
+        );
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .any(|container| container.id == BODY_POCKET_CONTAINER_ID),
+            "all clear must retain the body_pocket topology"
+        );
+        assert!((inventory.max_weight - BASE_CARRY_CAPACITY).abs() < f64::EPSILON);
+        assert_eq!(inventory.revision.0, previous_revision.0 + 1);
     }
 
     // plan-tarkov-backpack-v1 P5 — 背包平衡数值标定 sanity（固化 core.toml 解析正确）。
@@ -7595,9 +7736,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids.iter().filter(|id| id.starts_with("woliu.")).count(), 11);
+        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
         for id in ids {
             assert!(
-                crate::cultivation::known_techniques::technique_definition(id).is_some(),
+                techniques.get(id).is_some(),
                 "technique scroll references unknown id `{id}`"
             );
         }
@@ -13111,6 +13253,48 @@ cols = 4
     }
 
     #[test]
+    fn discard_inventory_item_to_dropped_loot_stays_pickable_after_registry_growth() {
+        let mut inventory = make_test_inventory_with_one_item();
+        let template_item = inventory.containers[0].items[0].instance.clone();
+        let mut registry = DroppedLootRegistry::default();
+        for index in 0..40_u64 {
+            let instance_id = 1_000 + index;
+            let mut item = template_item.clone();
+            item.instance_id = instance_id;
+            registry.entries.insert(
+                instance_id,
+                DroppedLootEntry {
+                    instance_id,
+                    source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                    source_row: 0,
+                    source_col: 0,
+                    world_pos: [0.5, 64.0, 0.5],
+                    dimension: DimensionKind::Overworld,
+                    item,
+                },
+            );
+        }
+
+        let outcome = discard_inventory_item_to_dropped_loot(
+            &mut inventory,
+            &mut registry,
+            [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
+            42,
+            &crate::schema::inventory::InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+        )
+        .expect("discard should succeed after registry growth");
+
+        pickup_dropped_loot_instance(&mut inventory, &mut registry, [0.0, 64.0, 0.0], 42)
+            .expect("a fresh drop must remain within pickup range after registry growth");
+        assert_eq!(outcome.dropped.instance_id, 42);
+    }
+
+    #[test]
     fn death_drop_keeps_high_durability_equipped_weapon() {
         let mut registry = ItemRegistry::default();
         registry.templates.insert(
@@ -18044,10 +18228,45 @@ cols = 4
     }
 
     #[test]
+    fn technique_scroll_reference_validation_accepts_checked_in_items() {
+        let items = load_item_registry().expect("checked-in item registry should load");
+        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
+
+        validate_technique_scroll_references(&items, &techniques)
+            .expect("all checked-in technique scroll ids must resolve at startup");
+    }
+
+    #[test]
+    fn technique_scroll_reference_validation_aggregates_unknown_ids_deterministically() {
+        let mut first = make_misc_template("z_scroll");
+        first.technique_scroll_spec = Some(TechniqueScrollSpec {
+            kind: "combat_technique".to_string(),
+            skill_id: "missing.z".to_string(),
+        });
+        let mut second = make_misc_template("a_scroll");
+        second.technique_scroll_spec = Some(TechniqueScrollSpec {
+            kind: "combat_technique".to_string(),
+            skill_id: "missing.a".to_string(),
+        });
+        let items = ItemRegistry::from_map(HashMap::from([
+            (first.id.clone(), first),
+            (second.id.clone(), second),
+        ]));
+        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
+
+        let error = validate_technique_scroll_references(&items, &techniques)
+            .expect_err("dangling technique scroll references must reject startup");
+        assert_eq!(
+            error,
+            "invalid technique scroll references:\n- item `a_scroll` references unknown technique_scroll.skill_id `missing.a`\n- item `z_scroll` references unknown technique_scroll.skill_id `missing.z`"
+        );
+    }
+
+    #[test]
     fn scroll_sword_cleave_skill_id_matches_definition() {
-        // Verify that the skill_id in the scroll matches a valid technique_definition
-        use crate::cultivation::known_techniques::technique_definition;
-        let def = technique_definition("sword.cleave");
+        // Verify that the skill_id in the scroll matches a valid registry definition.
+        let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
+        let def = techniques.get("sword.cleave");
         assert!(
             def.is_some(),
             "sword.cleave should be a registered technique definition"

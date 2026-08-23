@@ -1,9 +1,10 @@
-use valence::prelude::{Added, Changed, Client, Entity, Query, Username, With};
+use valence::prelude::{Added, Changed, Client, Entity, Query, Res, Username, With};
 
 use crate::combat::sword_basics::sword_proficiency_label;
-use crate::cultivation::known_techniques::{KnownTechniques, TECHNIQUE_DEFINITIONS};
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::network::agent_bridge::{
-    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+    payload_type_label, serialize_server_data_payload, serialize_server_data_payload_proto,
+    PayloadBuildError, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::combat_hud::{
@@ -16,35 +17,53 @@ type JoinTechniquesSnapshotFilter = (With<Client>, Added<KnownTechniques>);
 type TechniquesSnapshotQueryItem<'a> = (Entity, &'a mut Client, &'a Username, &'a KnownTechniques);
 
 pub fn emit_techniques_snapshot_payloads(
+    registry: Res<TechniqueRegistry>,
     mut clients: Query<TechniquesSnapshotQueryItem<'_>, TechniquesSnapshotFilter>,
 ) {
     for (entity, mut client, username, known) in &mut clients {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
 pub fn emit_join_techniques_snapshot_payloads(
+    registry: Res<TechniqueRegistry>,
     mut clients: Query<TechniquesSnapshotQueryItem<'_>, JoinTechniquesSnapshotFilter>,
 ) {
     for (entity, mut client, username, known) in &mut clients {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
-pub fn send_techniques_snapshot_to_client(
-    entity: Entity,
-    client: &mut Client,
-    username: &str,
+fn build_techniques_snapshot(
+    registry: &TechniqueRegistry,
     known: &KnownTechniques,
-) {
-    let snapshot = TechniquesSnapshotV1 {
+    player_name: Option<&str>,
+) -> TechniquesSnapshotV1 {
+    TechniquesSnapshotV1 {
         entries: known
             .entries
             .iter()
             .filter_map(|known| {
-                let definition = TECHNIQUE_DEFINITIONS
-                    .iter()
-                    .find(|definition| definition.id == known.id)?;
+                let Some(definition) = registry.get(&known.id) else {
+                    tracing::debug!(
+                        player = player_name.unwrap_or("<test>"),
+                        technique_id = %known.id,
+                        "known technique is absent from registry; omitting snapshot entry"
+                    );
+                    return None;
+                };
                 Some(TechniqueEntryV1 {
                     id: definition.id.to_string(),
                     display_name: definition.display_name.to_string(),
@@ -62,7 +81,7 @@ pub fn send_techniques_snapshot_to_client(
                             min_health: required.min_health,
                         })
                         .collect(),
-                    qi_cost: definition.qi_cost,
+                    qi_cost: definition.qi_cost as f32,
                     stamina_cost: definition.stamina_cost,
                     cast_ticks: definition.cast_ticks,
                     cooldown_ticks: definition.cooldown_ticks,
@@ -70,7 +89,39 @@ pub fn send_techniques_snapshot_to_client(
                 })
             })
             .collect(),
+    }
+}
+
+/// 启动期按“玩家学会完整 catalog”构造最坏情况快照，并强制走生产 protobuf 编码。
+/// registry 启动后不可变，因此通过即保证任意 `KnownTechniques` 子集不会因整包超限被丢弃。
+pub fn validate_techniques_snapshot_budget(
+    registry: &TechniqueRegistry,
+) -> Result<usize, PayloadBuildError> {
+    let known = KnownTechniques {
+        entries: registry
+            .iter()
+            .map(
+                |definition| crate::cultivation::known_techniques::KnownTechnique {
+                    id: definition.id.clone(),
+                    proficiency: 1.0,
+                    active: true,
+                },
+            )
+            .collect(),
     };
+    let snapshot = build_techniques_snapshot(registry, &known, None);
+    let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot));
+    serialize_server_data_payload_proto(&payload).map(|bytes| bytes.len())
+}
+
+pub fn send_techniques_snapshot_to_client(
+    registry: &TechniqueRegistry,
+    entity: Entity,
+    client: &mut Client,
+    username: &str,
+    known: &KnownTechniques,
+) {
+    let snapshot = build_techniques_snapshot(registry, known, Some(username));
     let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -86,4 +137,201 @@ pub fn send_techniques_snapshot_to_client(
         SERVER_DATA_CHANNEL,
         payload_type
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+
+    #[test]
+    fn snapshot_uses_injected_registry_and_omits_unknown_known_ids() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.display_name = "运行时覆写劈".to_string();
+                definition.qi_cost = 7.25;
+                definition.range = 4.5;
+            });
+        let known = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "unknown.removed".to_string(),
+                    proficiency: 0.4,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "sword.cleave".to_string(),
+                    proficiency: 1.5,
+                    active: true,
+                },
+            ],
+        };
+
+        let snapshot = build_techniques_snapshot(&registry, &known, None);
+
+        assert_eq!(snapshot.entries.len(), 1);
+        let entry = &snapshot.entries[0];
+        assert_eq!(entry.id, "sword.cleave");
+        assert_eq!(entry.display_name, "运行时覆写劈");
+        assert_eq!(entry.proficiency, 1.0);
+        assert_eq!(entry.qi_cost, 7.25);
+        assert_eq!(entry.range, 4.5);
+    }
+
+    #[test]
+    fn snapshot_qi_cost_uses_legacy_f32_wire_value() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.qi_cost = 0.4;
+            });
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let snapshot = build_techniques_snapshot(&registry, &known, None);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(
+            snapshot.entries[0].qi_cost, 0.4_f32,
+            "TechniqueEntry tag 10 remains the legacy float/fixed32 contract"
+        );
+    }
+
+    #[test]
+    fn snapshot_clamps_negative_proficiency_to_zero() {
+        let registry = TechniqueRegistry::load_for_tests();
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: -0.1,
+                active: true,
+            }],
+        };
+        let snapshot = build_techniques_snapshot(&registry, &known, None);
+        assert_eq!(snapshot.entries[0].proficiency, 0.0);
+    }
+
+    #[test]
+    fn aggregate_snapshot_bound_accepts_checked_in_catalog() {
+        // M18：catalog 被接受 ⇒ 学会全部条目的玩家必能收到完整快照。checked-in catalog
+        // 49 条、最长 description 41 字节，最坏聚合大小必须显著低于 32 KiB wire 上限。
+        let registry = TechniqueRegistry::load_for_tests();
+        let aggregate = registry.aggregate_snapshot_size();
+        assert!(
+            aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
+            "checked-in catalog worst-case snapshot ~{aggregate} bytes must fit MAX_PAYLOAD_BYTES = {}",
+            crate::schema::common::MAX_PAYLOAD_BYTES
+        );
+        // 保守估计的实际余量：即使再翻 10 倍也仍在限制内（与 loader 的
+        // MAX_CATALOG_ENTRIES = 512 相对照，填满 512 条就应突破）。
+        let extrapolated = aggregate * 10;
+        assert!(
+            extrapolated > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "10x catalog scale should exceed the wire limit (aggregate={aggregate}, extrapolated={extrapolated})"
+        );
+    }
+
+    #[test]
+    fn oversize_description_is_rejected_at_loader_not_dropped_at_send() {
+        // M18 负向用例：超长 description 必须在 loader 拒绝（单条 1024 字节上限，
+        // checked-in 最长 41 字节），不能等发送端 `PayloadBuildError::Oversize`
+        // 整包丢弃让快照消失。
+        let too_long = "刀".repeat(2_000);
+        let error = TechniqueRegistry::load_from_contents_for_tests(&format!(
+            r#"
+[[techniques]]
+id = "sword.cleave"
+display_name = "劈"
+grade = "common"
+description = "{too_long}"
+required_realm = "Awaken"
+required_meridians = []
+required_race = {{ kind = "humanoid" }}
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#
+        ))
+        .expect_err("2000-byte description must be rejected by the loader (M18)");
+        assert!(
+            format!("{error}").contains("description"),
+            "rejection message should name the description field, got {error}"
+        );
+    }
+
+    #[test]
+    fn oversized_protobuf_snapshot_is_rejected_before_send() {
+        let encoded_control_bytes = r"\u0001".repeat(1_000);
+        let mut catalog = String::new();
+        for index in 0..40 {
+            catalog.push_str(&format!(
+                r#"
+[[techniques]]
+id = "bulk.{index}"
+display_name = "批"
+grade = "common"
+description = "{encoded_control_bytes}"
+required_realm = "Awaken"
+required_meridians = []
+required_race = {{ kind = "any" }}
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "direct_generic"
+"#
+            ));
+        }
+
+        let registry = TechniqueRegistry::load_from_contents_for_tests(&catalog)
+            .expect("control-character descriptions under 1024 bytes must load");
+        let known = KnownTechniques {
+            entries: registry
+                .iter()
+                .map(|definition| KnownTechnique {
+                    id: definition.id.clone(),
+                    proficiency: 0.5,
+                    active: true,
+                })
+                .collect(),
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(
+            build_techniques_snapshot(&registry, &known, None),
+        ));
+        let actual_proto = payload.to_proto_bytes();
+        assert!(
+            actual_proto.len() > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "the production protobuf snapshot must exceed the wire limit, bytes={}",
+            actual_proto.len()
+        );
+        assert!(
+            registry.aggregate_snapshot_size() >= actual_proto.len(),
+            "startup protobuf estimate must upper-bound the production sender: estimate={}, actual={}",
+            registry.aggregate_snapshot_size(),
+            actual_proto.len()
+        );
+
+        let error = crate::cultivation::known_techniques::validate_startup_wiring(
+            &registry,
+            &crate::cultivation::skill_registry::SkillRegistry::default(),
+            &crate::cultivation::meridian::severed::SkillMeridianDependencies::default(),
+        )
+        .expect_err(
+            "a registry whose real protobuf snapshot is oversized must fail startup wiring",
+        );
+        assert!(
+            error.to_string().contains("MAX_PAYLOAD_BYTES"),
+            "startup rejection must identify the payload limit, got {error}"
+        );
+    }
 }

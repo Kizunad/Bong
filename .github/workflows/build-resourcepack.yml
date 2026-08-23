@@ -10,7 +10,7 @@ name: Build Resource Pack
       - "server/src/network/resourcepack.rs"
       - "scripts/build-resourcepack.sh"
       - "scripts/test_build_resourcepack.py"
-      - "scripts/models/**"
+      - "modelScript/**"
       - "client/tools/**"
       - ".github/workflows/build-resourcepack.yml"
   pull_request:
@@ -20,7 +20,7 @@ name: Build Resource Pack
       - "server/src/network/resourcepack.rs"
       - "scripts/build-resourcepack.sh"
       - "scripts/test_build_resourcepack.py"
-      - "scripts/models/**"
+      - "modelScript/**"
       - "client/tools/**"
       - ".github/workflows/build-resourcepack.yml"
   workflow_dispatch:
@@ -63,7 +63,7 @@ jobs:
         run: python3 -m unittest scripts/test_build_resourcepack.py
 
       - name: Unit test Python model tools
-        run: python3 -m unittest scripts/models/test_jian_player_tools.py
+        run: python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 
       - name: Build resource pack
         run: bash scripts/build-resourcepack.sh

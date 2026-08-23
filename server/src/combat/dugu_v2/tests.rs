@@ -21,6 +21,10 @@ use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::known_techniques::{
+    SkillCategory, TechniqueDefinition, TechniqueDispatch, TechniqueRegistry,
+    TechniqueRequiredMeridian,
+};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
@@ -70,6 +74,79 @@ fn actor(
             Position::new([x, 64.0, 0.0]),
         ))
         .id()
+}
+
+#[test]
+fn dugu_resolver_uses_nonlegacy_metadata_for_cast_contract() {
+    let mut app = setup_app();
+    app.insert_resource(TechniqueRegistry::load_for_tests_with_definition(
+        TechniqueDefinition {
+            id: DUGU_ECLIPSE_SKILL_ID.to_string(),
+            display_name: "蚀针".to_string(),
+            grade: "yellow".to_string(),
+            description: "test metadata extension".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: vec![TechniqueRequiredMeridian {
+                channel: "Liver".to_string(),
+                min_health: 0.01,
+            }],
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 1.0,
+            stamina_cost: 0.0,
+            cast_ticks: 1,
+            cooldown_ticks: 20,
+            range: 8.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_dugu_eclipse.png"
+                .to_string(),
+            category: SkillCategory::Attack,
+            dispatch: TechniqueDispatch::MetadataBacked,
+        },
+    ));
+    let mut dependencies = SkillMeridianDependencies::default();
+    crate::combat::dugu_v2::declare_meridian_dependencies(&mut dependencies);
+    app.insert_resource(dependencies);
+
+    let caster = actor(&mut app, Realm::Awaken, 2.0, 10.0, 0.0);
+    let target = actor(&mut app, Realm::Awaken, 5.0, 10.0, 4.0);
+    let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        2,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    assert_eq!(
+        result,
+        CastResult::Started {
+            cooldown_ticks: 20,
+            anim_duration_ticks: 1,
+        },
+        "metadata-backed Dugu extension must return its declared cooldown and cast duration, not legacy resolver values"
+    );
+
+    let caster_cultivation = app.world().get::<Cultivation>(caster).unwrap();
+    assert_eq!(
+        caster_cultivation.qi_current,
+        qi_before - 1.0,
+        "metadata qi_cost=1 must be the authoritative cast cost; legacy Eclipse cost 13 must not be charged"
+    );
+    let casting = app
+        .world()
+        .get::<crate::combat::components::Casting>(caster)
+        .expect("successful resolver cast must install Casting");
+    assert_eq!(casting.duration_ticks, 1);
+    assert_eq!(casting.complete_cooldown_ticks, 20);
+    assert_eq!(
+        app.world()
+            .get::<SkillBarBindings>(caster)
+            .unwrap()
+            .cooldowns
+            .get(DUGU_ECLIPSE_SKILL_ID),
+        Some(&21),
+        "metadata cooldown_ticks=20 must be applied from CombatClock tick 1"
+    );
 }
 
 #[test]
