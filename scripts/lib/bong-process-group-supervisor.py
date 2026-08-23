@@ -124,8 +124,14 @@ def pin_server_binary(built_binary: Path) -> Path:
         raise RuntimeError(f"prebuilt server binary does not exist: {built_binary}")
     artifact_dir = Path(tempfile.mkdtemp(prefix="bong-e2e-server-"))
     artifact = artifact_dir / "bong-server"
-    shutil.copy2(built_binary, artifact)
-    artifact.chmod(0o700)
+    try:
+        shutil.copy2(built_binary, artifact)
+        artifact.chmod(0o700)
+    except Exception:
+        # The temporary directory is owned by this call until the complete
+        # artifact setup succeeds; a copy/chmod failure must not leak it.
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+        raise
     return artifact
 
 
