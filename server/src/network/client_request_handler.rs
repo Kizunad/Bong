@@ -198,6 +198,9 @@ use crate::zhenfa::{
     ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
 };
 
+#[path = "client_request/session.rs"]
+mod session;
+
 /// RefuseRare arm 中对 rarity 的门控判断。
 ///
 /// 返回 `true` 表示该 rarity 属于 Rare+（Rare/Epic/Legendary/Ancient），
@@ -634,18 +637,18 @@ fn decode_client_request(payload: &str) -> Result<ClientRequestV1, serde_json::E
 /// plan-scroll-reading-v1 P0/P2：阅读残卷循环姿态动画 priority——"中低"档位，
 /// 低于战斗层（`COMBAT_PRIORITY`=1000）、高于仪式套路层（`GUANGBO_TICAO_PRIORITY`=500）。
 /// 合法区间 [`VFX_ANIM_PRIORITY_MIN`, `VFX_ANIM_PRIORITY_MAX`] = [100, 3999]。
-const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
+pub(crate) const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
 /// 淡入 tick 数（§8.1 #4 决议：fadeIn 4 tick）。
-const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
+pub(crate) const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
 
 /// plan-scroll-reading-v1 P2 — 展开微光 VFX `bong:scroll_open_glow`，淡金色，
 /// burst 12 粒（client `ScrollOpenGlowPlayer` 再叠加自身的 continuous 层，本端只发一次
 /// SpawnParticle，两层视觉由 client 侧固定常量生成，不经 payload 传递）。
-const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
-const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
-const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
-const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
-const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
+pub(crate) const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
+pub(crate) const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
+pub(crate) const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
+pub(crate) const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
+pub(crate) const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
 /// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
 /// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
@@ -1387,6 +1390,23 @@ pub fn handle_client_request_payloads(
                 }
                 continue;
             }
+        }
+
+        if session::dispatch(
+            &request,
+            ev.client,
+            &mut dispatch,
+            &mut combat_params,
+            &mut inventories,
+            &player_states,
+            &skill_scroll_params.cultivations,
+            &mut clients,
+            &skill_scroll_params.positions,
+            &skill_scroll_params.dimensions,
+            &mut commands,
+            alchemy_params.vfx_events.as_deref_mut(),
+        ) {
+            continue;
         }
 
         match request {
@@ -3045,217 +3065,6 @@ pub fn handle_client_request_payloads(
                     });
                 }
             }
-            ClientRequestV1::StartExtractRequest {
-                portal_entity_id, ..
-            } => {
-                tracing::info!(
-                    "[bong][network] client_request start_extract entity={:?} portal_bits={portal_entity_id}",
-                    ev.client
-                );
-                let Some(start_extract_tx) = combat_params.start_extract_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_extract because StartExtractRequest event resource is missing"
-                    );
-                    continue;
-                };
-                let Ok(portal) = Entity::try_from_bits(portal_entity_id) else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_extract: invalid portal_entity_id bits={portal_entity_id}"
-                    );
-                    continue;
-                };
-                start_extract_tx.send(StartExtractRequestEvent {
-                    player: ev.client,
-                    portal,
-                });
-            }
-            ClientRequestV1::CancelExtractRequest { .. } => {
-                tracing::info!(
-                    "[bong][network] client_request cancel_extract entity={:?}",
-                    ev.client
-                );
-                let Some(cancel_extract_tx) = combat_params.cancel_extract_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped cancel_extract because CancelExtractRequest event resource is missing"
-                    );
-                    continue;
-                };
-                cancel_extract_tx.send(CancelExtractRequestEvent { player: ev.client });
-            }
-            ClientRequestV1::StartSearch {
-                container_entity_id,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network] client_request start_search entity={:?} container_bits={container_entity_id}",
-                    ev.client
-                );
-                let Some(start_search_tx) = combat_params.start_search_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_search because StartSearchRequest event resource is missing"
-                    );
-                    continue;
-                };
-                let Ok(container) = Entity::try_from_bits(container_entity_id) else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_search: invalid container_entity_id bits={container_entity_id}"
-                    );
-                    continue;
-                };
-                start_search_tx.send(StartSearchRequestEvent {
-                    player: ev.client,
-                    container,
-                });
-            }
-            ClientRequestV1::CancelSearch { .. } => {
-                tracing::info!(
-                    "[bong][network] client_request cancel_search entity={:?}",
-                    ev.client
-                );
-                let Some(cancel_search_tx) = combat_params.cancel_search_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped cancel_search because CancelSearchRequest event resource is missing"
-                    );
-                    continue;
-                };
-                cancel_search_tx.send(CancelSearchRequestEvent { player: ev.client });
-            }
-            // ── 物资棺 entity-based open（plan-supply-coffin-loot-ui P2）──
-            ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request supply_coffin_open entity={:?} target_id={entity_id}",
-                    ev.client
-                );
-                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
-                    tracing::warn!(
-                        "[bong][network] dropped supply_coffin_open because EntityManager resource is missing"
-                    );
-                    continue;
-                };
-                let Some(target) = entity_manager.get_by_id(entity_id) else {
-                    tracing::debug!(
-                        "[bong][network] supply_coffin_open rejected: no entity for protocol id {entity_id}"
-                    );
-                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                        client.send_chat_message("§c[物资棺] 目标不存在。");
-                    }
-                    continue;
-                };
-                if let Some(supply_coffin_open_tx) = dispatch.supply_coffin_open_tx.as_deref_mut() {
-                    supply_coffin_open_tx.send(
-                        crate::supply_coffin::interact::SupplyCoffinOpenRequest {
-                            client: ev.client,
-                            target,
-                        },
-                    );
-                } else {
-                    tracing::warn!(
-                        "[bong][network] dropped supply_coffin_open because SupplyCoffinOpenRequest event resource is missing"
-                    );
-                }
-            }
-            // ── 通用世界容器 entity-based open（plan-placeable-container-blocks-v1 P1）──
-            ClientRequestV1::ContainerOpen { entity_id, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request container_open entity={:?} target_id={entity_id}",
-                    ev.client
-                );
-                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
-                    tracing::warn!(
-                        "[bong][network] dropped container_open because EntityManager resource is missing"
-                    );
-                    continue;
-                };
-                let Some(target) = entity_manager.get_by_id(entity_id) else {
-                    tracing::debug!(
-                        "[bong][network] container_open rejected: no entity for protocol id {entity_id}"
-                    );
-                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                        client.send_chat_message("§c[容器] 目标不存在。");
-                    }
-                    continue;
-                };
-                if let Some(container_open_tx) = dispatch.container_open_tx.as_deref_mut() {
-                    container_open_tx.send(crate::world::container_open::ContainerOpenRequest {
-                        client: ev.client,
-                        target,
-                    });
-                } else {
-                    tracing::warn!(
-                        "[bong][network] dropped container_open because ContainerOpenRequest event resource is missing"
-                    );
-                }
-            }
-            // ── 制作台 entity-based open（plan-workbench-place-runtime-v1 P2）──
-            ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request workbench_open entity={:?} target_id={entity_id}",
-                    ev.client
-                );
-                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
-                    tracing::warn!(
-                        "[bong][network] dropped workbench_open because EntityManager resource is missing"
-                    );
-                    continue;
-                };
-                let Some(workbench) = entity_manager.get_by_id(entity_id) else {
-                    tracing::debug!(
-                        "[bong][network] workbench_open rejected: no entity for protocol id {entity_id}"
-                    );
-                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                        client.send_chat_message("§c[制作台] 目标不存在。");
-                    }
-                    continue;
-                };
-                if let Some(workbench_open_tx) = dispatch.workbench_open_tx.as_deref_mut() {
-                    workbench_open_tx.send(crate::craft::WorkbenchOpenRequest {
-                        client: ev.client,
-                        workbench,
-                    });
-                } else {
-                    tracing::warn!(
-                        "[bong][network] dropped workbench_open because WorkbenchOpenRequest event resource is missing"
-                    );
-                }
-            }
-            // ── 外部容器 move / close ─────────────
-            ClientRequestV1::ExternalContainerMove {
-                session_id,
-                instance_id,
-                from,
-                to,
-                ..
-            } => {
-                handle_external_container_move(
-                    ev.client,
-                    session_id,
-                    instance_id,
-                    &from,
-                    &to,
-                    &mut dispatch,
-                    &mut combat_params,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut clients,
-                    &skill_scroll_params.positions,
-                    &skill_scroll_params.dimensions,
-                    &mut commands,
-                );
-            }
-            ClientRequestV1::ExternalContainerClose { session_id, .. } => {
-                handle_external_container_close(
-                    ev.client,
-                    session_id,
-                    &mut dispatch,
-                    &mut combat_params,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut clients,
-                    &mut commands,
-                );
-            }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
                 x,
@@ -3542,132 +3351,6 @@ pub fn handle_client_request_payloads(
                     .lower_shield_tx
                     .send(LowerShieldIntent { player: ev.client });
             }
-            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读请求 ─────────────
-            // 读取不消耗物品（区别于 read_combat_technique_scroll 消耗式学招）。
-            // 无 spec / 伪 instance_id / 非本人物品三类均静默拒绝 + warn（不向 client
-            // 暴露具体拒绝原因，避免给作弊 client 探测 instance_id 分布的信号）。
-            ClientRequestV1::ScrollReadRequest { instance_id, .. } => {
-                let Ok(inventory) = inventories.get(ev.client) else {
-                    tracing::warn!(
-                        "[bong][network] client_request scroll_read_request rejected: entity={:?} has no PlayerInventory",
-                        ev.client
-                    );
-                    continue;
-                };
-                match crate::network::scroll_open_emit::resolve_scroll_read_request(
-                    inventory,
-                    &combat_params.item_registry,
-                    instance_id,
-                ) {
-                    Ok(resolution) => {
-                        tracing::info!(
-                            "[bong][network] client_request scroll_read_request entity={:?} instance_id={instance_id}",
-                            ev.client
-                        );
-                        let anim_id = resolution.anim_id.clone();
-                        crate::network::scroll_open_emit::emit_scroll_open(
-                            ev.client,
-                            resolution.into_payload(),
-                            &mut clients,
-                        );
-                        // P2 — 展开微光：与 anim_id 是否存在无关，任意成功开卷都应有视觉反馈。
-                        if let Ok(position) = combat_params.positions.get(ev.client) {
-                            if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
-                                vfx_events
-                                    .send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                                    position.get(),
-                                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
-                                        event_id: SCROLL_OPEN_GLOW_EVENT_ID.to_string(),
-                                        origin: [
-                                            position.get().x,
-                                            position.get().y,
-                                            position.get().z,
-                                        ],
-                                        direction: None,
-                                        color: Some(SCROLL_OPEN_GLOW_COLOR.to_string()),
-                                        strength: Some(SCROLL_OPEN_GLOW_STRENGTH),
-                                        count: Some(SCROLL_OPEN_GLOW_COUNT),
-                                        duration_ticks: Some(SCROLL_OPEN_GLOW_DURATION_TICKS),
-                                    },
-                                ));
-                            }
-                        }
-                        // §8.1 #1：动画只在模板挂了 anim_id 时才播（残卷不强制有阅读动画）。
-                        if let Some(anim_id) = anim_id {
-                            // P2 — 插入 ScrollReading marker（真相源，供 ScrollReadClosed /
-                            // 死亡兜底停止动画）。插入不依赖 Position/UniqueId 查得到——就算
-                            // entity 暂查不到坐标，"该玩家正在读卷"这件事本身仍然成立。
-                            commands.entity(ev.client).insert(
-                                crate::network::scroll_open_emit::ScrollReading {
-                                    anim_id: anim_id.clone(),
-                                },
-                            );
-                            if let (Ok(position), Ok(unique_id)) = (
-                                combat_params.positions.get(ev.client),
-                                combat_params.unique_ids.get(ev.client),
-                            ) {
-                                if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
-                                    vfx_events.send(
-                                        crate::network::vfx_event_emit::VfxEventRequest::new(
-                                            position.get(),
-                                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
-                                                target_player: unique_id.0.to_string(),
-                                                anim_id,
-                                                priority: SCROLL_READ_ANIM_PRIORITY,
-                                                fade_in_ticks: Some(SCROLL_READ_ANIM_FADE_IN_TICKS),
-                                            },
-                                        ),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(reason) => {
-                        tracing::warn!(
-                            "[bong][network] client_request scroll_read_request rejected: entity={:?} instance_id={instance_id} reason={reason:?}",
-                            ev.client
-                        );
-                    }
-                }
-            }
-            // ─── plan-scroll-reading-v1 P2 §8.1#4：阅读屏关闭 → 停止循环阅读动画 ─────
-            // ScrollReading marker 是"读卷中"的真相源（而非 status）；命中就发
-            // StopAnim + 移除 marker，未命中（该玩家当时没有挂动画，或已被死亡/断线
-            // 兜底清理过）静默跳过，不重复停止。
-            ClientRequestV1::ScrollReadClosed { .. } => {
-                if let Ok(reading) = combat_params.scroll_reading_q.get(ev.client) {
-                    let anim_id = reading.anim_id.clone();
-                    if let (Ok(position), Ok(unique_id)) = (
-                        combat_params.positions.get(ev.client),
-                        combat_params.unique_ids.get(ev.client),
-                    ) {
-                        if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
-                            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                                position.get(),
-                                crate::schema::vfx_event::VfxEventPayloadV1::StopAnim {
-                                    target_player: unique_id.0.to_string(),
-                                    anim_id,
-                                    fade_out_ticks: Some(
-                                        crate::network::vfx_animation_trigger::SCROLL_READ_ANIM_FADE_OUT_TICKS,
-                                    ),
-                                },
-                            ));
-                        }
-                    }
-                    commands
-                        .entity(ev.client)
-                        .remove::<crate::network::scroll_open_emit::ScrollReading>();
-                    tracing::debug!(
-                        "[bong][network] client_request scroll_read_closed entity={:?} anim stopped",
-                        ev.client
-                    );
-                } else {
-                    tracing::debug!(
-                        "[bong][network] client_request scroll_read_closed entity={:?} (no ScrollReading marker, no-op)",
-                        ev.client
-                    );
-                }
-            }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
             // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；
             // 此处仅记录 trace 并发出 AgentUiResponseEvent Bevy event。
@@ -3690,6 +3373,9 @@ pub fn handle_client_request_payloads(
                     },
                 );
             }
+            _ => unreachable!(
+                "session-domain request must be consumed before the legacy dispatch match"
+            ),
         }
     }
 }
@@ -21673,7 +21359,7 @@ fn emit_shelflife_consume_events(
 // ── plan-supply-coffin-loot-ui P2：外部容器跨容器 move / close ──
 
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
-fn handle_external_container_move(
+pub(crate) fn handle_external_container_move(
     player_entity: Entity,
     session_id: u64,
     instance_id: u64,
@@ -22202,7 +21888,7 @@ fn handle_external_container_move(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_external_container_close(
+pub(crate) fn handle_external_container_close(
     player_entity: Entity,
     session_id: u64,
     dispatch: &mut ClientRequestDispatchParams,
