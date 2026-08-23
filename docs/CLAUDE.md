@@ -252,9 +252,15 @@ if [ -z "$TRIGGER_AT" ]; then
   echo "本轮没发过 @kody start-review ⇒ 没有可采信的 clean 结论，先补发触发评论" >&2
   exit 1
 fi
+#    这里认的是 `<!-- kody-codereview-completed-`（**带 -completed-**），不是裸标记。
+#    裸标记有三类会命中，只有第一类是审查结论：
+#      ① 审查结论「代码审查完成 / Kody 审查完成」—— 同时带 -completed- 和裸标记
+#      ② PR 摘要 —— 只有裸标记，**不是**结论
+#      ③ 任何正文里提到该标记的评论，**包括你自己回复时引用它**（实测 #2061
+#         上我的一条说明性回复就命中了裸标记）
 gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
   | jq -r --arg t "$TRIGGER_AT" --argjson uid "$OWNER_ID" '.[]
-      | select((.body | contains("<!-- kody-codereview"))
+      | select((.body | contains("<!-- kody-codereview-completed-"))
                and .user.id == $uid
                and .created_at > $t)
       | "\(.created_at)"'
