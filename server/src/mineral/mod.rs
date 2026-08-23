@@ -8,7 +8,7 @@
 //!  * [`events`] — Probe / Drop / Exhausted / KarmaFlag 4 个 Bevy events。
 //!  * [`break_handler`] — `DiggingEvent` listener，重写 vanilla loot drop 走 mineral_id。
 //!
-//! 非矿脉 block 静默 no-op；M2 启动期从 `worldgen/blueprint/mineral_anchors.json`
+//! 非矿脉 block 静默 no-op；M2 启动期从 `server/assets/mineral_anchors.json`
 //! 物化固定锚点，后续 raster `mineral_density/mineral_kind` 可继续扩展同一 index。
 
 pub mod anchors;

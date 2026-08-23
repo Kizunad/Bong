@@ -41,6 +41,9 @@ fn app() -> App {
     app.add_event::<crate::cultivation::full_power_strike::ChargeStartedEvent>();
     app.add_event::<MeridianSeveredEvent>();
     app.add_event::<JueBiTriggerEvent>();
+    let mut dependencies = SkillMeridianDependencies::default();
+    declare_meridian_dependencies(&mut dependencies);
+    app.insert_resource(dependencies);
     super::register(&mut app);
     app
 }

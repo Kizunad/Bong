@@ -1,5 +1,7 @@
 // plan-bughunt-animal-air-spawn-gravity-v1 P2：确定性 ambient one-shot dev 命令
 pub mod ambient_spawn;
+// plan-bot-e2e-coverage-v1 P4：确定性真实 Plant 采集夹具
+pub mod botany_spawn;
 // plan-tribulation-balance-v1 P0：/balance tribulation dev 命令
 pub mod balance;
 pub mod baolongwang;
@@ -134,6 +136,7 @@ pub fn register(app: &mut App) {
 pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     if dev_mode_enabled {
         ambient_spawn::register_enabled(app);
+        botany_spawn::register_enabled(app);
     }
     balance::register(app);
     baolongwang::register(app);

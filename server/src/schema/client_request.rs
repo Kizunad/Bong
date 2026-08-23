@@ -836,6 +836,28 @@ mod tests {
         assert!(matches!(req, ClientRequestV1::BreakthroughRequest { v: 1 }));
     }
 
+    #[test]
+    fn client_request_rejects_missing_version_at_serde_boundary() {
+        let json = r#"{"type":"breakthrough_request"}"#;
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("ClientRequestV1 缺少必填 v 必须在 serde 反序列化阶段失败");
+        assert!(
+            error.to_string().contains("missing field `v`"),
+            "缺 v 必须是 serde missing-field 错误，不能被默认为 v=0 后再由版本门忽略；实际 {error}"
+        );
+    }
+
+    #[test]
+    fn client_request_rejects_unknown_field_at_serde_boundary() {
+        let json = r#"{"type":"breakthrough_request","v":1,"extra_field":true}"#;
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("ClientRequestV1 额外字段必须被 deny_unknown_fields 拒绝");
+        assert!(
+            error.to_string().contains("unknown field `extra_field`"),
+            "额外字段必须是 serde unknown-field 错误；实际 {error}"
+        );
+    }
+
     // ─── plan-rotate-v1 — InventoryMoveIntent.rotated serde pin ────────────
 
     /// 旧客户端 payload 不带 rotated 字段必须照常解析且缺省为 false

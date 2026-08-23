@@ -377,12 +377,7 @@ mod tests {
                 .as_nanos(),
         ));
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
-        let settings = PersistenceSettings::with_paths(
-            &db_path,
-            &deceased_dir,
-            format!("epitaph-{test_name}"),
-        );
+        let settings = PersistenceSettings::with_db_path(&db_path, format!("epitaph-{test_name}"));
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         (settings, root)

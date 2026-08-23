@@ -5,8 +5,7 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 - **server/** — Rust 无头 MC 服务器（Valence on Bevy 0.14 ECS，MC 1.20.1 协议 763）
 - **client/** — Fabric 1.20.1 微端（Java 17，owo-lib UI）
 - **agent/** — LLM "天道" agent 层（TypeScript，三 Agent 并发推演）
-- **worldgen/** — Python 地形生成流水线（blueprint 驱动，terrain_gen 模块，LAYER_REGISTRY 统一 16 层地形）
-- **library-web/** — 末法残土图书馆前端（Astro，静态站点）
+- **BongWorldGen** — 独立的 Python/NumPy 地形生成库（<https://github.com/Kizunad/BongWorldGen>）
 
 ## Quick commands
 
@@ -28,9 +27,10 @@ cd agent/packages/tiandao && npm test              # 类型检查 + vitest
 # Schema
 cd agent/packages/schema && npm test
 
-# Worldgen
-cd worldgen && python -m scripts.terrain_gen       # 地形生成主流程
-bash worldgen/pipeline.sh                          # 默认导出 raster + 预览
+# Worldgen（独立仓库）
+cd ../BongWorldGen
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/bong-worldgen --width 256 --height 256 --seed 812731 --output generated/demo.npz
 
 # Dev reload (regen + validate + rebuild + restart)
 bash scripts/dev-reload.sh
@@ -75,10 +75,8 @@ bash scripts/smoke-test.sh
 - **IPC schema**：TypeBox（TS source of truth）→ JSON Schema export → Rust serde structs；共享 `agent/packages/schema/samples/*.json` 双端校验
 - **天道 Agent**：三 Agent 并发推演（灾劫/变化/演绎时代），Arbiter 仲裁层负责合并与冲突消解
 - **NPC AI**：big-brain Utility AI（Scorer → Action 模式），Position ↔ Transform 同步桥
-- **Worldgen 流水线**：blueprint 定义固定坐标大地图 → terrain_gen 生成区域 field → stitcher 负责 zone→wilderness 过渡（按 LAYER_REGISTRY blend_mode）→ raster_export 导出 little-endian float32/uint8 二进制（mmap-friendly）→ Rust server 运行时按需生成 chunk
-- **LAYER_REGISTRY**（`worldgen/scripts/terrain_gen/fields.py`）：16 层地形统一注册表，每层定义 `LayerSpec(safe_default, blend_mode, export_type)`；stitcher 和 raster_export 均从此派生配置
-- **Dev harness**：`scripts/dev-reload.sh` 一键 regen+validate+rebuild+restart；`worldgen/scripts/terrain_gen/harness/raster_check.py` 做 raster 后验（rift_axis_sdf 默认值、height range、water depth）
-- **Terrain profiles**：qingyun_peaks、spring_marsh、rift_valley/blood_valley、spawn、north_wastes、lingquan_marsh 均已完成
+- **地形生成**：已从本仓库迁出至 [BongWorldGen](https://github.com/Kizunad/BongWorldGen)。Bong 只负责读取生成后的 raster，并在运行时按需生成 chunk；生成器、荒野分类、河流与洞穴数据均由独立库维护。
+- **Dev harness**：`scripts/dev-reload.sh` 只负责服务端重建与重启；地形生成和地形数据校验在 BongWorldGen 内执行。
 - `#[allow(dead_code)]` on `mod schema` in main.rs — schema 模块用于 IPC 对齐，尚未接入运行时
 
 ## Current milestone
@@ -166,7 +164,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 - subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
 - subagent 闭环（PR 开出 + e2e 绿）后**必须释放 slot 再补位**：关闭 agent → slot 内 `git checkout --detach origin/main` 脱离任务分支 → **`git branch -D bugfix/plan-X` 删本地分支**（顺序不能反：分支被 slot 检出时删不掉）→ 删任务**私有**非缓存生成物（`.tmp` 日志等；**slot 的 `server/target`/`client/build` 保温缓存与共享 `CARGO_TARGET_DIR` 严禁任务级清理**）→ 标记 slot 空闲。slot 本身不 remove 不 prune。旧流程/异常残留的一次性 worktree 由主干跑 `bash scripts/wt-janitor.sh` 巡检回收（仅 PR **MERGED** 且工作区干净、无非缓存 ignored（如 `.env`）、且无未合入 patch 的树才 `--apply` 自动收；squash 合入后远端 branch 删除时以 `git cherry origin/main` 判定 patch 等价；CLOSED/UNKNOWN/无 PR/脏树/含 `.env` 等一律交人工；脚本主动枚举 ignored，不依赖 `git worktree remove` 拒绝）——历史上残留 worktree + 缓存曾塞掉上百 G（2026-07-17 实测塞满 444G 盘）。远端分支不动（返工/merge 还要用），PR merge 后由 squash-merge 删或 `git push origin --delete`
 - **claim 锁的释放也归主干**：PR merge 后核验远端 claim 分支确已删除（不依赖仓库自动删分支设置，没删就 `git push origin --delete bugfix/plan-X`）；PR close 未合并且确认放弃时，先核验无开放 PR、无在跑 subagent，再删 ref 让任务重新开放——锁不能靠"大概会自动清"悬着。**唯一 subagent 删除例外**：仅限该 subagent 本轮 create-ref 刚创建、PR 尚未创建、且删除前重新查询确认远端 ref SHA 仍严格等于本轮 `claim_sha` 的失败回滚；任一条件不满足即保留 ref 交主干，不得删除。**孤儿锁回收**：claim 成功但 PR 尚未创建时 subagent 异常退出/失联，主干确认无开放 PR、无存活 subagent、远端无需保留的提交后删 claim ref 重开任务；每轮补位时顺带巡检一遍孤儿锁。除上述严格失败回滚外，其余 claim ref 的释放、巡检与删除统一由主干负责。claim ref 的创建/删除是**锁运维**，是主干「不 push」禁令的唯一例外（该禁令约束的是提交/分支内容，不是锁 ref 生命周期管理）
-- **review 返工也是主干的调度责任**：主干盯 in-flight PR 的 `/review-next` / CodeRabbit 结果，出现修改意见时派**返工 subagent** 从 PR 分支进驻空闲 slot（原任务的进驻早已释放无妨，分支在远端；无空闲 slot 时返工排队并优先于新 skeleton 派发）。返工进驻也必须先用 `scripts/slot_registry.sh acquire` 获取 opaque `OWNER_TOKEN`，完成 detached/clean/ignored 与四方 SHA 对拍后，再用同一 token 通过唯一 `occupy` 门；失败按 token 化 `rollback`，成功后按 token 化 `release`/`freeze-blocked`，不得绕过 slot admission。返工序列（幂等，**不得重复 promotion / Finish Evidence 追加 / git mv 归档**）：修代码 → validator（step 4）→ 按栈门禁（step 5）→ fetch/merge 最新主线（step 6，带进变更则复验）→ 结论或证据变化时只**原地更新**已归档 plan 的 Finish Evidence → push 同一远端分支 → 等新 HEAD 的 e2e → **重发 `/review-next` 评论**（引擎对后续提交不自动跑）——review 意见永远有责任主体，不悬空
+- **review 返工也是主干的调度责任**：主干盯 in-flight PR 的 Kody / CodeRabbit 结果，出现修改意见时派**返工 subagent** 从 PR 分支进驻空闲 slot（原任务的进驻早已释放无妨，分支在远端；无空闲 slot 时返工排队并优先于新 skeleton 派发）。返工进驻也必须先用 `scripts/slot_registry.sh acquire` 获取 opaque `OWNER_TOKEN`，完成 detached/clean/ignored 与四方 SHA 对拍后，再用同一 token 通过唯一 `occupy` 门；失败按 token 化 `rollback`，成功后按 token 化 `release`/`freeze-blocked`，不得绕过 slot admission。返工序列（幂等，**不得重复 promotion / Finish Evidence 追加 / git mv 归档**）：修代码 → validator（step 4）→ 按栈门禁（step 5）→ fetch/merge 最新主线（step 6，带进变更则复验）→ 结论或证据变化时只**原地更新**已归档 plan 的 Finish Evidence → push 同一远端分支 → 等新 HEAD 的 e2e → 等待自动 review；若新 HEAD 未自动触发或需要显式复审，再发 `@kody start-review`——review 意见永远有责任主体，不悬空
 
 ### Subagent（修复）流程
 
@@ -176,10 +174,10 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
    - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
    - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
 4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。启动时**显式传入 worktree 绝对路径 + 待审 HEAD SHA**，validator 第一步回报 `git rev-parse HEAD` 与目标对拍，PASS/FAIL 结论必须携带该 SHA（防对错误代码的假 PASS）。validator 只输出 PASS/FAIL + 理由，不改代码；**出结论即关闭**——PASS / FAIL / 超时 / 异常四条路径都要关，不留活 validator 占并发槽。FAIL → 返工 → **对新 HEAD 开新的无上下文 validator 重验**，循环直到 PASS 才算闭环；此后任何 HEAD 变化（返工、合并主线）都必须对新 SHA 重验
-5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`bash scripts/dev-reload.sh`（仓库根目录执行，`set -euo pipefail` 任一步失败即非零退出；[1/4] regen + [2/4] raster 后验走 `scripts.terrain_gen.harness.raster_check.validate_rasters`）。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；BongWorldGen：在独立仓库运行其 `pytest` 和生成器测试。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
 6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
 7. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
-8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型），随后 `gh pr comment <PR> --body "/review-next"` **显式发独立评论触发首轮审查**（不依赖自动触发假设；引擎就算自动跑了，重复评论也无害）。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
+8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型）。PR 有新提交/变动时默认由 Kody 自动 review；若自动 review 未启动或新 HEAD 需要显式复审，再执行 `gh pr comment <PR> --body "@kody start-review"`。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
 
 ## Testing — 饱和化测试
 
@@ -251,7 +249,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 ## 视觉资产纪律（NBT 建筑 / layout / 模型 / 贴图）
 
 - **3 轮打磨 + `<PROMISE>` 担保**：NBT 建筑、worldgen layout 摆位、复杂模型、视觉资产**禁止一把 commit**。Round 1 first cut → Round 2 自评（截图渲染/structure dump/ASCII 平面投影）→ Round 3 终轮，commit message 标 `(round N/3)`；终轮 commit 末尾写 `<PROMISE>...已 3 轮打磨...已检查[...]...仍存局限[...]</PROMISE>` 块（**拼写是 PROMISE 不是 PROMIS**）。纯 Rust/TS 逻辑 TODO 不适用。
-- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `scripts/models/render_bbmodel.py` 看，别只信平涂示意图。
+- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `modelScript/core/render_bbmodel.py` 看，别只信平涂示意图。
 - **item icon 批量出**：新增 ItemTemplate 必配 icon，走 `/gen-image item`（批量、不需多轮）。跑不了 `/gen-image` 的 harness 标 `[BLOCKED: 需 /gen-image]`。
 
 ## 架构硬约束（entity / 动画）
@@ -274,6 +272,6 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 ## PR review gate
 
-- **gate 只看 `/review-next`（中心引擎 Kizunad/review，Claude CLI 多阶段流水线）+ CodeRabbit，绝不等 Codex**。旧 Codex 串行审核（review.yml/review.mjs）与 review-claude.yml 已于 2026-08-01 移除。`chatgpt-codex-connector`（"Codex usage limits reached"）是与本仓库无关的噪音，忽略。
-- **单一 `/review-next` 入口**：在 PR 评论 `/review-next` 触发（独立 issue comment，写在 PR body 不生效；熔断开启时用 workflow_dispatch 带 pr_number 旁路）。不要用 `@pi`/`@hive`/`@claude`——会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动跑（额度耗尽限流失败是计费问题不是代码问题）。
+- **gate 看 Kody + CodeRabbit，绝不把 Codex connector 的限流噪音当成代码结论**。Kody 负责按当前配置做 bug、性能、安全和业务逻辑 review；CodeRabbit 仍作为独立审查器。
+- **默认自动 review**：PR 创建或有新提交/变动时，Kody/CodeRabbit 应自动运行，不需要在每次 push 后手动发命令。自动 review 未启动、被暂停，或需要针对最新 HEAD 显式复审时，在 PR 根评论执行 `@kody start-review`；不要再使用已废弃的 `/review-next`，也不要用 `@pi`/`@hive`/`@claude` mention 陌生账号。
 - 等待用 `ScheduleWakeup delaySeconds=1200`（~20 min/回合，最多 3 回合卡死才停交人工），禁止 sleep loop / busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"（完整协议见 `docs/CLAUDE.md §6.5`）。

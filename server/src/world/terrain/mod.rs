@@ -1910,8 +1910,8 @@ mod tests {
         ///   - `cleanup_chunks_after_client_despawn` 只要求 `With<ClientMarker> +
         ///     With<Despawned>`（再加 View + VisibleChunkLayer），不需要 `Client` →
         ///     仍然对 view 内的每个 chunk 执行 dec。
-        /// 于是「chunk 已在层内、viewer_count 恒为 0、despawn 客户端 view 覆盖它」
-        /// 的 underflow 状态被确定性构造出来，全程无 mid-tick 时序依赖。
+        ///     于是「chunk 已在层内、viewer_count 恒为 0、despawn 客户端 view 覆盖它」
+        ///     的 underflow 状态被确定性构造出来，全程无 mid-tick 时序依赖。
         ///
         /// 消息丢弃：chunk 先入层，其 LOAD 消息在「无任何客户端」的 tick 里被
         /// staged→ready→unready 清空（unready 丢弃整条消息队列）→ 永不投递、计数 0。
@@ -1977,8 +1977,7 @@ mod tests {
                 .expect("chunk (0,0) should still be loaded after cleanup")
                 .viewer_count();
             assert_eq!(
-                viewer_count,
-                0,
+                viewer_count, 0,
                 "despawn cleanup 对从未 inc 过的 chunk 执行 dec 必须是无害 no-op：\
                  viewer_count 应为 0，实际是 {viewer_count}（未修复的 release 实现会把\
                  未计数 chunk 回绕到 u32::MAX，使其永久滞留、无法被保留 GC 回收）"
@@ -1994,6 +1993,124 @@ mod tests {
                     .is_some(),
                 "viewer_count 为 0 的孤儿 chunk 必须可回收（能从 layer 移出）；\
                  u32::MAX 回绕会让它永久滞留"
+            );
+        }
+
+        /// A client that actually acquired a chunk must still release its positive
+        /// viewer count during despawn cleanup. This is the non-underflowing side of
+        /// the guard: a real `1 -> 0` decrement must not be swallowed.
+        #[test]
+        fn despawn_cleanup_decrements_positive_viewer_count() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let layer = scenario.layer;
+            let client = scenario.client;
+            let chunk_pos = ChunkPos::new(0, 0);
+
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(chunk_pos, UnloadedChunk::new());
+
+            // The live scenario client starts with this layer as its visible layer;
+            // the first update delivers the pre-existing chunk and acquires exactly
+            // one viewer reference.
+            app.update();
+            let viewer_count_before = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .chunk(chunk_pos)
+                .expect("pre-existing chunk should remain loaded")
+                .viewer_count();
+            assert_eq!(
+                viewer_count_before,
+                1,
+                "客户端首次收到已存在 chunk 后必须恰有一个 viewer 引用，实际是 {viewer_count_before}"
+            );
+
+            app.world_mut().entity_mut(client).insert(Despawned);
+            app.update();
+
+            let viewer_count_after = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .chunk(chunk_pos)
+                .expect("chunk should still be observable after despawn cleanup")
+                .viewer_count();
+            assert_eq!(
+                viewer_count_after,
+                0,
+                "despawn cleanup 必须释放真实 positive viewer 引用（1 → 0），实际是 {viewer_count_after}"
+            );
+        }
+
+        /// Two clients can overlap a pre-existing chunk while only the first one
+        /// acquires a reference: the second client's join-tick view diff is empty.
+        /// Both cleanup passes must therefore leave the count at zero instead of
+        /// panicking in debug or wrapping it in release.
+        #[test]
+        fn despawn_cleanup_handles_overlapping_clients_with_one_acquisition() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let layer = scenario.layer;
+            let first_client = scenario.client;
+            let chunk_pos = ChunkPos::new(0, 0);
+
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(chunk_pos, UnloadedChunk::new());
+            app.update();
+
+            let (mut second_bundle, _helper) =
+                valence::testing::create_mock_client("overlapping-late-joiner");
+            second_bundle.player.layer.0 = layer;
+            second_bundle.visible_chunk_layer.0 = layer;
+            second_bundle.visible_entity_layers.0.insert(layer);
+            let second_client = app.world_mut().spawn(second_bundle).id();
+            app.world_mut().entity_mut(second_client).insert((
+                Position::new([8.5, 64.0, 8.5]),
+                OldPosition::new([8.5, 64.0, 8.5]),
+                ViewDistance::new(2),
+            ));
+            // Keep ClientMarker/View/VisibleChunkLayer so despawn cleanup can inspect
+            // this client, but remove Client before its first update: all load and view
+            // diff paths require &mut Client, so it cannot acquire the pre-existing chunk.
+            app.world_mut()
+                .entity_mut(second_client)
+                .remove::<valence::prelude::Client>();
+            app.update();
+
+            let viewer_count_before_cleanup = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .chunk(chunk_pos)
+                .expect("overlapping chunk should remain loaded")
+                .viewer_count();
+            assert_eq!(
+                viewer_count_before_cleanup,
+                1,
+                "重叠客户端中只有首个客户端获取预存 chunk 时，cleanup 前 viewer_count 必须为 1，实际是 {viewer_count_before_cleanup}"
+            );
+
+            app.world_mut().entity_mut(first_client).insert(Despawned);
+            app.world_mut().entity_mut(second_client).insert(Despawned);
+            app.update();
+
+            let viewer_count_after_cleanup = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .chunk(chunk_pos)
+                .expect("overlapping chunk should remain observable after cleanup")
+                .viewer_count();
+            assert_eq!(
+                viewer_count_after_cleanup,
+                0,
+                "两客户端 cleanup 中仅一方曾获取 viewer 引用时，guard 必须把 1 → 0 并跳过第二次 dec，实际是 {viewer_count_after_cleanup}"
             );
         }
     }
