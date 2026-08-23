@@ -101,6 +101,13 @@ impl DistanceRule {
         Self::euclidean3d_squared(NEARBY_INTERACT_MAX_BLOCKS)
     }
 
+    /// Named constants for callers that prefer frozen values over constructors.
+    pub const WORKBENCH: Self = Self::workbench();
+    pub const DROPPED_LOOT: Self = Self::dropped_loot();
+    pub const SUPPLY_COFFIN_OPEN: Self = Self::supply_coffin_open();
+    pub const EXTERNAL_SESSION: Self = Self::external_session();
+    pub const NEARBY_INTERACT: Self = Self::nearby_interact();
+
     /// Euclidean profile constructor.  The comparison remains squared.
     pub const fn euclidean3d_squared(max_blocks: f64) -> Self {
         Self::Profile {
@@ -159,9 +166,32 @@ impl DistanceRule {
 
                 match metric {
                     DistanceMetric::Euclidean3dSquared => {
-                        let radius_squared = max_blocks * max_blocks;
-                        let distance_squared = dx * dx + dy * dy + dz * dz;
-                        distance_squared <= radius_squared
+                        // Normalize by the largest delta before squaring.  A
+                        // direct comparison of the two squared values can
+                        // turn both sides into `INFINITY` and accidentally
+                        // allow a target that is out of range.
+                        let scale = dx.abs().max(dy.abs()).max(dz.abs());
+                        if !scale.is_finite() {
+                            return false;
+                        }
+                        if scale == 0.0 {
+                            return true;
+                        }
+
+                        let normalized_dx = dx / scale;
+                        let normalized_dy = dy / scale;
+                        let normalized_dz = dz / scale;
+                        let normalized_distance_squared = normalized_dx * normalized_dx
+                            + normalized_dy * normalized_dy
+                            + normalized_dz * normalized_dz;
+                        let normalized_radius = max_blocks / scale;
+
+                        // The normalized distance squared is at most 3.0.
+                        // Avoid squaring a very large normalized radius; a
+                        // radius of at least 2.0 already contains the whole
+                        // normalized three-dimensional cube.
+                        normalized_radius >= 2.0
+                            || normalized_distance_squared <= normalized_radius * normalized_radius
                     }
                     DistanceMetric::Chebyshev3d => {
                         let chebyshev = dx.abs().max(dy.abs()).max(dz.abs());
@@ -296,8 +326,11 @@ impl GateTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StateGateId {
     PlayerAlive,
+    TargetExists,
     SessionOpen,
+    SessionParticipant,
     SessionOwner,
+    OwnerAuthenticated,
     InventoryOpen,
     WorkbenchPresent,
     CraftSession,
@@ -514,6 +547,114 @@ mod tests {
     }
 
     #[test]
+    fn frozen_profiles_pin_metric_radius_and_named_constants() {
+        assert_eq!(
+            DistanceRule::workbench().profile_parts(),
+            Some((DistanceMetric::Chebyshev3d, WORKBENCH_MAX_BLOCKS))
+        );
+        assert_eq!(
+            DistanceRule::dropped_loot().profile_parts(),
+            Some((DistanceMetric::Euclidean3dSquared, DROPPED_LOOT_MAX_BLOCKS))
+        );
+        assert_eq!(
+            DistanceRule::supply_coffin_open().profile_parts(),
+            Some((
+                DistanceMetric::Euclidean3dSquared,
+                SUPPLY_COFFIN_OPEN_MAX_BLOCKS
+            ))
+        );
+        assert_eq!(
+            DistanceRule::external_session().profile_parts(),
+            Some((
+                DistanceMetric::Euclidean3dSquared,
+                EXTERNAL_SESSION_MAX_BLOCKS
+            ))
+        );
+        assert_eq!(
+            DistanceRule::nearby_interact().profile_parts(),
+            Some((
+                DistanceMetric::Euclidean3dSquared,
+                NEARBY_INTERACT_MAX_BLOCKS
+            ))
+        );
+        assert_eq!(DistanceRule::WORKBENCH, DistanceRule::workbench());
+        assert_eq!(DistanceRule::DROPPED_LOOT, DistanceRule::dropped_loot());
+        assert_eq!(
+            DistanceRule::SUPPLY_COFFIN_OPEN,
+            DistanceRule::supply_coffin_open()
+        );
+        assert_eq!(
+            DistanceRule::EXTERNAL_SESSION,
+            DistanceRule::external_session()
+        );
+        assert_eq!(
+            DistanceRule::NEARBY_INTERACT,
+            DistanceRule::nearby_interact()
+        );
+    }
+
+    #[test]
+    fn euclidean_squared_rejects_overflowing_out_of_range_distance() {
+        let max = f64::MAX;
+        let rule = DistanceRule::euclidean3d_squared(max);
+
+        assert!(
+            rule.allows([0.0, 0.0, 0.0], [max, 0.0, 0.0]),
+            "a finite distance exactly at the largest finite radius must remain allowed"
+        );
+        assert!(
+            !rule.allows([max, 0.0, 0.0], [-max, 0.0, 0.0]),
+            "an overflowing distance beyond the finite radius must fail closed"
+        );
+    }
+
+    #[test]
+    fn negative_coordinates_are_measured_by_delta_not_absolute_location() {
+        let euclidean = DistanceRule::euclidean3d_squared(5.0);
+        let chebyshev = DistanceRule::chebyshev3d(3.0);
+
+        assert!(euclidean.allows([-10.0, -10.0, -10.0], [-7.0, -6.0, -10.0]));
+        assert!(chebyshev.allows([-10.0, -10.0, -10.0], [-13.0, -7.0, -12.5]));
+        assert!(!chebyshev.allows([-10.0, -10.0, -10.0], [-13.0 - EPSILON, -10.0, -10.0]));
+    }
+
+    #[test]
+    fn metric_difference_is_pinned_at_diagonal_and_axis_cases() {
+        let chebyshev = DistanceRule::workbench();
+        let euclidean = DistanceRule::euclidean3d_squared(3.0);
+
+        assert!(chebyshev.allows([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]));
+        assert!(!euclidean.allows([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]));
+        assert!(DistanceRule::euclidean3d_squared(5.0).allows([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]));
+        assert!(!chebyshev.allows([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]));
+    }
+
+    #[test]
+    fn frozen_profile_boundaries_are_inclusive() {
+        assert!(DistanceRule::dropped_loot()
+            .allows([0.0, 0.0, 0.0], [DROPPED_LOOT_MAX_BLOCKS, 0.0, 0.0]));
+        assert!(DistanceRule::supply_coffin_open()
+            .allows([0.0, 0.0, 0.0], [0.0, SUPPLY_COFFIN_OPEN_MAX_BLOCKS, 0.0]));
+        assert!(DistanceRule::external_session()
+            .allows([0.0, 0.0, 0.0], [0.0, 0.0, EXTERNAL_SESSION_MAX_BLOCKS]));
+        assert!(DistanceRule::nearby_interact()
+            .allows([0.0, 0.0, 0.0], [NEARBY_INTERACT_MAX_BLOCKS, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn none_distance_rule_ignores_positions_and_invalid_profiles_fail_closed() {
+        assert!(DistanceRule::None.allows([f64::NAN, f64::INFINITY, -1.0], [0.0, 0.0, 0.0]));
+        assert!(DistanceRule::None.allows_context(&GateContext::default()));
+        assert_eq!(DistanceRule::None.profile_parts(), None);
+
+        assert!(DistanceRule::euclidean3d_squared(0.0).allows([1.0, -2.0, 3.0], [1.0, -2.0, 3.0]));
+        assert!(!DistanceRule::euclidean3d_squared(-1.0).allows([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]));
+        assert!(
+            !DistanceRule::euclidean3d_squared(f64::NAN).allows([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
     fn chebyshev_workbench_accepts_three_axis_boundary() {
         let rule = DistanceRule::workbench();
 
@@ -580,6 +721,99 @@ mod tests {
             spec.check(&missing_authority),
             Err(GateDenialReason::MissingAuthorityContext)
         );
+    }
+
+    fn complete_context() -> GateContext {
+        GateContext::new(
+            Some([0.0, 0.0, 0.0]),
+            Some(DimensionKind::Overworld),
+            Some("player-1".to_owned()),
+        )
+        .with_target(
+            Some([3.0, 3.0, 3.0]),
+            Some(DimensionKind::Overworld),
+            Some("player-1".to_owned()),
+        )
+    }
+
+    #[test]
+    fn gate_spec_checks_target_dimension_distance_and_ownership() {
+        let spec = GateSpec {
+            target: GateTarget::BlockPosition,
+            distance: DistanceRule::workbench(),
+            dimension: DimensionRule::Same,
+            ownership: OwnershipRule::Requester,
+            state: &[StateGateId::PlayerAlive],
+        };
+        let context = complete_context();
+
+        assert!(spec.allows(&context));
+        assert_eq!(
+            spec.check(&GateContext {
+                target_dimension: Some(DimensionKind::Tsy),
+                ..context.clone()
+            }),
+            Err(GateDenialReason::WrongDimension)
+        );
+        assert_eq!(
+            spec.check(&GateContext {
+                target_position: Some([3.0 + EPSILON, 0.0, 0.0]),
+                ..context.clone()
+            }),
+            Err(GateDenialReason::OutOfReach)
+        );
+        assert_eq!(
+            spec.check(&GateContext {
+                target_authority: Some("other-player".to_owned()),
+                ..context
+            }),
+            Err(GateDenialReason::NotOwner)
+        );
+    }
+
+    #[test]
+    fn missing_target_facts_fail_closed_for_targeted_specs() {
+        let spec = GateSpec {
+            target: GateTarget::ProtocolEntityId,
+            distance: DistanceRule::nearby_interact(),
+            dimension: DimensionRule::Same,
+            ownership: OwnershipRule::Any,
+            state: &[],
+        };
+        let complete = complete_context();
+
+        assert_eq!(
+            spec.check(&GateContext {
+                target_position: None,
+                ..complete.clone()
+            }),
+            Err(GateDenialReason::TargetNotFound)
+        );
+        assert_eq!(
+            spec.check(&GateContext {
+                target_dimension: None,
+                ..complete
+            }),
+            Err(GateDenialReason::TargetNotFound)
+        );
+    }
+
+    #[test]
+    fn targetless_spec_can_use_none_distance_without_target_facts() {
+        let spec = GateSpec {
+            target: GateTarget::None,
+            distance: DistanceRule::None,
+            dimension: DimensionRule::Same,
+            ownership: OwnershipRule::None,
+            state: &[],
+        };
+        let context = GateContext::new(
+            Some([0.0, 0.0, 0.0]),
+            Some(DimensionKind::Tsy),
+            Some("player-1".to_owned()),
+        );
+
+        assert!(spec.allows(&context));
     }
 
     #[test]
