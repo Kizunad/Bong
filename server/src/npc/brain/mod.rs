@@ -581,14 +581,11 @@ mod tests {
             "bong-npc-brain-{test_name}-{}-{nanos}",
             std::process::id()
         ));
-        let deceased_dir = root.join("deceased");
-        std::fs::create_dir_all(&deceased_dir).expect("test persistence dirs should be creatable");
         let db_path = root.join("bong.db");
         crate::persistence::bootstrap_sqlite(&db_path, &format!("npc-brain-{test_name}"))
             .expect("test sqlite should bootstrap");
-        let settings = crate::persistence::PersistenceSettings::with_paths(
+        let settings = crate::persistence::PersistenceSettings::with_db_path(
             db_path,
-            deceased_dir,
             format!("npc-brain-{test_name}"),
         );
         (settings, root)

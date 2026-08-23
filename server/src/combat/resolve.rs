@@ -66,6 +66,7 @@ use crate::network::audio_event_emit::{
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::movement::PendingKnockback;
+use crate::npc::scenario::PassiveTarget;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{
@@ -238,6 +239,8 @@ pub struct CombatResolveEventWriters<'w, 's> {
     zone_registry: Option<ResMut<'w, ZoneRegistry>>,
     /// bughunt r2 QP-003 — 查询防御方当前维度，用于 find_zone 定位目标 zone。
     defender_dim_q: Query<'w, 's, Option<&'static crate::world::dimension::CurrentDimension>>,
+    /// `/npc_scenario passive_target` contract: damage is allowed, forced movement is not.
+    passive_targets: Query<'w, 's, (), With<PassiveTarget>>,
 }
 
 pub fn apply_defense_intents(
@@ -812,41 +815,43 @@ pub fn resolve_attack_intents(
         let damage = (base_damage * (1.0 - juebi_backfire_fraction)).max(1.0);
         let juebi_backfire_damage = (base_damage * juebi_backfire_fraction).max(0.0);
         let was_alive = wounds.health_current > 0.0;
-        if let Ok(knockback) = compute_combat_knockback(CombatKnockbackInput {
-            physical_damage: damage,
-            qi_invest: hit_qi,
-            attacker_mass: Some(&attacker_mass),
-            target_mass: Some(&defender_mass),
-            target_stance: Some(&defender_stance),
-            target_cultivation: defender_cultivation.as_deref(),
-            weapon_kind: weapon_kind_for_knockback,
-            source: intent.source,
-        }) {
-            if knockback.is_actionable() {
-                let direction = target_position - attacker_position;
-                if direction.length() > f64::EPSILON {
-                    commands
-                        .entity(target_entity)
-                        .insert(PendingKnockback::from_result(
-                            intent.attacker,
-                            intent.source,
-                            direction,
-                            knockback,
-                            DEFAULT_CHAIN_DEPTH,
-                        ));
-                    if let Some(events) = event_writers.knockback_events.as_deref_mut() {
-                        events.send(KnockbackEvent {
-                            attacker: intent.attacker,
-                            target: target_entity,
-                            source: intent.source,
-                            distance_blocks: knockback.distance_blocks,
-                            velocity_blocks_per_tick: knockback.velocity_blocks_per_tick,
-                            duration_ticks: knockback.duration_ticks,
-                            kinetic_energy: knockback.kinetic_energy,
-                            collision_damage: None,
-                            chain_depth: DEFAULT_CHAIN_DEPTH,
-                            block_broken: false,
-                        });
+        if !event_writers.passive_targets.contains(target_entity) {
+            if let Ok(knockback) = compute_combat_knockback(CombatKnockbackInput {
+                physical_damage: damage,
+                qi_invest: hit_qi,
+                attacker_mass: Some(&attacker_mass),
+                target_mass: Some(&defender_mass),
+                target_stance: Some(&defender_stance),
+                target_cultivation: defender_cultivation.as_deref(),
+                weapon_kind: weapon_kind_for_knockback,
+                source: intent.source,
+            }) {
+                if knockback.is_actionable() {
+                    let direction = target_position - attacker_position;
+                    if direction.length() > f64::EPSILON {
+                        commands
+                            .entity(target_entity)
+                            .insert(PendingKnockback::from_result(
+                                intent.attacker,
+                                intent.source,
+                                direction,
+                                knockback,
+                                DEFAULT_CHAIN_DEPTH,
+                            ));
+                        if let Some(events) = event_writers.knockback_events.as_deref_mut() {
+                            events.send(KnockbackEvent {
+                                attacker: intent.attacker,
+                                target: target_entity,
+                                source: intent.source,
+                                distance_blocks: knockback.distance_blocks,
+                                velocity_blocks_per_tick: knockback.velocity_blocks_per_tick,
+                                duration_ticks: knockback.duration_ticks,
+                                kinetic_energy: knockback.kinetic_energy,
+                                collision_damage: None,
+                                chain_depth: DEFAULT_CHAIN_DEPTH,
+                                block_broken: false,
+                            });
+                        }
                     }
                 }
             }

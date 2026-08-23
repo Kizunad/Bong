@@ -479,6 +479,7 @@ fn handle_coffin_place_requests(
                 username.0,
                 event.pos
             );
+            send_coffin_place_rejected(&mut client, &format!("目标 {:?} 太远", event.pos));
             continue;
         }
 
@@ -488,6 +489,7 @@ fn handle_coffin_place_requests(
                 username.0,
                 event.item_instance_id
             );
+            send_coffin_place_rejected(&mut client, "物品实例不存在");
             continue;
         };
         let Some(grade) = CoffinGrade::from_item_id(&instance.template_id) else {
@@ -496,6 +498,7 @@ fn handle_coffin_place_requests(
                 username.0,
                 instance.template_id
             );
+            send_coffin_place_rejected(&mut client, "物品不是延寿棺");
             continue;
         };
 
@@ -507,6 +510,10 @@ fn handle_coffin_place_requests(
                 event.pos,
                 upper
             );
+            send_coffin_place_rejected(
+                &mut client,
+                &format!("位置 {:?}/{:?} 已有棺材", event.pos, upper),
+            );
             continue;
         }
         if let Ok(layer) = layers.get_single() {
@@ -517,6 +524,7 @@ fn handle_coffin_place_requests(
                     event.pos,
                     upper
                 );
+                send_coffin_place_rejected(&mut client, "目标位置不为空");
                 continue;
             }
         }
@@ -526,6 +534,7 @@ fn handle_coffin_place_requests(
                 "[bong][coffin] place rejected for `{}`: consume failed: {error}",
                 username.0
             );
+            send_coffin_place_rejected(&mut client, "物品实例不可用");
             continue;
         }
         if !registry.insert(event.pos, event.tick, grade) {
@@ -542,6 +551,7 @@ fn handle_coffin_place_requests(
                     username.0
                 );
             }
+            send_coffin_place_rejected(&mut client, "位置登记冲突");
             continue;
         }
 
@@ -1311,6 +1321,18 @@ fn coffin_requires_overworld(dimension: Option<&CurrentDimension>) -> bool {
 /// 拒绝反馈复用仓库既有的 `client.send_chat_message` 回执惯例（对齐
 /// `supply_coffin::interact::open_authority_rejection_message`），不另造第二套反馈机制。
 const COFFIN_DIMENSION_REJECTION_MESSAGE: &str = "§c[棺] 你不在主世界，无法操作延寿棺。";
+
+/// 放置被拒的显式 client 回执（chat 通道固定前缀）。review finding [2]：bot/验证不得用
+/// /give 的快照当作放置完成屏障（`handle_give` / `emit_changed_inventory_snapshots` /
+/// `handle_coffin_place_requests` 之间没有 Bevy 依赖链，give→snapshot→coffin handler 的
+/// 合法顺序会让「a_id 仍在」的快照早于放置处理产出，把放置误判为被拒）。改为：接受侧由
+/// `coffin_place_consumed` 消费快照回执；拒绝侧由本 chat 回执（请求特定、被拒绝即同步
+/// 发出）作为确定的完成信号，bot 按请求语义判定，不依赖包序快照推导。
+const COFFIN_PLACE_REJECTION_MESSAGE_PREFIX: &str = "§c[棺] 放置被拒：";
+
+fn send_coffin_place_rejected(client: &mut Client, reason: &str) {
+    client.send_chat_message(format!("{COFFIN_PLACE_REJECTION_MESSAGE_PREFIX}{reason}"));
+}
 
 /// plan-coffin-tiers-v1 P2 — marker 渲染实体的 spawn 坐标。棺横跨 lower→upper（x+1），
 /// marker 取两格中心（lower.x + 1.0）让 GeckoLib 模型居中覆盖整张棺，y 贴地。
@@ -3176,6 +3198,68 @@ mod tests {
         assert!(
             inventory_item_by_instance(inventory, item_instance_id).is_none(),
             "放置成功后随身棺材物品实例应被消费，但仍能在背包中找到"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_place_rejected_sends_place_rejected_chat() {
+        // review finding [2]：放置被拒必须推请求特定的 chat 回执「[棺] 放置被拒」——
+        // bot/验证据此判定放置结果，不再依赖 /give 包序快照屏障。伪造 instance 落在
+        // 缺实例分支（主世界 + 近距，走 instance 校验），必须发该回执。
+        let (mut app, client_entity, _item_instance_id, mut helper) =
+            app_with_place_system_holding_coffin();
+        let target = BlockPos::new(0, 0, 0);
+
+        app.world_mut().send_event(CoffinPlaceRequest {
+            player: client_entity,
+            pos: target,
+            item_instance_id: 999_999, // 不存在的实例 → missing item instance 被拒
+            tick: 0,
+        });
+        app.update();
+
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("放置被拒")),
+            "放置被拒必须下发显式 chat 回执（COFFIN_PLACE_REJECTION_MESSAGE_PREFIX）；             实际 messages={messages:?}"
+        );
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(target)
+                .is_none(),
+            "被拒放棺不得注册棺于 {target:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_place_allowed_does_not_send_place_rejected_chat() {
+        // 放行侧对照：成功放置不得误发「放置被拒」回执（二者互斥，bot 靠互斥收口）。
+        let (mut app, client_entity, item_instance_id, mut helper) =
+            app_with_place_system_holding_coffin();
+        let target = BlockPos::new(0, 0, 0);
+
+        app.world_mut().send_event(CoffinPlaceRequest {
+            player: client_entity,
+            pos: target,
+            item_instance_id,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(target)
+                .is_some(),
+            "主世界 + 近距放置应成功注册棺于 {target:?}"
+        );
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            !messages.iter().any(|m| m.contains("放置被拒")),
+            "成功放置不应发送「放置被拒」回执（接受=coffin_place_consumed 快照，             拒绝=该 chat，二者互斥）；实际 messages={messages:?}"
         );
     }
 

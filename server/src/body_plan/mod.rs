@@ -80,6 +80,16 @@ use valence::prelude::App;
 /// 用这个变量直接指向包含 `assets/` 子目录的根路径。
 pub const BONG_ASSETS_DIR_ENV_VAR: &str = "BONG_ASSETS_DIR";
 
+#[cfg(test)]
+pub(crate) static ASSETS_ROOT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn assets_root_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ASSETS_ROOT_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 运行时解析 `assets/` 所在根目录，取代编译期烙死的 `env!("CARGO_MANIFEST_DIR")`。
 ///
 /// bughunt major-3：`env!("CARGO_MANIFEST_DIR")` 在编译期把**构建机器**上的源码树
@@ -171,12 +181,8 @@ mod resolve_assets_root_tests {
 
     // 与 `world::mod` 既有的 `ScopedEnvVar`/`env_lock` 先例同构：修改进程级环境变量 /
     // 当前工作目录必须串行化，否则并发跑的其他测试可能读到中间态。
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        super::assets_root_env_lock()
     }
 
     struct ScopedEnvVar {
