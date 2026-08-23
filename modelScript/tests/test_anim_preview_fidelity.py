@@ -270,10 +270,85 @@ class BendUnitTest(unittest.TestCase):
                        + RA.limb_end_local("rightArm"))
         np.testing.assert_allclose(expect, rest_like, atol=1e-9)
 
+    def test_bend_matches_the_reference_implementation_everywhere(self):
+        """与 `RA.bent_end_local` 逐点对拍——本文件最硬的一条锁。
+
+        那是驱动过一大批已上线动画的参考实现（MC ModelPart 空间，+Y 朝下）；
+        预览在 Bedrock 空间（+Y 朝上）。两者必须描述同一个骨架。
+
+        曾经**旋向是反的**：肘往身后翻、膝往身前踢，两个关节同时做反。根因是
+        `_pt` 的 y 翻转是个反射，会反转旋转旋向（S·R(a,θ)·S = R(S·a, −θ)），
+        而 bend 的轴 y 分量恒为 0、S_FLIP 对它不起作用，那个负号就静默丢了。
+        单看渲染图很难判——人物姿势依旧"像个人"，只是别扭。
+        """
+        import preview_player_anim as P
+        worst, worst_case = 0.0, None
+        # axis 只扫本肢体**合解剖**的一侧：手臂折向身前（axis 落在 90~270），腿折向
+        # 身后（axis 落在 -90~90）。非法组合已由 `assert_joint_fold_is_anatomical`
+        # 在源码里拦掉，ship 不出去，没必要在这里对拍。
+        for part, segname, axes in (
+                ("rightArm", "rightArm_lo", (150, 180, 210)),
+                ("leftArm", "leftArm_lo", (150, 180, 210)),
+                ("rightLeg", "rightLeg_lo", (-30, 0, 30)),
+                ("leftLeg", "leftLeg_lo", (-30, 0, 30))):
+            for axis_deg in axes:
+                for bend_deg in (0, 15, 45, 90, 135):
+                    a = math.radians(axis_deg)
+                    base = np.array(P.PIVOT_OF[segname], float)
+                    ref = P._pt(base + RA.bent_end_local(part, a, math.radians(bend_deg)))
+                    kfs = {part: {"bend": [(0, math.radians(bend_deg), "LINEAR")],
+                                  "axis": [(0, a, "LINEAR")]}}
+                    rest = P._pt(base + RA.limb_end_local(part))
+                    got = (P.segment_transforms(kfs, 0.0)[segname] @ np.append(rest, 1.0))[:3]
+                    dist = float(np.linalg.norm(ref - got))
+                    if dist > worst:
+                        worst, worst_case = dist, (part, axis_deg, bend_deg, ref, got)
+        self.assertLess(
+            worst, 1e-6,
+            f"预览的弯折与参考实现不符，最差 {worst:.3f} 出现在 {worst_case}。"
+            f"若差值恰好是 z 分量整体变号，就是旋向反了（见本用例 docstring）")
+
+    def test_elbow_folds_toward_the_front_not_the_back(self):
+        """方向判据，独立于上面的对拍：人的肘往身前折，不往身后。
+
+        MC 空间 +Z 是身后，`_pt` 不改 z，所以 Bedrock 里 −z 仍是身前。
+        """
+        import preview_player_anim as P
+        base = np.array(P.PIVOT_OF["rightArm_lo"], float)
+        rest = P._pt(base + RA.limb_end_local("rightArm"))
+        kfs = {"rightArm": {"bend": [(0, math.radians(90), "LINEAR")],
+                            "axis": [(0, math.pi, "LINEAR")]}}
+        hand = (P.segment_transforms(kfs, 0.0)["rightArm_lo"] @ np.append(rest, 1.0))[:3]
+        self.assertLess(
+            hand[2], rest[2] - 1.0,
+            f"弯肘 90° 后手心 z={hand[2]:.2f}，静止 z={rest[2]:.2f}——"
+            f"手往身后（+z）去了，肘做反了")
+
+    def test_knee_folds_toward_the_back_not_the_front(self):
+        """膝与肘旋向相反：小腿往身后折（脚跟朝臀），不往身前踢。
+
+        同一条 bend 轴约定下，腿的 `limb_end_local` 指向下方，所以同样的旋转在腿
+        上表现为脚往后。这条和上一条一起，把「两个关节同时做反」那种错挡住——
+        只测一个关节的话，整体取负仍可能让另一个碰巧看着对。
+        """
+        import preview_player_anim as P
+        base = np.array(P.PIVOT_OF["rightLeg_lo"], float)
+        rest = P._pt(base + RA.limb_end_local("rightLeg"))
+        kfs = {"rightLeg": {"bend": [(0, math.radians(90), "LINEAR")],
+                            "axis": [(0, 0.0, "LINEAR")]}}
+        foot = (P.segment_transforms(kfs, 0.0)["rightLeg_lo"] @ np.append(rest, 1.0))[:3]
+        self.assertGreater(
+            foot[2], rest[2] + 1.0,
+            f"弯膝 90° 后脚 z={foot[2]:.2f}，静止 z={rest[2]:.2f}——"
+            f"脚往身前（−z）踢了，膝做反了")
+        ref = P._pt(base + RA.bent_end_local("rightLeg", 0.0, math.radians(90)))
+        np.testing.assert_allclose(ref, foot, atol=1e-6,
+                                   err_msg="膝的弯折与参考实现不符")
+
     def test_bend_axis_changes_the_swing_plane(self):
         """axis 同样是弧度。两个不同 axis 下的手心位置必须不同。"""
         a = self._hand(90.0, axis_deg=180.0)
-        b = self._hand(90.0, axis_deg=90.0)
+        b = self._hand(90.0, axis_deg=140.0)   # 同为"折向身前"，仍属合解剖
         self.assertGreater(float(np.linalg.norm(a - b)), 1.0,
                            "换 bend 轴后手心几乎没变——axis 多半也被双重转换了")
 
@@ -368,3 +443,126 @@ class DaggerAnimationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JointAnatomyGuardTest(unittest.TestCase):
+    """关节折向的源码硬拦（`anim_common.assert_joint_fold_is_anatomical`）。
+
+    肘只能往身前折、膝只能往身后折。折反了渲染出来往往只让人觉得"姿势别扭"，
+    很难一眼断定是 bug——所以拦在源码里，授权侧（生成器写错）和渲染侧（变换算错）
+    各拦一道。
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "client" / "tools"))
+        import anim_common
+        self.AC = anim_common
+
+    def test_correct_directions_pass(self):
+        """本仓约定：手臂 axis=180、腿 axis=0。全部放行。"""
+        for part in ("leftArm", "rightArm"):
+            self.AC.assert_joint_fold_is_anatomical(part, 100.0, 180.0)
+        for part in ("leftLeg", "rightLeg"):
+            self.AC.assert_joint_fold_is_anatomical(part, 100.0, 0.0)
+
+    def test_inverted_elbow_raises(self):
+        for part in ("leftArm", "rightArm"):
+            with self.assertRaises(ValueError) as cm:
+                self.AC.assert_joint_fold_is_anatomical(part, 100.0, 0.0)
+            self.assertIn("肘", str(cm.exception))
+
+    def test_inverted_knee_raises(self):
+        for part in ("leftLeg", "rightLeg"):
+            with self.assertRaises(ValueError) as cm:
+                self.AC.assert_joint_fold_is_anatomical(part, 105.0, 180.0)
+            self.assertIn("膝", str(cm.exception))
+
+    def test_negative_bend_is_handled_by_the_same_rule(self):
+        """负 bend 等价于反向折——判据看 sin(bend)·cos(axis) 的符号，自动覆盖。"""
+        with self.assertRaises(ValueError):
+            self.AC.assert_joint_fold_is_anatomical("rightArm", -100.0, 180.0)
+        self.AC.assert_joint_fold_is_anatomical("rightArm", -100.0, 0.0)
+
+    def test_straight_limb_is_exempt_regardless_of_axis(self):
+        """bend≈0 时肢体是直的，axis 纯属声明，不该拦。
+
+        仓库里确实有一批 bend=0 却写了 axis 的帧，拦它们全是假阳性。
+        """
+        for axis in (0.0, 90.0, 180.0, 270.0):
+            self.AC.assert_joint_fold_is_anatomical("rightArm", 0.0, axis)
+            self.AC.assert_joint_fold_is_anatomical("rightLeg", 0.5, axis)
+
+    def test_non_bendable_parts_are_exempt(self):
+        for part in ("head", "torso", "body"):
+            self.AC.assert_joint_fold_is_anatomical(part, 100.0, 0.0)
+
+    def test_error_message_names_the_fix(self):
+        with self.assertRaises(ValueError) as cm:
+            self.AC.assert_joint_fold_is_anatomical("rightLeg", 105.0, 180.0, where="tick 7")
+        msg = str(cm.exception)
+        self.assertIn("tick 7", msg)
+        self.assertIn("axis", msg)
+        self.assertIn("180", msg)
+
+    def test_pose_table_validation_rejects_an_inverted_knee(self):
+        """授权侧：生成器写出反关节，`build_doc` 就该拒绝，别让它落成 JSON。"""
+        bad = {0: {"easing": "LINEAR", "rightLeg": {"pitch": 40, "bend": 105, "axis": 180}}}
+        with self.assertRaises(ValueError):
+            self.AC._validate_pose_table(bad)
+        good = {0: {"easing": "LINEAR", "rightLeg": {"pitch": 40, "bend": 105, "axis": 0}}}
+        self.AC._validate_pose_table(good)
+
+    def test_every_shipped_animation_has_anatomical_joints(self):
+        """全仓库已落盘的动画逐帧过判据。
+
+        这条第一次跑就抓出 6 条既存违规（5 条 jian_* 反肘 + sword_ride 反膝）。
+        """
+        bad = []
+        for f in sorted(ANIM.glob("*.json")):
+            e = json.loads(f.read_text(encoding="utf-8"))
+            e = e.get("emote", e)
+            # axis 必须**按插值取**，不能"该 tick 没有 axis 关键帧就当 0"——
+            # axis 常只在首末帧打点，中段是插出来的。按 0 兜底会把一批正常动画
+            # 误判成反关节（第一版就这么误报了 3 条 baomai_*）。
+            kfs = RA.collect_keyframes(e)
+            for part, axes in kfs.items():
+                if "bend" not in axes:
+                    continue
+                for tick, bend_rad, _ in axes["bend"]:
+                    axis_rad = RA.sample_axis(kfs, part, "axis", float(tick))
+                    try:
+                        self.AC.assert_joint_fold_is_anatomical(
+                            part, math.degrees(bend_rad), math.degrees(axis_rad),
+                            where=f"{f.stem} tick {tick}")
+                    except ValueError as exc:
+                        bad.append(str(exc).splitlines()[0])
+        names = {b.split(" tick")[0] for b in bad}
+        # 历史欠账，**只准变少不准变多**。这 5 条剑法的架势（右臂高举 pitch=-170 +
+        # 肘深弯 bend=100 + axis=0）是靠反折肘换来的观感：锏沿小臂走，作者要"锏尖朝
+        # 前下、两尖在身前汇聚"，而合解剖的肘在手臂高举时只会把小臂折到脑后。
+        #
+        # 平心而论这条比膝盖那条软：**肩有沿上臂长轴的内外旋**（人约 180°），
+        # MC 的 pitch/yaw/roll 没把它和肘的折向分开，作者其实是拿 axis 在表达肩内旋。
+        # 膝没有这个自由度，所以膝那条是绝对的。留着这条是因为仓库约定明确
+        # （手臂 axis=180 用了 1634 次、axis=0 只有这 29 次），偏离约定值得拦。
+        #
+        # 要清掉得重设计架势（或给上臂长轴旋转单独建模），是视觉决策，不在本次范围。
+        # 另有 3 条 baomai_* 是**漏写 axis**：手臂设了 bend 却没设 axis，落到默认 0
+        # （对手臂即反折）。它们没有生成器，JSON 是手工件，改只能直接动 JSON，
+        # 且 bend 到 49° 改了看得出来——同样交人工定夺。
+        LEGACY = {"jian_draw_waist", "jian_dual_smash", "jian_dual_sweep",
+                  "jian_stance_high_low", "jian_waist_spin_cross",
+                  "baomai_blood_burn", "baomai_disperse", "baomai_mountain_shake"}
+        new_bad = sorted(n for n in names if n not in LEGACY)
+        self.assertEqual(
+            [], new_bad,
+            "以下动画含反关节（不在历史欠账名单里，说明是新引入的）：\n  "
+            + "\n  ".join(sorted(set(b for b in bad
+                                      if b.split(" tick")[0] in new_bad))))
+        self.assertLessEqual(
+            names, LEGACY,
+            "历史欠账名单该只减不增")
+        self.assertEqual(
+            LEGACY, names,
+            f"历史欠账里有 {sorted(LEGACY - names)} 已经修好了——"
+            f"请把它们从 LEGACY 名单里删掉，好让这条锁继续收紧")

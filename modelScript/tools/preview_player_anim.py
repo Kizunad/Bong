@@ -51,6 +51,7 @@ import argparse
 import base64
 import io
 import json
+import math
 import sys
 import uuid
 from pathlib import Path
@@ -63,6 +64,7 @@ REPO = LIB.parent
 for _d in (LIB / "core", LIB / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
+import anim_common as AC  # noqa: E402  关节解剖判据的唯一定义处
 import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimator/bendy 数学
 from preview_armor_on_body import make_player_skin  # noqa: E402
 from render_bbmodel import load_bbmodel, render  # noqa: E402
@@ -157,7 +159,19 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
             # 把角度缩掉约 57 倍 —— 肘和膝在预览里等于焊死，"肘不伸直"这类判据全失效。
             a = float(p["axis"])
             axis_b = S_FLIP @ np.array([np.cos(a), 0.0, np.sin(a)], float)
-            seg = seg @ _about(_axis_rot(axis_b, float(p["bend"])), centre_b)
+            # **角度取负**。`_pt` 把 y 翻过来（MC 的 +Y 朝下 → Bedrock 的 +Y 朝上），
+            # 这是个反射，会反转旋转的旋向：S·R(a,θ)·S = R(S·a, −θ)。part 旋转那边
+            # 用 `_rot` 做了完整共轭所以自带这个负号；bend 这条是直接在 Bedrock 空间
+            # 建轴的，而该轴 y 分量恒为 0、S_FLIP 对它不起作用，负号就这么丢了。
+            # 症状：肘和膝**朝反方向折**——前臂往身后翻、小腿往身前踢。
+            # 由 test_anim_preview_fidelity 与参考实现 `RA.bent_end_local` 逐点对拍锁死。
+            # 渲染侧也拦一道。授权侧（anim_common）拦的是"动画写错了"，这里拦的是
+            # "变换算错了"——本文件历史上就把旋向做反过（见上面那段注释），当时肘往
+            # 身后翻、膝往身前踢，两个关节同时反，而图上只表现为"姿势别扭"。
+            AC.assert_joint_fold_is_anatomical(
+                part, math.degrees(float(p["bend"])), math.degrees(a),
+                where=f"预览 tick {tick:g} / {name}")
+            seg = seg @ _about(_axis_rot(axis_b, -float(p["bend"])), centre_b)
 
         out[name] = body_m @ seg
     return out
