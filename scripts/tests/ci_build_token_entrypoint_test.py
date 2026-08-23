@@ -18,19 +18,6 @@ SPECS = {
         ],
         "forbid": [r"(?m)^\s*run:\s*cargo\b", r"(?m)^\s*run:\s*\./gradlew\b"],
     },
-    ".github/workflows/worldgen-preview.yml": {
-        "required": [
-            "../scripts/build-token.sh cargo build --release",
-            "../scripts/build-token.sh gradle clean --no-daemon",
-            "../scripts/build-token.sh gradle runClientPreview --no-daemon --stacktrace --rerun-tasks",
-            "bash scripts/preview/stop-server-headless.sh",
-        ],
-        "forbid": [
-            r"(?m)^\s*run:\s*cargo\b",
-            r"(?m)^\s*(?:xvfb-run[^\n]*\\\n\s*)?\./gradlew\b",
-            r"(?m)^\s*kill\s+-TERM\s+\"?\$PID",
-        ],
-    },
     "scripts/smoke-test-e2e.sh": {
         "required": ['"$ROOT/scripts/build-token.sh" cargo test'],
         "forbid": [],

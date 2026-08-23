@@ -5,7 +5,7 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 - **server/** — Rust 无头 MC 服务器（Valence on Bevy 0.14 ECS，MC 1.20.1 协议 763）
 - **client/** — Fabric 1.20.1 微端（Java 17，owo-lib UI）
 - **agent/** — LLM "天道" agent 层（TypeScript，三 Agent 并发推演）
-- **worldgen/** — Python 地形生成流水线（blueprint 驱动，terrain_gen 模块，LAYER_REGISTRY 统一 16 层地形）
+- **BongWorldGen** — 独立的 Python/NumPy 地形生成库（<https://github.com/Kizunad/BongWorldGen>）
 
 ## Quick commands
 
@@ -27,9 +27,10 @@ cd agent/packages/tiandao && npm test              # 类型检查 + vitest
 # Schema
 cd agent/packages/schema && npm test
 
-# Worldgen
-cd worldgen && python -m scripts.terrain_gen       # 地形生成主流程
-bash worldgen/pipeline.sh                          # 默认导出 raster + 预览
+# Worldgen（独立仓库）
+cd ../BongWorldGen
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/bong-worldgen --width 256 --height 256 --seed 812731 --output generated/demo.npz
 
 # Dev reload (regen + validate + rebuild + restart)
 bash scripts/dev-reload.sh
@@ -74,10 +75,8 @@ bash scripts/smoke-test.sh
 - **IPC schema**：TypeBox（TS source of truth）→ JSON Schema export → Rust serde structs；共享 `agent/packages/schema/samples/*.json` 双端校验
 - **天道 Agent**：三 Agent 并发推演（灾劫/变化/演绎时代），Arbiter 仲裁层负责合并与冲突消解
 - **NPC AI**：big-brain Utility AI（Scorer → Action 模式），Position ↔ Transform 同步桥
-- **Worldgen 流水线**：blueprint 定义固定坐标大地图 → terrain_gen 生成区域 field → stitcher 负责 zone→wilderness 过渡（按 LAYER_REGISTRY blend_mode）→ raster_export 导出 little-endian float32/uint8 二进制（mmap-friendly）→ Rust server 运行时按需生成 chunk
-- **LAYER_REGISTRY**（`worldgen/scripts/terrain_gen/fields.py`）：16 层地形统一注册表，每层定义 `LayerSpec(safe_default, blend_mode, export_type)`；stitcher 和 raster_export 均从此派生配置
-- **Dev harness**：`scripts/dev-reload.sh` 一键 regen+validate+rebuild+restart；`worldgen/scripts/terrain_gen/harness/raster_check.py` 做 raster 后验（rift_axis_sdf 默认值、height range、water depth）
-- **Terrain profiles**：qingyun_peaks、spring_marsh、rift_valley/blood_valley、spawn、north_wastes、lingquan_marsh 均已完成
+- **地形生成**：已从本仓库迁出至 [BongWorldGen](https://github.com/Kizunad/BongWorldGen)。Bong 只负责读取生成后的 raster，并在运行时按需生成 chunk；生成器、荒野分类、河流与洞穴数据均由独立库维护。
+- **Dev harness**：`scripts/dev-reload.sh` 只负责服务端重建与重启；地形生成和地形数据校验在 BongWorldGen 内执行。
 - `#[allow(dead_code)]` on `mod schema` in main.rs — schema 模块用于 IPC 对齐，尚未接入运行时
 
 ## Current milestone
@@ -175,7 +174,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
    - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
    - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
 4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。启动时**显式传入 worktree 绝对路径 + 待审 HEAD SHA**，validator 第一步回报 `git rev-parse HEAD` 与目标对拍，PASS/FAIL 结论必须携带该 SHA（防对错误代码的假 PASS）。validator 只输出 PASS/FAIL + 理由，不改代码；**出结论即关闭**——PASS / FAIL / 超时 / 异常四条路径都要关，不留活 validator 占并发槽。FAIL → 返工 → **对新 HEAD 开新的无上下文 validator 重验**，循环直到 PASS 才算闭环；此后任何 HEAD 变化（返工、合并主线）都必须对新 SHA 重验
-5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`bash scripts/dev-reload.sh`（仓库根目录执行，`set -euo pipefail` 任一步失败即非零退出；[1/4] regen + [2/4] raster 后验走 `scripts.terrain_gen.harness.raster_check.validate_rasters`）。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；BongWorldGen：在独立仓库运行其 `pytest` 和生成器测试。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
 6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
 7. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
 8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型）。PR 有新提交/变动时默认由 Kody 自动 review；若自动 review 未启动或新 HEAD 需要显式复审，再执行 `gh pr comment <PR> --body "@kody start-review"`。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）

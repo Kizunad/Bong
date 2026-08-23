@@ -17,7 +17,7 @@ use crate::world::dimension::DimensionKind;
 use crate::world::terrain::{FossilBbox, TerrainProvider, TerrainProviders};
 use crate::world::zone::ZoneRegistry;
 
-const DEFAULT_ANCHORS_PATH: &str = "../worldgen/blueprint/mineral_anchors.json";
+const DEFAULT_ANCHORS_PATH: &str = "assets/mineral_anchors.json";
 const MIN_WORLD_Y: i32 = -64;
 
 #[derive(Debug, Clone, Resource)]
@@ -1376,7 +1376,7 @@ mod tests {
     }
 
     // ─── plan-bughunt-mineral-anchor-position-drift-v1 ──────────────
-    // 回归契约：`worldgen/blueprint/mineral_anchors.json` 的每条固定矿脉
+    // 回归契约：`server/assets/mineral_anchors.json` 的每条固定矿脉
     // anchor 必须（1）声明一个当前 runtime zone 表里真实存在的 zone，
     // （2）position 落在该 zone 的 AABB 内。此前 qingyun_peaks / blood_valley /
     // lingquan_marsh 的 9 条 anchor 全部用旧世界坐标，实际都落在 spawn AABB

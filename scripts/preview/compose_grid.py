@@ -5,8 +5,8 @@ plan-worldgen-snapshot-v1 §3.1。
 
 输入:
   - client/run/screenshots/preview-{top,iso_ne,iso_nw,iso_se,iso_sw}.png
-  - worldgen/generated/snapshot/focus-layout-preview.png
-  - worldgen/generated/snapshot/focus-surface-preview.png
+  - generated/snapshot/focus-layout-preview.png
+  - generated/snapshot/focus-surface-preview.png
 
 输出:
   - <out_dir>/preview-grid.png
@@ -20,14 +20,14 @@ plan-worldgen-snapshot-v1 §3.1。
   | raster surface (full width)   |
   +-------------------------------+
 
-只依赖 stdlib (zlib + struct) 出 PNG —— 仿 worldgen/exporters.py 风格,
+只依赖 stdlib (zlib + struct) 出 PNG —— 保持与 BongWorldGen 导出物兼容,
 避免 PIL/matplotlib 依赖。简化:不做色彩混合 / 文字 caption (caption 让
 post_comment.py 在 markdown 里加),纯像素拼接。
 
 用法:
   python3 scripts/preview/compose_grid.py \\
     --client-dir client/run/screenshots \\
-    --raster-dir worldgen/generated/snapshot \\
+    --raster-dir generated/snapshot \\
     --out-dir <output>
 
 如果某张子图缺失,用单色占位（# 为提示「missing: <name>」），其他正常拼。
@@ -208,7 +208,7 @@ def compose_grid(client_dir: Path, raster_dir: Path, out_path: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="compose_grid.py")
     parser.add_argument("--client-dir", type=Path, default=Path("client/run/screenshots"))
-    parser.add_argument("--raster-dir", type=Path, default=Path("worldgen/generated/snapshot"))
+    parser.add_argument("--raster-dir", type=Path, default=Path("generated/snapshot"))
     parser.add_argument(
         "--out", type=Path, default=Path("client/run/screenshots/preview-grid.png")
     )

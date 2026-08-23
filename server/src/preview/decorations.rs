@@ -1,8 +1,8 @@
 //! Preview 装饰加载器（plan-worldgen-snapshot-v1 §2.2-2.4）。
 //!
-//! 启动期（更准确：第一次 Update tick）读 `worldgen/preview/decorations.json` →
+//! 启动期（更准确：第一次 Update tick）读 `server/assets/preview/decorations.json` →
 //! 调用 `ChunkLayer::set_block` 摆方块。仅在 `BONG_PREVIEW_MODE=1` 激活；JSON
-//! 路径默认 `worldgen/preview/decorations.json`，可被 `BONG_PREVIEW_DECORATIONS`
+//! 路径默认 `server/assets/preview/decorations.json`，可被 `BONG_PREVIEW_DECORATIONS`
 //! env 覆盖。
 //!
 //! 支持两类装饰（plan §2.2 第三类 boundary_marker 留 v2 plan，AABB 点阵 spawn
@@ -21,9 +21,9 @@ use valence::prelude::*;
 use valence::text::IntoText;
 
 /// 相对 server cwd（`server/` 目录）的默认装饰 JSON 路径。
-/// CI / 本地经 `scripts/build-token.sh cargo run` 从 `server/` 起跑，对应 repo 内 worldgen/preview/。
+/// CI / 本地经 `scripts/build-token.sh cargo run` 从 `server/` 起跑，对应 repo 内 assets/preview/。
 /// 想换路径用 `BONG_PREVIEW_DECORATIONS=/abs/path.json` env override。
-const DEFAULT_PATH: &str = "../worldgen/preview/decorations.json";
+const DEFAULT_PATH: &str = "assets/preview/decorations.json";
 const MAX_PILLAR_HEIGHT: u32 = 64;
 const MAX_SIGN_LINES: usize = 4;
 
@@ -60,7 +60,7 @@ pub fn load_from_path(path: &PathBuf) -> Result<DecorationsConfig, String> {
     serde_json::from_str(&body).map_err(|e| format!("parse {} 失败: {e}", path.display()))
 }
 
-/// env-driven 路径解析（默认 worldgen/preview/decorations.json）。
+/// env-driven 路径解析（默认 assets/preview/decorations.json）。
 pub fn resolve_path() -> PathBuf {
     std::env::var("BONG_PREVIEW_DECORATIONS")
         .map(PathBuf::from)
@@ -292,7 +292,7 @@ mod tests {
             std::env::remove_var("BONG_PREVIEW_DECORATIONS");
         }
         let path = resolve_path();
-        assert_eq!(path, PathBuf::from("../worldgen/preview/decorations.json"));
+        assert_eq!(path, PathBuf::from("assets/preview/decorations.json"));
     }
 
     #[test]
