@@ -502,6 +502,10 @@ impl ClientRequestBudget {
             return false;
         }
 
+        // A bucket may have been seeded through the pure store API before
+        // lifecycle metadata was observed.  Treat that as an unknown role
+        // generation and discard it before binding the current character.
+        self.store.cleanup(&client);
         self.character_ids.insert(client, current.to_string());
         true
     }
