@@ -219,23 +219,45 @@ PR 创建时 Kody 必跑，push 新提交后通常也会重跑但不保证。
 
 ```bash
 HEAD=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
+OWNER_ID=141109150          # Kizunad；Kody 借这个账号发言，见下面「marker 不是身份认证」
 
-# ① 本轮有没有针对当前 HEAD 的 Kody 意见。三个过滤条件缺一不可：
+# ① 针对当前 HEAD 的 Kody 行内意见。四个条件缺一不可：
 #    - original_commit_id：commit_id 会被 GitHub 改写成"仍适用的最新 commit"
-#    - <!-- kody-codereview 标记：**Kody 用仓库 owner 自己的账号发言**
-#      （user.login=Kizunad / type=User / author_association=OWNER），
-#      按 user.login 根本区分不出它和真人，只能认这个标记
-#    - --paginate：默认每页 30 条，长 PR 会把后面几页的结论整段漏掉
-#    （gh api 的 --jq 不支持 --arg，要带变量过滤就管道给 jq）
+#    - <!-- kody-codereview 标记：Kody 没有独立账号，只能靠它认出处
+#    - user.id：挡住 fork 贡献者伪造 marker（挡不住 owner 自己，见下）
+#    - --paginate：默认每页 30 条，长 PR 会漏掉后面几页
 gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments \
-  | jq -r --arg h "$HEAD" '.[]
-      | select(.original_commit_id == $h and (.body | contains("<!-- kody-codereview")))
+  | jq -r --arg h "$HEAD" --argjson uid "$OWNER_ID" '.[]
+      | select(.original_commit_id == $h
+               and .user.id == $uid
+               and (.body | contains("<!-- kody-codereview")))
       | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
 
-# ② 无意见那一轮只有一条 issue comment，不带任何 SHA（见下）
+# ② 无意见那一轮只有 issue comment、不带 SHA，必须靠"晚于本轮触发评论"来绑定：
+#    触发评论必须**精确匹配**，不能用 contains：Kody 自己那条"代码审查完成"的
+#    使用指南里就带着 `@kody start-review` 字样，contains 会把它当成触发评论，
+#    于是 TRIGGER_AT 永远等于最新那条 Kody 评论，这个校验就自废了（实测 #2061
+#    上 contains 命中 3 条、全是 Kody 自己发的；精确匹配命中 0 条才是对的）。
+TRIGGER_AT=$(gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
+  | jq -r '[.[] | select(.body | test("^\\s*@kody start-review\\s*$")) | .created_at] | max')
 gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
-  | jq -r '.[] | select(.body | contains("<!-- kody-codereview")) | "\(.created_at)"'
+  | jq -r --arg t "$TRIGGER_AT" --argjson uid "$OWNER_ID" '.[]
+      | select((.body | contains("<!-- kody-codereview"))
+               and .user.id == $uid
+               and .created_at > $t)
+      | "\(.created_at)"'
 ```
+
+`TRIGGER_AT` 为空（本轮没发过 `@kody start-review`）时第二条查询不成立——那就**没有**
+可采信的 clean 结论，别退化成"看最新那条"，那正是旧 HEAD 结论冒充本轮的入口。
+
+⚠️ **marker 不是身份认证，别当门禁凭证用。** `<!-- kody-codereview` 写在**用户可写的
+body** 里，仓库 owner 完全可以手打一条同样的评论。而且 Kody 借的就是 owner 账号
+（`login=Kizunad` / `type=User` / `id=141109150` / `author_association=OWNER`），
+API 层没有任何字段能把它和真人分开：review 对象 body 为空（`body_len=0`）认不了 marker，
+也没有可供事后校验的 webhook 签名。所以这套判据的定位是**防自己搞错**（防旧 HEAD 的
+结论冒充本轮），不是防恶意伪造；真要防伪造得让 Kody 用独立 App 账号发言，那是配置层的事，
+不是这份文档能兜的。
 
 `pulls/<PR>/reviews` 端点也带真实 `commit_id`，但 Kody 的 review 对象 **body 是空的**
 （实测 `body_len=0`），认不出是不是它发的，所以不拿它当权威——真要用得靠行内意见的
