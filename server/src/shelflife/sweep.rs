@@ -200,22 +200,18 @@ mod tests {
             .0
             .into_iter()
             .filter(|frame| {
-                frame
-                    .decode::<CustomPayloadS2c>()
-                    .ok()
-                    .filter(|packet| packet.channel.as_str() == "bong:server_data")
-                    .is_some_and(|packet| {
-                        serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(
-                            packet.data.0 .0,
+                let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                    return false;
+                };
+                if packet.channel.as_str() != "bong:server_data" {
+                    return false;
+                }
+                serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(packet.data.0 .0)
+                    .is_ok_and(|payload| {
+                        matches!(
+                            payload.payload,
+                            crate::schema::server_data::ServerDataPayloadV1::InventorySnapshot(_)
                         )
-                        .is_ok_and(|payload| {
-                            matches!(
-                                payload.payload,
-                                crate::schema::server_data::ServerDataPayloadV1::InventorySnapshot(
-                                    _
-                                )
-                            )
-                        })
                     })
             })
             .count()
@@ -236,10 +232,8 @@ mod tests {
         let mut template = ItemTemplate::minimal_for_test("dead_mineral_ling_shi_fan");
         template.display_name = "死灵石".to_string();
         template.description = "dead".to_string();
-        let item_registry = ItemRegistry::from_map(HashMap::from([(
-            template.id.clone(),
-            template,
-        )]));
+        let item_registry =
+            ItemRegistry::from_map(HashMap::from([(template.id.clone(), template)]));
 
         let mut app = App::new();
         app.insert_resource(profile_registry);
