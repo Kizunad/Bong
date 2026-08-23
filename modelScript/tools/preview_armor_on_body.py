@@ -499,6 +499,9 @@ def main() -> None:
     parser.add_argument("--dump-skin", action="store_true", help="另存一张生成的皮肤便于查看")
     parser.add_argument("--coverage", action="store_true",
                         help="逐面采样报哪个身体部位还露在甲外面")
+    parser.add_argument("--set", dest="as_set", action="store_true",
+                        help="把该材质的所有件**合成一件**穿上（判各件之间的搭接，"
+                             "如腿甲下摆压不压得住靴筒口）；件名取 <material>_set")
     args = parser.parse_args()
 
     out_dir = Path(__file__).resolve().parents[1] / "out"
@@ -512,7 +515,19 @@ def main() -> None:
     texture = module.make_texture()
     material = getattr(module, "MATERIAL", "preview")
     skin = make_grey_skin() if args.grey else make_player_skin()
-    for part in module.parts():
+
+    # --set：整套一起穿。单件预览判不出**件与件**的关系——腿甲的下摆和靴筒口
+    # 谁压谁、绑腿的穗有没有把鞋的绑绳整个埋掉，这些只有合起来才看得见，而它们
+    # 恰恰是"穿上以后好不好看"的大头。合成件只用于预览，不写任何游戏资产。
+    if args.as_set:
+        merged: tuple = ()
+        for part in module.parts():
+            merged += part.cubes
+        parts = (ArmorPart(f"{material}_set", f"{material.upper()} SET", merged),)
+    else:
+        parts = module.parts()
+
+    for part in parts:
         if args.part and part.key != args.part:
             continue
         if args.coverage:
