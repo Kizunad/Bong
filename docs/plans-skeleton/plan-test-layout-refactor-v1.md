@@ -22,7 +22,7 @@
 
 ## 立 plan 前预检记录（T0，2026-08-23）
 
-- **`docs/worldview.md`**：文件存在（1734 行）；按 test layout、test-all、测试布局/所有权/统一入口、CI 关键词扫描，未发现测试基础设施的世界观锚点。本 plan 不修改 worldview。
+- **`docs/worldview.md`**：证据范围为 `docs/worldview.md:1-1734`（`wc -l` = 1734；文件首个世界观章节从 `:1` 开始，玩法/区域/经济等锚点覆盖全文）。对该完整范围执行 `grep -nEi 'test|测试|CI|脚本|统一入口|所有权|artifact|报告'`；命中的“入口”等词均属于玩法/地理语境（例如 `docs/worldview.md:1409`），没有测试目录、测试命令、CI job、报告或 artifact ownership 的基础设施决策。因此“不修改 worldview”的结论落在本 plan 的 `§接入面`（worldview 锚点）、`§T0/P0`（只盘点既有契约）和 `§验收抓手`（明确不改 `docs/worldview.md`），本 plan 不修改该文件。
 - **`docs/finished_plans/`**：共 359 份归档 plan；相关关键词命中的是业务 plan 内的测试段（如 `plan-dandao-path-v1`、`plan-shield-block-combat-event-feedback-v1`），没有覆盖四栈测试布局、统一入口或 artifact ownership 的既有 plan，因此不并入。
 - **当前 active `docs/plan-*.md`**：逐项检查了 `plan-bot-e2e-coverage-v1`、`plan-ci-redis-pull-resilience-v1`、`plan-refactor-master-v1` 及其他 active plan；前者负责 bot 场景覆盖，后者负责 CI Redis 稳定性，`plan-refactor-master-v1` 的矩阵是代码 ownership，均不拥有四栈测试目录/报告编排，不重复其 scope。
 - **`docs/plans-skeleton/` 与 `reminder.md`**：立项前有 166 个 skeleton；无同名 `plan-test-layout-refactor-*` 或四栈测试布局主题骨架，`docs/plans-skeleton/reminder.md` 也无匹配待办。本文件因此作为独立 skeleton 新建。
