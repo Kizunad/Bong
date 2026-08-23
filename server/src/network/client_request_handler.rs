@@ -213,6 +213,16 @@ pub struct AlchemyMockState {
     pub recipe_index: HashMap<String, i32>,
 }
 
+type DyingElderTargetQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static crate::fauna::dying_elder::DyingElderState,
+        &'static NpcArchetype,
+    ),
+    (With<NpcMarker>, Without<Client>),
+>;
+
 /// 把 cast / quickslot 相关查询打包，避免 `handle_client_request_payloads`
 /// 顶部参数 tuple 超出 Bevy 0.14 SystemParam 16-tuple 上限。
 #[derive(SystemParam)]
@@ -222,15 +232,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
-    pub dying_elder_targets: Query<
-        'w,
-        's,
-        (
-            &'static crate::fauna::dying_elder::DyingElderState,
-            &'static NpcArchetype,
-        ),
-        (With<NpcMarker>, Without<Client>),
-    >,
+    pub dying_elder_targets: DyingElderTargetQuery<'w, 's>,
     pub unique_ids: Query<'w, 's, &'static UniqueId>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
     pub technique_registry: Res<'w, TechniqueRegistry>,
@@ -20838,14 +20840,11 @@ fn handle_give_dan_to_elder(
     elder_entity_id: i32,
     inventories: &mut Query<&mut PlayerInventory>,
     entity_manager: Option<&valence::prelude::EntityManager>,
-    mut clients: &mut Query<(&Username, &mut Client)>,
+    clients: &mut Query<(&Username, &mut Client)>,
     give_dan_tx: Option<&mut Events<crate::fauna::dying_elder::GiveDanToElderIntent>>,
     positions: &Query<&valence::prelude::Position>,
     dimensions: &Query<&CurrentDimension>,
-    dying_elder_targets: &Query<
-        (&crate::fauna::dying_elder::DyingElderState, &NpcArchetype),
-        (With<NpcMarker>, Without<Client>),
-    >,
+    dying_elder_targets: &DyingElderTargetQuery<'_, '_>,
 ) {
     use crate::fauna::dying_elder::GiveDanToElderIntent;
 
@@ -20903,7 +20902,7 @@ fn handle_give_dan_to_elder(
     // the downstream transaction cannot consume a pill for a stale/forged target.
     let Ok((elder_state, elder_archetype)) = dying_elder_targets.get(elder_entity) else {
         reject_give_dan_target(
-            &mut clients,
+            clients,
             player_entity,
             "§c[垂死大能] 目标不是可交互的大能。",
         );
@@ -20911,7 +20910,7 @@ fn handle_give_dan_to_elder(
     };
     if *elder_archetype != NpcArchetype::DyingElder || !dying_elder_can_receive_dan(elder_state) {
         reject_give_dan_target(
-            &mut clients,
+            clients,
             player_entity,
             "§c[垂死大能] 目标当前不接受回元丹。",
         );
@@ -20922,7 +20921,7 @@ fn handle_give_dan_to_elder(
         (positions.get(player_entity), positions.get(elder_entity))
     else {
         reject_give_dan_target(
-            &mut clients,
+            clients,
             player_entity,
             "§c[垂死大能] 无法确认玩家与目标位置。",
         );
@@ -20931,11 +20930,7 @@ fn handle_give_dan_to_elder(
     let (Ok(player_dimension), Ok(elder_dimension)) =
         (dimensions.get(player_entity), dimensions.get(elder_entity))
     else {
-        reject_give_dan_target(
-            &mut clients,
-            player_entity,
-            "§c[垂死大能] 无法确认目标位面。",
-        );
+        reject_give_dan_target(clients, player_entity, "§c[垂死大能] 无法确认目标位面。");
         return;
     };
     if !is_give_dan_target_in_scope(
@@ -20945,7 +20940,7 @@ fn handle_give_dan_to_elder(
         elder_dimension.0,
     ) {
         reject_give_dan_target(
-            &mut clients,
+            clients,
             player_entity,
             "§c[垂死大能] 目标不在当前位面或交互范围内。",
         );
