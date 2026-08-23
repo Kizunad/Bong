@@ -143,6 +143,14 @@ impl DistanceRule {
                     return false;
                 }
 
+                if requester
+                    .iter()
+                    .chain(target.iter())
+                    .any(|coordinate| !coordinate.is_finite())
+                {
+                    return false;
+                }
+
                 let dx = requester[0] - target[0];
                 let dy = requester[1] - target[1];
                 let dz = requester[2] - target[2];
@@ -510,6 +518,16 @@ mod tests {
         assert!(rule.allows([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]));
         assert!(rule.allows([0.0, 0.0, 0.0], [-3.0, 0.0, 2.5]));
         assert!(!rule.allows([0.0, 0.0, 0.0], [3.0 + EPSILON, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn non_finite_coordinates_are_rejected() {
+        let chebyshev = DistanceRule::workbench();
+        let euclidean = DistanceRule::euclidean3d_squared(3.0);
+
+        assert!(!chebyshev.allows([f64::NAN, 0.0, 0.0], [0.0, 0.0, 0.0]));
+        assert!(!chebyshev.allows([0.0, 0.0, 0.0], [0.0, f64::NAN, 0.0]));
+        assert!(!euclidean.allows([f64::INFINITY, 0.0, 0.0], [0.0, 0.0, 0.0]));
     }
 
     #[test]
