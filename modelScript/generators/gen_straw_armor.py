@@ -166,16 +166,22 @@ def _leg_cubes(mount: str, sign: float) -> tuple[Cube, ...]:
 
     # ── 顶穗 / 底穗：散开的杆头，做成一根根尖刺而不是一整圈裙边 ──
     # round 1 用四片吃满整边的板，渲出来和绳箍一模一样，读成「又两道箍」。
-    # 穗的特征是**参差**：每端八根，宽 0.62~0.86、长短各不同、深度也各不同，
+    # 穗的特征是**参差**：每端八根，宽 0.50~0.62、长短各不同、深度也各不同，
     # 任何视角看过去都是不齐的口（兽皮甲靴筒口同一条经验：只错开一个轴的话
-    # 换个视角又是平边）。顶穗封在 y≤12.35：再高就顶进躯干（y12 起）体积。
+    # 换个视角又是平边）。
+    #
+    # 顶穗的高度**按 z 分两档**，不是统一封顶：
+    #  - 前后两排在 z<-2.2 / z>2.3，整个躲开躯干和手臂的 z 带（±2），可以放到 12.6
+    #  - 外侧两排在 z-1.4~1.6，正撞手臂（world x4~8 / y12~24 / z±2）的 z 带，
+    #    必须压在 y<12 —— round 1 它们伸到 12.51，抬手时会有草刺从肘部长出来。
+    #    这条由 _assert_no_body_clash 挡住，别再改回去。
     for name, x0, w, dy, z0, dz, uv in (
         ("tuft_top_f1", -1.62, 0.58, 0.96, -2.96, 0.62, UV_WORN_A),
         ("tuft_top_f2", -0.70, 0.62, 1.24, -2.88, 0.58, UV_WORN_B),
         ("tuft_top_f3", 0.62, 0.54, 0.80, -3.00, 0.66, UV_WORN_A),
         ("tuft_top_o4", 1.74, 0.56, 1.10, -2.94, 0.60, UV_WORN_B),
-        ("tuft_top_o1", 2.30, 0.58, 1.16, -1.42, 0.80, UV_WORN_A),
-        ("tuft_top_o2", 2.38, 0.52, 0.72, 0.82, 0.74, UV_WORN_B),
+        ("tuft_top_o1", 2.30, 0.58, 0.58, -1.42, 0.80, UV_WORN_A),
+        ("tuft_top_o2", 2.38, 0.52, 0.50, 0.82, 0.74, UV_WORN_B),
         ("tuft_top_b1", -1.14, 0.60, 0.88, 2.36, 0.62, UV_WORN_A),
         ("tuft_top_b2", 1.06, 0.56, 0.64, 2.42, 0.56, UV_WORN_B),
     ):
@@ -185,7 +191,7 @@ def _leg_cubes(mount: str, sign: float) -> tuple[Cube, ...]:
         ("tuft_bot_f2", -0.58, 0.60, 0.62, -3.02, 0.68, UV_WORN_A),
         ("tuft_bot_f3", 0.74, 0.52, 0.94, -2.90, 0.56, UV_WORN_B),
         ("tuft_bot_f4", 1.86, 0.54, 0.70, -2.98, 0.64, UV_WORN_A),
-        ("tuft_bot_o1", 2.32, 0.56, 1.02, -1.28, 0.78, UV_WORN_B),
+        ("tuft_bot_o1", 2.37, 0.53, 1.02, -1.33, 0.79, UV_WORN_B),
         ("tuft_bot_o2", 2.40, 0.50, 0.66, 0.94, 0.70, UV_WORN_A),
         ("tuft_bot_b1", -1.20, 0.58, 0.76, 2.38, 0.60, UV_WORN_B),
         ("tuft_bot_b2", 1.12, 0.54, 0.58, 2.44, 0.54, UV_WORN_A),
@@ -379,6 +385,76 @@ def _assert_no_coplanar_faces(all_parts: tuple[ArmorPart, ...]) -> None:
                                 f"{part.key}: {first.name} 与 {second.name} 的 "
                                 f"{'xyz'[axis]}-{face} 面共面于 {value_a}，"
                                 f"投影相交 {overlap:.2f}——会 z-fighting，挪开一块"
+                            )
+
+
+# 原版 biped 的体积（世界坐标，脚在 y=0）。护甲件穿模进去 = 抬手抬腿时穿帮。
+VANILLA_ARM_LEFT = ((4.0, 8.0), (12.0, 24.0), (-2.0, 2.0))
+VANILLA_BODY = ((-4.0, 4.0), (12.0, 24.0), (-2.0, 2.0))
+
+
+def _world_box(cube: Cube) -> tuple[tuple[float, float], ...]:
+    from armor_model_common import MOUNT_X
+
+    offset = MOUNT_X[cube.mount]
+    origin = (cube.origin[0] + offset, cube.origin[1], cube.origin[2])
+    return tuple((origin[i], origin[i] + cube.size[i]) for i in range(3))
+
+
+def _overlaps(a, b, slack: float = 0.01) -> bool:
+    return all(min(a[i][1], b[i][1]) - max(a[i][0], b[i][0]) > slack for i in range(3))
+
+
+def _assert_no_body_clash(all_parts: tuple[ArmorPart, ...]) -> None:
+    """腿/脚上的件不准钻进躯干和手臂的体积。
+
+    腿甲的顶沿天然要往上够到髋线（y12）才不露缝，越界一点点就撞上从 y12 起的
+    躯干和手臂。静止三视图里这种穿模常常被手臂自己挡住看不见，**一抬手就露**，
+    所以只能靠算。左件对左臂即可：`_assert_mirror_symmetry` 已经保证右件是镜像。
+    """
+    for part in all_parts:
+        for cube in part.cubes:
+            if not cube.mount.startswith("LEFT"):
+                continue
+            box = _world_box(cube)
+            for name, volume in (("手臂", VANILLA_ARM_LEFT), ("躯干", VANILLA_BODY)):
+                if _overlaps(box, volume):
+                    raise ValueError(
+                        f"{part.key}/{cube.name} 钻进原版{name}体积 "
+                        f"(x{box[0][0]:.2f}~{box[0][1]:.2f} y{box[1][0]:.2f}~{box[1][1]:.2f} "
+                        f"z{box[2][0]:.2f}~{box[2][1]:.2f})——抬手/抬腿会穿帮"
+                    )
+
+
+def _assert_parts_stack_cleanly(all_parts: tuple[ArmorPart, ...]) -> None:
+    """护腿和草鞋是**同时穿**的，两件之间也不准有共面。
+
+    单件内的共面由 `_assert_no_coplanar_faces` 管，但它一次只看一件。护腿的底穗
+    （y 2.0~3.1）和草鞋的踝箍/结（y 2.0~2.9）在同一段高度上，两件各自都合法、
+    合起来照样能 z-fighting。件与件**互相插入是允许的**（草绑腿本来就该压在
+    草鞋的绑绳上），只禁止表面重合。
+    """
+    from itertools import combinations
+
+    for first, second in combinations(all_parts, 2):
+        for cube_a in first.cubes:
+            box_a = _world_box(cube_a)
+            for cube_b in second.cubes:
+                box_b = _world_box(cube_b)
+                for axis in range(3):
+                    overlap = 1.0
+                    for other in (k for k in range(3) if k != axis):
+                        overlap *= max(0.0, min(box_a[other][1], box_b[other][1])
+                                       - max(box_a[other][0], box_b[other][0]))
+                    if overlap <= 0.02:
+                        continue
+                    for face in (0, 1):
+                        if abs(box_a[axis][face] - box_b[axis][face]) < 1e-6:
+                            raise ValueError(
+                                f"{first.key}/{cube_a.name} 与 {second.key}/{cube_b.name} 的 "
+                                f"{'xyz'[axis]}-{'min' if face == 0 else 'max'} 面共面于 "
+                                f"{box_a[axis][face]}，投影相交 {overlap:.2f}——两件同时穿会 "
+                                f"z-fighting，挪开一件"
                             )
 
 
@@ -638,6 +714,8 @@ def generate(render_previews: bool = True, install: bool = False) -> dict[str, P
     _assert_uv_tiles(all_parts)
     _assert_inner_edges_meet(all_parts)
     _assert_mirror_symmetry(all_parts)
+    _assert_no_body_clash(all_parts)
+    _assert_parts_stack_cleanly(all_parts)
     return write_material_assets(
         MATERIAL,
         all_parts,
