@@ -16,9 +16,9 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, BlockPos, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager, EventReader,
-    EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource, UniqueId,
-    Username, With, Without,
+    bevy_ecs, BlockPos, ChunkLayer, Client, Commands, DVec3, Entity, EntityLayerId, EntityManager,
+    EventReader, EventWriter, Events, Position, Query, RemovedComponents, Res, ResMut, Resource,
+    UniqueId, Username, With, Without,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -318,6 +318,28 @@ pub struct ClientRequestBudget {
     character_ids: HashMap<Entity, String>,
 }
 
+/// O(1) lookup surface for authoritative lingtian plot positions.  The
+/// snapshot is refreshed once per update; individual C2S requests do not
+/// rescan every plot.
+#[derive(Debug, Default, Resource)]
+pub struct LingtianPlotIndex {
+    positions: HashSet<BlockPos>,
+}
+
+impl LingtianPlotIndex {
+    fn contains(&self, position: &BlockPos) -> bool {
+        self.positions.contains(position)
+    }
+}
+
+pub fn refresh_lingtian_plot_index(
+    mut index: ResMut<LingtianPlotIndex>,
+    plots: Query<&LingtianPlot>,
+) {
+    index.positions.clear();
+    index.positions.extend(plots.iter().map(|plot| plot.pos));
+}
+
 impl ClientRequestBudget {
     fn prepare_client(&mut self, client: Entity, character_id: Option<&str>) -> bool {
         let current = character_id.unwrap_or("<unbound>");
@@ -399,7 +421,9 @@ pub struct ClientRequestIngressParams<'w, 's> {
     pub budget: Option<ResMut<'w, ClientRequestBudget>>,
     pub lifecycles: Query<'w, 's, Option<&'static Lifecycle>>,
     pub gate_targets: Query<'w, 's, ClientRequestGateTarget<'static>>,
-    pub lingtian_plots: Query<'w, 's, &'static LingtianPlot>,
+    pub lingtian_plot_index: Option<Res<'w, LingtianPlotIndex>>,
+    pub chunk_layers:
+        Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     pub dimension_layers: Option<Res<'w, DimensionLayers>>,
 }
 
@@ -710,12 +734,15 @@ fn requester_gate_context(
         return Err(GateDenialReason::MissingAuthorityContext);
     }
 
-    let Ok((position, dimension, _, _, _)) = ingress.gate_targets.get(client) else {
+    let Ok((position, current_dimension, layer, _, _)) = ingress.gate_targets.get(client) else {
         return Err(GateDenialReason::MissingAuthorityContext);
     };
-    let dimension = dimension
-        .map(|dimension| dimension.0)
-        .ok_or(GateDenialReason::MissingAuthorityContext)?;
+    let dimension = dimension_for_target_layer(
+        current_dimension,
+        layer,
+        ingress.dimension_layers.as_deref(),
+    )
+    .ok_or(GateDenialReason::MissingAuthorityContext)?;
 
     Ok(GateContext::new(
         Some(gate_position(position)),
@@ -729,6 +756,7 @@ fn evaluate_live_gate(
     request: &ClientRequestV1,
     client: Entity,
     ingress: &ClientRequestIngressParams<'_, '_>,
+    lingtian_plot_index: Option<&LingtianPlotIndex>,
     dispatch: &ClientRequestDispatchParams<'_>,
     combat_params: &CombatRequestParams<'_, '_>,
     inventories: &mut Query<&mut PlayerInventory>,
@@ -746,11 +774,14 @@ fn evaluate_live_gate(
         }
         ClientRequestV1::LingtianStartTill { x, y, z, .. } => {
             let target_block = BlockPos::new(*x, *y, *z);
-            if !ingress
-                .lingtian_plots
-                .iter()
-                .any(|plot| plot.pos == target_block)
-            {
+            let plot_index =
+                lingtian_plot_index.ok_or(GateDenialReason::MissingAuthorityContext)?;
+            let target_exists = plot_index.contains(&target_block)
+                || ingress
+                    .chunk_layers
+                    .iter()
+                    .any(|layer| layer.block(target_block).is_some());
+            if !target_exists {
                 return Err(GateDenialReason::TargetNotFound);
             }
             let target = [
@@ -914,11 +945,76 @@ fn gate_feedback_message(reason: GateDenialReason) -> &'static str {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LiveGateFeedback {
+    EventAlert,
+    Chat(&'static str),
+    Silent,
+}
+
+fn live_gate_feedback(
+    request: Option<&ClientRequestV1>,
+    reason: GateDenialReason,
+    client: Entity,
+    inventories: Option<&mut Query<&mut PlayerInventory>>,
+) -> LiveGateFeedback {
+    let Some(request) = request else {
+        return LiveGateFeedback::EventAlert;
+    };
+
+    match request {
+        // Preserve the established consumer contract: these two target lookup
+        // failures are chat-only, while an out-of-range workbench is a silent
+        // interaction rejection.  The budget still bounds both paths.
+        ClientRequestV1::WorkbenchOpen { .. } => match reason {
+            GateDenialReason::TargetNotFound => LiveGateFeedback::Chat("§c[制作台] 目标不存在。"),
+            _ => LiveGateFeedback::Silent,
+        },
+        ClientRequestV1::GiveDanToElder {
+            pill_instance_id, ..
+        } => {
+            if let Some(inventories) = inventories {
+                let item = inventories.get_mut(client).ok().and_then(|inventory| {
+                    crate::inventory::inventory_item_by_instance_borrow(
+                        &inventory,
+                        *pill_instance_id,
+                    )
+                });
+                let Some(item) = item else {
+                    return LiveGateFeedback::Chat("§c[垂死大能] 背包中未找到该回元丹。");
+                };
+                if item.template_id != "huiyuan_pill" {
+                    return LiveGateFeedback::Chat("§c[垂死大能] 只接受回元丹。");
+                }
+            }
+
+            match reason {
+                GateDenialReason::TargetNotFound => {
+                    LiveGateFeedback::Chat("§c[垂死大能] 找不到目标大能。")
+                }
+                GateDenialReason::WrongDimension | GateDenialReason::OutOfReach => {
+                    LiveGateFeedback::Chat("§c[垂死大能] 目标不在当前位面或交互范围内。")
+                }
+                GateDenialReason::InvalidState => {
+                    LiveGateFeedback::Chat("§c[垂死大能] 目标不是可交互的大能。")
+                }
+                _ => LiveGateFeedback::Silent,
+            }
+        }
+        // Till has always been rejected without a client-facing response; its
+        // existing post-transfer validator remains the domain-level authority.
+        ClientRequestV1::LingtianStartTill { .. } => LiveGateFeedback::Silent,
+        _ => LiveGateFeedback::EventAlert,
+    }
+}
+
 fn report_live_gate_denial(
     client: Entity,
     tick: u64,
     request_kind: &'static str,
     reason: GateDenialReason,
+    request: Option<&ClientRequestV1>,
+    inventories: Option<&mut Query<&mut PlayerInventory>>,
     budget: Option<&mut ClientRequestBudget>,
     clients: &mut Query<(&Username, &mut Client)>,
 ) {
@@ -939,7 +1035,15 @@ fn report_live_gate_denial(
             "live C2S request rejected"
         );
     }
-    if !feedback.emit {
+    let feedback_mode = live_gate_feedback(request, reason, client, inventories);
+    if !feedback.emit || feedback_mode == LiveGateFeedback::Silent {
+        return;
+    }
+
+    if let LiveGateFeedback::Chat(message) = feedback_mode {
+        if let Ok((_username, mut client)) = clients.get_mut(client) {
+            client.send_chat_message(message);
+        }
         return;
     }
 
@@ -1013,6 +1117,8 @@ pub fn handle_client_request_payloads(
                     ingress.combat_clock.tick,
                     "ingress",
                     GateDenialReason::RateLimited,
+                    None,
+                    None,
                     ingress.budget.as_deref_mut(),
                     &mut clients,
                 );
@@ -1180,6 +1286,7 @@ pub fn handle_client_request_payloads(
                 &request,
                 ev.client,
                 &ingress,
+                ingress.lingtian_plot_index.as_deref(),
                 &dispatch,
                 &combat_params,
                 &mut inventories,
@@ -1190,6 +1297,8 @@ pub fn handle_client_request_payloads(
                     ingress.combat_clock.tick,
                     request_kind,
                     reason,
+                    Some(&request),
+                    Some(&mut inventories),
                     ingress.budget.as_deref_mut(),
                     &mut clients,
                 );
@@ -6605,6 +6714,73 @@ mod tests {
             });
         app.update();
         (client, drain_lingtian_request_captures(&mut app))
+    }
+
+    #[test]
+    fn requester_gate_dimension_falls_back_to_entity_layer() {
+        let overworld = Entity::from_raw(101);
+        let tsy = Entity::from_raw(102);
+        let layers = DimensionLayers { overworld, tsy };
+
+        assert_eq!(
+            dimension_for_target_layer(
+                None,
+                Some(&EntityLayerId(overworld)),
+                Some(&layers),
+            ),
+            Some(DimensionKind::Overworld),
+            "a live client without CurrentDimension must still resolve its authoritative overworld layer"
+        );
+        assert_eq!(
+            dimension_for_target_layer(None, Some(&EntityLayerId(tsy)), Some(&layers)),
+            Some(DimensionKind::Tsy),
+            "a live client without CurrentDimension must still resolve its authoritative Tsy layer"
+        );
+        assert_eq!(
+            dimension_for_target_layer(
+                None,
+                Some(&EntityLayerId(Entity::from_raw(103))),
+                Some(&layers),
+            ),
+            None,
+            "an unknown layer must fail closed instead of guessing a dimension"
+        );
+    }
+
+    #[test]
+    fn lingtian_plot_index_tracks_authoritative_positions() {
+        let mut app = App::new();
+        app.init_resource::<LingtianPlotIndex>();
+        app.add_systems(Update, refresh_lingtian_plot_index);
+
+        let first = BlockPos::new(-3, 64, 7);
+        let second = BlockPos::new(9, 65, -11);
+        let first_entity = app.world_mut().spawn(LingtianPlot::new(first, None)).id();
+        app.world_mut().spawn(LingtianPlot::new(second, None));
+
+        app.update();
+        let index = app.world().resource::<LingtianPlotIndex>();
+        assert!(
+            index.contains(&first),
+            "the refreshed index must admit the first authoritative plot position"
+        );
+        assert!(
+            index.contains(&second),
+            "the refreshed index must admit the second authoritative plot position"
+        );
+
+        app.world_mut().despawn(first_entity);
+        app.update();
+        assert!(
+            !app.world().resource::<LingtianPlotIndex>().contains(&first),
+            "despawned plots must disappear from the next ingress index snapshot"
+        );
+        assert!(
+            app.world()
+                .resource::<LingtianPlotIndex>()
+                .contains(&second),
+            "remaining plots must stay addressable after index refresh"
+        );
     }
 
     #[test]

@@ -386,6 +386,12 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
 /// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
 pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
     app.init_resource::<client_request_handler::ClientRequestBudget>();
+    app.init_resource::<client_request_handler::LingtianPlotIndex>();
+    app.add_systems(
+        Update,
+        client_request_handler::refresh_lingtian_plot_index
+            .before(client_request_handler::handle_client_request_payloads),
+    );
     app.add_systems(
         Update,
         client_request_handler::cleanup_client_request_budget
