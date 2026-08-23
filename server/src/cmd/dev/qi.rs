@@ -206,8 +206,7 @@ mod tests {
             "新上限 800 应把当前真元 900 钳到 800（Set 分支不钳，Max 分支才钳）"
         );
         assert_eq!(
-            cultivation.qi_max_frozen,
-            None,
+            cultivation.qi_max_frozen, None,
             "dev qi max 应重置真元冻结量（跨铺底残留冻结会令渡劫 Obsession 抉择软锁）"
         );
     }

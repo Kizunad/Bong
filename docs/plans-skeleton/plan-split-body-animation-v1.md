@@ -29,8 +29,8 @@
 | 上半身招式 | 同目录 `jian_{stance_high_low,draw_waist,waist_spin_cross,dual_smash,dual_sweep}.json`，生成器 `client/tools/gen_jian_dual_strikes.py`（`assert_upper_only`：不许写 leg，body 仅允许 y/z） |
 | 档位判定 | `client/.../animation/GaitSelector.java`（纯函数）+ `LowerBodyGaitController.java`（tick 接线，档位变了才换动画） |
 | 视角跟随 | `client/.../animation/UpperBodyViewPitchLayer.java`（procedural `IAnimation`，priority 700，写 `torso.bend`，常态 15°／持械 40° 分档） |
-| 预览工具 | `scripts/models/render_player_pose.py`（真实 cuboid + bend 变形 + emotecraft JSON 逐帧 + `--with-jian` 挂武器）、`render_jian_in_hand.py`（关节层级摆位） |
-| 武器模型 | `local_models/BambooJian.bbmodel` / `BambooJianSingle.bbmodel` / `JianPlayer.bbmodel` / `JianPlayerAnim.bbmodel`（含内嵌动画），生成器 `scripts/models/gen_bamboo_jian.py` / `gen_jian_player.py` / `gen_jian_player_anim.py` |
+| 预览工具 | `modelScript/core/render_player_pose.py`（真实 cuboid + bend 变形 + emotecraft JSON 逐帧 + `--with-jian` 挂武器）、`render_jian_in_hand.py`（关节层级摆位） |
+| 武器模型 | `modelScript/models/BambooJian.bbmodel` / `BambooJianSingle.bbmodel` / `JianPlayer.bbmodel` / `JianPlayerAnim.bbmodel`（含内嵌动画），生成器 `modelScript/generators/gen_bamboo_jian.py` / `gen_jian_player.py` / `gen_jian_player_anim.py` |
 | 测试 | `GaitSelectorTest`（10）+ `UpperBodyViewPitchLayerTest`（11） |
 
 **架势形制**（参考实拍定型）：一高一低分持——右臂高举、左臂低位内收，两把锏的尖端在

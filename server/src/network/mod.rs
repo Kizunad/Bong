@@ -43,6 +43,7 @@ pub mod forge_snapshot_emit;
 pub mod freshness_probe_emit;
 pub mod full_power_emit;
 pub mod gameplay_vfx;
+pub mod gate;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_move_rejected_emit;
@@ -793,8 +794,11 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     app.add_systems(
         Update,
         (
-            alchemy_bridge::publish_alchemy_session_end_events,
+            alchemy_bridge::publish_alchemy_session_end_events
+                .after(client_request_handler::handle_client_request_payloads),
             alchemy_bridge::publish_alchemy_insight_events,
+            alchemy_snapshot_emit::emit_alchemy_outcome_resolved
+                .after(client_request_handler::handle_client_request_payloads),
         ),
     );
     app.add_systems(
@@ -1014,7 +1018,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events)
-                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system)
+                .after(crate::social::SocialSystemSet::TradeOfferResponse),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,
@@ -3801,6 +3806,9 @@ mod tests {
             let (tx_outbound, rx_outbound) = unbounded();
             let (_tx_inbound, rx_inbound) = unbounded();
             let mut app = App::new();
+            app.insert_resource(
+                crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+            );
 
             crate::npc::faction::register(&mut app);
 
@@ -6640,10 +6648,8 @@ mod tests {
         fn agent_state_sqlite_authority_survives_redis_restart() {
             let root = unique_temp_dir("sqlite-authority-survives-redis-restart");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "agent_state_sqlite_authority_survives_redis_restart",
             );
 
@@ -6718,10 +6724,8 @@ mod tests {
         fn bootstrap_world_model_runtime_mirror_loads_sqlite_snapshot_before_mirror_write() {
             let root = unique_temp_dir("runtime-mirror-bootstrap-loads-sqlite-snapshot");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "runtime_mirror_bootstrap_loads_sqlite_snapshot",
             );
 
@@ -6778,10 +6782,8 @@ mod tests {
         fn agent_world_model_ingress_persists_sqlite_without_runtime_mirror_config() {
             let root = unique_temp_dir("agent-world-model-ingress-without-runtime-mirror");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "agent_world_model_ingress_without_runtime_mirror",
             );
 
@@ -6919,10 +6921,8 @@ mod tests {
         fn agent_world_model_ingress_persists_append_only_rows_without_runtime_mirror_config() {
             let root = unique_temp_dir("agent-world-model-ingress-append-only-no-mirror");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "agent_world_model_ingress_append_only_without_runtime_mirror",
             );
 
@@ -6991,10 +6991,8 @@ mod tests {
         fn agent_publish_failure_does_not_roll_back_sqlite() {
             let root = unique_temp_dir("publish-failure-does-not-rollback-sqlite");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "agent_publish_failure_does_not_roll_back_sqlite",
             );
 
@@ -7069,10 +7067,8 @@ mod tests {
         fn reconcile_world_model_runtime_mirror_loads_sqlite_snapshot_before_writer() {
             let root = unique_temp_dir("runtime-mirror-reconcile-loads-sqlite-snapshot");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "runtime_mirror_reconcile_loads_sqlite_snapshot",
             );
 
@@ -7120,10 +7116,8 @@ mod tests {
         fn reconcile_world_model_runtime_mirror_passes_none_when_sqlite_is_empty() {
             let root = unique_temp_dir("runtime-mirror-reconcile-empty-sqlite");
             let db_path = root.join("data").join("bong.db");
-            let deceased_dir = root.join("library-web").join("public").join("deceased");
-            let settings = PersistenceSettings::with_paths(
+            let settings = PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 "runtime_mirror_reconcile_empty_sqlite",
             );
 

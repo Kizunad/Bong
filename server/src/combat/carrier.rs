@@ -16,6 +16,7 @@ use crate::combat::components::{
 };
 use crate::combat::decay::{hit_qi_ratio, CarrierGrade};
 use crate::combat::events::CombatEvent;
+use crate::combat::guard_log::GuardLogDedup;
 use crate::combat::projectile::{
     residual_qi_after_miss, segment_point_distance, AnqiProjectileFlight, ProjectileDespawnReason,
     QiProjectile,
@@ -264,6 +265,7 @@ pub struct InjectProfile {
 }
 
 pub fn register(app: &mut App) {
+    app.init_resource::<GuardLogDedup>();
     app.add_event::<ChargeCarrierIntent>();
     app.add_event::<ThrowCarrierIntent>();
     app.add_event::<CarrierChargedEvent>();
@@ -768,12 +770,13 @@ fn transform_equipped_item(
 fn carry_decay_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
-    mut actors: Query<(&mut PlayerInventory, &mut CarrierStore)>,
+    mut stores: Query<(Entity, &mut CarrierStore)>,
+    mut inventories: Query<&mut PlayerInventory>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;
     }
-    for (mut inventory, mut store) in &mut actors {
+    for (entity, mut store) in &mut stores {
         let mut expired = Vec::new();
         for (instance_id, imprint) in &mut store.imprints_by_instance {
             if imprint.bond_kind != BondKind::HandheldCarrier {
@@ -790,9 +793,16 @@ fn carry_decay_tick(
                 expired.push(*instance_id);
             }
         }
-        for instance_id in expired {
-            store.imprints_by_instance.remove(&instance_id);
-            degrade_equipped_instance(&mut inventory, &registry, instance_id);
+        if expired.is_empty() {
+            continue;
+        }
+        for instance_id in &expired {
+            store.imprints_by_instance.remove(instance_id);
+        }
+        if let Ok(mut inventory) = inventories.get_mut(entity) {
+            for instance_id in expired {
+                degrade_equipped_instance(&mut inventory, &registry, instance_id);
+            }
         }
     }
 }
@@ -824,30 +834,70 @@ fn degrade_equipped_instance(
     transform_equipped_item(inventory, registry, slot, material_template)
 }
 
+type ThrowCarrierActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        &'static mut PlayerInventory,
+        &'static mut CarrierStore,
+        Option<&'static mut Stamina>,
+        Option<&'static UniqueId>,
+    ),
+>;
+
 fn throw_carrier_intents(
     clock: Res<CombatClock>,
     mut commands: Commands,
     mut intents: EventReader<ThrowCarrierIntent>,
-    mut actors: Query<(
-        &Position,
-        &mut PlayerInventory,
-        &mut CarrierStore,
-        Option<&mut Stamina>,
-    )>,
+    mut actors: ThrowCarrierActorQuery<'_, '_>,
+    // 护栏 guard info! 按 (carrier, reason) 去重：e2e 场景只需一条关联标记，
+    // 而任意连接可反复发 throw_carrier 空手请求——若每条都写 info 日志，
+    // 无操作请求就被转换成无界日志输出。去重经共享资源 GuardLogDedup 按 tick
+    // 窗口过期：窗口内每个 carrier×reason 至多一条（输出不随请求量增长），
+    // 窗口外自动剪除（内存不随历史玩家无限增长）。review findings [major]：
+    // 客户端可控抛射请求制造无界 info 日志路径 / dedup 表随历史玩家无限增长。
+    mut guard_log: ResMut<GuardLogDedup>,
 ) {
     for intent in intents.read() {
-        let Ok((position, mut inventory, mut store, stamina)) = actors.get_mut(intent.thrower)
+        let Ok((position, mut inventory, mut store, stamina, unique_id)) =
+            actors.get_mut(intent.thrower)
         else {
             continue;
         };
+        let wire_id = entity_wire_id(unique_id, intent.thrower);
         let Some(item) = inventory
             .equipped
             .get(intent.slot.equip_key())
             .and_then(|s| s.held.as_ref())
         else {
+            // e2e 空手护栏的正向证据：消费者系统（throw_carrier_intents）在「手槽
+            // 无载体」早退处发信号。carrier=player:{uuid} 是该 bot 的线缆 id，场景
+            // 用它把这条日志归属到自己的请求——不再依赖不唯一的 payload 字节数
+            // （review findings [major]：throw 场景缺消费者信号 / 日志相关性）。
+            // 系统未注册时此日志不出现，场景据此区分「护栏走了」与「消费者断线」。
+            // 每个 (carrier, no_carrier_item) 只在窗口内发一次：场景只需一条，
+            // 恶意客户端反复请求不能把 info 日志喂成无界输出（review finding
+            // [major]）。
+            if guard_log.should_emit(&wire_id, "no_carrier_item", clock.tick) {
+                tracing::info!(
+                    "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_carrier_item",
+                    wire_id,
+                    intent.slot
+                );
+            }
             continue;
         };
         let Some(imprint) = store.imprints_by_instance.remove(&item.instance_id) else {
+            // 与上同构：手槽有非暗器物品（新手村 fixture 主手通常是 iron_sword）
+            // 但无 anqi 印记——空手护栏的另一条实测路径。去重语义同上。
+            if guard_log.should_emit(&wire_id, "no_anqi_imprint", clock.tick) {
+                tracing::info!(
+                    "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_anqi_imprint",
+                    wire_id,
+                    intent.slot
+                );
+            }
             continue;
         };
         let dir = normalized_dir(intent.dir_unit);
@@ -3028,6 +3078,7 @@ mod tests {
     fn throw_app() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 0 });
+        app.init_resource::<GuardLogDedup>();
         app.add_event::<ThrowCarrierIntent>();
         app.add_systems(Update, throw_carrier_intents);
         app

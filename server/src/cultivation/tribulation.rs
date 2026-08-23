@@ -4221,15 +4221,10 @@ mod tests {
     fn persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         bootstrap_sqlite(&db_path, &format!("tribulation-{test_name}"))
             .expect("sqlite bootstrap should succeed");
         (
-            PersistenceSettings::with_paths(
-                &db_path,
-                &deceased_dir,
-                format!("tribulation-{test_name}"),
-            ),
+            PersistenceSettings::with_db_path(&db_path, format!("tribulation-{test_name}")),
             root,
         )
     }
@@ -4237,11 +4232,9 @@ mod tests {
     fn unbootstrapped_persistence_settings(test_name: &str) -> (PersistenceSettings, PathBuf) {
         let root = unique_temp_dir(test_name);
         let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("library-web").join("public").join("deceased");
         (
-            PersistenceSettings::with_paths(
+            PersistenceSettings::with_db_path(
                 &db_path,
-                &deceased_dir,
                 format!("tribulation-unbootstrapped-{test_name}"),
             ),
             root,

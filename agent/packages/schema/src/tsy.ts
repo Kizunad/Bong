@@ -167,7 +167,7 @@ export function validateTsyCollapseStartedV1Contract(data: unknown): ValidationR
 
 /** plan-tsy-lifecycle-v1 §3.3 — 塌缩完成；family 永久作废。
  *
- *  agent narration 据此发"某 TSY 化为虚无"信号；亡者博物馆（library-web 后续 plan）
+ *  agent narration 据此发"某 TSY 化为虚无"信号；亡者博物馆（后续 plan，载体待定）
  *  存档即用 `at_tick` 锚定时间。
  */
 export const TsyCollapseCompletedV1 = Type.Object(

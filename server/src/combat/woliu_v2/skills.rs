@@ -27,6 +27,7 @@ use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::scenario::PassiveTarget;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     qi_release_to_zone, QiAccountId, QiAccountKind, QiTransfer, QiTransferReason, WorldQiAccount,
@@ -612,24 +613,30 @@ fn collect_targets_in_radius(
         &Position,
         Option<&CurrentDimension>,
         Option<&Cultivation>,
+        Option<&PassiveTarget>,
     )>();
     query
         .iter(world)
-        .filter_map(|(entity, position, current_dimension, cultivation)| {
-            if entity == caster {
-                return None;
-            }
-            if current_dimension.map(|d| d.0).unwrap_or_default() != dimension {
-                return None;
-            }
-            if !cultivation.is_some_and(|c| c.qi_current > f64::EPSILON) {
-                return None;
-            }
-            if position.get().distance_squared(center) > radius_sq + f64::EPSILON {
-                return None;
-            }
-            Some(entity)
-        })
+        .filter_map(
+            |(entity, position, current_dimension, cultivation, passive_target)| {
+                if entity == caster {
+                    return None;
+                }
+                if passive_target.is_some() {
+                    return None;
+                }
+                if current_dimension.map(|d| d.0).unwrap_or_default() != dimension {
+                    return None;
+                }
+                if !cultivation.is_some_and(|c| c.qi_current > f64::EPSILON) {
+                    return None;
+                }
+                if position.get().distance_squared(center) > radius_sq + f64::EPSILON {
+                    return None;
+                }
+                Some(entity)
+            },
+        )
         .collect()
 }
 
@@ -925,6 +932,9 @@ fn apply_pull_displacement(
     displacement_blocks: f32,
     max_radius: f32,
 ) -> Option<f32> {
+    if world.get::<PassiveTarget>(target).is_some() {
+        return None;
+    }
     if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
         return None;
     }
@@ -967,6 +977,9 @@ fn apply_radial_displacement(
     displacement_blocks: f32,
     outward: bool,
 ) -> Option<f32> {
+    if world.get::<PassiveTarget>(target).is_some() {
+        return None;
+    }
     if !displacement_blocks.is_finite() || displacement_blocks <= f32::EPSILON {
         return None;
     }
@@ -2069,6 +2082,70 @@ mod tests {
         VoidErosion, BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION,
         VOID_CORE_DURATION_TICKS, VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
     };
+
+    #[test]
+    fn passive_target_is_excluded_from_all_woliu_displacement_paths() {
+        let mut world = bevy_ecs::world::World::new();
+        let caster = world
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let passive = world
+            .spawn((
+                Position::new([2.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+                PassiveTarget,
+            ))
+            .id();
+        let normal = world
+            .spawn((
+                Position::new([3.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let targets = collect_targets_in_radius(
+            &mut world,
+            caster,
+            DVec3::new(0.0, 64.0, 0.0),
+            DimensionKind::Overworld,
+            8.0,
+        );
+        assert_eq!(targets, vec![normal]);
+
+        let passive_before = world.get::<Position>(passive).unwrap().get();
+        assert_eq!(
+            apply_pull_displacement(&mut world, caster, passive, 1.0, 8.0),
+            None
+        );
+        assert_eq!(
+            apply_radial_displacement(&mut world, passive, DVec3::new(0.0, 64.0, 0.0), 1.0, true,),
+            None
+        );
+        assert_eq!(
+            world.get::<Position>(passive).unwrap().get(),
+            passive_before,
+            "passive target must retain its exact authoritative position across direct and AoE displacement helpers"
+        );
+
+        assert_eq!(
+            apply_pull_displacement(&mut world, caster, normal, 1.0, 8.0),
+            Some(1.0),
+            "control target must still consume the production pull path"
+        );
+    }
 
     /// plan-skill-av-relink-v1 P2 —— runtime visual 图标存在性 pin：15 变体
     /// `visual_for` 的 `icon_texture` 逐条对应 client main resources 磁盘真实

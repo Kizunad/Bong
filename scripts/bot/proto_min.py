@@ -38,6 +38,25 @@ PLAYER_STATE_REALM_NAMES = {
 }
 
 SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
+# proto/bong/envelope.proto ServerDataPayload oneof（与 server/src/schema/server_data.rs 对应）
+SERVER_DATA_SPARRING_INVITE_FIELD = 64
+SERVER_DATA_TRADE_OFFER_FIELD = 65
+SERVER_DATA_QUICKSLOT_CONFIG_FIELD = 35
+
+# QuickSlotConfigV1 内部字段（proto/bong/envelope.proto QuickSlotConfig）——
+# 命名常量供 decoder 与 wire 契约测试共同引用，避免两端各写一遍魔法数字漂移。
+QUICKSLOT_CONFIG_SLOTS_FIELD = 1
+QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD = 2
+QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD = 3
+QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD = 4
+
+# QuickSlotEntryV1 / OptionalQuickSlotEntry 内部字段。
+QUICKSLOT_ENTRY_ITEM_ID_FIELD = 1
+QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD = 2
+QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD = 3
+QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD = 4
+QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD = 5
+OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD = 1
 
 
 class ProtoDecodeError(ValueError):
@@ -71,16 +90,25 @@ SERVER_DATA_PAYLOAD_NAMES = {
     30: "gathering_session",
     31: "lingtian_session",
     34: "cast_sync",
+    35: "quickslot_config",
     36: "skillbar_config",
+    37: "techniques_snapshot",
+    49: "carrier_state",
     51: "combat_event",
+    54: "skill_config_snapshot",
+    64: "sparring_invite",
+    65: "trade_offer",
     66: "tribulation_state",
     69: "heart_demon_offer",
     71: "breakthrough_cinematic",
     72: "death_screen",
     73: "terminate_screen",
+    78: "coffin_state",
     80: "inventory_event",
     81: "dropped_loot_sync",
     90: "container_state",
+    97: "skill_scroll_used",
+    98: "skill_snapshot",
     119: "loot_container_open",
     120: "loot_container_update",
     121: "loot_container_close",
@@ -349,6 +377,19 @@ def _morph_state(data: bytes) -> dict[str, Any]:
     }
 
 
+def _coffin_state(data: bytes) -> dict[str, Any]:
+    """plan-coffin-v1 —— 延寿棺状态（field 78）。enter 推 grade=Some、
+    multiplier<1.0；leave 推 grade 缺席、multiplier=1.0。"""
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "coffin_state",
+        "in_coffin": bool(_varint(fields, 1)),
+        "lifespan_rate_multiplier": _double(fields, 2, default=1.0),
+        "coffin_grade": _optional_string(fields, 3),
+    }
+
+
 def _container_state(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     return {
@@ -356,6 +397,39 @@ def _container_state(data: bytes) -> dict[str, Any]:
         "type": "container_state",
         "entity_id": _varint(fields, 1),
         "visual_entity_id": _optional_varint(fields, 10),
+    }
+
+
+# proto/bong/envelope.proto:1890-1893 reserves zero for UNSPECIFIED.
+# Keep the generated protobuf enum values here; do not compress away the
+# unspecified slot because live CarrierState payloads use IDLE=1,
+# CHARGING=2, and CHARGED=3.
+CARRIER_CHARGE_PHASE_NAMES = {
+    0: "unspecified",
+    1: "idle",
+    2: "charging",
+    3: "charged",
+}
+
+
+def _carrier_state(data: bytes) -> dict[str, Any]:
+    """CarrierStateV1（server_data oneof field 49，envelope.proto:1896）。
+
+    carrier 是持有者的线缆 wire id（`player:{uuid}`），server 每 tick 周期向
+    各客户端推送自身快照；bot 场景用它与 redis 事件流上的 carrier 字段互证，
+    把 bong:anqi/container_swap 事件归属到本 bot。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "carrier_state",
+        "carrier": _string(fields, 1),
+        "phase": CARRIER_CHARGE_PHASE_NAMES.get(_varint(fields, 2), "unspecified"),
+        "progress": _float32(fields, 3),
+        "sealed_qi": _float32(fields, 4),
+        "sealed_qi_initial": _float32(fields, 5),
+        "half_life_remaining_ticks": _varint(fields, 6),
+        "item_instance_id": _optional_varint(fields, 7),
     }
 
 
@@ -417,6 +491,18 @@ def _item_view(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
         "stack_count": _varint(fields, 9),
         "spirit_quality": _double(fields, 10),
         "durability": _double(fields, 11),
+        "mineral_id": _optional_string(fields, 12),
+        "scroll_kind": _optional_string(fields, 13),
+        "scroll_skill_id": _optional_string(fields, 14),
+        "scroll_xp_grant": _optional_varint(fields, 15),
+        "charges": _optional_varint(fields, 16),
+        "forge_quality": _optional_float32(fields, 17),
+        "forge_color": _optional_varint(fields, 18),
+        "forge_side_effects": _strings(fields, 19),
+        "forge_achieved_tier": _optional_varint(fields, 20),
+        "alchemy": (
+            _alchemy_item_data(_message(fields, 21)) if _has(fields, 21) else None
+        ),
         "freshness": _inventory_freshness(_message(fields, 22)) if _has(fields, 22) else None,
     }
 
@@ -429,6 +515,56 @@ def _inventory_freshness(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
         "profile": _string(fields, 4),
         "frozen_accumulated": _varint(fields, 5),
         "frozen_since_tick": _optional_varint(fields, 6),
+    }
+
+
+def _alchemy_item_data(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "kind": _string(fields, 1),
+        "recipe_id": _optional_string(fields, 2),
+        "quality_tier": _optional_varint(fields, 3),
+        "effect_multiplier": _optional_double(fields, 4),
+        "consecrated": (
+            bool(_optional_varint(fields, 5)) if _has(fields, 5) else None
+        ),
+        "side_effect": (
+            _alchemy_side_effect(_message(fields, 6)) if _has(fields, 6) else None
+        ),
+        "fragment": (
+            _alchemy_fragment(_message(fields, 7)) if _has(fields, 7) else None
+        ),
+        "hint": _alchemy_hint(_message(fields, 8)) if _has(fields, 8) else None,
+        "residue_kind": _optional_string(fields, 9),
+        "produced_at_tick": _optional_varint(fields, 10),
+        "expires_at_tick": _optional_varint(fields, 11),
+    }
+
+
+def _alchemy_side_effect(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "tag": _string(fields, 1),
+        "duration_s": _optional_varint(fields, 2),
+        "weight": _optional_varint(fields, 3),
+        "perm": bool(_optional_varint(fields, 4)) if _has(fields, 4) else None,
+        "color": _optional_varint(fields, 5),
+        "amount": _optional_double(fields, 6),
+    }
+
+
+def _alchemy_fragment(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "recipe_id": _string(fields, 1),
+        "known_stages": _uint32s(fields, 2),
+        "max_quality_tier": _varint(fields, 3),
+    }
+
+
+def _alchemy_hint(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "source_pill": _string(fields, 1),
+        "recipe_id": _optional_string(fields, 2),
+        "accuracy": _double(fields, 3),
+        "ingredients": _strings(fields, 4),
     }
 
 
@@ -550,6 +686,24 @@ def _strings(fields: list[tuple[int, int, Any]], field: int) -> list[str]:
         for existing, wire, value in fields
         if existing == field and wire == 2
     ]
+
+
+def _uint32s(fields: list[tuple[int, int, Any]], field: int) -> list[int]:
+    """Decode repeated uint32 in either packed or unpacked protobuf form."""
+    values: list[int] = []
+    for existing, wire, value in fields:
+        if existing != field:
+            continue
+        if wire == WIRE_VARINT:
+            values.append(int(value))
+            continue
+        if wire != WIRE_LEN or not isinstance(value, bytes):
+            continue
+        pos = 0
+        while pos < len(value):
+            decoded, pos = _read_varint(value, pos)
+            values.append(decoded)
+    return values
 
 
 def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:
@@ -726,6 +880,207 @@ CAST_OUTCOME_NAMES = {
 }
 
 CAST_PHASE_NAMES = {0: "unspecified", 1: "idle", 2: "casting", 3: "complete", 4: "interrupt"}
+
+SKILL_ID_NAMES = {
+    0: "unspecified",
+    1: "herbalism",
+    2: "alchemy",
+    3: "forging",
+    4: "combat",
+    5: "mineral",
+    6: "cultivation",
+}
+
+
+def _skill_id_name(value: int) -> str:
+    return SKILL_ID_NAMES.get(value, f"unknown_{value}")
+
+
+def _skill_xp_gain(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    if _has(fields, 5):
+        scroll = _message(fields, 5)
+        source = {
+            "kind": "scroll",
+            "scroll_id": _string(scroll, 1),
+            "xp_grant": _varint(scroll, 2),
+        }
+    elif _has(fields, 7):
+        mentor = _message(fields, 7)
+        source = {"kind": "mentor", "mentor_char": _varint(mentor, 1)}
+    elif _has(fields, 4):
+        action = _message(fields, 4)
+        source = {"kind": "action", "plan_id": _string(action, 1), "action": _string(action, 2)}
+    elif _has(fields, 6):
+        source = {"kind": "realm_breakthrough"}
+    else:
+        source = None
+    return {
+        "v": 1,
+        "type": "skill_xp_gain",
+        "char_id": _varint(fields, 1),
+        "skill": _skill_id_name(_varint(fields, 2)),
+        "amount": _varint(fields, 3),
+        "source": source,
+    }
+
+
+def _quick_slot_entry(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "item_id": _string(fields, 1),
+        "display_name": _string(fields, 2),
+        "cast_duration_ms": _varint(fields, 3),
+        "cooldown_ms": _varint(fields, 4),
+        "icon_texture": _string(fields, 5),
+    }
+
+
+def _optional_quick_slot_entry(data: bytes) -> dict[str, Any] | None:
+    if not data:
+        return None
+    fields = _fields(data)
+    # `data` 是 repeated `OptionalQuickSlotEntry` 的一个元素（schema bong.rs）：
+    #   OptionalQuickSlotEntry { entry(1): Option<QuickSlotEntry> }
+    # 而 QuickSlotEntry { item_id(1), display_name(2), cast_duration_ms(3),
+    # cooldown_ms(4), icon_texture(5) }。proto3 repeated 不支持 optional element，
+    # 所以服务器用 wrapper 包一层——field 1 是**又一层嵌套 message**，必须先
+    # `_message(fields, 1)` 解出 QuickSlotEntry 再交给 `_quick_slot_entry`。
+    # central-review 2012 #3 的证据称调用方已传入 unwrapped 载荷、field 1 即
+    # item_id——与 prost 生成的 OptionalQuickSlotEntry 包装矛盾；此处以 schema 为
+    # 准，test_proto_quick_slot_config_payload_decodes 的 bound round-trip 断言
+    # 钉死该解码（跳过这层会把 QuickSlotEntry 原始字节误当 item_id）。
+    if not _has(fields, 1):
+        return None
+    return _quick_slot_entry(_message(fields, 1))
+
+
+def _packed_varints(data: bytes) -> list[int]:
+    """解码 proto3 packed repeated 标量：length-delimited blob 内连续 varint。"""
+    pos = 0
+    values = []
+    while pos < len(data):
+        value, pos = _read_varint(data, pos)
+        values.append(int(value))
+    return values
+
+
+def _quick_slot_config(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    # review finding [5]：`repeated uint64 cooldown_until_ms` 在 proto3 里默认
+    # **packed**（wire type 2：length-delimited blob 内连续 varint）。旧实现只读
+    # 独立 wire-0 varint（w==0），真实服务器生产的 packed 载荷被解码成空列表。
+    # 两种编码都收：packed 逐 blob 展开，unpacked 逐 varint 追加。
+    cooldowns: list[int] = []
+    for f, w, v in fields:
+        if f != 2:
+            continue
+        if w == 0:
+            cooldowns.append(int(v))
+        elif w == 2:
+            cooldowns.extend(_packed_varints(v))
+    return {
+        "v": 1,
+        "type": "quickslot_config",
+        "slots": [_optional_quick_slot_entry(raw) for raw in _messages(fields, 1)],
+        "cooldown_until_ms": cooldowns,
+        "ack_request_id": _optional_string(fields, 3),
+        "bind_accepted": (
+            bool(_varint(fields, 4)) if _has(fields, 4) else None
+        ),
+    }
+
+
+def _technique_required_meridian(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {"channel": _string(fields, 1), "min_health": _float32(fields, 2)}
+
+
+def _technique_entry(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "id": _string(fields, 1),
+        "display_name": _string(fields, 2),
+        "grade": _string(fields, 3),
+        "proficiency": _float32(fields, 4),
+        "proficiency_label": _string(fields, 5),
+        "active": bool(_varint(fields, 6)),
+        "description": _string(fields, 7),
+        "required_realm": _string(fields, 8),
+        "required_meridians": [
+            _technique_required_meridian(raw) for raw in _messages(fields, 9)
+        ],
+        "qi_cost": _float32(fields, 10),
+        "stamina_cost": _float32(fields, 11),
+        "cast_ticks": _varint(fields, 12),
+        "cooldown_ticks": _varint(fields, 13),
+        "range": _float32(fields, 14),
+    }
+
+
+def _techniques_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "techniques_snapshot",
+        "entries": [_technique_entry(raw) for raw in _messages(fields, 1)],
+    }
+
+
+def _skill_config_entry(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {"skill_id": _string(fields, 1), "json_config": _string(fields, 2)}
+
+
+def _skill_config_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skill_config_snapshot",
+        "configs": [_skill_config_entry(raw) for raw in _messages(fields, 1)],
+    }
+
+
+def _skill_scroll_used(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skill_scroll_used",
+        "char_id": _varint(fields, 1),
+        "scroll_id": _string(fields, 2),
+        "skill": _skill_id_name(_varint(fields, 3)),
+        "xp_granted": _varint(fields, 4),
+        "was_duplicate": bool(_varint(fields, 5)),
+    }
+
+
+def _skill_entry_snapshot(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "lv": _varint(fields, 1),
+        "xp": _varint(fields, 2),
+        "xp_to_next": _varint(fields, 3),
+        "total_xp": _varint(fields, 4),
+        "cap": _varint(fields, 5),
+        "recent_gain_xp": _varint(fields, 6),
+    }
+
+
+def _skill_snapshot_entry(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "skill_name": _string(fields, 1),
+        "entry": _skill_entry_snapshot(_message(fields, 2)),
+    }
+
+
+def _skill_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skill_snapshot",
+        "char_id": _varint(fields, 1),
+        "skills": [_skill_snapshot_entry(raw) for raw in _messages(fields, 2)],
+        "consumed_scrolls": _strings(fields, 3),
+    }
 
 
 def _craft_session_state(data: bytes) -> dict[str, Any]:
@@ -957,6 +1312,53 @@ def _repeated_uint64(fields: list[tuple[int, int, Any]], field: int) -> list[int
     return values
 
 
+def _quick_slot_config(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "quickslot_config",
+        "slots": [
+            _quick_slot_entry(raw) for raw in _messages(fields, QUICKSLOT_CONFIG_SLOTS_FIELD)
+        ],
+        "cooldown_until_ms": _repeated_varints(fields, QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD),
+        "ack_request_id": _optional_string(fields, QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD),
+        "bind_accepted": (
+            bool(_varint(fields, QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD))
+            if _has(fields, QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD)
+            else None
+        ),
+    }
+
+
+def _quick_slot_entry(data: bytes) -> dict[str, Any] | None:
+    fields = _fields(data)
+    if not _has(fields, OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD):
+        return None
+    entry = _message(fields, OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD)
+    return {
+        "item_id": _string(entry, QUICKSLOT_ENTRY_ITEM_ID_FIELD),
+        "display_name": _string(entry, QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD),
+        "cast_duration_ms": _varint(entry, QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
+        "cooldown_ms": _varint(entry, QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
+        "icon_texture": _string(entry, QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
+    }
+
+
+def _repeated_varints(fields: list[tuple[int, int, Any]], field: int) -> list[int]:
+    values: list[int] = []
+    for existing, wire, value in fields:
+        if existing != field:
+            continue
+        if wire == 0:
+            values.append(int(value))
+        elif wire == 2:
+            pos = 0
+            while pos < len(value):
+                v, pos = _read_varint(value, pos)
+                values.append(v)
+    return values
+
+
 def _combat_event_floater(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     events = []
@@ -1116,6 +1518,44 @@ def _forge_outcome(data: bytes) -> dict[str, Any]:
     }
 
 
+def _trade_item_summary(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "instance_id": _varint(fields, 1),
+        "item_id": _string(fields, 2),
+        "display_name": _string(fields, 3),
+        "stack_count": _varint(fields, 4),
+    }
+
+
+def _trade_offer(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "trade_offer",
+        "offer_id": _string(fields, 1),
+        "initiator": _string(fields, 2),
+        "target": _string(fields, 3),
+        "offered_item": _trade_item_summary(_message(fields, 4)),
+        "requested_items": [_trade_item_summary(_fields(raw)) for raw in _messages(fields, 5)],
+        "expires_at_ms": _varint(fields, 6),
+    }
+
+
+def _sparring_invite(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "sparring_invite",
+        "invite_id": _string(fields, 1),
+        "initiator": _string(fields, 2),
+        "target": _string(fields, 3),
+        "realm_band": _string(fields, 4),
+        "breath_hint": _string(fields, 5),
+        "terms": _string(fields, 6),
+        "expires_at_ms": _varint(fields, 7),
+    }
+
+
 def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     entries = []
@@ -1227,6 +1667,7 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     3: _narration_batch,
     SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
     SERVER_DATA_PLAYER_STATE_FIELD: _player_state,
+    7: _skill_xp_gain,
     8: _inventory_snapshot,
     11: _alchemy_furnace,
     12: _alchemy_session,
@@ -1242,8 +1683,14 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     30: _gathering_session,
     31: _lingtian_session,
     34: _cast_sync,
+    SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
     36: _skill_bar_config,
+    37: _techniques_snapshot,
+    49: _carrier_state,
     51: _combat_event_floater,
+    54: _skill_config_snapshot,
+    SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
+    SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
     66: _tribulation_state,
     69: _heart_demon_offer,
     SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
@@ -1252,12 +1699,15 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     80: _inventory_event,
     81: _dropped_loot_sync,
     90: _container_state,
+    97: _skill_scroll_used,
+    98: _skill_snapshot,
     119: _loot_container_open,
     120: _loot_container_update,
     121: _loot_container_close,
     131: _insight_offer,
     137: _inventory_move_rejected,
     142: _morph_state,
+    78: _coffin_state,
 }
 
 
@@ -1296,6 +1746,7 @@ WIRE_VARINT = 0
 WIRE_64BIT = 1
 WIRE_LEN = 2
 WIRE_32BIT = 5
+
 
 EQUIPPED_ITEM_FIELDS = {
     1: ("head", "worn"),
@@ -1403,7 +1854,15 @@ def server_data_payload_name(data: bytes) -> str | None:
     field = server_data_payload_field(data)
     if field is None:
         return None
-    return SERVER_DATA_PAYLOAD_NAMES.get(field, f"field_{field}")
+    known = SERVER_DATA_PAYLOAD_NAMES.get(field)
+    if known is not None:
+        return known
+    # dispatch 分支与 name 注册表独立：注册表漏登记但 decoder 认识的 oneof 字段，
+    # 由 decoded payload 的 type 回退，保证 bridge 与 decoder 一致（防注册表漂移）。
+    decoded = decode_server_data_envelope(data)
+    if isinstance(decoded, dict) and isinstance(decoded.get("type"), str):
+        return decoded["type"]
+    return f"field_{field}"
 
 
 def inventory_item_refs(data: bytes) -> list[InventoryItemRef]:

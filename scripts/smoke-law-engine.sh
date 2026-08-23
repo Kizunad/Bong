@@ -128,16 +128,26 @@ run_or_fail "schema" "npm run build" bash -lc "cd '$ROOT/agent/packages/schema' 
 run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agent/packages/schema' && npm test -- tests/schema.test.ts"
 
 stage "4/10" "Server entrypoint startup"
-run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
+# review finding：build-token 只锁 cargo 子进程，build 返回后从共享 target 直接执行
+# debug/bong-server 会被并发 job 替换（stale-read TOCTOU）。build 到 run-private
+# target 再执行，执行的就是本轮刚 build 的二进制。
+SERVER_START_TARGET="$(mktemp -d /tmp/bong-lawengine-target.XXXXXX)"
+trap 'rm -rf -- "$SERVER_START_TARGET"' EXIT
+run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build --target-dir '$SERVER_START_TARGET'"
+server_binary="$SERVER_START_TARGET/debug/bong-server"
+[[ -x "$server_binary" ]] || fail_stage "server-start" "successful cargo build did not produce $server_binary"
 server_start_exit=0
-echo "[run][server-start] timeout 20s 构建令牌 wrapper cargo run"
-timeout 20s bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo run" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
+echo "[run][server-start] timeout 20s built bong-server (cwd=$ROOT/server)"
+(
+  cd "$ROOT/server"
+  timeout 20s "$server_binary"
+) > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
 echo "[server-start] exit=${server_start_exit}, log=${SERVER_BOOT_LOG}"
 if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
-  fail_stage "server-start" "wrapper cargo run failed before startup anchors"
+  fail_stage "server-start" "built bong-server failed before startup anchors"
 fi
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[bridge\\] tokio runtime started" "bridge runtime started"
-require_anchor "server-start" "$SERVER_BOOT_LOG" "creating overworld" "world creation"
+require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[world\\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*" "fallback world readiness"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[player\\] registering player init/cleanup systems" "player systems registered"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[redis\\] connecting to" "redis bridge connection"
 
@@ -169,7 +179,7 @@ stage "9/10" "Cross-layer closure proof"
 echo "[closure] world_state publication -> server world_state_tests::uses_real_player_names_and_positions"
 echo "[closure] tiandao startup entrypoint -> npm run start:mock with tick anchors"
 echo "[closure] agent command/narration path -> tiandao runtime + redis-ipc + main-loop tests"
-echo "[closure] server startup entrypoint -> timeout 构建令牌 wrapper cargo run with bridge/world/player/redis anchors"
+echo "[closure] server startup entrypoint -> cargo build + timeout 20s from server/ cwd on built bong-server with bridge/world/player/redis anchors"
 echo "[closure] server execution path -> command_executor_tests::applies_modify_zone + narration_tests::player_scope_matches_username_and_offline_id"
 echo "[closure] client payload parsing -> BongNetworkHandlerTest + NarrationPayloadParserTest"
 

@@ -120,6 +120,7 @@ pub struct CommandExecutionParams<'w> {
     qi_heatmap: Option<Res<'w, QiDensityHeatmap>>,
     clock: Option<Res<'w, CultivationClock>>,
     terrain_providers: Option<Res<'w, TerrainProviders>>,
+    technique_registry: Res<'w, crate::cultivation::known_techniques::TechniqueRegistry>,
 }
 
 impl CommandExecutorResource {
@@ -228,6 +229,7 @@ pub fn execute_agent_commands(
                 &mut faction_store,
                 &mut npc_behavior,
                 &mut params.heartbeat,
+                &params.technique_registry,
                 params.karma_weights.as_deref(),
                 params.qi_heatmap.as_deref(),
                 params.clock.as_deref().map(|clock| clock.tick),
@@ -277,6 +279,7 @@ fn execute_single_command(
     faction_store: &mut Option<ResMut<FactionStore>>,
     npc_behavior: &mut Option<ResMut<NpcBehaviorConfig>>,
     heartbeat: &mut Option<ResMut<WorldHeartbeat>>,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     karma_weights: Option<&KarmaWeightStore>,
     qi_heatmap: Option<&QiDensityHeatmap>,
     tick: Option<u64>,
@@ -311,6 +314,7 @@ fn execute_single_command(
         CommandType::SpawnNpc => execute_spawn_npc(
             command,
             commands,
+            technique_registry,
             zone_registry,
             npc_registry,
             skin_pool,
@@ -540,6 +544,7 @@ fn execute_despawn_npc(
 fn execute_spawn_npc(
     command: &Command,
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
     skin_pool: &mut Option<ResMut<SkinPool>>,
@@ -699,6 +704,7 @@ fn execute_spawn_npc(
             NpcArchetype::Rogue => {
                 let entity = spawn_rogue_npc_at(
                     commands,
+                    technique_registry,
                     NpcSkinSpawnContext::new(
                         skin_pool.as_deref_mut(),
                         NpcSkinFallbackPolicy::AllowFallback,
@@ -752,6 +758,7 @@ fn execute_spawn_npc(
                     .unwrap_or(FactionId::Neutral);
                 let entity = spawn_disciple_npc_at(
                     commands,
+                    technique_registry,
                     NpcSkinSpawnContext::new(
                         skin_pool.as_deref_mut(),
                         NpcSkinFallbackPolicy::AllowFallback,
@@ -798,6 +805,7 @@ fn execute_spawn_npc(
                     .unwrap_or("agent_trial");
                 let entity = spawn_relic_guard_npc_at(
                     commands,
+                    technique_registry,
                     layer,
                     zone.name.as_str(),
                     spawn_position,
@@ -822,6 +830,7 @@ fn execute_spawn_npc(
                     .unwrap_or(zone.name.as_str());
                 let entity = spawn_tsy_daoxiang_at(
                     commands,
+                    technique_registry,
                     layer,
                     family_id,
                     zone.name.as_str(),
@@ -845,6 +854,7 @@ fn execute_spawn_npc(
                     .unwrap_or(zone.name.as_str());
                 let entity = spawn_tsy_zhinian_at(
                     commands,
+                    technique_registry,
                     layer,
                     family_id,
                     zone.name.as_str(),
@@ -1406,6 +1416,9 @@ mod command_executor_tests {
     fn setup_executor_app() -> App {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(CommandExecutorResource::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
@@ -2103,6 +2116,67 @@ mod command_executor_tests {
             .get::<crate::npc::lifecycle::NpcLifespan>(npcs[0].0)
             .unwrap();
         assert_eq!(lifespan.age_ticks, 5000.0);
+    }
+
+    #[test]
+    fn agent_spawn_npc_propagates_authoritative_registry_to_loadout() {
+        // M06：agent-command NPC spawn 必须把注入的权威 registry 传给 constructor，
+        // 产出的 loadout 跟随 runtime override。若 execute_spawn_npc 忽略参数并改读
+        // 默认/静态 catalog，runtime-only 招式会从 spawn 出的 NPC KnownTechniques
+        // 里消失并撞红。
+        let mut app = setup_executor_app();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_from_contents_for_tests(
+                r#"
+[[techniques]]
+ id = "runtime.only"
+ display_name = "运行时专属"
+ grade = "common"
+ description = "只存在于注入 registry 的 runtime-only 招式（M06 契约）。"
+ required_realm = "Awaken"
+ required_meridians = []
+ required_race = { kind = "any" }
+ qi_cost = 1.0
+ stamina_cost = 1.0
+ cast_ticks = 10
+ cooldown_ticks = 20
+ range = 3.0
+ icon_texture = "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+ category = "attack"
+ dispatch = "metadata_backed"
+"#,
+            )
+            .expect("runtime-only test catalog must load"),
+        );
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("rogue"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_rogue_runtime",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+
+        app.update();
+
+        let npc = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).next().map(|(e, a)| (e, *a)).unwrap()
+        };
+        assert_eq!(npc.1, NpcArchetype::Rogue);
+        let known = app
+            .world()
+            .get::<crate::cultivation::known_techniques::KnownTechniques>(npc.0)
+            .expect("spawned NPC must carry KnownTechniques loadout");
+        assert!(
+            known.entries.iter().any(|entry| entry.id == "runtime.only"),
+            "spawned NPC loadout must follow the injected authoritative registry (M06)"
+        );
     }
 
     #[test]
