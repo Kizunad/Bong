@@ -129,8 +129,6 @@ impl DenialKey {
 
 #[derive(Clone, Copy, Debug)]
 struct FeedbackAggregate {
-    /// Tick at which this window's first suppression occurred.
-    window_start: u64,
     suppressed_count: u32,
 }
 
@@ -349,25 +347,17 @@ where
             .is_none_or(|last| tick.saturating_sub(last) >= FEEDBACK_WINDOW_TICKS);
 
         if eligible {
-            let baseline = state.feedback_last_emit;
             let suppressed_count = state
                 .feedback
                 .remove(&key)
-                .filter(|aggregate| baseline.is_none_or(|last| aggregate.window_start >= last))
                 .map_or(0, |aggregate| aggregate.suppressed_count);
             state.feedback_last_emit = Some(tick);
             return CoalescedAdmission::emit(suppressed_count);
         }
 
-        let baseline = state.feedback_last_emit;
         let aggregate = state.feedback.entry(key).or_insert(FeedbackAggregate {
-            window_start: tick,
             suppressed_count: 0,
         });
-        if baseline.is_some_and(|last| aggregate.window_start < last) {
-            aggregate.window_start = tick;
-            aggregate.suppressed_count = 0;
-        }
         aggregate.suppressed_count = aggregate.suppressed_count.saturating_add(1);
         CoalescedAdmission::suppress(aggregate.suppressed_count)
     }
@@ -557,7 +547,36 @@ mod tests {
         );
         assert_eq!(
             store.admit_feedback(CLIENT, 20, KIND, GateDenialReason::Busy),
+            CoalescedAdmission::suppress(2)
+        );
+    }
+
+    #[test]
+    fn feedback_count_survives_another_key_emitting() {
+        let mut store = BudgetStore::new(1);
+        assert_eq!(
+            store.admit_feedback(CLIENT, 0, KIND, GateDenialReason::Busy),
+            CoalescedAdmission::emit(0)
+        );
+        assert_eq!(
+            store.admit_feedback(CLIENT, 1, KIND, GateDenialReason::Busy),
             CoalescedAdmission::suppress(1)
+        );
+        assert_eq!(
+            store.admit_feedback(CLIENT, 2, OTHER_KIND, GateDenialReason::OutOfReach),
+            CoalescedAdmission::suppress(1)
+        );
+        assert_eq!(
+            store.admit_feedback(CLIENT, 20, OTHER_KIND, GateDenialReason::OutOfReach),
+            CoalescedAdmission::emit(1)
+        );
+        assert_eq!(
+            store.admit_feedback(CLIENT, 20, KIND, GateDenialReason::Busy),
+            CoalescedAdmission::suppress(2)
+        );
+        assert_eq!(
+            store.admit_feedback(CLIENT, 40, KIND, GateDenialReason::Busy),
+            CoalescedAdmission::emit(2)
         );
     }
 
