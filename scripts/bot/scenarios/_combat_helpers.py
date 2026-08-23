@@ -33,16 +33,16 @@ def queue_fight_target(bot: Bot) -> Event:
         raise BotAssertionError("期望已有 bot.position 后再生成战斗 NPC，实际 position=None")
 
     anchor = last_event_time(bot)
-    queue_npc_scenario(bot, "passive_target")
+    queue_npc_scenario(bot, "fight")
 
     try:
         return bot.wait_for(
             lambda e: e.kind == "entity_spawn"
             and e.t > anchor
             and e.data.get("entity_id") != bot.entity_id
-            and _horizontal_distance(bot.position, _event_position(e)) <= 40.0,
+            and _distance(bot.position, _event_position(e)) <= 40.0,
             timeout=15.0,
-            description="/npc_scenario passive_target 后水平 40 格内出现 NPC entity_spawn",
+            description="/npc_scenario fight 后 40 格内出现 NPC entity_spawn",
         )
     except BotAssertionError as error:
         recent_spawns = [event for event in bot.events_of("entity_spawn") if event.t > anchor]
@@ -196,6 +196,10 @@ def payload_text(event: Event) -> str:
 
 def _event_position(event: Event) -> tuple[float, float, float]:
     return (float(event.data["x"]), float(event.data["y"]), float(event.data["z"]))
+
+
+def _distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return math.dist(a, b)
 
 
 def _horizontal_distance(
