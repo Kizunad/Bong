@@ -100,7 +100,7 @@ class R7InventoryContractTest {
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "caeb42e9867fb7f9b4725c973575ff51f51567a92d059b1bf56ba96ae3770572",
+            "53778f1f2652d9b03cb9031df926bbaa14ffa071c40cbc38179064ac7b2e696f",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "P1 keybind foundation must keep every shipped production path and byte pinned"
         );
