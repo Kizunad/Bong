@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 
 from bot.bot import BotAssertionError
@@ -19,6 +20,12 @@ from bot.scenarios._combat_helpers import (
 # 场景挂）。放宽只在**失败**路径上多花时间——成功时 wait_for 收到事件立刻返回，
 # 绿色用例的墙钟不变。
 SERVER_RESPONSE_TIMEOUT = 25.0
+
+# 近战重试预算单列，**不要**跟上面那个混用：实测把它从 10s/8 次放宽到 25s/20 次
+# 仍然打不中（PR #2066 的 CI），瓶颈不在预算，调大只会让失败更慢。真因待查，
+# 失败消息已带 _melee_failure_diagnosis 的现场判据。
+MELEE_RETRY_TIMEOUT = 15.0
+MELEE_DISTANCE = 1.2
 
 DESCRIPTION = "两个 Bot 互见 PlayerSpawn，并对共同观察到的同一 passive NPC 各自产生 outgoing typed hit"
 MODULES = ["network", "multibot", "combat", "npc"]
@@ -53,13 +60,49 @@ def _rendezvous_in_spawn(bot) -> None:
     )
 
 
+def _melee_failure_diagnosis(bot, target_id: int) -> str:
+    """把"打不中"拆成能判读的几种原因。
+
+    实测（PR #2066 的 CI）把重试预算从 10s/8 次放宽到 25s/20 次**仍然**打不中，
+    说明瓶颈根本不是预算——但旧的失败消息只说"重试 N 次未命中"，看不出到底是
+    目标没了、够不着、还是打出去没反馈。这里把三者分开报，下次撞红直接可判。
+    """
+    target = bot.entity_pos(target_id)
+    if target is None:
+        return (
+            f"目标 entity_id={target_id} 已不在 {bot.username} 的实体表里"
+            "（destroy/despawn，或从未同步过）——目标先没了，再多重试也没用"
+        )
+    if bot.position is None:
+        return f"目标在 {target}，但 {bot.username} 自己的 position 未知"
+    bx, by, bz = bot.position
+    tx, ty, tz = target
+    flat = math.hypot(bx - tx, bz - tz)
+    combat = [
+        e for e in bot.events
+        if e.kind == "server_data" and e.data.get("payload_type") == "combat_event"
+    ]
+    outgoing = sum(
+        1
+        for e in combat
+        for entry in (e.data.get("payload") or {}).get("events", [])
+        if isinstance(entry, dict) and entry.get("outgoing") is True
+    )
+    return (
+        f"目标仍在 {target}，{bot.username} 在 {bot.position}，水平距离 {flat:.2f} 格"
+        f"（贴身目标 {MELEE_DISTANCE} 格，垂直差 {abs(by - ty):.2f}）；"
+        f"整场共收到 {len(combat)} 条 combat_event、其中 outgoing 条目 {outgoing} 个"
+        "——距离超标说明贴身失败，距离达标但 outgoing=0 说明攻击包没被判定为命中"
+    )
+
+
 def _attack_until_positive_hit(
-    bot, spawn, target_id: int, timeout: float = SERVER_RESPONSE_TIMEOUT
+    bot, spawn, target_id: int, timeout: float = MELEE_RETRY_TIMEOUT
 ) -> None:
     """追踪同一协议实体重试近战，覆盖击退同步和服务端 10 tick GCD。"""
     # /tpzone 后玩家可能仍在从传送高度落向地面；这次必要的真实定位不应
     # 抢占攻击重试预算，否则首轮移动就会耗尽整个窗口。
-    move_to_melee_range(bot, spawn)
+    move_to_melee_range(bot, spawn, MELEE_DISTANCE)
     deadline = time.monotonic() + timeout
     attempts = 0
     while time.monotonic() < deadline:
@@ -81,11 +124,12 @@ def _attack_until_positive_hit(
                 break
             time.sleep(min(0.55, deadline - time.monotonic()))
             if time.monotonic() < deadline:
-                move_to_melee_range(bot, spawn)
+                move_to_melee_range(bot, spawn, MELEE_DISTANCE)
 
     raise BotAssertionError(
         f"[{bot.username}] 在 {timeout:.1f}s 内对同一 target_id={target_id} "
-        f"重试 {attempts} 次仍未收到 outgoing=true positive hit"
+        f"重试 {attempts} 次仍未收到 outgoing=true positive hit；"
+        f"{_melee_failure_diagnosis(bot, target_id)}"
     )
 
 
@@ -138,7 +182,7 @@ def run(env) -> None:
                     f"alice_uuid={alice_spawn.data['uuid']} bob_uuid={bob_spawn.data['uuid']}"
                 )
 
-            move_to_melee_range(alice, alice_spawn)
+            move_to_melee_range(alice, alice_spawn, MELEE_DISTANCE)
             alice_anchor = last_event_time(alice)
             alice.attack_entity(target_id)
             alice.wait_for(
