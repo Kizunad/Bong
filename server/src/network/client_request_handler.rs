@@ -78,6 +78,8 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
 use crate::forge::steps::next_step_after;
+#[cfg(test)]
+use crate::inventory::add_item_to_player_inventory;
 use crate::inventory::{
     add_item_to_player_inventory_with_alchemy, apply_inventory_move_with_race,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
@@ -107,13 +109,16 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::{npc, social};
+use crate::network::client_request::npc;
+use crate::network::client_request::social;
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
+#[cfg(test)]
+use crate::identity::PlayerIdentities;
 use crate::network::inventory_move_rejected_emit::emit_inventory_move_rejected;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::qi_attrition_emit::{
@@ -130,8 +135,12 @@ use crate::network::techniques_snapshot_emit::send_techniques_snapshot_to_client
 use crate::network::{
     gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
 };
+#[cfg(test)]
+use crate::npc::faction::FactionMembership;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
+#[cfg(test)]
+use crate::npc::trade::NpcPlayerReputation;
 use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
@@ -163,6 +172,8 @@ use crate::skill::config::{
     SkillConfigRejectReason, SkillConfigSchemas, SkillConfigSnapshot, SkillConfigStore,
 };
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
+#[cfg(test)]
+use crate::social::components::{FactionReputation, FactionReputationTier};
 use crate::social::events::{
     SpiritNicheActivateGuardianRequest, SpiritNicheCoordinateRevealRequest,
     SpiritNichePlaceRequest, SpiritNicheRepairRequest, SpiritNicheRevealSource,
@@ -184,6 +195,16 @@ use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use crate::zhenfa::{
     ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
+};
+
+// NPC 请求域实现位于编译期 typed route；保留参数类型作为顶层 system seam。
+pub(crate) use crate::network::client_request::npc::NpcEngagementRequestParams;
+
+// 这些 helper re-export 仅供现有 NPC 行为测试复用，生产路由不依赖它们。
+#[cfg(test)]
+pub(crate) use crate::network::client_request::npc::{
+    is_rarity_refused_at_low_rep, npc_trade_catalog_entry, reputation_to_player_score_for_npc_zone,
+    NpcEngagementTarget,
 };
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
@@ -1082,7 +1103,7 @@ pub fn handle_client_request_payloads(
     mut dropped_loot_params: DroppedLootRequestParams,
     mut lingtian_tx: LingtianRequestParams,
     mut skill_scroll_params: SkillScrollRequestParams,
-    mut npc_engagement_params: npc::NpcEngagementRequestParams,
+    mut npc_engagement_params: NpcEngagementRequestParams,
 ) {
     // Production wiring always inserts this resource.  If an alternate app
     // forgets it, fail closed instead of allowing an unbudgeted payload.
@@ -1327,6 +1348,28 @@ pub fn handle_client_request_payloads(
             }
         }
 
+        if matches!(
+            &request,
+            ClientRequestV1::NpcInspectRequest { .. }
+                | ClientRequestV1::NpcDialogueChoice { .. }
+                | ClientRequestV1::NpcTradeRequest { .. }
+        ) {
+            npc::dispatch(
+                &request,
+                ev.client,
+                combat_clock.tick,
+                &combat_params,
+                &mut npc_engagement_params,
+                alchemy_params.zones.as_deref(),
+                &mut clients,
+                &mut inventories,
+                &player_states,
+                &skill_scroll_params.cultivations,
+                &alchemy_params.item_registry,
+                &mut alchemy_params.instance_allocator,
+            );
+            continue;
+        }
         let request = match social::try_into_social_request(request) {
             Ok(social_request) => {
                 social::dispatch_social_request(
@@ -1341,37 +1384,11 @@ pub fn handle_client_request_payloads(
             Err(request) => request,
         };
 
-        let request = match npc::try_into_npc_request(request) {
-            Ok(npc_request) => {
-                npc::dispatch_npc_request(
-                    npc_request,
-                    ev.client,
-                    &combat_params,
-                    &mut npc_engagement_params,
-                    alchemy_params.zones.as_deref(),
-                    &mut clients,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &alchemy_params.item_registry,
-                    alchemy_params.instance_allocator.as_deref_mut(),
-                    combat_clock.tick,
-                );
-                continue;
-            }
-            Err(request) => request,
-        };
-
         match request {
             ClientRequestV1::SparringInviteResponse { .. }
             | ClientRequestV1::TradeOfferRequest { .. }
             | ClientRequestV1::TradeOfferResponse { .. } => {
                 unreachable!("Social requests are dispatched by the typed Social dispatcher")
-            }
-            ClientRequestV1::NpcInspectRequest { .. }
-            | ClientRequestV1::NpcDialogueChoice { .. }
-            | ClientRequestV1::NpcTradeRequest { .. } => {
-                unreachable!("NPC requests are dispatched by the typed NPC dispatcher")
             }
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 tracing::info!(
@@ -1910,6 +1927,13 @@ pub fn handle_client_request_payloads(
                     materials,
                     tick: combat_clock.tick,
                 });
+            }
+            // NPC requests are consumed by the typed route above. This arm exists only to keep
+            // the exhaustive match explicit if the route is ever rearranged.
+            ClientRequestV1::NpcInspectRequest { .. }
+            | ClientRequestV1::NpcDialogueChoice { .. }
+            | ClientRequestV1::NpcTradeRequest { .. } => {
+                unreachable!("NPC request bypassed its typed route")
             }
             ClientRequestV1::ZhenfaPlace {
                 x,
@@ -4248,22 +4272,16 @@ mod tests {
     use crate::cultivation::known_techniques::KnownTechniques;
     use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
-    use crate::identity::PlayerIdentities;
     use crate::inventory::{
-        add_item_to_player_inventory, BlueprintScrollSpec, ContainerState, InscriptionScrollSpec,
-        InventoryRevision, ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate,
-        PlacedItemState,
+        BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
+        ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
     };
     use crate::lingtian::events::{
         StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
         StartReplenishRequest, StartTillRequest,
     };
-    use crate::npc::faction::{
-        FactionId, FactionMembership, FactionRank, MissionQueue, NamedFactionId, Reputation,
-    };
-    use crate::npc::trade::NpcPlayerReputation;
+    use crate::npc::faction::{FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation};
     use crate::skill::components::SkillSet;
-    use crate::social::components::FactionReputation;
     use crate::zhenfa::trap_content::TrapTargetFace;
     use valence::entity::{EntityId, EntityPlugin};
     use valence::prelude::{
@@ -7775,7 +7793,7 @@ mod tests {
         faction_reputation.apply_delta(NamedFactionId::QingyunHunters, -51);
         let mut npc_membership = neutral_faction_membership();
         npc_membership.reputation = Reputation { loyalty: 0.8 };
-        let score_gate_value = npc::reputation_to_player_score_for_npc_zone(
+        let score_gate_value = reputation_to_player_score_for_npc_zone(
             Some(&npc_membership),
             None,
             Some(&faction_reputation),
@@ -7841,6 +7859,281 @@ mod tests {
         assert!(
             app.world().get::<PlayerInventory>(player).is_none(),
             "Wanted rejection happens before trade side effects or inventory mutation"
+        );
+    }
+
+    fn setup_npc_request_app(
+        player_position: DVec3,
+        npc_position: DVec3,
+        player_dimension: Option<DimensionKind>,
+        npc_dimension: Option<DimensionKind>,
+        archetype: NpcArchetype,
+    ) -> (App, Entity, Entity, i32, MockClientHelper) {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+
+        let (client_bundle, helper) = create_mock_client("NpcRoute");
+        let player = app
+            .world_mut()
+            .spawn((client_bundle, empty_inventory()))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_position));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityKind::VILLAGER,
+                EntityId::default(),
+                Position::new(npc_position),
+                OldPosition::new(npc_position),
+                archetype,
+            ))
+            .id();
+        if let Some(dimension) = npc_dimension {
+            app.world_mut()
+                .entity_mut(npc)
+                .insert(CurrentDimension(dimension));
+        }
+
+        app.update();
+        let npc_entity_id = app
+            .world()
+            .get::<EntityId>(npc)
+            .expect("EntityPlugin must assign protocol id to NPC")
+            .get();
+        (app, player, npc, npc_entity_id, helper)
+    }
+
+    fn send_npc_request(app: &mut App, client: Entity, request: ClientRequestV1) {
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&request)
+                    .expect("NPC request should serialize")
+                    .into_boxed_slice(),
+            });
+    }
+
+    #[test]
+    fn npc_inspect_request_preserves_feedback_and_rejects_invalid_targets() {
+        let (mut app, player, _npc, npc_entity_id, mut helper) = setup_npc_request_app(
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(1.0, 64.0, 0.0),
+            None,
+            None,
+            NpcArchetype::Commoner,
+        );
+        let revision_before = app.world().get::<PlayerInventory>(player).unwrap().revision;
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages.len(),
+            1,
+            "a nearby inspect must emit exactly one chat line"
+        );
+        assert!(
+            messages[0].starts_with("§7[NPC] "),
+            "inspect must preserve the existing NPC greeting feedback, messages={messages:?}"
+        );
+        assert_eq!(
+            app.world().get::<PlayerInventory>(player).unwrap().revision,
+            revision_before,
+            "inspect must not mutate the player inventory"
+        );
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id: npc_entity_id.saturating_add(9999),
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages,
+            vec!["[NPC] 目标已不在附近，无法查看。"],
+            "an unresolved NPC id must use the existing inspect rejection feedback"
+        );
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(DVec3::new(0.0, 64.0, 0.0)));
+        app.world_mut()
+            .entity_mut(_npc)
+            .insert(Position::new(DVec3::new(6.000_001, 64.0, 0.0)));
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages,
+            vec!["[NPC] 目标已不在附近，无法查看。"],
+            "an NPC beyond the six-block interaction boundary must be rejected"
+        );
+
+        app.world_mut()
+            .entity_mut(_npc)
+            .insert(Position::new(DVec3::new(1.0, 64.0, 0.0)));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .entity_mut(_npc)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages,
+            vec!["[NPC] 目标已不在附近，无法查看。"],
+            "an NPC in another dimension must be rejected before feedback lookup"
+        );
+    }
+
+    #[test]
+    fn npc_dialogue_request_preserves_choices_and_refusal_audio() {
+        let (mut app, player, _npc, npc_entity_id, mut helper) = setup_npc_request_app(
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(1.0, 64.0, 0.0),
+            None,
+            None,
+            NpcArchetype::Commoner,
+        );
+        let revision_before = app.world().get::<PlayerInventory>(player).unwrap().revision;
+
+        for (option_id, expected_message) in
+            [("inspect", "端详了一眼"), ("trade", "摊开了随身货物")]
+        {
+            send_npc_request(
+                &mut app,
+                player,
+                ClientRequestV1::NpcDialogueChoice {
+                    v: 1,
+                    npc_entity_id,
+                    option_id: option_id.to_string(),
+                },
+            );
+            app.update();
+            flush_all_client_packets(&mut app);
+            let messages = collect_game_messages(&mut helper);
+            assert_eq!(
+                messages.len(),
+                1,
+                "dialogue option {option_id} must emit one reply"
+            );
+            assert!(
+                messages[0].contains(expected_message),
+                "dialogue option {option_id} must preserve its existing reply, messages={messages:?}"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "accepted dialogue option {option_id} must not emit refusal audio"
+            );
+        }
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcDialogueChoice {
+                v: 1,
+                npc_entity_id,
+                option_id: "leave".to_string(),
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        assert!(
+            collect_game_messages(&mut helper).is_empty(),
+            "leave must preserve the existing silent dialogue behavior"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "leave must not emit refusal audio"
+        );
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcDialogueChoice {
+                v: 1,
+                npc_entity_id,
+                option_id: "not-a-dialogue-option".to_string(),
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages.len(),
+            1,
+            "an invalid dialogue option must emit one refusal"
+        );
+        assert!(
+            messages[0].contains("不愿回应这个选择"),
+            "invalid dialogue option must preserve the refusal feedback, messages={messages:?}"
+        );
+        let refusal_audio = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refusal_audio.len(),
+            1,
+            "invalid dialogue option must emit one refusal sound"
+        );
+        assert_eq!(refusal_audio[0].recipe_id, "npc_refuse");
+        assert_eq!(
+            app.world().get::<PlayerInventory>(player).unwrap().revision,
+            revision_before,
+            "dialogue choices must not mutate the player inventory revision"
         );
     }
 
@@ -17753,10 +18046,7 @@ fn is_qi_color_inspect_position_in_scope(
             <= QI_COLOR_INSPECT_MAX_DISTANCE * QI_COLOR_INSPECT_MAX_DISTANCE
 }
 
-pub(crate) fn dimension_kind_for(
-    dimensions: &Query<&CurrentDimension>,
-    entity: Entity,
-) -> DimensionKind {
+fn dimension_kind_for(dimensions: &Query<&CurrentDimension>, entity: Entity) -> DimensionKind {
     dimensions
         .get(entity)
         .map(|dimension| dimension.0)
@@ -22197,6 +22487,455 @@ mod take_pill_tests {
         assert!(
             matches!(forced_spoil, SpoilCheckOutcome::Safe { .. }),
             "forced winter phase should slow spoil checks immediately"
+        );
+    }
+}
+
+#[cfg(test)]
+mod named_faction_reputation_tests {
+    use super::*;
+    use crate::npc::faction::{FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation};
+
+    fn membership_with_loyalty(loyalty: f64) -> FactionMembership {
+        FactionMembership {
+            faction_id: FactionId::Neutral,
+            rank: FactionRank::Disciple,
+            reputation: Reputation { loyalty },
+            lineage: None,
+            mission_queue: MissionQueue::default(),
+        }
+    }
+
+    #[test]
+    fn npc_zone_faction_reputation_replaces_global_identity_renown() {
+        let mut identities = PlayerIdentities::with_default("Azure", 0);
+        identities.active_mut().unwrap().renown.notoriety = 80;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+
+        let score = reputation_to_player_score_for_npc_zone(
+            None,
+            Some(&identities),
+            Some(&faction_reputation),
+            Some("qingyun_peaks"),
+        );
+
+        assert_eq!(
+            score, 60,
+            "青云 zone NPC 应读取 QingyunHunters per_faction 信誉，而不是全局 identity Renown"
+        );
+    }
+
+    #[test]
+    fn npc_zone_faction_reputation_falls_back_to_identity_for_unknown_zone() {
+        let mut identities = PlayerIdentities::with_default("Azure", 0);
+        identities.active_mut().unwrap().renown.notoriety = 80;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+
+        let score = reputation_to_player_score_for_npc_zone(
+            None,
+            Some(&identities),
+            Some(&faction_reputation),
+            Some("spawn"),
+        );
+
+        assert_eq!(
+            score, -80,
+            "未映射到具名势力的 zone 应保持 legacy identity Renown fallback"
+        );
+    }
+
+    #[test]
+    fn npc_zone_faction_reputation_falls_back_when_zone_or_reputation_missing() {
+        let mut identities = PlayerIdentities::with_default("Azure", 0);
+        identities.active_mut().unwrap().renown.notoriety = 40;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+
+        let missing_zone_score = reputation_to_player_score_for_npc_zone(
+            None,
+            Some(&identities),
+            Some(&faction_reputation),
+            None,
+        );
+        let missing_reputation_score = reputation_to_player_score_for_npc_zone(
+            None,
+            Some(&identities),
+            None,
+            Some("qingyun_peaks"),
+        );
+        let empty_score = reputation_to_player_score_for_npc_zone(None, None, None, None);
+
+        assert_eq!(
+            missing_zone_score, -40,
+            "zone_name=None 时必须回退 legacy identity reputation，避免误读具名势力信誉"
+        );
+        assert_eq!(
+            missing_reputation_score, -40,
+            "玩家缺少 FactionReputation 组件时必须回退 legacy identity reputation"
+        );
+        assert_eq!(
+            empty_score, 0,
+            "缺少 membership/identity/faction reputation 的空输入应保持中立 0"
+        );
+    }
+
+    #[test]
+    fn npc_zone_faction_reputation_clamps_membership_plus_faction_score() {
+        let high_membership = membership_with_loyalty(1.0);
+        let low_membership = membership_with_loyalty(0.0);
+        let medium_membership = membership_with_loyalty(0.245);
+        let mut high_reputation = FactionReputation::default();
+        high_reputation.apply_delta(NamedFactionId::QingyunHunters, 1);
+        let mut low_reputation = FactionReputation::default();
+        low_reputation.apply_delta(NamedFactionId::QingyunHunters, -1);
+        let mut off_by_one_reputation = FactionReputation::default();
+        off_by_one_reputation.apply_delta(NamedFactionId::QingyunHunters, 50);
+
+        let upper = reputation_to_player_score_for_npc_zone(
+            Some(&high_membership),
+            None,
+            Some(&high_reputation),
+            Some("qingyun_peaks"),
+        );
+        let lower = reputation_to_player_score_for_npc_zone(
+            Some(&low_membership),
+            None,
+            Some(&low_reputation),
+            Some("qingyun_peaks"),
+        );
+        let off_by_one = reputation_to_player_score_for_npc_zone(
+            Some(&medium_membership),
+            None,
+            Some(&off_by_one_reputation),
+            Some("qingyun_peaks"),
+        );
+
+        assert_eq!(
+            upper, 100,
+            "membership baseline + faction score 超过上界时必须 clamp 到 100"
+        );
+        assert_eq!(
+            lower, -100,
+            "membership baseline + faction score 低于下界时必须 clamp 到 -100"
+        );
+        assert_eq!(
+            off_by_one, -1,
+            "未触及边界的 membership baseline + faction score 不应被误 clamp"
+        );
+    }
+
+    #[test]
+    fn wanted_tier_blocks_trade_even_when_score_would_otherwise_allow() {
+        let target = NpcEngagementTarget {
+            entity: Entity::PLACEHOLDER,
+            archetype: NpcArchetype::Commoner,
+            reputation_to_player: 100,
+            faction_reputation_tier: FactionReputationTier::Wanted,
+            display_name: "青云残峰散修".to_string(),
+            greeting_text: String::new(),
+            position: DVec3::ZERO,
+            npc_player_rep: None,
+        };
+
+        assert!(
+            !target.can_trade(),
+            "Wanted tier 必须优先阻断交易，即使 reputation_to_player 分数本身足够高"
+        );
+    }
+}
+
+// ── plan-cultivation-pacing-v1 P2.2 NPC 丹药交易测试 ──
+
+#[cfg(test)]
+mod npc_flawed_pill_trade_tests {
+    use super::*;
+    use crate::npc::lifecycle::NpcArchetype;
+
+    #[test]
+    fn commoner_sells_flawed_ling_xi_wan_at_8_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Commoner, "ling_xi_wan_flawed");
+        assert_eq!(
+            result,
+            Some(("ling_xi_wan_flawed", 8)),
+            "Commoner 应以 8 骨币售卖次品灵息丸"
+        );
+    }
+
+    #[test]
+    fn commoner_sells_flawed_ju_ling_dan_at_15_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Commoner, "ju_ling_dan_flawed");
+        assert_eq!(
+            result,
+            Some(("ju_ling_dan_flawed", 15)),
+            "Commoner 应以 15 骨币售卖次品聚灵丹"
+        );
+    }
+
+    #[test]
+    fn rogue_sells_flawed_ling_xi_wan_at_8_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Rogue, "ling_xi_wan_flawed");
+        assert_eq!(
+            result,
+            Some(("ling_xi_wan_flawed", 8)),
+            "Rogue 也应以 8 骨币售卖次品灵息丸"
+        );
+    }
+
+    #[test]
+    fn rogue_sells_flawed_ju_ling_dan_at_15_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Rogue, "ju_ling_dan_flawed");
+        assert_eq!(
+            result,
+            Some(("ju_ling_dan_flawed", 15)),
+            "Rogue 也应以 15 骨币售卖次品聚灵丹"
+        );
+    }
+
+    #[test]
+    fn chinese_alias_also_resolves_for_commoner() {
+        assert_eq!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ling_xi_wan_次品"),
+            Some(("ling_xi_wan_flawed", 8)),
+            "中文别名 ling_xi_wan_次品 应解析到同一物品"
+        );
+        assert_eq!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ju_ling_dan_次品"),
+            Some(("ju_ling_dan_flawed", 15)),
+            "中文别名 ju_ling_dan_次品 应解析到同一物品"
+        );
+    }
+
+    #[test]
+    fn beast_does_not_sell_flawed_pills() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Beast, "ling_xi_wan_flawed").is_none(),
+            "Beast 不应售卖次品丹药"
+        );
+    }
+
+    #[test]
+    fn zombie_does_not_sell_flawed_pills() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Zombie, "ling_xi_wan_flawed").is_none(),
+            "Zombie 不应售卖次品丹药"
+        );
+    }
+
+    #[test]
+    fn normal_pills_not_in_npc_catalog() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ling_xi_wan").is_none(),
+            "正品灵息丸不应在 NPC 交易目录中"
+        );
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ju_ling_dan").is_none(),
+            "正品聚灵丹不应在 NPC 交易目录中"
+        );
+    }
+
+    #[test]
+    fn higher_pills_not_in_npc_catalog() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "tong_mai_san_flawed").is_none(),
+            "通脉散以上 NPC 不售卖"
+        );
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Rogue, "xi_sui_ye_flawed").is_none(),
+            "洗髓液以上 NPC 不售卖"
+        );
+    }
+
+    /// 买路 spirit_grass 条目价格应为 10 骨币（与 TRADE_CATALOGUE 对齐）。
+    #[test]
+    fn buy_path_spirit_grass_price_10() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Commoner, "spirit_grass");
+        assert_eq!(
+            result,
+            Some(("spirit_grass", 10)),
+            "买路 spirit_grass 应以 10 骨币售卖（与 TRADE_CATALOGUE 对齐），\
+             期望: Some((\"spirit_grass\", 10))，实际: {:?}",
+            result
+        );
+    }
+
+    /// 买路 broken_artifact_scroll 条目价格应为 40 骨币（与 TRADE_CATALOGUE 对齐）。
+    #[test]
+    fn buy_path_broken_artifact_scroll_price_40() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Rogue, "broken_artifact_scroll");
+        assert_eq!(
+            result,
+            Some(("broken_artifact_scroll", 40)),
+            "买路 broken_artifact_scroll 应以 40 骨币售卖（与 TRADE_CATALOGUE 对齐），\
+             期望: Some((\"broken_artifact_scroll\", 40))，实际: {:?}",
+            result
+        );
+    }
+}
+
+// ── RefuseRare rarity 门控逻辑单元测试 ─────────────────────────────────────
+// 验证 TradeEligibility::RefuseRare arm 对不同 ItemRarity 的判断逻辑是正确的：
+// - Rare+ (Rare/Epic/Legendary/Ancient) → 拒绝
+// - Common/Uncommon → 通过（1.3x markup）
+//
+// NOTE：这组测试直接调用生产函数 is_rarity_refused_at_low_rep，
+// 确保任何变体增删/修改都会立刻让测试撞红。
+#[cfg(test)]
+mod refuse_rare_rarity_gate_tests {
+    use crate::inventory::ItemRarity;
+    use crate::network::client_request_handler::is_rarity_refused_at_low_rep;
+
+    /// Low 信誉买 Rare 物品（broken_artifact_scroll，rarity=Rare）→ 应被拒绝。
+    /// 期望：is_rarity_refused_at_low_rep(Rare) = true（触发 continue，不走到 add_item）。
+    #[test]
+    fn rare_rarity_is_refused_for_low_rep() {
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Rare),
+            "ItemRarity::Rare 应触发 RefuseRare 拒绝门控，\
+             期望: is_rarity_refused_at_low_rep(Rare) = true，实际: false"
+        );
+    }
+
+    /// Low 信誉买 Common 物品（spirit_grass，rarity=Common）→ 应通过。
+    /// 期望：is_rarity_refused_at_low_rep(Common) = false（走到 1.3x 加价路径）。
+    #[test]
+    fn common_rarity_allowed_for_low_rep_with_markup() {
+        assert!(
+            !is_rarity_refused_at_low_rep(ItemRarity::Common),
+            "ItemRarity::Common 不应触发 RefuseRare 门控，\
+             期望: is_rarity_refused_at_low_rep(Common) = false，实际: true"
+        );
+    }
+
+    /// Low 信誉买 Uncommon 物品（skill_scroll_herbalism_baicao_can，rarity=Uncommon）→ 应通过。
+    /// 这是 Rare 阈值 off-by-one 边界：Uncommon 在 Rare 之下，应允许（1.3x）。
+    #[test]
+    fn uncommon_rarity_is_allowed_off_by_one_boundary() {
+        assert!(
+            !is_rarity_refused_at_low_rep(ItemRarity::Uncommon),
+            "ItemRarity::Uncommon 是 Rare 阈值 off-by-one 边界（低于 Rare），\
+             期望: is_rarity_refused_at_low_rep(Uncommon) = false（允许 1.3x markup），实际: true"
+        );
+    }
+
+    /// Epic/Legendary/Ancient 全部应被拒绝（Rare+ 全覆盖）。
+    #[test]
+    fn epic_legendary_ancient_all_refused() {
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Epic),
+            "ItemRarity::Epic 应触发 RefuseRare 门控，\
+             期望: true，实际: false"
+        );
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Legendary),
+            "ItemRarity::Legendary 应触发 RefuseRare 门控，\
+             期望: true，实际: false"
+        );
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Ancient),
+            "ItemRarity::Ancient 应触发 RefuseRare 门控，\
+             期望: true，实际: false"
+        );
+    }
+
+    /// High/Mid 信誉不触发 RefuseRare——check_trade_eligibility 返回 Allowed，
+    /// 不走 RefuseRare arm，所以 rarity 门控根本不会执行。
+    /// 此测试通过验证 TradeEligibility 确认逻辑路径分叉正确。
+    #[test]
+    fn high_mid_rep_not_refused_by_eligibility() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        // High tier → Allowed（不走 RefuseRare arm）
+        assert!(
+            matches!(
+                check_trade_eligibility(RepTier::High),
+                TradeEligibility::Allowed { .. }
+            ),
+            "High 信誉不应走 RefuseRare arm，期望: Allowed，实际: 非 Allowed"
+        );
+        // Mid tier → Allowed（不走 RefuseRare arm）
+        assert!(
+            matches!(
+                check_trade_eligibility(RepTier::Mid),
+                TradeEligibility::Allowed { .. }
+            ),
+            "Mid 信誉不应走 RefuseRare arm，期望: Allowed，实际: 非 Allowed"
+        );
+    }
+
+    /// Hostile 信誉触发 Refused（全拒），与 RefuseRare 是不同分支。
+    #[test]
+    fn hostile_rep_is_fully_refused_not_rare_gated() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        assert_eq!(
+            check_trade_eligibility(RepTier::Hostile),
+            TradeEligibility::Refused,
+            "Hostile 信誉应触发 Refused（全拒），期望: Refused，实际: 非 Refused"
+        );
+    }
+
+    /// Low 信誉对应 RefuseRare 资格——买路 broken_artifact_scroll(Rare) 在此分支下应被拒绝。
+    #[test]
+    fn low_rep_eligibility_is_refuse_rare() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        assert_eq!(
+            check_trade_eligibility(RepTier::Low),
+            TradeEligibility::RefuseRare,
+            "Low 信誉应触发 RefuseRare，期望: RefuseRare，实际: 非 RefuseRare"
+        );
+    }
+
+    /// 完整 RefuseRare 链路验证：Low rep + Rare 物品 → 被拒绝。
+    /// 模拟 broken_artifact_scroll(Rare) 在 Low 声望下的完整判断链。
+    #[test]
+    fn full_refuse_rare_chain_rare_item_low_rep_refused() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        let rep_tier = RepTier::Low; // score ∈ (0.1, 0.3]
+        let eligibility = check_trade_eligibility(rep_tier);
+        assert_eq!(
+            eligibility,
+            TradeEligibility::RefuseRare,
+            "Low rep 应得到 RefuseRare 资格"
+        );
+        // Rare 物品：应触发拒绝
+        let is_rare = is_rarity_refused_at_low_rep(ItemRarity::Rare);
+        assert!(
+            is_rare,
+            "broken_artifact_scroll(Rare) 应触发 RefuseRare 拒绝门控，\
+             期望: is_rare = true，实际: false"
+        );
+    }
+
+    /// 完整 RefuseRare 链路验证：Low rep + Common 物品 → 通过（1.3x markup）。
+    /// 模拟 spirit_grass(Common) 在 Low 声望下的完整判断链。
+    #[test]
+    fn full_refuse_rare_chain_common_item_low_rep_allowed() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        let rep_tier = RepTier::Low;
+        let eligibility = check_trade_eligibility(rep_tier);
+        assert_eq!(
+            eligibility,
+            TradeEligibility::RefuseRare,
+            "Low rep 应得到 RefuseRare 资格"
+        );
+        let is_rare = is_rarity_refused_at_low_rep(ItemRarity::Common);
+        assert!(
+            !is_rare,
+            "spirit_grass(Common) 不应触发 RefuseRare 拒绝，\
+             期望: is_rare = false（走 1.3x markup 路径），实际: true"
+        );
+        // 验证 1.3x 价格计算
+        use crate::npc::trade::TradePricingConfig;
+        let config = TradePricingConfig::default();
+        let base_price = 10u64; // spirit_grass base price
+        let final_price = (base_price as f64 * config.rep_low_markup as f64)
+            .ceil()
+            .max(1.0) as u64;
+        assert_eq!(
+            final_price, 13,
+            "spirit_grass(10 骨币) 在 Low rep 1.3x markup 下应为 13 骨币，\
+             期望: 13，实际: {}",
+            final_price
         );
     }
 }
