@@ -35,10 +35,9 @@ use crate::combat::components::{
     CastSource, Casting, Lifecycle, LifecycleState, QuickSlotBindings, SkillBarBindings, SkillSlot,
     Stamina, Wounds,
 };
-use crate::combat::events::{
-    ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
-    StatusEffectKind,
-};
+#[cfg(test)]
+use crate::combat::events::RevivalActionIntent;
+use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
 use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
@@ -109,14 +108,12 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::npc;
-use crate::network::client_request::social;
+use crate::network::client_request::{combat, npc, social};
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
-use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
 #[cfg(test)]
 use crate::identity::PlayerIdentities;
 use crate::network::inventory_move_rejected_emit::emit_inventory_move_rejected;
@@ -453,6 +450,7 @@ pub struct AlchemyRequestParams<'w, 's> {
 
 #[derive(SystemParam)]
 pub struct ClientRequestDispatchParams<'w> {
+    pub(crate) combat: combat::CombatRequestParams<'w>,
     pub(crate) social: social::SocialRequestParams<'w>,
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub gameplay_tick: Option<Res<'w, GameplayTick>>,
@@ -470,7 +468,6 @@ pub struct ClientRequestDispatchParams<'w> {
     pub life_core_tx: Option<ResMut<'w, Events<UseLifeCoreEvent>>>,
     pub self_antidote_tx: Option<ResMut<'w, Events<SelfAntidoteIntent>>>,
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
-    pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
     pub place_forge_station_tx: Option<ResMut<'w, Events<PlaceForgeStationRequest>>>,
     /// plan-forge-session-entry-wiring-v1 §4.1#3/#4 — 起炉入口分发（原为 debug-log 死分支）。
     pub start_forge_tx: Option<ResMut<'w, Events<StartForgeRequest>>>,
@@ -514,9 +511,6 @@ pub struct ClientRequestDispatchParams<'w> {
     pub give_dan_to_elder_tx:
         Option<ResMut<'w, Events<crate::fauna::dying_elder::GiveDanToElderIntent>>>,
     pub workbench_open_tx: Option<ResMut<'w, Events<crate::craft::WorkbenchOpenRequest>>>,
-    // ─── plan-shield-block-v1 P1：持续举盾 intent ─────────────────────────
-    pub raise_shield_tx: EventWriter<'w, RaiseShieldIntent>,
-    pub lower_shield_tx: EventWriter<'w, LowerShieldIntent>,
     // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────────────────
     pub agent_ui_response_tx: EventWriter<'w, crate::network::agent_ui::AgentUiResponseEvent>,
 }
@@ -1357,6 +1351,18 @@ pub fn handle_client_request_payloads(
             );
             continue;
         }
+        let request = match combat::try_into_combat_request(request) {
+            Ok(combat_request) => {
+                combat::dispatch_combat_request(
+                    combat_request,
+                    ev.client,
+                    combat_clock.tick,
+                    &mut dispatch.combat,
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
         let request = match social::try_into_social_request(request) {
             Ok(social_request) => {
                 social::dispatch_social_request(
@@ -1389,6 +1395,13 @@ pub fn handle_client_request_payloads(
         }
 
         match request {
+            ClientRequestV1::CombatReincarnate { .. }
+            | ClientRequestV1::CombatTerminate { .. }
+            | ClientRequestV1::CombatCreateNewCharacter { .. }
+            | ClientRequestV1::RaiseShield { .. }
+            | ClientRequestV1::LowerShield { .. } => {
+                unreachable!("Combat requests are dispatched by the typed Combat dispatcher")
+            }
             ClientRequestV1::SparringInviteResponse { .. }
             | ClientRequestV1::TradeOfferRequest { .. }
             | ClientRequestV1::TradeOfferResponse { .. } => {
@@ -2628,33 +2641,6 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                 );
             }
-            ClientRequestV1::CombatReincarnate { .. } => {
-                if let Some(revival_tx) = dispatch.revival_tx.as_deref_mut() {
-                    revival_tx.send(RevivalActionIntent {
-                        entity: ev.client,
-                        action: RevivalActionKind::Reincarnate,
-                        issued_at_tick: combat_clock.tick,
-                    });
-                }
-            }
-            ClientRequestV1::CombatTerminate { .. } => {
-                if let Some(revival_tx) = dispatch.revival_tx.as_deref_mut() {
-                    revival_tx.send(RevivalActionIntent {
-                        entity: ev.client,
-                        action: RevivalActionKind::Terminate,
-                        issued_at_tick: combat_clock.tick,
-                    });
-                }
-            }
-            ClientRequestV1::CombatCreateNewCharacter { .. } => {
-                if let Some(revival_tx) = dispatch.revival_tx.as_deref_mut() {
-                    revival_tx.send(RevivalActionIntent {
-                        entity: ev.client,
-                        action: RevivalActionKind::CreateNewCharacter,
-                        issued_at_tick: combat_clock.tick,
-                    });
-                }
-            }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
                 x,
@@ -2927,19 +2913,6 @@ pub fn handle_client_request_payloads(
                     &combat_params.dimensions,
                     &combat_params.dying_elder_targets,
                 );
-            }
-            // ─── plan-shield-block-v1 P1：盾牌举盾 intent ─────────────────────
-            ClientRequestV1::RaiseShield { .. } => {
-                tracing::debug!("[bong][shield] RaiseShield received entity={:?}", ev.client);
-                dispatch
-                    .raise_shield_tx
-                    .send(RaiseShieldIntent { player: ev.client });
-            }
-            ClientRequestV1::LowerShield { .. } => {
-                tracing::debug!("[bong][shield] LowerShield received entity={:?}", ev.client);
-                dispatch
-                    .lower_shield_tx
-                    .send(LowerShieldIntent { player: ev.client });
             }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
             // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；
