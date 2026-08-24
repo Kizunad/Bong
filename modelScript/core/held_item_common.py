@@ -16,12 +16,27 @@ bbmodel 和 OBJ 的 boss 厚度就对不上。这里合成一个源头，从结�
     → 该宿主的 item model JSON 被 SML 劫持到 `bong:models/item/<id>/<id>.obj`
     → 显示 3D 模型
 
-## 坐标约定
+## 坐标约定：**授权系 ≠ 出料系**
 
-模型空间 1.0 = 一个方块 = 16 px。**y=0 必须落在握把末端、尖端朝 +Y**，
-`assert_conventions` 会查。这样一来所有手持物共用同一套 display 变换基线
-（参照 `axe_bone`：TP rotation [0,-90,55] / translation [0,4,0]），不必每件
-单独调 `client/tools/asset_configs/<id>.json`。
+授权（box 表）用「握把末端在 y=0、尖端朝 +Y」，`assert_conventions` 会查——这套
+读写都顺手。但**出料（OBJ / bbmodel）必须移进方块盒**，因为 MC 的 display 变换
+是绕**方块中心**转的，不是绕模型原点：
+
+    ItemRenderer.renderItem:  display 变换之后 translate(-0.5,-0.5,-0.5)
+    SML ObjUnbakedModelModel.emitVertex:  只做「-0.5 → blockstate 旋转 → +0.5」，
+                                          **不重定心**
+
+所以 OBJ 的 (0,0,0) 落在**方块角**，而 display 的 rotation/translation/scale 全部
+以 (0.5,0.5,0.5)（= 8px）为原点。授权系直接出料的话，模型等于挂在离枢轴半个方块
+远的角上：TP 里刀飘在拳头外（实测 6.3px，一个拳头才 4px 宽），GUI 里图标被推到
+格子左下角。**这不是 display 数值没调好，是差了一整个 0.5 方块的系统性偏移。**
+
+`emit_offset()` 因此把出料整体挪成「**握把点落在方块中心**」：
+
+    emit = (0.5 - 0, 0.5 - grip, 0.5 - 0)   # x/z 授权时就在 0 附近
+
+这样 display 变换的枢轴就是**握把本身**——调手持姿态时绕握把转，正是想要的语义；
+GUI/ground/fixed 也一并落回格子中心，不用每个模式各配一套补偿平移。
 
 ## UV 约定
 
@@ -106,9 +121,18 @@ class HeldItem:
     boxes: tuple[Box, ...]
     materials: tuple[Material, ...]
     display: dict[str, dict[str, list]]
+    grip: float                         # 拳心对准的模型高度（授权系，方块单位）
 
 
 # ── 校验 ──────────────────────────────────────────────────────────────────
+
+
+BLOCK_CENTRE = 0.5              # MC display 变换的枢轴，方块单位
+
+
+def emit_offset(item: HeldItem) -> tuple[float, float, float]:
+    """授权系 → 出料系的整体平移，让**握把点落在方块中心**（见模块 docstring）。"""
+    return (BLOCK_CENTRE, BLOCK_CENTRE - item.grip, BLOCK_CENTRE)
 
 
 def assert_conventions(item: HeldItem) -> None:
@@ -158,6 +182,15 @@ def assert_conventions(item: HeldItem) -> None:
         if span > 0.6:
             raise ValueError(f"{item.key}: {label} 向跨度 {span:.3f} 过大，不像手持物")
 
+    # 拳头在世界里约 4px 宽，换算回模型是 4/scale px；握把点必须落在模型上，而且
+    # 不能贴着尖端——否则 emit_offset 会把整件推出方块盒，display 枢轴也就没意义了。
+    if not 0.0 < item.grip < y_max:
+        raise ValueError(
+            f"{item.key}: grip={item.grip:.3f} 不在 (0, {y_max:.3f}) 内。"
+            f"grip 是拳心对准的模型高度，落在握把中段；出料时整件会平移成"
+            f"「grip 点 = 方块中心」，见 emit_offset"
+        )
+
 
 def assert_no_coplanar_faces(item: HeldItem) -> None:
     """揪出"两块外表面落在同一平面且投影相交"的 box 对——体素模型的经典 z-fighting。
@@ -201,8 +234,11 @@ def build_obj(item: HeldItem) -> str:
     lines += [f"vn {x:.4f} {y:.4f} {z:.4f}" for x, y, z in _VN]
 
     base = 0
+    off = emit_offset(item)
     for box in item.boxes:
-        lo, hi = box.low, box.high
+        # 出料系 = 授权系 + emit_offset（握把点落方块中心，见模块 docstring）
+        lo = tuple(box.low[i] + off[i] for i in range(3))
+        hi = tuple(box.high[i] + off[i] for i in range(3))
         corners = (
             (lo[0], lo[1], lo[2]), (hi[0], lo[1], lo[2]),
             (hi[0], hi[1], lo[2]), (lo[0], hi[1], lo[2]),
@@ -273,13 +309,17 @@ def _data_url(image: Image.Image) -> str:
 
 
 def build_bbmodel(item: HeldItem) -> dict:
-    """bbmodel 用**模型空间 ×16**（即 px）写坐标，Blockbench 的格子才对得上。
+    """bbmodel 用**出料系 ×16**（即 px）写坐标，Blockbench 的格子才对得上。
+
+    坐标要和 OBJ 逐点一致（同一个 `emit_offset`）——bbmodel 是设计期看的，OBJ 是
+    运行时吃的，两边差一个平移就意味着"预览里握得住、进游戏握不住"。
 
     uuid 全部走 uuid5：uuid4 会让每次重跑都产出一份 diff，git 上分不清"改了造型"
     和"只是重跑了一遍"（棺材那批生成器踩过）。
     """
     index_of = {m.name: i for i, m in enumerate(item.materials)}
     atlas_w = TILE * len(item.materials)
+    off = emit_offset(item)
     elements = []
     for box in item.boxes:
         tile = index_of[box.material]
@@ -297,8 +337,8 @@ def build_bbmodel(item: HeldItem) -> dict:
             "allow_mirror_modeling": True,
             "type": "cube",
             "uuid": str(uuid.uuid5(MODEL_NAMESPACE, f"{item.key}/{box.name}")),
-            "from": [round(v * 16.0, 4) for v in box.low],
-            "to": [round(v * 16.0, 4) for v in box.high],
+            "from": [round((v + off[i]) * 16.0, 4) for i, v in enumerate(box.low)],
+            "to": [round((v + off[i]) * 16.0, 4) for i, v in enumerate(box.high)],
             "autouv": 0,
             "color": tile % 8,
             "origin": [0.0, 0.0, 0.0],

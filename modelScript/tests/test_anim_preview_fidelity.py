@@ -388,12 +388,15 @@ class DaggerAnimationTest(unittest.TestCase):
         knife = RB.load_bbmodel(MODELS / "StoneKnife.bbmodel")[0]
         V = np.array([p for vs, _, _ in knife for p in vs])
         tip = V[int(V[:, 1].argmax())]
-        disp = {"rotation": [0, -90, 55], "translation": [0, 4.0, 0], "scale": [0.72] * 3}
+        # 取生成器里的真值，别在测试里另写一份——写死过一次 [0,-90,55]，
+        # 结果生成器改了刃向而测试还在量旧握法。
+        import gen_knife_trio as GK
+        disp = GK.STONE_KNIFE.display["thirdperson_righthand"]
         for name in self.ANIMS:
             kfs = self._kfs(name)
             pos = []
             for i in range(33):
-                m = P.hand_transform(P.segment_transforms(kfs, 8.0 * i / 32), disp)
+                m = P.hand_transform(kfs, 8.0 * i / 32, disp)
                 pos.append(m[:3, :3] @ tip + m[:3, 3])
             speed = np.linalg.norm(np.diff(np.array(pos), axis=0), axis=1)
             peak_tick = 8.0 * int(speed.argmax()) / 32
@@ -566,3 +569,151 @@ class JointAnatomyGuardTest(unittest.TestCase):
             LEGACY, names,
             f"历史欠账里有 {sorted(LEGACY - names)} 已经修好了——"
             f"请把它们从 LEGACY 名单里删掉，好让这条锁继续收紧")
+
+
+class HeldItemAttachTest(unittest.TestCase):
+    """手持物挂点：`preview_player_anim.item_attach_modelpart` 必须复刻运行时调用序。
+
+    这条链历史上错了**四处**，合起来让刀飘在拳头外 6.3px（一个拳头才 4px 宽）——
+    正是用户一眼看出的"手没握住把柄"。四处分别是：
+
+    ① 整条 `R_ATTACH`（`HeldItemFeatureRenderer` 的 Rx(-90)·Ry(180)）根本没有；
+    ② display 的 translation 被当成 `R_disp·t` 加，而 MC 是**先平移再旋转**；
+    ③ 挂点用 `limb_end_local` 近似，真值是 `R_ATTACH·(1,2,-10)`；
+    ④ 少了方块中心重定心 `T(-8,-8,-8)`。
+
+    下面按**可观察量**分别钉死，不去比对内部矩阵——换实现不该让这些红。
+    """
+
+    IDENT = {"rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [1, 1, 1]}
+
+    def setUp(self):
+        import preview_player_anim as P
+        self.P = P
+        self.kfs = RA.collect_keyframes(
+            json.loads((ANIM / "dagger_slash.json").read_text(encoding="utf-8"))["emote"])
+
+    def _arm(self, tick):
+        """臂本身的 ModelPart 变换（肩枢轴 + R_arm + bend），不含任何手持物项。"""
+        P = self.P
+        part = RA.sample_part(self.kfs, "rightArm", float(tick))
+        pivot = (np.array(P.PIVOT_OF["rightArm_lo"], float)
+                 + np.array([part["x"], part["y"], part["z"]], float))
+        R = RA.part_rotation_matrix(part["pitch"], part["yaw"], part["roll"])
+        a = float(part["axis"])
+        Rb = RA.rotate_about_axis(np.array([np.cos(-a), 0.0, np.sin(-a)]), float(part["bend"]))
+        return (P._aff(np.eye(3), pivot) @ P._aff(R, np.zeros(3))
+                @ P._about(Rb, P.ITEM_BEND_PIVOT_PX))
+
+    def test_anchor_is_the_minecraft_hand_offset(self):
+        """① + ③：display 为单位阵时，模型中心必须落在 `R_ATTACH·(1,2,-10)`。
+
+        那是 `HeldItemFeatureRenderer.renderItem` 里
+        `setArmAngle → Rx(-90) → Ry(180) → translate(1/16, 0.125, -0.625)` 的落点，
+        换算到臂系是 (-1,10,-2)：臂盒底面、往前 2px。
+        """
+        for tick in (0.0, 2.5, 5.0, 7.0):
+            M = self.P.item_attach_modelpart(self.kfs, tick, self.IDENT)
+            got = (M @ np.array([8.0, 8.0, 8.0, 1.0]))[:3]
+            want = (self._arm(tick) @ np.append(
+                self.P.R_ATTACH @ self.P.HAND_OFFSET_PX, 1.0))[:3]
+            np.testing.assert_allclose(
+                got, want, atol=1e-9,
+                err_msg=f"t{tick}: 模型中心没落在 MC 的手持物挂点上")
+
+    def test_left_hand_mirrors_the_x_offset(self):
+        for tick in (0.0, 5.0):
+            r = self.P.item_attach_modelpart(self.kfs, tick, self.IDENT, right=True)
+            l = self.P.item_attach_modelpart(self.kfs, tick, self.IDENT, right=False)
+            self.assertFalse(np.allclose(r, l), "左右手挂点不该完全一样")
+
+    def test_item_y_axis_points_forward_when_display_is_identity(self):
+        """① `R_ATTACH` 在场的直接判据：item 空间的 +Y 落到臂系的 -Z（朝前）。
+
+        少了 R_ATTACH 的话 +Y 会落到臂系 +Y（朝下），刀的朝向从根上就错。
+        """
+        M = self.P.item_attach_modelpart(self.kfs, 0.0, self.IDENT)
+        arm = self._arm(0.0)
+        got = M[:3, :3] @ np.array([0.0, 1.0, 0.0])
+        want = arm[:3, :3] @ np.array([0.0, 0.0, -1.0])
+        np.testing.assert_allclose(got, want, atol=1e-9)
+
+    def test_translation_is_applied_before_the_rotation(self):
+        """② MC 的 `Transformation.apply` 是 translate → rotate → scale。
+
+        所以模型中心（= 枢轴，减 8 后为零向量）的落点**只由 translation 决定**，
+        换 rotation 不该让它动。旧实现算的是 `R_disp·t`，换 rotation 就漂。
+        """
+        base = None
+        for rot in ([0, 0, 0], [0, -90, 55], [-80, 90, 0], [37, 12, -140]):
+            disp = {"rotation": rot, "translation": [3, -2, 1.5], "scale": [0.7] * 3}
+            M = self.P.item_attach_modelpart(self.kfs, 3.0, disp)
+            centre = (M @ np.array([8.0, 8.0, 8.0, 1.0]))[:3]
+            if base is None:
+                base = centre
+            np.testing.assert_allclose(
+                centre, base, atol=1e-9,
+                err_msg=f"rotation={rot} 让枢轴挪了位——translation 被当成旋转后再加")
+
+    def test_scale_pivots_on_the_block_centre(self):
+        """④ 缩放必须绕 (8,8,8) 而不是模型原点。
+
+        没有 `T(-8,-8,-8)` 的话原点才是不动点，整件会随 scale 往方块角坍缩——
+        本仓库的手持物握把恰好就在原点，症状正是"刀离手越缩越远"。
+        """
+        for s in (0.4, 1.0, 1.8):
+            disp = {"rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [s] * 3}
+            M = self.P.item_attach_modelpart(self.kfs, 1.0, disp)
+            centre = (M @ np.array([8.0, 8.0, 8.0, 1.0]))[:3]
+            up = (M @ np.array([8.0, 24.0, 8.0, 1.0]))[:3]
+            self.assertAlmostEqual(
+                16.0 * s, float(np.linalg.norm(up - centre)), places=9,
+                msg=f"scale={s}: 离枢轴 16px 的点没按比例走")
+            if s == 0.4:
+                ref = centre
+            else:
+                np.testing.assert_allclose(
+                    centre, ref, atol=1e-9,
+                    err_msg="缩放把枢轴本身挪了位 —— 说明少了方块中心重定心")
+
+    def test_item_follows_the_elbow_bend(self):
+        """PlayerAnimator `HeldItemMixin` 在 Rx(-90) 之前插了一段 bend 旋转，
+        所以手持物**跟着肘弯走**。不跟的话弯肘时刀会留在直臂的手位上。"""
+        P = self.P
+        seen = set()
+        for tick in (0.0, 3.0, 5.0):
+            M = P.item_attach_modelpart(self.kfs, tick, self.IDENT)
+            seen.add(tuple(np.round((M @ np.array([8.0, 8.0, 8.0, 1.0]))[:3], 6)))
+        self.assertEqual(3, len(seen), "各 tick 挂点完全相同 —— 手持物没跟着手臂动")
+
+    def test_grip_of_every_knife_sits_in_the_fist(self):
+        """三把刀 × 两条动画 × 每 tick：握把点都必须在拳心。
+
+        `emit_offset` 把握把点放到方块中心 = display 枢轴，所以这条同时锁住
+        `held_item_common` 的出料平移和本文件这条挂点链——任何一边漂了都会红。
+        """
+        import gen_knife_trio as GK
+        fist = np.array([-1.0, 8.5, 0.0, 1.0])       # 臂盒底面往上 1.5px、z 居中
+        for item in GK.items():
+            disp = item.display["thirdperson_righthand"]
+            for name in ("dagger_slash", "dagger_stab"):
+                kfs = RA.collect_keyframes(
+                    json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
+                for i in range(17):
+                    tick = 8.0 * i / 16
+                    part = RA.sample_part(kfs, "rightArm", tick)
+                    pivot = (np.array(self.P.PIVOT_OF["rightArm_lo"], float)
+                             + np.array([part["x"], part["y"], part["z"]], float))
+                    R = RA.part_rotation_matrix(part["pitch"], part["yaw"], part["roll"])
+                    a = float(part["axis"])
+                    Rb = RA.rotate_about_axis(
+                        np.array([np.cos(-a), 0.0, np.sin(-a)]), float(part["bend"]))
+                    arm = (self.P._aff(np.eye(3), pivot) @ self.P._aff(R, np.zeros(3))
+                           @ self.P._about(Rb, self.P.ITEM_BEND_PIVOT_PX))
+                    M = self.P.item_attach_modelpart(kfs, tick, disp)
+                    d = float(np.linalg.norm((M @ np.array([8.0, 8.0, 8.0, 1.0]))[:3]
+                                             - (arm @ fist)[:3]))
+                    self.assertLess(
+                        d, 0.5,
+                        f"{item.key}/{name} t{tick:g}: 握把离拳心 {d:.2f}px。"
+                        f"拳头只有 4px 宽，超过 0.5px 就看得出刀没被握住")

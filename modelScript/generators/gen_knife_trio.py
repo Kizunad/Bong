@@ -44,6 +44,7 @@ MC 手持物基线（axe_bone 全长 0.80、scale 0.85）定。逐段量色分�
 from __future__ import annotations
 
 import argparse
+import math
 import random
 import sys
 from pathlib import Path
@@ -250,24 +251,86 @@ def tex_bone_ground() -> Image.Image:
     return img
 
 
-# ── 手持 display：以 axe_bone 为基线 ──────────────────────────────────────
-# axe_bone 是 TP rotation [0,-90,55] / translation [0,4,0] / scale 0.85。
-# 小刀比斧短、也该在手里显得更小，scale 压到 0.72；GUI 里刀太小看不清，
-# 单独放到 1.15 并转 45° 走对角（原版剑/匕首同一处理）。
-def _display(scale: float) -> dict:
+# ── 手持 display ──────────────────────────────────────────────────────────
+# **不再抄 axe_bone 的 [0,-90,55] / [0,4,0]**，那组数是原版 `item/handheld` 的，
+# 而 handheld 伺候的是**平面 sprite**：贴图里刀刃走左下→右上的对角线，55° 正好
+# 把那条对角线掰正，[0,4,0] 补的是 sprite 握把点（约模型 (3,3)px）到方块中心的
+# 偏移。我们这套是**沿 +Y 立着的三维件**，两条前提都不成立——照抄的结果是刃朝
+# 斜下方 58°、握把离拳心 6.3px（拳头才 4px 宽）。
+#
+# 现在 `emit_offset` 已把握把点放到方块中心（= display 枢轴），于是：
+#
+#   rotation    [-80, 90, 0]
+#               Rx(-80)  **刃沿前臂出拳**，只偏 10°。这里**刻意不抄原版剑**：
+#                        原版把刃摆成⊥前臂（arm 垂下时刃水平朝前），那是平面
+#                        sprite 的产物，只在**手臂伸直**时成立。Bong 有 bendy-lib
+#                        肘弯，⊥ 的刃会跟着小臂转上去——实测两条匕首动画每一
+#                        tick 刃仰角都在 +63~+78°，横划那条**刃尖甚至越过肩往
+#                        身后指**，读成"举着火把"而不是握刀。拳头握刀的真解剖是
+#                        刃基本沿前臂出虎口，rx=-80 就是这个。
+#                        代价：手臂完全垂直时刃朝斜下 80°（贴腿垂刀的携行姿），
+#                        这正是匕首该有的收势，不是缺陷。
+#               Ry(90)   把刃面（模型薄轴 ±Z）转到玩家左右两侧，和原版剑一样：
+#                        侧看是一片刃，正面看是一条棱
+#   translation [0, -2, 1.5]
+#               握把点该落在**拳心**。MC 的挂点 `R_ATTACH·(1,2,-10)` = 臂系
+#               (-1,10,-2)，是臂盒底面往前 2px；拳心在臂盒底面往上 1.5px、z 居中，
+#               即 (-1, 8.5, 0)。差值换回 display 前的系就是 (0,-2,1.5)。
+#               —— 同一算法量原版剑，得 (0,-1.54,1.92)，两者同一个量级，互为佐证。
+#
+# 左手那组按本文件既有惯例**预取反 y/z 旋转**：`Transformation.apply(leftHanded)`
+# 自己还会再取反一次 y/z 旋转并翻 x 平移，两次抵消后左右手才是镜像而不是同姿。
+#
+# GUI / ground / fixed / head 要的是**整件居中**而不是握把居中，所以那几档用
+# `_centre_translation` 反解：MC 的点变换是 p = t + R·S·(v-8)，令几何中心落到
+# 目标点即可。少了这一步图标会被握把顶得偏出格子。
+def _centre_translation(rotation: list[float], scale: float, centre_px: float,
+                        target: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> list[float]:
+    """反解「让模型几何中心落在 target」的 display translation（px）。"""
+    rx, ry, rz = (math.radians(v) for v in rotation)
+
+    def _rot_x(v):
+        return (v[0], v[1] * math.cos(rx) - v[2] * math.sin(rx),
+                v[1] * math.sin(rx) + v[2] * math.cos(rx))
+
+    def _rot_y(v):
+        return (v[0] * math.cos(ry) + v[2] * math.sin(ry), v[1],
+                -v[0] * math.sin(ry) + v[2] * math.cos(ry))
+
+    def _rot_z(v):
+        return (v[0] * math.cos(rz) - v[1] * math.sin(rz),
+                v[0] * math.sin(rz) + v[1] * math.cos(rz), v[2])
+
+    # JOML rotationXYZ = Rx·Ry·Rz，作用到向量上是先 Z 再 Y 再 X
+    moved = _rot_x(_rot_y(_rot_z((0.0, centre_px * scale, 0.0))))
+    return [round(target[i] - moved[i], 3) for i in range(3)]
+
+
+def _display(scale: float, grip: float, length: float) -> dict:
+    """`grip`/`length` 单位是方块（授权系）。"""
+    centre_px = (length / 2.0 - grip) * 16.0      # 几何中心相对握把点，px
+
+    def centred(rotation, sc, target=(0.0, 0.0, 0.0)):
+        return {"rotation": rotation, "scale": [sc, sc, sc],
+                "translation": _centre_translation(rotation, sc, centre_px, target)}
+
+    fp = round(scale - 0.04, 4)
     return {
-        "thirdperson_righthand": {"rotation": [0, -90, 55], "translation": [0, 4.0, 0],
+        "thirdperson_righthand": {"rotation": [-80, 90, 0], "translation": [0, -2.0, 1.5],
                                   "scale": [scale, scale, scale]},
-        "thirdperson_lefthand": {"rotation": [0, 90, -55], "translation": [0, 4.0, 0],
+        "thirdperson_lefthand": {"rotation": [-80, -90, 0], "translation": [0, -2.0, 1.5],
                                  "scale": [scale, scale, scale]},
-        "firstperson_righthand": {"rotation": [0, -90, 25], "translation": [0, 2.0, -5.0],
-                                  "scale": [scale - 0.04] * 3},
-        "firstperson_lefthand": {"rotation": [0, 90, -25], "translation": [0, 2.0, -5.0],
-                                 "scale": [scale - 0.04] * 3},
-        "ground": {"rotation": [0, 0, 0], "translation": [0, 2.0, 0], "scale": [0.45, 0.45, 0.45]},
-        "gui": {"rotation": [0, 0, 45], "translation": [0, 0, 0], "scale": [1.15, 1.15, 1.15]},
-        "fixed": {"rotation": [0, 180, 0], "translation": [0, 0, 0], "scale": [1.0, 1.0, 1.0]},
-        "head": {"rotation": [0, 0, 0], "translation": [0, 12.0, 0], "scale": [1.0, 1.0, 1.0]},
+        # FPV 这两档只把坐标系摆正（刃朝正前、刃面朝两侧），**数值未经真机标定**：
+        # 本 harness 渲不了第一人称，且 FPV 手臂另有 plan-fpv-cast-av-v1 在动。
+        "firstperson_righthand": {"rotation": [-80, 90, 0], "translation": [0, -2.0, -4.0],
+                                  "scale": [fp, fp, fp]},
+        "firstperson_lefthand": {"rotation": [-80, -90, 0], "translation": [0, -2.0, -4.0],
+                                 "scale": [fp, fp, fp]},
+        "ground": centred([0, 0, 0], 0.45, (0.0, 2.0, 0.0)),
+        # GUI 里刀太小看不清，放到 1.15 并转 45° 走对角（原版剑/匕首同一处理）
+        "gui": centred([0, 0, 45], 1.15),
+        "fixed": centred([0, 180, 0], 1.0),
+        "head": centred([0, 0, 0], 1.0, (0.0, 12.0, 0.0)),
     }
 
 
@@ -320,7 +383,10 @@ STONE_KNIFE = HeldItem(
         Material("stone_haft", (0.48, 0.39, 0.27), tex_haft_dark()),
         Material("stone_cord", (0.55, 0.45, 0.30), tex_cord()),
     ),
-    display=_display(0.72),
+    # 拳心对准木柄+绳缠段的中点（柄 0~0.274 / 绳缠 0.274~0.400）：0.72 的显示
+    # 缩放下拳头占模型 0.25/0.72 = 0.347 方块，正好被这段 0.400 的握把吃住。
+    grip=0.20,
+    display=_display(0.72, 0.20, 0.722),
 )
 
 
@@ -349,7 +415,10 @@ IRON_DAGGER = HeldItem(
         Material("dagger_haft", (0.81, 0.67, 0.51), tex_haft_pale()),
         Material("dagger_fitting", (0.44, 0.42, 0.41), tex_iron_dark()),
     ),
-    display=_display(0.74),
+    # 木柄只有 0~0.269，比一个拳头(0.25/0.74 = 0.338)还短——护环正好压在拳头
+    # 上沿，这是护环该在的位置；拳心取 0.14 让柄尾露出一点点。
+    grip=0.14,
+    display=_display(0.74, 0.14, 0.775),
 )
 
 
@@ -389,7 +458,9 @@ BONE_SPIKE = HeldItem(
         Material("spike_joint", (0.78, 0.67, 0.49), tex_bone_joint()),
         Material("spike_ground", (0.87, 0.80, 0.67), tex_bone_ground()),
     ),
-    display=_display(0.76),
+    # 握把是关节头(0~0.16)加一小段骨干：拳心取 0.14，髁压在掌心、虎口卡在骨干上。
+    grip=0.14,
+    display=_display(0.76, 0.14, 0.795),
 )
 
 

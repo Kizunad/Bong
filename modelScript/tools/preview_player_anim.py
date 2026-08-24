@@ -129,17 +129,22 @@ def _axis_rot(axis: np.ndarray, angle: float) -> np.ndarray:
     ])
 
 
+def body_matrix(kfs, tick: float, body_disp_scale: float = 1.0) -> np.ndarray:
+    """`body.*` 的整体变换，Bedrock 空间。肢体和手持物都要左乘它。"""
+    body = RA.sample_part(kfs, "body", tick)
+    body_R = _rot(RA.part_rotation_matrix(body["pitch"], body["yaw"], body["roll"]))
+    # body.x/y/z 是位移不是点，只翻 y 的符号
+    body_t = np.array([body["x"], -body["y"], body["z"]], float) * body_disp_scale
+    return _aff(np.eye(3), body_t) @ _about(body_R, BODY_PIVOT)
+
+
 def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[str, np.ndarray]:
     """每个分段 element 在 Bedrock 世界空间的 4×4 刚体变换。
 
     组合顺序照 `render_animation.solve_skeleton` 的口径（body → part → bend），
     区别是那边只留关节点坐标，这里保留整条旋转链——摆 bbmodel 需要姿态不只是位置。
     """
-    body = RA.sample_part(kfs, "body", tick)
-    body_R = _rot(RA.part_rotation_matrix(body["pitch"], body["yaw"], body["roll"]))
-    # body.x/y/z 是位移不是点，只翻 y 的符号
-    body_t = np.array([body["x"], -body["y"], body["z"]], float) * body_disp_scale
-    body_m = _aff(np.eye(3), body_t) @ _about(body_R, BODY_PIVOT)
+    body_m = body_matrix(kfs, tick, body_disp_scale)
 
     out: dict[str, np.ndarray] = {}
     for name in PIVOT_OF:
@@ -177,32 +182,87 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
     return out
 
 
-def hand_transform(seg: dict[str, np.ndarray], display: dict) -> np.ndarray:
-    """右手手持物的世界变换。
+# ── MC 手持物挂点 ─────────────────────────────────────────────────────────
+# 下面三个常数逐字抄自运行时，不是估的：
+#   R_ATTACH / HAND_OFFSET_PX  ← `HeldItemFeatureRenderer.renderItem`（1.20.1）
+#       setArmAngle(arm) → Rx(-90) → Ry(180) → translate(±1/16, 0.125, -0.625)
+#   ITEM_BEND_PIVOT_PX         ← PlayerAnimator `HeldItemMixin`（同一方法的 mixin，
+#       注在 ordinal=0 的 mulPose 之前，即 Rx(-90) 之前）：
+#       translate(0, 0.25, 0) → rotateAxis(bend, (cos(-axis), 0, sin(-axis)))
+#       → translate(0, -0.25, 0)。手持物**跟着肘弯走**，不是钉在直臂手位。
+#       注意它取的枢轴是 (0,4,0)，比 cuboid 真 bend_center 的 (-1,4,0) 差 1px —— 这
+#       是库自己的近似，照抄，别"修正"，否则预览和游戏对不上。
+#   BLOCK_CENTRE_PX            ← `ItemRenderer.renderItem` 在 display 变换之后的
+#       translate(-0.5,-0.5,-0.5)。SML 的 `ObjUnbakedModelModel.emitVertex` 只做
+#       「-0.5 → blockstate 旋转 → +0.5」，**不重定心**，所以 OBJ/bbmodel 的
+#       (0,0,0) 落在方块角，display 变换的枢轴是 (8,8,8)px。
+R_ATTACH = RA.rot_x(np.radians(-90.0)) @ RA.rot_y(np.radians(180.0))
+HAND_OFFSET_PX = np.array([1.0, 2.0, -10.0])      # 右手；左手 x 取负
+ITEM_BEND_PIVOT_PX = np.array([0.0, 4.0, 0.0])
+BLOCK_CENTRE_PX = np.array([8.0, 8.0, 8.0])
+# `_pt` 的仿射形式。手持物这条链**整条在 ModelPart 空间里算完**再用它过桥，
+# 就不会重蹈「bend 轴 y 分量为 0、S_FLIP 对它不起作用 → 旋向静默丢负号」那个坑。
+A_TO_BEDROCK = np.array([[1.0, 0.0, 0.0, 0.0],
+                         [0.0, -1.0, 0.0, 24.0],
+                         [0.0, 0.0, 1.0, 0.0],
+                         [0.0, 0.0, 0.0, 1.0]])
 
-    **手心点取静止姿**（`limb_end_local`）而不是 `bent_end_local`：`seg["rightArm_lo"]`
-    里已经含了 part 旋转和 bend，再用弯折后的手心点就把 bend 算了两遍——症状是刀
-    飞到身体外面去，而三视图里因为它出了取景框，看起来像"刀没渲出来"。
+
+def item_attach_modelpart(kfs, tick: float, display: dict, right: bool = True) -> np.ndarray:
+    """手持物模型 px 坐标 → ModelPart 空间（含肩枢轴平移），逐步对齐 MC 调用序。
+
+    完整链（每个 translate 都在它前面那些旋转之后的局部系里）：
+
+        T(肩枢轴) · R_arm
+        · T(0,4,0) · R_bend · T(0,-4,0)       PlayerAnimator HeldItemMixin
+        · R_ATTACH · T(±1, 2, -10)            HeldItemFeatureRenderer
+        · T(display.translation) · R_disp · S  ItemRenderer / Transformation.apply
+        · T(-8,-8,-8)                          方块中心重定心
+
+    历史上这里错了四处，合起来让刀飘在拳头外 5.8px（一个拳头才 4px 宽）：
+    ① 整条 `R_ATTACH` 没有 —— 刀的朝向从根上就不是游戏里那个；
+    ② display 的 translation 被当成 `R_disp · t` 来加，而 MC 是**先平移再旋转**；
+    ③ 挂点用 `limb_end_local`（-1,10,0）近似，真值是 R_ATTACH·(1,2,-10)=(-1,10,-2)；
+    ④ 少了 `T(-8,-8,-8)`，等于默认模型原点就是 display 枢轴。
+    这四条都由 `test_anim_preview_fidelity.HeldItemAttachTest` 钉死。
     """
-    rest = _pt(np.array(PIVOT_OF["rightArm_lo"], float) + RA.limb_end_local("rightArm"))
-    m = seg["rightArm_lo"]
-    hand_world = (m @ np.append(rest, 1.0))[:3]
+    part = RA.sample_part(kfs, "rightArm" if right else "leftArm", tick)
+    pivot = (np.array(PIVOT_OF["rightArm_lo" if right else "leftArm_lo"], float)
+             + np.array([part["x"], part["y"], part["z"]], float))
+    R_arm = RA.part_rotation_matrix(part["pitch"], part["yaw"], part["roll"])
+
+    axis = float(part["axis"])
+    R_bend = RA.rotate_about_axis(
+        np.array([np.cos(-axis), 0.0, np.sin(-axis)]), float(part["bend"]))
 
     rx, ry, rz = display.get("rotation", [0, -90, 55])
-    tx, ty, tz = display.get("translation", [0, 4, 0])
-    sc = display.get("scale", [0.8, 0.8, 0.8])[0]
-    # MC 的 display rotation 走 JOML rotationXYZ = Rx·Ry·Rz（见
-    # client/tools/render_held_item.py 的 docstring）。写成 Ry·Rx·Rz 的症状是
-    # 刀尖指向玩家自己（t0 实测刀柄 z=-9.9、刀尖 z=-1.8，刃朝内）。
-    # MC 的 display rotation 走 JOML rotationXYZ = Rx·Ry·Rz（见
-    # client/tools/render_held_item.py 的 docstring）。
-    # **这里不夹 S_FLIP**：手持物 bbmodel 本来就是 Bedrock（y 朝上）坐标，
-    # 与 MC item display 空间的 Y 一致；多夹一层的症状是刀尖指向玩家自己。
+    # JOML `Quaternionf.rotationXYZ(x,y,z)` = Rx·Ry·Rz（见 render_held_item.py）。
     R_disp = (RA.rot_x(np.radians(rx)) @ RA.rot_y(np.radians(ry))
               @ RA.rot_z(np.radians(rz)))
-    # display 的 translation 单位就是 px，本空间也是 px，不要再乘系数
-    offset = R_disp @ np.array([tx, ty, tz], float)
-    return _aff(m[:3, :3] @ R_disp * sc, hand_world + m[:3, :3] @ offset)
+    scale = np.diag(display.get("scale", [0.8, 0.8, 0.8]))
+    # display.translation 的 JSON 数值就是 px（解析时 ×1/16 转方块，这里全程 px）
+    trans = np.array(display.get("translation", [0, 4, 0]), float)
+    hand = HAND_OFFSET_PX * (1.0 if right else np.array([-1.0, 1.0, 1.0]))
+
+    return (_aff(np.eye(3), pivot)
+            @ _aff(R_arm, np.zeros(3))
+            @ _about(R_bend, ITEM_BEND_PIVOT_PX)
+            @ _aff(R_ATTACH, np.zeros(3))
+            @ _aff(np.eye(3), hand + trans)
+            @ _aff(R_disp @ scale, np.zeros(3))
+            @ _aff(np.eye(3), -BLOCK_CENTRE_PX))
+
+
+def hand_transform(kfs, tick: float, display: dict,
+                   body_disp_scale: float = 1.0) -> np.ndarray:
+    """右手手持物在 Bedrock 世界空间的 4×4。
+
+    `body_m · A · M_MP`：`A` 是 ModelPart→Bedrock 的过桥仿射，而 `body_m` 已经是
+    Bedrock 空间的共轭形式（`body_m = A·M_body·A⁻¹`），所以它留在最左边。
+    """
+    return (body_matrix(kfs, tick, body_disp_scale)
+            @ A_TO_BEDROCK
+            @ item_attach_modelpart(kfs, tick, display))
 
 
 # ── bbmodel 组装 ──────────────────────────────────────────────────────────
@@ -299,10 +359,11 @@ def _fit_focus(kfs, display, scene, ids, held_ids, end, samples=17, margin=1.10)
     lo = np.full(3, np.inf)
     hi = np.full(3, -np.inf)
     for i in range(samples):
-        seg = segment_transforms(kfs, end * i / max(1, samples - 1))
+        tick = end * i / max(1, samples - 1)
+        seg = segment_transforms(kfs, tick)
         xform = {ids[n]: m for n, m in seg.items()}
         if held_ids:
-            hm = hand_transform(seg, display)
+            hm = hand_transform(kfs, tick, display)
             for hid in held_ids:
                 xform[hid] = hm
         tris, _, _, _ = load_bbmodel(scene, xform=xform)
@@ -320,7 +381,7 @@ def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
     seg = segment_transforms(kfs, tick)
     xform = {ids[n]: m for n, m in seg.items()}
     if held_ids:
-        hm = hand_transform(seg, display)
+        hm = hand_transform(kfs, tick, display)
         for hid in held_ids:
             xform[hid] = hm
     return [(label, render(scene, yaw=yaw, pitch=pitch, size=args.size,
@@ -402,7 +463,7 @@ def main() -> int:
         seg = segment_transforms(kfs, tick)
         xform = {ids[n]: m for n, m in seg.items()}
         if held_ids:
-            hm = hand_transform(seg, display)
+            hm = hand_transform(kfs, tick, display)
             for hid in held_ids:
                 xform[hid] = hm
         tiles = []

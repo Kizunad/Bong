@@ -36,6 +36,7 @@ from held_item_common import (  # noqa: E402
     Material,
     assert_conventions,
     assert_no_coplanar_faces,
+    emit_offset,
     build_atlas,
     build_bbmodel,
     build_model_json,
@@ -48,9 +49,9 @@ def _swatch(rgb=(128, 128, 128)) -> Image.Image:
     return Image.new("RGBA", (TILE, TILE), (*rgb, 255))
 
 
-def _probe(boxes, materials=None) -> HeldItem:
+def _probe(boxes, materials=None, grip=0.15) -> HeldItem:
     materials = materials or (Material("m", (0.5, 0.5, 0.5), _swatch()),)
-    return HeldItem("probe", "PROBE", "stick", tuple(boxes), tuple(materials), {})
+    return HeldItem("probe", "PROBE", "stick", tuple(boxes), tuple(materials), {}, grip)
 
 
 def _mean_rgb(image: Image.Image) -> tuple[float, float, float]:
@@ -259,31 +260,58 @@ class ObjMtlBbmodelConsistencyTest(unittest.TestCase):
                 self.assertEqual(item.key, key)
                 self.assertEqual(order, index, f"{item.key}/{name} map_Kd 序号错位")
 
-    def test_obj_vertices_match_the_box_table(self) -> None:
-        """OBJ 的坐标必须就是 box 表本身——两者一旦能各自漂移，这个公共层就白建了。"""
+    def test_obj_vertices_match_the_box_table_shifted_by_emit_offset(self) -> None:
+        """OBJ 坐标 = box 表 + `emit_offset`，一格不多一格不少。
+
+        两者一旦能各自漂移这个公共层就白建了；而 offset 必须**真的加上去**，
+        否则模型挂在方块角上，display 变换绕方块中心转 → 手持时刀飘在拳头外。
+        """
         for item in knives.items():
+            off = emit_offset(item)
             verts = [tuple(round(float(v), 4) for v in l.split()[1:4])
                      for l in build_obj(item).splitlines() if l.startswith("v ")]
             for index, box in enumerate(item.boxes):
                 chunk = verts[index * 8:(index + 1) * 8]
                 for axis in range(3):
-                    self.assertAlmostEqual(round(box.low[axis], 4),
+                    self.assertAlmostEqual(round(box.low[axis] + off[axis], 4),
                                            min(v[axis] for v in chunk), places=4)
-                    self.assertAlmostEqual(round(box.high[axis], 4),
+                    self.assertAlmostEqual(round(box.high[axis] + off[axis], 4),
                                            max(v[axis] for v in chunk), places=4)
 
+    def test_emitted_grip_point_sits_at_the_block_centre(self) -> None:
+        """出料系里握把点必须正好在 (8,8,8)px —— 那是 MC display 变换的枢轴
+        (`ItemRenderer` 在 display 之后 translate(-0.5,-0.5,-0.5))。差一点点，
+        整件在手里就偏一点点；差半个方块，就是"手没握住把柄"。"""
+        for item in knives.items():
+            off = emit_offset(item)
+            self.assertAlmostEqual(0.5, off[0], places=6)
+            self.assertAlmostEqual(0.5, off[2], places=6)
+            self.assertAlmostEqual(0.5, item.grip + off[1], places=6,
+                                   msg=f"{item.key} 握把点没落在方块中心")
+
+    def test_conventions_reject_grip_off_the_model(self) -> None:
+        for grip, why in ((0.0, "落在柄尾之下"), (0.9, "越过尖端")):
+            bad = _probe([Box("b", "m", (0.0, 0.30, 0.0), (0.04, 0.30, 0.03))], grip=grip)
+            with self.assertRaisesRegex(ValueError, "grip"):
+                assert_conventions(bad)
+
     def test_bbmodel_mirrors_the_same_boxes_at_16x(self) -> None:
-        """bbmodel 写的是模型空间 ×16（px），Blockbench 的格子才对得上。"""
+        """bbmodel 写的是**出料系** ×16（px），和 OBJ 逐点同源。
+
+        两边差一个平移 = "预览里握得住、进游戏握不住"，而这正是预览工具唯一
+        用来判手持姿态的依据，差了就再也发现不了。
+        """
         for item in knives.items():
             model = build_bbmodel(item)
+            off = emit_offset(item)
             self.assertEqual(len(item.boxes), len(model["elements"]))
             by_name = {e["name"]: e for e in model["elements"]}
             for box in item.boxes:
                 element = by_name[box.name]
                 for axis in range(3):
-                    self.assertAlmostEqual(box.low[axis] * 16.0,
+                    self.assertAlmostEqual((box.low[axis] + off[axis]) * 16.0,
                                            element["from"][axis], places=3)
-                    self.assertAlmostEqual(box.high[axis] * 16.0,
+                    self.assertAlmostEqual((box.high[axis] + off[axis]) * 16.0,
                                            element["to"][axis], places=3)
 
     def test_bbmodel_uuids_are_stable_across_runs(self) -> None:
