@@ -18,6 +18,7 @@ pub mod burst_event_emit;
 pub mod carrier_state_emit;
 pub mod cast_emit;
 pub mod chat_collector;
+pub mod client_request;
 pub mod client_request_handler;
 pub mod combat_bridge;
 pub mod combat_event_emit;
