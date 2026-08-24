@@ -241,135 +241,30 @@ pub(crate) fn dispatch(
             true
         }
         ClientRequestV1::ScrollReadRequest { instance_id, .. } => {
-            dispatch_scroll_read_open(
+            crate::network::scroll_open_emit::dispatch_scroll_read_open(
                 player,
                 *instance_id,
                 inventories,
-                combat,
+                &combat.item_registry,
                 clients,
+                &combat.positions,
+                &combat.unique_ids,
                 commands,
                 vfx_events,
             );
             true
         }
         ClientRequestV1::ScrollReadClosed { .. } => {
-            dispatch_scroll_read_close(player, combat, commands, vfx_events);
+            crate::network::scroll_open_emit::dispatch_scroll_read_close(
+                player,
+                &combat.scroll_reading_q,
+                &combat.positions,
+                &combat.unique_ids,
+                commands,
+                vfx_events,
+            );
             true
         }
         _ => false,
-    }
-}
-
-fn dispatch_scroll_read_open(
-    player: Entity,
-    instance_id: u64,
-    inventories: &mut Query<&mut PlayerInventory>,
-    combat: &mut CombatRequestParams,
-    clients: &mut Query<(&Username, &mut Client)>,
-    commands: &mut Commands,
-    mut vfx_events: Option<&mut Events<crate::network::vfx_event_emit::VfxEventRequest>>,
-) {
-    let Ok(inventory) = inventories.get(player) else {
-        tracing::warn!(
-            "[bong][network] client_request scroll_read_request rejected: entity={player:?} has no PlayerInventory"
-        );
-        return;
-    };
-    match crate::network::scroll_open_emit::resolve_scroll_read_request(
-        inventory,
-        &combat.item_registry,
-        instance_id,
-    ) {
-        Ok(resolution) => {
-            tracing::info!(
-                "[bong][network] client_request scroll_read_request entity={player:?} instance_id={instance_id}"
-            );
-            let anim_id = resolution.anim_id.clone();
-            crate::network::scroll_open_emit::emit_scroll_open(
-                player,
-                resolution.into_payload(),
-                clients,
-            );
-            if let Ok(position) = combat.positions.get(player) {
-                if let Some(vfx_events) = vfx_events.as_mut() {
-                    vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                        position.get(),
-                        crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
-                            event_id: super::SCROLL_OPEN_GLOW_EVENT_ID.to_string(),
-                            origin: [position.get().x, position.get().y, position.get().z],
-                            direction: None,
-                            color: Some(super::SCROLL_OPEN_GLOW_COLOR.to_string()),
-                            strength: Some(super::SCROLL_OPEN_GLOW_STRENGTH),
-                            count: Some(super::SCROLL_OPEN_GLOW_COUNT),
-                            duration_ticks: Some(super::SCROLL_OPEN_GLOW_DURATION_TICKS),
-                        },
-                    ));
-                }
-            }
-            if let Some(anim_id) = anim_id {
-                commands
-                    .entity(player)
-                    .insert(crate::network::scroll_open_emit::ScrollReading {
-                        anim_id: anim_id.clone(),
-                    });
-                if let (Ok(position), Ok(unique_id)) =
-                    (combat.positions.get(player), combat.unique_ids.get(player))
-                {
-                    if let Some(vfx_events) = vfx_events.as_mut() {
-                        vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                            position.get(),
-                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
-                                target_player: unique_id.0.to_string(),
-                                anim_id,
-                                priority: super::SCROLL_READ_ANIM_PRIORITY,
-                                fade_in_ticks: Some(super::SCROLL_READ_ANIM_FADE_IN_TICKS),
-                            },
-                        ));
-                    }
-                }
-            }
-        }
-        Err(reason) => {
-            tracing::warn!(
-                "[bong][network] client_request scroll_read_request rejected: entity={player:?} instance_id={instance_id} reason={reason:?}"
-            );
-        }
-    }
-}
-
-fn dispatch_scroll_read_close(
-    player: Entity,
-    combat: &mut CombatRequestParams,
-    commands: &mut Commands,
-    mut vfx_events: Option<&mut Events<crate::network::vfx_event_emit::VfxEventRequest>>,
-) {
-    if let Ok(reading) = combat.scroll_reading_q.get(player) {
-        let anim_id = reading.anim_id.clone();
-        if let (Ok(position), Ok(unique_id)) =
-            (combat.positions.get(player), combat.unique_ids.get(player))
-        {
-            if let Some(vfx_events) = vfx_events.as_mut() {
-                vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                    position.get(),
-                    crate::schema::vfx_event::VfxEventPayloadV1::StopAnim {
-                        target_player: unique_id.0.to_string(),
-                        anim_id,
-                        fade_out_ticks: Some(
-                            crate::network::vfx_animation_trigger::SCROLL_READ_ANIM_FADE_OUT_TICKS,
-                        ),
-                    },
-                ));
-            }
-        }
-        commands
-            .entity(player)
-            .remove::<crate::network::scroll_open_emit::ScrollReading>();
-        tracing::debug!(
-            "[bong][network] client_request scroll_read_closed entity={player:?} anim stopped"
-        );
-    } else {
-        tracing::debug!(
-            "[bong][network] client_request scroll_read_closed entity={player:?} (no ScrollReading marker, no-op)"
-        );
     }
 }

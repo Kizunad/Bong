@@ -634,22 +634,6 @@ fn decode_client_request(payload: &str) -> Result<ClientRequestV1, serde_json::E
     serde_json::from_str(payload)
 }
 
-/// plan-scroll-reading-v1 P0/P2：阅读残卷循环姿态动画 priority——"中低"档位，
-/// 低于战斗层（`COMBAT_PRIORITY`=1000）、高于仪式套路层（`GUANGBO_TICAO_PRIORITY`=500）。
-/// 合法区间 [`VFX_ANIM_PRIORITY_MIN`, `VFX_ANIM_PRIORITY_MAX`] = [100, 3999]。
-pub(crate) const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
-/// 淡入 tick 数（§8.1 #4 决议：fadeIn 4 tick）。
-pub(crate) const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
-
-/// plan-scroll-reading-v1 P2 — 展开微光 VFX `bong:scroll_open_glow`，淡金色，
-/// burst 12 粒（client `ScrollOpenGlowPlayer` 再叠加自身的 continuous 层，本端只发一次
-/// SpawnParticle，两层视觉由 client 侧固定常量生成，不经 payload 传递）。
-pub(crate) const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
-pub(crate) const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
-pub(crate) const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
-pub(crate) const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
-pub(crate) const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
-
 /// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
 /// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
 /// channel id 有中文标签，非 humanoid 构型（P5 飞鲸等）落显式"未知经脉"占位，不伪造。
