@@ -110,6 +110,7 @@ use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
 use crate::network::client_request::npc;
+use crate::network::client_request::social;
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
@@ -174,9 +175,8 @@ use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 #[cfg(test)]
 use crate::social::components::{FactionReputation, FactionReputationTier};
 use crate::social::events::{
-    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRepairRequest,
-    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+    SpiritNicheActivateGuardianRequest, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRepairRequest, SpiritNicheRevealSource,
 };
 use crate::world::block_place::BlockPlaceRequest;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
@@ -450,6 +450,7 @@ pub struct AlchemyRequestParams<'w, 's> {
 
 #[derive(SystemParam)]
 pub struct ClientRequestDispatchParams<'w> {
+    pub(crate) social: social::SocialRequestParams<'w>,
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub gameplay_tick: Option<Res<'w, GameplayTick>>,
     pub harvest_sessions: Option<ResMut<'w, HarvestSessionStore>>,
@@ -485,9 +486,6 @@ pub struct ClientRequestDispatchParams<'w> {
     pub coffin_leave_tx: Option<ResMut<'w, Events<CoffinLeaveRequest>>>,
     pub coffin_break_tx: Option<ResMut<'w, Events<crate::coffin::CoffinBreakRequest>>>,
     pub coffin_menu_reclaim_tx: Option<ResMut<'w, Events<crate::coffin::CoffinMenuReclaimRequest>>>,
-    pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
-    pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
-    pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
     pub block_place_tx: Option<ResMut<'w, Events<BlockPlaceRequest>>>,
     /// plan-worldgen-v4 P5 §8.1#5 — 画廊 dev-only give-block intent。
     pub block_picker_give_tx:
@@ -1372,8 +1370,26 @@ pub fn handle_client_request_payloads(
             );
             continue;
         }
+        let request = match social::try_into_social_request(request) {
+            Ok(social_request) => {
+                social::dispatch_social_request(
+                    social_request,
+                    ev.client,
+                    combat_clock.tick,
+                    &mut dispatch.social,
+                    combat_params.entity_manager.as_deref(),
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
 
         match request {
+            ClientRequestV1::SparringInviteResponse { .. }
+            | ClientRequestV1::TradeOfferRequest { .. }
+            | ClientRequestV1::TradeOfferResponse { .. } => {
+                unreachable!("Social requests are dispatched by the typed Social dispatcher")
+            }
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 tracing::info!(
                     "[bong][network] client_request set_meridian_target entity={:?} meridian={:?}",
@@ -1909,79 +1925,6 @@ pub fn handle_client_request_payloads(
                     niche_pos,
                     guardian_kind: guardian_kind_from_schema(guardian_kind),
                     materials,
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::SparringInviteResponse {
-                invite_id,
-                accepted,
-                timed_out,
-                ..
-            } => {
-                let Some(response_tx) = dispatch.sparring_invite_response_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped sparring_invite_response because SparringInviteResponseEvent resource is missing"
-                    );
-                    continue;
-                };
-                let kind = if timed_out {
-                    SparringInviteResponseKind::Timeout
-                } else if accepted {
-                    SparringInviteResponseKind::Accept
-                } else {
-                    SparringInviteResponseKind::Decline
-                };
-                response_tx.send(SparringInviteResponseEvent {
-                    player: ev.client,
-                    invite_id,
-                    kind,
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::TradeOfferRequest {
-                target,
-                offered_instance_id,
-                ..
-            } => {
-                let Some(request_tx) = dispatch.trade_offer_request_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped trade_offer_request because TradeOfferRequest event resource is missing"
-                    );
-                    continue;
-                };
-                let Some(target_entity) =
-                    resolve_trade_offer_target(target.as_str(), &combat_params)
-                else {
-                    tracing::warn!(
-                        "[bong][network] rejected trade_offer_request from {:?}: invalid target `{target}`",
-                        ev.client
-                    );
-                    continue;
-                };
-                request_tx.send(TradeOfferRequest {
-                    initiator: ev.client,
-                    target: target_entity,
-                    offered_instance_id,
-                    tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::TradeOfferResponse {
-                offer_id,
-                accepted,
-                requested_instance_id,
-                ..
-            } => {
-                let Some(response_tx) = dispatch.trade_offer_response_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped trade_offer_response because TradeOfferResponseEvent resource is missing"
-                    );
-                    continue;
-                };
-                response_tx.send(TradeOfferResponseEvent {
-                    player: ev.client,
-                    offer_id,
-                    accepted,
-                    requested_instance_id,
                     tick: combat_clock.tick,
                 });
             }
@@ -18140,14 +18083,6 @@ fn reject_give_dan_target(
     if let Ok((_username, mut client)) = clients.get_mut(player_entity) {
         client.send_chat_message(message);
     }
-}
-
-fn resolve_trade_offer_target(raw: &str, combat_params: &CombatRequestParams) -> Option<Entity> {
-    let raw = raw.trim();
-    if raw.is_empty() || raw.starts_with("entity_bits:") {
-        return None;
-    }
-    resolve_skill_cast_target(Some(raw), combat_params)
 }
 
 /// 通用技能警示：resolver-path 施法被拒时把拒绝原因推回施法者 client。
