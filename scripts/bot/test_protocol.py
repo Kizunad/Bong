@@ -153,6 +153,12 @@ from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
 from bot.scenarios.network_lifecycle_stale_session import (  # noqa: E402
     _assert_inactive_session_state,
 )
+from bot.scenarios.network_quickslot_config import (  # noqa: E402
+    _expect_bind_response,
+)
+from bot.scenarios.network_skill_config_intent import (  # noqa: E402
+    _expect_config_snapshot,
+)
 from bot.scenarios._npc_dialogue_helpers import (  # noqa: E402
     _scenario_spawn_matches,
     _trade_metadata,
@@ -4657,6 +4663,87 @@ class _FakeBot:
             if predicate(event):
                 return event
         raise AssertionError(f"未找到 {description}; events={self.events}")
+
+
+class NetworkScenarioHelperTest(unittest.TestCase):
+    def test_quickslot_rejection_defaults_to_empty_slot(self):
+        payload = {
+            "ack_request_id": "bad-item",
+            "bind_accepted": False,
+            "slots": [None] * 9,
+        }
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "quickslot_config", "payload": payload},
+                )
+            ]
+        )
+
+        returned = _expect_bind_response(bot, "bad-item", False, 4)
+
+        self.assertIs(returned, payload)
+
+    def test_quickslot_rejection_can_require_preserved_binding(self):
+        entry = {
+            "item_id": "guyuan_pill",
+            "display_name": "固元丹",
+            "cast_duration_ms": 1500,
+            "cooldown_ms": 3000,
+            "icon_texture": "bong-client:textures/gui/items/pill.png",
+        }
+        payload = {
+            "ack_request_id": "empty-item",
+            "bind_accepted": False,
+            "slots": [None, None, None, None, entry, None, None, None, None],
+        }
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "quickslot_config", "payload": payload},
+                )
+            ]
+        )
+
+        _expect_bind_response(bot, "empty-item", False, 4, expected_entry=entry)
+
+    def test_skill_config_snapshot_skips_stale_configuration(self):
+        def snapshot(config: dict) -> _FakeEvent:
+            return _FakeEvent(
+                1.0 if config["meridian_id"] == "Lung" else 2.0,
+                "server_data",
+                {
+                    "payload_type": "skill_config_snapshot",
+                    "payload": {
+                        "configs": [
+                            {
+                                "skill_id": "zhenmai.sever_chain",
+                                "json_config": json.dumps(config),
+                            }
+                        ]
+                    },
+                },
+            )
+
+        expected = {"meridian_id": "LargeIntestine", "backfire_kind": "real_yuan"}
+        bot = _FakeBot(
+            [
+                snapshot({"meridian_id": "Lung", "backfire_kind": "array"}),
+                snapshot(expected),
+            ]
+        )
+
+        event = _expect_config_snapshot(
+            bot,
+            0.0,
+            lambda payload: json.loads(payload["configs"][0]["json_config"]) == expected,
+        )
+
+        self.assertEqual(event["configs"][0]["json_config"], json.dumps(expected))
 
 
 class _ObservableLock:

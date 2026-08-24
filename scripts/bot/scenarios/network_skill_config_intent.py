@@ -13,7 +13,9 @@
 """
 
 import json
+from collections.abc import Callable
 
+from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 
 DESCRIPTION = "技能配置：合法写入穷举/未知skill拒绝/非法字段拒绝保持全量配置/空config清空"
@@ -51,21 +53,52 @@ MERIDIANS = [
 ]
 
 
-def _expect_config_snapshot(bot, anchor_t: float, timeout: float = 10.0) -> dict:
+def _expect_config_snapshot(
+    bot,
+    anchor_t: float,
+    matches: Callable[[dict], bool] | None = None,
+    timeout: float = 10.0,
+) -> dict:
     """锚定到本次 intent 之后的 skill_config_snapshot，避开 join 时的空快照。
 
     `anchor_t` 必须在 `bot.intent(...)` 之前取：锚后取会把快服务器已发出并记录
     的权威快照排除掉，导致 intent 成功后场景仍超时（central-review 2012 #1）。
+    提供 `matches` 时会跳过锚点后的陈旧快照，直到收到满足当前 intent 预期的快照。
     """
-    event = bot.wait_for(
-        lambda e: (
-            e.kind == "server_data"
-            and e.data.get("payload_type") == "skill_config_snapshot"
-            and e.t > anchor_t
-        ),
-        timeout=timeout,
-        description=f"skill_config_snapshot（t>{anchor_t:.2f}，当前 intent 响应）",
-    )
+    observed: list[dict] = []
+
+    def predicate(event) -> bool:
+        if not (
+            event.kind == "server_data"
+            and event.data.get("payload_type") == "skill_config_snapshot"
+            and event.t > anchor_t
+        ):
+            return False
+        payload = event.data["payload"]
+        if matches is None:
+            return True
+        observed.append(payload)
+        return matches(payload)
+
+    try:
+        event = bot.wait_for(
+            predicate,
+            timeout=timeout,
+            description=(
+                f"skill_config_snapshot（t>{anchor_t:.2f}，当前 intent 期望配置）"
+            ),
+        )
+    except AssertionError as error:
+        recent = []
+        for payload in observed[-5:]:
+            try:
+                recent.append(_configs_of(payload))
+            except (AssertionError, KeyError, TypeError):
+                recent.append({"<malformed>": repr(payload)})
+        raise BotAssertionError(
+            f"{error}; 锚点后收到的 skill_config 快照（最近 {len(recent)} 条）="
+            f"{recent!r}"
+        ) from error
     return event.data["payload"]
 
 
@@ -75,6 +108,24 @@ def _configs_of(payload: dict) -> dict[str, str]:
         f"skill_config_snapshot.configs 应为 list，实际 {configs!r}"
     )
     return {entry["skill_id"]: entry.get("json_config", "") for entry in configs}
+
+
+def _matches_skill_config(payload: dict, expected: dict) -> bool:
+    """仅在权威快照精确包含本次期望配置时匹配。"""
+    try:
+        configs = _configs_of(payload)
+        raw = configs.get(SKILL)
+        return raw is not None and json.loads(raw) == expected
+    except (AssertionError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+
+
+def _skill_config_absent(payload: dict) -> bool:
+    """匹配清配置后的权威快照。"""
+    try:
+        return SKILL not in _configs_of(payload)
+    except (AssertionError, KeyError, TypeError):
+        return False
 
 
 def _write_config(bot, config: dict) -> dict:
@@ -88,7 +139,9 @@ def _write_config(bot, config: dict) -> dict:
             "config": config,
         }
     )
-    return _expect_config_snapshot(bot, anchor)
+    return _expect_config_snapshot(
+        bot, anchor, lambda payload: _matches_skill_config(payload, config)
+    )
 
 
 def run(env) -> None:
@@ -125,7 +178,9 @@ def run(env) -> None:
                 "config": {"whatever": "value"},
             }
         )
-        rejected = _expect_config_snapshot(bot, anchor)
+        rejected = _expect_config_snapshot(
+            bot, anchor, lambda payload: _matches_skill_config(payload, last_config)
+        )
         configs = _configs_of(rejected)
         assert "no_such_skill_xyz" not in configs, (
             f"未知 skill 拒绝后 snapshot 不应含 no_such_skill_xyz，实际 {sorted(configs)}"
@@ -162,7 +217,9 @@ def run(env) -> None:
                 "config": {"meridian_id": "Pericardium", "backfire_kind": "bogus_kind"},
             }
         )
-        kept = _expect_config_snapshot(bot, anchor)
+        kept = _expect_config_snapshot(
+            bot, anchor, lambda payload: _matches_skill_config(payload, baseline)
+        )
         configs = _configs_of(kept)
         assert SKILL in configs, (
             f"非法字段拒绝后 {SKILL} 配置应保持，实际 {sorted(configs)}"
@@ -182,7 +239,9 @@ def run(env) -> None:
                 "config": {"meridian_id": "bogus_meridian", "backfire_kind": "tainted_yuan"},
             }
         )
-        kept = _expect_config_snapshot(bot, anchor)
+        kept = _expect_config_snapshot(
+            bot, anchor, lambda payload: _matches_skill_config(payload, baseline)
+        )
         configs = _configs_of(kept)
         assert SKILL in configs, (
             f"非法 meridian_id 拒绝后 {SKILL} 配置应保持，实际 {sorted(configs)}"
@@ -209,7 +268,9 @@ def run(env) -> None:
                     "config": partial,
                 }
             )
-            kept = _expect_config_snapshot(bot, anchor)
+            kept = _expect_config_snapshot(
+                bot, anchor, lambda payload: _matches_skill_config(payload, baseline)
+            )
             configs = _configs_of(kept)
             assert SKILL in configs, (
                 f"缺字段配置拒绝后 {SKILL} 配置应保持，实际 {sorted(configs)}"
@@ -229,7 +290,7 @@ def run(env) -> None:
                 "config": {},
             }
         )
-        cleared = _expect_config_snapshot(bot, anchor)
+        cleared = _expect_config_snapshot(bot, anchor, _skill_config_absent)
         configs = _configs_of(cleared)
         assert SKILL not in configs, (
             f"空 config 清空后 snapshot 不应含 {SKILL}，实际 {sorted(configs)}"
