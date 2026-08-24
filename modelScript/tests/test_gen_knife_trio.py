@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 import sys
+import json
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -35,6 +37,7 @@ from held_item_common import (  # noqa: E402
     HeldItem,
     Material,
     assert_conventions,
+    assert_host_is_claimable,
     assert_no_coplanar_faces,
     emit_offset,
     build_atlas,
@@ -357,3 +360,61 @@ class ObjMtlBbmodelConsistencyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostHijackGuardTest(unittest.TestCase):
+    """宿主劫持的 fail-fast。粒度是「一个 vanilla item → 一份 model JSON」，
+    写进去全局生效，所以撞车必须炸而不是静默覆盖。"""
+
+    def _host_json(self, tmp: Path, model: str) -> Path:
+        path = tmp / "host.json"
+        path.write_text(json.dumps({"parent": "sml:builtin/obj", "model": model}),
+                        encoding="utf-8")
+        return path
+
+    def test_rejects_two_items_sharing_a_host_in_one_run(self):
+        item = _probe([Box("b", "m", (0.0, 0.30, 0.0), (0.04, 0.30, 0.03))])
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "共用宿主"):
+                assert_host_is_claimable(item, Path(tmp) / "x.json", {"stick": "别的件"})
+
+    def test_rejects_overwriting_another_templates_host(self):
+        """现实案例：`bone.json` 指向 bone_dagger，而 bone_spike 也宿在 bone 上。"""
+        item = _probe([Box("b", "m", (0.0, 0.30, 0.0), (0.04, 0.30, 0.03))])
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self._host_json(Path(tmp), "bong:models/item/bone_dagger/bone_dagger.obj")
+            with self.assertRaisesRegex(ValueError, "已经被占用"):
+                assert_host_is_claimable(item, host, {})
+
+    def test_allows_reclaiming_its_own_host(self):
+        """重跑生成器覆盖自己上次写的那份，是正常操作，不该炸。"""
+        item = _probe([Box("b", "m", (0.0, 0.30, 0.0), (0.04, 0.30, 0.03))])
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self._host_json(Path(tmp), "bong:models/item/probe/probe.obj")
+            assert_host_is_claimable(item, host, {})
+
+    def test_allows_a_host_file_that_does_not_exist_yet(self):
+        item = _probe([Box("b", "m", (0.0, 0.30, 0.0), (0.04, 0.30, 0.03))])
+        with tempfile.TemporaryDirectory() as tmp:
+            assert_host_is_claimable(item, Path(tmp) / "nope.json", {})
+
+    def test_unreadable_host_is_not_treated_as_a_collision(self):
+        """读不动就放行，交给后面的写入报真错——别用一个假的"撞车"掩盖 IO 问题。"""
+        item = _probe([Box("b", "m", (0.0, 0.30, 0.0), (0.04, 0.30, 0.03))])
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "broken.json"
+            host.write_text("{ 这不是 JSON", encoding="utf-8")
+            assert_host_is_claimable(item, host, {})
+
+    def test_the_three_knives_still_collide_today(self):
+        """三把刀现在一件也装不了，这是**当前事实**，不是疏忽。
+
+        哪天 plan-held-item-registration-v1 落地、宿主机制被废掉，这条会红——
+        那时候该做的是删掉它和 `--install` 里那段 SystemExit，而不是放宽。
+        """
+        hosts = {item.key: item.host_item for item in knives.items()}
+        self.assertEqual(
+            {"stone_knife": "stone_sword", "iron_dagger": "iron_ingot",
+             "bone_spike": "bone"},
+            hosts,
+            "宿主分配变了，请重新核对 --install 那段拒绝理由还成不成立")

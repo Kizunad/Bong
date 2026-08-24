@@ -472,8 +472,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-preview", action="store_true", help="只写 bbmodel/资源，不出图")
     parser.add_argument("--install", action="store_true",
-                        help="OBJ/MTL/贴图/model JSON 写进 client 资源树"
-                             "（记得同步资源包 sha1）")
+                        help="【当前会直接报错】写进 client 资源树。三把刀的宿主全部"
+                             "撞车，装机前必须先落地 plan-held-item-registration-v1")
     parser.add_argument("--dump-obj", metavar="KEY", help="把某件的 OBJ/MTL 打到 stdout")
     args = parser.parse_args()
 
@@ -485,10 +485,32 @@ def main() -> None:
         print(build_mtl(chosen))
         return
 
+    if args.install:
+        # **这三把刀现在一件也装不了**，不是忘了装，是宿主机制没有空位：
+        #
+        #   stone_knife → item/stone_sword   已被 6 个模板共用（bone_sword / gua_dao /
+        #                                    三把 flawed 剑），装上去它们会一起变成石刃
+        #   bone_spike  → item/bone          已指向 bone_dagger，装上去匕首变骨刺
+        #   iron_dagger → item/iron_ingot    没被占，但那是**玩家真会看到的原版物品**，
+        #                                    劫持它等于全服铁锭长成匕首
+        #
+        # 换个"没人用的冷门 vanilla item"只是把问题推后一件——剩下 22 件借皮的模板
+        # 没那么多冷门 item 可烧（见 plan-held-item-registration-v1 §1.3）。
+        # 用户 2026-08-24 裁决：根治，即每个模板注册自己的 render-only Item。
+        #
+        # `held_item_common.assert_host_is_claimable` 那道闸也会拦住前两件，但它给不出
+        # 第三件的理由（iron_ingot 确实没被占），所以在这里连同背景一起说清。
+        raise SystemExit(
+            "拒绝 --install：三把刀的 vanilla 宿主全部撞车（stone_sword 被 6 个模板共用 / "
+            "bone 已指向 bone_dagger / iron_ingot 是玩家可见的原版物品）。\n"
+            "装机前先落地 docs/plans-skeleton/plan-held-item-registration-v1.md，"
+            "让每个模板注册自己的 render-only Item。"
+        )
+
     outputs = write_assets(
         items(),
         bbmodel_dir=BBMODEL_DIR,
-        client_resources=CLIENT_RESOURCES if args.install else None,
+        client_resources=None,      # 见上面 --install 那段：现在一件也装不了
         preview_dir=PREVIEW_DIR,
         render_previews=not args.no_preview,
     )

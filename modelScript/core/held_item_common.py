@@ -397,6 +397,45 @@ def build_bbmodel(item: HeldItem) -> dict:
 # ── 落盘 ──────────────────────────────────────────────────────────────────
 
 
+def assert_host_is_claimable(item: HeldItem, host_path: Path,
+                             claimed: dict[str, str]) -> None:
+    """劫持宿主 model JSON 之前的 fail-fast。**撞车必须炸，不许静默覆盖。**
+
+    宿主机制的粒度是「一个 vanilla item → 一份 model JSON」，写进去就是全局生效。
+    没有这道闸的话有两种静默灾难：
+
+    1. **覆盖别人的模板。** `assets/minecraft/models/item/bone.json` 现在指向
+       `bone_dagger`；`bone_spike` 也宿在 `bone` 上，`--install` 会把 bone_dagger
+       悄悄变成骨刺，而且 git diff 里只是一份 JSON 变了，看不出牵连到哪件物品。
+    2. **同一批里两件共宿主。** 后写的赢，前一件白生成，没有任何提示。
+
+    真正的解法是废掉宿主机制本身（`plan-held-item-registration-v1`：每个模板注册
+    自己的 render-only Item）。在那之前这道闸至少保证错误是响的。
+    """
+    if item.host_item in claimed:
+        raise ValueError(
+            f"{item.key} 与 {claimed[item.host_item]} 共用宿主 {item.host_item!r}——"
+            f"宿主粒度是「一个 vanilla item 一份 model JSON」，共宿主必然同形，"
+            f"后写的会盖掉前一件。给其中一件换宿主，或走 plan-held-item-registration-v1"
+        )
+    if not host_path.is_file():
+        return
+    try:
+        existing = json.loads(host_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return          # 读不动就不拦，交给后面的写入报真错
+    want = f"bong:models/item/{item.key}/{item.key}.obj"
+    found = existing.get("model")
+    if found is not None and found != want:
+        raise ValueError(
+            f"{item.key} 要劫持的宿主 {item.host_item!r} 已经被占用了：\n"
+            f"    {host_path} 当前指向 {found}\n"
+            f"    本次会把它改成 {want}\n"
+            f"写下去会让原来那件物品在游戏里变成 {item.key} 的样子，而 diff 只显示"
+            f"一份 JSON 变了、看不出牵连。换宿主，或走 plan-held-item-registration-v1"
+        )
+
+
 def write_assets(
     items: tuple[HeldItem, ...],
     bbmodel_dir: Path,
@@ -414,6 +453,7 @@ def write_assets(
         assert_no_coplanar_faces(item)
 
     outputs: dict[str, Path] = {}
+    claimed_hosts: dict[str, str] = {}      # host_item -> 本批里已占用它的 item.key
     bbmodel_dir.mkdir(parents=True, exist_ok=True)
 
     for item in items:
@@ -437,6 +477,8 @@ def write_assets(
             host_dir = client_resources / "assets" / "minecraft" / "models" / "item"
             host_dir.mkdir(parents=True, exist_ok=True)
             host_path = host_dir / f"{item.host_item}.json"
+            assert_host_is_claimable(item, host_path, claimed_hosts)
+            claimed_hosts[item.host_item] = item.key
             host_path.write_text(build_model_json(item), encoding="utf-8")
             outputs[f"host:{item.key}"] = host_path
 

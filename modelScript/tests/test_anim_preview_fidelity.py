@@ -850,3 +850,58 @@ class DaggerStanceTest(unittest.TestCase):
                 self.assertAlmostEqual(
                     0.0, float(b["roll"]), places=9,
                     msg=f"{name} t{tick:g}: body.roll 非零，会连刃的仰角一起改")
+
+
+class HeldSceneTextureTest(unittest.TestCase):
+    """`preview_player_anim.build_scene` 也得会读**磁盘路径引用**的贴图。
+
+    这是"贴图路径引用"那个 bug 的**第二个调用点**。`render_bbmodel._load_texture`
+    早就修了，但 `build_scene` 里还留着一份无条件 `base64.b64decode`，于是
+    `--hold` 挂在仓库那 11 个 linked-texture 模型上会报
+    `binascii.Error: Incorrect padding` —— 一个和"贴图找不到"毫无关系的错。
+    修一个调用点不算修完，所以这条按**每个磁盘路径模型**跑一遍。
+    """
+
+    def _path_referenced(self):
+        out = []
+        for path in sorted(MODELS.glob("*.bbmodel")):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            textures = doc.get("textures") or []
+            if textures and not str(textures[0].get("source", "")).startswith("data:"):
+                out.append(path)
+        return out
+
+    def test_scene_builds_for_every_path_referenced_model(self):
+        import preview_player_anim as P
+        models = self._path_referenced()
+        self.assertGreaterEqual(
+            len(models), 5,
+            "仓库里应当有一批 linked-texture 模型；一个都找不到说明这条锁失去了对象")
+        import tempfile
+        for path in models:
+            with tempfile.TemporaryDirectory() as tmp:
+                scene, ids, held = P.build_scene(Path(tmp) / "_scene.bbmodel", path)
+                self.assertTrue(
+                    held,
+                    f"{path.name}: 手持物没有任何 element 进场景 —— 贴图读到了但几何丢了")
+                tris, _, _, _ = RB.load_bbmodel(scene)
+                self.assertTrue(tris, f"{path.name}: 合成场景渲不出三角形")
+
+    def test_scene_atlas_carries_the_held_texture_not_a_blank(self):
+        """贴图要真的贴进图集右上角，不是被静默换成透明块。"""
+        import preview_player_anim as P
+        import tempfile
+        for path in (self._path_referenced() + [MODELS / "StoneKnife.bbmodel"]):
+            with tempfile.TemporaryDirectory() as tmp:
+                scene, _, _ = P.build_scene(Path(tmp) / "_scene.bbmodel", path)
+                doc = json.loads(scene.read_text(encoding="utf-8"))
+                src = doc["textures"][0]["source"].split(",", 1)[1]
+                atlas = np.asarray(
+                    Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA"), float)
+                held_quadrant = atlas[0:64, 64:128, 3]
+                self.assertGreater(
+                    float(held_quadrant.max()), 0.0,
+                    f"{path.name}: 图集里手持物那一格全透明，贴图没贴进去")

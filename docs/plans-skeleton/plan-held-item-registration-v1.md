@@ -67,7 +67,24 @@ iron_dagger  slow_trap  warning_trap  wooden_club
 
 做小刀三件套（`modelScript/generators/gen_knife_trio.py`，参考 `orthograph #8/#9/#10`）时发现：石刃的宿主 `item/stone_sword` 被 6 个模板共用，装上模型会把 `bone_sword` / `gua_dao` / 三把 flawed 剑一起变成石刃；骨刺宿 `item/bone`，装上会把 `bone_dagger` 变成骨刺。**要么给三把刀各烧一个冷门 vanilla item（不 scale，剩下 22 件借皮的没那么多冷门 item 可烧），要么根治。** 用户 2026-08-24 裁决：根治。
 
-### 1.4 与既有 plan 的关系（防孤岛）
+### 1.4 集成预检（Preflight，2026-08-25 实扫 origin/main）
+
+立本骨架前按 `docs/CLAUDE.md` 的防孤岛流程实扫了一遍，结论逐条记在这里，供
+review 复核而不是重扫：
+
+| 来源 | 扫到什么 | 与本 plan 的关系 |
+|------|----------|------------------|
+| `docs/worldview.md` | 无相关锚点 | 纯 client 渲染基建，不碰境界 / 命名禁词 / 骨币经济 / zone。§0 已记「worldview 锚点：无」 |
+| `docs/finished_plans/` | `plan-weapon-v1` / `plan-weapon-v1.1`（武器主链路 + 补完）、`plan-item-visual-v1`（图标 / 稀有度视觉）、`plan-armor-model-render-v1`（护甲 OBJ 落地） | **不重叠**。前三者交付的是"有没有模型 / 图标 / 伤害"，本 plan 只改"模型挂在谁身上"。`plan-weapon-v1 §5.3.Y` 明写加载器路径挂起且与本 plan 互不阻塞（详见 §1.4 下一节） |
+| 活跃 plan（`docs/plan-*.md`） | `plan-registry-datafication-v1`（硬编码注册表迁数据 + fail-fast）、`plan-fpv-cast-av-v1`（FPV 手臂 / 施法）、`plan-refactor-client-store-lifecycle-v1`（R2） | 三者都有接触面，处理方式见下一节。**无一与本 plan 的交付物重叠** |
+| `docs/plans-skeleton/` | 无同名或近义骨架（现有的是 bughunt-worldmodel / craft-chain-items / trade-offer-autopick） | **无需合并**，本骨架是新开的 |
+| `docs/reminder.md` | **该文件在本仓库不存在** | 无可核对项；如果后续引入，这一格需要补扫 |
+
+**skeleton 合并决策**：不合并，独立立项。理由是接触面（`BongWeaponModelRegistry`
+的 `Entry` 改形）与上述任何一份的交付物都不相交，合并只会让两份 plan 的验收互相
+阻塞。
+
+### 1.5 与既有 plan 的关系（防孤岛）
 
 - `plan-weapon-v1 §5.3.Y` 当年就把「加载器路径」挂起了，写明「评估时机（不是现在）：当 plan-armor-v1 或 plan-monster-v1 启动时重新评估……届时武器可顺便统一迁移到该加载器」。本 plan **不动加载器**（继续 SML + OBJ），只动「模型挂在谁身上」，与 §5.3.Y 的评估互不阻塞。
 - `BongWeaponModelRegistry` 的类 javadoc 自己写着「便于后续替换为真正的 template_id -> baked model 查询」——本 plan 就是兑现这句。

@@ -67,7 +67,7 @@ for _d in (LIB / "core", LIB / "tools", REPO / "client" / "tools"):
 import anim_common as AC  # noqa: E402  关节解剖判据的唯一定义处
 import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimator/bendy 数学
 from preview_armor_on_body import make_player_skin  # noqa: E402
-from render_bbmodel import load_bbmodel, render  # noqa: E402
+from render_bbmodel import _load_texture, load_bbmodel, render  # noqa: E402
 
 NS = uuid.UUID("6b1d0f3a-2c47-4e58-9a10-77c3f9e0b542")
 S_FLIP = np.diag([1.0, -1.0, 1.0])        # ModelPart(y↓) ↔ Bedrock(y↑) 的手性夹层
@@ -316,8 +316,12 @@ def build_scene(out_path: Path, held: Path | None) -> tuple[Path, dict[str, str]
 
     if held is not None:
         doc = json.loads(held.read_text(encoding="utf-8"))
-        src = doc["textures"][0]["source"].split(",", 1)[1]
-        tex = Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA")
+        # **必须走 `_load_texture`**，不能无条件 base64 解码。bbmodel 的贴图有两种存法：
+        # 内嵌 data URI，或指向磁盘的相对路径（Blockbench 的 "linked" 贴图）。仓库 55 个
+        # bbmodel 里 11 个是后者，硬解 base64 会报 `binascii.Error: Incorrect padding`
+        # ——一个和"贴图找不到"毫无关系的错。`render_bbmodel` 那边早就修了，这里曾是
+        # 同一个 bug 的**第二个调用点**，漏修的后果是 `--hold` 挂在那 11 个模型上。
+        tex = Image.fromarray(_load_texture(doc["textures"][0], held).astype(np.uint8), "RGBA")
         atlas.paste(tex, (64, 0))
         for e in doc["elements"]:
             e = dict(e)
