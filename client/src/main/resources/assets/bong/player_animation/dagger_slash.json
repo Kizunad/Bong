@@ -65,7 +65,7 @@
         "tick": 0,
         "easing": "OUTSINE",
         "rightArm": {
-          "pitch": -0.6283185
+          "pitch": -0.2792527
         }
       },
       {
@@ -100,7 +100,7 @@
         "tick": 0,
         "easing": "OUTSINE",
         "leftArm": {
-          "pitch": -0.9075712
+          "pitch": -0.3839724
         }
       },
       {
@@ -240,7 +240,7 @@
         "tick": 2,
         "easing": "OUTQUAD",
         "rightArm": {
-          "pitch": -0.5759587
+          "pitch": -0.2268928
         }
       },
       {
@@ -275,7 +275,7 @@
         "tick": 2,
         "easing": "OUTQUAD",
         "leftArm": {
-          "pitch": -0.8552113
+          "pitch": -0.3316126
         }
       },
       {
@@ -415,7 +415,7 @@
         "tick": 3,
         "easing": "INCUBIC",
         "rightArm": {
-          "pitch": -0.5235988
+          "pitch": -0.1745329
         }
       },
       {
@@ -450,7 +450,7 @@
         "tick": 3,
         "easing": "INCUBIC",
         "leftArm": {
-          "pitch": -0.8028515
+          "pitch": -0.2792527
         }
       },
       {
@@ -590,7 +590,7 @@
         "tick": 5,
         "easing": "OUTQUAD",
         "rightArm": {
-          "pitch": -0.8726646
+          "pitch": -0.5235988
         }
       },
       {
@@ -625,7 +625,7 @@
         "tick": 5,
         "easing": "OUTQUAD",
         "leftArm": {
-          "pitch": -1.012291
+          "pitch": -0.4886922
         }
       },
       {
@@ -765,7 +765,7 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -0.9075712
+          "pitch": -0.5585054
         }
       },
       {
@@ -800,7 +800,7 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -0.9773844
+          "pitch": -0.4537856
         }
       },
       {
@@ -940,7 +940,7 @@
         "tick": 8,
         "easing": "INOUTSINE",
         "rightArm": {
-          "pitch": -0.6283185
+          "pitch": -0.2792527
         }
       },
       {
@@ -975,7 +975,7 @@
         "tick": 8,
         "easing": "INOUTSINE",
         "leftArm": {
-          "pitch": -0.9075712
+          "pitch": -0.3839724
         }
       },
       {

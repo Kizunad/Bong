@@ -32,6 +32,20 @@
 
 峰值错开：腿 t2 → 腰 t3 → 肩 t5 → 肘/腕 t6。
 
+## 姿态被推翻重调过一次（round 3/3）
+
+round 1/2 的姿态是照着一个**手持物挂点算错的预览**调出来的：那版预览缺
+`R_ATTACH`、把 display translation 当成旋转后再加、还漏了方块中心重定心，刀根本
+没在手上。等挂点修对了再量，才发现这套姿态每一 tick 的**刃仰角都在 +33~+43°**，
+而修挂点之前用原版剑那种⊥握法量出来是 +63~+78°、刃尖越过肩往身后指——渲出来
+读成"举着火把"，和下面写的"低架、刀在右胸前"完全是两回事。
+
+修法只动**竖直面**这一路：`rightArm.pitch` 全帧 +20、`leftArm.pitch` 全帧 +30，
+把手从肩高压回上胸；yaw / roll / z / bend / easing **一格没动**——横向编排（腰转
+62°、counter-pull、错峰）是这条动画的骨架，和读错刃向无关。修完刃仰角落在
++14~+24°、刀尖从"过头顶"回到胸口高度。由 `DaggerBladeReadTest` 钉死（<45°、
+且前向分量恒 >0）。
+
 ## easing 的管辖方向（conventions §15）
 
 每帧的 easing 管的是「**本帧 → 下一帧**」这一段，不是「怎么到达本帧」——
@@ -47,13 +61,13 @@ PlayerAnimator 的 `isEasingBefore` 默认 false，取的是 `before.ease`。所
 from anim_common import emit_json
 
 POSE = {
-    0: dict(  # guard —— 侧身低架，刀在右胸前
+    0: dict(  # guard —— 侧身低架，刀在右胸前（实测刃仰 +14°、刀尖在胸口高度）
         easing="OUTSINE",
         body=dict(x=+0.02, y=0.0, z=0.0),
         head=dict(pitch=-3, yaw=-12),
         torso=dict(pitch=+2, yaw=+24),
-        rightArm=dict(pitch=-36, yaw=-14, roll=-8, bend=76, axis=180),
-        leftArm=dict(pitch=-52, yaw=+24, roll=-10, bend=98, axis=180),
+        rightArm=dict(pitch=-16, yaw=-14, roll=-8, bend=76, axis=180),
+        leftArm=dict(pitch=-22, yaw=+24, roll=-10, bend=98, axis=180),
         rightLeg=dict(pitch=+8, yaw=+6, bend=14, z=+0.04),
         leftLeg=dict(pitch=-12, yaw=+4, bend=20, z=-0.05),
     ),
@@ -62,8 +76,8 @@ POSE = {
         body=dict(x=+0.04, y=+0.01, z=-0.02),
         head=dict(pitch=-4, yaw=-14),
         torso=dict(pitch=+3, yaw=+32),
-        rightArm=dict(pitch=-33, yaw=-20, roll=-11, bend=84, axis=180),
-        leftArm=dict(pitch=-49, yaw=+27, roll=-9, bend=88, axis=180),  # load 微展
+        rightArm=dict(pitch=-13, yaw=-20, roll=-11, bend=84, axis=180),
+        leftArm=dict(pitch=-19, yaw=+27, roll=-9, bend=88, axis=180),  # load 微展
         rightLeg=dict(pitch=+16, yaw=+6, bend=34, z=+0.06),
         leftLeg=dict(pitch=-10, yaw=+4, bend=18, z=-0.05),
     ),
@@ -72,8 +86,8 @@ POSE = {
         body=dict(x=+0.05, y=+0.02, z=-0.05),
         head=dict(pitch=-5, yaw=-16),
         torso=dict(pitch=+4, yaw=+42),
-        rightArm=dict(pitch=-30, yaw=-26, roll=-14, bend=88, axis=180),
-        leftArm=dict(pitch=-46, yaw=+30, roll=-8, bend=84, axis=180),
+        rightArm=dict(pitch=-10, yaw=-26, roll=-14, bend=88, axis=180),
+        leftArm=dict(pitch=-16, yaw=+30, roll=-8, bend=84, axis=180),
         rightLeg=dict(pitch=+18, yaw=+6, bend=40, z=+0.06),
         leftLeg=dict(pitch=-8, yaw=+4, bend=16, z=-0.04),
     ),
@@ -82,8 +96,8 @@ POSE = {
         body=dict(x=-0.03, y=-0.01, z=+0.12),
         head=dict(pitch=+2, yaw=+6),
         torso=dict(pitch=+5, yaw=-20),
-        rightArm=dict(pitch=-50, yaw=+30, roll=+14, bend=58, axis=180),
-        leftArm=dict(pitch=-58, yaw=+10, roll=-24, bend=116, axis=180),  # counter-pull
+        rightArm=dict(pitch=-30, yaw=+30, roll=+14, bend=58, axis=180),
+        leftArm=dict(pitch=-28, yaw=+10, roll=-24, bend=116, axis=180),  # counter-pull
         rightLeg=dict(pitch=+4, yaw=+10, bend=12, z=+0.02),
         leftLeg=dict(pitch=-24, yaw=+2, bend=38, z=-0.08),
     ),
@@ -92,8 +106,8 @@ POSE = {
         body=dict(x=-0.02, y=-0.01, z=+0.13),
         head=dict(pitch=+3, yaw=+8),
         torso=dict(pitch=+5, yaw=-26),
-        rightArm=dict(pitch=-52, yaw=+38, roll=+24, bend=52, axis=180),
-        leftArm=dict(pitch=-56, yaw=+8, roll=-26, bend=112, axis=180),
+        rightArm=dict(pitch=-32, yaw=+38, roll=+24, bend=52, axis=180),
+        leftArm=dict(pitch=-26, yaw=+8, roll=-26, bend=112, axis=180),
         rightLeg=dict(pitch=+3, yaw=+10, bend=11, z=+0.02),
         leftLeg=dict(pitch=-26, yaw=+2, bend=40, z=-0.09),
     ),
@@ -102,8 +116,8 @@ POSE = {
         body=dict(x=+0.02, y=0.0, z=0.0),
         head=dict(pitch=-3, yaw=-12),
         torso=dict(pitch=+2, yaw=+24),
-        rightArm=dict(pitch=-36, yaw=-14, roll=-8, bend=76, axis=180),
-        leftArm=dict(pitch=-52, yaw=+24, roll=-10, bend=98, axis=180),
+        rightArm=dict(pitch=-16, yaw=-14, roll=-8, bend=76, axis=180),
+        leftArm=dict(pitch=-22, yaw=+24, roll=-10, bend=98, axis=180),
         rightLeg=dict(pitch=+8, yaw=+6, bend=14, z=+0.04),
         leftLeg=dict(pitch=-12, yaw=+4, bend=20, z=-0.05),
     ),

@@ -27,6 +27,17 @@
 
 峰值错开：腿 t2 → 腰 t3 → 肩 t5 → 肘/腕 t6。
 
+## 姿态被推翻重调过一次（round 3/3）
+
+同 `gen_dagger_slash.py` 同名小节：round 1/2 是照着挂点算错的预览调的。修对之后
+量出来 guard/LOAD 的刃仰角是 +31~+40°，刀举在肩上——不是"低位持刀"。
+
+修法只动竖直面：`rightArm.pitch` t0/t2/t8 +20、t3 +24，**t5/t6 一格不动**
+（撞击帧的刃仰角本来就是 +1.7°/+4.4°，已经是水平直刺，加 pitch 反而会把刺变成
+往下戳）；`leftArm.pitch` 前段 +32、撞击段 +26。yaw / roll / z / bend / easing 全部
+保持原值。修完 guard 刃仰角 +11°、撞击 +1.7°，手从肩高回到上胸。
+`DaggerBladeReadTest.test_the_thrust_actually_levels_the_blade` 钉住撞击帧 |仰角|<15°。
+
 ## easing 的管辖方向（conventions §15）
 
 每帧的 easing 管「本帧 → 下一帧」，不是「怎么到达本帧」，所以按段写在起始侧：
@@ -37,13 +48,13 @@ t6 收势 INOUTSINE。详见 `gen_dagger_slash.py` 同名小节记的那次踩�
 from anim_common import emit_json
 
 POSE = {
-    0: dict(  # guard —— 低位持刀，副手前探控距
+    0: dict(  # guard —— 低位持刀（实测刃仰 +11°），副手前探控距
         easing="OUTSINE",
         body=dict(x=+0.03, y=0.0, z=0.0),
         head=dict(pitch=+2, yaw=-8),
         torso=dict(pitch=+4, yaw=+18),
-        rightArm=dict(pitch=-24, yaw=-10, roll=-6, bend=86, axis=180),
-        leftArm=dict(pitch=-64, yaw=+26, roll=-6, bend=72, axis=180),
+        rightArm=dict(pitch=-4, yaw=-10, roll=-6, bend=86, axis=180),
+        leftArm=dict(pitch=-32, yaw=+26, roll=-6, bend=72, axis=180),
         rightLeg=dict(pitch=+8, yaw=+4, bend=16, z=+0.04),
         leftLeg=dict(pitch=-10, yaw=+4, bend=18, z=-0.05),
     ),
@@ -52,8 +63,8 @@ POSE = {
         body=dict(x=+0.05, y=+0.01, z=-0.03),
         head=dict(pitch=+2, yaw=-10),
         torso=dict(pitch=+5, yaw=+26),
-        rightArm=dict(pitch=-20, yaw=-16, roll=-9, bend=94, axis=180),
-        leftArm=dict(pitch=-70, yaw=+28, roll=-8, bend=60, axis=180),  # 探得更远
+        rightArm=dict(pitch=+0, yaw=-16, roll=-9, bend=94, axis=180),
+        leftArm=dict(pitch=-38, yaw=+28, roll=-8, bend=60, axis=180),  # 探得更远
         rightLeg=dict(pitch=+18, yaw=+4, bend=38, z=+0.06),
         leftLeg=dict(pitch=-8, yaw=+4, bend=16, z=-0.05),
     ),
@@ -62,8 +73,8 @@ POSE = {
         body=dict(x=+0.06, y=+0.02, z=-0.06),
         head=dict(pitch=+1, yaw=-12),
         torso=dict(pitch=+6, yaw=+34),
-        rightArm=dict(pitch=-14, yaw=-22, roll=-12, bend=102, axis=180),
-        leftArm=dict(pitch=-72, yaw=+30, roll=-10, bend=56, axis=180),
+        rightArm=dict(pitch=+10, yaw=-22, roll=-12, bend=102, axis=180),
+        leftArm=dict(pitch=-40, yaw=+30, roll=-10, bend=56, axis=180),
         rightLeg=dict(pitch=+20, yaw=+4, bend=44, z=+0.06),
         leftLeg=dict(pitch=-6, yaw=+4, bend=14, z=-0.04),
     ),
@@ -73,7 +84,7 @@ POSE = {
         head=dict(pitch=+5, yaw=+2),
         torso=dict(pitch=+7, yaw=-10),
         rightArm=dict(pitch=-58, yaw=+10, roll=+10, bend=22, axis=180),
-        leftArm=dict(pitch=-50, yaw=+6, roll=-22, bend=112, axis=180),  # 猛收护胸
+        leftArm=dict(pitch=-24, yaw=+6, roll=-22, bend=112, axis=180),  # 猛收护胸
         rightLeg=dict(pitch=+2, yaw=+8, bend=10, z=+0.02),
         leftLeg=dict(pitch=-26, yaw=+2, bend=40, z=-0.09),
     ),
@@ -83,7 +94,7 @@ POSE = {
         head=dict(pitch=+6, yaw=+4),
         torso=dict(pitch=+7, yaw=-12),
         rightArm=dict(pitch=-64, yaw=+13, roll=+20, bend=16, axis=180),
-        leftArm=dict(pitch=-48, yaw=+4, roll=-24, bend=108, axis=180),
+        leftArm=dict(pitch=-22, yaw=+4, roll=-24, bend=108, axis=180),
         rightLeg=dict(pitch=+1, yaw=+8, bend=9, z=+0.02),
         leftLeg=dict(pitch=-28, yaw=+2, bend=42, z=-0.10),
     ),
@@ -92,8 +103,8 @@ POSE = {
         body=dict(x=+0.03, y=0.0, z=0.0),
         head=dict(pitch=+2, yaw=-8),
         torso=dict(pitch=+4, yaw=+18),
-        rightArm=dict(pitch=-24, yaw=-10, roll=-6, bend=86, axis=180),
-        leftArm=dict(pitch=-64, yaw=+26, roll=-6, bend=72, axis=180),
+        rightArm=dict(pitch=-4, yaw=-10, roll=-6, bend=86, axis=180),
+        leftArm=dict(pitch=-32, yaw=+26, roll=-6, bend=72, axis=180),
         rightLeg=dict(pitch=+8, yaw=+4, bend=16, z=+0.04),
         leftLeg=dict(pitch=-10, yaw=+4, bend=18, z=-0.05),
     ),

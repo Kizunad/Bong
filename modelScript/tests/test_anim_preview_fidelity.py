@@ -717,3 +717,72 @@ class HeldItemAttachTest(unittest.TestCase):
                         d, 0.5,
                         f"{item.key}/{name} t{tick:g}: 握把离拳心 {d:.2f}px。"
                         f"拳头只有 4px 宽，超过 0.5px 就看得出刀没被握住")
+
+
+class DaggerBladeReadTest(unittest.TestCase):
+    """匕首动画的**刃向读感**回归锁。
+
+    这两条锁的是一次真实事故：动画的姿态是照着一个**挂点算错的预览**调出来的，
+    结果每一 tick 刃仰角都在 +63~+78°、横划那条刃尖还越过肩往身后指——渲出来
+    读成"举着火把"。姿态本身在数值上"没毛病"，只有把刀真正摆对了才看得见。
+    """
+
+    ANIMS = ("dagger_slash", "dagger_stab")
+
+    def _blade(self, name, tick):
+        import preview_player_anim as P
+        import gen_knife_trio as GK
+        kfs = RA.collect_keyframes(
+            json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
+        M = P.item_attach_modelpart(kfs, tick, GK.STONE_KNIFE.display["thirdperson_righthand"])
+        d = M[:3, :3] @ np.array([0.0, 1.0, 0.0])
+        d /= np.linalg.norm(d)
+        # ModelPart：+Y 朝下、+Z 朝身后
+        return math.degrees(math.asin(-d[1])), -d[2]
+
+    def test_blade_never_points_behind_the_player(self):
+        for name in self.ANIMS:
+            for i in range(33):
+                tick = 8.0 * i / 32
+                elev, forward = self._blade(name, tick)
+                self.assertGreater(
+                    forward, 0.0,
+                    f"{name} t{tick:g}: 刃的前向分量 {forward:+.3f} —— 刀尖指向自己身后")
+
+    def test_blade_stays_out_of_the_torch_zone(self):
+        """刃仰角全程 < 30°。
+
+        阈值取 30 是量出来的分界，不是拍的：返工前这两条是 42.9° / 39.6°，返工后是
+        23.6° / 16.3°。45° 那种"看着宽松点"的阈值**放行返工前的姿态**，等于没锁。
+        """
+        for name in self.ANIMS:
+            worst = max((self._blade(name, 8.0 * i / 32)[0], 8.0 * i / 32) for i in range(33))
+            self.assertLess(
+                worst[0], 30.0,
+                f"{name} t{worst[1]:g} 刃仰角 {worst[0]:.1f}° ≥ 30°，读成举火把而不是持刀")
+
+    def test_blade_tip_never_rises_above_the_shoulder(self):
+        """刀尖不许高过肩线——"举火把"最直接的判据，比仰角更贴近肉眼读到的东西。
+
+        返工前刀尖最高到肩上 4.6px（越过下巴、贴着脸），返工后落在肩下 0.3px 以内。
+        """
+        import preview_player_anim as P
+        import gen_knife_trio as GK
+        item = GK.STONE_KNIFE
+        tip_y = 8.0 + (max(b.high[1] for b in item.boxes) - item.grip) * 16.0
+        disp = item.display["thirdperson_righthand"]
+        for name in self.ANIMS:
+            kfs = RA.collect_keyframes(
+                json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
+            for i in range(33):
+                tick = 8.0 * i / 32
+                M = P.item_attach_modelpart(kfs, tick, disp)
+                y = (M @ np.array([8.0, tip_y, 8.0, 1.0]))[1] - 2.0   # 相对肩枢轴，+ 朝下
+                self.assertGreater(
+                    y, -1.0,
+                    f"{name} t{tick:g}: 刀尖高出肩线 {-y:.2f}px —— 这就是「举火把」的读感")
+
+    def test_the_thrust_actually_levels_the_blade(self):
+        """直刺的撞击帧刃必须接近水平——否则那不是刺，是往地上戳。"""
+        elev, _ = self._blade("dagger_stab", 5.0)
+        self.assertLess(abs(elev), 15.0, f"dagger_stab 撞击帧刃仰角 {elev:.1f}°，不像直刺")
