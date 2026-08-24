@@ -36,6 +36,13 @@
       {
         "tick": 0,
         "easing": "OUTSINE",
+        "body": {
+          "yaw": -0.5934119
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "OUTSINE",
         "head": {
           "pitch": 0.0349066
         }
@@ -44,7 +51,7 @@
         "tick": 0,
         "easing": "OUTSINE",
         "head": {
-          "yaw": -0.1396263
+          "yaw": 0.4537856
         }
       },
       {
@@ -211,6 +218,13 @@
       {
         "tick": 2,
         "easing": "OUTQUAD",
+        "body": {
+          "yaw": -0.5934119
+        }
+      },
+      {
+        "tick": 2,
+        "easing": "OUTQUAD",
         "head": {
           "pitch": 0.0349066
         }
@@ -219,7 +233,7 @@
         "tick": 2,
         "easing": "OUTQUAD",
         "head": {
-          "yaw": -0.1745329
+          "yaw": 0.418879
         }
       },
       {
@@ -386,6 +400,13 @@
       {
         "tick": 3,
         "easing": "INCUBIC",
+        "body": {
+          "yaw": -0.5934119
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "INCUBIC",
         "head": {
           "pitch": 0.0174533
         }
@@ -394,7 +415,7 @@
         "tick": 3,
         "easing": "INCUBIC",
         "head": {
-          "yaw": -0.2094395
+          "yaw": 0.3839724
         }
       },
       {
@@ -561,6 +582,13 @@
       {
         "tick": 5,
         "easing": "OUTQUAD",
+        "body": {
+          "yaw": -0.5934119
+        }
+      },
+      {
+        "tick": 5,
+        "easing": "OUTQUAD",
         "head": {
           "pitch": 0.0872665
         }
@@ -569,7 +597,7 @@
         "tick": 5,
         "easing": "OUTQUAD",
         "head": {
-          "yaw": 0.0349066
+          "yaw": 0.6283185
         }
       },
       {
@@ -736,6 +764,13 @@
       {
         "tick": 6,
         "easing": "INOUTSINE",
+        "body": {
+          "yaw": -0.5934119
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "INOUTSINE",
         "head": {
           "pitch": 0.1047198
         }
@@ -744,7 +779,7 @@
         "tick": 6,
         "easing": "INOUTSINE",
         "head": {
-          "yaw": 0.0698132
+          "yaw": 0.6632251
         }
       },
       {
@@ -911,6 +946,13 @@
       {
         "tick": 8,
         "easing": "INOUTSINE",
+        "body": {
+          "yaw": -0.5934119
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
         "head": {
           "pitch": 0.0349066
         }
@@ -919,7 +961,7 @@
         "tick": 8,
         "easing": "INOUTSINE",
         "head": {
-          "yaw": -0.1396263
+          "yaw": 0.4537856
         }
       },
       {

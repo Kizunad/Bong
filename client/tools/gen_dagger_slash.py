@@ -46,6 +46,28 @@ round 1/2 的姿态是照着一个**手持物挂点算错的预览**调出来的
 +14~+24°、刀尖从"过头顶"回到胸口高度。由 `DaggerBladeReadTest` 钉死（<45°、
 且前向分量恒 >0）。
 
+## 站架：由 `body.yaw` 给，不是 `torso.yaw`
+
+`torso.*` 只作用于躯干 ModelPart，头/臂/腿各自独立（conventions §L243）。所以
+round 1~3 那个"侧身"其实是 **24° 的躯干扭转**，胯和腿全程正对前方——量出来右脚
+只比左脚靠后 1.4px。症状很隐蔽：眼睛把**胸口**读成朝向，于是 3/4 机位看起来才
+像正面（用户 2026-08-25 一眼指出）。
+
+`body.yaw` 是唯一能转整个人（含头、腿、手持物）的通道，这里取 **-34° 恒定**：
+34° = FRONT 机位(180) 与 3/4 机位(146) 的夹角，符号取负因为**转机位 +θ ≡ 转身体
+-θ**（`_bodyyaw_sweep.png` 逐格比对确认）。于是原先只有在 3/4 机位才看得到的那个
+姿态，现在正对敌人就是这样。
+
+两条配套约束：
+
+- **恒定**，不逐帧变。站架是站架，挥砍的转体由 `torso.yaw` 给（它本来就在走
+  +24 → +42 → -20 那条 62° 曲线）。body 跟着动的话脚会在地上打滑。
+- **头反向补 +34°**，保持世界朝向不变（本条动画原本是 -12°，补偿后仍是 -12°）。
+  不补的话角色是"侧着身、还把脸扭开"，看不到敌人。
+
+纯 yaw 不动高度，所以 round 3/3 那批刃向锁（仰角 / 刀尖高度）数值一格未变，
+仍然绿。`DaggerStanceTest` 另外钉住"恒定 + 头朝向 + body 不许有 pitch/roll"。
+
 ## easing 的管辖方向（conventions §15）
 
 每帧的 easing 管的是「**本帧 → 下一帧**」这一段，不是「怎么到达本帧」——
@@ -63,8 +85,8 @@ from anim_common import emit_json
 POSE = {
     0: dict(  # guard —— 侧身低架，刀在右胸前（实测刃仰 +14°、刀尖在胸口高度）
         easing="OUTSINE",
-        body=dict(x=+0.02, y=0.0, z=0.0),
-        head=dict(pitch=-3, yaw=-12),
+        body=dict(x=+0.02, y=0.0, z=0.0, yaw=-34),
+        head=dict(pitch=-3, yaw=+22),
         torso=dict(pitch=+2, yaw=+24),
         rightArm=dict(pitch=-16, yaw=-14, roll=-8, bend=76, axis=180),
         leftArm=dict(pitch=-22, yaw=+24, roll=-10, bend=98, axis=180),
@@ -73,8 +95,8 @@ POSE = {
     ),
     2: dict(  # 腿先动 —— 后腿蹬地，链条从下往上启动
         easing="OUTQUAD",
-        body=dict(x=+0.04, y=+0.01, z=-0.02),
-        head=dict(pitch=-4, yaw=-14),
+        body=dict(x=+0.04, y=+0.01, z=-0.02, yaw=-34),
+        head=dict(pitch=-4, yaw=+20),
         torso=dict(pitch=+3, yaw=+32),
         rightArm=dict(pitch=-13, yaw=-20, roll=-11, bend=84, axis=180),
         leftArm=dict(pitch=-19, yaw=+27, roll=-9, bend=88, axis=180),  # load 微展
@@ -83,8 +105,8 @@ POSE = {
     ),
     3: dict(  # LOAD —— 腰到极限，刀收内侧（仍在 guard 范畴，不越到反侧）
         easing="INCUBIC",
-        body=dict(x=+0.05, y=+0.02, z=-0.05),
-        head=dict(pitch=-5, yaw=-16),
+        body=dict(x=+0.05, y=+0.02, z=-0.05, yaw=-34),
+        head=dict(pitch=-5, yaw=+18),
         torso=dict(pitch=+4, yaw=+42),
         rightArm=dict(pitch=-10, yaw=-26, roll=-14, bend=88, axis=180),
         leftArm=dict(pitch=-16, yaw=+30, roll=-8, bend=84, axis=180),
@@ -93,8 +115,8 @@ POSE = {
     ),
     5: dict(  # IMPACT —— 腰猛转正，刀横扫过身前；肘仍留 58°
         easing="OUTQUAD",
-        body=dict(x=-0.03, y=-0.01, z=+0.12),
-        head=dict(pitch=+2, yaw=+6),
+        body=dict(x=-0.03, y=-0.01, z=+0.12, yaw=-34),
+        head=dict(pitch=+2, yaw=+40),
         torso=dict(pitch=+5, yaw=-20),
         rightArm=dict(pitch=-30, yaw=+30, roll=+14, bend=58, axis=180),
         leftArm=dict(pitch=-28, yaw=+10, roll=-24, bend=116, axis=180),  # counter-pull
@@ -103,8 +125,8 @@ POSE = {
     ),
     6: dict(  # overshoot —— 末端关节滞后 1 tick：腕再翻、肘再收
         easing="INOUTSINE",
-        body=dict(x=-0.02, y=-0.01, z=+0.13),
-        head=dict(pitch=+3, yaw=+8),
+        body=dict(x=-0.02, y=-0.01, z=+0.13, yaw=-34),
+        head=dict(pitch=+3, yaw=+42),
         torso=dict(pitch=+5, yaw=-26),
         rightArm=dict(pitch=-32, yaw=+38, roll=+24, bend=52, axis=180),
         leftArm=dict(pitch=-26, yaw=+8, roll=-26, bend=112, axis=180),
@@ -113,8 +135,8 @@ POSE = {
     ),
     8: dict(  # 回 guard（与 tick 0 完全一致，连击友好）
         easing="INOUTSINE",
-        body=dict(x=+0.02, y=0.0, z=0.0),
-        head=dict(pitch=-3, yaw=-12),
+        body=dict(x=+0.02, y=0.0, z=0.0, yaw=-34),
+        head=dict(pitch=-3, yaw=+22),
         torso=dict(pitch=+2, yaw=+24),
         rightArm=dict(pitch=-16, yaw=-14, roll=-8, bend=76, axis=180),
         leftArm=dict(pitch=-22, yaw=+24, roll=-10, bend=98, axis=180),

@@ -786,3 +786,67 @@ class DaggerBladeReadTest(unittest.TestCase):
         """直刺的撞击帧刃必须接近水平——否则那不是刺，是往地上戳。"""
         elev, _ = self._blade("dagger_stab", 5.0)
         self.assertLess(abs(elev), 15.0, f"dagger_stab 撞击帧刃仰角 {elev:.1f}°，不像直刺")
+
+
+class DaggerStanceTest(unittest.TestCase):
+    """站架：`body.yaw` 是**整个人**（含头/腿/手持物）唯一的转身通道。
+
+    此前"侧身"只由 `torso.yaw` 给，而 `torso.*` 只作用于躯干 ModelPart，头/臂/腿
+    各自独立（conventions §L243）——胯和腿全程正对前方，实际是 24° 的躯干扭转而
+    不是站架。症状很隐蔽：眼睛把**胸口**读成朝向，于是 3/4 机位看起来才像正面。
+    """
+
+    ANIMS = ("dagger_slash", "dagger_stab")
+
+    def _kfs(self, name):
+        return RA.collect_keyframes(
+            json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
+
+    def test_stance_is_a_constant_whole_body_rotation(self):
+        """`body.yaw` 必须存在且**全程恒定**。
+
+        恒定是关键：站架是站架，不该跟着挥砍逐帧转——那会变成脚在地上打滑。
+        挥砍的转体由 `torso.yaw` 给（它本来就在动），两者分工不能混。
+        """
+        for name in self.ANIMS:
+            kfs = self._kfs(name)
+            yaws = {round(math.degrees(RA.sample_part(kfs, "body", 8.0 * i / 16)["yaw"]), 6)
+                    for i in range(17)}
+            self.assertEqual(
+                1, len(yaws), f"{name}: body.yaw 在动（{sorted(yaws)}）—— 站架应当恒定")
+            self.assertGreater(
+                abs(yaws.pop()), 5.0,
+                f"{name}: body.yaw ≈ 0，整个人没转 —— 又退回成只有躯干在扭")
+
+    def test_head_still_looks_at_the_target(self):
+        """转身之后头必须反向补偿回来，否则角色是"侧着身、也把脸扭开"。
+
+        世界朝向 = body.yaw + head.yaw（head 是 body 的子节点，不是 torso 的）。
+        """
+        for name in self.ANIMS:
+            kfs = self._kfs(name)
+            for i in range(17):
+                tick = 8.0 * i / 16
+                world = math.degrees(RA.sample_part(kfs, "body", tick)["yaw"]
+                                     + RA.sample_part(kfs, "head", tick)["yaw"])
+                self.assertLess(
+                    abs(world), 25.0,
+                    f"{name} t{tick:g}: 头的世界朝向 {world:+.1f}°，脸扭离目标太远")
+
+    def test_stance_does_not_disturb_the_blade_read(self):
+        """绕竖直轴转身不该改变刃的仰角——纯 yaw 不动高度。
+
+        这条是给未来改站架角度时用的安全网：只要还是纯 yaw，round 3/3 那批刃向锁
+        就仍然成立；哪天有人往 body 上加了 pitch/roll，这里会先红。
+        """
+        for name in self.ANIMS:
+            kfs = self._kfs(name)
+            for i in range(9):
+                tick = 8.0 * i / 8
+                b = RA.sample_part(kfs, "body", tick)
+                self.assertAlmostEqual(
+                    0.0, float(b["pitch"]), places=9,
+                    msg=f"{name} t{tick:g}: body.pitch 非零，会连刃的仰角一起改")
+                self.assertAlmostEqual(
+                    0.0, float(b["roll"]), places=9,
+                    msg=f"{name} t{tick:g}: body.roll 非零，会连刃的仰角一起改")
