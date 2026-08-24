@@ -1713,7 +1713,7 @@ mod tests {
         // 注：Disciple NPC 展示 offer 但生产买路暂无 Disciple arm——已知孤岛，后续 plan 补齐；
         // 此处故意仅覆盖 Commoner/Rogue，避免误报为"已覆盖"。
         // 非交易 archetype（GuardianRelic/Daoxiang/…）不参与校验。
-        use crate::network::client_request_handler::npc_trade_catalog_entry;
+        use crate::network::client_request::npc::npc_trade_catalog_entry;
         let trading_archetypes = [NpcArchetype::Commoner, NpcArchetype::Rogue];
         for entry in TRADE_CATALOGUE {
             let found = trading_archetypes
