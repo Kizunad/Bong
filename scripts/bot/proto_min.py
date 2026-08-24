@@ -114,6 +114,12 @@ SERVER_DATA_PAYLOAD_NAMES = {
     121: "loot_container_close",
     131: "insight_offer",
     137: "inventory_move_rejected",
+    49: "carrier_state",
+    74: "qi_color_observed",
+    77: "event_alert",
+    129: "mineral_probe_result",
+    130: "freshness_update",
+    132: "workbench_open",
     142: "morph_state",
 }
 
@@ -1242,6 +1248,123 @@ def _inventory_move_rejected(data: bytes) -> dict[str, Any]:
     }
 
 
+COLOR_KIND_PASCAL_NAMES = {
+    0: "unspecified",
+    1: "Sharp",
+    2: "Heavy",
+    3: "Mellow",
+    4: "Solid",
+    5: "Light",
+    6: "Intricate",
+    7: "Gentle",
+    8: "Insidious",
+    9: "Violent",
+    10: "Turbid",
+}
+
+EVENT_KIND_NAMES = {
+    0: "unspecified",
+    1: "thunder_tribulation",
+    2: "beast_tide",
+    3: "realm_collapse",
+    4: "karma_backlash",
+    5: "poison_miasma",
+    6: "meridian_seal",
+    7: "daoxiang_wave",
+    8: "heavenly_fire",
+    9: "pressure_invert",
+    10: "all_wither",
+    11: "generic",
+}
+
+
+def _sint32(fields: list[tuple[int, int, Any]], field: int, default: int = 0) -> int:
+    """protobuf `sint32`（zigzag varint）。WorkbenchOpen 的坐标可为负。"""
+    if not _has(fields, field):
+        return default
+    raw = _varint(fields, field)
+    return (raw >> 1) ^ -(raw & 1)
+
+
+def _qi_color_observed(data: bytes) -> dict[str, Any]:
+    """plan-exploration-probe-return-v1 —— 神识观色 S2C（field 74）。
+
+    与 Rust ServerDataPayloadV1::QiColorObserved 精确对应；`main`/`secondary`
+    是 ColorKind 枚举（varint），映射为 PascalCase 名（与 Rust 变体一致）。
+    `secondary` 只在该字段**实际携带**时才进 dict——脱敏路径（diff=1）服务端省略
+    field 4，键即缺失（presence 契约，区分「省略」与「显式 null」；central-review
+    31437496353 #3 要求场景断言键缺失而非 `dict.get is None`）。ColorKind=0 映射
+    为 `unspecified`；未知非零 wire 值保留为 `unknown_N`，避免与合法默认值混淆。
+    """
+    fields = _fields(data)
+    main = _optional_varint(fields, 3)
+    decoded = {
+        "v": 1,
+        "type": "qi_color_observed",
+        "observer": _string(fields, 1),
+        "observed": _string(fields, 2),
+        "main": _enum_name(COLOR_KIND_PASCAL_NAMES, main if main is not None else 0),
+        "is_chaotic": bool(_varint(fields, 5)),
+        "is_hunyuan": bool(_varint(fields, 6)),
+        "realm_diff": _int32(fields, 7),
+    }
+    secondary = _optional_varint(fields, 4)
+    if secondary is not None:
+        decoded["secondary"] = _enum_name(COLOR_KIND_PASCAL_NAMES, secondary)
+    return decoded
+
+
+def _event_alert(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    event = _optional_varint(fields, 1)
+    return {
+        "v": 1,
+        "type": "event_alert",
+        "event": _enum_name(EVENT_KIND_NAMES, event if event is not None else 0),
+        "message": _string(fields, 2),
+        "zone": _optional_string(fields, 3),
+        "duration_ticks": _optional_varint(fields, 4),
+    }
+
+
+def _mineral_probe_result(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "mineral_probe_result",
+        "kind": _string(fields, 1),
+        "mineral_id": _optional_string(fields, 2),
+        "remaining_units": _optional_varint(fields, 3),
+        "display_name_zh": _optional_string(fields, 4),
+        "denial_reason": _optional_string(fields, 5),
+    }
+
+
+def _freshness_update(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "freshness_update",
+        "item_uuid": _string(fields, 1),
+        "freshness": _float32(fields, 2),
+        "profile_name": _string(fields, 3),
+    }
+
+
+def _workbench_open(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "workbench_open",
+        "entity_id": _varint(fields, 1),
+        "position": [
+            _sint32(fields, 2),
+            _sint32(fields, 3),
+            _sint32(fields, 4),
+        ],
+    }
+
+
 def _cast_sync(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     return {
@@ -1706,6 +1829,11 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     121: _loot_container_close,
     131: _insight_offer,
     137: _inventory_move_rejected,
+    74: _qi_color_observed,
+    77: _event_alert,
+    129: _mineral_probe_result,
+    130: _freshness_update,
+    132: _workbench_open,
     142: _morph_state,
     78: _coffin_state,
 }

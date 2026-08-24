@@ -8,6 +8,10 @@ on:
       - "scripts/tests/cargo_dev_profile_config_test.sh"
       - "scripts/tests/slot_registry_test.sh"
       - "scripts/tests/wt_janitor_test.sh"
+      - "scripts/tests/preview_lifecycle_contract_test.sh"
+      - "scripts/preview/run-server-headless.sh"
+      - "scripts/preview/stop-server-headless.sh"
+      - "scripts/lib/bong-server-lifecycle.sh"
       - "scripts/slot_registry.sh"
       - "scripts/wt-janitor.sh"
       - "server/.cargo/config.toml"
@@ -27,6 +31,10 @@ on:
       - "scripts/tests/cargo_dev_profile_config_test.sh"
       - "scripts/tests/slot_registry_test.sh"
       - "scripts/tests/wt_janitor_test.sh"
+      - "scripts/tests/preview_lifecycle_contract_test.sh"
+      - "scripts/preview/run-server-headless.sh"
+      - "scripts/preview/stop-server-headless.sh"
+      - "scripts/lib/bong-server-lifecycle.sh"
       - "scripts/slot_registry.sh"
       - "scripts/wt-janitor.sh"
       - "server/.cargo/config.toml"
@@ -74,3 +82,6 @@ jobs:
 
       - name: Smoke owned-artifacts cleanup contract
         run: bash scripts/tests/smoke_owned_artifacts_test.sh
+
+      - name: Preview lifecycle contract
+        run: bash scripts/tests/preview_lifecycle_contract_test.sh

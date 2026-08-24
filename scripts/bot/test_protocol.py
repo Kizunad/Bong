@@ -40,6 +40,24 @@ from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
+from bot._agent_ui_helpers import (  # noqa: E402
+    DEFAULT_UI_XML,
+    REQUEST_TIMEOUT_MAX,
+    REQUEST_TIMEOUT_MIN,
+    REQUEST_XML_MAX_BYTES,
+    assert_request_shape,
+    build_cmd,
+    expect_agent_ui_close,
+    expect_agent_ui_request,
+    expect_redis_response,
+    response_matches,
+)
+from bot._redis_client_helpers import (  # noqa: E402
+    RedisClient,
+    RespFrames,
+    _INCOMPLETE_FRAME,
+    _encode_command,
+)
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._combat_helpers import (  # noqa: E402
@@ -117,6 +135,35 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
+    MOVE_DISTANCE,
+    MOVE_VERIFY_TOLERANCE,
+    POSITION_TOLERANCE,
+    _assert_restored_position,
+    _move_and_record,
+    _position_from_authoritative_event,
+)
+from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
+    _assert_surviving_connection,
+    _wait_keepalive_after,
+)
+from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
+    _wait_before_deadline,
+)
+from bot.scenarios.network_lifecycle_stale_session import (  # noqa: E402
+    _assert_inactive_session_state,
+)
+from bot.scenarios.network_quickslot_config import (  # noqa: E402
+    _expect_bind_response,
+)
+from bot.scenarios.network_skill_config_intent import (  # noqa: E402
+    _expect_config_snapshot,
+)
+from bot.scenarios._npc_dialogue_helpers import (  # noqa: E402
+    _scenario_spawn_matches,
+    _trade_metadata,
+)
+from bot.scenarios import npc_dialogue_chain_trade as npc_dialogue_trade  # noqa: E402
 from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
     DISCONNECT_SETTLE_SECONDS,
@@ -4618,6 +4665,87 @@ class _FakeBot:
         raise AssertionError(f"未找到 {description}; events={self.events}")
 
 
+class NetworkScenarioHelperTest(unittest.TestCase):
+    def test_quickslot_rejection_defaults_to_empty_slot(self):
+        payload = {
+            "ack_request_id": "bad-item",
+            "bind_accepted": False,
+            "slots": [None] * 9,
+        }
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "quickslot_config", "payload": payload},
+                )
+            ]
+        )
+
+        returned = _expect_bind_response(bot, "bad-item", False, 4)
+
+        self.assertIs(returned, payload)
+
+    def test_quickslot_rejection_can_require_preserved_binding(self):
+        entry = {
+            "item_id": "guyuan_pill",
+            "display_name": "固元丹",
+            "cast_duration_ms": 1500,
+            "cooldown_ms": 3000,
+            "icon_texture": "bong-client:textures/gui/items/pill.png",
+        }
+        payload = {
+            "ack_request_id": "empty-item",
+            "bind_accepted": False,
+            "slots": [None, None, None, None, entry, None, None, None, None],
+        }
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "quickslot_config", "payload": payload},
+                )
+            ]
+        )
+
+        _expect_bind_response(bot, "empty-item", False, 4, expected_entry=entry)
+
+    def test_skill_config_snapshot_skips_stale_configuration(self):
+        def snapshot(config: dict) -> _FakeEvent:
+            return _FakeEvent(
+                1.0 if config["meridian_id"] == "Lung" else 2.0,
+                "server_data",
+                {
+                    "payload_type": "skill_config_snapshot",
+                    "payload": {
+                        "configs": [
+                            {
+                                "skill_id": "zhenmai.sever_chain",
+                                "json_config": json.dumps(config),
+                            }
+                        ]
+                    },
+                },
+            )
+
+        expected = {"meridian_id": "LargeIntestine", "backfire_kind": "real_yuan"}
+        bot = _FakeBot(
+            [
+                snapshot({"meridian_id": "Lung", "backfire_kind": "array"}),
+                snapshot(expected),
+            ]
+        )
+
+        event = _expect_config_snapshot(
+            bot,
+            0.0,
+            lambda payload: json.loads(payload["configs"][0]["json_config"]) == expected,
+        )
+
+        self.assertEqual(event["configs"][0]["json_config"], json.dumps(expected))
+
+
 class _ObservableLock:
     def __init__(self):
         self.held = False
@@ -4660,6 +4788,252 @@ class _CommandFakeBot(_FakeBot):
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
 
+
+class LifecycleReviewContractTest(unittest.TestCase):
+    def test_move_probe_rejects_partial_server_movement_even_when_local_mirror_reaches_target(self):
+        class MoveProbeFakeBot:
+            def __init__(self, authoritative_x: float):
+                self.authoritative_x = authoritative_x
+                self.events = [
+                    _FakeEvent(
+                        1.0,
+                        "pos_look",
+                        {"x": 100.0, "y": 72.0, "z": 8.0, "flags": 0},
+                    ),
+                    # Same Y as the /top response, but received before its chat
+                    # watermark; this stale frame must not be consumed as the probe.
+                    _FakeEvent(
+                        1.9,
+                        "pos_look",
+                        {"x": 101.0, "y": 90.0, "z": 8.0, "flags": 0},
+                    ),
+                ]
+                self.position = (100.0, 72.0, 8.0)
+
+            def events_of(self, kind: str):
+                return [event for event in self.events if event.kind == kind]
+
+            def move_to(self, x: float, y: float, z: float, **_kwargs):
+                # Model the local client mirror reaching x+5 even though the server
+                # later reports only x+1 through the authoritative probe.
+                self.position = (x, y, z)
+
+            def cmd(self, command: str):
+                assert command == "top"
+                self.events.extend(
+                    [
+                        # This same-Y frame arrives after the old pre-command
+                        # watermark but before the command feedback. A probe
+                        # anchored before the chat would incorrectly consume it.
+                        _FakeEvent(
+                            1.9,
+                            "pos_look",
+                            {"x": 105.0, "y": 90.0, "z": 8.0, "flags": 0},
+                        ),
+                        _FakeEvent(2.0, "chat", {"text": "Teleported to top at Y=90."}),
+                        _FakeEvent(
+                            2.1,
+                            "pos_look",
+                            {
+                                "x": self.authoritative_x,
+                                "y": 90.0,
+                                "z": 8.0,
+                                "flags": 0,
+                            },
+                        ),
+                    ]
+                )
+
+            def expect_chat(self, substring: str, timeout: float = 5.0):
+                return self.wait_for(
+                    lambda event: event.kind == "chat"
+                    and substring in event.data["text"],
+                    timeout,
+                    f"chat/{substring}",
+                )
+
+            def wait_for(self, predicate, timeout: float, description: str):
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"
+        ), self.assertRaisesRegex(AssertionError, "server 权威移动"):
+            _move_and_record(MoveProbeFakeBot(authoritative_x=101.0))
+
+        with mock.patch("bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"):
+            moved = _move_and_record(MoveProbeFakeBot(authoritative_x=105.0))
+        self.assertEqual(
+            moved,
+            (105.0, 90.0, 8.0),
+            "断连锚点必须使用 server PositionLook 的坐标，而不是客户端本地 mirror",
+        )
+
+    def test_restore_window_rejects_four_meter_reset_after_minimum_accepted_move(self):
+        # A 4m authoritative move is exactly the lower edge accepted by the
+        # 5m ±1m movement oracle. The restored-origin distance must nevertheless
+        # exceed the narrower restore window, so this boundary cannot false-pass.
+        partial_move = MOVE_DISTANCE - MOVE_VERIFY_TOLERANCE
+        self.assertEqual(partial_move, 4.0)
+        with self.assertRaisesRegex(AssertionError, "水平偏差"):
+            _assert_restored_position(
+                (100.0 + partial_move, 72.0, 8.0),
+                (100.0, 90.0, 8.0),
+            )
+        _assert_restored_position(
+            (100.0 + POSITION_TOLERANCE, 72.0, 8.0),
+            (100.0, 90.0, 8.0),
+        )
+
+    def test_authoritative_position_requires_absolute_xyz_position_look(self):
+        event = _FakeEvent(
+            3.0,
+            "pos_look",
+            {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 0},
+        )
+        self.assertEqual(
+            _position_from_authoritative_event(event, "移动后"),
+            (105.0, 72.0, 8.0),
+        )
+        with self.assertRaisesRegex(BotAssertionError, "绝对 XYZ"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "pos_look", {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 1}),
+                "移动后",
+            )
+        with self.assertRaisesRegex(BotAssertionError, "PositionLook"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "keepalive", {"id": 1}),
+                "移动后",
+            )
+
+    def test_inactive_craft_session_requires_cleared_join_state(self):
+        _assert_inactive_session_state(
+            {
+                "active": False,
+                "recipe_id": None,
+                "elapsed_ticks": 0,
+                "total_ticks": 0,
+                "completed_count": 0,
+                "total_count": 0,
+            },
+            "最终重连",
+        )
+        with self.assertRaisesRegex(AssertionError, "active=false"):
+            _assert_inactive_session_state(
+                {
+                    "active": True,
+                    "recipe_id": "workbench.weapon.stone_knife",
+                    "elapsed_ticks": 1,
+                    "total_ticks": 10,
+                    "completed_count": 0,
+                    "total_count": 2,
+                },
+                "最终重连",
+            )
+        with self.assertRaisesRegex(AssertionError, "recipe_id"):
+            _assert_inactive_session_state(
+                {
+                    "active": False,
+                    "recipe_id": "stale",
+                    "elapsed_ticks": 0,
+                    "total_ticks": 0,
+                    "completed_count": 0,
+                    "total_count": 0,
+                },
+                "最终重连",
+            )
+
+    def test_double_login_cross_connection_liveness_rejects_lost_peer(self):
+        class ProbeBot(_FakeBot):
+            def assert_alive(self, _context: str) -> None:
+                return None
+
+        bot = ProbeBot([_FakeEvent(4.0, "connection_lost", {})])
+        with self.assertRaisesRegex(AssertionError, "connection_lost"):
+            _assert_surviving_connection(bot, "并发阶段")
+
+
+class DoubleLoginScenarioTest(unittest.TestCase):
+    def test_keepalive_probe_rejects_historical_and_boundary_events(self):
+        marker = 2.0
+        bot = _FakeBot(
+            [
+                _FakeEvent(1.0, "keepalive", {"id": 1}),
+                _FakeEvent(marker, "keepalive", {"id": 2}),
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"t>2\.000s",
+            msg=(
+                "join/cleanup phase marker 之前或恰好 marker 时收到的 KeepAlive"
+                " 不得冒充该阶段的 surviving-connection 连续性证据"
+            ),
+        ):
+            _wait_keepalive_after(bot, marker, "重复登录阶段")
+
+    def test_keepalive_probe_returns_only_a_strictly_new_event(self):
+        marker = 2.0
+        new_event = _FakeEvent(2.001, "keepalive", {"id": 3})
+        bot = _FakeBot(
+            [
+                _FakeEvent(1.0, "keepalive", {"id": 1}),
+                _FakeEvent(marker, "keepalive", {"id": 2}),
+                new_event,
+            ]
+        )
+
+        observed = _wait_keepalive_after(bot, marker, "重复登录阶段")
+
+        self.assertIs(
+            observed,
+            new_event,
+            "KeepAlive 断言必须返回严格晚于 marker 的新事件，而不是历史/边界事件",
+        )
+
+    def test_post_cross_probe_requires_second_connection_heartbeat(self):
+        # The second connection had a heartbeat before first's cross-probe, then
+        # was removed. A second heartbeat after the probe is the only observation
+        # that closes that race; the stricter phase must reject this event stream.
+        bot = _FakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(3.0, "connection_lost", {}),
+            ]
+        )
+        with self.assertRaisesRegex(AssertionError, r"t>2\.500s"):
+            _wait_keepalive_after(bot, 2.5, "第一连接 cross-probe 后第二连接")
+
+
+class IdleTimeoutScenarioTest(unittest.TestCase):
+    def test_idle_waits_share_one_absolute_deadline(self):
+        class TimeoutCaptureBot:
+            def __init__(self):
+                self.timeouts = []
+
+            def wait_for(self, _predicate, timeout: float, description: str):
+                self.timeouts.append((timeout, description))
+                raise AssertionError("测试 fake 不提供事件")
+
+        bot = TimeoutCaptureBot()
+        deadline = 130.0
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_idle_timeout.time.monotonic",
+            side_effect=[100.0, 112.0],
+        ):
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "首个等待")
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "第二个等待")
+
+        self.assertEqual(
+            [timeout for timeout, _description in bot.timeouts],
+            [30.0, 18.0],
+            "第二个 idle 等待必须消费同一 absolute deadline 的剩余预算，不能重置为 30s",
+        )
 
 class _ReaderAlive:
     def __init__(self, alive: bool):
@@ -7958,6 +8332,14 @@ class RunnerLogicTest(unittest.TestCase):
                 elif isinstance(node.func, ast.Name):
                     function_name = node.func.id
                 if function_name in raw_server_data_calls:
+                    # remains_loot 的负向契约必须扫描未注册的 RemainsSync(field 139)
+                    # raw 帧；该场景同时扫描已解码 server_data，raw helper 只用于防止
+                    # 未知 oneof 被静默吞掉。其他默认玩法场景仍禁止把 transport 当行为证据。
+                    if (
+                        path.name == "remains_loot_invalid_quiet_reject.py"
+                        and function_name == "server_data_payload_name"
+                    ):
+                        continue
                     failures.append(
                         f"{path.name}:{node.lineno}: {function_name} 只识别 transport/oneof，"
                         "玩法验收必须断言 kind=server_data 的深解码字段"
@@ -8735,6 +9117,13 @@ def _pb_int32_field(number: int, value: int) -> bytes:
     forge station_pos_x/y/z 断言负坐标（末法残土常见）时必须用这个而非
     `_pb_varint_field`。"""
     return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
+
+
+def _pb_sint32_field(number: int, value: int) -> bytes:
+    """protobuf `sint32`（zigzag）字段 wire 编码——WorkbenchOpen 坐标可为负。"""
+    return mc.write_varint(number << 3) + _pb_raw_varint(
+        (value << 1) ^ (value >> 63)
+    )
 
 
 def _proto_message_body(source: str, message_name: str) -> str:
@@ -11447,6 +11836,38 @@ class PlayerPacketContractTest(unittest.TestCase):
         self.assertEqual(event.data["yaw"], 0)
         self.assertEqual(event.data["pitch"], 0)
 
+    def test_player_spawn_exact_event_and_entities(self):
+        # central-review 2029 #1：packet 级 pin 完整解码契约——已知 uuid + 正负坐标，
+        # 逐字段精确还原 emitted event 与 self.entities 位置登记；坐标读取提前跳
+        # 15/17 字节等错误布局会在此撞红（不只是 entity_id 为正）。
+        bot = _bare_bot()
+        alice = uuid.UUID(int=424242)
+        spawn = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(900)
+            + alice.bytes
+            + struct.pack(">ddd", 12.5, 64.0, -33.25)
+            + b"\x2a\x4b"  # yaw=42, pitch=75
+        )
+        bot._dispatch(spawn)
+        self.assertEqual(bot.entity_pos(900), (12.5, 64.0, -33.25))
+        self.assertEqual(bot.player_entity_uuids[900], str(alice))
+        event = bot.events_of("player_spawn")[-1]
+        self.assertEqual(
+            event.data,
+            {
+                "entity_id": 900,
+                "uuid": str(alice),
+                "username": None,
+                "x": 12.5,
+                "y": 64.0,
+                "z": -33.25,
+                "yaw": 42,
+                "pitch": 75,
+            },
+            "player_spawn 必须逐字段精确还原（含正负坐标、UUID 与实体位置登记）",
+        )
+
     def test_destroy_removes_entity_to_player_mapping(self):
         bot = _bare_bot()
         alice = uuid.UUID(int=1)
@@ -11525,5 +11946,1417 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
+class NpcDialogueHelperContractTest(unittest.TestCase):
+    def test_scenario_spawn_requires_fixed_chase_geometry(self):
+        origin = (10.0, 64.0, -3.0)
+        valid = _FakeEvent(
+            2.0,
+            "entity_spawn",
+            {"type": 118, "entity_id": 7, "x": 22.0, "y": 64.0, "z": -3.0},
+        )
+        ambient = _FakeEvent(
+            2.1,
+            "entity_spawn",
+            {"type": 118, "entity_id": 8, "x": 18.0, "y": 64.0, "z": -3.0},
+        )
+        self.assertTrue(
+            _scenario_spawn_matches(valid, origin),
+            "chase 单体应只接受 origin +X 12 格的 type=118 出生点",
+        )
+        self.assertFalse(
+            _scenario_spawn_matches(ambient, origin),
+            "远处环境僵尸不得冒充 /npc_scenario chase 的返回实体",
+        )
+
+    def test_trade_metadata_requires_rogue_and_preserves_all_observed_offers(self):
+        payload = {
+            "type": "npc_metadata",
+            "entity_id": 42,
+            "archetype": "rogue",
+            "trade_offers": [
+                {"template_id": "skill_scroll_herbalism_baicao_can", "price_bone_coins": 30},
+                {"template_id": "broken_artifact_scroll", "price_bone_coins": 40},
+            ],
+        }
+        event = _FakeEvent(
+            3.0,
+            "payload",
+            {"channel": "bong:npc_metadata", "data": json.dumps(payload).encode()},
+        )
+        self.assertEqual(
+            _trade_metadata(event),
+            (
+                42,
+                [
+                    ("skill_scroll_herbalism_baicao_can", 30),
+                    ("broken_artifact_scroll", 40),
+                ],
+            ),
+            "场景必须按服务端 metadata 的实际库存覆盖高境界商品，而不是硬编码三件醒灵商品",
+        )
+        payload["archetype"] = "commoner"
+        self.assertIsNone(
+            _trade_metadata(
+                _FakeEvent(
+                    3.1,
+                    "payload",
+                    {"channel": "bong:npc_metadata", "data": json.dumps(payload).encode()},
+                )
+            ),
+            "非 Rogue 的 metadata 不得被选为散修商贩",
+        )
+
+    def test_trade_range_recovery_resends_the_same_observed_offer(self):
+        class TradeBot:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.events: list[_FakeEvent] = []
+                self.requests: list[dict] = []
+
+            def intent(self, request):
+                self.requests.append(request)
+
+            def wait_for(self, predicate, timeout, description):
+                text = (
+                    npc_dialogue_trade.OUT_OF_RANGE_TRADE
+                    if len(self.requests) == 1
+                    else "§c[NPC] 骨币不足，需要 30 枚。"
+                )
+                event = _FakeEvent(float(len(self.requests)), "chat", {"text": text})
+                self.events.append(event)
+                if predicate(event):
+                    return event
+                raise AssertionError(f"未匹配 {description}: {event!r}")
+
+        bot = TradeBot()
+        with (
+            mock.patch.object(npc_dialogue_trade, "request_and_assert_rogue"),
+            mock.patch.object(npc_dialogue_trade, "approach_entity", return_value=True),
+        ):
+            npc_dialogue_trade._run_rogue_chain(
+                bot, 77, [("skill_scroll_herbalism_baicao_can", 30)]
+            )
+        self.assertEqual(
+            [request["requested_item_id"] for request in bot.requests],
+            ["skill_scroll_herbalism_baicao_can", "skill_scroll_herbalism_baicao_can"],
+            "越界恢复必须重发当前 metadata offer，不得 advance/结束该商品",
+        )
+
+# ── agent_ui 场景底座（_redis_client_helpers / _agent_ui_helpers）单测 ──────────────
+
+
+class RespFramesTest(unittest.TestCase):
+    """RESP2 编解码器：feed 字节流 → 按帧取回值（纯 stdlib，无需 redis）。"""
+
+    def test_integer_reply(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "帧取完后应返回 _INCOMPLETE_FRAME",
+        )
+
+    def test_simple_string(self):
+        parser = RespFrames()
+        parser.feed(b"+OK\r\n")
+        self.assertEqual(parser.next_frame(), "OK")
+
+    def test_error_string(self):
+        parser = RespFrames()
+        parser.feed(b"-ERR bad\r\n")
+        self.assertEqual(parser.next_frame(), "ERR bad")
+
+    def test_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), b"hello")
+
+    def test_empty_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), b"")
+
+    def test_nil_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$-1\r\n:42\r\n")
+        frame = parser.next_frame()
+        self.assertIsNone(frame, "nil bulk 应解析为 None")
+        self.assertIsNot(
+            frame,
+            _INCOMPLETE_FRAME,
+            "完整 nil 帧是已解析的值，不是数据不足哨兵",
+        )
+        self.assertEqual(
+            parser.next_frame(),
+            42,
+            "nil bulk 帧必须被消费，后续帧才能继续解析",
+        )
+
+    def test_nil_bulk_distinct_from_incomplete(self):
+        # finding：完整 nil 帧（$-1）返回 None 但已消费，与「还需更多字节」
+        # 必须可区分。旧实现两者都返回 None，调用方无法判断收全了一条 nil。
+        parser = RespFrames()
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "空缓冲 = 数据不足，不应出帧",
+        )
+        parser.feed(b"$-1\r\n")
+        self.assertIsNone(parser.next_frame(), "完整 nil 帧应解析为 None")
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "nil 帧消费后回到数据不足",
+        )
+
+    def test_malformed_bulk_terminator_rejected(self):
+        # finding：$3\r\nabcXX 的 body 后两字节不是 \r\n，是协议违例，必须拒绝；
+        # 旧实现只确认有 2 字节就消费，把 b"abc" 当合法帧返回。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_malformed_bulk_terminator_desync_rejected(self):
+        # finding：body 后两字节非 \r\n 会让帧边界错位；拼接输入也必须整体拒绝，
+        # 不得把后面的 :1 当作独立整数帧吞掉。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX:1\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$9\r\nsubscribe\r\n$6\r\nbong:x\r\n:1\r\n")
+        self.assertEqual(parser.next_frame(), [b"subscribe", b"bong:x", 1])
+
+    def test_bulk_negative_length_below_nil_rejected(self):
+        # finding：RESP2 长度只允许 -1（nil）或非负。$-2 会被误当成 body 长度 0
+        # 把头部 CRLF 认作终止符返回 b''；必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"$-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_negative_count_below_nil_rejected(self):
+        # finding：*-2 的 range(-2) 不迭代，被误解析为空数组 []；RESP2 不允许，
+        # 必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"*-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_message_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_partial_feeds(self):
+        parser = RespFrames()
+        raw = b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n"
+        for i in range(0, len(raw), 3):
+            self.assertIs(
+                parser.next_frame(),
+                _INCOMPLETE_FRAME,
+                "字节未喂全时不应出帧",
+            )
+            parser.feed(raw[i : i + 3])
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_concatenated_frames(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b""])
+
+    def test_unknown_marker_rejected(self):
+        parser = RespFrames()
+        parser.feed(b"?nonsense\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_json_payload_in_message_frame(self):
+        payload = b'{"request_id":"req_1","action":"button_click","params":{}}'
+        raw = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(payload)).encode("ascii")
+            + b"\r\n"
+            + payload
+            + b"\r\n"
+        )
+        parser = RespFrames()
+        parser.feed(raw)
+        frame = parser.next_frame()
+        self.assertEqual(frame[0], b"message")
+        self.assertEqual(json.loads(frame[2].decode("utf-8"))["request_id"], "req_1")
+
+    def test_fragmented_large_bulk(self):
+        # 大 bulk 分 4096 块喂入：多次 partial feed 后仍须正确拼回。feed 走
+        # bytearray.extend（摊还线性）；若退回 ``bytes += `` 就会逐块整拷积压缓冲，
+        # 大消息退化为二次拷贝。
+        payload = b"x" * (64 * 1024)
+        raw = b"$" + str(len(payload)).encode("ascii") + b"\r\n" + payload + b"\r\n"
+        parser = RespFrames()
+        for i in range(0, len(raw), 4096):
+            parser.feed(raw[i : i + 4096])
+        self.assertEqual(parser.next_frame(), payload)
+
+    def test_bulk_declared_oversize_rejected(self):
+        # 单条 bulk 声明长度超上限：帧未收全也必须立刻拒绝（防超限帧占用合法化）。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$9\r\n123456789\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_bulk_declared_at_max_accepted(self):
+        # 上界合法等值边界：声明长度恰好 == max_bulk_size 必须完整接受（> 上限才拒绝）。
+        # 缺此断言时，把 >= 当 > 的 off-by-one 实现能通过全套却拒绝恰好到顶的合法载荷。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$8\r\n12345678\r\n")
+        self.assertEqual(parser.next_frame(), b"12345678")
+
+    def test_buffer_oversize_rejected(self):
+        # 永不收尾的帧反复 feed，积压缓冲越过上限必须抛错（防外部消息撑爆进程内存）。
+        parser = RespFrames(max_buffer_size=16)
+        parser.feed(b"$100\r\n0123456789")  # 15 bytes，帧未完整
+        with self.assertRaises(ValueError):
+            parser.feed(b"0123456789")  # 累计 25 > 16
+
+
+class RedisCommandEncodeTest(unittest.TestCase):
+    """PUBLISH / SUBSCRIBE 命令编码（与 RESP2 协议字节精确对拍）。"""
+
+    def test_publish_encoding(self):
+        self.assertEqual(
+            _encode_command("PUBLISH", "bong:agent_ui_cmd", '{"a":1}'),
+            b'*3\r\n$7\r\nPUBLISH\r\n$17\r\nbong:agent_ui_cmd\r\n$7\r\n{"a":1}\r\n',
+        )
+
+    def test_subscribe_encoding(self):
+        self.assertEqual(
+            _encode_command("SUBSCRIBE", "bong:agent_ui_response"),
+            b"*2\r\n$9\r\nSUBSCRIBE\r\n$22\r\nbong:agent_ui_response\r\n",
+        )
+
+
+class _FakeTimeoutSocket:
+    """recv 先按 settimeout 配置真实阻塞再抛 TimeoutError 的假 socket。
+
+    若 recv 恒立即抛错，wait_message 把 socket 超时设成整个 io_timeout（或漏调
+    settimeout）也无法被测出——墙钟只由循环里的 deadline 检查决定。这里 recv
+    实际睡 self.timeout 秒再抛，超时值超界会把等待拉长到可断言；同时记录每次
+    settimeout 值，供测试校验其受剩余 deadline 约束。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError(
+                "recv 被调用但未先 settimeout（wait_message 漏设 socket 超时）"
+            )
+        time.sleep(self.timeout)
+        raise TimeoutError("timed out")
+
+
+class _FakeDripPartialSocket:
+    """recv 每次成功返回一小块「永不收尾」的部分 RESP 帧字节的假 socket。
+
+    帧重组路径：分片持续到达（每次 recv 都有数据、从不抛 TimeoutError），socket
+    超时永远触发不了，只有 ``_next_frame`` 内部逐次核对绝对 deadline 才能让
+    ``wait_message`` 按时返回——靠外层循环 deadline 检查兜底的实现会无限 recv 下去。
+    首块喂声明 2MB bulk 的长度头，之后每块只给 512B body，单帧永远重组不完。
+    记录每次 settimeout 值供测试校验其受剩余 deadline 约束；recv 设上限兜底，防
+    回归实现让测试无限挂起。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+        self._recvs = 0
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError("recv 被调用但未先 settimeout")
+        self._recvs += 1
+        if self._recvs > 2000:
+            raise AssertionError(
+                "部分帧被持续喂入但绝对 deadline 未被强制：wait_message 应按时返回"
+            )
+        # 每块在 socket 超时内到达（睡极短时间），触发不了 socket 级 TimeoutError。
+        time.sleep(min(self.timeout, 0.001))
+        if self._recvs == 1:
+            return b"$2000000\r\n"
+        return b"z" * 512
+
+
+class RedisClientWaitDeadlineTest(unittest.TestCase):
+    """wait_message 的 recv 窗口必须受调用方 deadline 约束。
+
+    回归：io_timeout(10s) 大于负向断言窗口(2s)时，固定 10s 阻塞 recv 会直接抛
+    TimeoutError 崩掉场景，而不是按 deadline 返回 None / 抛 AssertionError。
+    """
+
+    def _redis_with_timeout_socket(self, timeout: float = 2.0) -> RedisClient:
+        redis = RedisClient(io_timeout=timeout)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        return redis
+
+    def _assert_timeouts_bounded(self, sock: _FakeTimeoutSocket, window: float) -> None:
+        """socket 超时值必须受调用方 deadline（window）约束，不能退化成 io_timeout。"""
+        self.assertTrue(
+            sock._settimeouts,
+            "wait_message 必须按剩余 deadline 调用 settimeout，不能漏设",
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            window + 0.05,
+            "socket 超时绝不能超过调用方 deadline，不能设成整个 io_timeout",
+        )
+
+    def test_negative_window_returns_none_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "负向窗口超时应返回 None，而不是抛 TimeoutError")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 1.5, "负向窗口应约在 deadline 处返回，不拖满 io_timeout"
+        )
+        self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_positive_window_raises_assertion_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(
+            elapsed, 0.2, "正窗口断言必须等满 deadline 才抛，不能提前抛"
+        )
+        self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_non_dict_json_payload_skipped_not_crashed(self):
+        # finding：bong:agent_ui_response 上合法的非对象 JSON（null/数组/字符串/数字）
+        # 会让 expect_redis_response.matches 对 payload 调 .get() 抛 AttributeError
+        # 崩掉整个场景。必须当作无关发布者消息跳过（与频道不符/无效 JSON 同款），
+        # 而不是传给 predicate。喂一帧 payload 为 JSON 数组的 message 帧，随后窗口
+        # 走满：无崩溃 + 负向返回 None，即证明非 dict 被跳过。
+        redis = RedisClient(io_timeout=2.0)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        json_bytes = b'["not","a","dict"]'
+        frame = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(json_bytes)).encode("ascii")
+            + b"\r\n"
+            + json_bytes
+            + b"\r\n"
+        )
+        redis._frames.feed(frame)
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response",
+            lambda payload: True,
+            timeout=0.2,
+            expect=False,
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(
+            got, "非 dict JSON 消息应被跳过（继续等满窗口），而不是抛 AttributeError"
+        )
+        self.assertGreaterEqual(elapsed, 0.2, "跳过非 dict 后仍须等满负向窗口")
+
+    def test_partial_frame_respects_absolute_deadline_negative(self):
+        # finding：deadline 测试只覆盖完全空闲的 socket（recv 即抛 TimeoutError），
+        # 帧重组路径（一次 _next_frame 内多次成功 recv）没测到——分片持续喂入、
+        # socket 超时永不触发，只有绝对 deadline 被强制才按 0.2s 返回 None；
+        # io_timeout=10s 明显大于窗口，若按 io_timeout 兜底会拖满 10s。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "部分帧持续喂入时负向窗口仍须按时返回 None")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 3.0, "部分帧不得拖过调用方 deadline（io_timeout=10s 更大）"
+        )
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            0.2 + 0.05,
+            "帧重组期间的每次 socket 超时都必须受剩余 deadline 约束",
+        )
+
+    def test_partial_frame_respects_absolute_deadline_positive(self):
+        # 正向路径同款：部分帧持续喂入时，断言必须在 deadline 处抛 AssertionError，
+        # 而不是被无限重组拖住。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.2, "正窗口断言必须等满 deadline 才抛")
+        self.assertLess(elapsed, 3.0, "部分帧不得拖过调用方 deadline（正向断言）")
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+
+
+class _AgentUiFakeBot(_FakeBot):
+    """wait_for 模拟真实 Bot 的 temporal wait 契约，供负向/时序断言测。
+
+    真实 ``Bot.wait_for``（bot.py:389）以调用时刻为起点等到 deadline，窗口内
+    到达即命中、窗口关闭后才到达不得命中。本 fake 用事件时间戳 ``t`` 建模同一条：
+    ``t <= start`` 的事件视为观测前已送达（顺序消费，不得二次命中），``t > deadline``
+    的事件视为窗口关闭后才到。这样负向断言能区分「窗口内迟到事件」（必须失败）
+    与「窗口外事件」（返回 None），而不是对固定事件列表做一次扫描——后者会让
+    「helper 立即返回 / 零超时 / 只快照当前事件」的错实现照样绿。
+    """
+
+    def __init__(self, events: list[_FakeEvent]) -> None:
+        super().__init__(events)
+        self._now = 0.0
+
+    def wait_for(self, predicate, timeout: float, description: str):
+        start = self._now
+        deadline = start + timeout
+        for event in self.events:
+            if start < event.t <= deadline and predicate(event):
+                self._now = event.t
+                return event
+        self._now = deadline
+        raise BotAssertionError(f"未找到 {description}; events={self.events}")
+
+
+def _req_event(t: float, request_id: str, **payload_overrides) -> _FakeEvent:
+    payload = json.dumps(
+        {
+            "request_id": request_id,
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+            **payload_overrides,
+        }
+    ).encode("utf-8")
+    return _FakeEvent(
+        t, "payload", {"channel": "bong:agent_ui_request", "data": payload}
+    )
+
+
+class AgentUiHelperTest(unittest.TestCase):
+    """_agent_ui_helpers 纯逻辑：cmd 构造 / S2C 形状断言 / 回执匹配 / 负向等待。"""
+
+    def test_build_cmd_exact_six_fields(self):
+        cmd = build_cmd("req_1", "offline:Fake")
+        self.assertEqual(
+            set(cmd),
+            {
+                "request_id",
+                "target_player",
+                "xml",
+                "timeout_ticks",
+                "realm_gate",
+                "allowed_button_ids",
+            },
+            "AgentUiRequestCommandV1 六个字段全必填（server serde deny_unknown_fields）",
+        )
+        self.assertEqual(cmd["request_id"], "req_1")
+        self.assertEqual(cmd["allowed_button_ids"], ["enter_realm", "cancel"])
+        self.assertEqual(cmd["realm_gate"], 0)
+        self.assertEqual(cmd["timeout_ticks"], 600, "默认 timeout_ticks 钉死 600")
+        self.assertEqual(cmd["xml"], DEFAULT_UI_XML, "默认 xml 钉死 DEFAULT_UI_XML")
+
+    def test_build_cmd_overrides(self):
+        cmd = build_cmd(
+            "req_2",
+            "offline:Fake",
+            timeout_ticks=20,
+            realm_gate=6,
+            allowed_button_ids=("ok",),
+            xml="<x/>",
+        )
+        self.assertEqual(cmd["timeout_ticks"], 20)
+        self.assertEqual(cmd["realm_gate"], 6)
+        self.assertEqual(cmd["allowed_button_ids"], ["ok"])
+        self.assertEqual(cmd["xml"], "<x/>")
+
+    def test_build_cmd_json_roundtrip(self):
+        cmd = build_cmd("req_3", "offline:Fake")
+        self.assertEqual(json.loads(json.dumps(cmd)), cmd)
+
+    def test_assert_request_shape_accepts_valid_payload(self):
+        payload = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_security_field_leak(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "realm_gate": 3}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(
+                {**base, "allowed_button_ids": ["enter_realm"]}, "req_1"
+            )
+
+    def test_assert_request_shape_rejects_wrong_request_id(self):
+        payload = {
+            "request_id": "other",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_target_player(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_xml(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_non_int_timeout_ticks(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": "600"}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": True}, "req_1")
+
+    def test_assert_request_shape_pins_closed_fields_and_boundaries(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": REQUEST_TIMEOUT_MIN,
+        }
+        assert_request_shape(base, "req_1")
+        assert_request_shape(
+            {**base, "timeout_ticks": REQUEST_TIMEOUT_MAX}, "req_1"
+        )
+        for bad_ticks in (REQUEST_TIMEOUT_MIN - 1, REQUEST_TIMEOUT_MAX + 1):
+            with self.subTest(timeout_ticks=bad_ticks), self.assertRaisesRegex(
+                BotAssertionError, "timeout_ticks"
+            ):
+                assert_request_shape({**base, "timeout_ticks": bad_ticks}, "req_1")
+
+        assert_request_shape(
+            {**base, "xml": "x" * REQUEST_XML_MAX_BYTES}, "req_1"
+        )
+        with self.assertRaisesRegex(BotAssertionError, "UTF-8 字节数"):
+            assert_request_shape(
+                {**base, "xml": "x" * (REQUEST_XML_MAX_BYTES + 1)}, "req_1"
+            )
+        with self.assertRaisesRegex(BotAssertionError, "额外"):
+            assert_request_shape({**base, "unexpected": True}, "req_1")
+
+    def test_assert_request_shape_compares_published_command_values(self):
+        cmd = build_cmd(
+            "req_cmd",
+            "offline:Expected",
+            timeout_ticks=2400,
+            xml="<owo-ui><label>expected</label></owo-ui>",
+        )
+        payload = {field: cmd[field] for field in (
+            "request_id",
+            "target_player",
+            "xml",
+            "timeout_ticks",
+        )}
+        assert_request_shape(payload, "req_cmd", expected_cmd=cmd)
+        for field, wrong in (
+            ("target_player", "offline:Other"),
+            ("xml", "<owo-ui><label>wrong</label></owo-ui>"),
+            ("timeout_ticks", 20),
+        ):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                BotAssertionError, field
+            ):
+                assert_request_shape(
+                    {**payload, field: wrong}, "req_cmd", expected_cmd=cmd
+                )
+
+    def test_expect_redis_response_rejects_wrong_same_request_before_expected(self):
+        class FakeRedis:
+            def wait_message(self, _channel, predicate, **_kwargs):
+                for payload in (
+                    {
+                        "request_id": "req_same",
+                        "action": "dismissed",
+                        "params": {},
+                    },
+                    {
+                        "request_id": "req_same",
+                        "action": "timeout",
+                        "params": {},
+                    },
+                ):
+                    if predicate(payload):
+                        return payload
+                return None
+
+        with self.assertRaisesRegex(BotAssertionError, "不匹配的同请求回执"):
+            expect_redis_response(FakeRedis(), "req_same", action="timeout")
+
+    def test_response_matches_action_and_params(self):
+        self.assertTrue(
+            response_matches(
+                {
+                    "request_id": "r",
+                    "action": "button_click",
+                    "params": {"button_id": "ok"},
+                },
+                action="button_click",
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x", "extra": "y"}},
+                params_subset={"reason": "x"},
+            ),
+            "params 子集匹配",
+        )
+        self.assertFalse(
+            response_matches({"action": "dismissed"}, action="button_click")
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "y"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": "not-a-dict"},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches({"action": "timeout", "params": {}}, params_subset={}),
+            "空子集要求 params 恰好为空",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "timeout", "params": {"unexpected": "value"}},
+                params_subset={},
+            ),
+            "声明空 params 时，额外参数必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "timeout"}, params_subset={}),
+            "声明空 params 时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "error"}, params_subset={"reason": "x"}),
+            "声明 params 子集时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {}},
+                params_subset={"reason": None},
+            ),
+            "子集匹配要求 key 存在：缺 reason 不能把缺失当显式 null 放行",
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": None}},
+                params_subset={"reason": None},
+            ),
+            "显式 null 的 reason 应匹配（key 存在且值为 None）",
+        )
+
+    def test_response_matches_params_exact(self):
+        # 原样转发契约：params 必须逐键精确相等，额外字段即违约（subset 会放行）。
+        self.assertTrue(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "owo_parse_failed"}},
+                action="parse_error",
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {
+                    "action": "parse_error",
+                    "params": {"reason": "owo_parse_failed", "button_id": "injected"},
+                },
+                params_exact={"reason": "owo_parse_failed"},
+            ),
+            "精确匹配拒绝额外字段：注入 button_id 不得满足原样转发契约",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "other"}},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error"}, params_exact={"reason": "owo_parse_failed"}
+            ),
+            "精确匹配要求 params 字段存在",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": "not-a-dict"},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        with self.assertRaises(ValueError):
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+                params_exact={"reason": "x"},
+            )
+
+    def test_expect_agent_ui_request_positive(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        payload = expect_agent_ui_request(bot, "req_1", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_1")
+        self.assertEqual(payload["target_player"], "offline:Fake")
+
+    def test_expect_agent_ui_request_negative_when_truly_absent(self):
+        # 窗口内完全没有 payload 事件：负向断言超时返回 None（干净）。
+        bot = _AgentUiFakeBot([])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False),
+            "窗口内无任何 payload 时负向断言应返回 None",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_when_present(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_1", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_other_request_id(self):
+        # finding：拒绝路径契约是「面板不下发」，不是「不下发指定 request_id 的面板」。
+        # request_id 与期望不符的 payload 在窗口内到达仍是错误下发，负向断言必须失败
+        # —— 不能靠 request_id 过滤把它当干净拒绝（唯一 request_id 防跨 run 碰撞，
+        # 但不能豁免同 bot 收到的其它下发）。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_other")])
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_missing_request_id(self):
+        # 漏掉 request_id 字段的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"target_player":"offline:Fake","xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_corrupted_request_id(self):
+        # request_id 被损坏（非字符串）的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"request_id":42,"target_player":"offline:Fake",'
+            b'"xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_non_object_json(self):
+        # 合法非对象 JSON（数组）到达：既不能崩（对非 dict 调 .get 抛 AttributeError），
+        # 也不能被 request_id 过滤当干净——它是错误下发的 payload，必须失败并报告形状。
+        raw = b'["not","a","dict"]'
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "而非 JSON 对象"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_invalid_json(self):
+        raw = b"not json at all"
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不是合法 JSON"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_positive_skips_non_dict_payloads(self):
+        # 正向匹配器对非对象 JSON 不得崩（.get 抛 AttributeError）：跳过噪音，
+        # 继续等真正匹配的 payload。
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": b'["noise"]'},
+                ),
+                _req_event(2.0, "req_real"),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_real", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_real")
+        self.assertEqual(bot._now, 2.0, "正向匹配必须消费到真正的匹配事件")
+
+    def test_expect_agent_ui_request_after_mark(self):
+        # 同一 request_id 在 marker 前后各一：request-id 过滤无法区分二者，
+        # 只有 after 语义能选中 marker 之后那条——忽略 after 的实现会错拿 marker 前的事件。
+        bot = _AgentUiFakeBot(
+            [
+                _req_event(1.0, "req_same", timeout_ticks=100),
+                _req_event(5.0, "req_same", timeout_ticks=900),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_same", after=2.0, timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_same")
+        self.assertEqual(payload["timeout_ticks"], 900, "必须取 marker 之后的同 request_id 事件")
+
+    def test_expect_agent_ui_request_after_mark_ignores_predating_only_match(self):
+        # 唯一匹配发生在 marker 之前：after 语义应拒绝它，返回 None。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_predates")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_predates", after=2.0, timeout=5.0, expect=False),
+            "marker 之前唯一匹配应被 after 拒绝",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_for_late_match_in_window(self):
+        # 匹配事件在观测窗口内（t=3.0 ∈ (0, 5.0]）才送达：负向断言必须失败。
+        # 若 fake 只做一次扫描、或 helper 立即返回 None / 零超时，这条会漏过——
+        # 正是「迟到、安全敏感的下发在断言窗口内到达仍产生 false passing audit」的点。
+        bot = _AgentUiFakeBot([_req_event(3.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_ok_when_match_after_window(self):
+        # 匹配事件在窗口关闭后（t=6.0 > deadline 5.0）才送达：负向断言返回 None，
+        # 证明观察窗口真的以 timeout 为界，而不是把任何时刻的事件都算作命中。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False),
+            "窗口外事件不得使负向断言失败",
+        )
+
+    def test_expect_agent_ui_request_positive_rejects_match_after_window(self):
+        # 匹配事件在窗口外到达：正向 wait 必须超时抛错，而不是错拿窗口外事件。
+        # 钉死 timeout 参数确实约束了观察边界（finding：无断言记录传给 wait_for 的 timeout）。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_assert(self):
+        # 负向断言必须因 reason 失配而红。旧版只有一条事件：正向断言消费它之后，
+        # 第二条断言只是"事件耗尽超时"，忽略 reason 的实现照样绿。改喂两条事件，
+        # 第二条 reason 明确不符（非 null），让第二条断言真正在 reason 值上失配。
+        close_ok = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"invalid_button_id"}',
+            },
+        )
+        close_wrong = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"other_button_id"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_ok, close_wrong])
+        expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_null(self):
+        close = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":null}',
+            },
+        )
+        bot = _AgentUiFakeBot([close])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_absent_means_replaced(self):
+        # 契约（schema AgentUiClosePayloadV1 的 reason=Type.Optional；shared wire
+        # fixture agent-ui-close.channel-wire.sample.json 的 replaced case）：reason
+        # 缺省 = Replaced，期望 None 时必须放行。期望具体 reason 时必须失败，且值
+        # 分支真正检查到 payload（_now 前移到 close_2.t=2.0），而非事件耗尽超时凑绿。
+        close_1 = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1"}',
+            },
+        )
+        close_2 = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_2"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_1, close_2])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_2", reason="invalid_button_id", timeout=5.0)
+        self.assertEqual(bot._now, close_2.t, "第二条断言必须检查到 close_2 事件")
+
+class ProbePayloadDecodeTest(unittest.TestCase):
+    """实体/空间探知流 S2C 解码 pin（field 74/77/129/130/132）。
+
+    这些 payload_type 此前不在 proto_min 白名单里，bot 即使收到包也解不出
+    `server_data` 事件，`expect_server_data("event_alert" / "qi_color_observed" /
+    "mineral_probe_result" / "freshness_update" / "workbench_open")` 会静默超时。
+    本类锁定字段号与字段映射，防 wire/label 失配。
+    """
+
+    def test_workbench_open_field_132_decodes_position_zigzag(self):
+        inner = (
+            _pb_varint_field(1, 999)
+            + _pb_sint32_field(2, -3)
+            + _pb_sint32_field(3, 71)
+            + _pb_sint32_field(4, -8)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(132, inner))
+        self.assertEqual(decoded["type"], "workbench_open")
+        self.assertEqual(decoded["entity_id"], 999)
+        self.assertEqual(decoded["position"], [-3, 71, -8], "sint32 负坐标应 zigzag 还原")
+
+    def test_qi_color_observed_field_74_decodes_all_color_kinds(self):
+        # central-review 2029 #4：只 pin (field3=3→Mellow) 会让「其余 9 个 ColorKind
+        # 映射错误」的实现也通过——穷举全部 10 个枚举成员逐一 pin 名字映射。
+        kinds = {
+            1: "Sharp",
+            2: "Heavy",
+            3: "Mellow",
+            4: "Solid",
+            5: "Light",
+            6: "Intricate",
+            7: "Gentle",
+            8: "Insidious",
+            9: "Violent",
+            10: "Turbid",
+        }
+        for raw, expected in kinds.items():
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, raw)
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                expected,
+                f"field3={raw} 应解码为 {expected}",
+            )
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_unspecified_default(self):
+        # central-review 2029 #1：ColorKind 是 protobuf enum，field3 合法地可以缺省
+        # （默认值 0）或显式编码为 0。`_varint(fields, 3)` 缺省时返回 0，
+        # ColorKind=0 是合法默认值，映射为 "unspecified"；穷举 1..=10
+        # 只 pin 非默认 gameplay 色，会放走「0 也映射成某种玩法色 / 大小写错误 /
+        # 直接 raise」的坏解码器——合法 default-valued 载荷会产出错误的
+        # qi_color_observed.main。两个子形都要 pin：显式 0 与字段缺省。
+        for label, field3_bytes in (
+            ("field3=0（protobuf enum 默认值）", _pb_varint_field(3, 0)),
+            ("field3 缺省", b""),
+        ):
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + field3_bytes
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                "unspecified",
+                f"{label} 应解码为 main=unspecified（默认/兜底映射），实际 {decoded['main']}",
+            )
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_unknown_enum_values(self):
+        # central-review 2029 #2：ColorKind 是 protobuf enum，未来/未知的非零 wire 值
+        # （如 11）是合法载荷。只 pin 1..=10 与 0/缺省，会放走「特殊处理 0 但对非零
+        # 未知值用 COLOR_KIND_PASCAL_NAMES[raw] 直取/raise」的坏解码器——它 decode 到
+        # 未知枚举值时崩溃，qi_color_observed 事件根本送不到。main/secondary 两个槽位
+        # 的未知值身份都要 pin；secondary 携带未知值应映射 "unknown_N" 而非 None
+        # （None 只留给字段缺省，proto_min.py 同款 presence 约定）。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 11)  # 未知 main
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(
+            decoded["main"],
+            "unknown_11",
+            "未知 main ColorKind 应保留 unknown_N 身份，实际值不可伪装成默认 unspecified",
+        )
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+        )
+
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 11)  # 未知 secondary
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "unknown_11",
+            "未知 secondary ColorKind 应保留 unknown_N 身份（None 只留给缺省）",
+        )
+
+    def test_qi_color_observed_field_74_wrong_wire_optional_secondary_is_absent(self):
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)
+            + _pb_string(4, "wrong-wire-secondary")
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "wrong-wire optional secondary must be ignored, not fabricated as unspecified",
+        )
+
+    def test_qi_color_observed_field_74_decodes_present_secondary(self):
+        # central-review 2029 #4：secondary 是可选字段，缺省路径之上还须 pin 携带
+        # 路径——恒返回 None 的错误实现（present 也丢）会在此撞红。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 9)  # secondary=VIOLENT
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "Violent",
+            "携带 secondary(field4=9) 时应解码为 Violent",
+        )
+        self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+        self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+        self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_boolean_flags(self):
+        # central-review 2029 #4：此前 fixtures 一律 field5/field6=0 且不断言，
+        # 恒硬编码两字段为 false / 掉字段 / 交换编号的实现全都会通过。逐档 pin：
+        # field5=1→is_chaotic=true、field6=1→is_hunyuan=true；单真 + 双真全解形，
+        # 并断言完整解码形状（main/secondary/realm_diff/两 canonical id）。
+        cases = [
+            (True, False),
+            (False, True),
+            (True, True),
+        ]
+        for exp_chaotic, exp_hunyuan in cases:
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, 3)  # main=MELLOW
+                + _pb_varint_field(4, 9)  # secondary=VIOLENT
+                + _pb_varint_field(5, 1 if exp_chaotic else 0)
+                + _pb_varint_field(6, 1 if exp_hunyuan else 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(decoded["main"], "Mellow")
+            self.assertEqual(decoded["secondary"], "Violent")
+            self.assertEqual(
+                decoded["is_chaotic"],
+                exp_chaotic,
+                "field5 布尔值应解码为 is_chaotic（map 到字段号 5）",
+            )
+            self.assertEqual(
+                decoded["is_hunyuan"],
+                exp_hunyuan,
+                "field6 布尔值应解码为 is_hunyuan（map 到字段号 6）",
+            )
+            self.assertEqual(decoded["realm_diff"], 2)
+            self.assertEqual(decoded["observer"], "offline:BGD9QiH")
+            self.assertEqual(decoded["observed"], "offline:BGD9QiV")
+
+    def test_event_alert_field_77_decodes_message(self):
+        inner = (
+            _pb_varint_field(1, 0)
+            + _pb_string(2, "神识未及，凝脉方可感知保鲜")
+            + _pb_varint_field(4, 70)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIn("神识未及", decoded["message"])
+        self.assertIsNone(decoded["zone"], "未携带 zone 时保持 None")
+        self.assertEqual(decoded["duration_ticks"], 70)
+
+    def test_event_alert_field_77_absent_duration_stays_none(self):
+        # central-review 2029 #7：duration_ticks 是可选字段（_optional_varint 缺省
+        # 返回 None）。现有 fixtures 都携带 field4，用普通 defaulting varint 访问器
+        # 的坏解码器（缺省返回 0）能通过全部旧断言——合法无 duration 的告警会被
+        # 解码成 duration_ticks=0 的错误形状。缺省分支必须 pin：absent→None；另 pin
+        # 携带但值为 0 → 0（与缺省可区分，ordinary defaulting 访问器两者都出 0）。
+        absent = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_string(2, "神识未及，凝脉方可感知保鲜"))
+        )
+        self.assertEqual(absent["type"], "event_alert")
+        self.assertIn("神识未及", absent["message"])
+        self.assertIsNone(absent["duration_ticks"], "缺省 duration_ticks 必须为 None")
+
+        present_zero = proto_min.decode_server_data_envelope(
+            _pb_message(
+                77,
+                _pb_string(2, "神识未及，凝脉方可感知保鲜") + _pb_varint_field(4, 0),
+            )
+        )
+        self.assertEqual(present_zero["type"], "event_alert")
+        self.assertEqual(
+            present_zero["duration_ticks"],
+            0,
+            "携带 field4=0 时应解码为 duration_ticks=0（区别于缺省 None）",
+        )
+
+    def test_event_alert_field_77_unknown_event_kind_preserves_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_varint_field(1, 99))
+        )
+        self.assertEqual(
+            decoded["event"],
+            "unknown_99",
+            "未知 EventKind 必须保留诊断身份，不能伪装成 unspecified",
+        )
+
+    def test_event_alert_field_77_wrong_wire_optional_fields_are_absent(self):
+        # field 1/4 are varint and field 3 is length-delimited; malformed wire
+        # values must not fabricate presence or default values.
+        inner = (
+            _pb_string(2, "告警")
+            + _pb_string(1, "wrong-wire-event")
+            + _pb_varint_field(3, 7)
+            + _pb_string(4, "wrong-wire-duration")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIsNone(decoded["zone"])
+        self.assertIsNone(decoded["duration_ticks"])
+
+    def test_mineral_probe_result_field_129_wrong_wire_optional_fields_are_absent(self):
+        inner = (
+            _pb_string(1, "denied")
+            + _pb_varint_field(2, 7)
+            + _pb_string(3, "wrong-wire-count")
+            + _pb_varint_field(4, 8)
+            + _pb_varint_field(5, 9)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+        self.assertIsNone(decoded["denial_reason"])
+
+    def test_event_alert_field_77_decodes_event_kind_and_zone(self):
+        inner = (
+            _pb_varint_field(1, 1)  # EVENT_KIND_THUNDER_TRIBULATION
+            + _pb_string(2, "雷劫将至")
+            + _pb_string(3, "jiuzong_taichu_ruin")
+            + _pb_varint_field(4, 120)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(
+            decoded["event"],
+            "thunder_tribulation",
+            "event kind 应映射为 server/agent 契约的 snake_case canonical name",
+        )
+        self.assertIn("雷劫将至", decoded["message"])
+        self.assertEqual(decoded["zone"], "jiuzong_taichu_ruin", "present-zone 应还原 field 3")
+        self.assertEqual(decoded["duration_ticks"], 120)
+
+    def test_mineral_probe_result_field_129_decodes_denial_reason(self):
+        inner = _pb_string(1, "denied") + _pb_string(5, "not_mineral_ore")
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "denied")
+        self.assertEqual(decoded["denial_reason"], "not_mineral_ore")
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+
+    def test_mineral_probe_result_field_129_decodes_found_variant(self):
+        inner = (
+            _pb_string(1, "found")
+            + _pb_string(2, "mineral.ore.lingshi")
+            + _pb_varint_field(3, 42)
+            + _pb_string(4, "灵石矿")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "found")
+        self.assertEqual(decoded["mineral_id"], "mineral.ore.lingshi")
+        self.assertEqual(decoded["remaining_units"], 42)
+        self.assertEqual(decoded["display_name_zh"], "灵石矿")
+        self.assertIsNone(decoded["denial_reason"])
+
+    def test_freshness_update_field_130_decodes_float_profile(self):
+        inner = (
+            _pb_string(1, "59")
+            + _pb_float32_field(2, 0.75)
+            + _pb_string(3, "food_spoil_mundane_meat_v1")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(130, inner))
+        self.assertEqual(decoded["type"], "freshness_update")
+        self.assertEqual(decoded["item_uuid"], "59")
+        self.assertAlmostEqual(decoded["freshness"], 0.75, places=4)
+        self.assertEqual(decoded["profile_name"], "food_spoil_mundane_meat_v1")
 if __name__ == "__main__":
     unittest.main(verbosity=1)

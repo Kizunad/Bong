@@ -18,6 +18,7 @@ pub mod burst_event_emit;
 pub mod carrier_state_emit;
 pub mod cast_emit;
 pub mod chat_collector;
+pub mod client_request;
 pub mod client_request_handler;
 pub mod combat_bridge;
 pub mod combat_event_emit;
@@ -385,6 +386,19 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
 /// `insert_resource` / `add_systems` / `add_event`，不起线程、不碰 IO，测试可直接调用；
 /// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
 pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
+    app.init_resource::<client_request_handler::ClientRequestBudget>();
+    app.init_resource::<client_request_handler::LingtianPlotIndex>();
+    app.add_systems(
+        Update,
+        client_request_handler::refresh_lingtian_plot_index
+            .before(client_request_handler::handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::cleanup_client_request_budget
+            .before(client_request_handler::handle_client_request_payloads)
+            .before(crate::player::despawn_disconnected_clients),
+    );
     app.add_systems(
         Update,
         client_request_handler::handle_client_request_payloads
