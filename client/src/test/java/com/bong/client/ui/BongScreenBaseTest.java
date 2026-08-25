@@ -8,12 +8,16 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BongScreenBaseTest {
     @Test
@@ -154,11 +158,50 @@ class BongScreenBaseTest {
             "removed 后 tick 不得再次触发 onScreenTick");
     }
 
+    @Test
+    void tickAndRemovalAreSerializedByTheLifecycleGate() throws Exception {
+        Harness screen = new Harness();
+        screen.onRemovedAction = () -> screen.events.add("onRemoved");
+        CountDownLatch tickEntered = new CountDownLatch(1);
+        CountDownLatch releaseTick = new CountDownLatch(1);
+        CountDownLatch removalStarted = new CountDownLatch(1);
+        screen.tickEntered = tickEntered;
+        screen.releaseTick = releaseTick;
+
+        Thread tickThread = new Thread(screen::tick, "bong-screen-test-tick");
+        tickThread.start();
+        assertTrue(tickEntered.await(1, TimeUnit.SECONDS),
+            "测试 tick 必须先进入 hook，才能验证 removed 无法穿插");
+
+        AtomicInteger removalCalls = new AtomicInteger();
+        Thread removalThread = new Thread(() -> {
+            removalStarted.countDown();
+            screen.removed();
+            removalCalls.incrementAndGet();
+        }, "bong-screen-test-removal");
+        removalThread.start();
+        assertTrue(removalStarted.await(1, TimeUnit.SECONDS),
+            "测试 removal 线程必须已发起生命周期调用");
+        assertEquals(0, removalCalls.get(),
+            "tick hook 持有生命周期锁时，removed 不得提前完成");
+
+        releaseTick.countDown();
+        tickThread.join(1_000);
+        removalThread.join(1_000);
+        assertFalse(tickThread.isAlive(), "tick 线程应在释放 hook 后完成");
+        assertFalse(removalThread.isAlive(), "removed 线程应在 tick 完成后完成");
+        assertEquals(1, removalCalls.get(), "removed 应在线性化后恰好执行一次");
+        assertEquals(List.of("tick", "onRemoved"), screen.events,
+            "生命周期锁应保证 removed 不会在 tick hook 中途穿插");
+    }
+
     private static final class Harness extends BongScreenBase<ParentComponent> {
         private final List<String> events = new ArrayList<>();
         private Runnable onRemovedAction = () -> {
         };
         private int tickCalls;
+        private CountDownLatch tickEntered;
+        private CountDownLatch releaseTick;
 
         private Harness() {
             super();
@@ -191,6 +234,16 @@ class BongScreenBaseTest {
         @Override
         protected void onScreenTick() {
             tickCalls++;
+            if (tickEntered != null && releaseTick != null) {
+                tickEntered.countDown();
+                try {
+                    releaseTick.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(interrupted);
+                }
+            }
+            events.add("tick");
         }
 
         @Override

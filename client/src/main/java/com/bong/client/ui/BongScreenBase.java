@@ -71,12 +71,14 @@ public abstract class BongScreenBase<R extends ParentComponent> extends BaseOwoS
 
     @Override
     public final void tick() {
-        if (closed) {
-            return;
-        }
-        super.tick();
-        if (!closed) {
-            onScreenTick();
+        synchronized (lifecycleLock) {
+            if (closed) {
+                return;
+            }
+            super.tick();
+            if (!closed) {
+                onScreenTick();
+            }
         }
     }
 
