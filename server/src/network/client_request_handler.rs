@@ -108,8 +108,8 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::social;
 use crate::network::client_request::{combat, npc};
+use crate::network::client_request::{social, world};
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
@@ -191,6 +191,7 @@ use crate::world::tsy_container_search::{
 };
 use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+#[cfg(test)]
 use crate::zhenfa::{
     ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
 };
@@ -453,6 +454,7 @@ pub struct AlchemyRequestParams<'w, 's> {
 pub struct ClientRequestDispatchParams<'w> {
     pub(crate) combat: combat::CombatRequestParams<'w>,
     pub(crate) social: social::SocialRequestParams<'w>,
+    pub(crate) world: world::WorldFormationRequestParams<'w>,
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
     pub gameplay_tick: Option<Res<'w, GameplayTick>>,
     pub harvest_sessions: Option<ResMut<'w, HarvestSessionStore>>,
@@ -491,10 +493,6 @@ pub struct ClientRequestDispatchParams<'w> {
     /// plan-worldgen-v4 P5 §8.1#5 — 画廊 dev-only give-block intent。
     pub block_picker_give_tx:
         Option<ResMut<'w, Events<crate::cmd::dev::block_picker::BlockPickerGiveIntent>>>,
-    pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
-    pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
-    pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
-    pub qi_scatter_bead_use_tx: Option<ResMut<'w, Events<ScatterBeadUseRequest>>>,
     pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
     pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
     // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
@@ -1377,6 +1375,18 @@ pub fn handle_client_request_payloads(
             }
             Err(request) => request,
         };
+        let request = match world::try_into_world_formation_request(request) {
+            Ok(world_request) => {
+                world::dispatch_world_formation_request(
+                    world_request,
+                    ev.client,
+                    combat_clock.tick,
+                    &mut dispatch.world,
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
 
         if session::dispatch(
             &request,
@@ -1953,92 +1963,13 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::NpcTradeRequest { .. } => {
                 unreachable!("NPC request bypassed its typed route")
             }
-            ClientRequestV1::ZhenfaPlace {
-                x,
-                y,
-                z,
-                kind,
-                carrier,
-                qi_invest_ratio,
-                trigger,
-                item_instance_id,
-                target_face,
-                ..
-            } => {
-                let Some(place_tx) = dispatch.zhenfa_place_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped zhenfa_place because ZhenfaPlaceRequest event resource is missing"
-                    );
-                    continue;
-                };
-                place_tx.send(ZhenfaPlaceRequest {
-                    player: ev.client,
-                    pos: [x, y, z],
-                    kind,
-                    carrier: carrier.unwrap_or_default(),
-                    qi_invest_ratio,
-                    trigger,
-                    item_instance_id,
-                    target_face,
-                    requested_at_tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::ZhenfaTrigger { instance_id, .. } => {
-                let Some(trigger_tx) = dispatch.zhenfa_trigger_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped zhenfa_trigger because ZhenfaTriggerRequest event resource is missing"
-                    );
-                    continue;
-                };
-                trigger_tx.send(ZhenfaTriggerRequest {
-                    player: ev.client,
-                    instance_id,
-                    requested_at_tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::ZhenfaDisarm { x, y, z, mode, .. } => {
-                let Some(disarm_tx) = dispatch.zhenfa_disarm_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped zhenfa_disarm because ZhenfaDisarmRequest event resource is missing"
-                    );
-                    continue;
-                };
-                disarm_tx.send(ZhenfaDisarmRequest {
-                    player: ev.client,
-                    pos: [x, y, z],
-                    mode,
-                    requested_at_tick: combat_clock.tick,
-                });
-            }
-            ClientRequestV1::QiScatterBeadUse {
-                item_instance_id,
-                x,
-                y,
-                z,
-                ..
-            } => {
-                let Some(use_tx) = dispatch.qi_scatter_bead_use_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped qi_scatter_bead_use because ScatterBeadUseRequest event resource is missing"
-                    );
-                    continue;
-                };
-                let bury_pos = match (x, y, z) {
-                    (Some(x), Some(y), Some(z)) => Some([x, y, z]),
-                    (None, None, None) => None,
-                    _ => {
-                        tracing::warn!(
-                            "[bong][network] dropped malformed qi_scatter_bead_use: x/y/z must be all present or all absent"
-                        );
-                        continue;
-                    }
-                };
-                use_tx.send(ScatterBeadUseRequest {
-                    player: ev.client,
-                    item_instance_id,
-                    bury_pos,
-                    requested_at_tick: combat_clock.tick,
-                });
+            ClientRequestV1::ZhenfaPlace { .. }
+            | ClientRequestV1::ZhenfaTrigger { .. }
+            | ClientRequestV1::ZhenfaDisarm { .. }
+            | ClientRequestV1::QiScatterBeadUse { .. } => {
+                unreachable!(
+                    "World formation requests are dispatched by the typed world dispatcher"
+                )
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
                 if !handle_craft_recipe_scroll(
