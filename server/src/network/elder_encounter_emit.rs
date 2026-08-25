@@ -32,7 +32,7 @@ use valence::entity::EntityId;
 use valence::ident;
 use valence::prelude::{
     bevy_ecs, App, Client, Commands, Component, Entity, EventReader, IntoSystemConfigs, Position,
-    Query, Res, Update, With, Without,
+    Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::fauna::dying_elder::{
@@ -85,16 +85,19 @@ fn send_to_players_in_zone<'w>(
     zone_name: &str,
     zones: &ZoneRegistry,
     bytes: &[u8],
-) {
+) -> usize {
+    let mut sent = 0;
     for (mut client, pos, current_dim) in players.iter_mut() {
         let dim = current_dim.map(|d| d.0).unwrap_or(DimensionKind::Overworld);
         // 仅推送给同 zone 内玩家（按 AABB 最小匹配）
         if let Some(zone) = zones.find_zone(dim, pos.get()) {
             if zone.name == zone_name {
                 client.send_custom_payload(ident!("bong:elder_encounter"), bytes);
+                sent += 1;
             }
         }
     }
+    sent
 }
 
 // ── System 类型别名 ────────────────────────────────────────────────────────────
@@ -129,6 +132,13 @@ type DyingElderQuery<'w, 's> = Query<
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct DyingElderDeathS2cBroadcast;
 
+/// appeared 事件可能早于 Valence 为新 marker 分配 EntityId；保留事件到下一帧重试，
+/// 避免客户端永远收不到 encounter HUD，也让协议 entity_id 与后续请求使用同一权威值。
+#[derive(Resource, Default)]
+struct PendingElderAppearS2c {
+    events: Vec<DyingElderAppearedEvent>,
+}
+
 // ── S2C appeared 系统 ─────────────────────────────────────────────────────────
 
 /// plan-dying-elder-v1 B1 Bug2 修复 — 大能出现时向同 zone 玩家推送 `bong:elder_encounter` appeared 事件。
@@ -140,17 +150,30 @@ pub(crate) struct DyingElderDeathS2cBroadcast;
 pub(crate) fn elder_encounter_s2c_appear_system(
     mut appeared_events: EventReader<DyingElderAppearedEvent>,
     elder_id_query: Query<&EntityId, (With<NpcMarker>, Without<ClientMarker>)>,
+    elder_entities: Query<(), (With<NpcMarker>, Without<ClientMarker>)>,
     mut players: PlayerQuery<'_, '_>,
     zones: Option<Res<ZoneRegistry>>,
+    mut pending: ResMut<PendingElderAppearS2c>,
 ) {
     let Some(zones) = zones else { return };
 
-    for ev in appeared_events.read() {
+    pending.events.extend(appeared_events.read().cloned());
+    let events = std::mem::take(&mut pending.events);
+
+    for ev in events {
         let Ok(entity_id) = elder_id_query.get(ev.elder) else {
+            if elder_entities.get(ev.elder).is_err() {
+                tracing::debug!(
+                    "[bong][elder_encounter_emit] drop appeared for despawned elder {:?}",
+                    ev.elder
+                );
+                continue;
+            }
             tracing::warn!(
-                "[bong][elder_encounter_emit] S2C appeared: no EntityId for elder {:?}, skipping",
+                "[bong][elder_encounter_emit] S2C appeared: no EntityId for elder {:?}, retrying",
                 ev.elder
             );
+            pending.events.push(ev.clone());
             continue;
         };
         let protocol_id = entity_id.get();
@@ -168,14 +191,22 @@ pub(crate) fn elder_encounter_s2c_appear_system(
         let Some(bytes) = to_json_bytes(&event) else {
             continue;
         };
-        send_to_players_in_zone(&mut players, &ev.zone_name, &zones, &bytes);
-        tracing::info!(
-            "[bong][elder_encounter_emit] S2C appeared → protocol_id={} zone='{}' betray_prob={:.3} tick={}",
-            protocol_id,
-            ev.zone_name,
-            ev.blackboard.betray_probability,
-            ev.tick,
-        );
+        let sent = send_to_players_in_zone(&mut players, &ev.zone_name, &zones, &bytes);
+        if sent == 0 {
+            // The player can enter the selected TSY layer immediately after the spawn tick.
+            // Keep the event until a same-zone client exists instead of silently dropping it.
+            pending.events.push(ev.clone());
+        }
+        if sent > 0 {
+            tracing::info!(
+                "[bong][elder_encounter_emit] S2C appeared → protocol_id={} zone='{}' players={} betray_prob={:.3} tick={}",
+                protocol_id,
+                ev.zone_name,
+                sent,
+                ev.blackboard.betray_probability,
+                ev.tick,
+            );
+        }
     }
 }
 
@@ -297,13 +328,19 @@ pub(crate) fn elder_encounter_s2c_death_system(
 /// - `elder_encounter_s2c_dan_received_system`：在 `give_dan_system` 之后运行
 /// - `elder_encounter_s2c_death_system`：收丹反馈与状态生产者之后、`death_system` 之前运行
 pub fn register(app: &mut App) {
+    app.init_resource::<PendingElderAppearS2c>();
+    app.add_systems(
+        valence::prelude::PostUpdate,
+        elder_encounter_s2c_appear_system.after(valence::entity::InitEntitiesSet),
+    );
     app.add_systems(
         Update,
         (
-            elder_encounter_s2c_appear_system,
             elder_encounter_s2c_dan_received_system
                 .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
-            elder_encounter_s2c_death_system.in_set(NpcTerminalSystemSet::PostCommit),
+            elder_encounter_s2c_death_system
+                .in_set(NpcTerminalSystemSet::PostCommit)
+                .after(elder_encounter_s2c_dan_received_system),
         ),
     );
 }

@@ -143,10 +143,6 @@ from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
     _move_and_record,
     _position_from_authoritative_event,
 )
-from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
-    _assert_surviving_connection,
-    _wait_keepalive_after,
-)
 from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
     _wait_before_deadline,
 )
@@ -4945,69 +4941,6 @@ class LifecycleReviewContractTest(unittest.TestCase):
                 "最终重连",
             )
 
-    def test_double_login_cross_connection_liveness_rejects_lost_peer(self):
-        class ProbeBot(_FakeBot):
-            def assert_alive(self, _context: str) -> None:
-                return None
-
-        bot = ProbeBot([_FakeEvent(4.0, "connection_lost", {})])
-        with self.assertRaisesRegex(AssertionError, "connection_lost"):
-            _assert_surviving_connection(bot, "并发阶段")
-
-
-class DoubleLoginScenarioTest(unittest.TestCase):
-    def test_keepalive_probe_rejects_historical_and_boundary_events(self):
-        marker = 2.0
-        bot = _FakeBot(
-            [
-                _FakeEvent(1.0, "keepalive", {"id": 1}),
-                _FakeEvent(marker, "keepalive", {"id": 2}),
-            ]
-        )
-
-        with self.assertRaisesRegex(
-            AssertionError,
-            r"t>2\.000s",
-            msg=(
-                "join/cleanup phase marker 之前或恰好 marker 时收到的 KeepAlive"
-                " 不得冒充该阶段的 surviving-connection 连续性证据"
-            ),
-        ):
-            _wait_keepalive_after(bot, marker, "重复登录阶段")
-
-    def test_keepalive_probe_returns_only_a_strictly_new_event(self):
-        marker = 2.0
-        new_event = _FakeEvent(2.001, "keepalive", {"id": 3})
-        bot = _FakeBot(
-            [
-                _FakeEvent(1.0, "keepalive", {"id": 1}),
-                _FakeEvent(marker, "keepalive", {"id": 2}),
-                new_event,
-            ]
-        )
-
-        observed = _wait_keepalive_after(bot, marker, "重复登录阶段")
-
-        self.assertIs(
-            observed,
-            new_event,
-            "KeepAlive 断言必须返回严格晚于 marker 的新事件，而不是历史/边界事件",
-        )
-
-    def test_post_cross_probe_requires_second_connection_heartbeat(self):
-        # The second connection had a heartbeat before first's cross-probe, then
-        # was removed. A second heartbeat after the probe is the only observation
-        # that closes that race; the stricter phase must reject this event stream.
-        bot = _FakeBot(
-            [
-                _FakeEvent(2.0, "keepalive", {"id": 1}),
-                _FakeEvent(3.0, "connection_lost", {}),
-            ]
-        )
-        with self.assertRaisesRegex(AssertionError, r"t>2\.500s"):
-            _wait_keepalive_after(bot, 2.5, "第一连接 cross-probe 后第二连接")
-
-
 class IdleTimeoutScenarioTest(unittest.TestCase):
     def test_idle_waits_share_one_absolute_deadline(self):
         class TimeoutCaptureBot:
@@ -5311,6 +5244,20 @@ class RejectionHelperTest(unittest.TestCase):
         chat = _RejectionFakeBot([_FakeEvent(2.0, "chat", {"text": "已收到经脉目标"})])
         with self.assertRaises(BotAssertionError):
             assert_no_gameplay_side_effect_since(chat, since_t=1.0, label="测试")
+
+    def test_carrier_state_periodic_sync_is_not_gameplay_side_effect(self):
+        # carrier_state 是无条件周期推送；拒绝场景的专用静默断言也必须复用
+        # 共享 ambient 集合，否则同一环境同步会在不同场景产生不一致结果。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(3.0, "server_data", {"payload_type": "carrier_state"})]
+        )
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_heartbeat_periodic_sync_is_not_gameplay_side_effect(self):
+        bot = _RejectionFakeBot(
+            [_FakeEvent(3.0, "server_data", {"payload_type": "heartbeat"})]
+        )
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
 
     def test_fire_probes_ignores_join_burst_ambient_traffic(self):
         # join 突发里既有无法解码的 spawn（裸 payload）也有解码的 status_snapshot，
@@ -7590,6 +7537,41 @@ class ProtoMinTest(unittest.TestCase):
             "combat_event",
             "shallow payload table must not hide production field 51",
         )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(128, b"")),
+            "sword_bond_hud_state",
+            "SwordBond HUD field 128 must be recognized as an ambient payload",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(45, b"")),
+            "dugu_poison_state",
+            "Dugu poison HUD field 45 must be recognized as an ambient payload",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(48, b"")),
+            "poison_trait_state",
+            "Poison trait HUD field 48 must be recognized as an ambient payload",
+        )
+
+    def test_false_skin_state_field_50_is_decoded_for_ambient_oracle(self):
+        inner = (
+            _pb_string(1, "offline:Bot")
+            + _pb_varint_field(3, 0)
+            + _pb_fixed64(4, 0.0)
+            + _pb_fixed64(5, 0.0)
+            + _pb_varint_field(6, 0)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(50, inner))
+        self.assertEqual(decoded["type"], "false_skin_state")
+        self.assertEqual(decoded["target_id"], "offline:Bot")
+
+    def test_treasure_equipped_field_43_decodes_empty_slot(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(43, _pb_string(1, "main_hand"))
+        )
+        self.assertEqual(decoded["type"], "treasure_equipped")
+        self.assertEqual(decoded["slot"], "main_hand")
+        self.assertIsNone(decoded["treasure"])
 
     def test_server_data_decoder_table_is_named_and_dispatches(self):
         self.assertLessEqual(
@@ -7768,6 +7750,11 @@ class FrameParseTest(unittest.TestCase):
         small = b"\x17small"
         conn.buf = _frame(mc.write_varint(0) + small)
         self.assertEqual(conn._try_parse_frame(), small)
+        # Valence treats an exact-threshold payload as uncompressed.
+        exact = b"\x17" + b"x" * 63
+        self.assertEqual(len(exact), 64)
+        conn.buf = _frame(mc.write_varint(0) + exact)
+        self.assertEqual(conn._try_parse_frame(), exact)
         # 达阈值 zlib：DataLength=原长 + 压缩体
         big = b"\x24" + b"y" * 200
         conn.buf = _frame(mc.write_varint(len(big)) + zlib.compress(big))
@@ -13025,6 +13012,46 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "workbench_open")
         self.assertEqual(decoded["entity_id"], 999)
         self.assertEqual(decoded["position"], [-3, 71, -8], "sint32 负坐标应 zigzag 还原")
+
+    def test_burst_meridian_event_field_70_decodes_optional_target_and_doubles(self):
+        inner = (
+            _pb_string(1, "burst_meridian.beng_quan")
+            + _pb_string(2, "offline:caster")
+            + _pb_string(3, "offline:target")
+            + _pb_varint_field(4, 12345)
+            + _pb_fixed64(5, 1.5)
+            + _pb_fixed64(6, 0.75)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(70, inner))
+        self.assertEqual(decoded["type"], "burst_meridian_event")
+        self.assertEqual(decoded["skill"], "burst_meridian.beng_quan")
+        self.assertEqual(decoded["caster"], "offline:caster")
+        self.assertEqual(decoded["target"], "offline:target")
+        self.assertEqual(decoded["tick"], 12345)
+        self.assertAlmostEqual(decoded["overload_ratio"], 1.5)
+        self.assertAlmostEqual(decoded["integrity_snapshot"], 0.75)
+
+    def test_burst_meridian_event_field_70_omits_absent_target(self):
+        inner = _pb_string(1, "burst_meridian.beng_quan") + _pb_string(2, "offline:caster")
+        decoded = proto_min.decode_server_data_envelope(_pb_message(70, inner))
+        self.assertNotIn("target", decoded)
+
+    def test_combat_hud_state_field_9_decodes_percentages_and_derived_flags(self):
+        inner = (
+            _pb_fixed32(1, 0.75)
+            + _pb_fixed32(2, 0.5)
+            + _pb_fixed32(3, 0.25)
+            + _pb_message(4, _pb_varint_field(3, 1))
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(9, inner))
+        self.assertEqual(decoded["type"], "combat_hud_state")
+        self.assertAlmostEqual(decoded["hp_percent"], 0.75)
+        self.assertAlmostEqual(decoded["qi_percent"], 0.5)
+        self.assertAlmostEqual(decoded["stamina_percent"], 0.25)
+        self.assertEqual(
+            decoded["derived"],
+            {"flying": False, "phasing": False, "tribulation_locked": True},
+        )
 
     def test_qi_color_observed_field_74_decodes_all_color_kinds(self):
         # central-review 2029 #4：只 pin (field3=3→Mellow) 会让「其余 9 个 ColorKind

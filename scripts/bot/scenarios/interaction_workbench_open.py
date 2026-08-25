@@ -34,6 +34,7 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
+from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
 
 DESCRIPTION = "放置制作台后 workbench_open 回推 WorkbenchOpen payload；坏 id 聊天拒绝、出界静默"
 MODULES = ["craft", "interaction", "network"]
@@ -50,7 +51,7 @@ TOP_TIMEOUT = 10.0
 # 静默契约 = 白名单外任何 server_data 一律判红（central-review 2029 #8：未知实体与
 # 出界 open 都被文档化为不产 S2C，只盯 workbench_open 会放走拒收却发 event_alert /
 # 库存更新等副作用的坏实现）。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
+AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 
 
 def run(env) -> None:

@@ -355,7 +355,7 @@ bot e2e 分三层记录：
 #### P0R Finish Evidence
 
 - **落地清单**：新增 source-derived Screen adapter、Store source、bootstrap order、semantic/intent/viewport、UI dependency、backend capability 和 production Java digest contract tests；长期 fixture 统一使用 `ui/` 语义文件名，不再使用阶段性 `r7-` 前缀。未新增 `client/src/main/java` production adapter、Screen migration 或 wire/schema 字段。
-- **关键证据**：production Java source tree SHA-256 `b4080c28024914d1e4604bd56df849153ab444ec4719f5cb3e77cfbc7a95938b`；Screen inventory 对拍为 29 个（15 owo、14 vanilla）；BongClient UI bootstrap 对拍为 30 个模块；Store source fixture 对拍通过。
+- **关键证据**：合并当前 `origin/main` 后 production Java source tree SHA-256 为 `66502bbf20e7be0999576c612eac5b53d23c81ca9c5e8c3cad91e67bc3558f2b`（包含主线已合入的 `BongScreenBase` 基类，P0R 分支自身未新增 Screen 迁移）；Screen inventory 对拍为 29 个（15 owo、14 vanilla）；BongClient UI bootstrap 对拍为 30 个模块；Store source fixture 对拍通过。
 - **测试结果**：`./gradlew test --tests 'com.bong.client.ui.R7*ContractTest' --tests com.bong.client.insight.InsightOfferScreenTest --tests com.bong.client.insight.InsightOfferStoreTest -x runGametest` 通过；Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"` 通过，包含 3 个 Fabric GameTest。
 - **跨仓库核验**：未修改 server、agent/schema、protobuf、Redis key、CustomPayload 或 R2/R6 owner 文件；semantic raw XML 继续标记为 legacy 输入，后续 wire cutover 仍由 R6/schema/agent amendment 负责。
 - **遗留 / 后续**：P1-P7 仍未开始；下一阶段才实现 `ui/contract/**`、owo-first/vanilla-compatible adapters、headless fake 和 Screen 迁移。`ui-backend-capabilities.tsv` 仅记录 OWO/VANILLA，第三方 host 明确 OUT_OF_SCOPE。

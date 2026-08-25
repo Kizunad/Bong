@@ -7,7 +7,7 @@ handle_give_dan_to_elder（client_request_handler.rs:19791）前置检查顺序�
 4. 已解析实体不是 DyingElder / 状态不可接丹 → 目标门禁拒绝；
 5. 已解析 Plea 大能超距或跨维 → 空间门禁拒绝。
 
-本场景先覆盖前三条拒收链，再用 `/npc_scenario fight` 构造真实非 elder
+本场景先覆盖前三条拒收链，再用 production passive target 构造真实非 elder
 protocol target，最后以 `/time advance 720000` 触发 production DyingElder，在真实
 protocol entity id 上分别验证距离与维度门。每条拒收都断言聊天-only、连接保持和
 回元丹同实例未被消费。
@@ -21,18 +21,19 @@ _assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发�
 （central-review 2029 #5）。
 """
 
-import math
+import json
 import time
 
 from bot.bot import BotAssertionError
 
-from ._combat_helpers import last_event_time
+from ._combat_helpers import last_event_time, queue_passive_target
 from ._inventory_helpers import (
     require_item,
     wait_inventory_contains,
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
+from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
 
 DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→有效 pill 的目标门禁，逐条拒绝"
 MODULES = ["fauna", "network"]
@@ -41,12 +42,27 @@ DAN_REQUEST = {"type": "give_dan_to_elder", "v": 1}
 MEAT_ITEM = "food.mundane.cooked_meat"
 NO_SUCH_ELDER_ID = 987654321
 SILENT_WINDOW = 4.0
+TSY_ZONE_CENTERS = {
+    "tsy_lingxu_01_shallow": (50.0, 80.0, 50.0),
+    "tsy_lingxu_01_mid": (50.0, 20.0, 50.0),
+    "tsy_lingxu_01_deep": (50.0, -20.0, 50.0),
+    "tsy_zongmen_01_shallow": (250.0, 80.0, 250.0),
+    "tsy_zongmen_01_mid": (250.0, 20.0, 250.0),
+    "tsy_zongmen_01_deep": (250.0, -20.0, 250.0),
+    "tsy_daneng_01_shallow": (550.0, 80.0, 550.0),
+    "tsy_daneng_01_mid": (550.0, 20.0, 550.0),
+    "tsy_daneng_01_deep": (550.0, -20.0, 550.0),
+    "tsy_gaoshou_01_shallow": (1050.0, 80.0, 550.0),
+    "tsy_gaoshou_01_mid": (1050.0, 20.0, 550.0),
+    "tsy_gaoshou_01_deep": (1050.0, -20.0, 550.0),
+}
+TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
 # 本场景无 cultivation/meridian/zone 变化，窗口内除 carrier_state 无合法非白名单
 # payload；白名单外一律判红（chat-only 契约的 S2C 半）。carrier_state 不在 proto_min
 # 白名单，通常不解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的
 # 周期流。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
+AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 
 
 def run(env) -> None:
@@ -114,24 +130,18 @@ def run(env) -> None:
                 f"{pill['item']['instance_id']}，实际丢失或替换"
             )
 
-        # 4. Exercise the resolved-target authorization path with a real NPC. The
-        # scenario command creates a valid non-elder target beyond the give-dan
-        # gate; a valid pill must remain in the same instance after rejection.
-        anchor = last_event_time(bot)
-        bot.cmd("npc_scenario fight")
-        bot.expect_chat("Scenario queued.", timeout=10.0)
-        target = bot.wait_for(
-            lambda event: (
-                event.kind == "entity_spawn"
-                and event.t > anchor
-                and event.data.get("entity_id") != bot.entity_id
-            ),
-            timeout=15.0,
-            description="npc_scenario fight 后出现可解析的非大能 entity",
-        )
+        # 4. Exercise the resolved-target authorization path with a production NPC that
+        # is stationary and spawns one block away. The server must resolve it, pass the
+        # dimension/range gates, then reject it as non-elder.
+        target = queue_passive_target(bot)
+        target_id = target.data.get("entity_id")
+        if not isinstance(target_id, int) or target_id <= 0:
+            raise BotAssertionError(
+                f"[{bot.username}] passive_target entity_id 应为正整数，实际 {target_id!r}"
+            )
         sent_at = last_event_time(bot)
         bot.intent(
-            {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": target.data["entity_id"]}
+            {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": target_id}
         )
         reject = bot.expect_chat("目标不是可交互的大能。", timeout=10.0)
         _assert_chat_only_response(
@@ -156,7 +166,9 @@ def run(env) -> None:
                 "elder_entity_id": elder_id,
             }
         )
-        reject = bot.expect_chat("目标不在当前位面或交互范围内。", timeout=10.0)
+        reject = _expect_chat_after(
+            bot, "目标不在当前位面或交互范围内。", sent_at, timeout=10.0
+        )
         _assert_chat_only_response(
             bot,
             sent_at,
@@ -181,7 +193,9 @@ def run(env) -> None:
                 "elder_entity_id": elder_id,
             }
         )
-        reject = bot.expect_chat("目标不在当前位面或交互范围内。", timeout=10.0)
+        reject = _expect_chat_after(
+            bot, "目标不在当前位面或交互范围内。", sent_at, timeout=10.0
+        )
         _assert_chat_only_response(
             bot,
             sent_at,
@@ -202,8 +216,24 @@ def run(env) -> None:
 def _spawn_real_elder(bot) -> int:
     """Spawn one production DyingElder and return its MC protocol entity id."""
     _transfer_dimension(bot, "tsy")
-    bot.cmd("tpzone tsy_lingxu_01_mid")
-    bot.expect_chat("Teleported to zone `tsy_lingxu_01_mid`.", timeout=10.0)
+    # The selected TSY spawn zone is deliberately negative. Fresh bot characters
+    # may have little remaining qi after the earlier rejection chain, so replenish
+    # the dev-only setup resource before entering the zone; otherwise the negative
+    # pressure can move the requester out of Alive while the elder is spawning.
+    bot.cmd("qi set 10")
+    bot.expect_chat("[dev] qi set", timeout=10.0)
+    # 生产 spawn selector 取 TSY registry 中第一个低于阈值的 zone。先用 dev-only
+    # zone_qi 把候选面钉成唯一的 daneng shallow，再把 bot 放到该层中心；使用略低于
+    # spawn threshold 的值，给拒绝链留下足够观察时间，不把 elder 提前抽干。
+    spawn_zone = "tsy_daneng_01_shallow"
+    for zone in TSY_ZONE_ORDER:
+        bot.cmd(f"zone_qi set {zone} 0")
+        bot.expect_chat(f"[dev] zone_qi `{zone}`", timeout=10.0)
+    bot.cmd(f"zone_qi set {spawn_zone} -0.41")
+    bot.expect_chat(f"[dev] zone_qi `{spawn_zone}`", timeout=10.0)
+    bot.cmd(f"tpzone {spawn_zone}")
+    bot.expect_chat(f"Teleported to zone `{spawn_zone}`.", timeout=10.0)
+    bot.set_position(*TSY_ZONE_CENTERS[spawn_zone])
     anchor = last_event_time(bot)
     bot.cmd("time advance 720000")
     bot.expect_chat("[dev] time advanced 720000", timeout=10.0)
@@ -212,16 +242,56 @@ def _spawn_real_elder(bot) -> int:
             event.kind == "entity_spawn"
             and event.t > anchor
             and event.data.get("type") == 120
+        )
+        or (
+            event.kind == "payload"
+            and event.t > anchor
+            and event.data.get("channel") == "bong:elder_encounter"
+            and _elder_appeared_payload(event) is not None
         ),
-        timeout=15.0,
-        description="time advance 后出现 production DyingElder entity_spawn",
+        timeout=10.0,
+        description="time advance 后出现 production DyingElder entity_spawn/elder_encounter",
     )
-    entity_id = elder.data.get("entity_id")
+    if elder is None:
+        raise BotAssertionError(
+            f"[{bot.username}] time advance 后未在 TSY 层收到 DyingElder entity_spawn/elder_encounter"
+        )
+    if elder.kind == "entity_spawn":
+        entity_id = elder.data.get("entity_id")
+    else:
+        entity_id = _elder_appeared_payload(elder)["elder_entity_id"]
     if not isinstance(entity_id, int) or entity_id <= 0:
         raise BotAssertionError(
             f"DyingElder entity_spawn 必须携带正数 protocol id，实际 {entity_id!r}"
         )
+    # Move to a separate TSY family through the authoritative zone command. The same
+    # entity id remains resolvable server-side, but the large horizontal gap exercises
+    # the range gate before the later cross-dimension check.
+    range_zone = "tsy_zongmen_01_shallow"
+    bot.cmd(f"tpzone {range_zone}")
+    bot.expect_chat(f"Teleported to zone `{range_zone}`.", timeout=10.0)
     return entity_id
+
+
+def _elder_appeared_payload(event):
+    if event.kind != "payload" or event.data.get("channel") != "bong:elder_encounter":
+        return None
+    try:
+        payload = json.loads(bytes(event.data["data"]).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) and payload.get("event_kind") == "appeared" else None
+
+
+def _expect_chat_after(bot, substring: str, after: float, timeout: float = 10.0):
+    """等待当前请求产生的聊天，避免匹配前一条同文案拒绝。"""
+    return bot.wait_for(
+        lambda event: event.kind == "chat"
+        and event.t > after
+        and substring in event.data.get("text", ""),
+        timeout=timeout,
+        description=f"t>{after:.3f}s 后包含「{substring}」的聊天消息",
+    )
 
 
 def _transfer_dimension(bot, target: str) -> None:

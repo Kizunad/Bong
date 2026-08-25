@@ -41,14 +41,18 @@ class R7KeybindProductionMigrationTest {
         "identity/IdentityPanelScreenBootstrap.java",
         "cultivation/voidaction/VoidActionScreenBootstrap.java",
         "forge/ForgeScreenBootstrap.java",
-        "tsy/ExtractInteractionBootstrap.java"
+        "tsy/ExtractInteractionBootstrap.java",
+        "dying_elder/DyingElderInteractionKeybindings.java"
     );
     private static final Set<String> TARGET_OWNER_IDS = Set.of(
         "identity.open_panel",
         "void_action.open_screen",
         "forge.open_screen",
         "tsy.extract_start",
-        "tsy.extract_cancel"
+        "tsy.extract_cancel",
+        "dying_elder.give_dan",
+        "dying_elder.refuse",
+        "dying_elder.delay"
     );
 
     @Test
@@ -57,7 +61,8 @@ class R7KeybindProductionMigrationTest {
             "identity/IdentityPanelScreenBootstrap.java", 1,
             "cultivation/voidaction/VoidActionScreenBootstrap.java", 1,
             "forge/ForgeScreenBootstrap.java", 1,
-            "tsy/ExtractInteractionBootstrap.java", 2
+            "tsy/ExtractInteractionBootstrap.java", 2,
+            "dying_elder/DyingElderInteractionKeybindings.java", 3
         );
 
         for (String relativePath : TARGET_FILES) {
@@ -71,7 +76,7 @@ class R7KeybindProductionMigrationTest {
         }
 
         List<ProductionBinding> actual = productionBindings();
-        assertEquals(5, actual.size(), "四个入口应迁移恰好五个生产绑定");
+        assertEquals(8, actual.size(), "五个入口应迁移恰好八个生产绑定");
         assertEquals(TARGET_OWNER_IDS, actual.stream()
             .map(ProductionBinding::ownerId)
             .collect(Collectors.toSet()),

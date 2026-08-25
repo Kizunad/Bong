@@ -228,7 +228,10 @@ class Connection:
     def send_packet(self, packet_id: int, body: bytes = b"") -> None:
         data = write_varint(packet_id) + body
         if self.compression_threshold >= 0:
-            if len(data) >= self.compression_threshold:
+            # Valence rejects a compressed payload whose decompressed length is
+            # equal to the threshold, so the boundary belongs to the raw-frame
+            # branch for this server implementation.
+            if len(data) > self.compression_threshold:
                 frame = write_varint(len(data)) + zlib.compress(data)
             else:
                 frame = write_varint(0) + data

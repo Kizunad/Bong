@@ -36,6 +36,7 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
+from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES, drain_event_stream
 
 DESCRIPTION = "freshness_probe：Awaken→神识未及告警、凝脉→FreshnessUpdate、无保鲜/坏实例→静默"
 MODULES = ["shelflife", "network"]
@@ -51,7 +52,7 @@ SILENT_WINDOW = 4.0
 # 周期性无变化 flush），窗口内无合法非白名单 payload——白名单外一律判红
 # （central-review 2029 #2）。carrier_state 不在 proto_min 白名单，通常不
 # 解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的周期流。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
+AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 # 探针路径 freshness = current_qi/initial_qi（shelflife/probe.rs，Linear：
 # current = initial - decay_per_tick × storage×season × (now_tick-created_at_tick)）。
 # 服务器主循环是 `app.update() + 5ms sleep`（main.rs:186），tick 率无上限也低于
@@ -139,6 +140,11 @@ def run(env) -> None:
             timeout=5.0,
             description="realm set condense 的 player_state 回推应已到达",
         )
+        # realm set 会异步触发 narration 等连接同步；服务端日志中的发送完成不等于
+        # Bot reader 已收到（CI 高负载时实测可滞后约 1.5s）。排空上限必须覆盖完整的
+        # 静默观察窗，并在排空完成后重新取水位，避免上一条命令的滞后事件被误归因于
+        # freshness_probe。成功探针自身的副作用仍会在后面的静默扫描中撞红。
+        drain_event_stream(bot, quiet_s=0.5, max_s=SILENT_WINDOW)
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update1 = bot.expect_server_data("freshness_update", timeout=10.0)

@@ -89,7 +89,7 @@ BOT_E2E_OPERATOR_TAGS=(
   Rein Term NewCh
   NpcIn NpcCh NpcTr
   FalseSkin InvGroup Quickslot Scrolls SkillCfg
-  Zlb Zre Alc Bob CoPl Coffin
+  Zlb Zre Alc Bob CoPl Coffin FoRq
   Big Typ Rng Stl
   Rein Term NewCh CoEn CoEnB CoLv CoLvB BR1 BR2 RW1 RW2 OO1 OO2 NRift
   GD2H GD2V GD2I GD2J Abr Hdm Ins Ins2 Rej Dux FoCj
@@ -517,7 +517,7 @@ start_self_server_attempt() {
     SERVER_BINARY="$EVIDENCE_DIR/bong-server-$TARGET_PROFILE"
     install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"
   fi
-  echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，端口 $PORT，尝试 $attempt/$MAX_PORT_RETRIES，log: $SERVER_LOG）"
+  echo "[bot-e2e] 启动 server（profile=$TARGET_PROFILE，端口 $PORT，尝试 $attempt/$MAX_PORT_RETRIES，log: $SERVER_LOG）"
   # Owned-fixture mode moves all relative persistent outputs into its evidence runtime. Generic
   # mode retains the historical checkout/server CWD for callers that rely on that contract.
   (

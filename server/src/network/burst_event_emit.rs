@@ -13,7 +13,6 @@ pub fn emit_burst_meridian_events(world: &mut valence::prelude::bevy_ecs::world:
     if events.is_empty() {
         return;
     }
-
     let payloads: Vec<Vec<u8>> = events
         .iter()
         .filter_map(|event| {
@@ -28,11 +27,17 @@ pub fn emit_burst_meridian_events(world: &mut valence::prelude::bevy_ecs::world:
             }
         })
         .collect();
-
     let mut clients = world.query_filtered::<&mut Client, With<Client>>();
+    let mut client_count = 0;
     for mut client in clients.iter_mut(world) {
+        client_count += 1;
         for payload in &payloads {
             send_server_data_payload(&mut client, payload.as_slice());
         }
     }
+    tracing::debug!(
+        "[bong][network] burst bridge sent {} payload(s) to {} client(s)",
+        payloads.len(),
+        client_count
+    );
 }
