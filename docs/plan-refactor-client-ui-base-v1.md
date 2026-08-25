@@ -2,6 +2,15 @@
 
 > 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：在不改变 server/schema/wire 行为的前提下，把 client UI 的状态读取、用户意图、屏幕生命周期、列表协调和 bootstrap 注册抽成库无关契约，再由 owo、vanilla 与 MCEF-compatible browser 三条 adapter 实现；以 29 个 Screen 和 `InspectScreen` 为迁移对象，为后续替换 owo-lib 提供单一切换边界。
 
+## Integration Preflight（2026-08-25）
+
+按 `docs/CLAUDE.md:7-21` 的防孤岛流程复核后再更新本 plan：
+
+- **正典**：已检查 `docs/worldview.md:1-35`；本计划只做 client UI 基础设施，不新增境界、经济、世界事件或真元/灵气公式，因此不改 worldview，也不创建新的 worldview 锚点。
+- **已完成计划**：已检索 `docs/finished_plans/`，重点对照 `plan-client.md`、`plan-HUD-v1.md`、`plan-alchemy-client-v1.md`、`plan-agent-ui-data-v1.md`、`plan-agent-ui-close-reason-drop-v1.md` 及相关 client/session/UI 结论；R7 只抽取现有 Store、HUD、agent UI close 和 client screen 的外部行为，不重新拥有这些 domain。
+- **进行中计划**：已枚举 `docs/plan-*.md`，重点核对 `plan-refactor-client-store-lifecycle-v1.md`、`plan-refactor-wire-s2c-v1.md`、`plan-client-login-ux-v1.md` 以及 alchemy/forge/lingtian session UI bugfix plans；R7 将 Store 断线清理留给 R2、bridge/router 留给 R6，不改其 owner 文件。
+- **骨架与 reminder**：已检查 `docs/plans-skeleton/plan-refactor-master-v1.md`、`docs/plans-skeleton/reminder.md:1-28` 和全部 UI/client 相关 skeleton；没有同名的 R7 child skeleton，也没有 reminder 条目要求另建 UI contract。master skeleton 保留计划族的 Wave、ownership、headless 总约束；本文件作为 R7 active child 只负责 client UI contract、adapter、Screen/HUD/keybind 和 browser/viewport seam，拆分理由是避免把 9 条重构轨道的跨轨裁决与单轨实施细节混在同一份可消费 plan 中。
+
 ## 0. 改写目的与不可变范围
 
 旧版 R7 以 `BongScreenBase extends BaseOwoScreen` 为公共基类，能改善当前 owo 屏幕，但不能作为未来 UI 库迁移边界。本版将 R7 从“owo UI 重构”改为“UI contract-first + adapter migration”计划：
@@ -166,18 +175,20 @@ public interface UiScreenScope {
 
 ### 4.3 `UiScreenController` 与 adapters
 
-库无关 controller 只依赖 immutable `ViewModel`、`UiStateSource` 和 typed `UiIntentSink`：
+库无关 controller 只依赖 immutable `ViewModel`、`UiStateSource` 和一个按领域参数化的 typed `UiIntentSink`；controller 不接收裸 `UiIntent`，adapter 只能通过该 sink 发送允许的动作：
 
 ```java
 public interface UiIntent {}
 
-public interface UiScreenController<M> {
+public interface UiScreenController<M, I extends UiIntent> {
     M viewModel();
-    void onIntent(UiIntent intent);
+    UiIntentSink<I> intentSink();
     void onOpen(UiScreenScope scope);
     void onClose();
 }
 ```
+
+`UiScreenController<M, I>` 的 `I` 必须与 `UiIntentSink<I>` 一致；adapter 不得把 `UiIntent` 向下转型或绕过 sink 调用 sender。需要多个动作域的 Screen 组合多个窄 sink/controller，而不是退回一个 117 方法的总接口。
 
 具体 UI library 只实现 host/adapter，不定义业务规则：
 
@@ -271,6 +282,10 @@ server/agent **不得**下发 owo XML、HTML、CSS、JavaScript、任意 URL、D
 本次 R7 不偷偷新增 wire union：P0R 先冻结 `UiSurfaceProjection`/action registry 的消费接缝和 source gate；若现有 `ServerDataV1` 无法表达某个语义 surface，由 R6/schema 以及对应 server/agent owner 另立 amendment，按 TypeBox source、generated mirror 和 atomic activation 规则接入。新 wire 未合入前，R7 只能从现有 authoritative payload 构造同形 projection 或使用 test fixture，不能把本地 ViewModel 伪装成服务端事实。
 
 ### 4.8 `UiViewport` 与响应式布局契约
+
+当前代码证据表明这条边界必须集中收口：`MixinMouse.java:100-116` 和 `BotanyHudBootstrap.java:58-69` 都把 `MinecraftClient.mouse` 的 physical window 坐标按 `getScaledWidth()/getWidth()`、`getScaledHeight()/getHeight()` 换算为 GUI logical 坐标；`BongHud.java:131-143`、`:243-251`、`:528-541` 则统一从 `getWindow().getScaledWidth/Height()` 生成 HUD 输入、绘制覆盖层和测量文字。相反，`AlchemyScreen.java:664-710`、`ForgeScreen.java:365-375`、`InspectScreen.java:2255-2375` 仍在 Screen 内直接进行 `mouseX/mouseY` 命中和 grid 换算，正是迁移期间要被 `UiViewport`/layout policy 覆盖的耦合点。
+
+当前 provider 事实也必须写明：`client/build.gradle:45-51` 只有 Minecraft、Fabric、owo 依赖，`client/gradle.properties:1-19` 没有 MCEF/JCEF 版本；因此 browser 坐标/texture/provider 接口是 P2 compatibility seam，不是已有 production API。CinemaMod/MCEF 的外部事实和 provider gate 仍以本 plan §2.1 为准。
 
 布局必须由可测试的纯策略计算，不在 controller、Store 或业务 intent 中写死屏幕像素。公共输入至少区分四种坐标空间：Minecraft 窗口/帧缓冲 physical px、Minecraft GUI logical px、browser CSS px、browser/CEF texture physical px，并显式记录 `gui_scale`、window scale factor 和 device-pixel ratio（DPR）。
 
@@ -486,7 +501,7 @@ bot e2e 分三层记录：
 
 ### #9 Viewport、缩放与输入坐标
 
-**决议**：公共 UI 只接受 `UiViewport` 的 logical dimensions 和显式 scale metadata；`UiLayoutPolicy` 以约束/布局模式处理 compact/regular/wide，不假设 16:9。physical px、MC GUI scale、browser CSS px、DPR texture px 的转换集中在 adapter，输入使用同一逆变换；最低 `320x240`、odd aspect、超宽/超窄/竖屏、GUI scale 1-4、DPR 1.0-2.0 和 resize 中间态全部进入 geometry/input contract。
+**决议**：公共 UI 只接受 `UiViewport` 的 logical dimensions 和显式 scale metadata；`UiLayoutPolicy` 以约束/布局模式处理 compact/regular/wide，不假设 16:9。physical px、MC GUI scale、browser CSS px、DPR texture px 的转换集中在 adapter，输入使用同一逆变换；最低 `320x240`、odd aspect、超宽/超窄/竖屏、GUI scale 1-4、DPR 1.0-2.0 和 resize 中间态全部进入 geometry/input contract。现有 physical→logical 证据是 `client/src/main/java/com/bong/client/mixin/MixinMouse.java:100-116`、`client/src/main/java/com/bong/client/botany/BotanyHudBootstrap.java:58-69`；现有 scaled viewport/HUD 消费证据是 `client/src/main/java/com/bong/client/BongHud.java:131-143,243-251,528-541`；现有 Screen-level hit-test 耦合证据是 `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java:664-710`、`client/src/main/java/com/bong/client/forge/ForgeScreen.java:365-375`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java:2255-2375`；browser provider 尚不存在，`client/build.gradle:45-51` 与 `client/gradle.properties:1-19` 是 P2 compatibility seam 的基线。
 
 **落点**：`client/src/main/java/com/bong/client/ui/contract/UiViewport.java`、`UiLayoutPolicy.java`、`ui/adapter/{owo,vanilla,mcef}/**`；本 plan §4.8、P2/P4/P7。
 
