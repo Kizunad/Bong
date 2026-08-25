@@ -99,14 +99,13 @@ class R7InventoryContractTest {
 
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 2026-08-25（前值 fd54d6c7…）：匕首三件套那条分支新增
-        // resources/assets/bong/player_animation/dagger_slash.json、dagger_stab.json，
-        // 并改了 sword_ride.json（膝盖折向修正）。逐文件对拍确认 client/src/main 下
-        // **只有这三个文件**相对 origin/main 有变化，其余 2147 个字节不动。
+        // 重新冻结于 2026-08-25（前值 fffdba51…）：R7 P1 将垂死大能的三个
+        // production keybinding 改由 BongKeybindRegistry 注册，并让 HUD 读取各自的
+        // effective binding label。逐文件对拍确认 client/src/main 下的其余产物不变。
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条——这正是它要的"每一个 shipped 字节都得被显式重新决定"。
         assertEquals(
-            "fffdba51f93b979da9b9dc62b2e66de0452fc9a0b459fd6d4fad4ba36c865d7b",
+            "04b3002b71c7eede0dccb40a9520de13245481228966838e00183d08f7481cbe",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
