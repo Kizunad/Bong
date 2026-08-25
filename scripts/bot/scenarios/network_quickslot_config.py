@@ -48,7 +48,12 @@ PROBE_TRAILING_WINDOW_MS = 75  # (b) 探针意图处理延迟的尾部覆盖
 
 
 def _expect_bind_response(
-    bot, request_id: str, accepted: bool, slot: int, timeout: float = 10.0
+    bot,
+    request_id: str,
+    accepted: bool,
+    slot: int,
+    timeout: float = 10.0,
+    expected_entry: dict | None = None,
 ) -> dict:
     event = bot.wait_for(
         lambda e: (
@@ -71,8 +76,12 @@ def _expect_bind_response(
         assert entry is not None and entry.get("item_id") == PILL, (
             f"绑定成功槽 {slot} 应含 {PILL}，实际 {entry!r}"
         )
-    else:
+    elif expected_entry is None:
         assert entry is None, f"绑定失败槽 {slot} 应为空，实际 {entry!r}"
+    else:
+        assert entry == expected_entry, (
+            f"绑定失败槽 {slot} 应保持既有条目 {expected_entry!r}，实际 {entry!r}"
+        )
     return payload
 
 
@@ -326,7 +335,7 @@ def run(env) -> None:
                 "request_id": rid128,
             }
         )
-        _expect_bind_response(bot, rid128, True, 4)
+        bind_4 = _expect_bind_response(bot, rid128, True, 4)
 
         # ── 4e. 畸形 item_id="" 拒绝且既有绑定不变 ──
         #     schema 契约仅允许 null 或 minLength:1 字符串，item_id="" 为畸形输入。
@@ -341,7 +350,13 @@ def run(env) -> None:
                 "request_id": empty_item_rid,
             }
         )
-        _expect_bind_response(bot, empty_item_rid, False, 4)
+        _expect_bind_response(
+            bot,
+            empty_item_rid,
+            False,
+            4,
+            expected_entry=bind_4["slots"][4],
+        )
         # 槽 4 必须保持槽含物品（未被清空）
         slots_after_empty = _authoritative_slots(bot, "gap10-probe-4e")
         assert slots_after_empty[4] is not None, (

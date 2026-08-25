@@ -2354,7 +2354,7 @@ mod tests {
         first.plot_qi = 0.25;
         let mut second = LingtianPlot::new(pos, None);
         second.plot_qi = 0.75;
-        let plots = vec![first, second];
+        let plots = [first, second];
 
         let index = build_start_plot_index(plots.iter(), None);
         let candidates = index
