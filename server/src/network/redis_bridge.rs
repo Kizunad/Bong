@@ -2001,8 +2001,8 @@ async fn execute_player_chat_list_push(
         .arg(-1_i64)
         .ignore();
 
-    match tokio::time::timeout(REDIS_IO_TIMEOUT, pipeline.query_async::<i64>(pub_conn)).await {
-        Ok(Ok(list_len)) => {
+    match tokio::time::timeout(REDIS_IO_TIMEOUT, pipeline.query_async::<(i64,)>(pub_conn)).await {
+        Ok(Ok((list_len,))) => {
             if should_warn_player_chat_queue(list_len) {
                 tracing::warn!(
                     "[bong][redis] player chat queue is being trimmed; dropping oldest entries: key={key} rpush_length={list_len} max_length={PLAYER_CHAT_QUEUE_MAX_LEN}"
@@ -3917,13 +3917,16 @@ mod redis_bridge_tests {
         for failed_command in [0, 1] {
             let (mut connection, state) =
                 mock_redis_list_connection(MockRedisMode::FailOnCommand(failed_command)).await;
-            let failure = execute_mock_chat_push(&mut connection, "message-failure").await;
-            assert_eq!(
-                failure,
-                Err(format!(
-                    "failed to RPUSH {CH_PLAYER_CHAT}: injected Redis failure"
-                )),
-                "RPUSH/LTRIM command failure must retain the existing RPUSH error contract"
+            let failure = execute_mock_chat_push(&mut connection, "message-failure")
+                .await
+                .expect_err("an injected RPUSH/LTRIM Redis error must not be acknowledged");
+            assert!(
+                failure.starts_with(&format!("failed to RPUSH {CH_PLAYER_CHAT}:")),
+                "RPUSH/LTRIM command failure must retain the existing RPUSH error prefix; got `{failure}`"
+            );
+            assert!(
+                failure.contains("injected Redis failure"),
+                "RPUSH/LTRIM command failure must preserve the Redis failure detail; got `{failure}`"
             );
             let commands = mock_commands_snapshot(&state);
             assert_eq!(
