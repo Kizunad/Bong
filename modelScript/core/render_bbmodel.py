@@ -23,6 +23,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+# render_bbmodel.py 在 modelScript/core/ 下，仓库根是上两级。
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 REPO = Path(__file__).resolve().parents[2]
 MODELS = Path(__file__).resolve().parents[1] / "models"
 OUTDIR = Path(__file__).resolve().parents[1] / "out"
@@ -53,7 +56,56 @@ def _rotmat(deg, axis):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
-def load_bbmodel(path, xform=None):
+def _load_texture(entry, model_path):
+    """贴图源有两种：Blockbench 内嵌的 data URI，和链接到磁盘的相对路径。
+
+    历史上只认 data URI，路径引用会被当成 base64 直接解 —— 报的是
+    `binascii.Error: Incorrect padding` 这种和"贴图找不到"毫不相干的错，
+    仓库 55 个 bbmodel 里有 11 个（全是多状态实体）因此渲不出来。
+    """
+    src = entry.get("source", "")
+    if src.startswith("data:"):
+        return np.asarray(
+            Image.open(io.BytesIO(base64.b64decode(src.split(",", 1)[1]))).convert("RGBA"),
+            float,
+        )
+    if not src:
+        raise ValueError(f"贴图 {entry.get('name')!r} 既无 source 也无内嵌数据")
+    # 路径按仓库根解析（bbmodel 里存的是 client/src/main/... 这种仓库相对路径），
+    # 找不到再退回按 bbmodel 自身所在目录解析。
+    cands = [_REPO_ROOT / src, Path(model_path).resolve().parent / src, Path(src)]
+    for c in cands:
+        if c.is_file():
+            return np.asarray(Image.open(c).convert("RGBA"), float)
+    raise FileNotFoundError(
+        f"贴图 {entry.get('name')!r} 的路径 {src!r} 在以下位置都找不到: "
+        + ", ".join(str(c) for c in cands)
+    )
+
+
+def _texture_index(texes, texture, model_path):
+    """texture 可以是 None（取第 0 张）、int 索引，或贴图名（可省 .png 后缀）。"""
+    if texture is None:
+        return 0
+    if isinstance(texture, int):
+        if not 0 <= texture < len(texes):
+            raise IndexError(
+                f"{Path(model_path).name} 只有 {len(texes)} 张贴图，索引 {texture} 越界"
+            )
+        return texture
+    names = [t.get("name", "") for t in texes]
+    for i, n in enumerate(names):
+        if n == texture or Path(n).stem == texture:
+            return i
+    raise KeyError(f"{Path(model_path).name} 没有名为 {texture!r} 的贴图；有 {names}")
+
+
+def texture_names(path):
+    """列出某个 bbmodel 的贴图名，供预览工具枚举状态变体。"""
+    return [t.get("name", "") for t in json.loads(Path(path).read_text()).get("textures", [])]
+
+
+def load_bbmodel(path, xform=None, texture=None):
     """xform: {element uuid: 4x4 刚体矩阵}，在元素自身 origin+rotation 之后再叠。
 
     骨骼动画预览用——本模块只认元素级旋转，骨树是无视的；摆姿时由调用方（rig.py）
@@ -62,15 +114,20 @@ def load_bbmodel(path, xform=None):
     d = json.loads(Path(path).read_text())
     res = d.get("resolution", {"width": 64, "height": 64})
     rw, rh = res["width"], res["height"]
-    src = d["textures"][0].get("source", "")
-    if src.startswith("data:"):
-        src = src.split(",", 1)[1]
-    tex = np.asarray(Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA"), float)
+    texes = d.get("textures", [])
+    if not texes:
+        raise ValueError(f"{Path(path).name} 没有贴图，无法渲染")
+    ti = _texture_index(texes, texture, path)
+    tex = _load_texture(texes[ti], path)
 
     tris = []  # (verts[3x3], uvs[3x2], normal[3])
     for e in d["elements"]:
         if e.get("type", "cube") != "cube":
             continue
+        # 注意 face["texture"] 这个索引**不能**拿来筛元素。多贴图模型（idle/working、
+        # intact/searching/looted…）的每张贴图都是覆盖同一套 UV 的整体状态皮肤，而元素上
+        # 的索引是生成时按序号轮着写的垃圾值——ForgeStation 的底座/砧/锤各被切成 0,1,0,1，
+        # 按它过滤会把一个铁匠台拆成互不相干的碎块。贴图是整体选，几何永远全画。
         f, t = np.array(e["from"], float), np.array(e["to"], float)
         faces = e.get("faces", {})
         rot = e.get("rotation", [0, 0, 0])
@@ -122,13 +179,13 @@ def _mc_shade(n):
 
 
 def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35, 0.6, 0.72),
-           xform=None, focus=None, shading="lambert"):
+           xform=None, focus=None, shading="lambert", texture=None):
     """focus: (center3, span) 固定取景——逐帧自动取景会让动画整体抖动（每帧包围盒不同）。
 
     shading: "lambert"（默认，保持既有行为）或 "mc"（按 MC 原版面亮度表，
     预览更贴近进游戏后的实际观感）。
     """
-    tris, tex, (rw, rh), name = load_bbmodel(path, xform=xform)
+    tris, tex, (rw, rh), name = load_bbmodel(path, xform=xform, texture=texture)
     th, tw = tex.shape[:2]
     R = _rotmat(pitch, 0) @ _rotmat(yaw, 1)
     ld = np.array(light, float)
@@ -206,12 +263,13 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)), name
 
 
-def render_three_view(path, size=360, bg=(22, 23, 26), shading="lambert"):
+def render_three_view(path, size=360, bg=(22, 23, 26), shading="lambert", texture=None):
     """真实纹理三视图：正面、侧面、前侧 3/4；供模型资产每轮自评。"""
     tiles = []
     name = Path(path).stem
     for label, yaw, pitch in THREE_VIEW_ANGLES:
-        rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg, shading=shading)
+        rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg,
+                                shading=shading, texture=texture)
         tiles.append((label, rendered))
 
     gap = 12
