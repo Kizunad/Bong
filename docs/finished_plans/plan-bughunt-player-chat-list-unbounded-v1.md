@@ -1,7 +1,5 @@
 # BugHunt: bong:player_chat Redis 队列无 LTRIM/TTL 上限，天道离线期间无界增长
 
-> 阶段总览：P0 写入路径与边界契约 ✅ 2026-08-25；P1 RESP/mock 饱和测试 ✅ 2026-08-25；P2 validator 对抗审查 ✅ 2026-08-25；P3 server 完整门禁 ✅ 2026-08-25；P4 主线合并复验 ✅ 2026-08-25；P5 归档与 PR ✅ 2026-08-25。
-
 ## Bug 摘要
 
 **严重度：medium**（skeptic 复核判定不变）。
