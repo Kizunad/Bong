@@ -63,6 +63,7 @@ from held_item_common import (  # noqa: E402
     HeldItem,
     Material,
     blotch,
+    build_model_json,
     build_mtl,
     build_obj,
     hand_display,
@@ -334,7 +335,17 @@ def main() -> None:
     parser.add_argument("--install", action="store_true",
                         help="【当前会直接报错】写进 client 资源树，见下方拒绝理由")
     parser.add_argument("--dump-obj", action="store_true", help="OBJ/MTL 打到 stdout")
+    parser.add_argument("--dump-display", action="store_true",
+                        help="model JSON（含 display 变换）打到 stdout。装不了机时，"
+                             "这是拿到 display 块的唯一途径——`preview_player_anim.py "
+                             "--display` 要它才能把棍摆到手上：\n"
+                             "  python3 modelScript/generators/gen_wooden_club.py "
+                             "--dump-display > /tmp/club.json")
     args = parser.parse_args()
+
+    if args.dump_display:
+        print(build_model_json(WOODEN_CLUB), end="")
+        return
 
     if args.dump_obj:
         print(build_obj(WOODEN_CLUB))
