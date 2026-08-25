@@ -97,10 +97,10 @@ class R7FoundationContractTest {
     void planCarriesTheFrozenContractAndBoundaryAnchors() {
         String plan = R7SourceScan.read(PLAN);
         for (String anchor : List.of(
-            "29 个 production Screen",
-            "92 个 `Sizing.fill(100)`",
+            "15 个 owo Screen",
+            "92 个 token",
             "BongScreenBase<R extends ParentComponent>",
-            "DiffListWidget<T, K, C extends Component>",
+            "DiffListWidget<T,K,C extends Component>",
             "BongKeybindRegistry",
             "ClientThreadMarshal",
             "ScreenOpenPolicy",
@@ -108,20 +108,21 @@ class R7FoundationContractTest {
             "R6",
             "tab-first",
             "DEFER_NOTIFY",
-            "BLOCK_DROP",
+            "DEFER_SILENT",
             "ZERO production behavior change"
         )) {
             assertTrue(plan.contains(anchor), "R7 P0 plan is missing frozen anchor: " + anchor);
         }
-        assertTrue(plan.contains("`ClientThreadMarshal` 只冻结纯 helper API"),
+        assertTrue(plan.contains("R6 的 receive-boundary 是唯一网络线程入口"),
             "R7 must not claim R6 network/router wiring");
-        assertTrue(plan.contains("Screen-local listener/unsubscriber"),
+        assertTrue(plan.contains("现有 listener/remove-listener 形态不统一"),
             "Screen teardown must be distinguished from SessionScopedStore data clearing");
-        assertTrue(plan.contains("`SparringInviteScreenBootstrap` 必须成为 `ScreenOpenPolicy` 的 production consumer"),
+        assertTrue(plan.contains("`SparringInviteScreenBootstrap.java`"),
             "P4 must wire the real social-invite bootstrap into ScreenOpenPolicy");
         assertTrue(plan.contains("server-authoritative combat snapshot"),
             "P4 social deferral must block on an authoritative combat-state input");
-        assertTrue(plan.contains("stale offer A") && plan.contains("不能清除 offer B"),
+        assertTrue(plan.contains("stale A/duplicate callback 不影响 B")
+                && plan.contains("exact offerId claim/compare-and-clear exactly-once"),
             "P4 must prove an older insight lifecycle cannot clear a newer offer");
     }
 
