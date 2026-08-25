@@ -642,7 +642,7 @@ describe("Arbiter", () => {
     );
   });
 
-  it("keeps ASCII names embedded in longer tokens and preserves one-character names", () => {
+  it("keeps names embedded in longer tokens and preserves one-character names", () => {
     const state = createTestWorldState();
     state.players[0] = {
       ...state.players[0],
@@ -670,6 +670,30 @@ describe("Arbiter", () => {
       state,
     );
     expect(embedded.narrations[0]?.text).toBe("TestPlayerX 才是真正的对手");
+
+    const supplementaryLetter = runMerge(
+      [
+        {
+          source: "calamity",
+          decision: {
+            commands: [],
+            narrations: [
+              {
+                scope: "zone",
+                target: "starter_zone",
+                text: "TestPlayer𐐀abc 才是真正的对手",
+                style: "system_warning",
+              },
+            ],
+            reasoning: "supplementary-letter boundary guard",
+          },
+        },
+      ],
+      state,
+    );
+    expect(supplementaryLetter.narrations[0]?.text).toBe(
+      "TestPlayer𐐀abc 才是真正的对手",
+    );
 
     state.players[0] = {
       ...state.players[0],

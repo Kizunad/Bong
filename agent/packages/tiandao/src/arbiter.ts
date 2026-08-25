@@ -665,7 +665,29 @@ function redactChinesePlayerNameToken(text: string, name: string): string {
 // therefore treated as separators here, while adjacent non-Han word characters still
 // protect longer ASCII/Unicode tokens from partial redaction.
 function hasNameBoundary(text: string, start: number, end: number): boolean {
-  return !isWordLikeCharacter(text[start - 1]) && !isWordLikeCharacter(text[end]);
+  return (
+    !isWordLikeCharacter(previousCodePoint(text, start)) &&
+    !isWordLikeCharacter(nextCodePoint(text, end))
+  );
+}
+
+// `indexOf` offsets are UTF-16 indices; decode both neighbors as full code points so
+// supplementary-plane letters cannot be mistaken for two non-word surrogate halves.
+function previousCodePoint(text: string, index: number): string | undefined {
+  if (index <= 0) {
+    return undefined;
+  }
+
+  const previousCodeUnit = text.charCodeAt(index - 1);
+  const isLowSurrogate = previousCodeUnit >= 0xdc00 && previousCodeUnit <= 0xdfff;
+  const codePointStart = isLowSurrogate && index >= 2 ? index - 2 : index - 1;
+  const codePoint = text.codePointAt(codePointStart);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function nextCodePoint(text: string, index: number): string | undefined {
+  const codePoint = text.codePointAt(index);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
 }
 
 function isWordLikeCharacter(char: string | undefined): boolean {
