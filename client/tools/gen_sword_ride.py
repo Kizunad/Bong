@@ -16,7 +16,9 @@
 
 反僵硬要点：
   - 躯干前倾 +25° 冲刺姿 (身体压风)
-  - 双腿 pitch=+40° + bend=105° axis=180° + yaw 外开 ±8° → 蹲踞踏剑 (大腿前抬、小腿折下)
+  - 双腿 pitch=+40° + bend=105° axis=0° + yaw 外开 ±8° → 蹲踞踏剑 (大腿前抬、小腿朝后折下)
+    注：axis 原为 180°，那会让膝盖**往身前折**——解剖上不存在的断膝。
+    axis=0 才是「小腿朝臀折」，与「小腿折下」的原意一致。
   - 双臂 pitch=+60° + yaw=±55° bend=15° axis=180° → 后展 (风阻平衡)
   - 风阻颤抖: 腿 bend 105°↔110° / 臂 yaw ±55°↔±58° 周期性
   - 袖摆方向差: 左右不同相位 (tick 10 右袖被刮内收 yaw -52° / 左袖外翻 +58°)
@@ -33,8 +35,8 @@ POSE = {
         torso=dict(pitch=+25),
         rightArm=dict(pitch=+60, yaw=-55, roll=0, bend=15, axis=180),
         leftArm=dict(pitch=+60, yaw=+55, roll=0, bend=15, axis=180),
-        rightLeg=dict(pitch=+40, yaw=-8, bend=105, axis=180),
-        leftLeg=dict(pitch=+40, yaw=+8, bend=105, axis=180),
+        rightLeg=dict(pitch=+40, yaw=-8, bend=105, axis=0),
+        leftLeg=dict(pitch=+40, yaw=+8, bend=105, axis=0),
     ),
     10: dict(  # 风刮左
         easing="INOUTSINE",
@@ -43,8 +45,8 @@ POSE = {
         torso=dict(pitch=+24, yaw=+2),
         rightArm=dict(pitch=+60, yaw=-52, roll=-5, bend=15, axis=180),
         leftArm=dict(pitch=+61, yaw=+58, roll=+8, bend=16, axis=180),
-        rightLeg=dict(pitch=+40, yaw=-8, bend=108, axis=180),
-        leftLeg=dict(pitch=+40, yaw=+8, bend=108, axis=180),
+        rightLeg=dict(pitch=+40, yaw=-8, bend=108, axis=0),
+        leftLeg=dict(pitch=+40, yaw=+8, bend=108, axis=0),
     ),
     20: dict(
         easing="INOUTSINE",
@@ -53,8 +55,8 @@ POSE = {
         torso=dict(pitch=+23),
         rightArm=dict(pitch=+60, yaw=-56, roll=0, bend=15, axis=180),
         leftArm=dict(pitch=+60, yaw=+56, roll=0, bend=15, axis=180),
-        rightLeg=dict(pitch=+40, yaw=-8, bend=110, axis=180),
-        leftLeg=dict(pitch=+40, yaw=+8, bend=110, axis=180),
+        rightLeg=dict(pitch=+40, yaw=-8, bend=110, axis=0),
+        leftLeg=dict(pitch=+40, yaw=+8, bend=110, axis=0),
     ),
     30: dict(  # 风刮右
         easing="INOUTSINE",
@@ -63,8 +65,8 @@ POSE = {
         torso=dict(pitch=+24, yaw=-2),
         rightArm=dict(pitch=+61, yaw=-58, roll=+8, bend=16, axis=180),
         leftArm=dict(pitch=+60, yaw=+52, roll=-5, bend=15, axis=180),
-        rightLeg=dict(pitch=+40, yaw=-8, bend=108, axis=180),
-        leftLeg=dict(pitch=+40, yaw=+8, bend=108, axis=180),
+        rightLeg=dict(pitch=+40, yaw=-8, bend=108, axis=0),
+        leftLeg=dict(pitch=+40, yaw=+8, bend=108, axis=0),
     ),
     40: dict(  # 闭环
         easing="INOUTSINE",
@@ -73,8 +75,8 @@ POSE = {
         torso=dict(pitch=+25),
         rightArm=dict(pitch=+60, yaw=-55, roll=0, bend=15, axis=180),
         leftArm=dict(pitch=+60, yaw=+55, roll=0, bend=15, axis=180),
-        rightLeg=dict(pitch=+40, yaw=-8, bend=105, axis=180),
-        leftLeg=dict(pitch=+40, yaw=+8, bend=105, axis=180),
+        rightLeg=dict(pitch=+40, yaw=-8, bend=105, axis=0),
+        leftLeg=dict(pitch=+40, yaw=+8, bend=105, axis=0),
     ),
 }
 

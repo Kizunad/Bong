@@ -12,13 +12,13 @@ use crate::schema::client_request::ClientRequestV1;
 
 /// Combat ingress 唯一需要的事件写入面。
 ///
-/// Revival 资源沿用原入口的可选 wiring，在资源缺失时保持 fail-closed；盾牌资源是
-/// 生产 wiring 的必需资源，使用强制引用避免未注册时静默丢弃举盾/放盾请求。
+/// 三个资源都使用 `Option<ResMut<_>>`：请求入口在资源缺失时保持 fail-closed，
+/// 不创建替代状态，也不触碰玩家 ECS。正常生产 wiring 仍由现有事件资源提供。
 #[derive(SystemParam)]
 pub(crate) struct CombatRequestParams<'w> {
     pub(crate) revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
-    pub(crate) raise_shield_tx: ResMut<'w, Events<RaiseShieldIntent>>,
-    pub(crate) lower_shield_tx: ResMut<'w, Events<LowerShieldIntent>>,
+    pub(crate) raise_shield_tx: Option<ResMut<'w, Events<RaiseShieldIntent>>>,
+    pub(crate) lower_shield_tx: Option<ResMut<'w, Events<LowerShieldIntent>>>,
 }
 /// 已经通过总 C2S schema 解析的 Combat 请求。
 ///
@@ -86,13 +86,23 @@ pub(crate) fn dispatch_combat_request(
             CombatDispatchOutcome::Emitted
         }
         CombatRequest::RaiseShield => {
-            tracing::debug!("[bong][shield] RaiseShield received entity={:?}", player);
-            params.raise_shield_tx.send(RaiseShieldIntent { player });
+            let Some(raise_shield_tx) = params.raise_shield_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped raise_shield because RaiseShieldIntent event resource is missing"
+                );
+                return CombatDispatchOutcome::DroppedMissingEventResource;
+            };
+            raise_shield_tx.send(RaiseShieldIntent { player });
             CombatDispatchOutcome::Emitted
         }
         CombatRequest::LowerShield => {
-            tracing::debug!("[bong][shield] LowerShield received entity={:?}", player);
-            params.lower_shield_tx.send(LowerShieldIntent { player });
+            let Some(lower_shield_tx) = params.lower_shield_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network] dropped lower_shield because LowerShieldIntent event resource is missing"
+                );
+                return CombatDispatchOutcome::DroppedMissingEventResource;
+            };
+            lower_shield_tx.send(LowerShieldIntent { player });
             CombatDispatchOutcome::Emitted
         }
     }
@@ -124,13 +134,17 @@ mod tests {
         outcome.0 = Some(dispatch_combat_request(request, player, tick, &mut params));
     }
 
-    fn combat_app(with_revival: bool) -> App {
+    fn combat_app(with_revival: bool, with_raise_shield: bool, with_lower_shield: bool) -> App {
         let mut app = App::new();
         if with_revival {
             app.add_event::<RevivalActionIntent>();
         }
-        app.add_event::<RaiseShieldIntent>();
-        app.add_event::<LowerShieldIntent>();
+        if with_raise_shield {
+            app.add_event::<RaiseShieldIntent>();
+        }
+        if with_lower_shield {
+            app.add_event::<LowerShieldIntent>();
+        }
         app.insert_resource(PendingCombatRequest::default());
         app.insert_resource(LastDispatchOutcome::default());
         app.add_systems(Update, dispatch_pending_combat_request);
@@ -205,7 +219,7 @@ mod tests {
 
     #[test]
     fn revival_requests_preserve_action_player_tick_and_event_count() {
-        let mut app = combat_app(true);
+        let mut app = combat_app(true, false, false);
         let player = app.world_mut().spawn(WorldMarker(7)).id();
         let cases = [
             (
@@ -253,7 +267,7 @@ mod tests {
 
     #[test]
     fn shield_requests_preserve_player_tick_and_event_count() {
-        let mut app = combat_app(false);
+        let mut app = combat_app(false, true, true);
         let player = app.world_mut().spawn(WorldMarker(9)).id();
         let tick = 707;
 
@@ -288,13 +302,25 @@ mod tests {
     #[test]
     fn missing_event_resource_drops_matching_request_without_ecs_mutation() {
         let cases = [
-            (CombatRequest::Reincarnate, "revival"),
-            (CombatRequest::Terminate, "revival"),
-            (CombatRequest::CreateNewCharacter, "revival"),
+            (CombatRequest::Reincarnate, false, false, false, "revival"),
+            (
+                CombatRequest::RaiseShield,
+                false,
+                false,
+                false,
+                "raise shield",
+            ),
+            (
+                CombatRequest::LowerShield,
+                false,
+                false,
+                false,
+                "lower shield",
+            ),
         ];
 
-        for (request, label) in cases {
-            let mut app = combat_app(false);
+        for (request, with_revival, with_raise, with_lower, label) in cases {
+            let mut app = combat_app(with_revival, with_raise, with_lower);
             let player = app.world_mut().spawn(WorldMarker(11)).id();
             assert_eq!(
                 send_request(&mut app, player, 808, request),

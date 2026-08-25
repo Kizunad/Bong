@@ -108,7 +108,8 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::{combat, npc, social};
+use crate::network::client_request::social;
+use crate::network::client_request::{combat, npc};
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
