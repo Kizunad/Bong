@@ -3496,27 +3496,28 @@ mod redis_bridge_tests {
         );
     }
 
-    async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> Vec<u8> {
+    async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> std::io::Result<Vec<u8>> {
         let mut line = Vec::new();
         loop {
             let mut byte = [0_u8; 1];
-            server
-                .read_exact(&mut byte)
-                .await
-                .expect("mock Redis must read the complete RESP line");
+            server.read_exact(&mut byte).await?;
             line.push(byte[0]);
             if line.ends_with(b"\r\n") {
-                return line;
+                return Ok(line);
             }
         }
     }
 
     async fn read_resp_request(server: &mut tokio::io::DuplexStream) {
-        let _ = read_resp_request_arguments(server).await;
+        let _ = read_resp_request_arguments(server)
+            .await
+            .expect("mock Redis must read the complete RESP request");
     }
 
-    async fn read_resp_request_arguments(server: &mut tokio::io::DuplexStream) -> Vec<Vec<u8>> {
-        let line = read_resp_line(server).await;
+    async fn read_resp_request_arguments(
+        server: &mut tokio::io::DuplexStream,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        let line = read_resp_line(server).await?;
         assert_eq!(
             line.first().copied(),
             Some(b'*'),
@@ -3528,7 +3529,7 @@ mod redis_bridge_tests {
             .expect("RESP array count must be numeric");
         let mut arguments = Vec::with_capacity(argument_count);
         for _ in 0..argument_count {
-            let line = read_resp_line(server).await;
+            let line = read_resp_line(server).await?;
             assert_eq!(
                 line.first().copied(),
                 Some(b'$'),
@@ -3539,10 +3540,7 @@ mod redis_bridge_tests {
                 .parse::<usize>()
                 .expect("RESP bulk length must be numeric");
             let mut payload = vec![0_u8; length + 2];
-            server
-                .read_exact(&mut payload)
-                .await
-                .expect("mock Redis must read the complete RESP bulk string");
+            server.read_exact(&mut payload).await?;
             assert_eq!(
                 &payload[length..],
                 b"\r\n",
@@ -3550,7 +3548,7 @@ mod redis_bridge_tests {
             );
             arguments.push(payload[..length].to_vec());
         }
-        arguments
+        Ok(arguments)
     }
 
     async fn mock_multiplexed_connection(
@@ -3603,7 +3601,11 @@ mod redis_bridge_tests {
 
         let start = if start < 0 { length + start } else { start };
         let stop = if stop < 0 { length + stop } else { stop };
-        if start < 0 || start >= length || stop < start || stop < 0 {
+        // Redis clamps a negative start that precedes the list to zero.  Without
+        // that clamp, the mock would erase every queue shorter than the cap and
+        // could not model `LTRIM key -N -1` faithfully.
+        let start = start.max(0);
+        if start >= length || stop < start || stop < 0 {
             list.clear();
             return;
         }
@@ -3633,7 +3635,11 @@ mod redis_bridge_tests {
 
             let mut command_index = 0;
             loop {
-                let arguments = read_resp_request_arguments(&mut server).await;
+                let arguments = match read_resp_request_arguments(&mut server).await {
+                    Ok(arguments) => arguments,
+                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(error) => panic!("mock Redis failed to read a command: {error}"),
+                };
                 let command = String::from_utf8_lossy(
                     arguments
                         .first()
