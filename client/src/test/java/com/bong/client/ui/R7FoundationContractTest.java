@@ -46,7 +46,10 @@ class R7FoundationContractTest {
         "void_action.open_screen",
         "forge.open_screen",
         "tsy.extract_start",
-        "tsy.extract_cancel"
+        "tsy.extract_cancel",
+        "dying_elder.give_dan",
+        "dying_elder.refuse",
+        "dying_elder.delay"
     );
 
     @Test
@@ -97,10 +100,10 @@ class R7FoundationContractTest {
     void planCarriesTheFrozenContractAndBoundaryAnchors() {
         String plan = R7SourceScan.read(PLAN);
         for (String anchor : List.of(
-            "29 个 production Screen",
-            "92 个 `Sizing.fill(100)`",
+            "真实 Screen **29** 个",
+            "现有 92 个 token（87 个 executable）",
             "BongScreenBase<R extends ParentComponent>",
-            "DiffListWidget<T, K, C extends Component>",
+            "DiffListWidget<T,K,C extends Component>",
             "BongKeybindRegistry",
             "ClientThreadMarshal",
             "ScreenOpenPolicy",
@@ -108,20 +111,22 @@ class R7FoundationContractTest {
             "R6",
             "tab-first",
             "DEFER_NOTIFY",
-            "BLOCK_DROP",
+            "普通 hotkey 不重放",
             "ZERO production behavior change"
         )) {
             assertTrue(plan.contains(anchor), "R7 P0 plan is missing frozen anchor: " + anchor);
         }
-        assertTrue(plan.contains("`ClientThreadMarshal` 只冻结纯 helper API"),
-            "R7 must not claim R6 network/router wiring");
-        assertTrue(plan.contains("Screen-local listener/unsubscriber"),
-            "Screen teardown must be distinguished from SessionScopedStore data clearing");
-        assertTrue(plan.contains("`SparringInviteScreenBootstrap` 必须成为 `ScreenOpenPolicy` 的 production consumer"),
-            "P4 must wire the real social-invite bootstrap into ScreenOpenPolicy");
+        assertTrue(plan.contains("R6 仍独占网络 receiver/bridge/router"),
+            "R7 must not claim R6 network/router ownership");
+        assertTrue(plan.contains("唯一 screen-level intake"),
+            "Screen teardown and subscription ownership must remain explicit");
+        assertTrue(plan.contains("SparringInviteScreenBootstrap.java")
+                && plan.contains("ScreenOpenPolicy"),
+            "P4/P6 must name the real social-invite bootstrap and its open-policy owner");
         assertTrue(plan.contains("server-authoritative combat snapshot"),
             "P4 social deferral must block on an authoritative combat-state input");
-        assertTrue(plan.contains("stale offer A") && plan.contains("不能清除 offer B"),
+        assertTrue(plan.contains("stale A/duplicate callback 不影响 B")
+                && plan.contains("exact offerId claim/compare-and-clear exactly-once"),
             "P4 must prove an older insight lifecycle cannot clear a newer offer");
     }
 
@@ -329,11 +334,11 @@ class R7FoundationContractTest {
             .filter(row -> !REGISTRY_MIGRATED_OWNER_IDS.contains(row.ownerId()))
             .toList();
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
-        assertEquals(21, actualSites.size(),
+        assertEquals(18, actualSites.size(),
             "remaining direct KeyBinding constructor-site count changed after registry migration");
         assertEquals(26, expected.size(), "the production-site manifest must retain all 26 logical bindings");
-        assertEquals(21, directExpected.size(),
-            "the direct-constructor subset must exclude exactly the five registry-migrated bindings");
+        assertEquals(18, directExpected.size(),
+            "the direct-constructor subset must exclude exactly the eight registry-migrated bindings");
         assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "every logical binding needs one globally unique BindingOwner id");
@@ -348,13 +353,13 @@ class R7FoundationContractTest {
         assertEquals(resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
-        assertEquals(29, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
-            "the remaining 21 direct constructors must expand to exactly 29 runtime bindings");
+        assertEquals(26, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "the remaining 18 direct constructors must expand to exactly 26 runtime bindings");
         Set<String> expandedTranslationKeys = new TreeSet<>();
         for (KeybindingSourceSite site : actualSites) {
             expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        assertEquals(29, expandedTranslationKeys.size(),
+        assertEquals(26, expandedTranslationKeys.size(),
             "every remaining direct runtime binding must have a unique effective translation key");
         for (KeybindProductionSiteRow row : directExpected) {
             KeybindingSourceSite actual = actualSites.stream()
@@ -378,7 +383,7 @@ class R7FoundationContractTest {
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
             directExpected, actualSites, keybindRows()
         );
-        assertEquals(29, expandedDefaults.size(),
+        assertEquals(26, expandedDefaults.size(),
             "the direct-site collision audit must inspect every remaining expanded default");
         Set<DefaultCollision> collisions = new TreeSet<>();
         for (int first = 0; first < expandedDefaults.size(); first++) {
@@ -411,7 +416,7 @@ class R7FoundationContractTest {
         }
         Set<DefaultCollision> expectedCollisions = Set.of();
         assertEquals(expectedCollisions, collisions,
-            "the 34 expanded target defaults must not collide with frozen vanilla reservations");
+            "the 26 expanded target defaults must not collide with frozen vanilla reservations");
 
         Set<DefaultCollision> exemptions = conflictExemptionRows().stream()
             .map(row -> new DefaultCollision(row.firstOwnerId(), row.secondOwnerId(), row.inputType(), row.code()))
