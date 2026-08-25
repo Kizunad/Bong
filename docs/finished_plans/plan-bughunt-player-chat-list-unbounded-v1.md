@@ -1,6 +1,6 @@
 # BugHunt: bong:player_chat Redis 队列无 LTRIM/TTL 上限，天道离线期间无界增长
 
-> 阶段总览：P0 写入路径与边界契约 ✅ 2026-08-25；P1 RESP/mock 饱和测试 ⏳；P2 validator 对抗审查 ⬜；P3 server 完整门禁 ⬜；P4 主线合并复验 ⬜；P5 归档与 PR ⬜。
+> 阶段总览：P0 写入路径与边界契约 ✅ 2026-08-25；P1 RESP/mock 饱和测试 ✅ 2026-08-25；P2 validator 对抗审查 ✅ 2026-08-25；P3 server 完整门禁 ✅ 2026-08-25；P4 主线合并复验 ✅ 2026-08-25；P5 归档与 PR ✅ 2026-08-25。
 
 ## Bug 摘要
 
@@ -58,13 +58,13 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 在 `server/src/network/redis_bridge.rs` 中为 `bong:player_chat` 定义一个显式、可配置的队列上限常量（如 `const PLAYER_CHAT_QUEUE_MAX_LEN: i64 = 4096;`，放在 `REDIS_IO_TIMEOUT` 附近同一批"运行时防护参数"里），数值需明显大于 agent 单次 drain 窗口 `CHAT_DRAIN_WINDOW`（128）留出安全边际，同时给出量级依据（如"约合 X 名玩家在 agent 离线 Y 分钟内的正常聊天速率上限"）写进代码注释。
-- [ ] 让 `execute_outbound_command` 处理 `RedisIoCommand::ListPush` 时，在同一次 Redis round-trip 里追加 `LTRIM key -PLAYER_CHAT_QUEUE_MAX_LEN -1`（保留队尾最新的 N 条、丢弃更旧的），可用 `redis::pipe().rpush(key, payload).ltrim(key, -max_len, -1).query_async(pub_conn)` 一次流水线发出；不要求 MULTI/EXEC 事务级原子性（单一 writer 单连接下 RPUSH→LTRIM 严格顺序执行已经足够正确），但要在 pipeline 失败/超时路径上保留现有 `REDIS_IO_TIMEOUT` 语义（超时仍报错，不吞失败）。
-- [ ] 显式声明并写进代码注释/plan 的丢弃策略：**丢最旧**（LTRIM 保留队尾最新 N 条），这是唯一允许的行为——不做"丢最新"或"整队列清空"。
-- [ ] 加一条 `tracing::warn!` 分支：当本次 RPUSH 后的 `list_len`（即 execute 分支里已经拿到的返回值）超过 `PLAYER_CHAT_QUEUE_MAX_LEN` 时打日志，暴露"聊天队列正在被截断，说明 agent 侧长期没在消费"这一运维信号，避免这个上限本身变成又一个静默吞消息的黑洞。
-- [ ] 不改动 `agent/packages/tiandao/src/redis-ipc.ts::drainListAtomically`、`runtime.ts` 的 `CHAT_DRAIN_WINDOW`/`drainPlayerChat` 调用点——agent 侧消费语义（一次最多 drain `maxItems` 条、`LRANGE`+`LTRIM` 清走已读前缀）保持不变；本次修复只加"写入侧兜底"，不引入消费侧的行为变化。
-- [ ] 若 `RedisIoCommand::ListPush` 未来需要被其他 `RedisOutbound` 变体复用（当前全仓仅 `PlayerChat` 一处），评估是否要把 `max_len` 做成该枚举变体的字段（而非硬编码在 `execute_outbound_command` 内部）以便按 key 差异化配置；本 plan 范围内可先按"`ListPush` 恒配 `PLAYER_CHAT_QUEUE_MAX_LEN`"最小实现，不提前泛化。
-- [ ] 复核 `docker-compose.test.yml`（以及生产部署配置，若仓库内有对应文件）是否需要补充 Redis 层 `maxmemory`/`maxmemory-policy` 作为纵深防御的第二层兜底；若不在本 plan 范围内，至少在 Finish Evidence 里写明"应用层已兜底，基础设施层兜底留作后续"。
+- [x] 在 `server/src/network/redis_bridge.rs` 中为 `bong:player_chat` 定义显式队列上限 `PLAYER_CHAT_QUEUE_MAX_LEN: i64 = 4096`，并以 agent 单次 drain 窗口 128 的 32 倍安全边际说明量级。
+- [x] 让 `execute_outbound_command` 的 `CH_PLAYER_CHAT` 路径在同一 Redis pipeline 中执行 `RPUSH` + `LTRIM key -4096 -1`，并保留 `REDIS_IO_TIMEOUT` 失败语义。
+- [x] 显式锁定丢弃策略为**丢最旧**：`LTRIM` 保留队尾最新 N 条，不丢最新、不清空整队列。
+- [x] 加入 `tracing::warn!` 分支，在 RPUSH 返回长度超过上限时暴露发生截断的运维信号。
+- [x] 保持 `agent/packages/tiandao/src/redis-ipc.ts::drainListAtomically`、`runtime.ts` 的 `CHAT_DRAIN_WINDOW`/`drainPlayerChat` 与 client/schema 不变，仅增加 server 写入侧兜底。
+- [x] 核验 `RedisIoCommand::ListPush` 当前仅由 PlayerChat 产出，因此不泛化字段、不把上限套到其它 ListPush/ListPushWithReceipt 路径。
+- [x] 复核 Redis 基础设施配置；仓库未提供针对该 key 的 `maxmemory-policy` 兜底，应用层上限已落地，基础设施纵深防御留作后续运维事项。
 
 ## 验收测试计划
 
@@ -86,3 +86,38 @@
 - 若未来出现其它 Redis list 类 outbound（当前 `RedisIoCommand::ListPush` 仅 `PlayerChat` 一处使用），本修复若把上限硬编码在 `execute_outbound_command` 内部而非做成按 key 可配置，后来者复用 `ListPush` 时可能被这个专为聊天设计的上限意外套用；实现时需在代码注释里显式标注"当前上限专为 `CH_PLAYER_CHAT` 设计，新增 list 类 key 前先评估是否需要独立上限"。
 - 修复点必须落在写入侧（`execute_outbound_command`），不能把兜底寄望于消费侧 `drainListAtomically` 加大 `maxItems`——那只是让"多久之后才会真正无界增长"的窗口变大，没有解决"agent 完全不在线时队列无限增长"的根本问题。
 - 加 LTRIM 后如果 `PLAYER_CHAT_QUEUE_MAX_LEN` 设置不当导致正常运行下（agent 一直在线、drain 及时）也频繁触发截断日志，会制造噪音日志；需要确保正常运行路径下 `list_len` 长期远低于上限，触发日志只在真正异常的积压场景出现。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0/P1：`server/src/network/redis_bridge.rs` 的 `execute_player_chat_list_push` 仅对 `CH_PLAYER_CHAT` 执行 `RPUSH` 后 `LTRIM key -4096 -1`，保留队尾最新消息；RESP/mock 测试覆盖边界、远超上限、失败、超时、warning 阈值和非 chat 路径。
+- P2：无上下文 read-only validator 以目标 HEAD `0ffc86d7511c24b23a738aec8a68002c150d0448` 对拍，返回 `PASS`。
+- P3：server 完整 fmt/clippy/test gate 通过。
+- P4：`git fetch origin && git merge origin/main` 返回 Already up to date；合并前后无主线变更。
+- P5：本文件由 Active 归档至 `docs/finished_plans/`，PR 在归档后创建且不合并。
+
+### 关键 commit
+
+- `8648738c639a9382d03b408797bd702d3b83b9e5`（2026-08-25）：将本 bughunt skeleton 提升为 Active plan。
+- `58a4fc5a157251bcb68e4d5c1cd3802f75590be8`（2026-08-25）：实现玩家聊天 Redis 队列有界写入及 RESP/mock 饱和测试。
+- `20ce6975bfed071eddb549269aa76fa069549a63`（2026-08-25）：修正 pipeline 单元素响应解码与错误语义断言。
+- `0853e785ddb727d2fe0f163bccc48f7675d3b987`（2026-08-25）：补齐 plan 阶段总览。
+- `0ffc86d7511c24b23a738aec8a68002c150d0448`（2026-08-25）：修正 Redis mock 的负索引 LTRIM 语义与 EOF 收尾。
+
+### 测试结果
+
+- `flock /tmp/bong-cargo.lock -c 'cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'`：fmt/clippy 通过；lib 12772 passed、2 ignored；main 18 passed；集成测试 9 + 8 + 2 + 4 + 18 passed；doc-tests 3 passed、5 ignored。
+- `flock /tmp/bong-cargo.lock -c 'cd server && cargo test player_chat_queue -- --nocapture --test-threads=1'`：5 passed、0 failed。
+
+### 跨仓库核验
+
+- server：`CH_PLAYER_CHAT`、`execute_player_chat_list_push`、`PLAYER_CHAT_QUEUE_MAX_LEN`。
+- agent：`drainListAtomically` / `drainPlayerChat` 保持既有消费语义，未修改。
+- client：聊天显示与协议路径未修改；本 bug 只需 server Redis 写入侧兜底。
+- schema：`CH_PLAYER_CHAT` 常量契约未修改。
+
+### 遗留 / 后续
+
+- Redis 基础设施未在仓库内为该 key 配置 `maxmemory-policy`；应用层 4096 上限和 warning 已作为当前防线，基础设施层纵深防御另行评估。
+- agent consumer、schema、client 及其它 Redis ListPush/ListPushWithReceipt 路径不在本 plan 范围。
