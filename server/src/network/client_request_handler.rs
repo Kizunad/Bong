@@ -108,7 +108,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::{combat, npc};
+use crate::network::client_request::{combat, npc, production};
 use crate::network::client_request::{social, world};
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
@@ -428,8 +428,8 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub furnaces: Query<'w, 's, (Entity, &'static mut AlchemyFurnace)>,
     pub learned: Query<'w, 's, &'static mut LearnedRecipes>,
     pub recipe_registry: Res<'w, RecipeRegistry>,
-    pub learn_fragment_tx: EventWriter<'w, crate::alchemy::LearnRecipeFragmentIntent>,
-    pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
+    pub learn_fragment_tx: Option<ResMut<'w, Events<crate::alchemy::LearnRecipeFragmentIntent>>>,
+    pub place_furnace_tx: Option<ResMut<'w, Events<PlaceFurnaceRequest>>>,
     pub outcome_tx: Option<ResMut<'w, Events<crate::alchemy::AlchemyOutcomeEvent>>>,
     pub item_registry: Res<'w, ItemRegistry>,
     pub instance_allocator: Option<ResMut<'w, InventoryInstanceIdAllocator>>,
@@ -1388,6 +1388,27 @@ pub fn handle_client_request_payloads(
             Err(request) => request,
         };
 
+        let request = match production::try_into_production_request(request) {
+            Ok(production_request) => {
+                production::dispatch_production_request(
+                    production_request,
+                    ev.client,
+                    combat_clock,
+                    &mut alchemy_params,
+                    &mut combat_params,
+                    &mut dispatch,
+                    &mut npc_engagement_params,
+                    &mut skill_scroll_params,
+                    &mut commands,
+                    &mut clients,
+                    &mut inventories,
+                    &player_states,
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
+
         if session::dispatch(
             &request,
             ev.client,
@@ -1417,6 +1438,20 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::TradeOfferRequest { .. }
             | ClientRequestV1::TradeOfferResponse { .. } => {
                 unreachable!("Social requests are dispatched by the typed Social dispatcher")
+            }
+            ClientRequestV1::AlchemyOpenFurnace { .. }
+            | ClientRequestV1::AlchemyFeedSlot { .. }
+            | ClientRequestV1::AlchemyTakeBack { .. }
+            | ClientRequestV1::AlchemyIgnite { .. }
+            | ClientRequestV1::AlchemyIntervention { .. }
+            | ClientRequestV1::AlchemyTurnPage { .. }
+            | ClientRequestV1::AlchemyLearnRecipe { .. }
+            | ClientRequestV1::AlchemyLearnRecipeFragment { .. }
+            | ClientRequestV1::AlchemyTakePill { .. }
+            | ClientRequestV1::AlchemyFurnacePlace { .. } => {
+                unreachable!(
+                    "Production requests are dispatched by the typed Production dispatcher"
+                )
             }
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 tracing::info!(
@@ -1591,105 +1626,6 @@ pub fn handle_client_request_payloads(
                         err
                     );
                 }
-            }
-            // ── 炼丹请求 ECS dispatch (plan-alchemy-v1 §4) ──────────────────
-            ClientRequestV1::AlchemyTurnPage { delta, .. } => {
-                handle_alchemy_turn_page(
-                    ev.client,
-                    delta,
-                    &mut clients,
-                    &mut alchemy_params.learned,
-                    &mut alchemy_params.state,
-                );
-            }
-            ClientRequestV1::AlchemyLearnRecipe { recipe_id, .. } => {
-                handle_alchemy_learn(
-                    ev.client,
-                    recipe_id,
-                    &mut clients,
-                    &mut alchemy_params.learned,
-                    &alchemy_params.recipe_registry,
-                );
-            }
-            ClientRequestV1::AlchemyLearnRecipeFragment {
-                item_instance_id, ..
-            } => {
-                tracing::info!(
-                    "[bong][network][alchemy] learn_recipe_fragment entity={:?} item_instance_id={item_instance_id}",
-                    ev.client
-                );
-                alchemy_params
-                    .learn_fragment_tx
-                    .send(crate::alchemy::LearnRecipeFragmentIntent {
-                        player: ev.client,
-                        item_instance_id,
-                    });
-            }
-            ClientRequestV1::AlchemyIntervention {
-                furnace_pos,
-                intervention,
-                ..
-            } => {
-                handle_alchemy_intervention(
-                    ev.client,
-                    furnace_pos,
-                    intervention.into(),
-                    &mut clients,
-                    &combat_params.unique_ids,
-                    &mut alchemy_params.furnaces,
-                    &alchemy_params.recipe_registry,
-                    alchemy_params.zones.as_deref(),
-                    alchemy_params.redis.as_deref(),
-                    alchemy_params.vfx_events.as_deref_mut(),
-                );
-            }
-            ClientRequestV1::AlchemyOpenFurnace { furnace_pos, .. } => {
-                handle_alchemy_open_furnace(
-                    ev.client,
-                    furnace_pos,
-                    &mut clients,
-                    &mut alchemy_params.furnaces,
-                    &mut alchemy_params.learned,
-                    &alchemy_params.recipe_registry,
-                );
-            }
-            ClientRequestV1::AlchemyTakePill { pill_item_id, .. } => {
-                handle_alchemy_take_pill(
-                    ev.client,
-                    &pill_item_id,
-                    None,
-                    &mut commands,
-                    combat_clock,
-                    &mut inventories,
-                    &mut clients,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut combat_params,
-                    &mut dispatch.lifespan_extension_tx,
-                    alchemy_params.vfx_events.as_deref_mut(),
-                    &mut npc_engagement_params.audio_events,
-                    // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
-                    alchemy_params.hallucination_events.as_deref_mut(),
-                    alchemy_params.pending_narrations.as_deref_mut(),
-                );
-            }
-            ClientRequestV1::AlchemyFurnacePlace {
-                x,
-                y,
-                z,
-                item_instance_id,
-                ..
-            } => {
-                let pos = valence::prelude::BlockPos::new(x, y, z);
-                tracing::info!(
-                    "[bong][network][alchemy] furnace_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
-                    ev.client
-                );
-                alchemy_params.place_furnace_tx.send(PlaceFurnaceRequest {
-                    player: ev.client,
-                    pos,
-                    item_instance_id,
-                });
             }
             ClientRequestV1::CoffinOpen { x, y, z, .. } => {
                 tracing::info!(
@@ -2018,70 +1954,6 @@ pub fn handle_client_request_payloads(
                         &mut combat_params.meridians,
                     );
                 }
-            }
-            ClientRequestV1::AlchemyIgnite {
-                furnace_pos,
-                recipe_id,
-                ..
-            } => {
-                handle_alchemy_ignite(
-                    ev.client,
-                    furnace_pos,
-                    recipe_id,
-                    &mut clients,
-                    &mut alchemy_params.furnaces,
-                    &alchemy_params.recipe_registry,
-                    alchemy_params.zones.as_deref(),
-                    alchemy_params.redis.as_deref(),
-                    alchemy_params.vfx_events.as_deref_mut(),
-                );
-            }
-            ClientRequestV1::AlchemyFeedSlot {
-                furnace_pos,
-                slot_idx,
-                material,
-                count,
-                ..
-            } => {
-                handle_alchemy_feed_slot(
-                    ev.client,
-                    furnace_pos,
-                    slot_idx,
-                    material,
-                    count,
-                    &mut clients,
-                    &mut alchemy_params.furnaces,
-                    &alchemy_params.recipe_registry,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    alchemy_params.zones.as_deref_mut(),
-                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
-                    alchemy_params.attrition_applied_events.as_deref_mut(),
-                    alchemy_params.tsy_lifecycle.as_deref(),
-                );
-            }
-            ClientRequestV1::AlchemyTakeBack {
-                furnace_pos,
-                slot_idx,
-                ..
-            } => {
-                handle_alchemy_take_back(
-                    ev.client,
-                    furnace_pos,
-                    slot_idx,
-                    combat_clock.tick,
-                    &mut clients,
-                    &mut alchemy_params.furnaces,
-                    &alchemy_params.recipe_registry,
-                    &mut alchemy_params.outcome_tx,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &alchemy_params.item_registry,
-                    alchemy_params.instance_allocator.as_deref_mut(),
-                    alchemy_params.vfx_events.as_deref_mut(),
-                );
             }
             ClientRequestV1::InventoryMoveIntent {
                 instance_id,
@@ -19015,7 +18887,7 @@ fn handle_apply_pill(
     );
 }
 
-fn handle_alchemy_turn_page(
+pub(crate) fn handle_alchemy_turn_page(
     entity: valence::prelude::Entity,
     delta: i32,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -19059,7 +18931,7 @@ fn handle_alchemy_turn_page(
     alchemy_snapshot_emit::send_recipe_book(&mut client, &player_id, new_index);
 }
 
-fn handle_alchemy_learn(
+pub(crate) fn handle_alchemy_learn(
     entity: valence::prelude::Entity,
     recipe_id: String,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -19093,7 +18965,7 @@ fn handle_alchemy_learn(
     }
 }
 
-fn handle_alchemy_open_furnace(
+pub(crate) fn handle_alchemy_open_furnace(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     clients: &mut Query<(&Username, &mut Client)>,
@@ -19143,7 +19015,7 @@ fn handle_alchemy_open_furnace(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_alchemy_intervention(
+pub(crate) fn handle_alchemy_intervention(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     intervention: Intervention,
@@ -19241,7 +19113,7 @@ fn handle_alchemy_intervention(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_alchemy_ignite(
+pub(crate) fn handle_alchemy_ignite(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     recipe_id: String,
@@ -19354,7 +19226,7 @@ fn alchemy_furnace_origin(furnace_pos: (i32, i32, i32)) -> DVec3 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_alchemy_feed_slot(
+pub(crate) fn handle_alchemy_feed_slot(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     slot_idx: u8,
@@ -19522,7 +19394,7 @@ fn handle_alchemy_feed_slot(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_alchemy_take_back(
+pub(crate) fn handle_alchemy_take_back(
     entity: valence::prelude::Entity,
     furnace_pos: (i32, i32, i32),
     slot_idx: u8,
@@ -19956,7 +19828,7 @@ fn furnace_zone_is_collapsed(
 /// `BreakthroughBonus` / `QiRecovery` 已有运行时接入；
 /// 其他 kind（MeridianHeal/ContaminationCleanse）待对应 tick 系统就位。
 #[allow(clippy::too_many_arguments)]
-fn handle_alchemy_take_pill(
+pub(crate) fn handle_alchemy_take_pill(
     entity: Entity,
     pill_item_id: &str,
     instance_id: Option<u64>,
