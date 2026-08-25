@@ -11,7 +11,10 @@ import com.bong.client.network.ClientRequestSender;
 import com.bong.client.visual.realm_vision.SenseKind;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.util.Identifier;
+import org.lwjgl.glfw.GLFW;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -772,9 +775,85 @@ public class DyingElderEncounterTest {
             .filter(c -> c.kind() == HudRenderCommand.Kind.SCALED_TEXT)
             .anyMatch(c -> c.text() != null && c.text().contains("拖延"));
 
-        assertTrue(hasGiveDan, "expected '给丹 [G]' button text in HUD commands because P3 spec lists 给丹 as first button");
-        assertTrue(hasRefuse, "expected '拒绝 [H]' button text in HUD commands because P3 spec lists 拒绝 as second button");
-        assertTrue(hasDelay, "expected '拖延 [J]' button text in HUD commands because P3 spec lists 拖延 as third button");
+        assertTrue(hasGiveDan, "expected 给丹 action text in HUD commands because it is the first dying-elder action");
+        assertTrue(hasRefuse, "expected 拒绝 action text in HUD commands because it is the second dying-elder action");
+        assertTrue(hasDelay, "expected 拖延 action text in HUD commands because it is the third dying-elder action");
+    }
+
+    @Test
+    void plannerShowsExplicitUnboundLabelForEveryDyingElderAction() {
+        List<HudRenderCommand> commands = DyingElderHudPlanner.buildCommands(
+            true,
+            0.5f,
+            false,
+            null,
+            "坍缩渊",
+            new DyingElderInteractionKeybindings.BindingLabels(null, null, null),
+            800,
+            600
+        );
+
+        assertTrue(hasText(commands, "给丹 [未绑定]"),
+            "expected give-dan HUD text to say 未绑定 when its effective key is UNKNOWN");
+        assertTrue(hasText(commands, "拒绝 [未绑定]"),
+            "expected refuse HUD text to say 未绑定 when its effective key is UNKNOWN");
+        assertTrue(hasText(commands, "拖延 [未绑定]"),
+            "expected delay HUD text to say 未绑定 when its effective key is UNKNOWN");
+    }
+
+    @Test
+    void plannerKeepsReboundLabelsAttachedToTheirOwnActions() {
+        List<HudRenderCommand> commands = DyingElderHudPlanner.buildCommands(
+            true,
+            0.5f,
+            false,
+            null,
+            "坍缩渊",
+            new DyingElderInteractionKeybindings.BindingLabels("K", "L", "M"),
+            800,
+            600
+        );
+
+        assertTrue(hasText(commands, "给丹 [K]"),
+            "expected give-dan to display its own rebound K label");
+        assertTrue(hasText(commands, "拒绝 [L]"),
+            "expected refuse to display its own rebound L label");
+        assertTrue(hasText(commands, "拖延 [M]"),
+            "expected delay to display its own rebound M label");
+        assertFalse(hasText(commands, "给丹 [L]") || hasText(commands, "给丹 [M]"),
+            "give-dan must not reuse another action's effective label");
+        assertFalse(hasText(commands, "拒绝 [K]") || hasText(commands, "拒绝 [M]"),
+            "refuse must not reuse another action's effective label");
+        assertFalse(hasText(commands, "拖延 [K]") || hasText(commands, "拖延 [L]"),
+            "delay must not reuse another action's effective label");
+    }
+
+    @Test
+    void effectiveBindingLabelUsesCurrentBoundKeyAndFailsClosedForUnknown() {
+        KeyBinding unbound = new KeyBinding(
+            "key.test.dying_elder_unbound",
+            InputUtil.Type.KEYSYM,
+            InputUtil.UNKNOWN_KEY.getCode(),
+            "category.test"
+        );
+        assertEquals(
+            DyingElderHudPlanner.UNBOUND_LABEL,
+            DyingElderInteractionKeybindings.effectiveBindingLabel(unbound),
+            "expected UNKNOWN key to render the explicit 未绑定 label instead of a guessed physical key"
+        );
+
+        KeyBinding rebound = new KeyBinding(
+            "key.test.dying_elder_rebound",
+            InputUtil.Type.KEYSYM,
+            InputUtil.UNKNOWN_KEY.getCode(),
+            "category.test"
+        );
+        rebound.setBoundKey(InputUtil.fromKeyCode(GLFW.GLFW_KEY_K, 0));
+        assertEquals(
+            rebound.getBoundKeyLocalizedText().getString(),
+            DyingElderInteractionKeybindings.effectiveBindingLabel(rebound),
+            "expected rebound HUD label to come from Minecraft's current bound key text"
+        );
     }
 
     @Test
@@ -1314,7 +1393,7 @@ public class DyingElderEncounterTest {
         assertTrue(
             src.contains("DyingElderInteractionKeybindings.register()"),
             "expected BongClient to call DyingElderInteractionKeybindings.register() because "
-                + "without this call the G/H/J keybindings are never registered and players cannot give dan (B2 fix), "
+                + "without this call the dying-elder action keybindings are never registered and players cannot give dan (B2 fix), "
                 + "actual: call not found in source"
         );
     }
@@ -1370,5 +1449,11 @@ public class DyingElderEncounterTest {
             "expected getQiFraction()=0.0 when qi_fraction is absent from payload (default=0), actual: "
                 + DyingElderEncounterStore.getQiFraction()
         );
+    }
+
+    private static boolean hasText(List<HudRenderCommand> commands, String expected) {
+        return commands.stream()
+            .filter(command -> command.kind() == HudRenderCommand.Kind.SCALED_TEXT)
+            .anyMatch(command -> expected.equals(command.text()));
     }
 }

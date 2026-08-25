@@ -99,14 +99,13 @@ class R7InventoryContractTest {
 
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 2026-08-25（前值 fffdba51…）：R7 P1 新增
-        // BongScreenBase.java；匕首三件套的资源改动已在 origin/main 基线中。
-        // 逐文件对拍确认 client/src/main 下只有本任务声明的 production foundation
-        // 文件相对基线有变化，其余内容不动。
+        // 重新冻结于 2026-08-25（前值 fffdba51…）：R7 P1 新增 BongScreenBase.java，
+        // 并叠加主线垂死大能三件 keybinding 的 registry/HUD 修复。
+        // 逐文件对拍确认 client/src/main 下只有这两组已声明的生产变更，其余内容不动。
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条——这正是它要的"每一个 shipped 字节都得被显式重新决定"。
         assertEquals(
-            "49b76b6ed27f49d51af959674effe7e1e0a7f1f5bcd864aea655d33765624fdf",
+            "1dfa392baf201f53e4149b7c9e091c91035b1f727d9a1a2041a94a1322c87615",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
