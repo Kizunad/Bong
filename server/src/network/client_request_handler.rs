@@ -78,15 +78,16 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
 use crate::forge::steps::next_step_after;
+#[cfg(test)]
+use crate::inventory::add_item_to_player_inventory;
 use crate::inventory::{
-    add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy,
-    apply_inventory_move_with_race, apply_item_spiritual_wear, consume_item_instance_once,
-    discard_inventory_item_to_dropped_loot, fully_repair_weapon_instance,
-    inventory_instance_container_attrition_exempt, inventory_item_by_instance_borrow,
-    inventory_item_by_instance_mut, inventory_location_attrition_exempt,
-    pickup_dropped_loot_instance, DroppedLootRegistry, InventoryDurabilityChangedEvent,
-    InventoryInstanceIdAllocator, InventoryMoveOutcome, InventoryMoveRejectReason, ItemInstance,
-    ItemTemplate, PlayerInventory,
+    add_item_to_player_inventory_with_alchemy, apply_inventory_move_with_race,
+    apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
+    fully_repair_weapon_instance, inventory_instance_container_attrition_exempt,
+    inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
+    inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
+    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
+    InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
     AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
@@ -108,6 +109,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
+use crate::network::client_request::npc;
 use crate::network::client_request::social;
 use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
@@ -115,13 +117,10 @@ use crate::network::gate::{GateContext, GateDenialReason};
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
+#[cfg(test)]
 use crate::identity::PlayerIdentities;
 use crate::network::inventory_move_rejected_emit::emit_inventory_move_rejected;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
-use crate::network::npc_metadata::{
-    display_name as npc_display_name, greeting_text_for_archetype,
-    reputation_to_player_score_for_client,
-};
 use crate::network::qi_attrition_emit::{
     emit_attrition_applied_if_lost, item_abs_qi_for_attrition, AttritionAppliedEvent,
 };
@@ -136,13 +135,12 @@ use crate::network::techniques_snapshot_emit::send_techniques_snapshot_to_client
 use crate::network::{
     gameplay_vfx, redis_bridge::RedisOutbound, vfx_event_emit::VfxEventRequest, RedisBridgeResource,
 };
+#[cfg(test)]
 use crate::npc::faction::FactionMembership;
-use crate::npc::interaction_memory::{
-    record_player_npc_interaction, NpcInteractionOutcome, NpcInteractionType,
-};
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
-use crate::npc::trade::{NpcPlayerReputation, NpcTradeInventory};
+#[cfg(test)]
+use crate::npc::trade::NpcPlayerReputation;
 use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
@@ -174,7 +172,8 @@ use crate::skill::config::{
     SkillConfigRejectReason, SkillConfigSchemas, SkillConfigSnapshot, SkillConfigStore,
 };
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
-use crate::social::components::{faction_for_zone, FactionReputation, FactionReputationTier};
+#[cfg(test)]
+use crate::social::components::{FactionReputation, FactionReputationTier};
 use crate::social::events::{
     SpiritNicheActivateGuardianRequest, SpiritNicheCoordinateRevealRequest,
     SpiritNichePlaceRequest, SpiritNicheRepairRequest, SpiritNicheRevealSource,
@@ -198,23 +197,18 @@ use crate::zhenfa::{
     ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
 };
 
-/// RefuseRare arm 中对 rarity 的门控判断。
-///
-/// 返回 `true` 表示该 rarity 属于 Rare+（Rare/Epic/Legendary/Ancient），
-/// 低信誉玩家购买此类物品时将被拒绝。
-/// Common/Uncommon 返回 `false`，允许以 1.3x 加价购买。
-///
-/// NOTE: `ItemRarity` 未实现 `PartialOrd`，使用 `matches!` 枚举变体。
-/// 如需新增更高 rarity 变体，必须同步更新此处。
-pub(crate) fn is_rarity_refused_at_low_rep(r: crate::inventory::ItemRarity) -> bool {
-    matches!(
-        r,
-        crate::inventory::ItemRarity::Rare
-            | crate::inventory::ItemRarity::Epic
-            | crate::inventory::ItemRarity::Legendary
-            | crate::inventory::ItemRarity::Ancient
-    )
-}
+#[path = "client_request/session.rs"]
+mod session;
+
+// NPC 请求域实现位于编译期 typed route；保留参数类型作为顶层 system seam。
+pub(crate) use crate::network::client_request::npc::NpcEngagementRequestParams;
+
+// 这些 helper re-export 仅供现有 NPC 行为测试复用，生产路由不依赖它们。
+#[cfg(test)]
+pub(crate) use crate::network::client_request::npc::{
+    is_rarity_refused_at_low_rep, npc_trade_catalog_entry, reputation_to_player_score_for_npc_zone,
+    NpcEngagementTarget,
+};
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -571,39 +565,9 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub craft_unlock_tx: Option<ResMut<'w, Events<crate::craft::CraftUnlockIntent>>>,
 }
 
-type NpcEngagementItem = (
-    &'static valence::prelude::Position,
-    &'static NpcArchetype,
-    Option<&'static FactionMembership>,
-    Option<&'static Cultivation>,
-    Option<&'static Lifecycle>,
-    // plan-territory-v1 P1: per-NPC per-player 信誉度（霸主驻守加成写入此组件，
-    // 这里读取后叠加到 faction baseline，让 dominance rep 真正影响交易价格）。
-    Option<&'static NpcPlayerReputation>,
-);
-
-#[derive(SystemParam)]
-pub struct NpcEngagementRequestParams<'w, 's> {
-    pub npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
-    pub trade_inventories: Query<'w, 's, &'static NpcTradeInventory, With<NpcMarker>>,
-    pub lifecycles: Query<'w, 's, &'static Lifecycle>,
-    pub memories: Query<
-        'w,
-        's,
-        &'static mut crate::npc::interaction_memory::NpcMemoryComponent,
-        With<NpcMarker>,
-    >,
-    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
-    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
-    pub identities: Query<'w, 's, &'static PlayerIdentities, With<Client>>,
-    pub faction_reputations: Query<'w, 's, &'static FactionReputation, With<Client>>,
-    pub audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
-}
-
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
 const QI_COLOR_INSPECT_MAX_DISTANCE: f64 = 6.0;
-const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
 const GIVE_DAN_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
@@ -628,22 +592,6 @@ fn decode_client_request(payload: &str) -> Result<ClientRequestV1, serde_json::E
 fn decode_client_request(payload: &str) -> Result<ClientRequestV1, serde_json::Error> {
     serde_json::from_str(payload)
 }
-
-/// plan-scroll-reading-v1 P0/P2：阅读残卷循环姿态动画 priority——"中低"档位，
-/// 低于战斗层（`COMBAT_PRIORITY`=1000）、高于仪式套路层（`GUANGBO_TICAO_PRIORITY`=500）。
-/// 合法区间 [`VFX_ANIM_PRIORITY_MIN`, `VFX_ANIM_PRIORITY_MAX`] = [100, 3999]。
-const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
-/// 淡入 tick 数（§8.1 #4 决议：fadeIn 4 tick）。
-const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
-
-/// plan-scroll-reading-v1 P2 — 展开微光 VFX `bong:scroll_open_glow`，淡金色，
-/// burst 12 粒（client `ScrollOpenGlowPlayer` 再叠加自身的 continuous 层，本端只发一次
-/// SpawnParticle，两层视觉由 client 侧固定常量生成，不经 payload 传递）。
-const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
-const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
-const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
-const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
-const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
 /// plan-race-system-v1 P1c — 参数改为 `MeridianChannelId`（wire 开放化后
 /// `SetMeridianTarget.meridian` 不再是闭合 `MeridianId` 枚举）；仅 humanoid 20 条
@@ -1387,6 +1335,28 @@ pub fn handle_client_request_payloads(
             }
         }
 
+        if matches!(
+            &request,
+            ClientRequestV1::NpcInspectRequest { .. }
+                | ClientRequestV1::NpcDialogueChoice { .. }
+                | ClientRequestV1::NpcTradeRequest { .. }
+        ) {
+            npc::dispatch(
+                &request,
+                ev.client,
+                combat_clock.tick,
+                &combat_params,
+                &mut npc_engagement_params,
+                alchemy_params.zones.as_deref(),
+                &mut clients,
+                &mut inventories,
+                &player_states,
+                &skill_scroll_params.cultivations,
+                &alchemy_params.item_registry,
+                &mut alchemy_params.instance_allocator,
+            );
+            continue;
+        }
         let request = match social::try_into_social_request(request) {
             Ok(social_request) => {
                 social::dispatch_social_request(
@@ -1400,6 +1370,23 @@ pub fn handle_client_request_payloads(
             }
             Err(request) => request,
         };
+
+        if session::dispatch(
+            &request,
+            ev.client,
+            &mut dispatch,
+            &mut combat_params,
+            &mut inventories,
+            &player_states,
+            &skill_scroll_params.cultivations,
+            &mut clients,
+            &skill_scroll_params.positions,
+            &skill_scroll_params.dimensions,
+            &mut commands,
+            alchemy_params.vfx_events.as_deref_mut(),
+        ) {
+            continue;
+        }
 
         match request {
             ClientRequestV1::SparringInviteResponse { .. }
@@ -1945,333 +1932,12 @@ pub fn handle_client_request_payloads(
                     tick: combat_clock.tick,
                 });
             }
-            ClientRequestV1::NpcInspectRequest { npc_entity_id, .. } => {
-                let Some(target) = resolve_npc_engagement_target(
-                    ev.client,
-                    npc_entity_id,
-                    &combat_params,
-                    &npc_engagement_params,
-                    alchemy_params.zones.as_deref(),
-                ) else {
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "[NPC] 目标已不在附近，无法查看。",
-                    );
-                    continue;
-                };
-                if target.reputation_to_player < -30 {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                }
-                send_npc_interaction_feedback(
-                    ev.client,
-                    &mut clients,
-                    format!("§7[NPC] {}：{}", target.display_name, target.greeting_text),
-                );
-            }
-            ClientRequestV1::NpcDialogueChoice {
-                npc_entity_id,
-                option_id,
-                ..
-            } => {
-                let Some(target) = resolve_npc_engagement_target(
-                    ev.client,
-                    npc_entity_id,
-                    &combat_params,
-                    &npc_engagement_params,
-                    alchemy_params.zones.as_deref(),
-                ) else {
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "[NPC] 目标已不在附近，无法交谈。",
-                    );
-                    continue;
-                };
-                let option = option_id.trim();
-                match option {
-                    "inspect" => send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§7[NPC] 你端详了一眼 {}。", target.display_name),
-                    ),
-                    "trade" if target.can_trade() => send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§7[NPC] {} 摊开了随身货物。", target.display_name),
-                    ),
-                    "leave" => {}
-                    _ => {
-                        emit_npc_refuse_audio(
-                            &mut npc_engagement_params.audio_events,
-                            ev.client,
-                            target.position,
-                        );
-                        send_npc_interaction_feedback(
-                            ev.client,
-                            &mut clients,
-                            format!("§c[NPC] {} 不愿回应这个选择。", target.display_name),
-                        );
-                    }
-                }
-            }
-            ClientRequestV1::NpcTradeRequest {
-                npc_entity_id,
-                offered_items,
-                requested_item_id,
-                ..
-            } => {
-                let Some(target) = resolve_npc_engagement_target(
-                    ev.client,
-                    npc_entity_id,
-                    &combat_params,
-                    &npc_engagement_params,
-                    alchemy_params.zones.as_deref(),
-                ) else {
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "[NPC] 目标已不在附近，无法交易。",
-                    );
-                    continue;
-                };
-                if !offered_items.is_empty() {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "§c[NPC] 当前交易只支持骨币结算。",
-                    );
-                    continue;
-                }
-                let Some((template_id, _catalogue_price)) =
-                    npc_trade_catalog_entry(target.archetype, &requested_item_id)
-                else {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§c[NPC] {} 没有这件货。", target.display_name),
-                    );
-                    continue;
-                };
-                if !target.can_trade() {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§c[NPC] {} 不做买卖。", target.display_name),
-                    );
-                    continue;
-                }
-                let Ok(trade_inventory) =
-                    npc_engagement_params.trade_inventories.get(target.entity)
-                else {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§c[NPC] {} 当前没有可成交的货物。", target.display_name),
-                    );
-                    continue;
-                };
-                let Some(offer) = trade_inventory
-                    .offers
-                    .iter()
-                    .find(|offer| offer.template_id == template_id)
-                    .cloned()
-                else {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§c[NPC] {} 当前没有这件货。", target.display_name),
-                    );
-                    continue;
-                };
-                let base_price = u64::from(offer.price_bone_coins);
-                // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
-                // plan-territory-v1 P1: 叠加 NpcPlayerReputation（霸主驻守 rep 加成写入此组件）。
-                // 叠加策略：先取 FactionMembership baseline (i32 → [0,1])，
-                // 再加 NpcPlayerReputation 的偏移量（默认 0.5 对应"中立=0 偏移"），
-                // 即 delta = npc_rep_score - 0.5，faction_baseline + delta，再 clamp。
-                let faction_rep_f32 =
-                    ((target.reputation_to_player as f32 + 100.0) / 200.0).clamp(0.0, 1.0);
-                let npc_rep_delta = target
-                    .npc_player_rep
-                    .as_ref()
-                    .map(|rep| {
-                        let player_id = clients
-                            .get(ev.client)
-                            .map(|(username, _)| canonical_player_id(username.0.as_str()))
-                            .unwrap_or_default();
-                        // NpcPlayerReputation.get() 默认 0.5（中立），
-                        // 霸主驻守后逼近 0.7+（High tier）。
-                        // delta = score - 0.5（正 = 比中立好，负 = 比中立差）。
-                        rep.get(player_id.as_str()) - 0.5
-                    })
-                    .unwrap_or(0.0);
-                let rep_f32 = (faction_rep_f32 + npc_rep_delta).clamp(0.0, 1.0);
-                let rep_tier = crate::npc::trade::RepTier::from_score(rep_f32);
-                let eligibility = crate::npc::trade::check_trade_eligibility(rep_tier);
-                let price = match eligibility {
-                    crate::npc::trade::TradeEligibility::Refused => {
-                        let attack_hint = if rep_f32 <= 0.05 {
-                            "，已经起了杀心"
-                        } else {
-                            ""
-                        };
-                        emit_npc_refuse_audio(
-                            &mut npc_engagement_params.audio_events,
-                            ev.client,
-                            target.position,
-                        );
-                        send_npc_interaction_feedback(
-                            ev.client,
-                            &mut clients,
-                            format!(
-                                "§c[NPC] {} 对你充满敌意，拒绝交易{attack_hint}。",
-                                target.display_name
-                            ),
-                        );
-                        continue;
-                    }
-                    crate::npc::trade::TradeEligibility::RefuseRare => {
-                        // Low 信誉：Rare+（含 Rare/Epic/Legendary/Ancient）直接拒绝；
-                        // Common/Uncommon 允许，但加 1.3x markup。
-                        // 阈值注释见 trade.rs RepTier::Low（"加价 + 拒绝稀有品"）。
-                        //
-                        // NOTE: ItemRarity 未实现 PartialOrd，用 matches! 枚举 Rare+ 变体。
-                        // 如需新增更高 rarity 变体，记得同步更新此处。
-                        let item_rarity = alchemy_params
-                            .item_registry
-                            .get(template_id)
-                            .map(|t| t.rarity)
-                            .unwrap_or(crate::inventory::ItemRarity::Common);
-                        if is_rarity_refused_at_low_rep(item_rarity) {
-                            emit_npc_refuse_audio(
-                                &mut npc_engagement_params.audio_events,
-                                ev.client,
-                                target.position,
-                            );
-                            send_npc_interaction_feedback(
-                                ev.client,
-                                &mut clients,
-                                format!("§c[NPC] {} 不愿将此物卖给你。", target.display_name),
-                            );
-                            continue;
-                        }
-                        // Common/Uncommon：允许，1.3x 加价
-                        let config = crate::npc::trade::TradePricingConfig::default();
-                        (base_price as f64 * config.rep_low_markup as f64)
-                            .ceil()
-                            .max(1.0) as u64
-                    }
-                    crate::npc::trade::TradeEligibility::Allowed { price_modifier } => {
-                        (base_price as f64 * price_modifier as f64).ceil().max(1.0) as u64
-                    }
-                };
-                let Ok(mut inventory) = inventories.get_mut(ev.client) else {
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "[NPC] 你的行囊尚未就绪，交易失败。",
-                    );
-                    continue;
-                };
-                if inventory.bone_coins < price {
-                    emit_npc_refuse_audio(
-                        &mut npc_engagement_params.audio_events,
-                        ev.client,
-                        target.position,
-                    );
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§c[NPC] 骨币不足，需要 {price} 枚。"),
-                    );
-                    continue;
-                }
-                let Some(instance_allocator) = alchemy_params.instance_allocator.as_deref_mut()
-                else {
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        "[NPC] 交易账本未就绪。",
-                    );
-                    continue;
-                };
-                if let Err(error) = add_item_to_player_inventory(
-                    &mut inventory,
-                    &alchemy_params.item_registry,
-                    instance_allocator,
-                    template_id,
-                    offer.count,
-                    combat_clock.tick,
-                ) {
-                    send_npc_interaction_feedback(
-                        ev.client,
-                        &mut clients,
-                        format!("§c[NPC] 交易失败：{error}"),
-                    );
-                    continue;
-                }
-                inventory.bone_coins = inventory.bone_coins.saturating_sub(price);
-                inventory.revision.0 = inventory.revision.0.saturating_add(1);
-                let Ok((username, mut client)) = clients.get_mut(ev.client) else {
-                    continue;
-                };
-                client.send_chat_message(format!(
-                    "§a[NPC] 你用 {price} 枚骨币从 {} 手中买下 {} x{}。",
-                    target.display_name, offer.display_name, offer.count
-                ));
-                record_player_npc_interaction(
-                    &mut npc_engagement_params.memories,
-                    &npc_engagement_params.lifecycles,
-                    target.entity,
-                    ev.client,
-                    NpcInteractionType::Trade,
-                    NpcInteractionOutcome::Friendly,
-                    combat_clock.tick,
-                );
-                if let (Ok(player_state), Ok(cultivation)) = (
-                    player_states.get(ev.client),
-                    skill_scroll_params.cultivations.get(ev.client),
-                ) {
-                    send_inventory_snapshot_to_client(
-                        ev.client,
-                        &mut client,
-                        username.0.as_str(),
-                        &inventory,
-                        player_state,
-                        cultivation,
-                        "npc_trade",
-                    );
-                }
+            // NPC requests are consumed by the typed route above. This arm exists only to keep
+            // the exhaustive match explicit if the route is ever rearranged.
+            ClientRequestV1::NpcInspectRequest { .. }
+            | ClientRequestV1::NpcDialogueChoice { .. }
+            | ClientRequestV1::NpcTradeRequest { .. } => {
+                unreachable!("NPC request bypassed its typed route")
             }
             ClientRequestV1::ZhenfaPlace {
                 x,
@@ -2989,217 +2655,6 @@ pub fn handle_client_request_payloads(
                     });
                 }
             }
-            ClientRequestV1::StartExtractRequest {
-                portal_entity_id, ..
-            } => {
-                tracing::info!(
-                    "[bong][network] client_request start_extract entity={:?} portal_bits={portal_entity_id}",
-                    ev.client
-                );
-                let Some(start_extract_tx) = combat_params.start_extract_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_extract because StartExtractRequest event resource is missing"
-                    );
-                    continue;
-                };
-                let Ok(portal) = Entity::try_from_bits(portal_entity_id) else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_extract: invalid portal_entity_id bits={portal_entity_id}"
-                    );
-                    continue;
-                };
-                start_extract_tx.send(StartExtractRequestEvent {
-                    player: ev.client,
-                    portal,
-                });
-            }
-            ClientRequestV1::CancelExtractRequest { .. } => {
-                tracing::info!(
-                    "[bong][network] client_request cancel_extract entity={:?}",
-                    ev.client
-                );
-                let Some(cancel_extract_tx) = combat_params.cancel_extract_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped cancel_extract because CancelExtractRequest event resource is missing"
-                    );
-                    continue;
-                };
-                cancel_extract_tx.send(CancelExtractRequestEvent { player: ev.client });
-            }
-            ClientRequestV1::StartSearch {
-                container_entity_id,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network] client_request start_search entity={:?} container_bits={container_entity_id}",
-                    ev.client
-                );
-                let Some(start_search_tx) = combat_params.start_search_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_search because StartSearchRequest event resource is missing"
-                    );
-                    continue;
-                };
-                let Ok(container) = Entity::try_from_bits(container_entity_id) else {
-                    tracing::warn!(
-                        "[bong][network] dropped start_search: invalid container_entity_id bits={container_entity_id}"
-                    );
-                    continue;
-                };
-                start_search_tx.send(StartSearchRequestEvent {
-                    player: ev.client,
-                    container,
-                });
-            }
-            ClientRequestV1::CancelSearch { .. } => {
-                tracing::info!(
-                    "[bong][network] client_request cancel_search entity={:?}",
-                    ev.client
-                );
-                let Some(cancel_search_tx) = combat_params.cancel_search_tx.as_deref_mut() else {
-                    tracing::warn!(
-                        "[bong][network] dropped cancel_search because CancelSearchRequest event resource is missing"
-                    );
-                    continue;
-                };
-                cancel_search_tx.send(CancelSearchRequestEvent { player: ev.client });
-            }
-            // ── 物资棺 entity-based open（plan-supply-coffin-loot-ui P2）──
-            ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request supply_coffin_open entity={:?} target_id={entity_id}",
-                    ev.client
-                );
-                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
-                    tracing::warn!(
-                        "[bong][network] dropped supply_coffin_open because EntityManager resource is missing"
-                    );
-                    continue;
-                };
-                let Some(target) = entity_manager.get_by_id(entity_id) else {
-                    tracing::debug!(
-                        "[bong][network] supply_coffin_open rejected: no entity for protocol id {entity_id}"
-                    );
-                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                        client.send_chat_message("§c[物资棺] 目标不存在。");
-                    }
-                    continue;
-                };
-                if let Some(supply_coffin_open_tx) = dispatch.supply_coffin_open_tx.as_deref_mut() {
-                    supply_coffin_open_tx.send(
-                        crate::supply_coffin::interact::SupplyCoffinOpenRequest {
-                            client: ev.client,
-                            target,
-                        },
-                    );
-                } else {
-                    tracing::warn!(
-                        "[bong][network] dropped supply_coffin_open because SupplyCoffinOpenRequest event resource is missing"
-                    );
-                }
-            }
-            // ── 通用世界容器 entity-based open（plan-placeable-container-blocks-v1 P1）──
-            ClientRequestV1::ContainerOpen { entity_id, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request container_open entity={:?} target_id={entity_id}",
-                    ev.client
-                );
-                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
-                    tracing::warn!(
-                        "[bong][network] dropped container_open because EntityManager resource is missing"
-                    );
-                    continue;
-                };
-                let Some(target) = entity_manager.get_by_id(entity_id) else {
-                    tracing::debug!(
-                        "[bong][network] container_open rejected: no entity for protocol id {entity_id}"
-                    );
-                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                        client.send_chat_message("§c[容器] 目标不存在。");
-                    }
-                    continue;
-                };
-                if let Some(container_open_tx) = dispatch.container_open_tx.as_deref_mut() {
-                    container_open_tx.send(crate::world::container_open::ContainerOpenRequest {
-                        client: ev.client,
-                        target,
-                    });
-                } else {
-                    tracing::warn!(
-                        "[bong][network] dropped container_open because ContainerOpenRequest event resource is missing"
-                    );
-                }
-            }
-            // ── 制作台 entity-based open（plan-workbench-place-runtime-v1 P2）──
-            ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request workbench_open entity={:?} target_id={entity_id}",
-                    ev.client
-                );
-                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
-                    tracing::warn!(
-                        "[bong][network] dropped workbench_open because EntityManager resource is missing"
-                    );
-                    continue;
-                };
-                let Some(workbench) = entity_manager.get_by_id(entity_id) else {
-                    tracing::debug!(
-                        "[bong][network] workbench_open rejected: no entity for protocol id {entity_id}"
-                    );
-                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
-                        client.send_chat_message("§c[制作台] 目标不存在。");
-                    }
-                    continue;
-                };
-                if let Some(workbench_open_tx) = dispatch.workbench_open_tx.as_deref_mut() {
-                    workbench_open_tx.send(crate::craft::WorkbenchOpenRequest {
-                        client: ev.client,
-                        workbench,
-                    });
-                } else {
-                    tracing::warn!(
-                        "[bong][network] dropped workbench_open because WorkbenchOpenRequest event resource is missing"
-                    );
-                }
-            }
-            // ── 外部容器 move / close ─────────────
-            ClientRequestV1::ExternalContainerMove {
-                session_id,
-                instance_id,
-                from,
-                to,
-                ..
-            } => {
-                handle_external_container_move(
-                    ev.client,
-                    session_id,
-                    instance_id,
-                    &from,
-                    &to,
-                    &mut dispatch,
-                    &mut combat_params,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut clients,
-                    &skill_scroll_params.positions,
-                    &skill_scroll_params.dimensions,
-                    &mut commands,
-                );
-            }
-            ClientRequestV1::ExternalContainerClose { session_id, .. } => {
-                handle_external_container_close(
-                    ev.client,
-                    session_id,
-                    &mut dispatch,
-                    &mut combat_params,
-                    &mut inventories,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut clients,
-                    &mut commands,
-                );
-            }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
                 x,
@@ -3486,132 +2941,6 @@ pub fn handle_client_request_payloads(
                     .lower_shield_tx
                     .send(LowerShieldIntent { player: ev.client });
             }
-            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读请求 ─────────────
-            // 读取不消耗物品（区别于 read_combat_technique_scroll 消耗式学招）。
-            // 无 spec / 伪 instance_id / 非本人物品三类均静默拒绝 + warn（不向 client
-            // 暴露具体拒绝原因，避免给作弊 client 探测 instance_id 分布的信号）。
-            ClientRequestV1::ScrollReadRequest { instance_id, .. } => {
-                let Ok(inventory) = inventories.get(ev.client) else {
-                    tracing::warn!(
-                        "[bong][network] client_request scroll_read_request rejected: entity={:?} has no PlayerInventory",
-                        ev.client
-                    );
-                    continue;
-                };
-                match crate::network::scroll_open_emit::resolve_scroll_read_request(
-                    inventory,
-                    &combat_params.item_registry,
-                    instance_id,
-                ) {
-                    Ok(resolution) => {
-                        tracing::info!(
-                            "[bong][network] client_request scroll_read_request entity={:?} instance_id={instance_id}",
-                            ev.client
-                        );
-                        let anim_id = resolution.anim_id.clone();
-                        crate::network::scroll_open_emit::emit_scroll_open(
-                            ev.client,
-                            resolution.into_payload(),
-                            &mut clients,
-                        );
-                        // P2 — 展开微光：与 anim_id 是否存在无关，任意成功开卷都应有视觉反馈。
-                        if let Ok(position) = combat_params.positions.get(ev.client) {
-                            if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
-                                vfx_events
-                                    .send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                                    position.get(),
-                                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
-                                        event_id: SCROLL_OPEN_GLOW_EVENT_ID.to_string(),
-                                        origin: [
-                                            position.get().x,
-                                            position.get().y,
-                                            position.get().z,
-                                        ],
-                                        direction: None,
-                                        color: Some(SCROLL_OPEN_GLOW_COLOR.to_string()),
-                                        strength: Some(SCROLL_OPEN_GLOW_STRENGTH),
-                                        count: Some(SCROLL_OPEN_GLOW_COUNT),
-                                        duration_ticks: Some(SCROLL_OPEN_GLOW_DURATION_TICKS),
-                                    },
-                                ));
-                            }
-                        }
-                        // §8.1 #1：动画只在模板挂了 anim_id 时才播（残卷不强制有阅读动画）。
-                        if let Some(anim_id) = anim_id {
-                            // P2 — 插入 ScrollReading marker（真相源，供 ScrollReadClosed /
-                            // 死亡兜底停止动画）。插入不依赖 Position/UniqueId 查得到——就算
-                            // entity 暂查不到坐标，"该玩家正在读卷"这件事本身仍然成立。
-                            commands.entity(ev.client).insert(
-                                crate::network::scroll_open_emit::ScrollReading {
-                                    anim_id: anim_id.clone(),
-                                },
-                            );
-                            if let (Ok(position), Ok(unique_id)) = (
-                                combat_params.positions.get(ev.client),
-                                combat_params.unique_ids.get(ev.client),
-                            ) {
-                                if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
-                                    vfx_events.send(
-                                        crate::network::vfx_event_emit::VfxEventRequest::new(
-                                            position.get(),
-                                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
-                                                target_player: unique_id.0.to_string(),
-                                                anim_id,
-                                                priority: SCROLL_READ_ANIM_PRIORITY,
-                                                fade_in_ticks: Some(SCROLL_READ_ANIM_FADE_IN_TICKS),
-                                            },
-                                        ),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(reason) => {
-                        tracing::warn!(
-                            "[bong][network] client_request scroll_read_request rejected: entity={:?} instance_id={instance_id} reason={reason:?}",
-                            ev.client
-                        );
-                    }
-                }
-            }
-            // ─── plan-scroll-reading-v1 P2 §8.1#4：阅读屏关闭 → 停止循环阅读动画 ─────
-            // ScrollReading marker 是"读卷中"的真相源（而非 status）；命中就发
-            // StopAnim + 移除 marker，未命中（该玩家当时没有挂动画，或已被死亡/断线
-            // 兜底清理过）静默跳过，不重复停止。
-            ClientRequestV1::ScrollReadClosed { .. } => {
-                if let Ok(reading) = combat_params.scroll_reading_q.get(ev.client) {
-                    let anim_id = reading.anim_id.clone();
-                    if let (Ok(position), Ok(unique_id)) = (
-                        combat_params.positions.get(ev.client),
-                        combat_params.unique_ids.get(ev.client),
-                    ) {
-                        if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
-                            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
-                                position.get(),
-                                crate::schema::vfx_event::VfxEventPayloadV1::StopAnim {
-                                    target_player: unique_id.0.to_string(),
-                                    anim_id,
-                                    fade_out_ticks: Some(
-                                        crate::network::vfx_animation_trigger::SCROLL_READ_ANIM_FADE_OUT_TICKS,
-                                    ),
-                                },
-                            ));
-                        }
-                    }
-                    commands
-                        .entity(ev.client)
-                        .remove::<crate::network::scroll_open_emit::ScrollReading>();
-                    tracing::debug!(
-                        "[bong][network] client_request scroll_read_closed entity={:?} anim stopped",
-                        ev.client
-                    );
-                } else {
-                    tracing::debug!(
-                        "[bong][network] client_request scroll_read_closed entity={:?} (no ScrollReading marker, no-op)",
-                        ev.client
-                    );
-                }
-            }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
             // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；
             // 此处仅记录 trace 并发出 AgentUiResponseEvent Bevy event。
@@ -3634,6 +2963,9 @@ pub fn handle_client_request_payloads(
                     },
                 );
             }
+            _ => unreachable!(
+                "session-domain request must be consumed before the legacy dispatch match"
+            ),
         }
     }
 }
@@ -8197,6 +7529,281 @@ mod tests {
         assert!(
             app.world().get::<PlayerInventory>(player).is_none(),
             "Wanted rejection happens before trade side effects or inventory mutation"
+        );
+    }
+
+    fn setup_npc_request_app(
+        player_position: DVec3,
+        npc_position: DVec3,
+        player_dimension: Option<DimensionKind>,
+        npc_dimension: Option<DimensionKind>,
+        archetype: NpcArchetype,
+    ) -> (App, Entity, Entity, i32, MockClientHelper) {
+        let mut app = App::new();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+
+        let (client_bundle, helper) = create_mock_client("NpcRoute");
+        let player = app
+            .world_mut()
+            .spawn((client_bundle, empty_inventory()))
+            .id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(player_position));
+        if let Some(dimension) = player_dimension {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(CurrentDimension(dimension));
+        }
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityKind::VILLAGER,
+                EntityId::default(),
+                Position::new(npc_position),
+                OldPosition::new(npc_position),
+                archetype,
+            ))
+            .id();
+        if let Some(dimension) = npc_dimension {
+            app.world_mut()
+                .entity_mut(npc)
+                .insert(CurrentDimension(dimension));
+        }
+
+        app.update();
+        let npc_entity_id = app
+            .world()
+            .get::<EntityId>(npc)
+            .expect("EntityPlugin must assign protocol id to NPC")
+            .get();
+        (app, player, npc, npc_entity_id, helper)
+    }
+
+    fn send_npc_request(app: &mut App, client: Entity, request: ClientRequestV1) {
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&request)
+                    .expect("NPC request should serialize")
+                    .into_boxed_slice(),
+            });
+    }
+
+    #[test]
+    fn npc_inspect_request_preserves_feedback_and_rejects_invalid_targets() {
+        let (mut app, player, _npc, npc_entity_id, mut helper) = setup_npc_request_app(
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(1.0, 64.0, 0.0),
+            None,
+            None,
+            NpcArchetype::Commoner,
+        );
+        let revision_before = app.world().get::<PlayerInventory>(player).unwrap().revision;
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages.len(),
+            1,
+            "a nearby inspect must emit exactly one chat line"
+        );
+        assert!(
+            messages[0].starts_with("§7[NPC] "),
+            "inspect must preserve the existing NPC greeting feedback, messages={messages:?}"
+        );
+        assert_eq!(
+            app.world().get::<PlayerInventory>(player).unwrap().revision,
+            revision_before,
+            "inspect must not mutate the player inventory"
+        );
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id: npc_entity_id.saturating_add(9999),
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages,
+            vec!["[NPC] 目标已不在附近，无法查看。"],
+            "an unresolved NPC id must use the existing inspect rejection feedback"
+        );
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new(DVec3::new(0.0, 64.0, 0.0)));
+        app.world_mut()
+            .entity_mut(_npc)
+            .insert(Position::new(DVec3::new(6.000_001, 64.0, 0.0)));
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages,
+            vec!["[NPC] 目标已不在附近，无法查看。"],
+            "an NPC beyond the six-block interaction boundary must be rejected"
+        );
+
+        app.world_mut()
+            .entity_mut(_npc)
+            .insert(Position::new(DVec3::new(1.0, 64.0, 0.0)));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .entity_mut(_npc)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages,
+            vec!["[NPC] 目标已不在附近，无法查看。"],
+            "an NPC in another dimension must be rejected before feedback lookup"
+        );
+    }
+
+    #[test]
+    fn npc_dialogue_request_preserves_choices_and_refusal_audio() {
+        let (mut app, player, _npc, npc_entity_id, mut helper) = setup_npc_request_app(
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(1.0, 64.0, 0.0),
+            None,
+            None,
+            NpcArchetype::Commoner,
+        );
+        let revision_before = app.world().get::<PlayerInventory>(player).unwrap().revision;
+
+        for (option_id, expected_message) in
+            [("inspect", "端详了一眼"), ("trade", "摊开了随身货物")]
+        {
+            send_npc_request(
+                &mut app,
+                player,
+                ClientRequestV1::NpcDialogueChoice {
+                    v: 1,
+                    npc_entity_id,
+                    option_id: option_id.to_string(),
+                },
+            );
+            app.update();
+            flush_all_client_packets(&mut app);
+            let messages = collect_game_messages(&mut helper);
+            assert_eq!(
+                messages.len(),
+                1,
+                "dialogue option {option_id} must emit one reply"
+            );
+            assert!(
+                messages[0].contains(expected_message),
+                "dialogue option {option_id} must preserve its existing reply, messages={messages:?}"
+            );
+            assert!(
+                app.world_mut()
+                    .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                    .drain()
+                    .next()
+                    .is_none(),
+                "accepted dialogue option {option_id} must not emit refusal audio"
+            );
+        }
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcDialogueChoice {
+                v: 1,
+                npc_entity_id,
+                option_id: "leave".to_string(),
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        assert!(
+            collect_game_messages(&mut helper).is_empty(),
+            "leave must preserve the existing silent dialogue behavior"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "leave must not emit refusal audio"
+        );
+
+        send_npc_request(
+            &mut app,
+            player,
+            ClientRequestV1::NpcDialogueChoice {
+                v: 1,
+                npc_entity_id,
+                option_id: "not-a-dialogue-option".to_string(),
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert_eq!(
+            messages.len(),
+            1,
+            "an invalid dialogue option must emit one refusal"
+        );
+        assert!(
+            messages[0].contains("不愿回应这个选择"),
+            "invalid dialogue option must preserve the refusal feedback, messages={messages:?}"
+        );
+        let refusal_audio = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refusal_audio.len(),
+            1,
+            "invalid dialogue option must emit one refusal sound"
+        );
+        assert_eq!(refusal_audio[0].recipe_id, "npc_refuse");
+        assert_eq!(
+            app.world().get::<PlayerInventory>(player).unwrap().revision,
+            revision_before,
+            "dialogue choices must not mutate the player inventory revision"
         );
     }
 
@@ -18148,169 +17755,6 @@ fn reject_give_dan_target(
     }
 }
 
-#[derive(Debug, Clone)]
-struct NpcEngagementTarget {
-    entity: Entity,
-    archetype: NpcArchetype,
-    reputation_to_player: i32,
-    faction_reputation_tier: FactionReputationTier,
-    display_name: String,
-    greeting_text: String,
-    position: DVec3,
-    /// plan-territory-v1 P1: per-NPC per-player 信誉组件（Optional clone）。
-    /// trade handler 读取时传入 player 的 canonical_player_id 叠加到 rep_f32。
-    npc_player_rep: Option<NpcPlayerReputation>,
-}
-
-impl NpcEngagementTarget {
-    fn can_trade(&self) -> bool {
-        matches!(self.archetype, NpcArchetype::Rogue | NpcArchetype::Commoner)
-            && self.faction_reputation_tier != FactionReputationTier::Wanted
-            && self.reputation_to_player >= -30
-    }
-}
-
-fn resolve_npc_engagement_target(
-    player: Entity,
-    npc_entity_id: i32,
-    combat_params: &CombatRequestParams,
-    npc_params: &NpcEngagementRequestParams,
-    zone_registry: Option<&ZoneRegistry>,
-) -> Option<NpcEngagementTarget> {
-    let npc = combat_params
-        .entity_manager
-        .as_deref()
-        .and_then(|manager| manager.get_by_id(npc_entity_id))?;
-    if dimension_kind_for(&npc_params.dimensions, player)
-        != dimension_kind_for(&npc_params.dimensions, npc)
-    {
-        return None;
-    }
-    let player_position = npc_params.positions.get(player).ok()?.get();
-    let (npc_position, archetype, membership, cultivation, lifecycle, npc_player_rep) =
-        npc_params.npcs.get(npc).ok()?;
-    if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
-        return None;
-    }
-    let npc_position = npc_position.get();
-    if player_position.distance_squared(npc_position)
-        > NPC_INTERACTION_MAX_DISTANCE * NPC_INTERACTION_MAX_DISTANCE
-    {
-        return None;
-    }
-    let player_identities = npc_params.identities.get(player).ok();
-    let player_faction_reputation = npc_params.faction_reputations.get(player).ok();
-    let realm = cultivation
-        .map(|cultivation| cultivation.realm)
-        .unwrap_or(crate::cultivation::components::Realm::Awaken);
-    let npc_dimension = dimension_kind_for(&npc_params.dimensions, npc);
-    let npc_zone_name = zone_registry
-        .and_then(|zones| zones.find_zone(npc_dimension, npc_position))
-        .map(|zone| zone.name.as_str());
-    let faction_reputation_tier = player_faction_reputation
-        .and_then(|reputation| npc_zone_name.map(|zone| reputation.tier_for_zone(zone)))
-        .unwrap_or(FactionReputationTier::Normal);
-    Some(NpcEngagementTarget {
-        entity: npc,
-        archetype: *archetype,
-        reputation_to_player: reputation_to_player_score_for_npc_zone(
-            membership,
-            player_identities,
-            player_faction_reputation,
-            npc_zone_name,
-        ),
-        faction_reputation_tier,
-        display_name: npc_display_name(*archetype, realm, membership),
-        greeting_text: greeting_text_for_archetype(*archetype).to_string(),
-        position: npc_position,
-        // plan-territory-v1 P1: clone 可选信誉组件，trade handler 中叠加霸主 rep 加成。
-        npc_player_rep: npc_player_rep.cloned(),
-    })
-}
-
-fn reputation_to_player_score_for_npc_zone(
-    membership: Option<&FactionMembership>,
-    player_identities: Option<&PlayerIdentities>,
-    faction_reputation: Option<&FactionReputation>,
-    zone_name: Option<&str>,
-) -> i32 {
-    let Some(faction_score) = faction_reputation.and_then(|reputation| {
-        zone_name
-            .and_then(faction_for_zone)
-            .map(|faction| reputation.score(faction))
-    }) else {
-        return reputation_to_player_score_for_client(membership, player_identities);
-    };
-    let faction_baseline = membership
-        .map(crate::network::npc_metadata::reputation_to_player_score)
-        .unwrap_or_default();
-    faction_baseline
-        .saturating_add(faction_score)
-        .clamp(-100, 100)
-}
-
-pub(crate) fn npc_trade_catalog_entry(
-    archetype: NpcArchetype,
-    requested_item_id: &str,
-) -> Option<(&'static str, u64)> {
-    match (archetype, requested_item_id.trim()) {
-        (NpcArchetype::Commoner, "lingcao" | "spirit_grass") => Some(("spirit_grass", 10)),
-        (NpcArchetype::Rogue, "lingcao" | "spirit_grass") => Some(("spirit_grass", 10)),
-        (NpcArchetype::Rogue, "fragment_scroll" | "broken_artifact_scroll") => {
-            Some(("broken_artifact_scroll", 40))
-        }
-        (NpcArchetype::Rogue, "skill_scroll_herbalism_baicao_can") => {
-            Some(("skill_scroll_herbalism_baicao_can", 30))
-        }
-        // plan-cultivation-pacing-v1 P2.2：NPC 售卖低品质修炼丹药。
-        // Commoner/Rogue 均可购买次品灵息丸（8 骨币）和次品聚灵丹（15 骨币），
-        // 效果 ×0.6，引导玩家自炼正品。
-        (
-            NpcArchetype::Commoner | NpcArchetype::Rogue,
-            "ling_xi_wan_flawed" | "ling_xi_wan_次品",
-        ) => Some(("ling_xi_wan_flawed", 8)),
-        (
-            NpcArchetype::Commoner | NpcArchetype::Rogue,
-            "ju_ling_dan_flawed" | "ju_ling_dan_次品",
-        ) => Some(("ju_ling_dan_flawed", 15)),
-        _ => None,
-    }
-}
-
-fn send_npc_interaction_feedback(
-    player: Entity,
-    clients: &mut Query<(&Username, &mut Client)>,
-    message: impl Into<String>,
-) {
-    let Ok((_, mut client)) = clients.get_mut(player) else {
-        return;
-    };
-    client.send_chat_message(message.into());
-}
-
-fn emit_npc_refuse_audio(
-    audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
-    player: Entity,
-    position: DVec3,
-) {
-    let Some(audio_events) = audio_events.as_mut() else {
-        return;
-    };
-    audio_events.send(PlaySoundRecipeRequest {
-        recipe_id: "npc_refuse".to_string(),
-        instance_id: 0,
-        pos: Some([
-            position.x.floor() as i32,
-            position.y.floor() as i32,
-            position.z.floor() as i32,
-        ]),
-        flag: None,
-        volume_mul: 1.0,
-        pitch_shift: 0.0,
-        recipient: AudioRecipient::Single(player),
-    });
-}
-
 /// 通用技能警示：resolver-path 施法被拒时把拒绝原因推回施法者 client。
 ///
 /// 走与经脉门控拒绝完全相同的 `CastSyncV1{phase: Idle, outcome: Reject*}` 形态
@@ -21609,7 +21053,7 @@ fn emit_shelflife_consume_events(
 // ── plan-supply-coffin-loot-ui P2：外部容器跨容器 move / close ──
 
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
-fn handle_external_container_move(
+pub(crate) fn handle_external_container_move(
     player_entity: Entity,
     session_id: u64,
     instance_id: u64,
@@ -22138,7 +21582,7 @@ fn handle_external_container_move(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_external_container_close(
+pub(crate) fn handle_external_container_close(
     player_entity: Entity,
     session_id: u64,
     dispatch: &mut ClientRequestDispatchParams,

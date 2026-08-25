@@ -8,8 +8,8 @@
 //! 实例不属于该玩家背包 / 模板未注册 / 模板无 `readable_scroll_spec`。
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Position, Query,
-    RemovedComponents, UniqueId, Username,
+    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Events, Position,
+    Query, RemovedComponents, UniqueId, Username,
 };
 
 use crate::combat::events::DeathEvent;
@@ -109,6 +109,124 @@ pub fn emit_scroll_open(
         send_server_data_payload(&mut client, payload_bytes.as_slice());
     }
 }
+
+/// Dispatch an admitted `ScrollReadRequest` through the scroll domain service.
+///
+/// Inventory lookup and scroll resolution stay beside the scroll wire emitter;
+/// the C2S session router only selects this typed service operation.
+#[allow(clippy::too_many_arguments)]
+pub fn dispatch_scroll_read_open(
+    player: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    registry: &ItemRegistry,
+    clients: &mut Query<(&Username, &mut Client)>,
+    positions: &Query<&Position>,
+    unique_ids: &Query<&UniqueId>,
+    commands: &mut Commands,
+    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    let Ok(inventory) = inventories.get(player) else {
+        tracing::warn!(
+            "[bong][network] client_request scroll_read_request rejected: entity={player:?} has no PlayerInventory"
+        );
+        return;
+    };
+    match resolve_scroll_read_request(inventory, registry, instance_id) {
+        Ok(resolution) => {
+            tracing::info!(
+                "[bong][network] client_request scroll_read_request entity={player:?} instance_id={instance_id}"
+            );
+            let anim_id = resolution.anim_id.clone();
+            emit_scroll_open(player, resolution.into_payload(), clients);
+            if let Ok(position) = positions.get(player) {
+                if let Some(vfx_events) = vfx_events.as_mut() {
+                    vfx_events.send(VfxEventRequest::new(
+                        position.get(),
+                        crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                            event_id: SCROLL_OPEN_GLOW_EVENT_ID.to_string(),
+                            origin: [position.get().x, position.get().y, position.get().z],
+                            direction: None,
+                            color: Some(SCROLL_OPEN_GLOW_COLOR.to_string()),
+                            strength: Some(SCROLL_OPEN_GLOW_STRENGTH),
+                            count: Some(SCROLL_OPEN_GLOW_COUNT),
+                            duration_ticks: Some(SCROLL_OPEN_GLOW_DURATION_TICKS),
+                        },
+                    ));
+                }
+            }
+            if let Some(anim_id) = anim_id {
+                commands.entity(player).insert(ScrollReading {
+                    anim_id: anim_id.clone(),
+                });
+                if let (Ok(position), Ok(unique_id)) =
+                    (positions.get(player), unique_ids.get(player))
+                {
+                    if let Some(vfx_events) = vfx_events.as_mut() {
+                        vfx_events.send(VfxEventRequest::new(
+                            position.get(),
+                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                                target_player: unique_id.0.to_string(),
+                                anim_id,
+                                priority: SCROLL_READ_ANIM_PRIORITY,
+                                fade_in_ticks: Some(SCROLL_READ_ANIM_FADE_IN_TICKS),
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network] client_request scroll_read_request rejected: entity={player:?} instance_id={instance_id} reason={reason:?}"
+            );
+        }
+    }
+}
+
+/// Close an admitted `ScrollReadClosed` request using the marker as source of truth.
+pub fn dispatch_scroll_read_close(
+    player: Entity,
+    reading_q: &Query<&ScrollReading>,
+    positions: &Query<&Position>,
+    unique_ids: &Query<&UniqueId>,
+    commands: &mut Commands,
+    mut vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if let Ok(reading) = reading_q.get(player) {
+        let anim_id = reading.anim_id.clone();
+        if let (Ok(position), Ok(unique_id)) = (positions.get(player), unique_ids.get(player)) {
+            if let Some(vfx_events) = vfx_events.as_mut() {
+                vfx_events.send(VfxEventRequest::new(
+                    position.get(),
+                    crate::schema::vfx_event::VfxEventPayloadV1::StopAnim {
+                        target_player: unique_id.0.to_string(),
+                        anim_id,
+                        fade_out_ticks: Some(
+                            crate::network::vfx_animation_trigger::SCROLL_READ_ANIM_FADE_OUT_TICKS,
+                        ),
+                    },
+                ));
+            }
+        }
+        commands.entity(player).remove::<ScrollReading>();
+        tracing::debug!(
+            "[bong][network] client_request scroll_read_closed entity={player:?} anim stopped"
+        );
+    } else {
+        tracing::debug!(
+            "[bong][network] client_request scroll_read_closed entity={player:?} (no ScrollReading marker, no-op)"
+        );
+    }
+}
+
+const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
+const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
+const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
+const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
+const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
+const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
+const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 
 /// plan-scroll-reading-v1 P2 — 玩家正在阅读残卷的持续标记 component。
 ///
