@@ -12,6 +12,9 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
+
 public final class BotanyHudBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String AUTO_KEY_TRANSLATION = "key.bong-client.botany_auto_harvest";
@@ -38,11 +41,17 @@ public final class BotanyHudBootstrap {
     }
 
     private static void onStartClientTick(MinecraftClient client) {
-        if (client == null || client.player == null) {
+        if (client == null) {
             return;
         }
+        if (client.player == null) {
+            discardAutoHarvestPresses();
+            return;
+        }
+
         HarvestSessionViewModel session = HarvestSessionStore.snapshot();
         if (!session.interactive() || client.currentScreen != null) {
+            discardAutoHarvestPresses();
             return;
         }
 
@@ -50,8 +59,36 @@ public final class BotanyHudBootstrap {
             dispatchModeRequest(session, BotanyHarvestMode.MANUAL);
         }
 
-        while (autoHarvestKey().wasPressed()) {
-            dispatchModeRequest(session, BotanyHarvestMode.AUTO);
+        pumpAutoHarvestPresses(true, false, autoHarvestKey()::wasPressed);
+    }
+
+    /**
+     * 消费自动采集按键队列；门控期间也必须取空队列，避免按键跨 tick/会话幽灵重放。
+     *
+     * <p>每次真正尝试派发前都从 {@link HarvestSessionStore} 读取实时快照。首次派发会把
+     * {@code requestPending} 写为 true，后续同 tick 排队按键因此只能被消费，不能再次发包。</p>
+     *
+     * @return 本次 pump 消费的按键次数（包括门控时丢弃的次数）
+     */
+    static int pumpAutoHarvestPresses(
+        boolean interactive,
+        boolean screenOpen,
+        BooleanSupplier wasPressed
+    ) {
+        Objects.requireNonNull(wasPressed, "wasPressed");
+        int consumed = 0;
+        while (wasPressed.getAsBoolean()) {
+            consumed++;
+            if (interactive && !screenOpen) {
+                dispatchModeRequest(HarvestSessionStore.snapshot(), BotanyHarvestMode.AUTO);
+            }
+        }
+        return consumed;
+    }
+
+    private static void discardAutoHarvestPresses() {
+        if (autoHarvestKey != null) {
+            pumpAutoHarvestPresses(false, true, autoHarvestKey::wasPressed);
         }
     }
 
