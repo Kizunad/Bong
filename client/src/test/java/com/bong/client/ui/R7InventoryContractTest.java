@@ -105,7 +105,7 @@ class R7InventoryContractTest {
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条——这正是它要的"每一个 shipped 字节都得被显式重新决定"。
         assertEquals(
-            "04b3002b71c7eede0dccb40a9520de13245481228966838e00183d08f7481cbe",
+            "ca12706817a0adb968ddf6c82fd006e2409faff2ae23eeab390de6c0f70f442f",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
