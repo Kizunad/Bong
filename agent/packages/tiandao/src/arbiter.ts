@@ -619,6 +619,9 @@ function replaceAllLiteral(text: string, needle: string, replacement: string): s
   return text.split(needle).join(replacement);
 }
 
+// UUIDs are opaque identifiers with negligible accidental substring matches, so every
+// literal occurrence is redacted. Display names use boundary checks below to avoid
+// replacing a shorter name embedded in a longer token.
 function redactIdentifierToken(text: string, identifier: string): string {
   const trimmed = identifier.trim();
   if (trimmed.length === 0) {
@@ -628,6 +631,9 @@ function redactIdentifierToken(text: string, identifier: string): string {
   return replaceAllLiteral(text, trimmed, "某修士");
 }
 
+// Names of two or more characters are redacted only at a token boundary. The one-character
+// early return is an existing policy choice: changing it would require a separate name
+// registration/redaction decision.
 function redactChinesePlayerNameToken(text: string, name: string): string {
   const trimmed = name.trim();
   if (trimmed.length < 2) {
@@ -655,12 +661,18 @@ function redactChinesePlayerNameToken(text: string, name: string): string {
   return output;
 }
 
+// Han characters do not provide a reliable token boundary in Chinese prose. They are
+// therefore treated as separators here, while adjacent non-Han word characters still
+// protect longer ASCII/Unicode tokens from partial redaction.
 function hasNameBoundary(text: string, start: number, end: number): boolean {
   return !isWordLikeCharacter(text[start - 1]) && !isWordLikeCharacter(text[end]);
 }
 
 function isWordLikeCharacter(char: string | undefined): boolean {
-  return char !== undefined && /[\p{L}\p{N}_:-]/u.test(char);
+  if (char === undefined || /\p{Script=Han}/u.test(char)) {
+    return false;
+  }
+  return /[\p{L}\p{N}_:-]/u.test(char);
 }
 
 /**
