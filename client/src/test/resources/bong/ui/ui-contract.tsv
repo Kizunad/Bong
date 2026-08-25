@@ -1,0 +1,11 @@
+# contract_id	owner	library_dependencies	identity_rule	status
+state_source	R7	NONE	snapshot-is-authoritative;subscribe-signals-only	FROZEN
+screen_scope	R7	NONE	close-is-exactly-once;late-work-is-no-op	FROZEN
+screen_controller	R7	NONE	controller-owns-view-model-and-typed-sink	FROZEN
+list_reconciler	R7	NONE	stable-key-order;detached-rebuild;retry-on-failure	FROZEN
+intent_sink	R7	NONE	domain-typed-sink;local-transport-result-only	FROZEN
+bootstrap_registry	R7	NONE	explicit-id-dependency-graph;idempotent-register	FROZEN
+semantic_surface	R7	NONE	surface-session-revision-action-identity	FROZEN
+headless_driver	R7	NONE	same-action-registry;authoritative-receipt	FROZEN
+viewport	R7	NONE	logical-coordinate-layout;safe-rect;scale-metadata	FROZEN
+legacy_raw_xml	R6_SCHEMA_AGENT	NONE	legacy-only;not-new-semantic-input	LEGACY

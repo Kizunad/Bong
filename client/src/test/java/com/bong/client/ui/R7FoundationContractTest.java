@@ -228,7 +228,7 @@ class R7FoundationContractTest {
 
     @Test
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
-        List<String> fixtureLines = resourceLines("/bong/ui/r7-screen-open-policy.tsv");
+        List<String> fixtureLines = resourceLines("/bong/ui/screen-open-policy.tsv");
         assertEquals(expectedOpenPolicyFixtureLines(), fixtureLines,
             "all 35 raw policy vectors and every input/output field must be explicitly re-decided");
         List<OpenPolicyRow> rows = openPolicyRows();
@@ -350,7 +350,7 @@ class R7FoundationContractTest {
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         assertEquals(expectedIdentities, actualIdentities,
             "fixture and production must match the exact (sourcePath, assignment target) set in both directions");
-        assertEquals(resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
+        assertEquals(resourceLines("/bong/ui/keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
         assertEquals(26, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
@@ -867,14 +867,14 @@ class R7FoundationContractTest {
         );
     }
     private static List<FoundationRow> foundationRows() {
-        return resourceLines("/bong/ui/r7-foundation-contract.tsv").stream()
+        return resourceLines("/bong/ui/foundation-contract.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new FoundationRow(columns[0], columns[1], columns[2], columns[3], columns[4]))
             .toList();
     }
 
     private static List<KeybindRow> keybindRows() {
-        return resourceLines("/bong/ui/r7-keybind-migration.tsv").stream()
+        return resourceLines("/bong/ui/keybind-migration.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4], columns[5],
@@ -884,7 +884,7 @@ class R7FoundationContractTest {
     }
 
     private static List<OpenPolicyRow> openPolicyRows() {
-        return resourceLines("/bong/ui/r7-screen-open-policy.tsv").stream()
+        return resourceLines("/bong/ui/screen-open-policy.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new OpenPolicyRow(
                 columns[0],
@@ -905,14 +905,14 @@ class R7FoundationContractTest {
     }
 
     private static List<ReservedDefaultRow> reservedDefaultRows() {
-        return resourceLines("/bong/ui/r7-keybind-reserved-defaults.tsv").stream()
+        return resourceLines("/bong/ui/keybind-reserved-defaults.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ReservedDefaultRow(columns[0], columns[1], columns[2], columns[3]))
             .toList();
     }
 
     private static List<ConflictExemptionRow> conflictExemptionRows() {
-        return resourceLines("/bong/ui/r7-keybind-conflict-exemptions.tsv").stream()
+        return resourceLines("/bong/ui/keybind-conflict-exemptions.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ConflictExemptionRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4]
@@ -921,7 +921,7 @@ class R7FoundationContractTest {
     }
 
     private static List<KeybindProductionSiteRow> keybindProductionSiteRows() {
-        return resourceLines("/bong/ui/r7-keybind-production-sites.tsv").stream()
+        return resourceLines("/bong/ui/keybind-production-sites.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindProductionSiteRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],
@@ -931,7 +931,7 @@ class R7FoundationContractTest {
     }
 
     private static List<InsightSettlementRow> insightSettlementRows() {
-        return resourceLines("/bong/ui/r7-insight-settlement.tsv").stream()
+        return resourceLines("/bong/ui/insight-settlement.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new InsightSettlementRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],

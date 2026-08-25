@@ -97,7 +97,7 @@ class R7KeybindProductionMigrationTest {
             FixtureRow expected = expectedBySite.get(actual.siteKey());
             assertNotNull(expected, "fixture 缺少迁移站点：" + actual.siteKey());
             assertEquals(expected.ownerId(), actual.ownerId(),
-                "owner id 必须与 r7-keybind-production-sites.tsv 对拍：" + actual.siteKey());
+                "owner id 必须与 keybind-production-sites.tsv 对拍：" + actual.siteKey());
             assertEquals(expected.translationKey(), actual.translationKey(),
                 "translation key 必须与冻结 fixture 对拍：" + actual.ownerId());
             assertEquals(expected.inputType(), actual.inputType(),
@@ -320,7 +320,7 @@ class R7KeybindProductionMigrationTest {
     private static List<FixtureRow> fixtureRows() throws IOException {
         try {
             var resource = R7KeybindProductionMigrationTest.class
-                .getResource("/bong/ui/r7-keybind-production-sites.tsv");
+                .getResource("/bong/ui/keybind-production-sites.tsv");
             assertNotNull(resource, "缺少 R7 production-sites fixture");
             return Files.readAllLines(Path.of(resource.toURI())).stream()
                 .filter(R7SourceScan::isFixtureDataLine)

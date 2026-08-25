@@ -318,7 +318,7 @@ class R7InventoryContractTest {
     }
 
     private static List<ScreenInventoryRow> readScreenInventory() {
-        return resourceLines("/bong/ui/r7-screen-inventory.tsv").stream()
+        return resourceLines("/bong/ui/screen-inventory.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ScreenInventoryRow(
                 columns[0], columns[1], columns[2], columns[3],
@@ -328,7 +328,7 @@ class R7InventoryContractTest {
     }
 
     private static List<FillInventoryRow> readFillInventory() {
-        return resourceLines("/bong/ui/r7-fill100-inventory.tsv").stream()
+        return resourceLines("/bong/ui/fill100-inventory.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new FillInventoryRow(
                 columns[0], Integer.parseInt(columns[1]), Integer.parseInt(columns[2]),
@@ -338,7 +338,7 @@ class R7InventoryContractTest {
     }
 
     private static List<R7SourceScan.StructuralTokenOccurrence> readFillStructuralContext() {
-        return resourceLines("/bong/ui/r7-fill100-structural-context.tsv").stream()
+        return resourceLines("/bong/ui/fill100-structural-context.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new R7SourceScan.StructuralTokenOccurrence(
                 columns[0], columns[1], columns[2], columns[3]

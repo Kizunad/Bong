@@ -13,24 +13,25 @@
 
 ## 0. 改写目的与不可变范围
 
-旧版 R7 以 `BongScreenBase extends BaseOwoScreen` 为公共基类，能改善当前 owo 屏幕，但不能作为未来 UI 库迁移边界。本版将 R7 收口为“owo-first UI contract + adapter migration”计划：
+旧版 R7 以 `BongScreenBase extends BaseOwoScreen` 为公共基类，能改善当前 owo 屏幕，但不能作为未来 UI 库迁移边界。本版将 R7 从“owo UI 重构”改为“UI contract-first + adapter migration”计划：
 
 1. **库无关核心**：状态读取、订阅生命周期、列表 diff/reconcile、intent dispatch、Screen open policy、bootstrap module contract 不得 import owo、Fabric widget 或 vanilla drawable。
-2. **双适配路径**：owo 是主实现和首选迁移目标；现有 14 个 vanilla Screen 通过兼容 adapter 保持行为，直到对应屏幕迁入 owo。第三方宿主和原生 UI 不属于本计划，也不作为第三宿主。
+2. **双适配路径**：现有 15 个 owo Screen 和 14 个 vanilla Screen 都必须有明确的 adapter/lifecycle 归属；owo 是主实现，vanilla 是迁移期间的兼容实现，不引入第三宿主。
 3. **协议不变**：不修改 server、TypeBox shape、protobuf envelope、Redis key、`ClientRequestProtocol` 编码或 `bong:server_data`/`bong:client_request` channel。现有 sender/handler 行为只通过 adapter 复用。
 4. **所有权不变**：R2 仍独占 Store 断线清理，R6 仍独占网络 receiver/bridge/router，R9 仍独占 cast domain；R7 只消费它们冻结的外部契约。
 5. **无大爆炸重写**：先落 contract、fake、source gate 和一条 owo/一条 vanilla 垂直切片，再批量迁移；不得先同时改 29 个 Screen、109 个 Store 和 80 个 Handler。
 
 ## 1. 基线证据（2026-08-24 复核）
 
-- client production Java 文件约 **1022** 个；真实 Screen **29** 个：15 个直接继承 owo `BaseOwoScreen`，14 个直接继承 vanilla `Screen`。`TechniqueScrollReadScreen` 是 helper，`LegacyAssignPanel.java` 是无 `Screen.java` 后缀的真实 Screen。逐文件基线：`client/src/test/resources/bong/ui/r7-screen-inventory.tsv`。
+- client production Java 文件约 **1022** 个；真实 Screen **29** 个：15 个直接继承 owo `BaseOwoScreen`，14 个直接继承 vanilla `Screen`。`TechniqueScrollReadScreen` 是 helper，`LegacyAssignPanel.java` 是无 `Screen.java` 后缀的真实 Screen。逐文件基线：`client/src/test/resources/bong/ui/screen-inventory.tsv`。
+- P0R 冻结基线为 **29 个 production Screen**；旧的 `DiffListWidget<T, K, C extends Component>`、92 个 `Sizing.fill(100)` 站点和 Screen-local listener/unsubscriber 语义只作为迁移对拍，不构成 library-neutral core；`ClientThreadMarshal` 只冻结纯 helper API。
 - 15 个 owo Screen 当前直接依赖 `BaseOwoScreen`/`FlowLayout`/owo `Component`；14 个 vanilla Screen 直接依赖 `Screen`/`addDrawableChild`。因此 `BongScreenBase<R extends ParentComponent>` 和 `DiffListWidget<T,K,C extends Component>` 只能是 adapter 实现，不能继续作为跨库公共契约。
 - `InspectScreen.java` 约 4647 行，同时持有 tab 组合、Store snapshot/listener intake、drag/drop、context menu、tooltip、hotbar 和 overlay arbitration；它必须保持唯一 screen-level intake，tab panel 不得重复订阅同一 Store。
 - production `*Store.java` 共 **109** 个（R2 的 108 个业务 Store 加 lifecycle infrastructure 口径）；R2 的 `SessionScopedStore` 只有 `clearOnDisconnect()`，不是 UI subscription contract。现有 listener/remove-listener 形态不统一，必须通过 R7 read adapter 归一，不能假定所有 Store 已有同一接口。
 - `client/network` Handler 约 **80** 个；主路径为 `ProtoServerDataBridge -> ServerDataRouter -> domain Handler -> Store/HUD/Screen`。Handler 负责解析和写入 domain state，UI 不得反向依赖 Handler。
 - `ClientRequestSender` 现有大量静态 `sendXxx` 入口（审计口径 117 个 public sending entry），同时存在 `void`、本地 transport `boolean`、tracked `request_id` 和 generic JSON 入口。UI 不能把该类当库无关 API；R7 只在其上提供 typed intent adapter。
 - `BongClient.onInitializeClient()` 以显式顺序注册 network、HUD、keybind、Screen bootstrap、render/audio 等模块；R7 只收编 UI/HUD/keybind 子集，不改变 `BongNetworkHandler.register()` 的 channel 注册顺序。
-- owo `Sizing.fill(100).inflate(space, ...)` 返回完整 `space`，不是同轴兄弟的剩余空间。现有 92 个 token（87 个 executable）以及 15 个 executable `clearChildren()` 站点已由 `r7-fill100-inventory.tsv` 锁定，不能机械全量替换。
+- owo `Sizing.fill(100).inflate(space, ...)` 返回完整 `space`，不是同轴兄弟的剩余空间。现有 92 个 token（87 个 executable）以及 15 个 executable `clearChildren()` 站点已由 `fill100-inventory.tsv` 锁定，不能机械全量替换。
 
 ## 2. 目标架构与稳定数据流
 
@@ -58,15 +59,15 @@ UI input
 - UI adapter 不直接操作 Store 的静态业务字段；只能消费 `UiStateSource.snapshot()` 和订阅信号。
 - UI 不把“本地 transport 已接受”当作 server gameplay 成功；权威结果仍来自 S2C state/receipt。
 - network Handler 不直接构造 library-specific widget；需要打开 UI 时只提交 domain offer/state，由 bootstrap/transition owner 决策。
-- server/agent 只拥有语义 surface、immutable view data 和 allowed action；client 只拥有本地模板、布局和交互呈现。任何 HTML/XML/JS/DOM/像素坐标不得跨这条边界。
+- server/agent 只拥有语义 surface、immutable view data 和 allowed action；client 只拥有本地 owo/vanilla 模板、布局和交互呈现。任何 HTML/XML/JS/DOM/像素坐标不得跨这条边界。
 - bot/headless client 消费同一 `surface_id`、`template_id`、`action_id`、参数校验和 authoritative receipt；它跳过模板、渲染和物理输入，但不能走另一套“测试专用”业务接口。
 
 ### 2.1 UI backend 决议
 
-- **主实现**：`owo`。现有 15 个 owo Screen 先迁移到 `OwoScreenHost`，动态 XML 只保留在 owo adapter 内；新 controller、ViewModel、Store adapter 和 typed intent 不得依赖 `BaseOwoScreen`。
-- **兼容实现**：`vanilla`。现有 14 个 vanilla Screen 通过 `VanillaScreenHost` 保持行为，作为迁移期间的兼容宿主，不再发展第二套业务状态或网络入口。
-- **撤回第三方宿主路线**：桌面原生运行时和额外进程不能覆盖手机端目标；因此本计划不引入第三方宿主、原生下载、HTML/CSS/JS 页面、纹理桥接或第三方输入。若未来有移动端兼容实现，另立 plan 重新评估，不在 R7 中预留生产接口。
-- **稳定边界**：library-neutral contract 只面向 `OwoScreenHost` 和 `VanillaScreenHost`；backend registry 的能力枚举只登记 `OWO`、`VANILLA`，不得以未实现的宿主能力作为 fallback 条件。
+- **主实现**：`owo`。现有 15 个 owo Screen 先迁移到 `OwoScreenHost`；动态 XML 只保留在 owo adapter 内，新 controller、ViewModel、Store adapter 和 typed intent 不得依赖 `BaseOwoScreen`。
+- **兼容实现**：`vanilla`。现有 14 个 vanilla Screen 通过 `VanillaScreenHost` 保持行为，作为迁移期间的兼容宿主，不发展第二套业务状态或网络入口。
+- **撤回第三方宿主路线**：本计划不引入 MCEF、JCEF、CinemaMod、原生窗口、HTML/CSS/JS 页面或额外进程；未来若需要第三种宿主，另立计划并重新做 compatibility gate。
+- **稳定边界**：library-neutral contract 只面向 `OwoScreenHost` 和 `VanillaScreenHost`；backend capability 只登记 `OWO`、`VANILLA`。
 
 ## 3. 接入面与跨轨所有权
 
@@ -176,7 +177,7 @@ public interface UiScreenController<M, I extends UiIntent> {
 - `BongScreenBase` 若保留，只能是 `OwoScreenHost` 的兼容实现，不得被写入 `ui/contract` 或作为新 Screen 的业务依赖。
 - `DynamicXmlScreen` 继续属于 owo adapter；模板白名单和 XML 安全策略不迁入 library-neutral contract。
 
-owo adapter 不等于 library-neutral contract：owo component、XML 模板和 library-specific lifecycle 均锁在 `ui/adapter/owo/**`；vanilla widget 细节锁在 `ui/adapter/vanilla/**`。若后续要支持第三种宿主，必须另立 plan 和 compatibility gate，不得把具体组件树偷渡成公共 wire schema。
+adapter 不等于 library-neutral contract：owo component、XML 模板和 vanilla widget 细节均锁在各自 adapter 包。若未来要支持第三种宿主，必须另立 plan，不得把具体组件树偷渡成公共 wire schema。
 
 ### 4.4 `UiListReconciler<T,K>`
 
@@ -263,19 +264,21 @@ server/agent **不得**下发 owo XML、HTML、CSS、JavaScript、任意 URL、D
 
 当前代码证据表明这条边界必须集中收口：`MixinMouse.java:100-116` 和 `BotanyHudBootstrap.java:58-69` 都把 `MinecraftClient.mouse` 的 physical window 坐标按 `getScaledWidth()/getWidth()`、`getScaledHeight()/getHeight()` 换算为 GUI logical 坐标；`BongHud.java:131-143`、`:243-251`、`:528-541` 则统一从 `getWindow().getScaledWidth/Height()` 生成 HUD 输入、绘制覆盖层和测量文字。相反，`AlchemyScreen.java:664-710`、`ForgeScreen.java:365-375`、`InspectScreen.java:2255-2375` 仍在 Screen 内直接进行 `mouseX/mouseY` 命中和 grid 换算，正是迁移期间要被 `UiViewport`/layout policy 覆盖的耦合点。
 
-布局必须由可测试的纯策略计算，不在 controller、Store 或业务 intent 中写死屏幕像素。公共输入只区分 Minecraft 窗口/帧缓冲 physical px、Minecraft GUI logical px，并显式记录 `gui_scale`、window scale factor 和 safe insets；手机触摸、第三方宿主坐标和原生纹理坐标不属于本计划。
+当前依赖事实也必须写明：`client/build.gradle:45-51` 只有 Minecraft、Fabric、owo 依赖，`client/gradle.properties:1-19` 没有第三方 browser provider；因此第三方宿主不是已有 production API，也不进入 R7 的 adapter seam。
 
-`UiViewport` 至少包含 `logical_width`、`logical_height`、`framebuffer_width`、`framebuffer_height`、`gui_scale` 和 safe insets；`UiLayoutPolicy.measure(UiViewport, ViewModel)` 输出确定性的 `UiLayoutSnapshot`（layout mode、content rect、控件 bounds、focus order、overflow policy 和 hit regions）。同一输入必须得到同一快照，供 owo/vanilla adapter 和 headless geometry test 共同消费。
+布局必须由可测试的纯策略计算，不在 controller、Store 或业务 intent 中写死屏幕像素。公共输入至少区分 Minecraft 窗口/帧缓冲 physical px 和 Minecraft GUI logical px，并显式记录 `gui_scale` 与 window scale factor。
+
+`UiViewport` 至少包含 `logical_width`、`logical_height`、`framebuffer_width`、`framebuffer_height`、`gui_scale`、`device_pixel_ratio` 和 safe insets；`UiLayoutPolicy.measure(UiViewport, ViewModel)` 输出确定性的 `UiLayoutSnapshot`（layout mode、content rect、控件 bounds、focus order、overflow policy 和 hit regions）。同一输入必须得到同一快照，供 Java adapter 和 headless geometry test 共同消费。
 
 冻结以下不变量：
 
 - 业务层只使用逻辑坐标和 design tokens；不得把窗口 physical px 或某一 GUI scale 当作业务尺寸。
 - GUI logical 尺寸优先使用 Minecraft 提供的 scaled viewport；鼠标、键盘焦点和 Screen 输入必须使用同一套正/逆变换，禁止在各 Screen 内散落手工比例换算。
 - 字体 token 不随 viewport 宽度连续缩放；空间不足时只能换 `COMPACT`/`REGULAR`/`WIDE` 布局、换行、堆叠、滚动或折叠次要操作。主要操作不能被裁切、遮挡或变成不可点击的隐形区域。
-- 每个 interactive hit region 必须落在 safe rect 内；除显式声明的 overlay group 外不得重叠；文本按实际 Minecraft 字体 metrics 测量，不能溢出父容器。resize 只能更新同一 host 的布局，不得重复注册组件或订阅。
+- 每个 interactive hit region 必须落在 safe rect 内；除显式声明的 overlay group 外不得重叠；文本按实际字体 metrics 测量，不能溢出父容器。resize 只能更新同一 host 的布局，不得重复创建组件或订阅。
 - P0R 必须根据实际 client window 限制冻结 `MIN_SUPPORTED_VIEWPORT`（默认验收下限为 `320x240`）。低于下限仍需进入 fail-safe compact/scroll 模式并保留关闭路径，但不得把“不支持”尺寸的绿灯算作完整布局支持。
 
-固定回归矩阵至少覆盖：`320x240`、`400x240`、`640x360`、`854x480`、`1000x700`、`1024x768`、`1280x720`、`1365x768`、`1920x1080`、`2560x1080`、`3440x1440`、`1080x1920`；每个尺寸至少跑 GUI scale `1/2/3/4`、window scale `1.0/1.25/1.5/2.0`，并额外覆盖 odd aspect 和 resize 中间态。矩阵是 geometry/input contract，不要求 bot 启动真实渲染器，也不宣称手机端支持。
+固定回归矩阵至少覆盖：`320x240`、`400x240`、`640x360`、`854x480`、`1000x700`、`1024x768`、`1280x720`、`1365x768`、`1920x1080`、`2560x1080`、`3440x1440`、`1080x1920`；每个尺寸至少跑 GUI scale `1/2/3/4`，window scale `1.0/1.25/1.5/2.0`，并额外覆盖 odd aspect 和 resize 中间态。矩阵是 geometry/input contract，不要求 bot 启动真实渲染器。
 
 ## 5. UI 状态、网络 Handler 与 Bootstrap 的外部接口纪律
 
@@ -328,9 +331,9 @@ bot e2e 分三层记录：
 ## 6. 阶段总览
 
 - ✅ 2026-07-30 **旧 P0 盘点基线**：29 Screen、92 fill、15 clearChildren、keybind 冲突、R2/R6 ownership fixture 已存在；仅 docs/tests/resources，未改变 production behavior。
-- ⬜ **P0R contract rebase + semantic/owo compatibility gate**：补齐 library-neutral contract、semantic surface/action 接缝、Store read adapter、typed intent、bootstrap registry、依赖方向和迁移 exemption；冻结 owo/vanilla adapter 边界、`UiViewport`/layout policy 与 resolution matrix；更新 fixtures，不生成 production adapter。
+- ✅ 2026-08-25 **P0R contract rebase + semantic/owo compatibility gate**：补齐 library-neutral contract、semantic surface/action 接缝、Store read adapter、typed intent、bootstrap registry、依赖方向和迁移 exemption；冻结 owo/vanilla adapter 边界、`UiViewport`/layout policy 与 resolution matrix；更新长期 fixtures，不生成 production adapter。
 - ⬜ **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy` 的纯 client 测试实现；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake；contract 包 zero owo/vanilla dependency。
-- ⬜ **P2 owo-first adapter + bootstrap reference slice**：实现 owo 主 host 和 vanilla 兼容 host；在最低和 odd viewport 矩阵跑 layout/input geometry；选择一个 owo Screen（`CraftScreen`）和一个 vanilla Screen（`TradeOfferScreen`）接入 controller/scope；把 `OWO`/`VANILLA` backend capability 和 bootstrap 纳入 registry。
+- ⬜ **P2 owo-first adapter + bootstrap reference slice**：实现 owo 主 host 和 vanilla 兼容 host；在最低和 odd viewport 矩阵跑 layout/input geometry；选择一个 owo Screen（`CraftScreen`）和一个 vanilla Screen（`TradeOfferScreen`）接入 controller/scope；把 `OWO`/`VANILLA` backend capability 纳入 registry。
 - ⬜ **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo/vanilla template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
 - ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy**：15 个 owo 与 14 个 vanilla Screen 分批归入 adapter；迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放。
 - ⬜ **P5 InspectScreen tab-first 拆解**：shell 只做一次 Store intake、一次 subscription scope 和交互 arbitration；tab panel 只接 immutable ViewModel + intent callback；不与 R10 server inventory 内部重排同窗口。
@@ -341,13 +344,21 @@ bot e2e 分三层记录：
 
 ### P0R — contract rebase + semantic/owo compatibility gate（ZERO production behavior change）
 
-- **模块**：`client/ui/{contract,state,intent,bootstrap}/` 的契约 fixture（含 `UiStateSourceMode`、`UiSurfaceProjection`、`UiActionRegistry`、`UiViewport`）；新增/更新 `r7-ui-contract.tsv`、`r7-screen-adapters.tsv`、`r7-store-state-sources.tsv`、`r7-intent-boundary.tsv`、`r7-ui-dependency-allowlist.tsv`、`r7-ui-bootstrap-modules.tsv`、`r7-semantic-surface.tsv`、`r7-viewport-matrix.tsv`。
+- **模块**：`client/ui/{contract,state,intent,bootstrap}/` 的契约 fixture（含 `UiStateSourceMode`、`UiSurfaceProjection`、`UiActionRegistry`、`UiViewport`）；长期保留 `ui-contract.tsv`、`screen-adapters.tsv`、`store-state-sources.tsv`、`intent-boundary.tsv`、`ui-dependency-allowlist.tsv`、`ui-bootstrap-modules.tsv`、`semantic-surface.tsv`、`viewport-matrix.tsv` 和 `ui-backend-capabilities.tsv`。
 
-- **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory；冻结 semantic surface 的必需 identity/revision/action 字段和 legacy raw XML 隔离；登记 `UiDriver` 外部接口；冻结 owo/vanilla backend capability、`MIN_SUPPORTED_VIEWPORT`、逻辑/physical 坐标转换和 odd-resolution matrix。
+- **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory；冻结 semantic surface 的必需 identity/revision/action 字段和 legacy raw XML 隔离；登记 `UiDriver` 外部接口；冻结 `OWO`/`VANILLA` backend capability、`MIN_SUPPORTED_VIEWPORT`、逻辑/physical 坐标转换和 odd-resolution matrix。
 
-- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryTest`、`R7SemanticSurfaceContractTest`、`R7ViewportMatrixContractTest`；production source hash 对拍，确认 no production behavior change。
+- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryContractTest`、`R7StoreStateSourceContractTest`、`R7BackendCapabilitiesContractTest`、`R7SemanticViewportContractTest`、`R7ProductionBaselineContractTest`；production source hash 对拍，确认 no production behavior change。
 
 - **跨仓库**：不在 R7 内直接改 schema/proto/Redis/CustomPayload；现有 `proto/bong/envelope.proto`、`agent/packages/schema/src/server-data.ts`、`scripts/bot/_agent_ui_helpers.py` 的 raw XML 耦合登记为 R6/schema/agent amendment 输入，未完成 atomic activation 前只保留 legacy regression。
+
+#### P0R Finish Evidence
+
+- **落地清单**：新增 source-derived Screen adapter、Store source、bootstrap order、semantic/intent/viewport、UI dependency、backend capability 和 production Java digest contract tests；长期 fixture 统一使用 `ui/` 语义文件名，不再使用阶段性 `r7-` 前缀。未新增 `client/src/main/java` production adapter、Screen migration 或 wire/schema 字段。
+- **关键证据**：合并当前 `origin/main` 后 production Java source tree SHA-256 为 `66502bbf20e7be0999576c612eac5b53d23c81ca9c5e8c3cad91e67bc3558f2b`（包含主线已合入的 `BongScreenBase` 基类，P0R 分支自身未新增 Screen 迁移）；Screen inventory 对拍为 29 个（15 owo、14 vanilla）；BongClient UI bootstrap 对拍为 30 个模块；Store source fixture 对拍通过。
+- **测试结果**：`./gradlew test --tests 'com.bong.client.ui.R7*ContractTest' --tests com.bong.client.insight.InsightOfferScreenTest --tests com.bong.client.insight.InsightOfferStoreTest -x runGametest` 通过；Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"` 通过，包含 3 个 Fabric GameTest。
+- **跨仓库核验**：未修改 server、agent/schema、protobuf、Redis key、CustomPayload 或 R2/R6 owner 文件；semantic raw XML 继续标记为 legacy 输入，后续 wire cutover 仍由 R6/schema/agent amendment 负责。
+- **遗留 / 后续**：P1-P7 仍未开始；下一阶段才实现 `ui/contract/**`、owo-first/vanilla-compatible adapters、headless fake 和 Screen 迁移。`ui-backend-capabilities.tsv` 仅记录 OWO/VANILLA，第三方 host 明确 OUT_OF_SCOPE。
 
 ### P1 — library-neutral core
 
@@ -372,7 +383,7 @@ bot e2e 分三层记录：
 
 ### P4 — 全 Screen、keybind、线程与 open policy
 
-- **模块**：15 owo + 14 vanilla Screen、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`r7-fill100-inventory.tsv` 相关站点。
+- **模块**：15 owo + 14 vanilla Screen、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`fill100-inventory.tsv` 相关站点。
 - **交付**：每个 Screen 有 adapter classification 和 scope owner；所有 production keybind constructor 经 global registry；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定；所有 Screen 使用 `UiLayoutPolicy`，不在 controller 写死 viewport px。
 - **测试**：source gate 禁止 raw network/sender imports；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复组件或订阅；Java 17 full gate。
 - **边界**：R6 receive boundary 不重复 marshal；combat snapshot 缺失时 social policy fail closed。
@@ -388,12 +399,12 @@ bot e2e 分三层记录：
 
 - **模块**：`InsightOfferHandler`、`HeartDemonOfferHandler` 的窄转换接缝、`InsightOfferViewModel/Store/Screen/Bootstrap`、`SparringInviteScreenBootstrap`、`BongHudOrchestrator`、剩余 UI bootstrap。
 - **交付**：`offer_id` 不丢失；distinct offer + reused trigger 不合并；exact offerId claim/compare-and-clear exactly-once；social invite 读取 server-authoritative combat snapshot；qi radar main path 恢复；UI registry 清单与 BongClient call set 收口。
-- **测试**：`r7-insight-settlement.tsv` 全 terminal causes、stale A/duplicate callback 不影响 B、combat notify/silent/open/expire、缺 combat producer fail closed、凝脉及以上 `HudRenderLayer.QI_RADAR` 与 negative-qi/TSY false-signal/nearby markers。
+- **测试**：`insight-settlement.tsv` 全 terminal causes、stale A/duplicate callback 不影响 B、combat notify/silent/open/expire、缺 combat producer fail closed、凝脉及以上 `HudRenderLayer.QI_RADAR` 与 negative-qi/TSY false-signal/nearby markers。
 - **跨仓库**：`InsightDecision` 当前仅 `trigger_id`/`choice_idx`；未新增 offer_id wire，不宣称 wire-level offer isolation。
 
 ### P7 — 验收与归档
 
-- **测试**：Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；semantic `UiDriver` bot roundtrip（`scripts/bot/**`）；`ui_c2s_smoke`；`reconnect_state_freshness`；`r7-viewport-matrix` geometry/input gate；必要的 `runClient` 五大屏人工回归；source/contract gates。
+- **测试**：Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；semantic `UiDriver` bot roundtrip（`scripts/bot/**`）；`ui_c2s_smoke`；`reconnect_state_freshness`；`viewport-matrix.tsv` geometry/input gate；必要的 `runClient` 五大屏人工回归；source/contract gates。
 - **归档**：所有阶段状态更新为 `✅ YYYY-MM-DD`，补 `## Finish Evidence`（模块路径、commit、测试、server/agent/client symbol、遗留项），只归档被本轨完整吸收的计划。
 
 ## 8. 吸收清单与已知边界
@@ -461,6 +472,8 @@ bot e2e 分三层记录：
 
 **决议**：passive social invite 保留 domain Store；战斗/已有屏时首次同 identity `DEFER_NOTIFY`，重复 `DEFER_SILENT`，空屏且 TTL 有效才 `OPEN`；普通 hotkey 永不排队重放；Insight 按 exact `offer_id` settlement；system terminal 按优先级抢占。
 
+该决议同时冻结 `BLOCK_DROP` 的普通 hotkey 结果；`SparringInviteScreenBootstrap` 必须成为 `ScreenOpenPolicy` 的 production consumer。Insight lifecycle 必须证明 stale offer A 不能清除 offer B。
+
 **落点**：`SparringInviteScreenBootstrap.java`、`InsightOfferScreenBootstrap.java`、`ScreenTransitionController.java`；本 plan §4.3、§7 P4/P6。
 
 ### #7 网络与 UI 边界
@@ -477,7 +490,7 @@ bot e2e 分三层记录：
 
 ### #9 Viewport、缩放与输入坐标
 
-**决议**：公共 UI 只接受 `UiViewport` 的 logical dimensions 和显式 scale metadata；`UiLayoutPolicy` 以约束/布局模式处理 compact/regular/wide，不假设 16:9。physical px 与 MC GUI scale 的转换集中在 owo/vanilla adapter，输入使用同一逆变换；最低 `320x240`、odd aspect、超宽/超窄/竖屏、GUI scale 1-4 和 resize 中间态全部进入 geometry/input contract；手机触摸和第三方宿主坐标不在本计划范围。现有 physical→logical 证据是 `client/src/main/java/com/bong/client/mixin/MixinMouse.java:100-116`、`client/src/main/java/com/bong/client/botany/BotanyHudBootstrap.java:58-69`；现有 scaled viewport/HUD 消费证据是 `client/src/main/java/com/bong/client/BongHud.java:131-143,243-251,528-541`；现有 Screen-level hit-test 耦合证据是 `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java:664-710`、`client/src/main/java/com/bong/client/forge/ForgeScreen.java:365-375`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java:2255-2375`。本决议对应本计划 §4.8、P2/P4/P7。
+**决议**：公共 UI 只接受 `UiViewport` 的 logical dimensions 和显式 scale metadata；`UiLayoutPolicy` 以约束/布局模式处理 compact/regular/wide，不假设 16:9。physical px 与 MC GUI scale 的转换集中在 owo/vanilla adapter，输入使用同一逆变换；最低 `320x240`、odd aspect、超宽/超窄/竖屏、GUI scale 1-4 和 resize 中间态全部进入 geometry/input contract。现有 physical→logical 证据是 `client/src/main/java/com/bong/client/mixin/MixinMouse.java:100-116`、`client/src/main/java/com/bong/client/botany/BotanyHudBootstrap.java:58-69`；现有 scaled viewport/HUD 消费证据是 `client/src/main/java/com/bong/client/BongHud.java:131-143,243-251,528-541`；现有 Screen-level hit-test 耦合证据是 `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java:664-710`、`client/src/main/java/com/bong/client/forge/ForgeScreen.java:365-375`、`client/src/main/java/com/bong/client/inventory/InspectScreen.java:2255-2375`。
 
 **落点**：`client/src/main/java/com/bong/client/ui/contract/UiViewport.java`、`UiLayoutPolicy.java`、`ui/adapter/{owo,vanilla}/**`；本 plan §4.8、P2/P4/P7。
 
@@ -492,7 +505,7 @@ bot e2e 分三层记录：
 1. **PR-1 / P0R contract rebase**：只改本 plan、R7 fixture/resource、master ownership 描述；ZERO production behavior change。
 2. **PR-2 / P1 library-neutral core**：`ui/contract`、state adapter、intent result、reconciler、bootstrap graph fake；不迁生产 Screen。
 3. **PR-3 / P2 owo-first adapter reference**：owo 主 host + vanilla 兼容 host；`CraftScreen` + `TradeOfferScreen` 两条垂直切片；UI registry 只登记 `OWO`/`VANILLA` 和 resolution/input geometry gate。
-4. **PR-4 / P3 state/intent boundary A**：semantic surface 双 adapter vertical slice、`SemanticUiDriver` bot roundtrip，以及 Alchemy/Craft/Trade/Loot；迁移并移除直接 sender/handler import，wire 变更只走 R6/schema atomic amendment。
+4. **PR-4 / P3 state/intent boundary A**：semantic surface 双 adapter vertical slice、`SemanticUiDriver` bot roundtrip，以及 Alchemy/Craft/Trade/Loot；迁移直接 sender/handler import，wire 变更只走 R6/schema atomic amendment。
 5. **PR-5 / P4 full Screen/input/scale policy**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移。
 6. **PR-6 / P5 Inspect split**：tab-first shell/panels，行为不变。
 7. **PR-7 / P6 integration + acceptance**：Insight/HUD/bootstrap 收口，完整 client gate、UI C2S smoke、reconnect evidence。

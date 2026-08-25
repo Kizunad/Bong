@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * InsightOfferStore 结算契约测试（r7-insight-settlement.tsv 全部 terminal causes）。
+ * InsightOfferStore 结算契约测试（insight-settlement.tsv 全部 terminal causes）。
  *
  * <p>核心不变量：每个 offer 实例由 {@code offerId} + 不可复用 session token 标识；
  * 任何结算路径都先对 exact offerId 原子 claim，再 dispatch/清槽；
