@@ -517,7 +517,7 @@ start_self_server_attempt() {
     SERVER_BINARY="$EVIDENCE_DIR/bong-server-$TARGET_PROFILE"
     install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"
   fi
-  echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，端口 $PORT，尝试 $attempt/$MAX_PORT_RETRIES，log: $SERVER_LOG）"
+  echo "[bot-e2e] 启动 server（profile=$TARGET_PROFILE，端口 $PORT，尝试 $attempt/$MAX_PORT_RETRIES，log: $SERVER_LOG）"
   # Owned-fixture mode moves all relative persistent outputs into its evidence runtime. Generic
   # mode retains the historical checkout/server CWD for callers that rely on that contract.
   (

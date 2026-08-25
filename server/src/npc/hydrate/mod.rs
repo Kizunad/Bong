@@ -23,6 +23,7 @@ use crate::cultivation::tribulation::{
 #[cfg(test)]
 use crate::fauna::daozhan::FakeBehavior;
 use crate::fauna::daozhan::{DaoZhangBehaviorBlackboard, DaoZhangState};
+use crate::fauna::dying_elder::DyingElderBlackboard;
 use crate::fauna::mimic_spider::{MimicSpiderBlackboard, SpiderDisguiseState, SpiderTrapPotential};
 use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
@@ -352,7 +353,12 @@ pub fn dehydrate_far_npcs_system(
             Option<&FactionMembership>,
             Option<&NpcPatrol>,
         ),
-        (With<NpcMarker>, Without<Despawned>, Without<ScenarioNpc>),
+        (
+            With<NpcMarker>,
+            Without<Despawned>,
+            Without<ScenarioNpc>,
+            Without<DyingElderBlackboard>,
+        ),
     >,
     severed: Query<Option<&MeridianSeveredPermanent>, With<NpcMarker>>,
     shared_lifespan: Query<Option<&LifespanComponent>, With<NpcMarker>>,

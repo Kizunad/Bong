@@ -34,6 +34,7 @@ import time
 from bot.bot import BotAssertionError
 
 from ._inventory_helpers import wait_join_and_inventory
+from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
 
 DESCRIPTION = "mineral_probe 拒绝面：Awaken→realm_too_low、凝脉→not_mineral_ore、出界→静默"
 MODULES = ["mineral", "network"]
@@ -43,7 +44,7 @@ SILENT_WINDOW = 4.0
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
 # cultivation_detail 需 MeridianSystem+Cultivation，本场景只 realm set（不加
 # 经脉系统），不应出现——若出现即判红（这正是契约要求的「无 S2C 响应」）。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
+AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 # 权威 Position 的 y 带：实测 spawn 后周期性 +10（72→82→92…），单点探针必超 6m。
 # 列盲扫覆盖 [-6, +30]（步长 4），覆盖整条提升带；列外则重读位置换列。
 Y_LO = -6

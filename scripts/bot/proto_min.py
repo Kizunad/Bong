@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import struct
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,6 +76,9 @@ SERVER_DATA_PAYLOAD_NAMES = {
     6: "cultivation_detail",
     7: "skill_xp_gain",
     8: "inventory_snapshot",
+    9: "combat_hud_state",
+    32: "wounds_snapshot",
+    104: "movement_state",
     11: "alchemy_furnace",
     12: "alchemy_session",
     14: "alchemy_outcome_resolved",
@@ -93,13 +97,21 @@ SERVER_DATA_PAYLOAD_NAMES = {
     35: "quickslot_config",
     36: "skillbar_config",
     37: "techniques_snapshot",
+    38: "unlocks_sync",
+    39: "derived_attrs_sync",
+    43: "treasure_equipped",
+    44: "vortex_state",
+    45: "dugu_poison_state",
+    48: "poison_trait_state",
     49: "carrier_state",
+    50: "false_skin_state",
     51: "combat_event",
     54: "skill_config_snapshot",
     64: "sparring_invite",
     65: "trade_offer",
     66: "tribulation_state",
     69: "heart_demon_offer",
+    70: "burst_meridian_event",
     71: "breakthrough_cinematic",
     72: "death_screen",
     73: "terminate_screen",
@@ -112,10 +124,13 @@ SERVER_DATA_PAYLOAD_NAMES = {
     119: "loot_container_open",
     120: "loot_container_update",
     121: "loot_container_close",
+    128: "sword_bond_hud_state",
     131: "insight_offer",
     137: "inventory_move_rejected",
     49: "carrier_state",
     74: "qi_color_observed",
+    76: "spiritual_sense_targets",
+    139: "remains_sync",
     77: "event_alert",
     129: "mineral_probe_result",
     130: "freshness_update",
@@ -192,6 +207,23 @@ def _inventory_snapshot(data: bytes) -> dict[str, Any]:
         "qi_current": _double(fields, 9),
         "qi_max": _double(fields, 10),
         "body_level": _double(fields, 11),
+    }
+
+
+def _combat_hud_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    derived = _message(fields, 4)
+    return {
+        "v": 1,
+        "type": "combat_hud_state",
+        "hp_percent": _float32(fields, 1),
+        "qi_percent": _float32(fields, 2),
+        "stamina_percent": _float32(fields, 3),
+        "derived": {
+            "flying": bool(_varint(derived, 1)),
+            "phasing": bool(_varint(derived, 2)),
+            "tribulation_locked": bool(_varint(derived, 3)),
+        },
     }
 
 
@@ -1498,6 +1530,55 @@ def _combat_event_floater(data: bytes) -> dict[str, Any]:
     return {"v": 1, "type": "combat_event", "events": events}
 
 
+def _false_skin_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "false_skin_state",
+        "target_id": _string(fields, 1),
+        "kind": _optional_varint(fields, 2),
+        "layers_remaining": _varint(fields, 3),
+        "contam_capacity_per_layer": _double(fields, 4),
+        "absorbed_contam": _double(fields, 5),
+        "equipped_at_tick": _varint(fields, 6),
+    }
+
+
+def _treasure_equipped(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    treasure = _message(fields, 2)
+    return {
+        "v": 1,
+        "type": "treasure_equipped",
+        "slot": _string(fields, 1),
+        "treasure": {
+            "instance_id": _varint(treasure, 1),
+            "template_id": _string(treasure, 2),
+            "display_name": _string(treasure, 3),
+        }
+        if treasure
+        else None,
+    }
+
+
+def _burst_meridian_event(data: bytes) -> dict[str, Any]:
+    """Decode the single BurstMeridianEvent payload (envelope field 70)."""
+    fields = _fields(data)
+    decoded = {
+        "v": 1,
+        "type": "burst_meridian_event",
+        "skill": _string(fields, 1),
+        "caster": _string(fields, 2),
+        "tick": _varint(fields, 4),
+        "overload_ratio": _double(fields, 5),
+        "integrity_snapshot": _double(fields, 6),
+    }
+    target = _optional_string(fields, 3)
+    if target is not None:
+        decoded["target"] = target
+    return decoded
+
+
 def _breakthrough_cinematic(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     return {
@@ -1792,6 +1873,7 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     SERVER_DATA_PLAYER_STATE_FIELD: _player_state,
     7: _skill_xp_gain,
     8: _inventory_snapshot,
+    9: _combat_hud_state,
     11: _alchemy_furnace,
     12: _alchemy_session,
     14: _alchemy_outcome_resolved,
@@ -1809,8 +1891,12 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
     36: _skill_bar_config,
     37: _techniques_snapshot,
+    43: _treasure_equipped,
+    44: lambda data: {"v": 1, "type": "vortex_state"},
     49: _carrier_state,
+    50: _false_skin_state,
     51: _combat_event_floater,
+    70: _burst_meridian_event,
     54: _skill_config_snapshot,
     SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
     SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
@@ -1979,6 +2065,15 @@ def server_data_payload_field(data: bytes) -> int | None:
 
 
 def server_data_payload_name(data: bytes) -> str | None:
+    stripped = data.lstrip()
+    if stripped.startswith(b"{"):
+        try:
+            decoded = json.loads(stripped.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if isinstance(decoded, dict) and isinstance(decoded.get("type"), str):
+            return decoded["type"]
+        return None
     field = server_data_payload_field(data)
     if field is None:
         return None

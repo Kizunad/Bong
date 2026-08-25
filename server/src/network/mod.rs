@@ -636,7 +636,6 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             ascension_quota_emit::emit_ascension_quota_payloads
                 .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
-            burst_event_emit::emit_burst_meridian_events,
             anqi_event_bridge::publish_carrier_charged_events,
             anqi_event_bridge::publish_carrier_impact_events,
             anqi_event_bridge::publish_projectile_despawned_events,
@@ -648,6 +647,14 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             tuike_event_bridge::publish_tuike_shed_events
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
+    );
+    // Skill resolvers enqueue BurstMeridianEvent via deferred commands. The explicit
+    // dependency makes Bevy insert ApplyDeferred between the request handler and this
+    // exclusive bridge, so every accepted cast reaches S2C in the same Update.
+    app.add_systems(
+        Update,
+        burst_event_emit::emit_burst_meridian_events
+            .after(client_request_handler::handle_client_request_payloads),
     );
     app.add_systems(Update, dugu_event_bridge::publish_antidote_result_events);
     app.add_systems(
