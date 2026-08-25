@@ -7817,6 +7817,11 @@ class FrameParseTest(unittest.TestCase):
         small = b"\x17small"
         conn.buf = _frame(mc.write_varint(0) + small)
         self.assertEqual(conn._try_parse_frame(), small)
+        # Valence treats an exact-threshold payload as uncompressed.
+        exact = b"\x17" + b"x" * 63
+        self.assertEqual(len(exact), 64)
+        conn.buf = _frame(mc.write_varint(0) + exact)
+        self.assertEqual(conn._try_parse_frame(), exact)
         # 达阈值 zlib：DataLength=原长 + 压缩体
         big = b"\x24" + b"y" * 200
         conn.buf = _frame(mc.write_varint(len(big)) + zlib.compress(big))

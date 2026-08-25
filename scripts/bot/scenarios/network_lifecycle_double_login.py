@@ -17,6 +17,10 @@ from bot.scenarios._inventory_helpers import wait_join_and_inventory
 
 DESCRIPTION = "同一身份双开登录：两连接共存不互踢，分散后重连干净"
 MODULES = ["network", "multibot"]
+# The persistence layer intentionally blocks a live duplicate canonical
+# activation. Keep helper unit tests available, but exclude this incompatible
+# product contract from the default bot e2e gate.
+DEFAULT_ENABLED = False
 
 KEEPALIVE_TIMEOUT = 25.0
 
