@@ -20,7 +20,6 @@ pub(crate) struct CombatRequestParams<'w> {
     pub(crate) raise_shield_tx: Option<ResMut<'w, Events<RaiseShieldIntent>>>,
     pub(crate) lower_shield_tx: Option<ResMut<'w, Events<LowerShieldIntent>>>,
 }
-
 /// 已经通过总 C2S schema 解析的 Combat 请求。
 ///
 /// 这是编译期路由面；不使用字符串 handler registry、反射或动态注册。
