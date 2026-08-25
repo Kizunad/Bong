@@ -1,6 +1,6 @@
 # plan-refactor-master-v1 — Client/Server 大重构总纲（重构计划族 R1-R10）
 
-一句话：230+ 份点状 bughunt/feature plan 背后反复出现的是 **8 个系统性根因**（session 生命周期各写各的、持久化各漏各的、qi 账本可绕、C2S 无门禁、S2C 双轨散装、client store 断线裸奔、UI 无基类、AV 无单一事实源）。本计划族用 9 条重构轨道一次性把根因变成**共享基础设施**，以协议级 bot e2e 为主验收门，代码目标是干净直接无面条（拆 3 个 2 万行级 god file）。
+一句话：230+ 份点状 bughunt/feature plan 背后反复出现的是 **8 个系统性根因**（session 生命周期各写各的、持久化各漏各的、qi 账本可绕、C2S 无门禁、S2C 双轨散装、client store 断线裸奔、UI 无基类、AV 无单一事实源）。本计划族用 9 条重构轨道一次性把根因变成**共享基础设施**，以协议级 bot e2e 为主验收门；UI 另冻结 semantic surface/headless driver 和跨 UI 库的 responsive viewport contract，代码目标是干净直接无面条（拆 3 个 2 万行级 god file）。
 
 > 撰写依据：2026-07-27 五路侦察（server/client 结构地图、84 active plan、146 skeleton、16 开放 PR 全量盘点）。各轨道 skeleton 文件见 §2 表。
 
@@ -15,6 +15,7 @@
   3. 与被删实现绑定的旧单测允许随代码删除；不要求饱和覆盖；
   4. feature plan（非重构轨）不适用本条，仍按根 CLAUDE.md。
 - **Headless 多端是产品需求（用户 2026-08-08 指示），不是测试策略**：所有 client 端侧请求路径必须做成适配无头请求形式（多端形式）——Java 游戏客户端只是多个客户端之一，不是参照实现；近期驱动是 agent 协助挂机刷宝类玩法，服务端以此为基础搭建、不做事后补装。可测判据：**一个无 UI、无渲染、无输入设备的客户端，能否只凭 wire（C2S 请求 + `bong:server_data`/授权投影）完成该路径，并机器可读地得知结果——含拒绝，且可与发出的请求关联**。这与上一条测试方针是两个不同命题：bot e2e 绿只证明重构没坏，不证明该路径 headless 可完成；凡核心闭环依赖 dev 命令旁路、人类可读文案或 client 渲染态的场景不计入 headless 证据。逐轨裁决、验收增量与已登记张力见 §4.3；未决项见 §9.5-§9.9。
+- **UI 语义与呈现必须完全分离**：server/agent 只产生 semantic surface、immutable view data、typed allowed actions 和 authoritative receipts；client 的 owo/vanilla/MCEF adapter 只选择本地模板并呈现。bot 复用同一 action registry 和 wire，不通过像素点击、截图、XML/HTML/JS 或 Java 私有 Store 测试 UI 功能；视觉几何另走 viewport matrix。
 - 代码风格：巨型 match/god function 拆注册表；复制粘贴生命周期抽共享框架；仓库既有范式「集中注册表 + 显式映射」保留（可 grep 性优先，不引入注解扫描/反射魔法）。
 
 ## 1. 基线：先清空在飞 PR（重构动核心文件前必须 merge/close）
@@ -43,7 +44,7 @@
 | R4 | `plan-refactor-c2s-gate-v1` | C2S 声明式门禁 + handler 巨石拆分 | `client_request_handler.rs` + `network/gate/` | ~24 |
 | R5 | `plan-refactor-qi-ledger-v1` | qi 账本架构强制化（字段收私有） | `qi_physics/**` + 全仓直写点 | ~20 |
 | R6 | `plan-refactor-wire-s2c-v1` | S2C schema generation/transport machinery、emit builder、client 双轨归一与作用域广播 | TypeBox generation machinery、generated mirrors、`proto_convert.rs`、client bridge/router plumbing | ~12 |
-| R7 | `plan-refactor-client-ui-base-v1` | 库无关 UI contract + owo/vanilla adapters + Screen/Store/Intent/Bootstrap 分层 + InspectScreen 拆解 | `client/ui/contract/**`、UI adapters、Screen/HUD/keybind、BongClient UI bootstrap | ~17 |
+| R7 | `plan-refactor-client-ui-base-v1` | semantic UI surface/headless driver + 库无关 UI contract + owo/vanilla/MCEF browser adapters + Screen/Store/Intent/Bootstrap 分层 + InspectScreen 拆解 + responsive viewport | `client/ui/contract/**`、headless driver、UI adapters、Screen/HUD/keybind、BongClient UI bootstrap、browser capability/viewport seam | ~17 |
 | R9 | `plan-refactor-cast-av-contract-v1` | cast TypeBox 内容语义 + reducer/state machine + SkillAvBinding 单一事实源 | TypeBox cast declarations、server cast/AV semantics、client cast store | ~13 |
 | R10 | `plan-refactor-inventory-core-v1` | inventory 巨石拆分 + InventoryTxn 事务 | `server/src/inventory/**` | ~7 |
 | V | `plan-bot-e2e-coverage-v1`（既有 skeleton 直接促升，不另立） | bot 场景 P1-P6 扩容 + CI 假绿修复 + build token 脚本 | `scripts/bot/**`、CI | ~9 |
@@ -64,7 +65,7 @@
 ## 4. 文件所有权矩阵（防并行打架，冲突时以本表为准）
 
 - `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+schema generation/transport machinery+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast domain semantics/AV emit+skill 注册=R9。
-- client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；generated bridge+channel/`ServerDataRouter` registration plumbing=R6（与 R2 同文件不同区段，merge 前互 fetch）；R7 独占 `client/ui/contract`、owo/vanilla UI adapters、Screen/HUD/keybind/InspectScreen，以及 `BongClient` 的 UI/HUD/keybind bootstrap call set；cast reducer/store 与具体 domain consumers=R9。
+- client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；generated bridge+channel/`ServerDataRouter` registration plumbing=R6（与 R2 同文件不同区段，merge 前互 fetch）；R7 独占 `client/ui/contract`、headless projection/driver、owo/vanilla/MCEF browser UI adapters、Screen/HUD/keybind/InspectScreen、`UiViewport`/layout policy，以及 `BongClient` 的 UI/HUD/keybind bootstrap call set；MCEF provider/native packaging 先过 R7 compatibility gate；cast reducer/store 与具体 domain consumers=R9。semantic wire shape 的 TypeBox/server/agent producer 仍归 R6 及对应 domain owner，R7 不越权改其文件。
 - 任何轨道碰他轨文件：只允许“消费对方冻结后的 API”，不允许改对方独占文件；接缝 API 归被依赖方定义。跨轨 wire 共同交付按 §4.1，不得用此通则拆开 activation merge unit。
 
 ### 4.1 R9 ↔ R6 schema 与 production cutover 裁决（2026-08-04）
@@ -106,7 +107,7 @@ M-09 是 contract-first handoff，M-10 是唯一 craft production cutover；两�
 | R4 | 受影响=核心 | P0 决议 4 自认 EventAlert"没有 request/reason/request_id 字段，不能被宣称为结构化 ack"；决议 3"预算耗尽即丢弃/合并，不 decode" | ① 每类 GateSpec 拒绝最终必须对请求者机器可读且可与请求关联（request_kind + 安全折叠 reason_code + request_id，即 R4 P0 决议 4 已命名、走 R6 契约流程的 `request_rejected`）；P1 的 EventAlert 临时反馈是人类面文案，**不计入 headless 验收**，R4 P4 归档不得以 toast 在场作为拒绝反馈的完成证据（张力 #1）。② ingress 预算静默丢弃对 agent 客户端等价于网络丢包；背压信号未收口（§9.7）前，R4 必须在 plan 内显式登记该限制，不得默认 agent 客户端能与人类同速（张力 #2） |
 | R5 | 不受影响 | "本轨 P0-P3 是纯 server 内部重构；P4 bot e2e 通过既有 dev telemetry 校验，不新增 agent/client wire 形状" | 无 |
 | R6 | 受影响=核心 | "出料：`bong:server_data` 单通道……join/重连首包快照集契约"；P0 已冻结 producer ledger 与 31 旁路 28 收编/3 豁免；P4"104 C2S + 144 S2C 每变体至少一条正反 sample" | ① 豁免登记附加 headless 判定：3 个豁免通道逐项证明只承载渲染/资产/握手类信息——凡 gameplay-authoritative 状态不得走豁免通道，headless 客户端跳过全部豁免通道后 gameplay 状态无损。② join 首包 + 后续 `server_data` 必须足以让无本地渲染缓存的客户端重建全部 gameplay-authoritative 可见状态；P0 producer ledger 的 strict join/join-derived/active replay 分类即该判据的证据面。③ P4 双向 sample 集是第三方 headless 客户端实现的机器可验字典：sample 缺失即 headless 缺口，不是可延期的 nice-to-have |
-| R7 | 不受影响 | "server 全部不碰；无 wire/schema/Redis 变更" | 无。键位/HUD/Screen 只属 Java 端；"gameplay 前置不得依赖键位/Screen 态"由 R4 server 权威保证，不在 R7 |
+| R7 | 受影响=确认 | R7 冻结 semantic `UiSurfaceProjection`/`UiDriver`、local template registry 和 `UiViewport`；现有 Java UI 仍是 adapter 侧实现 | UI 功能必须可由无渲染 bot 仅凭 semantic action + production wire 完成；server/agent 不得收到 owo/XML/HTML/JS/DOM/像素坐标；同一 projection 在 owo/vanilla/MCEF 的 geometry/input contract 对拍。R7 不负责新增 wire producer，缺失字段按 R6/schema/domain owner amendment 原子接入；gameplay admission 仍不得依赖 Screen/HUD/keybind 态 |
 | R9 | 受影响=确认 | I-04"只有它（CastSync）能建立或终结 authoritative active cast"、I-06 PLAY/STOP 仅 advisory；A-13/Iris 节"server 只 emit semantic effect ID/tier；Iris 缺失不影响 gameplay" | 把 gameplay/AV 分层 pin 成 headless 验收：仅订阅 `cast_session_begin`+`cast_sync`、忽略两个 `vfx_event` arm 的客户端必须获得完整施法 gameplay 生命周期与 P-09 全部 17 种 typed outcome。招式 A/V 五件套红线约束的是 Java client 交付物，不得反向成为 gameplay 前置；Iris 能力分层（A-13）是通例，headless = 渲染能力为零的极端档 |
 | R10 | 受影响=确认 | "snapshot 仅作状态修正，不是动作级反馈"；容量超限"返回 `{current, required, limit}`，所有状态与 DB 不变"；deferred #2 要求 receipt 贯通 `request_id` | 动作级 accepted/rejected receipt（request 关联 + 机器可读 reason/limit 字段）是 headless 客户端唯一成功信号，snapshot 不得替代。挂机刷宝核心循环（dropped-loot 投影→pickup→merge/capacity→receipt）必须全程 wire 闭环；R6 P4 已列的 bot decoder 对拍即 headless 消费方证据 |
 | V | 受影响=角色变化 | "让 CI 在无真人客户端条件下锁住玩家可感知行为"；P0 已交付 `mc_protocol.py`/`bot.py` 的动作与断言集 | `scripts/bot/` 是事实上的第一个 headless 客户端原型，其能力面即 headless 能力下限。分类不变量：bot 场景绿不自动构成 headless 证据——凡核心路径（非前置铺垫）依赖 dev 命令旁路的场景不计入 §0 headless 判据；计入者的核心闭环必须仅由生产 wire 消息驱动，dev 命令只允许出现在铺垫段。V P6 protobuf 深断言是 headless 消费 `server_data` 的参考解码实现。bot 框架是否促升为受支持 reference client 见 §9.9 |
@@ -158,6 +159,7 @@ M-09 是 contract-first handoff，M-10 是唯一 craft production cutover；两�
 4. bot 场景数从 ~30 增至 ≥80，CI e2e 是唯一主门禁且无已知假绿。
 5. `flash-review` label 下 open issue 全部显式处置（fixed / dup / 验伪关闭 / 促升 skeleton，见 §10），无静默积压。
 6. §4.3 裁决为"受影响"的轨道，其 headless 验收增量全部有证据：施法、session 生命周期、inventory/拾取、拒绝反馈四条核心闭环可由无 UI/渲染/输入的客户端仅经生产 wire 完成，结果与拒绝机器可读且可关联请求；§4.3 张力 #1/#2 已按 §9.6/§9.7 决议收口。
+7. R7 semantic UI surface 不含 XML/HTML/JS/DOM/像素坐标；同一 action registry 可由 Java adapter 与 bot 消费；`UiViewport` 在最低、odd、超宽/超窄/竖屏矩阵下通过 geometry/input contract，且 resize 不泄漏 native/browser resource。
 
 ## 9. 开放问题（总纲级，pre-P0 收口）
 
@@ -170,6 +172,7 @@ M-09 是 contract-first handoff，M-10 是唯一 craft production cutover；两�
 7. **agent 客户端的背压信号**（§4.3 张力 #2）：ingress 预算耗尽在 decode 前静默丢弃，headless 客户端无法与网络丢包区分。是否提供机器可读的 RateLimited 信号、如何在安全折叠下不成为探测 oracle、预算数值（32 容量 / 每 tick +8）是否按 agent 玩法校准，均未定。
 8. **服务端降级态的机器可读信号**：R3 载入守护"只读降级"等服务端全局/玩家级降级态，headless 客户端如何得知（现状仅人类可感反馈）；signal 形状归 R6，需 owner amendment 定义。
 9. **`scripts/bot/` 的定位与挂机经济边界**：bot 框架是促升为受支持的 reference headless client（含协议兼容承诺与版本纪律），还是仅测试工具？agent 7×24 挂机刷宝对匮乏经济（worldview §一）的长时段影响——真元守恒（R5）已防 mint，loot/discard 配额（R10）已有界，但自动化收益速率本身未校准——是否需要独立评估/plan。
+10. **Semantic UI wire owner 与 cutover**：当前 `proto/bong/envelope.proto` 的 `UiOpen`、`agent/packages/schema/src/server-data.ts` 和 `agent_ui_request` 仍含 raw XML；R7 只能先落 projection/driver 和 legacy adapter。需 R6/schema 与对应 server/agent owner amendment 冻结 `UiSurfaceV1` producer、generated mirror、receipt/close 语义及 atomic activation 波次，之后 R7 才能移除 legacy XML 生产路径。
 
 ## 10. flash-review issue 消化流程（2026-08-02 增补，用户指示）
 

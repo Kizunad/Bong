@@ -1,16 +1,16 @@
 # plan-refactor-client-ui-base-v1 — Client UI 可替换库边界 + Screen/Store/Intent/Bootstrap 分层（重构轨 R7）
 
-> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：在不改变 server/schema/wire 行为的前提下，把 client UI 的状态读取、用户意图、屏幕生命周期、列表协调和 bootstrap 注册抽成库无关契约，再由 owo 与 vanilla 两条 adapter 实现；以 29 个 Screen 和 `InspectScreen` 为迁移对象，为后续替换 owo-lib 提供单一切换边界。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：在不改变 server/schema/wire 行为的前提下，把 client UI 的状态读取、用户意图、屏幕生命周期、列表协调和 bootstrap 注册抽成库无关契约，再由 owo、vanilla 与 MCEF-compatible browser 三条 adapter 实现；以 29 个 Screen 和 `InspectScreen` 为迁移对象，为后续替换 owo-lib 提供单一切换边界。
 
 ## 0. 改写目的与不可变范围
 
 旧版 R7 以 `BongScreenBase extends BaseOwoScreen` 为公共基类，能改善当前 owo 屏幕，但不能作为未来 UI 库迁移边界。本版将 R7 从“owo UI 重构”改为“UI contract-first + adapter migration”计划：
 
 1. **库无关核心**：状态读取、订阅生命周期、列表 diff/reconcile、intent dispatch、Screen open policy、bootstrap module contract 不得 import owo、Fabric widget 或 vanilla drawable。
-2. **双适配路径**：现有 15 个 owo Screen 和 14 个 vanilla Screen 都必须有明确的 adapter/lifecycle 归属；不把 vanilla Screen 留在第二套隐式生命周期里。
+2. **三适配路径**：现有 15 个 owo Screen 和 14 个 vanilla Screen 都必须有明确的 adapter/lifecycle 归属；MCEF-compatible browser 作为可选第三宿主，CinemaMod 只作为 1.20.1/JCEF 参考实现，不把 vanilla Screen 留在第二套隐式生命周期里。
 3. **协议不变**：不修改 server、TypeBox shape、protobuf envelope、Redis key、`ClientRequestProtocol` 编码或 `bong:server_data`/`bong:client_request` channel。现有 sender/handler 行为只通过 adapter 复用。
 4. **所有权不变**：R2 仍独占 Store 断线清理，R6 仍独占网络 receiver/bridge/router，R9 仍独占 cast domain；R7 只消费它们冻结的外部契约。
-5. **无大爆炸重写**：先落 contract、fake、source gate 和一条 owo/一条 vanilla 垂直切片，再批量迁移；不得先同时改 29 个 Screen、109 个 Store 和 80 个 Handler。
+5. **无大爆炸重写**：先落 contract、fake、source gate、1.20.1 browser compatibility spike 和一条 owo/一条 vanilla 垂直切片，再批量迁移；不得先同时改 29 个 Screen、109 个 Store 和 80 个 Handler。
 
 ## 1. 基线证据（2026-08-24 复核）
 
@@ -32,9 +32,9 @@ server/protobuf/JSON
   -> BongNetworkHandler / ProtoServerDataBridge / ServerDataRouter (R6)
   -> domain Handler
   -> domain Store + immutable Snapshot/ViewModel (R2 owns lifecycle)
-  -> UiStateSource / UiViewModelAdapter (R7)
-  -> UiScreenController
-  -> owo adapter OR vanilla adapter
+  -> semantic UiSurfaceProjection / UiStateSource / UiViewModelAdapter (R7)
+  -> UiScreenController + local template registry
+  -> owo adapter OR vanilla adapter OR MCEF-compatible browser adapter
 
 UI input
   -> typed UiIntentSink (R7)
@@ -49,6 +49,36 @@ UI input
 - UI adapter 不直接操作 Store 的静态业务字段；只能消费 `UiStateSource.snapshot()` 和订阅信号。
 - UI 不把“本地 transport 已接受”当作 server gameplay 成功；权威结果仍来自 S2C state/receipt。
 - network Handler 不直接构造 library-specific widget；需要打开 UI 时只提交 domain offer/state，由 bootstrap/transition owner 决策。
+- server/agent 只拥有语义 surface、immutable view data 和 allowed action；client 只拥有本地模板、布局和交互呈现。任何 HTML/XML/JS/DOM/像素坐标不得跨这条边界。
+- bot/headless client 消费同一 `surface_id`、`template_id`、`action_id`、参数校验和 authoritative receipt；它跳过模板、渲染和物理输入，但不能走另一套“测试专用”业务接口。
+
+### 2.1 CinemaMod/MCEF 事实与兼容性决策门
+
+本计划把“CinemaMod/MCEF”拆成两个不同层次，不能把项目名直接当成 UI framework：
+
+- `CinemaMod/CinemaMod` 的 Fabric 1.20.1 分支（commit `ca334ca557a0c241671b9738ffd0e9475610aa83`）是视频影院 mod，不是通用 UI toolkit。它在 `fabric/cef/**` 自带 JCEF，`CefBrowserCinemaRenderer` 把 off-screen browser 的 BGRA buffer 上传成 OpenGL texture，`VideoRequestBrowser` 手工转发鼠标/键盘事件，`CefRenderMixin` 每帧驱动 CEF message loop，`CefInitMixin` 负责 native 解包和 `jcef.path`。其 README 仍把“convert CinemaMod to use MCEF 2”列为未完成 blocker。
+- `DimasKama/mcef-modern` 是独立的 MCEF API。当前文档化入口是异步 `MCEFApi.initialize()`、`MCEFBrowser.resize/setFocus/onMouse*/onKey*/getTexture*/close()`；但当前公开 Maven metadata 只有 MC `1.21.10`、`1.21.11`、`26.1`、`26.2` 版本，没有 MC 1.20.1 artifact。当前 API 还直接引用新版本 Minecraft input/GPU 类型，不能未经 port/compatibility release 编译进本 client。
+- 因此 R7 **不**直接依赖 CinemaMod 的内部 `com.cinemamod.fabric.cef.*`，不复制或 Jar-in-jar CEF native，不把当前 MCEF Modern 版本号写入 `client/gradle.properties`。MCEF/CinemaMod 只能作为运行时可选 capability；1.20.1 provider、平台 native、Linux/Windows/macOS、Java 17、GPU context、窗口 resize、输入转发和 client shutdown 全部通过 compatibility gate 后，才允许进入生产 adapter。
+
+目标 browser 数据流：
+
+```text
+UiScreenController + immutable ViewModel
+  -> McefBrowserHost (Screen lifecycle owner)
+  -> local packaged HTML/CSS/JS document
+  -> typed JS intent bridge
+  -> UiIntentSink -> existing ClientRequestSender
+```
+
+browser 宿主的约束：
+
+- 首期只加载 `assets/bong/ui/**` 的本地打包页面或受控 resource scheme；不允许服务端下发任意 URL、HTML、JavaScript，也不允许把 raw `owo-ui` XML 直接喂给 Chromium。
+- Java → browser 只推送序列化后的 immutable ViewModel/snapshot；browser → Java 只接受 registry 中的 `intent_id` 和经过 schema/参数校验的 typed intent，不开放任意 Java method 或 sender 调用。
+- MCEF 初始化必须异步且可取消/失败；UI 不阻塞 client thread 等待 native 下载。未就绪或初始化失败时由 `UiBackendRegistry` 按策略 fallback 到 vanilla/owo，并记录 capability 状态。
+- `McefBrowserHost` 独占 browser、texture/view、focus、mouse/key/char forwarding、resize 和 close；controller、Store、Handler 不 import MCEF/JCEF。1.20.1 OpenGL texture 与后续 MCEF GPU texture view 的差异只存在于 adapter 内。
+- 页面、JS bridge、native browser、Screen 被移除时必须 exactly-once close；late callback、late JS intent、旧 request_id 一律 fail closed。native resource 泄漏、后台 CEF message-loop、跨线程 DOM 操作和任意导航都属于 P0 blocker。
+
+审计来源：CinemaMod 1.20.1 代码 [`CinemaMod/CinemaMod@ca334ca`](https://github.com/CinemaMod/CinemaMod/tree/ca334ca557a0c241671b9738ffd0e9475610aa83/fabric)；MCEF Modern API [`DimasKama/mcef-modern`](https://github.com/DimasKama/mcef-modern)；MCEF Modern 当前 Maven metadata [`net.dimaskama:mcef-modern`](https://maven.dimaskama.net/releases/net/dimaskama/mcef-modern/maven-metadata.xml)。
 
 ## 3. 接入面与跨轨所有权
 
@@ -80,14 +110,14 @@ UI input
 | Store 业务字段、S2C hydration、断线清理 | R2 / domain owner | R7 不改字段语义；只写 read adapter 和 UI view-model mapping。 |
 | `BongNetworkHandler.register()`、receiver、bridge、router | R6 | R7 不改 channel registration；Insight `offer_id` 只按窄接缝协调。 |
 | `ClientRequestProtocol` 编码与 server request handler | 既有 network/C2S owner | R7 不改编码；intent adapter 复用 sender。 |
-| `client/ui/contract/**`、UI adapters、Screen/HUD/keybind 结构 | R7 | 新增库无关契约和 owo/vanilla 实现。 |
+| `client/ui/contract/**`、UI adapters、Screen/HUD/keybind 结构 | R7 | 新增库无关契约和 owo/vanilla/MCEF browser 实现；MCEF native/provider 依赖需先过 compatibility gate。 |
 | cast domain reducer/store/AV semantics | R9 | R7 只消费 view-model/intent contract。 |
 | `BongClient` UI/HUD/keybind bootstrap call set | R7 | 只迁 UI 子集到显式 registry，保留 network/render/audio order。 |
 | server、agent、worldgen、worldview、qi ledger | 其他 owner | R7 不触碰。 |
 
 ## 4. 库无关公共契约（P0 必须冻结）
 
-库无关类型按职责放在 `client/src/main/java/com/bong/client/ui/{contract,state,intent,bootstrap}/`；这些包的源码不得出现 owo、`BaseOwoScreen`、`FlowLayout`、`net.minecraft.client.gui.widget` 或具体 UI library import。adapter 只能出现在 `client/ui/adapter/{owo,vanilla}/`。
+库无关类型按职责放在 `client/src/main/java/com/bong/client/ui/{contract,state,intent,bootstrap}/`；这些包的源码不得出现 owo、`BaseOwoScreen`、`FlowLayout`、`net.minecraft.client.gui.widget`、MCEF/JCEF 或具体 UI library import。adapter 只能出现在 `client/ui/adapter/{owo,vanilla,mcef}/`。
 
 ### 4.1 `UiStateSource<S>`、`UiSubscription` 与 source mode
 
@@ -153,8 +183,11 @@ public interface UiScreenController<M> {
 
 - `client/ui/adapter/owo/OwoScreenHost`：兼容 `BaseOwoScreen`、`OwoUIAdapter`、`FlowLayout` 和动态 XML；只负责把 controller/view-model 映射到 owo component tree。
 - `client/ui/adapter/vanilla/VanillaScreenHost`：兼容 vanilla `Screen`、`Drawable`、`ClickableWidget`；只负责布局、输入和绘制。
+- `client/ui/adapter/mcef/McefBrowserHost`：兼容 1.20.1 provider 的 browser lifecycle、local HTML document、texture presentation 和 Minecraft 输入转发；只负责 browser host，不负责 Store、wire、sender 或业务规则。CinemaMod 的旧 `CefBrowserCinema` 只能作为 compatibility spike 的参考实现，不能成为 R7 公共 API。
 - `BongScreenBase` 若保留，只能是 `OwoScreenHost` 的兼容实现，不得被写入 `ui/contract` 或作为新 Screen 的业务依赖。
 - `DynamicXmlScreen` 继续属于 owo adapter；模板白名单和 XML 安全策略不迁入 library-neutral contract。
+
+browser adapter 不等于 library-neutral contract：HTML/CSS/JS 组件、DOM id、JS bridge message shape、CEF texture 类型和 MCEF lifecycle 均锁在 `ui/adapter/mcef/**`。若后续要让同一动态 UI 同时渲染到 owo/vanilla/browser，必须另立 neutral UI AST；不得把 owo XML 或 HTML DOM 偷渡成公共 wire schema。
 
 ### 4.4 `UiListReconciler<T,K>`
 
@@ -224,6 +257,35 @@ public interface UiBootstrapModule {
 - `BongNetworkHandler.register()` 在 registry 之前完成；`ScreenTransitionController` 先于 Screen bootstrap；HUD callback 只保留现有唯一 owner。
 - 只收编 `Screen/HUD/keybind` 注册。render/audio/debug/Iris/资源包模块继续由 `BongClient` 原顺序显式注册，避免无关范围膨胀。
 
+### 4.7 语义 UI surface 与前后端完全分离
+
+R7 冻结的是**消费端接缝**，不是让 server/agent 知道某个 UI 库的组件树。目标语义 surface 只允许携带以下与渲染库无关的数据：
+
+- `surface_id`、`template_id`、`session_id`、单调 `revision` 和有效期/关闭原因；
+- immutable、带版本的 view data；集合必须有稳定 identity，不能依赖数组位置；
+- `allowed_actions`：稳定 `action_id`、参数 schema、当前可用性和机器可读拒绝原因；
+- 可选的本地化 message key、severity、icon id 等有限 presentation hint，不携带布局坐标。
+
+server/agent **不得**下发 owo XML、HTML、CSS、JavaScript、任意 URL、DOM id 或像素坐标。client 用 `template_id` 在本地白名单中选择 owo/vanilla/MCEF 模板；同一 view data 和 action registry 必须能被三种 adapter 消费。现有 `UiOpen.xml`、`agent_ui_request` 的 raw XML 是迁移阻塞项，只能在兼容期保留，不能成为新 UI 的生产输入。
+
+本次 R7 不偷偷新增 wire union：P0R 先冻结 `UiSurfaceProjection`/action registry 的消费接缝和 source gate；若现有 `ServerDataV1` 无法表达某个语义 surface，由 R6/schema 以及对应 server/agent owner 另立 amendment，按 TypeBox source、generated mirror 和 atomic activation 规则接入。新 wire 未合入前，R7 只能从现有 authoritative payload 构造同形 projection 或使用 test fixture，不能把本地 ViewModel 伪装成服务端事实。
+
+### 4.8 `UiViewport` 与响应式布局契约
+
+布局必须由可测试的纯策略计算，不在 controller、Store 或业务 intent 中写死屏幕像素。公共输入至少区分四种坐标空间：Minecraft 窗口/帧缓冲 physical px、Minecraft GUI logical px、browser CSS px、browser/CEF texture physical px，并显式记录 `gui_scale`、window scale factor 和 device-pixel ratio（DPR）。
+
+`UiViewport` 至少包含 `logical_width`、`logical_height`、`framebuffer_width`、`framebuffer_height`、`gui_scale`、`device_pixel_ratio` 和 safe insets；`UiLayoutPolicy.measure(UiViewport, ViewModel)` 输出确定性的 `UiLayoutSnapshot`（layout mode、content rect、控件 bounds、focus order、overflow policy 和 hit regions）。同一输入必须得到同一快照，供 Java adapter 和 headless geometry test 共同消费。
+
+冻结以下不变量：
+
+- 业务层只使用逻辑坐标和 design tokens；不得把窗口 physical px、MCEF texture px 或某一 GUI scale 当作业务尺寸。
+- GUI logical 尺寸优先使用 Minecraft 提供的 scaled viewport；browser CSS viewport 与其一一映射，texture 尺寸按 `round(css * DPR)` 计算并限制在 provider 能力范围内。鼠标、触摸、键盘焦点和 browser 输入必须使用同一套正/逆变换，禁止 CinemaMod 式散落的手工比例换算。
+- 字体 token 不随 viewport 宽度连续缩放；空间不足时只能换 `COMPACT`/`REGULAR`/`WIDE` 布局、换行、堆叠、滚动或折叠次要操作。主要操作不能被裁切、遮挡或变成不可点击的隐形区域。
+- 每个 interactive hit region 必须落在 safe rect 内；除显式声明的 overlay group 外不得重叠；文本按实际字体/浏览器 metrics 测量，不能溢出父容器。resize 只能更新同一 host 的布局和 texture，不得重复创建 native browser/resource。
+- P0R 必须根据实际 client window 限制冻结 `MIN_SUPPORTED_VIEWPORT`（默认验收下限为 `320x240`）。低于下限仍需进入 fail-safe compact/scroll 模式并保留关闭路径，但不得把“不支持”尺寸的绿灯算作完整布局支持。
+
+固定回归矩阵至少覆盖：`320x240`、`400x240`、`640x360`、`854x480`、`1000x700`、`1024x768`、`1280x720`、`1365x768`、`1920x1080`、`2560x1080`、`3440x1440`、`1080x1920`；每个尺寸至少跑 GUI scale `1/2/3/4`，window scale/DPR `1.0/1.25/1.5/2.0`，并额外覆盖 odd aspect、resize 中间态和 texture 尚未就绪。矩阵是 geometry/input contract，不要求 bot 启动真实渲染器。
+
 ## 5. UI 状态、网络 Handler 与 Bootstrap 的外部接口纪律
 
 ### 5.1 Handler → Store
@@ -247,53 +309,81 @@ public interface UiBootstrapModule {
 - `BongNetworkHandler.register()`、`IrisBootstrap.register()`、render/audio/debug 注册不因 UI registry 重构被移动。
 - source gate 固定 UI module 清单、owner、依赖、注册顺序和 duplicate registration 行为。
 
+### 5.4 Headless UI driver 与 bot e2e
+
+`UiDriver` 是 semantic UI contract 的无渲染消费方，不是第二套 gameplay API。它与 Java client 共享 action registry、参数校验、`ClientRequestV1` 编码和 authoritative result projection：
+
+```text
+semantic UiSurfaceProjection
+  -> UiDriver.open(surface_id/session_id)
+  -> UiDriver.dispatch(action_id, typed args)
+  -> same UiIntentSink / ClientRequestV1
+  -> bong:server_data + correlated receipt
+  -> UiDriver.awaitRevision/awaitReceipt
+```
+
+bot 只允许使用真实 production wire（`Bot.intent(...)`、`bong:client_request`、`proto_min.py` 解码的 `bong:server_data`）以及服务端明确授权的 fixture/setup；不得调用 Java Store、屏幕私有 callback、像素坐标、截图 OCR、raw XML/HTML/JS 或 dev 命令绕过核心动作。dev 命令若用于铺垫，必须与核心 action/receipt 断言分段记录，不能算作 headless 闭环证据。
+
+P0R 冻结 `UiDriver` 的最小外部接口：`open`、`snapshot`、`listActions`、`dispatch`、`awaitRevision`、`awaitReceipt`、`close`；每个方法都带 session identity、revision/request identity 和超时结果。`dispatch` 先做同一 action registry 的参数/availability 校验，非法 action、过期 session、权限不足、重复 request、超时和关闭后的 late result 都必须可观察且无副作用。成功判据是权威 receipt/state transition，不是 transport write 成功。
+
+bot e2e 分三层记录：
+
+1. **contract pin**：surface/action shape、稳定 identity、revision 单调、枚举和 invalid payload；
+2. **semantic roundtrip**：open → action → server mutation/拒绝 receipt → projection 更新/关闭；覆盖 happy path、边界、权限、过期、重复、超时和跨 session isolation；
+3. **adapter geometry**：同一 ViewModel 在 owo/vanilla/MCEF 的布局和输入映射测试，另行验证，不把像素或真实渲染引入 bot 主路径。
+
+`scripts/bot/_agent_ui_helpers.py` 已有 `bong:agent_ui_cmd`、`bong:agent_ui_request`、`bong:agent_ui_close`、`bong:agent_ui_response` 的 request shape、按钮回执、dismiss、关闭和负向路径；P0R 必须把这些 helper 重定位为 semantic driver 的兼容实现，并标出仍依赖 raw XML 的路径。raw XML 路径在新 semantic surface 未完成前只能作为 legacy regression，不能成为新 adapter 的验收门。
+
 ## 6. 阶段总览
 
 - ✅ 2026-07-30 **旧 P0 盘点基线**：29 Screen、92 fill、15 clearChildren、keybind 冲突、R2/R6 ownership fixture 已存在；仅 docs/tests/resources，未改变 production behavior。
-- ⬜ **P0R contract rebase**：补齐 library-neutral contract、Store read adapter、typed intent、bootstrap registry、依赖方向和迁移 exemption；更新 fixtures，不生成 production adapter。
-- ⬜ **P1 core contract + fake**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph 的纯 client 测试实现；contract 包 zero owo/vanilla dependency。
-- ⬜ **P2 双 adapter + bootstrap reference slice**：实现 owo/vanilla host；选择一个 owo Screen（`CraftScreen`）和一个 vanilla Screen（`TradeOfferScreen`）接入 controller/scope；把两者 bootstrap 纳入 registry。
-- ⬜ **P3 Store/Intent 边界迁移批次 A**：迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；保留现有 wire 与 server authoritative semantics。
-- ⬜ **P4 Screen 批量迁移 + input/thread/open policy**：15 个 owo 与 14 个 vanilla Screen 分批归入 adapter；迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险和 identity-sensitive list；普通 hotkey 不重放。
+- ⬜ **P0R contract rebase + semantic/browser compatibility gate**：补齐 library-neutral contract、semantic surface/action 接缝、Store read adapter、typed intent、bootstrap registry、依赖方向和迁移 exemption；登记 CinemaMod/MCEF 事实、1.20.1 provider 方案、capability fallback、`UiViewport`/layout policy 与 resolution matrix；更新 fixtures，不生成 production adapter。
+- ⬜ **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy` 的纯 client 测试实现；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake；contract 包 zero owo/vanilla/MCEF dependency。
+- ⬜ **P2 三 adapter + bootstrap reference slice**：实现 owo/vanilla host；完成 MCEF 1.20.1 compatibility spike（初始化、local HTML、texture、输入、resize、close、shutdown）；在最低和 odd viewport 矩阵跑 layout/input geometry；选择一个 owo Screen（`CraftScreen`）和一个 vanilla Screen（`TradeOfferScreen`）接入 controller/scope；把 backend capability 和三类 bootstrap 纳入 registry。
+- ⬜ **P3 Store/Intent 边界迁移批次 A + semantic/browser vertical slice**：用 semantic surface + 一条本地 HTML/CSS/JS 页面接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
+- ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy**：15 个 owo 与 14 个 vanilla Screen 分批归入 adapter；迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放。
 - ⬜ **P5 InspectScreen tab-first 拆解**：shell 只做一次 Store intake、一次 subscription scope 和交互 arbitration；tab panel 只接 immutable ViewModel + intent callback；不与 R10 server inventory 内部重排同窗口。
 - ⬜ **P6 Insight/HUD/Bootstrap 收口**：`offer_id` 保留到 ViewModel/Store/Screen；exact offerId settlement；Sparring invite 只消费 server-authoritative combat snapshot；恢复 `BongHudOrchestrator` qi radar main path；完成剩余 UI bootstrap registry 迁移。
-- ⬜ **P7 全量验收 + 归档**：contract/source gate、Java 17 build、UI C2S smoke、reconnect freshness、真实客户端五大屏回归全部通过后，补 Finish Evidence 并归档被完整吸收的计划。
+- ⬜ **P7 全量验收 + 归档**：semantic/headless contract、source gate、Java 17 build、bot UI roundtrip、UI C2S smoke、reconnect freshness、resolution/input geometry matrix、真实客户端五大屏回归全部通过后，补 Finish Evidence 并归档被完整吸收的计划。
 
 ## 7. 分阶段交付物与验收抓手
 
-### P0R — contract rebase（ZERO production behavior change）
+### P0R — contract rebase + semantic/browser compatibility gate（ZERO production behavior change）
 
-- **模块**：`client/ui/{contract,state,intent,bootstrap}/` 的契约 fixture（含 `UiStateSourceMode`）；新增/更新 `r7-ui-contract.tsv`、`r7-screen-adapters.tsv`、`r7-store-state-sources.tsv`、`r7-intent-boundary.tsv`、`r7-ui-dependency-allowlist.tsv`、`r7-ui-bootstrap-modules.tsv`。
-- **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory。
-- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryTest`；production source hash 对拍，确认 no production behavior change。
-- **跨仓库**：schema/proto/Redis/CustomPayload 零变更；只引用既有 R2/R6 symbols。
+- **模块**：`client/ui/{contract,state,intent,bootstrap}/` 的契约 fixture（含 `UiStateSourceMode`、`UiSurfaceProjection`、`UiActionRegistry`、`UiViewport`）；新增/更新 `r7-ui-contract.tsv`、`r7-screen-adapters.tsv`、`r7-store-state-sources.tsv`、`r7-intent-boundary.tsv`、`r7-ui-dependency-allowlist.tsv`、`r7-ui-bootstrap-modules.tsv`、`r7-browser-backend-compatibility.tsv`、`r7-semantic-surface.tsv`、`r7-viewport-matrix.tsv`。
+
+- **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory；冻结 semantic surface 的必需 identity/revision/action 字段和 legacy raw XML 隔离；登记 `UiDriver` 外部接口；记录 CinemaMod 1.20.1/JCEF、MCEF Modern 版本和目标 provider 的兼容性证据，明确 provider 未就绪时的 fallback；冻结 `MIN_SUPPORTED_VIEWPORT`、逻辑/physical/browser 坐标转换和 odd-resolution matrix。
+
+- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryTest`、`R7BrowserBackendCompatibilityTest`、`R7SemanticSurfaceContractTest`、`R7ViewportMatrixContractTest`；production source hash 对拍，确认 no production behavior change。
+
+- **跨仓库**：不在 R7 内直接改 schema/proto/Redis/CustomPayload；现有 `proto/bong/envelope.proto`、`agent/packages/schema/src/server-data.ts`、`scripts/bot/_agent_ui_helpers.py` 的 raw XML 耦合登记为 R6/schema/agent amendment 输入，未完成 atomic activation 前只保留 legacy regression。
 
 ### P1 — library-neutral core
 
-- **模块**：`client/ui/contract/**`、`client/ui/intent/**`、`client/ui/state/**`；纯 Java fake 不依赖 Minecraft widget。
-- **交付**：scope LIFO/error aggregation、subscription close/idempotence、reconciler commit/retry、typed intent result、bootstrap dependency graph。
-- **测试**：empty→items、equal keys、reorder/add/remove、duplicate/null、patch failure/full retry、rebuild create failure、late callback、double close、dependency cycle/missing/duplicate/idempotent register；每条失败信息带行为原因。
+- **模块**：`client/ui/contract/**`、`client/ui/intent/**`、`client/ui/state/**`、`client/ui/headless/**`；纯 Java fake 不依赖 Minecraft widget 或 browser。
+- **交付**：scope LIFO/error aggregation、subscription close/idempotence、reconciler commit/retry、typed intent result、bootstrap dependency graph、semantic surface projection/action registry、`UiDriver` fake、`UiViewport`/`UiLayoutPolicy` 的纯函数实现。
+- **测试**：empty→items、equal keys、reorder/add/remove、duplicate/null、patch failure/full retry、rebuild create failure、late callback、double close、dependency cycle/missing/duplicate/idempotent register；surface revision/session/action validation；driver invalid/expired/duplicate/timeout/close；viewport safe rect、compact/regular/wide、text/hit-region overflow 和 coordinate round-trip；每条失败信息带行为原因。
 - **跨仓库**：不新增 wire；intent encoder 通过既有 sender contract tests 对拍。
 
-### P2 — owo/vanilla adapter + reference slice
+### P2 — 三 adapter + bootstrap reference slice
 
-- **模块**：`client/ui/adapter/owo/**`、`client/ui/adapter/vanilla/**`、`CraftScreen`、`TradeOfferScreen`、对应 bootstrap。
-- **交付**：同一 controller/view-model/intent contract 分别渲染到 owo 与 vanilla；Screen removed/close/tick/input cleanup 一致；Dynamic XML 只在 owo adapter 中保留。
-- **测试**：同一 fake ViewModel 在两个 adapter 上的行为对拍；subscription 不泄漏；adapter close 后 late state no-op；bootstrap registration order/once。
+- **模块**：`client/ui/adapter/{owo,vanilla,mcef}/**`、`CraftScreen`、`TradeOfferScreen`、对应 bootstrap、1.20.1 browser provider compatibility seam。
+- **交付**：同一 semantic surface/controller/view-model/intent contract 分别渲染到 owo 与 vanilla；browser adapter 完成 local HTML、texture、input、resize、async init/failure fallback、close/shutdown；Screen removed/close/tick/input cleanup 一致；Dynamic XML 只在 owo adapter 中保留；所有 adapter 共享 `UiLayoutSnapshot`，不共享 DOM/XML。
+- **测试**：同一 fake ViewModel 在 owo、vanilla 与 browser host 上的行为对拍；browser 未安装/初始化失败/texture 尚未就绪时 fallback；最低/odd viewport 的 bounds、文字、hit region、focus order 和输入逆变换；subscription 不泄漏；adapter close 后 late state/JS intent no-op；bootstrap registration order/once。
 - **跨仓库**：Craft/Trade 既有 C2S/S2C type、request identity、server rejection semantics 完整保留。
 
-### P3 — state/intent boundary migration A
+### P3 — state/intent boundary migration A + browser vertical slice
 
 - **模块**：`AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen`、相关 panels/bootstrap、`client/ui/state/**`、`client/ui/intent/**`。
-- **交付**：Screen 不直接依赖 `ClientRequestSender`、`ClientRequestProtocol`、network Handler；所有 Store 读取经 `UiStateSource`/ViewModel，所有输入经 typed sink；明确交易显式 picker 和 inventory `instance_id`。
-- **测试**：Craft/Alchemy/Trade/Loot 的 server authoritative roundtrip、无 selection refusal、transport accepted 与 server accepted 分离、断线后 scope/Store 不串会话；existing UI C2S smoke 对拍。
+- **交付**：先用 semantic surface + `assets/bong/ui/**` 的本地 HTML/CSS/JS 页面跑通一条完整 browser vertical slice；Screen 不直接依赖 `ClientRequestSender`、`ClientRequestProtocol`、network Handler；所有 Store 读取经 `UiStateSource`/ViewModel，所有输入经 typed sink；明确交易显式 picker 和 inventory `instance_id`；`SemanticUiDriver` 用同一 action registry 跑对应 bot roundtrip。
+- **测试**：browser JS bridge 只允许登记的 `intent_id`、非法参数/任意导航/late callback 全部 fail closed；bot 不使用像素点击且能验证 open/action/receipt/revision/rejection/close/session isolation；Craft/Alchemy/Trade/Loot 的 server authoritative roundtrip、无 selection refusal、transport accepted 与 server accepted 分离、断线后 scope/Store 不串会话；existing UI C2S smoke 对拍。
 - **跨仓库**：R2 lifecycle、R6 router、schema/proto 不改；CraftStore 只消费 M-09 冻结 contract。
 
 ### P4 — 全 Screen、keybind、线程与 open policy
 
 - **模块**：15 owo + 14 vanilla Screen、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`r7-fill100-inventory.tsv` 相关站点。
-- **交付**：每个 Screen 有 adapter classification 和 scope owner；所有 production keybind constructor 经 global registry；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定。
-- **测试**：source gate 禁止 raw network/sender imports；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；Java 17 full gate。
+- **交付**：每个 Screen 有 adapter classification 和 scope owner；所有 production keybind constructor 经 global registry；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定；所有 Screen 使用 `UiLayoutPolicy`，不在 controller 写死 viewport px。
+- **测试**：source gate 禁止 raw network/sender imports；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale/DPR 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复 native resource；Java 17 full gate。
 - **边界**：R6 receive boundary 不重复 marshal；combat snapshot 缺失时 social policy fail closed。
 
 ### P5 — InspectScreen tab-first
@@ -312,7 +402,7 @@ public interface UiBootstrapModule {
 
 ### P7 — 验收与归档
 
-- **测试**：Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；`ui_c2s_smoke`；`reconnect_state_freshness`；必要的 `runClient` 五大屏人工回归；source/contract gates。
+- **测试**：Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；semantic `UiDriver` bot roundtrip（`scripts/bot/**`）；`ui_c2s_smoke`；`reconnect_state_freshness`；`r7-viewport-matrix` geometry/input gate；必要的 `runClient` 五大屏人工回归；source/contract gates。
 - **归档**：所有阶段状态更新为 `✅ YYYY-MM-DD`，补 `## Finish Evidence`（模块路径、commit、测试、server/agent/client symbol、遗留项），只归档被本轨完整吸收的计划。
 
 ## 8. 吸收清单与已知边界
@@ -388,6 +478,18 @@ public interface UiBootstrapModule {
 
 **落点**：`client/src/main/java/com/bong/client/BongNetworkHandler.java:108-331`、`network/ProtoServerDataBridge.java`、`network/ServerDataRouter.java`；本 plan §2、§5、P4。
 
+### #8 Semantic surface 与 headless driver
+
+**决议**：server/agent 不再以 XML/HTML/JS 描述 UI；跨端只交换带 `surface_id`、`template_id`、`session_id`、`revision`、immutable view data 和 typed `allowed_actions` 的语义 surface。client 通过本地模板 registry 渲染，bot 通过同一 action registry 和 authoritative receipt 消费；R7 不擅自改现有 wire，raw XML 只作为 legacy adapter，真正 wire cutover 由 R6/schema/agent amendment 按 atomic activation 完成。
+
+**落点**：R7 `ui/contract/{surface,headless}/**`、`scripts/bot/` semantic driver；现有 `proto/bong/envelope.proto`、`agent/packages/schema/src/server-data.ts`、`scripts/bot/_agent_ui_helpers.py` 记录为跨轨接入证据；本 plan §2、§4.7、§5.4、P0R/P3。
+
+### #9 Viewport、缩放与输入坐标
+
+**决议**：公共 UI 只接受 `UiViewport` 的 logical dimensions 和显式 scale metadata；`UiLayoutPolicy` 以约束/布局模式处理 compact/regular/wide，不假设 16:9。physical px、MC GUI scale、browser CSS px、DPR texture px 的转换集中在 adapter，输入使用同一逆变换；最低 `320x240`、odd aspect、超宽/超窄/竖屏、GUI scale 1-4、DPR 1.0-2.0 和 resize 中间态全部进入 geometry/input contract。
+
+**落点**：`client/src/main/java/com/bong/client/ui/contract/UiViewport.java`、`UiLayoutPolicy.java`、`ui/adapter/{owo,vanilla,mcef}/**`；本 plan §4.8、P2/P4/P7。
+
 ## 10. 实施工作流
 
 ### 10.1 适用边界
@@ -398,9 +500,9 @@ public interface UiBootstrapModule {
 
 1. **PR-1 / P0R contract rebase**：只改本 plan、R7 fixture/resource、master ownership 描述；ZERO production behavior change。
 2. **PR-2 / P1 library-neutral core**：`ui/contract`、state adapter、intent result、reconciler、bootstrap graph fake；不迁生产 Screen。
-3. **PR-3 / P2 adapter reference**：owo + vanilla host；`CraftScreen` + `TradeOfferScreen` 两条垂直切片；UI registry 接入两者。
-4. **PR-4 / P3 state/intent boundary A**：Alchemy/Craft/Trade/Loot；迁移直接 sender/handler import，保持 wire 不变。
-5. **PR-5 / P4 full Screen/input policy**：剩余 Screen、keybind、thread marshal、open policy、fill/list 迁移。
+3. **PR-3 / P2 adapter reference**：owo + vanilla host，加上 MCEF 1.20.1 compatibility spike；`CraftScreen` + `TradeOfferScreen` 两条垂直切片；UI registry 接入 backend capability 和 resolution/input geometry gate。
+4. **PR-4 / P3 state/intent boundary A**：semantic surface/browser vertical slice、`SemanticUiDriver` bot roundtrip，以及 Alchemy/Craft/Trade/Loot；迁移直接 sender/handler import，wire 变更只走 R6/schema atomic amendment。
+5. **PR-5 / P4 full Screen/input/scale policy**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移。
 6. **PR-6 / P5 Inspect split**：tab-first shell/panels，行为不变。
 7. **PR-7 / P6 integration + acceptance**：Insight/HUD/bootstrap 收口，完整 client gate、UI C2S smoke、reconnect evidence。
 8. **PR-8 / P7 archive**：仅在所有阶段和被吸收计划具备 Finish Evidence 后归档。
@@ -409,11 +511,11 @@ public interface UiBootstrapModule {
 
 ### 10.3 每个 PR 的闭环门
 
-1. 在独立 worktree/branch 实施，不修改脏 main checkout，不越界改 R2/R6/server owner 文件。
+1. 在独立 worktree/branch 实施，不修改脏 main checkout，不越界改 R2/R6/server owner 文件；semantic wire amendment 未合入前，R7 只做 declared/test-only projection，不接新 production traffic。
 2. `git fetch origin` 后紧邻 `git merge origin/main`；merge 触及受影响文件即重跑该阶段全部测试。
 3. Client 使用 Java 17 串行门禁：`flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`。
 4. 每个阶段最终 SHA 启动 explicit-worktree、read-only fresh-context validator；validator 必须回报 HEAD SHA 对拍。
-5. source/contract gate 必须从 production source 派生集合，不用手写数量假绿；生产代码不得调用 test reset seam。
+5. source/contract gate 必须从 production source 派生集合，不用手写数量假绿；生产代码不得调用 test reset seam；bot UI 证据必须包含真实 wire、action id、request/revision/receipt 对拍，不能用像素或截图替代。
 6. push 后确认 PR head 等于已验证 SHA，独立评论 `/review`；review 修复产生新 HEAD 时重新 fetch/merge、全量门禁、validator、e2e 和 review。
 7. R7 实施 agent 不 merge；orchestrator 在 review/e2e 绿后按 plan 顺序收口。
 
@@ -433,10 +535,11 @@ Agent(
 
 ### 10.5 终态验收
 
-- `ui/contract` 无 owo/vanilla/widget import；UI source gate 无 network Handler/proto/sender 越权 import。
+- `ui/contract` 无 owo/vanilla/widget/MCEF import；UI source gate 无 network Handler/proto/sender 越权 import，server/agent 语义 surface 无 XML/HTML/JS/DOM/像素坐标。
 - 29 Screen 全部有 adapter/lifecycle classification；无未登记的 raw Screen exception。
 - Store subscription close、disconnect cleanup、late callback、跨 session freshness 全部通过；R2 registry 仍是唯一断线清理入口。
-- UI intent 编码与现有 `ClientRequestProtocol`/`ClientRequestSender` tests 对拍；local transport accepted 与 server result 分离。
+- `UiDriver` 与 Java client 共享 action registry、参数校验、`ClientRequestProtocol` 编码和 authoritative receipt；bot semantic roundtrip 能覆盖 UI 功能而不依赖渲染/输入设备；local transport accepted 与 server result 分离。
+- `UiViewport`/`UiLayoutPolicy` 在固定最低、奇怪、超宽、超窄和竖屏矩阵下通过 no-overlap/no-clipping/in-bounds/text-fit/hit-test/coordinate-roundtrip；GUI scale、window scale、DPR 和 browser texture/input mapping 对拍。
 - `BongClient` UI/HUD/keybind module registry 的 owner/dependency/order/idempotence pin 全绿；network/render/audio/debug registration 未被误收编。
 - Java 17 full gate、`ui_c2s_smoke`、`reconnect_state_freshness` 及必要 `runClient` 真实 Screen 回归通过。
 
