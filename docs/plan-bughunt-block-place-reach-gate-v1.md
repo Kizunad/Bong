@@ -54,14 +54,14 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 在 `server/src/world/block_place.rs` 顶部新增常量 `const PLACE_REACH_BLOCKS: f64 = 6.0;`（对齐仓库内 `coffin::COFFIN_INTERACT_MAX_DISTANCE_SQ`=36.0 即 6.0 格量级，比 `container_open::OPEN_RANGE_BLOCKS`=4.0 略宽松以覆盖持有长柄工具/隔着一格墙放置的常规体验；具体数值在实施阶段可与 vanilla 4.5-6 格惯例再核对一次并在 commit 里写明依据）。
-- [ ] 在 `can_place_block` 函数签名或调用点补一条距离校验：计算 `pos` 中心点 `(x+0.5, y+0.5, z+0.5)` 与 `player_pos` 的 `distance_squared`，超过 `PLACE_REACH_BLOCKS.powi(2)` 时返回新增的 `BlockPlaceRejectReason::TooFar`（或在 `handle_block_place_requests` 内 `can_place_block` 调用前单独判定，二选一皆可，但必须在 `consume_item_instance_once`（L220）**之前**拒绝——修复点放在消耗之后只会把"无效放置"变成"吞道具但拒绝"，是更差的回归）。
-- [ ] `BlockPlaceRejectReason` 新增 `TooFar` 变体，`impl fmt::Display` 补对应分支（参照现有 `PlayerCollision`/`ChunkNotLoaded` 写法保持统一日志风格）。
-- [ ] `handle_block_place_requests` 里 `can_place_block` 校验失败分支（L184-192）已有统一的 `tracing::warn!` + `continue` 逻辑，新分支自动复用，无需额外处理逻辑，只需确认新 reject reason 走的是同一条日志/拒绝路径。
-- [ ] 明确本次修复**只补服务端权威 reach gate**，不新增客户端 UI 隐藏/提示（若客户端已有本地射线限制则保持不变，纯粹是 UX 增强，不能替代 server 校验；server 拒绝必须在客户端毫无预判的情况下依然生效）。
-- [ ] 不在本 plan 内展开 `docs/finished_plans/plan-block-lifecycle-v1.md` §11 #4 提到的更大范围"spawn-zone 保护"系统——那是独立的空间保护设计问题，本 plan 严格收敛为"放置必须在合理距离内"这一条最小修复，避免范围蔓延。
-- [ ] 本修复不涉及真元/灵气流动（`block_place.rs` 全程无 `qi_current`/`spirit_qi` 读写），无需 `qi_physics::ledger` 接线；仅涉及 C2S 权威校验，遵循「server gate 是最终权威，client 隐藏只是 UX」原则。
-- [ ] 修复完成后同步检查 `docs/finished_plans/plan-block-lifecycle-v1.md` §11 #4 的措辞是否需要补一条"reach 校验已在 plan-bughunt-block-place-reach-gate-v1 收口"的引用注记（若归档流程允许，作为本 plan 的 Finish Evidence 交叉引用，不改该 finished plan 本体的阶段状态）。
+- [x] 在 `server/src/world/block_place.rs` 顶部新增常量 `const PLACE_REACH_BLOCKS: f64 = 6.0;`（对齐仓库内 `coffin::COFFIN_INTERACT_MAX_DISTANCE_SQ`=36.0 即 6.0 格量级，比 `container_open::OPEN_RANGE_BLOCKS`=4.0 略宽松以覆盖持有长柄工具/隔着一格墙放置的常规体验；具体数值在实施阶段可与 vanilla 4.5-6 格惯例再核对一次并在 commit 里写明依据）。
+- [x] 在 `can_place_block` 函数签名或调用点补一条距离校验：计算 `pos` 中心点 `(x+0.5, y+0.5, z+0.5)` 与 `player_pos` 的 `distance_squared`，超过 `PLACE_REACH_BLOCKS.powi(2)` 时返回新增的 `BlockPlaceRejectReason::TooFar`（或在 `handle_block_place_requests` 内 `can_place_block` 调用前单独判定，二选一皆可，但必须在 `consume_item_instance_once`（L220）**之前**拒绝——修复点放在消耗之后只会把"无效放置"变成"吞道具但拒绝"，是更差的回归）。
+- [x] `BlockPlaceRejectReason` 新增 `TooFar` 变体，`impl fmt::Display` 补对应分支（参照现有 `PlayerCollision`/`ChunkNotLoaded` 写法保持统一日志风格）。
+- [x] `handle_block_place_requests` 里 `can_place_block` 校验失败分支（L184-192）已有统一的 `tracing::warn!` + `continue` 逻辑，新分支自动复用，无需额外处理逻辑，只需确认新 reject reason 走的是同一条日志/拒绝路径。
+- [x] 明确本次修复**只补服务端权威 reach gate**，不新增客户端 UI 隐藏/提示（若客户端已有本地射线限制则保持不变，纯粹是 UX 增强，不能替代 server 校验；server 拒绝必须在客户端毫无预判的情况下依然生效）。
+- [x] 不在本 plan 内展开 `docs/finished_plans/plan-block-lifecycle-v1.md` §11 #4 提到的更大范围"spawn-zone 保护"系统——那是独立的空间保护设计问题，本 plan 严格收敛为"放置必须在合理距离内"这一条最小修复，避免范围蔓延。
+- [x] 本修复不涉及真元/灵气流动（`block_place.rs` 全程无 `qi_current`/`spirit_qi` 读写），无需 `qi_physics::ledger` 接线；仅涉及 C2S 权威校验，遵循「server gate 是最终权威，client 隐藏只是 UX」原则。
+- [x] 修复完成后同步检查 `docs/finished_plans/plan-block-lifecycle-v1.md` §11 #4 的措辞是否需要补一条"reach 校验已在 plan-bughunt-block-place-reach-gate-v1 收口"的引用注记（若归档流程允许，作为本 plan 的 Finish Evidence 交叉引用，不改该 finished plan 本体的阶段状态）。
 
 ## 验收测试计划
 
@@ -85,3 +85,12 @@
 - 拒绝时机：修复点必须卡在 `consume_item_instance_once`（L220）之前。若不慎放在消耗之后，会把"未授权的远距放置"改造成"扣道具但放置失败"的更差回归，等同于新增一个吞物品 bug。
 - 范围蔓延风险：`docs/finished_plans/plan-block-lifecycle-v1.md` §11 #4 里提到的"spawn-zone 保护"是比 reach gate 大得多的独立设计问题（涉及区域权限、他人领地判定等），本 plan 严禁顺手把两者混在一起实现，否则会把一个小修复膨胀成一个新功能 plan，违反最小正确修复原则。
 - 线上已有数据：若已有玩家利用此漏洞在远处放置了容器/方块，修复 gate 不会自动清除已放置的方块——这属于运营侧清理范畴，不在本 plan 修复范围内，仅在此风险项中提示知悉。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/world/block_place.rs` 增加 `PLACE_REACH_BLOCKS=6.0` 权威距离门、`BlockPlaceRejectReason::TooFar` 及有限距离 fail-closed 判断；handler 集成测试覆盖边界、略超距、极远、跨维、容器不消费/不生成和非有限坐标。
+- **关键 commit**：`5c1462a2e`（2026-08-25，promotion 为 active plan）；`d1109827d`（2026-08-25，服务端 block place reach gate 与饱和回归测试）。
+- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过，主测试 `12771 passed, 0 failed, 2 ignored`，其余 integration/doc tests 全部通过；block place focused suite `41 passed`。
+- **跨仓库核验**：本修复是纯 server C2S 权威校验，不修改 schema、client 或 agent；server 入口继续复用既有 `BlockPlaceRequest`/`handle_block_place_requests`。
+- **validator**：只读 validator 对拍 HEAD `d1109827d407abd5e16f6efa77e9a9c3029a118c` 并 PASS；fetch+merge 最新 `origin/main` 后无新增提交、无冲突。
+- **遗留 / 后续**：spawn-zone protection、领地权限和既有远距历史数据清理不在本 plan 范围；保留给独立设计/运营任务。
