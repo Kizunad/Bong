@@ -44,8 +44,11 @@ Solidify=3/Spirit=4/Void=5，technique_scroll.rs:211）：
 import time
 
 from bot.bot import BotAssertionError
+from bot.mc_protocol import offline_uuid
+from bot import proto_min
 from bot.scenarios._combat_helpers import last_event_time, payload_text
 from bot.scenarios._inventory_helpers import wait_join_and_inventory
+from bot.scenarios._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
 
 DESCRIPTION = (
     "qi_color_inspect：跨境界全量 payload（victim 非默认真元色 main=Heavy/"
@@ -62,9 +65,10 @@ SILENT_WINDOW = 4.0
 # 无合法非白名单 payload；白名单外一律判红（central-review 2029 #4）。carrier_state
 # 不在 proto_min 白名单，通常不解码成 server_data 事件；保留它只为显式豁免未来
 # proto_min 收录后的周期流。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
+AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 
 BENG_QUAN = "burst_meridian.beng_quan"
+BENG_QUAN_WIRE = "beng_quan"
 WOLIU_MOUTH = "woliu.mouth"
 SLOT_BENG = 0
 SLOT_WOLIU = 1
@@ -127,11 +131,7 @@ def _practice_nondefault_qi_color(bot) -> None:
             # 事件（含 position-look 等非 server_data），必须先判 kind 再读
             # payload_type——否则无关事件先到就 KeyError 崩场景（Woliu 回调用 .get
             # 侥幸安全，此回调必须显式拦 kind）。
-            lambda e: (
-                e.kind == "server_data"
-                and e.data["payload_type"] == "burst_meridian_event"
-                and e.data["payload"].get("skill") == BENG_QUAN
-            ),
+            _burst_event_observed,
             "空挥崩拳应收到 burst_meridian_event（施放被接受，Heavy 修行落账）",
         )
         time.sleep(BENG_GAP)
@@ -164,6 +164,25 @@ def _cast_empty_and_confirm(bot, slot: int, confirm, description: str) -> None:
     )
 
 
+def _burst_event_observed(event) -> bool:
+    if event.kind == "server_data":
+        return (
+            event.data.get("payload_type") == "burst_meridian_event"
+            and event.data.get("payload", {}).get("skill") == BENG_QUAN_WIRE
+        )
+    if event.kind != "server_data_raw":
+        return False
+    try:
+        payload = proto_min.decode_server_data_envelope(event.data["data"])
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("type") == "burst_meridian_event"
+        and payload.get("skill") == BENG_QUAN_WIRE
+    )
+
+
 def run(env) -> None:
     with env.new_bot("QiH") as host:
         wait_join_and_inventory(host)
@@ -180,11 +199,22 @@ def run(env) -> None:
             # PlayerList（标准顺序在 PlayerSpawn 前到达）。
             wait_join_and_inventory(victim)
 
+            # Spawn selector 为不同用户名分配的出生点可能相距很远，host 因视距
+            # 不会收到 victim 的 PlayerSpawn。先把两端放到同一固定 zone，再等待
+            # 真实 PlayerSpawn；后续跨维/远距步骤仍使用同一 protocol entity id。
+            host.cmd("tpzone jiuzong_taichu_ruin")
+            host.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
+            victim.cmd("tpzone jiuzong_taichu_ruin")
+            victim.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
+
             spawn = host.wait_for(
                 lambda e: (
                     e.kind == "player_spawn"
                     and e.t > spawn_watermark
-                    and e.data.get("username") == victim.username
+                    and (
+                        e.data.get("username") == victim.username
+                        or e.data.get("uuid") == offline_uuid(victim.username)
+                    )
                 ),
                 timeout=15.0,
                 description="host 收到 victim 的 PlayerSpawn（protocol entity id）",

@@ -22,6 +22,7 @@ from bot import proto_min
 from bot.bot import BotAssertionError
 
 from ._inventory_helpers import wait_join_and_inventory
+from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES, drain_event_stream
 
 DESCRIPTION = "remains_loot 空/未知 remains_id 静默拒绝：无 remains_sync、无聊天、连接保持"
 MODULES = ["inventory", "network"]
@@ -31,12 +32,15 @@ SILENT_WINDOW = 4.0
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
 # cultivation_detail 需 MeridianSystem+Cultivation，本场景未开经脉，不应出现——
 # 若出现即判红（这正是契约要求的「无任何新 server_data」）。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
+AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 
 
 def run(env) -> None:
     with env.new_bot("RmH") as bot:
         wait_join_and_inventory(bot)
+        # Join-time Changed-driven HUD payloads can lag the first inventory snapshot;
+        # establish a quiet post-join watermark before testing request silence.
+        drain_event_stream(bot, quiet_s=0.3, max_s=1.5)
 
         for label, remains_id in (
             ("空 remains_id", ""),
@@ -86,7 +90,8 @@ def _scan_quiet_violations(bot, sent_at: float, description: str) -> None:
             continue
         raise BotAssertionError(
             f"[{bot.username}] {description}，实际窗口内收到 raw bong:server_data"
-            f"/{raw_payload_name or 'unknown'}（{len(e.data['data'])} bytes，t={e.t:.3f}）"
+            f"/{raw_payload_name or 'unknown'}（{len(e.data['data'])} bytes，"
+            f"hex={e.data['data'].hex()}，t={e.t:.3f}）"
         )
     for e in bot.events_of("chat"):
         if e.t > sent_at:

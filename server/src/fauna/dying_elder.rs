@@ -1737,9 +1737,12 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
 /// Bevy 注册：P3 Redis 叙事事件系统（appear / death / dan_received broadcast）。
 pub fn register_p3(app: &mut App) {
     app.add_systems(
+        valence::prelude::PostUpdate,
+        dying_elder_p3_emit_appear_event_system.after(valence::entity::InitEntitiesSet),
+    );
+    app.add_systems(
         Update,
         (
-            dying_elder_p3_emit_appear_event_system,
             // 第五颗丹同帧产生收丹与终态反馈：先广播收丹，终态必须最后到达，
             // 避免 client/agent 被后到的 DanReceived 覆盖死亡状态。
             dying_elder_p3_emit_death_event_system
