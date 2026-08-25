@@ -99,22 +99,21 @@ class R7InventoryContractTest {
 
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 2026-08-25（前值 fffdba51…）：R7 P1 将垂死大能的三个
-        // production keybinding 改由 BongKeybindRegistry 注册，并让 HUD 读取各自的
-        // effective binding label。逐文件对拍确认 client/src/main 下的其余产物不变。
+        // 重新冻结于 2026-08-25（前值 fffdba51…）：R7 P1 新增 BongScreenBase.java，
+        // 并叠加主线垂死大能三件 keybinding 的 registry/HUD 修复。
+        // 逐文件对拍确认 client/src/main 下只有这两组已声明的生产变更，其余内容不动。
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条——这正是它要的"每一个 shipped 字节都得被显式重新决定"。
         assertEquals(
-            "04b3002b71c7eede0dccb40a9520de13245481228966838e00183d08f7481cbe",
+            "1dfa392baf201f53e4149b7c9e091c91035b1f727d9a1a2041a94a1322c87615",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 P1 foundations must keep every shipped production path and byte pinned"
         );
     }
 
     @Test
-    void p1AddsOnlyTheRequestedKeybindFoundationWithoutScreenMigration() throws IOException {
+    void p1AddsOnlyTheRequestedFoundationsWithoutScreenMigration() throws IOException {
         Set<String> forbiddenProductionTypes = Set.of(
-            "BongScreenBase.java",
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -127,6 +126,8 @@ class R7InventoryContractTest {
         }
         assertTrue(discovered.isEmpty(),
             "R7 P1 must not add an unapproved foundation type: " + discovered);
+        assertTrue(Files.isRegularFile(PRODUCTION_ROOT.resolve("ui/BongScreenBase.java")),
+            "R7 P1 must add the requested BongScreenBase production foundation");
 
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
@@ -144,6 +145,11 @@ class R7InventoryContractTest {
         List<ScreenInventoryRow> result = new java.util.ArrayList<>();
         for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(PRODUCTION_ROOT)) {
             String relative = PRODUCTION_ROOT.relativize(parsed.path()).toString().replace('\\', '/');
+            if (relative.equals("ui/BongScreenBase.java")) {
+                // The shared base is an R7 foundation, not a production Screen
+                // instance and therefore does not belong in the 29-screen inventory.
+                continue;
+            }
             List<DirectScreenDeclaration> declarations = new java.util.ArrayList<>();
             List<String> adapterStyles = new java.util.ArrayList<>();
             new TreePathScanner<Void, Void>() {
