@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.dying_elder.DyingElderEncounterStore;
+import com.bong.client.dying_elder.DyingElderInteractionKeybindings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,7 +13,7 @@ import java.util.Locale;
  * <p>从 {@link DyingElderEncounterStore} 读取状态，生成 {@link HudRenderCommand} 列表：
  * <ul>
  *   <li>真元回复进度条（qi_fraction）</li>
- *   <li>三个交互按钮：给丹 [G] / 拒绝 [H] / 拖延 [J]</li>
+ *   <li>三个交互按钮：给丹、拒绝、拖延及其当前有效绑定标签</li>
  *   <li>背叛概率（SpiritEye 激活时显示具体数字，否则显示"气息有异"）</li>
  * </ul>
  *
@@ -20,6 +21,9 @@ import java.util.Locale;
  * 按钮键位仅为视觉提示，实际意图通过服务端 IntentHandler 处理。
  */
 public final class DyingElderHudPlanner {
+
+    /** 当前 binding 为空时的明确 UI 文案。 */
+    public static final String UNBOUND_LABEL = DyingElderInteractionKeybindings.UNBOUND_KEY_LABEL;
 
     // ── 布局常量 ─────────────────────────────────────────────────────────────
 
@@ -94,6 +98,7 @@ public final class DyingElderHudPlanner {
             DyingElderEncounterStore.isSpiritEyeActive(),
             DyingElderEncounterStore.getBetrayProbability(),
             DyingElderEncounterStore.getZoneDisplayName(),
+            DyingElderInteractionKeybindings.effectiveBindingLabels(),
             screenWidth,
             screenHeight
         );
@@ -111,10 +116,40 @@ public final class DyingElderHudPlanner {
         int screenWidth,
         int screenHeight
     ) {
+        return buildCommands(
+            active,
+            qiFraction,
+            spiritEyeActive,
+            betrayProbability,
+            zoneDisplayName,
+            new DyingElderInteractionKeybindings.BindingLabels(null, null, null),
+            screenWidth,
+            screenHeight
+        );
+    }
+
+    /**
+     * 纯函数版本，显式接收三个动作各自的有效绑定标签，避免测试依赖真实 Minecraft screen
+     * 或把一个动作的标签错误复用于另外两个动作。
+     */
+    public static List<HudRenderCommand> buildCommands(
+        boolean active,
+        float qiFraction,
+        boolean spiritEyeActive,
+        Double betrayProbability,
+        String zoneDisplayName,
+        DyingElderInteractionKeybindings.BindingLabels bindingLabels,
+        int screenWidth,
+        int screenHeight
+    ) {
         List<HudRenderCommand> out = new ArrayList<>();
         if (!active || screenWidth <= 0 || screenHeight <= 0) {
             return out;
         }
+
+        DyingElderInteractionKeybindings.BindingLabels effectiveLabels = bindingLabels == null
+            ? new DyingElderInteractionKeybindings.BindingLabels(null, null, null)
+            : bindingLabels;
 
         int panelX = (screenWidth - PANEL_WIDTH) / 2;
         int panelY = screenHeight - BOTTOM_MARGIN - PANEL_HEIGHT;
@@ -186,12 +221,16 @@ public final class DyingElderHudPlanner {
             0.75
         ));
 
-        // ── 三个按钮：给丹 [G] / 拒绝 [H] / 拖延 [J] ────────────────────────
+        // ── 三个按钮：动作文本 + 各自当前有效绑定 ──────────────────────────────
         int btnsTotalWidth = BTN_WIDTH * 3 + BTN_SPACING * 2;
         int btnsX = panelX + (PANEL_WIDTH - btnsTotalWidth) / 2;
         int btnsY = panelY + PANEL_HEIGHT - BTN_HEIGHT - 5;
 
-        String[] labels = {"给丹 [G]", "拒绝 [H]", "拖延 [J]"};
+        String[] labels = {
+            "给丹 [" + effectiveLabels.giveDan() + "]",
+            "拒绝 [" + effectiveLabels.refuse() + "]",
+            "拖延 [" + effectiveLabels.delay() + "]"
+        };
         for (int i = 0; i < 3; i++) {
             int btnX = btnsX + i * (BTN_WIDTH + BTN_SPACING);
             out.add(HudRenderCommand.rect(

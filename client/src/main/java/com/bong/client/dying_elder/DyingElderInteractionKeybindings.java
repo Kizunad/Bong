@@ -4,8 +4,8 @@ import com.bong.client.BongClient;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -13,12 +13,12 @@ import net.minecraft.client.util.InputUtil;
 /**
  * plan-dying-elder-v1 P3 — 垂死大能遭遇交互键绑定。
  *
- * <p>三个键绑定（G/H/J）仅在 {@link DyingElderEncounterStore#isActive()} 为 true 时生效：
+ * <p>三个键绑定仅在 {@link DyingElderEncounterStore#isActive()} 为 true 时生效：
  * <ul>
- *   <li>G — 给丹：在背包搜索第一颗 {@code hui_yuan_pill}，
+ *   <li>给丹：在背包搜索第一颗 {@code hui_yuan_pill}，
  *       构造并发送 {@code GiveDanToElderReq}（{@code give_dan_to_elder} C2S）。</li>
- *   <li>H — 拒绝：日志警告（server 无 refuse 协议，仅占位；玩家移开即关闭遭遇）。</li>
- *   <li>J — 拖延：日志警告（server 无 delay 协议，仅占位）。</li>
+ *   <li>拒绝：日志警告（server 无 refuse 协议，仅占位；玩家移开即关闭遭遇）。</li>
+ *   <li>拖延：日志警告（server 无 delay 协议，仅占位）。</li>
  * </ul>
  *
  * <p><b>守恒红线</b>：此类只发 C2S 请求，绝不直接修改玩家真元、血量或任何 gameplay 数值。
@@ -28,6 +28,10 @@ public final class DyingElderInteractionKeybindings {
 
     private static final String CATEGORY = "category.bong-client.dying_elder";
 
+    private static final String GIVE_DAN_OWNER = "dying_elder.give_dan";
+    private static final String REFUSE_OWNER = "dying_elder.refuse";
+    private static final String DELAY_OWNER = "dying_elder.delay";
+
     // 键绑定 key 翻译路径
     private static final String KEY_GIVE_DAN = "key.bong-client.dying_elder_give_dan";
     private static final String KEY_REFUSE    = "key.bong-client.dying_elder_refuse";
@@ -35,6 +39,9 @@ public final class DyingElderInteractionKeybindings {
 
     /** 回元丹的 item template id（与 server handle_give_dan_to_elder 校验的 "huiyuan_pill" 对齐）。 */
     static final String HUI_YUAN_PILL_ITEM_ID = "huiyuan_pill";
+
+    /** HUD 在实际绑定为空或尚未完成注册时使用的明确文案。 */
+    public static final String UNBOUND_KEY_LABEL = "未绑定";
 
     private static KeyBinding giveDanKey;
     private static KeyBinding refuseKey;
@@ -49,17 +56,33 @@ public final class DyingElderInteractionKeybindings {
             return;
         }
         // 默认不绑定固定键（UNKNOWN_KEY = -1 = 未绑定），由玩家在键位设置中自行配置。
-        // HUD 显示 "给丹[G]" 是提示标签，不强制绑定到 GLFW_KEY_G，
-        // 避免与 InteractionKeybindings 的 G 键默认绑定冲突
-        // （NoDuplicateDefaultGKeybindingTest 强制执行此约束）。
-        giveDanKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(KEY_GIVE_DAN, InputUtil.Type.KEYSYM, InputUtil.UNKNOWN_KEY.getCode(), CATEGORY)
+        // 统一 G 路由仍由 InteractionKeybindings 唯一持有，避免新增物理默认冲突。
+        giveDanKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner(GIVE_DAN_OWNER),
+                KEY_GIVE_DAN,
+                InputUtil.Type.KEYSYM,
+                InputUtil.UNKNOWN_KEY.getCode(),
+                CATEGORY
+            )
         );
-        refuseKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(KEY_REFUSE, InputUtil.Type.KEYSYM, InputUtil.UNKNOWN_KEY.getCode(), CATEGORY)
+        refuseKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner(REFUSE_OWNER),
+                KEY_REFUSE,
+                InputUtil.Type.KEYSYM,
+                InputUtil.UNKNOWN_KEY.getCode(),
+                CATEGORY
+            )
         );
-        delayKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(KEY_DELAY, InputUtil.Type.KEYSYM, InputUtil.UNKNOWN_KEY.getCode(), CATEGORY)
+        delayKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner(DELAY_OWNER),
+                KEY_DELAY,
+                InputUtil.Type.KEYSYM,
+                InputUtil.UNKNOWN_KEY.getCode(),
+                CATEGORY
+            )
         );
         ClientTickEvents.END_CLIENT_TICK.register(DyingElderInteractionKeybindings::onEndClientTick);
         registered = true;
@@ -81,10 +104,45 @@ public final class DyingElderInteractionKeybindings {
             handleGiveDan();
         }
         if (consumeWasPressed(refuseKey)) {
-            BongClient.LOGGER.info("[DyingElder] 拒绝键（H）按下：server 无 refuse 协议（占位），玩家离开遭遇区即结束遭遇。");
+            BongClient.LOGGER.info("[DyingElder] 拒绝键按下：server 无 refuse 协议（占位），玩家离开遭遇区即结束遭遇。");
         }
         if (consumeWasPressed(delayKey)) {
-            BongClient.LOGGER.info("[DyingElder] 拖延键（J）按下：server 无 delay 协议（占位），当前版本无延迟效果。");
+            BongClient.LOGGER.info("[DyingElder] 拖延键按下：server 无 delay 协议（占位），当前版本无延迟效果。");
+        }
+    }
+
+    /**
+     * 返回 HUD 当前应显示的三个有效绑定标签。
+     *
+     * <p>读取的是 Minecraft 当前 bound key，而不是默认键；玩家在设置中重绑定后，下一帧 HUD
+     * 即可反映新标签。未注册或显式 UNKNOWN 都 fail-closed 为“未绑定”。
+     */
+    public static BindingLabels effectiveBindingLabels() {
+        return new BindingLabels(
+            effectiveBindingLabel(giveDanKey),
+            effectiveBindingLabel(refuseKey),
+            effectiveBindingLabel(delayKey)
+        );
+    }
+
+    static String effectiveBindingLabel(KeyBinding key) {
+        if (key == null || key.isUnbound()) {
+            return UNBOUND_KEY_LABEL;
+        }
+        String label = key.getBoundKeyLocalizedText().getString();
+        return label == null || label.isBlank() ? UNBOUND_KEY_LABEL : label;
+    }
+
+    /** HUD 纯函数使用的动作顺序固定为给丹、拒绝、拖延。 */
+    public record BindingLabels(String giveDan, String refuse, String delay) {
+        public BindingLabels {
+            giveDan = normalizeLabel(giveDan);
+            refuse = normalizeLabel(refuse);
+            delay = normalizeLabel(delay);
+        }
+
+        private static String normalizeLabel(String label) {
+            return label == null || label.isBlank() ? UNBOUND_KEY_LABEL : label;
         }
     }
 
