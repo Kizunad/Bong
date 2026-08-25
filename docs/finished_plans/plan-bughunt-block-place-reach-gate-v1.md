@@ -90,8 +90,8 @@
 
 - **落地清单**：`server/src/world/block_place.rs` 增加 `PLACE_REACH_BLOCKS=6.0` 权威距离门、`BlockPlaceRejectReason::TooFar` 及有限距离 fail-closed 判断；handler 集成测试覆盖边界、略超距、极远、跨维、容器不消费/不生成和非有限坐标。
 - **关键 commit**：`5c1462a2e`（2026-08-25，promotion 为 active plan）；`d1109827d`（2026-08-25，服务端 block place reach gate 与饱和回归测试）。
-- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过，主测试 `12771 passed, 0 failed, 2 ignored`，其余 integration/doc tests 全部通过；block place focused suite `41 passed`。
+- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过，主测试 `12773 passed, 0 failed, 2 ignored`，其余 integration/doc tests 全部通过；block place focused suite `41 passed`。
 - **跨仓库核验**：本修复是纯 server C2S 权威校验，不修改 schema、client 或 agent；server 入口继续复用既有 `BlockPlaceRequest`/`handle_block_place_requests`。
-- **validator**：只读 validator 对拍 HEAD `d1109827d407abd5e16f6efa77e9a9c3029a118c` 并 PASS；fetch+merge 最新 `origin/main` 后无新增提交、无冲突。
+- **validator**：fresh-context 只读 validator 对拍 HEAD `c1679ba054a909725b4ca9a9e2c85b3500a8ead3` 并 PASS；已 fetch+merge `origin/main=d12e280faf3842100bcdc0e5e7803b5a70552cba`，无冲突。
 - **review 修正**：归档保留原始 `Skeleton Fix Plan` 阶段文本，完成状态仅由本节记录。
 - **遗留 / 后续**：spawn-zone protection、领地权限和既有远距历史数据清理不在本 plan 范围；保留给独立设计/运营任务。
