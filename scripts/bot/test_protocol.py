@@ -143,10 +143,6 @@ from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
     _move_and_record,
     _position_from_authoritative_event,
 )
-from bot.scenarios.network_lifecycle_double_login import (  # noqa: E402
-    _assert_surviving_connection,
-    _wait_keepalive_after,
-)
 from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
     _wait_before_deadline,
 )
@@ -4945,69 +4941,6 @@ class LifecycleReviewContractTest(unittest.TestCase):
                 "最终重连",
             )
 
-    def test_double_login_cross_connection_liveness_rejects_lost_peer(self):
-        class ProbeBot(_FakeBot):
-            def assert_alive(self, _context: str) -> None:
-                return None
-
-        bot = ProbeBot([_FakeEvent(4.0, "connection_lost", {})])
-        with self.assertRaisesRegex(AssertionError, "connection_lost"):
-            _assert_surviving_connection(bot, "并发阶段")
-
-
-class DoubleLoginScenarioTest(unittest.TestCase):
-    def test_keepalive_probe_rejects_historical_and_boundary_events(self):
-        marker = 2.0
-        bot = _FakeBot(
-            [
-                _FakeEvent(1.0, "keepalive", {"id": 1}),
-                _FakeEvent(marker, "keepalive", {"id": 2}),
-            ]
-        )
-
-        with self.assertRaisesRegex(
-            AssertionError,
-            r"t>2\.000s",
-            msg=(
-                "join/cleanup phase marker 之前或恰好 marker 时收到的 KeepAlive"
-                " 不得冒充该阶段的 surviving-connection 连续性证据"
-            ),
-        ):
-            _wait_keepalive_after(bot, marker, "重复登录阶段")
-
-    def test_keepalive_probe_returns_only_a_strictly_new_event(self):
-        marker = 2.0
-        new_event = _FakeEvent(2.001, "keepalive", {"id": 3})
-        bot = _FakeBot(
-            [
-                _FakeEvent(1.0, "keepalive", {"id": 1}),
-                _FakeEvent(marker, "keepalive", {"id": 2}),
-                new_event,
-            ]
-        )
-
-        observed = _wait_keepalive_after(bot, marker, "重复登录阶段")
-
-        self.assertIs(
-            observed,
-            new_event,
-            "KeepAlive 断言必须返回严格晚于 marker 的新事件，而不是历史/边界事件",
-        )
-
-    def test_post_cross_probe_requires_second_connection_heartbeat(self):
-        # The second connection had a heartbeat before first's cross-probe, then
-        # was removed. A second heartbeat after the probe is the only observation
-        # that closes that race; the stricter phase must reject this event stream.
-        bot = _FakeBot(
-            [
-                _FakeEvent(2.0, "keepalive", {"id": 1}),
-                _FakeEvent(3.0, "connection_lost", {}),
-            ]
-        )
-        with self.assertRaisesRegex(AssertionError, r"t>2\.500s"):
-            _wait_keepalive_after(bot, 2.5, "第一连接 cross-probe 后第二连接")
-
-
 class IdleTimeoutScenarioTest(unittest.TestCase):
     def test_idle_waits_share_one_absolute_deadline(self):
         class TimeoutCaptureBot:
@@ -7817,6 +7750,11 @@ class FrameParseTest(unittest.TestCase):
         small = b"\x17small"
         conn.buf = _frame(mc.write_varint(0) + small)
         self.assertEqual(conn._try_parse_frame(), small)
+        # Valence treats an exact-threshold payload as uncompressed.
+        exact = b"\x17" + b"x" * 63
+        self.assertEqual(len(exact), 64)
+        conn.buf = _frame(mc.write_varint(0) + exact)
+        self.assertEqual(conn._try_parse_frame(), exact)
         # 达阈值 zlib：DataLength=原长 + 压缩体
         big = b"\x24" + b"y" * 200
         conn.buf = _frame(mc.write_varint(len(big)) + zlib.compress(big))

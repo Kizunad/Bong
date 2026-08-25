@@ -247,7 +247,35 @@ pub fn meridian_label(id: MeridianId) -> &'static str {
 mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
-    use valence::prelude::Events;
+    use valence::prelude::{ConnectionMode, Events};
+    use valence::protocol::packets::play::CommandExecutionC2s;
+    use valence::protocol::{Bounded, FixedBitSet, VarInt};
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn setup_command_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            valence::event_loop::EventLoopPlugin,
+            valence::command::manager::CommandPlugin,
+        ));
+        register(&mut app);
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    fn execute_command(app: &mut App, helper: &mut MockClientHelper, command: &str) {
+        helper.send(&CommandExecutionC2s {
+            command: Bounded(command),
+            timestamp: 0,
+            salt: 0,
+            argument_signatures: Vec::new(),
+            message_count: VarInt(0),
+            acknowledgement: FixedBitSet::default(),
+        });
+        app.update();
+    }
 
     fn setup_app() -> App {
         let mut app = App::new();
@@ -326,6 +354,51 @@ mod tests {
         assert_eq!(cultivation.qi_max, 20.0);
         assert_eq!(life.biography.len(), 1);
         assert_eq!(life.spirit_root_first, Some(MeridianId::Lung));
+    }
+
+    #[test]
+    fn command_integration_opens_meridian_from_client_command() {
+        let mut app = setup_command_app();
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Cultivation::default(),
+            MeridianSystem::default(),
+            LifeRecord::default(),
+        ));
+
+        execute_command(&mut app, &mut helper, "meridian open lung");
+
+        let meridians = app.world().get::<MeridianSystem>(player).unwrap();
+        assert!(
+            meridians.get(MeridianId::Lung).opened,
+            "client command must reach MeridianCmd handler"
+        );
+    }
+
+    #[test]
+    fn production_command_gate_dispatches_meridian_open_for_operator() {
+        let mut app = crate::cmd::test_command_app_with_connection_mode(ConnectionMode::Online {
+            prevent_proxy_connections: true,
+        });
+        let (bundle, mut helper) = create_mock_client("Admin");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Cultivation::default(),
+            MeridianSystem::default(),
+            LifeRecord::default(),
+        ));
+
+        execute_command(&mut app, &mut helper, "meridian open lung");
+
+        assert!(
+            app.world()
+                .get::<MeridianSystem>(player)
+                .expect("production command test player should keep MeridianSystem")
+                .get(MeridianId::Lung)
+                .opened,
+            "operator command gate must dispatch /meridian open to its handler"
+        );
     }
 
     #[test]

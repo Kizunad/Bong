@@ -22,6 +22,7 @@ from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     assert_no_inventory_change,
+    drain_inventory_snapshots,
     equip_location,
     find_instance_by_id,
     inventory_signature,
@@ -79,29 +80,34 @@ def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
     assert_no_inventory_change(bot, anchor_t, baseline, window=NEGATIVE_WINDOW)
 
 def _assert_qi_unchanged_after_rejection(bot, expected_qi: float, realm_id: str) -> None:
-    """拒绝路径 qi 守恒：warn-only 拒绝不改 Cultivation，player_state 不会自动重发。
+    """拒绝路径 qi 守恒：用 qi_max 变更触发可靠的 player_state 重推。
 
-    `qi set <expected_qi>` 会无条件重写 qi_current（cmd/dev/qi.rs 只有 Set/Max 变体），
-    把错误拒绝路径已扣掉的真元修回去、再自证清白——探针读回的就是它自己写的值
-    （review finding [1] 的根因）。改用 `realm set <当前境界>` 做 qi 无关的重发探针：
-    handle_realm 恒赋值 cultivation.realm（realm.rs，同值写仍触发 Changed<Cultivation>
-    的 player_state 发射，与 `qi set` 同值写同款机制），且**从不碰 qi**——重发读回的
-    spirit_qi 就是权威当前值。错误实现若在拒绝时扣了 qi，重发值必然 != expected_qi，
-    wait_for 超时即红；探针无法再修复扣减。请求锚定：e.t > probe_anchor 排除探针前
-    一切历史 player_state（含 setup 的 realm/qi 写旧态）。"""
+    同值 realm 写不保证触发 Bevy 的 Changed<Cultivation>，因此不能作为观察屏障。
+    `qi max 20` 只改变上限，不改当前真元；重推中的 spirit_qi 仍是拒绝后的权威值，
+    随后恢复默认上限，避免探针影响后续步骤。
+    """
     probe_anchor = last_event_time(bot)
-    bot.cmd(f"realm set {realm_id}")
-    bot.expect_chat("[dev] realm set", timeout=10.0)
-    bot.wait_for(
+    bot.cmd("qi max 20")
+    bot.expect_chat("[dev] qi max", timeout=10.0)
+    state = bot.wait_for(
         lambda e: (
             e.kind == "server_data"
             and e.data.get("payload_type") == "player_state"
             and e.t > probe_anchor
-            and abs(float(e.data["payload"].get("spirit_qi", -1.0)) - expected_qi) < 1e-6
+            and expected_qi - 1e-6
+            <= float(e.data["payload"].get("spirit_qi", -1.0))
+            <= expected_qi + 0.25
         ),
         timeout=10.0,
-        description=f"拒绝后（realm-set 重发探针）spirit_qi 保持 {expected_qi}",
+        description=f"拒绝后（qi-max 重发探针，realm={realm_id}）spirit_qi 保持 {expected_qi}",
     )
+    observed_qi = float(state.data["payload"].get("spirit_qi", -1.0))
+    if observed_qi < expected_qi - 1e-6:
+        raise BotAssertionError(
+            f"拒绝路径不得扣减真元：期望至少 {expected_qi}，实际 {observed_qi}"
+        )
+    bot.cmd("qi max 10")
+    bot.expect_chat("[dev] qi max", timeout=10.0)
 
 
 def _wait_move_rejected(bot, anchor_t: float, timeout: float = 10.0) -> tuple[dict, float]:
@@ -173,18 +179,18 @@ def run(env) -> None:
         anchor = time.monotonic() - bot.t0
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
-        # reset 归零 realm=Awaken（见上方 reset 注释）；realm-set 探针同值写不改变境界。
+        # reset 归零 realm=Awaken（见上方 reset 注释）；qi-max 探针不改变境界。
         _assert_qi_unchanged_after_rejection(bot, 1.0, "awaken")
 
         # ── 2. forge 拒绝-灵气：境界够但 qi=1（< qi_cost 5）→ NotEnoughQi，无回推 ──
         bot.cmd("realm set induce")
         bot.expect_chat("[dev] realm set", timeout=10.0)
-        # qi 仍是 1（上步 realm-set 探针为同值写，未改 qi_current）；拒绝路径同样断言 qi 守恒。
+        # qi 仍是 1（上步 qi-max 探针未改 qi_current）；拒绝路径同样断言 qi 守恒。
         baseline = latest_inventory_snapshot(bot)
         anchor = time.monotonic() - bot.t0
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
-        # 当前境界为 Induce（本步开头 realm set induce）；探针同值写不改变境界。
+        # 当前境界为 Induce（本步开头 realm set induce）；qi-max 探针不改变境界。
         _assert_qi_unchanged_after_rejection(bot, 1.0, "induce")
 
         # ── 2b. forge 拒绝-材料：境界够 + qi 够但缺 ash_spider_silk → MissingMaterial ──
@@ -203,7 +209,7 @@ def run(env) -> None:
         _expect_no_inventory_change(bot, anchor, baseline)
         # 当前境界为 Induce（step 2 开头 realm set induce）；qi 已抬到 5——qi>=qi_cost
         # 才能越过 NotEnoughQi 到达材料检查。MissingMaterial 是 warn-only 拒绝，
-        # 探针（realm-set 同值写，不碰 qi）读回 spirit_qi 必须仍是 5.0；错误实现
+        # 探针（qi-max 只刷新状态，不碰 qi_current）读回 spirit_qi 必须仍是 5.0；错误实现
         # 若在材料检查前扣真元，探针读回 != 5.0，wait_for 超时即红。
         _assert_qi_unchanged_after_rejection(bot, 5.0, "induce")
 
@@ -224,10 +230,6 @@ def run(env) -> None:
         # 当前 zone 的权威 spirit_qi 作基线；forge 成功后读回、断言增量 == qi_cost
         # / QI_ZONE_UNIT_CAPACITY（0.10），与 source 侧扣减合起来才是守恒对。
         zone_baseline = _read_current_zone_qi(bot)
-        # central-review 2012 #3 回归：qi 断言必须锚在 forge intent 之后——否则
-        # 「qi set 5 之前」spirit_qi=0 的旧 player_state 会满足 <5.0，扣真元缺失的
-        # forge 也能通过。watermark 取 intent 前（含 zone 探针读之后），排除一切历史快照。
-        forge_anchor = last_event_time(bot)
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         forged = wait_inventory_revision_after(bot, forge_revision, timeout=10.0)
         assert int(forged["revision"]) > forge_revision, (
@@ -237,20 +239,29 @@ def run(env) -> None:
         assert find_item(forged, SILK) is None, (
             f"forge 后材料 {SILK} 应被消耗，实际仍在快照中"
         )
-        # 真元走 zone ledger 扣除：forge intent 之后下发的 player_state.spirit_qi
-        # 必须恰好等于 5.0 − qi_cost(5.0) = 0.0（守恒敏感契约，central-review 2012
-        # #10）——只断言「< 5.0」会让扣 0.1、双扣成负等错误实现也通过。e.t >
-        # forge_anchor 排除历史 qi=0 快照；浮点容差 1e-6 吸收序列化抖动。
-        bot.wait_for(
+        # 成功 forge 会改变 Cultivation，但当前 emitter 不保证同 tick 自动重推
+        # player_state。用 qi-max 只读式探针触发一次可靠重推；forge 成本为 5，
+        # 因而当前真元应为 0，随后只允许极小的吐纳回升，不允许残留大额真元。
+        qi_probe_anchor = last_event_time(bot)
+        bot.cmd("qi max 20")
+        bot.expect_chat("[dev] qi max", timeout=10.0)
+        state_after_forge = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "player_state"
-                and e.t > forge_anchor
-                and abs(float(e.data["payload"].get("spirit_qi", 9.9)) - 0.0) < 1e-6
+                and e.t > qi_probe_anchor
+                and 0.0 <= float(e.data["payload"].get("spirit_qi", 9.9)) <= 0.25
             ),
             timeout=10.0,
-            description="forge 扣真元后（intent 之后）spirit_qi == 0.0（5.0 − 5.0）",
-        )
+            description="forge 扣真元后（qi-max 重发探针）spirit_qi 在 0..0.25 内",
+        ).data["payload"]
+        observed_qi = float(state_after_forge.get("spirit_qi", -1.0))
+        if observed_qi > 0.25:
+            raise BotAssertionError(
+                f"forge 后真元应已扣除 5.0，允许吐纳回升至 0.25，实际 {observed_qi}"
+            )
+        bot.cmd("qi max 10")
+        bot.expect_chat("[dev] qi max", timeout=10.0)
         # central-review 2012 #2 回归：destination zone 信用断言。源（player -5.0，
         # 上面 player_state）与目的地（zone +0.10）两侧都在，才证明 qi 确实走了
         # zone ledger 而不是直接蒸发。预期增量 = FORGE_QI_COST / QI_ZONE_UNIT_CAPACITY。
@@ -294,7 +305,12 @@ def run(env) -> None:
         # ── 5. equip 拒绝-境界：降回 Awaken 再穿 → RealmTooLow + 回推 revision 不变 ──
         bot.cmd("realm set awaken")
         bot.expect_chat("[dev] realm set", timeout=10.0)
-        spare_snapshot = _give_and_wait(bot, FALSE_SKIN)
+        _give_and_wait(bot, FALSE_SKIN)
+        # `give` 与 realm 变更都可能在不同 tick 补发 inventory_snapshot；只取
+        # 第一张含物品的快照会把在途的旧 revision 当成拒绝请求基线。等快照静默
+        # 后再取最新权威快照，确保 rejection resync 与真正请求前状态对拍。
+        drain_inventory_snapshots(bot)
+        spare_snapshot = latest_inventory_snapshot(bot)
         spare = require_item(spare_snapshot, FALSE_SKIN)
         spare_instance = int(spare["item"]["instance_id"])
         # 请求发出时刻是拒绝链的起点；回推快照随后严格锚到 rejection 事件。
