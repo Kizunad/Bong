@@ -53,6 +53,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
+import random
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,6 +124,52 @@ class HeldItem:
     materials: tuple[Material, ...]
     display: dict[str, dict[str, list]]
     grip: float                         # 拳心对准的模型高度（授权系，方块单位）
+
+
+# ── 16² 贴图的两个原语 ────────────────────────────────────────────────────
+# 手持物贴图全是「通用材质样本」（木纹 / 石片 / 锈斑 / 骨纹 / 绳纹），画法只有两
+# 招：底噪 + 斑。原先各躺在 `gen_knife_trio` 私有一份；第二件资产（木棍）要用同一
+# 套画法，抄过去就又成了本模块 docstring 里骂的那种"两套各写一份"。
+#
+# **改这两个函数会改掉所有既有资产的贴图。** 它们的 RNG 调用序就是产物的一部分：
+# 每个 pixel 一次 `randint`（warm 时两次），顺序 row-major。想加新效果就加新函数，
+# 别在这两个里插调用。
+
+
+def noise_fill(image: Image.Image, rng: random.Random, base, spread: int,
+               warm: int = 0) -> None:
+    """整图铺底噪。`warm` 给 R 加、给 B 减同一个随机量（做木/锈那种暖偏）。"""
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            jitter = rng.randint(-spread, spread)
+            tint = rng.randint(-warm, warm) if warm else 0
+            pixels[x, y] = (
+                max(0, min(255, base[0] + jitter + tint)),
+                max(0, min(255, base[1] + jitter)),
+                max(0, min(255, base[2] + jitter - tint)),
+                255,
+            )
+
+
+def blotch(image: Image.Image, rng: random.Random, count: int, colour, radius) -> None:
+    """撒 `count` 块径向渐隐的斑。斑比线更像"自然痕迹"——规则的斜线在任何尺度下
+    都读成刮蹭（`tex_iron_forged` 那轮踩过）。"""
+    pixels = image.load()
+    for _ in range(count):
+        cx, cy = rng.uniform(0, 15), rng.uniform(0, 15)
+        r = rng.uniform(*radius)
+        peak = rng.uniform(0.25, 0.62)
+        for y in range(max(0, int(cy - r)), min(16, int(cy + r) + 1)):
+            for x in range(max(0, int(cx - r)), min(16, int(cx + r) + 1)):
+                d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 / r
+                if d > 1.0:
+                    continue
+                a = peak * (1.0 - d)
+                px = pixels[x, y]
+                pixels[x, y] = tuple(
+                    int(round(px[i] * (1 - a) + colour[i] * a)) for i in range(3)
+                ) + (255,)
 
 
 # ── 校验 ──────────────────────────────────────────────────────────────────
@@ -218,6 +266,184 @@ def assert_no_coplanar_faces(item: HeldItem) -> None:
                             f"{'xyz'[axis]}-{face} 面共面于 {a}，投影相交 {overlap:.5f}"
                             f"——会 z-fighting，挪开一块"
                         )
+
+
+MIN_CONTACT_RATIO = 0.08        # 一块与邻居的接触面积，至少要占自身最大截面的 8%
+# 小于这个缝就当贴上了。判据是**看不看得见**：件在真实手持尺寸下约 110px/方块，
+# 0.004 方块 ≈ 0.44px。小刀那三把的绳缠道与道之间就留着 0.0003 的缝（0.03px），
+# 那是刻意做的参差，不是断开。
+GAP_TOLERANCE = 0.004
+
+
+def _contact_area(first: Box, second: Box) -> float:
+    """两块的**接触面积**。分离返回 0；只碰到一条棱或一个角也返回 0。
+
+    不能用"相交体积"：本模块的件大多是**上下相接**的分段（刀柄三段、木条五段），
+    相接处体积恒为 0，用体积判会把所有正常拼接都判成断开。面积口径同时覆盖两种
+    正当连接——贴面相接（一轴重叠为 0、另两轴有面积）和互相嵌入。
+    """
+    span = [min(first.high[k], second.high[k]) - max(first.low[k], second.low[k])
+            for k in range(3)]
+    if min(span) < -GAP_TOLERANCE:
+        return 0.0                                  # 中间有肉眼可见的缝
+    span = sorted((max(0.0, v) for v in span), reverse=True)
+    return span[0] * span[1]                        # 最大的两轴 = 接触面
+
+
+def assert_boxes_are_connected(item: HeldItem) -> None:
+    """整件必须是**一个连通体**，且没有只靠一条棱 / 一个角挂着的碎块。
+
+    体素件最扎眼的缺陷之一：某块从主体上分离出去，渲出来像一块飘在旁边的碎料。
+    三视图里未必看得出来——正视被主体挡住、侧视又刚好重叠。
+
+    **这道闸上线当天就抓到一个已 merge 的真缺陷**：`iron_dagger` 的 `handle_body`
+    顶到 0.2635，而护环底在 0.2688，中间空着 0.0053——整条刃加护环因此是一块**和
+    柄不相连的浮空体**，且与该生成器自己写的「木柄 0~0.269」也对不上。三视图渲了
+    三轮没人看出来，因为那道缝在图上不到一个像素。
+    """
+    boxes = item.boxes
+    if len(boxes) < 2:
+        return
+
+    adjacency: dict[int, set[int]] = {i: set() for i in range(len(boxes))}
+    for i, box in enumerate(boxes):
+        w, h, d = (2.0 * v for v in box.half)
+        own = max(w * h, h * d, w * d)              # 自身最大截面
+        best = 0.0
+        for j, other in enumerate(boxes):
+            if i == j:
+                continue
+            area = _contact_area(box, other)
+            best = max(best, area)
+            if area > 1e-9:
+                adjacency[i].add(j)
+        if best < own * MIN_CONTACT_RATIO:
+            raise ValueError(
+                f"{item.key}/{box.name}: 与其余部件的最大接触面积只有自身截面的 "
+                f"{best / own * 100:.1f}%（下限 {MIN_CONTACT_RATIO * 100:.0f}%）——"
+                f"渲出来是一块飘在旁边的碎块。往主体挪，或加大重叠"
+            )
+
+    reached = {0}
+    frontier = [0]
+    while frontier:
+        current = frontier.pop()
+        for neighbour in adjacency[current] - reached:
+            reached.add(neighbour)
+            frontier.append(neighbour)
+    if len(reached) != len(boxes):
+        stray = sorted(boxes[i].name for i in range(len(boxes)) if i not in reached)
+        raise ValueError(f"{item.key}: 这些部件和主体不连通（自成一块）：{stray}")
+
+
+# ── 手持 display ──────────────────────────────────────────────────────────
+# **不要抄 `axe_bone` 的 [0,-90,55] / [0,4,0]**，那组数是原版 `item/handheld` 的，
+# 而 handheld 伺候的是**平面 sprite**：贴图里刃走左下→右上的对角线，55° 正好把那
+# 条对角线掰正，[0,4,0] 补的是 sprite 握把点（约模型 (3,3)px）到方块中心的偏移。
+# 我们这套是**沿 +Y 立着的三维件**，两条前提都不成立——照抄的结果是件朝斜下方
+# 58°、握把离拳心 6.3px（拳头才 4px 宽）。
+#
+# `emit_offset()` 已把握把点放到方块中心（= display 枢轴），于是本仓基线是：
+#
+#   rotation    [-80, 90, 0]
+#               Rx(-80)  **件沿前臂出拳**，只偏 10°。这里**刻意不抄原版剑**：原版
+#                        把刃摆成⊥前臂（arm 垂下时刃水平朝前），那是平面 sprite 的
+#                        产物，只在**手臂伸直**时成立。Bong 有 bendy-lib 肘弯，⊥ 的
+#                        刃会跟着小臂转上去——实测两条匕首动画每一 tick 刃仰角都在
+#                        +63~+78°，横划那条刃尖甚至越过肩往身后指，读成"举着火把"。
+#                        拳头握持的真解剖是件基本沿前臂出虎口，rx=-80 就是这个。
+#               Ry(90)   把件的薄轴（模型 ±Z）转到玩家左右两侧，和原版剑一样：
+#                        侧看是一片，正面看是一条棱
+#   translation [0, -2, 1.5]
+#               握把点该落在**拳心**。MC 的挂点 `R_ATTACH·(1,2,-10)` = 臂系
+#               (-1,10,-2)，是臂盒底面往前 2px；拳心在臂盒底面往上 1.5px、z 居中，
+#               即 (-1, 8.5, 0)。差值换回 display 前的系就是 (0,-2,1.5)。
+#               —— 同一算法量原版剑得 (0,-1.54,1.92)，同量级，互为佐证。
+#
+# 左手那组**预取反 y/z 旋转**：`Transformation.apply(leftHanded)` 自己还会再取反
+# 一次 y/z 旋转并翻 x 平移，两次抵消后左右手才是镜像而不是同姿。
+#
+# GUI / ground / fixed / head 要的是**整件居中**而不是握把居中，所以那几档用
+# `centre_translation` 反解。少了这一步图标会被握把顶得偏出格子。
+#
+# FPV 两档只把坐标系摆正，**数值未经真机标定**：本 harness 渲不了第一人称，且 FPV
+# 手臂另有 plan-fpv-cast-av-v1 在动。
+
+DEFAULT_HAND_ROTATION = (-80, 90, 0)
+
+
+def _angles(values) -> list:
+    """把角度列表规整成 JSON 里好看的形态：整数写成 int，`-0.0` 归零。
+
+    纯写法问题，但**不能省**：左手那组是右手的取反，`-0.0` 会原样写进 model JSON，
+    而 diff 里一个 `-0.0` 看不出是"镜像算出来的零"还是"谁手滑改的"。
+    """
+    out = []
+    for v in values:
+        v = float(v) + 0.0                       # −0.0 → 0.0
+        out.append(int(v) if v.is_integer() else v)
+    return out
+
+
+def centre_translation(rotation, scale: float, centre_px: float,
+                       target: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> list[float]:
+    """反解「让模型几何中心落在 `target`」的 display translation（px）。
+
+    MC 的点变换是 `p = t + R·S·(v - 8)`；令几何中心（授权系里相对握把点 `centre_px`
+    的那一点）落到 `target` 即可。
+    """
+    rx, ry, rz = (math.radians(v) for v in rotation)
+
+    def _rot_x(v):
+        return (v[0], v[1] * math.cos(rx) - v[2] * math.sin(rx),
+                v[1] * math.sin(rx) + v[2] * math.cos(rx))
+
+    def _rot_y(v):
+        return (v[0] * math.cos(ry) + v[2] * math.sin(ry), v[1],
+                -v[0] * math.sin(ry) + v[2] * math.cos(ry))
+
+    def _rot_z(v):
+        return (v[0] * math.cos(rz) - v[1] * math.sin(rz),
+                v[0] * math.sin(rz) + v[1] * math.cos(rz), v[2])
+
+    # JOML rotationXYZ = Rx·Ry·Rz，作用到向量上是先 Z 再 Y 再 X
+    moved = _rot_x(_rot_y(_rot_z((0.0, centre_px * scale, 0.0))))
+    return [round(target[i] - moved[i], 3) for i in range(3)]
+
+
+def hand_display(scale: float, grip: float, length: float, *,
+                 rotation: tuple[float, float, float] = DEFAULT_HAND_ROTATION,
+                 gui_scale: float = 1.15, gui_spin: float = 45.0,
+                 ground_scale: float = 0.45) -> dict:
+    """整套 display 变换。`grip` / `length` 单位是方块（授权系）。
+
+    `gui_spin` 是 GUI 图标绕 Z 转的角度：细长件走对角线才占满格子（原版剑/匕首同一
+    处理）。粗短件转 45° 反而会露出四角空白，那种件传 0。
+    """
+    centre_px = (length / 2.0 - grip) * 16.0      # 几何中心相对握把点，px
+    rx, ry, rz = rotation
+    right = _angles((rx, ry, rz))
+    left = _angles((rx, -ry, -rz))
+
+    def centred(rot, sc, target=(0.0, 0.0, 0.0)):
+        return {"rotation": _angles(rot), "scale": [sc, sc, sc],
+                "translation": centre_translation(rot, sc, centre_px, target)}
+
+    fp = round(scale - 0.04, 4)
+    return {
+        "thirdperson_righthand": {"rotation": right, "translation": [0, -2.0, 1.5],
+                                  "scale": [scale, scale, scale]},
+        "thirdperson_lefthand": {"rotation": left, "translation": [0, -2.0, 1.5],
+                                 "scale": [scale, scale, scale]},
+        "firstperson_righthand": {"rotation": right, "translation": [0, -2.0, -4.0],
+                                  "scale": [fp, fp, fp]},
+        "firstperson_lefthand": {"rotation": left, "translation": [0, -2.0, -4.0],
+                                 "scale": [fp, fp, fp]},
+        "ground": centred((0, 0, 0), ground_scale, (0.0, 2.0, 0.0)),
+        "gui": centred((0, 0, gui_spin), gui_scale),
+        "fixed": centred((0, 180, 0), 1.0),
+        "head": centred((0, 0, 0), 1.0, (0.0, 12.0, 0.0)),
+    }
 
 
 # ── OBJ / MTL ─────────────────────────────────────────────────────────────
@@ -451,6 +677,7 @@ def write_assets(
     for item in items:
         assert_conventions(item)
         assert_no_coplanar_faces(item)
+        assert_boxes_are_connected(item)
 
     outputs: dict[str, Path] = {}
     claimed_hosts: dict[str, str] = {}      # host_item -> 本批里已占用它的 item.key
