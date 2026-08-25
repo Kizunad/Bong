@@ -43,7 +43,7 @@
 | R4 | `plan-refactor-c2s-gate-v1` | C2S 声明式门禁 + handler 巨石拆分 | `client_request_handler.rs` + `network/gate/` | ~24 |
 | R5 | `plan-refactor-qi-ledger-v1` | qi 账本架构强制化（字段收私有） | `qi_physics/**` + 全仓直写点 | ~20 |
 | R6 | `plan-refactor-wire-s2c-v1` | S2C schema generation/transport machinery、emit builder、client 双轨归一与作用域广播 | TypeBox generation machinery、generated mirrors、`proto_convert.rs`、client bridge/router plumbing | ~12 |
-| R7 | `plan-refactor-client-ui-base-v1` | Screen 基类 + InspectScreen 拆解 + 输入/线程纪律 | client Screen/hud/keybind | ~17 |
+| R7 | `plan-refactor-client-ui-base-v1` | 库无关 UI contract + owo/vanilla adapters + Screen/Store/Intent/Bootstrap 分层 + InspectScreen 拆解 | `client/ui/contract/**`、UI adapters、Screen/HUD/keybind、BongClient UI bootstrap | ~17 |
 | R9 | `plan-refactor-cast-av-contract-v1` | cast TypeBox 内容语义 + reducer/state machine + SkillAvBinding 单一事实源 | TypeBox cast declarations、server cast/AV semantics、client cast store | ~13 |
 | R10 | `plan-refactor-inventory-core-v1` | inventory 巨石拆分 + InventoryTxn 事务 | `server/src/inventory/**` | ~7 |
 | V | `plan-bot-e2e-coverage-v1`（既有 skeleton 直接促升，不另立） | bot 场景 P1-P6 扩容 + CI 假绿修复 + build token 脚本 | `scripts/bot/**`、CI | ~9 |
@@ -64,7 +64,7 @@
 ## 4. 文件所有权矩阵（防并行打架，冲突时以本表为准）
 
 - `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+schema generation/transport machinery+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast domain semantics/AV emit+skill 注册=R9。
-- client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；generated bridge+channel/`ServerDataRouter` registration plumbing=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；cast reducer/store 与具体 domain consumers=R9。
+- client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；generated bridge+channel/`ServerDataRouter` registration plumbing=R6（与 R2 同文件不同区段，merge 前互 fetch）；R7 独占 `client/ui/contract`、owo/vanilla UI adapters、Screen/HUD/keybind/InspectScreen，以及 `BongClient` 的 UI/HUD/keybind bootstrap call set；cast reducer/store 与具体 domain consumers=R9。
 - 任何轨道碰他轨文件：只允许“消费对方冻结后的 API”，不允许改对方独占文件；接缝 API 归被依赖方定义。跨轨 wire 共同交付按 §4.1，不得用此通则拆开 activation merge unit。
 
 ### 4.1 R9 ↔ R6 schema 与 production cutover 裁决（2026-08-04）
