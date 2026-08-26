@@ -51,7 +51,9 @@ bug-hunt 定点轮（worktree `bughunt-loop-20260705-br`，范围只看 client i
 ### 落地清单
 
 - **P0 默认键位修复**：`client/src/main/java/com/bong/client/forge/ForgeScreenBootstrap.java` 将 Forge 默认键改为 `UNKNOWN`；`client/src/main/java/com/bong/client/tsy/ExtractInteractionBootstrap.java` 保留撤离取消 `U` 并同步修正启动日志；Identity 面板保留 `O`，VoidAction 面板改为 `UNKNOWN`，从默认物理键层面消除两组无仲裁双派发。
+- **P0 存量配置迁移**：`client/src/main/java/com/bong/client/ui/BongKeybindRegistry.java` 在 `CLIENT_STARTED`、首个 Forge tick 消费前按完整 translation key 定位存量绑定；仅将仍为旧默认 `U` 的 Forge 配置迁移到 `UNKNOWN`，通过 `GameOptions#setKeyCode` 持久化并调用 `KeyBinding.updateKeysByCode()` 刷新物理索引，自定义键与已为 `UNKNOWN` 的配置保持不变。
 - **P0 全局契约**：新增 `client/src/test/java/com/bong/client/input/DefaultKeybindingUniquenessTest.java`，扫描 direct `KeyBinding` 与 `BongKeybindRegistry.BindingSpec`，覆盖所有默认键表达式、`UNKNOWN` fail-closed、`O/U` 唯一归属，并为唯一保留的 R 键重复绑定锁定 `BotanyHudBootstrap.shouldCaptureSpellVolumeKey()` 仲裁。
+- **P0 迁移契约**：`client/src/test/java/com/bong/client/ui/BongKeybindRegistryTest.java` 覆盖旧 `U` 迁移、自定义键保留、`UNKNOWN` 幂等，以及迁移前后物理 `U` 对 Forge `wasPressed()` 的真实派发差异；`R7KeybindProductionMigrationTest` 锁定 `CLIENT_STARTED` 注册早于 Forge `END_CLIENT_TICK` 消费。
 - **P0 R7 对拍**：更新 `client/src/test/resources/bong/ui/keybind-migration.tsv`、`keybind-production-sites.tsv` 与 R7 source digest baseline；测试全部位于 `client/src/test/java/**`，未改 #2098/#2099 资产、动画或工具链。
 
 ### 关键 commit
@@ -63,11 +65,16 @@ bug-hunt 定点轮（worktree `bughunt-loop-20260705-br`，范围只看 client i
 - `d9712e0c8` · 2026-08-26 · 更新 R7 生产源冻结摘要。
 - `5c852ce7b` · 2026-08-26 · 修正 TSY 撤离键位日志。
 - `d0b8466dd` · 2026-08-26 · 同步日志变更后的 R7 生产源冻结摘要。
+- `f11f2bca0` · 2026-08-26 · 迁移 Forge 存量 U 键位配置。
+- `9490b5dbf` · 2026-08-26 · 补齐 Forge 存量键位运行时索引测试。
+- `8da381c9f` · 2026-08-26 · 同步 Forge 键位迁移的 R7 源码摘要。
+- `fa6bd905a` · 2026-08-27 · 合并最新主线并同步联合 R7 源码基线。
 
 ### 测试结果
 
-- `JAVA_HOME=/home/serverkizuna/.cache/codex-jdks/jdk-17 PATH=/home/serverkizuna/.cache/codex-jdks/jdk-17/bin:$PATH scripts/build-token.sh gradle test build`：`4941 tests`、Gametest `3/3`、build successful。
-- `git fetch origin && git merge origin/main`：Already up to date；无需因主线变更重复构建。
+- `JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH ../scripts/build-token.sh gradle test build`：最终合并态 `4949 tests`、failures `0`、errors `0`，Gametest `3/3`，`BUILD SUCCESSFUL`。
+- `git fetch origin && git merge origin/main`：合并 `origin/main` 后解决两处 R7 fixture 冲突；以联合生产树真实 digest 重新冻结，再运行完整 Java 17 gate 通过。
+- fresh-context、read-only validator：对最终 HEAD 重新验证默认键唯一性、存量配置迁移、首 tick 前接线和物理索引刷新；最终 SHA 与结论见 PR 收尾证据。
 
 ### 跨仓库核验
 
