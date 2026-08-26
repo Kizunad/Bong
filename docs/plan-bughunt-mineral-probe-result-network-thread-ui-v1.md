@@ -6,9 +6,9 @@ Skeleton Plan：`mineral_probe_result` S2C 回执在 Fabric 网络线程内直�
 
 | 阶段 | 状态 | 目标 |
 |---|---|---|
-| P0 | ⬜ | 将 `MineralProbeResultHandler` 改为纯解析 / dispatch 意图，不在 `ServerDataRouter.route()` 内触达 MC HUD/SFX |
-| P1 | ⬜ | 在 `BongNetworkHandler.applyDispatch(...)` 的 main-thread 路径统一落地 actionbar overlay 与本地 SFX |
-| P2 | ⬜ | 增加线程契约回归测试 + runClient 手动验证 N 键 found/denied 反馈 |
+| P0 | ✅ 2026-08-26 | 将 `MineralProbeResultHandler` 改为纯解析 / dispatch 意图，不在 `ServerDataRouter.route()` 内触达 MC HUD/SFX |
+| P1 | ✅ 2026-08-26 | 在 `BongNetworkHandler.applyDispatch(...)` 的 main-thread 路径统一落地 actionbar overlay 与本地 SFX |
+| P2 | ✅ 2026-08-26 | 增加线程契约回归测试；live runClient 手测因无可驱动 server+Fabric 客户端的 e2e harness 未执行 |
 
 ## 实际游玩体验影响
 
@@ -77,3 +77,37 @@ Skeleton Plan：`mineral_probe_result` S2C 回执在 Fabric 网络线程内直�
 - 第一轮反方质疑：需要证明 raw receiver 确为网络线程、`ROUTER.route(...)` 是否同步执行 handler、后续 `applyDispatch` 是否已保护该路径、是否存在死代码或重复主题。
 - 修正 / 反驳：Fabric sources 明确 raw receiver 线程契约；`ServerDataRouter.route(...)` 同步 `handler.handle(...)`；`MineralProbeResultHandler` 直接触 HUD/SFX 且返回普通 `handled(...)`；N 键入口、server emit 系统和 router 注册均可达；重复检索未发现 `mineral_probe_result` 网络线程主题。
 - 最终裁决：高置信，支持开 BugHunt PR，不降级为 `NO_CANDIDATE`；适合本轮只新增 skeleton plan。推荐修复路线为“纯解析 / dispatch 意图 + main-thread applier”，而不是在 handler 内临时包一层局部 `client.execute`。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`MineralProbeResultHandler` 仅解析 `kind`、文案、余量和拒绝原因，输出 `MineralProbeFeedbackSpec`；`ServerDataDispatch` 携带可选 spec；handler 不再依赖 Minecraft、Text、HUD 或 SFX。
+- P1：`BongNetworkHandler` 的 server-data dispatch 判定接入 feedback spec，`applyDispatch(...)` 在 client-thread 内统一应用 actionbar 颜色与 vanilla 音效；`ServerDataRouter` 未增加 UI 副作用。
+- P2：补齐 `MineralProbeResultHandlerTest`、`ServerDataRouterTest` 和 `BongServerDataThreadingTest`，覆盖 found/denied spec、三档颜色、音效参数、纯路由和 `client.execute` 顺序。
+- production source digest 合同按本 PR 的实际客户端 production diff 更新：`R7InventoryContractTest` 与 `production-source-baseline.tsv`。
+
+### 关键 commit
+
+- `52a4b1803a042d1869991c50f4fa05e647721f9a`（2026-08-26）：promotion，skeleton → active。
+- `c8986170e3e7c183fd098d3d71e060b5c37f22bc`（2026-08-26）：引入结构化矿脉反馈并接入主线程 applier。
+- `27dfbb028b4a702ca69e8406e0929b713ebcebc9`（2026-08-26）：同步 production source digest 合同。
+- `2ebabdc288d5c5d355013cd7b64aa44cf822d660`（2026-08-26）：移除 handler 内遗留 Text helper，收紧为 spec-only 边界。
+
+### 测试结果
+
+- Java 17 完整门禁：`JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH flock /tmp/bong-gradle.lock -c 'cd client && ./gradlew test build'`；4941 tests，0 failures、0 errors、0 skipped；3 个 GameTest 全部通过；`BUILD SUCCESSFUL`。
+- 受影响测试集：Mineral handler、ServerDataRouter、server-data threading 与 R7 source-baseline 合同通过；validator 记录 82 tests、0 failures/errors。
+- validator：`gpt-5.6-luna` 对拍最终 HEAD `2ebabdc288d5c5d355013cd7b64aa44cf822d660`，PASS，已关闭。
+- 最终 `git fetch origin` 后 `git merge origin/main`：`Already up to date`，基线 `origin/main=32624f398764e78be60ccccd7b8f47d5172e7b11`。
+- live runClient N 键 found/denied 手测未执行：当前仓库没有可直接驱动 server + Fabric 客户端交互的 e2e harness；线程 seam、spec 字段和完整 Gradle/GameTest gate 已覆盖自动化路径。
+
+### 跨仓库核验
+
+- client：`mineral_probe_result` → `MineralProbeResultHandler` → `MineralProbeFeedbackSpec` → `BongNetworkHandler.applyDispatch`。
+- server、schema、agent 未修改；wire payload、`mineral_probe_result` 字段和 server emit 契约未改动。
+
+### 遗留 / 后续
+
+- 可在具备 live server + Fabric client 的环境中补按 N 键的 found/denied 体验手测；不属于本 PR 的协议或 server 变更。
+- `ShieldBrokenHandler`、`ShieldBlockHitHandler`、`BreakthroughCinematicHandler` 等其他 handler 的线程审计仍不在本 plan 范围。
