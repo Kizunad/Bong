@@ -23,99 +23,40 @@ rig.py，本模块一概不猜。
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import uuid
-import zlib
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
-
-# ---------------------------------------------------------------- 线性代数
-def rotmat(deg: float, axis: int) -> np.ndarray:
-    a = math.radians(deg)
-    c, s = math.cos(a), math.sin(a)
-    if axis == 0:
-        return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
-    if axis == 1:
-        return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
-    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import animcore  # noqa: E402
 
 
-def euler(rot) -> np.ndarray:
-    """Blockbench 顺序 Rz·Ry·Rx。"""
-    if not any(rot):
-        return np.eye(3)
-    return rotmat(rot[2], 2) @ rotmat(rot[1], 1) @ rotmat(rot[0], 0)
+# ---------------------------------------------------------------- 线性代数 / 曲线
+# 这些原本在本模块和 animkit.py 里各写了一份逐字相同的实现。现在统一在 animcore，
+# 这里只做转发 —— 既有 `from anim_rig import rotmat, smooth, ...` 的调用点一个不用改。
+rotmat = animcore.rotmat
+euler = animcore.euler
+affine = animcore.affine
+wrap = animcore.wrap
+smooth = animcore.smooth
+ease_out = animcore.ease_out
+pulse = animcore.pulse
+keyed = animcore.keyed
+jitter = animcore.jitter
+decay_shake = animcore.decay_shake
 
 
 def euler_of(R: np.ndarray) -> list[float]:
     """`euler()` 的逆：旋转矩阵 → Blockbench 顺序（Rz·Ry·Rx）的三个角（度）。
 
-    需要它是因为有些姿态**天然是用轴角描述的**（绕某条切向倒过去多少度），而骨骼
-    通道只吃欧拉角。自己按分量反解，别拿三个角去凑——凑出来的解在万向锁附近会跳。
-
-    R = Rz(c)·Ry(b)·Rx(a) 展开后第三行是 (−sb, sa·cb, ca·cb)，第一列是
-    (cb·cc, cb·sc, −sb)，于是 b = −asin(R₂₀)、a = atan2(R₂₁, R₂₂)、c = atan2(R₁₀, R₀₀)。
-    cb→0 时（俯仰 ±90°）a 与 c 简并，退化为把整个旋转记在 a 上。
+    本模块的调用点把它当三元序列用（拆包、直接塞进 Channel.rot），所以维持 list
+    返回值；animkit 那份返回 ndarray。算法本身在 `animcore.euler_xyz`。
     """
-    sb = float(np.clip(-R[2, 0], -1.0, 1.0))
-    b = math.asin(sb)
-    if abs(math.cos(b)) < 1e-7:
-        return [math.degrees(math.atan2(-R[1, 2], R[1, 1])), math.degrees(b), 0.0]
-    return [math.degrees(math.atan2(R[2, 1], R[2, 2])),
-            math.degrees(b),
-            math.degrees(math.atan2(R[1, 0], R[0, 0]))]
-
-
-def affine(R: np.ndarray, t: np.ndarray) -> np.ndarray:
-    M = np.eye(4)
-    M[:3, :3] = R
-    M[:3, 3] = t
-    return M
-
-
-# ---------------------------------------------------------------- 曲线工具
-def wrap(u: float) -> float:
-    return u - math.floor(u)
-
-
-def smooth(s: float) -> float:
-    s = min(1.0, max(0.0, s))
-    return s * s * (3.0 - 2.0 * s)
-
-
-def ease_out(s: float, p: float = 2.0) -> float:
-    return 1.0 - (1.0 - min(1.0, max(0.0, s))) ** p
-
-
-def pulse(u: float, center: float, width: float) -> float:
-    """环形高斯脉冲：用来做"大部分时间不动、某一刻抽一下"。"""
-    d = abs(wrap(u - center + 0.5) - 0.5)
-    return math.exp(-((d / width) ** 2))
-
-
-def keyed(t: float, keys) -> float:
-    """按 (时间, 值) 列表做平滑插值（段内 smoothstep，不会像线性那样出现折角）。"""
-    if t <= keys[0][0]:
-        return keys[0][1]
-    for (t0, v0), (t1, v1) in zip(keys, keys[1:]):
-        if t <= t1:
-            return v0 + (v1 - v0) * smooth((t - t0) / (t1 - t0)) if t1 > t0 else v1
-    return keys[-1][1]
-
-
-def jitter(name: str, i: int) -> float:
-    """稳定扰动（crc32 不用内置 hash——后者每进程加盐，两次跑出的动画会不一样）。"""
-    return (((zlib.crc32(f"{name}{i}".encode()) >> 3) & 1023) / 1023.0) * 2.0 - 1.0
-
-
-def decay_shake(t: float, freq: float, tau: float) -> float:
-    """指数衰减抖动。受击/抖毛/努责余震都是这个形状，别用等幅正弦。"""
-    return math.sin(2.0 * math.pi * freq * t) * math.exp(-tau * t)
+    return list(animcore.euler_xyz(R))
 
 
 # ---------------------------------------------------------------- 骨 / 姿态
@@ -464,48 +405,24 @@ class Rig:
 
 
 # ---------------------------------------------------------------- 导出
-def _uuid(seed: str) -> str:
-    """确定性 v4 uuid。
-
-    别用 `uuid.UUID(int=crc32(seed))` 拼：熵只有 32 位（上万关键帧撞车概率不低），
-    版本/变体位也不合法。Blockbench 拿 uuid 当索引键，不值得冒这个险。
-    """
-    return str(uuid.UUID(bytes=hashlib.md5(seed.encode()).digest(), version=4))
+_uuid = animcore.stable_uuid
 
 
 def _kf(channel: str, time: float, vec, idx: int, aname: str) -> dict:
-    """关键帧。字段照用户手上能正常打开的带动画工程逐项对齐：data_points 用**字符串**、
-    bezier 四件套即使走 linear 也写全 —— 缺字段是没必要担的读盘风险。"""
-    return {
-        "channel": channel,
-        "data_points": [{"x": f"{vec[0]:.4f}", "y": f"{vec[1]:.4f}", "z": f"{vec[2]:.4f}"}],
-        "uuid": _uuid(f"{aname}{channel}{idx}"),
-        "time": round(time, 4),
-        "color": -1,
-        "interpolation": "linear",
-        "bezier_linked": True,
-        "bezier_left_time": [-0.1, -0.1, -0.1],
-        "bezier_left_value": [0, 0, 0],
-        "bezier_right_time": [0.1, 0.1, 0.1],
-        "bezier_right_value": [0, 0, 0],
-    }
+    """关键帧。种子拼成 `名+骨+通道 + 通道 + 序号`（通道名出现两次）—— 这是本模块的
+    历史拼法，动它会让既有产物的 uuid 全变，而 uuid 只是 Blockbench 的索引键。"""
+    return animcore.keyframe(channel, time, vec, f"{aname}{channel}{idx}")
 
 
 def build_tracks(rig: Rig, sampler, length: float, loop: bool, n: int):
     """采样 → 每骨每通道的 (时间, 三元组) 序列。恒定通道直接丢掉。"""
-    frames = []
-    for i in range(n + 1):
-        t = i / n
-        if loop and i == n:
-            frames.append((length, frames[0][1]))     # 循环末帧 = 首帧，接缝为零
-            break
-        frames.append((t * length, sampler(t)))
+    frames = animcore.sample_frames(sampler, length, loop, [i / n for i in range(n + 1)])
 
     tracks: dict[str, dict[str, list]] = {}
     for bone in rig.order:
-        for chan, attr, default in (("rotation", "rot", 0.0), ("position", "pos", 0.0), ("scale", "scale", 1.0)):
-            vals = [(tt, list(getattr(pz[bone], attr)) if bone in pz else [default] * 3) for tt, pz in frames]
-            if all(abs(v[k] - default) < 1e-4 for _, v in vals for k in range(3)):
+        for chan, attr, default in animcore.CHANNELS:
+            vals = animcore.channel_values(bone, attr, default, frames)
+            if animcore.is_constant_default(vals, default):
                 continue
             # 恒定但非默认的通道只留首末两帧。整条动画都是同一个值的通道（典型是"其余
             # 骨保持某个非静止姿"）逐帧写没有任何信息量，却按采样数线性吃关键帧——
@@ -540,29 +457,12 @@ def write_bbmodel(src: Path, out: Path, model_name: str, entries) -> Path:
 
     anims = []
     for name, length, loop, tracks in entries:
-        animators = {}
-        for bone, chans in tracks.items():
-            kfs = []
-            for chan, vals in chans.items():
-                for i, (tt, v) in enumerate(vals):
-                    kfs.append(_kf(chan, tt, v, i, f"{name}{bone}{chan}"))
-            animators[uuids[bone]] = {"name": bone, "type": "bone", "keyframes": kfs}
-        anims.append({
-            "uuid": _uuid(f"anim:{model_name}:{name}"),
-            "name": name,
-            "loop": "loop" if loop else "once",
-            "override": False,
-            "length": round(length, 4),
-            "snapping": 24,
-            "selected": False,
-            "saved": True,
-            "path": "",
-            "anim_time_update": "",
-            "blend_weight": "",
-            "start_delay": "",
-            "loop_delay": "",
-            "animators": animators,
-        })
+        animators = animcore.animators_of(
+            tracks,
+            lambda bone: uuids[bone],
+            lambda bone, chan, i, _n=name: f"{_n}{bone}{chan}{chan}{i}",
+        )
+        anims.append(animcore.animation_entry(model_name, name, length, loop, animators))
     doc["animations"] = anims
     doc["name"] = model_name
     doc["model_identifier"] = model_name
@@ -579,21 +479,7 @@ def write_geckolib(out: Path, namespace: str, model_id: str, entries) -> Path:
     modelScript/core/bbmodel_to_geckolib.py（驱动 Blockbench 官方 codec 导出），由 codec
     负责这层约定；本函数只用于人眼查看曲线和兜底。
     """
-    animations = {}
-    for name, length, loop, tracks in entries:
-        bones = {}
-        for bone, chans in tracks.items():
-            entry = {}
-            for chan, vals in chans.items():
-                entry[chan] = {str(round(tt, 4)): [round(v[0], 4), round(v[1], 4), round(v[2], 4)]
-                               for tt, v in vals}
-            bones[bone] = entry
-        animations[f"animation.{namespace}.{model_id}.{name}"] = {
-            "loop": bool(loop),
-            "animation_length": round(length, 4),
-            "bones": bones,
-        }
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"format_version": "1.8.0", "animations": animations},
+    out.write_text(json.dumps(animcore.geckolib_document(entries, namespace, model_id),
                               indent="\t", ensure_ascii=False))
     return out
