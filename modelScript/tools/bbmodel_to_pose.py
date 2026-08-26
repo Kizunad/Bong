@@ -62,7 +62,6 @@ import numpy as np
 LIB = Path(__file__).resolve().parents[1]
 REPO = LIB.parent
 sys.path.insert(0, str(LIB / "core"))
-sys.path.insert(0, str(REPO / "client" / "tools"))
 
 import bb_anim_axes as AX  # noqa: E402
 from animkit import euler_of  # noqa: E402  R = Rz·Ry·Rx 的逆解
