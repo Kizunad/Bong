@@ -104,8 +104,16 @@ class R7InventoryContractTest {
         // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
+        //
+        // 2026-08-26 重新冻结（这就是上一句要求的那次"显式再确认"）：随包新增木棍的两条
+        // 玩家动画资产，client/src/main 下没有别的增删改。
+        //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
+        //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
+        // 文件数 2169 → 2171；`git diff --name-status <base> -- client/src/main` 只有这两条
+        // A，无 M / D。生成器在 client/tools/gen_club_{smash,sweep}.py，属工具不随包发布，
+        // 因此不进本摘要——这条基线只管"发出去的字节"。
         assertEquals(
-            "ffe11c0c4c85f2bb6ff19492cf9d69b1ca71416d6938cef034a707ef342c18e1",
+            "a461b58bd422412daf8c19e22c3e790bf8de133e3d3f549ef8f7ef715deaa11f",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
