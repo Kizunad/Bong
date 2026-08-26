@@ -6,7 +6,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -158,9 +161,8 @@ public class MineralProbeResultHandlerTest {
     }
 
     @Test
-    void handle_playerNullNoOpReturnedNotThrown_forFoundKind() {
-        // 在 headless 测试 JVM 里 MinecraftClient.getInstance() 返回 null（或 player==null）。
-        // handler 应返回 noOp 而非抛 NullPointerException。
+    void handle_foundBuildsFeedbackSpecWithoutClientState() {
+        // handler 不应读取 MinecraftClient；即使 headless，也必须产出完整反馈 spec。
         String json = """
             {"v":1,"type":"mineral_probe_result","kind":"found","remaining_units":30,"display_name_zh":"铁矿"}
             """;
@@ -168,16 +170,26 @@ public class MineralProbeResultHandlerTest {
             .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
             .envelope();
 
-        // 预期：no-op 或 noOp（取决于 mc == null），绝不 throw
-        assertDoesNotThrow(() -> {
-            ServerDataDispatch dispatch = new MineralProbeResultHandler().handle(envelope);
-            assertNotNull(dispatch,
-                "handle() 在 headless 下应返回非 null dispatch，实际 null");
-        }, "handle() 在 headless 下 kind=found 不应抛出任何异常");
+        ServerDataDispatch dispatch = assertDoesNotThrow(
+            () -> new MineralProbeResultHandler().handle(envelope),
+            "handle() 在 headless 下 kind=found 不应访问 MinecraftClient 或抛出异常"
+        );
+        MineralProbeFeedbackSpec feedback = dispatch.mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("found 必须生成结构化 feedback spec，而不是丢弃 HUD/SFX 意图")
+        );
+        assertTrue(dispatch.handled(), "found feedback dispatch 必须标记 handled");
+        assertEquals("「铁矿」灵脉 · 余 30 缕", feedback.actionbarText(),
+            "found spec 必须保留原 actionbar 文案");
+        assertEquals(0xFCD34D, feedback.actionbarColor(),
+            "remaining=30 必须保留 moderate 琥珀色");
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.AMETHYST_CHIME, feedback.soundEffect(),
+            "found 必须保留 amethyst chime");
+        assertEquals(0.3f, feedback.volume(), "found 音量必须保持 0.3");
+        assertEquals(1.4f, feedback.pitch(), "found 音高必须保持 1.4");
     }
 
     @Test
-    void handle_playerNullNoOpReturnedNotThrown_forDeniedKind() {
+    void handle_deniedBuildsFeedbackSpecWithoutClientState() {
         String json = """
             {"v":1,"type":"mineral_probe_result","kind":"denied","denial_reason":"out_of_range"}
             """;
@@ -185,11 +197,55 @@ public class MineralProbeResultHandlerTest {
             .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
             .envelope();
 
-        assertDoesNotThrow(() -> {
-            ServerDataDispatch dispatch = new MineralProbeResultHandler().handle(envelope);
-            assertNotNull(dispatch,
-                "handle() 在 headless 下应返回非 null dispatch，实际 null");
-        }, "handle() 在 headless 下 kind=denied 不应抛出任何异常");
+        ServerDataDispatch dispatch = assertDoesNotThrow(
+            () -> new MineralProbeResultHandler().handle(envelope),
+            "handle() 在 headless 下 kind=denied 不应访问 MinecraftClient 或抛出异常"
+        );
+        MineralProbeFeedbackSpec feedback = dispatch.mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("denied 必须生成结构化 feedback spec，而不是丢弃 HUD/SFX 意图")
+        );
+        assertTrue(dispatch.handled(), "denied feedback dispatch 必须标记 handled");
+        assertEquals("神识探之不及", feedback.actionbarText(),
+            "denied spec 必须保留 denial_reason 对应文案");
+        assertEquals(0x9CA3AF, feedback.actionbarColor(),
+            "denied spec 必须保留灰色 actionbar");
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.NOTE_BLOCK_BASS, feedback.soundEffect(),
+            "denied 必须保留 bass 音效");
+        assertEquals(0.2f, feedback.volume(), "denied 音量必须保持 0.2");
+        assertEquals(0.6f, feedback.pitch(), "denied 音高必须保持 0.6");
+    }
+
+    @Test
+    void handle_foundBuildsSparseFeedbackColor() {
+        String json = """
+            {"v":1,"type":"mineral_probe_result","kind":"found","remaining_units":9}
+            """;
+        ServerDataEnvelope envelope = ServerDataEnvelope
+            .parse(json, json.getBytes(StandardCharsets.UTF_8).length)
+            .envelope();
+
+        MineralProbeFeedbackSpec feedback = new MineralProbeResultHandler()
+            .handle(envelope)
+            .mineralProbeFeedback()
+            .orElseThrow(() -> new AssertionError("found=9 必须生成 feedback spec"));
+
+        assertEquals("「灵脉」灵脉 · 余 9 缕", feedback.actionbarText(),
+            "缺 display_name_zh 时必须保留原灵脉兜底文案");
+        assertEquals(0xF87171, feedback.actionbarColor(),
+            "remaining=9 的 found spec 必须使用 sparse 赤色");
+    }
+
+    @Test
+    void handlerSourceDoesNotTouchClientHudOrSound() throws IOException {
+        String source = Files.readString(Path.of(
+            "src/main/java/com/bong/client/network/MineralProbeResultHandler.java"));
+
+        assertFalse(source.contains("MinecraftClient"),
+            "MineralProbeResultHandler 只能解析并生成 spec，不得访问 MinecraftClient");
+        assertFalse(source.contains("setOverlayMessage"),
+            "MineralProbeResultHandler 不得直接落 actionbar，必须交给 applyDispatch");
+        assertFalse(source.contains("playSound"),
+            "MineralProbeResultHandler 不得直接播放 SFX，必须交给 applyDispatch");
     }
 
     @Test

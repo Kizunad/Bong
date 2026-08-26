@@ -3,19 +3,14 @@ package com.bong.client.network;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonElement;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
 
 /**
  * 神识感知矿脉回执处理器（plan-exploration-probe-return-v1 P0）。
  * <p>
  * 处理 type="mineral_probe_result" 的 S2C payload：
  * <ul>
- *   <li>Found → actionbar overlay 文本（按丰度上色）+ vanilla 神识轻鸣</li>
- *   <li>Denied → actionbar 灰字（按 denial_reason 显示对应文案）+ 低钝音</li>
+ *   <li>Found → 结构化 actionbar/SFX feedback spec（按丰度上色）</li>
+ *   <li>Denied → 结构化 actionbar/SFX feedback spec（按 denial_reason 显示对应文案）</li>
  * </ul>
  *
  * 视听规格见 plan P0 §视听规格：
@@ -52,18 +47,10 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
             );
         }
 
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc == null || mc.player == null) {
-            return ServerDataDispatch.noOp(
-                envelope.type(),
-                "mineral_probe_result: 无本地玩家，不显示"
-            );
-        }
-
         if ("found".equals(kind)) {
-            return handleFound(mc, envelope, payload);
+            return handleFound(envelope, payload);
         } else if ("denied".equals(kind)) {
-            return handleDenied(mc, envelope, payload);
+            return handleDenied(envelope, payload);
         } else {
             return ServerDataDispatch.noOp(
                 envelope.type(),
@@ -74,7 +61,7 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
 
     // ─── Found ────────────────────────────────────────────────────
 
-    private ServerDataDispatch handleFound(MinecraftClient mc, ServerDataEnvelope envelope, JsonObject payload) {
+    private ServerDataDispatch handleFound(ServerDataEnvelope envelope, JsonObject payload) {
         String displayNameZh = readString(payload, "display_name_zh");
         int remainingUnits   = readInt(payload, "remaining_units", 0);
 
@@ -82,46 +69,40 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
             ? displayNameZh
             : "灵脉";
 
-        String overlayText = "「" + name + "」灵脉 · 余 " + remainingUnits + " 缕";
+        String overlayText = foundOverlayText(name, remainingUnits);
         int color = colorByAbundance(remainingUnits);
-
-        Text text = Text.literal(overlayText).styled(s -> s.withColor(color));
-        mc.inGameHud.setOverlayMessage(text, true);
-
-        // SFX：block.amethyst_block.chime pitch=1.4 / volume=0.3
-        mc.player.playSound(
-            SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME,
-            SoundCategory.PLAYERS,
+        MineralProbeFeedbackSpec feedback = new MineralProbeFeedbackSpec(
+            overlayText,
+            color,
+            MineralProbeFeedbackSpec.SoundEffect.AMETHYST_CHIME,
             0.3f,
             1.4f
         );
 
-        return ServerDataDispatch.handled(
+        return ServerDataDispatch.handledWithMineralProbeFeedback(
             envelope.type(),
+            feedback,
             "神识感知矿脉 found: " + name + " remaining=" + remainingUnits
         );
     }
 
     // ─── Denied ───────────────────────────────────────────────────
 
-    private ServerDataDispatch handleDenied(MinecraftClient mc, ServerDataEnvelope envelope, JsonObject payload) {
+    private ServerDataDispatch handleDenied(ServerDataEnvelope envelope, JsonObject payload) {
         String reason = readString(payload, "denial_reason");
         String message = denialMessage(reason);
 
-        Text text = Text.literal(message).styled(s -> s.withColor(COLOR_DENIED));
-        mc.inGameHud.setOverlayMessage(text, true);
-
-        // SFX: block.note_block.bass pitch=0.6 / vol=0.2 (plan P0 spec).
-        // MC 1.20.1 Yarn: BLOCK_NOTE_BLOCK_BASS is RegistryEntry$Reference<SoundEvent>; call .value() to get SoundEvent.
-        mc.player.playSound(
-            SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(),
-            SoundCategory.PLAYERS,
+        MineralProbeFeedbackSpec feedback = new MineralProbeFeedbackSpec(
+            message,
+            COLOR_DENIED,
+            MineralProbeFeedbackSpec.SoundEffect.NOTE_BLOCK_BASS,
             0.2f,
             0.6f
         );
 
-        return ServerDataDispatch.handled(
+        return ServerDataDispatch.handledWithMineralProbeFeedback(
             envelope.type(),
+            feedback,
             "神识感知矿脉 denied: " + reason
         );
     }
@@ -145,9 +126,13 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
      */
     static net.minecraft.text.Text buildFoundText(String displayNameZh, int remainingUnits) {
         String name = (displayNameZh != null && !displayNameZh.isBlank()) ? displayNameZh : "灵脉";
-        String overlayText = "「" + name + "」灵脉 · 余 " + remainingUnits + " 缕";
+        String overlayText = foundOverlayText(name, remainingUnits);
         int color = colorByAbundance(remainingUnits);
         return net.minecraft.text.Text.literal(overlayText).styled(s -> s.withColor(color));
+    }
+
+    private static String foundOverlayText(String name, int remainingUnits) {
+        return "「" + name + "」灵脉 · 余 " + remainingUnits + " 缕";
     }
 
     /**
