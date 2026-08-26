@@ -3,6 +3,7 @@ ui/contract/**	java.lang;java.util;java.function	owo;vanilla_widget;net.minecraf
 ui/state/**	ui.contract	owo;vanilla_widget;network_handler	R7	state-adapter-only
 ui/intent/**	ui.contract;network.ClientRequestSender	ServerDataHandler;ProtoServerDataBridge;Screen	R7	typed-transport-boundary
 ui/bootstrap/**	ui.contract;java.util	reflection;annotation-discovery;network-registration	R7	static-explicit-registry
+ui/headless/**	ui.contract;java.lang;java.util;java.function	owo;vanilla_widget;net.minecraft.client	R7	renderer-neutral-semantic-driver
 ui/adapter/owo/**	ui.contract;owo	ServerDataHandler;ClientRequestProtocol	R7	owo-host-only
 ui/adapter/vanilla/**	ui.contract;vanilla_widget	ServerDataHandler;ClientRequestProtocol	R7	vanilla-host-only
 client/*Screen.java	ui.contract;ui.intent;ui.state	ClientRequestSender;ClientRequestProtocol;ServerDataHandler	R7	migration-target

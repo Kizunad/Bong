@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class R7ProductionBaselineContractTest {
     @Test
-    void p0rDoesNotChangeTheProductionJavaSourceTree() throws IOException {
+    void productionSourceTreeMatchesFrozenBaseline() throws IOException {
         String[] fields = resourceLines().stream()
             .filter(R7SourceScan::isFixtureDataLine)
             .findFirst()
@@ -19,7 +19,7 @@ class R7ProductionBaselineContractTest {
         assertEquals(3, fields.length, "malformed production source baseline row");
         assertEquals("SHA-256", fields[1], "production baseline must use the pinned digest algorithm");
         assertEquals(fields[2], R7SourceScan.sourceTreeDigest(R7SourceScan.productionRoot()),
-            "P0R must not modify client production Java sources; update this baseline only with an intentional production change");
+            "production source tree drifted; update this baseline only with an intentional production change");
     }
 
     private static List<String> resourceLines() throws IOException {
