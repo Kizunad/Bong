@@ -83,6 +83,7 @@ sys.path.insert(0, str(LIB / "generators"))
 
 import render_jian_in_hand as H  # noqa: E402
 import render_player_pose as P  # noqa: E402
+import bb_anim_axes as AX  # noqa: E402
 from gen_jian_player_anim import (  # noqa: E402  骨架/关键帧的公共件，别再抄一份
     PART_GROUPS,
     TICKS_PER_SECOND,
@@ -93,47 +94,7 @@ from gen_jian_player_anim import (  # noqa: E402  骨架/关键帧的公共件�
     split_cubes,
 )
 
-# ── 关键帧的符号：**本地重定义，不用锏那份的 AXIS_LAYERS** ────────────────────
-# 锏那份注释说动画通道走「Bedrock 约定：X/Y 取反」。**实测是错的。**
-#
-# 证据是一次真实的往返：用户把本文件生成的 bbmodel 在 Blockbench 里打开，只手动改了
-# t=0 那一帧，存盘之后**其余每一个关键帧的 X / Y 都被整齐地取了反、Z 原样**，position
-# 的 X 也取了反。Blockbench 只是把它读进来又写回去——能产生这种系统性翻号，只可能是
-# 写文件时用的约定和我们写进去的那套差一个负号。
-#
-# 也就是说：bbmodel 的 animation 通道和静态 group.rotation 用的是**同一套右手系**，
-# 真正需要的换算只有 MC(y 向下) → bbmodel(y 向上) 那一层：
-#
-#     rotation:  bb.x = -pitch,  bb.y = +yaw,  bb.z = -roll
-#     position:  bb = (x, -y, z) × 16
-#
-# 之前那版按错的符号写出去，Blockbench 里看到的是 **pitch / yaw 双双镜像**的姿态——
-# 而且离线核验抓不到：核验脚本用的是我自己那套假设，两边同错就对拍得上。真正的判据
-# 只有"拿进 Blockbench 转一圈再读回来"。
-#
-# ⚠ `JianPlayerAnim.bbmodel` 是按旧符号生成的，同样带着镜像；修它要连带复验那份资产，
-#    不在本次范围。
-AXIS_LAYERS = (("pitch", 0, -1.0), ("yaw", 1, +1.0), ("roll", 2, -1.0))
-
-
-def bend_single_axis(bend_deg: float, axis_deg: float) -> float:
-    """bend → 单轴 X 旋转（度）。符号同上：和静态 group.rotation 一套右手系。
-
-    bendAxis 语义是"折弯方向绕主轴转多少"，轴 = (cos a, 0, sin a)。本项目的动画只用
-    a=0（绕 +X）与 a=180（绕 −X）两种纯前后折弯，走解析分支而不是通用矩阵分解——JSON
-    存的是弧度，π 转回度数是 180.000003，sin 不严格为 0，通用分解会渗出 1e-6 级的 y/z
-    分量，落到单轴层里表达不了。
-    """
-    if abs(bend_deg) < 1e-9:
-        return 0.0
-    a = axis_deg % 360.0
-    if a < 1.0 or a > 359.0:
-        return -bend_deg      # 轴 +X
-    if abs(a - 180.0) < 1.0:
-        return +bend_deg      # 轴 −X
-    raise AssertionError(
-        f"bendAxis={axis_deg}° 不是纯 X 折弯，单轴层表达不了——需要再拆一层斜轴 group")
-
+# 轴换算全部走 `core/bb_anim_axes`——那里是唯一一处，且带着"怎么测出来的"证据。
 REPO = LIB.parent
 ANIM_DIR = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
 SRC_CLUB = LIB / "models" / "WoodenClub.bbmodel"
@@ -251,25 +212,29 @@ def convert_animation(json_path: Path, gmap: dict) -> dict:
         pose = dict(pose)
         body = pose.pop("_body", None)
         if body:
-            pos = [body.get("x", 0.0) * 16.0, -body.get("y", 0.0) * 16.0,
-                   body.get("z", 0.0) * 16.0]
-            track("root_pos").append(keyframe("position", t, [round(v, 4) for v in pos]))
-            for axis_name, idx, sign in AXIS_LAYERS:
-                vals = [0.0, 0.0, 0.0]
-                vals[idx] = round(sign * body.get(axis_name, 0.0), 4)
-                track(f"root_{axis_name}").append(keyframe("rotation", t, vals))
+            track("root_pos").append(
+                keyframe("position", t, AX.body_position_to_bb(body)))
+            for axis_name in AX.AXIS_ORDER:
+                track(f"root_{axis_name}").append(
+                    keyframe("rotation", t, AX.rotation_to_bb(body, axis_name)))
         for part, axes in pose.items():
             if part not in PART_GROUPS:
                 continue
             prefix, has_bend = PART_GROUPS[part]
-            for axis_name, idx, sign in AXIS_LAYERS:
-                vals = [0.0, 0.0, 0.0]
-                vals[idx] = round(sign * axes.get(axis_name, 0.0), 4)
-                track(f"{prefix}_{axis_name}").append(keyframe("rotation", t, vals))
+            for axis_name in AX.AXIS_ORDER:
+                track(f"{prefix}_{axis_name}").append(
+                    keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
+            # **part 级位移也要烘**。锏那份只烘旋转，于是腿的 z（步幅前后错开，
+            # ±0.05~0.10 格 = 0.8~1.6px）在 bbmodel 里整个丢了——`bbmodel_to_pose --diff`
+            # 会把它当成"人改过"一路报出来，是个永久的假阳性。
+            if any(abs(axes.get(k, 0.0)) > 1e-9 for k in "xyz"):
+                track(f"{prefix}_{AX.AXIS_ORDER[-1]}").append(
+                    keyframe("position", t, AX.body_position_to_bb(axes)))
             if has_bend:
-                bend = bend_single_axis(axes.get("bend", 0.0), axes.get("axis", 0.0))
                 track(f"{prefix}_bend").append(
-                    keyframe("rotation", t, [round(bend, 4), 0.0, 0.0]))
+                    keyframe("rotation", t,
+                             [round(AX.bend_to_bb(axes.get("bend", 0.0),
+                                                  axes.get("axis", 0.0)), 4), 0.0, 0.0]))
 
     return {
         "uuid": _uuid(), "name": name,
