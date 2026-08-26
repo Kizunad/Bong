@@ -18,10 +18,14 @@ import base64
 import io
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import framing  # noqa: E402
 
 # render_bbmodel.py 在 modelScript/core/ 下，仓库根是上两级。
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,11 +33,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 REPO = Path(__file__).resolve().parents[2]
 MODELS = Path(__file__).resolve().parents[1] / "models"
 OUTDIR = Path(__file__).resolve().parents[1] / "out"
-THREE_VIEW_ANGLES = (
-    ("FRONT", 180.0, 0.0),
-    ("SIDE", 90.0, 0.0),
-    ("3/4", 145.0, 15.0),
-)
+
+# 三视图的角度不再硬编，改由 framing 按**声明的朝向**派生 —— 名字必须和实际照到的
+# 轴面对得上。默认 facing 沿用历史假定 `-z`（yaw=180 叫 FRONT），于是角度一个没变：
+# FRONT 180 / SIDE_R 90 / 3/4 145。唯一改名的是 SIDE → SIDE_R：yaw=90 照的是 −x 面，
+# 那是 FRONT 视里观者右手边的一侧，叫「SIDE」等于把左右两侧混成一个名字。
+THREE_VIEW_NAMES = ("FRONT", "SIDE_R", "3/4")
+THREE_VIEWS = framing.views_for(framing.LEGACY_FACING, THREE_VIEW_NAMES)
+THREE_VIEW_ANGLES = tuple((v.name, v.yaw, v.pitch) for v in THREE_VIEWS)
 
 # 每面：4 角(取 min=f/max=t 的分量) + 法线。角序 = uv 的 TL,TR,BR,BL。
 FACES = {
@@ -263,14 +270,25 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)), name
 
 
-def render_three_view(path, size=360, bg=(22, 23, 26), shading="lambert", texture=None):
-    """真实纹理三视图：正面、侧面、前侧 3/4；供模型资产每轮自评。"""
+def render_three_view(path, size=360, bg=(22, 23, 26), shading="lambert", texture=None,
+                     facing=framing.LEGACY_FACING):
+    """真实纹理三视图：正面、右侧、前侧 3/4；供模型资产每轮自评。
+
+    facing 声明资产的正面朝哪个轴（`+z` / `-z` / `+x` / `-x`），视角名由它派生。缺省沿
+    用历史假定 `-z`，既有调用点行为不变。
+
+    **三张共用一个取景**：render() 自动取景是每张图各算各的包围盒中心与缩放，于是
+    「侧视比正视矮一截」这种观察全是取景噪声，跨轮叠图更是完全对不上。这里一次算出
+    覆盖三个角度的公共 focus 传下去，三张图的屏幕坐标从此可比。
+    """
+    views = framing.views_for(facing, THREE_VIEW_NAMES)
+    focus = framing.focus_for(path, views)
     tiles = []
     name = Path(path).stem
-    for label, yaw, pitch in THREE_VIEW_ANGLES:
-        rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg,
-                                shading=shading, texture=texture)
-        tiles.append((label, rendered))
+    for view in views:
+        rendered, name = render(path, yaw=view.yaw, pitch=view.pitch, size=size, bg=bg,
+                                focus=focus, shading=shading, texture=texture)
+        tiles.append((view.label, rendered))
 
     gap = 12
     label_height = 18
