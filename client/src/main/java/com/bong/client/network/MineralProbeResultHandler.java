@@ -120,26 +120,8 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
         }
     }
 
-    /**
-     * Found overlay 文本（含颜色格式化），package-private 供测试断言。
-     * 格式："「{displayNameZh}」灵脉 · 余 {remainingUnits} 缕"
-     */
-    static net.minecraft.text.Text buildFoundText(String displayNameZh, int remainingUnits) {
-        String name = (displayNameZh != null && !displayNameZh.isBlank()) ? displayNameZh : "灵脉";
-        String overlayText = foundOverlayText(name, remainingUnits);
-        int color = colorByAbundance(remainingUnits);
-        return net.minecraft.text.Text.literal(overlayText).styled(s -> s.withColor(color));
-    }
-
     private static String foundOverlayText(String name, int remainingUnits) {
         return "「" + name + "」灵脉 · 余 " + remainingUnits + " 缕";
-    }
-
-    /**
-     * Denied overlay 文本（灰字），package-private 供测试断言。
-     */
-    static net.minecraft.text.Text buildDeniedText(String reason) {
-        return net.minecraft.text.Text.literal(denialMessage(reason)).styled(s -> s.withColor(COLOR_DENIED));
     }
 
     /**
