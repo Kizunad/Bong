@@ -64,6 +64,13 @@ public final class FakeUiDriver implements UiDriver {
         if (surface.isExpired(clock.getAsLong())) {
             return new PublishResult(PublishResult.Status.EXPIRED, "surface is expired");
         }
+        if (!current.surfaceId().equals(surface.surfaceId())
+            || !current.templateId().equals(surface.templateId())) {
+            return new PublishResult(
+                PublishResult.Status.INVALID,
+                "surface identity cannot change within a session"
+            );
+        }
         if (surface.revision() <= current.revision()) {
             return new PublishResult(PublishResult.Status.STALE, "revision must increase monotonically");
         }

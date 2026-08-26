@@ -87,16 +87,22 @@ public final class DefaultUiScreenScope implements UiScreenScope {
     }
 
     @Override
-    public synchronized boolean isClosed() {
-        return closed;
+    public boolean isClosed() {
+        synchronized (lock) {
+            return closed;
+        }
     }
 
-    public synchronized boolean isOpen() {
-        return opened && !closed;
+    public boolean isOpen() {
+        synchronized (lock) {
+            return opened && !closed;
+        }
     }
 
-    public synchronized long lastTickMs() {
-        return lastTickMs;
+    public long lastTickMs() {
+        synchronized (lock) {
+            return lastTickMs;
+        }
     }
 
     private static Throwable appendFailure(Throwable primary, Throwable failure) {

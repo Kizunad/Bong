@@ -78,6 +78,39 @@ class FakeUiDriverTest {
     }
 
     @Test
+    void publishRejectsSurfaceIdentityChangesWithinOneSession() {
+        FakeUiDriver driver = new FakeUiDriver(() -> 10L);
+        driver.open(surface(1L, 100L));
+
+        assertEquals(
+            FakeUiDriver.PublishResult.Status.INVALID,
+            driver.publish(surface("surface-2", "craft", 2L, 100L)).status(),
+            "同一 session 不得替换 surface_id"
+        );
+        assertEquals(
+            FakeUiDriver.PublishResult.Status.INVALID,
+            driver.publish(surface("surface-1", "alchemy", 2L, 100L)).status(),
+            "同一 session 不得替换 template_id"
+        );
+        assertEquals("surface-1", driver.snapshot("session-1").surface().surfaceId(),
+            "身份不匹配的 publish 必须保留原 active surface");
+    }
+
+    @Test
+    void nullArgumentsAreRejectedByActionValidation() {
+        FakeUiDriver driver = new FakeUiDriver(() -> 10L);
+        driver.open(surface(1L, 100L));
+
+        UiDriver.DispatchResult result = driver.dispatch(
+            new UiDriver.DispatchRequest("session-1", 1L, "craft.start", "null-args", null)
+        );
+
+        assertEquals(UiDriver.DispatchResult.Status.INVALID, result.status(),
+            "null args 必须交给 UiActionSpec.validate 并 fail closed");
+        assertEquals("arguments must not be null", result.reason());
+    }
+
+    @Test
     void invalidTimeoutAndSurfaceOpenInputsAreRejected() {
         FakeUiDriver driver = new FakeUiDriver(() -> 10L);
         assertThrows(IllegalArgumentException.class,
@@ -88,10 +121,19 @@ class FakeUiDriverTest {
     }
 
     private static UiSurfaceProjection surface(long revision, long expiresAtMs) {
+        return surface("surface-1", "craft", revision, expiresAtMs);
+    }
+
+    private static UiSurfaceProjection surface(
+        String surfaceId,
+        String templateId,
+        long revision,
+        long expiresAtMs
+    ) {
         UiActionSpec action = new UiActionSpec(
             "craft.start", Map.of("recipe", UiActionSpec.ArgumentType.STRING), true, null);
         return new UiSurfaceProjection(
-            "surface-1", "craft", "session-1", revision, expiresAtMs, null,
+            surfaceId, templateId, "session-1", revision, expiresAtMs, null,
             Map.of("title", "炼器"), Map.of("row-1", "instance-1"), Map.of(action.actionId(), action)
         );
     }

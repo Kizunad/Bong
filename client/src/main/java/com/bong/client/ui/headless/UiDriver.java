@@ -37,7 +37,7 @@ public interface UiDriver {
             if (revision < 0L) {
                 throw new IllegalArgumentException("revision must be non-negative");
             }
-            args = args == null ? Map.of() : Map.copyOf(args);
+            args = args == null ? null : Map.copyOf(args);
         }
     }
 

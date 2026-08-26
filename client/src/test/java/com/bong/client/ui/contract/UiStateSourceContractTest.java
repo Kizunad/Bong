@@ -66,7 +66,9 @@ class UiStateSourceContractTest {
             throw first;
         });
 
+        assertFalse(scope.isOpen(), "未 onOpen 的 scope 不应报告为 open");
         scope.onOpen();
+        assertTrue(scope.isOpen(), "onOpen 后 scope 必须报告为 open");
         assertTrue(scope.runIfOpen(() -> events.add("open")));
         scope.onTick(42L);
         assertEquals(42L, scope.lastTickMs());
@@ -80,6 +82,7 @@ class UiStateSourceContractTest {
         assertFalse(scope.runIfOpen(() -> events.add("late")));
         scope.close();
         assertTrue(scope.isClosed());
+        assertFalse(scope.isOpen(), "close 后 scope 必须报告为 closed 且非 open");
         assertThrows(IllegalStateException.class, scope::onOpen);
         assertThrows(IllegalStateException.class, () -> scope.addCleanup(() -> {
         }));

@@ -474,9 +474,21 @@ bot e2e 分三层记录：
 
 **决议**：passive social invite 保留 domain Store；战斗/已有屏时首次同 identity `DEFER_NOTIFY`，重复 `DEFER_SILENT`，空屏且 TTL 有效才 `OPEN`；普通 hotkey 永不排队重放；Insight 按 exact `offer_id` settlement；system terminal 按优先级抢占。
 
-该决议同时冻结 `BLOCK_DROP` 的普通 hotkey 结果；`SparringInviteScreenBootstrap` 必须成为 `ScreenOpenPolicy` 的 production consumer。Insight lifecycle 必须证明 stale offer A 不能清除 offer B。
+该决议同时冻结 `BLOCK_DROP` 的普通 hotkey 结果（契约向量见
+`client/src/test/resources/bong/ui/screen-open-policy.tsv:17-19`，断言见
+`client/src/test/java/com/bong/client/ui/R7FoundationContractTest.java:265-266`）；当前
+production policy seam 是 `SparringInviteScreenBootstrap.decide(...)`（含 combat fail-closed、
+首次 `DEFER_NOTIFY`、重复 `DEFER_SILENT`，见
+`client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java:64-119`），其行为回归
+见 `client/src/test/java/com/bong/client/social/SparringInviteScreenBootstrapTest.java:231-265`。
+Insight lifecycle 必须证明 stale offer A 不能清除 offer B；精确 `offer_id` compare-and-clear
+见 `client/src/main/java/com/bong/client/insight/InsightOfferStore.java:93-160`，旧屏回归见
+`client/src/test/java/com/bong/client/insight/InsightOfferScreenTest.java:101-120`。
 
-**落点**：`SparringInviteScreenBootstrap.java`、`InsightOfferScreenBootstrap.java`、`ScreenTransitionController.java`；本 plan §4.3、§7 P4/P6。
+**落点**：`client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java`、
+`client/src/main/java/com/bong/client/insight/InsightOfferScreenBootstrap.java`、
+`client/src/main/java/com/bong/client/insight/InsightOfferStore.java`、
+`client/src/main/java/com/bong/client/ui/ScreenTransitionController.java`；本 plan §4.3、§7 P4/P6。
 
 ### #7 网络与 UI 边界
 
