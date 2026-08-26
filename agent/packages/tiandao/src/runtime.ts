@@ -51,7 +51,7 @@ import {
 } from "./npc-producer.js";
 import type { AgentDecision } from "./parse.js";
 import { QiColorNarrationTracker } from "./qi-color-narration.js";
-import { RedisIpc } from "./redis-ipc.js";
+import { RedisIpc, type TsyRuntimeEventV1 } from "./redis-ipc.js";
 import { SeasonalNarrationTracker } from "./templates/seasonal.js";
 import {
   emptyErrorBreakdown,
@@ -140,6 +140,8 @@ export interface TickAgent {
    * Arbiter/Agent tick 把 button_click 追加到推演上下文，让天道感知玩家意图。
    */
   setButtonClickEvents?(events: AgentUiResponsePayloadV1[]): void;
+  /** TSY enter/exit runtime signals for this推演窗口。 */
+  setTsyRuntimeEvents?(events: TsyRuntimeEventV1[]): void;
 }
 
 export interface RuntimeRedis {
@@ -151,6 +153,8 @@ export interface RuntimeRedis {
   drainNpcDeathEvents?(): NpcDeathV1[];
   /** plan-agent-ui-data-v1 P2：drain tsy_zone_activated 事件供 triggerUi 生产路径消费。 */
   drainTsyZoneActivatedEvents?(): TsyZoneActivatedV1[];
+  /** drain validated TSY enter/exit events for Tiandao context consumption. */
+  drainTsyRuntimeEvents?(): TsyRuntimeEventV1[];
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
@@ -208,6 +212,8 @@ export interface TickDeps {
    * 注入本轮推演作为玩家 UI 交互上下文（Arbiter 合并前由 context/agent 消费）。
    */
   buttonClickEvents?: AgentUiResponsePayloadV1[];
+  /** 本窗口已从 bong:tsy_event drain 的 enter/exit 信号。 */
+  tsyRuntimeEvents?: TsyRuntimeEventV1[];
   worldModel?: WorldModel;
   publishCommands: (request: CommandPublishRequest) => Promise<void>;
   publishNarrations: (request: NarrationPublishRequest) => Promise<void>;
@@ -445,6 +451,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     chatSignals,
     npcDeathEvents,
     buttonClickEvents,
+    tsyRuntimeEvents,
     worldModel,
     publishCommands,
     publishNarrations,
@@ -467,6 +474,13 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
       `[tiandao] button_click inject: count=${buttonClickEvents.length} ` +
       `ids=${buttonClickEvents.map((e) => e.params["button_id"] ?? "(none)").join(",")} ` +
       `(player ui interaction context for this tick)`,
+    );
+  }
+  if (tsyRuntimeEvents && tsyRuntimeEvents.length > 0) {
+    logger.log(
+      `[tiandao] tsy runtime event inject: count=${tsyRuntimeEvents.length} ` +
+      `kinds=${tsyRuntimeEvents.map((event) => event.kind).join(",")} ` +
+      `(player TSY enter/exit context for this tick)`,
     );
   }
   const measuredTickStartMs = tickStartedAtMs ?? Date.now();
@@ -504,6 +518,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   applyNpcDeathEventsToAgents(agents, npcDeathEvents ?? []);
   // plan-agent-ui-data-v1 P2 — button_click 真注入：玩家 UI 交互信号进每个 agent 推演上下文。
   applyButtonClickEventsToAgents(agents, buttonClickEvents ?? []);
+  applyTsyRuntimeEventsToAgents(agents, tsyRuntimeEvents ?? []);
   logger.log("[tiandao] === tick start ===");
   logger.log(
     `[tiandao] tick: ${state.tick}, players: ${state.players.length}, zones: ${state.zones.length}, correlation_id: ${metadata.correlationId}`,
@@ -777,6 +792,15 @@ function applyButtonClickEventsToAgents(
   for (const agent of agents) {
     if (typeof agent.setButtonClickEvents === "function") {
       agent.setButtonClickEvents(events);
+    }
+  }
+}
+
+/** Inject validated TSY enter/exit signals into every Agent that supports the context seam. */
+function applyTsyRuntimeEventsToAgents(agents: TickAgent[], events: TsyRuntimeEventV1[]): void {
+  for (const agent of agents) {
+    if (typeof agent.setTsyRuntimeEvents === "function") {
+      agent.setTsyRuntimeEvents(events);
     }
   }
 }
@@ -1223,6 +1247,7 @@ export async function runRuntime(
   let connected = false;
   let failureStreak = 0;
   let latestChatSignals: ChatSignal[] = [];
+  let pendingTsyRuntimeEvents: TsyRuntimeEventV1[] = [];
   let loopIterations = 0;
   let lastProcessedStateCursor: WorldStateCursor | null = null;
   const maxLoopIterations = deps.maxLoopIterations ?? Number.POSITIVE_INFINITY;
@@ -1304,6 +1329,15 @@ export async function runRuntime(
           logger.log(`[tiandao] npc death drain: events=${drainedNpcDeaths.length}`);
         }
 
+        const drainedTsyRuntimeEvents = redis.drainTsyRuntimeEvents?.() ?? [];
+        if (drainedTsyRuntimeEvents.length > 0) {
+          pendingTsyRuntimeEvents = [...pendingTsyRuntimeEvents, ...drainedTsyRuntimeEvents];
+          logger.log(
+            `[tiandao] tsy runtime event drain: events=${drainedTsyRuntimeEvents.length} ` +
+            `(pending=${pendingTsyRuntimeEvents.length})`,
+          );
+        }
+
         const state = redis.getLatestState();
         await processEcologyEvents({
           redis,
@@ -1370,6 +1404,7 @@ export async function runRuntime(
                   chatSignals: latestChatSignals,
                   npcDeathEvents: drainedNpcDeaths,
                   buttonClickEvents: drainedButtonClicks,
+                  tsyRuntimeEvents: pendingTsyRuntimeEvents,
                   worldModel,
                   publishCommands: (request) => redis.publishCommands(request),
                   publishNarrations: (request) => redis.publishNarrations(request),
@@ -1434,6 +1469,7 @@ export async function runRuntime(
                 });
               },
             });
+            pendingTsyRuntimeEvents = [];
             lastProcessedStateCursor = {
               tick: state.tick,
               ts: state.ts,

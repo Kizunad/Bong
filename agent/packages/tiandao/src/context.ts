@@ -6,6 +6,8 @@ import type {
   ChatSignal,
   NpcDeathV1,
   AgentUiResponsePayloadV1,
+  TsyEnterEventV1,
+  TsyExitEventV1,
 } from "@bong/schema";
 import { buildChatSignalsBlock } from "./chat-processor.js";
 import {
@@ -13,6 +15,8 @@ import {
   describeRegion,
 } from "./offscreen-war-narration.js";
 import type { WorldModel, TrendDirection } from "./world-model.js";
+
+export type TsyRuntimeEventV1 = TsyEnterEventV1 | TsyExitEventV1;
 
 export interface ContextInput {
   state: WorldStateV1;
@@ -34,6 +38,11 @@ export interface ContextInput {
    * 默认空数组（无点击 → 不渲染该块）。
    */
   buttonClickEvents?: AgentUiResponsePayloadV1[];
+  /**
+   * 本推演窗口内收到的 TSY enter/exit 事件。
+   * 事件已在 Redis IPC 层完成 schema 校验，完整 wire payload 由本块保真带入上下文。
+   */
+  tsyRuntimeEvents?: TsyRuntimeEventV1[];
 }
 
 export interface ContextBlock {
@@ -62,6 +71,7 @@ export function createContextInput(
     worldModel?: WorldModel;
     npcDeathEvents?: NpcDeathV1[];
     buttonClickEvents?: AgentUiResponsePayloadV1[];
+    tsyRuntimeEvents?: TsyRuntimeEventV1[];
   } = {},
 ): ContextInput {
   return {
@@ -72,6 +82,7 @@ export function createContextInput(
     worldModel: options.worldModel,
     npcDeathEvents: options.npcDeathEvents,
     buttonClickEvents: options.buttonClickEvents,
+    tsyRuntimeEvents: options.tsyRuntimeEvents,
   };
 }
 
@@ -302,6 +313,27 @@ export const buttonClickBlock: ContextBlock = {
   },
 };
 
+/**
+ * TSY enter/exit runtime signal block。
+ * `qi_drained_total` 当前仍是 server 端 wire 占位值 0；这里保留字段但不将其解释为真实累计。
+ */
+export const tsyRuntimeEventsBlock: ContextBlock = {
+  name: "tsy_runtime_events",
+  priority: 2,
+  required: false,
+  render({ tsyRuntimeEvents }) {
+    if (!tsyRuntimeEvents || tsyRuntimeEvents.length === 0) {
+      return "";
+    }
+
+    return [
+      "## 活坍缩渊进出信号",
+      "以下是 server 已校验的 TSY 进出事件；qi_drained_total 当前仅为 wire 占位字段，不代表真实累计真元抽取。",
+      ...tsyRuntimeEvents.map((event) => `- ${JSON.stringify(event)}`),
+    ].join("\n");
+  },
+};
+
 export const peerDecisionsBlock: ContextBlock = {
   name: "peer_decisions",
   priority: 3,
@@ -452,6 +484,7 @@ export const CALAMITY_RECIPE: ContextRecipe = {
     { ...keyPlayerBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...perceptionEnvelopeBlock, priority: 2, required: true },
+    { ...tsyRuntimeEventsBlock, priority: 2, required: false },
     { ...recentEventsBlock, priority: 3, required: true },
     { ...calamityArsenalBlock, priority: 4, required: false },
     { ...balanceBlock, priority: 5, required: false },
@@ -471,6 +504,7 @@ export const MUTATION_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...perceptionEnvelopeBlock, priority: 2, required: true },
+    { ...tsyRuntimeEventsBlock, priority: 2, required: false },
     // P4：离屏散修消长喂变化时代（感知世界格局变化），紧跟 perception。
     { ...offscreenWarBlock, priority: 3, required: false },
     { ...balanceBlock, priority: 4, required: false },
@@ -491,6 +525,7 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
     { ...perceptionEnvelopeBlock, priority: 3, required: true },
+    { ...tsyRuntimeEventsBlock, priority: 3, required: false },
     // P4：离屏散修消长喂演绎时代（总结历史走势），紧跟 perception。
     { ...offscreenWarBlock, priority: 4, required: false },
     { ...balanceBlock, priority: 5, required: false },
