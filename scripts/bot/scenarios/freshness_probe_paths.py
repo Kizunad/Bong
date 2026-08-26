@@ -140,9 +140,11 @@ def run(env) -> None:
             timeout=5.0,
             description="realm set condense 的 player_state 回推应已到达",
         )
-        # realm set 会异步触发 narration 等连接同步；先排空事件流，再为成功探针
-        # 取水位，避免上一条命令的滞后事件被误归因于 freshness_probe。
-        drain_event_stream(bot, quiet_s=0.3, max_s=1.5)
+        # realm set 会异步触发 narration 等连接同步；服务端日志中的发送完成不等于
+        # Bot reader 已收到（CI 高负载时实测可滞后约 1.5s）。排空上限必须覆盖完整的
+        # 静默观察窗，并在排空完成后重新取水位，避免上一条命令的滞后事件被误归因于
+        # freshness_probe。成功探针自身的副作用仍会在后面的静默扫描中撞红。
+        drain_event_stream(bot, quiet_s=0.5, max_s=SILENT_WINDOW)
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update1 = bot.expect_server_data("freshness_update", timeout=10.0)

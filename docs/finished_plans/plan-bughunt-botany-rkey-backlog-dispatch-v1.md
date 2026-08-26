@@ -1,5 +1,11 @@
 # BugHunt: 采药自动采集 R 键与战斗 R 键默认冲突叠加陈旧会话快照，导致按键积压幽灵触发与同 tick 重复派发采集请求
 
+## 实施状态
+
+- P0 第一性原理验真与最小修复：✅ 2026-08-25
+- P1 headless 饱和测试与 Java 17 gate：✅ 2026-08-25
+- P2 validator、主线同步与归档：✅ 2026-08-25
+
 ## Bug 摘要
 
 **严重度：medium**（skeptic 复核后维持 medium，未调整）。
@@ -65,12 +71,12 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 修复缺陷 1（按键积压不排空）：在 `BotanyHudBootstrap.onStartClientTick` 中，`!session.interactive() || client.currentScreen != null` 分支 `return` 之前，主动排空 `autoHarvestKey()` 的按键计数（例如 `while (autoHarvestKey().wasPressed()) { /* 丢弃，不 dispatch */ }`），确保非 interactive 期间产生的按键永远不会被下一次进入 interactive 状态的 tick 误当作「当下按键」。
-- [ ] 修复缺陷 2（陈旧快照绕过 requestPending 门）：把 AUTO 分支的 `while (autoHarvestKey().wasPressed()) { dispatchModeRequest(session, BotanyHarvestMode.AUTO); }` 改为每次迭代前重新读取 `HarvestSessionStore.snapshot()`（而不是复用 tick 开头捕获的 `session` 局部变量），或者在 `dispatchModeRequest` 首次成功派发（即真正调用了 `HarvestSessionStore.requestMode(...)` 且 `sendBotanyHarvestRequest` 之后）立即 `break` 跳出 `while` 循环——两种任选其一均可，核心是保证 `requestPending()` 门禁在同一 tick 内读到的是**实时**状态，不是 tick 开始时的旧值。
-- [ ] 保持 `consumeManualPress` / MANUAL 分支不变——第二轮反方审查已确认 MANUAL 路径不在 `while` 循环里，不受本 bug 影响，修复不应误伤该分支的现有行为。
-- [ ] 为使新增的按键消费/去重逻辑可被 JUnit 测试到，参考 `CombatKeybindings.installBindings` / `consumeQuickSlotPresses` 已经把内部按键处理暴露成包内可见静态方法的先例，给 `BotanyHudBootstrap` 补一个可注入 `KeyBinding` 或可从测试触发单次 tick pump 的包内可见入口（不需要改变默认 `private`/`public` 的对外 API 边界，只需要测试能构造场景并驱动一次 `onStartClientTick` 等价逻辑）。
-- [ ] 本 bug 是纯 client 侧的重复派发问题，不直接涉及真元/灵气流动，不需要引入新的 `qi_physics` 常数或走 ledger；但因为 `botany_harvest_request` 最终是 C2S 请求，**client 侧去重只是减少无意义网络流量的 UX/前端优化，不能被当成唯一的防重手段**——server 侧 `botany_harvest_request` handler（当前在 `docs/plan-botany-harvest-mode-request-misroute-v1.md` 范围内被记录为错接旧 `GameplayAction::Gather`）最终仍应对同一 session 的重复/高频 mode 请求具备幂等或节流的权威判定；本 plan 的修复只负责把 client 侧两处具体缺陷堵上，不越界修改 server handler，但要在验收阶段的联调用例里明确标注这层依赖关系。
-- [ ] 修复完成后核对 `client/src/main/java/com/bong/client/hud/BotanyHudPlanner.java` 等 HUD 展示层是否因为 `requestPending` 状态刷新时机变化而需要同步调整（预期不需要，因为 UI 只读 `HarvestSessionStore.snapshot()`，但要在测试里显式验证一遍不回归）。
+- [x] 修复缺陷 1（按键积压不排空）：在 `BotanyHudBootstrap.onStartClientTick` 中，`!session.interactive() || client.currentScreen != null` 分支 `return` 之前，主动排空 `autoHarvestKey()` 的按键计数（例如 `while (autoHarvestKey().wasPressed()) { /* 丢弃，不 dispatch */ }`），确保非 interactive 期间产生的按键永远不会被下一次进入 interactive 状态的 tick 误当作「当下按键」。
+- [x] 修复缺陷 2（陈旧快照绕过 requestPending 门）：把 AUTO 分支的 `while (autoHarvestKey().wasPressed()) { dispatchModeRequest(session, BotanyHarvestMode.AUTO); }` 改为每次迭代前重新读取 `HarvestSessionStore.snapshot()`（而不是复用 tick 开头捕获的 `session` 局部变量），或者在 `dispatchModeRequest` 首次成功派发（即真正调用了 `HarvestSessionStore.requestMode(...)` 且 `sendBotanyHarvestRequest` 之后）立即 `break` 跳出 `while` 循环——两种任选其一均可，核心是保证 `requestPending()` 门禁在同一 tick 内读到的是**实时**状态，不是 tick 开始时的旧值。
+- [x] 保持 `consumeManualPress` / MANUAL 分支不变——第二轮反方审查已确认 MANUAL 路径不在 `while` 循环里，不受本 bug 影响，修复不应误伤该分支的现有行为。
+- [x] 为使新增的按键消费/去重逻辑可被 JUnit 测试到，参考 `CombatKeybindings.installBindings` / `consumeQuickSlotPresses` 已经把内部按键处理暴露成包内可见静态方法的先例，给 `BotanyHudBootstrap` 补一个可注入 `KeyBinding` 或可从测试触发单次 tick pump 的包内可见入口（不需要改变默认 `private`/`public` 的对外 API 边界，只需要测试能构造场景并驱动一次 `onStartClientTick` 等价逻辑）。
+- [x] 本 bug 是纯 client 侧的重复派发问题，不直接涉及真元/灵气流动，不需要引入新的 `qi_physics` 常数或走 ledger；但因为 `botany_harvest_request` 最终是 C2S 请求，**client 侧去重只是减少无意义网络流量的 UX/前端优化，不能被当成唯一的防重手段**——server 侧 `botany_harvest_request` handler（当前在 `docs/plan-botany-harvest-mode-request-misroute-v1.md` 范围内被记录为错接旧 `GameplayAction::Gather`）最终仍应对同一 session 的重复/高频 mode 请求具备幂等或节流的权威判定；本 plan 的修复只负责把 client 侧两处具体缺陷堵上，不越界修改 server handler，但要在验收阶段的联调用例里明确标注这层依赖关系。
+- [x] 修复完成后核对 `client/src/main/java/com/bong/client/hud/BotanyHudPlanner.java` 等 HUD 展示层是否因为 `requestPending` 状态刷新时机变化而需要同步调整（预期不需要，因为 UI 只读 `HarvestSessionStore.snapshot()`，但要在测试里显式验证一遍不回归）。
 
 ## 验收测试计划
 
@@ -92,3 +98,33 @@
 - 长期根治建议：给「战斗法力量条预览」与「采药自动采集」拆分成互不冲突的默认键位（例如仿照 `jiemai_react` 把其中一个默认改为 `GLFW_KEY_UNKNOWN`，交给玩家在控制设置里显式绑定），从根源消除同键双绑，而不是继续靠软件层仲裁掩盖冲突——`docs/plans-skeleton/plan-bughunt-client-input-keybind-collision-v1.md` 已经在收集同型（`O`/`U`）冲突，未来如果做「全局默认键唯一性测试基建」，应该把 R 键这组也一并纳入白名单核查范围。这属于设计层面的后续工作，不在本 plan 最小修复范围内。
 - 修复引入的「排空非 interactive 态按键」逻辑必须确认不会误伤真正合法的场景：例如玩家在非 interactive 状态下按 R 只是想预览法力量条、之后立刻走近灵草——这种情况下"排空"应该只丢弃 `autoHarvestKey` 内部的计数，不能影响 `spellVolumeKey`（两者是独立 `KeyBinding` 实例，正常互不干扰，但测试仍需覆盖以防意外耦合）。
 - 若修复改为"重新读取快照"而非"首次派发后 break"，需注意 `while (autoHarvestKey().wasPressed())` 的循环条件本身也会继续消费按键计数——两种修法都必须保证按键计数被完全耗尽（不留新的积压），而不是只堵住 dispatch 副作用、却让计数继续累积到下一 tick。
+
+## Finish Evidence
+
+### 落地清单
+
+- `client/src/main/java/com/bong/client/botany/BotanyHudBootstrap.java`：非 interactive、current screen、null player 路径排空 AUTO 队列；包内 `pumpAutoHarvestPresses` 提供 headless seam，并在每次 AUTO 判定读取实时 `HarvestSessionStore.snapshot()`。
+- `client/src/test/java/com/bong/client/botany/BotanyHudBootstrapTest.java`：10 项 Botany 回归测试覆盖成功派发、同 tick 多按键、非 interactive/current screen 排空、技能/会话拒绝、interrupted 恢复和实时 `requestPending` 去重。
+- `client/src/test/java/com/bong/client/ui/R7InventoryContractTest.java`：仅更新本次 Botany 生产源变更触发的 R7 source digest 期望值，没有重写其它冻结基线。
+
+### 关键 commit
+
+- `af20e53ee`（2026-08-25）：promotion skeleton → active。
+- `3946163f1`（2026-08-25）：修复按键队列积压、陈旧快照防重并补齐 headless 回归测试。
+- `234c0f259`（2026-08-25）：更新由 Botany 生产源变化触发的单行 R7 source digest fixture。
+
+### 测试结果
+
+- `env JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH flock /tmp/bong-gradle.lock -c 'cd client && ./gradlew test --tests com.bong.client.botany.BotanyHudBootstrapTest'`：通过；BotanyHudBootstrapTest 10 项，Fabric GameTest 3/3 required tests 通过。
+- `env JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 PATH=/home/serverkizuna/java/jdk-17.0.19+10/bin:$PATH flock /tmp/bong-gradle.lock -c 'cd client && ./gradlew test build'`：通过；4907 tests，0 failures，0 errors，0 skipped；Fabric GameTest 3/3 required tests；`BUILD SUCCESSFUL`。
+- fresh-context read-only validator：`gpt-5.6-luna` 在 implementation HEAD `234c0f2599b13374b175dd467a11c853628d80e6` 上 PASS；validator 完成后已关闭。
+
+### 跨仓库核验
+
+- client：`BotanyHudBootstrap.pumpAutoHarvestPresses`、`HarvestSessionStore.requestMode`、`ClientRequestSender.sendBotanyHarvestRequest` 链路已验证；未修改 `CombatKeybindings`。
+- server/agent：本任务不修改 server、schema、Redis 或 agent；`botany_harvest_request` 服务端 misroute 仍由 `docs/plan-botany-harvest-mode-request-misroute-v1.md` 作为独立后续风险跟踪。
+
+### 遗留 / 后续
+
+- client 侧 gate 只减少积压与同 tick 重复派发，不等同于 server 协议幂等；必须继续收口 `plan-botany-harvest-mode-request-misroute-v1` 的服务端权威防重/正确路由。
+- R 与战斗法力量条预览共用默认物理键的长期拆键设计不在本 PR 范围内。

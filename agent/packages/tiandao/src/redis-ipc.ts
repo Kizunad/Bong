@@ -18,6 +18,8 @@ import {
   validateTrespassEventV1Contract,
   validateTsyNpcSpawnedV1Contract,
   validateTsySentinelPhaseChangedV1Contract,
+  validateTsyEnterEventV1Contract,
+  validateTsyExitEventV1Contract,
   validateTsyZoneActivatedV1Contract,
   validateWeatherEventUpdateV1Contract,
   validateZonePressureCrossedV1Contract,
@@ -42,6 +44,8 @@ import type {
   TrespassEventV1,
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
+  TsyEnterEventV1,
+  TsyExitEventV1,
   TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
@@ -105,6 +109,7 @@ const {
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const TSY_HOSTILE_EVENT_BUFFER_LIMIT = 128;
+const TSY_RUNTIME_EVENT_BUFFER_LIMIT = 128;
 const TSY_ZONE_ACTIVATED_BUFFER_LIMIT = 64;
 const NPC_EVENT_BUFFER_LIMIT = 128;
 const ALCHEMY_EVENT_BUFFER_LIMIT = 128;
@@ -145,6 +150,7 @@ export interface PublishAgentWorldModelRequest {
 }
 
 export type TsyHostileEventV1 = TsyNpcSpawnedV1 | TsySentinelPhaseChangedV1;
+export type TsyRuntimeEventV1 = TsyEnterEventV1 | TsyExitEventV1;
 export type NpcRuntimeEventV1 = NpcSpawnedV1 | NpcDeathV1 | FactionEventV1;
 export type AlchemyRuntimeEventV1 = AlchemySessionEndV1 | AlchemyInsightV1;
 export type PoiNoviceRuntimeEventV1 = PoiSpawnedEventV1 | TrespassEventV1;
@@ -242,6 +248,8 @@ export class RedisIpc {
   private pub: RedisIpcClient;
   private latestState: WorldStateV1 | null = null;
   private latestTsyHostileEvents: TsyHostileEventV1[] = [];
+  /** TSY enter/exit drain queue: the shared channel must not silently discard valid runtime signals. */
+  private latestTsyRuntimeEvents: TsyRuntimeEventV1[] = [];
   /** plan-agent-ui-data-v1 P2 — tsy_zone_activated drain 队列，供 triggerUi 参考生产路径使用。 */
   private latestTsyZoneActivatedEvents: TsyZoneActivatedV1[] = [];
   private latestNpcEvents: NpcRuntimeEventV1[] = [];
@@ -259,8 +267,10 @@ export class RedisIpc {
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestFaunaEcologyEvents: FaunaEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
+  private pendingTsyRuntimeOverflowDropped = 0;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
+  private tsyRuntimeCallbacks: Array<(event: TsyRuntimeEventV1) => void> = [];
   private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
   private alchemyEventCallbacks: Array<(event: AlchemyRuntimeEventV1) => void> = [];
   private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
@@ -360,6 +370,27 @@ export class RedisIpc {
     try {
       const data = JSON.parse(message) as unknown;
       if (!isObjectRecord(data) || typeof data.kind !== "string") {
+        console.warn("[redis-ipc] invalid tsy_event payload: missing string kind");
+        return;
+      }
+
+      if (data.kind === "tsy_enter") {
+        const result = validateTsyEnterEventV1Contract(data);
+        if (!result.ok) {
+          console.warn("[redis-ipc] invalid tsy_enter event:", result.errors.join("; "));
+          return;
+        }
+        this.recordTsyRuntimeEvent(data as TsyEnterEventV1);
+        return;
+      }
+
+      if (data.kind === "tsy_exit") {
+        const result = validateTsyExitEventV1Contract(data);
+        if (!result.ok) {
+          console.warn("[redis-ipc] invalid tsy_exit event:", result.errors.join("; "));
+          return;
+        }
+        this.recordTsyRuntimeEvent(data as TsyExitEventV1);
         return;
       }
 
@@ -397,9 +428,24 @@ export class RedisIpc {
           return;
         }
         this.recordTsyZoneActivatedEvent(data as TsyZoneActivatedV1);
+        return;
       }
+
+      console.warn(`[redis-ipc] unknown tsy_event kind: ${data.kind}`);
     } catch (e) {
       console.warn("[redis-ipc] failed to parse tsy_event:", e);
+    }
+  }
+
+  private recordTsyRuntimeEvent(event: TsyRuntimeEventV1): void {
+    this.latestTsyRuntimeEvents.push(event);
+    if (this.latestTsyRuntimeEvents.length > TSY_RUNTIME_EVENT_BUFFER_LIMIT) {
+      const droppedCount = this.latestTsyRuntimeEvents.length - TSY_RUNTIME_EVENT_BUFFER_LIMIT;
+      this.pendingTsyRuntimeOverflowDropped += droppedCount;
+      this.latestTsyRuntimeEvents = this.latestTsyRuntimeEvents.slice(-TSY_RUNTIME_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.tsyRuntimeCallbacks) {
+      cb(event);
     }
   }
 
@@ -782,6 +828,28 @@ export class RedisIpc {
 
   onTsyHostileEvent(cb: (event: TsyHostileEventV1) => void): void {
     this.tsyHostileCallbacks.push(cb);
+  }
+
+  getLatestTsyRuntimeEvents(): TsyRuntimeEventV1[] {
+    return [...this.latestTsyRuntimeEvents];
+  }
+
+  onTsyRuntimeEvent(cb: (event: TsyRuntimeEventV1) => void): void {
+    this.tsyRuntimeCallbacks.push(cb);
+  }
+
+  /** Drain validated enter/exit events for the single Tiandao runtime consumer. */
+  drainTsyRuntimeEvents(): TsyRuntimeEventV1[] {
+    const events = [...this.latestTsyRuntimeEvents];
+    if (this.pendingTsyRuntimeOverflowDropped > 0) {
+      console.warn(
+        `[redis-ipc] tsy runtime event buffer overflow: dropped oldest events ` +
+        `(count=${this.pendingTsyRuntimeOverflowDropped}, retained=${TSY_RUNTIME_EVENT_BUFFER_LIMIT})`,
+      );
+      this.pendingTsyRuntimeOverflowDropped = 0;
+    }
+    this.latestTsyRuntimeEvents = [];
+    return events;
   }
 
   /**

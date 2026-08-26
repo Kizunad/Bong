@@ -51,7 +51,7 @@ import {
 } from "./npc-producer.js";
 import type { AgentDecision } from "./parse.js";
 import { QiColorNarrationTracker } from "./qi-color-narration.js";
-import { RedisIpc } from "./redis-ipc.js";
+import { RedisIpc, type TsyRuntimeEventV1 } from "./redis-ipc.js";
 import { SeasonalNarrationTracker } from "./templates/seasonal.js";
 import {
   emptyErrorBreakdown,
@@ -76,6 +76,7 @@ export const DEFAULT_MODEL = "gpt-5.4-mini";
 export const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379";
 const TICK_INTERVAL_MS = 5_000;
 const CHAT_DRAIN_WINDOW = 128;
+const TSY_RUNTIME_EVENT_BUFFER_LIMIT = 128;
 const LOOP_BACKOFF_BASE_MS = 1_000;
 const LOOP_BACKOFF_MAX_MS = 30_000;
 const SNAPSHOT_INTERVAL_TICKS = 100;
@@ -140,6 +141,8 @@ export interface TickAgent {
    * Arbiter/Agent tick 把 button_click 追加到推演上下文，让天道感知玩家意图。
    */
   setButtonClickEvents?(events: AgentUiResponsePayloadV1[]): void;
+  /** TSY enter/exit runtime signals for this推演窗口。 */
+  setTsyRuntimeEvents?(events: TsyRuntimeEventV1[]): void;
 }
 
 export interface RuntimeRedis {
@@ -151,6 +154,8 @@ export interface RuntimeRedis {
   drainNpcDeathEvents?(): NpcDeathV1[];
   /** plan-agent-ui-data-v1 P2：drain tsy_zone_activated 事件供 triggerUi 生产路径消费。 */
   drainTsyZoneActivatedEvents?(): TsyZoneActivatedV1[];
+  /** drain validated TSY enter/exit events for Tiandao context consumption. */
+  drainTsyRuntimeEvents?(): TsyRuntimeEventV1[];
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
@@ -208,6 +213,10 @@ export interface TickDeps {
    * 注入本轮推演作为玩家 UI 交互上下文（Arbiter 合并前由 context/agent 消费）。
    */
   buttonClickEvents?: AgentUiResponsePayloadV1[];
+  /** 本窗口已从 bong:tsy_event drain 的 enter/exit 信号。 */
+  tsyRuntimeEvents?: TsyRuntimeEventV1[];
+  /** Runtime-owned per-agent batches; scheduled agents acknowledge these independently. */
+  tsyRuntimeEventsByAgent?: ReadonlyMap<string, TsyRuntimeEventV1[]>;
   worldModel?: WorldModel;
   publishCommands: (request: CommandPublishRequest) => Promise<void>;
   publishNarrations: (request: NarrationPublishRequest) => Promise<void>;
@@ -244,6 +253,13 @@ export interface TickResult {
   skipped: boolean;
   metadata: TickPublishMetadata;
   metrics: TickMetrics;
+  /** Agents that returned a decision after receiving the current TSY event batch. */
+  tsyRuntimeEventConsumers: string[];
+}
+
+interface PendingTsyRuntimeEventBatch {
+  events: TsyRuntimeEventV1[];
+  awaitingAgents: Set<string>;
 }
 
 export function loadEnv(): void {
@@ -445,6 +461,8 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     chatSignals,
     npcDeathEvents,
     buttonClickEvents,
+    tsyRuntimeEvents,
+    tsyRuntimeEventsByAgent,
     worldModel,
     publishCommands,
     publishNarrations,
@@ -467,6 +485,13 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
       `[tiandao] button_click inject: count=${buttonClickEvents.length} ` +
       `ids=${buttonClickEvents.map((e) => e.params["button_id"] ?? "(none)").join(",")} ` +
       `(player ui interaction context for this tick)`,
+    );
+  }
+  if (tsyRuntimeEvents && tsyRuntimeEvents.length > 0) {
+    logger.log(
+      `[tiandao] tsy runtime event inject: count=${tsyRuntimeEvents.length} ` +
+      `kinds=${tsyRuntimeEvents.map((event) => event.kind).join(",")} ` +
+      `(player TSY enter/exit context for this tick)`,
     );
   }
   const measuredTickStartMs = tickStartedAtMs ?? Date.now();
@@ -504,6 +529,21 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   applyNpcDeathEventsToAgents(agents, npcDeathEvents ?? []);
   // plan-agent-ui-data-v1 P2 — button_click 真注入：玩家 UI 交互信号进每个 agent 推演上下文。
   applyButtonClickEventsToAgents(agents, buttonClickEvents ?? []);
+  const tsyRuntimeEventTargetAgents = new Set(
+    tsyRuntimeEventsByAgent
+      ? [...tsyRuntimeEventsByAgent.keys()]
+      : (tsyRuntimeEvents?.length ?? 0) > 0
+        ? agents
+          .filter((agent) => typeof agent.setTsyRuntimeEvents === "function")
+          .map((agent) => agent.name)
+        : [],
+  );
+  const tsyRuntimeEventConsumers = new Set<string>();
+  applyTsyRuntimeEventsToAgents(
+    agents,
+    tsyRuntimeEvents ?? [],
+    tsyRuntimeEventsByAgent,
+  );
   logger.log("[tiandao] === tick start ===");
   logger.log(
     `[tiandao] tick: ${state.tick}, players: ${state.players.length}, zones: ${state.zones.length}, correlation_id: ${metadata.correlationId}`,
@@ -536,6 +576,9 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     const result = results[i];
     const agent = agents[i];
     if (result.status === "fulfilled" && result.value.decision) {
+      if (tsyRuntimeEventTargetAgents.has(agent.name)) {
+        tsyRuntimeEventConsumers.add(agent.name);
+      }
       const agentDurationMs = Math.max(0, result.value.endedAtMs - result.value.startedAtMs);
       const decision = result.value.decision as AgentDecisionWithMetadata;
       const metadata = decision.__agentTickMetadata;
@@ -710,32 +753,34 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     skipped: decisionsForMerge.length === 0,
     metadata,
     metrics,
+    tsyRuntimeEventConsumers: [...tsyRuntimeEventConsumers],
   };
 }
 
-async function runFreshTickWithRollback(args: {
-    worldModel: WorldModel;
-    run: () => Promise<void>;
-  }): Promise<void> {
+async function runFreshTickWithRollback<T>(args: {
+  worldModel: WorldModel;
+  run: () => Promise<T>;
+}): Promise<T> {
   const { worldModel, run } = args;
   const rollbackSnapshot = worldModel.toJSON();
 
   try {
-    await run();
+    return await run();
   } catch (error) {
     worldModel.restoreFromJSON(rollbackSnapshot);
     throw error;
   }
 }
 
-async function runFreshTickWithPublish(args: {
+async function runFreshTickWithPublish<T>(args: {
   worldModel: WorldModel;
-  run: () => Promise<void>;
+  run: () => Promise<T>;
   publish: () => Promise<void>;
-}): Promise<void> {
+}): Promise<T> {
   const { publish, ...rollbackArgs } = args;
-  await runFreshTickWithRollback(rollbackArgs);
+  const result = await runFreshTickWithRollback(rollbackArgs);
   await publish();
+  return result;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -779,6 +824,102 @@ function applyButtonClickEventsToAgents(
       agent.setButtonClickEvents(events);
     }
   }
+}
+
+/** Inject validated TSY enter/exit signals into every Agent that supports the context seam. */
+function applyTsyRuntimeEventsToAgents(
+  agents: TickAgent[],
+  events: TsyRuntimeEventV1[],
+  eventsByAgent?: ReadonlyMap<string, TsyRuntimeEventV1[]>,
+): void {
+  for (const agent of agents) {
+    if (typeof agent.setTsyRuntimeEvents !== "function") {
+      continue;
+    }
+
+    if (eventsByAgent) {
+      const agentEvents = eventsByAgent.get(agent.name);
+      if (agentEvents) {
+        agent.setTsyRuntimeEvents(agentEvents);
+      }
+      continue;
+    }
+
+    agent.setTsyRuntimeEvents(events);
+  }
+}
+
+function appendPendingTsyRuntimeEvents(
+  batches: PendingTsyRuntimeEventBatch[],
+  events: TsyRuntimeEventV1[],
+  agentNames: Set<string>,
+  logger: Pick<typeof console, "warn">,
+): void {
+  if (events.length === 0) {
+    return;
+  }
+  if (agentNames.size === 0) {
+    logger.warn(
+      `[tiandao] tsy runtime events dropped: no Agent exposes setTsyRuntimeEvents ` +
+      `(count=${events.length})`,
+    );
+    return;
+  }
+
+  batches.push({
+    events: [...events],
+    awaitingAgents: new Set(agentNames),
+  });
+
+  let pendingCount = batches.reduce((count, batch) => count + batch.events.length, 0);
+  let droppedCount = 0;
+  while (pendingCount > TSY_RUNTIME_EVENT_BUFFER_LIMIT && batches.length > 0) {
+    const oldest = batches[0];
+    const overflow = pendingCount - TSY_RUNTIME_EVENT_BUFFER_LIMIT;
+    if (oldest.events.length <= overflow) {
+      batches.shift();
+      pendingCount -= oldest.events.length;
+      droppedCount += oldest.events.length;
+    } else {
+      oldest.events = oldest.events.slice(overflow);
+      pendingCount -= overflow;
+      droppedCount += overflow;
+    }
+  }
+
+  if (droppedCount > 0) {
+    logger.warn(
+      `[tiandao] tsy runtime pending overflow: dropped oldest events ` +
+      `(count=${droppedCount}, retained=${pendingCount})`,
+    );
+  }
+}
+
+function buildPendingTsyRuntimeEventsByAgent(
+  batches: PendingTsyRuntimeEventBatch[],
+): ReadonlyMap<string, TsyRuntimeEventV1[]> {
+  const byAgent = new Map<string, TsyRuntimeEventV1[]>();
+  for (const batch of batches) {
+    for (const agentName of batch.awaitingAgents) {
+      const events = byAgent.get(agentName) ?? [];
+      events.push(...batch.events);
+      byAgent.set(agentName, events);
+    }
+  }
+  return byAgent;
+}
+
+function acknowledgeTsyRuntimeEventsForAgents(
+  batches: PendingTsyRuntimeEventBatch[],
+  consumers: string[],
+): PendingTsyRuntimeEventBatch[] {
+  const consumedAgents = new Set(consumers);
+  for (const batch of batches) {
+    for (const agentName of consumedAgents) {
+      batch.awaitingAgents.delete(agentName);
+    }
+  }
+  return batches.filter((batch) => batch.awaitingAgents.size > 0);
 }
 
 function applyWorldModelToAgents(agents: TickAgent[], worldModel?: WorldModel): void {
@@ -1223,6 +1364,12 @@ export async function runRuntime(
   let connected = false;
   let failureStreak = 0;
   let latestChatSignals: ChatSignal[] = [];
+  let pendingTsyRuntimeEventBatches: PendingTsyRuntimeEventBatch[] = [];
+  const tsyRuntimeEventAgentNames = new Set(
+    agents
+      .filter((agent) => typeof agent.setTsyRuntimeEvents === "function")
+      .map((agent) => agent.name),
+  );
   let loopIterations = 0;
   let lastProcessedStateCursor: WorldStateCursor | null = null;
   const maxLoopIterations = deps.maxLoopIterations ?? Number.POSITIVE_INFINITY;
@@ -1304,6 +1451,24 @@ export async function runRuntime(
           logger.log(`[tiandao] npc death drain: events=${drainedNpcDeaths.length}`);
         }
 
+        const drainedTsyRuntimeEvents = redis.drainTsyRuntimeEvents?.() ?? [];
+        if (drainedTsyRuntimeEvents.length > 0) {
+          appendPendingTsyRuntimeEvents(
+            pendingTsyRuntimeEventBatches,
+            drainedTsyRuntimeEvents,
+            tsyRuntimeEventAgentNames,
+            logger,
+          );
+          const pendingTsyRuntimeEventCount = pendingTsyRuntimeEventBatches.reduce(
+            (count, batch) => count + batch.events.length,
+            0,
+          );
+          logger.log(
+            `[tiandao] tsy runtime event drain: events=${drainedTsyRuntimeEvents.length} ` +
+            `(pending=${pendingTsyRuntimeEventCount})`,
+          );
+        }
+
         const state = redis.getLatestState();
         await processEcologyEvents({
           redis,
@@ -1358,10 +1523,16 @@ export async function runRuntime(
               }
             }
 
-            await runFreshTickWithPublish({
+            const pendingTsyRuntimeEventsByAgent = buildPendingTsyRuntimeEventsByAgent(
+              pendingTsyRuntimeEventBatches,
+            );
+            const pendingTsyRuntimeEvents = pendingTsyRuntimeEventBatches.flatMap(
+              (batch) => batch.events,
+            );
+            const tickResult = await runFreshTickWithPublish({
               worldModel,
               run: async () => {
-                await runTick(state, {
+                return runTick(state, {
                   agents,
                   llmClient,
                   model: modelOverrides.default,
@@ -1370,6 +1541,8 @@ export async function runRuntime(
                   chatSignals: latestChatSignals,
                   npcDeathEvents: drainedNpcDeaths,
                   buttonClickEvents: drainedButtonClicks,
+                  tsyRuntimeEvents: pendingTsyRuntimeEvents,
+                  tsyRuntimeEventsByAgent: pendingTsyRuntimeEventsByAgent,
                   worldModel,
                   publishCommands: (request) => redis.publishCommands(request),
                   publishNarrations: (request) => redis.publishNarrations(request),
@@ -1434,6 +1607,10 @@ export async function runRuntime(
                 });
               },
             });
+            pendingTsyRuntimeEventBatches = acknowledgeTsyRuntimeEventsForAgents(
+              pendingTsyRuntimeEventBatches,
+              tickResult.tsyRuntimeEventConsumers,
+            );
             lastProcessedStateCursor = {
               tick: state.tick,
               ts: state.ts,

@@ -60,37 +60,25 @@ class R7FoundationContractTest {
     }
 
     @Test
-    void foundationFixturePinsFiveNamedContractsAndOwnership() {
+    void foundationFixturePinsThreeNamedContractsAndOwnership() {
         List<FoundationRow> rows = foundationRows();
         Map<String, Long> components = histogram(rows.stream().map(FoundationRow::component).toList());
 
         assertEquals(Set.of(
-            "BongScreenBase",
             "BongKeybindRegistry",
             "ClientThreadMarshal",
-            "DiffListWidget",
             "ScreenOpenPolicy"
-        ), components.keySet(), "P0 freezes one base plus four shared helper contracts");
-        assertEquals(37, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
-        assertEquals(37, Set.copyOf(rows).size(), "each frozen contract row must be unique");
-        assertEquals(37, rows.stream()
+        ), components.keySet(), "P0 freezes the remaining shared helper contracts");
+        assertEquals(20, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
+        assertEquals(20, Set.copyOf(rows).size(), "each frozen contract row must be unique");
+        assertEquals(20, rows.stream()
             .map(row -> row.component() + "::" + row.symbol())
             .collect(java.util.stream.Collectors.toSet()).size(),
             "each frozen contract symbol must have one unambiguous signature row");
         assertEquals(expectedFoundationRows(), rows,
             "foundation fixture drifted: every signature, owner, and invariant must be explicitly re-decided");
         assertTrue(rows.stream().allMatch(row -> row.owner().equals("R7")),
-            "all five contract surfaces are R7-owned even when integration belongs to another track");
-        assertTrue(rows.stream().anyMatch(row -> row.component().equals("BongScreenBase")
-            && row.signature().contains("R extends ParentComponent")),
-            "BongScreenBase must support both code-built and UIModel owo adapters");
-        assertTrue(rows.stream().anyMatch(row -> row.component().equals("DiffListWidget")
-            && row.symbol().equals("constructor")
-            && row.signature().contains("Function<? super T, ? extends K> keyOf")),
-            "a final DiffListWidget must receive its key extractor by constructor injection");
-        assertFalse(rows.stream().anyMatch(row -> row.component().equals("DiffListWidget")
-            && row.signature().contains("abstract")),
-            "a final DiffListWidget cannot freeze abstract extension points");
+            "all three remaining contract surfaces are R7-owned even when integration belongs to another track");
         assertTrue(rows.stream().anyMatch(row -> row.component().equals("ClientThreadMarshal")
             && row.invariant().contains("false enqueues once")),
             "marshal contract must freeze exactly-once inline/enqueue behavior");
@@ -228,7 +216,7 @@ class R7FoundationContractTest {
 
     @Test
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
-        List<String> fixtureLines = resourceLines("/bong/ui/r7-screen-open-policy.tsv");
+        List<String> fixtureLines = resourceLines("/bong/ui/screen-open-policy.tsv");
         assertEquals(expectedOpenPolicyFixtureLines(), fixtureLines,
             "all 35 raw policy vectors and every input/output field must be explicitly re-decided");
         List<OpenPolicyRow> rows = openPolicyRows();
@@ -350,7 +338,7 @@ class R7FoundationContractTest {
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         assertEquals(expectedIdentities, actualIdentities,
             "fixture and production must match the exact (sourcePath, assignment target) set in both directions");
-        assertEquals(resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
+        assertEquals(resourceLines("/bong/ui/keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
         assertEquals(26, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
@@ -827,23 +815,6 @@ class R7FoundationContractTest {
 
     private static List<FoundationRow> expectedFoundationRows() {
         return List.of(
-            new FoundationRow("BongScreenBase", "type", "public abstract class BongScreenBase<R extends ParentComponent> extends BaseOwoScreen<R>", "R7", "Root type remains generic; subclasses keep ownership of the owo adapter."),
-            new FoundationRow("BongScreenBase", "constructor-empty", "protected BongScreenBase()", "R7", "Supports existing screens that use the owo default title path."),
-            new FoundationRow("BongScreenBase", "constructor-title", "protected BongScreenBase(Text title)", "R7", "Rejects a null title and delegates the title to BaseOwoScreen."),
-            new FoundationRow("BongScreenBase", "adapter", "protected abstract @NotNull OwoUIAdapter<R> createAdapter()", "R7", "The base never hard-codes OwoUIAdapter.create or a vertical-flow root factory."),
-            new FoundationRow("BongScreenBase", "build", "protected abstract void build(R rootComponent)", "R7", "The base delegates layout construction to the concrete screen."),
-            new FoundationRow("BongScreenBase", "cleanup", "protected final void registerCleanup(Runnable cleanup)", "R7", "Screen-local cleanup runs exactly once in LIFO order; removal still reaches every lifecycle stage; first failure is primary and later failures are suppressed in execution order; repeated removal is a no-op and this is not Store lifecycle clearing."),
-            new FoundationRow("BongScreenBase", "refresh", "protected final void runWhileOpen(Runnable task)", "R7", "A queued refresh is discarded after removal and cannot touch a detached screen."),
-            new FoundationRow("BongScreenBase", "tick", "public final void tick()", "R7", "Tick dispatch reaches the protected hook only while the screen is open."),
-            new FoundationRow("BongScreenBase", "tick-hook", "protected void onScreenTick()", "R7", "Subclasses extend tick behavior without bypassing the open-state guard."),
-            new FoundationRow("BongScreenBase", "removed", "public final void removed()", "R7", "Removal marks closed first; business hook, LIFO cleanup, and super.removed remain reachable after failures; the first failure is thrown with later failures suppressed; repeated removal is a no-op."),
-            new FoundationRow("BongScreenBase", "removed-hook", "protected void onRemoved()", "R7", "Business terminal effects run once without allowing cleanup bypass."),
-            new FoundationRow("DiffListWidget", "type", "public final class DiffListWidget<T, K, C extends Component>", "R7", "The generic list owns ordered-key diffing without imposing an owo scroll-offset API."),
-            new FoundationRow("DiffListWidget", "constructor", "public DiffListWidget(FlowLayout rows, Function<? super T, ? extends K> keyOf, Function<? super T, ? extends C> createRow, BiConsumer<? super C, ? super T> patchRow)", "R7", "A final widget receives key extraction and row lifecycle functions by constructor injection."),
-            new FoundationRow("DiffListWidget", "update", "public UpdateResult update(List<? extends T> items)", "R7", "Null list/item/key and duplicate keys fail before mutation; equal ordered keys patch mounted rows; patch failure propagates unchanged, preserves the previous committed key sequence, and the next update retries the full list; structural key changes create every replacement row before mutating mounted children, so createRow failure preserves the prior mounted rows and committed keys, and a successful rebuild swaps the complete row set atomically."),
-            new FoundationRow("DiffListWidget", "rendered-keys", "public List<K> renderedKeys()", "R7", "Inspection returns the immutable current ordered key sequence."),
-            new FoundationRow("DiffListWidget", "row-lookup", "public Optional<C> rowForKey(K key)", "R7", "Inspection exposes mounted identity without leaking mutable ownership."),
-            new FoundationRow("DiffListWidget", "result", "public enum UpdateResult { REBUILT, PATCHED }", "R7", "The caller can distinguish structural rebuild from identity-preserving patch."),
             new FoundationRow("BongKeybindRegistry", "type", "public final class BongKeybindRegistry", "R7", "Registrations are explicit and inspectable; no reflection or annotation discovery."),
             new FoundationRow("BongKeybindRegistry", "global", "public static BongKeybindRegistry global()", "R7", "Production has one registry instance so bootstrap-local registries cannot bypass conflict detection."),
             new FoundationRow("BongKeybindRegistry", "constructor", "BongKeybindRegistry(UnaryOperator<KeyBinding> registrar, List<ReservedDefault> reservedDefaults, Set<ConflictExemption> exemptions)", "R7", "The package seam injects Fabric registration plus explicit vanilla reservations and exact exemptions."),
@@ -867,14 +838,14 @@ class R7FoundationContractTest {
         );
     }
     private static List<FoundationRow> foundationRows() {
-        return resourceLines("/bong/ui/r7-foundation-contract.tsv").stream()
+        return resourceLines("/bong/ui/foundation-contract.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new FoundationRow(columns[0], columns[1], columns[2], columns[3], columns[4]))
             .toList();
     }
 
     private static List<KeybindRow> keybindRows() {
-        return resourceLines("/bong/ui/r7-keybind-migration.tsv").stream()
+        return resourceLines("/bong/ui/keybind-migration.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4], columns[5],
@@ -884,7 +855,7 @@ class R7FoundationContractTest {
     }
 
     private static List<OpenPolicyRow> openPolicyRows() {
-        return resourceLines("/bong/ui/r7-screen-open-policy.tsv").stream()
+        return resourceLines("/bong/ui/screen-open-policy.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new OpenPolicyRow(
                 columns[0],
@@ -905,14 +876,14 @@ class R7FoundationContractTest {
     }
 
     private static List<ReservedDefaultRow> reservedDefaultRows() {
-        return resourceLines("/bong/ui/r7-keybind-reserved-defaults.tsv").stream()
+        return resourceLines("/bong/ui/keybind-reserved-defaults.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ReservedDefaultRow(columns[0], columns[1], columns[2], columns[3]))
             .toList();
     }
 
     private static List<ConflictExemptionRow> conflictExemptionRows() {
-        return resourceLines("/bong/ui/r7-keybind-conflict-exemptions.tsv").stream()
+        return resourceLines("/bong/ui/keybind-conflict-exemptions.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ConflictExemptionRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4]
@@ -921,7 +892,7 @@ class R7FoundationContractTest {
     }
 
     private static List<KeybindProductionSiteRow> keybindProductionSiteRows() {
-        return resourceLines("/bong/ui/r7-keybind-production-sites.tsv").stream()
+        return resourceLines("/bong/ui/keybind-production-sites.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindProductionSiteRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],
@@ -931,7 +902,7 @@ class R7FoundationContractTest {
     }
 
     private static List<InsightSettlementRow> insightSettlementRows() {
-        return resourceLines("/bong/ui/r7-insight-settlement.tsv").stream()
+        return resourceLines("/bong/ui/insight-settlement.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new InsightSettlementRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],

@@ -41,17 +41,23 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import time
 import urllib.parse
 
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time
+from bot.scenarios._inventory_helpers import latest_inventory_snapshot
 
 DESCRIPTION = "经脉锻造 forge_request：ForgeEventV1 字段 + tier 读回 + 成本 + 四负向分支"
 MODULES = ["cmd", "cultivation", "network"]
 
 _INCOMPLETE = object()
+_QI_SET_CHAT_RE = re.compile(
+    r"^\[dev\] qi set (?P<before>[0-9]+(?:\.[0-9]+)?) -> "
+    r"(?P<after>[0-9]+(?:\.[0-9]+)?)$"
+)
 
 
 class _ForgeEventSubscriber:
@@ -263,6 +269,47 @@ def _expect_chat_after(bot, substring: str, after: float, timeout: float = 10.0)
     )
 
 
+def _expect_qi_set_before(
+    bot,
+    expected_before: float,
+    target: float,
+    after: float,
+    tolerance: float = 0.5,
+) -> None:
+    """验证本次 qi set 回执，同时容纳等待期间的自然吐纳小数漂移。"""
+    observed: dict[str, float] = {}
+
+    def matches(event) -> bool:
+        if event.kind != "chat" or event.t <= after:
+            return False
+        match = _QI_SET_CHAT_RE.fullmatch(event.data["text"])
+        if match is None:
+            return False
+        observed["before"] = float(match.group("before"))
+        observed["after"] = float(match.group("after"))
+        return True
+
+    bot.wait_for(
+        matches,
+        timeout=10.0,
+        description=(
+            f"发送锚点 t>{after:.3f}s 后 qi set 回执（before≈{expected_before:.1f}, "
+            f"target={target:.1f}）"
+        ),
+    )
+    actual_before = observed["before"]
+    actual_after = observed["after"]
+    if abs(actual_before - expected_before) > tolerance:
+        raise BotAssertionError(
+            f"qi set 成本读回 before 应接近 {expected_before:.1f}±{tolerance:.1f}，"
+            f"实际 {actual_before:.1f}"
+        )
+    if actual_after != target:
+        raise BotAssertionError(
+            f"qi set 目标值应为 {target:.1f}，实际 {actual_after:.1f}"
+        )
+
+
 def _run_forge_scenario(env, subscriber: _ForgeEventSubscriber) -> None:
     with env.new_bot("FoRq") as bot:
         try:
@@ -272,10 +319,36 @@ def _run_forge_scenario(env, subscriber: _ForgeEventSubscriber) -> None:
 
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)
+        # pos_look is only the protocol handshake. The inventory snapshot is
+        # emitted after the server attaches Cultivation/MeridianSystem, but it
+        # can arrive on the wire before the client's pos_look packet. Consume
+        # the buffered snapshot as the authoritative component-ready barrier.
+        latest_inventory_snapshot(bot, timeout=15.0)
+        # Match the vanilla client lifecycle before exercising the command tree.
+        bot.send_client_settings()
+        time.sleep(0.25)
 
         # dev 铺垫：只开肺经（heart 保持关闭 → 负向 MeridianClosed），qi 设到已知值。
-        bot.cmd("meridian open lung")
-        bot.expect_chat("[dev] opened meridian", timeout=10.0)
+        # 先用公开 /ping 消费一条 CommandResultEvent，确认 command manager 已开始
+        # 处理该连接的命令事件；随后 Meridian handler 仍允许两次有限重试，避免
+        # command tree 刚切换完成时首个 dev 命令落在边界帧。
+        bot.cmd("ping")
+        bot.expect_chat("pong", timeout=10.0)
+        meridian_opened = False
+        for attempt in range(3):
+            command_anchor = last_event_time(bot)
+            bot.cmd("meridian open lung")
+            try:
+                _expect_chat_after(bot, "[dev] opened meridian", command_anchor, timeout=2.0)
+            except BotAssertionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.25)
+            else:
+                meridian_opened = True
+                break
+        if not meridian_opened:
+            raise BotAssertionError("meridian open lung 未收到 handler 回执")
         bot.cmd("qi max 100")
         bot.expect_chat("[dev] qi max", timeout=10.0)
         bot.cmd("qi set 100")
@@ -287,8 +360,9 @@ def _run_forge_scenario(env, subscriber: _ForgeEventSubscriber) -> None:
         _assert_success_event(ev, meridian="Lung", axis="Rate", from_tier=0, to_tier=1)
 
         # 成本读回：tier1 cost = tier_cost(1) = 4，qi 100→96（/qi set 0 的 before 回读）。
+        qi_reset_anchor = last_event_time(bot)
         bot.cmd("qi set 0")
-        bot.expect_chat("[dev] qi set 96.0 -> 0.0", timeout=10.0)
+        _expect_qi_set_before(bot, expected_before=96.0, target=0.0, after=qi_reset_anchor)
         refill_anchor = last_event_time(bot)
         bot.cmd("qi set 100")
         # 该回显与 setup 完全相同，必须锚定本次命令；否则历史消息可能让 forge
@@ -302,8 +376,9 @@ def _run_forge_scenario(env, subscriber: _ForgeEventSubscriber) -> None:
         # 成本读回：tier2 cost = tier_cost(2) = 16，qi 100→84。
         # 读回必须紧随 forge：服务端 qi 缓慢回复（实测 ≈0.04/s），隔了负向分支的
         # ~8s 后 before 会漂到 84.3，精确钉 cost 的读回就废了。
+        qi_set_three_anchor = last_event_time(bot)
         bot.cmd("qi set 3")
-        bot.expect_chat("[dev] qi set 84.0 -> 3.0", timeout=10.0)
+        _expect_qi_set_before(bot, expected_before=84.0, target=3.0, after=qi_set_three_anchor)
         bot.cmd("qi set 100")
         # before=3.0 → echo "[dev] qi set 3.0 -> 100.0"，全史唯一，真等待。
         bot.expect_chat("[dev] qi set 3.0 -> 100.0", timeout=10.0)
@@ -333,8 +408,9 @@ def _run_forge_scenario(env, subscriber: _ForgeEventSubscriber) -> None:
         # 冲 cap：2→3（cost 36，qi 100→64），再读回 64.0 证明 tier3 cost。
         ev = _forge(bot, subscriber, "lung", "Rate")
         _assert_success_event(ev, meridian="Lung", axis="Rate", from_tier=2, to_tier=3)
+        qi_cap_reset_anchor = last_event_time(bot)
         bot.cmd("qi set 0")
-        bot.expect_chat("[dev] qi set 64.0 -> 0.0", timeout=10.0)
+        _expect_qi_set_before(bot, expected_before=64.0, target=0.0, after=qi_cap_reset_anchor)
 
         # 负向 AtMaxTier：P1 上限 tier3，连发两次均 success:false → 无超 cap 溢出（双发检查）。
         ev = _forge(bot, subscriber, "lung", "Rate")

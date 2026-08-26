@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * InsightOfferScreen 结算生命周期测试（r7-insight-settlement.tsv ESC / TIMEOUT /
+ * InsightOfferScreen 结算生命周期测试（insight-settlement.tsv ESC / TIMEOUT /
  * ANIMATED_OPEN_CANCELLED / REMOVED_EXCEPTIONALLY / REPLACED_BY_DIFFERENT_OFFER）。
  *
  * <p>结算路径恒为：exact offerId claim 先于 dispatch 先于 close；被替换后旧屏的迟到

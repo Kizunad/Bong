@@ -255,21 +255,21 @@ def run(env) -> None:
         assert not dup_gains, (
             f"重复习得不应产生新的 skill_xp_gain（重复不授 XP），实际 {len(dup_gains)} 条"
         )
-        # review finding [10]：保留断言必须锚在 skill_scroll_used 回执**之后**（dup_t）
-        # 并加窗口上限——旧实现锚 intent 前水位，回执前任意周期 flush 的「revision
-        # 不变 + 卷轴仍在」快照都能冒充回推；错误实现「回了 was_duplicate 却仍消耗
-        # 卷轴」也能过。回执同一 tick 同步回推 resync，dup_t 之后窗口内必有真实回推。
+        # skill_scroll_used 由独立 Update system 发出，而 duplicate handler 会先同步
+        # 发 resync snapshot；两者没有跨 system 的顺序契约。因果水位仍锚在 intent
+        # 之前，但快照允许出现在回执之前或之后，且限制在同一短窗口内，避免把历史
+        # 周期 flush 当成这次拒绝的回推。
         kept = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_snapshot"
-                and e.t > dup_t
-                and e.t < dup_t + ROLLBACK_WINDOW
+                and e.t > anchor
+                and e.t < anchor + ROLLBACK_WINDOW
             ),
             timeout=10.0,
             description=(
-                f"重复习得回执之后 {ROLLBACK_WINDOW}s 内（t∈({dup_t:.2f}, "
-                f"{dup_t + ROLLBACK_WINDOW:.2f})）的回推 inventory_snapshot"
+                f"重复习得 intent 后 {ROLLBACK_WINDOW}s 内（t∈({anchor:.2f}, "
+                f"{anchor + ROLLBACK_WINDOW:.2f})）的回推 inventory_snapshot"
             ),
         ).data["payload"]
         assert int(kept["revision"]) == before_revision, (

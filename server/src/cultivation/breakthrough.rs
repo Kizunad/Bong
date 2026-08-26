@@ -37,6 +37,7 @@ use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, 
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::meridian_open::MIN_ZONE_QI_TO_OPEN;
+use super::overload::FREEZE_FACTOR;
 use super::tick::CultivationClock;
 
 pub const RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
@@ -600,10 +601,10 @@ pub fn try_breakthrough_with_profile<R: RollSource>(
             });
             m.integrity = (m.integrity - severity * 0.2).max(0.0);
         }
-        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，每次加 severity * 10.0（即 1.0..9.0）。
+        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，与过载路径使用同一冻结系数。
         // 无 cap 时多次失败可致 qi_max_frozen ≥ qi_max → 有效上限归零 → 玩家永久废人。
         // 与 overload.rs 对齐：冻结量不超过 qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO (0.5)。
-        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * 10.0)
+        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * FREEZE_FACTOR)
             .min(cultivation.qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO);
         cultivation.qi_max_frozen = Some(new_frozen);
         cultivation.composure = (cultivation.composure - 0.3).max(0.0);
@@ -1166,6 +1167,7 @@ fn block_pos_from_position(position: &Position) -> BlockPos {
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::cultivation::overload;
     use crate::npc::spawn::NpcMarker;
     use crate::qi_physics::{QiAccountId, QiTransferReason, WorldQiAccount};
     use crate::schema::common::NarrationScope;
@@ -2684,23 +2686,29 @@ mod tests {
     // qi_max_frozen cap: 突破失败不能永久废人
     // ───────────────────────────────────────────────────────────────────────
 
-    /// 单次失败：qi_max_frozen 精确加上 severity * 10.0，且不超过 qi_max * 0.5。
+    /// 单次失败：qi_max_frozen 精确加上 severity * FREEZE_FACTOR，且不超过 qi_max * 0.5。
     #[test]
     fn single_breakthrough_failure_freezes_qi_within_cap() {
         let (mut c, mut m) = setup_for_induce();
         // 强制失败：roll > base_success_rate(Induce)=0.90
-        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0))
+            .expect_err("roll=1.0 must fail the 0.90 Induce breakthrough");
 
         // severity = (1.0 - success_rate).clamp(0.1, 0.9)
         // success_rate = base × composure × integrity × completeness = 0.90 × 1.0 × 1.0 × 1.0 = 0.90
-        // severity = 0.10, freeze_add = 0.10 * 10.0 = 1.0
-        // cap = qi_max(100.0) * 0.5 = 50.0 → 1.0 < 50.0, no clamping
+        // severity = 0.10, freeze_add = 0.10 * FREEZE_FACTOR = 0.5
+        // cap = qi_max(100.0) * 0.5 = 50.0 → 0.5 < 50.0, no clamping
+        let severity = match err {
+            BreakthroughError::RolledFailure { severity } => severity,
+            other => panic!("expected rolled failure, got {other:?}"),
+        };
+        let expected = severity * FREEZE_FACTOR;
         let frozen = c
             .qi_max_frozen
             .expect("qi_max_frozen should be Some after failure");
         assert!(
-            (frozen - 1.0).abs() < 1e-9,
-            "期望 qi_max_frozen = 1.0（severity=0.10 × 10.0），实际 = {frozen}"
+            (frozen - expected).abs() < 1e-9,
+            "期望 qi_max_frozen = severity({severity}) × factor({FREEZE_FACTOR}) = {expected}，实际 = {frozen}"
         );
         let effective = c.qi_max - frozen;
         assert!(
@@ -2736,14 +2744,14 @@ mod tests {
         let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
 
         assert!(
-            frozen <= cap,
-            "期望 qi_max_frozen ≤ {cap}（qi_max×0.5，防废人），实际 qi_max_frozen = {frozen}"
+            (frozen - cap).abs() < 1e-9,
+            "期望重复失败后 qi_max_frozen 精确 clamp 到 cap={cap}（qi_max×0.5），实际 = {frozen}"
         );
 
         let effective_qi_max = c.qi_max - frozen;
         assert!(
-            effective_qi_max > 0.0,
-            "期望有效真元上限 > 0（玩家不应被永久废），实际 effective_qi_max = {effective_qi_max}"
+            (effective_qi_max - qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO)).abs() < 1e-9,
+            "期望有效真元上限精确保留 qi_max×(1-cap_ratio)，实际 effective_qi_max = {effective_qi_max}"
         );
     }
 
@@ -2751,13 +2759,13 @@ mod tests {
     #[test]
     fn breakthrough_failure_does_not_exceed_cap_when_already_near_cap() {
         let qi_max = 100.0;
-        // 预填到接近 cap（40/100 = 0.4 × qi_max，距 0.5×qi_max=50 还差 10）
+        // 预填到接近 cap（48/100），单次 severity=0.9 的新增冻结量 4.5 会跨过 50 的 cap。
         let mut c = Cultivation {
             realm: Realm::Awaken,
             qi_current: qi_max,
             qi_max,
-            composure: 0.0, // severity 接近 0.9 → freeze_add 接近 9.0，足够触碰 cap
-            qi_max_frozen: Some(40.0),
+            composure: 0.0, // severity=0.9 → freeze_add=0.9×FREEZE_FACTOR=4.5，足够跨过 cap
+            qi_max_frozen: Some(48.0),
             ..Default::default()
         };
         let mut m = MeridianSystem::default();
@@ -2771,14 +2779,69 @@ mod tests {
         let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
 
         assert!(
-            frozen <= cap + 1e-9,
-            "期望 qi_max_frozen ≤ {cap}（cap = qi_max×0.5），实际 qi_max_frozen = {frozen}（超 cap）"
+            (frozen - cap).abs() < 1e-9,
+            "期望 pre-existing frozen + severity×factor 跨越后精确 clamp 到 cap={cap}，实际 = {frozen}"
         );
-        // 有效上限仍须 > 0
         let effective = c.qi_max - frozen;
         assert!(
-            effective >= qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO) - 1e-9,
-            "期望有效 qi_max ≥ qi_max×0.5={cap}，实际 = {effective}"
+            (effective - qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO)).abs() < 1e-9,
+            "期望 cap 后有效 qi_max 精确为 {cap}，实际 = {effective}"
+        );
+    }
+
+    /// 相同 severity 经真实突破失败与 overload event-reader 写入时必须得到相同冻结量。
+    #[test]
+    fn breakthrough_and_overload_share_freeze_factor() {
+        let (mut breakthrough_cultivation, mut breakthrough_meridians) = setup_for_induce();
+        let breakthrough_error = try_breakthrough(
+            &mut breakthrough_cultivation,
+            &mut breakthrough_meridians,
+            0.0,
+            &mut FixedRoll(1.0),
+        )
+        .expect_err("roll=1.0 must exercise the production breakthrough failure path");
+        let severity = match breakthrough_error {
+            BreakthroughError::RolledFailure { severity } => severity,
+            other => panic!("expected rolled failure, got {other:?}"),
+        };
+
+        let mut overload_app = App::new();
+        overload_app.insert_resource(CultivationClock { tick: 7 });
+        overload_app.add_event::<overload::MeridianOverloadEvent>();
+        overload_app.add_systems(Update, overload::apply_meridian_overload_events);
+        let overload_entity = overload_app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_max: breakthrough_cultivation.qi_max,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+            ))
+            .id();
+        overload_app
+            .world_mut()
+            .send_event(overload::MeridianOverloadEvent {
+                entity: overload_entity,
+                severity,
+            });
+        overload_app.update();
+
+        let overload_frozen = overload_app
+            .world()
+            .get::<Cultivation>(overload_entity)
+            .and_then(|cultivation| cultivation.qi_max_frozen)
+            .expect("overload event-reader must write qi_max_frozen");
+        let breakthrough_frozen = breakthrough_cultivation
+            .qi_max_frozen
+            .expect("breakthrough failure must write qi_max_frozen");
+        assert!(
+            (breakthrough_frozen - overload_frozen).abs() < 1e-9,
+            "same severity={severity} must freeze equally across breakthrough and overload: breakthrough={breakthrough_frozen}, overload={overload_frozen}"
+        );
+        assert!(
+            (breakthrough_frozen - severity * FREEZE_FACTOR).abs() < 1e-9,
+            "both production paths must use canonical factor={FREEZE_FACTOR}; severity={severity}, actual={breakthrough_frozen}"
         );
     }
 

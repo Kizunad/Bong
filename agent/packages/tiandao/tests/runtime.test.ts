@@ -23,7 +23,18 @@ import { LlmBackoffError, LlmTimeoutError, type LlmClient } from "../src/llm.js"
 import type { TelemetrySink } from "../src/telemetry.js";
 import { WorldModel, type WorldModelSnapshot } from "../src/world-model.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { AgentUiResponsePayloadV1, AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, NpcDeathV1, RatPhaseChangeEventV1, TsyZoneActivatedV1 } from "@bong/schema";
+import type {
+  AgentUiResponsePayloadV1,
+  AgentWorldModelEnvelopeV1,
+  ChatMessageV1,
+  Command,
+  Narration,
+  NpcDeathV1,
+  RatPhaseChangeEventV1,
+  TsyEnterEventV1,
+  TsyExitEventV1,
+  TsyZoneActivatedV1,
+} from "@bong/schema";
 
 function createStructuredChatResult(content: string, model: string) {
   return {
@@ -59,6 +70,32 @@ class DeathAwareFakeAgent extends FakeAgent {
   setNpcDeathEvents(events: NpcDeathV1[]): void {
     this.receivedNpcDeathCount = events.length;
     this.lastReceivedNpcDeaths = events;
+  }
+}
+
+class TsyRuntimeAwareFakeAgent extends FakeAgent {
+  public receivedTsyRuntimeEvents: Array<TsyEnterEventV1 | TsyExitEventV1> = [];
+
+  setTsyRuntimeEvents(events: Array<TsyEnterEventV1 | TsyExitEventV1>): void {
+    this.receivedTsyRuntimeEvents = events;
+  }
+}
+
+class ScheduledTsyRuntimeAwareFakeAgent extends TsyRuntimeAwareFakeAgent {
+  private tickCalls = 0;
+  public consumedTsyRuntimeEvents: Array<TsyEnterEventV1 | TsyExitEventV1> = [];
+
+  override async tick(
+    client: Parameters<FakeAgent["tick"]>[0],
+    model: Parameters<FakeAgent["tick"]>[1],
+    state: Parameters<FakeAgent["tick"]>[2],
+  ): ReturnType<FakeAgent["tick"]> {
+    this.tickCalls += 1;
+    if (this.tickCalls === 1) {
+      return null;
+    }
+    this.consumedTsyRuntimeEvents = [...this.receivedTsyRuntimeEvents];
+    return super.tick(client, model, state);
   }
 }
 
@@ -726,6 +763,51 @@ describe("runTick", () => {
       logger: { log: vi.fn(), error: vi.fn() },
     });
     expect(deathAwareAgent.receivedNpcDeathCount).toBe(0);
+  });
+
+  it("injects complete TSY enter/exit events into agents before ticking", async () => {
+    const tsyAwareAgent = new TsyRuntimeAwareFakeAgent("mutation", null);
+    const events: Array<TsyEnterEventV1 | TsyExitEventV1> = [
+      {
+        v: 1,
+        kind: "tsy_enter",
+        tick: 42,
+        player_id: "offline:Azure",
+        family_id: "tsy_lingxu_01",
+        return_to: {
+          dimension: "minecraft:overworld",
+          pos: [12.5, 64, -8.25],
+        },
+        filtered_items: [
+          {
+            instance_id: 7,
+            template_id: "bone_coin",
+            reason: "spirit_quality_too_high",
+          },
+        ],
+      },
+      {
+        v: 1,
+        kind: "tsy_exit",
+        tick: 5042,
+        player_id: "offline:Azure",
+        family_id: "tsy_lingxu_01",
+        duration_ticks: 5_000,
+        qi_drained_total: 0,
+      },
+    ];
+
+    await runTick(createTestWorldState(), {
+      agents: [tsyAwareAgent],
+      llmClient: new StructuredFakeLlmClient("{}"),
+      model: DEFAULT_MODEL,
+      tsyRuntimeEvents: events,
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(tsyAwareAgent.receivedTsyRuntimeEvents).toEqual(events);
   });
 
   it("persists current era from arbiter output into the shared world model", async () => {
@@ -2725,6 +2807,9 @@ describe("runRuntime Fix②: drainPendingButtonClicks injected into tick before 
     public readonly publishCommands = vi.fn(async (_r: CommandPublishRequest) => {});
     public readonly publishNarrations = vi.fn(async (_r: NarrationPublishRequest) => {});
     public readonly drainTsyZoneActivatedEvents = vi.fn(() => [] as TsyZoneActivatedV1[]);
+    public readonly drainTsyRuntimeEvents = vi.fn(
+      () => [] as Array<TsyEnterEventV1 | TsyExitEventV1>,
+    );
     private index = 0;
     constructor(private readonly states: Array<ReturnType<typeof createTestWorldState> | null>) {}
     getLatestState() {
@@ -2792,6 +2877,158 @@ describe("runRuntime Fix②: drainPendingButtonClicks injected into tick before 
     const logLines = logger.log.mock.calls.flatMap((c) => c.map(String));
     const injectLog = logLines.find((l) => l.includes("button_click inject") && l.includes("enter_realm"));
     expect(injectLog, "should log button_click inject with button_id=enter_realm").toBeTruthy();
+  });
+
+  it("runRuntime drains TSY enter/exit events and injects them into the fresh tick", async () => {
+    const event: TsyExitEventV1 = {
+      v: 1,
+      kind: "tsy_exit",
+      tick: 5042,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    };
+    const redis = new AgentUiAwareRuntimeRedis([createTestWorldState(), null]);
+    redis.drainTsyRuntimeEvents.mockReturnValueOnce([event]);
+    const tsyAwareAgent = new TsyRuntimeAwareFakeAgent("mutation", null);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-tsy-runtime-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [tsyAwareAgent],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 1,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(redis.drainTsyRuntimeEvents, "runRuntime must consume the TSY drain once per loop").toHaveBeenCalledOnce();
+    expect(tsyAwareAgent.receivedTsyRuntimeEvents).toEqual([event]);
+    expect(
+      logger.log.mock.calls.flatMap((call) => call.map(String)).some((line) => line.includes("tsy runtime event drain")),
+      "runRuntime should leave an observable drain record for the TSY signal",
+    ).toBe(true);
+  });
+
+  it("retains TSY events until a scheduled Agent actually consumes them", async () => {
+    const event: TsyExitEventV1 = {
+      v: 1,
+      kind: "tsy_exit",
+      tick: 5042,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    };
+    const state1 = createTestWorldState();
+    const state2 = { ...state1, tick: state1.tick + 1, ts: state1.ts + 5 };
+    const redis = new AgentUiAwareRuntimeRedis([state1, state2, null]);
+    redis.drainTsyRuntimeEvents.mockReturnValueOnce([event]);
+    const tsyAwareAgent = new ScheduledTsyRuntimeAwareFakeAgent("mutation", {
+      commands: [],
+      narrations: [],
+      reasoning: "scheduled consumer",
+    });
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-tsy-scheduled-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [tsyAwareAgent],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(
+      tsyAwareAgent.consumedTsyRuntimeEvents,
+      "a skipped first tick must not acknowledge the event before the scheduled Agent runs",
+    ).toEqual([event]);
+  });
+
+  it("bounds pending TSY events and warns when stale state prevents consumption", async () => {
+    const events: TsyExitEventV1[] = Array.from({ length: 100 }, (_, index) => ({
+      v: 1,
+      kind: "tsy_exit",
+      tick: index,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    }));
+    const redis = new AgentUiAwareRuntimeRedis([null, null]);
+    redis.drainTsyRuntimeEvents.mockReturnValue(events);
+    const tsyAwareAgent = new TsyRuntimeAwareFakeAgent("mutation", null);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-tsy-overflow-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [tsyAwareAgent],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(
+      logger.warn.mock.calls.some(([message]) => String(message).includes("pending overflow")),
+      "stale state must emit an overflow warning instead of allowing an unbounded TSY queue",
+    ).toBe(true);
   });
 
   it("runRuntime with no agentUiRuntime proceeds without error (drain skipped gracefully)", async () => {
