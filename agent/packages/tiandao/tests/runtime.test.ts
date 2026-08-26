@@ -81,6 +81,24 @@ class TsyRuntimeAwareFakeAgent extends FakeAgent {
   }
 }
 
+class ScheduledTsyRuntimeAwareFakeAgent extends TsyRuntimeAwareFakeAgent {
+  private tickCalls = 0;
+  public consumedTsyRuntimeEvents: Array<TsyEnterEventV1 | TsyExitEventV1> = [];
+
+  override async tick(
+    client: Parameters<FakeAgent["tick"]>[0],
+    model: Parameters<FakeAgent["tick"]>[1],
+    state: Parameters<FakeAgent["tick"]>[2],
+  ): ReturnType<FakeAgent["tick"]> {
+    this.tickCalls += 1;
+    if (this.tickCalls === 1) {
+      return null;
+    }
+    this.consumedTsyRuntimeEvents = [...this.receivedTsyRuntimeEvents];
+    return super.tick(client, model, state);
+  }
+}
+
 class SequenceRuntimeRedis implements RuntimeRedis {
   public readonly connect = vi.fn(async () => {});
   public readonly disconnect = vi.fn(async () => {});
@@ -2908,6 +2926,108 @@ describe("runRuntime Fix②: drainPendingButtonClicks injected into tick before 
     expect(
       logger.log.mock.calls.flatMap((call) => call.map(String)).some((line) => line.includes("tsy runtime event drain")),
       "runRuntime should leave an observable drain record for the TSY signal",
+    ).toBe(true);
+  });
+
+  it("retains TSY events until a scheduled Agent actually consumes them", async () => {
+    const event: TsyExitEventV1 = {
+      v: 1,
+      kind: "tsy_exit",
+      tick: 5042,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    };
+    const state1 = createTestWorldState();
+    const state2 = { ...state1, tick: state1.tick + 1, ts: state1.ts + 5 };
+    const redis = new AgentUiAwareRuntimeRedis([state1, state2, null]);
+    redis.drainTsyRuntimeEvents.mockReturnValueOnce([event]);
+    const tsyAwareAgent = new ScheduledTsyRuntimeAwareFakeAgent("mutation", {
+      commands: [],
+      narrations: [],
+      reasoning: "scheduled consumer",
+    });
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-tsy-scheduled-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [tsyAwareAgent],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(
+      tsyAwareAgent.consumedTsyRuntimeEvents,
+      "a skipped first tick must not acknowledge the event before the scheduled Agent runs",
+    ).toEqual([event]);
+  });
+
+  it("bounds pending TSY events and warns when stale state prevents consumption", async () => {
+    const events: TsyExitEventV1[] = Array.from({ length: 100 }, (_, index) => ({
+      v: 1,
+      kind: "tsy_exit",
+      tick: index,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    }));
+    const redis = new AgentUiAwareRuntimeRedis([null, null]);
+    redis.drainTsyRuntimeEvents.mockReturnValue(events);
+    const tsyAwareAgent = new TsyRuntimeAwareFakeAgent("mutation", null);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-tsy-overflow-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [tsyAwareAgent],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(
+      logger.warn.mock.calls.some(([message]) => String(message).includes("pending overflow")),
+      "stale state must emit an overflow warning instead of allowing an unbounded TSY queue",
     ).toBe(true);
   });
 

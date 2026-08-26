@@ -184,6 +184,9 @@ export class TiandaoAgent {
       model: result.model,
       toolUsage: result.toolUsage,
     };
+    // Runtime acknowledges this batch only after tick() returns a decision. Keep it
+    // on LLM failure so the runtime can retry the event on a later scheduled tick.
+    this.latestTsyRuntimeEvents = [];
     return decision;
   }
 }

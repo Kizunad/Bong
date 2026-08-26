@@ -321,6 +321,16 @@ describe("TSY enter/exit runtime context", () => {
     expect(context).toContain("tsy_exit");
     expect(context).toContain("duration_ticks");
   });
+
+  it("keeps TSY runtime blocks required so a full token budget cannot drop events", () => {
+    for (const recipe of [CALAMITY_RECIPE, MUTATION_RECIPE, ERA_RECIPE]) {
+      const block = recipe.blocks.find((candidate) => candidate.name === "tsy_runtime_events");
+      expect(
+        block?.required,
+        `${recipe.agentName} must treat validated TSY runtime events as required context`,
+      ).toBe(true);
+    }
+  });
 });
 
 describe("context with task-21 world model blocks", () => {

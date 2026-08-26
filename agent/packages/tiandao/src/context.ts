@@ -484,7 +484,7 @@ export const CALAMITY_RECIPE: ContextRecipe = {
     { ...keyPlayerBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...perceptionEnvelopeBlock, priority: 2, required: true },
-    { ...tsyRuntimeEventsBlock, priority: 2, required: false },
+    { ...tsyRuntimeEventsBlock, priority: 2, required: true },
     { ...recentEventsBlock, priority: 3, required: true },
     { ...calamityArsenalBlock, priority: 4, required: false },
     { ...balanceBlock, priority: 5, required: false },
@@ -504,7 +504,7 @@ export const MUTATION_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...perceptionEnvelopeBlock, priority: 2, required: true },
-    { ...tsyRuntimeEventsBlock, priority: 2, required: false },
+    { ...tsyRuntimeEventsBlock, priority: 2, required: true },
     // P4：离屏散修消长喂变化时代（感知世界格局变化），紧跟 perception。
     { ...offscreenWarBlock, priority: 3, required: false },
     { ...balanceBlock, priority: 4, required: false },
@@ -525,7 +525,7 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
     { ...perceptionEnvelopeBlock, priority: 3, required: true },
-    { ...tsyRuntimeEventsBlock, priority: 3, required: false },
+    { ...tsyRuntimeEventsBlock, priority: 3, required: true },
     // P4：离屏散修消长喂演绎时代（总结历史走势），紧跟 perception。
     { ...offscreenWarBlock, priority: 4, required: false },
     { ...balanceBlock, priority: 5, required: false },
