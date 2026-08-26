@@ -390,7 +390,7 @@ describe("redis-ipc", () => {
     expect(ipc.drainTsyRuntimeEvents()).toEqual([]);
   });
 
-  it("warns when the Redis TSY bridge drops the oldest event at its buffer limit", async () => {
+  it("aggregates one Redis TSY bridge overflow warning per drain window", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -401,7 +401,7 @@ describe("redis-ipc", () => {
     const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
 
     await ipc.connect();
-    for (let tick = 0; tick <= 128; tick += 1) {
+    for (let tick = 0; tick < 256; tick += 1) {
       await sub.publish(
         TSY_EVENT,
         JSON.stringify({
@@ -417,13 +417,17 @@ describe("redis-ipc", () => {
     }
 
     expect(ipc.getLatestTsyRuntimeEvents(), "bridge overflow must retain only the bounded newest window").toHaveLength(128);
-    expect(ipc.getLatestTsyRuntimeEvents()[0], "the oldest event must be the one explicitly reported as dropped").toEqual(
-      expect.objectContaining({ kind: "tsy_exit", tick: 1 }),
+    expect(ipc.getLatestTsyRuntimeEvents()[0], "the retained window must begin after the 128 oldest events were dropped").toEqual(
+      expect.objectContaining({ kind: "tsy_exit", tick: 128 }),
     );
+    expect(warn, "overflow must be aggregated until the consumer drains the bridge").not.toHaveBeenCalled();
+    expect(ipc.drainTsyRuntimeEvents(), "drain must preserve the newest bounded payload window").toHaveLength(128);
     expect(
-      warn.mock.calls.map(([message]) => String(message)).some((message) => message.includes("tsy runtime event buffer overflow")),
-      "bridge-level truncation must emit an observable overflow warning instead of silently dropping TSY events",
-    ).toBe(true);
+      warn.mock.calls.map(([message]) => String(message)),
+      "bridge-level truncation must emit one cumulative warning instead of a warning per dropped event",
+    ).toEqual([expect.stringContaining("tsy runtime event buffer overflow: dropped oldest events (count=128")]);
+    expect(ipc.drainTsyRuntimeEvents(), "a completed drain window must not replay its overflow warning").toEqual([]);
+    expect(warn, "the next empty drain must not emit another warning").toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 

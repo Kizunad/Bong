@@ -267,6 +267,7 @@ export class RedisIpc {
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestFaunaEcologyEvents: FaunaEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
+  private pendingTsyRuntimeOverflowDropped = 0;
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
   private tsyRuntimeCallbacks: Array<(event: TsyRuntimeEventV1) => void> = [];
@@ -440,10 +441,7 @@ export class RedisIpc {
     this.latestTsyRuntimeEvents.push(event);
     if (this.latestTsyRuntimeEvents.length > TSY_RUNTIME_EVENT_BUFFER_LIMIT) {
       const droppedCount = this.latestTsyRuntimeEvents.length - TSY_RUNTIME_EVENT_BUFFER_LIMIT;
-      console.warn(
-        `[redis-ipc] tsy runtime event buffer overflow: dropped oldest events ` +
-        `(count=${droppedCount}, retained=${TSY_RUNTIME_EVENT_BUFFER_LIMIT})`,
-      );
+      this.pendingTsyRuntimeOverflowDropped += droppedCount;
       this.latestTsyRuntimeEvents = this.latestTsyRuntimeEvents.slice(-TSY_RUNTIME_EVENT_BUFFER_LIMIT);
     }
     for (const cb of this.tsyRuntimeCallbacks) {
@@ -843,6 +841,13 @@ export class RedisIpc {
   /** Drain validated enter/exit events for the single Tiandao runtime consumer. */
   drainTsyRuntimeEvents(): TsyRuntimeEventV1[] {
     const events = [...this.latestTsyRuntimeEvents];
+    if (this.pendingTsyRuntimeOverflowDropped > 0) {
+      console.warn(
+        `[redis-ipc] tsy runtime event buffer overflow: dropped oldest events ` +
+        `(count=${this.pendingTsyRuntimeOverflowDropped}, retained=${TSY_RUNTIME_EVENT_BUFFER_LIMIT})`,
+      );
+      this.pendingTsyRuntimeOverflowDropped = 0;
+    }
     this.latestTsyRuntimeEvents = [];
     return events;
   }
