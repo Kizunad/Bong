@@ -439,6 +439,11 @@ export class RedisIpc {
   private recordTsyRuntimeEvent(event: TsyRuntimeEventV1): void {
     this.latestTsyRuntimeEvents.push(event);
     if (this.latestTsyRuntimeEvents.length > TSY_RUNTIME_EVENT_BUFFER_LIMIT) {
+      const droppedCount = this.latestTsyRuntimeEvents.length - TSY_RUNTIME_EVENT_BUFFER_LIMIT;
+      console.warn(
+        `[redis-ipc] tsy runtime event buffer overflow: dropped oldest events ` +
+        `(count=${droppedCount}, retained=${TSY_RUNTIME_EVENT_BUFFER_LIMIT})`,
+      );
       this.latestTsyRuntimeEvents = this.latestTsyRuntimeEvents.slice(-TSY_RUNTIME_EVENT_BUFFER_LIMIT);
     }
     for (const cb of this.tsyRuntimeCallbacks) {

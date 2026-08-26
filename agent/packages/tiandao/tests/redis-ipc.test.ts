@@ -390,6 +390,43 @@ describe("redis-ipc", () => {
     expect(ipc.drainTsyRuntimeEvents()).toEqual([]);
   });
 
+  it("warns when the Redis TSY bridge drops the oldest event at its buffer limit", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+
+    await ipc.connect();
+    for (let tick = 0; tick <= 128; tick += 1) {
+      await sub.publish(
+        TSY_EVENT,
+        JSON.stringify({
+          v: 1,
+          kind: "tsy_exit",
+          tick,
+          player_id: "offline:Azure",
+          family_id: "tsy_lingxu_01",
+          duration_ticks: 5_000,
+          qi_drained_total: 0,
+        }),
+      );
+    }
+
+    expect(ipc.getLatestTsyRuntimeEvents(), "bridge overflow must retain only the bounded newest window").toHaveLength(128);
+    expect(ipc.getLatestTsyRuntimeEvents()[0], "the oldest event must be the one explicitly reported as dropped").toEqual(
+      expect.objectContaining({ kind: "tsy_exit", tick: 1 }),
+    );
+    expect(
+      warn.mock.calls.map(([message]) => String(message)).some((message) => message.includes("tsy runtime event buffer overflow")),
+      "bridge-level truncation must emit an observable overflow warning instead of silently dropping TSY events",
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
   it("warns and drops invalid or unknown TSY enter/exit payloads", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
