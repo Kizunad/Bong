@@ -108,15 +108,25 @@ def _value_at(anim: dict, bone: str, channel: str, tick: float):
     if entry is None:
         return None
     want = tick / TICKS_PER_SECOND
-    for kf in entry["keyframes"]:
+    for kf in _keyframes(entry):
         if kf["channel"] == channel and abs(kf["time"] - want) < 1e-6:
             point = kf["data_points"][0]
             return [float(point.get(axis, 0) or 0) for axis in "xyz"]
     return None
 
 
+def _keyframes(entry: dict) -> list:
+    """animator 的关键帧列表；**没有关键帧的骨头连 `keyframes` 键都没有**。
+
+    Blockbench 会给「在动画模式下点选过、但一帧没打」的骨头也写一条 animator 记录，形如
+    `{"name": ..., "type": "bone", "rotation_global": false, ...}`——`keyframes` 整个缺席。
+    本仓的 `club_right_*`（棍子挂在手上的静态转接层）就是这种。直接下标会 KeyError。
+    """
+    return entry.get("keyframes", [])
+
+
 def keyframe_ticks(anim: dict) -> list[float]:
-    times = {kf["time"] for entry in anim["animators"].values() for kf in entry["keyframes"]}
+    times = {kf["time"] for entry in anim["animators"].values() for kf in _keyframes(entry)}
     return sorted(round(t * TICKS_PER_SECOND, 4) for t in times)
 
 

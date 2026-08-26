@@ -35,6 +35,7 @@ for _d in (LIB_DIR / "core", LIB_DIR / "generators", LIB_DIR / "tools",
 
 import gen_wooden_club as GC  # noqa: E402
 import preview_player_anim as P  # noqa: E402
+import held_item_pose as HIP  # noqa: E402
 import render_animation as RA  # noqa: E402
 
 ANIM = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
@@ -48,6 +49,17 @@ GRIP_PX = np.array([8.0, 8.0, 8.0, 1.0])
 SMASH = ("club_smash", 12.0, 5.0, 7.0)
 SWEEP = ("club_sweep", 8.0, 3.0, 5.0)
 BOTH = (SMASH, SWEEP)
+
+# 握法分组。**这不是分类学，是判据的适用域**：单手招式里副手是自由的，可以反相呼吸、
+# 手臂要伸展去够；双手招式里副手被锁在棍上，这两条判据换成"副手真的在棍上"和"棍头真的
+# 送出去了"。拿单手的判据去卡双手，等于要求玩家一只手握着棍还得同时把它甩开。
+ONE_HANDED = (SMASH,)
+TWO_HANDED = (SWEEP,)
+
+# 头的轮廓，相对右肩枢轴、ModelPart 系（+X 玩家左、+Y 朝下）。右肩在中线右 5px，
+# 所以头心落在 x=+5、y=-6，各向半宽 4px。
+HEAD_X = (1.0, 9.0)
+HEAD_Y = (-10.0, -2.0)
 
 
 def _emote(name):
@@ -67,6 +79,13 @@ def _club_head(kfs, tick):
 def _grip(kfs, tick):
     M = P.item_attach_modelpart(kfs, tick, DISPLAY)
     return (M @ GRIP_PX)[:3] - SHOULDER
+
+
+def _club_point(kfs, tick, frac):
+    """棍身上按比例取点（0 = 棍尾，1 = 棍头），相对右肩、ModelPart 系。"""
+    M = P.item_attach_modelpart(kfs, tick, DISPLAY)
+    butt = np.array([8.0, 8.0 - GC.GRIP * 16.0, 8.0, 1.0])
+    return (M @ (butt + (HEAD_PX - butt) * frac))[:3] - SHOULDER
 
 
 def _elevation(kfs, tick):
@@ -128,19 +147,34 @@ class ClubSwingShapeTest(unittest.TestCase):
                            f"横/竖 = {lateral / vertical:.2f}，弧线太斜，和抡砸分不开")
 
     def test_the_sweep_never_crosses_the_face(self) -> None:
-        """横抡全程棍头不得高过肩线。
+        """横抡全程不得从**脸的正前方**横过去。
 
-        第一版整条弧摆在肩高（撞击帧棍头高于肩 1.3px），竖直行程只有 0.7px——数字上
-        比现在还平，渲出来却是贴着**下巴**扫过去的，正视图里整根棍横在脸前面。棍确实
-        在人体前方、并没穿模，但"挡住脸"本身就是缺陷。压到胸腹高的代价是竖直行程涨到
-        14.6px，这是**刻意换的**，别再按"更平"把它调回去。
+        第一版整条弧摆在肩高，数字上更平（竖直行程 0.7px），渲出来棍是贴着下巴扫的。
+        棍确实在人体前方、并没穿模，可"挡住脸"本身就是缺陷。
+
+        判据一度写成「棍头不得高过肩线」——那是个**代理**，在 v1 的几何里恰好等价，
+        换成 v2 从左侧起手就失效了：v2 的 guard 棍头在肩上 5.5px，但那是在身体左外侧
+        17px 处，离脸远得很。反过来它也漏报——v1 真正的毛病是棍在脸**前方** 10px 处
+        横过，三维上根本不相交，靠高度差也测不出来。
+
+        所以这里量真正要禁的东西：**正面投影的遮挡**。棍身在身前（z<0）时，沿棍取样的
+        任何一点都不许落进头的正面轮廓里。v2 因此专门加了 tick 7——没有它，收势直线插值
+        会让棍在 t7.25 从脸前 15px 处扫过。
         """
         name, end, _, _ = SWEEP
         kfs = _kfs(name)
-        worst = max(((-_club_head(kfs, end * i / 96)[1], end * i / 96) for i in range(97)))
-        self.assertLess(
-            worst[0], 0.0,
-            f"t{worst[1]:g} 棍头高于肩 {worst[0]:.1f}px —— 会从脸前面扫过去")
+        for i in range(129):
+            tick = end * i / 128
+            for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+                x, y, z = _club_point(kfs, tick, frac)
+                if z >= 0.0:                      # 棍在身后，挡不到脸
+                    continue
+                blocked = (HEAD_X[0] <= x <= HEAD_X[1]
+                           and HEAD_Y[0] <= y <= HEAD_Y[1])
+                self.assertFalse(
+                    blocked,
+                    f"t{tick:.2f} 棍身 {frac:.0%} 处落在脸的正前方 "
+                    f"(左{x:.1f} 下{y:.1f} 前{-z:.1f}px) —— 会把脸挡住")
 
     def test_the_two_swings_are_orthogonal(self) -> None:
         """一纵一横。这是招式差异化的底线：远处只看剪影就得分得出。"""
@@ -269,11 +303,11 @@ class ClubPostureTest(unittest.TestCase):
                 f"{name}: guard 到撞击棍头只走了 {travel:.1f}px —— guard 多半还没进入架势")
 
     def test_the_elbow_opens_but_never_locks(self) -> None:
-        """肘在撞击时要打开（不像匕首那样全程蜷着），但绝不锁死（不像剑刺打直到 3）。
+        """单手招式：肘在撞击时要打开（不像匕首那样全程蜷着），但绝不锁死。
 
         锁肘挥棍是真会伤到自己的动作；而全程蜷着等于放弃棍长带来的力矩。
         """
-        for name, end, load, impact in BOTH:
+        for name, end, load, impact in ONE_HANDED:
             bends = [math.degrees(v) for _, v, _ in _kfs(name)["rightArm"]["bend"]]
             at_impact = math.degrees(RA.sample_part(_kfs(name), "rightArm", impact)["bend"])
             self.assertGreaterEqual(
@@ -285,6 +319,32 @@ class ClubPostureTest(unittest.TestCase):
             self.assertGreater(
                 max(bends), 60.0,
                 f"{name} 右肘最大 bend={max(bends):.0f}° —— 蓄势时没折起来")
+
+    def test_two_handed_reach_comes_from_the_club_not_the_arm(self) -> None:
+        """双手招式：不要求肘伸直，要求**棍头真的送出去**。
+
+        双手握时上手（这里是持棍的右手）在触击瞬间本来就是屈的——棒球触球那一刻上手肘
+        约 90°，力矩来自两条手臂加躯干构成的闭链，不来自单臂伸展。实测双手横抡撞击帧
+        bend=118°，而想把它压到 50° 以下的唯一办法是让副手滑到棍尾、离轴 2.4px（即
+        "看着不像握着"）——那是拿真正的判据去换一个不适用的代理。
+
+        所以这里锁真正怕丢的东西：棍头得送到身前、且远比手走得多（钝器杀伤在头部）。
+        """
+        for name, end, load, impact in TWO_HANDED:
+            kfs = _kfs(name)
+            bends = [math.degrees(v) for _, v, _ in kfs["rightArm"]["bend"]]
+            self.assertGreaterEqual(
+                min(bends), 12.0,
+                f"{name} 右肘最小 bend={min(bends):.0f}° —— 锁死了")
+            forward = -_club_head(kfs, impact)[2]
+            self.assertGreater(
+                forward, 8.0,
+                f"{name} 撞击帧棍头只到身前 {forward:.1f}px —— 棍没送出去")
+            span = max(abs(_club_head(kfs, impact)[0] - _club_head(kfs, load)[0]),
+                       0.001)
+            self.assertGreater(
+                span, 18.0,
+                f"{name} LOAD→撞击棍头只横移 {span:.1f}px —— 抡不成抡")
 
     def test_stance_is_a_constant_whole_body_rotation(self) -> None:
         """`body.yaw` 必须存在且**全程恒定**。
@@ -339,9 +399,9 @@ class ClubPostureTest(unittest.TestCase):
                                        msg=f"{name} t{tick:g}: body.roll 非零")
 
     def test_the_off_hand_breathes(self) -> None:
-        """副手不能全程静止，否则观众会觉得那只手是挂在肩上的假肢（§2.4）。
+        """单手招式：副手不能全程静止，否则观众会觉得那只手是挂在肩上的假肢（§2.4）。
         而且 LOAD 与 IMPACT 要**反相**：都朝同方向变只是"慢慢收紧"，读作跟随不是呼吸。"""
-        for name, end, load, impact in BOTH:
+        for name, end, load, impact in ONE_HANDED:
             kfs = _kfs(name)
             guard = math.degrees(RA.sample_part(kfs, "leftArm", 0.0)["bend"])
             at_load = math.degrees(RA.sample_part(kfs, "leftArm", load)["bend"])
@@ -351,6 +411,34 @@ class ClubPostureTest(unittest.TestCase):
             self.assertGreater(at_impact, guard + 5.0,
                                f"{name}: 副手 IMPACT 时没有猛收（{guard:.0f}→{at_impact:.0f}）")
 
+    def test_the_off_hand_actually_holds_the_club(self) -> None:
+        """双手招式：副手**全程**握在棍身上。这条取代"副手呼吸"——手锁在棍上就不该呼吸。
+
+        这件事眼睛判不了：左腕差 3px 就是"手悬在棍旁边"，而 3px 在正视图里只有一个多
+        像素，截图上看不出来，进游戏一转视角就露馅。v1 单手版本的副手全程离棍身 16px，
+        改双手前谁也没发现——因为没人量过。
+
+        取样到 1/4 tick：只卡关键帧会漏掉插值中段甩脱（实测 t4 附近最远，2.05px）。
+        """
+        for name, end, load, impact in TWO_HANDED:
+            kfs = _kfs(name)
+            worst = (0.0, -1.0)
+            for i in range(int(end * 4) + 1):
+                tick = i / 4.0
+                butt = _club_point(kfs, tick, 0.0)
+                head = _club_point(kfs, tick, 1.0)
+                axis = head - butt
+                wrist = HIP.wrist(kfs, "leftArm", tick) - SHOULDER
+                frac = float(np.clip(np.dot(wrist - butt, axis) / np.dot(axis, axis),
+                                     0.0, 1.0))
+                dist = float(np.linalg.norm(wrist - (butt + axis * frac)))
+                worst = max(worst, (dist, tick))
+                self.assertGreater(
+                    frac, 0.02,
+                    f"{name} t{tick:g}: 副手滑到棍尾外（{frac:.0%}）—— 那是空抓")
+            self.assertLess(
+                worst[0], 2.5,
+                f"{name} t{worst[1]:g}: 副手离棍身轴线 {worst[0]:.2f}px —— 没握住")
 
 class ClubGripTest(unittest.TestCase):
     """棍必须真的被握在手里——所有量棍头位置的断言都建立在这上面。"""
