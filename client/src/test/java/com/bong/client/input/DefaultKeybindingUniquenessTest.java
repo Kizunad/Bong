@@ -114,11 +114,11 @@ class DefaultKeybindingUniquenessTest {
         assertHasDefault(bindings,
             "forge/ForgeScreenBootstrap.java:forge.open_screen", "UNKNOWN");
 
-        String identity = compact(codeOnly(read(IDENTITY_BOOTSTRAP)));
-        assertTrue(identity.contains("client.setScreen(newIdentityPanelScreen());"),
+        String identity = codeOnly(read(IDENTITY_BOOTSTRAP));
+        assertTrue(identity.contains("client.setScreen(new IdentityPanelScreen());"),
             "O 的唯一默认 owner 必须仍打开身份面板这个独占 screen");
-        String voidAction = compact(codeOnly(read(VOID_ACTION_BOOTSTRAP)));
-        assertTrue(voidAction.contains("client.setScreen(newVoidActionScreen());"),
+        String voidAction = codeOnly(read(VOID_ACTION_BOOTSTRAP));
+        assertTrue(voidAction.contains("client.setScreen(new VoidActionScreen());"),
             "化虚行动保留可重绑入口时必须仍打开自己的独占 screen");
         String extract = compact(codeOnly(read(EXTRACT_BOOTSTRAP)));
         assertTrue(extract.contains("while(cancelKey.wasPressed()&&ExtractStateStore.snapshot().extracting())"),
