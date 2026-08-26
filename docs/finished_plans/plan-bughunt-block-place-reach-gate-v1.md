@@ -85,3 +85,13 @@
 - 拒绝时机：修复点必须卡在 `consume_item_instance_once`（L220）之前。若不慎放在消耗之后，会把"未授权的远距放置"改造成"扣道具但放置失败"的更差回归，等同于新增一个吞物品 bug。
 - 范围蔓延风险：`docs/finished_plans/plan-block-lifecycle-v1.md` §11 #4 里提到的"spawn-zone 保护"是比 reach gate 大得多的独立设计问题（涉及区域权限、他人领地判定等），本 plan 严禁顺手把两者混在一起实现，否则会把一个小修复膨胀成一个新功能 plan，违反最小正确修复原则。
 - 线上已有数据：若已有玩家利用此漏洞在远处放置了容器/方块，修复 gate 不会自动清除已放置的方块——这属于运营侧清理范畴，不在本 plan 修复范围内，仅在此风险项中提示知悉。
+
+## Finish Evidence
+
+- **落地清单**：`server/src/world/block_place.rs` 增加 `PLACE_REACH_BLOCKS=6.0` 权威距离门、`BlockPlaceRejectReason::TooFar` 及有限距离 fail-closed 判断；handler 集成测试覆盖边界、略超距、极远、跨维、容器不消费/不生成和非有限坐标。
+- **关键 commit**：`5c1462a2e`（2026-08-25，promotion 为 active plan）；`d1109827d`（2026-08-25，服务端 block place reach gate 与饱和回归测试）。
+- **测试结果**：`scripts/build-token.sh cargo fmt --check` 通过；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 通过；`scripts/build-token.sh cargo test` 通过，主测试 `12773 passed, 0 failed, 2 ignored`，其余 integration/doc tests 全部通过；block place focused suite `41 passed`。
+- **跨仓库核验**：本修复是纯 server C2S 权威校验，不修改 schema、client 或 agent；server 入口继续复用既有 `BlockPlaceRequest`/`handle_block_place_requests`。
+- **validator**：fresh-context 只读 validator 对拍 HEAD `c1679ba054a909725b4ca9a9e2c85b3500a8ead3` 并 PASS；已 fetch+merge `origin/main=d12e280faf3842100bcdc0e5e7803b5a70552cba`，无冲突。
+- **review 修正**：归档保留原始 `Skeleton Fix Plan` 阶段文本，完成状态仅由本节记录。
+- **遗留 / 后续**：spawn-zone protection、领地权限和既有远距历史数据清理不在本 plan 范围；保留给独立设计/运营任务。

@@ -59,7 +59,7 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 修正 `isWordLikeCharacter`（`agent/packages/tiandao/src/arbiter.ts:662-664`）的判定策略：当前 `\p{L}` 覆盖了汉字（Unicode 类目 Lo），但中文书写没有词间空格的书写惯例，"紧邻汉字"不该被当作"这是同一个不可拆分 token 的延续"。改为把 Han 文字从"word-like（会阻断脱敏边界）"判定里剔除，例如：
+- [x] ✅ 2026-08-26 修正 `isWordLikeCharacter`（`agent/packages/tiandao/src/arbiter.ts`）的判定策略：当前 `\p{L}` 覆盖了汉字（Unicode 类目 Lo），但中文书写没有词间空格的书写惯例，"紧邻汉字"不该被当作"这是同一个不可拆分 token 的延续"。改为把 Han 文字从"word-like（会阻断脱敏边界）"判定里剔除。
   ```ts
   function isWordLikeCharacter(char: string | undefined): boolean {
     if (char === undefined) return false;
@@ -68,10 +68,10 @@
   }
   ```
   效果：名字前/后紧邻普通汉字时，`hasNameBoundary` 不再因为"汉字是 word-like"而返回 false，脱敏分支正常触发；同时保留对 ASCII 字母/数字/下划线/冒号/连字符连续拼接的边界保护（防止 `TestPlayer` 被 `TestPlayerX` 之类更长 token 误伤截断）。
-- [ ] 同步更新 `hasNameBoundary`（L658-660）上方注释，明确其语义变化为"前后不是同一（非 Han）书写系统下的延续字符"，避免后续维护者误以为它仍是纯粹的"是否为字母数字"判定。
-- [ ] 复核 `redactIdentifierToken`（L622-629，用于 uuid，无边界判定、全词替换）与修复后的 `redactChinesePlayerNameToken`（有边界判定）两条路径的语义差异是否仍然合理：uuid 误撞概率低所以走无条件替换，玩家名需要防止长单词内部子串误伤所以走边界判定——若认可这个既有设计区分，在函数上方各补一行注释说明"为什么这两条路径处理方式不同"，不合并成一套逻辑。
-- [ ] 评估 `trimmed.length < 2` 早退分支（L633-635）：当前任何 1 字符玩家名完全不脱敏。修复本 bug 时**不擅自放开**这条阈值（1 字符中文名在正文中撞车概率极高，属于独立的设计取舍），但在 plan 文档里记录这是已知的、范围外的行为，留给后续 plan 决策是否需要更保守的策略（如禁止注册 1 字符显示名）。
-- [ ] 不改动 `redactPlayerNames`（L239-254）/`applyNarrationScopeRules`（L187）的调用时机与顺序——本 bug 的修复面严格限定在"边界判定用什么字符集"这一层，不重新设计脱敏调用链。
+- [x] ✅ 2026-08-26 同步更新 `hasNameBoundary` 注释，明确其语义为"前后不是同一（非 Han）书写系统下的延续字符"。
+- [x] ✅ 2026-08-26 复核并保留 `redactIdentifierToken`（uuid 无边界全词替换）与 `redactChinesePlayerNameToken`（玩家名边界判定）的既有语义差异，并补充注释说明原因。
+- [x] ✅ 2026-08-26 保留 `trimmed.length < 2` 早退分支；单字符玩家名仍是范围外已知行为，已由回归测试显式锁定。
+- [x] ✅ 2026-08-26 未改动 `redactPlayerNames` / `applyNarrationScopeRules` 的调用时机与顺序，修复限定在边界字符集判定层。
 
 ## 验收测试计划
 
@@ -101,3 +101,37 @@
 - **`redactIdentifierToken`（uuid 路径）未同步修复**：该函数无边界判定、全词替换，理论上比玩家名路径更容易误伤（uuid 恰好是另一段文本子串的概率极低但非零）。本次修复范围严格限定在 `redactChinesePlayerNameToken`/`hasNameBoundary`/`isWordLikeCharacter` 三者，不顺手改 `redactIdentifierToken`，避免修复面扩散；该函数的设计取舍需要在 plan 文档里存档说明，供后续追溯。
 - **修复面仅限 agent 侧**：本 bug 与 server/client 无关（纯 TypeScript 文本处理，运行于 tiandao Agent 合并阶段），修复不触达 `server/src/social/mod.rs` 的 `SocialAnonymity` 广播逻辑。若日后 server 侧对同一段 narration 文本做二次转发/持久化，需要单独确认没有绕开本次修复重新引入明文玩家名的分支。
 - **1 字符玩家名早退分支维持现状**：修复不改变 `trimmed.length < 2` 的既有放行行为，1 字符名玩家的脱敏缺口仍然存在且已知，留待独立决策（如是否应禁止注册单字显示名）。
+
+## Finish Evidence
+
+### 落地清单
+
+- `agent/packages/tiandao/src/arbiter.ts`：Han 字符不再阻断玩家名脱敏边界；边界邻居按完整 Unicode code point 解码，保留非 Han word-like 字符对长 token 的保护。
+- `agent/packages/tiandao/tests/arbiter.test.ts`：补齐中文/ASCII 邻接、起止边界、重复命中、broadcast/zone/player scope、ASCII 与补充平面长 token 防误伤和单字符既有策略测试。
+- `docs/finished_plans/plan-bughunt-arbiter-cjk-redaction-bypass-v1.md`：本 plan 完成归档。
+
+### 关键 commit
+
+- `49382487b000aebfcdad8085e1d63809ad5d8748`（2026-08-26）：提升 plan 为 Active。
+- `6e2efe474d411982ad07c3d540a45fec4d4e5295`（2026-08-26）：修复 Han 邻接脱敏绕过并补饱和测试。
+- `77f3ae395`（2026-08-26）：修复 UTF-16 半 surrogate 边界误判并补充平面字母回归测试。
+
+### 测试结果
+
+- `npm run build -w @bong/schema`：PASS（为 workspace 类型依赖生成 dist）。
+- `cd agent/packages/tiandao && npm test`：PASS，72 test files、862 tests。
+- Fresh read-only validator：PASS，目标 SHA `6e2efe474d411982ad07c3d540a45fec4d4e5295`，validator 模型 `gpt-5.6-luna`。
+- review validator 发现并锁定 `TestPlayer𐐀abc` 长 token 边界；修复后 Agent gate 仍为 72 test files、862 tests 全部通过，最终 HEAD 另行 fresh validator 对拍。
+- `git fetch origin && git merge origin/main`：Already up to date；未引入需复验的主线变更。
+
+### 跨仓库核验
+
+- Agent：`Arbiter.merge` → `applyNarrationScopeRules` → `redactPlayerNames` → `isWordLikeCharacter`，本次修复命中该链路。
+- Server：无修改；不存在新的 Redis / server IPC 接线。
+- Client：无修改；不存在新的 wire/UI 接线。
+- Schema：无修改；仅为本地 Agent gate 构建已有 workspace 类型产物。
+
+### 遗留 / 后续
+
+- 单字符显示名仍按既有 `trimmed.length < 2` 策略不脱敏，是否禁止或收紧单字符显示名另立任务。
+- UUID 全词替换与玩家名边界替换的差异保持不变；若未来出现 UUID 子串误伤案例，另立独立 plan。
