@@ -106,20 +106,22 @@
 
 ### 落地清单
 
-- `agent/packages/tiandao/src/arbiter.ts`：Han 字符不再阻断玩家名脱敏边界；保留非 Han word-like 字符对长 token 的保护。
-- `agent/packages/tiandao/tests/arbiter.test.ts`：补齐中文/ASCII 邻接、起止边界、重复命中、broadcast/zone/player scope、长 token 防误伤和单字符既有策略测试。
+- `agent/packages/tiandao/src/arbiter.ts`：Han 字符不再阻断玩家名脱敏边界；边界邻居按完整 Unicode code point 解码，保留非 Han word-like 字符对长 token 的保护。
+- `agent/packages/tiandao/tests/arbiter.test.ts`：补齐中文/ASCII 邻接、起止边界、重复命中、broadcast/zone/player scope、ASCII 与补充平面长 token 防误伤和单字符既有策略测试。
 - `docs/finished_plans/plan-bughunt-arbiter-cjk-redaction-bypass-v1.md`：本 plan 完成归档。
 
 ### 关键 commit
 
 - `49382487b000aebfcdad8085e1d63809ad5d8748`（2026-08-26）：提升 plan 为 Active。
 - `6e2efe474d411982ad07c3d540a45fec4d4e5295`（2026-08-26）：修复 Han 邻接脱敏绕过并补饱和测试。
+- `77f3ae395`（2026-08-26）：修复 UTF-16 半 surrogate 边界误判并补充平面字母回归测试。
 
 ### 测试结果
 
 - `npm run build -w @bong/schema`：PASS（为 workspace 类型依赖生成 dist）。
 - `cd agent/packages/tiandao && npm test`：PASS，72 test files、862 tests。
 - Fresh read-only validator：PASS，目标 SHA `6e2efe474d411982ad07c3d540a45fec4d4e5295`，validator 模型 `gpt-5.6-luna`。
+- review validator 发现并锁定 `TestPlayer𐐀abc` 长 token 边界；修复后 Agent gate 仍为 72 test files、862 tests 全部通过，最终 HEAD 另行 fresh validator 对拍。
 - `git fetch origin && git merge origin/main`：Already up to date；未引入需复验的主线变更。
 
 ### 跨仓库核验
