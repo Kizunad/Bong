@@ -34,7 +34,7 @@ public final class ExtractInteractionBootstrap {
                 new BongKeybindRegistry.BindingOwner("tsy.extract_cancel"),
                 CANCEL_KEY_TRANSLATION,
                 InputUtil.Type.KEYSYM,
-                InputUtil.UNKNOWN_KEY.getCode(),
+                GLFW.GLFW_KEY_U,
                 CATEGORY
             )
         );

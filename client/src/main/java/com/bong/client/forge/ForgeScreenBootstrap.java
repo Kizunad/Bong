@@ -6,7 +6,6 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import org.lwjgl.glfw.GLFW;
 
 /** plan-forge-v1 §3.3 — 右键砧方块 / 按键打开锻炉 UI 的启动器。 */
 public final class ForgeScreenBootstrap {
@@ -19,7 +18,9 @@ public final class ForgeScreenBootstrap {
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(ForgeScreenBootstrap::onEndClientTick);
-        BongClient.LOGGER.info("Registered forge screen bootstrap keybinding on key: U");
+        BongClient.LOGGER.info(
+            "Registered forge screen bootstrap keybinding (default unbound; configure in controls)."
+        );
     }
 
     private static void onEndClientTick(MinecraftClient client) {
@@ -36,7 +37,7 @@ public final class ForgeScreenBootstrap {
                     new BongKeybindRegistry.BindingOwner("forge.open_screen"),
                     OPEN_KEY_TRANSLATION,
                     InputUtil.Type.KEYSYM,
-                    GLFW.GLFW_KEY_U,
+                    InputUtil.UNKNOWN_KEY.getCode(),
                     CATEGORY
                 )
             );

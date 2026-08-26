@@ -3,8 +3,8 @@ spirit_treasure_open	key.bong-client.open_spirit_treasure_screen	KEYSYM	T	KEYSYM
 lingtian_open	key.bong-client.open_lingtian_action_screen	KEYSYM	L	KEYSYM	UNKNOWN	VANILLA_ADVANCEMENTS	lingtian/LingtianActionScreenBootstrap.java	Leave screen hotkey unbound by default; interaction entry remains available.
 identity_open	key.bong-client.open_identity_panel	KEYSYM	O	KEYSYM	O	BONG_O_DUPLICATE	identity/IdentityPanelScreenBootstrap.java	Keep the established identity entry point.
 void_action_open	key.bong-client.open_void_action_screen	KEYSYM	O	KEYSYM	UNKNOWN	BONG_O_DUPLICATE	cultivation/voidaction/VoidActionScreenBootstrap.java	Leave the secondary O action unbound by default.
-forge_open	key.bong-client.open_forge_screen	KEYSYM	U	KEYSYM	U	BONG_U_DUPLICATE	forge/ForgeScreenBootstrap.java	Keep the established forge entry point.
-extract_cancel	key.bong-client.tsy_extract_cancel	KEYSYM	U	KEYSYM	UNKNOWN	BONG_U_DUPLICATE	tsy/ExtractInteractionBootstrap.java	Leave cancellation unbound; active interaction UI remains authoritative.
+forge_open	key.bong-client.open_forge_screen	KEYSYM	U	KEYSYM	UNKNOWN	BONG_U_DUPLICATE	forge/ForgeScreenBootstrap.java	Leave the forge screen unbound by default; TSY extraction cancellation owns U during extraction.
+extract_cancel	key.bong-client.tsy_extract_cancel	KEYSYM	U	KEYSYM	U	BONG_U_DUPLICATE	tsy/ExtractInteractionBootstrap.java	Keep extraction cancellation on U; the extracting path is authoritative and Forge remains unbound.
 botany_auto	key.bong-client.botany_auto_harvest	KEYSYM	R	KEYSYM	UNKNOWN	BONG_R_DUPLICATE	botany/BotanyHudBootstrap.java	Remove the passive automation default; drain queued presses while session/screen preconditions reject dispatch; prove no later replay.
 spell_volume_hold	key.bong-client.spell_volume_hold	KEYSYM	R	KEYSYM	R	BONG_R_DUPLICATE	combat/CombatKeybindings.java	Keep the combat hold action on R.
 dying_elder_give	key.bong-client.dying_elder_give_dan	KEYSYM	UNKNOWN	KEYSYM	UNKNOWN	HUD_LABEL_MISMATCH	dying_elder/DyingElderInteractionKeybindings.java	HUD must resolve the effective binding instead of promising G; show unbound explicitly; the unified G router remains unique.
