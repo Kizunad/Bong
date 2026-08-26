@@ -27,12 +27,12 @@ Blockbench 没有 bend 概念（那是 bendy-lib 在渲染期折 cuboid 顶点�
 
 ## 角度换算（改完姿态要写回 `client/tools/gen_club_*.py` 时按这个反推）
 
-    静态 group.rotation（标准右手系）:  bb.x = -pitch, bb.y = +yaw, bb.z = -roll
-    动画 keyframe（Bedrock 约定，X/Y 取反、Z 不取反，叠加上面那层之后）:
-                                        X 写 +pitch, Y 写 -yaw, Z 写 -roll
-    body 位移: bb = (-x, -y, +z) × 16    （米 → px，同样吃 Bedrock 的 X 取反）
+    静态 group.rotation 和动画 keyframe **同一套**（都是标准右手系）:
+        bb.x = -pitch,  bb.y = +yaw,  bb.z = -roll
+    body 位移: bb = (x, -y, z) × 16      （米 → px，只翻 y）
 
-**两套符号不一样，别混用**——静态字段和动画通道在 Blockbench 里走的是两条码路。
+第一版按锏那份的注释写成了「动画通道 X/Y 取反」，结果 Blockbench 里看到的是 pitch/yaw
+双双镜像的姿态。修正的依据是一次真实往返，详见 `AXIS_LAYERS` 那段注释。
 
 ## 木棍怎么挂在手上
 
@@ -84,16 +84,55 @@ sys.path.insert(0, str(LIB / "generators"))
 import render_jian_in_hand as H  # noqa: E402
 import render_player_pose as P  # noqa: E402
 from gen_jian_player_anim import (  # noqa: E402  骨架/关键帧的公共件，别再抄一份
-    AXIS_LAYERS,
     PART_GROUPS,
     TICKS_PER_SECOND,
     _uuid,
-    bend_single_axis,
     cube_element,
     group,
     keyframe,
     split_cubes,
 )
+
+# ── 关键帧的符号：**本地重定义，不用锏那份的 AXIS_LAYERS** ────────────────────
+# 锏那份注释说动画通道走「Bedrock 约定：X/Y 取反」。**实测是错的。**
+#
+# 证据是一次真实的往返：用户把本文件生成的 bbmodel 在 Blockbench 里打开，只手动改了
+# t=0 那一帧，存盘之后**其余每一个关键帧的 X / Y 都被整齐地取了反、Z 原样**，position
+# 的 X 也取了反。Blockbench 只是把它读进来又写回去——能产生这种系统性翻号，只可能是
+# 写文件时用的约定和我们写进去的那套差一个负号。
+#
+# 也就是说：bbmodel 的 animation 通道和静态 group.rotation 用的是**同一套右手系**，
+# 真正需要的换算只有 MC(y 向下) → bbmodel(y 向上) 那一层：
+#
+#     rotation:  bb.x = -pitch,  bb.y = +yaw,  bb.z = -roll
+#     position:  bb = (x, -y, z) × 16
+#
+# 之前那版按错的符号写出去，Blockbench 里看到的是 **pitch / yaw 双双镜像**的姿态——
+# 而且离线核验抓不到：核验脚本用的是我自己那套假设，两边同错就对拍得上。真正的判据
+# 只有"拿进 Blockbench 转一圈再读回来"。
+#
+# ⚠ `JianPlayerAnim.bbmodel` 是按旧符号生成的，同样带着镜像；修它要连带复验那份资产，
+#    不在本次范围。
+AXIS_LAYERS = (("pitch", 0, -1.0), ("yaw", 1, +1.0), ("roll", 2, -1.0))
+
+
+def bend_single_axis(bend_deg: float, axis_deg: float) -> float:
+    """bend → 单轴 X 旋转（度）。符号同上：和静态 group.rotation 一套右手系。
+
+    bendAxis 语义是"折弯方向绕主轴转多少"，轴 = (cos a, 0, sin a)。本项目的动画只用
+    a=0（绕 +X）与 a=180（绕 −X）两种纯前后折弯，走解析分支而不是通用矩阵分解——JSON
+    存的是弧度，π 转回度数是 180.000003，sin 不严格为 0，通用分解会渗出 1e-6 级的 y/z
+    分量，落到单轴层里表达不了。
+    """
+    if abs(bend_deg) < 1e-9:
+        return 0.0
+    a = axis_deg % 360.0
+    if a < 1.0 or a > 359.0:
+        return -bend_deg      # 轴 +X
+    if abs(a - 180.0) < 1.0:
+        return +bend_deg      # 轴 −X
+    raise AssertionError(
+        f"bendAxis={axis_deg}° 不是纯 X 折弯，单轴层表达不了——需要再拆一层斜轴 group")
 
 REPO = LIB.parent
 ANIM_DIR = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
@@ -212,7 +251,7 @@ def convert_animation(json_path: Path, gmap: dict) -> dict:
         pose = dict(pose)
         body = pose.pop("_body", None)
         if body:
-            pos = [-body.get("x", 0.0) * 16.0, -body.get("y", 0.0) * 16.0,
+            pos = [body.get("x", 0.0) * 16.0, -body.get("y", 0.0) * 16.0,
                    body.get("z", 0.0) * 16.0]
             track("root_pos").append(keyframe("position", t, [round(v, 4) for v in pos]))
             for axis_name, idx, sign in AXIS_LAYERS:
