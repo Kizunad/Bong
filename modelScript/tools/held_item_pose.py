@@ -115,6 +115,10 @@ def solve(display, tip, grip, *, up, right, forward, elev, bend_range,
 
     `two_hand` 传 `{"item": ..., "span": ..., "tol": ...}` 时，只留副手也搭得上棍身的解。
     """
+    if near_tol <= 0:
+        raise ValueError(
+            f"near_tol 是 `--near` 盒子的半径，必须为正，收到 {near_tol!r}"
+            "——负数会让区间首尾颠倒，扫描直接空转，读起来却像'这个目标够不到'")
     p_lo, p_hi = _axis_span(near, near_tol, "pitch", (-100, 60))
     y_lo, y_hi = _axis_span(near, near_tol, "yaw", (-56, 56))
     r_lo, r_hi = _axis_span(near, near_tol, "roll", (-56, 56))
@@ -264,12 +268,26 @@ def solve_off_hand_chain(item, display, right_poses, *, span=(0.20, 0.65),
     """整条右臂轨迹 → 逐帧解出**连贯**的副手。
 
     单帧各解各的会得到一串互不相干的最优解——每帧都贴着棍，串起来却是左臂在乱抽。所以
-    这里按帧推进，每一帧的搜索都夹在上一帧解 ±`near_tol` 的盒子里：先保证连贯，再在连贯
-    的解里挑最贴棍的那个。首帧无约束（没有"上一帧"）。
+    这里按帧推进，让"贴棍"和"跟上一帧连贯"一起进目标函数。首帧无约束（没有"上一帧"）。
 
-    返回和 `right_poses` 等长的列表，元素是 `(dist, pitch, yaw, roll, bend, frac)`；
-    某帧连 `tol` 都满足不了就放 `None`，由调用方决定是放宽还是改右臂。
+    **`near_tol` 是权重，不是闸门——这是有意的，别改成硬过滤。** 它的作用是把"转了多少
+    度"折算成"离棍多少 px"（`swing / near_tol` 加进距离分）。一次真的抡击本来就要求手臂
+    在两 tick 内转过大角度：拿 `near_tol=34`（产出 club_sweep 时的默认值）硬过滤，撞击帧
+    和 overshoot 帧会直接判成无解——**工具会报"这一招做不出来"，而那一招已经出料了**。
+    转角不掩盖：它作为第 7 项 `swing` 原样返回，`chain` 子命令逐帧打印"本帧最大转角"，
+    超没超出人能做到的范围由看的人判断，工具不替他拍板。这条策略由
+    `OffHandChainPolicyTest` 钉住。
+
+    真正的硬闸是 `tol`（离轴距离）：够不着棍身的候选直接淘汰，整帧无解就放 `None`。
+
+    返回和 `right_poses` 等长的列表，元素是
+    `(dist, pitch, yaw, roll, bend, frac, swing)`；某帧连 `tol` 都满足不了就放 `None`，
+    由调用方决定是放宽还是改右臂。
     """
+    if near_tol <= 0:
+        raise ValueError(
+            f"near_tol 是帧间转角折算成 px 的分母，必须为正，收到 {near_tol!r}"
+            "——传 0 会当场除零，传负数会把'转得越多分越高'，静默解出乱抽的副手")
     out, prev = [], seed
     for right in right_poses:
         rows = [r for r in solve_off_hand(item, display, right, span=span,
@@ -281,10 +299,9 @@ def solve_off_hand_chain(item, display, right_poses, *, span=(0.20, 0.65),
         if prev is None:
             best, swing = rows[0], 0.0
         else:
-            # 贴棍 + 连贯的加权取舍。**硬过滤是错的**：一次真的抡击本来就要求手臂在两
-            # tick 内转过大角度，卡死容差只会让整帧无解、把「这一招做不出来」误报成
-            # 「参数没调好」。这里改成让贴棍距离和帧间转角一起进目标函数，并把转角原样
-            # 报出来——超没超出人能做到的范围，由看的人判断，工具不替他拍板。
+            # 贴棍 + 连贯的**加权取舍**，不是按 near_tol 硬过滤——理由见 docstring
+            # 「near_tol 是权重，不是闸门」，硬过滤会把 club_sweep 的撞击帧判成无解。
+            # 转角不掩盖：原样作为 swing 返回并逐帧打印。
             scored = [(r[0] + max(abs(r[i + 1] - prev[i + 1]) for i in range(4))
                        / near_tol, r) for r in rows]
             scored.sort(key=lambda row: row[0])
