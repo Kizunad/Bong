@@ -49,7 +49,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
-from rigkit import Rig, element_bounds  # noqa: E402
+import gatekit  # noqa: E402
+from gatekit import Seat  # noqa: E402
+from rigkit import Rig  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 # 落 models/ 顶层：.gitignore:109 排掉 models/*/ 所有子目录（只白名单
@@ -416,244 +418,89 @@ def _shift_to_block_space(model: dict) -> None:
         node["origin"][2] += 8.0
 
 
-def _bone_of(rig: Rig, eid: str) -> str:
-    for name, b in rig.bones.items():
-        if eid in b["children"]:
-            return name
-    return "?"
+# ── 门禁声明：算法在 core/gatekit.py，这里只交代**本件的几何事实** ──────────
+MATS_BY_COLOR = gatekit.mats_by_color(MATS)
 
+# 侧袋外壁，侧袋针脚的宿主面
+POCKET_OUT = HALF_W + 1.15
 
-def _overflow(rig: Rig) -> list[str]:
-    """越出 0..16 方块空间的件（平移后会被 MC 裁掉）。"""
-    bad = []
-    for el in rig.elements:
-        lo, hi = element_bounds([el])
-        if lo[0] + 8 < -0.01 or hi[0] + 8 > 16.01 or lo[1] < -0.01 or hi[1] > 16.01 \
-                or lo[2] + 8 < -0.01 or hi[2] + 8 > 16.01:
-            bad.append(f"{el['name']}: {tuple(round(v, 2) for v in lo)}→"
-                       f"{tuple(round(v, 2) for v in hi)}")
-    return bad
+# 贴面件就位规格。符号方向是这道门唯一容易写反的地方：件长在宿主面**外侧**时，
+# 「咬合」是两者的重叠厚度（宿主面 − 件的内侧面），不是件到宿主面的距离 —— 写成后者，
+# 「把件往外推」这种明显的脱离反而会让数字变小（第一版就是这么反的：差分实测缺陷版
+# 报 0、干净版报 2，符号一眼看出来错了）。
+#
+# 骨扣的门限单列 0.04：栓在檐外的硬件靠薄咬合站住（实测 0.06px），比编带压进壁里的
+# 0.10 更浅是正常的，混用一个门限会误报干净模型。且只查两端粗头 —— 中间细腰 _02 是
+# taper 收出来的束腰，本来就该比粗头浅 0.12px（实测 z 起 2.46 vs 前檐 2.40，差 0.06
+# 悬空），但它整段被绳箍 peg_tie 罩住（箍 z 从 2.50 起、x±1.05 包住扣 x±0.46），
+# 渲染上看不见那道缝。拿粗头当判据，缺陷来了照样抓得住。
+#
+# 兜身横缝 pocket_band 与盖折痕 flap_crease **刻意不列**：它们贴的是自己那件，
+# 不是宿主壁，匹配不到 Seat 就不查。
+SEATS = (
+    Seat("bone_peg", axis=2, outward=+1, surface=FLAP_FRONT_Z,
+         min_bite=0.04, max_bite=None, exclude=("bone_peg_02",), host="前檐"),
+    Seat("band_f_", axis=2, outward=+1, surface=HALF_D,
+         min_bite=0.10, max_bite=WALL, host="前壁"),
+    Seat("hem_f_", axis=2, outward=+1, surface=HALF_D,
+         min_bite=0.10, max_bite=WALL, host="前壁"),
+    Seat("band_b_", axis=2, outward=-1, surface=-HALF_D,
+         min_bite=0.10, max_bite=WALL, host="后壁"),
+    Seat("band_r_", axis=0, outward=+1, surface=_half_w_at,
+         min_bite=0.10, max_bite=WALL, host="右壁"),
+    Seat("band_l_", axis=0, outward=-1, surface=lambda y: -_half_w_at(y),
+         min_bite=0.10, max_bite=WALL, host="左壁"),
+    Seat("pocket_seam_", axis=0, outward=+1, surface=POCKET_OUT,
+         min_bite=0.10, max_bite=WALL, host="侧袋外壁"),
+)
 
+# 软覆盖白名单：只放行「软覆盖硬」的设计意图。**关键是留下硬对硬不放行** ——
+# bone×flap / bone×braid / bone×weave 一律不列：骨扣扎穿翻盖或封边是缺陷不是构造。
+SOFT_OVER = frozenset({
+    # 编带/编缝压壁、封边罩口：本就该薄嵌
+    frozenset(("seam", "weave")), frozenset(("braid", "weave")),
+    frozenset(("braid", "seam")),
+    # 盖罩在编身上、盖压封边：软覆盖
+    frozenset(("flap", "weave")), frozenset(("flap", "seam")),
+    frozenset(("flap", "braid")),
+    # 绳捆盖/绕身/绕骨扣
+    frozenset(("cord", "flap")), frozenset(("cord", "weave")),
+    frozenset(("cord", "seam")), frozenset(("cord", "braid")),
+    frozenset(("cord", "bone")),
+    # 针脚咬壁/咬封边/咬盖
+    frozenset(("stitch", "weave")), frozenset(("stitch", "seam")),
+    frozenset(("stitch", "braid")), frozenset(("stitch", "flap")),
+})
 
-def _orphans(rig: Rig) -> list[str]:
-    """没被任何骨骼收养的 element（渲染时会丢）。"""
-    owned = {eid for b in rig.bones.values() for eid in b["children"]}
-    return [e["name"] for e in rig.elements if e["uuid"] not in owned]
+GATES = gatekit.AssetGates(
+    "小草包 / grass_pouch",
+    MATS,
+    # 刻意不对称件（盖压歪、右侧插袋、针脚）走白名单排除 —— 那是设计意图不是缺陷
+    asym=ASYM,
+    # 露头草药上段刻意伸出兜口（悬在空中读作「插着的草」）
+    free_floating=frozenset({"sprig_a", "sprig_b"}),
+    soft_over=SOFT_OVER,
+    seats=SEATS,
+    seat_materials=frozenset({"seam", "stitch", "bone"}),
+)
 
-
-def _degenerate(rig: Rig) -> list[str]:
-    """任一轴薄于 0.2px 的件。"""
-    bad = []
-    for el in rig.elements:
-        d = [el["to"][i] - el["from"][i] for i in range(3)]
-        if min(d) < 0.2:
-            bad.append(f"{el['name']}: {tuple(round(v, 2) for v in d)}")
-    return bad
-
-
-def _floating(rig: Rig) -> list[str]:
-    """悬空件：与其它件无面接触。
-
-    **判据必须三轴一起看**：早先只要「≥2 轴重叠 > 0.15」就算接触，于是一件贴在
-    另一件**旁边**、第三轴上明明差着一道缝，也被判成搭上了。骨扣离前檐 0.06px
-    分离就是这么漏过去的；侧袋针脚整排平移 0.9px 飘在兜外，门同样报 0。
-    真接触 = 两轴有实打实的重叠面（> 0.15）**且**第三轴不许有可见缝隙
-    （重叠 > -CONTACT_TOL，负值即缝）。
-
-    露头草药上段刻意伸出兜口（悬在空中读作「插着的草」），故白名单排除。
-    """
-    CONTACT_TOL = 0.12
-    free_tips = {"sprig_a", "sprig_b"}
-    boxes = []
-    for el in rig.elements:
-        lo, hi = element_bounds([el])
-        boxes.append((el["name"], lo, hi))
-    bad = []
-    for i, (name, lo, hi) in enumerate(boxes):
-        if name in free_tips:
-            continue
-        touch = False
-        for j, (_, lo2, hi2) in enumerate(boxes):
-            if i == j:
-                continue
-            ovs = [min(hi[k], hi2[k]) - max(lo[k], lo2[k]) for k in range(3)]
-            if min(ovs) > -CONTACT_TOL and sum(1 for o in ovs if o > 0.15) >= 2:
-                touch = True
-                break
-        if not touch:
-            bad.append(name)
-    return bad
-
-
-def _applique_seating(rig: Rig) -> list[str]:
-    """贴面件就位：编带/针脚必须**咬住**宿主壁，且不许穿透到内壁另一侧。
-
-    第七道门，补前六道的两个实测盲区：
-      1. _interpenetrating 为了放过 taper/shaft 的相邻分段而跳过同 bone 组合，
-         而编带与壁同属 body bone —— 「带压穿整壁 2.2px」在穿模门里从未被检查
-         （差分实测仍报 0 处）。
-      2. _floating 靠 AABB 重叠判接触，而露头草药是斜插 shaft，它的轴对齐包围盒
-         很胖；侧袋针脚整排平移 0.9px 飘在兜外，却因为「碰到 sprig_a 的包围盒」
-         被判成搭上了。旋转件的 AABB 一律高估接触，通用门在这里靠不住。
-
-    所以这道门不做通用碰撞，而是按构造直接算：每个贴面件沿自己的法向，量它相对
-    宿主外表面的**咬入深度** bite，要求 MIN_BITE ≤ bite ≤ WALL。
-    小于下界 = 浮在外面（渲不出贴合，甚至整件飘走）；大于壁厚 = 扎穿，从包内侧
-    能看见一截带子捅进来。一条判据同时封住两种缺陷。
-    """
-    MIN_BITE = 0.10
-    # 骨扣咬合门限单列：栓在檐外的硬件靠薄咬合站住（实测 0.06px），比编带
-    # 压进壁里的 0.10 更浅是正常的 —— 混用一个门限会误报干净模型。
-    MIN_BITE_PEG = 0.04
-    SKIN = {"seam", "stitch", "bone"}
-    POCKET_OUT = HALF_W + 1.15        # pocket_body 外壁，侧袋针脚的宿主面
-    bad = []
-    for el in rig.elements:
-        if MATS_BY_COLOR.get(el["color"], "?") not in SKIN:
-            continue
-        name = el["name"]
-        if name.startswith("bone_peg"):
-            # 骨扣栓在翻盖前檐上，宿主面是 FLAP_FRONT_Z。曾经实测差 0.06px
-            # **分离**（我一度把符号读反当成咬合），_floating 因为骨扣和绳箍
-            # peg_tie 有重叠而放过 —— 那次缺陷正是这道门要抓的。
-            #
-            # 只查两端粗头（_01/_03）：中间细腰 _02 是 taper 收出来的束腰，本来就
-            # 该比粗头浅 0.12px（实测 z 起 2.46 vs 前檐 2.40，差 0.06 悬空），
-            # 但它整段被绳箍 peg_tie 罩住（箍 z 从 2.50 起、x±1.05 包住扣 x±0.46），
-            # 渲染上看不见那道缝。拿粗头当判据，缺陷来了照样抓得住。
-            if name.endswith("_02"):
-                continue
-            # 骨扣长在前檐**外面**（z 2.34→3.26，檐外表面 2.40），所以「咬合」是
-            # 两者的**重叠厚度** = 檐面 − 扣背，不是扣背到檐面的距离。写成后者会
-            # 让「把扣往前推」这种明显的脱离反而把数字变小 —— 我第一版就是这么
-            # 反的，差分实测缺陷版报 0、干净版报 2，符号一眼看出来错了。
-            lo, hi = element_bounds([el])
-            bite = FLAP_FRONT_Z - lo[2]
-            if not (MIN_BITE_PEG <= bite):
-                bad.append(f"{name} 没咬住前檐（重叠 {bite:.2f} < {MIN_BITE_PEG}）")
-            continue
-        lo, hi = element_bounds([el])
-        yc = (lo[1] + hi[1]) / 2
-        if name.startswith("band_f_") or name.startswith("hem_f_"):
-            bite = HALF_D - lo[2]
-        elif name.startswith("band_b_"):
-            bite = hi[2] + HALF_D
-        elif name.startswith("band_r_"):
-            bite = _half_w_at(yc) - lo[0]
-        elif name.startswith("band_l_"):
-            bite = hi[0] + _half_w_at(yc)
-        elif name.startswith("pocket_seam_"):
-            # 兜身横缝骑在兜外壁上（x 跨过 POCKET_OUT），咬入量按内侧算
-            bite = POCKET_OUT - lo[0]
-        elif name.startswith("pocket_band") or name.startswith("flap_crease"):
-            continue                  # 兜身横缝/盖折痕贴的是自己那件，另算
-        else:
-            continue
-        if bite < MIN_BITE:
-            bad.append(f"{name} 没咬住宿主壁（bite={bite:.2f} < {MIN_BITE}）")
-        elif bite > WALL:
-            bad.append(f"{name} 扎穿内壁 {bite - WALL:.2f}px（壁厚 {WALL}）")
-    return bad
-
-
-def _interpenetrating(rig: Rig) -> list[str]:
-    """穿模：跨 bone 的两件在三轴上都实体重叠且体积可观。
-
-    **必须区分「搭接」和「穿模」**：编带压壁、绳压盖、封边罩口、针脚咬壁都是
-    贴合，本来就该有薄重叠。判据两条 ——
-      1. 只查跨 bone 组合（同 bone 内是同一构件的分段，如 taper/shaft 相邻段）；
-      2. 三轴同时重叠且最小重叠深度 > MIN_BITE（真扎进去，不是薄贴）。
-
-    材质对白名单只放行「软覆盖硬」的设计意图。**关键是留下硬对硬不放行** ——
-    背篓那轮把 bamboo×hide（柱头扎穿皮盖，正是要抓的缺陷）错误放行、又去抓
-    合法的 bamboo×weave，结果坏版和修好版都报 17 处，门完全没有鉴别力。这里
-    保留 bone×flap / bone×braid 不放行：骨扣扎穿翻盖或封边是缺陷不是构造。
-    """
-    MIN_BITE = 0.55
-    soft_over = {
-        # 编带/编缝压壁、封边罩口：本就该薄嵌
-        frozenset(("seam", "weave")), frozenset(("braid", "weave")),
-        frozenset(("braid", "seam")),
-        # 盖罩在编身上、盖压封边：软覆盖
-        frozenset(("flap", "weave")), frozenset(("flap", "seam")),
-        frozenset(("flap", "braid")),
-        # 绳捆盖/绕身/绕骨扣
-        frozenset(("cord", "flap")), frozenset(("cord", "weave")),
-        frozenset(("cord", "seam")), frozenset(("cord", "braid")),
-        frozenset(("cord", "bone")),
-        # 针脚咬壁/咬封边/咬盖
-        frozenset(("stitch", "weave")), frozenset(("stitch", "seam")),
-        frozenset(("stitch", "braid")), frozenset(("stitch", "flap")),
-        # bone×flap / bone×braid / bone×weave **不放行**：骨扣扎穿是缺陷
-    }
-    items = []
-    for el in rig.elements:
-        lo, hi = element_bounds([el])
-        items.append((el["name"], _bone_of(rig, el["uuid"]),
-                      MATS_BY_COLOR.get(el["color"], "?"), lo, hi))
-    bad = []
-    for i, (n1, b1, m1, lo1, hi1) in enumerate(items):
-        for n2, b2, m2, lo2, hi2 in items[i + 1:]:
-            if b1 == b2:
-                continue
-            if frozenset((m1, m2)) in soft_over or m1 == m2:
-                continue
-            bite = min(min(hi1[k], hi2[k]) - max(lo1[k], lo2[k])
-                       for k in range(3))
-            if bite > MIN_BITE:
-                bad.append(f"{n1}({m1}) × {n2}({m2}) 互穿 {bite:.2f}px")
-    return bad
+NOTE = ("注：立体感/比例/与破草包的可辨差异，自检量不出 —— 必须人眼看 "
+        "render_bbmodel.py 三视图定夺。")
 
 
 def check(rig: Rig) -> int:
-    """七道门：孤儿 / 越界 / 退化薄片 / 悬空 / 穿模 / 贴面就位 / 对称件镜像。
-
-    刻意不对称件（盖压歪、右侧插袋、针脚）走 ASYM 白名单排除。
-    """
-    print("小草包 / grass_pouch 自检:")
-    lo, hi = rig.bounds()
-    dims = tuple(hi[i] - lo[i] for i in range(3))
-    print(f"  bbox   : {dims[0]:.1f}×{dims[1]:.1f}×{dims[2]:.1f}px = "
-          f"{dims[0]/PX:.2f}W × {dims[1]/PX:.2f}H × {dims[2]/PX:.2f}D 格")
-    print(f"  cubes  : {len(rig.elements)}  bones: {len(rig.bones)}")
-    used = {}
-    for el in rig.elements:
-        m = MATS_BY_COLOR.get(el["color"], "?")
-        used[m] = used.get(m, 0) + 1
-    print(f"  材质   : {len(used)}/{len(MATS)} 种在用 — "
-          + ", ".join(f"{k}:{v}" for k, v in used.items()))
-
-    total = 0
-    sym_els = [e for e in rig.elements if _bone_of(rig, e["uuid"]) not in ASYM]
-    from rigkit import mirror_violations as _mv
-    gates = [
-        ("孤儿 element", _orphans(rig)),
-        ("越出 0..16 方块空间", _overflow(rig)),
-        ("退化薄片 (<0.2px)", _degenerate(rig)),
-        ("悬空无接触", _floating(rig)),
-        ("硬件互穿（穿模）", _interpenetrating(rig)),
-        ("贴面件未就位/扎穿", _applique_seating(rig)),
-        ("对称件左右不镜像", _mv(sym_els)),
-    ]
-    for label, bad in gates:
-        total += len(bad)
-        mark = "✓" if not bad else "✗"
-        print(f"  {mark} {label}: {len(bad)}")
-        for b in bad[:6]:
-            print(f"      - {b}")
-    print(f"  → 共 {total} 处违例")
-    print("  注：立体感/比例/与破草包的可辨差异，自检量不出 —— 必须人眼看 "
-          "render_bbmodel.py 三视图定夺。")
-    return total
+    """七道门：孤儿 / 越界 / 退化薄片 / 悬空 / 穿模 / 贴面就位 / 对称件镜像。"""
+    return GATES.report(rig, px=PX, note=NOTE)
 
 
-MATS_BY_COLOR = {i % 8: name for i, name in enumerate(MATS)}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="小草包 bbmodel 生成器")
     ap.add_argument("--part", help="只生成单件（调试用）")
     ap.add_argument("--check", action="store_true", help="只跑自检，不写盘")
+    ap.add_argument("--self-test", action="store_true",
+                    help="差分自证：每道门注入它该抓的缺陷，报不出来就算这道门失效")
     ap.add_argument("--list", action="store_true", help="列出所有部件")
     args = ap.parse_args()
 
@@ -669,6 +516,9 @@ def main() -> int:
     parts = [args.part] if args.part else None
 
     rig = build(parts)
+    if args.self_test:
+        return 1 if GATES.self_test(rig) else 0
+
     bad = check(rig)
     if args.check:
         return 1 if bad else 0
