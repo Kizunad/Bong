@@ -341,6 +341,143 @@ describe("redis-ipc", () => {
     ]);
   });
 
+  it("buffers and drains validated TSY enter/exit events without losing payload fields", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    const callback = vi.fn();
+    ipc.onTsyRuntimeEvent(callback);
+
+    const enter = {
+      v: 1,
+      kind: "tsy_enter",
+      tick: 42,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      return_to: {
+        dimension: "minecraft:overworld",
+        pos: [12.5, 64, -8.25],
+      },
+      filtered_items: [
+        {
+          instance_id: 7,
+          template_id: "bone_coin",
+          reason: "spirit_quality_too_high",
+        },
+      ],
+    } as const;
+    const exit = {
+      v: 1,
+      kind: "tsy_exit",
+      tick: 5042,
+      player_id: "offline:Azure",
+      family_id: "tsy_lingxu_01",
+      duration_ticks: 5_000,
+      qi_drained_total: 0,
+    } as const;
+
+    await ipc.connect();
+    await sub.publish(TSY_EVENT, JSON.stringify(enter));
+    await sub.publish(TSY_EVENT, JSON.stringify(exit));
+
+    expect(callback.mock.calls.map(([event]) => event)).toEqual([enter, exit]);
+    expect(ipc.getLatestTsyRuntimeEvents()).toEqual([enter, exit]);
+    expect(ipc.drainTsyRuntimeEvents()).toEqual([enter, exit]);
+    expect(ipc.drainTsyRuntimeEvents()).toEqual([]);
+  });
+
+  it("aggregates one Redis TSY bridge overflow warning per drain window", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+
+    await ipc.connect();
+    for (let tick = 0; tick < 256; tick += 1) {
+      await sub.publish(
+        TSY_EVENT,
+        JSON.stringify({
+          v: 1,
+          kind: "tsy_exit",
+          tick,
+          player_id: "offline:Azure",
+          family_id: "tsy_lingxu_01",
+          duration_ticks: 5_000,
+          qi_drained_total: 0,
+        }),
+      );
+    }
+
+    expect(ipc.getLatestTsyRuntimeEvents(), "bridge overflow must retain only the bounded newest window").toHaveLength(128);
+    expect(ipc.getLatestTsyRuntimeEvents()[0], "the retained window must begin after the 128 oldest events were dropped").toEqual(
+      expect.objectContaining({ kind: "tsy_exit", tick: 128 }),
+    );
+    expect(warn, "overflow must be aggregated until the consumer drains the bridge").not.toHaveBeenCalled();
+    expect(ipc.drainTsyRuntimeEvents(), "drain must preserve the newest bounded payload window").toHaveLength(128);
+    expect(
+      warn.mock.calls.map(([message]) => String(message)),
+      "bridge-level truncation must emit one cumulative warning instead of a warning per dropped event",
+    ).toEqual([expect.stringContaining("tsy runtime event buffer overflow: dropped oldest events (count=128")]);
+    expect(ipc.drainTsyRuntimeEvents(), "a completed drain window must not replay its overflow warning").toEqual([]);
+    expect(warn, "the next empty drain must not emit another warning").toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it("warns and drops invalid or unknown TSY enter/exit payloads", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+
+    await ipc.connect();
+    await sub.publish(
+      TSY_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "tsy_enter",
+        tick: 42,
+        player_id: "offline:Azure",
+        family_id: "tsy_lingxu_01",
+        filtered_items: [],
+      }),
+    );
+    await sub.publish(
+      TSY_EVENT,
+      JSON.stringify({
+        v: 1,
+        kind: "tsy_exit",
+        tick: 43,
+        player_id: "offline:Azure",
+        family_id: "tsy_lingxu_01",
+        duration_ticks: -1,
+        qi_drained_total: 0,
+      }),
+    );
+    await sub.publish(TSY_EVENT, JSON.stringify({ v: 1, kind: "tsy_future_kind" }));
+
+    expect(ipc.drainTsyRuntimeEvents(), "invalid and unknown kinds must never reach the runtime buffer").toEqual([]);
+    expect(warn.mock.calls.map(([message]) => String(message))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("invalid tsy_enter event"),
+        expect.stringContaining("invalid tsy_exit event"),
+        expect.stringContaining("unknown tsy_event kind"),
+      ]),
+    );
+    warn.mockRestore();
+  });
+
   it("observes NPC runtime events from dedicated channels", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
