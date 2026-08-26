@@ -63,8 +63,12 @@ class IronArmorGeneratorTest(unittest.TestCase):
             render_mode_summary(False, -35.0, 22.0),
             "单视图日志必须保留 CLI yaw/pitch",
         )
+        # SIDE → SIDE_R 是 framing 引入的**诚实化**改名，不是笔误：yaw=90 照的是 −x 面，
+        # 也就是 FRONT(yaw=180) 视里观者右手边那一侧。叫「SIDE」等于把左右两侧混成一个
+        # 名字，manifest 点名器再按 must_show_in=["SIDE_R"] 去核对就没有着落。角度一个
+        # 没动 —— 这条断言的本职（防偷偷改取景）原样保留。
         self.assertEqual(
-            "three-view [FRONT yaw=180.0 pitch=0.0; SIDE yaw=90.0 pitch=0.0; "
+            "three-view [FRONT yaw=180.0 pitch=0.0; SIDE_R yaw=90.0 pitch=0.0; "
             "3/4 yaw=145.0 pitch=15.0]",
             render_mode_summary(True, -35.0, 22.0),
             "三视图日志必须报告固定实际角度，不得误报未使用的 CLI 参数",
