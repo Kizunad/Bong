@@ -105,7 +105,7 @@ class R7InventoryContractTest {
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         assertEquals(
-            "cf2da7dff4d1f6de8ed350a2bcd19cb1d3900bd730373afed9200c74d50b92b7",
+            "9bcba8ff85394f7e72ffda1f327af0b6f68a1199c1d1c0da3552ecd689a0125c",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
