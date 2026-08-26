@@ -249,11 +249,13 @@ def part_strap_l(rig: Rig) -> None:
     # z 起伏必须压在板厚（0.84）量级内：段是直的，拐点在 z 上的错位无法被
     # 斜接吃掉，起伏一大就是肉眼可见的断层（原折线 z 摆幅 1.7px，实测裂开）。
     # 「绕过肩」的外扩交给 x 表达，z 只留极轻的离背弧度。
-    pts = [(-2.6, H_BODY + 0.4, -HALF_D - 0.2),
-           (-3.4, H_BODY - 2.6, -HALF_D - 0.5),
-           (-3.7, H_BODY - 6.4, -HALF_D - 0.7),
-           (-3.4, H_BODY - 9.6, -HALF_D - 0.5),
-           (-2.8, 1.6, -HALF_D - 0.2)]
+    # 整条 z 必须绕到后箍（外沿 -3.9）和后檐 lid_back（-4.88..-3.4）之外 —— 与
+    # strap_r 同一处缺陷：原折线 -3.5..-3.7 使草编带整条骑在竹箍和皮檐里。
+    pts = [(-2.6, H_BODY + 0.4, -HALF_D - 1.4),
+           (-3.4, H_BODY - 2.6, -HALF_D - 1.7),
+           (-3.7, H_BODY - 6.4, -HALF_D - 1.9),
+           (-3.4, H_BODY - 9.6, -HALF_D - 1.7),
+           (-2.8, 1.6, -HALF_D - 1.4)]
     _flat_band(rig, "strap_l", "strap_l", pts, 1.15, 0.84, "cord")
 
 
@@ -415,6 +417,13 @@ def _interpenetrating(rig: Rig) -> list[str]:
     只有「硬件互穿」才是缺陷。
     """
     MIN_BITE = 0.55
+    # 背带例外：左带材质是 cord（草编），会顺着 cord×hide「绳捆皮盖」和
+    # cord×bamboo「绳绕竹架」两条软覆盖被放行 —— 但背带穿后檐/后箍是缺陷，
+    # 不是捆扎。**穿模判据不能只看材质对**：捆绳是压在件外的短绳，背带是绕过
+    # 整个篓身的长带，同材质不同构件语义。按件名把背带排除在软覆盖之外。
+    def _is_strap(name: str) -> bool:
+        return name.startswith(("strap_l", "strap_r"))
+
     soft_over = {
         # 竹架嵌入编身壁是正常构造（立柱本就埋在壁里，实测 0.70px）。
         frozenset(("bamboo", "weave")), frozenset(("bamboo", "seam")),
@@ -438,7 +447,12 @@ def _interpenetrating(rig: Rig) -> list[str]:
         for n2, b2, m2, lo2, hi2 in items[i + 1:]:
             if b1 == b2:
                 continue
-            if frozenset((m1, m2)) in soft_over or m1 == m2:
+            # 背带对硬件（竹架/皮盖）不吃软覆盖豁免：它是绕在外面的，不是捆上去的
+            strap_vs_hard = ((_is_strap(n1) and m2 in ("bamboo", "hide"))
+                             or (_is_strap(n2) and m1 in ("bamboo", "hide")))
+            if not strap_vs_hard and (frozenset((m1, m2)) in soft_over or m1 == m2):
+                continue
+            if strap_vs_hard and m1 == m2:
                 continue
             bite = min(min(hi1[k], hi2[k]) - max(lo1[k], lo2[k])
                        for k in range(3))
