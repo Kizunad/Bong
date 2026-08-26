@@ -203,6 +203,72 @@ def build_doc(
     }
 
 
+# ---------------------------------------------------------------------------
+# 重定时（把一条已经设计好的动画整体拉长 / 压缩）
+# ---------------------------------------------------------------------------
+#
+# **tick 是整数，这是运行时的硬约束，不是本仓的洁癖**：PlayerAnimator 读 JSON 时
+# `int tick = obj.get("tick").getAsInt()`（AnimationJson.java:123），存储层也是
+# `findAtTick(int)` / `addKeyFrame(int, ...)`（KeyframeAnimation.java:451/469）。写
+# 小数进去不会报错——会被截断，然后和相邻整数帧**撞成同一帧**，静默丢关键帧。
+#
+# 于是"把动画拉长 1.2 倍"这件事在整数网格上根本没有精确解：本来只有 1 tick 的段乘
+# 1.2 之后只能落回 1 或 2，也就是 ×1.0 或 ×2.0。能做到的最好情况是让**每一帧的时间
+# 位置**误差都不超过半 tick，办法是对累计位置取整（段长 = 相邻累计值之差），而不是逐段
+# 取整再累加——后者的误差会一路攒下去，末帧能偏出好几 tick。
+
+
+def integer_retime(ticks: Iterable[int], scale: float, *,
+                   keep_gap: Iterable[int] = ()) -> Dict[int, int]:
+    """{原 tick: 新 tick}，按 `scale` 拉长到整数网格，累计时间误差 ≤ 0.5 tick。
+
+    `keep_gap` 里的帧与**上一帧**的间隔保持原长。给的是那些"必须紧跟"的段：
+    overshoot 就得贴着 impact 后一 tick（conventions §2.6），被拉成 2 tick 就不再是
+    弹性过冲，而是"到位之后又慢慢挪了一下"。
+    """
+    src = sorted(int(t) for t in ticks)
+    if not src or src[0] != 0:
+        raise ValueError(f"重定时要求首帧是 tick 0，收到 {src[:1]}")
+    tight = {int(t) for t in keep_gap}
+    unknown = tight - set(src)
+    if unknown:
+        raise ValueError(f"keep_gap 里有不存在的帧 {sorted(unknown)}")
+
+    out: Dict[int, int] = {src[0]: 0}
+    prev = 0
+    for i in range(1, len(src)):
+        t = src[i]
+        if t in tight:
+            nxt = prev + (t - src[i - 1])
+        else:
+            nxt = int(math.floor(t * scale + 0.5))   # 半数向上，不要 banker's rounding
+        if nxt <= prev:
+            raise ValueError(
+                f"tick {src[i - 1]}→{t} 在 scale={scale:g} 下压成了同一帧"
+                f"（{prev}→{nxt}）——整数网格装不下，改 scale 或合并这两帧")
+        out[t] = nxt
+        prev = nxt
+    return out
+
+
+def retime(pose_table: Dict[int, dict], mapping: Dict[int, int]) -> Dict[int, dict]:
+    """按 `mapping` 把 POSE 表搬到新的 tick 网格。姿态**原样**搬，一个数都不改。
+
+    这是重定时相对"重采样"的关键好处：每一段走过的姿态集合
+    `{lerp(v0, v1, ease(α)) : α ∈ [0,1]}` 与段长无关，所以贴棍距离、挡不挡脸、棍头
+    包围盒这些**几何**判据全部逐字成立，变的只有速度。重采样（在新网格上按原曲线取值）
+    做不到这一点：拉长倍率不是整数时，设计好的极值帧会落在两个新整数 tick 之间，
+    LOAD / IMPACT 的峰值被插值削掉——恰好把这条动画最要紧的东西磨平。
+    """
+    missing = set(pose_table) - set(mapping)
+    if missing:
+        raise ValueError(f"mapping 没覆盖这些帧：{sorted(missing)}")
+    out = {mapping[t]: pose for t, pose in pose_table.items()}
+    if len(out) != len(pose_table):
+        raise ValueError("mapping 把两帧映射到了同一个 tick")
+    return out
+
+
 def resolve_output_path(name: str) -> Path:
     """Write into the Fabric resource tree regardless of CWD."""
     here = Path(__file__).resolve().parent

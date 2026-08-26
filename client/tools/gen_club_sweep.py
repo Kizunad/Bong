@@ -45,18 +45,42 @@ v1 单手棍头横向行程 35.5px。双手握之后只剩 ~20px——因为两�
 顺带把抡击的转角摊平了：`chain` 逐帧最大转角从 24/18/**96**/6/42/36 变成
 24/18/30/42/6/12/36，没有任何一帧要副手甩过 50°。
 
-## 8 tick 分段（docs/player-animation-conventions.md §1）
+## 分段（docs/player-animation-conventions.md §1）
 
-    tick 0  guard    棍横在身体左侧、双手握持；右肩前倾（用户手摆的那一帧）
-    tick 2  腿先动    后腿蹬地 bend 15→40（kinetic chain 起点）
-    tick 3  LOAD     腰扭到 −40°，棍沉进抡击平面（棍头肩左 17.8px、肩下 2.4px、放平）
-    tick 4  中段      棍过身体中线（棍头肩左 9.6px）—— 见上节，这一帧是为副手加的
-    tick 5  IMPACT   腰猛转到 +30°（总转矩 70°），棍扫到肩右 6.4px、身前 11.8px
-    tick 6  overshoot 棍再扫右 + 腕再拧（末端关节滞后 1 tick）
-    tick 7  收势      棍**贴着低位**抽回左侧，过了头的轮廓才抬起来
-    tick 8  == tick 0
+POSE 表按**设计 tick**（8 tick 骨架）写，出料前整体拉长到 10 tick（见下节）：
 
-峰值错开：腿 t2 → 腰 t3 → 肩 t5 → 肘/腕 t6。impact 落在 5/8 = 62%（标配 60%）。
+    设计  出料
+      0 →  0   guard    棍横在身体左侧、双手握持；右肩前倾（用户手摆的那一帧）
+      2 →  3   腿先动    后腿蹬地 bend 15→40（kinetic chain 起点）
+      3 →  4   LOAD     腰扭到 −40°，棍沉进抡击平面（棍头肩左 17.8px、肩下 2.4px、放平）
+      4 →  5   中段      棍过身体中线（棍头肩左 9.6px）—— 见上节，这一帧是为副手加的
+      5 →  6   IMPACT   腰猛转到 +30°（总转矩 70°），棍扫到肩右 6.4px、身前 11.8px
+      6 →  7   overshoot 棍再扫右 + 腕再拧（末端关节滞后 1 tick）
+      7 →  9   收势      棍**贴着低位**抽回左侧，过了头的轮廓才抬起来
+      8 → 10   == tick 0
+
+峰值错开：腿 → 腰 → 肩 → 肘/腕。impact 落在 6/10 = 60%（标配 60%）。
+
+## 拉长 1.2×：整数网格上只能给到 1.25×
+
+tick 是**整数**——PlayerAnimator 读 JSON 时 `getAsInt()`（AnimationJson.java:123），存储层
+也是 `findAtTick(int)`。8 × 1.2 = 9.6 落不到网格上，写小数会被截断、和相邻帧撞成一帧，
+静默丢关键帧。最近的整数是 10，也就是 **1.25×**（比要的多 4%，20ms，肉眼无从分辨）。
+
+拉长走 `anim_common.retime`——**搬帧，不重采样**。姿态一个数都不改，所以贴棍距离、
+挡不挡脸、棍头包围盒这些几何判据逐字成立，变的只有速度。重采样（在新网格上按原曲线
+取值）会把 LOAD / IMPACT 削掉：1.25 倍下设计的极值帧落在两个新整数 tick 之间，插值
+过去峰值就没了，而峰值恰恰是这条动画最要紧的东西。
+
+多出来的 2 tick 落在哪儿是**解出来的**，不是挑的：`integer_retime` 对累计位置取整，
+保证任何一帧的时间误差 ≤ 0.5 tick。唯一的人工约束是 `keep_gap={6}`——overshoot 必须
+贴着 impact 后一 tick（conventions §2.6），被拉成 2 tick 就不再是弹性过冲，而是"到位
+之后又慢慢挪了一下"。解出来是 guard→腿 3 tick（原 2）、overshoot→收势 2 tick（原 1）。
+
+**抡击段本身没变速**（LOAD→中段→IMPACT 仍是 1+1 tick）。这不是偷懒：1 tick 的段在整数
+网格上乘 1.2 只能落回 1 或 2，也就是 ×1.0 或 ×2.0——把它拉成 2 tick 是把这一下**减半速**，
+远超要求的 1.2×，而且会抹掉「smash 是重的、sweep 是快的」这条差异化的立身之本。多出来
+的时间因此摊在蓄势和收势上，这也正是累计取整自己挑出来的位置。
 
 ## 转矩全靠 `torso.yaw`，站架靠 `body.yaw`
 
@@ -88,12 +112,16 @@ pitch/yaw/roll/bend，torso 给的是"这一下是从腰上抡出来的"这个�
     club_smash   横向 12.1  竖直 33.8  前后 13.5   —— 竖直是横向的 2.79 倍
     club_sweep   横向 25.4  竖直 10.9  前后  8.6   —— 横向是竖直的 2.33 倍
     副手离棍身轴线 ≤ 1.38px（1/4 tick 取样；v1 是 16px）
-    峰速 17.2px/tick @ t4.50（落在抡击段内），回程峰 16.2 —— 低于打击峰
+    峰速 17.2px/tick @ t5.50（落在抡击段内），回程峰 16.4 —— 低于打击峰
+    开场「什么都没发生」的窗口 0.44 → 1.03 tick（拉长的代价，全部落在蓄势前）
     全程无「棍从脸正前方横过」
 """
 
-from anim_common import emit_json
+from anim_common import emit_json, integer_retime, retime
 
+# **键是设计 tick（8 tick 骨架），不是出料 tick**——出料前整体拉长到 10 tick，见 §拉长。
+# 下面注释里提到的 tick 一律指设计 tick，换算查 §分段 那张两列表。
+#
 # tick 0 的 rightArm 是**用户在 Blockbench 里亲手摆的**，小数一位不许凑整——凑了就是
 # 偷偷改他的姿态。其余各帧的右臂由 `held_item_pose.py solve --two-hand` 解出，副手由
 # `chain` 按帧链式解出。
@@ -189,16 +217,22 @@ POSE = {
 DESCRIPTION = (
     "v2 木棍双手横抡扫击: 棍从身体左侧扫向右侧（tick 0 由用户手摆），双手全程握在棍身上"
     "（左腕离轴 ≤1.4px，v1 是 16px）；与 club_smash 正交——横向行程 25.4px、竖直 10.9px"
-    "（抡砸恰好反过来：竖 33.8 / 横 12.1），8 tick 快、平、贴胸腹高扫过身前；"
-    "腰转矩 70°（−22 → −40 → +30，抡砸 54°），腿 t2 → 腰 t3 → 肩 t5 → 腕 t6 错峰。"
+    "（抡砸恰好反过来：竖 33.8 / 横 12.1），10 tick 快、平、贴胸腹高扫过身前；"
+    "腰转矩 70°（−22 → −40 → +30，抡砸 54°），腿 t3 → 腰 t4 → 肩 t6 → 腕 t7 错峰。"
 )
+
+# 整体拉长。见 §拉长——8 tick 的设计骨架搬到 10 tick 网格上（1.25×，整数网格上离
+# 1.2× 最近的一档）。`keep_gap={6}` 把 overshoot 钉在 impact 后一 tick。
+TIME_SCALE = 1.25
+TIMING = integer_retime(POSE, TIME_SCALE, keep_gap={6})
+END_TICK = TIMING[max(POSE)]
 
 if __name__ == "__main__":
     emit_json(
-        POSE,
+        retime(POSE, TIMING),
         name="club_sweep",
         description=DESCRIPTION,
-        end_tick=8,
-        stop_tick=10,
+        end_tick=END_TICK,
+        stop_tick=END_TICK + 2,
         is_loop=False,
     )

@@ -47,7 +47,7 @@ GRIP_PX = np.array([8.0, 8.0, 8.0, 1.0])
 
 # (动画名, endTick, LOAD tick, IMPACT tick)
 SMASH = ("club_smash", 12.0, 5.0, 7.0)
-SWEEP = ("club_sweep", 8.0, 3.0, 5.0)
+SWEEP = ("club_sweep", 10.0, 4.0, 6.0)
 BOTH = (SMASH, SWEEP)
 
 # 握法分组。**这不是分类学，是判据的适用域**：单手招式里副手是自由的，可以反相呼吸、
@@ -255,9 +255,18 @@ class ClubTimingTest(unittest.TestCase):
             f"t8→t9 段棍头最快还有峰速的 {window.max() / peak:.0%}，没有「停住」那一拍")
 
     def test_the_smash_is_the_slow_one_and_the_sweep_the_quick_one(self) -> None:
-        """两条的**时长**也要拉开：重兵器那一记 12 tick、快的那记 8 tick。"""
+        """两条的**时长**也要拉开：重兵器那一记 12 tick、快的那记 10 tick。
+
+        横抡原本是 8 tick，按要求整体拉长 1.2× —— 整数网格上落到 10（见
+        `gen_club_sweep.py §拉长`）。时长差因此从 50% 收窄到 20%，**差异化不再靠时长**，
+        全压在棍头行程的正交性上（`test_the_two_swings_are_orthogonal`）。所以这里除了
+        钉死两个数，还要钉住"抡砸仍然更长"这条不变量——再拉长横抡就得先回答这个问题。
+        """
         self.assertEqual(12, int(_emote(SMASH[0])["endTick"]))
-        self.assertEqual(8, int(_emote(SWEEP[0])["endTick"]))
+        self.assertEqual(10, int(_emote(SWEEP[0])["endTick"]))
+        self.assertGreater(
+            int(_emote(SMASH[0])["endTick"]), int(_emote(SWEEP[0])["endTick"]),
+            "抡砸必须比横抡长——重的那一记读作重，一半来自它花的时间更多")
         for name, *_ in BOTH:
             emote = _emote(name)
             self.assertGreaterEqual(
