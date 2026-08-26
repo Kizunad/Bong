@@ -2348,6 +2348,10 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
+# Keep the S3 signal-boundary suite on the lifecycle entrypoint as well as the
+# preflight job; this path exercises the same owner/rollback contract from the
+# production-style shell harness.
+python3 "$ROOT/scripts/tests/s3_lifecycle_signal_boundary_contract_test.py"
 if [ "${GITHUB_ACTIONS:-}" = true ] \
     && [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ]; then
     "$ROOT/scripts/test-tmux-shutdown-order.sh"
@@ -2589,6 +2593,15 @@ unset -f cleanup_pinned_server_or_preserve_tmux tmux bong_server_rollback_pinned
 # preserving 1/2; stop completes non-server teardown and returns status 3 so an
 # operator can observe that AppExit/Last was not proven.
 source "$ROOT/scripts/dev-reload.sh"
+
+manifest_path_fixture="$TEST_ROOT/raster-path"
+mkdir -p "$manifest_path_fixture"
+touch "$manifest_path_fixture/manifest.json"
+absolute_manifest_path="$(realpath -- "$manifest_path_fixture/manifest.json")"
+resolved_manifest_path="$(resolve_raster_manifest_path "$absolute_manifest_path")"
+[ "$resolved_manifest_path" = "$absolute_manifest_path" ] \
+    || fail "dev-reload must preserve an absolute raster manifest path"
+
 production_managed_status=0
 bong_server_stop_managed() { return "$production_managed_status"; }
 for production_managed_status in 0 "$BONG_SERVER_STOP_FORCED"; do

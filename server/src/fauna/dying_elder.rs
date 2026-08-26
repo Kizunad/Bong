@@ -51,7 +51,7 @@ use crate::qi_physics::ledger::{
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
 use crate::social::components::Renown;
-use crate::world::dimension::{DimensionKind, DimensionLayers};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::tsy_drain::compute_drain_per_tick;
 use crate::world::zone::ZoneRegistry;
 
@@ -407,6 +407,7 @@ pub(crate) fn dying_elder_apply_spawn_system(
                     Transform::from_xyz(pos.x as f32, pos.y as f32, pos.z as f32),
                     GlobalTransform::default(),
                     NpcMarker,
+                    CurrentDimension(DimensionKind::Tsy),
                     DyingElderState::Plea,
                     bb.clone(),
                     NpcArchetype::DyingElder,
@@ -417,6 +418,7 @@ pub(crate) fn dying_elder_apply_spawn_system(
             commands
                 .spawn((
                     NpcMarker,
+                    CurrentDimension(DimensionKind::Tsy),
                     Position::new([pos.x, pos.y, pos.z]),
                     DyingElderState::Plea,
                     bb.clone(),
@@ -1735,9 +1737,12 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
 /// Bevy 注册：P3 Redis 叙事事件系统（appear / death / dan_received broadcast）。
 pub fn register_p3(app: &mut App) {
     app.add_systems(
+        valence::prelude::PostUpdate,
+        dying_elder_p3_emit_appear_event_system.after(valence::entity::InitEntitiesSet),
+    );
+    app.add_systems(
         Update,
         (
-            dying_elder_p3_emit_appear_event_system,
             // 第五颗丹同帧产生收丹与终态反馈：先广播收丹，终态必须最后到达，
             // 避免 client/agent 被后到的 DanReceived 覆盖死亡状态。
             dying_elder_p3_emit_death_event_system

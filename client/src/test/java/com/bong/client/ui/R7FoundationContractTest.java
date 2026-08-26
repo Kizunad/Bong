@@ -41,6 +41,16 @@ class R7FoundationContractTest {
     private static final Path CLIENT_ROOT = R7SourceScan.productionRoot();
     private static final Path REPOSITORY_ROOT = R7SourceScan.repositoryRoot();
     private static final Path PLAN = REPOSITORY_ROOT.resolve("docs/plan-refactor-client-ui-base-v1.md");
+    private static final Set<String> REGISTRY_MIGRATED_OWNER_IDS = Set.of(
+        "identity.open_panel",
+        "void_action.open_screen",
+        "forge.open_screen",
+        "tsy.extract_start",
+        "tsy.extract_cancel",
+        "dying_elder.give_dan",
+        "dying_elder.refuse",
+        "dying_elder.delay"
+    );
 
     @Test
     void fixtureLoaderSkipsPlainAndOrdinalPrefixedHeaders() {
@@ -90,10 +100,10 @@ class R7FoundationContractTest {
     void planCarriesTheFrozenContractAndBoundaryAnchors() {
         String plan = R7SourceScan.read(PLAN);
         for (String anchor : List.of(
-            "29 个 production Screen",
-            "92 个 `Sizing.fill(100)`",
+            "真实 Screen **29** 个",
+            "现有 92 个 token（87 个 executable）",
             "BongScreenBase<R extends ParentComponent>",
-            "DiffListWidget<T, K, C extends Component>",
+            "DiffListWidget<T,K,C extends Component>",
             "BongKeybindRegistry",
             "ClientThreadMarshal",
             "ScreenOpenPolicy",
@@ -101,20 +111,22 @@ class R7FoundationContractTest {
             "R6",
             "tab-first",
             "DEFER_NOTIFY",
-            "BLOCK_DROP",
+            "普通 hotkey 不重放",
             "ZERO production behavior change"
         )) {
             assertTrue(plan.contains(anchor), "R7 P0 plan is missing frozen anchor: " + anchor);
         }
-        assertTrue(plan.contains("`ClientThreadMarshal` 只冻结纯 helper API"),
-            "R7 must not claim R6 network/router wiring");
-        assertTrue(plan.contains("Screen-local listener/unsubscriber"),
-            "Screen teardown must be distinguished from SessionScopedStore data clearing");
-        assertTrue(plan.contains("`SparringInviteScreenBootstrap` 必须成为 `ScreenOpenPolicy` 的 production consumer"),
-            "P4 must wire the real social-invite bootstrap into ScreenOpenPolicy");
+        assertTrue(plan.contains("R6 仍独占网络 receiver/bridge/router"),
+            "R7 must not claim R6 network/router ownership");
+        assertTrue(plan.contains("唯一 screen-level intake"),
+            "Screen teardown and subscription ownership must remain explicit");
+        assertTrue(plan.contains("SparringInviteScreenBootstrap.java")
+                && plan.contains("ScreenOpenPolicy"),
+            "P4/P6 must name the real social-invite bootstrap and its open-policy owner");
         assertTrue(plan.contains("server-authoritative combat snapshot"),
             "P4 social deferral must block on an authoritative combat-state input");
-        assertTrue(plan.contains("stale offer A") && plan.contains("不能清除 offer B"),
+        assertTrue(plan.contains("stale A/duplicate callback 不影响 B")
+                && plan.contains("exact offerId claim/compare-and-clear exactly-once"),
             "P4 must prove an older insight lifecycle cannot clear a newer offer");
     }
 
@@ -216,7 +228,7 @@ class R7FoundationContractTest {
 
     @Test
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
-        List<String> fixtureLines = resourceLines("/bong/ui/r7-screen-open-policy.tsv");
+        List<String> fixtureLines = resourceLines("/bong/ui/screen-open-policy.tsv");
         assertEquals(expectedOpenPolicyFixtureLines(), fixtureLines,
             "all 35 raw policy vectors and every input/output field must be explicitly re-decided");
         List<OpenPolicyRow> rows = openPolicyRows();
@@ -318,13 +330,19 @@ class R7FoundationContractTest {
         assertEquals(List.of(), conflictExemptionRows(), "physical-default exemptions must remain empty");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
+        List<KeybindProductionSiteRow> directExpected = expected.stream()
+            .filter(row -> !REGISTRY_MIGRATED_OWNER_IDS.contains(row.ownerId()))
+            .toList();
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
-        assertEquals(26, actualSites.size(), "production KeyBinding constructor-site count changed");
-        assertEquals(26, expected.size(), "each constructor source site must have one exact binding contract");
+        assertEquals(18, actualSites.size(),
+            "remaining direct KeyBinding constructor-site count changed after registry migration");
+        assertEquals(26, expected.size(), "the production-site manifest must retain all 26 logical bindings");
+        assertEquals(18, directExpected.size(),
+            "the direct-constructor subset must exclude exactly the eight registry-migrated bindings");
         assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "every logical binding needs one globally unique BindingOwner id");
-        Set<SourceSiteIdentity> expectedIdentities = expected.stream()
+        Set<SourceSiteIdentity> expectedIdentities = directExpected.stream()
             .map(row -> new SourceSiteIdentity(row.sourcePath(), row.sourceSite()))
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         Set<SourceSiteIdentity> actualIdentities = actualSites.stream()
@@ -332,18 +350,18 @@ class R7FoundationContractTest {
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         assertEquals(expectedIdentities, actualIdentities,
             "fixture and production must match the exact (sourcePath, assignment target) set in both directions");
-        assertEquals(resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
+        assertEquals(resourceLines("/bong/ui/keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
-        assertEquals(34, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
-            "the pinned 26 constructors must expand to exactly 34 runtime bindings");
+        assertEquals(26, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "the remaining 18 direct constructors must expand to exactly 26 runtime bindings");
         Set<String> expandedTranslationKeys = new TreeSet<>();
         for (KeybindingSourceSite site : actualSites) {
             expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        assertEquals(34, expandedTranslationKeys.size(),
-            "every pinned runtime binding must have a unique effective translation key");
-        for (KeybindProductionSiteRow row : expected) {
+        assertEquals(26, expandedTranslationKeys.size(),
+            "every remaining direct runtime binding must have a unique effective translation key");
+        for (KeybindProductionSiteRow row : directExpected) {
             KeybindingSourceSite actual = actualSites.stream()
                 .filter(site -> site.sourcePath().equals(row.sourcePath())
                     && site.sourceSite().equals(row.sourceSite()))
@@ -363,10 +381,10 @@ class R7FoundationContractTest {
                 "expanded runtime translation keys drifted for " + row.ownerId());
         }
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
-            expected, actualSites, keybindRows()
+            directExpected, actualSites, keybindRows()
         );
-        assertEquals(34, expandedDefaults.size(),
-            "the collision audit must inspect every expanded runtime production default, including UNKNOWN entries");
+        assertEquals(26, expandedDefaults.size(),
+            "the direct-site collision audit must inspect every remaining expanded default");
         Set<DefaultCollision> collisions = new TreeSet<>();
         for (int first = 0; first < expandedDefaults.size(); first++) {
             ExpandedProductionDefault left = expandedDefaults.get(first);
@@ -398,7 +416,7 @@ class R7FoundationContractTest {
         }
         Set<DefaultCollision> expectedCollisions = Set.of();
         assertEquals(expectedCollisions, collisions,
-            "the 34 expanded target defaults must not collide with frozen vanilla reservations");
+            "the 26 expanded target defaults must not collide with frozen vanilla reservations");
 
         Set<DefaultCollision> exemptions = conflictExemptionRows().stream()
             .map(row -> new DefaultCollision(row.firstOwnerId(), row.secondOwnerId(), row.inputType(), row.code()))
@@ -849,14 +867,14 @@ class R7FoundationContractTest {
         );
     }
     private static List<FoundationRow> foundationRows() {
-        return resourceLines("/bong/ui/r7-foundation-contract.tsv").stream()
+        return resourceLines("/bong/ui/foundation-contract.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new FoundationRow(columns[0], columns[1], columns[2], columns[3], columns[4]))
             .toList();
     }
 
     private static List<KeybindRow> keybindRows() {
-        return resourceLines("/bong/ui/r7-keybind-migration.tsv").stream()
+        return resourceLines("/bong/ui/keybind-migration.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4], columns[5],
@@ -866,7 +884,7 @@ class R7FoundationContractTest {
     }
 
     private static List<OpenPolicyRow> openPolicyRows() {
-        return resourceLines("/bong/ui/r7-screen-open-policy.tsv").stream()
+        return resourceLines("/bong/ui/screen-open-policy.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new OpenPolicyRow(
                 columns[0],
@@ -887,14 +905,14 @@ class R7FoundationContractTest {
     }
 
     private static List<ReservedDefaultRow> reservedDefaultRows() {
-        return resourceLines("/bong/ui/r7-keybind-reserved-defaults.tsv").stream()
+        return resourceLines("/bong/ui/keybind-reserved-defaults.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ReservedDefaultRow(columns[0], columns[1], columns[2], columns[3]))
             .toList();
     }
 
     private static List<ConflictExemptionRow> conflictExemptionRows() {
-        return resourceLines("/bong/ui/r7-keybind-conflict-exemptions.tsv").stream()
+        return resourceLines("/bong/ui/keybind-conflict-exemptions.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ConflictExemptionRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4]
@@ -903,7 +921,7 @@ class R7FoundationContractTest {
     }
 
     private static List<KeybindProductionSiteRow> keybindProductionSiteRows() {
-        return resourceLines("/bong/ui/r7-keybind-production-sites.tsv").stream()
+        return resourceLines("/bong/ui/keybind-production-sites.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindProductionSiteRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],
@@ -913,7 +931,7 @@ class R7FoundationContractTest {
     }
 
     private static List<InsightSettlementRow> insightSettlementRows() {
-        return resourceLines("/bong/ui/r7-insight-settlement.tsv").stream()
+        return resourceLines("/bong/ui/insight-settlement.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new InsightSettlementRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],

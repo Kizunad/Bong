@@ -18,6 +18,7 @@ pub mod burst_event_emit;
 pub mod carrier_state_emit;
 pub mod cast_emit;
 pub mod chat_collector;
+pub mod client_request;
 pub mod client_request_handler;
 pub mod combat_bridge;
 pub mod combat_event_emit;
@@ -43,6 +44,7 @@ pub mod forge_snapshot_emit;
 pub mod freshness_probe_emit;
 pub mod full_power_emit;
 pub mod gameplay_vfx;
+pub mod gate;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_move_rejected_emit;
@@ -384,6 +386,19 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
 /// `insert_resource` / `add_systems` / `add_event`，不起线程、不碰 IO，测试可直接调用；
 /// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
 pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
+    app.init_resource::<client_request_handler::ClientRequestBudget>();
+    app.init_resource::<client_request_handler::LingtianPlotIndex>();
+    app.add_systems(
+        Update,
+        client_request_handler::refresh_lingtian_plot_index
+            .before(client_request_handler::handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::cleanup_client_request_budget
+            .before(client_request_handler::handle_client_request_payloads)
+            .before(crate::player::despawn_disconnected_clients),
+    );
     app.add_systems(
         Update,
         client_request_handler::handle_client_request_payloads
@@ -621,7 +636,6 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             ascension_quota_emit::emit_ascension_quota_payloads
                 .after(crate::cultivation::tribulation::tribulation_wave_system),
             tribulation_heart_demon_offer_emit::emit_heart_demon_offer_payloads,
-            burst_event_emit::emit_burst_meridian_events,
             anqi_event_bridge::publish_carrier_charged_events,
             anqi_event_bridge::publish_carrier_impact_events,
             anqi_event_bridge::publish_projectile_despawned_events,
@@ -633,6 +647,14 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             tuike_event_bridge::publish_tuike_shed_events
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
+    );
+    // Skill resolvers enqueue BurstMeridianEvent via deferred commands. The explicit
+    // dependency makes Bevy insert ApplyDeferred between the request handler and this
+    // exclusive bridge, so every accepted cast reaches S2C in the same Update.
+    app.add_systems(
+        Update,
+        burst_event_emit::emit_burst_meridian_events
+            .after(client_request_handler::handle_client_request_payloads),
     );
     app.add_systems(Update, dugu_event_bridge::publish_antidote_result_events);
     app.add_systems(
@@ -1017,7 +1039,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events)
-                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system)
+                .after(crate::social::SocialSystemSet::TradeOfferResponse),
             inventory_snapshot_emit::emit_revive_inventory_resyncs,
             skill_snapshot_emit::emit_revive_skill_resyncs,
             inventory_event_emit::emit_dropped_item_inventory_events,

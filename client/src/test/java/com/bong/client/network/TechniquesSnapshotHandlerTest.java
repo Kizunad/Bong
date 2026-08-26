@@ -46,8 +46,22 @@ class TechniquesSnapshotHandlerTest {
         var technique = TechniquesListPanel.snapshot().get(0);
         assertEquals(TechniquesListPanel.Grade.YELLOW, technique.grade());
         assertEquals("熟练", technique.proficiencyLabel());
-        assertEquals(0.4f, technique.qiCost(), 0.0001f);
+        assertEquals(0.4, technique.qiCost(), 0.0001);
         assertEquals("LargeIntestine", technique.requiredMeridians().get(0).channel());
+    }
+
+    @Test
+    void preservesLegacyFloatQiCost() {
+        ServerDataDispatch dispatch = new TechniquesSnapshotHandler().handle(parseEnvelope("""
+            {"v":1,"type":"techniques_snapshot","entries":[{
+              "id":"sword.cleave","display_name":"劈","grade":"common",
+              "proficiency":0.5,"active":true,"description":"","required_realm":"Awaken",
+              "required_meridians":[],"qi_cost":0.4,"cast_ticks":1,
+              "cooldown_ticks":1,"range":1.0
+            }]}"""));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertEquals(0.4f, TechniquesListPanel.snapshot().get(0).qiCost());
     }
 
     @Test

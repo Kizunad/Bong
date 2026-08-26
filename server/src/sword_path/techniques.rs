@@ -107,13 +107,17 @@ mod tests {
 
     #[test]
     fn color_weights_all_resolver_ids_covered() {
-        for id in [
-            "sword_path.condense_edge",
-            "sword_path.qi_slash",
-            "sword_path.resonance",
-            "sword_path.manifest",
-            "sword_path.heaven_gate",
-        ] {
+        let registry = crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests();
+        let ids: Vec<&str> = registry
+            .iter()
+            .filter(|definition| definition.id.starts_with("sword_path."))
+            .map(|definition| definition.id.as_str())
+            .collect();
+        assert!(
+            !ids.is_empty(),
+            "registry must contain sword_path techniques"
+        );
+        for id in ids {
             assert!(
                 coloring::practice_weight(id).is_some(),
                 "technique {id} should have color weight"

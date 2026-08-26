@@ -2174,6 +2174,40 @@ mod tests {
     }
 
     #[test]
+    fn cast_sword_cleave_uses_overridden_runtime_race_gate() {
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_CLEAVE_SKILL_ID,
+            |definition| definition.required_race = crate::body_plan::RaceGateOwned::Any,
+        ));
+        app.add_event::<AttackIntent>();
+        insert_non_humanoid_race_fixture(&mut app, "test_whale");
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_CLEAVE_SKILL_ID, 0.5),
+                test_sword_weapon(),
+                Cultivation {
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    qi_current: 42.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "runtime Any override must admit a non-humanoid caster, got {result:?}"
+        );
+        assert!(
+            !app.world().resource::<Events<AttackIntent>>().is_empty(),
+            "accepted runtime race override must reach attack emission"
+        );
+    }
+
+    #[test]
     fn cast_sword_parry_rejects_race_mismatch_for_non_humanoid_caster() {
         // sword.parry 同表 RaceGate::Humanoid。断言拒绝原因 + StatusEffects 未被写入
         // SwordParrying（证明 resolver 在 race gate 就返回，未继续执行格挡逻辑）。

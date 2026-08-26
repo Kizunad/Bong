@@ -34,11 +34,12 @@ use crate::schema::channels::{
     CH_BAOMAI_V4_IRON_COCOON_STAGE_UP, CH_BAOMAI_V4_RESONANCE_LOCK,
     CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
     CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY,
-    CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
-    CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_ANTIDOTE_RESULT,
-    CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE,
-    CH_DUO_SHE_EVENT, CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR,
-    CH_FAUNA_ECOLOGY, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE,
+    CH_BOT_DELIVERY_FENCE_ACK, CH_BOT_DELIVERY_FENCE_REQUEST, CH_BREAKTHROUGH_CINEMATIC,
+    CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH,
+    CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_ANTIDOTE_RESULT, CH_DUGU_POISON_PROGRESS,
+    CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT,
+    CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR, CH_FAUNA_ECOLOGY,
+    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE,
     CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
     CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT,
     CH_NAMED_FACTION_STATE, CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN,
@@ -135,6 +136,10 @@ const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
+/// Application-side cap for `bong:player_chat`: 32 agent drain windows of 128
+/// messages leave room for a short agent restart while bounding Redis memory.
+/// `LTRIM` keeps this queue's newest entries, so overflow drops the oldest chat.
+const PLAYER_CHAT_QUEUE_MAX_LEN: i64 = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedisDeliveryReceipt {
@@ -320,6 +325,9 @@ pub enum RedisOutbound {
     // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
     /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
     AgentUiResponse(AgentUiResponsePayloadV1),
+    BotDeliveryFenceAck {
+        token: String,
+    },
     // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────
     /// 半步化虚重渡触发（bong:tribulation/halfstep_rechallenge），agent narration 用。
     HalfStepRechallengeTrigger(
@@ -376,6 +384,11 @@ enum BridgeLoopControl {
 enum SubscriberTaskExit {
     StreamEnded,
     GameChannelClosed,
+}
+
+#[derive(Debug, Clone)]
+struct BotDeliveryFenceRequest {
+    token: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +477,7 @@ pub fn spawn_redis_bridge(
 ) {
     let (tx_to_game, rx_inbound) = crossbeam_channel::unbounded::<RedisInbound>();
     let (tx_outbound, rx_from_game) = crossbeam_channel::unbounded::<RedisOutbound>();
+    let (tx_fence, rx_fence) = crossbeam_channel::unbounded::<BotDeliveryFenceRequest>();
 
     let url = redis_url.to_string();
 
@@ -488,12 +502,13 @@ pub fn spawn_redis_bridge(
             let mut pending_command = None;
 
             loop {
-                match connect_bridge_session(&client, url.as_str(), &tx_to_game).await {
+                match connect_bridge_session(&client, url.as_str(), &tx_to_game, &tx_fence).await {
                     Ok((pub_conn, sub_task)) => {
                         backoff.reset();
 
                         match run_bridge_session(
                             &rx_from_game,
+                            &rx_fence,
                             &mut pending_command,
                             pub_conn,
                             sub_task,
@@ -575,6 +590,13 @@ async fn drain_outbound_messages(
 
 fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, ValidationError> {
     match message {
+        RedisOutbound::BotDeliveryFenceAck { token } => {
+            let payload = serde_json::json!({"v": 1, "ok": true, "token": token});
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BOT_DELIVERY_FENCE_ACK,
+                payload: payload.to_string(),
+            })
+        }
         RedisOutbound::WorldState(state) => {
             validate_world_state(&state)?;
 
@@ -1905,7 +1927,11 @@ async fn execute_outbound_command(
             Ok(())
         }
         RedisIoCommand::ListPush { key, payload } => {
-            execute_list_push(pub_conn, key, payload).await
+            if *key == CH_PLAYER_CHAT {
+                execute_player_chat_list_push(pub_conn, key, payload).await
+            } else {
+                execute_list_push(pub_conn, key, payload).await
+            }
         }
         RedisIoCommand::HashReplaceWithReceipt {
             key,
@@ -1942,6 +1968,49 @@ async fn execute_list_push(
     {
         Ok(Ok(list_len)) => {
             tracing::debug!("[bong][redis] pushed payload onto {key}; list length {list_len}");
+            Ok(())
+        }
+        Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
+        Err(_) => Err(format!(
+            "timed out RPUSH {key} after {:?}",
+            REDIS_IO_TIMEOUT
+        )),
+    }
+}
+
+fn should_warn_player_chat_queue(list_len: i64) -> bool {
+    list_len > PLAYER_CHAT_QUEUE_MAX_LEN
+}
+
+async fn execute_player_chat_list_push(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    key: &'static str,
+    payload: &str,
+) -> Result<(), String> {
+    // This is deliberately a non-transaction pipeline: Redis executes the
+    // commands in order on this connection, so RPUSH reports the pre-trim
+    // length while the following LTRIM retains only the newest N entries.
+    let mut pipeline = redis::pipe();
+    pipeline
+        .cmd("RPUSH")
+        .arg(key)
+        .arg(payload)
+        .cmd("LTRIM")
+        .arg(key)
+        .arg(-PLAYER_CHAT_QUEUE_MAX_LEN)
+        .arg(-1_i64)
+        .ignore();
+
+    match tokio::time::timeout(REDIS_IO_TIMEOUT, pipeline.query_async::<(i64,)>(pub_conn)).await {
+        Ok(Ok((list_len,))) => {
+            if should_warn_player_chat_queue(list_len) {
+                tracing::warn!(
+                    "[bong][redis] player chat queue is being trimmed; dropping oldest entries: key={key} rpush_length={list_len} max_length={PLAYER_CHAT_QUEUE_MAX_LEN}"
+                );
+            }
+            tracing::debug!(
+                "[bong][redis] pushed and bounded player chat queue {key}; RPUSH length {list_len}, max length {PLAYER_CHAT_QUEUE_MAX_LEN}"
+            );
             Ok(())
         }
         Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
@@ -2154,6 +2223,7 @@ async fn connect_bridge_session(
     client: &redis::Client,
     redis_url: &str,
     tx_to_game: &Sender<RedisInbound>,
+    tx_fence: &Sender<BotDeliveryFenceRequest>,
 ) -> Result<
     (
         redis::aio::MultiplexedConnection,
@@ -2182,7 +2252,11 @@ async fn connect_bridge_session(
     );
 
     let tx_to_game_clone = tx_to_game.clone();
-    let sub_task = tokio::spawn(async move { run_subscriber_task(pubsub, tx_to_game_clone).await });
+    let tx_fence_clone = tx_fence.clone();
+    let sub_task =
+        tokio::spawn(
+            async move { run_subscriber_task(pubsub, tx_to_game_clone, tx_fence_clone).await },
+        );
 
     Ok((pub_conn, sub_task))
 }
@@ -2226,11 +2300,19 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
         .await
         .map_err(|error| format!("failed to subscribe to {CH_AGENT_UI_CMD}: {error}"))?;
 
+    pubsub
+        .subscribe(CH_BOT_DELIVERY_FENCE_REQUEST)
+        .await
+        .map_err(|error| {
+            format!("failed to subscribe to {CH_BOT_DELIVERY_FENCE_REQUEST}: {error}")
+        })?;
+
     Ok(())
 }
 
 async fn run_bridge_session(
     rx_from_game: &Receiver<RedisOutbound>,
+    rx_fence: &Receiver<BotDeliveryFenceRequest>,
     pending_command: &mut Option<RedisIoCommand>,
     mut pub_conn: redis::aio::MultiplexedConnection,
     sub_task: tokio::task::JoinHandle<SubscriberTaskExit>,
@@ -2253,10 +2335,48 @@ async fn run_bridge_session(
             }
         }
 
+        while let Ok(request) = rx_fence.try_recv() {
+            if let Err(control) =
+                flush_and_ack_delivery_fence(rx_from_game, pending_command, &mut pub_conn, request)
+                    .await
+            {
+                abort_subscriber_task(sub_task).await;
+                return control;
+            }
+        }
+
         if sub_task.is_finished() {
             return handle_finished_subscriber_task(sub_task).await;
         }
     }
+}
+
+async fn flush_and_ack_delivery_fence(
+    rx_from_game: &Receiver<RedisOutbound>,
+    pending_command: &mut Option<RedisIoCommand>,
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    request: BotDeliveryFenceRequest,
+) -> Result<(), BridgeLoopControl> {
+    loop {
+        match drain_outbound_messages(rx_from_game, pub_conn, pending_command).await {
+            DrainOutcome::Healthy if pending_command.is_none() && rx_from_game.is_empty() => break,
+            DrainOutcome::Healthy => continue,
+            DrainOutcome::Reconnect { reason } => {
+                return Err(BridgeLoopControl::Reconnect { reason });
+            }
+            DrainOutcome::Stop => return Err(BridgeLoopControl::Stop),
+        }
+    }
+    let payload = serde_json::json!({"v": 1, "ok": true, "token": request.token});
+    execute_publish(
+        pub_conn,
+        CH_BOT_DELIVERY_FENCE_ACK,
+        payload.to_string().as_str(),
+    )
+    .await
+    .map_err(|error| BridgeLoopControl::Reconnect {
+        reason: format!("delivery_fence_ack_failed: {error}"),
+    })
 }
 
 async fn abort_subscriber_task(sub_task: tokio::task::JoinHandle<SubscriberTaskExit>) {
@@ -2304,6 +2424,7 @@ fn map_subscriber_join_result(
 async fn run_subscriber_task(
     mut pubsub: redis::aio::PubSub,
     tx_to_game: Sender<RedisInbound>,
+    tx_fence: Sender<BotDeliveryFenceRequest>,
 ) -> SubscriberTaskExit {
     use futures_util::StreamExt;
 
@@ -2324,6 +2445,38 @@ async fn run_subscriber_task(
                 continue;
             }
         };
+
+        if channel == CH_BOT_DELIVERY_FENCE_REQUEST {
+            let request = match serde_json::from_str::<serde_json::Value>(payload.as_str()) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::warn!("[bong][redis] dropped invalid delivery fence request: {error}");
+                    continue;
+                }
+            };
+            let Some(token) = request.get("token").and_then(Value::as_str) else {
+                tracing::warn!("[bong][redis] dropped delivery fence request without token");
+                continue;
+            };
+            if token.is_empty() || token.len() > 128 {
+                tracing::warn!(
+                    "[bong][redis] dropped delivery fence request with invalid token length"
+                );
+                continue;
+            }
+            if tx_fence
+                .send(BotDeliveryFenceRequest {
+                    token: token.to_string(),
+                })
+                .is_err()
+            {
+                tracing::warn!(
+                    "[bong][redis] delivery fence channel closed; stopping subscriber task"
+                );
+                return SubscriberTaskExit::GameChannelClosed;
+            }
+            continue;
+        }
 
         match parse_inbound_message(channel.as_str(), payload.as_str()) {
             Ok(Some(inbound)) => {
@@ -2803,6 +2956,8 @@ fn expect_array_field<'a>(
 #[cfg(test)]
 mod redis_bridge_tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     fn dormant_hash_outbound(
         entries: Vec<(String, String)>,
@@ -3341,23 +3496,28 @@ mod redis_bridge_tests {
         );
     }
 
-    async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> Vec<u8> {
+    async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> std::io::Result<Vec<u8>> {
         let mut line = Vec::new();
         loop {
             let mut byte = [0_u8; 1];
-            server
-                .read_exact(&mut byte)
-                .await
-                .expect("mock Redis must read the complete RESP line");
+            server.read_exact(&mut byte).await?;
             line.push(byte[0]);
             if line.ends_with(b"\r\n") {
-                return line;
+                return Ok(line);
             }
         }
     }
 
     async fn read_resp_request(server: &mut tokio::io::DuplexStream) {
-        let line = read_resp_line(server).await;
+        let _ = read_resp_request_arguments(server)
+            .await
+            .expect("mock Redis must read the complete RESP request");
+    }
+
+    async fn read_resp_request_arguments(
+        server: &mut tokio::io::DuplexStream,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        let line = read_resp_line(server).await?;
         assert_eq!(
             line.first().copied(),
             Some(b'*'),
@@ -3367,8 +3527,9 @@ mod redis_bridge_tests {
             .expect("RESP array count must be UTF-8")
             .parse::<usize>()
             .expect("RESP array count must be numeric");
+        let mut arguments = Vec::with_capacity(argument_count);
         for _ in 0..argument_count {
-            let line = read_resp_line(server).await;
+            let line = read_resp_line(server).await?;
             assert_eq!(
                 line.first().copied(),
                 Some(b'$'),
@@ -3379,16 +3540,15 @@ mod redis_bridge_tests {
                 .parse::<usize>()
                 .expect("RESP bulk length must be numeric");
             let mut payload = vec![0_u8; length + 2];
-            server
-                .read_exact(&mut payload)
-                .await
-                .expect("mock Redis must read the complete RESP bulk string");
+            server.read_exact(&mut payload).await?;
             assert_eq!(
                 &payload[length..],
                 b"\r\n",
                 "RESP bulk string must end with CRLF"
             );
+            arguments.push(payload[..length].to_vec());
         }
+        Ok(arguments)
     }
 
     async fn mock_multiplexed_connection(
@@ -3418,6 +3578,473 @@ mod redis_bridge_tests {
                 .expect("test duplex must construct a multiplexed Redis connection");
         task::spawn(driver);
         connection
+    }
+
+    #[derive(Clone, Copy)]
+    enum MockRedisMode {
+        Normal,
+        FailOnCommand(usize),
+        HangOnCommand(usize),
+    }
+
+    #[derive(Default)]
+    struct MockRedisState {
+        commands: Vec<Vec<String>>,
+        lists: HashMap<String, Vec<String>>,
+    }
+
+    fn mock_ltrim(list: &mut Vec<String>, start: isize, stop: isize) {
+        let length = list.len() as isize;
+        if length == 0 {
+            return;
+        }
+
+        let start = if start < 0 { length + start } else { start };
+        let stop = if stop < 0 { length + stop } else { stop };
+        // Redis clamps a negative start that precedes the list to zero.  Without
+        // that clamp, the mock would erase every queue shorter than the cap and
+        // could not model `LTRIM key -N -1` faithfully.
+        let start = start.max(0);
+        if start >= length || stop < start || stop < 0 {
+            list.clear();
+            return;
+        }
+
+        let stop = stop.min(length - 1) as usize;
+        let start = start as usize;
+        *list = list[start..=stop].to_vec();
+    }
+
+    async fn mock_redis_list_connection(
+        mode: MockRedisMode,
+    ) -> (
+        redis::aio::MultiplexedConnection,
+        Arc<Mutex<MockRedisState>>,
+    ) {
+        let (client, mut server) = duplex(16 * 1024);
+        let state = Arc::new(Mutex::new(MockRedisState::default()));
+        let server_state = Arc::clone(&state);
+        task::spawn(async move {
+            for _ in 0..2 {
+                read_resp_request(&mut server).await;
+            }
+            server
+                .write_all(b"+OK\r\n+OK\r\n")
+                .await
+                .expect("mock Redis must send both setup responses");
+
+            let mut command_index = 0;
+            loop {
+                let arguments = match read_resp_request_arguments(&mut server).await {
+                    Ok(arguments) => arguments,
+                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(error) => panic!("mock Redis failed to read a command: {error}"),
+                };
+                let command = String::from_utf8_lossy(
+                    arguments
+                        .first()
+                        .expect("mock Redis command must have a command name"),
+                )
+                .to_string();
+                let command_for_state = arguments
+                    .iter()
+                    .map(|argument| String::from_utf8_lossy(argument).into_owned())
+                    .collect::<Vec<_>>();
+                server_state
+                    .lock()
+                    .expect("mock Redis state mutex should not be poisoned")
+                    .commands
+                    .push(command_for_state);
+
+                if matches!(mode, MockRedisMode::HangOnCommand(index) if index == command_index) {
+                    std::future::pending::<()>().await;
+                }
+
+                if matches!(mode, MockRedisMode::FailOnCommand(index) if index == command_index) {
+                    server
+                        .write_all(b"-ERR injected Redis failure\r\n")
+                        .await
+                        .expect("mock Redis must send the injected failure");
+                    command_index += 1;
+                    continue;
+                }
+
+                let response = match command.as_str() {
+                    "RPUSH" => {
+                        assert_eq!(
+                            arguments.len(),
+                            3,
+                            "mock RPUSH must contain key and one payload"
+                        );
+                        let key = String::from_utf8_lossy(&arguments[1]).into_owned();
+                        let payload = String::from_utf8_lossy(&arguments[2]).into_owned();
+                        let mut state = server_state
+                            .lock()
+                            .expect("mock Redis state mutex should not be poisoned");
+                        let list = state.lists.entry(key).or_default();
+                        list.push(payload);
+                        format!(":{}\r\n", list.len())
+                    }
+                    "LTRIM" => {
+                        assert_eq!(
+                            arguments.len(),
+                            4,
+                            "mock LTRIM must contain key, start, and stop"
+                        );
+                        let key = String::from_utf8_lossy(&arguments[1]).into_owned();
+                        let start = String::from_utf8_lossy(&arguments[2])
+                            .parse::<isize>()
+                            .expect("mock LTRIM start must be an integer");
+                        let stop = String::from_utf8_lossy(&arguments[3])
+                            .parse::<isize>()
+                            .expect("mock LTRIM stop must be an integer");
+                        let mut state = server_state
+                            .lock()
+                            .expect("mock Redis state mutex should not be poisoned");
+                        if let Some(list) = state.lists.get_mut(&key) {
+                            mock_ltrim(list, start, stop);
+                        }
+                        "+OK\r\n".to_string()
+                    }
+                    other => format!("-ERR unsupported mock command {other}\r\n"),
+                };
+                server
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("mock Redis must send its command response");
+                command_index += 1;
+            }
+        });
+        let (connection, driver) =
+            redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
+                .await
+                .expect("test duplex must construct a multiplexed Redis connection");
+        task::spawn(driver);
+        (connection, state)
+    }
+
+    fn mock_list_snapshot(state: &Arc<Mutex<MockRedisState>>, key: &str) -> Vec<String> {
+        state
+            .lock()
+            .expect("mock Redis state mutex should not be poisoned")
+            .lists
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn mock_commands_snapshot(state: &Arc<Mutex<MockRedisState>>) -> Vec<Vec<String>> {
+        state
+            .lock()
+            .expect("mock Redis state mutex should not be poisoned")
+            .commands
+            .clone()
+    }
+
+    async fn execute_mock_chat_push(
+        connection: &mut redis::aio::MultiplexedConnection,
+        payload: &str,
+    ) -> Result<(), String> {
+        let command = RedisIoCommand::ListPush {
+            key: CH_PLAYER_CHAT,
+            payload: payload.to_string(),
+        };
+        execute_outbound_command(connection, &command).await
+    }
+
+    #[tokio::test]
+    async fn player_chat_queue_keeps_below_cap_and_drops_oldest_at_boundary() {
+        let (mut connection, state) = mock_redis_list_connection(MockRedisMode::Normal).await;
+        let max_len = PLAYER_CHAT_QUEUE_MAX_LEN as usize;
+
+        for index in 0..3 {
+            execute_mock_chat_push(&mut connection, &format!("message-{index}"))
+                .await
+                .expect("chat push below the cap should succeed without dropping entries");
+        }
+        assert_eq!(
+            mock_list_snapshot(&state, CH_PLAYER_CHAT),
+            vec!["message-0", "message-1", "message-2"],
+            "a queue below the cap must retain every chat in arrival order"
+        );
+
+        for index in 3..max_len {
+            execute_mock_chat_push(&mut connection, &format!("message-{index}"))
+                .await
+                .expect("chat push at the cap should succeed");
+        }
+        let at_cap = mock_list_snapshot(&state, CH_PLAYER_CHAT);
+        let expected_at_cap_last = format!("message-{}", max_len - 1);
+        assert_eq!(
+            at_cap.len(),
+            max_len,
+            "the queue must be exactly capped before the boundary push"
+        );
+        assert_eq!(
+            at_cap.first().map(String::as_str),
+            Some("message-0"),
+            "filling to the cap must not discard the oldest entry prematurely"
+        );
+        assert_eq!(
+            at_cap.last(),
+            Some(&expected_at_cap_last),
+            "filling to the cap must retain the newest entry"
+        );
+
+        let boundary_payload = format!("message-{max_len}");
+        execute_mock_chat_push(&mut connection, &boundary_payload)
+            .await
+            .expect("the first overflowing chat must still be acknowledged");
+        let after_boundary = mock_list_snapshot(&state, CH_PLAYER_CHAT);
+        assert_eq!(
+            after_boundary.len(),
+            max_len,
+            "one chat over the cap must leave exactly the configured queue length"
+        );
+        assert_eq!(
+            after_boundary.first().map(String::as_str),
+            Some("message-1"),
+            "the boundary overflow must drop exactly the oldest chat"
+        );
+        assert_eq!(
+            after_boundary.last(),
+            Some(&boundary_payload),
+            "the boundary overflow must retain the newest chat"
+        );
+
+        let commands = mock_commands_snapshot(&state);
+        assert_eq!(
+            commands.len(),
+            (max_len + 1) * 2,
+            "every chat write must issue exactly one RPUSH followed by one LTRIM"
+        );
+        assert_eq!(
+            commands[0],
+            vec![
+                "RPUSH".to_string(),
+                CH_PLAYER_CHAT.to_string(),
+                "message-0".to_string()
+            ],
+            "the first RESP command must be RPUSH with the chat key and payload"
+        );
+        let trim_start = (-PLAYER_CHAT_QUEUE_MAX_LEN).to_string();
+        assert_eq!(
+            commands[1],
+            vec![
+                "LTRIM".to_string(),
+                CH_PLAYER_CHAT.to_string(),
+                trim_start.clone(),
+                "-1".to_string()
+            ],
+            "the second RESP command must retain the newest configured number of chats"
+        );
+        let boundary_commands = &commands[max_len * 2..];
+        assert_eq!(
+            boundary_commands[0].get(2).map(String::as_str),
+            Some(boundary_payload.as_str()),
+            "the boundary RPUSH must carry the overflowing newest chat"
+        );
+        assert_eq!(
+            boundary_commands[1].get(2).map(String::as_str),
+            Some(trim_start.as_str()),
+            "the boundary LTRIM must use the negative configured cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn player_chat_queue_stays_bounded_and_keeps_newest_when_far_over_cap() {
+        let (mut connection, state) = mock_redis_list_connection(MockRedisMode::Normal).await;
+        let max_len = PLAYER_CHAT_QUEUE_MAX_LEN as usize;
+        let total = max_len * 2 + 17;
+
+        for index in 0..total {
+            execute_mock_chat_push(&mut connection, &format!("message-{index}"))
+                .await
+                .expect("far-over-cap chat writes must continue succeeding");
+        }
+
+        let list = mock_list_snapshot(&state, CH_PLAYER_CHAT);
+        let expected_first = format!("message-{}", total - max_len);
+        let expected_last = format!("message-{}", total - 1);
+        assert_eq!(
+            list.len(),
+            max_len,
+            "a queue far beyond the cap must remain bounded after every RPUSH/LTRIM pair"
+        );
+        assert_eq!(
+            list.first(),
+            Some(&expected_first),
+            "far-over-cap trimming must discard the entire oldest prefix"
+        );
+        assert_eq!(
+            list.last(),
+            Some(&expected_last),
+            "far-over-cap trimming must retain the newest queue entry"
+        );
+
+        let commands = mock_commands_snapshot(&state);
+        let trim_start = (-PLAYER_CHAT_QUEUE_MAX_LEN).to_string();
+        assert_eq!(
+            commands.len(),
+            total * 2,
+            "far-over-cap traffic must never bypass the bounding LTRIM"
+        );
+        assert!(
+            commands.chunks_exact(2).all(|pair| {
+                pair[0].first().map(String::as_str) == Some("RPUSH")
+                    && pair[0].get(1).map(String::as_str) == Some(CH_PLAYER_CHAT)
+                    && pair[1].first().map(String::as_str) == Some("LTRIM")
+                    && pair[1].get(1).map(String::as_str) == Some(CH_PLAYER_CHAT)
+                    && pair[1].get(2).map(String::as_str) == Some(trim_start.as_str())
+                    && pair[1].get(3).map(String::as_str) == Some("-1")
+            }),
+            "every far-over-cap RESP pair must be RPUSH then LTRIM with the chat cap"
+        );
+    }
+
+    #[test]
+    fn player_chat_queue_warning_threshold_is_strictly_over_cap() {
+        assert!(
+            !should_warn_player_chat_queue(0),
+            "an empty queue cannot indicate truncation"
+        );
+        assert!(
+            !should_warn_player_chat_queue(PLAYER_CHAT_QUEUE_MAX_LEN),
+            "a RPUSH length exactly at the cap must not emit a truncation warning"
+        );
+        assert!(
+            should_warn_player_chat_queue(PLAYER_CHAT_QUEUE_MAX_LEN + 1),
+            "only a RPUSH length above the cap indicates that LTRIM will drop the oldest chat"
+        );
+    }
+
+    #[tokio::test]
+    async fn player_chat_queue_failure_preserves_rpush_error_for_rpush_and_ltrim_failures() {
+        for failed_command in [0, 1] {
+            let (mut connection, state) =
+                mock_redis_list_connection(MockRedisMode::FailOnCommand(failed_command)).await;
+            let failure = execute_mock_chat_push(&mut connection, "message-failure")
+                .await
+                .expect_err("an injected RPUSH/LTRIM Redis error must not be acknowledged");
+            assert!(
+                failure.starts_with(&format!("failed to RPUSH {CH_PLAYER_CHAT}:")),
+                "RPUSH/LTRIM command failure must retain the existing RPUSH error prefix; got `{failure}`"
+            );
+            assert!(
+                failure.contains("injected Redis failure"),
+                "RPUSH/LTRIM command failure must preserve the Redis failure detail; got `{failure}`"
+            );
+            let commands = mock_commands_snapshot(&state);
+            assert_eq!(
+                commands
+                    .first()
+                    .and_then(|command| command.first())
+                    .map(String::as_str),
+                Some("RPUSH"),
+                "the failing chat path must issue RPUSH before reporting the Redis error"
+            );
+            assert_eq!(
+                commands
+                    .get(1)
+                    .and_then(|command| command.first())
+                    .map(String::as_str),
+                Some("LTRIM"),
+                "the chat pipeline must include LTRIM even when either command response fails"
+            );
+            if failed_command == 0 {
+                assert!(
+                    mock_list_snapshot(&state, CH_PLAYER_CHAT).is_empty(),
+                    "a failed RPUSH must not make a chat appear in the mock Redis list"
+                );
+            } else {
+                assert_eq!(
+                    mock_list_snapshot(&state, CH_PLAYER_CHAT),
+                    vec!["message-failure"],
+                    "a failed LTRIM must report failure rather than falsely acknowledge an untrimmed write"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn player_chat_queue_timeout_preserves_rpush_timeout_for_each_pipeline_stage() {
+        for hung_command in [0, 1] {
+            let (mut connection, state) =
+                mock_redis_list_connection(MockRedisMode::HangOnCommand(hung_command)).await;
+            let failure = tokio::time::timeout(
+                Duration::from_millis(500),
+                execute_mock_chat_push(&mut connection, "message-timeout"),
+            )
+            .await
+            .expect("the executor's 100ms timeout must finish before the test watchdog");
+            assert_eq!(
+                failure,
+                Err(format!(
+                    "timed out RPUSH {CH_PLAYER_CHAT} after {:?}",
+                    REDIS_IO_TIMEOUT
+                )),
+                "a timeout in either pipeline stage must retain the existing RPUSH timeout contract"
+            );
+            assert!(
+                !mock_commands_snapshot(&state).is_empty(),
+                "the timeout test must observe a real RESP command before timing out"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn non_chat_list_paths_remain_unbounded_rpush_only() {
+        let (mut connection, state) = mock_redis_list_connection(MockRedisMode::Normal).await;
+        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+        let durable = RedisIoCommand::ListPushWithReceipt {
+            key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
+            payload: "elder-payload".to_string(),
+            delivery_id: "elder-1".to_string(),
+            receipt_tx,
+        };
+        assert_eq!(
+            execute_outbound_command(&mut connection, &durable).await,
+            Ok(()),
+            "durable non-chat list writes must retain their existing successful RPUSH path"
+        );
+        let receipt = receipt_rx
+            .try_recv()
+            .expect("durable non-chat RPUSH must still emit its success receipt");
+        assert_eq!(receipt.delivery_id, "elder-1");
+        assert_eq!(receipt.outcome, Ok(()));
+
+        let other = RedisIoCommand::ListPush {
+            key: "bong:other:list",
+            payload: "other-payload".to_string(),
+        };
+        assert_eq!(
+            execute_outbound_command(&mut connection, &other).await,
+            Ok(()),
+            "a future non-chat ListPush key must not inherit the player-chat cap"
+        );
+
+        let commands = mock_commands_snapshot(&state);
+        assert_eq!(
+            commands.len(),
+            2,
+            "non-chat list writes must issue one command each rather than RPUSH plus LTRIM"
+        );
+        assert!(
+            commands.iter().all(|command| {
+                command.len() == 3 && command.first().map(String::as_str) == Some("RPUSH")
+            }),
+            "non-chat list writes must remain bare RPUSH commands"
+        );
+        assert_eq!(
+            mock_list_snapshot(&state, ELDER_ENCOUNTER_DURABLE_REDIS_KEY),
+            vec!["elder-payload"],
+            "durable non-chat list content must be unchanged"
+        );
+        assert_eq!(
+            mock_list_snapshot(&state, "bong:other:list"),
+            vec!["other-payload"],
+            "future non-chat ListPush content must be unchanged"
+        );
     }
 
     #[tokio::test]

@@ -48,6 +48,56 @@ VALID_PARTS = frozenset(
 RESERVED_KEYS = frozenset({"easing"})
 
 
+# ── 关节解剖朝向 ────────────────────────────────────────────────────────────
+# 肘只能往身前折（手够向脸/胸），膝只能往身后折（脚跟够向臀）。这不是风格偏好，
+# 是骨骼约束——折反了就是断肢，而渲染出来往往只让人觉得"姿势有点别扭"，很难一眼
+# 认定是 bug。所以在源码里硬拦，不靠肉眼审图。
+#
+# 判据：bendy-lib 把弯折轴取为 (cos(axis), 0, sin(axis))，绕它转 bend 后，末端相对
+# 静止位的**前后**位移是
+#
+#     Δz = L · sin(bend) · cos(axis)          （MC 空间，+Z 是身后）
+#
+# 于是只需看 sin(bend)·cos(axis) 的符号，负 bend 和任意 axis 都自动处理：
+#     肘 → 必须 < 0（往前）
+#     膝 → 必须 > 0（往后）
+# sin(bend) ≈ 0 时肢体本就是直的，axis 无意义，跳过。
+
+_ARM_PARTS = frozenset({"leftArm", "rightArm"})
+_LEG_PARTS = frozenset({"leftLeg", "rightLeg"})
+# 低于这个折角就认为肢体是直的（axis 此时纯属声明，不产生朝向）
+_FOLD_EPSILON_DEG = 1.0
+
+
+def joint_fold_z(bend_deg: float, axis_deg: float) -> float:
+    """末端前后位移的符号量（正=往身后，负=往身前）。单位无关，只看符号与大小。"""
+    return math.sin(math.radians(bend_deg)) * math.cos(math.radians(axis_deg))
+
+
+def assert_joint_fold_is_anatomical(part: str, bend_deg: float, axis_deg: float,
+                                    where: str = "") -> None:
+    """折向不合解剖就抛 ValueError。非可弯部位与近乎伸直的肢体直接放行。"""
+    if part not in _ARM_PARTS and part not in _LEG_PARTS:
+        return
+    if abs(math.sin(math.radians(bend_deg))) < math.sin(math.radians(_FOLD_EPSILON_DEG)):
+        return
+    z = joint_fold_z(bend_deg, axis_deg)
+    is_arm = part in _ARM_PARTS
+    ok = z < 0 if is_arm else z > 0
+    if ok:
+        return
+    joint, want, got = ("肘", "身前", "身后") if is_arm else ("膝", "身后", "身前")
+    loc = f"{where}: " if where else ""
+    raise ValueError(
+        f"{loc}{part} 的{joint}折反了——bend={bend_deg:g}° axis={axis_deg:g}° 会让末端往"
+        f"{got}折，{joint}只能往{want}折。\n"
+        f"    修法：axis 加减 180°（本仓约定 手臂 axis=180、腿 axis=0），"
+        f"或把 bend 取反。\n"
+        f"    判据 sin(bend)·cos(axis) = {z:+.3f}，"
+        f"手臂要求 < 0、腿要求 > 0。"
+    )
+
+
 def _validate_pose_table(pose_table: Dict[int, dict]) -> None:
     for tick, pose in pose_table.items():
         if not isinstance(tick, int):
@@ -65,6 +115,10 @@ def _validate_pose_table(pose_table: Dict[int, dict]) -> None:
                         f"tick {tick}, part {key}: unknown axis '{axis}' "
                         f"(valid angles {sorted(ANGLE_AXES)}, linear {sorted(LINEAR_AXES)})"
                     )
+            if "bend" in value:
+                assert_joint_fold_is_anatomical(
+                    key, float(value["bend"]), float(value.get("axis", 0.0)),
+                    where=f"tick {tick}")
 
 
 def _check_loop_closure(pose_table: Dict[int, dict], end_tick: int) -> None:

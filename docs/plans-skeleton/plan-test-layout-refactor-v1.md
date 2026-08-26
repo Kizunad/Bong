@@ -163,7 +163,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 3. **统一 envelope、原生报告不搬家**：每次运行生成一个可配置的 run-private report dir（建议默认 `.sisyphus/evidence/test-all/<run-id>/`），写入 `summary.json`、`summary.tsv`、每 suite 的 `command.txt`/`status`/`stdout.log`/`stderr.log`；Gradle XML/HTML、Criterion HTML、schema generated 与 Bong 内 preview PNG/日志继续留在各自原生路径，仅在 summary 中索引；外部 raster 不由 Bong 入口生产或搬迁。
 4. **状态语义**：suite 状态固定为 `PASS`、`FAIL`、`SKIP`、`BLOCKED`；`BLOCKED` 仅用于缺失外部前置且 profile 明确要求它的情况。summary 必须包含 `profile`、git SHA、开始/结束时间、命令（脱敏）、工作目录、退出码、原生产物列表和 owner。
 5. **退出码**：0 仅当所有要求 suite 为 PASS；1 为测试失败；2 为 usage/config/preflight 错误；3 为报告写入/产物完整性错误；`--continue` 不吞掉任何失败。管道命令必须读取 `${PIPESTATUS[0]}`，不能用 `tail` 制造假绿。
-6. **CI 兼容**：P2 先让一个 job 以 `test-all.sh --profile unit --suite ...` 做 shadow/对拍，并继续执行原命令；只有 summary、退出码、原生报告和时限都对拍后，才考虑替换 job 内命令。artifact upload/download 名称、DAG needs 和 cleanup 语义在此之前不改。
+6. **CI 兼容**：P3 先让一个 job 以 `test-all.sh --profile unit --suite ...` 做 shadow/对拍，并继续执行原命令；只有 summary、退出码、原生报告和时限都对拍后，才考虑替换 job 内命令。artifact upload/download 名称、DAG needs 和 cleanup 语义在此之前不改。
 
 ## P2 — Rust inline tests 首批外置（⬜）
 

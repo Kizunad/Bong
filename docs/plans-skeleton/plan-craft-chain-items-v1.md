@@ -19,7 +19,7 @@
 - **消耗品医疗线已密，必须错位**：bandage（wound_heal 1.0 全身）/ 夹板（2.0 定向）/ meridian_salve / anti_gu_powder / qingzhuo_powder（contamination_cleanse 0.4）/ calming_tea（composure_restore 0.35）/ qi_guide_talisman（food_regen 0.30）——`workbench_materials.toml:347-470`。新消耗品只做**链条升级档**（吃现有产物作材料），不开新效果轴。
 - **链条地基全是现有可合成物**：wood_handle（`workbench_recipes.rs:222`，产 4）、grass_rope（`:247`）、stone_knife（`HANDCRAFT_STONE_TOOLS` 手搓，`:21`）、spider_silk_cord / salt_crystal / rat_tail_oil / herb_bundle（workbench 加工产物）、bone_spike / iron_ingot（`materials.toml`）。
 - **效果 = 纯数据**：TOML `effect = { kind = "wound_heal", ... }` 直映射 `ItemEffect`（`inventory/mod.rs:397`），消耗链路现成；WeaponSpec 同为 TOML 字段。本 plan 的"效果到位"= 复用现集合真接线，**发现必须新增 ItemEffect 变体即停下按 §8 裁决**（红线目标：零新变体）。
-- **模型链路已有范本**：手持物 = `scripts/models/gen_*.py` 分部件 bbmodel（范本 `gen_wooden_shield.py`：part 函数拆件 + preview 渲染 + `local_models/*.bbmodel` Blockbench 手调源）→ 导出 OBJ → `client/assets/bong/models/item/<id>/<id>.obj` + `BongWeaponModelRegistry` 条目（`weapon/BongWeaponModelRegistry.java:21` Entry 四元组）；图标 = `/gen-image item` → `gui/items/<id>.png`（`ItemIconRegistry` 按 id 约定自动解析，零 Java 注册）。
+- **模型链路已有范本**：手持物 = `modelScript/generators/gen_*.py` 分部件 bbmodel（范本 `gen_wooden_shield.py`：part 函数拆件 + preview 渲染 + `modelScript/models/*.bbmodel` Blockbench 手调源）→ 导出 OBJ → `client/assets/bong/models/item/<id>/<id>.obj` + `BongWeaponModelRegistry` 条目（`weapon/BongWeaponModelRegistry.java:21` Entry 四元组）；图标 = `/gen-image item` → `gui/items/<id>.png`（`ItemIconRegistry` 按 id 约定自动解析，零 Java 注册）。
 
 ## 物品清单草案（§8 #1 终审）
 
@@ -56,7 +56,7 @@
 
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
-- **进料**：`materials.toml` / `workbench_materials.toml` 现有材料与产物；`CraftRegistry`（配方注册）；`ItemRegistry` TOML 扫盘（`inventory/mod.rs:1634`）；fauna 掉落（生肉，§8 #3）；`/gen-image item` + bbmodel 工具链（`scripts/models/`）。
+- **进料**：`materials.toml` / `workbench_materials.toml` 现有材料与产物；`CraftRegistry`（配方注册）；`ItemRegistry` TOML 扫盘（`inventory/mod.rs:1634`）；fauna 掉落（生肉，§8 #3）；`/gen-image item` + bbmodel 工具链（`modelScript/`）。
 - **出料**：物品入 `PlayerInventory`；矛入 combat 武器链（WeaponSpec 倍率 / 双手 / 耐久 / 修理站）；消耗品走 `ItemEffect` 消费链（wound / food_regen 各自现有 system）；肉干入 shelflife 现有食物保质规则。
 - **共享类型 / event**：**零新枚举变体为红线目标**——ItemCategory（Weapon/Misc/Food）、ItemEffect（wound_heal/food_regen）、WeaponKind（Spear）全在现集合内；发现必须新增 → 停下按 §8 裁决。
 - **跨仓库契约**：client 仅 `BongWeaponModelRegistry` 3 条目 + 资源文件；零 proto/schema 改动（`inventory_snapshot` 按 item_id 字符串透传，新物品自动走通）。
@@ -76,8 +76,8 @@
 
 ## P2 资产（3 轮打磨 + PROMISE 纪律）⬜
 
-- `scripts/models/gen_spear_family.py`：分部件 `part_head()` / `part_shaft()` / `part_binding()`（范本 `gen_wooden_shield.py`），三矛共骨架差异化部件；每件单独 preview PNG + `render_bbmodel.py` 真渲染核验；commit 按 `(round N/3)` + 终轮 `<PROMISE>` 块。
-- 产物 `local_models/Spear*.bbmodel`（gitignored，Blockbench 手调源，勿重跑生成器覆盖手调稿）→ 导出 OBJ → `client/.../models/item/<id>/<id>.obj` + 贴图。
+- `modelScript/generators/gen_spear_family.py`：分部件 `part_head()` / `part_shaft()` / `part_binding()`（范本 `gen_wooden_shield.py`），三矛共骨架差异化部件；每件单独 preview PNG + `render_bbmodel.py` 真渲染核验；commit 按 `(round N/3)` + 终轮 `<PROMISE>` 块。
+- 产物 `modelScript/models/Spear*.bbmodel`（gitignored，Blockbench 手调源，勿重跑生成器覆盖手调稿）→ 导出 OBJ → `client/.../models/item/<id>/<id>.obj` + 贴图。
 - `BongWeaponModelRegistry` 3 条目：host 选型必查 `vanillaModelPaths` 防撞 + 选 Bong 体系未占用的 vanilla item（候选 `Items.TRIDENT` 系；三矛不可共 host）；FPV+TPV 双入口核验（模型链路审计教训：双策略坑）。
 - 图标：`/gen-image item` 批产 5 张（矛 3 + 绷带 + 肉干）→ `gui/items/<id>.png`；批产后程序化全量扫假透明并 `--force` 重生成；harness 跑不了 `/gen-image` 则占位 + `[BLOCKED: 需 /gen-image 生成 <清单>]` 标注，接线照做。
 - 资源包：重打 zip + `resourcepack.rs` / `client/resourcepack/manifest.json` sha1+size **双处同步**（CI 红线）。

@@ -1,0 +1,78 @@
+name: Bot Long Scenario (heart_demon_decision)
+
+on:
+  schedule:
+    # 每日 02:42 UTC，避开常规 PR/主干的 90min e2e 时间窗
+    - cron: "42 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bot-heart-demon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300 # bounded：场景 GATE_WALL_TIMEOUT=4h（真实 ticks 门槛）+ 构建/铺底开销
+    env:
+      REDIS_URL: redis://127.0.0.1:6379
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /tmp/bong-target
+      # review finding major-2：场景声明 RUN_IN_ALL_WHEN_ENV=BONG_RUN_LONG_SCENARIOS，
+      # 本工作流真实下发该 env——run_scenarios --all 才把 68min 的
+      # cultivation_heart_demon_decision 纳入（常规 CI 的 --all 不设此 env，保持 REST 全量快）。
+      BONG_RUN_LONG_SCENARIOS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system test dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tmux
+
+      - name: Cache Rust target
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/bong-target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Pre-pull Redis image with retry
+        run: |
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.test.yml pull redis; then
+              exit 0
+            fi
+            delay=$((attempt * 10))
+            echo "redis image pull failed on attempt ${attempt}; retrying in ${delay}s"
+            sleep "${delay}"
+          done
+          docker compose -f docker-compose.test.yml pull redis
+
+      - name: Bring up Redis test service
+        run: docker compose -f docker-compose.test.yml up -d redis --wait
+
+      - name: Build server release binary
+        working-directory: server
+        run: ../scripts/build-token.sh cargo build --release
+
+      - name: Bot heart_demon_decision full-chain (opt-in --all env)
+        env:
+          BOT_E2E_RUN_TAG: night
+          BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
+        run: bash scripts/bot-e2e.sh
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs redis
+
+      - name: Tear down Redis test service
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v --remove-orphans

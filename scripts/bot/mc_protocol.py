@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import struct
@@ -227,7 +228,10 @@ class Connection:
     def send_packet(self, packet_id: int, body: bytes = b"") -> None:
         data = write_varint(packet_id) + body
         if self.compression_threshold >= 0:
-            if len(data) >= self.compression_threshold:
+            # Valence rejects a compressed payload whose decompressed length is
+            # equal to the threshold, so the boundary belongs to the raw-frame
+            # branch for this server implementation.
+            if len(data) > self.compression_threshold:
                 frame = write_varint(len(data)) + zlib.compress(data)
             else:
                 frame = write_varint(0) + data
@@ -288,3 +292,19 @@ def chat_text_to_plain(raw: str) -> str:
         return walk(json.loads(raw))
     except (json.JSONDecodeError, TypeError):
         return raw
+
+
+def offline_uuid(username: str) -> str:
+    """offline mode 玩家 UUID：valence `offline_uuid` = sha256(username) 前 16 字节。
+
+    服务器身份由用户名确定性导出，bot 可据此在 PlayerSpawnS2c 里精确辨认
+    另一名 bot（NPC 也有 spawn 包，不能靠位置猜）。
+    """
+    raw = hashlib.sha256(username.encode()).digest()[:16]
+    hexed = raw.hex()
+    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"
+
+
+def uuid_to_string(raw: bytes) -> str:
+    hexed = raw.hex()
+    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"

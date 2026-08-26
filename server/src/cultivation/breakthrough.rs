@@ -8,9 +8,11 @@
 //! 化虚渡劫为特殊流程（§3.2）：不走本 system 的 try_breakthrough，而是
 //! `tribulation.rs::initiate_tribulation` 分发天劫事件。
 
+use std::collections::HashMap;
+
 use valence::prelude::{
-    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Entity, Event, EventReader, EventWriter,
-    Events, Position, Query, Res, ResMut, Username,
+    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Commands, Component, Entity, Event,
+    EventReader, EventWriter, Events, Position, Query, Res, ResMut, Username,
 };
 
 use crate::combat::components::StatusEffects;
@@ -35,6 +37,7 @@ use super::components::{CrackCause, Cultivation, MeridianCrack, MeridianSystem, 
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::meridian_open::MIN_ZONE_QI_TO_OPEN;
+use super::overload::FREEZE_FACTOR;
 use super::tick::CultivationClock;
 
 pub const RAPID_BREAKTHROUGH_KARMA_WINDOW_TICKS: u64 = 30 * 24 * 60 * 60 * 20;
@@ -412,6 +415,21 @@ pub trait RollSource {
     fn roll_unit(&mut self) -> f64;
 }
 
+/// break review finding（major-1）：突破 roll 流跨 Update 持久化所需的每实体容器。
+///
+/// 历史上 `breakthrough_system` 每个 Update 都用固定种子重建 `XorshiftRoll`，导致
+/// 一次双连发若被 socket 读批拆到两个 tick，两条请求各自消费 r1（=0.8597…）——
+/// Solidify→Spirit 的成功率顶到全态夏季也只有 0.75075 < r1，拆批就永远过不去。
+/// 本组件把 roll 流状态存到实体上，随每笔真实尝试推进；同 tick 与 1/tick 拆批的
+/// 请求都消费到**连续**的 roll 值，任意拆批双连发都收敛（findings 的确定性控制见
+/// 下方 `breakthrough_roll_state_*` 单测）。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BreakthroughRollState(pub u64);
+
+/// 突破 roll 流种子（历史上每 Update 重建 XorshiftRoll 用的同一常量，行为保持向后
+/// 兼容：新玩家首笔请求仍消费 r1=0.8597…）。
+pub const BREAKTHROUGH_ROLL_SEED: u64 = 0x9e3779b97f4a7c15;
+
 /// 默认 roll：PRNG 的简单 xorshift（可重现，无需引 rand 依赖）。
 pub struct XorshiftRoll(pub u64);
 impl RollSource for XorshiftRoll {
@@ -583,10 +601,10 @@ pub fn try_breakthrough_with_profile<R: RollSource>(
             });
             m.integrity = (m.integrity - severity * 0.2).max(0.0);
         }
-        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，每次加 severity * 10.0（即 1.0..9.0）。
+        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，与过载路径使用同一冻结系数。
         // 无 cap 时多次失败可致 qi_max_frozen ≥ qi_max → 有效上限归零 → 玩家永久废人。
         // 与 overload.rs 对齐：冻结量不超过 qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO (0.5)。
-        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * 10.0)
+        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * FREEZE_FACTOR)
             .min(cultivation.qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO);
         cultivation.qi_max_frozen = Some(new_frozen);
         cultivation.composure = (cultivation.composure - 0.3).max(0.0);
@@ -678,8 +696,10 @@ pub(crate) struct BreakthroughResources<'w> {
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
+#[allow(clippy::type_complexity)] // players Query carries 5 optional/owned token tuple elements
 pub fn breakthrough_system(
     clock: Res<CultivationClock>,
+    mut commands: Commands,
     mut requests: EventReader<BreakthroughRequest>,
     mut outcomes: EventWriter<BreakthroughOutcome>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
@@ -688,6 +708,7 @@ pub fn breakthrough_system(
         &mut MeridianSystem,
         &mut LifeRecord,
         Option<&NpcMarker>,
+        Option<&mut BreakthroughRollState>,
     )>,
     mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
@@ -697,10 +718,14 @@ pub fn breakthrough_system(
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut resources: BreakthroughResources,
 ) {
-    let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
+    // fix review finding major-1：roll 流不再每 Update 重建，而是按实体持久（组件
+    // BreakthroughRollState），同 tick 与拆批到多个 Update 的请求都消费**连续**的
+    // roll 值——Solidify→Spirit 双连发在 1/tick 拆批下也收敛（r1 失败后 next tick 的
+    // r2 必胜）。roll_streams 是本 Update 内的实体级续接缓冲。
+    let mut roll_streams: HashMap<Entity, u64> = HashMap::new();
     let now = clock.tick;
     for req in requests.read() {
-        let Ok((mut cultivation, mut meridians, mut life, npc_marker)) =
+        let Ok((mut cultivation, mut meridians, mut life, npc_marker, roll_state)) =
             players.get_mut(req.entity)
         else {
             // §15.2 可观察性：静默丢请求 = 玩家永远不知道为什么没反应。
@@ -827,6 +852,14 @@ pub fn breakthrough_system(
             None
         };
 
+        // 本 Update 内实体级续接：先查本 Update 已消费到的 roll 状态，否则读持久组件
+        // （无组件则用固定种子，向后兼容：新玩家首笔请求仍消费 r1）。
+        let entity_roll = roll_streams
+            .get(&req.entity)
+            .copied()
+            .unwrap_or_else(|| roll_state.map_or(BREAKTHROUGH_ROLL_SEED, |state| state.0));
+        let mut roll = XorshiftRoll(entity_roll);
+
         let res = zone_error
             .or_else(|| breakthrough_precondition_error_for_profile(&cultivation, &meridians, profile))
             .or(ledger_error)
@@ -885,6 +918,10 @@ pub fn breakthrough_system(
                 },
                 Err,
             );
+
+        // 消费点（try_breakthrough 内部）只在本 Update 真正突破尝试时推进 roll；因前置错误
+        // 拒绝的请求不推进（roll 保持原值，写入同值无害）。持久化到组件跨 Update 续接。
+        roll_streams.insert(req.entity, roll.0);
 
         match &res {
             Ok(success) => {
@@ -1040,6 +1077,14 @@ pub fn breakthrough_system(
             result: res,
         });
     }
+
+    // 把每个实体本 Update 消费后的 roll 流状态写回组件（deferred Commands 可见性：
+    // 同 Update 内靠 roll_streams 续接，下一 Update 靠组件续接）。
+    for (entity, roll_state) in roll_streams.drain() {
+        commands
+            .entity(entity)
+            .insert(BreakthroughRollState(roll_state));
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -1122,6 +1167,7 @@ fn block_pos_from_position(position: &Position) -> BlockPos {
 mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
+    use crate::cultivation::overload;
     use crate::npc::spawn::NpcMarker;
     use crate::qi_physics::{QiAccountId, QiTransferReason, WorldQiAccount};
     use crate::schema::common::NarrationScope;
@@ -1205,6 +1251,15 @@ mod tests {
 
     fn open_extraordinary(meridians: &mut MeridianSystem, count: usize) {
         for id in MeridianId::EXTRAORDINARY.iter().take(count) {
+            meridians.get_mut(*id).opened = true;
+        }
+    }
+
+    fn open_all_meridians(meridians: &mut MeridianSystem) {
+        for id in MeridianId::REGULAR
+            .iter()
+            .chain(MeridianId::EXTRAORDINARY.iter())
+        {
             meridians.get_mut(*id).opened = true;
         }
     }
@@ -2319,6 +2374,127 @@ mod tests {
         }
     }
 
+    /// 确定性 control（review finding major-1）——1/tick 拆批：两条请求分属两个 Update，
+    /// 消费**连续**的 roll 值（r1 失败 → r2 必胜），Solidify→Spirit 拆批双连发收敛。
+    /// 这是修复前的必死路径：per-Update 重建 XorshiftRoll 时，两条请求各自消费 r1=0.8597…，
+    /// 而 Solidify→Spirit 顶到全态夏季也只有 0.693 < r1，永远过不去。
+    #[test]
+    fn breakthrough_roll_state_advances_across_updates_for_split_pair() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let mut meridians = MeridianSystem::default();
+        open_all_meridians(&mut meridians);
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Solidify,
+                    qi_current: 500.0,
+                    qi_max: 500.0,
+                    composure: 1.0,
+                    ..Default::default()
+                },
+                meridians,
+                LifeRecord::new("player_a"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        // tick N：只有第一条请求。r1=0.8597 > 全态夏季成功率 0.693 → 失败，境界停在 Solidify。
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(
+            cultivation.realm,
+            Realm::Solidify,
+            "1/tick 拆批首条请求消费 r1（高值）应失败，境界仍为 Solidify"
+        );
+
+        // tick N+1：第二条请求。roll 状态跨 Update 持久，消费 r2=0.3943 ≤ 成功率 → 成功。
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(
+            cultivation.realm,
+            Realm::Spirit,
+            "方案要求 1/tick 拆批的第二条请求消费连续 r2 并成功进阶 Spirit；若 roll 仍每 Update 重建（= 修复前），第二条请求会再消费 r1 而失败，境界停 Solidify"
+        );
+    }
+
+    /// 确定性 control（review finding major-1）——同 Update 双连发：两条请求在同一 tick
+    /// 消费 r1（败）、r2（胜），Solidify→Spirit 收敛。锁住"连续消费"的原有语义。
+    #[test]
+    fn breakthrough_roll_state_advances_within_same_update_for_paired_requests() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let mut meridians = MeridianSystem::default();
+        open_all_meridians(&mut meridians);
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Solidify,
+                    qi_current: 500.0,
+                    qi_max: 500.0,
+                    composure: 1.0,
+                    ..Default::default()
+                },
+                meridians,
+                LifeRecord::new("player_b"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(
+            cultivation.realm,
+            Realm::Spirit,
+            "同 Update 双连发应连续消费 r1(败)/r2(胜) 并进阶 Spirit；若 roll 不随每笔请求推进，两条请求都消费 r1 而双败，境界停在 Solidify"
+        );
+    }
+
     #[test]
     fn guyuan_requires_high_qi_or_spirit_eye() {
         let mut zones = ZoneRegistry::fallback();
@@ -2510,23 +2686,29 @@ mod tests {
     // qi_max_frozen cap: 突破失败不能永久废人
     // ───────────────────────────────────────────────────────────────────────
 
-    /// 单次失败：qi_max_frozen 精确加上 severity * 10.0，且不超过 qi_max * 0.5。
+    /// 单次失败：qi_max_frozen 精确加上 severity * FREEZE_FACTOR，且不超过 qi_max * 0.5。
     #[test]
     fn single_breakthrough_failure_freezes_qi_within_cap() {
         let (mut c, mut m) = setup_for_induce();
         // 强制失败：roll > base_success_rate(Induce)=0.90
-        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
+        let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0))
+            .expect_err("roll=1.0 must fail the 0.90 Induce breakthrough");
 
         // severity = (1.0 - success_rate).clamp(0.1, 0.9)
         // success_rate = base × composure × integrity × completeness = 0.90 × 1.0 × 1.0 × 1.0 = 0.90
-        // severity = 0.10, freeze_add = 0.10 * 10.0 = 1.0
-        // cap = qi_max(100.0) * 0.5 = 50.0 → 1.0 < 50.0, no clamping
+        // severity = 0.10, freeze_add = 0.10 * FREEZE_FACTOR = 0.5
+        // cap = qi_max(100.0) * 0.5 = 50.0 → 0.5 < 50.0, no clamping
+        let severity = match err {
+            BreakthroughError::RolledFailure { severity } => severity,
+            other => panic!("expected rolled failure, got {other:?}"),
+        };
+        let expected = severity * FREEZE_FACTOR;
         let frozen = c
             .qi_max_frozen
             .expect("qi_max_frozen should be Some after failure");
         assert!(
-            (frozen - 1.0).abs() < 1e-9,
-            "期望 qi_max_frozen = 1.0（severity=0.10 × 10.0），实际 = {frozen}"
+            (frozen - expected).abs() < 1e-9,
+            "期望 qi_max_frozen = severity({severity}) × factor({FREEZE_FACTOR}) = {expected}，实际 = {frozen}"
         );
         let effective = c.qi_max - frozen;
         assert!(
@@ -2562,14 +2744,14 @@ mod tests {
         let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
 
         assert!(
-            frozen <= cap,
-            "期望 qi_max_frozen ≤ {cap}（qi_max×0.5，防废人），实际 qi_max_frozen = {frozen}"
+            (frozen - cap).abs() < 1e-9,
+            "期望重复失败后 qi_max_frozen 精确 clamp 到 cap={cap}（qi_max×0.5），实际 = {frozen}"
         );
 
         let effective_qi_max = c.qi_max - frozen;
         assert!(
-            effective_qi_max > 0.0,
-            "期望有效真元上限 > 0（玩家不应被永久废），实际 effective_qi_max = {effective_qi_max}"
+            (effective_qi_max - qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO)).abs() < 1e-9,
+            "期望有效真元上限精确保留 qi_max×(1-cap_ratio)，实际 effective_qi_max = {effective_qi_max}"
         );
     }
 
@@ -2577,13 +2759,13 @@ mod tests {
     #[test]
     fn breakthrough_failure_does_not_exceed_cap_when_already_near_cap() {
         let qi_max = 100.0;
-        // 预填到接近 cap（40/100 = 0.4 × qi_max，距 0.5×qi_max=50 还差 10）
+        // 预填到接近 cap（48/100），单次 severity=0.9 的新增冻结量 4.5 会跨过 50 的 cap。
         let mut c = Cultivation {
             realm: Realm::Awaken,
             qi_current: qi_max,
             qi_max,
-            composure: 0.0, // severity 接近 0.9 → freeze_add 接近 9.0，足够触碰 cap
-            qi_max_frozen: Some(40.0),
+            composure: 0.0, // severity=0.9 → freeze_add=0.9×FREEZE_FACTOR=4.5，足够跨过 cap
+            qi_max_frozen: Some(48.0),
             ..Default::default()
         };
         let mut m = MeridianSystem::default();
@@ -2597,14 +2779,69 @@ mod tests {
         let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
 
         assert!(
-            frozen <= cap + 1e-9,
-            "期望 qi_max_frozen ≤ {cap}（cap = qi_max×0.5），实际 qi_max_frozen = {frozen}（超 cap）"
+            (frozen - cap).abs() < 1e-9,
+            "期望 pre-existing frozen + severity×factor 跨越后精确 clamp 到 cap={cap}，实际 = {frozen}"
         );
-        // 有效上限仍须 > 0
         let effective = c.qi_max - frozen;
         assert!(
-            effective >= qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO) - 1e-9,
-            "期望有效 qi_max ≥ qi_max×0.5={cap}，实际 = {effective}"
+            (effective - qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO)).abs() < 1e-9,
+            "期望 cap 后有效 qi_max 精确为 {cap}，实际 = {effective}"
+        );
+    }
+
+    /// 相同 severity 经真实突破失败与 overload event-reader 写入时必须得到相同冻结量。
+    #[test]
+    fn breakthrough_and_overload_share_freeze_factor() {
+        let (mut breakthrough_cultivation, mut breakthrough_meridians) = setup_for_induce();
+        let breakthrough_error = try_breakthrough(
+            &mut breakthrough_cultivation,
+            &mut breakthrough_meridians,
+            0.0,
+            &mut FixedRoll(1.0),
+        )
+        .expect_err("roll=1.0 must exercise the production breakthrough failure path");
+        let severity = match breakthrough_error {
+            BreakthroughError::RolledFailure { severity } => severity,
+            other => panic!("expected rolled failure, got {other:?}"),
+        };
+
+        let mut overload_app = App::new();
+        overload_app.insert_resource(CultivationClock { tick: 7 });
+        overload_app.add_event::<overload::MeridianOverloadEvent>();
+        overload_app.add_systems(Update, overload::apply_meridian_overload_events);
+        let overload_entity = overload_app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_max: breakthrough_cultivation.qi_max,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+            ))
+            .id();
+        overload_app
+            .world_mut()
+            .send_event(overload::MeridianOverloadEvent {
+                entity: overload_entity,
+                severity,
+            });
+        overload_app.update();
+
+        let overload_frozen = overload_app
+            .world()
+            .get::<Cultivation>(overload_entity)
+            .and_then(|cultivation| cultivation.qi_max_frozen)
+            .expect("overload event-reader must write qi_max_frozen");
+        let breakthrough_frozen = breakthrough_cultivation
+            .qi_max_frozen
+            .expect("breakthrough failure must write qi_max_frozen");
+        assert!(
+            (breakthrough_frozen - overload_frozen).abs() < 1e-9,
+            "same severity={severity} must freeze equally across breakthrough and overload: breakthrough={breakthrough_frozen}, overload={overload_frozen}"
+        );
+        assert!(
+            (breakthrough_frozen - severity * FREEZE_FACTOR).abs() < 1e-9,
+            "both production paths must use canonical factor={FREEZE_FACTOR}; severity={severity}, actual={breakthrough_frozen}"
         );
     }
 

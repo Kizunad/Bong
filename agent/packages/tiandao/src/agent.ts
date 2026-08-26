@@ -8,7 +8,12 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorldStateV1 } from "@bong/schema";
 import type { ChatSignal, NpcDeathV1, AgentUiResponsePayloadV1 } from "@bong/schema";
-import { type ContextRecipe, assembleContext, createContextInput } from "./context.js";
+import {
+  type ContextRecipe,
+  type TsyRuntimeEventV1,
+  assembleContext,
+  createContextInput,
+} from "./context.js";
 import { normalizeLlmChatResult, type LlmClient, type LlmToolUsage } from "./llm.js";
 import { type AgentDecision, parseDecision } from "./parse.js";
 import { createToolContext, type AgentTool } from "./tools/types.js";
@@ -71,6 +76,8 @@ export class TiandaoAgent {
   private latestNpcDeathEvents: NpcDeathV1[] = [];
   /** plan-agent-ui-data-v1 P2 — 本窗口玩家 UI button_click 事件，tick 时织入 LLM context。 */
   private latestButtonClickEvents: AgentUiResponsePayloadV1[] = [];
+  /** TSY enter/exit runtime signal，按 tick 注入上下文并在下一轮覆盖。 */
+  private latestTsyRuntimeEvents: TsyRuntimeEventV1[] = [];
   private worldModel?: WorldModel;
   private readonly now: () => number;
   private readonly tools: readonly AgentTool[];
@@ -107,6 +114,10 @@ export class TiandaoAgent {
     this.latestButtonClickEvents = events;
   }
 
+  setTsyRuntimeEvents(events: TsyRuntimeEventV1[]): void {
+    this.latestTsyRuntimeEvents = events;
+  }
+
   setWorldModel(worldModel: WorldModel): void {
     this.worldModel = worldModel;
   }
@@ -134,6 +145,7 @@ export class TiandaoAgent {
         npcDeathEvents: this.latestNpcDeathEvents,
         // plan-agent-ui-data-v1 P2 — 玩家 UI button_click 意图信号进 LLM 推演上下文
         buttonClickEvents: this.latestButtonClickEvents,
+        tsyRuntimeEvents: this.latestTsyRuntimeEvents,
       }),
     );
     const userPrompt = `${context}\n\n---\n\n请基于以上信息决策。输出 JSON。如果不需要行动，返回空数组。`;
@@ -172,6 +184,9 @@ export class TiandaoAgent {
       model: result.model,
       toolUsage: result.toolUsage,
     };
+    // Runtime acknowledges this batch only after tick() returns a decision. Keep it
+    // on LLM failure so the runtime can retry the event on a later scheduled tick.
+    this.latestTsyRuntimeEvents = [];
     return decision;
   }
 }

@@ -26,6 +26,8 @@ use crate::zhenfa::trap_content::TrapTargetFace;
 
 const PLAYER_HALF_WIDTH: f64 = 0.3;
 const PLAYER_HEIGHT: f64 = 1.8;
+const PLACE_REACH_BLOCKS: f64 = 6.0;
+const PLACE_REACH_DISTANCE_SQ: f64 = PLACE_REACH_BLOCKS * PLACE_REACH_BLOCKS;
 const HERB_CRATE_PLACED_TEMPLATE: &str = "herb_crate_placed";
 
 #[derive(Debug, Clone, Copy, Event)]
@@ -64,6 +66,7 @@ pub enum BlockPlaceRejectReason {
     ContainerBreakRequiresContainerSystem(PlaceableBlockKind),
     ChunkNotLoaded,
     YOutOfBounds,
+    TooFar,
     TargetNotReplaceable(BlockState),
     PlayerCollision,
     BongBlockPlaceFailed,
@@ -81,6 +84,7 @@ impl fmt::Display for BlockPlaceRejectReason {
             }
             Self::ChunkNotLoaded => write!(f, "target chunk is not loaded"),
             Self::YOutOfBounds => write!(f, "target y is outside layer bounds"),
+            Self::TooFar => write!(f, "target is outside placement reach"),
             Self::TargetNotReplaceable(state) => {
                 write!(f, "target block {state:?} is not replaceable")
             }
@@ -582,6 +586,15 @@ pub fn can_place_block(
     if pos.y < layer.min_y() || pos.y >= layer.min_y() + layer.height() as i32 {
         return Err(BlockPlaceRejectReason::YOutOfBounds);
     }
+    let block_center = valence::math::DVec3::new(
+        f64::from(pos.x) + 0.5,
+        f64::from(pos.y) + 0.5,
+        f64::from(pos.z) + 0.5,
+    );
+    let distance_squared = block_center.distance_squared(player_pos);
+    if !distance_squared.is_finite() || distance_squared > PLACE_REACH_DISTANCE_SQ {
+        return Err(BlockPlaceRejectReason::TooFar);
+    }
     let Some(current) = layer.block(pos).map(|block| block.state) else {
         return Err(BlockPlaceRejectReason::ChunkNotLoaded);
     };
@@ -850,6 +863,56 @@ mod tests {
     }
 
     #[test]
+    fn can_place_accepts_exact_reach_boundary() {
+        let (app, layer_entity) = test_layer();
+        let layer = app
+            .world()
+            .get::<ChunkLayer>(layer_entity)
+            .expect("test layer should carry ChunkLayer");
+
+        assert_eq!(
+            can_place_block(
+                layer,
+                BlockPos::new(9, 64, 3),
+                BlockState::DIRT,
+                valence::math::DVec3::new(3.5, 64.5, 3.5)
+            ),
+            Ok(()),
+            "a block center exactly PLACE_REACH_BLOCKS away must remain placeable"
+        );
+    }
+
+    #[test]
+    fn can_place_rejects_outside_reach_and_non_finite_distance() {
+        let (app, layer_entity) = test_layer();
+        let layer = app
+            .world()
+            .get::<ChunkLayer>(layer_entity)
+            .expect("test layer should carry ChunkLayer");
+
+        assert_eq!(
+            can_place_block(
+                layer,
+                BlockPos::new(9, 64, 3),
+                BlockState::DIRT,
+                valence::math::DVec3::new(3.4, 64.5, 3.5)
+            ),
+            Err(BlockPlaceRejectReason::TooFar),
+            "a block center just beyond the reach boundary must be rejected"
+        );
+        assert_eq!(
+            can_place_block(
+                layer,
+                BlockPos::new(1, 64, 1),
+                BlockState::DIRT,
+                valence::math::DVec3::new(f64::NAN, 64.0, 3.5)
+            ),
+            Err(BlockPlaceRejectReason::TooFar),
+            "non-finite player coordinates must fail closed as TooFar"
+        );
+    }
+
+    #[test]
     fn can_place_rejects_occupied_target_without_consuming() {
         let (mut app, layer_entity) = test_layer();
         let pos = BlockPos::new(1, 64, 1);
@@ -895,9 +958,9 @@ mod tests {
         assert_eq!(
             can_place_block(
                 layer,
-                BlockPos::new(32, 64, 32),
+                BlockPos::new(16, 64, 16),
                 BlockState::DIRT,
-                player_pos
+                valence::math::DVec3::new(16.5, 64.0, 16.5)
             ),
             Err(BlockPlaceRejectReason::ChunkNotLoaded)
         );
@@ -2059,6 +2122,175 @@ mod tests {
             .filter(|event| event.recipe_id == DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID)
             .count();
         assert_eq!(ward_audio_count, 0, "owner break must not play ward SFX");
+    }
+
+    #[test]
+    fn handler_rejects_too_far_without_consuming_or_writing() {
+        let cases = [
+            (
+                "just beyond reach",
+                BlockPos::new(9, 64, 3),
+                [3.4, 64.5, 3.5],
+            ),
+            (
+                "extreme distance",
+                BlockPos::new(500, 64, 500),
+                [3.5, 64.0, 3.5],
+            ),
+        ];
+
+        for (label, pos, player_position) in cases {
+            let (mut app, client, layer_entity, _helper) = block_place_app(
+                inventory_with_item(item_instance(9105, "earth_crumb", 1)),
+                DimensionKind::Overworld,
+            );
+            if pos.x >= 32 || pos.z >= 32 {
+                app.world_mut()
+                    .get_mut::<ChunkLayer>(layer_entity)
+                    .expect("test layer should carry ChunkLayer")
+                    .insert_chunk(
+                        [pos.x.div_euclid(16), pos.z.div_euclid(16)],
+                        UnloadedChunk::new(),
+                    );
+            }
+            move_client(&mut app, client, player_position, DimensionKind::Overworld);
+            app.world_mut().send_event(BlockPlaceRequest {
+                client,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                item_instance_id: 9105,
+                target_face: TrapTargetFace::Top,
+            });
+            app.update();
+
+            assert_eq!(
+                block_state_at(&app, layer_entity, pos),
+                Some(BlockState::AIR),
+                "{label} placement must not write the target block"
+            );
+            assert_eq!(
+                inventory_template_count(&app, client, "earth_crumb"),
+                1,
+                "{label} rejection must leave the item stack untouched"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<PlayerInventory>(client)
+                    .expect("client should keep inventory")
+                    .revision,
+                InventoryRevision(0),
+                "{label} rejection must not mutate inventory revision"
+            );
+        }
+    }
+
+    #[test]
+    fn handler_rejects_too_far_container_without_consuming_or_spawning() {
+        let (mut app, client, layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9106, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+        ])));
+        move_client(&mut app, client, [3.4, 64.5, 3.5], DimensionKind::Overworld);
+        let pos = BlockPos::new(9, 64, 3);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9106,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, pos),
+            Some(BlockState::AIR),
+            "too-far entity-backed placement must not write a block"
+        );
+        assert_eq!(
+            inventory_template_count(&app, client, "trade_crate"),
+            1,
+            "too-far entity-backed placement must not consume the crate"
+        );
+        let container_count = app
+            .world_mut()
+            .query_filtered::<Entity, With<ContainerBlock>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            container_count, 0,
+            "too-far entity-backed placement must not spawn a container"
+        );
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .is_empty(),
+            "too-far entity-backed placement must not allocate a container session"
+        );
+    }
+
+    #[test]
+    fn handler_applies_reach_gate_in_player_dimension() {
+        let (mut app, client, overworld_layer, _helper) = block_place_app(
+            inventory_with_item(item_instance(9107, "barren_sand", 2)),
+            DimensionKind::Tsy,
+        );
+        let mut tsy_layer = new_test_chunk_layer(&app);
+        tsy_layer.insert_chunk([0, 0], UnloadedChunk::new());
+        let tsy_layer_entity = app.world_mut().spawn(tsy_layer).id();
+        app.insert_resource(DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer_entity,
+        });
+
+        let near = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: near.x,
+            y: near.y,
+            z: near.z,
+            item_instance_id: 9107,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let far = BlockPos::new(9, 64, 3);
+        move_client(&mut app, client, [3.4, 64.5, 3.5], DimensionKind::Tsy);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: far.x,
+            y: far.y,
+            z: far.z,
+            item_instance_id: 9107,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        assert_eq!(
+            block_state_at(&app, overworld_layer, near),
+            Some(BlockState::AIR),
+            "TSY requests must not write the overworld layer"
+        );
+        assert_eq!(
+            block_state_at(&app, tsy_layer_entity, near),
+            Some(BlockState::SAND),
+            "a near TSY request should still place in the selected dimension layer"
+        );
+        assert_eq!(
+            block_state_at(&app, tsy_layer_entity, far),
+            Some(BlockState::AIR),
+            "a too-far TSY request must be rejected in the selected dimension layer"
+        );
+        assert_eq!(
+            inventory_template_count(&app, client, "barren_sand"),
+            1,
+            "the rejected cross-dimension request must leave its item untouched"
+        );
     }
 
     #[test]

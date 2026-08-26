@@ -128,7 +128,7 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "rightLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -156,7 +156,7 @@
         "tick": 0,
         "easing": "INOUTSINE",
         "leftLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -289,7 +289,7 @@
         "tick": 10,
         "easing": "INOUTSINE",
         "rightLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -317,7 +317,7 @@
         "tick": 10,
         "easing": "INOUTSINE",
         "leftLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -436,7 +436,7 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "rightLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -464,7 +464,7 @@
         "tick": 20,
         "easing": "INOUTSINE",
         "leftLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -597,7 +597,7 @@
         "tick": 30,
         "easing": "INOUTSINE",
         "rightLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -625,7 +625,7 @@
         "tick": 30,
         "easing": "INOUTSINE",
         "leftLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -744,7 +744,7 @@
         "tick": 40,
         "easing": "INOUTSINE",
         "rightLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       },
       {
@@ -772,7 +772,7 @@
         "tick": 40,
         "easing": "INOUTSINE",
         "leftLeg": {
-          "axis": 3.1415927
+          "axis": 0.0
         }
       }
     ]

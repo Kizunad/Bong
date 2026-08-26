@@ -310,7 +310,7 @@ mod tests {
             .get(&sel.technique_id)
             .unwrap_or_else(|| panic!("selected technique {} should exist", sel.technique_id));
         assert!(
-            f64::from(def.qi_cost) <= cultivation.qi_current,
+            def.qi_cost <= cultivation.qi_current,
             "selected technique {} qi_cost={} should be <= qi_current={}",
             sel.technique_id,
             def.qi_cost,

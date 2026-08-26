@@ -1,0 +1,311 @@
+{
+  "meta": {
+    "format_version": "4.10",
+    "model_format": "free"
+  },
+  "name": "grass_pouch_back",
+  "resolution": {
+    "width": 32,
+    "height": 32
+  },
+  "elements": [
+    {
+      "name": "Bag_Body",
+      "from": [
+        -3,
+        11.5,
+        1.5
+      ],
+      "to": [
+        3,
+        17,
+        4.5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            0,
+            6,
+            5.5
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            6,
+            0,
+            12,
+            5.5
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            12,
+            0,
+            15,
+            5.5
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            15,
+            0,
+            18,
+            5.5
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            0,
+            6,
+            6,
+            9
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            6,
+            6,
+            12,
+            9
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "Flap_Top",
+      "from": [
+        -3.2,
+        16.5,
+        1
+      ],
+      "to": [
+        3.2,
+        17.5,
+        5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            22,
+            6,
+            23
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            6,
+            22,
+            12,
+            23
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            12,
+            22,
+            16,
+            23
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            16,
+            22,
+            20,
+            23
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            0,
+            22,
+            6,
+            26
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            6,
+            22,
+            12,
+            26
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "Flap_Back",
+      "from": [
+        -3.2,
+        14,
+        4.5
+      ],
+      "to": [
+        3.2,
+        16.5,
+        5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            22,
+            6,
+            24.5
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            0,
+            22,
+            6,
+            24.5
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            12,
+            22,
+            12.5,
+            24.5
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            12,
+            22,
+            12.5,
+            24.5
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            0,
+            24,
+            6,
+            24.5
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            0,
+            25,
+            6,
+            25.5
+          ],
+          "texture": 0
+        }
+      }
+    },
+    {
+      "name": "Buckle",
+      "from": [
+        -0.5,
+        14.5,
+        4.8
+      ],
+      "to": [
+        0.5,
+        15.5,
+        5.2
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            18,
+            0,
+            19,
+            1
+          ],
+          "texture": 0
+        },
+        "south": {
+          "uv": [
+            18,
+            0,
+            19,
+            1
+          ],
+          "texture": 0
+        },
+        "east": {
+          "uv": [
+            18,
+            1,
+            18.5,
+            2
+          ],
+          "texture": 0
+        },
+        "west": {
+          "uv": [
+            18,
+            1,
+            18.5,
+            2
+          ],
+          "texture": 0
+        },
+        "up": {
+          "uv": [
+            18,
+            0,
+            19,
+            0.5
+          ],
+          "texture": 0
+        },
+        "down": {
+          "uv": [
+            18,
+            0,
+            19,
+            0.5
+          ],
+          "texture": 0
+        }
+      }
+    }
+  ],
+  "outliner": [
+    {
+      "name": "GrassPouch_Back",
+      "origin": [
+        0,
+        14,
+        3
+      ],
+      "children": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "name": "grass_pouch",
+      "source": "data:image/png;base64,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"
+    }
+  ]
+}

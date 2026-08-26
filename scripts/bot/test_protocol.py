@@ -34,10 +34,30 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from bot import _redis_helpers  # noqa: E402
+from bot import _server_log  # noqa: E402
 from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
+from bot._agent_ui_helpers import (  # noqa: E402
+    DEFAULT_UI_XML,
+    REQUEST_TIMEOUT_MAX,
+    REQUEST_TIMEOUT_MIN,
+    REQUEST_XML_MAX_BYTES,
+    assert_request_shape,
+    build_cmd,
+    expect_agent_ui_close,
+    expect_agent_ui_request,
+    expect_redis_response,
+    response_matches,
+)
+from bot._redis_client_helpers import (  # noqa: E402
+    RedisClient,
+    RespFrames,
+    _INCOMPLETE_FRAME,
+    _encode_command,
+)
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._combat_helpers import (  # noqa: E402
@@ -53,6 +73,7 @@ from bot.scenarios._cultivation_helpers import (  # noqa: E402
     _set_qi_max_and_wait,
 )
 from bot.scenarios._inventory_helpers import (  # noqa: E402
+    inventory_signature,
     give_inventory_revision_barrier,
     latest_inventory_snapshot,
     require_pack_container,
@@ -114,6 +135,31 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
 )
+from bot.scenarios.network_lifecycle_abrupt_reconnect import (  # noqa: E402
+    MOVE_DISTANCE,
+    MOVE_VERIFY_TOLERANCE,
+    POSITION_TOLERANCE,
+    _assert_restored_position,
+    _move_and_record,
+    _position_from_authoritative_event,
+)
+from bot.scenarios.network_lifecycle_idle_timeout import (  # noqa: E402
+    _wait_before_deadline,
+)
+from bot.scenarios.network_lifecycle_stale_session import (  # noqa: E402
+    _assert_inactive_session_state,
+)
+from bot.scenarios.network_quickslot_config import (  # noqa: E402
+    _expect_bind_response,
+)
+from bot.scenarios.network_skill_config_intent import (  # noqa: E402
+    _expect_config_snapshot,
+)
+from bot.scenarios._npc_dialogue_helpers import (  # noqa: E402
+    _scenario_spawn_matches,
+    _trade_metadata,
+)
+from bot.scenarios import npc_dialogue_chain_trade as npc_dialogue_trade  # noqa: E402
 from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
     DISCONNECT_SETTLE_SECONDS,
@@ -1457,7 +1503,51 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "inventory_snapshot")
         self.assertEqual(decoded["revision"], 12)
         self.assertEqual(decoded["containers"][0]["id"], "body_pocket")
-        self.assertEqual(decoded["equipped"]["chest_worn"][0]["item_id"], "worn_grass_pouch")
+        item = decoded["equipped"]["chest_worn"][0]
+        self.assertEqual(item["item_id"], "worn_grass_pouch")
+        self.assertEqual(item["mineral_id"], "za_gang")
+        self.assertEqual(item["scroll_kind"], "skill_scroll")
+        self.assertEqual(item["scroll_skill_id"], "forging")
+        self.assertEqual(item["scroll_xp_grant"], 500)
+        self.assertEqual(item["charges"], 7)
+        self.assertAlmostEqual(item["forge_quality"], 0.75, places=6)
+        self.assertEqual(item["forge_color"], 1)
+        self.assertEqual(item["forge_side_effects"], ["brittle_edge", "qi_shear"])
+        self.assertEqual(item["forge_achieved_tier"], 3)
+        self.assertEqual(
+            item["alchemy"],
+            {
+                "kind": "pill",
+                "recipe_id": "qing_xin_dan",
+                "quality_tier": 2,
+                "effect_multiplier": 0.9,
+                "consecrated": True,
+                "side_effect": {
+                    "tag": "qi_drain_mild",
+                    "duration_s": 30,
+                    "weight": 1,
+                    "perm": False,
+                    "color": 2,
+                    "amount": 1.5,
+                },
+                "fragment": None,
+                "hint": None,
+                "residue_kind": None,
+                "produced_at_tick": None,
+                "expires_at_tick": None,
+            },
+        )
+        self.assertEqual(
+            item["freshness"],
+            {
+                "created_at_tick": 123,
+                "initial_qi": 0.5,
+                "track": "Decay",
+                "profile": "mineral_decay_v1",
+                "frozen_accumulated": 17,
+                "frozen_since_tick": 140,
+            },
+        )
 
     def test_proto_inventory_event_moved_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_inventory_event_moved_bytes())
@@ -1971,6 +2061,229 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
+    def test_proto_tribulation_state_payload_decodes(self):
+        # 全部新增字段都用非默认值编码（failed=true、half_step_on_success=true、
+        # world_x/z、三个 tick），逐个断言 wire 号：解码器缺席/串号/恒 false 都会被抓。
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="wave",
+                wave_current=3,
+                wave_total=5,
+                result=None,
+                failed=True,
+                half_step_on_success=True,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertEqual(decoded["phase"], "wave")
+        self.assertEqual(decoded["wave_current"], 3)
+        self.assertEqual(decoded["wave_total"], 5)
+        self.assertEqual(decoded["kind"], "du_xu")
+        self.assertEqual(decoded["actor_name"], "BHDE6Cult")
+        self.assertEqual(decoded["world_x"], 12.5)
+        self.assertEqual(decoded["world_z"], -34.25)
+        self.assertEqual(decoded["started_tick"], 1000)
+        self.assertEqual(decoded["phase_started_tick"], 5000)
+        self.assertEqual(decoded["next_wave_tick"], 5300)
+        self.assertIn("du_xu:char-1", decoded["participants"])
+        self.assertTrue(decoded["failed"])
+        self.assertTrue(decoded["half_step_on_success"])
+        self.assertIsNone(decoded["result"])
+
+    def test_proto_tribulation_state_settle_payload_decodes(self):
+        # 结算 payload：active=false + result=outcome label（ascended/failed/killed）
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="settle",
+                wave_current=5,
+                wave_total=5,
+                result="ascended",
+                active=False,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertFalse(decoded["active"])
+        self.assertEqual(decoded["result"], "ascended")
+        self.assertEqual(decoded["wave_current"], 5)
+
+    def test_proto_tribulation_state_asymmetric_failed_only(self):
+        # review finding major-7：failed=true / half_step_on_success=false 必须落各自独
+        # 立 wire 号——字段 13/14 互换的解码器在此撞红。
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="wave",
+                wave_current=3,
+                wave_total=5,
+                result=None,
+                failed=True,
+                half_step_on_success=False,
+            )
+        )
+        self.assertTrue(decoded["failed"])
+        self.assertFalse(decoded["half_step_on_success"])
+
+    def test_proto_tribulation_state_asymmetric_half_step_only(self):
+        # reverse 组合：failed=false / half_step_on_success=true，把两字段双向锁死。
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="wave",
+                wave_current=3,
+                wave_total=5,
+                result=None,
+                failed=False,
+                half_step_on_success=True,
+            )
+        )
+        self.assertFalse(decoded["failed"])
+        self.assertTrue(decoded["half_step_on_success"])
+
+    def test_proto_tribulation_state_ignores_wrong_wire_participant(self):
+        # review finding minor：participants 是 repeated string（wire 2）。误编码的 fixed64
+        # (wire 1) field 15 必须被忽略，不得解成参与者文本。
+        payload = _pb_message(
+            66,
+            _pb_string(5, "wave") + _pb_fixed64(15, 3.25),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertEqual(decoded["participants"], [])
+
+    def test_proto_heart_demon_offer_ignores_wrong_wire_choice(self):
+        # review finding minor：choices 是 repeated message（wire 2）。误编码的 fixed64
+        # (wire 1) field 9 必须被忽略（不得喂给嵌套解析器抛 ProtoDecodeError、丢观测）；
+        # 合法 wire 2 choice 仍正常解码。
+        choice = _pb_string(1, "heart_demon_choice_0") + _pb_string(2, "Composure")
+        payload = _pb_message(
+            69,
+            _pb_string(3, "心魔劫临身") + _pb_fixed64(9, 1.5) + _pb_message(9, choice),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "heart_demon_offer")
+        self.assertEqual(decoded["choices"], [{"choice_id": "heart_demon_choice_0", "category": "Composure", "title": "", "effect_summary": "", "flavor": "", "style_hint": ""}])
+
+    def test_proto_heart_demon_offer_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_heart_demon_offer_bytes())
+
+        self.assertEqual(decoded["type"], "heart_demon_offer")
+        # 非对称 fixture 全字段精确断言（review finding major-7）：offer_id != trigger_id、
+        # 配额不等、每个标量/嵌套字段独立 pin 到 wire 号。
+        self.assertEqual(decoded["offer_id"], "heart_demon:7:1000")
+        self.assertEqual(decoded["trigger_id"], "heart_demon:7:1111")
+        self.assertNotEqual(decoded["offer_id"], decoded["trigger_id"])
+        self.assertEqual(decoded["trigger_label"], "心魔劫临身")
+        self.assertEqual(decoded["realm_label"], "渡虚劫 · 心魔")
+        self.assertEqual(decoded["composure"], 0.85)
+        self.assertEqual(decoded["quota_remaining"], 2)
+        self.assertEqual(decoded["quota_total"], 3)
+        self.assertNotEqual(decoded["quota_remaining"], decoded["quota_total"])
+        self.assertEqual(decoded["expires_at_ms"], 1700000050000)
+        self.assertEqual(
+            [(c["choice_id"], c["category"], c["title"]) for c in decoded["choices"]],
+            [
+                ("heart_demon_choice_0", "Composure", "守本心"),
+                ("heart_demon_choice_1", "Breakthrough", "斩执念"),
+                ("heart_demon_choice_2", "Perception", "无解"),
+            ],
+        )
+        self.assertEqual(
+            [c["effect_summary"] for c in decoded["choices"]],
+            [
+                "稳住心神，回复少量当前真元",
+                "若斩错心魔，将损当前真元并强化下一道开天雷",
+                "承认无解，不得增益也不受真元惩罚",
+            ],
+        )
+        self.assertEqual(
+            [c["flavor"] for c in decoded["choices"]],
+            ["心若磐石，外物不侵。", "抽刀断水，一念斩魔。", "心魔无解，人间一二。"],
+        )
+        self.assertEqual(
+            [c["style_hint"] for c in decoded["choices"]],
+            ["calm-blue", "edge-orange", "calm-grey"],
+        )
+        # 每个 choice 的嵌套字段必须各自可辨（不是同一串复读）。
+        self.assertEqual(len({c["effect_summary"] for c in decoded["choices"]}), 3)
+        self.assertEqual(len({c["flavor"] for c in decoded["choices"]}), 3)
+        self.assertEqual(len({c["style_hint"] for c in decoded["choices"]}), 3)
+
+    def test_bot_dispatch_emits_decoded_tribulation_state_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_tribulation_state_bytes(
+                phase="heart_demon",
+                wave_current=4,
+                wave_total=5,
+                result=None,
+            )
+        )
+        bot._dispatch(body)
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "tribulation_state")
+        self.assertEqual(decoded_events[0].data["payload"]["phase"], "heart_demon")
+
+    def test_proto_carrier_state_decodes_wire_id(self):
+        # field 49 CarrierState —— carrier 是本 bot 的线缆 wire id（player:{uuid}）。
+        # 场景靠它把 bong:anqi/container_swap 事件归属到本 bot（findings 修复）。
+        decoded = decode_server_data_payload(
+            _server_data_carrier_state_bytes(
+                carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                phase=3,
+                progress=0.5,
+                sealed_qi=30.0,
+                sealed_qi_initial=60.0,
+                half_life_remaining_ticks=120,
+                item_instance_id=9,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "carrier_state")
+        self.assertEqual(decoded["carrier"], "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f")
+        self.assertEqual(decoded["phase"], "charged")
+        self.assertAlmostEqual(decoded["progress"], 0.5)
+        self.assertAlmostEqual(decoded["sealed_qi"], 30.0)
+        self.assertAlmostEqual(decoded["sealed_qi_initial"], 60.0)
+        self.assertEqual(decoded["half_life_remaining_ticks"], 120)
+        self.assertEqual(decoded["item_instance_id"], 9)
+
+    def test_proto_carrier_state_decodes_every_charge_phase(self):
+        # CARRIER_CHARGE_PHASE_NAMES 是本次引入的完整 wire→domain 契约：每个 phase
+        # 值都必须解出正确名称，未知值回退 unspecified（findings：原测试只覆盖 phase=2，
+        # idle/charging 映射错或未知值不回退都测不出来）。
+        cases = {
+            0: "unspecified",
+            1: "idle",
+            2: "charging",
+            3: "charged",
+            9: "unspecified",
+        }
+        for phase, expected in cases.items():
+            with self.subTest(phase=phase):
+                decoded = decode_server_data_payload(
+                    _server_data_carrier_state_bytes(
+                        carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                        phase=phase,
+                        progress=0.5,
+                        sealed_qi=30.0,
+                        sealed_qi_initial=60.0,
+                        half_life_remaining_ticks=120,
+                        item_instance_id=None,
+                    )
+                )
+                self.assertEqual(decoded["type"], "carrier_state")
+                self.assertEqual(decoded["phase"], expected)
+                # 构造边界本来就是 item_instance_id=None（field 7 缺省）；缺省的可选
+                # protobuf 字段必须解成 None，而不是 0 / 残留旧值（review finding
+                # [major]：absent item_instance_id is encoded but never asserted——
+                # 错把缺省当 0 会让消费者把无实例快照误读为 instance 0）。
+                self.assertIsNone(
+                    decoded["item_instance_id"],
+                    f"phase={phase} 时 field 7 缺省应解出 None，实际 {decoded['item_instance_id']!r}",
+                )
 
 
 class CombatServerDataGateTest(unittest.TestCase):
@@ -2055,7 +2368,272 @@ class CombatServerDataGateTest(unittest.TestCase):
         )
         self.assertTrue(is_outgoing_positive_hit(accepted))
 
+def _server_data_skill_xp_gain_bytes() -> bytes:
+    scroll = _pb_string(1, "skill_scroll_herbalism_baicao_can") + _pb_varint(2, 500)
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_varint(2, 1)  # SkillId HERBALISM
+        + _pb_varint(3, 500)
+        + _pb_message(5, scroll)  # XpGainSourceScroll
+    )
+    return _pb_message(7, payload)
+
+
+def _server_data_quickslot_config_bytes() -> bytes:
+    entry = (
+        _pb_string(1, "guyuan_pill")
+        + _pb_string(2, "固元丹")
+        + _pb_varint(3, 1500)
+        + _pb_varint(4, 3000)
+        + _pb_string(5, "bong-client:textures/gui/items/pill.png")
+    )
+    bound_slot = _pb_message(1, entry)
+    empty_slot = b""
+    # review finding [5]：proto3 `repeated uint64` 默认 **packed**（wire type 2，
+    # length-delimited blob 内连续 varint）。旧 builder 用 9 个独立 wire-0 varint
+    # 构造、解码器只读 w==0，真实服务器生产的 packed 载荷被解成空列表——用 packed
+    # 编码 + 非零时间戳钉死解码器必须走 packed 路径且逐值还原。
+    packed_cooldowns = _pb_bytes(
+        2,
+        _pb_raw_varint(1)
+        + _pb_raw_varint(2)
+        + _pb_raw_varint(3)
+        + _pb_raw_varint(4)
+        + _pb_raw_varint(5)
+        + _pb_raw_varint(6)
+        + _pb_raw_varint(7)
+        + _pb_raw_varint(8)
+        + _pb_raw_varint(9),
+    )
+    payload = (
+        _pb_message(1, bound_slot)
+        + _pb_message(1, empty_slot) * 8
+        + packed_cooldowns
+        + _pb_string(3, "gap10-bind-1")
+        + _pb_varint(4, 1)
+    )
+    return _pb_message(35, payload)
+
+
+def _server_data_techniques_snapshot_bytes() -> bytes:
+    meridian = _pb_string(1, "Lung") + _pb_fixed32(2, 0.5)
+    # central-review 31438252846 finding [5]：proficiency(field 4) 与 qi_cost(field 10)
+    # 取**非零互异**值——旧 fixture 两者都是 0.0，解码器完全忽略这两个 wire 字段、
+    # 返回默认 0.0 也能通过断言。非零值 + 精确断言才能区分「正确解码」与「丢弃字段」。
+    entry = (
+        _pb_string(1, "sword.cleave")
+        + _pb_string(2, "劈")
+        + _pb_string(3, "common")
+        + _pb_fixed32(4, 0.5)  # proficiency
+        + _pb_string(5, "生疏")
+        + _pb_varint(6, 1)
+        + _pb_string(7, "基础劈砍。举剑过顶，顺势劈下。")
+        + _pb_string(8, "Awaken")
+        + _pb_message(9, meridian)
+        + _pb_fixed32(10, 2.5)  # qi_cost
+        + _pb_fixed32(11, 8.0)
+        + _pb_varint(12, 16)
+        + _pb_varint(13, 30)
+        + _pb_fixed32(14, 3.0)
+    )
+    return _pb_message(37, _pb_message(1, entry))
+
+
+def _server_data_skill_config_snapshot_bytes() -> bytes:
+    entry = _pb_string(1, "zhenmai.sever_chain") + _pb_string(
+        2, '{"backfire_kind":"tainted_yuan","meridian_id":"Pericardium"}'
+    )
+    return _pb_message(54, _pb_message(1, entry))
+
+
+def _server_data_skill_scroll_used_bytes() -> bytes:
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_string(2, "skill_scroll_herbalism_baicao_can")
+        + _pb_varint(3, 1)  # SkillId HERBALISM
+        + _pb_varint(4, 500)
+        + _pb_varint(5, 0)
+    )
+    return _pb_message(97, payload)
+
+
+def _server_data_skill_snapshot_bytes() -> bytes:
+    # central-review 31438252846 finding [4] + 31442475206 finding [9]：六个嵌套字段
+    # 全部取**互异**非默认值——旧 fixture 用 500 同时填 xp 与 recent_gain_xp，解码器
+    # 交换 field 2/field 6 在断言下仍观测相同；互异值才能暴露 field swap 与 drop。
+    entry_snap = (
+        _pb_varint(1, 3)      # lv
+        + _pb_varint(2, 500)  # xp
+        + _pb_varint(3, 1600) # xp_to_next
+        + _pb_varint(4, 1440) # total_xp
+        + _pb_varint(5, 30)   # cap
+        + _pb_varint(6, 700)  # recent_gain_xp
+    )
+    snap_entry = _pb_string(1, "herbalism") + _pb_message(2, entry_snap)
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_message(2, snap_entry)
+        + _pb_string(3, "skill_scroll_herbalism_baicao_can")
+    )
+    return _pb_message(98, payload)
+
+
+class ServerDataSkillScrollDecodeTest(unittest.TestCase):
+    def test_proto_skill_xp_gain_scroll_source_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_xp_gain_bytes())
+
+        self.assertEqual(decoded["type"], "skill_xp_gain")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(decoded["skill"], "herbalism")
+        self.assertEqual(decoded["amount"], 500)
+        self.assertEqual(
+            decoded["source"],
+            {"kind": "scroll", "scroll_id": "skill_scroll_herbalism_baicao_can", "xp_grant": 500},
+            "learn_skill_scroll 的 XP 来源必须是 scroll 且带 scroll_id，场景才可断言来源",
+        )
+
+    def test_proto_quick_slot_config_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_quickslot_config_bytes())
+
+        self.assertEqual(decoded["type"], "quickslot_config")
+        self.assertEqual(len(decoded["slots"]), 9, "固定 9 槽")
+        bound = decoded["slots"][0]
+        # central-review 31442475206 finding [5]：fixture 供应完整 5 字段绑定条目
+        # （item_id/display_name/cast_duration_ms/cooldown_ms/icon_texture），旧测试
+        # 只断言 item_id + cast_duration_ms——解码器丢弃字段 2/4/5 或返回默认值也能
+        # 通过。逐字段 pin 全部 5 个可观测槽元数据。
+        self.assertEqual(bound["item_id"], "guyuan_pill")
+        self.assertEqual(bound["display_name"], "固元丹")
+        self.assertEqual(bound["cast_duration_ms"], 1500)
+        self.assertEqual(bound["cooldown_ms"], 3000)
+        self.assertEqual(bound["icon_texture"], "bong-client:textures/gui/items/pill.png")
+        self.assertIsNone(decoded["slots"][1], "未绑定槽应为 None")
+        self.assertEqual(
+            decoded["cooldown_until_ms"],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            "packed repeated uint64 必须逐值还原（review finding [5]：旧解码器把 "
+            "wire-2 packed 载荷解成空列表）",
+        )
+        self.assertEqual(decoded["ack_request_id"], "gap10-bind-1")
+        self.assertIs(decoded["bind_accepted"], True)
+
+    def test_proto_techniques_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_techniques_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "techniques_snapshot")
+        self.assertEqual(len(decoded["entries"]), 1)
+        entry = decoded["entries"][0]
+        self.assertEqual(entry["id"], "sword.cleave")
+        self.assertEqual(entry["display_name"], "劈")
+        self.assertEqual(entry["required_realm"], "Awaken")
+        self.assertEqual(entry["required_meridians"], [{"channel": "Lung", "min_health": 0.5}])
+        self.assertEqual(entry["cast_ticks"], 16)
+        self.assertEqual(entry["cooldown_ticks"], 30)
+        # central-review 2012 #6 回归：fixture 供应了 grade/proficiency/
+        # proficiency_label/active/description/qi_cost/stamina_cost/range 全部分解码
+        # 字段，但旧测试只断言其中一部分——解码器对这些字段返回零值/丢弃也能通过。
+        # 这些是新支持快照载荷的可观测字段，逐个 pin 完整解码契约。
+        self.assertEqual(entry["grade"], "common")
+        # central-review 31438252846 finding [5]：fixture 现以非零互异值编码
+        # proficiency(0.5) 与 qi_cost(2.5)，精确断言其解码值——忽略任一 wire 字段的
+        # 解码器会返回 0.0 并被此处抓红。
+        self.assertEqual(entry["proficiency"], 0.5)
+        self.assertEqual(entry["proficiency_label"], "生疏")
+        self.assertIs(entry["active"], True)
+        self.assertEqual(entry["description"], "基础劈砍。举剑过顶，顺势劈下。")
+        self.assertEqual(entry["qi_cost"], 2.5)
+        self.assertEqual(entry["stamina_cost"], 8.0)
+        self.assertEqual(entry["range"], 3.0)
+
+    def test_proto_skill_config_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_config_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "skill_config_snapshot")
+        self.assertEqual(len(decoded["configs"]), 1)
+        entry = decoded["configs"][0]
+        self.assertEqual(entry["skill_id"], "zhenmai.sever_chain")
+        self.assertIn('"meridian_id":"Pericardium"', entry["json_config"])
+
+    def test_proto_skill_scroll_used_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_scroll_used_bytes())
+
+        self.assertEqual(decoded["type"], "skill_scroll_used")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(decoded["scroll_id"], "skill_scroll_herbalism_baicao_can")
+        self.assertEqual(decoded["skill"], "herbalism")
+        self.assertEqual(decoded["xp_granted"], 500)
+        self.assertIs(decoded["was_duplicate"], False)
+
+    def test_proto_skill_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "skill_snapshot")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(len(decoded["skills"]), 1)
+        entry = decoded["skills"][0]
+        self.assertEqual(entry["skill_name"], "herbalism")
+        # central-review 31438252846 finding [4] + 31442475206 finding [9]：fixture
+        # 供应全部六个嵌套字段且互异（xp=500 ≠ recent_gain_xp=700），旧 fixture 用
+        # 500 同时填两个字段——交换 field 2/field 6 的解码器也观测相同。逐字段 pin
+        # 完整解码契约（互异值暴露 field swap）。
+        self.assertEqual(entry["entry"]["lv"], 3)
+        self.assertEqual(entry["entry"]["xp"], 500)
+        self.assertEqual(entry["entry"]["xp_to_next"], 1600)
+        self.assertEqual(entry["entry"]["total_xp"], 1440)
+        self.assertEqual(entry["entry"]["cap"], 30)
+        self.assertEqual(entry["entry"]["recent_gain_xp"], 700)
+        self.assertEqual(decoded["consumed_scrolls"], ["skill_scroll_herbalism_baicao_can"])
+
+    def test_bot_dispatch_emits_quickslot_config_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_quickslot_config_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "quickslot_config")
+        self.assertEqual(
+            decoded_events[0].data["payload"]["ack_request_id"],
+            "gap10-bind-1",
+            "真实 Bot reader 必须把 production protobuf quickslot_config 暴露为可断言事件",
+        )
+
+
 class InventoryHelperTest(unittest.TestCase):
+    def test_inventory_signature_retains_complete_item_metadata(self):
+        baseline = {
+            "containers": [{"id": "body_pocket", "rows": 2, "cols": 3}],
+            "placed_items": [
+                {
+                    "container_id": "body_pocket",
+                    "row": 0,
+                    "col": 1,
+                    "item": {
+                        "instance_id": 7,
+                        "item_id": "guyuan_pill",
+                        "durability": 0.61,
+                        "freshness": {"current_qi": 0.4},
+                        "forge_quality": 0.8,
+                    },
+                }
+            ],
+            "equipped": {"chest_worn": []},
+            "hotbar": [None] * 9,
+            "bone_coins": 12,
+        }
+        changed = json.loads(json.dumps(baseline))
+        changed["placed_items"][0]["item"]["durability"] = 0.60
+        self.assertNotEqual(
+            inventory_signature(baseline),
+            inventory_signature(changed),
+            "拒绝路径签名必须捕获 durability/NBT-like metadata 的细微篡改",
+        )
+
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(
             [
@@ -2822,6 +3400,24 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
 
+    def test_anqi_all_gate_is_wired_and_reuse_log_is_preserved(self):
+        # The three anqi scenarios are dedicated because they need Redis plus
+        # a server log.  The harness must export the gate only after those
+        # prerequisites are owned/available, and reuse mode must not overwrite
+        # a caller-provided BONG_SERVER_LOG.
+        self.assertIn('export BOT_E2E_ANQI_REDIS=1', self.source)
+        self.assertIn('CALLER_SERVER_LOG="${BONG_SERVER_LOG:-}"', self.source)
+        self.assertIn('SERVER_LOG="$CALLER_SERVER_LOG"', self.source)
+        self.assertIn('unset BOT_E2E_ANQI_REDIS', self.source)
+        for name in (
+            "combat_anqi_charge_carrier",
+            "combat_anqi_container_switch",
+            "combat_anqi_throw_carrier",
+        ):
+            module = discover_scenarios()[name]
+            self.assertFalse(module.DEFAULT_ENABLED)
+            self.assertEqual(module.RUN_IN_ALL_WHEN_ENV, "BOT_E2E_ANQI_REDIS")
+
     def test_ci_runs_owned_rasterless_fallback_stage(self):
         stage_start = self.workflow_source.index('Bot fallback-flat e2e stage')
         stage_end = self.workflow_source.index(
@@ -2973,7 +3569,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
-        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
+        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" BONG_SERVER_LOG="$SERVER_LOG" \\
   python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
@@ -4065,6 +4661,87 @@ class _FakeBot:
         raise AssertionError(f"未找到 {description}; events={self.events}")
 
 
+class NetworkScenarioHelperTest(unittest.TestCase):
+    def test_quickslot_rejection_defaults_to_empty_slot(self):
+        payload = {
+            "ack_request_id": "bad-item",
+            "bind_accepted": False,
+            "slots": [None] * 9,
+        }
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "quickslot_config", "payload": payload},
+                )
+            ]
+        )
+
+        returned = _expect_bind_response(bot, "bad-item", False, 4)
+
+        self.assertIs(returned, payload)
+
+    def test_quickslot_rejection_can_require_preserved_binding(self):
+        entry = {
+            "item_id": "guyuan_pill",
+            "display_name": "固元丹",
+            "cast_duration_ms": 1500,
+            "cooldown_ms": 3000,
+            "icon_texture": "bong-client:textures/gui/items/pill.png",
+        }
+        payload = {
+            "ack_request_id": "empty-item",
+            "bind_accepted": False,
+            "slots": [None, None, None, None, entry, None, None, None, None],
+        }
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "server_data",
+                    {"payload_type": "quickslot_config", "payload": payload},
+                )
+            ]
+        )
+
+        _expect_bind_response(bot, "empty-item", False, 4, expected_entry=entry)
+
+    def test_skill_config_snapshot_skips_stale_configuration(self):
+        def snapshot(config: dict) -> _FakeEvent:
+            return _FakeEvent(
+                1.0 if config["meridian_id"] == "Lung" else 2.0,
+                "server_data",
+                {
+                    "payload_type": "skill_config_snapshot",
+                    "payload": {
+                        "configs": [
+                            {
+                                "skill_id": "zhenmai.sever_chain",
+                                "json_config": json.dumps(config),
+                            }
+                        ]
+                    },
+                },
+            )
+
+        expected = {"meridian_id": "LargeIntestine", "backfire_kind": "real_yuan"}
+        bot = _FakeBot(
+            [
+                snapshot({"meridian_id": "Lung", "backfire_kind": "array"}),
+                snapshot(expected),
+            ]
+        )
+
+        event = _expect_config_snapshot(
+            bot,
+            0.0,
+            lambda payload: json.loads(payload["configs"][0]["json_config"]) == expected,
+        )
+
+        self.assertEqual(event["configs"][0]["json_config"], json.dumps(expected))
+
+
 class _ObservableLock:
     def __init__(self):
         self.held = False
@@ -4107,6 +4784,189 @@ class _CommandFakeBot(_FakeBot):
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
 
+
+class LifecycleReviewContractTest(unittest.TestCase):
+    def test_move_probe_rejects_partial_server_movement_even_when_local_mirror_reaches_target(self):
+        class MoveProbeFakeBot:
+            def __init__(self, authoritative_x: float):
+                self.authoritative_x = authoritative_x
+                self.events = [
+                    _FakeEvent(
+                        1.0,
+                        "pos_look",
+                        {"x": 100.0, "y": 72.0, "z": 8.0, "flags": 0},
+                    ),
+                    # Same Y as the /top response, but received before its chat
+                    # watermark; this stale frame must not be consumed as the probe.
+                    _FakeEvent(
+                        1.9,
+                        "pos_look",
+                        {"x": 101.0, "y": 90.0, "z": 8.0, "flags": 0},
+                    ),
+                ]
+                self.position = (100.0, 72.0, 8.0)
+
+            def events_of(self, kind: str):
+                return [event for event in self.events if event.kind == kind]
+
+            def move_to(self, x: float, y: float, z: float, **_kwargs):
+                # Model the local client mirror reaching x+5 even though the server
+                # later reports only x+1 through the authoritative probe.
+                self.position = (x, y, z)
+
+            def cmd(self, command: str):
+                assert command == "top"
+                self.events.extend(
+                    [
+                        # This same-Y frame arrives after the old pre-command
+                        # watermark but before the command feedback. A probe
+                        # anchored before the chat would incorrectly consume it.
+                        _FakeEvent(
+                            1.9,
+                            "pos_look",
+                            {"x": 105.0, "y": 90.0, "z": 8.0, "flags": 0},
+                        ),
+                        _FakeEvent(2.0, "chat", {"text": "Teleported to top at Y=90."}),
+                        _FakeEvent(
+                            2.1,
+                            "pos_look",
+                            {
+                                "x": self.authoritative_x,
+                                "y": 90.0,
+                                "z": 8.0,
+                                "flags": 0,
+                            },
+                        ),
+                    ]
+                )
+
+            def expect_chat(self, substring: str, timeout: float = 5.0):
+                return self.wait_for(
+                    lambda event: event.kind == "chat"
+                    and substring in event.data["text"],
+                    timeout,
+                    f"chat/{substring}",
+                )
+
+            def wait_for(self, predicate, timeout: float, description: str):
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"
+        ), self.assertRaisesRegex(AssertionError, "server 权威移动"):
+            _move_and_record(MoveProbeFakeBot(authoritative_x=101.0))
+
+        with mock.patch("bot.scenarios.network_lifecycle_abrupt_reconnect.time.sleep"):
+            moved = _move_and_record(MoveProbeFakeBot(authoritative_x=105.0))
+        self.assertEqual(
+            moved,
+            (105.0, 90.0, 8.0),
+            "断连锚点必须使用 server PositionLook 的坐标，而不是客户端本地 mirror",
+        )
+
+    def test_restore_window_rejects_four_meter_reset_after_minimum_accepted_move(self):
+        # A 4m authoritative move is exactly the lower edge accepted by the
+        # 5m ±1m movement oracle. The restored-origin distance must nevertheless
+        # exceed the narrower restore window, so this boundary cannot false-pass.
+        partial_move = MOVE_DISTANCE - MOVE_VERIFY_TOLERANCE
+        self.assertEqual(partial_move, 4.0)
+        with self.assertRaisesRegex(AssertionError, "水平偏差"):
+            _assert_restored_position(
+                (100.0 + partial_move, 72.0, 8.0),
+                (100.0, 90.0, 8.0),
+            )
+        _assert_restored_position(
+            (100.0 + POSITION_TOLERANCE, 72.0, 8.0),
+            (100.0, 90.0, 8.0),
+        )
+
+    def test_authoritative_position_requires_absolute_xyz_position_look(self):
+        event = _FakeEvent(
+            3.0,
+            "pos_look",
+            {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 0},
+        )
+        self.assertEqual(
+            _position_from_authoritative_event(event, "移动后"),
+            (105.0, 72.0, 8.0),
+        )
+        with self.assertRaisesRegex(BotAssertionError, "绝对 XYZ"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "pos_look", {"x": 105.0, "y": 72.0, "z": 8.0, "flags": 1}),
+                "移动后",
+            )
+        with self.assertRaisesRegex(BotAssertionError, "PositionLook"):
+            _position_from_authoritative_event(
+                _FakeEvent(3.0, "keepalive", {"id": 1}),
+                "移动后",
+            )
+
+    def test_inactive_craft_session_requires_cleared_join_state(self):
+        _assert_inactive_session_state(
+            {
+                "active": False,
+                "recipe_id": None,
+                "elapsed_ticks": 0,
+                "total_ticks": 0,
+                "completed_count": 0,
+                "total_count": 0,
+            },
+            "最终重连",
+        )
+        with self.assertRaisesRegex(AssertionError, "active=false"):
+            _assert_inactive_session_state(
+                {
+                    "active": True,
+                    "recipe_id": "workbench.weapon.stone_knife",
+                    "elapsed_ticks": 1,
+                    "total_ticks": 10,
+                    "completed_count": 0,
+                    "total_count": 2,
+                },
+                "最终重连",
+            )
+        with self.assertRaisesRegex(AssertionError, "recipe_id"):
+            _assert_inactive_session_state(
+                {
+                    "active": False,
+                    "recipe_id": "stale",
+                    "elapsed_ticks": 0,
+                    "total_ticks": 0,
+                    "completed_count": 0,
+                    "total_count": 0,
+                },
+                "最终重连",
+            )
+
+class IdleTimeoutScenarioTest(unittest.TestCase):
+    def test_idle_waits_share_one_absolute_deadline(self):
+        class TimeoutCaptureBot:
+            def __init__(self):
+                self.timeouts = []
+
+            def wait_for(self, _predicate, timeout: float, description: str):
+                self.timeouts.append((timeout, description))
+                raise AssertionError("测试 fake 不提供事件")
+
+        bot = TimeoutCaptureBot()
+        deadline = 130.0
+        with mock.patch(
+            "bot.scenarios.network_lifecycle_idle_timeout.time.monotonic",
+            side_effect=[100.0, 112.0],
+        ):
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "首个等待")
+            with self.assertRaisesRegex(AssertionError, "测试 fake"):
+                _wait_before_deadline(bot, lambda _event: True, deadline, "第二个等待")
+
+        self.assertEqual(
+            [timeout for timeout, _description in bot.timeouts],
+            [30.0, 18.0],
+            "第二个 idle 等待必须消费同一 absolute deadline 的剩余预算，不能重置为 30s",
+        )
 
 class _ReaderAlive:
     def __init__(self, alive: bool):
@@ -4385,6 +5245,20 @@ class RejectionHelperTest(unittest.TestCase):
         with self.assertRaises(BotAssertionError):
             assert_no_gameplay_side_effect_since(chat, since_t=1.0, label="测试")
 
+    def test_carrier_state_periodic_sync_is_not_gameplay_side_effect(self):
+        # carrier_state 是无条件周期推送；拒绝场景的专用静默断言也必须复用
+        # 共享 ambient 集合，否则同一环境同步会在不同场景产生不一致结果。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(3.0, "server_data", {"payload_type": "carrier_state"})]
+        )
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_heartbeat_periodic_sync_is_not_gameplay_side_effect(self):
+        bot = _RejectionFakeBot(
+            [_FakeEvent(3.0, "server_data", {"payload_type": "heartbeat"})]
+        )
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
     def test_fire_probes_ignores_join_burst_ambient_traffic(self):
         # join 突发里既有无法解码的 spawn（裸 payload）也有解码的 status_snapshot，
         # 它们都落在探针窗口起点之前：drain 排干 + 类型排除后不误判成副作用。
@@ -4423,6 +5297,142 @@ class RejectionHelperTest(unittest.TestCase):
         fresh = _RejectionFakeBot([_FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"})])
         with self.assertRaises(BotAssertionError):
             assert_no_gameplay_side_effect_since(fresh, since_t=1.0, label="测试")
+
+
+    def test_ambient_fauna_bite_in_probe_window_is_not_side_effect(self):
+        # 回归锁：野生生物（实测噬元鼠）在探针窗口内咬 bot 会产生
+        # combat_event(outgoing=false) + vfx_event(play_entity_anim)，二者都跟被拒
+        # 请求无关。此前它们被判成"玩法副作用"，让干净拒绝场景在 CI 上随机变红
+        # （同一 commit 连跑两次挂在不同场景）。
+        bitten = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {
+                        "payload_type": "combat_event",
+                        "payload": {
+                            "v": 1,
+                            "type": "combat_event",
+                            "events": [{"kind": "qi_damage", "amount": 0.04, "outgoing": False}],
+                        },
+                    },
+                ),
+                _FakeEvent(
+                    3.1,
+                    "vfx_event",
+                    {
+                        "v": 1,
+                        "type": "play_entity_anim",
+                        "entity_id": 338,
+                        "anim": "animation.bong.devour_rat.claw",
+                        "duration_ticks": 12,
+                    },
+                ),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(bitten, since_t=1.0, label="测试")
+
+    def test_full_rat_bite_triplet_is_ambient(self):
+        # 一次环境咬击同时产生三件：combat_event(incoming) + play_entity_anim +
+        # spawn_particle(bong:rat_bite_nip)。三件必须一起豁免——只补前两件的话
+        # 第三件仍会让场景变红（CI 上实证过一次）。
+        bitten = _RejectionFakeBot(
+            [
+                _FakeEvent(3.0, "server_data", {
+                    "payload_type": "combat_event",
+                    "payload": {"v": 1, "type": "combat_event",
+                                "events": [{"kind": "qi_damage", "amount": 0.04, "outgoing": False}]},
+                }),
+                _FakeEvent(3.1, "vfx_event", {
+                    "v": 1, "type": "play_entity_anim", "entity_id": 338,
+                    "anim": "animation.bong.devour_rat.claw", "duration_ticks": 12,
+                }),
+                _FakeEvent(3.2, "vfx_event", {
+                    "v": 1, "type": "spawn_particle", "event_id": "bong:rat_bite_nip",
+                    "origin": [-187.7, 74.2, -178.1], "count": 4, "duration_ticks": 8,
+                }),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(bitten, since_t=1.0, label="测试")
+
+    def test_outgoing_damage_in_probe_window_is_still_a_side_effect(self):
+        # 豁免必须只覆盖"bot 挨打"。bot **打出**伤害只可能来自被处理的请求，
+        # 仍要撞红——否则这条豁免会把真 bug 一起放过。
+        for events in (
+            [{"kind": "hit", "amount": 3.0, "outgoing": True}],
+            # 混合：挨打 + 打出，只要有一条 outgoing 就不算环境
+            [
+                {"kind": "qi_damage", "amount": 0.04, "outgoing": False},
+                {"kind": "hit", "amount": 3.0, "outgoing": True},
+            ],
+        ):
+            with self.subTest(events=events):
+                bot = _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            3.0,
+                            "server_data",
+                            {
+                                "payload_type": "combat_event",
+                                "payload": {"v": 1, "type": "combat_event", "events": events},
+                            },
+                        )
+                    ]
+                )
+                with self.assertRaises(BotAssertionError):
+                    assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_malformed_combat_event_payload_stays_flagged(self):
+        # 结构不符 / 空条目时无从归因 ⇒ 宁严勿松，仍算副作用。
+        for payload in (
+            None,
+            {"v": 1, "type": "combat_event"},                      # 没有 events 字段
+            {"v": 1, "type": "combat_event", "events": []},        # 空条目
+            {"v": 1, "type": "combat_event", "events": [{"kind": "hit"}]},  # 缺 outgoing
+            {"v": 1, "type": "combat_event", "events": "nope"},    # 类型不对
+        ):
+            with self.subTest(payload=payload):
+                bot = _RejectionFakeBot(
+                    [_FakeEvent(3.0, "server_data",
+                                {"payload_type": "combat_event", "payload": payload})]
+                )
+                with self.assertRaises(BotAssertionError):
+                    assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_other_vfx_types_are_not_exempted_by_the_fauna_anim_rule(self):
+        # play_entity_anim 的豁免不能外溢：其它 vfx（无 event_id、或响应式 event_id）
+        # 仍必须标记。
+        for data in (
+            {"v": 1, "type": "spawn_particles"},          # 非 play_entity_anim 且无 event_id
+            {"event_id": "bong:combat_hit"},              # 响应式 vfx
+        ):
+            with self.subTest(data=data):
+                bot = _RejectionFakeBot([_FakeEvent(3.0, "vfx_event", data)])
+                with self.assertRaises(BotAssertionError):
+                    assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_ambient_fauna_combat_before_window_does_not_mask_later_real_effect(self):
+        # 环境挨打被豁免，但同窗口内的真副作用仍要撞红（豁免不是"整窗放行"）。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    2.0,
+                    "server_data",
+                    {
+                        "payload_type": "combat_event",
+                        "payload": {
+                            "v": 1,
+                            "type": "combat_event",
+                            "events": [{"kind": "qi_damage", "amount": 0.04, "outgoing": False}],
+                        },
+                    },
+                ),
+                _FakeEvent(3.0, "chat", {"text": "某个坏请求的回执"}),
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
 
     def test_payload_type_seen_before_window_is_not_automatically_ambient(self):
         # 窗口起点前见过某 payload type **不自证**它是连接同步：inventory_snapshot
@@ -6137,6 +7147,30 @@ def _server_data_zone_info_bytes() -> bytes:
 
 
 def _server_data_inventory_snapshot_bytes() -> bytes:
+    side_effect = (
+        _pb_string(1, "qi_drain_mild")
+        + _pb_varint(2, 30)
+        + _pb_varint(3, 1)
+        + _pb_varint(4, 0)
+        + _pb_varint(5, 2)
+        + _pb_fixed64(6, 1.5)
+    )
+    alchemy = (
+        _pb_string(1, "pill")
+        + _pb_string(2, "qing_xin_dan")
+        + _pb_varint(3, 2)
+        + _pb_fixed64(4, 0.9)
+        + _pb_varint(5, 1)
+        + _pb_message(6, side_effect)
+    )
+    freshness = (
+        _pb_varint(1, 123)
+        + _pb_fixed32(2, 0.5)
+        + _pb_string(3, "Decay")
+        + _pb_string(4, "mineral_decay_v1")
+        + _pb_varint(5, 17)
+        + _pb_varint(6, 140)
+    )
     item = (
         _pb_varint(1, 9)
         + _pb_string(2, "worn_grass_pouch")
@@ -6149,6 +7183,18 @@ def _server_data_inventory_snapshot_bytes() -> bytes:
         + _pb_varint(9, 1)
         + _pb_fixed64(10, 0.0)
         + _pb_fixed64(11, 0.3)
+        + _pb_string(12, "za_gang")
+        + _pb_string(13, "skill_scroll")
+        + _pb_string(14, "forging")
+        + _pb_varint(15, 500)
+        + _pb_varint(16, 7)
+        + _pb_fixed32(17, 0.75)
+        + _pb_varint(18, 1)
+        + _pb_string(19, "brittle_edge")
+        + _pb_string(19, "qi_shear")
+        + _pb_varint(20, 3)
+        + _pb_message(21, alchemy)
+        + _pb_message(22, freshness)
     )
     container = (
         _pb_string(1, "body_pocket")
@@ -6269,6 +7315,104 @@ def _server_data_loot_container_close_bytes() -> bytes:
     return _pb_message(121, _pb_varint(1, 7) + _pb_string(2, "distance"))
 
 
+def _server_data_tribulation_state_bytes(
+    *,
+    phase: str,
+    wave_current: int,
+    wave_total: int,
+    result: str | None,
+    active: bool = True,
+    failed: bool = False,
+    half_step_on_success: bool = False,
+) -> bytes:
+    """field 66 `tribulation_state`（见 proto/bong/envelope.proto `TribulationState`）。
+
+    failed=field 13、half_step_on_success=field 14 都是独立 bool 字段，必须可设非默认值：
+    解码测试要 pin 每一个新增字段的 wire 号，缺席/串号/恒 false 的解码器才会被抓住。
+    """
+    body = (
+        _pb_varint(1, 1 if active else 0)
+        + _pb_string(2, "du_xu:char-1")
+        + _pb_string(3, "BHDE6Cult")
+        + _pb_string(4, "du_xu")
+        + _pb_string(5, phase)
+        + _pb_fixed64(6, 12.5)
+        + _pb_fixed64(7, -34.25)
+        + _pb_varint(8, wave_current)
+        + _pb_varint(9, wave_total)
+        + _pb_varint(10, 1000)
+        + _pb_varint(11, 5000)
+        + _pb_varint(12, 5300)
+        + _pb_varint(13, 1 if failed else 0)
+        + _pb_varint(14, 1 if half_step_on_success else 0)
+        + _pb_string(15, "du_xu:char-1")
+    )
+    if result is not None:
+        body += _pb_string(16, result)
+    return _pb_message(66, body)
+
+
+def _server_data_heart_demon_offer_bytes() -> bytes:
+    """field 69 `heart_demon_offer`（见 proto/bong/envelope.proto `HeartDemonOffer`）。
+
+    全部**非对称**值（review finding major-7）：offer_id != trigger_id、quota_remaining !=
+    quota_total、每个 choice 的 effect_summary/flavor/style_hint 各自可辨——把字段 13/14
+    互换、读错 trigger_id、配额钞等错误解码器立刻撞红。
+    """
+    choice = lambda choice_id, category, title, effect, flavor, style: (  # noqa: E731
+        _pb_string(1, choice_id)
+        + _pb_string(2, category)
+        + _pb_string(3, title)
+        + _pb_string(4, effect)
+        + _pb_string(5, flavor)
+        + _pb_string(6, style)
+    )
+    body = (
+        _pb_string(1, "heart_demon:7:1000")
+        + _pb_string(2, "heart_demon:7:1111")
+        + _pb_string(3, "心魔劫临身")
+        + _pb_string(4, "渡虚劫 · 心魔")
+        + _pb_fixed64(5, 0.85)
+        + _pb_varint(6, 2)  # quota_remaining
+        + _pb_varint(7, 3)  # quota_total（≠ remaining，锁独立映射）
+        + _pb_varint(8, 1700000050000)  # expires_at_ms
+        + _pb_message(
+            9,
+            choice(
+                "heart_demon_choice_0",
+                "Composure",
+                "守本心",
+                "稳住心神，回复少量当前真元",
+                "心若磐石，外物不侵。",
+                "calm-blue",
+            ),
+        )
+        + _pb_message(
+            9,
+            choice(
+                "heart_demon_choice_1",
+                "Breakthrough",
+                "斩执念",
+                "若斩错心魔，将损当前真元并强化下一道开天雷",
+                "抽刀断水，一念斩魔。",
+                "edge-orange",
+            ),
+        )
+        + _pb_message(
+            9,
+            choice(
+                "heart_demon_choice_2",
+                "Perception",
+                "无解",
+                "承认无解，不得增益也不受真元惩罚",
+                "心魔无解，人间一二。",
+                "calm-grey",
+            ),
+        )
+    )
+    return _pb_message(69, body)
+
+
 def _server_data_morph_state_bytes(
     *,
     mode: str,
@@ -6289,6 +7433,30 @@ def _server_data_morph_state_bytes(
     )
     state = _pb_varint(1, 1) + _pb_string(2, mode) + _pb_message(3, entry)
     return _pb_message(142, state)
+
+
+def _server_data_carrier_state_bytes(
+    *,
+    carrier: str,
+    phase: int,
+    progress: float,
+    sealed_qi: float,
+    sealed_qi_initial: float,
+    half_life_remaining_ticks: int,
+    item_instance_id: int | None,
+) -> bytes:
+    """field 49 `carrier_state`（见 proto/bong/envelope.proto:1896 `CarrierState`）。"""
+    state = (
+        _pb_string(1, carrier)
+        + _pb_varint(2, phase)
+        + _pb_fixed32(3, progress)
+        + _pb_fixed32(4, sealed_qi)
+        + _pb_fixed32(5, sealed_qi_initial)
+        + _pb_varint(6, half_life_remaining_ticks)
+    )
+    if item_instance_id is not None:
+        state += _pb_varint(7, item_instance_id)
+    return _pb_message(49, state)
 
 
 def _pb_key(field: int, wire: int) -> bytes:
@@ -6335,6 +7503,17 @@ def _pb_varint_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + mc.write_varint(value)
 
 
+def _pb_u64_varint_field(number: int, value: int) -> bytes:
+    """protobuf uint64 字段（mc.write_varint 是 32 位 MC varint，装不下 u64）。"""
+    body = bytearray()
+    remaining = value
+    while remaining >= 0x80:
+        body.append((remaining & 0x7F) | 0x80)
+        remaining >>= 7
+    body.append(remaining)
+    return mc.write_varint(number << 3) + bytes(body)
+
+
 def _pb_len_field(number: int, value: bytes) -> bytes:
     return mc.write_varint((number << 3) | 2) + mc.write_varint(len(value)) + value
 
@@ -6358,6 +7537,41 @@ class ProtoMinTest(unittest.TestCase):
             "combat_event",
             "shallow payload table must not hide production field 51",
         )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(128, b"")),
+            "sword_bond_hud_state",
+            "SwordBond HUD field 128 must be recognized as an ambient payload",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(45, b"")),
+            "dugu_poison_state",
+            "Dugu poison HUD field 45 must be recognized as an ambient payload",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(48, b"")),
+            "poison_trait_state",
+            "Poison trait HUD field 48 must be recognized as an ambient payload",
+        )
+
+    def test_false_skin_state_field_50_is_decoded_for_ambient_oracle(self):
+        inner = (
+            _pb_string(1, "offline:Bot")
+            + _pb_varint_field(3, 0)
+            + _pb_fixed64(4, 0.0)
+            + _pb_fixed64(5, 0.0)
+            + _pb_varint_field(6, 0)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(50, inner))
+        self.assertEqual(decoded["type"], "false_skin_state")
+        self.assertEqual(decoded["target_id"], "offline:Bot")
+
+    def test_treasure_equipped_field_43_decodes_empty_slot(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(43, _pb_string(1, "main_hand"))
+        )
+        self.assertEqual(decoded["type"], "treasure_equipped")
+        self.assertEqual(decoded["slot"], "main_hand")
+        self.assertIsNone(decoded["treasure"])
 
     def test_server_data_decoder_table_is_named_and_dispatches(self):
         self.assertLessEqual(
@@ -6380,6 +7594,26 @@ class ProtoMinTest(unittest.TestCase):
                         sentinel,
                         f"field {field} 必须由 decoder table 分发",
                     )
+
+    def test_server_data_payload_name_reads_skill_xp_gain_oneof_field(self):
+        # central-review 2012 #1：field 7 必须在 SERVER_DATA_PAYLOAD_NAMES 中登记，
+        # 否则 expect_server_data_payload("skill_xp_gain") 会把该 oneof 分类为未知。
+        envelope = _server_data_skill_xp_gain_bytes()
+        self.assertEqual(proto_min.server_data_payload_field(envelope), 7)
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "skill_xp_gain")
+
+    def test_server_data_payload_name_falls_back_to_decoded_type(self):
+        # decoder 认识但注册表未登记的 oneof 字段（field 34=cast_sync）：name 桥
+        # 由 decoded payload 的 type 回退，与 decoder 保持一致，而不是退回 field_34。
+        envelope = _pb_len_field(34, b"")
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+        # 验证未在 SERVER_DATA_PAYLOAD_NAMES 注册但在 DECODERS 注册时的回退机制
+        saved = proto_min.SERVER_DATA_PAYLOAD_NAMES.pop(34, None)
+        try:
+            self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+        finally:
+            if saved is not None:
+                proto_min.SERVER_DATA_PAYLOAD_NAMES[34] = saved
 
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
@@ -6413,6 +7647,68 @@ class ProtoMinTest(unittest.TestCase):
 
         refs = proto_min.inventory_item_refs(envelope)
         self.assertEqual(refs[0].location, {"kind": "equip", "slot": "main_hand", "state": "held"})
+
+    def test_trade_offer_decodes_offer_and_item_summaries(self):
+        offered = (
+            _pb_u64_varint_field(1, 1001)
+            + _pb_len_field(2, b"starter_talisman")
+            + _pb_len_field(3, b"talisman")
+            + _pb_varint_field(4, 1)
+        )
+        requested = (
+            _pb_u64_varint_field(1, 2002)
+            + _pb_len_field(2, b"huiyuan_pill")
+            + _pb_len_field(3, b"pill")
+            + _pb_varint_field(4, 3)
+        )
+        trade_offer = (
+            _pb_len_field(1, b"trade:00000000-0000-7000-8000-000000000000")
+            + _pb_len_field(2, b"char:alice")
+            + _pb_len_field(3, b"char:bob")
+            + _pb_len_field(4, offered)
+            + _pb_len_field(5, requested)
+            + _pb_u64_varint_field(6, 9876543210)
+        )
+        envelope = _pb_len_field(65, trade_offer)
+
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "trade_offer")
+        payload = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(payload["type"], "trade_offer")
+        self.assertEqual(payload["offer_id"], "trade:00000000-0000-7000-8000-000000000000")
+        self.assertEqual(payload["initiator"], "char:alice")
+        self.assertEqual(payload["target"], "char:bob")
+        self.assertEqual(
+            payload["offered_item"],
+            {"instance_id": 1001, "item_id": "starter_talisman", "display_name": "talisman", "stack_count": 1},
+        )
+        self.assertEqual(
+            payload["requested_items"],
+            [{"instance_id": 2002, "item_id": "huiyuan_pill", "display_name": "pill", "stack_count": 3}],
+        )
+        self.assertEqual(payload["expires_at_ms"], 9876543210)
+
+    def test_sparring_invite_decodes_all_fields(self):
+        sparring_invite = (
+            _pb_len_field(1, b"sparring:00000000-0000-7000-8000-000000000000")
+            + _pb_len_field(2, b"char:alice")
+            + _pb_len_field(3, b"char:bob")
+            + _pb_len_field(4, b"condense_solidify")
+            + _pb_len_field(5, "气息相试".encode())
+            + _pb_len_field(6, "点到为止".encode())
+            + _pb_u64_varint_field(7, 9876543210)
+        )
+        envelope = _pb_len_field(64, sparring_invite)
+
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "sparring_invite")
+        payload = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(payload["type"], "sparring_invite")
+        self.assertEqual(payload["invite_id"], "sparring:00000000-0000-7000-8000-000000000000")
+        self.assertEqual(payload["initiator"], "char:alice")
+        self.assertEqual(payload["target"], "char:bob")
+        self.assertEqual(payload["realm_band"], "condense_solidify")
+        self.assertEqual(payload["breath_hint"], "气息相试")
+        self.assertEqual(payload["terms"], "点到为止")
+        self.assertEqual(payload["expires_at_ms"], 9876543210)
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:
@@ -6454,6 +7750,11 @@ class FrameParseTest(unittest.TestCase):
         small = b"\x17small"
         conn.buf = _frame(mc.write_varint(0) + small)
         self.assertEqual(conn._try_parse_frame(), small)
+        # Valence treats an exact-threshold payload as uncompressed.
+        exact = b"\x17" + b"x" * 63
+        self.assertEqual(len(exact), 64)
+        conn.buf = _frame(mc.write_varint(0) + exact)
+        self.assertEqual(conn._try_parse_frame(), exact)
         # 达阈值 zlib：DataLength=原长 + 压缩体
         big = b"\x24" + b"y" * 200
         conn.buf = _frame(mc.write_varint(len(big)) + zlib.compress(big))
@@ -6844,6 +8145,67 @@ class RunnerLogicTest(unittest.TestCase):
         run.assert_not_called()
         self.assertIn("SKIP", output.getvalue())
 
+    def test_heart_demon_decision_scenario_declares_optin_env_hook(self):
+        # review finding major-2：主链路场景必须声明 RUN_IN_ALL_WHEN_ENV（且不默认开启），
+        # 由专用工作流下发该 env 才纳入 --all —— 没这个 hook 常规 CI 的 --all 永远跳过它。
+        scenario = discover_scenarios()["cultivation_heart_demon_decision"]
+        self.assertFalse(
+            scenario.DEFAULT_ENABLED,
+            "heart_demon_decision 是 30 分钟满进度门槛的长场景，不得进入常规 --all",
+        )
+        self.assertEqual(
+            getattr(scenario, "RUN_IN_ALL_WHEN_ENV", None),
+            "BONG_RUN_LONG_SCENARIOS",
+            "场景必须声明统一的 RUN_IN_ALL_WHEN_ENV；bot-heart-demon-nightly 工作流下发它",
+        )
+
+    def test_heart_demon_decision_all_runs_only_when_optin_env_set(self):
+        # pin runner 语义：env 未设/0 → SKIP（run 不被调用）；env=1 → 纳入 --all（run 被调）。
+        run_env = "BONG_RUN_LONG_SCENARIOS"
+        scenario = types.SimpleNamespace(
+            DESCRIPTION="dedicated heart-demon",
+            MODULES=["cultivation"],
+            DEFAULT_ENABLED=False,
+            RUN_IN_ALL_WHEN_ENV=run_env,
+            run=mock.Mock(),
+        )
+        for value, expected_included in (("1", True), ("0", False), ("", False)):
+            scenario.run.reset_mock()
+            output = io.StringIO()
+            with (
+                mock.patch.object(
+                    scenario_runner,
+                    "discover_scenarios",
+                    return_value={"cultivation_heart_demon_decision": scenario},
+                ),
+                mock.patch.object(
+                    scenario_runner, "check_server_reachable", return_value=True
+                ),
+                mock.patch.dict(os.environ, {run_env: value}, clear=False),
+                mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+                redirect_stdout(output),
+            ):
+                result = scenario_runner.main()
+            self.assertEqual(result, 0)
+            if expected_included:
+                scenario.run.assert_called_once()
+                self.assertIn("pass=1", output.getvalue())
+            else:
+                scenario.run.assert_not_called()
+                self.assertIn("skip=1", output.getvalue())
+
+    def test_heart_demon_nightly_workflow_actually_sets_optin_env(self):
+        # review finding major-2：pin「opt-in --all 环境钩子 + 工作流真正下发」的电线。
+        # 工作流必须把 BONG_RUN_LONG_SCENARIOS 设为 1 并调用 bot-e2e.sh（--all），
+        # 否则场景声明的 RUN_IN_ALL_WHEN_ENV 只是死钩子。
+        wf_path = pathlib.Path(__file__).parent.parent.parent / ".github" / "workflows" / "bot-heart-demon-nightly.yml"
+        text = wf_path.read_text(encoding="utf-8")
+        self.assertIn("BONG_RUN_LONG_SCENARIOS", text)
+        self.assertIn("BONG_RUN_LONG_SCENARIOS: \"1\"", text)
+        self.assertIn("scripts/bot-e2e.sh", text)
+        self.assertIn("on:", text)
+        self.assertIn("workflow_dispatch", text)
+
     def test_explicit_scenario_without_required_env_fails_closed(self):
         run = mock.Mock()
         required_env = "BOT_E2E_TEST_DEDICATED"
@@ -6957,6 +8319,14 @@ class RunnerLogicTest(unittest.TestCase):
                 elif isinstance(node.func, ast.Name):
                     function_name = node.func.id
                 if function_name in raw_server_data_calls:
+                    # remains_loot 的负向契约必须扫描未注册的 RemainsSync(field 139)
+                    # raw 帧；该场景同时扫描已解码 server_data，raw helper 只用于防止
+                    # 未知 oneof 被静默吞掉。其他默认玩法场景仍禁止把 transport 当行为证据。
+                    if (
+                        path.name == "remains_loot_invalid_quiet_reject.py"
+                        and function_name == "server_data_payload_name"
+                    ):
+                        continue
                     failures.append(
                         f"{path.name}:{node.lineno}: {function_name} 只识别 transport/oneof，"
                         "玩法验收必须断言 kind=server_data 的深解码字段"
@@ -7736,6 +9106,13 @@ def _pb_int32_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
 
 
+def _pb_sint32_field(number: int, value: int) -> bytes:
+    """protobuf `sint32`（zigzag）字段 wire 编码——WorkbenchOpen 坐标可为负。"""
+    return mc.write_varint(number << 3) + _pb_raw_varint(
+        (value << 1) ^ (value >> 63)
+    )
+
+
 def _proto_message_body(source: str, message_name: str) -> str:
     match = re.search(rf"\bmessage\s+{re.escape(message_name)}\s*\{{", source)
     if match is None:
@@ -8322,6 +9699,20 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
         self.assertIsNone(decoded["drops"][0]["item"]["freshness"])
 
+    def test_inventory_item_decodes_forge_quality_for_trade_identity_evidence(self):
+        forge_quality = struct.unpack("<f", struct.pack("<I", 0x3F666667))[0]
+        item = (
+            _pb_varint(1, 77)
+            + _pb_string(2, "forged_blade")
+            + _pb_varint(9, 1)
+            + _pb_fixed32(17, forge_quality)
+        )
+        entry = _pb_varint(1, 77) + _pb_message(8, item)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(81, _pb_message(1, entry))
+        )
+        self.assertEqual(decoded["drops"][0]["item"]["forge_quality"], forge_quality)
+
     def test_lumber_progress_tag29_decodes_terminal_contract(self):
         progress = (
             _pb_string(1, "offline:wood")
@@ -8715,6 +10106,1196 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["current_index"], 0)
 
 
+class _FakeSocket:
+    """把 socketpair 一端包成可控制 recv 的代理。
+
+    Python 3.13 下 C socket 方法（recv/sendall）不可 mock.patch.object（只读
+    属性）。测试要确定性制造 EOF / OSError 时，把 `_mode` 切成 eof / raise：
+    - real：委托真 socket（正常读）；
+    - eof：recv 返回 b""（对端关闭）；
+    - raise：recv 抛 OSError（连接重置）。
+    """
+
+    def __init__(self, real: socket.socket):
+        object.__setattr__(self, "_real", real)
+        self._mode = "real"
+
+    def recv(self, *args, **kwargs):
+        if self._mode == "eof":
+            return b""
+        if self._mode == "raise":
+            raise OSError("reset")
+        return object.__getattribute__(self, "_real").recv(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_real"), name)
+
+
+class RedisPubSubTest(unittest.TestCase):
+    """_redis_helpers：RESP2 帧编解码 + SUBSCRIBE ack 等待 + 消息泵（纯 stdlib，无需 redis 服务）。"""
+
+    def _pubsub_with_pair(self, max_events: int = 5000):
+        server, client = socket.socketpair()
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379, max_events=max_events)
+        return pubsub, server, client
+
+    def _wait_for(self, pubsub, channel, predicate, timeout=5.0):
+        """轮询 events_for 直到谓词命中（全历史匹配，无等待窗口语义）。
+
+        泵线程是独立线程，send 后事件何时入队不确定；这里确定性等它入队，
+        用于验证“投递”本身，与 wait_event 的窗口语义无关。
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for evt in pubsub.events_for(channel):
+                if predicate(evt):
+                    return evt
+            time.sleep(0.05)
+        raise AssertionError(f"事件未在 {timeout:.0f}s 内入队: channel={channel}")
+
+    def test_resp_frames_simple_string_integer_null(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"+PONG\r\n:42\r\n$-1\r\n")
+        self.assertEqual(frames.next_frame(), "PONG")
+        self.assertEqual(frames.next_frame(), 42)
+        self.assertIsNone(frames.next_frame())
+
+    def test_resp_frames_array_of_bulk(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
+        self.assertIsNone(frames.next_frame())
+
+    def test_resp_frames_subscribed_pong_shape(self):
+        # RESP2 subscribed PING replies as the two-element pubsub array
+        # ["pong", ""], not the ordinary +PONG simple string.
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+        self.assertEqual(frames.next_frame(), [b"pong", b""])
+        self.assertIsNone(frames.next_frame())
+
+    def test_subscribed_pong_establishes_delivery_barrier(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def server_loop():
+                try:
+                    while True:
+                        data = server.recv(4096)
+                        if not data:
+                            return
+                        server.sendall(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+                except OSError:
+                    return
+
+            thread = threading.Thread(target=server_loop, daemon=True)
+            thread.start()
+            pubsub.settle(0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_producer_fence_waits_for_matching_server_ack(self):
+        # The fence must invoke a producer-side request and accept only the
+        # matching ack; this is intentionally independent of socket timing.
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._host = "127.0.0.1"
+        pubsub._port = 6379
+        pubsub._username = None
+        pubsub._password = None
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._events = []
+        pubsub._oldest_retained_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        called = {}
+
+        def fake_request(token, timeout):
+            called["token"] = token
+            called["timeout"] = timeout
+            payload = json.dumps({"v": 1, "ok": True, "token": token}).encode()
+            pubsub._handle_frame(
+                [
+                    b"message",
+                    _redis_helpers.DELIVERY_FENCE_ACK_CHANNEL.encode(),
+                    payload,
+                ]
+            )
+
+        pubsub._publish_fence_request = fake_request
+        ack = pubsub.producer_fence(timeout=1.0)
+        self.assertTrue(ack["ok"])
+        self.assertEqual(ack["token"], called["token"])
+        self.assertEqual(called["timeout"], 1.0)
+
+    def test_resp_frames_partial_feeds(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$9\r\nsub")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"scribe\r\n$7\r\nmy_ch")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"an\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
+
+    def test_resp_frames_bulk_payload_split(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$5\r\nhel")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"lo\r\n")
+        self.assertEqual(frames.next_frame(), b"hello")
+
+    def test_oversized_bulk_frame_rejected_at_length(self):
+        # 回归：review finding [major]——解码器信任对端自报的 bulk 长度，为
+        # `length + 2` 字节无限累积 _buf。封顶后，仅长度头（不送本体）就必须
+        # 在长度阶段抛错，不得进入等待更多分片的缓冲路径。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$%d\r\n" % (_redis_helpers.MAX_BULK_LEN + 1))
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_BULK_LEN", str(ctx.exception))
+
+    def test_resp_buffer_cap_rejects_runaway_feed(self):
+        # 回归：review finding [major] 的第二道兜底——即使没有单个超大 bulk，
+        # 海量小分片同样不能无限撑大 _buf。
+        frames = _redis_helpers.RespFrames()
+        with self.assertRaises(ValueError) as ctx:
+            frames.feed(b"x" * (_redis_helpers.MAX_BUF_LEN + 1))
+        self.assertIn("MAX_BUF_LEN", str(ctx.exception))
+
+    def test_non_object_json_payloads_are_ignored(self):
+        # 回归：review finding [minor]——订阅的全局频道上任意发布者可投递合法
+        # JSON 的非对象值（null/[]/"x"/数字）。事件契约要求对象：非 dict 必须
+        # 被忽略，否则 wait_event 谓词与 events_for 推导里的 e.get() 会抛
+        # AttributeError 让场景崩溃。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            for raw in (b"null", b"[]", b'"x"', b"42"):
+                msg = (
+                    b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                    % (len(raw), raw)
+                )
+                server.sendall(msg)
+            good = json.dumps({"tick": 7}).encode()
+            msg = (
+                b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                % (len(good), good)
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+            self.assertEqual(
+                len(pubsub.events_for("my_chan")),
+                1,
+                "非 dict JSON 应被忽略，只留合法对象事件",
+            )
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_oversized_bulk_on_subscribed_channel_is_fatal(self):
+        # 回归：review finding [major]——超大 bulk 到达订阅连接时，泵线程不得
+        # 静默死掉（那样 wait_event 只会一直超时）；必须封顶并记录致命错误，
+        # 由 events_for/wait_event 上报为明确失败。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            huge = _redis_helpers.MAX_BULK_LEN + 1
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n" % huge
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(
+                fatal_msg, "超大 bulk 帧应使 events_for 上报致命错误而非静默"
+            )
+            self.assertIn("MAX_BULK_LEN", fatal_msg)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_resp_negative_length_below_null_rejected(self):
+        # 回归：review finding [minor]——RESP2 只允许 -1 表示 null；$-2/-3 等
+        # 负长度与 *-2 负计数若当空值放行，结束偏移会倒退、后续流错位。
+        for bad in (b"$-2\r\n", b"*-2\r\n", b"$-3\r\n"):
+            frames = _redis_helpers.RespFrames()
+            frames.feed(bad)
+            with self.assertRaises(ValueError):
+                frames.next_frame()
+
+    def test_resp_bulk_missing_crlf_terminator_rejected(self):
+        # 回归：review finding [minor]——bulk 载荷末尾必须跟 CRLF；只按声明长度
+        # 跳两字节会吞掉畸形流并从错误边界继续解析。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            frames.next_frame()
+
+    def test_resp_array_nesting_depth_bounded(self):
+        # 回归：review finding [major]——*1 深嵌套链会触发 Python 递归爆栈；
+        # 嵌套深度必须封顶，超限即致命协议错误。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*1\r\n" * (_redis_helpers.MAX_RESP_DEPTH + 1))
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_RESP_DEPTH", str(ctx.exception))
+
+    def test_resp_array_element_count_bounded(self):
+        # 回归：review finding [major]——对端可自报海量小元素，在 16MiB 字节
+        # 上限内膨胀出大得多的 Python list，且不完整数组每次 recv 重解析全部
+        # 前驱元素（二次方 CPU）。元素总数封顶后超限即致命协议错误。
+        count = _redis_helpers.MAX_RESP_ARRAY_ITEMS + 1
+        body = b"*%d\r\n" % count + b":1\r\n" * count
+        frames = _redis_helpers.RespFrames()
+        frames.feed(body)
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_RESP_ARRAY_ITEMS", str(ctx.exception))
+
+    def test_resp_array_within_bounds_still_parses(self):
+        # 上限不得误伤合法帧：订阅消息是长度 3 的浅数组，边界内照常解码。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"message", b"my_chan", 1])
+
+    def test_pump_eof_is_fatal(self):
+        # 回归：review finding [major]——订阅连接被对端关闭（EOF）时，若泵线程
+        # 只是静默退出，events_for/wait_event 会继续返回冻结事件列表，负向断言
+        # （无事件）在死订阅上照常通过。EOF 必须记录为致命错误。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            # 泵此刻阻塞在真 recv 上。先切 eof 再发一条无害 PONG 解阻塞：泵读到
+            # PONG（_handle_frame 忽略非 message 帧）后循环，下一次 recv 走 fake
+            # → EOF。切换先于解阻塞字节，故泵的第二次 recv 必然命中 eof。
+            fake._mode = "eof"
+            server.sendall(b"+PONG\r\n")
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(fatal_msg, "EOF 应使 events_for 上报致命错误而非静默")
+            self.assertIn("EOF", fatal_msg)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_socket_error_is_fatal(self):
+        # 回归：review finding [major]——recv 抛 OSError（连接重置/断线）同样
+        # 不能静默退出泵线程，否则负向断言在死订阅上照常通过。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            # 同 EOF 测试：先切 raise 再发 PONG 解阻塞泵的第一次真 recv。
+            fake._mode = "raise"
+            server.sendall(b"+PONG\r\n")
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(fatal_msg, "socket 错误应使 events_for 上报致命错误")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_peer_close_is_immediate_error(self):
+        # 回归：review finding [minor]——握手阶段对端关闭（EOF）时，旧代码会空读
+        # 空转烧 CPU 直到 5s 超时；现在应立即抛错而非空转。recv 注入 EOF 使路径
+        # 确定性落在 AUTH→EOF（AUTH 命令本身由真 socket sendall 发出）。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        fake._mode = "eof"
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            with self.assertRaises(RuntimeError) as ctx:
+                _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="hunter2")
+        self.assertIn("EOF", str(ctx.exception))
+        server.close()
+        client.close()
+
+    def test_subscribe_ack_wait_and_message_pump(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"full_charge": False, "tick": 7}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+            self.assertEqual(pubsub.events_for("other"), [])
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_timeout_raises(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event("my_chan", lambda e: False, timeout=0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_survives_idle_timeout_and_still_delivers_later_message(self):
+        # 回归：review finding [2]——ack 循环临时装的超时若残留在长连接上，
+        # _pump 会把 socket.timeout 当 OSError 永久退出，之后发布的订阅消息
+        # 永远收不到。修复后：(a) subscribe() 把连接恢复为阻塞（无超时残留）；
+        # (b) 即便仍有有限超时，_pump 也把 timeout 当非终止信号继续等。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            self.assertIsNone(
+                client.gettimeout(),
+                "subscribe 确认后长连接不应残留 ack 用有限超时（空闲 5s 会杀线程）",
+            )
+
+            # 人为模拟超时仍残留：旧代码 _pump 在首个空闲超时即退出。
+            client.settimeout(0.1)
+            time.sleep(0.35)
+
+            payload = json.dumps({"tick": 42}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 42)
+            self.assertEqual(pubsub.events_for("my_chan")[0]["tick"], 42)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_message_coalesced_with_final_subscribe_ack_is_delivered(self):
+        # 回归：review finding [major]——ack 循环的一次 recv(4096) 可能同时读到
+        # 「最终订阅确认 + 首条已发布消息」，但它只解析 ack 就退出（remaining 空）。
+        # 若 _pump 先阻塞 recv 再解析缓冲，这条已入缓冲的消息要等下一次网络流量
+        # 才会被处理；这是唯一一次发布时 wait_event 会一直超时。修复：_pump 先
+        # 消费缓冲帧再收新数据。这里 ack 与消息同一次 sendall，且之后不再有
+        # 任何网络流量——消息必须被泵线程立即解析入队。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            payload = json.dumps({"tick": 99}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(ack + msg)
+            pubsub.subscribe("my_chan")
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 99, timeout=2.0)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_message_published_between_subscribe_acks_is_not_discarded(self):
+        # 回归：review finding [minor]——依次 SUBSCRIBE 多频道时，发布者可在首个
+        # ack 之后、末个 ack 之前发布消息。ack 循环若只认 subscribe 帧、把穿插的
+        # message 帧当噪声丢弃，wait_event 会在这条真实消息上超时。订阅确认与
+        # 穿插消息同批到达，subscribe 返回后消息必须已在事件流中。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack_a = b"*3\r\n$9\r\nsubscribe\r\n$4\r\nch_a\r\n:1\r\n"
+            ack_b = b"*3\r\n$9\r\nsubscribe\r\n$4\r\nch_b\r\n:2\r\n"
+            payload = json.dumps({"tick": 11}).encode()
+            msg_a = b"*3\r\n$7\r\nmessage\r\n$4\r\nch_a\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            # 先 ack ch_a，穿插 ch_a 上的消息，再 ack ch_b——一次 recv 全到。
+            server.sendall(ack_a + msg_a + ack_b)
+            pubsub.subscribe("ch_a", "ch_b")
+            self._wait_for(pubsub, "ch_a", lambda e: e.get("tick") == 11, timeout=2.0)
+            self.assertEqual(len(pubsub.events_for("ch_a")), 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_parse_redis_url_strips_components_and_keeps_credentials(self):
+        # 回归：review finding [2]/[3]——(a) REDIS_URL 带 db 路径/query 时转端口
+        # 会 int('6379/0') ValueError；query-only（无路径）URL 的 '?x=1' 会残留
+        # 在 authority 里同样炸端口解析；fragment 同理。SUBSCRIBE 不需要选库，
+        # 应在 authority 边界（/ ? #）处剥离。(b) userinfo（user:pass@）不再丢弃，
+        # 返回给 RedisPubSub 连接后 AUTH。
+        cases = {
+            "redis://127.0.0.1:6379/0": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1:6379/0?x=1&y=2": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1:6379?x=1": ("127.0.0.1", 6379, None, None),
+            "redis://127.0.0.1:6379#frag": ("127.0.0.1", 6379, None, None),
+            "redis://user:pass@127.0.0.1:6380/3": ("127.0.0.1", 6380, "user", "pass"),
+            "redis://user@127.0.0.1:6380": ("127.0.0.1", 6380, "user", None),
+            "redis://alice:s3cret@127.0.0.1:6379?x=1": (
+                "127.0.0.1",
+                6379,
+                "alice",
+                "s3cret",
+            ),
+            "": ("127.0.0.1", 6379, None, None),
+        }
+        for url, expected in cases.items():
+            self.assertEqual(_redis_helpers._parse_redis_url(url), expected)
+
+    def test_unsupported_redis_scheme_error_redacts_credentials(self):
+        # 回归：review finding [major]——不支持的 scheme 报错若回填完整 URL，
+        # `rediss://alice:s3cret@...` 会把密码打印进 CI/运维日志。修复后只报
+        # scheme，不得泄漏 userinfo（用户名 / 密码）。
+        with self.assertRaises(ValueError) as ctx:
+            _redis_helpers._parse_redis_url("rediss://alice:s3cret@redis.example:6380")
+        message = str(ctx.exception)
+        self.assertIn(
+            "rediss", message,
+            "异常应点明不支持的 scheme，便于运维定位；实际={message!r}",
+        )
+        self.assertNotIn(
+            "s3cret", message,
+            "异常不得包含密码；实际={message!r}",
+        )
+        self.assertNotIn(
+            "alice", message,
+            "异常不得包含用户名；实际={message!r}",
+        )
+        self.assertNotIn(
+            "redis.example", message,
+            "异常不得包含完整 host（无关凭据也一并避免）；实际={message!r}",
+        )
+
+    def test_auth_issued_on_connect_with_credentials(self):
+        # 回归：review finding [3]——带凭据的 REDIS_URL 之前静默丢弃 userinfo，
+        # 连上后直接 SUBSCRIBE，认证服务器回 -NOAUTH 使场景全废；修复后连接即
+        # AUTH（有用户名用 `AUTH <user> <pass>`，Redis 6+ ACL）。+OK 才继续。
+        # 断言对齐 _frame_command 的 RESP2 数组框架（review finding [major]：
+        # 旧 inline 文本 `AUTH alice s3cret` 会被空格拆参/注入，框架已改）。
+        server, client = socket.socketpair()
+        server.sendall(b"+OK\r\n")
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub(
+                "127.0.0.1", 6379, username="alice", password="s3cret"
+            )
+        try:
+            expected = _redis_helpers._frame_command(["AUTH", "alice", "s3cret"])
+            cmd = b""
+            while len(cmd) < len(expected):
+                cmd += server.recv(1024)
+            self.assertEqual(cmd, expected, "连接后应先发 RESP2 数组框架的 AUTH 而非 SUBSCRIBE")
+            # AUTH 确认后仍能正常订阅并收到消息。
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"tick": 9}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 9)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_password_only_uses_default_user(self):
+        # 无用户名时退化为 `AUTH <pass>`（默认用户），同样走 RESP2 数组框架。
+        server, client = socket.socketpair()
+        server.sendall(b"+OK\r\n")
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="hunter2")
+        try:
+            expected = _redis_helpers._frame_command(["AUTH", "hunter2"])
+            cmd = b""
+            while len(cmd) < len(expected):
+                cmd += server.recv(1024)
+            self.assertEqual(cmd, expected)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_failure_raises_on_connect(self):
+        # 回归：review finding [3]——错误凭据必须连接阶段立即暴露（RuntimeError），
+        # 不能让 -NOAUTH/-WRONGPASS 错误帧被静默吞掉后场景跑起来才莫名失败。
+        server, client = socket.socketpair()
+        server.sendall(b"-NOAUTH Authentication required\r\n")
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            with self.assertRaises(RuntimeError):
+                _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="wrong")
+        server.close()
+        client.close()
+
+    def test_events_buffer_is_bounded(self):
+        # 回归：review finding [2]——_events 无上限会随全局频道累积撑爆内存；
+        # max_events 裁剪应丢弃最旧条目。
+        pubsub, server, client = self._pubsub_with_pair(max_events=2)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            for i in range(3):
+                payload = json.dumps({"seq": i}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+            # 等三条全部入队（seq 2 可见即裁剪已发生——裁剪与追加同锁），再断言。
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 2)
+            got = [e["seq"] for e in pubsub.events_for("my_chan")]
+            self.assertEqual(len(got), 2)
+            self.assertNotIn(0, got, "max_events 裁剪应丢弃最旧条目")
+            with self.assertRaises(AssertionError) as ctx:
+                pubsub.window_events("my_chan", after=0)
+            self.assertIn("淘汰", str(ctx.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_events_byte_budget_trims_oldest_by_bytes(self):
+        # 回归：review finding [major]——max_events 只按条数裁剪，单事件可接近
+        # MAX_BULK_LEN（1 MiB），5000 条 × 近 1 MiB = 数 GiB 保留会耗尽 bot
+        # runner 内存。累积字节预算把保留内存压到可控量级；超预算裁剪最旧条目。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("ch")
+            # 手工压低字节预算：3 条各 ~51 字节 wire 的载荷总和超预算即裁剪最旧。
+            pubsub._max_event_bytes = 60
+            for i in range(3):
+                payload = json.dumps({"seq": i, "pad": "x" * 30}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+            self._wait_for(pubsub, "ch", lambda e: e.get("seq") == 2, timeout=2.0)
+            got = [e["seq"] for e in pubsub.events_for("ch")]
+            self.assertNotIn(0, got, "字节预算应裁剪最旧条目")
+            self.assertLessEqual(len(got), 2)
+            self.assertLessEqual(pubsub._event_bytes, 60)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_returns_event_received_during_wait(self):
+        # wait_event 的等待窗口从调用时起算：事件须在窗口内到达才被命中。
+        # 用生产者线程在 wait 开始后再投递，避免“先 send 后 wait”时泵线程抢先
+        # 入队、事件落出窗口（那正是 review finding [2] 要消除的重扫行为）。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def _produce():
+                time.sleep(0.2)
+                payload = json.dumps({"tick": 7}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+
+            producer = threading.Thread(target=_produce)
+            producer.start()
+            evt = pubsub.wait_event(
+                "my_chan", lambda e: e.get("tick") == 7, timeout=5.0
+            )
+            producer.join()
+            self.assertEqual(evt["tick"], 7)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_scans_only_events_since_wait_start(self):
+        # 回归：review finding [2]——wait_event 若重扫全频道历史，等待开始前的
+        # 旧事件也会被谓词命中；应只匹配本次等待期间新增的事件。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"seq": 0}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 0)
+            # 旧事件已入队但不在本次等待窗口内，不应再被命中。
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event("my_chan", lambda e: e.get("seq") == 0, timeout=0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_honors_anchor_taken_before_action(self):
+        # 回归：review finding [1]/[4]——"trigger 先于 wait_event"的调用顺序下，
+        # 服务端响应可能在 wait_event 记录窗口前被泵线程入队，被 seq >= start_seq
+        # 排除而超时。修复后调用方可在发触发 intent **之前** anchor() 取锚点并传
+        # wait_event(after=anchor)：锚点与等待之间入队的事件同样被窗口包含。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            # 1) 发送触发「动作」前先锚定（场景里对应 _switch(intent) 之前）。
+            anchor = pubsub.anchor()
+
+            # 2) 动作触发后，事件在 wait_event 调用**之前**就被泵线程入队——
+            #    正是 review finding [1] 指出的竞态窗口。
+            payload = json.dumps({"tick": 7}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+
+            # 3) 窗口从调用时起算会漏掉它；after=anchor 让窗口从动作前的锚点起算。
+            evt = pubsub.wait_event(
+                "my_chan", lambda e: e.get("tick") == 7, timeout=5.0, after=anchor
+            )
+            self.assertEqual(evt["tick"], 7)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_after_still_excludes_events_before_anchor(self):
+        # after= 语义与默认窗口一致：锚点**之前**入队的事件仍被排除（只是把窗口
+        # 起点从调用时前移到锚定时，不改变"只扫新增"的契约）。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"seq": 0}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 0)
+            # 锚定发生在 seq0 事件入队**之后**：该事件仍在窗口外。
+            anchor = pubsub.anchor()
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event(
+                    "my_chan",
+                    lambda e: e.get("seq") == 0,
+                    timeout=0.5,
+                    after=anchor,
+                )
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_feed_appends_in_place_no_quadratic_rebuild(self):
+        # 回归：review finding [minor]——_buf 若是不可变 bytes，feed 每次 `+=` 都
+        # 复制整段累计缓冲，分片到达时呈二次方拷贝。改为 bytearray 后原地追加。
+        frames = _redis_helpers.RespFrames()
+        buf_ref = frames._buf
+        for _ in range(50):
+            frames.feed(b"x" * 4096)
+        self.assertIs(
+            frames._buf,
+            buf_ref,
+            "feed 必须原地追加，不得重建缓冲对象（bytearray 而非 bytes）",
+        )
+        self.assertEqual(len(frames._buf), 50 * 4096)
+
+    def test_wait_event_excludes_events_enqueued_after_deadline(self):
+        # 回归：review finding [minor]——最终扫描只用 seq 边界，无法区分「截止前
+        # 到达」与「截止后入队」；事件入队时间戳 <= deadline 才被接受。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        # 匹配事件在 deadline（≈now+0.01s）之后才入队：ts 在未来，必须被排除。
+        pubsub._events = [
+            (0, "my_chan", {"ok": True}, time.monotonic() + 1000.0, 4)
+        ]
+        with self.assertRaises(AssertionError):
+            pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=0.01)
+
+    def test_wait_event_accepts_events_within_deadline(self):
+        # 同一 seq 窗口内的匹配事件，入队时刻 <= deadline 时仍应被接受（过滤
+        # 只排除截止后入队，不误伤截止前到达）。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        pubsub._events = [
+            (0, "my_chan", {"ok": True}, time.monotonic() - 1.0, 4)
+        ]
+        evt = pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=5.0)
+        self.assertEqual(evt["ok"], True)
+
+    def test_window_events_bounds_by_anchor_and_enqueue_ts(self):
+        # 负向断言的最终窗口化扫描基础：after 锚点之前的事件与 max_ts 之后入队的
+        # 事件都被排除——最终扫描不得把窗口外事件误判为窗口内（review finding
+        # [major]：最终 despawn 检查缺窗口化扫描）。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 3
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        now = time.monotonic()
+        pubsub._events = [
+            (0, "ch", {"seq": "pre"}, now, 4),
+            (1, "ch", {"seq": "in"}, now, 4),
+            (2, "ch", {"seq": "late"}, now + 1000.0, 4),
+        ]
+        got = [
+            e["seq"]
+            for e in pubsub.window_events("ch", after=1, max_ts=now + 500.0)
+        ]
+        self.assertEqual(got, ["in"])
+
+    def test_settle_drains_buffered_frames_as_delivery_barrier(self):
+        # 回归：review finding [major]——负向断言的最终扫描若缺投递屏障，截止判定
+        # 与 pump 入队之间的帧会被漏掉。settle 现在以 PING/PONG 正同步证明投递
+        # 完成：PING 写入订阅连接后，pump 必须消费到应答 PONG（Redis 按入站命令
+        # 顺序处理，PONG 之前的 message 帧字节必已先于 PONG 到达），屏障返回即
+        # 已缓冲帧全部消费入队。此测试验证完整通路：真实 pump 线程 + 对端回 PONG。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def server_loop():
+                # 对客户端每次读取回一条 PONG（真 redis-server 按入站命令顺序
+                # 应答，这里只模拟"读到命令必有应答"的应答面）。
+                try:
+                    while True:
+                        data = server.recv(4096)
+                        if not data:
+                            return
+                        server.sendall(b"+PONG\r\n")
+                except OSError:
+                    return
+
+            thread = threading.Thread(target=server_loop, daemon=True)
+            thread.start()
+
+            # 模拟"截止前发布、字节已入订阅连接但 pump 尚未消费"的帧：直接推入
+            # _frames（等价于 pump 已 recv 未 drain 的状态），settle 的 PONG 屏障
+            # 返回后必须已被消费入队。
+            frames = _redis_helpers.RespFrames()
+            payload = json.dumps({"owner": "player:x", "tick": 1}).encode()
+            frames.feed(
+                b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                % (len(payload), payload)
+            )
+            with pubsub._frame_lock:
+                pubsub._frames = frames
+
+            pubsub.settle(0.5)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+            self.assertEqual(pubsub.events_for("my_chan")[0]["tick"], 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_settle_fails_closed_when_pong_not_consumed(self):
+        # 回归：review finding [major]——settle 的投递屏障未成立（PONG 未被 pump
+        # 消费）时必须抛错而非静默返回：负向断言不得建立在未证明的投递完成上。
+        # 对端不读不回，PING 的 PONG 应答永不出现，屏障必然超时。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            with self.assertRaises(AssertionError) as cm:
+                pubsub.settle(0.05)
+            self.assertIn("投递屏障未成立", str(cm.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_settle_fails_closed_on_fatal_connection(self):
+        # 回归：review finding [major]——连接已 fatal（泵线程记录协议异常）时
+        # settle 不得静默返回：负向断言不可信，必须抛错。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            pubsub._fatal_error = RuntimeError("protocol exploded")
+            with self.assertRaises(AssertionError) as cm:
+                pubsub.settle(0.05)
+            self.assertIn("protocol exploded", str(cm.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_deep_json_recursion_error_is_fatal(self):
+        # 回归：review finding [major]——json.loads 对超深嵌套列表抛 RecursionError，
+        # 不在 _handle_frame 的 ValueError/TypeError 捕获之列，此前会让泵线程静默
+        # 退出、负向断言在死订阅上照常通过。泵线程兜底失败边界必须把它记为 fatal。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            deep = b"[" * 100000 + b"]" * 100000
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(deep),
+                deep,
+            )
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    # str(RecursionError) 是消息文本而非类型名；RecursionError 不是
+                    # ValueError/TypeError 子类，必须落到泵线程的兜底 except Exception。
+                    self.assertIn("maximum recursion depth", str(exc))
+                    return
+                time.sleep(0.05)
+            self.fail("超深 JSON 载荷未让泵线程把 RecursionError 记为 fatal")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_catch_all_marks_fatal_on_unexpected_frame_exception(self):
+        # 兜底失败边界（review finding [major]）：泵线程捕获不到协议/socket 例外
+        # 以外的任何异常时，必须 _set_fatal 而不是静默退出守护线程。用子类让
+        # _handle_frame 抛非 ValueError/TypeError/OSError 的意外异常验证该边界。
+        class Boom(_redis_helpers.RedisPubSub):
+            def _handle_frame(self, frame):
+                raise RuntimeError("boom")
+
+        server, client = socket.socketpair()
+        with mock.patch(
+            "bot._redis_helpers.socket.create_connection", return_value=client
+        ):
+            pubsub = Boom("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$2\r\n{}\r\n"
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    self.assertIn("boom", str(exc))
+                    return
+                time.sleep(0.05)
+            self.fail("泵线程未把意外帧处理异常记为 fatal")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+
+class ThrowCarrierGuardMarkerTest(unittest.TestCase):
+    """combat_anqi_throw_carrier：消费者 guard 日志按 carrier 线缆 id 归属解析。
+
+    回归 review findings [major]：正向派发证据不得依赖不唯一的 payload 字节数，
+    必须由 throw_carrier_intents 在空手早退处发出的 guard 日志按本 bot 线缆 id
+    归属。此测试钉住解析逻辑（按 carrier 过滤 + reason 提取）。
+    """
+
+    def _scenario_module(self):
+        from bot.scenarios import combat_anqi_throw_carrier as mod
+
+        return mod
+
+    def _write_log(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def _scan(self, path: str, mod) -> "_server_log.ServerLogScanner":
+        scanner = _server_log.ServerLogScanner(path, mod._GUARD_RE)
+        scanner.scan()
+        return scanner
+
+    def test_guard_markers_filtered_to_own_carrier(self):
+        mod = self._scenario_module()
+        own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
+        other = "player:11111111-2222-3333-4444-555555555555"
+        path = self._write_log(
+            [
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
+                f"[bong][combat] throw_carrier guard carrier={other} slot=MainHand reason=no_carrier_item",
+                "[bong][network] client_request received entity=5v1 payload_bytes=77",
+            ]
+        )
+        scanner = self._scan(path, mod)
+        self.assertEqual(
+            scanner.guard_markers(own),
+            ["no_anqi_imprint"],
+            "只应解析出归属本 bot 的 guard 标记",
+        )
+        self.assertEqual(
+            scanner.guard_markers(other),
+            ["no_carrier_item"],
+        )
+        self.assertEqual(scanner.guard_markers("player:missing"), [])
+
+    def test_guard_reasons_whitelist_accepts_both_guards(self):
+        mod = self._scenario_module()
+        own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
+        path = self._write_log(
+            [
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_carrier_item",
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
+            ]
+        )
+        reasons = self._scan(path, mod).guard_markers(own)
+        for reason in reasons:
+            self.assertIn(
+                reason,
+                mod._GUARD_REASONS,
+                f"reason {reason!r} 不在空手护栏白名单 {mod._GUARD_REASONS!r} 内",
+            )
+
+
+class ServerLogScannerTest(unittest.TestCase):
+    """_server_log.ServerLogScanner：增量扫描 + user= 精确归属。"""
+
+    def _write_log(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_incremental_scan_does_not_reprocess_old_lines(self):
+        # 回归：review finding [minor]——guard 轮询若每次从头全扫整个无界 server
+        # 日志，窗口内几十次全量读产生几十 GB I/O。按偏移增量扫描不得重复解析
+        # 旧行，且追加段须在下一次 scan() 里被读到。
+        path = self._write_log(
+            [
+                "[bong][combat] throw_carrier guard carrier=player:aaa "
+                "slot=MainHand reason=no_carrier_item",
+            ]
+        )
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        self.assertEqual(scanner.guard_markers("player:aaa"), ["no_carrier_item"])
+        scanner.scan()  # 无新增：不得重复累计旧行
+        self.assertEqual(
+            scanner.guard_markers("player:aaa"),
+            ["no_carrier_item"],
+            "重复 scan 不得重新解析旧行",
+        )
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(
+                "[bong][combat] throw_carrier guard carrier=player:bbb "
+                "slot=MainHand reason=no_anqi_imprint\n"
+            )
+        scanner.scan()
+        self.assertEqual(scanner.guard_markers("player:aaa"), ["no_carrier_item"])
+        self.assertEqual(scanner.guard_markers("player:bbb"), ["no_anqi_imprint"])
+
+    def test_deserialize_failed_attribution_is_exact_not_substring(self):
+        # 回归：review finding [minor]——`username in line` 子串匹配会让 Throw
+        # 被 Throw2 的失败误归因。按结构化 user=<name> 字段精确匹配。
+        path = self._write_log(
+            [
+                "[bong][network] client_request deserialize failed from 2v1 "
+                "(user=Throw2): bad; payload_bytes=10",
+            ]
+        )
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(r"throw_carrier guard carrier=(\S+)"),
+        )
+        scanner.scan()
+        self.assertEqual(
+            scanner.deserialize_failed("Throw"),
+            0,
+            "Throw 不得被 Throw2 的 user= 字段子串命中",
+        )
+        self.assertEqual(scanner.deserialize_failed("Throw2"), 1)
+
+    def test_same_inode_equal_or_larger_rewrite_resets_to_new_head(self):
+        path = self._write_log(["old line A", "old line B"])
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        with open(path, "r+b") as fh:
+            fh.seek(0)
+            replacement = (
+                "throw_carrier guard carrier=player:same slot=MainHand "
+                "reason=no_carrier_item\n" + "x" * 80 + "\n"
+            ).encode()
+            fh.write(replacement)
+            fh.truncate()
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("player:same"),
+            ["no_carrier_item"],
+            "同 inode 且新内容不短于旧偏移时也必须识别 copytruncate/rewrite 并从头扫描",
+        )
+
+    def test_rotation_to_larger_replacement_resets_to_new_head(self):
+        # 回归：review finding [minor]——日志被替换成更大的新文件（轮转）时，旧
+        # 实现只按 offset <= size 判定文件身份，会 seek 到旧偏移 N 并跳过新文件
+        # N 之前的全部行。把 guard 关键字横跨旧偏移 N 摆放：seek(N) 后 re.search
+        # 只看到被截断的后缀，guard 证据永久丢失。修复后按 dev/inode 判定文件
+        # 身份，替换后从头重读。
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("old line A\nold line B\n")  # 22 字节 → 旧偏移 N=22
+        self.addCleanup(os.remove, path)
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        # 轮转：旧文件改名移走，同路径新建（新 inode）。新文件更大，guard 关键字
+        # 横跨字节 22（"HEADERZZZZ\n" 占 11 字节，throw_carrier 起于 11）——
+        # seek(22) 只能读到 "er guard carrier=..." 后缀，re.search 找不到完整关键字。
+        os.rename(path, path + ".rotated")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "HEADERZZZZ\n"
+                "throw_carrier guard carrier=player:new slot=MainHand "
+                "reason=no_carrier_item\n"
+                "line C\nline D\nline E\n"
+            )
+        self.addCleanup(os.remove, path + ".rotated")
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("player:new"),
+            ["no_carrier_item"],
+            "轮转成更大的替换文件后必须从头重读，guard 不得被旧偏移跳过",
+        )
+
+    def test_partial_multibyte_line_rewinds_to_line_start(self):
+        # 回归：review finding [minor]——文本模式的 fh.tell() 记录字节流 cookie，
+        # 而旧 rewind 按 len(data)（字符数）回退：未写完的多字节 UTF-8 行会把偏移
+        # 算到行中间，续写后 seek 从半行开始，guard 标记被跳过或只解出后缀。修复
+        # 后按字节扫描，未完成行回退到字节级行起点（最后一个 \n 之后）。
+        fd, path = tempfile.mkstemp(suffix=".log")
+        self.addCleanup(os.remove, path)
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        head = "line one\n"
+        # 未完成行：2 个多字节字符（玩家 = 6 字节）且无结尾换行。
+        partial = "throw_carrier guard carrier=玩家"
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(head + partial)
+        scanner.scan()
+        # 行起点 = head 的字节长（9）；修复后 _offset 必须精确落在行起点。
+        self.assertEqual(
+            scanner._offset,
+            len(head.encode("utf-8")),
+            "未完成多字节行回退后偏移必须落在字节级行起点",
+        )
+        self.assertEqual(scanner.guard_markers("玩家"), [])
+        # 续写完整行 + 换行：从行起点重读，guard 完整解析。
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(" reason=no_carrier_item\n")
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("玩家"),
+            ["no_carrier_item"],
+            "未完成多字节行续写后必须从行起点重读，guard 不得被跳过",
+        )
+
 class NewServerDataDecoderContractTest(unittest.TestCase):
     """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
 
@@ -9016,6 +11597,14 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
             _pb_message(30, _pb_varint(5, 7))
         )
         self.assertEqual(gathering["target_type"], "unknown_7")
+        xp_gain = proto_min.decode_server_data_envelope(
+            _pb_message(7, _pb_varint(2, 99))
+        )
+        self.assertEqual(xp_gain["skill"], "unknown_99")
+        scroll_used = proto_min.decode_server_data_envelope(
+            _pb_message(97, _pb_varint(3, 99))
+        )
+        self.assertEqual(scroll_used["skill"], "unknown_99")
 
     def test_new_registry_tags_dispatch_to_named_decoders(self):
         for field, expected_type in (
@@ -9234,6 +11823,38 @@ class PlayerPacketContractTest(unittest.TestCase):
         self.assertEqual(event.data["yaw"], 0)
         self.assertEqual(event.data["pitch"], 0)
 
+    def test_player_spawn_exact_event_and_entities(self):
+        # central-review 2029 #1：packet 级 pin 完整解码契约——已知 uuid + 正负坐标，
+        # 逐字段精确还原 emitted event 与 self.entities 位置登记；坐标读取提前跳
+        # 15/17 字节等错误布局会在此撞红（不只是 entity_id 为正）。
+        bot = _bare_bot()
+        alice = uuid.UUID(int=424242)
+        spawn = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(900)
+            + alice.bytes
+            + struct.pack(">ddd", 12.5, 64.0, -33.25)
+            + b"\x2a\x4b"  # yaw=42, pitch=75
+        )
+        bot._dispatch(spawn)
+        self.assertEqual(bot.entity_pos(900), (12.5, 64.0, -33.25))
+        self.assertEqual(bot.player_entity_uuids[900], str(alice))
+        event = bot.events_of("player_spawn")[-1]
+        self.assertEqual(
+            event.data,
+            {
+                "entity_id": 900,
+                "uuid": str(alice),
+                "username": None,
+                "x": 12.5,
+                "y": 64.0,
+                "z": -33.25,
+                "yaw": 42,
+                "pitch": 75,
+            },
+            "player_spawn 必须逐字段精确还原（含正负坐标、UUID 与实体位置登记）",
+        )
+
     def test_destroy_removes_entity_to_player_mapping(self):
         bot = _bare_bot()
         alice = uuid.UUID(int=1)
@@ -9312,7 +11933,1457 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
+class NpcDialogueHelperContractTest(unittest.TestCase):
+    def test_scenario_spawn_requires_fixed_chase_geometry(self):
+        origin = (10.0, 64.0, -3.0)
+        valid = _FakeEvent(
+            2.0,
+            "entity_spawn",
+            {"type": 118, "entity_id": 7, "x": 22.0, "y": 64.0, "z": -3.0},
+        )
+        ambient = _FakeEvent(
+            2.1,
+            "entity_spawn",
+            {"type": 118, "entity_id": 8, "x": 18.0, "y": 64.0, "z": -3.0},
+        )
+        self.assertTrue(
+            _scenario_spawn_matches(valid, origin),
+            "chase 单体应只接受 origin +X 12 格的 type=118 出生点",
+        )
+        self.assertFalse(
+            _scenario_spawn_matches(ambient, origin),
+            "远处环境僵尸不得冒充 /npc_scenario chase 的返回实体",
+        )
+
+    def test_trade_metadata_requires_rogue_and_preserves_all_observed_offers(self):
+        payload = {
+            "type": "npc_metadata",
+            "entity_id": 42,
+            "archetype": "rogue",
+            "trade_offers": [
+                {"template_id": "skill_scroll_herbalism_baicao_can", "price_bone_coins": 30},
+                {"template_id": "broken_artifact_scroll", "price_bone_coins": 40},
+            ],
+        }
+        event = _FakeEvent(
+            3.0,
+            "payload",
+            {"channel": "bong:npc_metadata", "data": json.dumps(payload).encode()},
+        )
+        self.assertEqual(
+            _trade_metadata(event),
+            (
+                42,
+                [
+                    ("skill_scroll_herbalism_baicao_can", 30),
+                    ("broken_artifact_scroll", 40),
+                ],
+            ),
+            "场景必须按服务端 metadata 的实际库存覆盖高境界商品，而不是硬编码三件醒灵商品",
+        )
+        payload["archetype"] = "commoner"
+        self.assertIsNone(
+            _trade_metadata(
+                _FakeEvent(
+                    3.1,
+                    "payload",
+                    {"channel": "bong:npc_metadata", "data": json.dumps(payload).encode()},
+                )
+            ),
+            "非 Rogue 的 metadata 不得被选为散修商贩",
+        )
+
+    def test_trade_range_recovery_resends_the_same_observed_offer(self):
+        class TradeBot:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.events: list[_FakeEvent] = []
+                self.requests: list[dict] = []
+
+            def intent(self, request):
+                self.requests.append(request)
+
+            def wait_for(self, predicate, timeout, description):
+                text = (
+                    npc_dialogue_trade.OUT_OF_RANGE_TRADE
+                    if len(self.requests) == 1
+                    else "§c[NPC] 骨币不足，需要 30 枚。"
+                )
+                event = _FakeEvent(float(len(self.requests)), "chat", {"text": text})
+                self.events.append(event)
+                if predicate(event):
+                    return event
+                raise AssertionError(f"未匹配 {description}: {event!r}")
+
+        bot = TradeBot()
+        with (
+            mock.patch.object(npc_dialogue_trade, "request_and_assert_rogue"),
+            mock.patch.object(npc_dialogue_trade, "approach_entity", return_value=True),
+        ):
+            npc_dialogue_trade._run_rogue_chain(
+                bot, 77, [("skill_scroll_herbalism_baicao_can", 30)]
+            )
+        self.assertEqual(
+            [request["requested_item_id"] for request in bot.requests],
+            ["skill_scroll_herbalism_baicao_can", "skill_scroll_herbalism_baicao_can"],
+            "越界恢复必须重发当前 metadata offer，不得 advance/结束该商品",
+        )
+
+# ── agent_ui 场景底座（_redis_client_helpers / _agent_ui_helpers）单测 ──────────────
 
 
+class RespFramesTest(unittest.TestCase):
+    """RESP2 编解码器：feed 字节流 → 按帧取回值（纯 stdlib，无需 redis）。"""
+
+    def test_integer_reply(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "帧取完后应返回 _INCOMPLETE_FRAME",
+        )
+
+    def test_simple_string(self):
+        parser = RespFrames()
+        parser.feed(b"+OK\r\n")
+        self.assertEqual(parser.next_frame(), "OK")
+
+    def test_error_string(self):
+        parser = RespFrames()
+        parser.feed(b"-ERR bad\r\n")
+        self.assertEqual(parser.next_frame(), "ERR bad")
+
+    def test_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), b"hello")
+
+    def test_empty_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), b"")
+
+    def test_nil_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$-1\r\n:42\r\n")
+        frame = parser.next_frame()
+        self.assertIsNone(frame, "nil bulk 应解析为 None")
+        self.assertIsNot(
+            frame,
+            _INCOMPLETE_FRAME,
+            "完整 nil 帧是已解析的值，不是数据不足哨兵",
+        )
+        self.assertEqual(
+            parser.next_frame(),
+            42,
+            "nil bulk 帧必须被消费，后续帧才能继续解析",
+        )
+
+    def test_nil_bulk_distinct_from_incomplete(self):
+        # finding：完整 nil 帧（$-1）返回 None 但已消费，与「还需更多字节」
+        # 必须可区分。旧实现两者都返回 None，调用方无法判断收全了一条 nil。
+        parser = RespFrames()
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "空缓冲 = 数据不足，不应出帧",
+        )
+        parser.feed(b"$-1\r\n")
+        self.assertIsNone(parser.next_frame(), "完整 nil 帧应解析为 None")
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "nil 帧消费后回到数据不足",
+        )
+
+    def test_malformed_bulk_terminator_rejected(self):
+        # finding：$3\r\nabcXX 的 body 后两字节不是 \r\n，是协议违例，必须拒绝；
+        # 旧实现只确认有 2 字节就消费，把 b"abc" 当合法帧返回。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_malformed_bulk_terminator_desync_rejected(self):
+        # finding：body 后两字节非 \r\n 会让帧边界错位；拼接输入也必须整体拒绝，
+        # 不得把后面的 :1 当作独立整数帧吞掉。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX:1\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$9\r\nsubscribe\r\n$6\r\nbong:x\r\n:1\r\n")
+        self.assertEqual(parser.next_frame(), [b"subscribe", b"bong:x", 1])
+
+    def test_bulk_negative_length_below_nil_rejected(self):
+        # finding：RESP2 长度只允许 -1（nil）或非负。$-2 会被误当成 body 长度 0
+        # 把头部 CRLF 认作终止符返回 b''；必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"$-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_negative_count_below_nil_rejected(self):
+        # finding：*-2 的 range(-2) 不迭代，被误解析为空数组 []；RESP2 不允许，
+        # 必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"*-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_message_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_partial_feeds(self):
+        parser = RespFrames()
+        raw = b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n"
+        for i in range(0, len(raw), 3):
+            self.assertIs(
+                parser.next_frame(),
+                _INCOMPLETE_FRAME,
+                "字节未喂全时不应出帧",
+            )
+            parser.feed(raw[i : i + 3])
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_concatenated_frames(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b""])
+
+    def test_unknown_marker_rejected(self):
+        parser = RespFrames()
+        parser.feed(b"?nonsense\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_json_payload_in_message_frame(self):
+        payload = b'{"request_id":"req_1","action":"button_click","params":{}}'
+        raw = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(payload)).encode("ascii")
+            + b"\r\n"
+            + payload
+            + b"\r\n"
+        )
+        parser = RespFrames()
+        parser.feed(raw)
+        frame = parser.next_frame()
+        self.assertEqual(frame[0], b"message")
+        self.assertEqual(json.loads(frame[2].decode("utf-8"))["request_id"], "req_1")
+
+    def test_fragmented_large_bulk(self):
+        # 大 bulk 分 4096 块喂入：多次 partial feed 后仍须正确拼回。feed 走
+        # bytearray.extend（摊还线性）；若退回 ``bytes += `` 就会逐块整拷积压缓冲，
+        # 大消息退化为二次拷贝。
+        payload = b"x" * (64 * 1024)
+        raw = b"$" + str(len(payload)).encode("ascii") + b"\r\n" + payload + b"\r\n"
+        parser = RespFrames()
+        for i in range(0, len(raw), 4096):
+            parser.feed(raw[i : i + 4096])
+        self.assertEqual(parser.next_frame(), payload)
+
+    def test_bulk_declared_oversize_rejected(self):
+        # 单条 bulk 声明长度超上限：帧未收全也必须立刻拒绝（防超限帧占用合法化）。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$9\r\n123456789\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_bulk_declared_at_max_accepted(self):
+        # 上界合法等值边界：声明长度恰好 == max_bulk_size 必须完整接受（> 上限才拒绝）。
+        # 缺此断言时，把 >= 当 > 的 off-by-one 实现能通过全套却拒绝恰好到顶的合法载荷。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$8\r\n12345678\r\n")
+        self.assertEqual(parser.next_frame(), b"12345678")
+
+    def test_buffer_oversize_rejected(self):
+        # 永不收尾的帧反复 feed，积压缓冲越过上限必须抛错（防外部消息撑爆进程内存）。
+        parser = RespFrames(max_buffer_size=16)
+        parser.feed(b"$100\r\n0123456789")  # 15 bytes，帧未完整
+        with self.assertRaises(ValueError):
+            parser.feed(b"0123456789")  # 累计 25 > 16
+
+
+class RedisCommandEncodeTest(unittest.TestCase):
+    """PUBLISH / SUBSCRIBE 命令编码（与 RESP2 协议字节精确对拍）。"""
+
+    def test_publish_encoding(self):
+        self.assertEqual(
+            _encode_command("PUBLISH", "bong:agent_ui_cmd", '{"a":1}'),
+            b'*3\r\n$7\r\nPUBLISH\r\n$17\r\nbong:agent_ui_cmd\r\n$7\r\n{"a":1}\r\n',
+        )
+
+    def test_subscribe_encoding(self):
+        self.assertEqual(
+            _encode_command("SUBSCRIBE", "bong:agent_ui_response"),
+            b"*2\r\n$9\r\nSUBSCRIBE\r\n$22\r\nbong:agent_ui_response\r\n",
+        )
+
+
+class _FakeTimeoutSocket:
+    """recv 先按 settimeout 配置真实阻塞再抛 TimeoutError 的假 socket。
+
+    若 recv 恒立即抛错，wait_message 把 socket 超时设成整个 io_timeout（或漏调
+    settimeout）也无法被测出——墙钟只由循环里的 deadline 检查决定。这里 recv
+    实际睡 self.timeout 秒再抛，超时值超界会把等待拉长到可断言；同时记录每次
+    settimeout 值，供测试校验其受剩余 deadline 约束。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError(
+                "recv 被调用但未先 settimeout（wait_message 漏设 socket 超时）"
+            )
+        time.sleep(self.timeout)
+        raise TimeoutError("timed out")
+
+
+class _FakeDripPartialSocket:
+    """recv 每次成功返回一小块「永不收尾」的部分 RESP 帧字节的假 socket。
+
+    帧重组路径：分片持续到达（每次 recv 都有数据、从不抛 TimeoutError），socket
+    超时永远触发不了，只有 ``_next_frame`` 内部逐次核对绝对 deadline 才能让
+    ``wait_message`` 按时返回——靠外层循环 deadline 检查兜底的实现会无限 recv 下去。
+    首块喂声明 2MB bulk 的长度头，之后每块只给 512B body，单帧永远重组不完。
+    记录每次 settimeout 值供测试校验其受剩余 deadline 约束；recv 设上限兜底，防
+    回归实现让测试无限挂起。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+        self._recvs = 0
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError("recv 被调用但未先 settimeout")
+        self._recvs += 1
+        if self._recvs > 2000:
+            raise AssertionError(
+                "部分帧被持续喂入但绝对 deadline 未被强制：wait_message 应按时返回"
+            )
+        # 每块在 socket 超时内到达（睡极短时间），触发不了 socket 级 TimeoutError。
+        time.sleep(min(self.timeout, 0.001))
+        if self._recvs == 1:
+            return b"$2000000\r\n"
+        return b"z" * 512
+
+
+class RedisClientWaitDeadlineTest(unittest.TestCase):
+    """wait_message 的 recv 窗口必须受调用方 deadline 约束。
+
+    回归：io_timeout(10s) 大于负向断言窗口(2s)时，固定 10s 阻塞 recv 会直接抛
+    TimeoutError 崩掉场景，而不是按 deadline 返回 None / 抛 AssertionError。
+    """
+
+    def _redis_with_timeout_socket(self, timeout: float = 2.0) -> RedisClient:
+        redis = RedisClient(io_timeout=timeout)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        return redis
+
+    def _assert_timeouts_bounded(self, sock: _FakeTimeoutSocket, window: float) -> None:
+        """socket 超时值必须受调用方 deadline（window）约束，不能退化成 io_timeout。"""
+        self.assertTrue(
+            sock._settimeouts,
+            "wait_message 必须按剩余 deadline 调用 settimeout，不能漏设",
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            window + 0.05,
+            "socket 超时绝不能超过调用方 deadline，不能设成整个 io_timeout",
+        )
+
+    def test_negative_window_returns_none_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "负向窗口超时应返回 None，而不是抛 TimeoutError")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 1.5, "负向窗口应约在 deadline 处返回，不拖满 io_timeout"
+        )
+        self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_positive_window_raises_assertion_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(
+            elapsed, 0.2, "正窗口断言必须等满 deadline 才抛，不能提前抛"
+        )
+        self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_non_dict_json_payload_skipped_not_crashed(self):
+        # finding：bong:agent_ui_response 上合法的非对象 JSON（null/数组/字符串/数字）
+        # 会让 expect_redis_response.matches 对 payload 调 .get() 抛 AttributeError
+        # 崩掉整个场景。必须当作无关发布者消息跳过（与频道不符/无效 JSON 同款），
+        # 而不是传给 predicate。喂一帧 payload 为 JSON 数组的 message 帧，随后窗口
+        # 走满：无崩溃 + 负向返回 None，即证明非 dict 被跳过。
+        redis = RedisClient(io_timeout=2.0)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        json_bytes = b'["not","a","dict"]'
+        frame = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(json_bytes)).encode("ascii")
+            + b"\r\n"
+            + json_bytes
+            + b"\r\n"
+        )
+        redis._frames.feed(frame)
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response",
+            lambda payload: True,
+            timeout=0.2,
+            expect=False,
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(
+            got, "非 dict JSON 消息应被跳过（继续等满窗口），而不是抛 AttributeError"
+        )
+        self.assertGreaterEqual(elapsed, 0.2, "跳过非 dict 后仍须等满负向窗口")
+
+    def test_partial_frame_respects_absolute_deadline_negative(self):
+        # finding：deadline 测试只覆盖完全空闲的 socket（recv 即抛 TimeoutError），
+        # 帧重组路径（一次 _next_frame 内多次成功 recv）没测到——分片持续喂入、
+        # socket 超时永不触发，只有绝对 deadline 被强制才按 0.2s 返回 None；
+        # io_timeout=10s 明显大于窗口，若按 io_timeout 兜底会拖满 10s。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "部分帧持续喂入时负向窗口仍须按时返回 None")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 3.0, "部分帧不得拖过调用方 deadline（io_timeout=10s 更大）"
+        )
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            0.2 + 0.05,
+            "帧重组期间的每次 socket 超时都必须受剩余 deadline 约束",
+        )
+
+    def test_partial_frame_respects_absolute_deadline_positive(self):
+        # 正向路径同款：部分帧持续喂入时，断言必须在 deadline 处抛 AssertionError，
+        # 而不是被无限重组拖住。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.2, "正窗口断言必须等满 deadline 才抛")
+        self.assertLess(elapsed, 3.0, "部分帧不得拖过调用方 deadline（正向断言）")
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+
+
+class _AgentUiFakeBot(_FakeBot):
+    """wait_for 模拟真实 Bot 的 temporal wait 契约，供负向/时序断言测。
+
+    真实 ``Bot.wait_for``（bot.py:389）以调用时刻为起点等到 deadline，窗口内
+    到达即命中、窗口关闭后才到达不得命中。本 fake 用事件时间戳 ``t`` 建模同一条：
+    ``t <= start`` 的事件视为观测前已送达（顺序消费，不得二次命中），``t > deadline``
+    的事件视为窗口关闭后才到。这样负向断言能区分「窗口内迟到事件」（必须失败）
+    与「窗口外事件」（返回 None），而不是对固定事件列表做一次扫描——后者会让
+    「helper 立即返回 / 零超时 / 只快照当前事件」的错实现照样绿。
+    """
+
+    def __init__(self, events: list[_FakeEvent]) -> None:
+        super().__init__(events)
+        self._now = 0.0
+
+    def wait_for(self, predicate, timeout: float, description: str):
+        start = self._now
+        deadline = start + timeout
+        for event in self.events:
+            if start < event.t <= deadline and predicate(event):
+                self._now = event.t
+                return event
+        self._now = deadline
+        raise BotAssertionError(f"未找到 {description}; events={self.events}")
+
+
+def _req_event(t: float, request_id: str, **payload_overrides) -> _FakeEvent:
+    payload = json.dumps(
+        {
+            "request_id": request_id,
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+            **payload_overrides,
+        }
+    ).encode("utf-8")
+    return _FakeEvent(
+        t, "payload", {"channel": "bong:agent_ui_request", "data": payload}
+    )
+
+
+class AgentUiHelperTest(unittest.TestCase):
+    """_agent_ui_helpers 纯逻辑：cmd 构造 / S2C 形状断言 / 回执匹配 / 负向等待。"""
+
+    def test_build_cmd_exact_six_fields(self):
+        cmd = build_cmd("req_1", "offline:Fake")
+        self.assertEqual(
+            set(cmd),
+            {
+                "request_id",
+                "target_player",
+                "xml",
+                "timeout_ticks",
+                "realm_gate",
+                "allowed_button_ids",
+            },
+            "AgentUiRequestCommandV1 六个字段全必填（server serde deny_unknown_fields）",
+        )
+        self.assertEqual(cmd["request_id"], "req_1")
+        self.assertEqual(cmd["allowed_button_ids"], ["enter_realm", "cancel"])
+        self.assertEqual(cmd["realm_gate"], 0)
+        self.assertEqual(cmd["timeout_ticks"], 600, "默认 timeout_ticks 钉死 600")
+        self.assertEqual(cmd["xml"], DEFAULT_UI_XML, "默认 xml 钉死 DEFAULT_UI_XML")
+
+    def test_build_cmd_overrides(self):
+        cmd = build_cmd(
+            "req_2",
+            "offline:Fake",
+            timeout_ticks=20,
+            realm_gate=6,
+            allowed_button_ids=("ok",),
+            xml="<x/>",
+        )
+        self.assertEqual(cmd["timeout_ticks"], 20)
+        self.assertEqual(cmd["realm_gate"], 6)
+        self.assertEqual(cmd["allowed_button_ids"], ["ok"])
+        self.assertEqual(cmd["xml"], "<x/>")
+
+    def test_build_cmd_json_roundtrip(self):
+        cmd = build_cmd("req_3", "offline:Fake")
+        self.assertEqual(json.loads(json.dumps(cmd)), cmd)
+
+    def test_assert_request_shape_accepts_valid_payload(self):
+        payload = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_security_field_leak(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "realm_gate": 3}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(
+                {**base, "allowed_button_ids": ["enter_realm"]}, "req_1"
+            )
+
+    def test_assert_request_shape_rejects_wrong_request_id(self):
+        payload = {
+            "request_id": "other",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_target_player(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_xml(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_non_int_timeout_ticks(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": "600"}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": True}, "req_1")
+
+    def test_assert_request_shape_pins_closed_fields_and_boundaries(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": REQUEST_TIMEOUT_MIN,
+        }
+        assert_request_shape(base, "req_1")
+        assert_request_shape(
+            {**base, "timeout_ticks": REQUEST_TIMEOUT_MAX}, "req_1"
+        )
+        for bad_ticks in (REQUEST_TIMEOUT_MIN - 1, REQUEST_TIMEOUT_MAX + 1):
+            with self.subTest(timeout_ticks=bad_ticks), self.assertRaisesRegex(
+                BotAssertionError, "timeout_ticks"
+            ):
+                assert_request_shape({**base, "timeout_ticks": bad_ticks}, "req_1")
+
+        assert_request_shape(
+            {**base, "xml": "x" * REQUEST_XML_MAX_BYTES}, "req_1"
+        )
+        with self.assertRaisesRegex(BotAssertionError, "UTF-8 字节数"):
+            assert_request_shape(
+                {**base, "xml": "x" * (REQUEST_XML_MAX_BYTES + 1)}, "req_1"
+            )
+        with self.assertRaisesRegex(BotAssertionError, "额外"):
+            assert_request_shape({**base, "unexpected": True}, "req_1")
+
+    def test_assert_request_shape_compares_published_command_values(self):
+        cmd = build_cmd(
+            "req_cmd",
+            "offline:Expected",
+            timeout_ticks=2400,
+            xml="<owo-ui><label>expected</label></owo-ui>",
+        )
+        payload = {field: cmd[field] for field in (
+            "request_id",
+            "target_player",
+            "xml",
+            "timeout_ticks",
+        )}
+        assert_request_shape(payload, "req_cmd", expected_cmd=cmd)
+        for field, wrong in (
+            ("target_player", "offline:Other"),
+            ("xml", "<owo-ui><label>wrong</label></owo-ui>"),
+            ("timeout_ticks", 20),
+        ):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                BotAssertionError, field
+            ):
+                assert_request_shape(
+                    {**payload, field: wrong}, "req_cmd", expected_cmd=cmd
+                )
+
+    def test_expect_redis_response_rejects_wrong_same_request_before_expected(self):
+        class FakeRedis:
+            def wait_message(self, _channel, predicate, **_kwargs):
+                for payload in (
+                    {
+                        "request_id": "req_same",
+                        "action": "dismissed",
+                        "params": {},
+                    },
+                    {
+                        "request_id": "req_same",
+                        "action": "timeout",
+                        "params": {},
+                    },
+                ):
+                    if predicate(payload):
+                        return payload
+                return None
+
+        with self.assertRaisesRegex(BotAssertionError, "不匹配的同请求回执"):
+            expect_redis_response(FakeRedis(), "req_same", action="timeout")
+
+    def test_response_matches_action_and_params(self):
+        self.assertTrue(
+            response_matches(
+                {
+                    "request_id": "r",
+                    "action": "button_click",
+                    "params": {"button_id": "ok"},
+                },
+                action="button_click",
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x", "extra": "y"}},
+                params_subset={"reason": "x"},
+            ),
+            "params 子集匹配",
+        )
+        self.assertFalse(
+            response_matches({"action": "dismissed"}, action="button_click")
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "y"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": "not-a-dict"},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches({"action": "timeout", "params": {}}, params_subset={}),
+            "空子集要求 params 恰好为空",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "timeout", "params": {"unexpected": "value"}},
+                params_subset={},
+            ),
+            "声明空 params 时，额外参数必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "timeout"}, params_subset={}),
+            "声明空 params 时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "error"}, params_subset={"reason": "x"}),
+            "声明 params 子集时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {}},
+                params_subset={"reason": None},
+            ),
+            "子集匹配要求 key 存在：缺 reason 不能把缺失当显式 null 放行",
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": None}},
+                params_subset={"reason": None},
+            ),
+            "显式 null 的 reason 应匹配（key 存在且值为 None）",
+        )
+
+    def test_response_matches_params_exact(self):
+        # 原样转发契约：params 必须逐键精确相等，额外字段即违约（subset 会放行）。
+        self.assertTrue(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "owo_parse_failed"}},
+                action="parse_error",
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {
+                    "action": "parse_error",
+                    "params": {"reason": "owo_parse_failed", "button_id": "injected"},
+                },
+                params_exact={"reason": "owo_parse_failed"},
+            ),
+            "精确匹配拒绝额外字段：注入 button_id 不得满足原样转发契约",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "other"}},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error"}, params_exact={"reason": "owo_parse_failed"}
+            ),
+            "精确匹配要求 params 字段存在",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": "not-a-dict"},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        with self.assertRaises(ValueError):
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+                params_exact={"reason": "x"},
+            )
+
+    def test_expect_agent_ui_request_positive(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        payload = expect_agent_ui_request(bot, "req_1", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_1")
+        self.assertEqual(payload["target_player"], "offline:Fake")
+
+    def test_expect_agent_ui_request_negative_when_truly_absent(self):
+        # 窗口内完全没有 payload 事件：负向断言超时返回 None（干净）。
+        bot = _AgentUiFakeBot([])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False),
+            "窗口内无任何 payload 时负向断言应返回 None",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_when_present(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_1", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_other_request_id(self):
+        # finding：拒绝路径契约是「面板不下发」，不是「不下发指定 request_id 的面板」。
+        # request_id 与期望不符的 payload 在窗口内到达仍是错误下发，负向断言必须失败
+        # —— 不能靠 request_id 过滤把它当干净拒绝（唯一 request_id 防跨 run 碰撞，
+        # 但不能豁免同 bot 收到的其它下发）。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_other")])
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_missing_request_id(self):
+        # 漏掉 request_id 字段的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"target_player":"offline:Fake","xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_corrupted_request_id(self):
+        # request_id 被损坏（非字符串）的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"request_id":42,"target_player":"offline:Fake",'
+            b'"xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_non_object_json(self):
+        # 合法非对象 JSON（数组）到达：既不能崩（对非 dict 调 .get 抛 AttributeError），
+        # 也不能被 request_id 过滤当干净——它是错误下发的 payload，必须失败并报告形状。
+        raw = b'["not","a","dict"]'
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "而非 JSON 对象"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_invalid_json(self):
+        raw = b"not json at all"
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不是合法 JSON"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_positive_skips_non_dict_payloads(self):
+        # 正向匹配器对非对象 JSON 不得崩（.get 抛 AttributeError）：跳过噪音，
+        # 继续等真正匹配的 payload。
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": b'["noise"]'},
+                ),
+                _req_event(2.0, "req_real"),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_real", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_real")
+        self.assertEqual(bot._now, 2.0, "正向匹配必须消费到真正的匹配事件")
+
+    def test_expect_agent_ui_request_after_mark(self):
+        # 同一 request_id 在 marker 前后各一：request-id 过滤无法区分二者，
+        # 只有 after 语义能选中 marker 之后那条——忽略 after 的实现会错拿 marker 前的事件。
+        bot = _AgentUiFakeBot(
+            [
+                _req_event(1.0, "req_same", timeout_ticks=100),
+                _req_event(5.0, "req_same", timeout_ticks=900),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_same", after=2.0, timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_same")
+        self.assertEqual(payload["timeout_ticks"], 900, "必须取 marker 之后的同 request_id 事件")
+
+    def test_expect_agent_ui_request_after_mark_ignores_predating_only_match(self):
+        # 唯一匹配发生在 marker 之前：after 语义应拒绝它，返回 None。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_predates")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_predates", after=2.0, timeout=5.0, expect=False),
+            "marker 之前唯一匹配应被 after 拒绝",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_for_late_match_in_window(self):
+        # 匹配事件在观测窗口内（t=3.0 ∈ (0, 5.0]）才送达：负向断言必须失败。
+        # 若 fake 只做一次扫描、或 helper 立即返回 None / 零超时，这条会漏过——
+        # 正是「迟到、安全敏感的下发在断言窗口内到达仍产生 false passing audit」的点。
+        bot = _AgentUiFakeBot([_req_event(3.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_ok_when_match_after_window(self):
+        # 匹配事件在窗口关闭后（t=6.0 > deadline 5.0）才送达：负向断言返回 None，
+        # 证明观察窗口真的以 timeout 为界，而不是把任何时刻的事件都算作命中。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False),
+            "窗口外事件不得使负向断言失败",
+        )
+
+    def test_expect_agent_ui_request_positive_rejects_match_after_window(self):
+        # 匹配事件在窗口外到达：正向 wait 必须超时抛错，而不是错拿窗口外事件。
+        # 钉死 timeout 参数确实约束了观察边界（finding：无断言记录传给 wait_for 的 timeout）。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_assert(self):
+        # 负向断言必须因 reason 失配而红。旧版只有一条事件：正向断言消费它之后，
+        # 第二条断言只是"事件耗尽超时"，忽略 reason 的实现照样绿。改喂两条事件，
+        # 第二条 reason 明确不符（非 null），让第二条断言真正在 reason 值上失配。
+        close_ok = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"invalid_button_id"}',
+            },
+        )
+        close_wrong = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"other_button_id"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_ok, close_wrong])
+        expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_null(self):
+        close = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":null}',
+            },
+        )
+        bot = _AgentUiFakeBot([close])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_absent_means_replaced(self):
+        # 契约（schema AgentUiClosePayloadV1 的 reason=Type.Optional；shared wire
+        # fixture agent-ui-close.channel-wire.sample.json 的 replaced case）：reason
+        # 缺省 = Replaced，期望 None 时必须放行。期望具体 reason 时必须失败，且值
+        # 分支真正检查到 payload（_now 前移到 close_2.t=2.0），而非事件耗尽超时凑绿。
+        close_1 = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1"}',
+            },
+        )
+        close_2 = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_2"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_1, close_2])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_2", reason="invalid_button_id", timeout=5.0)
+        self.assertEqual(bot._now, close_2.t, "第二条断言必须检查到 close_2 事件")
+
+class ProbePayloadDecodeTest(unittest.TestCase):
+    """实体/空间探知流 S2C 解码 pin（field 74/77/129/130/132）。
+
+    这些 payload_type 此前不在 proto_min 白名单里，bot 即使收到包也解不出
+    `server_data` 事件，`expect_server_data("event_alert" / "qi_color_observed" /
+    "mineral_probe_result" / "freshness_update" / "workbench_open")` 会静默超时。
+    本类锁定字段号与字段映射，防 wire/label 失配。
+    """
+
+    def test_workbench_open_field_132_decodes_position_zigzag(self):
+        inner = (
+            _pb_varint_field(1, 999)
+            + _pb_sint32_field(2, -3)
+            + _pb_sint32_field(3, 71)
+            + _pb_sint32_field(4, -8)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(132, inner))
+        self.assertEqual(decoded["type"], "workbench_open")
+        self.assertEqual(decoded["entity_id"], 999)
+        self.assertEqual(decoded["position"], [-3, 71, -8], "sint32 负坐标应 zigzag 还原")
+
+    def test_burst_meridian_event_field_70_decodes_optional_target_and_doubles(self):
+        inner = (
+            _pb_string(1, "burst_meridian.beng_quan")
+            + _pb_string(2, "offline:caster")
+            + _pb_string(3, "offline:target")
+            + _pb_varint_field(4, 12345)
+            + _pb_fixed64(5, 1.5)
+            + _pb_fixed64(6, 0.75)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(70, inner))
+        self.assertEqual(decoded["type"], "burst_meridian_event")
+        self.assertEqual(decoded["skill"], "burst_meridian.beng_quan")
+        self.assertEqual(decoded["caster"], "offline:caster")
+        self.assertEqual(decoded["target"], "offline:target")
+        self.assertEqual(decoded["tick"], 12345)
+        self.assertAlmostEqual(decoded["overload_ratio"], 1.5)
+        self.assertAlmostEqual(decoded["integrity_snapshot"], 0.75)
+
+    def test_burst_meridian_event_field_70_omits_absent_target(self):
+        inner = _pb_string(1, "burst_meridian.beng_quan") + _pb_string(2, "offline:caster")
+        decoded = proto_min.decode_server_data_envelope(_pb_message(70, inner))
+        self.assertNotIn("target", decoded)
+
+    def test_combat_hud_state_field_9_decodes_percentages_and_derived_flags(self):
+        inner = (
+            _pb_fixed32(1, 0.75)
+            + _pb_fixed32(2, 0.5)
+            + _pb_fixed32(3, 0.25)
+            + _pb_message(4, _pb_varint_field(3, 1))
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(9, inner))
+        self.assertEqual(decoded["type"], "combat_hud_state")
+        self.assertAlmostEqual(decoded["hp_percent"], 0.75)
+        self.assertAlmostEqual(decoded["qi_percent"], 0.5)
+        self.assertAlmostEqual(decoded["stamina_percent"], 0.25)
+        self.assertEqual(
+            decoded["derived"],
+            {"flying": False, "phasing": False, "tribulation_locked": True},
+        )
+
+    def test_qi_color_observed_field_74_decodes_all_color_kinds(self):
+        # central-review 2029 #4：只 pin (field3=3→Mellow) 会让「其余 9 个 ColorKind
+        # 映射错误」的实现也通过——穷举全部 10 个枚举成员逐一 pin 名字映射。
+        kinds = {
+            1: "Sharp",
+            2: "Heavy",
+            3: "Mellow",
+            4: "Solid",
+            5: "Light",
+            6: "Intricate",
+            7: "Gentle",
+            8: "Insidious",
+            9: "Violent",
+            10: "Turbid",
+        }
+        for raw, expected in kinds.items():
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, raw)
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                expected,
+                f"field3={raw} 应解码为 {expected}",
+            )
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_unspecified_default(self):
+        # central-review 2029 #1：ColorKind 是 protobuf enum，field3 合法地可以缺省
+        # （默认值 0）或显式编码为 0。`_varint(fields, 3)` 缺省时返回 0，
+        # ColorKind=0 是合法默认值，映射为 "unspecified"；穷举 1..=10
+        # 只 pin 非默认 gameplay 色，会放走「0 也映射成某种玩法色 / 大小写错误 /
+        # 直接 raise」的坏解码器——合法 default-valued 载荷会产出错误的
+        # qi_color_observed.main。两个子形都要 pin：显式 0 与字段缺省。
+        for label, field3_bytes in (
+            ("field3=0（protobuf enum 默认值）", _pb_varint_field(3, 0)),
+            ("field3 缺省", b""),
+        ):
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + field3_bytes
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                "unspecified",
+                f"{label} 应解码为 main=unspecified（默认/兜底映射），实际 {decoded['main']}",
+            )
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_unknown_enum_values(self):
+        # central-review 2029 #2：ColorKind 是 protobuf enum，未来/未知的非零 wire 值
+        # （如 11）是合法载荷。只 pin 1..=10 与 0/缺省，会放走「特殊处理 0 但对非零
+        # 未知值用 COLOR_KIND_PASCAL_NAMES[raw] 直取/raise」的坏解码器——它 decode 到
+        # 未知枚举值时崩溃，qi_color_observed 事件根本送不到。main/secondary 两个槽位
+        # 的未知值身份都要 pin；secondary 携带未知值应映射 "unknown_N" 而非 None
+        # （None 只留给字段缺省，proto_min.py 同款 presence 约定）。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 11)  # 未知 main
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(
+            decoded["main"],
+            "unknown_11",
+            "未知 main ColorKind 应保留 unknown_N 身份，实际值不可伪装成默认 unspecified",
+        )
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+        )
+
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 11)  # 未知 secondary
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "unknown_11",
+            "未知 secondary ColorKind 应保留 unknown_N 身份（None 只留给缺省）",
+        )
+
+    def test_qi_color_observed_field_74_wrong_wire_optional_secondary_is_absent(self):
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)
+            + _pb_string(4, "wrong-wire-secondary")
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "wrong-wire optional secondary must be ignored, not fabricated as unspecified",
+        )
+
+    def test_qi_color_observed_field_74_decodes_present_secondary(self):
+        # central-review 2029 #4：secondary 是可选字段，缺省路径之上还须 pin 携带
+        # 路径——恒返回 None 的错误实现（present 也丢）会在此撞红。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 9)  # secondary=VIOLENT
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "Violent",
+            "携带 secondary(field4=9) 时应解码为 Violent",
+        )
+        self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+        self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+        self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_boolean_flags(self):
+        # central-review 2029 #4：此前 fixtures 一律 field5/field6=0 且不断言，
+        # 恒硬编码两字段为 false / 掉字段 / 交换编号的实现全都会通过。逐档 pin：
+        # field5=1→is_chaotic=true、field6=1→is_hunyuan=true；单真 + 双真全解形，
+        # 并断言完整解码形状（main/secondary/realm_diff/两 canonical id）。
+        cases = [
+            (True, False),
+            (False, True),
+            (True, True),
+        ]
+        for exp_chaotic, exp_hunyuan in cases:
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, 3)  # main=MELLOW
+                + _pb_varint_field(4, 9)  # secondary=VIOLENT
+                + _pb_varint_field(5, 1 if exp_chaotic else 0)
+                + _pb_varint_field(6, 1 if exp_hunyuan else 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(decoded["main"], "Mellow")
+            self.assertEqual(decoded["secondary"], "Violent")
+            self.assertEqual(
+                decoded["is_chaotic"],
+                exp_chaotic,
+                "field5 布尔值应解码为 is_chaotic（map 到字段号 5）",
+            )
+            self.assertEqual(
+                decoded["is_hunyuan"],
+                exp_hunyuan,
+                "field6 布尔值应解码为 is_hunyuan（map 到字段号 6）",
+            )
+            self.assertEqual(decoded["realm_diff"], 2)
+            self.assertEqual(decoded["observer"], "offline:BGD9QiH")
+            self.assertEqual(decoded["observed"], "offline:BGD9QiV")
+
+    def test_event_alert_field_77_decodes_message(self):
+        inner = (
+            _pb_varint_field(1, 0)
+            + _pb_string(2, "神识未及，凝脉方可感知保鲜")
+            + _pb_varint_field(4, 70)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIn("神识未及", decoded["message"])
+        self.assertIsNone(decoded["zone"], "未携带 zone 时保持 None")
+        self.assertEqual(decoded["duration_ticks"], 70)
+
+    def test_event_alert_field_77_absent_duration_stays_none(self):
+        # central-review 2029 #7：duration_ticks 是可选字段（_optional_varint 缺省
+        # 返回 None）。现有 fixtures 都携带 field4，用普通 defaulting varint 访问器
+        # 的坏解码器（缺省返回 0）能通过全部旧断言——合法无 duration 的告警会被
+        # 解码成 duration_ticks=0 的错误形状。缺省分支必须 pin：absent→None；另 pin
+        # 携带但值为 0 → 0（与缺省可区分，ordinary defaulting 访问器两者都出 0）。
+        absent = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_string(2, "神识未及，凝脉方可感知保鲜"))
+        )
+        self.assertEqual(absent["type"], "event_alert")
+        self.assertIn("神识未及", absent["message"])
+        self.assertIsNone(absent["duration_ticks"], "缺省 duration_ticks 必须为 None")
+
+        present_zero = proto_min.decode_server_data_envelope(
+            _pb_message(
+                77,
+                _pb_string(2, "神识未及，凝脉方可感知保鲜") + _pb_varint_field(4, 0),
+            )
+        )
+        self.assertEqual(present_zero["type"], "event_alert")
+        self.assertEqual(
+            present_zero["duration_ticks"],
+            0,
+            "携带 field4=0 时应解码为 duration_ticks=0（区别于缺省 None）",
+        )
+
+    def test_event_alert_field_77_unknown_event_kind_preserves_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_varint_field(1, 99))
+        )
+        self.assertEqual(
+            decoded["event"],
+            "unknown_99",
+            "未知 EventKind 必须保留诊断身份，不能伪装成 unspecified",
+        )
+
+    def test_event_alert_field_77_wrong_wire_optional_fields_are_absent(self):
+        # field 1/4 are varint and field 3 is length-delimited; malformed wire
+        # values must not fabricate presence or default values.
+        inner = (
+            _pb_string(2, "告警")
+            + _pb_string(1, "wrong-wire-event")
+            + _pb_varint_field(3, 7)
+            + _pb_string(4, "wrong-wire-duration")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["event"], "unspecified")
+        self.assertIsNone(decoded["zone"])
+        self.assertIsNone(decoded["duration_ticks"])
+
+    def test_mineral_probe_result_field_129_wrong_wire_optional_fields_are_absent(self):
+        inner = (
+            _pb_string(1, "denied")
+            + _pb_varint_field(2, 7)
+            + _pb_string(3, "wrong-wire-count")
+            + _pb_varint_field(4, 8)
+            + _pb_varint_field(5, 9)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+        self.assertIsNone(decoded["denial_reason"])
+
+    def test_event_alert_field_77_decodes_event_kind_and_zone(self):
+        inner = (
+            _pb_varint_field(1, 1)  # EVENT_KIND_THUNDER_TRIBULATION
+            + _pb_string(2, "雷劫将至")
+            + _pb_string(3, "jiuzong_taichu_ruin")
+            + _pb_varint_field(4, 120)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(
+            decoded["event"],
+            "thunder_tribulation",
+            "event kind 应映射为 server/agent 契约的 snake_case canonical name",
+        )
+        self.assertIn("雷劫将至", decoded["message"])
+        self.assertEqual(decoded["zone"], "jiuzong_taichu_ruin", "present-zone 应还原 field 3")
+        self.assertEqual(decoded["duration_ticks"], 120)
+
+    def test_mineral_probe_result_field_129_decodes_denial_reason(self):
+        inner = _pb_string(1, "denied") + _pb_string(5, "not_mineral_ore")
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "denied")
+        self.assertEqual(decoded["denial_reason"], "not_mineral_ore")
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+
+    def test_mineral_probe_result_field_129_decodes_found_variant(self):
+        inner = (
+            _pb_string(1, "found")
+            + _pb_string(2, "mineral.ore.lingshi")
+            + _pb_varint_field(3, 42)
+            + _pb_string(4, "灵石矿")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "found")
+        self.assertEqual(decoded["mineral_id"], "mineral.ore.lingshi")
+        self.assertEqual(decoded["remaining_units"], 42)
+        self.assertEqual(decoded["display_name_zh"], "灵石矿")
+        self.assertIsNone(decoded["denial_reason"])
+
+    def test_freshness_update_field_130_decodes_float_profile(self):
+        inner = (
+            _pb_string(1, "59")
+            + _pb_float32_field(2, 0.75)
+            + _pb_string(3, "food_spoil_mundane_meat_v1")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(130, inner))
+        self.assertEqual(decoded["type"], "freshness_update")
+        self.assertEqual(decoded["item_uuid"], "59")
+        self.assertAlmostEqual(decoded["freshness"], 0.75, places=4)
+        self.assertEqual(decoded["profile_name"], "food_spoil_mundane_meat_v1")
 if __name__ == "__main__":
     unittest.main(verbosity=1)

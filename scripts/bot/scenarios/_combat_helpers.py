@@ -28,28 +28,21 @@ def queue_npc_scenario(bot: Bot, scenario: str = "fight") -> None:
 
 
 def queue_fight_target(bot: Bot) -> Event:
-    """Queue a deterministic production-combat target.
-
-    The dev command only establishes a stationary real NPC fixture. All damage, lifecycle, network
-    feedback, and terminal despawn still travel through production systems.
-    """
+    """Queue a deterministic production-combat target."""
     if bot.position is None:
         raise BotAssertionError("期望已有 bot.position 后再生成战斗 NPC，实际 position=None")
 
     anchor = last_event_time(bot)
-    queue_npc_scenario(bot, "passive_target")
+    queue_npc_scenario(bot, "fight")
 
     try:
         return bot.wait_for(
             lambda e: e.kind == "entity_spawn"
             and e.t > anchor
             and e.data.get("entity_id") != bot.entity_id
-            and _horizontal_distance(bot.position, _event_position(e)) <= 40.0,
+            and _distance(bot.position, _event_position(e)) <= 40.0,
             timeout=15.0,
-            description=(
-                "/npc_scenario passive_target 后水平 40 格内出现 NPC entity_spawn；"
-                "Bot 自身 Y 只由 server PositionLook 更新，落地过程不会回推自身 entity move"
-            ),
+            description="/npc_scenario fight 后 40 格内出现 NPC entity_spawn",
         )
     except BotAssertionError as error:
         recent_spawns = [event for event in bot.events_of("entity_spawn") if event.t > anchor]
@@ -63,6 +56,23 @@ def queue_fight_target(bot: Bot) -> Event:
         ) from error
 
 
+def queue_passive_target(bot: Bot) -> Event:
+    if bot.position is None:
+        raise BotAssertionError("期望已有 bot.position 后再生成被动靶，实际 position=None")
+
+    anchor = last_event_time(bot)
+    queue_npc_scenario(bot, "passive_target")
+
+    return bot.wait_for(
+        lambda e: e.kind == "entity_spawn"
+        and e.t > anchor
+        and e.data.get("entity_id") != bot.entity_id
+        and _horizontal_distance(bot.position, _event_position(e)) <= 40.0,
+        timeout=15.0,
+        description="/npc_scenario passive_target 后 40 格内出现被动靶 entity_spawn",
+    )
+
+
 def wait_for_skill_binding(bot: Bot, anchor: float, slot: int, skill_id: str) -> Event:
     return bot.wait_for(
         lambda event: event.kind == "server_data"
@@ -74,9 +84,7 @@ def wait_for_skill_binding(bot: Bot, anchor: float, slot: int, skill_id: str) ->
         and event.data["payload"]["slots"][slot].get("kind") == "skill"
         and event.data["payload"]["slots"][slot].get("skill_id") == skill_id,
         timeout=10.0,
-        description=(
-            f"skillbar_config 槽 {slot} 权威确认绑定 skill `{skill_id}`（不得靠 sleep 猜完成）"
-        ),
+        description=f"skillbar_config 槽 {slot} 权威确认绑定 skill `{skill_id}`",
     )
 
 
@@ -109,6 +117,28 @@ def move_to_melee_range(bot: Bot, spawn: Event, distance: float = 1.2) -> None:
     time.sleep(0.2)
 
 
+def move_to_melee_target(
+    bot: Bot, target_id: int, fallback_spawn: Event, distance: float = 1.8
+) -> None:
+    """贴近目标的最新协议坐标，避免 spawn 后的相对位移使用旧坐标。"""
+    target_pos = bot.entity_pos(target_id)
+    if target_pos is None:
+        target_pos = _event_position(fallback_spawn)
+    if bot.position is None:
+        raise BotAssertionError("move_to_melee_target 需要 bot.position，实际 None")
+
+    bx, by, bz = bot.position
+    tx, ty, tz = target_pos
+    dx, dz = bx - tx, bz - tz
+    length = math.hypot(dx, dz)
+    if length <= 0.001:
+        dx, dz, length = 1.0, 0.0, 1.0
+    goal_x = tx + dx / length * distance
+    goal_z = tz + dz / length * distance
+    bot.move_to(goal_x, ty, goal_z, speed=5.5)
+    time.sleep(0.2)
+
+
 def wait_for_server_data_after(
     bot: Bot,
     anchor: float,
@@ -116,11 +146,7 @@ def wait_for_server_data_after(
     timeout: float,
     description: str,
 ) -> Event:
-    """Wait for a successfully decoded production server_data payload.
-
-    Raw payload bytes are deliberately never accepted here. Heartbeats, unknown oneofs, malformed
-    protobuf, and JSON without a typed payload must all remain unable to satisfy combat evidence.
-    """
+    """Wait for a successfully decoded production server_data payload."""
     return bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.t > anchor
@@ -170,6 +196,10 @@ def payload_text(event: Event) -> str:
 
 def _event_position(event: Event) -> tuple[float, float, float]:
     return (float(event.data["x"]), float(event.data["y"]), float(event.data["z"]))
+
+
+def _distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return math.dist(a, b)
 
 
 def _horizontal_distance(

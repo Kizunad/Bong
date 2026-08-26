@@ -48,8 +48,15 @@ from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场�
 # 各场景探针前后指纹相等断言（inventory_fingerprint = revision + 全部内容字段），
 # 成功路径响应（loot_container_update / loot_container_close / quickslot_config ack）
 # 是独立 payload 类型，仍非 ambient，由 assert_no_server_data_payload_since 单独锁。
-_AMBIENT_SERVER_DATA_TYPES = frozenset(
+AMBIENT_SERVER_DATA_TYPES = frozenset(
     {
+        "heartbeat",          # server keepalive payload（周期连接保活）
+        "carrier_state",      # carrier HUD 的周期同步（carrier_state_emit.rs）
+        "false_skin_state",   # 伪皮 HUD 状态同步（false_skin_state_emit.rs）
+        "treasure_equipped",  # 灵宝装备 HUD 同步（treasure_equipped_emit.rs）
+        "vortex_state",       # 吸灵口涡流 HUD 周期同步（woliu_state_emit.rs）
+        "dugu_poison_state", # 毒蛊 HUD 每秒同步（dugu_state_emit.rs）
+        "poison_trait_state", # 毒性层级 HUD 同步（poison_trait_state_emit.rs）
         "status_snapshot",    # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
         "zone_info",          # 区域内 spirit_qi 等状态波动时重发（连接同步，非请求响应）
         "player_state",       # 玩家灵气等状态变化时重发（连接同步，非请求响应）
@@ -58,18 +65,54 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
         "morph_state",        # join 首帧 + 每 20 tick 周期全量重发 + 易形增删 delta
         "cultivation_detail",  # 每 20 tick 周期全量重发（cultivation_detail_emit.rs）
         "lingtian_session",  # 每帧全量推送的灵田 HUD 同步（lingtian/network_emit.rs，无请求也每帧发，active 覆盖）
+        "spiritual_sense_targets",  # 神识扫描周期/玩家加入时的目标快照（cultivation/spiritual_sense/push.rs）
+        "remains_sync",  # 遗骸 join 快照/内容 diff 广播（network/remains_sync_emit.rs）
+        "combat_hud_state",  # Changed<Cultivation/Stamina/Wounds> 驱动的战斗 HUD 同步
+        "wounds_snapshot",  # Changed<Wounds> 驱动的伤口 HUD 同步
+        "movement_state",  # 移动状态周期/位置同步（server_data field 104）
+        "sword_bond_hud_state",  # 人剑共生 HUD 每秒同步（sword_bond_state_emit.rs）
     }
 )
+# 兼容已有单测对内部名称的引用；新场景统一使用公开集合。
+_AMBIENT_SERVER_DATA_TYPES = AMBIENT_SERVER_DATA_TYPES
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
 # qi_regen 系统）；凡兽出生/凋亡粒子（fauna/experience.rs emit_fauna_spawn_vfx_system
 # 在 Added<FaunaVisualKind> 上触发、fauna/mundane.rs mundane_fauna_negative_zone_wither_system
 # 在世界 qi 驱动下触发——均为 ambient 调度器/世界状态驱动，与任何 client_request
 # 无关）。其余 vfx（combat/forge/alchemy/breakthrough 等）均为请求驱动。
+# bong:rat_bite_nip 是 plan-ambient-threat-v1 的环境威胁咬击 AV
+# （server/src/combat/rat_bite.rs::emit_rat_bite_nip_av，由噬元鼠 AI 自发触发、
+# 跟任何 client_request 无关）。一次咬击会同时产生**三件**东西：
+#   ① combat_event(qi_damage, outgoing=false)   —— 见 _is_ambient_fauna_combat
+#   ② vfx_event(play_entity_anim, devour_rat.claw) —— 见 is_gameplay_side_effect
+#   ③ vfx_event(spawn_particle, bong:rat_bite_nip) —— 就是这里
+# 三件缺一个漏网，拒绝路径场景就会在 CI 上随机变红（①② 修完后 ③ 又挂了一次）。
 _AMBIENT_VFX_EVENT_IDS = frozenset(
-    {"bong:cultivation_absorb", "bong:fauna_spawn_dust"}
+    {"bong:cultivation_absorb", "bong:fauna_spawn_dust", "bong:rat_bite_nip"}
 )
 _AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage__",)
 
+
+
+def _is_ambient_fauna_combat(payload) -> bool:
+    """`combat_event` 是否是「bot 单纯挨打」—— 环境生物 AI 行为，非请求副作用。
+
+    实测（PR #2058 的 e2e）：野生噬元鼠会在探针窗口内跑过来咬 bot，产生
+    `combat_event{kind:qi_damage, outgoing:false}` + `vfx_event{play_entity_anim,
+    devour_rat.claw}`，把干净拒绝误判成"有玩法副作用"。同一 commit 连跑两次挂在
+    不同场景上，确认是环境噪声而不是代码问题。
+
+    这里按**归因**豁免而不是按 payload type 一刀切：只有全部条目都
+    `outgoing=false`（伤害是打到 bot 身上的）才算环境。任何 `outgoing=true`
+    说明 bot **打出了**伤害——那只可能来自被处理的请求，必须继续算副作用。
+    条目为空或结构不符一律返回 False（宁严勿松）。
+    """
+    if not isinstance(payload, dict):
+        return False
+    events = payload.get("events")
+    if not isinstance(events, list) or not events:
+        return False
+    return all(isinstance(e, dict) and e.get("outgoing") is False for e in events)
 
 
 def is_gameplay_side_effect(
@@ -104,8 +147,15 @@ def is_gameplay_side_effect(
             if not isinstance(payload, dict):
                 return True
             return inventory_fingerprint(payload) != inventory_fingerprint(baseline_snapshot)
+        if payload_type == "combat_event" and _is_ambient_fauna_combat(event.data.get("payload")):
+            return False
         return payload_type not in ambient_data
     if event.kind == "vfx_event":
+        # `play_entity_anim` 按 schema 定义就是**非玩家实体**（GeckoLib FaunaEntity）的
+        # 招式动画（server/src/schema/vfx_event.rs），由 NPC 自身 AI 驱动，且不带
+        # event_id（走 type 判别）——不豁免的话每次野兽在窗口内出手都会误报。
+        if event.data.get("type") == "play_entity_anim":
+            return False
         event_id = event.data.get("event_id")
         if not event_id:
             return True
@@ -143,7 +193,7 @@ def assert_no_gameplay_side_effect_since(
         if event.t > since_t
         and is_gameplay_side_effect(
             event,
-            _AMBIENT_SERVER_DATA_TYPES,
+            AMBIENT_SERVER_DATA_TYPES,
             _AMBIENT_VFX_EVENT_IDS,
             baseline_snapshot,
         )
