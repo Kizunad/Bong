@@ -905,3 +905,44 @@ class HeldSceneTextureTest(unittest.TestCase):
                 self.assertGreater(
                     float(held_quadrant.max()), 0.0,
                     f"{path.name}: 图集里手持物那一格全透明，贴图没贴进去")
+
+
+class PreviewEndTickTest(unittest.TestCase):
+    """`preview_player_anim` 的 GIF 段长必须来自 emote 自己的 `endTick`。
+
+    这是本文件第 5 类"预览工具在骗人"的 bug，做木棍时撞上的：`main()` 把**整份 JSON
+    文档**当 emote 往下传，`collect_keyframes` 那行自己做了 `.get("emote", ...)` 所以关键帧
+    是对的，但 `endTick` 取的是文档顶层——那儿没有这个键，于是永远吃默认值 8。
+
+    症状极隐蔽：仓库里绝大多数动画正好就是 8 tick，图看着完全正常。只有 `endTick ≠ 8`
+    的会被**悄悄截断**——`club_smash` 是 12 tick，GIF 只播到 t8，整段收势（overshoot +
+    低位滞留 + 拖回）一帧都看不见，而工具还打印"原速 400ms"。照那个 GIF 去调节奏，会把
+    本来正确的收势判成"没有收势"。
+
+    修法连同**去掉默认值**一起：静默兜底正是这个 bug 能活下来的原因。
+    """
+
+    def test_end_tick_comes_from_the_emote_not_the_document(self):
+        import preview_player_anim as P
+        doc = json.loads((ANIM / "club_smash.json").read_text(encoding="utf-8"))
+        self.assertEqual(12, int(doc["emote"]["endTick"]),
+                         "本用例依赖 club_smash 是 12 tick（≠ 默认值 8）才有鉴别力")
+        self.assertEqual(12.0, P._end_tick(doc["emote"]))
+
+    def test_passing_the_whole_document_raises_instead_of_defaulting(self):
+        """传错层级必须**炸**。返回 8 的话，调用方拿到的是一段被截断的动画而毫不知情。"""
+        import preview_player_anim as P
+        doc = json.loads((ANIM / "club_smash.json").read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(KeyError, "endTick"):
+            P._end_tick(doc)
+
+    def test_every_shipped_animation_reports_its_own_length(self):
+        """全仓库动画逐个过一遍：剥好 emote 之后都取得到 endTick。"""
+        import preview_player_anim as P
+        checked = 0
+        for path in sorted(ANIM.glob("*.json")):
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            emote = doc.get("emote", doc)
+            self.assertGreater(P._end_tick(emote), 0.0, f"{path.name}: endTick 非正")
+            checked += 1
+        self.assertGreater(checked, 100, "动画资产一个都没扫到，这条锁失去了对象")

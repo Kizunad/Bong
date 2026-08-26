@@ -31,6 +31,10 @@ python3 modelScript/core/render_bbmodel.py modelScript/models/Workbench.bbmodel
 # 把护甲戴到真 MC 玩家模型上，查有没有漏盖
 python3 modelScript/tools/preview_armor_on_body.py gen_hide_armor --slot chest --coverage
 
+# 手持物动画：解姿态 / 量轨迹（别手调，pitch 和 bend 是相加的，直觉必错）
+python3 modelScript/tools/held_item_pose.py solve --item wooden_club --up 12:15 --elev 50:80
+python3 modelScript/tools/held_item_pose.py track --item wooden_club --anim club_smash
+
 # 生物流水线（顺序不能乱：骨→肌→皮→动画）
 python3 modelScript/creatures/kekeda_goose/gen_skeleton.py
 python3 modelScript/creatures/kekeda_goose/gen_muscle.py
@@ -55,6 +59,7 @@ python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 | `animkit.py` · `anim_rig.py` · `voxel_rig.py` · `rigkit.py` | 骨树正解/逆解、关键帧轨道、体素生物调色板与 Rig 容器 |
 | `to_fmt410.py` | bbmodel 5.0 → 4.10 降级。**5.0 在 4.x 里打开是一个 cube 都看不见**，不报错，只是空场景 |
 | `bbmodel_to_geckolib.py` | 驱动 web Blockbench 官方 codec 做转换（Playwright），不手搓格式 |
+| `bb_anim_axes.py` | MC 玩家动画轴 ↔ bbmodel 轴的**唯一换算处**。⚠ **读写不是同一套符号**（Blockbench 读 animation 通道时取反 X/Y、存盘时不取反），`WRITE_LAYERS` / `READ_LAYERS` 分开，别当成互逆 |
 
 ## models/ ——什么入库什么不入库
 
@@ -90,6 +95,31 @@ python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 - **复杂模型分部件做**：拆 `part_base()` / `part_body()` / … 逐件单独预览，最后 `all_cubes()` 拼接。
   整件一把梭会埋掉单件缺陷。
 - **PlayerAnimator 四大库坑**见 `docs/player-animation-conventions.md`，写动画前必读。
+
+## 玩家动画：改完要能改回来
+
+动画是**双向**的，两头都别手抄：
+
+```bash
+# 去程：JSON → 分组骨架 bbmodel（Blockbench 里能播、能拖、能改）
+python3 modelScript/generators/gen_club_player_anim.py
+
+# 回程：Blockbench 里改完 → 读回成 POSE 表，贴进 client/tools/gen_<anim>.py
+python3 modelScript/tools/bbmodel_to_pose.py modelScript/models/ClubPlayerAnim.bbmodel \
+    --anim club_smash --tick 5
+python3 modelScript/tools/bbmodel_to_pose.py modelScript/models/ClubPlayerAnim.bbmodel \
+    --anim club_smash --diff      # 只列出人改动过的轴
+```
+
+回程以前是断的：手改的姿态卡在 bbmodel 里，生成器那份 POSE 还是旧的，两边就此分叉。
+
+**读 Blockbench 存的文件和读生成器直出的文件，符号不一样**（见 `bb_anim_axes`）。
+`bbmodel_to_pose` 按 `meta.format_version` 自动选边（生成器只写 `4.10`，Blockbench 5 存盘
+一律变 `5.0`），拿不准用 `--assume blockbench|generator` 显式指定。选错边读出来的姿态是
+**镜像**的。
+
+**手改过的 bbmodel 别再跑生成器**——存盘后文件会变成 `format_version 5.0`，重跑会整份
+覆盖。正确顺序是先 `--diff` 看改了什么、`--tick` 取出来贴回生成器，再重跑。
 
 ## 与主仓的接线
 
