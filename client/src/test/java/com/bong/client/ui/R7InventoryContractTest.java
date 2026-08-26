@@ -99,20 +99,20 @@ class R7InventoryContractTest {
 
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 2026-08-25（前值 fffdba51…）：R7 P1 新增 BongScreenBase.java，
-        // 并叠加主线垂死大能三件 keybinding 的 registry/HUD 修复。
-        // 逐文件对拍确认 client/src/main 下只有这两组已声明的生产变更，其余内容不动。
+        // 重新冻结于 legacy foundation 清理后：移除无生产引用的 owo foundation，
+        // 并保留主线 keybinding registry/HUD 修复的生产源对拍。
+        // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
-        // 客户端资源都会撞这条——这正是它要的"每一个 shipped 字节都得被显式重新决定"。
+        // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         assertEquals(
-            "1837c0c1b6a56eccb5a6ea44f6a10bde8fd780c0f5c3f6553b493d4c348c7bc5",
+            "0fc53c02ee94156f9d4ef343a897c80fc17f4a80d369e784a3de9a85535f882a",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "R7 P1 foundations must keep every shipped production path and byte pinned"
+            "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
     }
 
     @Test
-    void p1AddsOnlyTheRequestedFoundationsWithoutScreenMigration() throws IOException {
+    void p1RetainsScreenInventoryWithoutLegacyFoundation() throws IOException {
         Set<String> forbiddenProductionTypes = Set.of(
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
@@ -126,9 +126,6 @@ class R7InventoryContractTest {
         }
         assertTrue(discovered.isEmpty(),
             "R7 P1 must not add an unapproved foundation type: " + discovered);
-        assertTrue(Files.isRegularFile(PRODUCTION_ROOT.resolve("ui/BongScreenBase.java")),
-            "R7 P1 must add the requested BongScreenBase production foundation");
-
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
                 continue;
@@ -136,8 +133,6 @@ class R7InventoryContractTest {
             String code = R7SourceScan.read(PRODUCTION_ROOT.resolve(row.path()));
             assertTrue(code.contains("extends BaseOwoScreen<FlowLayout>"),
                 "P0 must not migrate production Screen inheritance: " + row.path());
-            assertFalse(code.contains("extends BongScreenBase"),
-                "P0 must not introduce production behavior: " + row.path());
         }
     }
 
@@ -145,11 +140,6 @@ class R7InventoryContractTest {
         List<ScreenInventoryRow> result = new java.util.ArrayList<>();
         for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(PRODUCTION_ROOT)) {
             String relative = PRODUCTION_ROOT.relativize(parsed.path()).toString().replace('\\', '/');
-            if (relative.equals("ui/BongScreenBase.java")) {
-                // The shared base is an R7 foundation, not a production Screen
-                // instance and therefore does not belong in the 29-screen inventory.
-                continue;
-            }
             List<DirectScreenDeclaration> declarations = new java.util.ArrayList<>();
             List<String> adapterStyles = new java.util.ArrayList<>();
             new TreePathScanner<Void, Void>() {
@@ -307,12 +297,10 @@ class R7InventoryContractTest {
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
-            "npc/NpcTradeScreen.java:163",
-            "ui/DiffListWidget.java:120",
-            "ui/DiffListWidget.java:124"
+            "npc/NpcTradeScreen.java:163"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(17, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(15, sites.size(), "the frozen executable clearChildren inventory changed");
         assertEquals(sites.stream().sorted().toList(), actual,
             "the inventory must match every executable zero-argument production clearChildren call");
     }
