@@ -393,8 +393,20 @@ def _frame(args, kfs, display, scene, ids, held_ids, focus, tick):
             for label, yaw, pitch in VIEWS]
 
 
+def _end_tick(emote) -> float:
+    """emote 的 `endTick`。**必须传剥好的 emote 子对象**，不是整份文档。
+
+    没有这个键就抛，不给默认值：静默兜底正是上面那个 bug 能活这么久的原因。
+    """
+    if "endTick" not in emote:
+        raise KeyError(
+            "emote 里没有 endTick —— 多半是把整份 JSON 文档当 emote 传进来了，"
+            "应当先 `doc.get(\"emote\", doc)` 剥一层")
+    return float(emote["endTick"])
+
+
 def _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus):
-    end = float(emote.get("endTick", 8))
+    end = _end_tick(emote)
     n = max(2, int(round(end * args.subdiv)))
     gap, lab = 8, 16
     w = args.size * len(VIEWS) + gap * (len(VIEWS) + 1) + 54
@@ -443,8 +455,14 @@ def main() -> int:
                          "400ms，且多数看图器把 <50ms 的帧延迟钳到 100ms，原速反而失真")
     args = ap.parse_args()
 
-    emote = json.loads(args.json.read_text(encoding="utf-8"))
-    kfs = RA.collect_keyframes(emote.get("emote", emote))
+    # **先剥到 emote 再用**。这里曾经拿整份文档当 emote 使：`collect_keyframes` 那行
+    # 自己做了 `.get("emote", ...)` 所以关键帧是对的，但后面两处 `endTick` 取的是**文档
+    # 顶层**——那儿没有这个键，于是永远吃默认值 8。症状极隐蔽：仓库里绝大多数动画正好
+    # 就是 8 tick，图看着完全正常；只有 endTick ≠ 8 的（`club_smash` 是 12）会被**悄悄
+    # 截断**，GIF 只播到 t8，整段收势看不见，而工具还理直气壮地打印"原速 400ms"。
+    doc = json.loads(args.json.read_text(encoding="utf-8"))
+    emote = doc.get("emote", doc)
+    kfs = RA.collect_keyframes(emote)
     ticks = [float(t) for t in args.ticks.split(",")]
 
     display = {"rotation": [0, -90, 55], "translation": [0, 4, 0], "scale": [0.8] * 3}
@@ -456,8 +474,7 @@ def main() -> int:
 
     # 固定取景：逐帧自动取景会让整段动画抖（render_bbmodel.render 的 docstring 明说）。
     # 但硬编码 span 会留一圈死边——扫一遍整段动画取**联合**包围盒，既贴身又照样恒定。
-    focus = _fit_focus(kfs, display, scene, ids, held_ids,
-                       float(emote.get("endTick", 8)))
+    focus = _fit_focus(kfs, display, scene, ids, held_ids, _end_tick(emote))
 
     if args.gif:
         return _write_gif(args, emote, kfs, display, scene, ids, held_ids, focus)
