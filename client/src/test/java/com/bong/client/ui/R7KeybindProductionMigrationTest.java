@@ -110,6 +110,28 @@ class R7KeybindProductionMigrationTest {
     }
 
     @Test
+    void forgeLegacyMigrationIsRegisteredBeforeItsEndTickConsumer() throws IOException {
+        String source = R7SourceScan.read(CLIENT_ROOT.resolve(
+            "forge/ForgeScreenBootstrap.java"
+        ));
+        int lifecycleRegistration = source.indexOf(
+            "ClientLifecycleEvents.CLIENT_STARTED.register(ForgeScreenBootstrap::migrateLegacyBinding)"
+        );
+        int endTickRegistration = source.indexOf(
+            "ClientTickEvents.END_CLIENT_TICK.register(ForgeScreenBootstrap::onEndClientTick)"
+        );
+
+        assertTrue(lifecycleRegistration >= 0,
+            "Forge 必须在客户端首个 tick 前注册存量键位迁移回调");
+        assertTrue(endTickRegistration > lifecycleRegistration,
+            "Forge 的旧键位迁移接线必须先于 wasPressed 消费回调声明");
+        assertTrue(source.contains("migrateLegacyBoundKey("),
+            "Forge 必须通过按 translation key 的 registry seam 迁移存量配置");
+        assertTrue(source.contains("client.options::setKeyCode"),
+            "迁移必须通过 GameOptions 持久化 UNKNOWN，而不是只改内存字段");
+    }
+
+    @Test
     void theOUConflictClusterConvergesThroughRegistryRulesAndUnknownIsUnbound() {
         BongKeybindRegistry registry = testRegistry();
         registry.register(spec("forge.open_screen", "key.r7.forge", GLFW.GLFW_KEY_U));

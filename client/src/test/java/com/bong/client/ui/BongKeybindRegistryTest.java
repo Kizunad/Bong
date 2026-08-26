@@ -205,6 +205,12 @@ class BongKeybindRegistryTest {
         ));
         AtomicReference<InputUtil.Key> persisted = new AtomicReference<>();
 
+        KeyBinding.unpressAll();
+        KeyBinding.onKeyPressed(key(GLFW.GLFW_KEY_U));
+        assertTrue(forge.wasPressed(),
+            "before migration the persisted legacy U must still reach Forge's binding");
+        assertFalse(forge.wasPressed(), "the pre-migration press must be drained before migration");
+
         boolean migrated = registry.migrateLegacyBoundKey(
             "key.test.forge",
             key(GLFW.GLFW_KEY_U),
@@ -223,6 +229,10 @@ class BongKeybindRegistryTest {
             "migration must pass UNKNOWN to the persistence seam");
         assertTrue(unrelated.matchesKey(GLFW.GLFW_KEY_K, 0),
             "migration must not alter another registered binding");
+
+        KeyBinding.onKeyPressed(key(GLFW.GLFW_KEY_U));
+        assertFalse(forge.wasPressed(),
+            "after migration the old U physical index must no longer dispatch to Forge");
     }
 
     @Test
