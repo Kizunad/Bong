@@ -34,6 +34,7 @@ import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
 import com.bong.client.network.InventoryMoveRejectedHandler;
+import com.bong.client.network.MineralProbeFeedbackSpec;
 import com.bong.client.network.LocustSwarmWarningHandler;
 import com.bong.client.network.QiAttritionPayload;
 import com.bong.client.network.ServerDataDispatch;
@@ -71,6 +72,8 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.network.PacketByteBuf;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
@@ -540,7 +543,8 @@ public class BongNetworkHandler {
             || dispatch.alertToast().isPresent()
             || dispatch.realmCollapseHudState().isPresent()
             || dispatch.uiOpenState().isPresent()
-            || dispatch.identityPanelState().isPresent()) {
+            || dispatch.identityPanelState().isPresent()
+            || dispatch.mineralProbeFeedback().isPresent()) {
             dispatchApplier.accept(dispatch, result.envelope().type());
         }
     }
@@ -1075,6 +1079,8 @@ public class BongNetworkHandler {
             return;
         }
 
+        dispatch.mineralProbeFeedback().ifPresent(feedback -> applyMineralProbeFeedback(client, feedback));
+
         for (Text chatMessage : dispatch.chatMessages()) {
             client.player.sendMessage(chatMessage, false);
         }
@@ -1082,6 +1088,30 @@ public class BongNetworkHandler {
         dispatch.legacyMessage().ifPresent(message ->
             client.player.sendMessage(Text.literal("[Bong] " + envelopeType + ": " + message), false)
         );
+    }
+
+    private static void applyMineralProbeFeedback(
+        net.minecraft.client.MinecraftClient client,
+        MineralProbeFeedbackSpec feedback
+    ) {
+        Text actionbarText = Text.literal(feedback.actionbarText())
+            .styled(style -> style.withColor(feedback.actionbarColor()));
+        client.inGameHud.setOverlayMessage(actionbarText, true);
+
+        switch (feedback.soundEffect()) {
+            case AMETHYST_CHIME -> client.player.playSound(
+                SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME,
+                SoundCategory.PLAYERS,
+                feedback.volume(),
+                feedback.pitch()
+            );
+            case NOTE_BLOCK_BASS -> client.player.playSound(
+                SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(),
+                SoundCategory.PLAYERS,
+                feedback.volume(),
+                feedback.pitch()
+            );
+        }
     }
 
     private static void applyUiOpen(net.minecraft.client.MinecraftClient client, UiOpenState uiOpenState, String envelopeType) {

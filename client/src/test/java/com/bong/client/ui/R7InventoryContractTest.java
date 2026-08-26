@@ -113,7 +113,7 @@ class R7InventoryContractTest {
         // A，无 M / D。生成器在 client/tools/gen_club_{smash,sweep}.py，属工具不随包发布，
         // 因此不进本摘要——这条基线只管"发出去的字节"。
         assertEquals(
-            "a461b58bd422412daf8c19e22c3e790bf8de133e3d3f549ef8f7ef715deaa11f",
+            "8b25c62d357c825ba1aa5417d9c71286b3f93dbb52c03d0d7f993eb61ad0d6d5",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

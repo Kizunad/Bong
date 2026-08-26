@@ -11,6 +11,7 @@ import com.bong.client.craft.WorkbenchScreen;
 import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
+import com.bong.client.network.MineralProbeFeedbackSpec;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -115,6 +116,38 @@ class BongServerDataThreadingTest {
             "期望单 payload 执行后 client task queue 为空，因为不得嵌套或重复调度；实际 queue="
                 + clientTasks
         );
+    }
+
+    @Test
+    void mineralProbeFeedbackWaitsForClientExecuteBeforeApplyDispatch() {
+        List<String> appliedThreads = new CopyOnWriteArrayList<>();
+        List<ServerDataDispatch> applied = new CopyOnWriteArrayList<>();
+
+        dispatchOnNetworkThread(
+            "{\"v\":1,\"type\":\"mineral_probe_result\",\"kind\":\"denied\",\"denial_reason\":\"out_of_range\"}",
+            ServerDataRouter.createDefault(),
+            (dispatch, type) -> {
+                applied.add(dispatch);
+                appliedThreads.add(type + "@" + Thread.currentThread().getName());
+            }
+        );
+
+        assertTrue(applied.isEmpty(),
+            "矿脉 feedback spec 在 client.execute 排队期间不得提前进入 applyDispatch");
+        assertEquals(1, clientTasks.size(),
+            "矿脉回执必须只排入一个 client-thread task");
+
+        runNextClientTask();
+
+        assertEquals(List.of("mineral_probe_result@" + CLIENT_THREAD), appliedThreads,
+            "矿脉 spec 必须在 client task 内进入 applyDispatch；实际=" + appliedThreads);
+        MineralProbeFeedbackSpec feedback = applied.get(0).mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("applyDispatch 收到的矿脉 dispatch 必须携带 feedback spec")
+        );
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.NOTE_BLOCK_BASS, feedback.soundEffect(),
+            "applyDispatch 不得丢失 denied bass 意图");
+        assertEquals(0.2f, feedback.volume(), "applyDispatch 不得改写 denied 音量");
+        assertEquals(0.6f, feedback.pitch(), "applyDispatch 不得改写 denied 音高");
     }
 
     @ParameterizedTest
