@@ -234,5 +234,91 @@ class AnimationRoundTripTest(unittest.TestCase):
                       BP.pick_layers({"meta": {"format_version": "4.10"}}, "blockbench")[0])
 
 
+class PoseTickContractTest(unittest.TestCase):
+    """全仓不变量：生成器 POSE 的键 == 出料 JSON 的 tick。
+
+    这是**回程能成立的前提**，不是风格偏好。bbmodel 是从 `player_animation/*.json` 烘出
+    来的，所以 `bbmodel_to_pose` 读到的帧号是出料 tick，而它把这个帧号原样当作 POSE 的
+    键打印出来给人贴回生成器。两边编号一旦不同，贴回去就是**静默**改掉整条动画的节奏：
+    姿态一个数没错、脚本不报错、出料照常，只有节奏变了。
+
+    真出过一次：`gen_club_sweep` 曾把 8 tick 的设计骨架在出料一步拉长成 10 tick，POSE 的
+    键是 0/2/3/4/5/6/7/8 而 JSON 里是 0/3/4/5/6/7/9/10。修法是把落位写进 POSE 键（求落位
+    的 `integer_retime` 留着，搬表的那个函数删了），并由本类守住全仓。
+    """
+
+    TOOLS = REPO / "client" / "tools"
+    # 扫描退化兜底：这条不变量的价值全在"覆盖了所有生成器"上。哪天 import 路径写歪、
+    # glob 没匹配上、POSE 改了名，扫描会安静地收敛到 0 条并照样绿——那才是最坏的结果。
+    # 今天实际覆盖 86 个，留点余量当地板。
+    MIN_COVERAGE = 80
+
+    @classmethod
+    def _scan(cls):
+        """→ (对得上的, 对不上的, import 炸了的, 没有 POSE 或没有同名 JSON 的)。"""
+        import importlib
+
+        matched, mismatched, broken, skipped = [], [], [], []
+        for path in sorted(cls.TOOLS.glob("gen_*.py")):
+            module_name = path.stem
+            try:
+                module = importlib.import_module(module_name)
+            except Exception as exc:                       # noqa: BLE001 —— 要的就是全抓
+                broken.append((module_name, f"{type(exc).__name__}: {exc}"))
+                continue
+            pose = getattr(module, "POSE", None)
+            if (not isinstance(pose, dict) or not pose
+                    or not all(isinstance(k, (int, float)) for k in pose)):
+                skipped.append(module_name)                # 不是"tick → 姿态"那种生成器
+                continue
+            emitted = ANIM / f"{module_name[len('gen_'):]}.json"
+            if not emitted.exists():
+                skipped.append(module_name)                # 出料名和模块名不同源
+                continue
+            moves = json.loads(emitted.read_text(encoding="utf-8"))["emote"]["moves"]
+            ticks = sorted({int(m["tick"]) for m in moves})
+            keys = sorted(int(k) for k in pose)
+            (matched if keys == ticks else mismatched).append((module_name, keys, ticks))
+        return matched, mismatched, broken, skipped
+
+    def setUp(self) -> None:
+        self.matched, self.mismatched, self.broken, self.skipped = self._scan()
+
+    def test_every_generator_poses_at_the_ticks_it_ships(self) -> None:
+        detail = "\n".join(
+            f"  {name}\n    POSE {keys}\n    JSON {ticks}"
+            for name, keys, ticks in self.mismatched)
+        self.assertEqual(
+            [], [name for name, _k, _t in self.mismatched],
+            "这些生成器的 POSE 键和它出料的 JSON tick 对不上——`bbmodel_to_pose` 读回来的"
+            f"帧号贴进去会静默改掉节奏：\n{detail}")
+
+    def test_importing_every_generator_still_works(self) -> None:
+        """顺带守住"生成器全都还能 import"。扫描要靠 import 才能看见 POSE，某个模块炸了
+        就会从覆盖里消失——那正是上一条最怕的静默漏检。"""
+        self.assertEqual([], [name for name, _why in self.broken],
+                         f"这些生成器 import 就炸：{self.broken}")
+
+    def test_the_scan_actually_covers_the_generators(self) -> None:
+        covered = len(self.matched) + len(self.mismatched)
+        self.assertGreaterEqual(
+            covered, self.MIN_COVERAGE,
+            f"只扫到 {covered} 个生成器（跳过 {len(self.skipped)}、炸 {len(self.broken)}）——"
+            f"低于地板 {self.MIN_COVERAGE}，八成是扫描本身坏了而不是生成器真少了")
+
+    def test_the_two_club_animations_are_covered(self) -> None:
+        """点名这两条：本仓唯一破过这条不变量的就是 `gen_club_sweep`，被跳过就等于没测。"""
+        covered = {name for name, _k, _t in self.matched + self.mismatched}
+        for name in ("gen_club_smash", "gen_club_sweep"):
+            self.assertIn(name, covered, f"{name} 没进扫描覆盖")
+
+    def test_club_sweep_poses_at_its_stretched_ticks(self) -> None:
+        """把当年那个 bug 的具体形状钉死：拉长后的落位必须落在 POSE 键上。"""
+        import gen_club_sweep as SWEEP
+
+        self.assertEqual([0, 3, 4, 5, 6, 7, 9, 10], sorted(SWEEP.POSE),
+                         "club_sweep 的 POSE 必须直接写在出料 tick 上，不许在出料时现搬")
+
+
 if __name__ == "__main__":
     unittest.main()

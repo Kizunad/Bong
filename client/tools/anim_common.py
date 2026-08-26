@@ -216,6 +216,20 @@ def build_doc(
 # 1.2 之后只能落回 1 或 2，也就是 ×1.0 或 ×2.0。能做到的最好情况是让**每一帧的时间
 # 位置**误差都不超过半 tick，办法是对累计位置取整（段长 = 相邻累计值之差），而不是逐段
 # 取整再累加——后者的误差会一路攒下去，末帧能偏出好几 tick。
+#
+# **算出落位之后，把 POSE 表直接改写到新 tick 上，不要在出料时现搬。** 全仓每个动画
+# 生成器都满足「POSE 的键 == 出料 JSON 的 tick」，`bbmodel_to_pose`（把 Blockbench 里
+# 手改的姿态读回成 POSE 表）就是靠这条等式才能把读到的帧号原样当作 POSE 键用。谁在
+# 出料一步搬帧，谁就单方面废掉这条回程：工具读出来的是出料 tick，贴回生成器却成了另一
+# 套编号，贴一次就把整条动画的节奏改掉。`PoseTickContractTest` 逐个扫过去钉住这条等式。
+#
+# 所以这里只提供**求落位**，不提供搬表：拿 `integer_retime` 算出 {旧: 新}，照着它把
+# 生成器里的 POSE 键改成新 tick，再把设计骨架和倍率作为常量留在生成器里（`gen_club_sweep`
+# 的 `DESIGN_TICKS` / `TIME_SCALE` / `KEEP_GAP`），由测试反过来核验落位仍然对得上。
+# 姿态本身一个数都不用改——这正是「拉长 = 搬帧，不是重采样」的全部含义：每一段走过的
+# 姿态集合 `{lerp(v0, v1, ease(α)) : α ∈ [0,1]}` 与段长无关，贴棍距离、挡不挡脸、包围盒
+# 这些几何判据逐字成立，变的只有速度。重采样做不到——倍率不是整数时，设计好的极值帧会
+# 落在两个新整数 tick 之间，LOAD / IMPACT 的峰值被插值削掉。
 
 
 def integer_retime(ticks: Iterable[int], scale: float, *,
@@ -248,24 +262,6 @@ def integer_retime(ticks: Iterable[int], scale: float, *,
                 f"（{prev}→{nxt}）——整数网格装不下，改 scale 或合并这两帧")
         out[t] = nxt
         prev = nxt
-    return out
-
-
-def retime(pose_table: Dict[int, dict], mapping: Dict[int, int]) -> Dict[int, dict]:
-    """按 `mapping` 把 POSE 表搬到新的 tick 网格。姿态**原样**搬，一个数都不改。
-
-    这是重定时相对"重采样"的关键好处：每一段走过的姿态集合
-    `{lerp(v0, v1, ease(α)) : α ∈ [0,1]}` 与段长无关，所以贴棍距离、挡不挡脸、棍头
-    包围盒这些**几何**判据全部逐字成立，变的只有速度。重采样（在新网格上按原曲线取值）
-    做不到这一点：拉长倍率不是整数时，设计好的极值帧会落在两个新整数 tick 之间，
-    LOAD / IMPACT 的峰值被插值削掉——恰好把这条动画最要紧的东西磨平。
-    """
-    missing = set(pose_table) - set(mapping)
-    if missing:
-        raise ValueError(f"mapping 没覆盖这些帧：{sorted(missing)}")
-    out = {mapping[t]: pose for t, pose in pose_table.items()}
-    if len(out) != len(pose_table):
-        raise ValueError("mapping 把两帧映射到了同一个 tick")
     return out
 
 

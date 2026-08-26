@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""`anim_common.integer_retime` / `retime` —— 把一条设计好的动画整体拉长 / 压缩。
+"""`anim_common.integer_retime` —— 把一条设计好的动画整体拉长 / 压缩时，帧该落在哪儿。
 
-这两个函数存在的理由是一条运行时硬约束：**PlayerAnimator 的 tick 是整数**
+这个函数存在的理由是一条运行时硬约束：**PlayerAnimator 的 tick 是整数**
 （`AnimationJson.java:123` 的 `getAsInt()`、`KeyframeAnimation.java:451/469` 的
 `findAtTick(int)` / `addKeyFrame(int, ...)`）。写小数进 JSON 不会报错——会被截断，然后
 和相邻整数帧**撞成同一帧**，静默丢关键帧。于是"拉长 1.2 倍"这件事没有精确解，只能求
-误差最小的整数落位，而"误差"该怎么定义、以及**拉长是搬帧不是重采样**，就是这里锁的
-东西。
+误差最小的整数落位，而"误差"该怎么定义就是这里锁的东西。
 
 三条设计意图：
 
@@ -14,10 +13,17 @@
    位置取整则保证任何一帧的时间误差 ≤ 0.5 tick。
 2. **`keep_gap` 是给"必须紧跟"的段用的**（overshoot 贴着 impact 后一 tick，
    conventions §2.6），被拉成 2 tick 就不再是弹性过冲。
-3. **搬帧，姿态一个数都不改。** 每一段走过的姿态集合与段长无关，所以贴棍距离、挡不挡
-   脸、包围盒这些几何判据在拉长后逐字成立——这是相对"重采样"的全部好处，必须有测试
-   钉住，否则以后有人图省事换成重采样，几何判据会静默失去意义（重采样会把落在两个新
-   整数 tick 之间的 LOAD / IMPACT 极值插值削掉）。
+3. **落位解完写进生成器的 POSE 键，不在出料一步搬帧。** 全仓生成器都满足「POSE 的键 ==
+   出料 JSON 的 tick」，`bbmodel_to_pose` 的回程靠的就是这条等式（不变量本身由
+   `PoseTickContractTest` 对全部生成器钉住）。所以这里只提供**求落位**，`ClubSweepRetimingTest`
+   反过来核验 `gen_club_sweep` 里那组 tick 确实是这个解。
+
+还有一条不在函数里、但必须有测试守住的：**拉长是搬帧，不是重采样。** 姿态一个数都不
+改，所以每一段走过的姿态集合与段长无关，贴棍距离、挡不挡脸、包围盒这些几何判据在拉长
+后逐字成立，变的只有速度。这条直接拿**出料的 club_sweep.json** 和它 8 tick 草稿逐段
+对拍（见 `test_stretching_changed_only_the_speed_not_a_single_pose`）——哪天有人改成
+"在新网格上按原曲线重采样"，那条会立刻撞红：重采样在非整数倍率下会把落在两个新整数
+tick 之间的 LOAD / IMPACT 极值插值削掉。
 """
 
 from __future__ import annotations
@@ -135,87 +141,86 @@ class IntegerRetimeTest(unittest.TestCase):
         self.assertIn("同一帧", str(cm.exception))
 
 
-class RetimeTableTest(unittest.TestCase):
-    """POSE 表的搬迁。"""
-
-    def setUp(self) -> None:
-        self.table = {
-            0: dict(easing="OUTSINE", rightArm=dict(pitch=-30, bend=20, axis=180)),
-            2: dict(easing="INSINE", rightArm=dict(pitch=+10, bend=60, axis=180)),
-            4: dict(easing="LINEAR", rightArm=dict(pitch=-30, bend=20, axis=180)),
-        }
-
-    def test_it_moves_the_frames_without_touching_the_poses(self) -> None:
-        """姿态原样搬——这是"拉长不改设计"的全部含义。"""
-        out = A.retime(self.table, {0: 0, 2: 3, 4: 5})
-        self.assertEqual([0, 3, 5], sorted(out))
-        for src, dst in ((0, 0), (2, 3), (4, 5)):
-            self.assertEqual(self.table[src], out[dst])
-
-    def test_it_refuses_a_mapping_with_a_hole(self) -> None:
-        """漏掉一帧就是丢一帧，必须响。"""
-        with self.assertRaises(ValueError) as cm:
-            A.retime(self.table, {0: 0, 2: 3})
-        self.assertIn("4", str(cm.exception))
-
-    def test_it_refuses_a_mapping_that_collides(self) -> None:
-        with self.assertRaises(ValueError) as cm:
-            A.retime(self.table, {0: 0, 2: 3, 4: 3})
-        self.assertIn("同一个 tick", str(cm.exception))
-
-    def test_a_mapping_with_extra_entries_is_harmless(self) -> None:
-        """多给几条映射（比如整套骨架的表）不该报错——只用得上的那几条。"""
-        out = A.retime(self.table, {0: 0, 1: 1, 2: 3, 3: 4, 4: 5})
-        self.assertEqual([0, 3, 5], sorted(out))
-
-    def test_the_traversed_poses_are_identical_after_retiming(self) -> None:
-        """**搬帧 ≠ 重采样**：每一段走过的姿态集合与段长无关。
-
-        判据：原动画在段内 α 处的取值，必须与重定时后同一段 α 处逐位相等。成立就意味着
-        任何**几何**判据（贴棍距离、挡不挡脸、棍头包围盒）在拉长后逐字成立，变的只有
-        速度。哪天有人把 `retime` 换成"在新网格上按原曲线重采样"，这条会立刻撞红——
-        重采样在非整数倍率下会把落在两个新整数 tick 之间的极值帧插值削掉。
-        """
-        mapping = {0: 0, 2: 3, 4: 5}
-        src_doc = A.build_doc(self.table, name="a", description="",
-                              end_tick=4, stop_tick=6)
-        dst_doc = A.build_doc(A.retime(self.table, mapping), name="a", description="",
-                              end_tick=5, stop_tick=7)
-        src_kfs = RA.collect_keyframes(src_doc["emote"])
-        dst_kfs = RA.collect_keyframes(dst_doc["emote"])
-        segments = [(0, 2), (2, 4)]
-        for a, b in segments:
-            A2, B2 = mapping[a], mapping[b]
-            for i in range(21):
-                alpha = i / 20.0
-                for axis in ("pitch", "bend"):
-                    want = RA.sample_axis(src_kfs, "rightArm", axis,
-                                          a + (b - a) * alpha)
-                    got = RA.sample_axis(dst_kfs, "rightArm", axis,
-                                         A2 + (B2 - A2) * alpha)
-                    self.assertAlmostEqual(
-                        want, got, places=9,
-                        msg=f"段 {a}→{b} 的 α={alpha:.2f} 处 rightArm.{axis} "
-                            f"拉长前 {want:.6f} ≠ 拉长后 {got:.6f}")
-
-
 class ClubSweepRetimingTest(unittest.TestCase):
-    """出料的 club_sweep.json 必须和生成器里的设计落位一致。"""
+    """`gen_club_sweep` 的那次拉长：落位、出料、以及"只改了速度"。"""
 
-    def test_the_emitted_ticks_match_the_declared_timing(self) -> None:
+    def _mapping(self) -> dict:
+        """生成器自报的那次求解，原样跑一遍。"""
+        return A.integer_retime(SWEEP.DESIGN_TICKS, SWEEP.TIME_SCALE,
+                                keep_gap=SWEEP.KEEP_GAP)
+
+    def test_the_declared_stretch_reproduces_the_pose_ticks(self) -> None:
+        """POSE 的键必须正好是「设计骨架 × TIME_SCALE」的解。
+
+        POSE 键改了却没重新解、或者倍率改了却没重排帧，都在这里撞红——这是"设计节奏"
+        这件事在代码里唯一的锚点（拉长已经写进键里，光看 POSE 是看不出原骨架的）。
+        """
+        self.assertEqual(sorted(self._mapping().values()), sorted(SWEEP.POSE))
+
+    def test_ten_ticks_is_the_nearest_integer_to_the_requested_1_2x(self) -> None:
+        """为什么是 10 不是 9.6：整数网格上离 1.2× 最近的一档。"""
+        ideal = max(SWEEP.DESIGN_TICKS) * 1.2
+        self.assertEqual(10, SWEEP.END_TICK)
+        self.assertLessEqual(abs(SWEEP.END_TICK - ideal), 0.5,
+                             f"末帧 {SWEEP.END_TICK} 离 1.2× 的理想位置 {ideal} 太远")
+
+    def test_the_emitted_json_matches_the_pose_table(self) -> None:
         emote = json.loads(
             (ANIM / "club_sweep.json").read_text(encoding="utf-8"))["emote"]
         ticks = sorted({int(m["tick"]) for m in emote["moves"]})
-        self.assertEqual(sorted(SWEEP.TIMING.values()), ticks,
-                         "JSON 里的 tick 和 gen_club_sweep.TIMING 对不上 —— 生成器没重跑")
+        self.assertEqual(sorted(SWEEP.POSE), ticks,
+                         "JSON 里的 tick 和 gen_club_sweep.POSE 对不上 —— 生成器没重跑")
         self.assertEqual(SWEEP.END_TICK, int(emote["endTick"]))
 
-    def test_the_design_skeleton_itself_is_untouched(self) -> None:
-        """POSE 表仍按 8 tick 骨架写——拉长发生在出料一步，不许回写进设计表。
+    def test_stretching_changed_only_the_speed_not_a_single_pose(self) -> None:
+        """**搬帧 ≠ 重采样**所依赖的那条前提，拿出料资产验。
 
-        回写了就再也说不清"这条动画的设计节奏是什么"，下次要改倍率只能凭猜。
+        前提是：段内插值**只看段内进度 α**，不看段有多长——于是一段走过的姿态集合
+        `{lerp(v0, v1, ease(α)) : α ∈ [0,1]}` 与段长无关。判据：把出料的 10 tick 表按
+        落位搬回 8 tick 草稿，两条在同一段的同一 α 处必须**逐轴逐位**相等。
+
+        这条成立，"拉长只改了速度"才是真的，这条动画在 8 tick 上做过的几何量测（副手
+        贴棍 ≤1.38px、不挡脸、棍头包围盒 25.4×10.9×8.6）才能不重测就搬到 10 tick 上用。
+        哪天有人把 easing 改成带绝对时长的（比如按 tick 数而不是按 α 插值），或者把
+        拉长改成"在新网格上按原曲线重采样"，这条立刻撞红。
+
+        （"POSE 键必须就是出料 tick"由上面那两条管；这里只管插值本身的性质。）
         """
-        self.assertEqual(SKELETON, sorted(SWEEP.POSE))
+        mapping = self._mapping()
+        inverse = {dst: src for src, dst in mapping.items()}
+        stray = sorted(set(SWEEP.POSE) - set(inverse))
+        self.assertEqual([], stray,
+                         f"POSE 里的 tick {stray} 不在落位解的像里——先看上面那条"
+                         "test_the_declared_stretch_reproduces_the_pose_ticks")
+        draft = {inverse[tick]: pose for tick, pose in SWEEP.POSE.items()}
+
+        shipped_doc = A.build_doc(SWEEP.POSE, name="x", description="",
+                                  end_tick=SWEEP.END_TICK, stop_tick=SWEEP.END_TICK + 2)
+        draft_doc = A.build_doc(draft, name="x", description="",
+                                end_tick=max(draft), stop_tick=max(draft) + 2)
+        shipped = RA.collect_keyframes(shipped_doc["emote"])
+        drafted = RA.collect_keyframes(draft_doc["emote"])
+
+        self.assertEqual(sorted(drafted), sorted(shipped),
+                         "搬回草稿之后 part 集合都不一样了，后面的逐轴对拍没有意义")
+        design = list(SWEEP.DESIGN_TICKS)
+        checked = 0
+        for a, b in zip(design, design[1:]):
+            dst_a, dst_b = mapping[a], mapping[b]
+            for part, axes in drafted.items():
+                for axis in axes:
+                    for i in range(21):
+                        alpha = i / 20.0
+                        want = RA.sample_axis(drafted, part, axis, a + (b - a) * alpha)
+                        got = RA.sample_axis(shipped, part, axis,
+                                             dst_a + (dst_b - dst_a) * alpha)
+                        self.assertAlmostEqual(
+                            want, got, places=9,
+                            msg=f"段 {a}→{b}（出料 {dst_a}→{dst_b}）的 α={alpha:.2f} 处 "
+                                f"{part}.{axis}：草稿 {want:.6f} ≠ 出料 {got:.6f}")
+                        checked += 1
+        self.assertGreater(checked, 1000,
+                           f"只对拍了 {checked} 个采样点——采样循环八成是空转的")
 
 
 if __name__ == "__main__":
