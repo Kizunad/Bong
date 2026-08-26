@@ -287,16 +287,15 @@ class JianPlayerToolsTest(unittest.TestCase):
     def test_jian_player_animation_converter_pins_axes_body_and_lower_filler(self) -> None:
         elements, _outliner, gmap, _atlas = A.build_geometry()
         self.assertGreater(len(elements), 0)
-        # 符号在 2026-08-26 修过：原先 pitch/yaw 各多取了一次反（老注释说动画通道走
-        # "Bedrock 约定"），据此生成的 bbmodel 在 Blockbench 里是 pitch/yaw 双双镜像的
-        # 姿态。**这条断言当时钉的就是那组错值**——它锁住了 bug 而不是契约，因为它抄的是
-        # 实现，不是任何独立可核验的东西。改正的依据见 `core/bb_anim_axes` 的 docstring
-        # （一次真实的 Blockbench 存盘往返），往返锁在 `test_bb_anim_roundtrip.py`。
+        # 这三个符号是**写侧**（生成器写给 Blockbench 看的那一侧，要预取反 X/Y 去抵消
+        # 它读入时的取反）。2026-08-26 一度按"读写同一套"把它们翻掉，结果生成的资产在
+        # Blockbench 里四肢镜像、身体朝后；依据与读侧口径见 `core/bb_anim_axes` 的
+        # docstring，往返锁在 `test_bb_anim_roundtrip.py`。
         self.assertEqual(3, len(A.AXIS_LAYERS))
-        self.assertEqual(("pitch", 0, -1.0), A.AXIS_LAYERS[0])
-        self.assertEqual(("yaw", 1, +1.0), A.AXIS_LAYERS[1])
+        self.assertEqual(("pitch", 0, 1.0), A.AXIS_LAYERS[0])
+        self.assertEqual(("yaw", 1, -1.0), A.AXIS_LAYERS[1])
         self.assertEqual(("roll", 2, -1.0), A.AXIS_LAYERS[2])
-        self.assertIs(A.AXIS_LAYERS, A.AX.AXIS_LAYERS, "必须用公共层那一份，别再抄")
+        self.assertIs(A.AXIS_LAYERS, A.AX.WRITE_LAYERS, "必须用公共层的写侧，别再抄")
         animation = A.convert_animation(A.ANIM_DIR / "lower_walk.json", gmap)
         self.assertEqual("loop", animation["loop"])
         self.assertAlmostEqual(1.0, animation["length"])

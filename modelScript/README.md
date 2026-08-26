@@ -59,7 +59,7 @@ python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 | `animkit.py` · `anim_rig.py` · `voxel_rig.py` · `rigkit.py` | 骨树正解/逆解、关键帧轨道、体素生物调色板与 Rig 容器 |
 | `to_fmt410.py` | bbmodel 5.0 → 4.10 降级。**5.0 在 4.x 里打开是一个 cube 都看不见**，不报错，只是空场景 |
 | `bbmodel_to_geckolib.py` | 驱动 web Blockbench 官方 codec 做转换（Playwright），不手搓格式 |
-| `bb_anim_axes.py` | MC 玩家动画轴 ↔ bbmodel 轴的**唯一换算处**（双向）。符号是拿进 Blockbench 往返测出来的，别照直觉改 |
+| `bb_anim_axes.py` | MC 玩家动画轴 ↔ bbmodel 轴的**唯一换算处**。⚠ **读写不是同一套符号**（Blockbench 读 animation 通道时取反 X/Y、存盘时不取反），`WRITE_LAYERS` / `READ_LAYERS` 分开，别当成互逆 |
 
 ## models/ ——什么入库什么不入库
 
@@ -112,6 +112,11 @@ python3 modelScript/tools/bbmodel_to_pose.py modelScript/models/ClubPlayerAnim.b
 ```
 
 回程以前是断的：手改的姿态卡在 bbmodel 里，生成器那份 POSE 还是旧的，两边就此分叉。
+
+**读 Blockbench 存的文件和读生成器直出的文件，符号不一样**（见 `bb_anim_axes`）。
+`bbmodel_to_pose` 按 `meta.format_version` 自动选边（生成器只写 `4.10`，Blockbench 5 存盘
+一律变 `5.0`），拿不准用 `--assume blockbench|generator` 显式指定。选错边读出来的姿态是
+**镜像**的。
 
 **手改过的 bbmodel 别再跑生成器**——存盘后文件会变成 `format_version 5.0`，重跑会整份
 覆盖。正确顺序是先 `--diff` 看改了什么、`--tick` 取出来贴回生成器，再重跑。

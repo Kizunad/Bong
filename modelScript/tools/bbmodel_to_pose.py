@@ -16,6 +16,11 @@ gen_<anim>.py` 那份 POSE 表还是旧的，两边就此分叉。2026-08-26 用
    取值，必须把 roll→yaw→pitch 三层**乘起来**再分解。
 2. **bend 层拧出来的 y/z 残差在 MC 里表达不了。** MC 的 bend 只能绕水平轴转。默认遇到
    >1° 的残差就报错，`--tolerate-bend-twist` 可显式接受丢失。
+3. **读 Blockbench 存的文件和读我们自己生成的文件，符号不一样。** Blockbench 读入 animation
+   通道时对 X/Y 取反、存盘时不取反（见 `core/bb_anim_axes`），所以生成器写文件要预先取反，
+   而它存出来的是未取反的内部值。本脚本按 `meta.format_version` 自动区分——生成器只写
+   `4.10`，Blockbench 5 存盘一律变成 `5.0`，这也正是本仓「5.0 = 手改过」那条既有判据。
+   拿不准就用 `--assume` 显式指定。
 
 ## 用法
 
@@ -49,6 +54,18 @@ sys.path.insert(0, str(REPO / "client" / "tools"))
 
 import bb_anim_axes as AX  # noqa: E402
 from animkit import euler_of  # noqa: E402  R = Rz·Ry·Rx 的逆解
+
+
+def pick_layers(doc: dict, assume: str = "auto"):
+    """这份文件该按哪一侧的符号读？→ (layers, 说明)。"""
+    if assume == "blockbench":
+        return AX.READ_LAYERS, "显式指定：Blockbench 存盘"
+    if assume == "generator":
+        return AX.WRITE_LAYERS, "显式指定：生成器直出"
+    version = str(doc.get("meta", {}).get("format_version", ""))
+    if version.startswith("5"):
+        return AX.READ_LAYERS, f"format_version {version} → Blockbench 存过盘"
+    return AX.WRITE_LAYERS, f"format_version {version} → 生成器直出，未经 Blockbench"
 
 ANIM_DIR = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
 TICKS_PER_SECOND = 20.0
@@ -103,8 +120,38 @@ def keyframe_ticks(anim: dict) -> list[float]:
     return sorted(round(t * TICKS_PER_SECOND, 4) for t in times)
 
 
-def read_pose(anim: dict, tick: float, tolerate_twist: bool = False) -> dict:
-    """→ `{part: {pitch,yaw,roll,bend,axis}, "_body": {...}}`，MC 轴、度。"""
+def _axes_from_euler(triple, layers) -> dict:
+    """合成好的 bb 欧拉三元组 → MC 轴，按指定那一侧的符号。"""
+    return {name: float(triple[index]) / sign for name, index, sign in layers}
+
+
+def _position_from(triple, layers) -> dict:
+    """bb position → MC 米。
+
+    position 的 X 与 rotation 的 X **取反关系相反**：写侧 rotation 写 `+pitch` 而
+    position 写 `-x`；读侧反过来。所以这里取 pitch 那一层符号的**负数**。
+    """
+    x_sign = -next(sign for name, _i, sign in layers if name == "pitch")
+    return {"x": float(triple[0]) * x_sign / AX.PX_PER_BLOCK,
+            "y": -float(triple[1]) / AX.PX_PER_BLOCK,
+            "z": float(triple[2]) / AX.PX_PER_BLOCK}
+
+
+def _bend_from(bb_x: float, layers) -> tuple[float, float]:
+    x_sign = next(sign for name, _i, sign in layers if name == "pitch")
+    value = float(bb_x) * x_sign
+    if abs(value) < 1e-9:
+        return 0.0, 180.0
+    return (-value, 180.0) if value < 0 else (value, 0.0)
+
+
+def read_pose(anim: dict, tick: float, tolerate_twist: bool = False,
+              layers=None) -> dict:
+    """→ `{part: {pitch,yaw,roll,bend,axis}, "_body": {...}}`，MC 轴、度。
+
+    `layers` 决定按哪一侧的符号解，默认读侧（Blockbench 存盘）。用 `pick_layers()` 取。
+    """
+    layers = layers or AX.READ_LAYERS
     pose: dict = {}
     for part, prefix in PART_PREFIX.items():
         matrix = np.eye(3)
@@ -116,27 +163,25 @@ def read_pose(anim: dict, tick: float, tolerate_twist: bool = False) -> dict:
                 seen = True
         if not seen:
             continue
-        axes = {k: round(v, ROUND) for k, v in AX.euler_to_mc(euler_of(matrix)).items()}
+        axes = {k: round(v, ROUND) for k, v in _axes_from_euler(euler_of(matrix), layers).items()}
         bend_triple = _value_at(anim, f"{prefix}_bend", "rotation", tick)
         if bend_triple is not None:
-            if tolerate_twist:
-                bend, axis = AX.bend_from_bb(bend_triple[0])
-            else:
-                bend, axis = AX.assert_pure_x(bend_triple, where=f"{part} @ tick {tick:g}")
+            if not tolerate_twist and max(abs(bend_triple[1]), abs(bend_triple[2])) > 1.0:
+                AX.assert_pure_x(bend_triple, where=f"{part} @ tick {tick:g}")
+            bend, axis = _bend_from(bend_triple[0], layers)
             axes["bend"] = round(bend, ROUND)
             axes["axis"] = axis
         # part 级位移烘在**最外层**那一层 group 上（与生成器同一处），别忘了读
         offset = _value_at(anim, f"{prefix}_{AX.AXIS_ORDER[-1]}", "position", tick)
         if offset is not None:
-            axes.update({k: round(v, 5)
-                         for k, v in AX.body_position_from_bb(offset).items()
+            axes.update({k: round(v, 5) for k, v in _position_from(offset, layers).items()
                          if abs(v) > 1e-9})
         pose[part] = axes
 
     body: dict = {}
     position = _value_at(anim, "root_pos", "position", tick)
     if position is not None:
-        body.update({k: round(v, 5) for k, v in AX.body_position_from_bb(position).items()})
+        body.update({k: round(v, 5) for k, v in _position_from(position, layers).items()})
     matrix = np.eye(3)
     seen = False
     for layer in reversed(AX.AXIS_ORDER):
@@ -145,7 +190,8 @@ def read_pose(anim: dict, tick: float, tolerate_twist: bool = False) -> dict:
             matrix = matrix @ _rotmat(*triple)
             seen = True
     if seen:
-        body.update({k: round(v, ROUND) for k, v in AX.euler_to_mc(euler_of(matrix)).items()})
+        body.update({k: round(v, ROUND)
+                     for k, v in _axes_from_euler(euler_of(matrix), layers).items()})
     if body:
         pose["_body"] = body
     return pose
@@ -201,6 +247,9 @@ def main() -> int:
                         help="和现网 player_animation JSON 逐轴比，只列出改动过的")
     parser.add_argument("--tolerate-bend-twist", action="store_true",
                         help="bend 层的 y/z 残差表达不了，默认报错；加这个显式接受丢失")
+    parser.add_argument("--assume", choices=("auto", "blockbench", "generator"),
+                        default="auto",
+                        help="这份文件按哪一侧符号读；默认按 meta.format_version 自动判")
     args = parser.parse_args()
 
     doc = json.loads(args.bbmodel.read_text(encoding="utf-8"))
@@ -208,13 +257,15 @@ def main() -> int:
     if args.anim not in anims:
         raise SystemExit(f"{args.bbmodel} 里没有动画 {args.anim!r}；有的是 {sorted(anims)}")
     anim = anims[args.anim]
+    layers, why = pick_layers(doc, args.assume)
     ticks = [args.tick] if args.tick is not None else keyframe_ticks(anim)
 
     if args.diff:
         print(f"# {args.anim}：bbmodel 与 player_animation/{args.anim}.json 的逐轴差异")
+        print(f"# 读取口径：{why}")
         clean = True
         for tick in ticks:
-            mine = read_pose(anim, tick, args.tolerate_bend_twist)
+            mine = read_pose(anim, tick, args.tolerate_bend_twist, layers)
             theirs = load_json_pose(args.anim, tick)
             for part in sorted(set(mine) | set(theirs)):
                 a = mine.get(part, {})
@@ -232,9 +283,10 @@ def main() -> int:
         return 0
 
     print(f"# 从 {args.bbmodel.name} 读回 {args.anim}，可直接贴进 gen_{args.anim}.py 的 POSE")
+    print(f"# 读取口径：{why}")
     print("# ⚠ easing 是 bbmodel 表达不了的，下面一律填占位值，贴回去要自己改")
     for tick in ticks:
-        print(as_pose_source(read_pose(anim, tick, args.tolerate_bend_twist), tick))
+        print(as_pose_source(read_pose(anim, tick, args.tolerate_bend_twist, layers), tick))
     return 0
 
 
