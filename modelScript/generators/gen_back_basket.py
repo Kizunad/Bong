@@ -39,7 +39,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 from rigkit import Rig, element_bounds  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
-OUT_DIR = Path(__file__).resolve().parents[1] / "models" / "containers"
+# 落 models/ 顶层：.gitignore:109 排掉了 models/*/ 所有子目录（只白名单
+# armor/baolongwang/handmade/lootcrate/rat），子目录里的 bbmodel 提不进仓库。
+# 同级穿戴件 GrassPouchBack/DouliHat/SuoYiCloak 也都在顶层。
+OUT_DIR = Path(__file__).resolve().parents[1] / "models"
 
 PX = 16.0
 
