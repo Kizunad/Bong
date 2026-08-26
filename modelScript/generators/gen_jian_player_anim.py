@@ -58,6 +58,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+
+import bb_anim_axes as AX  # noqa: E402  MC ↔ bbmodel 轴换算的唯一一处
 import render_jian_in_hand as H  # noqa: E402
 import render_player_pose as P  # noqa: E402
 
@@ -81,16 +83,15 @@ PART_GROUPS = {
     "rightLeg": ("leg_right", True),
     "leftLeg": ("leg_left", True),
 }
-# 单轴层 → (channel 分量下标, 写入动画关键帧的符号)
+# 单轴层与 bend 的换算收在 `core/bb_anim_axes`（唯一一处）。
 #
-# 这里有两层符号，踩过坑：
-#   ① MC ModelPart(y 向下) → bbmodel(y 向上)：pitch/roll 翻号、yaw 不翻
-#   ② Blockbench 的【动画关键帧】走 Bedrock 约定，BoneAnimator 应用时 X/Y 取反、Z 不取反
-#      —— 注意这只针对动画通道；静态 group.rotation 字段是标准右手系（两者不同！）
-# 两层叠加后：X 写 +pitch，Y 写 -yaw，Z 写 -roll。
-# 实测依据：group.mesh.matrixWorld 变换已知向量，比对脸朝向与肢体朝向是否同侧
-#（cube mesh 的世界位置不可当判据，Blockbench 对 cube 另有内部变换）。
-AXIS_LAYERS = (("pitch", 0, +1.0), ("yaw", 1, -1.0), ("roll", 2, -1.0))
+# **这里原先写反了**：老注释说动画通道走「Bedrock 约定：X/Y 取反」，据此生成的 bbmodel
+# 在 Blockbench 里是 pitch / yaw 双双镜像的姿态。2026-08-26 一次真实往返测出了正确符号
+# （证据见 `bb_anim_axes` 模块 docstring）——静态 group.rotation 和动画关键帧是**同一套**
+# 右手系。`JianPlayerAnim.bbmodel` 随本次修正一并重生成。
+AXIS_LAYERS = AX.AXIS_LAYERS
+bend_single_axis = AX.bend_to_bb
+
 TICKS_PER_SECOND = 20.0
 UPPER_PARTS = ("rightArm", "leftArm", "torso", "head")
 STANCE_ANIM = "jian_stance_high_low"
@@ -110,26 +111,6 @@ def euler_zyx_deg(M):
         alpha = math.atan2(M[2][1], M[2][2])
         gamma = math.atan2(M[1][0], M[0][0])
     return [math.degrees(alpha), math.degrees(beta), math.degrees(gamma)]
-
-
-def bend_single_axis(bend_deg: float, axis_deg: float) -> float:
-    """bend → 单轴 X 旋转（度）。
-
-    bendAxis 语义是"折弯方向绕主轴转多少"，轴 = (cos a, 0, sin a)。本项目的动画只用
-    a=0（绕 +X）与 a=180（绕 -X）两种纯前后折弯，走解析分支而不是通用矩阵分解——
-    JSON 存的是弧度，π 转回度数是 180.000003，sin 不严格为 0，通用分解会渗出 1e-6 级
-    的 y/z 分量，落到单轴层里表达不了。
-    """
-    if abs(bend_deg) < 1e-9:
-        return 0.0
-    a = axis_deg % 360.0
-    # 走 X 通道，同样吃 Bedrock 的 X 取反（与 AXIS_LAYERS 的 pitch 同号规则）
-    if a < 1.0 or a > 359.0:
-        return +bend_deg      # 轴 +X
-    if abs(a - 180.0) < 1.0:
-        return -bend_deg      # 轴 -X
-    raise AssertionError(
-        f"bendAxis={axis_deg}° 不是纯 X 折弯，单轴层表达不了——需要再拆一层斜轴 group")
 
 
 # ── 几何：玩家分段 cube + 锏 ──────────────────────────────────────────────
@@ -297,13 +278,10 @@ def convert_animation(json_path: Path, gmap: dict):
         if body:
             if abs(body.get("yaw", 0.0)) > 1e-9 or abs(body.get("roll", 0.0)) > 1e-9:
                 raise AssertionError("body 目前只支持 pitch 单轴（步态用到的就这一轴）")
-            # position 通道同样是 Bedrock 约定：X 取反、Y/Z 不取反；
-            # 叠加 MC(y 向下)→bbmodel(y 向上) 的 y 翻号后：(-x, -y, +z) × 16
-            pos = [-body.get("x", 0.0) * 16.0, -body.get("y", 0.0) * 16.0,
-                   body.get("z", 0.0) * 16.0]
-            track("root_pos").append(keyframe("position", t, [round(v, 4) for v in pos]))
+            track("root_pos").append(
+                keyframe("position", t, AX.body_position_to_bb(body)))
             track("root_pitch").append(
-                keyframe("rotation", t, [round(+body.get("pitch", 0.0), 4), 0.0, 0.0]))
+                keyframe("rotation", t, AX.rotation_to_bb(body, "pitch")))
         frame = dict(pose)
         if filler:
             frame.update(filler)
@@ -311,11 +289,9 @@ def convert_animation(json_path: Path, gmap: dict):
             if part not in PART_GROUPS:
                 continue
             prefix, has_bend = PART_GROUPS[part]
-            for axis_name, idx, sign in AXIS_LAYERS:
-                v = round(sign * axes.get(axis_name, 0.0), 4)
-                vals = [0.0, 0.0, 0.0]
-                vals[idx] = v
-                track(f"{prefix}_{axis_name}").append(keyframe("rotation", t, vals))
+            for axis_name in AX.AXIS_ORDER:
+                track(f"{prefix}_{axis_name}").append(
+                    keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
             if has_bend:
                 bend = bend_single_axis(axes.get("bend", 0.0), axes.get("axis", 0.0))
                 track(f"{prefix}_bend").append(keyframe("rotation", t, [round(bend, 4), 0.0, 0.0]))
