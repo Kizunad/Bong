@@ -39,7 +39,7 @@ public final class ExtractInteractionBootstrap {
             )
         );
         ClientTickEvents.END_CLIENT_TICK.register(ExtractInteractionBootstrap::onTick);
-        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/UNKNOWN");
+        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/U");
     }
 
     private static void onTick(MinecraftClient client) {
