@@ -73,9 +73,9 @@
 ## Finish Evidence
 
 - **落地清单**：`agent/packages/tiandao/src/redis-ipc.ts`（typed TSY runtime buffer、schema validation、callback/drain、unknown-kind warning）；`agent/packages/tiandao/src/runtime.ts`（drain 与 pending 注入）；`agent/packages/tiandao/src/context.ts` / `src/agent.ts`（完整事件上下文）；对应 `tests/redis-ipc.test.ts`、`tests/context.test.ts`、`tests/runtime.test.ts` 回归。
-- **关键 commit**：`5571e7e35`（2026-08-26，promotion）；`f89004824`（2026-08-26，Redis typed dispatch/buffer）；`bfb69a9b5`（2026-08-26，runtime/context 注入）。均带 `Model: gpt-5.6-luna-max`。
-- **测试结果**：受影响三组 `vitest` 共 118 tests 通过；`cd agent/packages/schema && npm test`：31 files / 904 tests 通过；`cd agent/packages/tiandao && npm test`：72 files / 865 tests 通过（含 TypeScript check）。
-- **对抗验证**：无上下文 read-only `gpt-5.6-luna` validator 对拍最终实现 SHA `bfb69a9b5eb107bb689ea09011bf63c7a0f7864b`，结果 PASS；随后已关闭 validator。
+- **关键 commit**：`5571e7e35`（2026-08-26，promotion）；`f89004824`（2026-08-26，Redis typed dispatch/buffer）；`bfb69a9b5`（2026-08-26，runtime/context 注入）；`6eb2d60b5`（2026-08-26，review-fix：required context、按 Agent ack、有界 pending）。均带 `Model: gpt-5.6-luna-max`。
+- **测试结果**：返工后受影响三组 `vitest` 共 121 tests 通过；`cd agent/packages/schema && npm test`：31 files / 904 tests 通过；`cd agent/packages/tiandao && npm test`：72 files / 868 tests 通过（含 TypeScript check）。
+- **对抗验证**：无上下文 read-only `gpt-5.6-luna` validator 对拍 review-fix code SHA `6eb2d60b5c1dd73ce0d293aace3568b4d2f5ad77`，结果 PASS；随后已关闭 validator。
 - **跨仓库核验**：server 的 `TsyEnterEventV1` / `TsyExitEventV1` bridge 与 `bong:tsy_event` publisher 未改；schema 定义与 generated artifact 未改；agent 现完整接收并注入 `return_to`、`filtered_items`、`duration_ticks` 与 `qi_drained_total`。
 - **接口契约与数据流**：server 以既有 `TsyEnterEventV1` / `TsyExitEventV1` wire payload 发布到 `bong:tsy_event`；`RedisIpc.handleTsyEventMessage` 按 `kind` 做 schema validation 后写入有界 runtime buffer，并由单一 tiandao `runRuntime` owner drain。runtime 按 Agent 名维护待消费 batch，只有对应 Agent 实际返回 decision 才 acknowledge；完整事件 JSON 进入三类 context recipe 的 required `tsy_runtime_events` block。该通路是 Server → Redis → Agent 单向链路，不新增 client 适配或 schema/wire 字段。
 - **遗留 / 后续**：server 侧 `qi_drained_total=0` 仍是独立 loot 累计后续风险，本 PR 不宣称已修复；本 PR 创建后等待 inline review 与 e2e，不在本流程内 merge。
