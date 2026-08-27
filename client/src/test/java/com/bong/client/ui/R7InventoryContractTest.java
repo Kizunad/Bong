@@ -105,15 +105,18 @@ class R7InventoryContractTest {
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         //
-        // 2026-08-26 重新冻结（这就是上一句要求的那次"显式再确认"）：随包新增木棍的两条
-        // 玩家动画资产，client/src/main 下没有别的增删改。
+        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
+        // 矿脉反馈线程修复的 2170 文件基线上，随包新增木棍的两条玩家动画与背篓三份资源，
+        // client/src/main 下没有别的增删改。
         //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
         //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        // 文件数 2169 → 2171；`git diff --name-status <base> -- client/src/main` 只有这两条
-        // A，无 M / D。生成器在 client/tools/gen_club_{smash,sweep}.py，属工具不随包发布，
-        // 因此不进本摘要——这条基线只管"发出去的字节"。
+        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
+        //     + resources/assets/bong/geo/back_basket.geo.json
+        //     + resources/assets/bong/textures/entity/back_basket.png
+        // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
+        // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
         assertEquals(
-            "8b25c62d357c825ba1aa5417d9c71286b3f93dbb52c03d0d7f993eb61ad0d6d5",
+            "bc4bc8073e76f20d718423c083ca0967e3fb8ad459c5fc7ef89d5de390a8e858",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
