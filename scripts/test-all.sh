@@ -715,7 +715,12 @@ run_preview_handoff() {
     trap 'preview_signal_cleanup 143' TERM
     bash "$ROOT/scripts/preview/run-server-headless.sh" --debug &
     preview_launcher_pid=$!
-    if wait "$preview_launcher_pid"; then server_started=1; else failed=1; fi
+    if wait "$preview_launcher_pid"; then
+        server_started=1
+        preview_launch_ready=1
+    else
+        failed=1
+    fi
     preview_launcher_pid=0
     if ((server_started == 1 && preview_launch_ready == 1)); then
         (
