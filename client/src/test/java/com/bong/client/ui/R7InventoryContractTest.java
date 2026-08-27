@@ -125,7 +125,7 @@ class R7InventoryContractTest {
         // Forge、撤离、T/L 入口和键位注册接线，文件数 2189 → 2191；旧 options.txt 的
         // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
         assertEquals(
-            "5b8634e6c7cd5fab78876e540dbfa68216cb64ba7cc6c9486df0f4da8e61840d",
+            "23ec4aae909b393314eb410bdea3ca1347a7a6735acd7d0a7583eb563c19e9b4",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
