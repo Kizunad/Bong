@@ -600,7 +600,7 @@ run_e2e_scripts() {
 }
 
 run_preview_handoff() {
-    local failed=0 server_started=0 preview_launcher_pid=0
+    local failed=0 server_started=0 preview_launcher_pid=0 preview_exit_cleanup_active=0
     preview_cleanup() {
         local exit_code="$1"
         if ((server_started == 1)); then
@@ -635,10 +635,18 @@ run_preview_handoff() {
     }
     preview_exit_cleanup() {
         local exit_code=$?
+        if ((preview_exit_cleanup_active == 1)); then
+            trap - EXIT INT TERM
+            exit "$exit_code"
+        fi
+        preview_exit_cleanup_active=1
         preview_shutdown_launcher TERM
-        trap - EXIT INT TERM
         preview_cleanup "$exit_code"
         exit_code=$?
+        # If the function reached EXIT with an owned server, preview_cleanup
+        # above is the final bounded attempt. Disable traps only after it has
+        # returned so normal-path failures get this EXIT retry exactly once.
+        trap - EXIT INT TERM
         exit "$exit_code"
     }
     preview_signal_cleanup() {

@@ -66,6 +66,15 @@ assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_LOG
 assert_contains "$SCRIPT" 'preview_launcher_pid=$!' 'preview 记录 wrapper child PID'
 assert_contains "$SCRIPT" 'kill "-$signal_name" "$preview_launcher_pid"' 'preview signal cleanup 转发到 wrapper child'
 assert_contains "$SCRIPT" 'if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"' 'preview 仅在 stop 成功分支处理 authority cleanup'
+assert_contains "$SCRIPT" 'preview_exit_cleanup_active=1' 'preview EXIT cleanup 有重入保护'
+EXIT_CLEANUP_CALL_LINE="$(grep -n 'preview_cleanup "\$exit_code"' "$SCRIPT" | head -1 | cut -d: -f1)"
+EXIT_TRAP_DISABLE_LINE="$(grep -n 'trap - EXIT INT TERM' "$SCRIPT" | tail -1 | cut -d: -f1)"
+if [[ -n "$EXIT_CLEANUP_CALL_LINE" && -n "$EXIT_TRAP_DISABLE_LINE" \
+    && "$EXIT_CLEANUP_CALL_LINE" -lt "$EXIT_TRAP_DISABLE_LINE" ]]; then
+    pass 'preview EXIT cleanup 在 stop 尝试后才解除 trap'
+else
+    fail 'preview EXIT cleanup 不得在 stop 尝试前解除 trap'
+fi
 START_LINE="$(grep -n 'bash "\$ROOT/scripts/preview/run-server-headless.sh" --debug &' "$SCRIPT" | cut -d: -f1)"
 EXIT_TRAP_LINE="$(grep -n 'trap preview_exit_cleanup EXIT' "$SCRIPT" | cut -d: -f1)"
 if [[ -n "$START_LINE" && -n "$EXIT_TRAP_LINE" && "$EXIT_TRAP_LINE" -lt "$START_LINE" ]]; then
