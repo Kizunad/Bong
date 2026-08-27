@@ -619,6 +619,12 @@ run_preview_handoff() {
         [[ -f "$preview_launch_state_file" && ! -L "$preview_launch_state_file" ]] \
             && grep -Fxq 'state=authority_published' "$preview_launch_state_file"
     }
+    preview_authority_record_present() {
+        # Presence only grants a cleanup attempt. stop-server-headless.sh is
+        # still the authority boundary: it validates PID/starttime/executable
+        # identity before sending any signal or removing the record.
+        [[ -f "$REPORT_DIR/preview-server.pid" && ! -L "$REPORT_DIR/preview-server.pid" ]]
+    }
     preview_clear_launch_state() {
         if [[ ! -e "$preview_launch_state_file" && ! -L "$preview_launch_state_file" ]]; then
             return 0
@@ -635,6 +641,12 @@ run_preview_handoff() {
         if ((server_started == 0)) && preview_launch_state_published; then
             # The wrapper may have returned non-zero after publishing its
             # authority.  The marker is the explicit ownership handoff.
+            server_started=1
+        elif ((server_started == 0)) && preview_authority_record_present; then
+            # If publishing that marker itself failed, the wrapper may still
+            # have retained a matching authority record after an unconfirmed
+            # rollback.  This is only a cleanup candidate; the stop command
+            # performs the identity-safe validation and fails closed.
             server_started=1
         fi
         if ((server_started == 1)); then

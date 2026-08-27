@@ -381,7 +381,25 @@ bong_server_launch_preview_locked() {
   # server rather than leaving an authority the outer runner cannot discover.
   if ! bong_server_publish_launch_state; then
     echo "❌ 无法发布 preview launch authority handoff" >&2
-    bong_server_post_publication_rollback "preview launch-state publication rollback" || true
+    if bong_server_post_publication_rollback "preview launch-state publication rollback"; then
+      return 1
+    else
+      status=$?
+    fi
+    # The parent runner cannot infer ownership from a non-zero wrapper status.
+    # If identity-safe rollback is not confirmed, make one explicit handoff
+    # retry while the matching PID authority is still retained.  The retry is
+    # never allowed to overwrite an existing marker; the outer runner also
+    # has a record-based, identity-safe stop fallback for this fail-closed case.
+    echo "❌ launch-state publication rollback 未确认 (status=$status)；保留 authority 供父 runner identity-safe 重试清理" >&2
+    if [ -n "$LAUNCH_STATE_FILE" ] && [ -e "$PID_FILE" ] && [ ! -L "$PID_FILE" ] \
+        && [ ! -e "$LAUNCH_STATE_FILE" ] && [ ! -L "$LAUNCH_STATE_FILE" ]; then
+      if bong_server_publish_launch_state; then
+        echo "⚠ 已补发 preview launch authority handoff；父 runner 必须执行 stop 重试" >&2
+      else
+        echo "❌ 无法补发 preview launch authority handoff；父 runner 必须按 authority record identity-safe 清理" >&2
+      fi
+    fi
     return 1
   fi
   # The record is now published. Keep the cancellation traps installed until
