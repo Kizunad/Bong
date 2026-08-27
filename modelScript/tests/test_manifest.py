@@ -338,6 +338,30 @@ class RollCallTest(unittest.TestCase):
         self.assertIn("bone", rc.unseen_materials(),
                       "骨扣是唯一的 bone 件，删掉后材质普查必须报 bone 一次都没上镜")
 
+    def test_a_material_that_never_shows_counts_as_a_missing_item(self) -> None:
+        """回归（Kody #2104 抓到的）：未上镜的材质早就被 `lines()` 打成 `!` 红行，
+        但 `ok` / `report()` 不算它 —— 于是「报告是红的、退出码是 0」，
+        正是这套工具要治的那种假绿。
+
+        这里所有特征都过，只有一种清单里声明、模型里根本没有的材质缺席。
+        """
+        doc = json.loads(json.dumps({
+            "facing": "+z", "mirror_x": 8.0,
+            "materials": {**{k: list(v) for k, v in self.manifest.materials.items()},
+                          "ghost": [10, 250, 10]},
+            "features": {"bone_toggle": {"elements": ["bone_peg"],
+                                         "must_show_in": ["FRONT"], "min_px": 100}},
+        }))
+        rc = mf.roll_call(MODEL, mf.parse_manifest(doc))
+        self.assertEqual((), rc.missing, "特征一条不缺")
+        self.assertEqual(("ghost",), rc.unseen_materials())
+        self.assertFalse(rc.ok, "未上镜的材质必须算缺项，否则报告红而退出码绿")
+        self.assertEqual(1, rc.report(), "report() 的返回值就是 CLI 的退出码依据")
+        red = [ln for ln in rc.lines() if ln.startswith("!")]
+        self.assertTrue(any("ghost" in ln for ln in red))
+        self.assertTrue(any("材质没上镜" in ln for ln in red),
+                        f"总结行必须把材质缺席也算进去并标红：{red}")
+
     def test_a_feature_covering_the_whole_model_reports_the_silhouette(self) -> None:
         """边界：抽光了没法渲，得退回整幅剪影而不是崩掉。"""
         doc = {"facing": "+z", "features": {"everything": {"elements": [""],
@@ -382,6 +406,28 @@ class RollCallTest(unittest.TestCase):
 
 
 class CliTest(unittest.TestCase):
+    def test_cli_returns_one_when_only_a_material_is_off_camera(self) -> None:
+        import tomllib
+
+        doc = tomllib.loads(SHEET.read_bytes().decode())
+        doc["materials"]["ghost"] = [10, 250, 10]
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "Probe.manifest.toml"
+            sheet.write_text("\n".join(
+                ['facing = "+z"', "mirror_x = 8.0", f"size = {doc['size']}", "", "[materials]"]
+                + [f"{k} = {list(v)}" for k, v in doc["materials"].items()]
+                + ["", "[features]",
+                   'bone_toggle = { elements = ["bone_peg"], must_show_in = ["FRONT"], min_px = 100 }']
+            ))
+            argv = sys.argv
+            sys.argv = ["manifest.py", str(MODEL), "--manifest", str(sheet)]
+            try:
+                self.assertEqual(1, mf.main(),
+                                 "只有材质缺席时 CLI 也必须非零退出 —— 报告是红的，"
+                                 "退出码不能是绿的")
+            finally:
+                sys.argv = argv
+
     def test_cli_returns_zero_on_a_clean_asset(self) -> None:
         argv = sys.argv
         sys.argv = ["manifest.py", str(MODEL)]

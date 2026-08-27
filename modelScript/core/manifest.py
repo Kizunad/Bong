@@ -343,7 +343,12 @@ class RollCall:
 
     @property
     def ok(self) -> bool:
-        return all(v.ok for v in self.verdicts)
+        """未上镜的材质**算缺项**。
+
+        `lines()` 早就把它打成 `!` 红行了，如果 `ok` / `report()` 不算，就会出现
+        「报告是红的、退出码是 0」这种自相矛盾 —— 正是这套工具要治的假绿。
+        """
+        return all(v.ok for v in self.verdicts) and not self.unseen_materials()
 
     @property
     def missing(self) -> tuple[str, ...]:
@@ -366,16 +371,21 @@ class RollCall:
             out.append(("" if v.ok else "! ") + f"{v.key:<18}{v.count:>4}{cells}  {mark}")
         unseen = self.unseen_materials()
         if unseen:
-            out.append("! 材质一次都没上镜: " + ", ".join(unseen))
+            out.append("! 材质一次都没上镜: " + ", ".join(unseen)
+                       + "（要么它本就不该在清单里，要么该补一个看得见它的视角）")
         elif self.manifest.materials:
             out.append(f"材质全部上镜: {len(self.manifest.materials)} 种")
-        out.append(("" if self.ok else "! ") + f"→ {len(self.missing)} 处缺项")
+        tail = f"→ {len(self.missing)} 处缺项"
+        if unseen:
+            tail += f" + {len(unseen)} 种材质没上镜"
+        out.append(("" if self.ok else "! ") + tail)
         return out
 
     def report(self) -> int:
+        """打印报告，返回缺项数（CLI 据它定退出码）。"""
         for line in self.lines():
             print(line)
-        return len(self.missing)
+        return len(self.missing) + len(self.unseen_materials())
 
 
 def _foreground(img, bg) -> np.ndarray:

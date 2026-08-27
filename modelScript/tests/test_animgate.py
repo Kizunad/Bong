@@ -392,6 +392,31 @@ class InjectorTest(unittest.TestCase):
         with self.assertRaises(ag.AnimInjectionImpossible):
             ag.snap_chain_by(lambda t: {"a": (np.zeros(3), np.ones(3))}, "ghost")(0.0)
 
+    def test_injectors_accept_the_list_form_that_bone_boxes_actually_returns(self) -> None:
+        """回归（Kody #2104 抓到的）：`bone_boxes()` **默认逐件返回一串盒**，而两个
+        盒子类注入器早先写成 `alo, ahi = boxes[a]`，组里不止一件时抛
+        `ValueError: too many values to unpack` —— 于是 `self_test()` 当场崩掉，
+        而 self_test 正是用来证明门有鉴别力的那一步，它自己崩了就什么都证明不了。
+        """
+        def boxes(t):
+            return {"a": [(np.zeros(3), np.ones(3)),
+                          (np.array([1.0, 0, 0]), np.array([2.0, 1, 1])),
+                          (np.array([2.0, 0, 0]), np.array([3.0, 1, 1]))],
+                    "b": [(np.array([9.0, 0, 0]), np.array([10.0, 1, 1]))]}
+
+        moved = ag.overlap_by(boxes, "a", "b")(0.0)["a"]
+        self.assertEqual(3, len(moved), "整组三件都要跟着挪，不能只挪其中一件")
+        span_lo = np.min([b[0] for b in moved], axis=0)
+        span_hi = np.max([b[1] for b in moved], axis=0)
+        self.assertTrue(np.allclose((span_lo + span_hi) / 2, np.array([9.5, 0.5, 0.5])),
+                        "挪完整组的中心必须落在 b 组的中心上")
+
+        lifted = ag.snap_chain_by(boxes, "a", gap=3.0)(0.0)["a"]
+        self.assertEqual(3, len(lifted))
+        for (lo0, hi0), (lo1, hi1) in zip(boxes(0.0)["a"], lifted):
+            self.assertTrue(np.allclose(lo1 - lo0, (0.0, 3.0, 0.0)))
+            self.assertTrue(np.allclose(hi1 - hi0, (0.0, 3.0, 0.0)))
+
     def test_flatten_balance_keeps_the_sign_and_kills_the_peak(self) -> None:
         base = lambda t: 0.9 if t < 0.5 else None      # noqa: E731
         flat = ag.flatten_balance_by(base)
@@ -400,6 +425,48 @@ class InjectorTest(unittest.TestCase):
         self.assertLess(flat(0.1), ag.BALANCE_MIN)
         self.assertTrue(ag.gate_balance(base, n=20).ok)
         self.assertFalse(ag.gate_balance(flat, n=20).ok)
+
+
+class RealAdapterSelfTestTest(unittest.TestCase):
+    """端到端回归：用**真的** `bone_boxes` 适配器（默认逐件形式）驱动 self_test。
+
+    单元测试里各写各的 `boxes_at` 闭包返回单个盒，正好绕开了真实用法 —— 这个类专门
+    走文档推荐的那条路，把注入器和门接在一起跑一遍。
+    """
+
+    def setUp(self) -> None:
+        self.rig = FakeRig({
+            "leg1": ((0, 0, 0), (1, 2, 1)), "leg2": ((1, 0, 0), (2, 2, 1)),
+            "core1": ((2, 0, 0), (3, 2, 1)), "core2": ((3, 0, 0), (4, 2, 1)),
+            "head1": ((4, 0, 0), (5, 2, 1)), "head2": ((5, 0, 0), (6, 2, 1)),
+        })
+        groups = {"leg": ("leg1", "leg2"), "core": ("core1", "core2"),
+                  "head": ("head1", "head2")}
+        self.gates = ag.AnimGates(
+            "真适配器 / real",
+            boxes_at=lambda t: ag.bone_boxes(self.rig, FakePose(), groups),
+            overlap_pairs=(("leg", "head"),),
+            chains={"躯干": ["leg", "core", "head"]},
+            chain_probe="head",
+            frames=8,
+        )
+
+    def test_bone_boxes_really_hands_back_a_list_per_group(self) -> None:
+        boxes = ag.bone_boxes(self.rig, FakePose(), {"leg": ("leg1", "leg2")})
+        self.assertIsInstance(boxes["leg"], list)
+        self.assertEqual(2, len(boxes["leg"]))
+
+    def test_both_box_gates_are_clean_on_the_laid_out_rig(self) -> None:
+        self.assertEqual(["逐帧互穿", "链断裂"], [g.label for g in self.gates.run_all()])
+        for g in self.gates.run_all():
+            self.assertTrue(g.ok, f"{g.label} 不该报：{g.detail}")
+
+    def test_self_test_runs_to_completion_and_finds_both_gates_discriminating(self) -> None:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            broken = self.gates.self_test()
+        self.assertEqual(0, broken, buf.getvalue())
+        self.assertIn("2/2 道门有鉴别力", buf.getvalue())
 
 
 class AnimGatesTest(unittest.TestCase):
