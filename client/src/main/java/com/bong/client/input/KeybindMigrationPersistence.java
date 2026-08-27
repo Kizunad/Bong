@@ -41,7 +41,7 @@ final class PropertiesKeybindMigrationPersistence implements KeybindMigrationPer
         try (Reader reader = Files.newBufferedReader(markerFile)) {
             markers.load(reader);
             return "true".equals(markers.getProperty(property));
-        } catch (IOException exception) {
+        } catch (IOException | IllegalArgumentException exception) {
             throw new IllegalStateException(
                 "cannot read keybinding migration marker: " + markerFile, exception
             );
@@ -55,7 +55,7 @@ final class PropertiesKeybindMigrationPersistence implements KeybindMigrationPer
         if (Files.isRegularFile(markerFile)) {
             try (Reader reader = Files.newBufferedReader(markerFile)) {
                 markers.load(reader);
-            } catch (IOException exception) {
+            } catch (IOException | IllegalArgumentException exception) {
                 throw new IllegalStateException(
                     "cannot update keybinding migration marker: " + markerFile, exception
                 );

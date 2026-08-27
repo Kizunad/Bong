@@ -115,9 +115,9 @@ class R7InventoryContractTest {
         // 主线文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
         // 工程，不随包发布。本分支再新增 KeybindMigrationPersistence 与
         // KeybindMigrationService，并修改 Forge、撤离和键位注册接线，文件数 2175 → 2177；
-        // 用于迁移旧 options.txt 的 U 键；marker 写失败时回滚改绑并继续客户端启动。
+        // 用于迁移旧 options.txt 的 U 键；marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
         assertEquals(
-            "beec27aff8e09c96be340549fe428aaedd16c830e6f74695a5487b290324ac8e",
+            "7a02c717940a91838a6d1dd88c620ffd0a5593dc6464aac930e7605ee43d41a2",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

@@ -44,4 +44,29 @@ class KeybindMigrationPersistenceTest {
         assertThrows(NullPointerException.class, () -> persistence.markCompleted(null));
         assertThrows(IllegalArgumentException.class, () -> persistence.markCompleted("\t"));
     }
+
+    @Test
+    void malformedPropertiesFailClosedAsLifecycleSafePersistenceErrors() throws Exception {
+        Path marker = Files.createTempDirectory("bong-keybind-marker-malformed-")
+            .resolve("migrations.properties");
+        Files.writeString(marker, "completed.broken=\\u12\n");
+        KeybindMigrationPersistence persistence =
+            new PropertiesKeybindMigrationPersistence(marker);
+
+        IllegalStateException readFailure = assertThrows(IllegalStateException.class,
+            () -> persistence.hasCompleted("forge-open-screen-u-v1"));
+        assertTrue(readFailure.getMessage().contains("cannot read keybinding migration marker"),
+            "malformed marker reads must use the lifecycle-safe persistence error contract");
+        assertTrue(readFailure.getCause() instanceof IllegalArgumentException,
+            "the malformed Unicode escape must remain available as the root cause");
+
+        IllegalStateException updateFailure = assertThrows(IllegalStateException.class,
+            () -> persistence.markCompleted("forge-open-screen-u-v1"));
+        assertTrue(updateFailure.getMessage().contains("cannot update keybinding migration marker"),
+            "updating a malformed marker must fail without replacing its existing contents");
+        assertTrue(updateFailure.getCause() instanceof IllegalArgumentException,
+            "the update path must preserve the malformed marker parse failure as its cause");
+        assertTrue(Files.readString(marker).equals("completed.broken=\\u12\n"),
+            "a rejected malformed marker must not be partially overwritten");
+    }
 }
