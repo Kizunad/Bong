@@ -600,28 +600,54 @@ run_e2e_scripts() {
 }
 
 run_preview_handoff() {
-    local failed=0 server_started=0
+    local failed=0 server_started=0 preview_launcher_pid=0
     preview_cleanup() {
         local exit_code="$1"
-        trap - EXIT INT TERM
         if ((server_started == 1)); then
-            if ! BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid" \
+            if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid" \
                 bash "$ROOT/scripts/preview/stop-server-headless.sh"; then
-                printf 'preview cleanup: stop-server-headless.sh 未确认成功\n' >&2
+                server_started=0
+                trap - EXIT INT TERM
+            else
+                printf 'preview cleanup: stop-server-headless.sh 未确认成功；保留清理状态\n' >&2
                 exit_code=1
             fi
-            server_started=0
+        else
+            trap - EXIT INT TERM
         fi
         return "$exit_code"
     }
+    preview_shutdown_launcher() {
+        local signal_name="$1" launcher_status=0
+        if ((preview_launcher_pid > 1)); then
+            kill "-$signal_name" "$preview_launcher_pid" 2>/dev/null || true
+            if wait "$preview_launcher_pid"; then
+                server_started=1
+            else
+                launcher_status=$?
+            fi
+            preview_launcher_pid=0
+            if ((launcher_status != 0)); then
+                printf 'preview cleanup: run-server-headless.sh 在启动阶段以 exit %d 结束\n' \
+                    "$launcher_status" >&2
+            fi
+        fi
+    }
     preview_exit_cleanup() {
         local exit_code=$?
+        preview_shutdown_launcher TERM
+        trap - EXIT INT TERM
         preview_cleanup "$exit_code"
         exit_code=$?
         exit "$exit_code"
     }
     preview_signal_cleanup() {
         local exit_code="$1"
+        if [[ "$exit_code" -eq 130 ]]; then
+            preview_shutdown_launcher INT
+        else
+            preview_shutdown_launcher TERM
+        fi
         preview_cleanup "$exit_code"
         exit_code=$?
         exit "$exit_code"
@@ -638,7 +664,10 @@ run_preview_handoff() {
     trap preview_exit_cleanup EXIT
     trap 'preview_signal_cleanup 130' INT
     trap 'preview_signal_cleanup 143' TERM
-    if bash "$ROOT/scripts/preview/run-server-headless.sh" --debug; then server_started=1; else failed=1; fi
+    bash "$ROOT/scripts/preview/run-server-headless.sh" --debug &
+    preview_launcher_pid=$!
+    if wait "$preview_launcher_pid"; then server_started=1; else failed=1; fi
+    preview_launcher_pid=0
     if ((server_started == 1)); then
         (
             export JAVA_HOME="$JAVA17_HOME"

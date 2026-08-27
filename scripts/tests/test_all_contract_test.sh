@@ -63,7 +63,10 @@ assert_contains "$SCRIPT" "trap 'preview_signal_cleanup 143' TERM" 'preview 注�
 assert_contains "$SCRIPT" 'stop-server-headless.sh' 'preview cleanup 调用身份安全停服 wrapper'
 assert_contains "$SCRIPT" 'BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log"' 'preview server 日志进入 run-private 目录'
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_LOG_FILE:-/tmp/bong-preview-server.log' 'preview wrapper 保留可覆盖的历史默认日志路径'
-START_LINE="$(grep -n 'if bash "\$ROOT/scripts/preview/run-server-headless.sh" --debug' "$SCRIPT" | cut -d: -f1)"
+assert_contains "$SCRIPT" 'preview_launcher_pid=$!' 'preview 记录 wrapper child PID'
+assert_contains "$SCRIPT" 'kill "-$signal_name" "$preview_launcher_pid"' 'preview signal cleanup 转发到 wrapper child'
+assert_contains "$SCRIPT" 'if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"' 'preview 仅在 stop 成功分支处理 authority cleanup'
+START_LINE="$(grep -n 'bash "\$ROOT/scripts/preview/run-server-headless.sh" --debug &' "$SCRIPT" | cut -d: -f1)"
 EXIT_TRAP_LINE="$(grep -n 'trap preview_exit_cleanup EXIT' "$SCRIPT" | cut -d: -f1)"
 if [[ -n "$START_LINE" && -n "$EXIT_TRAP_LINE" && "$EXIT_TRAP_LINE" -lt "$START_LINE" ]]; then
     pass 'preview 在 server 启动前注册 cleanup trap，覆盖启动取消窗口'
