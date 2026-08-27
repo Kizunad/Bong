@@ -571,8 +571,8 @@ run_scripts_contract() {
 run_e2e_scripts() {
     local failed=0 e2e_script=""
     for e2e_script in "$ROOT/scripts/smoke-test-e2e.sh" "$ROOT/scripts/bot-e2e.sh" "$ROOT/scripts/e2e-chat-signal-window.sh"; do
-        if [[ ! -x "$e2e_script" ]]; then
-            printf 'e2e script 不存在或不可执行：%s\n' "$e2e_script" >&2
+        if [[ ! -r "$e2e_script" ]]; then
+            printf 'e2e script 不存在或不可读：%s\n' "$e2e_script" >&2
             failed=1
             continue
         fi

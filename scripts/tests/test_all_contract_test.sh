@@ -150,6 +150,20 @@ else
     pass 'unit client 不偷偷追加 build'
 fi
 
+for e2e_script in smoke-test-e2e.sh bot-e2e.sh e2e-chat-signal-window.sh; do
+    printf '#!/usr/bin/env bash\nprintf '\''e2e stub %s\\n'\'' >>"$FIXTURE_LOG"\n' "$e2e_script" \
+        > "$FIXTURE/scripts/$e2e_script"
+    chmod 0644 "$FIXTURE/scripts/$e2e_script"
+done
+E2E_REPORT="$SANDBOX/e2e-report"
+run_capture "$SANDBOX/e2e.out" "$SANDBOX/e2e.err" \
+    env PATH="$FIXTURE/bin:/usr/bin:/bin" FIXTURE_LOG="$FIXTURE_LOG" \
+    /bin/bash "$FIXTURE/scripts/test-all.sh" \
+    --profile e2e --suite scripts --report-dir "$E2E_REPORT"
+assert_rc 0 'e2e 可调用既有但非 executable-bit 的 bash 脚本'
+assert_contains "$E2E_REPORT/scripts/status" 'PASS' 'e2e suite 成功写入 status'
+assert_contains "$FIXTURE_LOG" 'e2e stub bot-e2e.sh' 'e2e 按既有脚本顺序调用 bot 入口'
+
 BAD_FIXTURE="$SANDBOX/bad-fixture"
 mkdir -p "$BAD_FIXTURE/scripts" "$BAD_FIXTURE/server/tests" "$BAD_FIXTURE/client" \
     "$BAD_FIXTURE/agent/packages/schema" "$BAD_FIXTURE/agent/packages/tiandao" \
