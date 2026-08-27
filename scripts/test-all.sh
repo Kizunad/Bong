@@ -600,17 +600,19 @@ run_e2e_scripts() {
 }
 
 run_preview_handoff() {
-    local failed=0 server_started=0
+    local failed=0 server_started=0 preview_start_owned=0
     preview_cleanup() {
         local exit_code="$1"
         trap - EXIT INT TERM
-        if ((server_started == 1)); then
+        if ((server_started == 1 || preview_start_owned == 1)) \
+            && { [[ -e "$REPORT_DIR/preview-server.pid" ]] || [[ -L "$REPORT_DIR/preview-server.pid" ]]; }; then
             if ! BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid" \
                 bash "$ROOT/scripts/preview/stop-server-headless.sh"; then
                 printf 'preview cleanup: stop-server-headless.sh 未确认成功\n' >&2
                 exit_code=1
             fi
             server_started=0
+            preview_start_owned=0
         fi
         return "$exit_code"
     }
@@ -631,11 +633,17 @@ run_preview_handoff() {
     export BONG_PREVIEW_SERVER=127.0.0.1:25565
     export BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"
     export BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log"
+    if [[ ! -e "$BONG_PREVIEW_PID_FILE" && ! -L "$BONG_PREVIEW_PID_FILE" ]]; then
+        preview_start_owned=1
+    fi
+    # Install cleanup before launch: run-server-headless has its own bounded
+    # launch rollback, while this outer trap covers cancellation after the
+    # authority record is published but before the wrapper returns.
+    trap preview_exit_cleanup EXIT
+    trap 'preview_signal_cleanup 130' INT
+    trap 'preview_signal_cleanup 143' TERM
     if bash "$ROOT/scripts/preview/run-server-headless.sh" --debug; then server_started=1; else failed=1; fi
     if ((server_started == 1)); then
-        trap preview_exit_cleanup EXIT
-        trap 'preview_signal_cleanup 130' INT
-        trap 'preview_signal_cleanup 143' TERM
         (
             export JAVA_HOME="$JAVA17_HOME"
             export PATH="$JAVA17_HOME/bin:$PATH"
