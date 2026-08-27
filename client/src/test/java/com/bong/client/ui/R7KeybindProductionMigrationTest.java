@@ -163,6 +163,46 @@ class R7KeybindProductionMigrationTest {
     }
 
     @Test
+    void voidActionLegacyMigrationIsRegisteredBeforeItsEndTickConsumer() throws IOException {
+        String source = R7SourceScan.read(CLIENT_ROOT.resolve(
+            "cultivation/voidaction/VoidActionScreenBootstrap.java"
+        ));
+        int lifecycleRegistration = source.indexOf(
+            "ClientLifecycleEvents.CLIENT_STARTED.register(VoidActionScreenBootstrap::migrateLegacyBinding)"
+        );
+        int endTickRegistration = source.indexOf(
+            "ClientTickEvents.END_CLIENT_TICK.register(VoidActionScreenBootstrap::onEndClientTick)"
+        );
+
+        assertTrue(lifecycleRegistration >= 0,
+            "VoidAction 必须在客户端首个 tick 前注册 O 存量键位迁移回调");
+        assertTrue(endTickRegistration > lifecycleRegistration,
+            "VoidAction 的旧 O 键迁移接线必须先于 wasPressed 消费回调声明");
+        assertTrue(source.contains("migrationService().migrateOnce("),
+            "VoidAction 必须通过 input 应用服务编排一次性存量迁移");
+        assertTrue(source.contains("BongKeybindRegistry.global().migrateLegacyBoundKey("),
+            "VoidAction 迁移 action 必须继续通过按 translation key 的 registry seam 改绑");
+        assertTrue(source.contains("LEGACY_MIGRATION_ID")
+                && source.contains("void-action-open-screen-o-v1"),
+            "VoidAction 的存量迁移 marker 必须带稳定版本 id");
+        assertTrue(source.contains("KeybindMigrationService.clientConfig()"),
+            "VoidAction 必须依赖迁移应用服务，不能自行编排 marker 状态");
+        assertFalse(source.contains("KeybindMigrationPersistence")
+                || source.contains("FabricLoader")
+                || source.contains("getConfigDir()"),
+            "VoidAction bootstrap 不得依赖迁移持久化接口或文件存储细节");
+        assertTrue(source.contains("client.options::setKeyCode"),
+            "VoidAction 迁移必须通过 GameOptions 持久化 UNKNOWN");
+        assertTrue(source.contains("client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY)")
+                && source.contains("KeyBinding.updateKeysByCode()"),
+            "VoidAction marker 写失败时必须恢复旧 O 并刷新物理索引");
+        assertTrue(source.contains("GLFW.GLFW_KEY_O"),
+            "VoidAction 迁移必须只处理旧默认 O，不覆盖玩家自定义键位");
+        assertTrue(source.contains("catch (IllegalStateException exception)"),
+            "VoidAction CLIENT_STARTED 边界必须捕获 marker I/O 故障");
+    }
+
+    @Test
     void theOUConflictClusterConvergesThroughRegistryRulesAndUnknownIsUnbound() {
         BongKeybindRegistry registry = testRegistry();
         registry.register(spec("forge.open_screen", "key.r7.forge", GLFW.GLFW_KEY_U));
