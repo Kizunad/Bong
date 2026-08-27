@@ -72,7 +72,7 @@ bong_server_launch_record_matches() {
 
 publish_launch_handoff() {
   local handoff_file="$1" expected_state="$2"
-  local directory record_directory temporary
+  local directory record_directory temporary status
 
   [ -n "$handoff_file" ] || return 0
   directory="$(dirname -- "$handoff_file")"
@@ -99,16 +99,42 @@ publish_launch_handoff() {
     return 1
   fi
   bong_server_validate_pid_record_file "$temporary" || { rm -f -- "$temporary"; return 1; }
-  # The destination was checked above only for diagnostics.  Exclusive hard
-  # linking is the publication gate: a concurrent invocation that wins the
-  # destination cannot be overwritten by this launch, and a symlink/directory
-  # substitution is rejected instead of being followed.
-  if ! ln -T -- "$temporary" "$handoff_file"; then
+  # The destination was checked above only for diagnostics.  renameat2 with
+  # RENAME_NOREPLACE is the publication gate: it creates one final directory
+  # entry atomically, never overwrites a concurrent destination, and leaves no
+  # transient two-link handoff for readers that enforce links=1.
+  if python3 - "$temporary" "$handoff_file" <<'PY'
+import ctypes
+import errno
+import os
+import sys
+
+source = os.fsencode(sys.argv[1])
+destination = os.fsencode(sys.argv[2])
+libc = ctypes.CDLL(None, use_errno=True)
+try:
+    renameat2 = libc.renameat2
+except AttributeError:
+    sys.exit(1)
+renameat2.argtypes = [
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_uint,
+]
+renameat2.restype = ctypes.c_int
+if renameat2(-100, source, -100, destination, 1) != 0:
+    sys.exit(17 if ctypes.get_errno() == errno.EEXIST else 1)
+PY
+  then
+    :
+  else
+    status=$?
     rm -f -- "$temporary"
-    echo "❌ Preview launch handoff 已存在或无法独占发布: $handoff_file" >&2
+    echo "❌ Preview launch handoff 已存在或无法独占发布 (status=$status): $handoff_file" >&2
     return 1
   fi
-  rm -f -- "$temporary" || return 1
 }
 
 bong_server_publish_launch_identity() {
