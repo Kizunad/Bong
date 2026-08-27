@@ -67,6 +67,14 @@ assert_contains "$SCRIPT" 'preview_launcher_pid=$!' 'preview 记录 wrapper chil
 assert_contains "$SCRIPT" 'kill "-$signal_name" "$preview_launcher_pid"' 'preview signal cleanup 转发到 wrapper child'
 assert_contains "$SCRIPT" 'if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"' 'preview 仅在 stop 成功分支处理 authority cleanup'
 assert_contains "$SCRIPT" 'preview_exit_cleanup_active=1' 'preview EXIT cleanup 有重入保护'
+assert_contains "$SCRIPT" 'BONG_PREVIEW_LAUNCH_STATE_FILE="$preview_launch_state_file"' 'preview 显式传递 authority handoff 状态文件'
+assert_contains "$SCRIPT" 'if preview_launch_state_published; then' 'preview 非零 wrapper 仍识别已发布 authority'
+assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'bong_server_publish_launch_state' 'preview wrapper 发布 authority handoff marker'
+if grep -Fq 'local failed=0 server_started=0 preview_launcher_pid=0' "$SCRIPT"; then
+    fail 'preview cleanup 状态不得在管道函数中声明为局部变量'
+else
+    pass 'preview cleanup 状态跨越管道函数返回保持可用'
+fi
 if awk '
     /^    preview_exit_cleanup\(\) \{/ { in_cleanup=1; next }
     in_cleanup && /^    preview_signal_cleanup\(\) \{/ {
@@ -245,6 +253,135 @@ run_capture "$SANDBOX/preview-tool.out" "$SANDBOX/preview-tool.err" \
 assert_rc 2 'preview 缺 xvfb-run 以明确的前置失败码返回'
 assert_contains "$PREVIEW_TOOL_REPORT/scripts/status" 'SKIP' 'preview 缺 xvfb-run 状态为 SKIP'
 assert_contains "$PREVIEW_TOOL_REPORT/scripts/stderr.log" '需要 xvfb-run' 'preview 缺 xvfb-run 原因写入报告'
+
+# wrapper 已发布 authority 后非零退出时，外层必须仍调用 stop；同时不能把
+# 「需要清理」误当成「已 ready」而启动客户端。这个 fixture 只模拟 runner
+# contract，不启动真实 server/Gradle/Redis/LLM。
+PREVIEW_AUTHORITY_FIXTURE="$SANDBOX/preview-authority-fixture"
+mkdir -p "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview" \
+    "$PREVIEW_AUTHORITY_FIXTURE/client/src/gametest" \
+    "$PREVIEW_AUTHORITY_FIXTURE/raster" \
+    "$PREVIEW_AUTHORITY_FIXTURE/agent/packages/schema/tests" \
+    "$PREVIEW_AUTHORITY_FIXTURE/agent/packages/tiandao/tests" \
+    "$PREVIEW_AUTHORITY_FIXTURE/scripts/tests" \
+    "$PREVIEW_AUTHORITY_FIXTURE/server/tests" \
+    "$PREVIEW_AUTHORITY_FIXTURE/bin"
+cp "$SCRIPT" "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh"
+cp "$ROOT/scripts/test-all-owners.tsv" "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all-owners.tsv"
+cp "$FIXTURE/scripts/build-token.sh" "$PREVIEW_AUTHORITY_FIXTURE/scripts/build-token.sh"
+chmod +x "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh"
+touch "$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
+    "$PREVIEW_AUTHORITY_FIXTURE/raster/focus-layout-preview.png" \
+    "$PREVIEW_AUTHORITY_FIXTURE/raster/focus-surface-preview.png" \
+    "$PREVIEW_AUTHORITY_FIXTURE/client/gradlew"
+cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/run-server-headless.sh" <<'EOF'
+#!/usr/bin/env bash
+set -u
+printf 'state=authority_published\n' > "$BONG_PREVIEW_LAUNCH_STATE_FILE"
+printf 'pid=4242\n' > "$BONG_PREVIEW_PID_FILE"
+if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == success ]]; then
+    exit 0
+fi
+exit 23
+EOF
+cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/stop-server-headless.sh" <<'EOF'
+#!/usr/bin/env bash
+set -u
+printf 'stop\n' >> "$PREVIEW_STOP_LOG"
+if [[ -n "${PREVIEW_STOP_COUNT_FILE:-}" ]]; then
+    count=0
+    [[ ! -f "$PREVIEW_STOP_COUNT_FILE" ]] || read -r count < "$PREVIEW_STOP_COUNT_FILE"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$PREVIEW_STOP_COUNT_FILE"
+    if [[ "${PREVIEW_STOP_FAIL_ONCE:-0}" == 1 && "$count" -eq 1 ]]; then
+        exit 17
+    fi
+fi
+rm -f -- "$BONG_PREVIEW_PID_FILE" "$BONG_PREVIEW_LAUNCH_STATE_FILE"
+exit 0
+EOF
+cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/validate_snapshots.py" <<'EOF'
+#!/usr/bin/env python3
+raise SystemExit(0)
+EOF
+cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/compose_grid.py" <<'EOF'
+#!/usr/bin/env python3
+raise SystemExit(0)
+EOF
+cat > "$PREVIEW_AUTHORITY_FIXTURE/bin/java" <<'EOF'
+#!/usr/bin/env bash
+printf 'openjdk version "17.0.10"\n' >&2
+EOF
+cat > "$PREVIEW_AUTHORITY_FIXTURE/bin/xvfb-run" <<'EOF'
+#!/usr/bin/env bash
+printf 'client-preview-called\n' >> "$PREVIEW_STOP_LOG"
+exit 0
+EOF
+for tool in cargo rustc; do
+    ln -s "$(command -v "$tool")" "$PREVIEW_AUTHORITY_FIXTURE/bin/$tool"
+done
+chmod +x "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/run-server-headless.sh" \
+    "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/stop-server-headless.sh" \
+    "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/validate_snapshots.py" \
+    "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/compose_grid.py" \
+    "$PREVIEW_AUTHORITY_FIXTURE/scripts/build-token.sh" \
+    "$PREVIEW_AUTHORITY_FIXTURE/bin/java" "$PREVIEW_AUTHORITY_FIXTURE/bin/xvfb-run" \
+    "$PREVIEW_AUTHORITY_FIXTURE/client/gradlew"
+PREVIEW_AUTHORITY_REPORT="$SANDBOX/preview-authority-report"
+PREVIEW_STOP_LOG="$SANDBOX/preview-stop.log"
+run_capture "$SANDBOX/preview-authority.out" "$SANDBOX/preview-authority.err" \
+    env PATH="$PREVIEW_AUTHORITY_FIXTURE/bin:/usr/bin:/bin" \
+    BONG_TERRAIN_RASTER_DIR="$PREVIEW_AUTHORITY_FIXTURE/raster" \
+    BONG_CLIENT_PREVIEW_DIR="$PREVIEW_AUTHORITY_FIXTURE/client" \
+    BONG_PREVIEW_CONFIG="$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
+    PREVIEW_STOP_LOG="$PREVIEW_STOP_LOG" \
+    /bin/bash "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_AUTHORITY_REPORT"
+assert_rc 1 'wrapper 非零但已发布 authority 时 preview 仍诚实失败'
+assert_contains "$PREVIEW_STOP_LOG" 'stop' 'wrapper 非零且有 authority 时外层重试 stop cleanup'
+if [[ ! -e "$PREVIEW_AUTHORITY_REPORT/preview-server.pid" ]] \
+    && [[ -z "$(find "$PREVIEW_AUTHORITY_REPORT" -maxdepth 1 -name '.preview-launch-*.state' -print -quit)" ]]; then
+    pass 'wrapper 非零 authority cleanup 后 PID/state 均清理'
+else
+    fail 'wrapper 非零 authority cleanup 遗留 PID/state'
+fi
+if grep -Fq 'client-preview-called' "$PREVIEW_STOP_LOG"; then
+    fail 'wrapper 非零 authority 不应被当成 ready 启动客户端'
+else
+    pass 'wrapper 非零 authority 不冒充 ready'
+fi
+
+# stop 首次失败后由 EXIT trap 重试时，cleanup 状态必须仍存在于管道子 shell；
+# 这是 Kody finding 的真实回归 pin，而不是只检查静态变量声明。
+PREVIEW_RETRY_REPORT="$SANDBOX/preview-retry-report"
+PREVIEW_RETRY_STOP_COUNT="$SANDBOX/preview-stop-count"
+run_capture "$SANDBOX/preview-retry.out" "$SANDBOX/preview-retry.err" \
+    env PATH="$PREVIEW_AUTHORITY_FIXTURE/bin:/usr/bin:/bin" \
+    BONG_TERRAIN_RASTER_DIR="$PREVIEW_AUTHORITY_FIXTURE/raster" \
+    BONG_CLIENT_PREVIEW_DIR="$PREVIEW_AUTHORITY_FIXTURE/client" \
+    BONG_PREVIEW_CONFIG="$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
+    PREVIEW_STOP_LOG="$PREVIEW_STOP_LOG" \
+    PREVIEW_STOP_COUNT_FILE="$PREVIEW_RETRY_STOP_COUNT" \
+    PREVIEW_STOP_FAIL_ONCE=1 PREVIEW_WRAPPER_MODE=success \
+    /bin/bash "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_RETRY_REPORT"
+assert_rc 1 'stop 首次失败仍保留 preview 的诚实非零结果'
+if [[ "$(cat "$PREVIEW_RETRY_STOP_COUNT")" -eq 2 ]]; then
+    pass 'stop 首次失败后 EXIT cleanup 使用持久状态完成第二次清理'
+else
+    fail "stop 首次失败后应调用两次 cleanup，实际 $(cat "$PREVIEW_RETRY_STOP_COUNT" 2>/dev/null || printf 0) 次"
+fi
+if [[ ! -e "$PREVIEW_RETRY_REPORT/preview-server.pid" ]] \
+    && [[ -z "$(find "$PREVIEW_RETRY_REPORT" -maxdepth 1 -name '.preview-launch-*.state' -print -quit)" ]]; then
+    pass 'EXIT cleanup retry 后不遗留 PID/state'
+else
+    fail 'EXIT cleanup retry 后遗留 PID/state'
+fi
+if grep -Fq 'unbound variable' "$SANDBOX/preview-retry.err"; then
+    fail 'EXIT cleanup retry 不得因管道函数局部变量失效而触发 unbound variable'
+else
+    pass 'EXIT cleanup retry 未触发局部变量失效异常'
+fi
 
 BAD_FIXTURE="$SANDBOX/bad-fixture"
 mkdir -p "$BAD_FIXTURE/scripts" "$BAD_FIXTURE/server/tests" "$BAD_FIXTURE/client" \

@@ -601,20 +601,55 @@ run_e2e_scripts() {
 }
 
 run_preview_handoff() {
-    local failed=0 server_started=0 preview_launcher_pid=0 preview_exit_cleanup_active=0
+    local failed=0
+    # run_suite executes this runner on the left side of a pipeline.  These
+    # cleanup variables must therefore survive the function return until the
+    # pipeline subshell fires its EXIT trap; making them local loses ownership
+    # exactly on the retry path.
+    server_started=0
+    preview_launcher_pid=0
+    preview_exit_cleanup_active=0
+    preview_launch_ready=0
+    preview_launch_state_file="$REPORT_DIR/.preview-launch-${BASHPID}.state"
+    if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]]; then
+        printf 'preview launch state 已存在，拒绝复用：%s\n' "$preview_launch_state_file" >&2
+        return 1
+    fi
+    preview_launch_state_published() {
+        [[ -f "$preview_launch_state_file" && ! -L "$preview_launch_state_file" ]] \
+            && grep -Fxq 'state=authority_published' "$preview_launch_state_file"
+    }
+    preview_clear_launch_state() {
+        if [[ ! -e "$preview_launch_state_file" && ! -L "$preview_launch_state_file" ]]; then
+            return 0
+        fi
+        if [[ -L "$preview_launch_state_file" || ! -f "$preview_launch_state_file" ]]; then
+            printf 'preview cleanup: launch state 不是安全普通文件，保留现场：%s\n' \
+                "$preview_launch_state_file" >&2
+            return 1
+        fi
+        rm -f -- "$preview_launch_state_file"
+    }
     preview_cleanup() {
         local exit_code="$1"
+        if ((server_started == 0)) && preview_launch_state_published; then
+            # The wrapper may have returned non-zero after publishing its
+            # authority.  The marker is the explicit ownership handoff.
+            server_started=1
+        fi
         if ((server_started == 1)); then
             if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid" \
                 bash "$ROOT/scripts/preview/stop-server-headless.sh"; then
                 server_started=0
-                trap - EXIT INT TERM
             else
                 printf 'preview cleanup: stop-server-headless.sh 未确认成功；保留清理状态\n' >&2
                 exit_code=1
             fi
-        else
+        fi
+        if ((server_started == 0)) && preview_clear_launch_state; then
             trap - EXIT INT TERM
+        elif ((server_started == 0)); then
+            exit_code=1
         fi
         return "$exit_code"
     }
@@ -624,10 +659,18 @@ run_preview_handoff() {
             kill "-$signal_name" "$preview_launcher_pid" 2>/dev/null || true
             if wait "$preview_launcher_pid"; then
                 server_started=1
+                preview_launch_ready=1
             else
                 launcher_status=$?
             fi
             preview_launcher_pid=0
+            if preview_launch_state_published; then
+                # A non-zero wrapper exit can still own the server record when
+                # its internal rollback was not confirmed.  Keep the outer
+                # stop retry eligible, but never run the client against a
+                # launch that did not return ready.
+                server_started=1
+            fi
             if ((launcher_status != 0)); then
                 printf 'preview cleanup: run-server-headless.sh 在启动阶段以 exit %d 结束\n' \
                     "$launcher_status" >&2
@@ -662,6 +705,7 @@ run_preview_handoff() {
     export BONG_PREVIEW_SERVER=127.0.0.1:25565
     export BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"
     export BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log"
+    export BONG_PREVIEW_LAUNCH_STATE_FILE="$preview_launch_state_file"
     # Install cleanup before launch. run-server-headless owns the pre-publication
     # launch rollback; this outer trap only stops a server after that wrapper has
     # returned success and this process has confirmed server_started=1. A PID
@@ -673,7 +717,7 @@ run_preview_handoff() {
     preview_launcher_pid=$!
     if wait "$preview_launcher_pid"; then server_started=1; else failed=1; fi
     preview_launcher_pid=0
-    if ((server_started == 1)); then
+    if ((server_started == 1 && preview_launch_ready == 1)); then
         (
             export JAVA_HOME="$JAVA17_HOME"
             export PATH="$JAVA17_HOME/bin:$PATH"
@@ -685,9 +729,7 @@ run_preview_handoff() {
     fi
     python3 "$ROOT/scripts/preview/validate_snapshots.py" --client-dir "$PREVIEW_CLIENT_DIR" --require-min-count 5 || failed=1
     python3 "$ROOT/scripts/preview/compose_grid.py" --client-dir "$PREVIEW_CLIENT_DIR" --raster-dir "$PREVIEW_RASTER_DIR" --out "$REPORT_DIR/preview-grid.png" || failed=1
-    if ((server_started == 1)); then
-        preview_cleanup 0 || failed=1
-    fi
+    preview_cleanup 0 || failed=1
     return "$failed"
 }
 

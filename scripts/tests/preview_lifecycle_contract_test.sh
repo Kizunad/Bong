@@ -106,8 +106,20 @@ fi
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
 : >"$TMP_ROOT/cargo-invocations.log"
+export BONG_PREVIEW_LAUNCH_STATE_FILE="$TMP_ROOT/runtime/launch.state"
 run_preview 5 >/dev/null
 [ -f "$BONG_PREVIEW_PID_FILE" ]
+# The wrapper must publish an explicit parent handoff only after the PID
+# authority exists.  The outer test-all runner uses this marker when the
+# wrapper later exits non-zero during post-publication rollback.
+[ -f "$BONG_PREVIEW_LAUNCH_STATE_FILE" ] || {
+  echo "successful preview did not publish the authority handoff marker" >&2
+  exit 1
+}
+grep -qx 'state=authority_published' "$BONG_PREVIEW_LAUNCH_STATE_FILE" || {
+  echo "authority handoff marker has no published state" >&2
+  exit 1
+}
 # review finding [3]：默认 release profile 的 build 必须是 'build --locked --release'。
 # 旧 harness 不观测 build 调用，跳过 build / 用错 profile（如省略 --locked、忽略
 # --release）的实现照常绿。
@@ -143,6 +155,8 @@ listener_on_25565 || {
 }
 bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
+rm -f -- "$BONG_PREVIEW_LAUNCH_STATE_FILE"
+unset BONG_PREVIEW_LAUNCH_STATE_FILE
 # 同一契约的稳定态：一次成功停服后记录已清，再调 stop 必须仍返回 0（幂等 no-op）——
 # 回归成「无记录时返回错误」的实现此断言必红（review finding 31447830772 [major]）。
 if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \

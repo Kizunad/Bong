@@ -46,6 +46,42 @@ TARGET_ROOT="$(bong_scoped_cargo_target "$REPO_ROOT/server")" \
   || { echo "❌ 无法解析 checkout-scoped Cargo target" >&2; exit 1; }
 PID_FILE="${BONG_PREVIEW_PID_FILE:-$(bong_server_runtime_dir)/bong-preview-server.pid}"
 export BONG_SERVER_PID_FILE="$PID_FILE"
+# When the preview runner launches this wrapper asynchronously, a non-zero
+# wrapper exit cannot by itself tell the parent whether the PID authority was
+# already published.  The optional marker is a private, one-shot handoff: its
+# presence means the parent must retain cleanup ownership even when this
+# process exits non-zero.  Direct invocations do not opt into the marker.
+LAUNCH_STATE_FILE="${BONG_PREVIEW_LAUNCH_STATE_FILE:-}"
+
+bong_server_publish_launch_state() {
+  local directory record_directory temporary
+
+  [ -n "$LAUNCH_STATE_FILE" ] || return 0
+  directory="$(dirname -- "$LAUNCH_STATE_FILE")"
+  record_directory="$(dirname -- "$PID_FILE")"
+  [ "$directory" = "$record_directory" ] || {
+    echo "❌ Preview launch state 必须与 PID authority 位于同一目录" >&2
+    return 1
+  }
+  bong_server_validate_pid_record_parent "$LAUNCH_STATE_FILE" || {
+    echo "❌ Preview launch state 目录不安全: $directory" >&2
+    return 1
+  }
+  if [ -e "$LAUNCH_STATE_FILE" ] || [ -L "$LAUNCH_STATE_FILE" ]; then
+    echo "❌ Preview launch state 已存在，拒绝覆盖: $LAUNCH_STATE_FILE" >&2
+    return 1
+  fi
+  temporary="$(umask 077 && mktemp "$directory/.bong-preview-launch-state.XXXXXX")" || return 1
+  chmod 600 -- "$temporary" || { rm -f -- "$temporary"; return 1; }
+  if ! printf 'state=authority_published\npid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
+      "$SERVER_PID" "$SERVER_STARTTIME" "$SERVER_BINARY" "$SERVER_EXECUTABLE_IDENTITY" \
+      > "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  bong_server_validate_pid_record_file "$temporary" || { rm -f -- "$temporary"; return 1; }
+  mv -f -- "$temporary" "$LAUNCH_STATE_FILE" || { rm -f -- "$temporary"; return 1; }
+}
 
 # Launch phase is kept explicit so cancellation after authority publication cannot
 # be mistaken for the pre-publication, untracked-child case.  The post-publication
@@ -338,6 +374,14 @@ bong_server_launch_preview_locked() {
         bounded_cleanup_unconfirmed_launch "preview record-publish rollback"
         ;;
     esac
+    return 1
+  fi
+  # Publish the parent handoff only after the lifecycle record itself has been
+  # atomically published.  If this communication step fails, roll back the
+  # server rather than leaving an authority the outer runner cannot discover.
+  if ! bong_server_publish_launch_state; then
+    echo "❌ 无法发布 preview launch authority handoff" >&2
+    bong_server_post_publication_rollback "preview launch-state publication rollback" || true
     return 1
   fi
   # The record is now published. Keep the cancellation traps installed until
