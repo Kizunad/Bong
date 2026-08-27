@@ -2,6 +2,7 @@ package com.bong.client.forge.input;
 
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.tsy.ExtractStateStore;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
@@ -19,6 +20,14 @@ import java.util.Map;
  */
 public final class ForgeStartInputHandler {
     private ForgeStartInputHandler() {}
+
+    /**
+     * Forge global-open input policy. Extraction owns the shared legacy U path
+     * while active, so Forge must consume but not dispatch that queued press.
+     */
+    public static boolean shouldDispatchForgeOpen() {
+        return !ExtractStateStore.snapshot().extracting();
+    }
 
     /**
      * 起炉模式判定（渲染与输入门禁共用同一语义，review #1141 major 收口）：

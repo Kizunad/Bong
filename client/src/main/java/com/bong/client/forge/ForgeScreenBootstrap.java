@@ -2,7 +2,7 @@ package com.bong.client.forge;
 
 import com.bong.client.BongClient;
 import com.bong.client.input.KeybindMigrationService;
-import com.bong.client.tsy.ExtractStateStore;
+import com.bong.client.forge.input.ForgeStartInputHandler;
 import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -66,14 +66,10 @@ public final class ForgeScreenBootstrap {
         if (client == null || client.player == null) return;
         // Drain legacy U presses while extracting so a failed migration cannot replay Forge later.
         while (keyBinding().wasPressed()) {
-            if (shouldDispatchForgeOpen()) {
+            if (ForgeStartInputHandler.shouldDispatchForgeOpen()) {
                 requestOpenForgeScreen(client);
             }
         }
-    }
-
-    static boolean shouldDispatchForgeOpen() {
-        return !ExtractStateStore.snapshot().extracting();
     }
 
     private static KeybindMigrationService migrationService() {

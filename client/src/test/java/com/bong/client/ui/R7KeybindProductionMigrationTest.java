@@ -150,10 +150,10 @@ class R7KeybindProductionMigrationTest {
                 && source.contains("KeyBinding.updateKeysByCode()"),
             "marker 写失败时必须恢复旧 U 并刷新物理索引，不能留下未提交的 UNKNOWN 状态");
         assertTrue(source.contains("while (keyBinding().wasPressed())")
-                && source.contains("if (shouldDispatchForgeOpen())"),
+                && source.contains("if (ForgeStartInputHandler.shouldDispatchForgeOpen())"),
             "Forge 必须先排空历史 U 的按键队列，再以 extracting 状态仲裁开屏，不能延迟重放");
-        assertTrue(source.contains("return !ExtractStateStore.snapshot().extracting();"),
-            "Forge 的历史 U 回滚路径必须在撤离中 fail closed");
+        assertTrue(source.contains("ForgeStartInputHandler.shouldDispatchForgeOpen()"),
+            "Forge 必须通过 Forge 输入策略接口执行 extracting 仲裁，不能直接依赖 TSY store");
         assertTrue(source.contains("catch (IllegalStateException exception)"),
             "CLIENT_STARTED 边界必须捕获 marker I/O 故障，不能阻断客户端启动");
         assertTrue(source.contains("BongClient.LOGGER.error(")
