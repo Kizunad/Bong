@@ -164,6 +164,16 @@ assert_rc 0 'e2e 可调用既有但非 executable-bit 的 bash 脚本'
 assert_contains "$E2E_REPORT/scripts/status" 'PASS' 'e2e suite 成功写入 status'
 assert_contains "$FIXTURE_LOG" 'e2e stub bot-e2e.sh' 'e2e 按既有脚本顺序调用 bot 入口'
 
+PREVIEW_REPORT="$SANDBOX/preview-report"
+run_capture "$SANDBOX/preview.out" "$SANDBOX/preview.err" \
+    env -u BONG_TERRAIN_RASTER_DIR -u BONG_TERRAIN_RASTER_PATH \
+    -u BONG_CLIENT_PREVIEW_DIR PATH="$FIXTURE/bin:/usr/bin:/bin" \
+    /bin/bash "$FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_REPORT"
+assert_rc 1 'preview 缺外部 raster handoff 返回非零'
+assert_contains "$PREVIEW_REPORT/scripts/status" 'BLOCKED' 'preview 缺外部 raster 明确标记 BLOCKED'
+assert_contains "$PREVIEW_REPORT/scripts/stderr.log" '缺少 BONG_TERRAIN_RASTER' 'preview BLOCKED 原因指向外部输入'
+
 BAD_FIXTURE="$SANDBOX/bad-fixture"
 mkdir -p "$BAD_FIXTURE/scripts" "$BAD_FIXTURE/server/tests" "$BAD_FIXTURE/client" \
     "$BAD_FIXTURE/agent/packages/schema" "$BAD_FIXTURE/agent/packages/tiandao" \

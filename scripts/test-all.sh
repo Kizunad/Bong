@@ -400,27 +400,43 @@ preflight_suite() {
         scripts)
             if ! need_command bash || ! need_command python3; then
                 PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 bash/python3'
-            elif [[ ! -d "$ROOT/scripts/tests" ]]; then
-                PRECHECK_STATUS=SKIP; PRECHECK_REASON='scripts/tests 不存在'
-            elif [[ "$PROFILE" == contract || "$PROFILE" == full ]] \
-                && ! need_command zip; then
-                PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 zip（resourcepack contract 既有前置）'
-            elif [[ "$PROFILE" == contract || "$PROFILE" == full ]] \
-                && ! need_command gcc; then
-                PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 gcc（preview lifecycle contract 既有前置）'
-            elif [[ "$PROFILE" == contract || "$PROFILE" == full ]] \
-                && ! python3 -c 'import numpy; import PIL' >/dev/null 2>&1; then
-                PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 Python asset/model 依赖（numpy/Pillow）'
             elif [[ "$PROFILE" == preview ]]; then
-                if ! need_command cargo || ! need_command rustc || [[ ! -x "$ROOT/scripts/build-token.sh" ]]; then
+                # 先判定外部 handoff；缺 raster 必须是 BLOCKED，即使本机随后还缺
+                # Java/Cargo，也不能把“调用方没有输入”误报成普通工具 SKIP。
+                resolve_preview_inputs || true
+                if [[ "$PRECHECK_STATUS" != PASS ]]; then
+                    :
+                elif ! need_command cargo || ! need_command rustc || [[ ! -x "$ROOT/scripts/build-token.sh" ]]; then
                     PRECHECK_STATUS=SKIP; PRECHECK_REASON='preview 缺少 cargo/rustc 或 build-token.sh'
+                elif [[ ! -r "$ROOT/scripts/preview/run-server-headless.sh" \
+                    || ! -r "$ROOT/scripts/preview/stop-server-headless.sh" ]]; then
+                    PRECHECK_STATUS=SKIP; PRECHECK_REASON='preview handoff wrapper 不存在或不可读'
                 elif [[ ! -x "$ROOT/client/gradlew" ]]; then
                     PRECHECK_STATUS=SKIP; PRECHECK_REASON='preview 缺少 client/gradlew'
                 elif ! resolve_java17; then
                     PRECHECK_STATUS=SKIP; PRECHECK_REASON='preview 需要 Java 17'
-                else
-                    resolve_preview_inputs || true
                 fi
+            elif [[ "$PROFILE" == contract || "$PROFILE" == full ]]; then
+                if [[ ! -d "$ROOT/scripts/tests" ]]; then
+                    PRECHECK_STATUS=SKIP; PRECHECK_REASON='scripts/tests 不存在'
+                elif ! need_command zip; then
+                    PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 zip（resourcepack contract 既有前置）'
+                elif ! need_command gcc; then
+                    PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 gcc（preview lifecycle contract 既有前置）'
+                elif ! python3 -c 'import numpy; import PIL' >/dev/null 2>&1; then
+                    PRECHECK_STATUS=SKIP; PRECHECK_REASON='缺少 Python asset/model 依赖（numpy/Pillow）'
+                fi
+            elif [[ "$PROFILE" == e2e ]]; then
+                local e2e_path=""
+                for e2e_path in \
+                    "$ROOT/scripts/smoke-test-e2e.sh" \
+                    "$ROOT/scripts/bot-e2e.sh" \
+                    "$ROOT/scripts/e2e-chat-signal-window.sh"; do
+                    if [[ ! -r "$e2e_path" ]]; then
+                        PRECHECK_STATUS=SKIP; PRECHECK_REASON="e2e script 不存在或不可读：$e2e_path"
+                        break
+                    fi
+                done
             fi
             ;;
     esac
