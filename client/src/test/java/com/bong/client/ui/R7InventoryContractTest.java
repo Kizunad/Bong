@@ -124,8 +124,9 @@ class R7InventoryContractTest {
         // 本分支另新增 KeybindMigrationPersistence 与 KeybindMigrationService，并修改
         // Forge、撤离、T/L 入口和键位注册接线，文件数 2189 → 2191；旧 options.txt 的
         // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
+        // 随后主线 #2109 新增异兽刺骨甲的四个随包资源并更新 manifest，文件数 2191 → 2195。
         assertEquals(
-            "23ec4aae909b393314eb410bdea3ca1347a7a6735acd7d0a7583eb563c19e9b4",
+            "dc6c4a2f68d70adf174fda405db0f0fb19559e24087e2062df5b41566183686d",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
