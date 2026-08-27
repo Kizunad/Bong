@@ -286,6 +286,9 @@ touch "$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
 cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/run-server-headless.sh" <<'EOF'
 #!/usr/bin/env bash
 set -u
+if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == refuse_existing ]]; then
+    exit 1
+fi
 printf 'pid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' > "$BONG_PREVIEW_PID_FILE"
 if [[ "${PREVIEW_WRAPPER_MODE:-failure}" != failure_no_marker \
     && "${PREVIEW_WRAPPER_MODE:-failure}" != refuse_existing ]]; then
@@ -409,6 +412,9 @@ fi
 # code; reusing a report directory must therefore leave its authority alone.
 PREVIEW_REFUSAL_REPORT="$SANDBOX/preview-refusal-report"
 PREVIEW_REFUSAL_STOP_LOG="$SANDBOX/preview-refusal-stop.log"
+mkdir -p "$PREVIEW_REFUSAL_REPORT"
+printf 'pid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' \
+    > "$PREVIEW_REFUSAL_REPORT/preview-server.pid"
 run_capture "$SANDBOX/preview-refusal.out" "$SANDBOX/preview-refusal.err" \
     env PATH="$PREVIEW_AUTHORITY_FIXTURE/bin:/usr/bin:/bin" \
     BONG_TERRAIN_RASTER_DIR="$PREVIEW_AUTHORITY_FIXTURE/raster" \
