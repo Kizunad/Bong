@@ -82,6 +82,7 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
+from bot.scenarios import freshness_probe_paths as freshness_probe_scenario  # noqa: E402
 from bot.scenarios._rejection_helpers import (  # noqa: E402
     assert_no_gameplay_side_effect_since,
     assert_valid_request_still_works,
@@ -5092,6 +5093,55 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
+    def test_freshness_realm_settle_excludes_late_sync_but_keeps_probe_oracle_strict(self):
+        bot = _RejectionFakeBot([])
+        clock = 0.0
+        narration = _FakeEvent(
+            1.5,
+            "server_data",
+            {"payload_type": "narration", "payload": {"text": "境界同步旁白"}},
+        )
+        narration_injected = False
+
+        def monotonic() -> float:
+            return clock
+
+        def sleep(duration: float) -> None:
+            nonlocal clock, narration_injected
+            clock += duration
+            if not narration_injected and clock >= narration.t:
+                bot.events.append(narration)
+                narration_injected = True
+
+        with (
+            mock.patch.object(freshness_probe_scenario.time, "monotonic", side_effect=monotonic),
+            mock.patch.object(freshness_probe_scenario.time, "sleep", side_effect=sleep),
+        ):
+            anchor = freshness_probe_scenario._settle_realm_change(bot)
+
+        self.assertTrue(narration_injected, "测试必须让迟到 narration 落入 realm 同步排空期")
+        self.assertGreaterEqual(
+            clock,
+            narration.t + freshness_probe_scenario.SILENT_WINDOW,
+            "请求锚点前必须观察完整静默窗，不能在 0.5s 假静默后提前发送",
+        )
+        self.assertGreaterEqual(anchor, narration.t, "realm set 的迟到 narration 必须早于请求锚点")
+
+        bot.events.append(
+            _FakeEvent(
+                anchor + 0.1,
+                "server_data",
+                {"payload_type": "narration", "payload": {"text": "探针后旁白"}},
+            )
+        )
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                bot,
+                anchor,
+                "成功探针不得产生额外 narration",
+                (),
+            )
+
     def test_wait_keepalive_after_finds_later_keepalive(self):
         bot = _RejectionFakeBot([_FakeEvent(2.0, "keepalive", {"id": 7})])
         event = wait_keepalive_after(bot, after=1.0, timeout=1.0)

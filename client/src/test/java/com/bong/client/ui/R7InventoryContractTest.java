@@ -105,15 +105,17 @@ class R7InventoryContractTest {
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         //
-        // 2026-08-26 重新冻结（这就是上一句要求的那次"显式再确认"）：随包新增木棍的两条
-        // 玩家动画资产，client/src/main 下没有别的增删改。
+        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
+        // 矿脉反馈线程修复的 2170 文件基线上，主线随包新增木棍的两条玩家动画与背篓三份资源。
         //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
         //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        // 文件数 2169 → 2171；`git diff --name-status <base> -- client/src/main` 只有这两条
-        // A，无 M / D。生成器在 client/tools/gen_club_{smash,sweep}.py，属工具不随包发布，
-        // 因此不进本摘要——这条基线只管"发出去的字节"。
-        // 同时保留本分支的 Forge 旧默认 U 键迁移及 input 应用服务边界，避免历史
-        // options.txt 继续与撤离取消冲突，并确保 marker I/O 故障不阻断客户端启动。
+        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
+        //     + resources/assets/bong/geo/back_basket.geo.json
+        //     + resources/assets/bong/textures/entity/back_basket.png
+        // 主线文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
+        // 工程，不随包发布。本分支再新增 KeybindMigrationPersistence 与
+        // KeybindMigrationService，并修改 Forge、撤离和键位注册接线，文件数 2175 → 2177；
+        // 用于迁移旧 options.txt 的 U 键且确保 marker I/O 故障不阻断客户端启动。
         assertEquals(
             "2ab1445fe2e090b585f23d057636fd98923d524ada73ec1c76d4c182a74bf6e2",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
