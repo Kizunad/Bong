@@ -106,17 +106,19 @@ class R7InventoryContractTest {
         // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
         // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         //
-        // 2026-08-26 重新冻结（这就是上一句要求的那次"显式再确认"）：随包新增木棍的两条
-        // 玩家动画资产，client/src/main 下没有别的增删改。
+        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
+        // 矿脉反馈线程修复的 2170 文件基线上，随包新增木棍的两条玩家动画与背篓三份资源，
+        // client/src/main 下没有别的增删改。
         //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
         //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        // 文件数 2169 → 2171；`git diff --name-status <base> -- client/src/main` 只有这两条
-        // A，无 M / D。生成器在 client/tools/gen_club_{smash,sweep}.py，属工具不随包发布，
-        // 因此不进本摘要——这条基线只管"发出去的字节"。
+        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
+        //     + resources/assets/bong/geo/back_basket.geo.json
+        //     + resources/assets/bong/textures/entity/back_basket.png
+        // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
+        // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
         // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
-        // 最终摘要同时覆盖上述主线资产和本阶段所有 client/src/main 生产字节。
+        // 相对主线新增 14 个生产文件、修改 5 个且无删除，最终文件数 2175 → 2189。
         // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
-        // 本次重新冻结只包含 UiPreviewConfig 与 UiPreviewHarnessClient 两个生产 Java 文件。
         // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
         // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
         // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。

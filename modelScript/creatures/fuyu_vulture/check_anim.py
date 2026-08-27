@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
+import animgate  # noqa: E402
 from animkit import Pose, build_tracks  # noqa: E402
 from rig import SIDES, VultureRig, unfold_pose  # noqa: E402
 
@@ -56,22 +57,9 @@ FID_TOL = 0.8
 UNFOLD_TOL = 0.5
 
 
-def com(rig: VultureRig, pose: Pose) -> np.ndarray:
-    """质心近似：按 element 体积加权的形心。骨/羽密度当然不同，但这里只用来判"重心有
-    没有压到支撑脚那一侧"，方向对就够，不需要真密度。"""
-    W = rig.world(pose)
-    tot, acc = 0.0, np.zeros(3)
-    for n in rig.order:
-        for u in rig.bones[n].elements:
-            e = rig.elements.get(u)
-            if e is None:
-                continue
-            f, t = np.array(e["from"], float), np.array(e["to"], float)
-            vol = float(np.prod(np.maximum(t - f, 1e-3)))
-            c = (f + t) / 2
-            acc += vol * (W[n][:3, :3] @ c + W[n][:3, 3])
-            tot += vol
-    return acc / max(tot, 1e-9)
+#: 质心近似：按 element 体积加权的形心。骨/羽密度当然不同，但这里只用来判「重心有没有
+#: 压到支撑脚那一侧」，方向对就够，不需要真密度。判据在 core/animgate.py。
+com = animgate.volume_center
 
 
 def gait_report(rig: VultureRig, name: str, gait, H: float) -> list[str]:
@@ -129,19 +117,9 @@ def balance_report(rig: VultureRig, name: str, gait) -> str:
             f"侧向占比 {worst:+.2f}..{best:+.2f}（1.0 = 正压在支撑脚上）{flag}")
 
 
-def lowest_bone(rig: VultureRig, pose: Pose) -> tuple[float, str]:
-    """最低点及其所属骨骼。只报一个数字的话，"穿地 0.43" 根本不知道该去调什么 ——
-    是脚陷了、翼尖扫地了、还是尾羽拖地了，改法完全不同。"""
-    W = rig.world(pose)
-    best, who = 1e9, "-"
-    for n in rig.order:
-        pts = rig.bone_points(n)
-        if not len(pts):
-            continue
-        y = float((pts @ W[n][:3, :3].T + W[n][:3, 3])[:, 1].min())
-        if y < best:
-            best, who = y, n
-    return best, who
+#: 最低点及其所属骨骼。只报一个数字的话，「穿地 0.43」根本不知道该去调什么 —— 是脚陷了、
+#: 翼尖扫地了、还是尾羽拖地了，改法完全不同。判据在 core/animgate.py。
+lowest_bone = animgate.lowest_bone
 
 
 def _rots(rig: VultureRig, name: str, t: float) -> dict[str, list[float]]:
@@ -217,20 +195,7 @@ def _hull(rig: VultureRig) -> dict[str, np.ndarray]:
 
 
 def _pose_from_tracks(tracks: dict, tt: float) -> Pose:
-    p = Pose()
-    attr = {"rotation": "rot", "position": "pos", "scale": "scale"}
-    for bone, chans in tracks.items():
-        for chan, vals in chans.items():
-            got = vals[-1][1]
-            for j in range(len(vals) - 1):
-                if vals[j][0] <= tt <= vals[j + 1][0]:
-                    t0, v0 = vals[j]
-                    t1, v1 = vals[j + 1]
-                    s = (tt - t0) / (t1 - t0) if t1 > t0 else 0.0
-                    got = [v0[k] + (v1[k] - v0[k]) * s for k in range(3)]
-                    break
-            setattr(p[bone], attr[chan], list(got))
-    return p
+    return animgate.pose_from_tracks(tracks, tt, Pose)
 
 
 def fidelity(rig: VultureRig, name: str, fine: int = 193) -> tuple[float, str]:
