@@ -11,23 +11,23 @@ import java.util.Objects;
 import java.util.Properties;
 
 /** Persistent completion markers for one-time client keybinding migrations. */
-public interface KeybindMigrationStore {
+public interface KeybindMigrationPersistence {
     boolean hasCompleted(String migrationId);
 
     void markCompleted(String migrationId);
 
-    /** Creates the production store; its config-file location is an implementation detail. */
-    static KeybindMigrationStore clientConfig() {
+    /** Creates the production service; its config-file location is an implementation detail. */
+    static KeybindMigrationPersistence clientConfig() {
         Path markerFile = FabricLoader.getInstance().getConfigDir()
             .resolve("bong-client-keybind-migrations.properties");
-        return new PropertiesKeybindMigrationStore(markerFile);
+        return new PropertiesKeybindMigrationPersistence(markerFile);
     }
 }
 
-final class PropertiesKeybindMigrationStore implements KeybindMigrationStore {
+final class PropertiesKeybindMigrationPersistence implements KeybindMigrationPersistence {
     private final Path markerFile;
 
-    PropertiesKeybindMigrationStore(Path markerFile) {
+    PropertiesKeybindMigrationPersistence(Path markerFile) {
         this.markerFile = Objects.requireNonNull(markerFile, "marker file must not be null");
     }
 

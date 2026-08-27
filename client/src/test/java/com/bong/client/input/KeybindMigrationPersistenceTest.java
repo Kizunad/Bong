@@ -9,19 +9,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class KeybindMigrationStoreTest {
+class KeybindMigrationPersistenceTest {
     @Test
-    void propertiesStorePersistsMarkersAcrossReloadAndPreservesOtherMarkers() throws Exception {
+    void propertiesServicePersistsMarkersAcrossReloadAndPreservesOtherMarkers() throws Exception {
         Path marker = Files.createTempDirectory("bong-keybind-marker-")
             .resolve("nested/migrations.properties");
-        PropertiesKeybindMigrationStore first = new PropertiesKeybindMigrationStore(marker);
+        PropertiesKeybindMigrationPersistence first =
+            new PropertiesKeybindMigrationPersistence(marker);
 
         assertFalse(first.hasCompleted("forge-open-screen-u-v1"),
             "a missing marker file must report the migration as incomplete");
         first.markCompleted("forge-open-screen-u-v1");
         first.markCompleted("another-migration-v1");
 
-        PropertiesKeybindMigrationStore reloaded = new PropertiesKeybindMigrationStore(marker);
+        PropertiesKeybindMigrationPersistence reloaded =
+            new PropertiesKeybindMigrationPersistence(marker);
         assertTrue(reloaded.hasCompleted("forge-open-screen-u-v1"),
             "a completed marker must survive construction of a new persistence service");
         assertTrue(reloaded.hasCompleted("another-migration-v1"),
@@ -34,11 +36,12 @@ class KeybindMigrationStoreTest {
     void invalidMigrationIdsFailAtThePersistenceBoundary() throws Exception {
         Path marker = Files.createTempDirectory("bong-keybind-marker-invalid-")
             .resolve("migrations.properties");
-        KeybindMigrationStore store = new PropertiesKeybindMigrationStore(marker);
+        KeybindMigrationPersistence persistence =
+            new PropertiesKeybindMigrationPersistence(marker);
 
-        assertThrows(NullPointerException.class, () -> store.hasCompleted(null));
-        assertThrows(IllegalArgumentException.class, () -> store.hasCompleted(" "));
-        assertThrows(NullPointerException.class, () -> store.markCompleted(null));
-        assertThrows(IllegalArgumentException.class, () -> store.markCompleted("\t"));
+        assertThrows(NullPointerException.class, () -> persistence.hasCompleted(null));
+        assertThrows(IllegalArgumentException.class, () -> persistence.hasCompleted(" "));
+        assertThrows(NullPointerException.class, () -> persistence.markCompleted(null));
+        assertThrows(IllegalArgumentException.class, () -> persistence.markCompleted("\t"));
     }
 }

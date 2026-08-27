@@ -114,7 +114,7 @@ class R7InventoryContractTest {
         // 因此不进本摘要——这条基线只管"发出去的字节"。
         // 同时保留本分支的 Forge 旧默认 U 键迁移，避免历史 options.txt 继续与撤离取消冲突。
         assertEquals(
-            "16f9cb3a53250fdcaeb5447dff3d140e951032d574b64ffec1beb0272cc8ee03",
+            "82ece56b3422ce485b9aaf153331c4835808520e5ea2a55623a7d33fb4d5c90f",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

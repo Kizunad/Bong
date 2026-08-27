@@ -1,6 +1,6 @@
 package com.bong.client.ui;
 
-import com.bong.client.input.KeybindMigrationStore;
+import com.bong.client.input.KeybindMigrationPersistence;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -174,22 +174,24 @@ public final class BongKeybindRegistry {
      */
     public synchronized boolean migrateLegacyBoundKeyOnce(
         String migrationId,
-        KeybindMigrationStore migrationStore,
+        KeybindMigrationPersistence migrationPersistence,
         String translationKey,
         InputUtil.Key legacyKey,
         InputUtil.Key replacementKey,
         BiConsumer<KeyBinding, InputUtil.Key> rebinder
     ) {
         requireNonBlank(migrationId, "migration id");
-        Objects.requireNonNull(migrationStore, "migration store must not be null");
-        if (migrationStore.hasCompleted(migrationId)) {
+        Objects.requireNonNull(
+            migrationPersistence, "migration persistence must not be null"
+        );
+        if (migrationPersistence.hasCompleted(migrationId)) {
             return false;
         }
 
         boolean migrated = migrateLegacyBoundKey(
             translationKey, legacyKey, replacementKey, rebinder
         );
-        migrationStore.markCompleted(migrationId);
+        migrationPersistence.markCompleted(migrationId);
         return migrated;
     }
 
