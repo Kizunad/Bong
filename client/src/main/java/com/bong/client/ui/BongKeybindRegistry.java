@@ -1,6 +1,5 @@
 package com.bong.client.ui;
 
-import com.bong.client.input.KeybindMigrationPersistence;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -162,37 +161,6 @@ public final class BongKeybindRegistry {
         }
         KeyBinding.updateKeysByCode();
         return true;
-    }
-
-    /**
-     * Applies a legacy migration once for a persistent marker id.
-     *
-     * <p>The marker is recorded even when the current binding is already a
-     * player-selected key.  That distinction matters when the player later
-     * chooses the old default key intentionally: a completed migration must
-     * never reinterpret that choice as legacy configuration.</p>
-     */
-    public synchronized boolean migrateLegacyBoundKeyOnce(
-        String migrationId,
-        KeybindMigrationPersistence migrationPersistence,
-        String translationKey,
-        InputUtil.Key legacyKey,
-        InputUtil.Key replacementKey,
-        BiConsumer<KeyBinding, InputUtil.Key> rebinder
-    ) {
-        requireNonBlank(migrationId, "migration id");
-        Objects.requireNonNull(
-            migrationPersistence, "migration persistence must not be null"
-        );
-        if (migrationPersistence.hasCompleted(migrationId)) {
-            return false;
-        }
-
-        boolean migrated = migrateLegacyBoundKey(
-            translationKey, legacyKey, replacementKey, rebinder
-        );
-        migrationPersistence.markCompleted(migrationId);
-        return migrated;
     }
 
     private static boolean isBoundTo(KeyBinding binding, InputUtil.Key key) {

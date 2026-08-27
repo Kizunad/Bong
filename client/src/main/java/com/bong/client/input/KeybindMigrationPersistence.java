@@ -10,13 +10,13 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Properties;
 
-/** Persistent completion markers for one-time client keybinding migrations. */
-public interface KeybindMigrationPersistence {
+/** Persistent completion markers used internally by {@link KeybindMigrationService}. */
+interface KeybindMigrationPersistence {
     boolean hasCompleted(String migrationId);
 
     void markCompleted(String migrationId);
 
-    /** Creates the production service; its config-file location is an implementation detail. */
+    /** Creates production persistence; its config-file location is an implementation detail. */
     static KeybindMigrationPersistence clientConfig() {
         Path markerFile = FabricLoader.getInstance().getConfigDir()
             .resolve("bong-client-keybind-migrations.properties");

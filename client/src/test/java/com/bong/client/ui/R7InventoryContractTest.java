@@ -112,9 +112,10 @@ class R7InventoryContractTest {
         // 文件数 2169 → 2171；`git diff --name-status <base> -- client/src/main` 只有这两条
         // A，无 M / D。生成器在 client/tools/gen_club_{smash,sweep}.py，属工具不随包发布，
         // 因此不进本摘要——这条基线只管"发出去的字节"。
-        // 同时保留本分支的 Forge 旧默认 U 键迁移，避免历史 options.txt 继续与撤离取消冲突。
+        // 同时保留本分支的 Forge 旧默认 U 键迁移及 input 应用服务边界，避免历史
+        // options.txt 继续与撤离取消冲突，并确保 marker I/O 故障不阻断客户端启动。
         assertEquals(
-            "82ece56b3422ce485b9aaf153331c4835808520e5ea2a55623a7d33fb4d5c90f",
+            "2ab1445fe2e090b585f23d057636fd98923d524ada73ec1c76d4c182a74bf6e2",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

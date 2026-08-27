@@ -125,17 +125,26 @@ class R7KeybindProductionMigrationTest {
             "Forge 必须在客户端首个 tick 前注册存量键位迁移回调");
         assertTrue(endTickRegistration > lifecycleRegistration,
             "Forge 的旧键位迁移接线必须先于 wasPressed 消费回调声明");
-        assertTrue(source.contains("migrateLegacyBoundKeyOnce("),
-            "Forge 必须通过按 translation key 的 registry seam 执行一次性存量迁移");
+        assertTrue(source.contains("MIGRATION_SERVICE.migrateOnce("),
+            "Forge 必须通过 input 应用服务编排一次性存量迁移");
+        assertTrue(source.contains("BongKeybindRegistry.global().migrateLegacyBoundKey("),
+            "迁移 action 必须继续通过按 translation key 的 registry seam 改绑");
         assertTrue(source.contains("LEGACY_MIGRATION_ID")
                 && source.contains("forge-open-screen-u-v1"),
             "Forge 的存量迁移 marker 必须带稳定版本 id");
-        assertTrue(source.contains("KeybindMigrationPersistence.clientConfig()"),
-            "Forge 必须通过持久化服务获取迁移完成状态，不能暴露文件位置");
-        assertFalse(source.contains("FabricLoader") || source.contains("getConfigDir()"),
-            "Forge UI bootstrap 不得直接依赖迁移 marker 的文件存储细节");
+        assertTrue(source.contains("KeybindMigrationService.clientConfig()"),
+            "Forge 必须依赖迁移应用服务，不能自行编排 marker 状态");
+        assertFalse(source.contains("KeybindMigrationPersistence")
+                || source.contains("FabricLoader")
+                || source.contains("getConfigDir()"),
+            "Forge UI bootstrap 不得依赖迁移持久化接口或文件存储细节");
         assertTrue(source.contains("client.options::setKeyCode"),
             "迁移必须通过 GameOptions 持久化 UNKNOWN，而不是只改内存字段");
+        assertTrue(source.contains("catch (IllegalStateException exception)"),
+            "CLIENT_STARTED 边界必须捕获 marker I/O 故障，不能阻断客户端启动");
+        assertTrue(source.contains("BongClient.LOGGER.error(")
+                && source.contains("continuing client startup"),
+            "迁移持久化故障必须留下可观测 error 并明确继续启动");
     }
 
     @Test

@@ -1,7 +1,7 @@
 package com.bong.client.forge;
 
 import com.bong.client.BongClient;
-import com.bong.client.input.KeybindMigrationPersistence;
+import com.bong.client.input.KeybindMigrationService;
 import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -17,8 +17,8 @@ public final class ForgeScreenBootstrap {
     private static final InputUtil.Key LEGACY_DEFAULT_KEY =
         InputUtil.Type.KEYSYM.createFromCode(GLFW.GLFW_KEY_U);
     private static final String LEGACY_MIGRATION_ID = "forge-open-screen-u-v1";
-    private static final KeybindMigrationPersistence MIGRATION_PERSISTENCE =
-        KeybindMigrationPersistence.clientConfig();
+    private static final KeybindMigrationService MIGRATION_SERVICE =
+        KeybindMigrationService.clientConfig();
     private static KeyBinding openScreenKey;
 
     private ForgeScreenBootstrap() {}
@@ -34,17 +34,25 @@ public final class ForgeScreenBootstrap {
 
     private static void migrateLegacyBinding(MinecraftClient client) {
         if (client == null || client.options == null) return;
-        boolean migrated = BongKeybindRegistry.global().migrateLegacyBoundKeyOnce(
-            LEGACY_MIGRATION_ID,
-            MIGRATION_PERSISTENCE,
-            OPEN_KEY_TRANSLATION,
-            LEGACY_DEFAULT_KEY,
-            InputUtil.UNKNOWN_KEY,
-            client.options::setKeyCode
-        );
-        if (migrated) {
-            BongClient.LOGGER.info(
-                "Migrated legacy forge screen keybinding U to UNKNOWN; existing custom bindings were preserved."
+        try {
+            boolean migrated = MIGRATION_SERVICE.migrateOnce(
+                LEGACY_MIGRATION_ID,
+                () -> BongKeybindRegistry.global().migrateLegacyBoundKey(
+                    OPEN_KEY_TRANSLATION,
+                    LEGACY_DEFAULT_KEY,
+                    InputUtil.UNKNOWN_KEY,
+                    client.options::setKeyCode
+                )
+            );
+            if (migrated) {
+                BongClient.LOGGER.info(
+                    "Migrated legacy forge screen keybinding U to UNKNOWN; existing custom bindings were preserved."
+                );
+            }
+        } catch (IllegalStateException exception) {
+            BongClient.LOGGER.error(
+                "Unable to persist the Forge keybinding migration marker; continuing client startup.",
+                exception
             );
         }
     }

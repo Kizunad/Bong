@@ -1,13 +1,11 @@
 package com.bong.client.ui;
 
-import com.bong.client.input.KeybindMigrationPersistence;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -281,64 +279,6 @@ class BongKeybindRegistryTest {
     }
 
     @Test
-    void oneTimeMigrationPersistencePreservesIntentionalLegacyKeyChoice() {
-        InMemoryMigrationPersistence persistence = new InMemoryMigrationPersistence();
-        BongKeybindRegistry firstRegistry = registry();
-        KeyBinding forge = firstRegistry.register(spec(
-            "owner.forge.once", "key.test.forge.once", GLFW.GLFW_KEY_U
-        ));
-        AtomicInteger firstRebinderCalls = new AtomicInteger();
-
-        assertTrue(firstRegistry.migrateLegacyBoundKeyOnce(
-                "forge-open-screen-u-v1", persistence, "key.test.forge.once",
-                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
-                (binding, replacement) -> {
-                    firstRebinderCalls.incrementAndGet();
-                    binding.setBoundKey(replacement);
-                }),
-            "the first run must process an unmarked legacy binding");
-        assertEquals(1, firstRebinderCalls.get(), "the first run must rebind exactly once");
-        assertTrue(persistence.hasCompleted("forge-open-screen-u-v1"),
-            "a completed migration must be visible through the persistence abstraction");
-
-        forge.setBoundKey(key(GLFW.GLFW_KEY_U));
-        KeyBinding.updateKeysByCode();
-        AtomicInteger secondRebinderCalls = new AtomicInteger();
-        assertFalse(firstRegistry.migrateLegacyBoundKeyOnce(
-                "forge-open-screen-u-v1", persistence, "key.test.forge.once",
-                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
-                (binding, replacement) -> secondRebinderCalls.incrementAndGet()),
-            "a completed marker must skip later runs even when the player chose U intentionally");
-        assertEquals(0, secondRebinderCalls.get(), "a completed marker must not call the rebinder");
-        assertTrue(forge.matchesKey(GLFW.GLFW_KEY_U, 0),
-            "an intentional post-migration U choice must remain unchanged");
-    }
-
-    @Test
-    void oneTimeMigrationPersistenceIsRecordedForAlreadyCustomizedBinding() {
-        InMemoryMigrationPersistence persistence = new InMemoryMigrationPersistence();
-        BongKeybindRegistry registry = registry();
-        KeyBinding forge = registry.register(spec(
-            "owner.forge.custom.once", "key.test.forge.custom.once", GLFW.GLFW_KEY_K
-        ));
-
-        assertFalse(registry.migrateLegacyBoundKeyOnce(
-                "forge-open-screen-u-v1", persistence, "key.test.forge.custom.once",
-                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
-                (binding, replacement) -> binding.setBoundKey(replacement)),
-            "a pre-existing custom key must not be migrated");
-        forge.setBoundKey(key(GLFW.GLFW_KEY_U));
-        KeyBinding.updateKeysByCode();
-        assertFalse(registry.migrateLegacyBoundKeyOnce(
-                "forge-open-screen-u-v1", persistence, "key.test.forge.custom.once",
-                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
-                (binding, replacement) -> binding.setBoundKey(InputUtil.UNKNOWN_KEY)),
-            "the marker must prevent a later custom U from being treated as legacy");
-        assertTrue(forge.matchesKey(GLFW.GLFW_KEY_U, 0),
-            "a custom U selected after the first run must be preserved");
-    }
-
-    @Test
     void nullAndBlankInputsFailFastAtTheContractBoundary() {
         assertThrows(NullPointerException.class, () -> new BongKeybindRegistry.BindingOwner(null));
         assertThrows(IllegalArgumentException.class, () -> new BongKeybindRegistry.BindingOwner("\t"));
@@ -396,21 +336,6 @@ class BongKeybindRegistryTest {
 
     private static InputUtil.Key key(int code) {
         return InputUtil.Type.KEYSYM.createFromCode(code);
-    }
-
-    private static final class InMemoryMigrationPersistence
-        implements KeybindMigrationPersistence {
-        private final Set<String> completed = new HashSet<>();
-
-        @Override
-        public boolean hasCompleted(String migrationId) {
-            return completed.contains(migrationId);
-        }
-
-        @Override
-        public void markCompleted(String migrationId) {
-            completed.add(migrationId);
-        }
     }
 
 }
