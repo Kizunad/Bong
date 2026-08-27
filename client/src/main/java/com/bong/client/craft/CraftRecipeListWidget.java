@@ -22,7 +22,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 /** 左栏配方列表：搜索、分类 tab、收藏置顶、锁定配方提示。 */
 public final class CraftRecipeListWidget {
@@ -44,6 +43,7 @@ public final class CraftRecipeListWidget {
     private static final int LIST_VIEWPORT_HEIGHT = 200;
 
     private String query = "";
+    private List<CraftRecipe> lastRecipes = List.of();
     private InventoryModel lastInventory = InventoryModel.empty();
     private SkillSetSnapshot lastSkills = SkillSetSnapshot.empty();
     /** 上一次 refresh() 渲染出的行 id 序列（含顺序），用于判定是否需要 clearChildren 重建。 */
@@ -77,7 +77,7 @@ public final class CraftRecipeListWidget {
         searchBox.text("");
         searchBox.onChanged().subscribe(value -> {
             query = value == null ? "" : value;
-            refresh(lastInventory, lastSkills);
+            refresh(lastRecipes, lastInventory, lastSkills);
         });
         root.child(searchBox);
         root.child(buildCategoryTabs());
@@ -102,24 +102,25 @@ public final class CraftRecipeListWidget {
         this.selectedId = selectedId;
     }
 
-    public void refresh(InventoryModel inventory) {
-        refresh(inventory, SkillSetSnapshot.empty());
-    }
-
-    public void refresh(InventoryModel inventory, SkillSetSnapshot skills) {
+    public void refresh(
+        List<CraftRecipe> recipes,
+        InventoryModel inventory,
+        SkillSetSnapshot skills
+    ) {
+        lastRecipes = List.copyOf(recipes == null ? List.of() : recipes);
         lastInventory = inventory == null ? InventoryModel.empty() : inventory;
         lastSkills = skills == null ? SkillSetSnapshot.empty() : skills;
-        List<CraftRecipe> scoped = CraftStore.recipes().stream()
+        List<CraftRecipe> scoped = lastRecipes.stream()
             .filter(stationScope)
-            .collect(Collectors.toList());
-        List<CraftRecipe> recipes = CraftRecipeFilter.filter(scoped, category, query, favorites);
-        List<String> nextIds = recipes.stream().map(CraftRecipe::id).toList();
+            .toList();
+        List<CraftRecipe> filtered = CraftRecipeFilter.filter(scoped, category, query, favorites);
+        List<String> nextIds = filtered.stream().map(CraftRecipe::id).toList();
 
         if (!shouldRebuildRows(rowsBuilt, renderedIds, nextIds)) {
             // id 序列（含顺序）完全一致 → 原地更新每行文案/颜色/tooltip/选中态，不 clearChildren。
             // owo ScrollContainer.layout() 会在内容清空瞬间把 maxScroll 算成 0 并 clamp scrollOffset
             // 回 0，随后行加回来 offset 也回不来 —— 这是"滚动条自动回弹到顶部"的根因，见 PR 描述。
-            for (CraftRecipe recipe : recipes) {
+            for (CraftRecipe recipe : filtered) {
                 FlowLayout row = rowById.get(recipe.id());
                 LabelComponent text = labelById.get(recipe.id());
                 if (row == null || text == null) {
@@ -134,12 +135,12 @@ public final class CraftRecipeListWidget {
         rowById.clear();
         labelById.clear();
         rowsBuilt = true;
-        if (recipes.isEmpty()) {
+        if (filtered.isEmpty()) {
             rows.child(label("无匹配配方", 0xFF888888));
             renderedIds = List.of();
             return;
         }
-        for (CraftRecipe recipe : recipes) {
+        for (CraftRecipe recipe : filtered) {
             FlowLayout r = row(recipe, lastInventory, lastSkills);
             rowById.put(recipe.id(), r);
             rows.child(r);
@@ -228,7 +229,7 @@ public final class CraftRecipeListWidget {
         label.mouseDown().subscribe((x, y, button) -> {
             if (button == 0) {
                 category = next;
-                refresh(lastInventory, lastSkills);
+                refresh(lastRecipes, lastInventory, lastSkills);
                 return true;
             }
             return false;
@@ -257,7 +258,7 @@ public final class CraftRecipeListWidget {
                 }
                 // 用 lastInventory 而非闭包捕获的 inventory：后者是本行构建瞬间的旧快照，
                 // 若在此之前已发生过原地更新（diff 路径不重建行/不重订阅），捕获值会 stale。
-                refresh(lastInventory, lastSkills);
+                refresh(lastRecipes, lastInventory, lastSkills);
                 return true;
             }
             return false;

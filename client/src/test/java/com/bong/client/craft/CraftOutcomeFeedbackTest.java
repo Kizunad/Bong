@@ -71,6 +71,28 @@ class CraftOutcomeFeedbackTest {
     }
 
     @Test
+    void outcomeViewProjectsBothStoreVariantsWithoutLeakingEventType() {
+        CraftStore.CraftOutcomeEvent completed = CraftStore.CraftOutcomeEvent.completed(
+            "craft.view.completed", "rough_handle", 2, 12L
+        );
+        CraftStore.CraftOutcomeEvent failed = CraftStore.CraftOutcomeEvent.failed(
+            "craft.view.failed", "insufficient_material", 3, 0.25
+        );
+
+        CraftOutcomeView completedView = CraftOutcomeView.from(completed);
+        CraftOutcomeView failedView = CraftOutcomeView.from(failed);
+
+        assertEquals(CraftOutcomeView.Kind.COMPLETED, completedView.kind());
+        assertEquals("rough_handle", completedView.outputTemplate());
+        assertEquals(2, completedView.outputCount());
+        assertEquals(12L, completedView.completedAtTick());
+        assertEquals(CraftOutcomeView.Kind.FAILED, failedView.kind());
+        assertEquals("insufficient_material", failedView.failureReason());
+        assertEquals(3, failedView.materialReturned());
+        assertEquals(0.25, failedView.qiRefunded());
+    }
+
+    @Test
     void craftScreenCompletedUsesSharedFeedbackContract() {
         CraftScreen screen = new CraftScreen();
         List<String> events = new ArrayList<>();
