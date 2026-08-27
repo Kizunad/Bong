@@ -139,10 +139,10 @@ P1 是独立基础设施 PR：创建 `scripts/test-all.sh`、`scripts/test-all-o
 
 ### P1 实施证据（2026-08-27）
 
-- `scripts/test-all.sh` 已落地从脚本自身解析仓库根；支持 `unit`/`contract`/`full`/`e2e`/`preview`、可重复 `--suite`、`--report-dir`、`--continue`、`--list`、`--help`，按串行 suite DAG 调用既有命令。unit 不包含 `scripts`，e2e 仅调用既有 smoke/bot/chat 三个入口，preview 只消费调用方提供的外部 raster 与 client 截图目录，不启动 BongWorldGen。
+- `scripts/test-all.sh` 已落地从脚本自身解析仓库根；支持 `unit`/`contract`/`full`/`e2e`/`preview`、可重复 `--suite`、`--report-dir`、`--continue`、`--list`、`--help`，按串行 suite DAG 调用既有命令。unit 不包含 `scripts`，e2e 仅调用既有 smoke/bot/chat 三个入口，preview 只消费调用方提供的外部 raster 与 client 截图目录，不启动 BongWorldGen；preview server 日志经 `BONG_PREVIEW_LOG_FILE` 落入 run-private report。
 - `scripts/test-all-owners.tsv` 固定覆盖 `server`、`client`、`schema`、`tiandao`、`scripts` 五行；`--list` 校验 header、恰好五个 suite、reviewer/evidence 路径存在，并输出七列 owners/command/dependency/native-report 矩阵。
 - run-private 报告固定写入 `summary.json`、`summary.tsv` 及每个 suite 的 `command.txt`、`status`、`stdout.log`、`stderr.log`；状态固定为 `PASS`/`FAIL`/`SKIP`/`BLOCKED`，summary 索引原生报告路径并保留真实 `${PIPESTATUS[0]}` 退出码。
-- `scripts/tests/test_all_contract_test.sh` 使用临时 fixture/stub 覆盖 help/list、未知参数/profile/suite、缺工具显式 SKIP、`--continue` 后续执行与最终非零、真实 native exit code `23`、unit client 的 `gradle test`、非 executable-bit 的既有 e2e bash 入口、preview 缺外部 raster 的 BLOCKED 语义、缺 xvfb-run 的显式 SKIP、preview 中断/退出 cleanup 注册、run-private 报告、owner/path 校验：`47 passed, 0 failed`。
+- `scripts/tests/test_all_contract_test.sh` 使用临时 fixture/stub 覆盖 help/list、未知参数/profile/suite、缺工具显式 SKIP、`--continue` 后续执行与最终非零、真实 native exit code `23`、unit client 的 `gradle test`、非 executable-bit 的既有 e2e bash 入口、preview 缺外部 raster 的 BLOCKED 语义、缺 xvfb-run 的显式 SKIP、preview 中断/退出 cleanup 注册、run-private server 日志/报告、owner/path 校验：`49 passed, 0 failed`。
 - 受影响门禁：`bash -n scripts/test-all.sh scripts/tests/test_all_contract_test.sh`、`git diff --check`、`bash scripts/tests/test_all_contract_test.sh` 均通过；`shellcheck` 当前环境不可用，已记录并以 Bash 原生语法检查替代。真实 `contract` profile 对拍明确报告环境前置：`agent/node_modules` 未安装、resourcepack 既有构建缺少 `zip`，未静默成功；此前可运行的 modelScript validator 已通过 604 tests，resourcepack validator 因上述 `zip` 缺失非代码失败。
 - 本 P1 未新增生产 inline test、未移动既有测试、未改依赖版本、workflow、玩法/schema/worldview 或其他 plan；P2/P3/P4 仍保持 `⬜`。
 

@@ -20,7 +20,10 @@ PROFILE_FLAG="--release"
 TARGET_PROFILE="release"
 TIMEOUT_SECONDS=90
 PORT=25565
-LOG_FILE="/tmp/bong-preview-server.log"
+# Callers such as scripts/test-all.sh can keep the server log inside their
+# run-private evidence directory. Preserve the historical path for direct
+# invocations that do not provide an explicit handoff.
+LOG_FILE="${BONG_PREVIEW_LOG_FILE:-/tmp/bong-preview-server.log}"
 
 while [ $# -gt 0 ]; do
   case "$1" in

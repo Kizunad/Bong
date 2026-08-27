@@ -630,6 +630,7 @@ run_preview_handoff() {
     export BONG_PREVIEW_CONFIG="$PREVIEW_CONFIG"
     export BONG_PREVIEW_SERVER=127.0.0.1:25565
     export BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"
+    export BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log"
     if bash "$ROOT/scripts/preview/run-server-headless.sh" --debug; then server_started=1; else failed=1; fi
     if ((server_started == 1)); then
         trap preview_exit_cleanup EXIT
@@ -686,7 +687,7 @@ suite_artifacts() {
         tiandao) printf '%s' 'agent/packages/tiandao/dist' ;;
         scripts)
             if [[ "$PROFILE" == preview ]]; then
-                printf 'client preview screenshots|%s/preview-grid.png|/tmp/bong-preview-server.log' "$REPORT_DIR"
+                printf 'client preview screenshots|%s/preview-grid.png|%s/preview-server.log' "$REPORT_DIR" "$REPORT_DIR"
             else
                 printf '%s' '.sisyphus/evidence|client/resourcepack|scripts validator stdout'
             fi

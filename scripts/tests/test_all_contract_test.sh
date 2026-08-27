@@ -61,6 +61,8 @@ assert_contains "$SCRIPT" 'trap preview_exit_cleanup EXIT' 'preview 注册 EXIT 
 assert_contains "$SCRIPT" "trap 'preview_signal_cleanup 130' INT" 'preview 注册 SIGINT cleanup'
 assert_contains "$SCRIPT" "trap 'preview_signal_cleanup 143' TERM" 'preview 注册 SIGTERM cleanup'
 assert_contains "$SCRIPT" 'stop-server-headless.sh' 'preview cleanup 调用身份安全停服 wrapper'
+assert_contains "$SCRIPT" 'BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log"' 'preview server 日志进入 run-private 目录'
+assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_LOG_FILE:-/tmp/bong-preview-server.log' 'preview wrapper 保留可覆盖的历史默认日志路径'
 
 run_capture "$SANDBOX/list.out" "$SANDBOX/list.err" bash "$SCRIPT" --list
 assert_rc 0 '--list 返回 0'
