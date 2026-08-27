@@ -70,6 +70,8 @@ assert_contains "$SCRIPT" 'preview_exit_cleanup_active=1' 'preview EXIT cleanup 
 assert_contains "$SCRIPT" 'BONG_PREVIEW_LAUNCH_STATE_FILE="$preview_launch_state_file"' 'preview 显式传递 authority handoff 状态文件'
 assert_contains "$SCRIPT" 'if preview_launch_state_published; then' 'preview 非零 wrapper 仍识别已发布 authority'
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'bong_server_publish_launch_state' 'preview wrapper 发布 authority handoff marker'
+assert_contains "$SCRIPT" 'launcher_status == PREVIEW_HANDOFF_FAILURE_EXIT' 'preview marker fallback 绑定 wrapper 专用失败码'
+assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_HANDOFF_FAILURE_EXIT=75' 'preview handoff failure 使用独立退出码'
 if grep -Fq 'bong_server_post_publication_rollback "preview launch-state publication rollback" || true' \
     "$ROOT/scripts/preview/run-server-headless.sh"; then
     fail 'launch-state publication rollback 不得吞掉失败'
@@ -285,11 +287,18 @@ cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/run-server-headless.sh" <<'EOF
 #!/usr/bin/env bash
 set -u
 printf 'pid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' > "$BONG_PREVIEW_PID_FILE"
-if [[ "${PREVIEW_WRAPPER_MODE:-failure}" != failure_no_marker ]]; then
+if [[ "${PREVIEW_WRAPPER_MODE:-failure}" != failure_no_marker \
+    && "${PREVIEW_WRAPPER_MODE:-failure}" != refuse_existing ]]; then
     printf 'state=authority_published\n' > "$BONG_PREVIEW_LAUNCH_STATE_FILE"
 fi
 if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == success ]]; then
     exit 0
+fi
+if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == failure_no_marker ]]; then
+    exit 75
+fi
+if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == refuse_existing ]]; then
+    exit 1
 fi
 exit 23
 EOF
@@ -394,6 +403,31 @@ if grep -Fq 'client-preview-called' "$PREVIEW_NO_MARKER_STOP_LOG"; then
     fail 'handoff marker 缺失时不应把 wrapper 失败当成 ready 启动客户端'
 else
     pass 'handoff marker 缺失时不冒充 ready'
+fi
+
+# A normal preexisting-record refusal is not the handoff-publication failure
+# code; reusing a report directory must therefore leave its authority alone.
+PREVIEW_REFUSAL_REPORT="$SANDBOX/preview-refusal-report"
+PREVIEW_REFUSAL_STOP_LOG="$SANDBOX/preview-refusal-stop.log"
+run_capture "$SANDBOX/preview-refusal.out" "$SANDBOX/preview-refusal.err" \
+    env PATH="$PREVIEW_AUTHORITY_FIXTURE/bin:/usr/bin:/bin" \
+    BONG_TERRAIN_RASTER_DIR="$PREVIEW_AUTHORITY_FIXTURE/raster" \
+    BONG_CLIENT_PREVIEW_DIR="$PREVIEW_AUTHORITY_FIXTURE/client" \
+    BONG_PREVIEW_CONFIG="$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
+    PREVIEW_STOP_LOG="$PREVIEW_REFUSAL_STOP_LOG" \
+    PREVIEW_WRAPPER_MODE=refuse_existing \
+    /bin/bash "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_REFUSAL_REPORT"
+assert_rc 1 'preexisting authority refusal 仍诚实失败'
+if [[ -s "$PREVIEW_REFUSAL_STOP_LOG" ]]; then
+    fail 'preexisting authority refusal 不得因共享 PID path 触发 stop'
+else
+    pass 'preexisting authority refusal 不因共享 PID path 触发 stop'
+fi
+if [[ -e "$PREVIEW_REFUSAL_REPORT/preview-server.pid" ]]; then
+    pass 'preexisting authority refusal 保留原 authority record'
+else
+    fail 'preexisting authority refusal 意外清除了原 authority record'
 fi
 
 # stop 首次失败后由 EXIT trap 重试时，cleanup 状态必须仍存在于管道子 shell；

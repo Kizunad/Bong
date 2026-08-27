@@ -52,6 +52,11 @@ export BONG_SERVER_PID_FILE="$PID_FILE"
 # presence means the parent must retain cleanup ownership even when this
 # process exits non-zero.  Direct invocations do not opt into the marker.
 LAUNCH_STATE_FILE="${BONG_PREVIEW_LAUNCH_STATE_FILE:-}"
+# Contract with scripts/test-all.sh: this exit code means this wrapper reached
+# the handoff-publication branch. It is deliberately distinct from the normal
+# preexisting-record refusal, so a reused report directory cannot make the
+# parent stop another invocation's server merely because a PID file exists.
+BONG_PREVIEW_HANDOFF_FAILURE_EXIT=75
 
 bong_server_launch_record_matches() {
   [ -n "${SERVER_PID:-}" ] || return 1
@@ -392,7 +397,7 @@ bong_server_launch_preview_locked() {
   if ! bong_server_publish_launch_state; then
     echo "❌ 无法发布 preview launch authority handoff" >&2
     if bong_server_post_publication_rollback "preview launch-state publication rollback"; then
-      return 1
+      return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
     else
       status=$?
     fi
@@ -410,7 +415,7 @@ bong_server_launch_preview_locked() {
         echo "❌ 无法补发 preview launch authority handoff；父 runner 必须按 authority record identity-safe 清理" >&2
       fi
     fi
-    return 1
+    return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
   fi
   # The record is now published. Keep the cancellation traps installed until
   # disown and trap removal both complete; TERM/HUP in this interval must roll
@@ -464,7 +469,12 @@ bong_server_preview_start_locked() {
   bong_server_launch_preview_locked
 }
 
-bong_server_with_lock bong_server_preview_start_locked || exit 1
+if bong_server_with_lock bong_server_preview_start_locked; then
+  :
+else
+  status=$?
+  exit "$status"
+fi
 
 echo "[run-server-headless] PID=$SERVER_PID authority=$PID_FILE log=$LOG_FILE"
 

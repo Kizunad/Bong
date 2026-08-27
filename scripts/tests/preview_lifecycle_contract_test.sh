@@ -718,6 +718,10 @@ unset FAKE_PIDFD_SIGNAL_FAIL FAKE_PGREP_CHILD_ENUM_FAIL
   echo "handoff publication failure rollback hung" >&2
   exit 1
 }
+[ "$rc" -eq 75 ] || {
+  echo "handoff publication failure returned $rc instead of dedicated exit 75" >&2
+  exit 1
+}
 grep -q "launch-state publication rollback 未确认" "$TMP_ROOT/handoff-publish-failure.log" || {
   echo "handoff publication failure did not report rollback uncertainty" >&2
   exit 1

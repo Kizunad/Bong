@@ -235,6 +235,7 @@ load_owners || { printf 'test-all: owners 映射校验失败\n' >&2; exit 2; }
 
 REPORT_DIR=
 RUN_ID=
+PREVIEW_HANDOFF_FAILURE_EXIT=75
 STARTED_AT=
 ENDED_AT=
 GIT_SHA=unknown
@@ -610,6 +611,7 @@ run_preview_handoff() {
     preview_launcher_pid=0
     preview_exit_cleanup_active=0
     preview_launch_ready=0
+    preview_launcher_status=0
     preview_launch_state_file="$REPORT_DIR/.preview-launch-${BASHPID}.state"
     if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]]; then
         printf 'preview launch state 已存在，拒绝复用：%s\n' "$preview_launch_state_file" >&2
@@ -641,12 +643,6 @@ run_preview_handoff() {
         if ((server_started == 0)) && preview_launch_state_published; then
             # The wrapper may have returned non-zero after publishing its
             # authority.  The marker is the explicit ownership handoff.
-            server_started=1
-        elif ((server_started == 0)) && preview_authority_record_present; then
-            # If publishing that marker itself failed, the wrapper may still
-            # have retained a matching authority record after an unconfirmed
-            # rollback.  This is only a cleanup candidate; the stop command
-            # performs the identity-safe validation and fails closed.
             server_started=1
         fi
         if ((server_started == 1)); then
@@ -681,6 +677,13 @@ run_preview_handoff() {
                 # its internal rollback was not confirmed.  Keep the outer
                 # stop retry eligible, but never run the client against a
                 # launch that did not return ready.
+                server_started=1
+            elif ((launcher_status == PREVIEW_HANDOFF_FAILURE_EXIT)) \
+                && preview_authority_record_present; then
+                # A missing marker is eligible only for the wrapper's
+                # handoff-publication failure code. Ordinary refusal (for
+                # example, a reused report-dir with another server record)
+                # must never turn pathname presence into ownership.
                 server_started=1
             fi
             if ((launcher_status != 0)); then
@@ -731,7 +734,15 @@ run_preview_handoff() {
         server_started=1
         preview_launch_ready=1
     else
+        preview_launcher_status=$?
         failed=1
+        if ((preview_launcher_status == PREVIEW_HANDOFF_FAILURE_EXIT)) \
+            && preview_authority_record_present; then
+            # The normal wait path does not pass through
+            # preview_shutdown_launcher; preserve the same dedicated-code
+            # ownership gate here.
+            server_started=1
+        fi
     fi
     preview_launcher_pid=0
     if ((server_started == 1 && preview_launch_ready == 1)); then
