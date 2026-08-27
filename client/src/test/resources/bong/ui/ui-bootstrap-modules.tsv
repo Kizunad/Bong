@@ -1,5 +1,5 @@
 # order	module_id	group	source_call	dependencies
-1	screen_transition	SCREEN	ScreenTransitionController.register()	NONE
+1	screen_transition	SCREEN	ClientUiBootstrap.registerScreenTransition()	NONE
 2	interaction_keybind	KEYBIND	InteractionKeybindings.register()	NONE
 3	npc_interaction_log	KEYBIND	NpcInteractionLogControls.register()	NONE
 4	hud_immersion	HUD	HudImmersionControls.register()	NONE
@@ -12,7 +12,7 @@
 11	dropped_item_pickup	SCREEN	DroppedItemPickupBootstrap.register()	screen_transition
 12	alchemy_screen	SCREEN	AlchemyScreenBootstrap.register()	screen_transition
 13	forge_screen	SCREEN	ForgeScreenBootstrap.register()	screen_transition
-14	craft_screen	SCREEN	CraftScreenBootstrap.register()	screen_transition
+14	craft_screen	SCREEN	ClientUiBootstrap.registerCraftScreen()	screen_transition
 15	identity_panel	SCREEN	IdentityPanelScreenBootstrap.register()	screen_transition
 16	lingtian_screen	SCREEN	LingtianActionScreenBootstrap.register()	screen_transition
 17	void_action_screen	SCREEN	VoidActionScreenBootstrap.register()	screen_transition

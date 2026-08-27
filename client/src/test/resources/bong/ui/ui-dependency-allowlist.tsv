@@ -5,5 +5,6 @@ ui/intent/**	ui.contract;network.ClientRequestSender	ServerDataHandler;ProtoServ
 ui/bootstrap/**	ui.contract;java.util	reflection;annotation-discovery;network-registration	R7	static-explicit-registry
 ui/headless/**	ui.contract;java.lang;java.util;java.function	owo;vanilla_widget;net.minecraft.client	R7	renderer-neutral-semantic-driver
 ui/adapter/owo/**	ui.contract;owo	ServerDataHandler;ClientRequestProtocol	R7	owo-host-only
-ui/adapter/vanilla/**	ui.contract;vanilla_widget	ServerDataHandler;ClientRequestProtocol	R7	vanilla-host-only
+ui/adapter/vanilla/**	NONE	vanilla_widget	R7	禁止建立 vanilla production adapter；最终 UI 统一使用 owo XML
+ui/preview/**	ui.adapter.owo;MinecraftClient;local-fixture	ServerDataHandler;ClientRequestProtocol;reflection	R7	真实 Fabric 截图只允许本地白名单场景，不接受网络模板或动态类名
 client/*Screen.java	ui.contract;ui.intent;ui.state	ClientRequestSender;ClientRequestProtocol;ServerDataHandler	R7	migration-target

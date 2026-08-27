@@ -1,0 +1,265 @@
+package com.bong.client.ui.preview;
+
+import com.bong.client.ui.ScreenTransitionController;
+import com.bong.client.ui.adapter.owo.OwoXmlTemplateRegistry;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.texture.NativeImage;
+import net.minecraft.client.util.ScreenshotRecorder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+/** 真实 Fabric/owo UI 截图状态机。 */
+final class UiPreviewSession {
+    private static final Logger LOGGER = LoggerFactory.getLogger("bong-ui-preview");
+
+    private enum Phase {
+        WAIT_CLIENT,
+        CONFIGURE_VIEWPORT,
+        WAIT_VIEWPORT,
+        OPEN_SCREEN,
+        WAIT_SCREEN,
+        SETTLE,
+        SHOOT,
+        CLOSE_SCREEN,
+        FINISHED
+    }
+
+    private final UiPreviewConfig config;
+    private final Path outputDir;
+    private Phase phase = Phase.WAIT_CLIENT;
+    private int phaseTicks;
+    private int totalTicks;
+    private int shotIndex;
+    private Screen openedScreen;
+    private UiPreviewScene openedScene;
+    private boolean stopRequested;
+
+    UiPreviewSession(UiPreviewConfig config) {
+        this.config = config;
+        this.outputDir = Path.of(config.outputDir()).toAbsolutePath();
+        try {
+            UiPreviewResultFile.begin(outputDir);
+        } catch (IOException e) {
+            throw new IllegalStateException("无法创建 UI preview 输出目录: " + outputDir, e);
+        }
+    }
+
+    void onTick(MinecraftClient client) {
+        if (stopRequested) {
+            return;
+        }
+        totalTicks++;
+        phaseTicks++;
+        try {
+            step(client);
+        } catch (RuntimeException | IOException failure) {
+            cleanup(client);
+            recordFailureAndStop(client, failure);
+        }
+    }
+
+    private void step(MinecraftClient client) throws IOException {
+        switch (phase) {
+            case WAIT_CLIENT -> waitClient(client);
+            case CONFIGURE_VIEWPORT -> configureViewport(client);
+            case WAIT_VIEWPORT -> waitViewport(client);
+            case OPEN_SCREEN -> openScreen(client);
+            case WAIT_SCREEN -> waitScreen(client);
+            case SETTLE -> settle();
+            case SHOOT -> shoot(client);
+            case CLOSE_SCREEN -> closeScreen(client);
+            case FINISHED -> finish(client);
+        }
+    }
+
+    private void waitClient(MinecraftClient client) {
+        boolean ready = client.getWindow() != null
+            && client.getFramebuffer() != null
+            && client.getWindow().getFramebufferWidth() > 0
+            && templatesLoaded();
+        if (ready && phaseTicks >= 5) {
+            advance(Phase.CONFIGURE_VIEWPORT);
+            return;
+        }
+        if (phaseTicks > config.waitClientTicks()) {
+            throw new IllegalStateException("等待 Minecraft client 初始化超时");
+        }
+    }
+
+    private void configureViewport(MinecraftClient client) {
+        if (shotIndex >= config.screenshots().size()) {
+            advance(Phase.FINISHED);
+            return;
+        }
+        UiPreviewShot shot = currentShot();
+        if (client.getWindow().isFullscreen()) {
+            client.getWindow().toggleFullscreen();
+        }
+        client.getWindow().setWindowedSize(shot.framebufferWidth(), shot.framebufferHeight());
+        client.onResolutionChanged();
+        LOGGER.info(
+            "[ui-preview] configuring '{}' framebuffer={}x{} scale={} expected logical={}x{}",
+            shot.name(), shot.framebufferWidth(), shot.framebufferHeight(), shot.guiScale(),
+            shot.expectedLogicalWidth(), shot.expectedLogicalHeight());
+        advance(Phase.WAIT_VIEWPORT);
+    }
+
+    private void waitViewport(MinecraftClient client) {
+        UiPreviewShot shot = currentShot();
+        boolean framebufferMatches = client.getWindow().getFramebufferWidth() == shot.framebufferWidth()
+            && client.getWindow().getFramebufferHeight() == shot.framebufferHeight();
+        if (framebufferMatches) {
+            // 必须先等物理窗口到位；Minecraft 会按旧窗口尺寸压低暂时不可用的 GUI scale。
+            client.options.getGuiScale().setValue(shot.guiScale());
+            client.onResolutionChanged();
+        }
+        boolean logicalMatches = client.getWindow().getScaledWidth() == shot.expectedLogicalWidth()
+            && client.getWindow().getScaledHeight() == shot.expectedLogicalHeight();
+        if (framebufferMatches && logicalMatches) {
+            advance(Phase.OPEN_SCREEN);
+            return;
+        }
+        if (phaseTicks > config.resizeTimeoutTicks()) {
+            throw new IllegalStateException(String.format(
+                "viewport 未生效: framebuffer=%dx%d logical=%dx%d",
+                client.getWindow().getFramebufferWidth(), client.getWindow().getFramebufferHeight(),
+                client.getWindow().getScaledWidth(), client.getWindow().getScaledHeight()));
+        }
+    }
+
+    private void openScreen(MinecraftClient client) {
+        UiPreviewShot shot = currentShot();
+        openedScene = UiPreviewScenes.require(shot.sceneId());
+        openedScene.installFixture();
+        openedScreen = openedScene.createScreen();
+        client.setScreen(openedScreen);
+        advance(Phase.WAIT_SCREEN);
+    }
+
+    private void waitScreen(MinecraftClient client) {
+        if (client.currentScreen == openedScreen) {
+            if (openedScene.initializationFailed(openedScreen)) {
+                throw new IllegalStateException("owo Screen 初始化失败，禁止生成截图证据");
+            }
+            if (!openedScene.isReady(openedScreen)) {
+                if (phaseTicks > config.resizeTimeoutTicks()) {
+                    throw new IllegalStateException("owo Screen adapter 初始化超时");
+                }
+                return;
+            }
+            String actualTemplate = openedScene.selectedTemplateId(openedScreen);
+            if (!currentShot().expectedTemplateId().equals(actualTemplate)) {
+                throw new IllegalStateException(
+                    "布局模板错误: expected=" + currentShot().expectedTemplateId()
+                        + ", actual=" + actualTemplate);
+            }
+            advance(Phase.SETTLE);
+            return;
+        }
+        if (phaseTicks > config.resizeTimeoutTicks()) {
+            throw new IllegalStateException("等待 UI Screen 打开超时");
+        }
+    }
+
+    private void settle() {
+        if (phaseTicks >= config.settleTicks()) {
+            advance(Phase.SHOOT);
+        }
+    }
+
+    private void shoot(MinecraftClient client) throws IOException {
+        UiPreviewShot shot = currentShot();
+        // 等真实渲染帧完成后再检查输入命中；owo scrollbar 的 hit region 在 draw 时初始化。
+        openedScene.validateGeometry(openedScreen, shot);
+        Path imagePath = outputDir.resolve("ui-" + shot.name() + ".png");
+        try (NativeImage image = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
+            image.writeTo(imagePath);
+        }
+        String metadata = "scene_id=" + shot.sceneId() + "\n"
+            + "framebuffer=" + client.getWindow().getFramebufferWidth() + "x"
+            + client.getWindow().getFramebufferHeight() + "\n"
+            + "logical_viewport=" + client.getWindow().getScaledWidth() + "x"
+            + client.getWindow().getScaledHeight() + "\n"
+            + "gui_scale=" + client.getWindow().getScaleFactor() + "\n"
+            + "template_id=" + openedScene.selectedTemplateId(openedScreen) + "\n";
+        Files.writeString(outputDir.resolve("ui-" + shot.name() + ".txt"), metadata);
+        LOGGER.info("[ui-preview] saved {}", imagePath);
+        advance(Phase.CLOSE_SCREEN);
+    }
+
+    private void closeScreen(MinecraftClient client) {
+        ScreenTransitionController.cancelAndClose(client);
+        openedScene.cleanup();
+        openedScene = null;
+        openedScreen = null;
+        shotIndex++;
+        advance(Phase.CONFIGURE_VIEWPORT);
+    }
+
+    private void finish(MinecraftClient client) throws IOException {
+        if (phaseTicks < 5) {
+            return;
+        }
+        UiPreviewResultFile.passed(outputDir, shotIndex);
+        LOGGER.info("[ui-preview] completed {} screenshots in {} ticks", shotIndex, totalTicks);
+        if (config.exitOnComplete()) {
+            stopRequested = true;
+            client.scheduleStop();
+        }
+    }
+
+    private void recordFailureAndStop(MinecraftClient client, Throwable failure) {
+        try {
+            UiPreviewResultFile.failed(
+                outputDir, shotIndex, phase.name(), shotName(), failure
+            );
+        } catch (IOException resultFailure) {
+            failure.addSuppressed(resultFailure);
+        }
+        LOGGER.error(
+            "[ui-preview] failed phase={} shot={} completed={}",
+            phase, shotName(), shotIndex, failure
+        );
+        stopRequested = true;
+        client.scheduleStop();
+    }
+
+    private void cleanup(MinecraftClient client) {
+        if (openedScreen != null) {
+            ScreenTransitionController.cancelAndClose(client);
+        }
+        if (openedScene != null) {
+            openedScene.cleanup();
+        }
+    }
+
+    private UiPreviewShot currentShot() {
+        return config.screenshots().get(shotIndex);
+    }
+
+    private String shotName() {
+        return shotIndex < config.screenshots().size()
+            ? config.screenshots().get(shotIndex).name()
+            : "complete";
+    }
+
+    private void advance(Phase next) {
+        phase = next;
+        phaseTicks = 0;
+    }
+
+    private static boolean templatesLoaded() {
+        try {
+            OwoXmlTemplateRegistry.production().require("craft");
+            OwoXmlTemplateRegistry.production().require("craft-compact");
+            return true;
+        } catch (IllegalStateException notLoadedYet) {
+            return false;
+        }
+    }
+}

@@ -111,6 +111,23 @@ class UiBootstrapRegistryTest {
         }));
     }
 
+    @Test
+    void targetedRegistrationRunsOnlyTheRequestedDependencyClosure() {
+        UiBootstrapRegistry registry = new UiBootstrapRegistry();
+        List<String> calls = new ArrayList<>();
+        registry.add(module("root", Set.of(), calls));
+        registry.add(module("requested", Set.of("root"), calls));
+        registry.add(module("unrelated", Set.of(), calls));
+        UiRuntime runtime = new UiRuntime() {
+        };
+
+        registry.register("requested", runtime);
+        registry.register("requested", runtime);
+
+        assertEquals(List.of("root", "requested"), calls);
+        assertEquals(List.of("root", "requested"), registry.completedModuleIds());
+    }
+
     private static UiBootstrapModule module(String id, Set<String> dependencies, List<String> calls) {
         return new UiBootstrapModule() {
             @Override

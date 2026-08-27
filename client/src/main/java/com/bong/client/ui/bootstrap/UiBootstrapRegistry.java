@@ -49,18 +49,20 @@ public final class UiBootstrapRegistry {
     }
 
     public void registerAll(UiRuntime runtime) {
-        Objects.requireNonNull(runtime, "runtime must not be null");
-        if (registeredRuntime != null && registeredRuntime != runtime) {
-            throw new IllegalStateException("bootstrap registry cannot switch runtime after registration started");
-        }
-        registeredRuntime = runtime;
-        registrationStarted = true;
+        beginRegistration(runtime);
         for (String id : registrationOrder()) {
-            if (completed.contains(id)) {
-                continue;
-            }
-            modules.get(id).register(runtime);
-            completed.add(id);
+            registerChecked(id, runtime);
+        }
+    }
+
+    /** 注册一个模块及其依赖，供生产 bootstrap 按原有时序逐批迁移。 */
+    public void register(String id, UiRuntime runtime) {
+        beginRegistration(runtime);
+        String checkedId = requireId(id);
+        List<String> order = new ArrayList<>();
+        visit(checkedId, new LinkedHashSet<>(), new LinkedHashSet<>(), order);
+        for (String dependencyOrTarget : order) {
+            registerChecked(dependencyOrTarget, runtime);
         }
     }
 
@@ -74,6 +76,23 @@ public final class UiBootstrapRegistry {
 
     public boolean isRegistered(String id) {
         return completed.contains(id);
+    }
+
+    private void beginRegistration(UiRuntime runtime) {
+        Objects.requireNonNull(runtime, "runtime must not be null");
+        if (registeredRuntime != null && registeredRuntime != runtime) {
+            throw new IllegalStateException("bootstrap registry cannot switch runtime after registration started");
+        }
+        registeredRuntime = runtime;
+        registrationStarted = true;
+    }
+
+    private void registerChecked(String id, UiRuntime runtime) {
+        if (completed.contains(id)) {
+            return;
+        }
+        modules.get(id).register(runtime);
+        completed.add(id);
     }
 
     private void visit(String id, Set<String> visiting, Set<String> visited, List<String> order) {

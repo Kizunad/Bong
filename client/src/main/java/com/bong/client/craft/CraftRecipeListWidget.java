@@ -73,6 +73,7 @@ public final class CraftRecipeListWidget {
         root.child(label("配方", 0xFFE8DDC4));
 
         searchBox = Components.textBox(Sizing.fixed(CraftScreenLayout.LEFT_W - 10));
+        searchBox.id("craft-search");
         searchBox.text("");
         searchBox.onChanged().subscribe(value -> {
             query = value == null ? "" : value;
@@ -88,6 +89,7 @@ public final class CraftRecipeListWidget {
         // 空间),viewport 会被解算到 ≥ 内容高度,scroll 判定无需滚动 → 滚动条钉死拖不动(配方
         // 22 条时尤其明显)。仿能滚的先例 TechniquesTabPanel(固定 viewport)。
         var scroll = Containers.verticalScroll(Sizing.fill(100), Sizing.fixed(LIST_VIEWPORT_HEIGHT), rowContent);
+        scroll.id("craft-recipe-scroll");
         scroll.scrollbarThiccness(3);
         root.child(scroll);
     }
