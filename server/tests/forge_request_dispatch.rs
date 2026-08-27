@@ -18,7 +18,7 @@ use bong_server::inventory::{
     PlayerInventory,
 };
 use bong_server::network::agent_ui::AgentUiResponseEvent;
-use bong_server::network::client_request::forge::{
+use bong_server::network::client_request::forge_contract::{
     dispatch_forge_request, try_into_forge_request, ForgeRequest,
 };
 use bong_server::network::client_request_handler::{
