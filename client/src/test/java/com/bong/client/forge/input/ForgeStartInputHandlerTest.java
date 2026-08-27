@@ -1,6 +1,7 @@
 package com.bong.client.forge.input;
 
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.input.ClientInputPolicy;
 import com.bong.client.tsy.ExtractStateStore;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
@@ -172,7 +173,7 @@ class ForgeStartInputHandlerTest {
     @Test
     void forgeOpenInputIsAvailableWhenExtractionIsIdle() {
         assertTrue(
-            ForgeStartInputHandler.shouldDispatchForgeOpen(),
+            ClientInputPolicy.shouldDispatchForgeOpen(),
             "非撤离状态允许消费 Forge 按键并请求打开锻炉屏幕"
         );
     }
@@ -182,7 +183,7 @@ class ForgeStartInputHandlerTest {
         ExtractStateStore.markStarted(42L, "tsy_lingxu_01", 20, 1_000L);
 
         assertFalse(
-            ForgeStartInputHandler.shouldDispatchForgeOpen(),
+            ClientInputPolicy.shouldDispatchForgeOpen(),
             "撤离进行时即使 Forge 暂时回滚到历史 U，也不能派发 Forge 开屏"
         );
     }

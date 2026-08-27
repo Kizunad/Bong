@@ -1,6 +1,7 @@
 package com.bong.client.forge;
 
 import com.bong.client.BongClient;
+import com.bong.client.input.ClientInputPolicy;
 import com.bong.client.input.KeybindMigrationService;
 import com.bong.client.forge.input.ForgeStartInputHandler;
 import com.bong.client.ui.BongKeybindRegistry;
@@ -66,7 +67,7 @@ public final class ForgeScreenBootstrap {
         if (client == null || client.player == null) return;
         // Drain legacy U presses while extracting so a failed migration cannot replay Forge later.
         while (keyBinding().wasPressed()) {
-            if (ForgeStartInputHandler.shouldDispatchForgeOpen()) {
+            if (ClientInputPolicy.shouldDispatchForgeOpen()) {
                 requestOpenForgeScreen(client);
             }
         }
