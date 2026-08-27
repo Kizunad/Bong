@@ -119,8 +119,9 @@ class R7InventoryContractTest {
         // 本次重新冻结只包含 UiPreviewConfig 与 UiPreviewHarnessClient 两个生产 Java 文件。
         // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
         // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
+        // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
         assertEquals(
-            "c275739ba9250bf444fd7e780146350d4d6610fb78550c61bc06ad91e30ea387",
+            "4330920f6f6a0d66faf6fc8efb4e35eb2c61c5537301b84298713dc588e3ac19",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

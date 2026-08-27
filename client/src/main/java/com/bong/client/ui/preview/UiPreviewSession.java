@@ -57,7 +57,7 @@ final class UiPreviewSession {
         try {
             step(client);
         } catch (RuntimeException | IOException failure) {
-            recordFailureAndStop(client, attachCleanupFailure(failure, () -> cleanup(client)));
+            recordFailureAndStop(client, cleanupAfterFailure(client, failure));
         }
     }
 
@@ -224,13 +224,30 @@ final class UiPreviewSession {
         client.scheduleStop();
     }
 
-    private void cleanup(MinecraftClient client) {
-        if (openedScreen != null) {
-            ScreenTransitionController.cancelAndClose(client);
+    private Throwable cleanupAfterFailure(MinecraftClient client, Throwable failure) {
+        // Screen 关闭失败不能阻断 fixture store 清理，两个生命周期阶段必须分别尝试。
+        return attachCleanupFailures(
+            failure,
+            () -> {
+                if (openedScreen != null) {
+                    ScreenTransitionController.cancelAndClose(client);
+                }
+            },
+            () -> {
+                if (openedScene != null) {
+                    openedScene.cleanup();
+                }
+            }
+        );
+    }
+
+    static Throwable attachCleanupFailures(Throwable primary, Runnable... cleanups) {
+        Objects.requireNonNull(cleanups, "cleanups 不能为空");
+        Throwable result = Objects.requireNonNull(primary, "primary 不能为空");
+        for (Runnable cleanup : cleanups) {
+            result = attachCleanupFailure(result, cleanup);
         }
-        if (openedScene != null) {
-            openedScene.cleanup();
-        }
+        return result;
     }
 
     static Throwable attachCleanupFailure(Throwable primary, Runnable cleanup) {

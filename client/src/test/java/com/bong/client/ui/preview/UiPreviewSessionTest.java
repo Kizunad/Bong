@@ -2,6 +2,9 @@ package com.bong.client.ui.preview;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -31,6 +34,32 @@ class UiPreviewSessionTest {
 
         assertSame(primary, actual);
         assertEquals(0, actual.getSuppressed().length, "成功 cleanup 不应制造伪 suppressed 原因");
+    }
+
+    @Test
+    void screenCloseFailureDoesNotSkipSceneCleanup() {
+        RuntimeException primary = new RuntimeException("render failed");
+        IllegalStateException screenFailure = new IllegalStateException("screen close failed");
+        IllegalArgumentException sceneFailure = new IllegalArgumentException("scene cleanup failed");
+        List<String> calls = new ArrayList<>();
+
+        Throwable actual = UiPreviewSession.attachCleanupFailures(
+            primary,
+            () -> {
+                calls.add("screen");
+                throw screenFailure;
+            },
+            () -> {
+                calls.add("scene");
+                throw sceneFailure;
+            }
+        );
+
+        assertSame(primary, actual, "清理链失败不能覆盖最初的截图失败");
+        assertEquals(List.of("screen", "scene"), calls,
+            "Screen 关闭失败后仍必须继续清理 Scene fixture");
+        assertEquals(List.of(screenFailure, sceneFailure), List.of(actual.getSuppressed()),
+            "每个清理失败都必须按发生顺序保留为 suppressed 原因");
     }
 
     @Test
