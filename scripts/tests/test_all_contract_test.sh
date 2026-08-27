@@ -299,6 +299,10 @@ fi
 printf 'pid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' > "$BONG_PREVIEW_PID_FILE"
 printf 'state=identity_published\npid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' \
     > "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE"
+if [[ "$mode" == invalid_identity ]]; then
+    printf 'state=identity_published\npid=not-a-pid\n' > "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE"
+    exit 75
+fi
 if [[ "$mode" == successor ]]; then
     printf 'pid=5252\nstarttime=2\nexecutable=successor-server\nexecutable_identity=2:2\n' \
         > "$BONG_PREVIEW_PID_FILE"
@@ -492,6 +496,31 @@ if grep -Fq 'client-preview-called' "$PREVIEW_SUCCESSOR_STOP_LOG"; then
     fail 'successor handoff mismatch 不应启动 preview client'
 else
     pass 'successor handoff mismatch 不启动 preview client'
+fi
+
+# A malformed identity handoff must not make the parent infer ownership from
+# the shared PID record.  It fails closed and leaves the record untouched.
+PREVIEW_INVALID_REPORT="$SANDBOX/preview-invalid-report"
+PREVIEW_INVALID_STOP_LOG="$SANDBOX/preview-invalid-stop.log"
+run_capture "$SANDBOX/preview-invalid.out" "$SANDBOX/preview-invalid.err" \
+    env PATH="$PREVIEW_AUTHORITY_FIXTURE/bin:/usr/bin:/bin" \
+    BONG_TERRAIN_RASTER_DIR="$PREVIEW_AUTHORITY_FIXTURE/raster" \
+    BONG_CLIENT_PREVIEW_DIR="$PREVIEW_AUTHORITY_FIXTURE/client" \
+    BONG_PREVIEW_CONFIG="$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
+    PREVIEW_STOP_LOG="$PREVIEW_INVALID_STOP_LOG" \
+    PREVIEW_WRAPPER_MODE=invalid_identity \
+    /bin/bash "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_INVALID_REPORT"
+assert_rc 1 '非法 identity handoff 以非零 fail-closed'
+if [[ -s "$PREVIEW_INVALID_STOP_LOG" ]]; then
+    fail '非法 identity handoff 不得按共享 PID path 调用 stop'
+else
+    pass '非法 identity handoff 不按共享 PID path 调用 stop'
+fi
+if [[ -f "$PREVIEW_INVALID_REPORT/preview-server.pid" ]]; then
+    pass '非法 identity handoff 保留未验证 authority record'
+else
+    fail '非法 identity handoff 意外清除了 authority record'
 fi
 
 # stop 首次失败后由 EXIT trap 重试时，cleanup 状态必须仍存在于管道子 shell；

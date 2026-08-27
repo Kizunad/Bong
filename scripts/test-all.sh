@@ -632,7 +632,7 @@ run_preview_handoff() {
     preview_read_handoff_identity() {
         local handoff_file="$1" expected_state="$2"
         local fd line state= pid= starttime= executable= executable_identity=
-        local count=0 owner= mode= links= kind= path_identity= fd_identity=
+        local count=0 owner= mode= links= kind= path_identity= path_identity_after= fd_identity=
         [[ -f "$handoff_file" && ! -L "$handoff_file" ]] || return 1
         path_identity="$(stat -Lc '%d:%i' -- "$handoff_file" 2>/dev/null)" || return 1
         exec {fd}<"$handoff_file" || return 1
@@ -641,9 +641,12 @@ run_preview_handoff() {
         mode="$(stat -Lc '%a' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
         links="$(stat -Lc '%h' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
         fd_identity="$(stat -Lc '%d:%i' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
-        if [[ "$kind" != 'regular file' && "$kind" != 'regular empty file' ]] \
+        path_identity_after="$(stat -Lc '%d:%i' -- "$handoff_file" 2>/dev/null || true)"
+        if [[ ! -f "$handoff_file" || -L "$handoff_file" ]] \
+            || [[ "$kind" != 'regular file' && "$kind" != 'regular empty file' ]] \
             || [[ "$owner" != "$UID" ]] || [[ "$mode" != 600 ]] || [[ "$links" != 1 ]] \
-            || [[ "$fd_identity" != "$path_identity" ]]; then
+            || [[ "$fd_identity" != "$path_identity" ]] \
+            || [[ "$path_identity_after" != "$fd_identity" ]]; then
             exec {fd}<&-
             return 1
         fi
@@ -663,9 +666,12 @@ run_preview_handoff() {
         mode="$(stat -Lc '%a' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
         links="$(stat -Lc '%h' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
         fd_identity="$(stat -Lc '%d:%i' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
-        if [[ "$kind" != 'regular file' && "$kind" != 'regular empty file' ]] \
+        path_identity_after="$(stat -Lc '%d:%i' -- "$handoff_file" 2>/dev/null || true)"
+        if [[ ! -f "$handoff_file" || -L "$handoff_file" ]] \
+            || [[ "$kind" != 'regular file' && "$kind" != 'regular empty file' ]] \
             || [[ "$owner" != "$UID" ]] || [[ "$mode" != 600 ]] || [[ "$links" != 1 ]] \
-            || [[ "$fd_identity" != "$path_identity" ]]; then
+            || [[ "$fd_identity" != "$path_identity" ]] \
+            || [[ "$path_identity_after" != "$fd_identity" ]]; then
             exec {fd}<&-
             return 1
         fi
@@ -681,10 +687,10 @@ run_preview_handoff() {
         PREVIEW_HANDOFF_EXECUTABLE_IDENTITY="$executable_identity"
     }
 
-    # The state marker is preferred when valid.  If its publication failed,
-    # the independent identity handoff is the only allowed fallback.  Missing
-    # or malformed handoffs never fall back to preview-server.pid pathname
-    # presence; cleanup remains fail-closed.
+    # The independent identity handoff is authoritative.  The state marker is
+    # checked as a second copy when present; if its publication failed, the
+    # identity handoff remains the only allowed fallback.  Missing or malformed
+    # handoffs never fall back to preview-server.pid pathname presence.
     preview_load_handoff_identity() {
         preview_expected_identity_loaded=0
         preview_expected_pid=
@@ -692,32 +698,41 @@ run_preview_handoff() {
         preview_expected_executable=
         preview_expected_executable_identity=
         preview_handoff_reason=
-        if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]]; then
-            if preview_read_handoff_identity "$preview_launch_state_file" authority_published; then
-                preview_expected_identity_loaded=1
-            else
-                preview_handoff_reason="launch state handoff 无效：$preview_launch_state_file"
-                return 1
-            fi
-        elif [[ -e "$preview_launch_identity_file" || -L "$preview_launch_identity_file" ]]; then
-            if preview_read_handoff_identity "$preview_launch_identity_file" identity_published; then
-                preview_expected_identity_loaded=1
-            else
-                preview_handoff_reason="launch identity handoff 无效：$preview_launch_identity_file"
-                return 1
-            fi
-        else
+        if [[ ! -e "$preview_launch_identity_file" && ! -L "$preview_launch_identity_file" ]]; then
             preview_handoff_reason='缺少本次 launch 的 identity handoff'
+            return 1
+        fi
+        if ! preview_read_handoff_identity "$preview_launch_identity_file" identity_published; then
+            preview_handoff_reason="launch identity handoff 无效：$preview_launch_identity_file"
             return 1
         fi
         preview_expected_pid="$PREVIEW_HANDOFF_PID"
         preview_expected_starttime="$PREVIEW_HANDOFF_STARTTIME"
         preview_expected_executable="$PREVIEW_HANDOFF_EXECUTABLE"
         preview_expected_executable_identity="$PREVIEW_HANDOFF_EXECUTABLE_IDENTITY"
+        if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]]; then
+            if ! preview_read_handoff_identity "$preview_launch_state_file" authority_published; then
+                preview_handoff_reason="launch state handoff 无效：$preview_launch_state_file"
+                return 1
+            fi
+            if [[ "$PREVIEW_HANDOFF_PID" != "$preview_expected_pid" ]] \
+                || [[ "$PREVIEW_HANDOFF_STARTTIME" != "$preview_expected_starttime" ]] \
+                || [[ "$PREVIEW_HANDOFF_EXECUTABLE" != "$preview_expected_executable" ]] \
+                || [[ "$PREVIEW_HANDOFF_EXECUTABLE_IDENTITY" != "$preview_expected_executable_identity" ]]; then
+                preview_handoff_reason='launch state 与 identity handoff 不一致'
+                return 1
+            fi
+        fi
+        preview_expected_identity_loaded=1
     }
 
     preview_clear_launch_state() {
         local handoff_file expected_state
+        if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]] \
+            && [[ ! -e "$preview_launch_identity_file" && ! -L "$preview_launch_identity_file" ]]; then
+            printf 'preview cleanup: state handoff 存在但独立 identity handoff 缺失，保留现场\n' >&2
+            return 1
+        fi
         for handoff_file in "$preview_launch_state_file" "$preview_launch_identity_file"; do
             if [[ ! -e "$handoff_file" && ! -L "$handoff_file" ]]; then
                 continue
