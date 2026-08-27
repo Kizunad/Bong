@@ -55,6 +55,13 @@ assert_rc 0 '--help 返回 0'
 assert_contains "$SANDBOX/help.out" '--profile unit|contract|full|e2e|preview' '--help 暴露 profile 契约'
 assert_contains "$SANDBOX/help.out" '--list' '--help 暴露 list 契约'
 
+assert_contains "$SCRIPT" "xvfb-run -a --server-args='-screen 0 1280x720x24'" 'preview client 使用固定 xvfb 屏幕参数'
+assert_contains "$SCRIPT" 'elif ! need_command xvfb-run; then' 'preview 缺 xvfb-run 时显式 SKIP'
+assert_contains "$SCRIPT" 'trap preview_exit_cleanup EXIT' 'preview 注册 EXIT cleanup'
+assert_contains "$SCRIPT" "trap 'preview_signal_cleanup 130' INT" 'preview 注册 SIGINT cleanup'
+assert_contains "$SCRIPT" "trap 'preview_signal_cleanup 143' TERM" 'preview 注册 SIGTERM cleanup'
+assert_contains "$SCRIPT" 'stop-server-headless.sh' 'preview cleanup 调用身份安全停服 wrapper'
+
 run_capture "$SANDBOX/list.out" "$SANDBOX/list.err" bash "$SCRIPT" --list
 assert_rc 0 '--list 返回 0'
 LIST_LINES="$(wc -l < "$SANDBOX/list.out" | tr -d '[:space:]')"
@@ -87,7 +94,7 @@ assert_contains "$MISSING_REPORT/server/stderr.log" '缺少 cargo/rustc' '缺工
 FIXTURE="$SANDBOX/fixture"
 mkdir -p "$FIXTURE/bin" "$FIXTURE/server/tests" "$FIXTURE/client" \
     "$FIXTURE/agent/packages/schema" "$FIXTURE/agent/packages/tiandao" \
-    "$FIXTURE/scripts/tests" "$FIXTURE/client/src/test" \
+    "$FIXTURE/scripts/tests" "$FIXTURE/client/src/gametest" \
     "$FIXTURE/agent/packages/schema/tests" "$FIXTURE/agent/packages/tiandao/tests"
 cp "$SCRIPT" "$FIXTURE/scripts/test-all.sh"
 cp "$ROOT/scripts/test-all-owners.tsv" "$FIXTURE/scripts/test-all-owners.tsv"
@@ -174,10 +181,44 @@ assert_rc 1 'preview 缺外部 raster handoff 返回非零'
 assert_contains "$PREVIEW_REPORT/scripts/status" 'BLOCKED' 'preview 缺外部 raster 明确标记 BLOCKED'
 assert_contains "$PREVIEW_REPORT/scripts/stderr.log" '缺少 BONG_TERRAIN_RASTER' 'preview BLOCKED 原因指向外部输入'
 
+PREVIEW_TOOL_FIXTURE="$SANDBOX/preview-tool-fixture"
+mkdir -p "$PREVIEW_TOOL_FIXTURE/scripts/preview" \
+    "$PREVIEW_TOOL_FIXTURE/client" "$PREVIEW_TOOL_FIXTURE/raster" \
+    "$PREVIEW_TOOL_FIXTURE/client/src/gametest" "$PREVIEW_TOOL_FIXTURE/agent/packages/schema/tests" \
+    "$PREVIEW_TOOL_FIXTURE/agent/packages/tiandao/tests" "$PREVIEW_TOOL_FIXTURE/scripts/tests" \
+    "$PREVIEW_TOOL_FIXTURE/server/tests" \
+    "$PREVIEW_TOOL_FIXTURE/bin"
+cp "$SCRIPT" "$PREVIEW_TOOL_FIXTURE/scripts/test-all.sh"
+cp "$ROOT/scripts/test-all-owners.tsv" "$PREVIEW_TOOL_FIXTURE/scripts/test-all-owners.tsv"
+chmod +x "$PREVIEW_TOOL_FIXTURE/scripts/test-all.sh"
+touch "$PREVIEW_TOOL_FIXTURE/scripts/preview/run-server-headless.sh" \
+    "$PREVIEW_TOOL_FIXTURE/scripts/preview/stop-server-headless.sh" \
+    "$PREVIEW_TOOL_FIXTURE/client/preview-harness.json" \
+    "$PREVIEW_TOOL_FIXTURE/raster/focus-layout-preview.png" \
+    "$PREVIEW_TOOL_FIXTURE/raster/focus-surface-preview.png"
+for tool in bash python3 cargo rustc git date mkdir basename dirname; do
+    ln -s "$(command -v "$tool")" "$PREVIEW_TOOL_FIXTURE/bin/$tool"
+done
+cp "$FIXTURE/bin/java" "$PREVIEW_TOOL_FIXTURE/bin/java"
+cp "$FIXTURE/client/gradlew" "$PREVIEW_TOOL_FIXTURE/client/gradlew"
+cp "$FIXTURE/scripts/build-token.sh" "$PREVIEW_TOOL_FIXTURE/scripts/build-token.sh"
+chmod +x "$PREVIEW_TOOL_FIXTURE/client/gradlew" "$PREVIEW_TOOL_FIXTURE/scripts/build-token.sh"
+PREVIEW_TOOL_REPORT="$SANDBOX/preview-tool-report"
+run_capture "$SANDBOX/preview-tool.out" "$SANDBOX/preview-tool.err" \
+    env PATH="$PREVIEW_TOOL_FIXTURE/bin" \
+    BONG_TERRAIN_RASTER_DIR="$PREVIEW_TOOL_FIXTURE/raster" \
+    BONG_CLIENT_PREVIEW_DIR="$PREVIEW_TOOL_FIXTURE/client" \
+    BONG_PREVIEW_CONFIG="$PREVIEW_TOOL_FIXTURE/client/preview-harness.json" \
+    /bin/bash "$PREVIEW_TOOL_FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_TOOL_REPORT"
+assert_rc 1 'preview 缺 xvfb-run 不是静默成功'
+assert_contains "$PREVIEW_TOOL_REPORT/scripts/status" 'SKIP' 'preview 缺 xvfb-run 状态为 SKIP'
+assert_contains "$PREVIEW_TOOL_REPORT/scripts/stderr.log" '需要 xvfb-run' 'preview 缺 xvfb-run 原因写入报告'
+
 BAD_FIXTURE="$SANDBOX/bad-fixture"
 mkdir -p "$BAD_FIXTURE/scripts" "$BAD_FIXTURE/server/tests" "$BAD_FIXTURE/client" \
     "$BAD_FIXTURE/agent/packages/schema" "$BAD_FIXTURE/agent/packages/tiandao" \
-    "$BAD_FIXTURE/scripts/tests" "$BAD_FIXTURE/client/src/test" \
+    "$BAD_FIXTURE/scripts/tests" "$BAD_FIXTURE/client/src/gametest" \
     "$BAD_FIXTURE/agent/packages/schema/tests" "$BAD_FIXTURE/agent/packages/tiandao/tests"
 cp "$SCRIPT" "$BAD_FIXTURE/scripts/test-all.sh"
 sed 's#scripts/tests#scripts/does-not-exist#' \
