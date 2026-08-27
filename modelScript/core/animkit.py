@@ -14,169 +14,41 @@ Blockbench 的 R = Rz·Ry·Rx，绕自身 pivot、在父骨已变换的坐标系
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import sys
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
+import animcore  # noqa: E402
 from to_fmt410 import ensure_410  # noqa: E402
 
 # ================================================================ 旋转 / 曲线
-
-
-def rotmat(deg: float, axis: int) -> np.ndarray:
-    a = math.radians(deg)
-    c, s = math.cos(a), math.sin(a)
-    if axis == 0:
-        return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
-    if axis == 1:
-        return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
-    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-
-
-def euler(rot) -> np.ndarray:
-    """Blockbench 顺序 Rz·Ry·Rx。"""
-    if not any(rot):
-        return np.eye(3)
-    return rotmat(rot[2], 2) @ rotmat(rot[1], 1) @ rotmat(rot[0], 0)
+# 这些原本在本模块和 anim_rig.py 里各写了一份逐字相同的实现。现在统一在 animcore，
+# 这里只做转发 —— 既有 `from animkit import rotmat, smooth, ...` 的调用点一个不用改。
+rotmat = animcore.rotmat
+euler = animcore.euler
+align = animcore.align
+slerp = animcore.slerp
+affine = animcore.affine
+wrap = animcore.wrap
+clamp01 = animcore.clamp01
+smooth = animcore.smooth
+pulse = animcore.pulse
+soft_clamp = animcore.soft_clamp
+keyed = animcore.keyed
 
 
 def euler_of(R: np.ndarray) -> np.ndarray:
     """R = Rz·Ry·Rx 的逆运算，返回 (x, y, z) 度。
 
-    万向锁附近（|sin y| → 1）把 z 固定为 0 再解 x —— 该处 x 与 z 本就简并，硬解出来的
-    那一对角度会在相邻帧之间乱跳。
+    本模块的调用点拿它当向量算（做差、加权），所以维持 ndarray 返回值；
+    anim_rig 那份返回 list。算法本身在 `animcore.euler_xyz`。
     """
-    sy = max(-1.0, min(1.0, -R[2, 0]))
-    if math.sqrt(max(0.0, 1.0 - sy * sy)) < 1e-6:
-        return np.array([math.degrees(math.atan2(-R[1, 2], R[1, 1])),
-                         math.degrees(math.asin(sy)), 0.0])
-    return np.array([math.degrees(math.atan2(R[2, 1], R[2, 2])),
-                     math.degrees(math.asin(sy)),
-                     math.degrees(math.atan2(R[1, 0], R[0, 0]))])
-
-
-def align(u, v) -> np.ndarray:
-    """把向量 u 转到 v 的**最小**旋转（罗德里格斯）。反向时挑一个垂直轴。"""
-    u = np.asarray(u, float)
-    v = np.asarray(v, float)
-    u = u / (np.linalg.norm(u) or 1.0)
-    v = v / (np.linalg.norm(v) or 1.0)
-    c = float(np.dot(u, v))
-    if c > 1.0 - 1e-12:
-        return np.eye(3)
-    if c < -1.0 + 1e-12:
-        axis = np.cross(u, [1.0, 0.0, 0.0])
-        if np.linalg.norm(axis) < 1e-6:
-            axis = np.cross(u, [0.0, 1.0, 0.0])
-        axis /= np.linalg.norm(axis)
-        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
-        return np.eye(3) + 2.0 * K @ K
-    w = np.cross(u, v)
-    K = np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]])
-    return np.eye(3) + K + K @ K / (1.0 + c)
-
-
-def _quat(R: np.ndarray) -> np.ndarray:
-    t = float(np.trace(R))
-    if t > 0.0:
-        s = math.sqrt(t + 1.0) * 2.0
-        return np.array([(R[2, 1] - R[1, 2]) / s, (R[0, 2] - R[2, 0]) / s,
-                         (R[1, 0] - R[0, 1]) / s, 0.25 * s])
-    i = int(np.argmax(np.diag(R)))
-    j, k = (i + 1) % 3, (i + 2) % 3
-    s = math.sqrt(1.0 + R[i, i] - R[j, j] - R[k, k]) * 2.0
-    q = np.zeros(4)
-    q[3] = (R[k, j] - R[j, k]) / s
-    q[i], q[j], q[k] = 0.25 * s, (R[j, i] + R[i, j]) / s, (R[k, i] + R[i, k]) / s
-    return q
-
-
-def _from_quat(q: np.ndarray) -> np.ndarray:
-    x, y, z, w = q / (np.linalg.norm(q) or 1.0)
-    return np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ])
-
-
-def slerp(R0: np.ndarray, R1: np.ndarray, w: float) -> np.ndarray:
-    """两个旋转之间的**球面**插值。
-
-    别对欧拉角做线性插值：三个分量各走各的直线，合成出来的姿态既不是最短弧、中途也不
-    在两端姿态的"之间"。转角小的时候看不出来，收翼→展翼每根羽要转近 90°，线性插值下
-    整片翼中途会散成互不相连的板（实测 t=0.3~0.45 两帧最明显）。
-    """
-    q0, q1 = _quat(R0), _quat(R1)
-    if float(np.dot(q0, q1)) < 0.0:
-        q1 = -q1                      # 取近端：不翻符号会绕远路转 360° 减去夹角
-    d = float(np.clip(np.dot(q0, q1), -1.0, 1.0))
-    if d > 0.9995:
-        return _from_quat(q0 + (q1 - q0) * w)
-    th = math.acos(d)
-    s = math.sin(th)
-    return _from_quat((math.sin((1 - w) * th) * q0 + math.sin(w * th) * q1) / s)
-
-
-def affine(R: np.ndarray, t: np.ndarray) -> np.ndarray:
-    M = np.eye(4)
-    M[:3, :3] = R
-    M[:3, 3] = t
-    return M
-
-
-def wrap(u: float) -> float:
-    return u - math.floor(u)
-
-
-def clamp01(s: float) -> float:
-    return min(1.0, max(0.0, s))
-
-
-def smooth(s: float) -> float:
-    s = clamp01(s)
-    return s * s * (3.0 - 2.0 * s)
-
-
-def pulse(u: float, center: float, width: float) -> float:
-    """环形高斯脉冲：做"大部分时间不动、某一刻抽一下"。"""
-    d = abs(wrap(u - center + 0.5) - 0.5)
-    return math.exp(-((d / width) ** 2))
-
-
-def soft_clamp(x: float, lo: float, hi: float, knee: float) -> float:
-    """夹进 [lo, hi]，但在边界前 knee 的宽度里**平滑**收口，永不真正贴死。
-
-    硬夹的代价不在越界，在"冻住"：逆解一旦顶到可达上界，关节角就一动不动，等目标退回
-    可达域再突然复活 —— 值是连续的、导数不是，看着就是肢体先卡住再"啪"地弹一下。实测
-    落地那条动作里跗跖角连着六个子步纹丝不动（−48.79），紧接着 1/480 个周期内跳 9.5°。
-
-    x ≤ hi−knee 时原样返回（导数为 1，与未夹区无缝接上），越界越多越贴近 hi 但取不到。
-    """
-    if knee <= 1e-9:
-        return min(hi, max(lo, x))
-    if x > hi - knee:
-        return hi - knee * math.exp(-(x - (hi - knee)) / knee)
-    if x < lo + knee:
-        return lo + knee * math.exp((x - (lo + knee)) / knee)
-    return x
-
-
-def keyed(t: float, keys: list[tuple[float, float]]) -> float:
-    """按 (时间, 值) 列表做平滑插值（段内 smoothstep，不像线性那样留折角）。"""
-    if t <= keys[0][0]:
-        return keys[0][1]
-    for (t0, v0), (t1, v1) in zip(keys, keys[1:]):
-        if t <= t1:
-            return v0 + (v1 - v0) * smooth((t - t0) / (t1 - t0)) if t1 > t0 else v1
-    return keys[-1][1]
+    return np.array(animcore.euler_xyz(R))
 
 
 # ================================================================ 骨 / 姿态
@@ -494,32 +366,13 @@ class PoseRig:
 # ================================================================ 关键帧导出
 
 
-def _uuid(seed: str) -> str:
-    """确定性 v4 uuid。
-
-    别用 `uuid.UUID(int=crc32(seed))` 那种拼法：熵只有 32 位（上万关键帧撞车概率约
-    1%），版本/变体位也不合法。Blockbench 拿 uuid 当索引键，不值得冒这个险。
-    """
-    return str(uuid.UUID(bytes=hashlib.md5(seed.encode()).digest(), version=4))
+_uuid = animcore.stable_uuid
 
 
 def _kf(channel: str, time: float, vec, idx: int, seed: str) -> dict:
-    """关键帧。字段照用户手上能正常打开的带动画工程逐项对齐：data_points 用**字符串**、
-    bezier 四件套即使走 linear 也写全 —— 缺字段的默认值随 Blockbench 版本变，不值得赌。
-    """
-    return {
-        "channel": channel,
-        "data_points": [{"x": f"{vec[0]:.4f}", "y": f"{vec[1]:.4f}", "z": f"{vec[2]:.4f}"}],
-        "uuid": _uuid(f"{seed}{idx}"),
-        "time": round(time, 4),
-        "color": -1,
-        "interpolation": "linear",
-        "bezier_linked": True,
-        "bezier_left_time": [-0.1, -0.1, -0.1],
-        "bezier_left_value": [0, 0, 0],
-        "bezier_right_time": [0.1, 0.1, 0.1],
-        "bezier_right_value": [0, 0, 0],
-    }
+    """关键帧。种子拼成 `名+骨+通道+序号` —— 这是本模块的历史拼法，动它会让既有产物的
+    uuid 全变，而 uuid 只是 Blockbench 的索引键。"""
+    return animcore.keyframe(channel, time, vec, f"{seed}{idx}")
 
 
 def _prune(vals: list[tuple[float, list[float]]], tol: float) -> list[tuple[float, list[float]]]:
@@ -578,28 +431,15 @@ def build_tracks(rig: PoseRig, sampler, length: float, loop: bool, n: int,
     两个采样离它多远，于是"加密采样"反而可能更差，误差曲线上下横跳、怎么加都不收敛。
     """
     ts = sorted({i / n for i in range(n + 1)} | {t for t in extra if 0.0 < t < 1.0})
-    frames: list[tuple[float, Pose]] = []
-    for t in ts:
-        if loop and t >= 1.0:
-            frames.append((length, frames[0][1]))     # 循环末帧 = 首帧，接缝为零
-            break
-        frames.append((t * length, sampler(t)))
+    frames = animcore.sample_frames(sampler, length, loop, ts)
 
     tracks: dict[str, dict[str, list]] = {}
     for bone in rig.order:
-        for chan, attr, default in (("rotation", "rot", 0.0), ("position", "pos", 0.0),
-                                    ("scale", "scale", 1.0)):
-            vals = [(tt, list(getattr(pz[bone], attr)) if bone in pz else [default] * 3)
-                    for tt, pz in frames]
+        for chan, attr, default in animcore.CHANNELS:
+            vals = animcore.channel_values(bone, attr, default, frames)
             if chan == "rotation":
-                # 解缠：euler(θ) 与 euler(θ±360) 是同一个姿态，但导出的关键帧走线性插值
-                # —— 相邻两帧一个 +179 一个 −179，播出来是整整转一圈。姿态由旋转矩阵解出
-                # 来时（球面插值那条路）必然会在 ±180 处翻面，所以这一步不是可选的。
-                for i in range(1, len(vals)):
-                    prev, cur = vals[i - 1][1], vals[i][1]
-                    for k in range(3):
-                        cur[k] -= 360.0 * round((cur[k] - prev[k]) / 360.0)
-            if all(abs(v[k] - default) < 1e-4 for _, v in vals for k in range(3)):
+                animcore.unwrap_degrees(vals)
+            if animcore.is_constant_default(vals, default):
                 continue
             tracks.setdefault(bone, {})[chan] = _prune(
                 vals, _prune_tol(chan, rig.reach(bone), rig.depth(bone)))
@@ -615,29 +455,13 @@ def write_animated_bbmodel(rig: PoseRig, anims: list[dict], out: Path, name: str
     doc = json.loads(json.dumps(rig.doc))
     entries = []
     for a in anims:
-        animators = {}
-        for bone, chans in a["tracks"].items():
-            kfs = []
-            for chan, vals in chans.items():
-                for i, (tt, v) in enumerate(vals):
-                    kfs.append(_kf(chan, tt, v, i, f"{a['name']}{bone}{chan}"))
-            animators[rig.bones[bone].uuid] = {"name": bone, "type": "bone", "keyframes": kfs}
-        entries.append({
-            "uuid": _uuid(f"anim:{name}:{a['name']}"),
-            "name": a["name"],
-            "loop": "loop" if a["loop"] else "once",
-            "override": False,
-            "length": round(a["length"], 4),
-            "snapping": 24,
-            "selected": False,
-            "saved": True,
-            "path": "",
-            "anim_time_update": "",
-            "blend_weight": "",
-            "start_delay": "",
-            "loop_delay": "",
-            "animators": animators,
-        })
+        animators = animcore.animators_of(
+            a["tracks"],
+            lambda bone: rig.bones[bone].uuid,
+            lambda bone, chan, i, _n=a["name"]: f"{_n}{bone}{chan}{i}",
+        )
+        entries.append(animcore.animation_entry(name, a["name"], a["length"], a["loop"],
+                                                animators))
     doc["animations"] = entries
     doc["name"] = name
     doc["model_identifier"] = name
@@ -655,19 +479,7 @@ def write_geckolib(anims: list[dict], out: Path, namespace: str, model_id: str) 
     modelScript/core/bbmodel_to_geckolib.py（驱动 Blockbench 官方 codec 导出），由 codec
     负责这层约定；本函数只用于人眼查曲线和兜底。
     """
-    animations = {}
-    for a in anims:
-        bones = {}
-        for bone, chans in a["tracks"].items():
-            entry = {}
-            for chan, vals in chans.items():
-                entry[chan] = {str(round(tt, 4)): [round(v[0], 4), round(v[1], 4), round(v[2], 4)]
-                               for tt, v in vals}
-            bones[bone] = entry
-        animations[f"animation.{namespace}.{model_id}.{a['name']}"] = {
-            "loop": bool(a["loop"]),
-            "animation_length": round(a["length"], 4),
-            "bones": bones,
-        }
-    Path(out).write_text(json.dumps({"format_version": "1.8.0", "animations": animations},
-                                    indent="\t", ensure_ascii=False))
+    entries = [(a["name"], a["length"], a["loop"], a["tracks"]) for a in anims]
+    Path(out).write_text(
+        json.dumps(animcore.geckolib_document(entries, namespace, model_id),
+                   indent="\t", ensure_ascii=False))
