@@ -9,7 +9,7 @@
 | 阶段 | 主题 | 状态 |
 |------|------|------|
 | T0 / P0 | 三栈盘点、CI/产物地图、所有权矩阵冻结、统一入口契约设计 | ✅ 2026-08-23 |
-| P1 | 测试放置规则、禁止新增 inline、`scripts/test-all.sh` 与 owners 映射层 | ✅ 2026-08-27 |
+| P1 | 测试放置规则、禁止新增 inline、`scripts/test-all.sh` 与 owners 映射层 | ✅ 2026-08-28 |
 | P2 | Rust inline tests 首批按模块外置到 `server/tests/unit/**` 或专用测试文件 | ⬜ |
 | P3 | CI 兼容接入、报告收口与迁移前后对拍 | ⬜ |
 | P4 | 剩余 Rust inline tests 分批外置、清点归零、全量回归 | ⬜ |
@@ -137,7 +137,7 @@ P1 是独立基础设施 PR：创建 `scripts/test-all.sh`、`scripts/test-all-o
 - `scripts/tests/test_all_contract_test.sh`（或等价的 `scripts/tests/**` contract）：覆盖 `--help`、`--list`、未知参数、缺失工具、`--continue` 失败传播、`${PIPESTATUS[0]}` 退出码和 run-private 报告目录。
 - `docs/` 只记录迁移表和决议，不把业务模块测试搬迁混进 P1。
 
-### P1 实施证据（2026-08-27）
+### P1 实施证据（2026-08-28）
 
 - `scripts/test-all.sh` 已落地从脚本自身解析仓库根；支持 `unit`/`contract`/`full`/`e2e`/`preview`、可重复 `--suite`、`--report-dir`、`--continue`、`--list`、`--help`，按串行 suite DAG 调用既有命令。unit 不包含 `scripts`，e2e 仅调用既有 smoke/bot/chat 三个入口，preview 只消费调用方提供的外部 raster 与 client 截图目录，不启动 BongWorldGen；preview server 日志经 `BONG_PREVIEW_LOG_FILE` 落入 run-private report。
 - `scripts/test-all-owners.tsv` 固定覆盖 `server`、`client`、`schema`、`tiandao`、`scripts` 五行；`--list` 校验 header、恰好五个 suite、reviewer/evidence 路径存在，并输出七列 owners/command/dependency/native-report 矩阵。
