@@ -1,8 +1,8 @@
 # plan-test-layout-refactor-v1 — 三栈测试外置布局、所有权冻结与统一入口设计
 
-> **一句话主题**：保留 server/client/agent 各自的 canonical 测试根，禁止新增生产文件内联测试，并按可回滚的小批次把现有 Rust inline tests 外置；同时冻结执行命令、CI job 与报告产物所有权，设计 `scripts/test-all.sh` 统一入口。
+> **一句话主题**：保留 server/client/agent 各自的 canonical 测试根，禁止新增生产文件内联测试，并按可回滚的小批次把现有 Rust inline tests 外置；同时冻结执行命令、CI job 与报告产物所有权，落地 `scripts/test-all.sh` 统一入口。
 >
-> **当前状态**：骨架（skeleton），T0 设计盘点已完成；已收口“独立测试根 + 分阶段外置”决议，未创建统一脚本，未开始批量迁移测试代码。
+> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2-P4 尚未开始，未批量迁移测试代码。
 >
 > **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `plan-test-layout-refactor-v1`，基于 `origin/main=eea1e73f2`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。外部 `BongWorldGen` 不属于本仓库或本 plan 的测试栈；Bong 仅保留 raster handoff 与 server/client preview 消费端。
 
@@ -14,12 +14,12 @@
 | P3 | CI 兼容接入、报告收口与迁移前后对拍 | ⬜ |
 | P4 | 剩余 Rust inline tests 分批外置、清点归零、全量回归 | ⬜ |
 
-## 为什么独立成 skeleton
+## 为什么最初独立成 skeleton
 
 - 这不是某个业务模块的测试补充，而是跨 Bong 内 `server/`、`client/`、`agent/`、根 `scripts/` 和 `.github/workflows/` 的测试基础设施设计；与现有 feature plan 及 `plan-refactor-master-v1` 的代码所有权不同。
 - 当前已有多个局部入口：`scripts/smoke-test.sh`、`scripts/smoke-test-e2e.sh`、`scripts/smoke-tiandao-fullstack.sh`、server/client preview handoff、resource-pack 与 script-contract workflow。直接改其中任一入口会把盘点、迁移和行为改变混在一个 PR，故先独立冻结基线。
-- `BongWorldGen` 的生成器、console、terrain tests 与其 CI 已迁出到独立仓库；本 skeleton 只记录 Bong 侧的 raster handoff/preview 消费边界，不把外部测试重新算作第四栈。
-- 本 skeleton 不占用任何现有测试目录，不给既有测试重新命名，也不回写 `docs/CLAUDE.md`、`docs/worldview.md` 或其他 plan。
+- `BongWorldGen` 的生成器、console、terrain tests 与其 CI 已迁出到独立仓库；原 skeleton 只记录 Bong 侧的 raster handoff/preview 消费边界，不把外部测试重新算作第四栈。
+- T0 阶段原 skeleton 不占用任何现有测试目录，不给既有测试重新命名，也不回写 `docs/CLAUDE.md`、`docs/worldview.md` 或其他 plan；P1 仅新增本 plan 指定的脚本入口、owners 映射与外置 contract pin。
 
 ## 立 plan 前预检记录（T0，2026-08-23）
 
@@ -27,7 +27,7 @@
 - **`origin/main` 栈边界**：`eea1e73f2`（`迁出旧 worldgen 到 BongWorldGen`）删除了顶层 `worldgen/` 与 `.github/workflows/worldgen-preview.yml`；`git ls-tree origin/main worldgen` 无结果，`CLAUDE.md:8,78-79` 与 `scripts/dev-reload.sh:438-461` 将生成器/console 定义为外部仓库。故 BongWorldGen 的测试目录、命令、CI job 与 artifact 不进入本 plan；Bong 保留的 `server/src/preview/**`、`client/preview-harness.json`、`scripts/preview/**` 归入 server/client/root-script 边界。
 - **`docs/finished_plans/`**：共 359 份归档 plan；相关关键词命中的是业务 plan 内的测试段（如 `plan-dandao-path-v1`、`plan-shield-block-combat-event-feedback-v1`），没有覆盖当前三栈测试布局、统一入口或 artifact ownership 的既有 plan，因此不并入；历史 worldgen plans 不属于当前 Bong 测试栈。
 - **当前 active `docs/plan-*.md`**：逐项检查了 `plan-bot-e2e-coverage-v1`、`plan-ci-redis-pull-resilience-v1`、`plan-refactor-master-v1` 及其他 active plan；前者负责 bot 场景覆盖，后者负责 CI Redis 稳定性，`plan-refactor-master-v1` 的矩阵是代码 ownership，均不拥有三栈测试目录/报告编排，不重复其 scope。
-- **`docs/plans-skeleton/` 与 `reminder.md`**：立项前有 166 个 skeleton；无同名 `plan-test-layout-refactor-*` 或三栈测试布局主题骨架，`docs/plans-skeleton/reminder.md` 也无匹配待办。本文件因此作为独立 skeleton 新建。
+- **`docs/plans-skeleton/` 与 `reminder.md`**：立项前有 166 个 skeleton；无同名 `plan-test-layout-refactor-*` 或三栈测试布局主题骨架，`docs/plans-skeleton/reminder.md` 也无匹配待办。本文件当时作为独立 skeleton 新建，现已 promotion 为 `docs/plan-test-layout-refactor-v1.md`。
 
 ## Pre-P0 Decisions（T0，2026-08-23）
 
@@ -148,7 +148,7 @@ P1 是独立基础设施 PR：创建 `scripts/test-all.sh`、`scripts/test-all-o
 
 ### CLI 契约
 
-建议入口位于仓库根 `scripts/test-all.sh`，默认从脚本所在目录解析仓库根，不依赖当前 cwd；同目录的 `scripts/test-all-owners.tsv` 是 owner/reviewer 映射真源。P1 实现前不得把以下设计当成已落地命令：
+入口位于仓库根 `scripts/test-all.sh`，从脚本所在目录解析仓库根，不依赖当前 cwd；同目录的 `scripts/test-all-owners.tsv` 是 owner/reviewer 映射真源。以下是已落地的 P1 CLI 契约：
 
 ```text
 scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
@@ -197,10 +197,10 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 
 ## 验收抓手（T0）
 
-- `docs/plans-skeleton/plan-test-layout-refactor-v1.md` 独立存在，未产生 `scripts/test-all.sh`。
+- `docs/plan-test-layout-refactor-v1.md` 为当前 active plan，`scripts/test-all.sh`、`scripts/test-all-owners.tsv` 与 `scripts/tests/test_all_contract_test.sh` 已按 P1 交付。
 - 盘点覆盖三栈及根 preview/contract tooling 的 source directory、local command、CI job、native report/artifact；每行都有 owner 和 consumer。
 - 矩阵明确区分测试语义 owner、编排 owner、报告 producer/consumer；P1 交付的 `scripts/test-all-owners.tsv` 必须能逐行核验 suite/path/evidence 三列，且声明跨栈 smoke 不得复制场景。
-- `git diff --name-only`（在干净基线核验时）只应出现本 skeleton；本轮不要求清理工作树中已有的用户文件。
+- `git diff --name-only`（在 T0 干净基线核验时）只应出现当时的 skeleton 文件；P1 本轮不要求清理工作树中已有的用户文件。
 - 本轮不修改任何 `server/**`、`client/**`、`agent/**` 测试路径，不修改 `.github/workflows/**`，不添加依赖；外部 BongWorldGen 不在本 PR 的路径/命令/CI 变更范围内。
 
 ## §8 开放问题（升 active / P1 决策门前需收口）
@@ -255,7 +255,7 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 
 **落点**：`.github/workflows/e2e.yml:81-187,248-254,304-312,369-373,421-428` / 本文 `T0 产物矩阵`、`P1 编排与报告契约`。
 
-以上决议允许进入 P1；升为 active 前仍需将本 skeleton 以单独 PR promotion 到 `docs/plan-test-layout-refactor-v1.md`，并由测试/CI owner 审阅。任何未来任务卡必须附带下列“Test Refactor 附录”。
+以上决议已用于 P1；skeleton 已按单独 promotion commit 移为 `docs/plan-test-layout-refactor-v1.md`，P1 交付等待测试/CI owner 审阅。任何未来任务卡必须附带下列“Test Refactor 附录”。
 
 ## 后续任务卡固定附录（复制模板）
 
