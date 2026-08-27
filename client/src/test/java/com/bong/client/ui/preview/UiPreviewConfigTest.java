@@ -15,7 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class UiPreviewConfigTest {
     @Test
     void checkedInConfigCoversMinimumOddAndWideRealRendererCases() throws IOException {
-        UiPreviewConfig config = UiPreviewConfig.load(Path.of("ui-preview-harness.json"));
+        UiPreviewConfig config = UiPreviewConfig.parse(
+            Files.readString(Path.of("ui-preview-harness.json")));
         assertEquals(3, config.screenshots().size());
         assertEquals("craft-compact", config.screenshots().get(0).expectedTemplateId());
         assertEquals(320, config.screenshots().get(0).expectedLogicalWidth());
@@ -27,7 +28,8 @@ class UiPreviewConfigTest {
 
     @Test
     void defaultsAreAppliedToMinimalValidConfig(@TempDir Path tempDir) throws IOException {
-        UiPreviewConfig config = UiPreviewConfig.load(write(tempDir, validShot("craft")));
+        UiPreviewConfig config = UiPreviewConfig.parse(
+            Files.readString(write(tempDir, validShot("craft"))));
         assertEquals("ui-preview-screenshots", config.outputDir());
         assertEquals(600, config.waitClientTicks());
         assertEquals(200, config.resizeTimeoutTicks());
@@ -44,7 +46,7 @@ class UiPreviewConfigTest {
             + "  \"settle_ticks\": 5,\n"
             + "  \"exit_on_complete\": false,\n"
             + "  \"screenshots\": [" + shotBody("craft") + "]\n}";
-        UiPreviewConfig config = UiPreviewConfig.load(write(tempDir, json));
+        UiPreviewConfig config = UiPreviewConfig.parse(Files.readString(write(tempDir, json)));
         assertEquals("shots", config.outputDir());
         assertEquals(40, config.waitClientTicks());
         assertEquals(30, config.resizeTimeoutTicks());
@@ -72,9 +74,10 @@ class UiPreviewConfigTest {
 
     @Test
     void missingOrEmptyScreenshotsAreRejected(@TempDir Path tempDir) throws IOException {
-        assertThrows(IllegalArgumentException.class, () -> UiPreviewConfig.load(write(tempDir, "{}")));
         assertThrows(IllegalArgumentException.class, () ->
-            UiPreviewConfig.load(write(tempDir, "{\"screenshots\":[]}")));
+            UiPreviewConfig.parse(Files.readString(write(tempDir, "{}"))));
+        assertThrows(IllegalArgumentException.class, () ->
+            UiPreviewConfig.parse(Files.readString(write(tempDir, "{\"screenshots\":[]}"))));
     }
 
     private static String validShot(String sceneId) {

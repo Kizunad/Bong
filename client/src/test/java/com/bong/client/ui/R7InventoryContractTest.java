@@ -115,8 +115,10 @@ class R7InventoryContractTest {
         // 因此不进本摘要——这条基线只管"发出去的字节"。
         // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
         // 最终摘要同时覆盖上述主线资产和本阶段所有 client/src/main 生产字节。
+        // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
+        // 本次重新冻结只包含 UiPreviewConfig 与 UiPreviewHarnessClient 两个生产 Java 文件。
         assertEquals(
-            "25a6033bc7fae9e0b06aecbc05f48127d7398a099a2fc897f2d7286001634cfd",
+            "97635717b1b773393510eb4e5fffd4077ff4dfb14cc81321028e841d7996eee0",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

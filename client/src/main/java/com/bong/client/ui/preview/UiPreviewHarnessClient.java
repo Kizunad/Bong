@@ -30,7 +30,7 @@ public final class UiPreviewHarnessClient {
             throw new IllegalStateException("UI preview 配置不存在: " + path.toAbsolutePath());
         }
         try {
-            UiPreviewConfig config = UiPreviewConfig.load(path);
+            UiPreviewConfig config = UiPreviewConfig.parse(Files.readString(path));
             for (UiPreviewShot shot : config.screenshots()) {
                 if (!UiPreviewScenes.isRegistered(shot.sceneId())) {
                     throw new IllegalArgumentException("未登记的 UI preview scene: " + shot.sceneId());

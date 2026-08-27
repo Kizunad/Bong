@@ -4,11 +4,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /** UI 截图配置；只描述本地白名单场景和可核验的 viewport。 */
@@ -33,8 +31,10 @@ public record UiPreviewConfig(
         screenshots = List.copyOf(screenshots);
     }
 
-    public static UiPreviewConfig load(Path path) throws IOException {
-        JsonObject root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+    /** 从已读取的配置文本解析配置；文件系统 I/O 由外部入口负责。 */
+    public static UiPreviewConfig parse(String content) {
+        JsonObject root = JsonParser.parseString(Objects.requireNonNull(content, "配置文本不能为空"))
+            .getAsJsonObject();
         if (!root.has("screenshots") || !root.get("screenshots").isJsonArray()) {
             throw new IllegalArgumentException("UI preview 配置缺少 screenshots 数组");
         }
