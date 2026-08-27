@@ -125,8 +125,13 @@ class R7KeybindProductionMigrationTest {
             "Forge 必须在客户端首个 tick 前注册存量键位迁移回调");
         assertTrue(endTickRegistration > lifecycleRegistration,
             "Forge 的旧键位迁移接线必须先于 wasPressed 消费回调声明");
-        assertTrue(source.contains("migrateLegacyBoundKey("),
-            "Forge 必须通过按 translation key 的 registry seam 迁移存量配置");
+        assertTrue(source.contains("migrateLegacyBoundKeyOnce("),
+            "Forge 必须通过按 translation key 的 registry seam 执行一次性存量迁移");
+        assertTrue(source.contains("LEGACY_MIGRATION_ID")
+                && source.contains("forge-open-screen-u-v1"),
+            "Forge 的存量迁移 marker 必须带稳定版本 id");
+        assertTrue(source.contains("bong-client-keybind-migrations.properties"),
+            "Forge 必须把迁移完成状态持久化到客户端配置目录文件");
         assertTrue(source.contains("client.options::setKeyCode"),
             "迁移必须通过 GameOptions 持久化 UNKNOWN，而不是只改内存字段");
     }

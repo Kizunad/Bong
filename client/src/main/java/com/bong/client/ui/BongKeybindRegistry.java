@@ -9,9 +9,15 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Properties;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.UnaryOperator;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Explicit keybinding registration gate for Bong client bindings.
@@ -161,6 +167,81 @@ public final class BongKeybindRegistry {
         }
         KeyBinding.updateKeysByCode();
         return true;
+    }
+
+    /**
+     * Applies a legacy migration once for a persistent marker id.
+     *
+     * <p>The marker is recorded even when the current binding is already a
+     * player-selected key.  That distinction matters when the player later
+     * chooses the old default key intentionally: a completed migration must
+     * never reinterpret that choice as legacy configuration.</p>
+     */
+    public synchronized boolean migrateLegacyBoundKeyOnce(
+        String migrationId,
+        Path markerFile,
+        String translationKey,
+        InputUtil.Key legacyKey,
+        InputUtil.Key replacementKey,
+        BiConsumer<KeyBinding, InputUtil.Key> rebinder
+    ) {
+        requireNonBlank(migrationId, "migration id");
+        Objects.requireNonNull(markerFile, "marker file must not be null");
+        if (hasMigrationMarker(markerFile, migrationId)) {
+            return false;
+        }
+
+        boolean migrated = migrateLegacyBoundKey(
+            translationKey, legacyKey, replacementKey, rebinder
+        );
+        writeMigrationMarker(markerFile, migrationId);
+        return migrated;
+    }
+
+    private static boolean hasMigrationMarker(Path markerFile, String migrationId) {
+        if (!Files.isRegularFile(markerFile)) {
+            return false;
+        }
+        Properties markers = new Properties();
+        try (Reader reader = Files.newBufferedReader(markerFile)) {
+            markers.load(reader);
+            return "true".equals(markers.getProperty(markerProperty(migrationId)));
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                "cannot read keybinding migration marker: " + markerFile, exception
+            );
+        }
+    }
+
+    private static void writeMigrationMarker(Path markerFile, String migrationId) {
+        Properties markers = new Properties();
+        if (Files.isRegularFile(markerFile)) {
+            try (Reader reader = Files.newBufferedReader(markerFile)) {
+                markers.load(reader);
+            } catch (IOException exception) {
+                throw new IllegalStateException(
+                    "cannot update keybinding migration marker: " + markerFile, exception
+                );
+            }
+        }
+        markers.setProperty(markerProperty(migrationId), "true");
+        Path parent = markerFile.getParent();
+        try {
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            try (Writer writer = Files.newBufferedWriter(markerFile)) {
+                markers.store(writer, "Bong client keybinding migrations");
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                "cannot write keybinding migration marker: " + markerFile, exception
+            );
+        }
+    }
+
+    private static String markerProperty(String migrationId) {
+        return "completed." + migrationId;
     }
 
     private static boolean isBoundTo(KeyBinding binding, InputUtil.Key key) {

@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -276,6 +278,66 @@ class BongKeybindRegistryTest {
         assertEquals(0, rebinderCalls.get(),
             "idempotent no-op must not rewrite options.txt");
         assertTrue(forge.isUnbound(), "already UNKNOWN must remain UNKNOWN");
+    }
+
+    @Test
+    void oneTimeMigrationMarkerSurvivesReloadAndPreservesIntentionalLegacyKeyChoice() throws Exception {
+        Path marker = Files.createTempDirectory("bong-keybind-marker-")
+            .resolve("migrations.properties");
+        BongKeybindRegistry firstRegistry = registry();
+        KeyBinding forge = firstRegistry.register(spec(
+            "owner.forge.once", "key.test.forge.once", GLFW.GLFW_KEY_U
+        ));
+        AtomicInteger firstRebinderCalls = new AtomicInteger();
+
+        assertTrue(firstRegistry.migrateLegacyBoundKeyOnce(
+                "forge-open-screen-u-v1", marker, "key.test.forge.once",
+                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
+                (binding, replacement) -> {
+                    firstRebinderCalls.incrementAndGet();
+                    binding.setBoundKey(replacement);
+                }),
+            "the first run must process an unmarked legacy binding");
+        assertEquals(1, firstRebinderCalls.get(), "the first run must rebind exactly once");
+        assertTrue(Files.readString(marker).contains("completed.forge-open-screen-u-v1=true"),
+            "a completed migration must be persisted under its versioned marker id");
+
+        forge.setBoundKey(key(GLFW.GLFW_KEY_U));
+        KeyBinding.updateKeysByCode();
+        AtomicInteger secondRebinderCalls = new AtomicInteger();
+        assertFalse(firstRegistry.migrateLegacyBoundKeyOnce(
+                "forge-open-screen-u-v1", marker, "key.test.forge.once",
+                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
+                (binding, replacement) -> secondRebinderCalls.incrementAndGet()),
+            "a completed marker must skip later runs even when the player chose U intentionally");
+        assertEquals(0, secondRebinderCalls.get(), "a completed marker must not call the rebinder");
+        assertTrue(forge.matchesKey(GLFW.GLFW_KEY_U, 0),
+            "an intentional post-migration U choice must remain unchanged");
+    }
+
+    @Test
+    void oneTimeMigrationMarkerIsRecordedForAlreadyCustomizedBinding() throws Exception {
+        Path marker = Files.createTempDirectory("bong-keybind-marker-custom-")
+            .resolve("migrations.properties");
+        BongKeybindRegistry registry = registry();
+        KeyBinding forge = registry.register(spec(
+            "owner.forge.custom.once", "key.test.forge.custom.once", GLFW.GLFW_KEY_K
+        ));
+
+        assertFalse(registry.migrateLegacyBoundKeyOnce(
+                "forge-open-screen-u-v1", marker, "key.test.forge.custom.once",
+                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
+                (binding, replacement) -> binding.setBoundKey(replacement)),
+            "a pre-existing custom key must not be migrated");
+        forge.setBoundKey(key(GLFW.GLFW_KEY_U));
+        KeyBinding.updateKeysByCode();
+        assertFalse(registry.migrateLegacyBoundKeyOnce(
+                "forge-open-screen-u-v1", marker, "key.test.forge.custom.once",
+                key(GLFW.GLFW_KEY_U), InputUtil.UNKNOWN_KEY,
+                (binding, replacement) -> binding.setBoundKey(InputUtil.UNKNOWN_KEY)),
+            "the marker must prevent a later custom U from being treated as legacy");
+        assertTrue(forge.matchesKey(GLFW.GLFW_KEY_U, 0),
+            "a custom U selected after the first run must be preserved");
     }
 
     @Test
