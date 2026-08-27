@@ -65,12 +65,14 @@ assert_contains "$SCRIPT" 'BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_LOG_FILE:-/tmp/bong-preview-server.log' 'preview wrapper 保留可覆盖的历史默认日志路径'
 assert_contains "$SCRIPT" 'preview_launcher_pid=$!' 'preview 记录 wrapper child PID'
 assert_contains "$SCRIPT" 'kill "-$signal_name" "$preview_launcher_pid"' 'preview signal cleanup 转发到 wrapper child'
-assert_contains "$SCRIPT" 'if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"' 'preview 仅在 stop 成功分支处理 authority cleanup'
+assert_contains "$SCRIPT" 'preview_stop_owned_server' 'preview stop 仅通过 identity-bound cleanup helper'
 assert_contains "$SCRIPT" 'preview_exit_cleanup_active=1' 'preview EXIT cleanup 有重入保护'
 assert_contains "$SCRIPT" 'BONG_PREVIEW_LAUNCH_STATE_FILE="$preview_launch_state_file"' 'preview 显式传递 authority handoff 状态文件'
-assert_contains "$SCRIPT" 'if preview_launch_state_published; then' 'preview 非零 wrapper 仍识别已发布 authority'
+assert_contains "$SCRIPT" 'BONG_PREVIEW_LAUNCH_IDENTITY_FILE="$preview_launch_identity_file"' 'preview 显式传递独立 identity handoff 文件'
+assert_contains "$SCRIPT" 'preview_read_handoff_identity' 'preview 只接受完整 identity handoff'
+assert_contains "$SCRIPT" 'BONG_PREVIEW_EXPECTED_EXECUTABLE_IDENTITY' 'preview stop 传递完整 expected identity'
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'bong_server_publish_launch_state' 'preview wrapper 发布 authority handoff marker'
-assert_contains "$SCRIPT" 'launcher_status == PREVIEW_HANDOFF_FAILURE_EXIT' 'preview marker fallback 绑定 wrapper 专用失败码'
+assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'bong_server_publish_launch_identity' 'preview wrapper 独立发布 identity handoff'
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_HANDOFF_FAILURE_EXIT=75' 'preview handoff failure 使用独立退出码'
 if grep -Fq 'bong_server_post_publication_rollback "preview launch-state publication rollback" || true' \
     "$ROOT/scripts/preview/run-server-headless.sh"; then
@@ -78,7 +80,11 @@ if grep -Fq 'bong_server_post_publication_rollback "preview launch-state publica
 else
     pass 'launch-state publication rollback 显式传播未确认状态'
 fi
-assert_contains "$SCRIPT" 'preview_authority_record_present' 'preview marker 失败时仍交给 identity-safe stop 清理'
+if grep -Fq 'preview_authority_record_present' "$SCRIPT"; then
+    fail 'preview 不得以共享 PID pathname 推断 authority'
+else
+    pass 'preview 不以共享 PID pathname 推断 authority'
+fi
 if grep -Fq 'local failed=0 server_started=0 preview_launcher_pid=0' "$SCRIPT"; then
     fail 'preview cleanup 状态不得在管道函数中声明为局部变量'
 else
@@ -286,21 +292,28 @@ touch "$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
 cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/run-server-headless.sh" <<'EOF'
 #!/usr/bin/env bash
 set -u
-if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == refuse_existing ]]; then
+mode="${PREVIEW_WRAPPER_MODE:-failure}"
+if [[ "$mode" == refuse_existing ]]; then
     exit 1
 fi
 printf 'pid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' > "$BONG_PREVIEW_PID_FILE"
-if [[ "${PREVIEW_WRAPPER_MODE:-failure}" != failure_no_marker \
-    && "${PREVIEW_WRAPPER_MODE:-failure}" != refuse_existing ]]; then
-    printf 'state=authority_published\n' > "$BONG_PREVIEW_LAUNCH_STATE_FILE"
+printf 'state=identity_published\npid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' \
+    > "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE"
+if [[ "$mode" == successor ]]; then
+    printf 'pid=5252\nstarttime=2\nexecutable=successor-server\nexecutable_identity=2:2\n' \
+        > "$BONG_PREVIEW_PID_FILE"
 fi
-if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == success ]]; then
+if [[ "$mode" != failure_no_marker && "$mode" != successor ]]; then
+    printf 'state=authority_published\npid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' \
+        > "$BONG_PREVIEW_LAUNCH_STATE_FILE"
+fi
+if [[ "$mode" == success ]]; then
     exit 0
 fi
-if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == failure_no_marker ]]; then
+if [[ "$mode" == failure_no_marker || "$mode" == successor ]]; then
     exit 75
 fi
-if [[ "${PREVIEW_WRAPPER_MODE:-failure}" == refuse_existing ]]; then
+if [[ "$mode" == refuse_existing ]]; then
     exit 1
 fi
 exit 23
@@ -309,6 +322,21 @@ cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/stop-server-headless.sh" <<'EO
 #!/usr/bin/env bash
 set -u
 printf 'stop\n' >> "$PREVIEW_STOP_LOG"
+if [[ -n "${BONG_PREVIEW_EXPECTED_PID:-}" ]]; then
+    if ! awk -v expected_pid="$BONG_PREVIEW_EXPECTED_PID" \
+        -v expected_starttime="$BONG_PREVIEW_EXPECTED_STARTTIME" \
+        -v expected_executable="$BONG_PREVIEW_EXPECTED_EXECUTABLE" \
+        -v expected_identity="$BONG_PREVIEW_EXPECTED_EXECUTABLE_IDENTITY" '
+        /^pid=/ { pid = substr($0, 5) }
+        /^starttime=/ { starttime = substr($0, 11) }
+        /^executable=/ { executable = substr($0, 12) }
+        /^executable_identity=/ { identity = substr($0, 21) }
+        END { exit !(pid == expected_pid && starttime == expected_starttime && executable == expected_executable && identity == expected_identity) }
+    ' "$BONG_PREVIEW_PID_FILE"; then
+        printf 'successor authority preserved after expected identity mismatch\n' >> "$PREVIEW_STOP_LOG"
+        exit 41
+    fi
+fi
 if ! awk '
     NR == 1 && $0 == "pid=4242" { pid=1 }
     NR == 2 && $0 == "starttime=1" { starttime=1 }
@@ -328,7 +356,7 @@ if [[ -n "${PREVIEW_STOP_COUNT_FILE:-}" ]]; then
         exit 17
     fi
 fi
-rm -f -- "$BONG_PREVIEW_PID_FILE" "$BONG_PREVIEW_LAUNCH_STATE_FILE"
+rm -f -- "$BONG_PREVIEW_PID_FILE" "$BONG_PREVIEW_LAUNCH_STATE_FILE" "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE"
 exit 0
 EOF
 cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/validate_snapshots.py" <<'EOF'
@@ -434,6 +462,36 @@ if [[ -e "$PREVIEW_REFUSAL_REPORT/preview-server.pid" ]]; then
     pass 'preexisting authority refusal 保留原 authority record'
 else
     fail 'preexisting authority refusal 意外清除了原 authority record'
+fi
+
+# A successor may publish the shared PID record after the wrapper has handed
+# off the old identity but before the parent cleanup obtains the lifecycle
+# lock.  The expected-identity stop must reject that replacement without
+# signalling or deleting it.
+PREVIEW_SUCCESSOR_REPORT="$SANDBOX/preview-successor-report"
+PREVIEW_SUCCESSOR_STOP_LOG="$SANDBOX/preview-successor-stop.log"
+run_capture "$SANDBOX/preview-successor.out" "$SANDBOX/preview-successor.err" \
+    env PATH="$PREVIEW_AUTHORITY_FIXTURE/bin:/usr/bin:/bin" \
+    BONG_TERRAIN_RASTER_DIR="$PREVIEW_AUTHORITY_FIXTURE/raster" \
+    BONG_CLIENT_PREVIEW_DIR="$PREVIEW_AUTHORITY_FIXTURE/client" \
+    BONG_PREVIEW_CONFIG="$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
+    PREVIEW_STOP_LOG="$PREVIEW_SUCCESSOR_STOP_LOG" \
+    PREVIEW_WRAPPER_MODE=successor \
+    /bin/bash "$PREVIEW_AUTHORITY_FIXTURE/scripts/test-all.sh" \
+    --profile preview --suite scripts --report-dir "$PREVIEW_SUCCESSOR_REPORT"
+assert_rc 1 'successor authority 替换旧 handoff 时 preview 诚实失败'
+assert_contains "$PREVIEW_SUCCESSOR_STOP_LOG" 'successor authority preserved' \
+    'expected identity 不匹配时 stop 不触碰 successor'
+if grep -Fxq 'pid=5252' "$PREVIEW_SUCCESSOR_REPORT/preview-server.pid" \
+    && grep -Fxq 'starttime=2' "$PREVIEW_SUCCESSOR_REPORT/preview-server.pid"; then
+    pass 'successor authority record 保持原样'
+else
+    fail 'successor authority record 被旧 launch cleanup 改写或删除'
+fi
+if grep -Fq 'client-preview-called' "$PREVIEW_SUCCESSOR_STOP_LOG"; then
+    fail 'successor handoff mismatch 不应启动 preview client'
+else
+    pass 'successor handoff mismatch 不启动 preview client'
 fi
 
 # stop 首次失败后由 EXIT trap 重试时，cleanup 状态必须仍存在于管道子 shell；

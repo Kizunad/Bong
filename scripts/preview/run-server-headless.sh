@@ -48,10 +48,12 @@ PID_FILE="${BONG_PREVIEW_PID_FILE:-$(bong_server_runtime_dir)/bong-preview-serve
 export BONG_SERVER_PID_FILE="$PID_FILE"
 # When the preview runner launches this wrapper asynchronously, a non-zero
 # wrapper exit cannot by itself tell the parent whether the PID authority was
-# already published.  The optional marker is a private, one-shot handoff: its
-# presence means the parent must retain cleanup ownership even when this
-# process exits non-zero.  Direct invocations do not opt into the marker.
+# already published.  The optional markers are private, one-shot handoffs:
+# identity is published independently before the state marker, so a failure to
+# publish the latter still leaves the parent with the exact cleanup identity.
+# Direct invocations do not opt into either marker.
 LAUNCH_STATE_FILE="${BONG_PREVIEW_LAUNCH_STATE_FILE:-}"
+LAUNCH_IDENTITY_FILE="${BONG_PREVIEW_LAUNCH_IDENTITY_FILE:-}"
 # Contract with scripts/test-all.sh: this exit code means this wrapper reached
 # the handoff-publication branch. It is deliberately distinct from the normal
 # preexisting-record refusal, so a reused report directory cannot make the
@@ -68,34 +70,44 @@ bong_server_launch_record_matches() {
     && [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" = "$SERVER_EXECUTABLE_IDENTITY" ]
 }
 
-bong_server_publish_launch_state() {
+publish_launch_handoff() {
+  local handoff_file="$1" expected_state="$2"
   local directory record_directory temporary
 
-  [ -n "$LAUNCH_STATE_FILE" ] || return 0
-  directory="$(dirname -- "$LAUNCH_STATE_FILE")"
+  [ -n "$handoff_file" ] || return 0
+  directory="$(dirname -- "$handoff_file")"
   record_directory="$(dirname -- "$PID_FILE")"
   [ "$directory" = "$record_directory" ] || {
-    echo "❌ Preview launch state 必须与 PID authority 位于同一目录" >&2
+    echo "❌ Preview launch handoff 必须与 PID authority 位于同一目录" >&2
     return 1
   }
-  bong_server_validate_pid_record_parent "$LAUNCH_STATE_FILE" || {
+  bong_server_validate_pid_record_parent "$handoff_file" || {
     echo "❌ Preview launch state 目录不安全: $directory" >&2
     return 1
   }
-  if [ -e "$LAUNCH_STATE_FILE" ] || [ -L "$LAUNCH_STATE_FILE" ]; then
-    echo "❌ Preview launch state 已存在，拒绝覆盖: $LAUNCH_STATE_FILE" >&2
+  if [ -e "$handoff_file" ] || [ -L "$handoff_file" ]; then
+    echo "❌ Preview launch handoff 已存在，拒绝覆盖: $handoff_file" >&2
     return 1
   fi
   temporary="$(umask 077 && mktemp "$directory/.bong-preview-launch-state.XXXXXX")" || return 1
   chmod 600 -- "$temporary" || { rm -f -- "$temporary"; return 1; }
-  if ! printf 'state=authority_published\npid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
+  if ! printf 'state=%s\npid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
+      "$expected_state" \
       "$SERVER_PID" "$SERVER_STARTTIME" "$SERVER_BINARY" "$SERVER_EXECUTABLE_IDENTITY" \
       > "$temporary"; then
     rm -f -- "$temporary"
     return 1
   fi
   bong_server_validate_pid_record_file "$temporary" || { rm -f -- "$temporary"; return 1; }
-  mv -f -- "$temporary" "$LAUNCH_STATE_FILE" || { rm -f -- "$temporary"; return 1; }
+  mv -f -- "$temporary" "$handoff_file" || { rm -f -- "$temporary"; return 1; }
+}
+
+bong_server_publish_launch_identity() {
+  publish_launch_handoff "$LAUNCH_IDENTITY_FILE" identity_published
+}
+
+bong_server_publish_launch_state() {
+  publish_launch_handoff "$LAUNCH_STATE_FILE" authority_published
 }
 
 # Launch phase is kept explicit so cancellation after authority publication cannot
@@ -390,6 +402,20 @@ bong_server_launch_preview_locked() {
         ;;
     esac
     return 1
+  fi
+  # The identity handoff is the fallback authority for the parent runner. It is
+  # intentionally published before the human-readable state marker: marker
+  # publication may fail because a reused report directory already contains a
+  # state path, but the parent must still receive this launch's exact identity.
+  if ! bong_server_publish_launch_identity; then
+    echo "❌ 无法发布 preview launch identity handoff" >&2
+    if bong_server_post_publication_rollback "preview identity handoff publication rollback"; then
+      return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
+    else
+      status=$?
+    fi
+    echo "❌ identity handoff publication rollback 未确认 (status=$status)；保留 authority 供父 runner诊断" >&2
+    return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
   fi
   # Publish the parent handoff only after the lifecycle record itself has been
   # atomically published.  If this communication step fails, roll back the

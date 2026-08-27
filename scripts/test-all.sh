@@ -235,7 +235,6 @@ load_owners || { printf 'test-all: owners 映射校验失败\n' >&2; exit 2; }
 
 REPORT_DIR=
 RUN_ID=
-PREVIEW_HANDOFF_FAILURE_EXIT=75
 STARTED_AT=
 ENDED_AT=
 GIT_SHA=unknown
@@ -613,41 +612,151 @@ run_preview_handoff() {
     preview_launch_ready=0
     preview_launcher_status=0
     preview_launch_state_file="$REPORT_DIR/.preview-launch-${BASHPID}.state"
-    if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]]; then
-        printf 'preview launch state 已存在，拒绝复用：%s\n' "$preview_launch_state_file" >&2
-        return 1
-    fi
-    preview_launch_state_published() {
-        [[ -f "$preview_launch_state_file" && ! -L "$preview_launch_state_file" ]] \
-            && grep -Fxq 'state=authority_published' "$preview_launch_state_file"
-    }
-    preview_authority_record_present() {
-        # Presence only grants a cleanup attempt. stop-server-headless.sh is
-        # still the authority boundary: it validates PID/starttime/executable
-        # identity before sending any signal or removing the record.
-        [[ -f "$REPORT_DIR/preview-server.pid" && ! -L "$REPORT_DIR/preview-server.pid" ]]
-    }
-    preview_clear_launch_state() {
-        if [[ ! -e "$preview_launch_state_file" && ! -L "$preview_launch_state_file" ]]; then
-            return 0
-        fi
-        if [[ -L "$preview_launch_state_file" || ! -f "$preview_launch_state_file" ]]; then
-            printf 'preview cleanup: launch state 不是安全普通文件，保留现场：%s\n' \
-                "$preview_launch_state_file" >&2
+    preview_launch_identity_file="$REPORT_DIR/.preview-launch-${BASHPID}.identity"
+    for preview_handoff_file in "$preview_launch_state_file" "$preview_launch_identity_file"; do
+        if [[ -e "$preview_handoff_file" || -L "$preview_handoff_file" ]]; then
+            printf 'preview launch handoff 已存在，拒绝复用：%s\n' "$preview_handoff_file" >&2
             return 1
         fi
-        rm -f -- "$preview_launch_state_file"
+    done
+    preview_expected_identity_loaded=0
+    preview_expected_pid=
+    preview_expected_starttime=
+    preview_expected_executable=
+    preview_expected_executable_identity=
+    preview_handoff_reason=
+
+    # Read one wrapper-published handoff through a checked file descriptor.  A
+    # pathname check alone is not an ownership proof: the fd/path identity and
+    # private 0600 metadata are rechecked after the complete record is read.
+    preview_read_handoff_identity() {
+        local handoff_file="$1" expected_state="$2"
+        local fd line state= pid= starttime= executable= executable_identity=
+        local count=0 owner= mode= links= kind= path_identity= fd_identity=
+        [[ -f "$handoff_file" && ! -L "$handoff_file" ]] || return 1
+        path_identity="$(stat -Lc '%d:%i' -- "$handoff_file" 2>/dev/null)" || return 1
+        exec {fd}<"$handoff_file" || return 1
+        kind="$(stat -Lc '%F' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        owner="$(stat -Lc '%u' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        mode="$(stat -Lc '%a' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        links="$(stat -Lc '%h' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        fd_identity="$(stat -Lc '%d:%i' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        if [[ "$kind" != 'regular file' && "$kind" != 'regular empty file' ]] \
+            || [[ "$owner" != "$UID" ]] || [[ "$mode" != 600 ]] || [[ "$links" != 1 ]] \
+            || [[ "$fd_identity" != "$path_identity" ]]; then
+            exec {fd}<&-
+            return 1
+        fi
+        while IFS= read -r -u "$fd" line || [[ -n "$line" ]]; do
+            case "$line" in
+                state=*) [[ -z "$state" ]] || { exec {fd}<&-; return 1; }; state="${line#state=}" ;;
+                pid=*) [[ -z "$pid" ]] || { exec {fd}<&-; return 1; }; pid="${line#pid=}" ;;
+                starttime=*) [[ -z "$starttime" ]] || { exec {fd}<&-; return 1; }; starttime="${line#starttime=}" ;;
+                executable=*) [[ -z "$executable" ]] || { exec {fd}<&-; return 1; }; executable="${line#executable=}" ;;
+                executable_identity=*) [[ -z "$executable_identity" ]] || { exec {fd}<&-; return 1; }; executable_identity="${line#executable_identity=}" ;;
+                *) exec {fd}<&-; return 1 ;;
+            esac
+            count=$((count + 1))
+        done
+        kind="$(stat -Lc '%F' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        owner="$(stat -Lc '%u' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        mode="$(stat -Lc '%a' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        links="$(stat -Lc '%h' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        fd_identity="$(stat -Lc '%d:%i' -- "/proc/self/fd/$fd" 2>/dev/null || true)"
+        if [[ "$kind" != 'regular file' && "$kind" != 'regular empty file' ]] \
+            || [[ "$owner" != "$UID" ]] || [[ "$mode" != 600 ]] || [[ "$links" != 1 ]] \
+            || [[ "$fd_identity" != "$path_identity" ]]; then
+            exec {fd}<&-
+            return 1
+        fi
+        exec {fd}<&-
+        [[ "$count" -eq 5 ]] && [[ "$state" == "$expected_state" ]] \
+            && [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [ "$pid" -gt 1 ] \
+            && [[ "$starttime" =~ ^[0-9]+$ ]] && [[ -n "$executable" ]] \
+            && [[ "$executable" != *$'\r'* ]] \
+            && [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+        PREVIEW_HANDOFF_PID="$pid"
+        PREVIEW_HANDOFF_STARTTIME="$starttime"
+        PREVIEW_HANDOFF_EXECUTABLE="$executable"
+        PREVIEW_HANDOFF_EXECUTABLE_IDENTITY="$executable_identity"
+    }
+
+    # The state marker is preferred when valid.  If its publication failed,
+    # the independent identity handoff is the only allowed fallback.  Missing
+    # or malformed handoffs never fall back to preview-server.pid pathname
+    # presence; cleanup remains fail-closed.
+    preview_load_handoff_identity() {
+        preview_expected_identity_loaded=0
+        preview_expected_pid=
+        preview_expected_starttime=
+        preview_expected_executable=
+        preview_expected_executable_identity=
+        preview_handoff_reason=
+        if [[ -e "$preview_launch_state_file" || -L "$preview_launch_state_file" ]]; then
+            if preview_read_handoff_identity "$preview_launch_state_file" authority_published; then
+                preview_expected_identity_loaded=1
+            else
+                preview_handoff_reason="launch state handoff 无效：$preview_launch_state_file"
+                return 1
+            fi
+        elif [[ -e "$preview_launch_identity_file" || -L "$preview_launch_identity_file" ]]; then
+            if preview_read_handoff_identity "$preview_launch_identity_file" identity_published; then
+                preview_expected_identity_loaded=1
+            else
+                preview_handoff_reason="launch identity handoff 无效：$preview_launch_identity_file"
+                return 1
+            fi
+        else
+            preview_handoff_reason='缺少本次 launch 的 identity handoff'
+            return 1
+        fi
+        preview_expected_pid="$PREVIEW_HANDOFF_PID"
+        preview_expected_starttime="$PREVIEW_HANDOFF_STARTTIME"
+        preview_expected_executable="$PREVIEW_HANDOFF_EXECUTABLE"
+        preview_expected_executable_identity="$PREVIEW_HANDOFF_EXECUTABLE_IDENTITY"
+    }
+
+    preview_clear_launch_state() {
+        local handoff_file expected_state
+        for handoff_file in "$preview_launch_state_file" "$preview_launch_identity_file"; do
+            if [[ ! -e "$handoff_file" && ! -L "$handoff_file" ]]; then
+                continue
+            fi
+            if [[ "$handoff_file" == "$preview_launch_state_file" ]]; then
+                expected_state=authority_published
+            else
+                expected_state=identity_published
+            fi
+            if ! preview_read_handoff_identity "$handoff_file" "$expected_state"; then
+                printf 'preview cleanup: handoff 不是可验证的本次 identity，保留现场：%s\n' \
+                    "$handoff_file" >&2
+                return 1
+            fi
+            rm -f -- "$handoff_file" || return 1
+        done
+    }
+    preview_stop_owned_server() {
+        [[ "$preview_expected_identity_loaded" -eq 1 ]] || return 2
+        BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid" \
+            BONG_PREVIEW_EXPECTED_PID="$preview_expected_pid" \
+            BONG_PREVIEW_EXPECTED_STARTTIME="$preview_expected_starttime" \
+            BONG_PREVIEW_EXPECTED_EXECUTABLE="$preview_expected_executable" \
+            BONG_PREVIEW_EXPECTED_EXECUTABLE_IDENTITY="$preview_expected_executable_identity" \
+            bash "$ROOT/scripts/preview/stop-server-headless.sh"
     }
     preview_cleanup() {
         local exit_code="$1"
-        if ((server_started == 0)) && preview_launch_state_published; then
+        if preview_load_handoff_identity; then
             # The wrapper may have returned non-zero after publishing its
-            # authority.  The marker is the explicit ownership handoff.
+            # authority.  The complete identity handoff is the ownership proof.
             server_started=1
+        elif ((server_started == 1)); then
+            printf 'preview cleanup: %s；拒绝按共享 PID path stop\n' \
+                "$preview_handoff_reason" >&2
+            exit_code=1
         fi
         if ((server_started == 1)); then
-            if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid" \
-                bash "$ROOT/scripts/preview/stop-server-headless.sh"; then
+            if preview_stop_owned_server; then
                 server_started=0
             else
                 printf 'preview cleanup: stop-server-headless.sh 未确认成功；保留清理状态\n' >&2
@@ -672,18 +781,11 @@ run_preview_handoff() {
                 launcher_status=$?
             fi
             preview_launcher_pid=0
-            if preview_launch_state_published; then
+            if preview_load_handoff_identity; then
                 # A non-zero wrapper exit can still own the server record when
                 # its internal rollback was not confirmed.  Keep the outer
                 # stop retry eligible, but never run the client against a
                 # launch that did not return ready.
-                server_started=1
-            elif ((launcher_status == PREVIEW_HANDOFF_FAILURE_EXIT)) \
-                && preview_authority_record_present; then
-                # A missing marker is eligible only for the wrapper's
-                # handoff-publication failure code. Ordinary refusal (for
-                # example, a reused report-dir with another server record)
-                # must never turn pathname presence into ownership.
                 server_started=1
             fi
             if ((launcher_status != 0)); then
@@ -721,6 +823,7 @@ run_preview_handoff() {
     export BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"
     export BONG_PREVIEW_LOG_FILE="$REPORT_DIR/preview-server.log"
     export BONG_PREVIEW_LAUNCH_STATE_FILE="$preview_launch_state_file"
+    export BONG_PREVIEW_LAUNCH_IDENTITY_FILE="$preview_launch_identity_file"
     # Install cleanup before launch. run-server-headless owns the pre-publication
     # launch rollback; this outer trap only stops a server after that wrapper has
     # returned success and this process has confirmed server_started=1. A PID
@@ -736,10 +839,9 @@ run_preview_handoff() {
     else
         preview_launcher_status=$?
         failed=1
-        if ((preview_launcher_status == PREVIEW_HANDOFF_FAILURE_EXIT)) \
-            && preview_authority_record_present; then
+        if preview_load_handoff_identity; then
             # The normal wait path does not pass through
-            # preview_shutdown_launcher; preserve the same dedicated-code
+            # preview_shutdown_launcher; preserve the same identity handoff
             # ownership gate here.
             server_started=1
         fi
