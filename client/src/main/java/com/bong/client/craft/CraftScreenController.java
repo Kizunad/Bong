@@ -8,6 +8,7 @@ import com.bong.client.ui.intent.UiIntentSink;
 import com.bong.client.ui.state.UiStateBinder;
 
 import java.util.Objects;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 /** 手搓状态、生命周期和 typed intent 的库无关控制器。 */
@@ -17,6 +18,7 @@ public final class CraftScreenController
     private final UiStateSource<CraftScreenViewModel> source;
     private final UiIntentSink<CraftIntent> transportSink;
     private final Consumer<? super CraftScreenViewModel> viewListener;
+    private final Executor uiExecutor;
     private final UiIntentSink<CraftIntent> guardedIntentSink = this::dispatchIfOpen;
 
     private CraftScreenViewModel viewModel;
@@ -29,19 +31,37 @@ public final class CraftScreenController
         UiIntentSink<CraftIntent> transportSink,
         Consumer<? super CraftScreenViewModel> viewListener
     ) {
+        this(source, transportSink, viewListener, Runnable::run);
+    }
+
+    public CraftScreenController(
+        UiStateSource<CraftScreenViewModel> source,
+        UiIntentSink<CraftIntent> transportSink,
+        Consumer<? super CraftScreenViewModel> viewListener,
+        Executor uiExecutor
+    ) {
         this.source = Objects.requireNonNull(source, "source must not be null");
         this.transportSink = Objects.requireNonNull(transportSink, "transportSink must not be null");
         this.viewListener = Objects.requireNonNull(viewListener, "viewListener must not be null");
+        this.uiExecutor = Objects.requireNonNull(uiExecutor, "uiExecutor must not be null");
         this.viewModel = source.snapshot();
     }
 
     public static CraftScreenController production(
         Consumer<? super CraftScreenViewModel> viewListener
     ) {
+        return production(viewListener, Runnable::run);
+    }
+
+    public static CraftScreenController production(
+        Consumer<? super CraftScreenViewModel> viewListener,
+        Executor uiExecutor
+    ) {
         return new CraftScreenController(
             CraftUiStateSource.production(),
             CraftClientIntentSink.production(),
-            viewListener
+            viewListener,
+            uiExecutor
         );
     }
 
@@ -67,7 +87,7 @@ public final class CraftScreenController
         opened = true;
         activeScope = scope;
         try {
-            UiStateBinder.bind(source, scope, this::acceptViewModel);
+            UiStateBinder.bind(source, scope, this::acceptViewModel, uiExecutor);
         } catch (Throwable failure) {
             opened = false;
             activeScope = null;

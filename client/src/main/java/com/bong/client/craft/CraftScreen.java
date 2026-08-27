@@ -50,7 +50,7 @@ public final class CraftScreen extends OwoXmlScreenHost<FlowLayout> {
         this.outcomeRefresh = outcomeRefresh != null
             ? outcomeRefresh
             : this::refreshOutcomeOnly;
-        this.controller = CraftScreenController.production(this::applyViewModel);
+        this.controller = CraftScreenController.production(this::applyViewModel, CraftScreen::executeOnClientThread);
     }
 
     /**
@@ -152,7 +152,7 @@ public final class CraftScreen extends OwoXmlScreenHost<FlowLayout> {
         }
         outcomeTestSubscription = CraftUiStateSource.production().subscribe(update -> {
             if (update.change() == CraftScreenViewModel.Change.OUTCOME) {
-                applyOutcome(update);
+                executeOnClientThread(() -> applyOutcome(update));
             }
         });
     }
@@ -340,6 +340,16 @@ public final class CraftScreen extends OwoXmlScreenHost<FlowLayout> {
         if (client != null && client.player != null) {
             client.player.playSound(SoundEvents.BLOCK_ANVIL_USE, 0.1F, 1.5F);
         }
+    }
+
+    /** 所有状态源更新统一回到 Minecraft 主线程，避免网络线程触碰 owo 组件。 */
+    private static void executeOnClientThread(Runnable task) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) {
+            task.run();
+            return;
+        }
+        client.execute(task);
     }
 
 }

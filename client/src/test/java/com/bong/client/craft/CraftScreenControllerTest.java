@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -133,6 +134,64 @@ class CraftScreenControllerTest {
         assertThrows(NullPointerException.class, () -> new CraftScreenController(
             source, ignored -> UiIntentResult.accepted(), null
         ));
+        assertThrows(NullPointerException.class, () -> new CraftScreenController(
+            source, ignored -> UiIntentResult.accepted(), ignored -> {
+            }, null
+        ));
+    }
+
+    @Test
+    void stateUpdatesAreDispatchedOnlyThroughTheConfiguredUiExecutor() {
+        MutableSource source = new MutableSource(model(0L, CraftScreenViewModel.Change.INITIAL));
+        List<Runnable> queued = new ArrayList<>();
+        List<CraftScreenViewModel> rendered = new ArrayList<>();
+        Executor executor = queued::add;
+        CraftScreenController controller = new CraftScreenController(
+            source,
+            ignored -> UiIntentResult.accepted(),
+            rendered::add,
+            executor
+        );
+        DefaultUiScreenScope scope = openScope();
+
+        controller.onOpen(scope);
+        source.emit(model(1L, CraftScreenViewModel.Change.RECIPES));
+
+        assertTrue(rendered.isEmpty(), "Store 线程只能提交 UI task，不得直接触碰 view listener");
+        assertEquals(1, queued.size(), "连续状态变化应合并到一个有序 drain task");
+
+        queued.remove(0).run();
+
+        assertEquals(
+            List.of(
+                CraftScreenViewModel.Change.INITIAL,
+                CraftScreenViewModel.Change.RECIPES
+            ),
+            rendered.stream().map(CraftScreenViewModel::change).toList(),
+            "UI executor drain 必须按状态产生顺序交付首帧和后续变化"
+        );
+    }
+
+    @Test
+    void subscriptionWindowUpdateIsDeliveredWithoutDuplicateCatchUpFrame() {
+        CraftScreenViewModel initial = model(0L, CraftScreenViewModel.Change.INITIAL);
+        CraftScreenViewModel duringSubscribe = model(1L, CraftScreenViewModel.Change.RECIPES);
+        MutableSource source = new MutableSource(initial, duringSubscribe);
+        List<CraftScreenViewModel> rendered = new ArrayList<>();
+        CraftScreenController controller = new CraftScreenController(
+            source,
+            ignored -> UiIntentResult.accepted(),
+            rendered::add
+        );
+        DefaultUiScreenScope scope = openScope();
+
+        controller.onOpen(scope);
+
+        assertEquals(
+            List.of(CraftScreenViewModel.Change.INITIAL, CraftScreenViewModel.Change.RECIPES),
+            rendered.stream().map(CraftScreenViewModel::change).toList(),
+            "snapshot 与订阅登记之间的更新必须补发一次且不能重复补发"
+        );
     }
 
     private static DefaultUiScreenScope openScope() {
@@ -155,11 +214,20 @@ class CraftScreenControllerTest {
 
     private static final class MutableSource implements UiStateSource<CraftScreenViewModel> {
         private final List<Consumer<? super CraftScreenViewModel>> listeners = new ArrayList<>();
+        private final CraftScreenViewModel emitDuringSubscribe;
         private CraftScreenViewModel current;
         private int registrations;
 
         private MutableSource(CraftScreenViewModel current) {
+            this(current, null);
+        }
+
+        private MutableSource(
+            CraftScreenViewModel current,
+            CraftScreenViewModel emitDuringSubscribe
+        ) {
             this.current = current;
+            this.emitDuringSubscribe = emitDuringSubscribe;
         }
 
         @Override
@@ -171,6 +239,10 @@ class CraftScreenControllerTest {
         public UiSubscription subscribe(Consumer<? super CraftScreenViewModel> listener) {
             registrations++;
             listeners.add(listener);
+            if (emitDuringSubscribe != null) {
+                current = emitDuringSubscribe;
+                listener.accept(emitDuringSubscribe);
+            }
             return UiSubscriptions.once(() -> listeners.remove(listener));
         }
 
