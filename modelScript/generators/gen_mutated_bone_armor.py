@@ -408,7 +408,7 @@ def generate(render_previews: bool = True) -> dict[str, Path]:
     all_parts = parts()
     _assert_no_coplanar_faces(all_parts)
     texture = make_texture()
-    return write_material_assets(
+    outputs = write_material_assets(
         MATERIAL,
         all_parts,
         texture,
@@ -417,6 +417,18 @@ def generate(render_previews: bool = True) -> dict[str, Path]:
         PREVIEW_ROOT,
         render_previews,
     )
+
+    # 同步写出 128x128 OnPlayer 人体穿戴合模资产，保证生成脚本幂等输出全部交付物
+    import sys as _sys
+    _sys.path.insert(0, str(REPO / "modelScript" / "tools"))
+    from preview_armor_on_body import make_player_skin, write_player_bbmodel
+    skin = make_player_skin()
+    model_dir = LOCAL_MODELS / "armor" / MATERIAL
+    for part in all_parts:
+        on_player_path = write_player_bbmodel(part, skin, texture, MATERIAL, model_dir)
+        outputs[f"model_on_player:{part.key}"] = on_player_path
+
+    return outputs
 
 
 def main() -> None:

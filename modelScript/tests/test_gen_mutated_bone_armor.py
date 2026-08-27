@@ -91,8 +91,12 @@ class TestMutatedBoneArmor(unittest.TestCase):
         outputs = generate(render_previews=False)
         self.assertIn("model:mutated_bone_chestplate", outputs)
         self.assertIn("model:mutated_bone_leggings", outputs)
+        self.assertIn("model_on_player:mutated_bone_chestplate", outputs)
+        self.assertIn("model_on_player:mutated_bone_leggings", outputs)
         self.assertTrue(outputs["model:mutated_bone_chestplate"].exists())
         self.assertTrue(outputs["model:mutated_bone_leggings"].exists())
+        self.assertTrue(outputs["model_on_player:mutated_bone_chestplate"].exists())
+        self.assertTrue(outputs["model_on_player:mutated_bone_leggings"].exists())
 
 
 if __name__ == "__main__":
