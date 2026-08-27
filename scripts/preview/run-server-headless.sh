@@ -53,6 +53,16 @@ export BONG_SERVER_PID_FILE="$PID_FILE"
 # process exits non-zero.  Direct invocations do not opt into the marker.
 LAUNCH_STATE_FILE="${BONG_PREVIEW_LAUNCH_STATE_FILE:-}"
 
+bong_server_launch_record_matches() {
+  [ -n "${SERVER_PID:-}" ] || return 1
+  [ -e "$PID_FILE" ] && [ ! -L "$PID_FILE" ] || return 1
+  bong_server_read_record || return 1
+  [ "$BONG_SERVER_RECORDED_PID" = "$SERVER_PID" ] \
+    && [ "$BONG_SERVER_RECORDED_STARTTIME" = "$SERVER_STARTTIME" ] \
+    && [ "$BONG_SERVER_RECORDED_EXECUTABLE" = "$SERVER_BINARY" ] \
+    && [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" = "$SERVER_EXECUTABLE_IDENTITY" ]
+}
+
 bong_server_publish_launch_state() {
   local directory record_directory temporary
 
@@ -392,7 +402,7 @@ bong_server_launch_preview_locked() {
     # never allowed to overwrite an existing marker; the outer runner also
     # has a record-based, identity-safe stop fallback for this fail-closed case.
     echo "❌ launch-state publication rollback 未确认 (status=$status)；保留 authority 供父 runner identity-safe 重试清理" >&2
-    if [ -n "$LAUNCH_STATE_FILE" ] && [ -e "$PID_FILE" ] && [ ! -L "$PID_FILE" ] \
+    if [ -n "$LAUNCH_STATE_FILE" ] && bong_server_launch_record_matches \
         && [ ! -e "$LAUNCH_STATE_FILE" ] && [ ! -L "$LAUNCH_STATE_FILE" ]; then
       if bong_server_publish_launch_state; then
         echo "⚠ 已补发 preview launch authority handoff；父 runner 必须执行 stop 重试" >&2

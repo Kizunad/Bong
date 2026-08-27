@@ -284,7 +284,7 @@ touch "$PREVIEW_AUTHORITY_FIXTURE/client/preview-harness.json" \
 cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/run-server-headless.sh" <<'EOF'
 #!/usr/bin/env bash
 set -u
-printf 'pid=4242\n' > "$BONG_PREVIEW_PID_FILE"
+printf 'pid=4242\nstarttime=1\nexecutable=fixture-server\nexecutable_identity=1:1\n' > "$BONG_PREVIEW_PID_FILE"
 if [[ "${PREVIEW_WRAPPER_MODE:-failure}" != failure_no_marker ]]; then
     printf 'state=authority_published\n' > "$BONG_PREVIEW_LAUNCH_STATE_FILE"
 fi
@@ -297,6 +297,16 @@ cat > "$PREVIEW_AUTHORITY_FIXTURE/scripts/preview/stop-server-headless.sh" <<'EO
 #!/usr/bin/env bash
 set -u
 printf 'stop\n' >> "$PREVIEW_STOP_LOG"
+if ! awk '
+    NR == 1 && $0 == "pid=4242" { pid=1 }
+    NR == 2 && $0 == "starttime=1" { starttime=1 }
+    NR == 3 && $0 == "executable=fixture-server" { executable=1 }
+    NR == 4 && $0 == "executable_identity=1:1" { identity=1 }
+    END { exit !(pid && starttime && executable && identity && NR == 4) }
+' "$BONG_PREVIEW_PID_FILE"; then
+    printf 'identity-safe fixture stop rejected malformed authority\n' >&2
+    exit 19
+fi
 if [[ -n "${PREVIEW_STOP_COUNT_FILE:-}" ]]; then
     count=0
     [[ ! -f "$PREVIEW_STOP_COUNT_FILE" ]] || read -r count < "$PREVIEW_STOP_COUNT_FILE"
