@@ -131,7 +131,7 @@ class R7KeybindProductionMigrationTest {
             "Forge 必须在客户端首个 tick 前注册存量键位迁移回调");
         assertTrue(endTickRegistration > lifecycleRegistration,
             "Forge 的旧键位迁移接线必须先于 wasPressed 消费回调声明");
-        assertTrue(source.contains("MIGRATION_SERVICE.migrateOnce("),
+        assertTrue(source.contains("migrationService().migrateOnce("),
             "Forge 必须通过 input 应用服务编排一次性存量迁移");
         assertTrue(source.contains("BongKeybindRegistry.global().migrateLegacyBoundKey("),
             "迁移 action 必须继续通过按 translation key 的 registry seam 改绑");
@@ -149,6 +149,11 @@ class R7KeybindProductionMigrationTest {
         assertTrue(source.contains("client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY)")
                 && source.contains("KeyBinding.updateKeysByCode()"),
             "marker 写失败时必须恢复旧 U 并刷新物理索引，不能留下未提交的 UNKNOWN 状态");
+        assertTrue(source.contains("while (keyBinding().wasPressed())")
+                && source.contains("if (shouldDispatchForgeOpen())"),
+            "Forge 必须先排空历史 U 的按键队列，再以 extracting 状态仲裁开屏，不能延迟重放");
+        assertTrue(source.contains("return !ExtractStateStore.snapshot().extracting();"),
+            "Forge 的历史 U 回滚路径必须在撤离中 fail closed");
         assertTrue(source.contains("catch (IllegalStateException exception)"),
             "CLIENT_STARTED 边界必须捕获 marker I/O 故障，不能阻断客户端启动");
         assertTrue(source.contains("BongClient.LOGGER.error(")

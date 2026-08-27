@@ -2,6 +2,7 @@ package com.bong.client.forge;
 
 import com.bong.client.BongClient;
 import com.bong.client.input.KeybindMigrationService;
+import com.bong.client.tsy.ExtractStateStore;
 import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -17,8 +18,7 @@ public final class ForgeScreenBootstrap {
     private static final InputUtil.Key LEGACY_DEFAULT_KEY =
         InputUtil.Type.KEYSYM.createFromCode(GLFW.GLFW_KEY_U);
     private static final String LEGACY_MIGRATION_ID = "forge-open-screen-u-v1";
-    private static final KeybindMigrationService MIGRATION_SERVICE =
-        KeybindMigrationService.clientConfig();
+    private static KeybindMigrationService migrationService;
     private static KeyBinding openScreenKey;
 
     private ForgeScreenBootstrap() {}
@@ -35,7 +35,7 @@ public final class ForgeScreenBootstrap {
     private static void migrateLegacyBinding(MinecraftClient client) {
         if (client == null || client.options == null) return;
         try {
-            boolean migrated = MIGRATION_SERVICE.migrateOnce(
+            boolean migrated = migrationService().migrateOnce(
                 LEGACY_MIGRATION_ID,
                 () -> BongKeybindRegistry.global().migrateLegacyBoundKey(
                     OPEN_KEY_TRANSLATION,
@@ -64,9 +64,23 @@ public final class ForgeScreenBootstrap {
 
     private static void onEndClientTick(MinecraftClient client) {
         if (client == null || client.player == null) return;
+        // Drain legacy U presses while extracting so a failed migration cannot replay Forge later.
         while (keyBinding().wasPressed()) {
-            requestOpenForgeScreen(client);
+            if (shouldDispatchForgeOpen()) {
+                requestOpenForgeScreen(client);
+            }
         }
+    }
+
+    static boolean shouldDispatchForgeOpen() {
+        return !ExtractStateStore.snapshot().extracting();
+    }
+
+    private static KeybindMigrationService migrationService() {
+        if (migrationService == null) {
+            migrationService = KeybindMigrationService.clientConfig();
+        }
+        return migrationService;
     }
 
     private static KeyBinding keyBinding() {
