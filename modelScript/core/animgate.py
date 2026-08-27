@@ -404,29 +404,46 @@ def break_seam_by(pose_at, bone: str, delta: float = 5.0):
     return wrapped
 
 
+def _group_span(boxes) -> tuple[np.ndarray, np.ndarray]:
+    """一组盒的整体包围盒。注入器要整组一起挪，不能只挪其中一件。"""
+    items = _as_boxes(boxes)
+    return (np.min([b[0] for b in items], axis=0), np.max([b[1] for b in items], axis=0))
+
+
+def _shift_group(boxes, off: np.ndarray) -> list:
+    return [(np.asarray(lo, float) + off, np.asarray(hi, float) + off)
+            for lo, hi in _as_boxes(boxes)]
+
+
 def overlap_by(boxes_at, a: str, b: str):
-    """把 a 组整体挪到与 b 组同心 —— 逐帧互穿门必须报。"""
+    """把 a 组整体挪到与 b 组同心 —— 逐帧互穿门必须报。
+
+    **必须走 `_as_boxes` 归一化**：`bone_boxes()` 默认逐件返回一串盒（合并成一个大
+    AABB 会把「组里最近的那一对」冲淡），直接 `alo, ahi = boxes[a]` 在组里不止一件时
+    抛 `ValueError: too many values to unpack`，整个 `self_test()` 当场崩掉 —— 而
+    self_test 正是用来证明门有鉴别力的那一步，它自己崩了就什么都证明不了。
+    """
     def wrapped(t):
         boxes = dict(boxes_at(t))
         if a not in boxes or b not in boxes:
             raise AnimInjectionImpossible(f"这一帧没有 {a} 或 {b}，造不出互穿")
-        alo, ahi = boxes[a]
-        blo, bhi = boxes[b]
-        shift = (blo + bhi) / 2 - (alo + ahi) / 2
-        boxes[a] = (alo + shift, ahi + shift)
+        alo, ahi = _group_span(boxes[a])
+        blo, bhi = _group_span(boxes[b])
+        boxes[a] = _shift_group(boxes[a], (blo + bhi) / 2 - (alo + ahi) / 2)
         return boxes
     return wrapped
 
 
 def snap_chain_by(boxes_at, group: str, gap: float = 3.0):
-    """把链上某一节整体拉开 gap —— 链断裂门必须报。"""
+    """把链上某一节整体拉开 gap —— 链断裂门必须报。
+
+    同 `overlap_by`：组里可能不止一件，一律走 `_as_boxes` 归一化后整组平移。
+    """
     def wrapped(t):
         boxes = dict(boxes_at(t))
         if group not in boxes:
             raise AnimInjectionImpossible(f"这一帧没有 {group}，造不出断链")
-        lo, hi = boxes[group]
-        off = np.array([0.0, gap, 0.0])
-        boxes[group] = (lo + off, hi + off)
+        boxes[group] = _shift_group(boxes[group], np.array([0.0, gap, 0.0]))
         return boxes
     return wrapped
 

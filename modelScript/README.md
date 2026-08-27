@@ -13,7 +13,7 @@ modelScript/
 ├── creatures/    生物流水线：骨架 → 肌肉 → 皮毛 → 动画，每种一个子包
 ├── exporters/    bbmodel → GeckoLib geo.json / 贴图，写进 client 资源树
 ├── tools/        摆位预览、变体派生、手绘稿改造
-├── tests/        466 例，CI 在 build-resourcepack.yml 里跑
+├── tests/        583 例，CI 在 build-resourcepack.yml 里跑
 ├── manifests/    人写的特征清单（*.manifest.toml），点名器照它核对
 ├── assets/       手工输入：参考图 + Tripo 生成索引（入库）
 ├── models/       .bbmodel 产物与手工源（大宗产物 gitignored，见下）
