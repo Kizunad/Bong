@@ -51,9 +51,9 @@ bug-hunt 定点轮（worktree `bughunt-loop-20260705-br`，范围只看 client i
 ### 落地清单
 
 - **P0 默认键位修复**：`client/src/main/java/com/bong/client/forge/ForgeScreenBootstrap.java` 将 Forge 默认键改为 `UNKNOWN`；`client/src/main/java/com/bong/client/tsy/ExtractInteractionBootstrap.java` 保留撤离取消 `U` 并同步修正启动日志；Identity 面板保留 `O`，VoidAction 面板改为 `UNKNOWN`，从默认物理键层面消除两组无仲裁双派发。
-- **P0 存量配置迁移**：`client/src/main/java/com/bong/client/ui/BongKeybindRegistry.java` 在 `CLIENT_STARTED`、首个 Forge tick 消费前按完整 translation key 定位存量绑定；仅将仍为旧默认 `U` 的 Forge 配置迁移到 `UNKNOWN`，通过 `GameOptions#setKeyCode` 持久化并调用 `KeyBinding.updateKeysByCode()` 刷新物理索引，自定义键与已为 `UNKNOWN` 的配置保持不变。
+- **P0 存量配置迁移**：`client/src/main/java/com/bong/client/ui/BongKeybindRegistry.java` 在 `CLIENT_STARTED`、首个 Forge tick 消费前按完整 translation key 定位存量绑定；仅将仍为旧默认 `U` 的 Forge 配置迁移到 `UNKNOWN`，通过 `GameOptions#setKeyCode` 持久化并调用 `KeyBinding.updateKeysByCode()` 刷新物理索引，自定义键与已为 `UNKNOWN` 的配置保持不变。`client/src/main/java/com/bong/client/input/KeybindMigrationPersistence.java` 以 `hasCompleted` / `markCompleted` 隔离 marker 文件实现，UI registry 与 Forge bootstrap 不再暴露 `Path` / `markerFile` 存储细节。
 - **P0 全局契约**：新增 `client/src/test/java/com/bong/client/input/DefaultKeybindingUniquenessTest.java`，扫描 direct `KeyBinding` 与 `BongKeybindRegistry.BindingSpec`，覆盖所有默认键表达式、`UNKNOWN` fail-closed、`O/U` 唯一归属，并为唯一保留的 R 键重复绑定锁定 `BotanyHudBootstrap.shouldCaptureSpellVolumeKey()` 仲裁。
-- **P0 迁移契约**：`client/src/test/java/com/bong/client/ui/BongKeybindRegistryTest.java` 覆盖旧 `U` 迁移、自定义键保留、`UNKNOWN` 幂等，以及迁移前后物理 `U` 对 Forge `wasPressed()` 的真实派发差异；`R7KeybindProductionMigrationTest` 锁定 `CLIENT_STARTED` 注册早于 Forge `END_CLIENT_TICK` 消费。
+- **P0 迁移契约**：`client/src/test/java/com/bong/client/ui/BongKeybindRegistryTest.java` 覆盖旧 `U` 迁移、自定义键保留、`UNKNOWN` 幂等，以及迁移前后物理 `U` 对 Forge `wasPressed()` 的真实派发差异；`client/src/test/java/com/bong/client/input/KeybindMigrationPersistenceTest.java` 覆盖跨实例持久化、多个 marker 保留与非法 ID；`R7KeybindProductionMigrationTest` 锁定 `CLIENT_STARTED` 注册早于 Forge `END_CLIENT_TICK` 消费及 UI 层无文件路径泄漏。
 - **P0 R7 对拍**：更新 `client/src/test/resources/bong/ui/keybind-migration.tsv`、`keybind-production-sites.tsv` 与 R7 source digest baseline；测试全部位于 `client/src/test/java/**`，未改 #2098/#2099 资产、动画或工具链。
 
 ### 关键 commit
@@ -71,17 +71,20 @@ bug-hunt 定点轮（worktree `bughunt-loop-20260705-br`，范围只看 client i
 - `fa6bd905a` · 2026-08-27 · 合并最新主线并同步联合 R7 源码基线。
 - `507f39228` · 2026-08-27 · 补齐 Forge 键位迁移一次性版本标记及回改 U 测试。
 - `5d41219a4` · 2026-08-27 · 同步键位迁移版本标记的 R7 基线。
+- `f2db1ce59` · 2026-08-27 · 按 inline review 初步抽离键位迁移持久化边界。
+- `81baef679` · 2026-08-27 · 将持久化服务正名为非 session store，并同步 R7 冻结基线。
+- `1d90c7899` · 2026-08-27 · 合并最新 `origin/main`（`7623bc2f8`），主线变更未触及 client。
 
 ### 测试结果
 
-- `JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH ../scripts/build-token.sh gradle test build`：marker 返工后的 `4951 tests`、failures `0`、errors `0`，Gametest `3/3`，`BUILD SUCCESSFUL`。
-- `git fetch origin && git merge origin/main`：合并 `origin/main` 后解决两处 R7 fixture 冲突；以联合生产树真实 digest 重新冻结，再运行完整 Java 17 gate 通过。
-- fresh-context、read-only validator：对 `5d41219a4ba2c02d6e2f29bc9da94b183a193cbc` PASS，重新验证默认键唯一性、存量配置迁移、首 tick 前接线、物理索引刷新和一次性版本 marker；返工后新 SHA 的 validator 需在本次证据提交后再次执行。
-- GitHub workflow `33025769643` 首轮：除 `bot-e2e (1)` 外全部通过；失败唯一为与本 plan 无关的 `network_quickslot_config` 负向静默窗口，`freshness_probe_paths` 已通过。失败 job rerun 后 `total=86 pass=82 skip=4 fail=0`；该 rerun 针对前一最终 SHA，当前 marker 返工 HEAD 推送后须重新取得最终 workflow 证据。
+- `JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH ../scripts/build-token.sh gradle test build`：持久化边界返工后的 `4953 tests`、failures `0`、errors `0`，Gametest `3/3`，`BUILD SUCCESSFUL`；合并最新主线后再次运行通过。
+- `git fetch origin && git merge origin/main`：紧邻合并最新 `origin/main`（`7623bc2f8`）；带入内容仅为 `modelScript/` 与根 `CLAUDE.md`，未触及 client，合并后完整 Java 17 gate 复验通过。
+- fresh-context、read-only validator：对 merge HEAD `1d90c789998d81f67779058d171ffcfdda48d48c` PASS，重新核验默认键唯一性、一次性存量迁移、`KeybindMigrationPersistence` 边界、R2 store 命名约束和 R7 digest；本 Finish Evidence commit 后继续对最终 SHA 复验。
+- GitHub workflow `33030064148`：对 review 返工前 HEAD `3a233437065bb0ebc543ca56e4c57568c0802bab` 的 preflight/schema/agent/client/server-test/build-release/smoke/chat-window/bot-e2e (1)/(2) 全部通过；当前持久化边界返工 HEAD 推送后由同一 PR 重新取得最终 workflow 证据。
 
 ### 跨仓库核验
 
-- **client**：`BongKeybindRegistry.BindingSpec`、`DefaultKeybindingUniquenessTest`、`IdentityPanelScreenBootstrap`、`VoidActionScreenBootstrap`、`ForgeScreenBootstrap`、`ExtractInteractionBootstrap` 均命中，覆盖注册、默认键扫描与实际 `wasPressed()` 路由。
+- **client**：`BongKeybindRegistry.BindingSpec`、`KeybindMigrationPersistence`、`DefaultKeybindingUniquenessTest`、`IdentityPanelScreenBootstrap`、`VoidActionScreenBootstrap`、`ForgeScreenBootstrap`、`ExtractInteractionBootstrap` 均命中，覆盖注册、默认键扫描、一次性持久化与实际 `wasPressed()` 路由。
 - **server / agent / schema**：本 plan 仅涉及 Fabric client 输入与测试契约，不修改 server、agent、schema、Redis key 或 wire payload。
 
 ### 遗留 / 后续
