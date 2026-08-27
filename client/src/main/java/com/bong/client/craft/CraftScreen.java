@@ -5,29 +5,24 @@ import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
 import com.bong.client.skill.SkillSetSnapshot;
 import com.bong.client.skill.SkillSetStore;
-import io.wispforest.owo.ui.base.BaseOwoScreen;
-import io.wispforest.owo.ui.component.Components;
+import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
+import com.bong.client.ui.contract.UiScreenScope;
 import io.wispforest.owo.ui.component.LabelComponent;
-import io.wispforest.owo.ui.container.Containers;
 import io.wispforest.owo.ui.container.FlowLayout;
-import io.wispforest.owo.ui.core.Color;
-import io.wispforest.owo.ui.core.HorizontalAlignment;
-import io.wispforest.owo.ui.core.Insets;
-import io.wispforest.owo.ui.core.OwoUIAdapter;
-import io.wispforest.owo.ui.core.Sizing;
-import io.wispforest.owo.ui.core.Surface;
-import io.wispforest.owo.ui.core.VerticalAlignment;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 import java.util.function.Consumer;
 
 /** plan-craft-ux-v1 — 640×340 三栏手搓屏幕。 */
-public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
+public final class CraftScreen extends OwoXmlScreenHost<FlowLayout> {
     private static final Text TITLE = Text.literal("手搓台");
+    private static final int WIDE_MIN_WIDTH = 660;
+    private static final int WIDE_MIN_HEIGHT = 360;
 
     private CraftRecipeListWidget recipeList;
     private CraftMaterialGrid materialGrid;
@@ -65,7 +60,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
 
     /** 测试注入点：观察 screen 自身的完成音与 outcome refresh，不替换 Store/feedback 链。 */
     CraftScreen(CraftOutcomeFeedback.CompleteSoundPlayer completeSound, Runnable outcomeRefresh) {
-        super(TITLE);
+        super(TITLE, FlowLayout.class, "craft");
         this.completeSound = completeSound;
         this.outcomeRefresh = outcomeRefresh != null
             ? outcomeRefresh
@@ -78,42 +73,55 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         );
     }
 
+    /**
+     * XML 已声明外壳、标题、三栏和底部 bridge 插槽；这里仅把已有动态
+     * 列表/材料/产物组件挂入插槽，并把状态监听接到它们。
+     */
     @Override
-    protected OwoUIAdapter<FlowLayout> createAdapter() {
-        return OwoUIAdapter.create(this, Containers::verticalFlow);
-    }
+    protected void bindTemplate(FlowLayout root) {
+        FlowLayout recipeHost = component(FlowLayout.class, "recipe-host");
+        FlowLayout materialHost = component(FlowLayout.class, "material-host");
+        FlowLayout outputHost = component(FlowLayout.class, "output-host");
+        FlowLayout actionHost = component(FlowLayout.class, "action-host");
+        label("craft-title").text(Text.literal("手搓台").formatted(Formatting.BOLD));
+        subtitle = label("craft-subtitle");
 
-    @Override
-    protected void build(FlowLayout root) {
-        root.surface(Surface.VANILLA_TRANSLUCENT);
-        root.horizontalAlignment(HorizontalAlignment.CENTER);
-        root.verticalAlignment(VerticalAlignment.CENTER);
-
-        FlowLayout panel = Containers.verticalFlow(Sizing.fixed(CraftScreenLayout.PANEL_W), Sizing.fixed(CraftScreenLayout.PANEL_H));
-        panel.surface(Surface.flat(0xFF0D0D15).and(Surface.outline(0xFF4A4050)));
-        panel.padding(Insets.of(6));
-        panel.gap(4);
-        panel.child(buildHeader());
-
-        FlowLayout columns = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(CraftScreenLayout.BODY_H));
-        columns.gap(4);
         recipeList = new CraftRecipeListWidget(id -> {
             selectedId = id;
             refreshRightPanel();
         }, CraftRecipe::isHandcraft);
         materialGrid = new CraftMaterialGrid();
         outputPreview = new CraftOutputPreview();
-        columns.child(recipeList.root());
-        columns.child(materialGrid.root());
-        columns.child(outputPreview.root());
-        panel.child(columns);
+        recipeHost.child(recipeList.root());
+        materialHost.child(materialGrid.root());
+        outputHost.child(outputPreview.root());
 
         actionBar = new CraftActionBar(() -> actionBar.setQuantityToMax(), this::startCraft, this::refreshAll);
-        panel.child(actionBar.root());
-
-        root.child(panel);
-        attachListeners();
+        actionHost.child(actionBar.root());
         refreshAll();
+    }
+
+    @Override
+    protected String selectTemplateId(int logicalWidth, int logicalHeight) {
+        return templateIdForViewport(logicalWidth, logicalHeight);
+    }
+
+    static String templateIdForViewport(int logicalWidth, int logicalHeight) {
+        return logicalWidth >= WIDE_MIN_WIDTH && logicalHeight >= WIDE_MIN_HEIGHT
+            ? "craft"
+            : "craft-compact";
+    }
+
+    @Override
+    protected void onHostOpened(UiScreenScope scope) {
+        attachListeners();
+        scope.addCleanup(this::detachListeners);
+    }
+
+    @Override
+    protected void onHostClosed() {
+        // 测试缝可能在 host open 前手动 attach；这里幂等兜底，生产清理由 scope 先执行。
+        detachListeners();
     }
 
     @Override
@@ -122,7 +130,6 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         if (client != null && client.player != null && CraftStore.sessionState().active()) {
             ClientRequestSender.sendCraftCancel();
         }
-        detachListeners();
         super.removed();
     }
 
@@ -167,18 +174,6 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
 
     public static boolean tabHeightMatchesAlchemy() {
         return CraftScreenLayout.matchesAlchemyTabHeight();
-    }
-
-    private FlowLayout buildHeader() {
-        FlowLayout header = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(CraftScreenLayout.HEADER_H));
-        header.verticalAlignment(VerticalAlignment.CENTER);
-        header.gap(8);
-        header.child(label("§f§l手搓台", 0xFFFFFFFF));
-        subtitle = label("C 关闭 · 双击快速制作", 0xFFA8A8B8);
-        header.child(subtitle);
-        // fill spacer 必须排在最后：owo fill(100) 占整宽，放在中间会把副标题顶出右边界。
-        header.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
-        return header;
     }
 
     private void attachListeners() {
@@ -362,11 +357,12 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void scheduleRefresh(Runnable action) {
+        Runnable guarded = () -> screenScope().runIfOpen(action);
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null) {
-            client.execute(action);
+            client.execute(guarded);
         } else {
-            action.run();
+            guarded.run();
         }
     }
 
@@ -377,9 +373,4 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    private static LabelComponent label(String text, int color) {
-        LabelComponent label = Components.label(Text.literal(text));
-        label.color(Color.ofArgb(color));
-        return label;
-    }
 }
