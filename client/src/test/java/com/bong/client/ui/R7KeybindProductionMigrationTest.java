@@ -130,8 +130,10 @@ class R7KeybindProductionMigrationTest {
         assertTrue(source.contains("LEGACY_MIGRATION_ID")
                 && source.contains("forge-open-screen-u-v1"),
             "Forge 的存量迁移 marker 必须带稳定版本 id");
-        assertTrue(source.contains("bong-client-keybind-migrations.properties"),
-            "Forge 必须把迁移完成状态持久化到客户端配置目录文件");
+        assertTrue(source.contains("KeybindMigrationStore.clientConfig()"),
+            "Forge 必须通过持久化服务获取迁移完成状态，不能暴露文件位置");
+        assertFalse(source.contains("FabricLoader") || source.contains("getConfigDir()"),
+            "Forge UI bootstrap 不得直接依赖迁移 marker 的文件存储细节");
         assertTrue(source.contains("client.options::setKeyCode"),
             "迁移必须通过 GameOptions 持久化 UNKNOWN，而不是只改内存字段");
     }
