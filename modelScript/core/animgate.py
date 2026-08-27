@@ -415,35 +415,66 @@ def _shift_group(boxes, off: np.ndarray) -> list:
             for lo, hi in _as_boxes(boxes)]
 
 
-def overlap_by(boxes_at, a: str, b: str):
-    """把 a 组整体挪到与 b 组同心 —— 逐帧互穿门必须报。
+def overlap_by(boxes_at, a: str, b: str, min_depth: float = OVERLAP_TOL):
+    """把 a 组挪进 b 组内部 —— 逐帧互穿门必须报。
 
-    **必须走 `_as_boxes` 归一化**：`bone_boxes()` 默认逐件返回一串盒（合并成一个大
-    AABB 会把「组里最近的那一对」冲淡），直接 `alo, ahi = boxes[a]` 在组里不止一件时
-    抛 `ValueError: too many values to unpack`，整个 `self_test()` 当场崩掉 —— 而
-    self_test 正是用来证明门有鉴别力的那一步，它自己崩了就什么都证明不了。
+    **不能按两组的整体 AABB 中心对齐。** 组里的盒是离散的（`bone_boxes` 逐件返回，
+    「两条腿」这种组的整体包围盒中心落在两腿之间的空处），按整体中心平移会让 b 正好
+    坐进 a 的缝里，一对实体盒都没真重叠 —— 注入等于没注入，`self_test` 于是报
+    「没有鉴别力」**冤枉一道好门**。假红和假绿一样有害：它会逼下一个人去把门限调松。
+
+    正确做法是挑出**同心后能咬得最深的那一对**（各轴取两者较小边长的最小值，与
+    `gatekit.inject_interpenetrating` 同一个口径），把整组按那一对的中心差平移。
+    这样注入出来的重叠是这份几何上可能达到的最深值，报不报得出来一目了然。
+
+    连最深的一对都咬不过 min_depth 时抛 `AnimInjectionImpossible` —— 那是「这份几何
+    造不出该门要抓的缺陷」，和「门没有鉴别力」是两回事，不许混成一个结论。
     """
     def wrapped(t):
         boxes = dict(boxes_at(t))
         if a not in boxes or b not in boxes:
             raise AnimInjectionImpossible(f"这一帧没有 {a} 或 {b}，造不出互穿")
-        alo, ahi = _group_span(boxes[a])
-        blo, bhi = _group_span(boxes[b])
-        boxes[a] = _shift_group(boxes[a], (blo + bhi) / 2 - (alo + ahi) / 2)
+        a_boxes, b_boxes = _as_boxes(boxes[a]), _as_boxes(boxes[b])
+        best = None
+        for xa in a_boxes:
+            for xb in b_boxes:
+                depth = min(min(xa[1][k] - xa[0][k], xb[1][k] - xb[0][k]) for k in range(3))
+                if best is None or depth > best[0]:
+                    best = (depth, xa, xb)
+        depth, xa, xb = best
+        if depth <= min_depth:
+            raise AnimInjectionImpossible(
+                f"{a} 与 {b} 里最厚的一对同心也只能咬 {depth:.2f}px ≤ {min_depth}，"
+                f"这份几何造不出够深的互穿")
+        shift = (xb[0] + xb[1]) / 2 - (xa[0] + xa[1]) / 2
+        boxes[a] = _shift_group(boxes[a], shift)
         return boxes
     return wrapped
 
 
-def snap_chain_by(boxes_at, group: str, gap: float = 3.0):
-    """把链上某一节整体拉开 gap —— 链断裂门必须报。
+def snap_chain_by(boxes_at, group: str, gap: float = 3.0,
+                  tol: float = LINK_BREAK_TOL):
+    """把链上某一节整体抬离所有其它件 —— 链断裂门必须报。
 
-    同 `overlap_by`：组里可能不止一件，一律走 `_as_boxes` 归一化后整组平移。
+    **不能固定平移一个常数。** `aabb_gap` 取三轴分离的最大值，平移量吃不掉盒自身的
+    高度时两件仍在 y 上重叠、x/z 又贴着，量出来的间隙是 0 —— 注入失效，`self_test`
+    照样冤枉这道门。链节越高越容易踩到（实测 y 跨度 10 的链节，+3.0 完全无效）。
+
+    改成抬到**这一帧所有盒的最高点之上再加 gap**：抬完这一组的最低点比谁都高 gap，
+    与链上邻居的 y 分离必然 ≥ gap。
     """
+    if gap <= tol:
+        raise ValueError(f"断链注入量 {gap} 必须大于门限 {tol}，否则注出来的缝门看不见")
+
     def wrapped(t):
         boxes = dict(boxes_at(t))
         if group not in boxes:
             raise AnimInjectionImpossible(f"这一帧没有 {group}，造不出断链")
-        boxes[group] = _shift_group(boxes[group], np.array([0.0, gap, 0.0]))
+        target = _as_boxes(boxes[group])
+        target_lo = min(float(lo[1]) for lo, _ in target)
+        global_hi = max(float(hi[1]) for v in boxes.values() for _, hi in _as_boxes(v))
+        boxes[group] = _shift_group(boxes[group],
+                                    np.array([0.0, global_hi - target_lo + gap, 0.0]))
         return boxes
     return wrapped
 
@@ -513,13 +544,14 @@ class AnimGates:
             out.append((lambda src=None: gate_overlap(
                 self.boxes_at if src is None else src, self.overlap_pairs,
                 self.frames, self.overlap_tol),
-                lambda p=probe: overlap_by(self.boxes_at, p[0], p[1])))
+                lambda p=probe: overlap_by(self.boxes_at, p[0], p[1],
+                                           min_depth=self.overlap_tol)))
         if self.boxes_at is not None and self.chains:
             probe = self.chain_probe or next(iter(self.chains.values()))[-1]
             out.append((lambda src=None: gate_chain_break(
                 self.boxes_at if src is None else src, self.chains,
                 self.frames, self.chain_tol),
-                lambda g=probe: snap_chain_by(self.boxes_at, g)))
+                lambda g=probe: snap_chain_by(self.boxes_at, g, tol=self.chain_tol)))
         if self.frac_at is not None:
             out.append((lambda src=None: gate_balance(
                 self.frac_at if src is None else src, self.frames, self.balance_min),

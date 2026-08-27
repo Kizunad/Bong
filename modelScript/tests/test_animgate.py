@@ -406,16 +406,66 @@ class InjectorTest(unittest.TestCase):
 
         moved = ag.overlap_by(boxes, "a", "b")(0.0)["a"]
         self.assertEqual(3, len(moved), "整组三件都要跟着挪，不能只挪其中一件")
-        span_lo = np.min([b[0] for b in moved], axis=0)
-        span_hi = np.max([b[1] for b in moved], axis=0)
-        self.assertTrue(np.allclose((span_lo + span_hi) / 2, np.array([9.5, 0.5, 0.5])),
-                        "挪完整组的中心必须落在 b 组的中心上")
+        deltas = {tuple(np.round(m[0] - o[0], 9)) for m, o in zip(moved, boxes(0.0)["a"])}
+        self.assertEqual(1, len(deltas), "整组必须**同一个**位移，不是各挪各的")
+        self.assertFalse(ag.gate_overlap(ag.overlap_by(boxes, "a", "b"),
+                                         [("a", "b")], n=2).ok,
+                         "注入之后互穿门必须真的报出来")
 
         lifted = ag.snap_chain_by(boxes, "a", gap=3.0)(0.0)["a"]
         self.assertEqual(3, len(lifted))
-        for (lo0, hi0), (lo1, hi1) in zip(boxes(0.0)["a"], lifted):
-            self.assertTrue(np.allclose(lo1 - lo0, (0.0, 3.0, 0.0)))
-            self.assertTrue(np.allclose(hi1 - hi0, (0.0, 3.0, 0.0)))
+        lift = {tuple(np.round(m[0] - o[0], 9)) for m, o in zip(lifted, boxes(0.0)["a"])}
+        self.assertEqual(1, len(lift))
+        self.assertFalse(ag.gate_chain_break(ag.snap_chain_by(boxes, "a"),
+                                             {"c": ["a", "b"]}, n=2).ok,
+                         "注入之后链断裂门必须真的报出来")
+
+    def test_overlap_injection_works_on_a_group_whose_own_centre_is_empty(self) -> None:
+        """回归（Kody #2104 二轮）：组里的盒是离散的，整体 AABB 中心可能落在空处。
+
+        「两条腿」这种组，按两组的**整体中心**对齐会让 b 正好坐进 a 的缝里，一对实体盒
+        都没真重叠 —— 注入等于没注入，`self_test` 于是报「没有鉴别力」**冤枉一道好门**。
+        假红和假绿一样有害：它会逼下一个人去把门限调松。
+        """
+        def boxes(t):
+            return {"a": [(np.array([-4.0, 0, 0]), np.array([-2.0, 2, 1])),
+                          (np.array([2.0, 0, 0]), np.array([4.0, 2, 1]))],
+                    "b": [(np.array([-0.5, 0, 0]), np.array([0.5, 2, 1]))]}
+
+        self.assertTrue(ag.gate_overlap(boxes, [("a", "b")], n=2).ok, "干净时不该报")
+        hit = ag.gate_overlap(ag.overlap_by(boxes, "a", "b"), [("a", "b")], n=2)
+        self.assertFalse(hit.ok, f"离散组也必须注得进去，实测 worst={hit.worst:.2f}")
+        self.assertGreater(hit.worst, ag.OVERLAP_TOL)
+
+    def test_overlap_injection_refuses_when_the_geometry_is_too_thin(self) -> None:
+        """「这份几何造不出该门要抓的缺陷」和「门没有鉴别力」是两回事，不许混成一个结论。"""
+        def thin(t):
+            return {"a": (np.zeros(3), np.full(3, 0.3)),
+                    "b": (np.array([9.0, 0, 0]), np.array([9.3, 0.3, 0.3]))}
+
+        with self.assertRaises(ag.AnimInjectionImpossible) as ctx:
+            ag.overlap_by(thin, "a", "b")(0.0)
+        self.assertIn("0.30", str(ctx.exception), "报错要把实测到的最深咬合写出来")
+
+    def test_chain_injection_clears_boxes_taller_than_the_nominal_gap(self) -> None:
+        """回归（Kody #2104 二轮）：`aabb_gap` 取三轴分离的最大值。
+
+        平移量吃不掉盒自身高度时两件仍在 y 上重叠、x/z 又贴着，量出来的间隙是 0 ——
+        注入失效，照样冤枉这道门。实测 y 跨度 10 的链节，固定 +3.0 完全无效。
+        """
+        def tall(t):
+            return {"a": (np.zeros(3), np.array([1.0, 10.0, 1.0])),
+                    "b": (np.array([1.0, 0, 0]), np.array([2.0, 10.0, 1.0]))}
+
+        chain = {"c": ["a", "b"]}
+        self.assertTrue(ag.gate_chain_break(tall, chain, n=2).ok, "干净时不该报")
+        hit = ag.gate_chain_break(ag.snap_chain_by(tall, "b"), chain, n=2)
+        self.assertFalse(hit.ok, f"高链节也必须注得开，实测 worst={hit.worst:.2f}")
+        self.assertGreater(hit.worst, ag.LINK_BREAK_TOL)
+
+    def test_chain_injection_rejects_a_gap_smaller_than_the_gate_tolerance(self) -> None:
+        with self.assertRaisesRegex(ValueError, "必须大于门限"):
+            ag.snap_chain_by(lambda t: {}, "a", gap=0.01, tol=ag.LINK_BREAK_TOL)
 
     def test_flatten_balance_keeps_the_sign_and_kills_the_peak(self) -> None:
         base = lambda t: 0.9 if t < 0.5 else None      # noqa: E731
