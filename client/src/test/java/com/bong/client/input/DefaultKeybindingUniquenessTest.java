@@ -42,6 +42,8 @@ class DefaultKeybindingUniquenessTest {
         CLIENT_SOURCES.resolve("forge/ForgeScreenBootstrap.java");
     private static final Path EXTRACT_BOOTSTRAP =
         CLIENT_SOURCES.resolve("tsy/ExtractInteractionBootstrap.java");
+    private static final Path KEYBIND_REGISTRY =
+        CLIENT_SOURCES.resolve("ui/BongKeybindRegistry.java");
 
     private static final Pattern DIRECT_KEY_BINDING =
         Pattern.compile("\\bnew\\s+KeyBinding\\s*\\(");
@@ -59,6 +61,11 @@ class DefaultKeybindingUniquenessTest {
         Pattern.compile("GLFW\\.GLFW_KEY_([A-Z0-9_]+)");
     private static final Pattern BINDING_OWNER = Pattern.compile(
         "new\\s+(?:BongKeybindRegistry\\.)?BindingOwner\\s*\\(\\s*(.+)\\s*\\)"
+    );
+    private static final Pattern RESERVED_DEFAULT = Pattern.compile(
+        "new\\s+ReservedDefault\\s*\\(\\s*new\\s+BindingOwner\\s*\\(\\s*\"([^\"]+)\"\\s*\\)"
+            + "\\s*,\\s*new\\s+PhysicalDefault\\s*\\(\\s*InputUtil\\.Type\\.([A-Z]+)"
+            + "\\s*,\\s*GLFW\\.GLFW_KEY_([A-Z0-9_]+)\\s*\\)\\s*\\)"
     );
 
     private static final Map<PhysicalKey, List<String>> ALLOWED_DUPLICATES = Map.of(
@@ -85,14 +92,22 @@ class DefaultKeybindingUniquenessTest {
     void globalScanCoversDirectAndRegistryDeclarations() throws IOException {
         List<Binding> bindings = scanBindings();
 
-        assertEquals(34, bindings.size(),
-            "全局扫描必须覆盖当前 26 个 direct runtime binding 与 8 个 registry binding");
+        assertEquals(36, bindings.size(),
+            "全局扫描必须覆盖当前 24 个 direct runtime binding、10 个 registry binding 与 2 个 vanilla reservation");
         assertTrue(bindings.stream().anyMatch(binding ->
                 binding.owner().equals("identity/IdentityPanelScreenBootstrap.java:identity.open_panel")),
             "全局扫描不能漏掉 BongKeybindRegistry.BindingSpec 声明");
         assertTrue(bindings.stream().anyMatch(binding ->
                 binding.owner().equals("combat/CombatKeybindings.java:\"key.bong-client.quick_slot_\"+(i+1)")),
             "全局扫描不能漏掉带 F1+i 动态展开的 direct KeyBinding 声明");
+        assertTrue(bindings.stream().anyMatch(binding ->
+                binding.owner().equals("ui/BongKeybindRegistry.java:vanilla.chat")
+                    && binding.key().equals(new PhysicalKey("KEYSYM", "T"))),
+            "全局扫描必须将 registry 中的 vanilla chat reservation 纳入冲突审计");
+        assertTrue(bindings.stream().anyMatch(binding ->
+                binding.owner().equals("ui/BongKeybindRegistry.java:vanilla.advancements")
+                    && binding.key().equals(new PhysicalKey("KEYSYM", "L"))),
+            "全局扫描必须将 registry 中的 vanilla advancements reservation 纳入冲突审计");
     }
 
     @Test
@@ -158,6 +173,19 @@ class DefaultKeybindingUniquenessTest {
         Map<String, String> stringConstants = localStringConstants(source);
         collectDirectBindings(path, source, intConstants, result);
         collectRegistryBindings(path, source, intConstants, stringConstants, result);
+        if (path.equals(KEYBIND_REGISTRY)) {
+            collectReservedDefaults(path, source, result);
+        }
+    }
+
+    private static void collectReservedDefaults(Path path, String source, List<Binding> result) {
+        Matcher matcher = RESERVED_DEFAULT.matcher(source);
+        while (matcher.find()) {
+            result.add(new Binding(
+                new PhysicalKey(matcher.group(2), matcher.group(3)),
+                relative(path) + ":" + matcher.group(1)
+            ));
+        }
     }
 
     private static void collectDirectBindings(

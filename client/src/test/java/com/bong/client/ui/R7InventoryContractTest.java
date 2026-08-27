@@ -117,7 +117,7 @@ class R7InventoryContractTest {
         // KeybindMigrationService，并修改 Forge、撤离和键位注册接线，文件数 2175 → 2177；
         // 用于迁移旧 options.txt 的 U 键；marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
         assertEquals(
-            "7a02c717940a91838a6d1dd88c620ffd0a5593dc6464aac930e7605ee43d41a2",
+            "46afc08a8100fdf9b0ca863d9114c0b450d62a441a7057aee9b170046f4efff4",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

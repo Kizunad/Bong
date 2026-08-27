@@ -1,8 +1,10 @@
 package com.bong.client.lingtian;
 
 import com.bong.client.BongClient;
+import com.bong.client.input.KeybindMigrationService;
+import com.bong.client.ui.BongKeybindRegistry;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -19,14 +21,55 @@ import org.lwjgl.glfw.GLFW;
 public final class LingtianActionScreenBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String OPEN_KEY_TRANSLATION = "key.bong-client.open_lingtian_action_screen";
+    private static final InputUtil.Key LEGACY_DEFAULT_KEY =
+        InputUtil.Type.KEYSYM.createFromCode(GLFW.GLFW_KEY_L);
+    private static final String LEGACY_MIGRATION_ID = "lingtian-open-l-v1";
+    private static final KeybindMigrationService MIGRATION_SERVICE =
+        KeybindMigrationService.clientConfig();
     private static KeyBinding openScreenKey;
 
     private LingtianActionScreenBootstrap() {}
 
     public static void register() {
         keyBinding();
+        ClientLifecycleEvents.CLIENT_STARTED.register(LingtianActionScreenBootstrap::migrateLegacyBinding);
         ClientTickEvents.END_CLIENT_TICK.register(LingtianActionScreenBootstrap::onEndClientTick);
-        BongClient.LOGGER.info("Registered lingtian action screen bootstrap on key: L");
+        BongClient.LOGGER.info(
+            "Registered lingtian action screen bootstrap (default unbound; configure in controls)."
+        );
+    }
+
+    private static void migrateLegacyBinding(MinecraftClient client) {
+        if (client == null || client.options == null) return;
+        try {
+            boolean migrated = MIGRATION_SERVICE.migrateOnce(
+                LEGACY_MIGRATION_ID,
+                () -> {
+                    if (!keyBinding().matchesKey(LEGACY_DEFAULT_KEY.getCode(), 0)) {
+                        return false;
+                    }
+                    client.options.setKeyCode(keyBinding(), InputUtil.UNKNOWN_KEY);
+                    KeyBinding.updateKeysByCode();
+                    return true;
+                },
+                () -> {
+                    client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY);
+                    KeyBinding.updateKeysByCode();
+                }
+            );
+            if (migrated) {
+                BongClient.LOGGER.info(
+                    "Migrated legacy lingtian action screen keybinding L to UNKNOWN; "
+                        + "existing custom bindings were preserved."
+                );
+            }
+        } catch (IllegalStateException exception) {
+            BongClient.LOGGER.error(
+                "Unable to persist the lingtian keybinding migration marker; "
+                    + "migration was rolled back and client startup will continue.",
+                exception
+            );
+        }
     }
 
     private static void onEndClientTick(MinecraftClient client) {
@@ -38,8 +81,14 @@ public final class LingtianActionScreenBootstrap {
 
     private static KeyBinding keyBinding() {
         if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_L, CATEGORY)
+            openScreenKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("lingtian.open_action_screen"),
+                    OPEN_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    InputUtil.UNKNOWN_KEY.getCode(),
+                    CATEGORY
+                )
             );
         }
         return openScreenKey;
