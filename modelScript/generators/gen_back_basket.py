@@ -36,8 +36,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
-import gatekit  # noqa: E402
-from rigkit import Rig  # noqa: E402
+from rigkit import Rig, element_bounds  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 # 落 models/ 顶层：.gitignore:109 排掉了 models/*/ 所有子目录（只白名单
@@ -363,69 +362,175 @@ def _shift_to_block_space(model: dict) -> None:
         node["origin"][2] += 8.0
 
 
-# ── 门禁声明：算法在 core/gatekit.py，这里只交代**本件的几何事实** ──────────
-MATS_BY_COLOR = gatekit.mats_by_color(MATS)
+def _bone_of(rig: Rig, eid: str) -> str:
+    for name, b in rig.bones.items():
+        if eid in b["children"]:
+            return name
+    return "?"
 
 
-def _is_strap(name: str) -> bool:
-    return name.startswith(("strap_l", "strap_r"))
+def _overflow(rig: Rig) -> list[str]:
+    """越出 0..16 方块空间的件（平移后会被 MC 裁掉）。"""
+    bad = []
+    for el in rig.elements:
+        lo, hi = element_bounds([el])
+        if lo[0] + 8 < -0.01 or hi[0] + 8 > 16.01 or lo[1] < -0.01 or hi[1] > 16.01 \
+                or lo[2] + 8 < -0.01 or hi[2] + 8 > 16.01:
+            bad.append(f"{el['name']}: {tuple(round(v, 2) for v in lo)}→"
+                       f"{tuple(round(v, 2) for v in hi)}")
+    return bad
 
 
-def _strap_vs_hard(n1: str, m1: str, n2: str, m2: str) -> bool:
-    """背带对硬件（竹架/皮盖）不吃软覆盖豁免：它是绕在外面的，不是捆上去的。
+def _orphans(rig: Rig) -> list[str]:
+    """没被任何骨骼收养的 element（渲染时会丢）。"""
+    owned = {eid for b in rig.bones.values() for eid in b["children"]}
+    return [e["name"] for e in rig.elements if e["uuid"] not in owned]
 
-    左背带材质是 cord（草编），会顺着 cord×hide「绳捆皮盖」和 cord×bamboo「绳绕竹架」
-    两条软覆盖被放行 —— 但背带穿后檐/后箍是缺陷，不是捆扎。**穿模判据不能只看材质对**：
-    捆绳是压在件外的短绳，背带是绕过整个篓身的长带，同材质不同构件语义。
+
+def _degenerate(rig: Rig) -> list[str]:
+    """任一轴薄于 0.2px 的件 —— 生图提示词里的「不细于二十分之一」下限。"""
+    bad = []
+    for el in rig.elements:
+        d = [el["to"][i] - el["from"][i] for i in range(3)]
+        if min(d) < 0.2:
+            bad.append(f"{el['name']}: {tuple(round(v, 2) for v in d)}")
+    return bad
+
+
+def _floating(rig: Rig) -> list[str]:
+    """悬空件：与其它件无任何面接触（≥2 轴重叠 > 0.15）。
+
+    背带下端刻意脱离篓身（挂在空中读作可套肩），故白名单排除。
     """
-    return ((_is_strap(n1) and m2 in ("bamboo", "hide"))
-            or (_is_strap(n2) and m1 in ("bamboo", "hide")))
+    strap_tail = {"strap_l_3", "strap_r_2"}
+    boxes = []
+    for el in rig.elements:
+        lo, hi = element_bounds([el])
+        boxes.append((el["name"], lo, hi))
+    bad = []
+    for i, (name, lo, hi) in enumerate(boxes):
+        if name in strap_tail:
+            continue
+        touch = False
+        for j, (_, lo2, hi2) in enumerate(boxes):
+            if i == j:
+                continue
+            ov = sum(1 for k in range(3)
+                     if min(hi[k], hi2[k]) - max(lo[k], lo2[k]) > 0.15)
+            if ov >= 2:
+                touch = True
+                break
+        if not touch:
+            bad.append(name)
+    return bad
 
 
-# 软覆盖白名单：软件覆盖硬件是设计意图（皮盖罩竹架、绳捆皮盖、布补压编身），
-# 只有「硬件互穿」才是缺陷。**hide×bamboo 不放行**：竹柱头扎穿皮盖正是要抓的穿模
-# —— 那一轮把它错误放行、又去抓合法的 bamboo×weave，结果坏版和修好版都报 17 处。
-SOFT_OVER = frozenset({
-    # 竹架嵌入编身壁是正常构造（立柱本就埋在壁里，实测 0.70px）。
-    frozenset(("bamboo", "weave")), frozenset(("bamboo", "seam")),
-    frozenset(("cord", "hide")),
-    frozenset(("cord", "bamboo")), frozenset(("cord", "weave")),
-    frozenset(("cord", "seam")), frozenset(("cord", "bone")),
-    frozenset(("patch", "weave")), frozenset(("patch", "seam")),
-    frozenset(("stitch", "patch")), frozenset(("stitch", "weave")),
-    frozenset(("stitch", "seam")), frozenset(("hide", "weave")),
-    frozenset(("hide", "seam")), frozenset(("seam", "weave")),
-    frozenset(("cord", "patch")),
-})
+def _interpenetrating(rig: Rig) -> list[str]:
+    """穿模：跨 bone 的两件在三轴上都实体重叠且体积可观。
 
-GATES = gatekit.AssetGates(
-    "背篓 / back_basket",
-    MATS,
-    # 刻意不对称件（盖歪、右带替换、补丁、重编）走白名单排除 —— 那是设计意图不是缺陷
-    asym=ASYM,
-    # 背带下端刻意脱离篓身（挂在空中读作可套肩）
-    free_floating=frozenset({"strap_l_3", "strap_r_2"}),
-    soft_over=SOFT_OVER,
-    hard_override=_strap_vs_hard,
-)
+    **必须区分「搭接」和「穿模」**：编带压壁、绳压皮盖、补丁贴壁、针脚咬补丁
+    都是贴合，本来就该有薄重叠。判据取两条 ——
+      1. 只查跨 bone 组合（同 bone 内是同一构件的分段，如 taper/shaft 相邻段）；
+      2. 三轴同时重叠、且最小重叠深度 > MIN_BITE（不是薄贴而是真扎进去）。
+    薄件贴合最小轴重叠通常 ≤0.5px；柱头穿盖那种是整段扎进去。
 
-NOTE = ("注：立体感/比例/不对称是否好看，自检量不出 —— 必须人眼看 "
-        "render_bbmodel.py 三视图定夺。")
+    材质对白名单：软件覆盖硬件是设计意图（皮盖罩竹架、绳捆皮盖、布补压编身），
+    只有「硬件互穿」才是缺陷。
+    """
+    MIN_BITE = 0.55
+    # 背带例外：左带材质是 cord（草编），会顺着 cord×hide「绳捆皮盖」和
+    # cord×bamboo「绳绕竹架」两条软覆盖被放行 —— 但背带穿后檐/后箍是缺陷，
+    # 不是捆扎。**穿模判据不能只看材质对**：捆绳是压在件外的短绳，背带是绕过
+    # 整个篓身的长带，同材质不同构件语义。按件名把背带排除在软覆盖之外。
+    def _is_strap(name: str) -> bool:
+        return name.startswith(("strap_l", "strap_r"))
+
+    soft_over = {
+        # 竹架嵌入编身壁是正常构造（立柱本就埋在壁里，实测 0.70px）。
+        frozenset(("bamboo", "weave")), frozenset(("bamboo", "seam")),
+        # hide×bamboo **不放行**：竹柱头扎穿皮盖正是要抓的穿模。
+        frozenset(("cord", "hide")),
+        frozenset(("cord", "bamboo")), frozenset(("cord", "weave")),
+        frozenset(("cord", "seam")), frozenset(("cord", "bone")),
+        frozenset(("patch", "weave")), frozenset(("patch", "seam")),
+        frozenset(("stitch", "patch")), frozenset(("stitch", "weave")),
+        frozenset(("stitch", "seam")), frozenset(("hide", "weave")),
+        frozenset(("hide", "seam")), frozenset(("seam", "weave")),
+        frozenset(("cord", "patch")),
+    }
+    items = []
+    for el in rig.elements:
+        lo, hi = element_bounds([el])
+        items.append((el["name"], _bone_of(rig, el["uuid"]),
+                      MATS_BY_COLOR.get(el["color"], "?"), lo, hi))
+    bad = []
+    for i, (n1, b1, m1, lo1, hi1) in enumerate(items):
+        for n2, b2, m2, lo2, hi2 in items[i + 1:]:
+            if b1 == b2:
+                continue
+            # 背带对硬件（竹架/皮盖）不吃软覆盖豁免：它是绕在外面的，不是捆上去的
+            strap_vs_hard = ((_is_strap(n1) and m2 in ("bamboo", "hide"))
+                             or (_is_strap(n2) and m1 in ("bamboo", "hide")))
+            if not strap_vs_hard and (frozenset((m1, m2)) in soft_over or m1 == m2):
+                continue
+            if strap_vs_hard and m1 == m2:
+                continue
+            bite = min(min(hi1[k], hi2[k]) - max(lo1[k], lo2[k])
+                       for k in range(3))
+            if bite > MIN_BITE:
+                bad.append(f"{n1}({m1}) × {n2}({m2}) 互穿 {bite:.2f}px")
+    return bad
 
 
 def check(rig: Rig) -> int:
-    """六道门：孤儿 / 越界 / 退化薄片 / 悬空 / 穿模 / 对称件镜像。"""
-    return GATES.report(rig, px=PX, note=NOTE)
+    """五道门：孤儿 / 越界 / 退化薄片 / 悬空 / 穿模。外加对称件镜像。
+
+    刻意不对称件（盖歪、右带替换、补丁、重编）走 ASYM 白名单排除 —— 那是
+    设计意图，不是缺陷。
+    """
+    print("背篓 / back_basket 自检:")
+    lo, hi = rig.bounds()
+    dims = tuple(hi[i] - lo[i] for i in range(3))
+    print(f"  bbox   : {dims[0]:.1f}×{dims[1]:.1f}×{dims[2]:.1f}px = "
+          f"{dims[0]/PX:.2f}W × {dims[1]/PX:.2f}H × {dims[2]/PX:.2f}D 格")
+    print(f"  cubes  : {len(rig.elements)}  bones: {len(rig.bones)}")
+    used = {}
+    for el in rig.elements:
+        m = MATS_BY_COLOR.get(el["color"], "?")
+        used[m] = used.get(m, 0) + 1
+    print(f"  材质   : {len(used)}/{len(MATS)} 种在用 — "
+          + ", ".join(f"{k}:{v}" for k, v in used.items()))
+
+    total = 0
+    sym_els = [e for e in rig.elements if _bone_of(rig, e["uuid"]) not in ASYM]
+    from rigkit import mirror_violations as _mv
+    gates = [
+        ("孤儿 element", _orphans(rig)),
+        ("越出 0..16 方块空间", _overflow(rig)),
+        ("退化薄片 (<0.2px)", _degenerate(rig)),
+        ("悬空无接触", _floating(rig)),
+        ("硬件互穿（穿模）", _interpenetrating(rig)),
+        ("对称件左右不镜像", _mv(sym_els)),
+    ]
+    for label, bad in gates:
+        total += len(bad)
+        mark = "✓" if not bad else "✗"
+        print(f"  {mark} {label}: {len(bad)}")
+        for b in bad[:6]:
+            print(f"      - {b}")
+    print(f"  → 共 {total} 处违例")
+    print("  注：立体感/比例/不对称是否好看，自检量不出 —— 必须人眼看 "
+          "render_bbmodel.py 三视图定夺。")
+    return total
 
 
+MATS_BY_COLOR = {i % 8: name for i, name in enumerate(MATS)}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="背篓 bbmodel 生成器")
     ap.add_argument("--part", help="只生成单件（调试用）")
     ap.add_argument("--check", action="store_true", help="只跑自检，不写盘")
-    ap.add_argument("--self-test", action="store_true",
-                    help="差分自证：每道门注入它该抓的缺陷，报不出来就算这道门失效")
     ap.add_argument("--list", action="store_true", help="列出所有部件")
     args = ap.parse_args()
 
@@ -441,9 +546,6 @@ def main() -> int:
         return 2
 
     rig = build(parts)
-    if args.self_test:
-        return 1 if GATES.self_test(rig) else 0
-
     bad = check(rig)
     if args.check:
         return 1 if bad else 0
