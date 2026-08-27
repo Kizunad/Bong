@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 静态外壳由 XML 持有；配方行、材料格和产物说明由动态 bridge 更新。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface>
+                <vanilla-translucent />
+            </surface>
+            <!-- 面板随逻辑 viewport 连续伸缩；根 padding 是稳定安全边距。 -->
+            <padding>
+                <horizontal>10</horizontal>
+                <vertical>6</vertical>
+            </padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="craft-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fill">100</horizontal>
+                        <vertical method="fill">100</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#0D0D15</flat>
+                        <outline>#4A4050</outline>
+                    </surface>
+                    <padding><all>6</all></padding>
+                    <gap>4</gap>
+                    <vertical-alignment>center</vertical-alignment>
+                    <children>
+                        <flow-layout id="craft-header" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <vertical-alignment>center</vertical-alignment>
+                            <gap>8</gap>
+                            <children>
+                                <label id="craft-title">
+                                    <text>手搓台</text>
+                                    <color>#FFFFFFFF</color>
+                                </label>
+                                <label id="craft-subtitle">
+                                    <text>C 关闭 · 双击快速制作</text>
+                                    <color>#A8A8B8</color>
+                                </label>
+                            </children>
+                        </flow-layout>
+                        <flow-layout id="craft-columns" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="fixed">276</vertical>
+                            </sizing>
+                            <gap>4</gap>
+                            <horizontal-alignment>center</horizontal-alignment>
+                            <!-- bridge 插槽保持固定宽，防止 fill(100) 抢占兄弟列。 -->
+                            <children>
+                                <flow-layout id="recipe-host" direction="vertical">
+                                    <sizing>
+                                        <horizontal method="fixed">160</horizontal>
+                                        <vertical method="fill">100</vertical>
+                                    </sizing>
+                                </flow-layout>
+                                <flow-layout id="material-host" direction="vertical">
+                                    <sizing>
+                                        <horizontal method="fixed">260</horizontal>
+                                        <vertical method="fill">100</vertical>
+                                    </sizing>
+                                </flow-layout>
+                                <flow-layout id="output-host" direction="vertical">
+                                    <sizing>
+                                        <horizontal method="fixed">200</horizontal>
+                                        <vertical method="fill">100</vertical>
+                                    </sizing>
+                                </flow-layout>
+                            </children>
+                        </flow-layout>
+                        <flow-layout id="action-host" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="fixed">32</vertical>
+                            </sizing>
+                        </flow-layout>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>
