@@ -69,14 +69,15 @@ use crate::cultivation::technique_scroll::{
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::cultivation::void::actions::VoidActionIntent;
 use crate::fauna::dying_elder::DyingElderState;
-use crate::forge::blueprint::{BlueprintRegistry, TemperBeat};
+use crate::forge::blueprint::BlueprintRegistry;
+#[cfg(test)]
+use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
-use crate::forge::steps::next_step_after;
 #[cfg(test)]
 use crate::inventory::add_item_to_player_inventory;
 use crate::inventory::{
@@ -108,9 +109,8 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::{combat, npc, production};
+use crate::network::client_request::{combat, forge, npc, production};
 use crate::network::client_request::{social, world};
-use crate::network::forge_snapshot_emit;
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
 use crate::shelflife::probe::FreshnessProbeIntent;
@@ -1409,6 +1409,24 @@ pub fn handle_client_request_payloads(
             Err(request) => request,
         };
 
+        let request = match forge::try_into_forge_request(request) {
+            Ok(forge_request) => {
+                forge::dispatch_forge_request(
+                    forge_request,
+                    ev.client,
+                    &mut pending_forge_steps,
+                    &mut dispatch,
+                    &mut skill_scroll_params,
+                    &mut commands,
+                    &mut clients,
+                    &mut inventories,
+                    &player_states,
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
+
         if session::dispatch(
             &request,
             ev.client,
@@ -1452,6 +1470,16 @@ pub fn handle_client_request_payloads(
                 unreachable!(
                     "Production requests are dispatched by the typed Production dispatcher"
                 )
+            }
+            ClientRequestV1::ForgeStartSession { .. }
+            | ClientRequestV1::ForgeTemperingHit { .. }
+            | ClientRequestV1::ForgeInscriptionScroll { .. }
+            | ClientRequestV1::ForgeConsecrationInject { .. }
+            | ClientRequestV1::ForgeStepAdvance { .. }
+            | ClientRequestV1::ForgeBlueprintTurnPage { .. }
+            | ClientRequestV1::ForgeLearnBlueprint { .. }
+            | ClientRequestV1::ForgeStationPlace { .. } => {
+                unreachable!("Forge requests are dispatched by the typed Forge dispatcher")
             }
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
                 tracing::info!(
@@ -2538,139 +2566,6 @@ pub fn handle_client_request_payloads(
                     ev.client
                 );
             }
-            ClientRequestV1::ForgeStationPlace {
-                x,
-                y,
-                z,
-                item_instance_id,
-                station_tier,
-                ..
-            } => {
-                tracing::info!(
-                    "[bong][network][forge] station_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id} tier={station_tier}",
-                    ev.client
-                );
-                if let Some(place_forge_station_tx) = dispatch.place_forge_station_tx.as_deref_mut()
-                {
-                    place_forge_station_tx.send(PlaceForgeStationRequest {
-                        player: ev.client,
-                        pos: valence::prelude::BlockPos::new(x, y, z),
-                        item_instance_id,
-                        station_tier,
-                    });
-                }
-            }
-            ClientRequestV1::ForgeInscriptionScroll {
-                session_id,
-                inscription_id,
-                ..
-            } => {
-                let session = ForgeSessionId(session_id);
-                let pending_step = pending_forge_steps
-                    .get(&(ev.client.to_bits(), session))
-                    .copied();
-                handle_forge_inscription_scroll(
-                    ev.client,
-                    session_id,
-                    &inscription_id,
-                    &mut inventories,
-                    &combat_params.item_registry,
-                    &mut clients,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut skill_scroll_params.inscription_scroll_tx,
-                    skill_scroll_params.forge_sessions.as_deref(),
-                    pending_step,
-                );
-            }
-            ClientRequestV1::ForgeTemperingHit {
-                session_id,
-                beat,
-                ticks_remaining,
-                ..
-            } => {
-                let session = ForgeSessionId(session_id);
-                let pending_step = pending_forge_steps
-                    .get(&(ev.client.to_bits(), session))
-                    .copied();
-                handle_forge_tempering_hit(
-                    ev.client,
-                    session_id,
-                    &beat,
-                    ticks_remaining,
-                    &mut dispatch.tempering_hit_tx,
-                    skill_scroll_params.forge_sessions.as_deref(),
-                    pending_step,
-                );
-            }
-            ClientRequestV1::ForgeConsecrationInject {
-                session_id,
-                qi_amount,
-                ..
-            } => {
-                let session = ForgeSessionId(session_id);
-                let pending_step = pending_forge_steps
-                    .get(&(ev.client.to_bits(), session))
-                    .copied();
-                handle_forge_consecration_inject(
-                    ev.client,
-                    session_id,
-                    qi_amount,
-                    &mut dispatch.consecration_inject_tx,
-                    skill_scroll_params.forge_sessions.as_deref(),
-                    pending_step,
-                );
-            }
-            ClientRequestV1::ForgeStepAdvance { session_id, .. } => {
-                if let Some((session, next_step)) = handle_forge_step_advance(
-                    ev.client,
-                    session_id,
-                    &mut dispatch.step_advance_tx,
-                    skill_scroll_params.forge_sessions.as_deref(),
-                    skill_scroll_params.blueprint_registry.as_deref(),
-                ) {
-                    pending_forge_steps.insert((ev.client.to_bits(), session), next_step);
-                }
-            }
-            ClientRequestV1::ForgeLearnBlueprint { blueprint_id, .. } => {
-                handle_forge_learn_blueprint(
-                    ev.client,
-                    &blueprint_id,
-                    &mut commands,
-                    &mut inventories,
-                    &combat_params.item_registry,
-                    &mut clients,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &mut skill_scroll_params.learned_blueprints,
-                );
-            }
-            // ─── 炼器（武器）起炉 / 图谱翻页（plan-forge-session-entry-wiring-v1 §4.1#2/#3）───
-            ClientRequestV1::ForgeStartSession {
-                station_pos,
-                blueprint_id,
-                materials,
-                ..
-            } => {
-                handle_forge_start_session(
-                    ev.client,
-                    station_pos,
-                    blueprint_id,
-                    materials,
-                    &mut clients,
-                    &skill_scroll_params.forge_stations,
-                    &mut dispatch.start_forge_tx,
-                );
-            }
-            ClientRequestV1::ForgeBlueprintTurnPage { delta, .. } => {
-                handle_forge_blueprint_turn_page(
-                    ev.client,
-                    delta,
-                    &mut clients,
-                    &mut skill_scroll_params.learned_blueprints,
-                    skill_scroll_params.blueprint_registry.as_deref(),
-                );
-            }
             // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
             ClientRequestV1::CraftStart {
                 recipe_id,
@@ -3187,511 +3082,6 @@ fn resync_technique_scroll_use(
             known,
         );
     }
-}
-
-/// plan-forge-session-entry-wiring-v1 §4.1#3 — station_pos → 站台实体寻址结果。
-#[derive(Debug, PartialEq, Eq)]
-enum ForgeStationRouteError {
-    Missing,
-    Forbidden { owner: Option<Entity> },
-}
-
-/// 按 `station_pos` 在 `WeaponForgeStation` 里查实体，并校验 owner（对齐
-/// `with_owned_furnace_mut` 的 BlockPos 寻址 + owner 校验模式；`WeaponForgeStation.owner`
-/// 是 `Option<Entity>`，直接与 `player` 比对，无需像 furnace 那样转 canonical_player_id 字符串）。
-fn find_owned_forge_station(
-    player: Entity,
-    station_pos: (i32, i32, i32),
-    stations: &Query<(Entity, &WeaponForgeStation)>,
-) -> Result<Entity, ForgeStationRouteError> {
-    let Some((station_entity, station)) = stations
-        .iter()
-        .find(|(_, station)| station.pos == Some(station_pos))
-    else {
-        return Err(ForgeStationRouteError::Missing);
-    };
-    let owner_ok = match station.owner {
-        None => true,
-        Some(owner) => owner == player,
-    };
-    if owner_ok {
-        Ok(station_entity)
-    } else {
-        Err(ForgeStationRouteError::Forbidden {
-            owner: station.owner,
-        })
-    }
-}
-
-fn send_forge_error(client: &mut Client, player_id: &str, message: String) {
-    client.send_chat_message(format!("§c[炼器] {message}"));
-    tracing::warn!("[bong][network][forge] error for `{player_id}`: {message}");
-}
-
-/// plan-forge-session-entry-wiring-v1 §4.1#3 — `ForgeStartSession` C2S 真分发（原为
-/// debug-log 死分支）。station_pos 解析失败/非本人的砧走 chat 回执（对齐 alchemy
-/// `send_alchemy_error` 模式）；解析成功则 send `StartForgeRequest`，权威校验（已学/
-/// 砧 tier/材料/持有量）全部留给 `forge::handle_start_forge_requests`（引擎侧，异步下一拍）。
-#[allow(clippy::too_many_arguments)]
-fn handle_forge_start_session(
-    entity: Entity,
-    station_pos: (i32, i32, i32),
-    blueprint_id: String,
-    materials: Vec<(String, u32)>,
-    clients: &mut Query<(&Username, &mut Client)>,
-    stations: &Query<(Entity, &WeaponForgeStation)>,
-    start_forge_tx: &mut Option<ResMut<Events<StartForgeRequest>>>,
-) {
-    let Ok((username, mut client)) = clients.get_mut(entity) else {
-        return;
-    };
-    let player_id = canonical_player_id(username.0.as_str());
-    match find_owned_forge_station(entity, station_pos, stations) {
-        Ok(station_entity) => {
-            let Some(start_forge_tx) = start_forge_tx.as_deref_mut() else {
-                tracing::warn!(
-                    "[bong][network][forge] start_session dropped: StartForgeRequest events resource missing"
-                );
-                return;
-            };
-            tracing::info!(
-                "[bong][network][forge] start_session pos={station_pos:?} blueprint={blueprint_id} \
-                 materials={materials:?} for `{player_id}`"
-            );
-            start_forge_tx.send(StartForgeRequest {
-                station: station_entity,
-                caster: entity,
-                blueprint: blueprint_id,
-                materials,
-            });
-        }
-        Err(ForgeStationRouteError::Missing) => {
-            tracing::warn!(
-                "[bong][network][forge] `{player_id}` start_session rejected: missing station pos={station_pos:?}"
-            );
-            send_forge_error(
-                &mut client,
-                &player_id,
-                format!("锻炉不存在：{station_pos:?}"),
-            );
-        }
-        Err(ForgeStationRouteError::Forbidden { owner }) => {
-            tracing::warn!(
-                "[bong][network][forge] `{player_id}` tried to start_session at pos={station_pos:?} owned by {owner:?}"
-            );
-            send_forge_error(&mut client, &player_id, "这座炼器炉不是你的".to_string());
-        }
-    }
-}
-
-/// plan-forge-session-entry-wiring-v1 §4.1#2 — `ForgeBlueprintTurnPage` C2S 真分发。
-/// server 权威页码：按 delta 步进 `LearnedBlueprints::next_page`/`prev_page`
-/// （二者各步 1 页且 %len 循环，|delta|>1 时循环调用对应次数以保持语义一致），
-/// 翻页后把最新页码通过 `forge_blueprint_book` S2C 回推。玩家从未学过任何图谱
-/// （`LearnedBlueprints` 组件懒插入，未学时不存在）时无书可翻，直接返回。
-fn handle_forge_blueprint_turn_page(
-    entity: Entity,
-    delta: i32,
-    clients: &mut Query<(&Username, &mut Client)>,
-    learned_blueprints: &mut Query<&mut LearnedBlueprints>,
-    registry: Option<&BlueprintRegistry>,
-) {
-    let Ok(mut learned) = learned_blueprints.get_mut(entity) else {
-        return;
-    };
-    if delta == 0 || learned.ids.is_empty() {
-        return;
-    }
-    // 恶意/巨量 delta 守卫（对齐 handle_alchemy_turn_page 同款）：i32::MIN.unsigned_abs()
-    // = 2.1B 次循环会冻结整个 ECS tick。next/prev 本身 %len 环回，|delta| mod len 步
-    // 落点与逐步等价，循环上界收敛到 len-1。
-    let steps = delta.unsigned_abs() % (learned.ids.len() as u32);
-    for _ in 0..steps {
-        if delta > 0 {
-            learned.next_page();
-        } else {
-            learned.prev_page();
-        }
-    }
-
-    let Ok((_, mut client)) = clients.get_mut(entity) else {
-        return;
-    };
-    tracing::info!(
-        "[bong][network][forge] blueprint_turn_page delta={delta} entity={entity:?} new_index={}",
-        learned.current_index
-    );
-    let Some(registry) = registry else {
-        tracing::warn!(
-            "[bong][network][forge] blueprint_turn_page: BlueprintRegistry resource missing, S2C echo skipped"
-        );
-        return;
-    };
-    forge_snapshot_emit::send_blueprint_book_to_player(&mut client, &learned, registry);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn handle_forge_learn_blueprint(
-    entity: Entity,
-    blueprint_id: &str,
-    commands: &mut Commands,
-    inventories: &mut Query<&mut PlayerInventory>,
-    registry: &ItemRegistry,
-    clients: &mut Query<(&Username, &mut Client)>,
-    player_states: &Query<&PlayerState>,
-    cultivations: &Query<&Cultivation>,
-    learned_blueprints: &mut Query<&mut LearnedBlueprints>,
-) {
-    let blueprint_id = blueprint_id.trim();
-    if blueprint_id.is_empty() {
-        return;
-    }
-
-    if let Ok(learned) = learned_blueprints.get_mut(entity) {
-        if learned.knows(blueprint_id) {
-            if let Ok(inventory) = inventories.get(entity) {
-                resync_snapshot(
-                    entity,
-                    inventory,
-                    clients,
-                    player_states,
-                    cultivations,
-                    "forge_blueprint_already_known",
-                );
-            }
-            return;
-        }
-    }
-
-    let Some(instance_id) = inventories
-        .get(entity)
-        .ok()
-        .and_then(|inventory| find_blueprint_scroll_instance_id(inventory, registry, blueprint_id))
-    else {
-        if let Ok(inventory) = inventories.get(entity) {
-            resync_snapshot(
-                entity,
-                inventory,
-                clients,
-                player_states,
-                cultivations,
-                "forge_blueprint_scroll_missing",
-            );
-        }
-        tracing::warn!(
-            "[bong][network][forge] learn_blueprint rejected: no scroll for blueprint_id={blueprint_id} on entity={entity:?}"
-        );
-        return;
-    };
-
-    {
-        let Ok(mut inventory) = inventories.get_mut(entity) else {
-            return;
-        };
-        if let Err(err) = consume_item_instance_once(&mut inventory, instance_id) {
-            tracing::warn!(
-                "[bong][network][forge] learn_blueprint consume failed for instance_id={instance_id}: {err}"
-            );
-            return;
-        }
-        resync_snapshot(
-            entity,
-            &inventory,
-            clients,
-            player_states,
-            cultivations,
-            "forge_blueprint_learned",
-        );
-    }
-
-    if let Ok(mut learned) = learned_blueprints.get_mut(entity) {
-        learned.learn(blueprint_id.to_string());
-    } else {
-        let mut learned = LearnedBlueprints::new();
-        learned.learn(blueprint_id.to_string());
-        commands.entity(entity).insert(learned);
-    }
-}
-
-fn require_owned_active_step(
-    forge_sessions: Option<&ForgeSessions>,
-    session: ForgeSessionId,
-    entity: Entity,
-    expected: ForgeStep,
-    pending_step: Option<ForgeStep>,
-    request_label: &str,
-) -> bool {
-    let Some(forge_sessions) = forge_sessions else {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: ForgeSessions unavailable"
-        );
-        return false;
-    };
-    let Some(session_state) = forge_sessions.get(session) else {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: missing session_id={}",
-            session.0
-        );
-        return false;
-    };
-    if session_state.caster != entity {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: session_id={} caster mismatch entity={entity:?} session_caster={:?}",
-            session.0,
-            session_state.caster
-        );
-        return false;
-    }
-    if session_state.current_step != expected && pending_step != Some(expected) {
-        tracing::warn!(
-            "[bong][network][forge] {request_label} rejected: session_id={} step={:?}, pending={pending_step:?}, expected={expected:?}",
-            session.0,
-            session_state.current_step
-        );
-        return false;
-    }
-    true
-}
-
-#[allow(clippy::too_many_arguments)]
-fn handle_forge_inscription_scroll(
-    entity: Entity,
-    session_id: u64,
-    inscription_id: &str,
-    inventories: &mut Query<&mut PlayerInventory>,
-    registry: &ItemRegistry,
-    clients: &mut Query<(&Username, &mut Client)>,
-    player_states: &Query<&PlayerState>,
-    cultivations: &Query<&Cultivation>,
-    inscription_scroll_tx: &mut Option<ResMut<Events<InscriptionScrollSubmit>>>,
-    forge_sessions: Option<&ForgeSessions>,
-    pending_step: Option<ForgeStep>,
-) {
-    let inscription_id = inscription_id.trim();
-    if inscription_id.is_empty() {
-        return;
-    }
-    let session = ForgeSessionId(session_id);
-    if !require_owned_active_step(
-        forge_sessions,
-        session,
-        entity,
-        ForgeStep::Inscription,
-        pending_step,
-        "inscription_scroll",
-    ) {
-        return;
-    }
-    let Some(inscription_scroll_tx) = inscription_scroll_tx.as_deref_mut() else {
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll rejected: ForgePlugin events unavailable"
-        );
-        return;
-    };
-
-    let Some(instance_id) = inventories.get(entity).ok().and_then(|inventory| {
-        find_inscription_scroll_instance_id(inventory, registry, inscription_id)
-    }) else {
-        if let Ok(inventory) = inventories.get(entity) {
-            resync_snapshot(
-                entity,
-                inventory,
-                clients,
-                player_states,
-                cultivations,
-                "forge_inscription_scroll_missing",
-            );
-        }
-        tracing::warn!(
-            "[bong][network][forge] inscription_scroll rejected: no scroll for inscription_id={inscription_id} on entity={entity:?}"
-        );
-        return;
-    };
-
-    // 只把精确实例交给 forge 权威系统。实际消费必须等前一步结算完成并确认
-    // session 真实进入 Inscription，避免同帧 Tempering Waste 时先扣残卷再丢事件。
-    inscription_scroll_tx.send(InscriptionScrollSubmit {
-        session,
-        caster: entity,
-        item_instance_id: instance_id,
-        inscription_id: inscription_id.to_string(),
-    });
-}
-
-fn handle_forge_tempering_hit(
-    entity: Entity,
-    session_id: u64,
-    beat: &str,
-    ticks_remaining: u32,
-    tempering_hit_tx: &mut Option<ResMut<Events<TemperingHit>>>,
-    forge_sessions: Option<&ForgeSessions>,
-    pending_step: Option<ForgeStep>,
-) {
-    let Some(beat) = parse_temper_beat(beat) else {
-        tracing::warn!("[bong][network][forge] tempering_hit rejected: unknown beat `{beat}`");
-        return;
-    };
-    let session = ForgeSessionId(session_id);
-    if !require_owned_active_step(
-        forge_sessions,
-        session,
-        entity,
-        ForgeStep::Tempering,
-        pending_step,
-        "tempering_hit",
-    ) {
-        return;
-    }
-    let Some(tempering_hit_tx) = tempering_hit_tx.as_deref_mut() else {
-        tracing::warn!(
-            "[bong][network][forge] tempering_hit rejected: ForgePlugin events unavailable"
-        );
-        return;
-    };
-    tempering_hit_tx.send(TemperingHit {
-        session,
-        beat,
-        ticks_remaining,
-    });
-}
-
-fn handle_forge_consecration_inject(
-    entity: Entity,
-    session_id: u64,
-    qi_amount: f64,
-    consecration_inject_tx: &mut Option<ResMut<Events<ConsecrationInject>>>,
-    forge_sessions: Option<&ForgeSessions>,
-    pending_step: Option<ForgeStep>,
-) {
-    if !qi_amount.is_finite() || qi_amount < 0.0 {
-        tracing::warn!(
-            "[bong][network][forge] consecration_inject rejected: invalid qi_amount={qi_amount}"
-        );
-        return;
-    }
-    let session = ForgeSessionId(session_id);
-    if !require_owned_active_step(
-        forge_sessions,
-        session,
-        entity,
-        ForgeStep::Consecration,
-        pending_step,
-        "consecration_inject",
-    ) {
-        return;
-    }
-    let Some(consecration_inject_tx) = consecration_inject_tx.as_deref_mut() else {
-        tracing::warn!(
-            "[bong][network][forge] consecration_inject rejected: ForgePlugin events unavailable"
-        );
-        return;
-    };
-    consecration_inject_tx.send(ConsecrationInject { session, qi_amount });
-}
-
-fn handle_forge_step_advance(
-    entity: Entity,
-    session_id: u64,
-    step_advance_tx: &mut Option<ResMut<Events<StepAdvance>>>,
-    forge_sessions: Option<&ForgeSessions>,
-    blueprint_registry: Option<&BlueprintRegistry>,
-) -> Option<(ForgeSessionId, ForgeStep)> {
-    let session = ForgeSessionId(session_id);
-    let Some(forge_sessions) = forge_sessions else {
-        tracing::warn!("[bong][network][forge] step_advance rejected: ForgeSessions unavailable");
-        return None;
-    };
-    let Some(session_state) = forge_sessions.get(session) else {
-        tracing::warn!(
-            "[bong][network][forge] step_advance rejected: missing session_id={session_id}"
-        );
-        return None;
-    };
-    if session_state.caster != entity {
-        tracing::warn!(
-            "[bong][network][forge] step_advance rejected: session_id={session_id} caster mismatch entity={entity:?} session_caster={:?}",
-            session_state.caster
-        );
-        return None;
-    }
-    if matches!(session_state.current_step, ForgeStep::Done) {
-        tracing::warn!(
-            "[bong][network][forge] step_advance rejected: session_id={session_id} already done"
-        );
-        return None;
-    }
-    let Some(step_advance_tx) = step_advance_tx.as_deref_mut() else {
-        tracing::warn!(
-            "[bong][network][forge] step_advance rejected: ForgePlugin events unavailable"
-        );
-        return None;
-    };
-    let from_step = session_state.current_step;
-    step_advance_tx.send(StepAdvance { session, from_step });
-    let next_step = blueprint_registry
-        .and_then(|registry| registry.get(session_state.blueprint.as_str()))
-        .map(|blueprint| next_step_after(blueprint, session_state.step_index))
-        .unwrap_or(ForgeStep::Done);
-    Some((session, next_step))
-}
-
-fn parse_temper_beat(raw: &str) -> Option<TemperBeat> {
-    match raw {
-        "L" => Some(TemperBeat::Light),
-        "H" => Some(TemperBeat::Heavy),
-        "F" => Some(TemperBeat::Fold),
-        _ => None,
-    }
-}
-
-fn find_blueprint_scroll_instance_id(
-    inventory: &PlayerInventory,
-    registry: &ItemRegistry,
-    blueprint_id: &str,
-) -> Option<u64> {
-    find_inventory_instance_id_matching(inventory, |template_id| {
-        registry
-            .get(template_id)
-            .and_then(|template| template.blueprint_scroll_spec.as_ref())
-            .is_some_and(|spec| spec.blueprint_id == blueprint_id)
-    })
-}
-
-fn find_inscription_scroll_instance_id(
-    inventory: &PlayerInventory,
-    registry: &ItemRegistry,
-    inscription_id: &str,
-) -> Option<u64> {
-    find_inventory_instance_id_matching(inventory, |template_id| {
-        registry
-            .get(template_id)
-            .and_then(|template| template.inscription_scroll_spec.as_ref())
-            .is_some_and(|spec| spec.inscription_id == inscription_id)
-    })
-}
-
-fn find_inventory_instance_id_matching(
-    inventory: &PlayerInventory,
-    mut predicate: impl FnMut(&str) -> bool,
-) -> Option<u64> {
-    for item in inventory.hotbar.iter().flatten() {
-        if predicate(item.template_id.as_str()) {
-            return Some(item.instance_id);
-        }
-    }
-    for container in &inventory.containers {
-        for placed in &container.items {
-            if predicate(placed.instance.template_id.as_str()) {
-                return Some(placed.instance.instance_id);
-            }
-        }
-    }
-    for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
-        if predicate(item.template_id.as_str()) {
-            return Some(item.instance_id);
-        }
-    }
-    None
 }
 
 fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
@@ -18460,7 +17850,7 @@ fn send_moved_event(
     }
 }
 
-fn resync_snapshot(
+pub(crate) fn resync_snapshot(
     entity: valence::prelude::Entity,
     inventory: &PlayerInventory,
     clients: &mut Query<(&Username, &mut Client)>,
