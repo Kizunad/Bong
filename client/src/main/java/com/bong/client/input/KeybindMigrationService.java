@@ -22,18 +22,36 @@ public final class KeybindMigrationService {
      * Runs a migration at most once for the supplied version id.
      *
      * <p>A completed no-op is still marked so a player may deliberately choose
-     * the legacy key later.  Failed migration actions are not marked and may be
-     * retried on the next startup.</p>
+     * the legacy key later. Failed migration actions are not marked and may be
+     * retried on the next startup. If the action changes state but its completion
+     * marker cannot be persisted, the supplied rollback restores the pre-migration
+     * state before the persistence failure is rethrown.</p>
      */
-    public synchronized boolean migrateOnce(String migrationId, BooleanSupplier migration) {
+    public synchronized boolean migrateOnce(
+        String migrationId,
+        BooleanSupplier migration,
+        Runnable rollback
+    ) {
         requireNonBlank(migrationId);
         Objects.requireNonNull(migration, "migration must not be null");
+        Objects.requireNonNull(rollback, "rollback must not be null");
         if (persistence.hasCompleted(migrationId)) {
             return false;
         }
 
         boolean migrated = migration.getAsBoolean();
-        persistence.markCompleted(migrationId);
+        try {
+            persistence.markCompleted(migrationId);
+        } catch (IllegalStateException persistenceFailure) {
+            if (migrated) {
+                try {
+                    rollback.run();
+                } catch (RuntimeException rollbackFailure) {
+                    persistenceFailure.addSuppressed(rollbackFailure);
+                }
+            }
+            throw persistenceFailure;
+        }
         return migrated;
     }
 

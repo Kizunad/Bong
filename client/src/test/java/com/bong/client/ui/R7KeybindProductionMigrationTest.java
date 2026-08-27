@@ -140,11 +140,15 @@ class R7KeybindProductionMigrationTest {
             "Forge UI bootstrap 不得依赖迁移持久化接口或文件存储细节");
         assertTrue(source.contains("client.options::setKeyCode"),
             "迁移必须通过 GameOptions 持久化 UNKNOWN，而不是只改内存字段");
+        assertTrue(source.contains("client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY)")
+                && source.contains("KeyBinding.updateKeysByCode()"),
+            "marker 写失败时必须恢复旧 U 并刷新物理索引，不能留下未提交的 UNKNOWN 状态");
         assertTrue(source.contains("catch (IllegalStateException exception)"),
             "CLIENT_STARTED 边界必须捕获 marker I/O 故障，不能阻断客户端启动");
         assertTrue(source.contains("BongClient.LOGGER.error(")
-                && source.contains("continuing client startup"),
-            "迁移持久化故障必须留下可观测 error 并明确继续启动");
+                && source.contains("migration was rolled back")
+                && source.contains("client startup will continue"),
+            "迁移持久化故障必须留下可观测 error，并明确回滚后继续启动");
     }
 
     @Test

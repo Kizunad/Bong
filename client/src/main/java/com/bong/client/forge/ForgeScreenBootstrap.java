@@ -42,7 +42,11 @@ public final class ForgeScreenBootstrap {
                     LEGACY_DEFAULT_KEY,
                     InputUtil.UNKNOWN_KEY,
                     client.options::setKeyCode
-                )
+                ),
+                () -> {
+                    client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY);
+                    KeyBinding.updateKeysByCode();
+                }
             );
             if (migrated) {
                 BongClient.LOGGER.info(
@@ -51,7 +55,8 @@ public final class ForgeScreenBootstrap {
             }
         } catch (IllegalStateException exception) {
             BongClient.LOGGER.error(
-                "Unable to persist the Forge keybinding migration marker; continuing client startup.",
+                "Unable to persist the Forge keybinding migration marker; "
+                    + "migration was rolled back and client startup will continue.",
                 exception
             );
         }
