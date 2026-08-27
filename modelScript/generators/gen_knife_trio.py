@@ -44,7 +44,6 @@ MC 手持物基线（axe_bone 全长 0.80、scale 0.85）定。逐段量色分�
 from __future__ import annotations
 
 import argparse
-import math
 import random
 import sys
 from pathlib import Path
@@ -57,8 +56,11 @@ from held_item_common import (  # noqa: E402
     Box,
     HeldItem,
     Material,
+    blotch,
     build_mtl,
     build_obj,
+    hand_display,
+    noise_fill,
     write_assets,
 )
 
@@ -71,38 +73,9 @@ CLIENT_RESOURCES = REPO / "client" / "src" / "main" / "resources"
 # ── 贴图 ──────────────────────────────────────────────────────────────────
 # 每张 16²。OBJ 那条链是**每个面整张铺满**，所以只能画通用材质样本，
 # 不能画"某个面的具体图案"——画了会被按面拉伸成条带。
-
-
-def _noise(image: Image.Image, rng: random.Random, base, spread: int, warm: int = 0) -> None:
-    pixels = image.load()
-    for y in range(image.height):
-        for x in range(image.width):
-            jitter = rng.randint(-spread, spread)
-            tint = rng.randint(-warm, warm) if warm else 0
-            pixels[x, y] = (
-                max(0, min(255, base[0] + jitter + tint)),
-                max(0, min(255, base[1] + jitter)),
-                max(0, min(255, base[2] + jitter - tint)),
-                255,
-            )
-
-
-def _blotch(image: Image.Image, rng: random.Random, count: int, colour, radius) -> None:
-    pixels = image.load()
-    for _ in range(count):
-        cx, cy = rng.uniform(0, 15), rng.uniform(0, 15)
-        r = rng.uniform(*radius)
-        peak = rng.uniform(0.25, 0.62)
-        for y in range(max(0, int(cy - r)), min(16, int(cy + r) + 1)):
-            for x in range(max(0, int(cx - r)), min(16, int(cx + r) + 1)):
-                d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 / r
-                if d > 1.0:
-                    continue
-                a = peak * (1.0 - d)
-                px = pixels[x, y]
-                pixels[x, y] = tuple(
-                    int(round(px[i] * (1 - a) + colour[i] * a)) for i in range(3)
-                ) + (255,)
+#
+# 底噪 / 斑两个原语在 `held_item_common`（`noise_fill` / `blotch`）：木棍那件要用
+# 同一套画法，留在这里就成了本模块 docstring 里骂的那种"两套各写一份"。
 
 
 def tex_stone_flake() -> Image.Image:
@@ -113,9 +86,9 @@ def tex_stone_flake() -> Image.Image:
     """
     rng = random.Random(0x5701)
     img = Image.new("RGBA", (16, 16), (168, 161, 150, 255))
-    _noise(img, rng, (168, 161, 150), 7, warm=2)
-    _blotch(img, rng, 5, (196, 191, 182), (2.6, 4.4))     # 新剥片：亮
-    _blotch(img, rng, 4, (132, 126, 118), (2.2, 3.8))     # 旧面：暗
+    noise_fill(img, rng, (168, 161, 150), 7, warm=2)
+    blotch(img, rng, 5, (196, 191, 182), (2.6, 4.4))     # 新剥片：亮
+    blotch(img, rng, 4, (132, 126, 118), (2.2, 3.8))     # 旧面：暗
     pixels = img.load()
     for _ in range(9):                                     # 棱：1px 亮线
         x0, y0 = rng.randint(0, 15), rng.randint(0, 15)
@@ -131,9 +104,9 @@ def tex_haft_dark() -> Image.Image:
     """石刃的木柄：风化开裂的深色木，竖向纹。参考 H33 S45 V37。"""
     rng = random.Random(0x5702)
     img = Image.new("RGBA", (16, 16), (123, 100, 70, 255))
-    _noise(img, rng, (123, 100, 70), 8, warm=4)
-    _blotch(img, rng, 4, (99, 79, 54), (2.2, 4.0))         # 风化的暗块
-    _blotch(img, rng, 3, (148, 122, 88), (1.8, 3.2))       # 磨亮处
+    noise_fill(img, rng, (123, 100, 70), 8, warm=4)
+    blotch(img, rng, 4, (99, 79, 54), (2.2, 4.0))         # 风化的暗块
+    blotch(img, rng, 3, (148, 122, 88), (1.8, 3.2))       # 磨亮处
     pixels = img.load()
     # 木纹只画 2 条、断续、对比压到 8 个色阶。round 1 画成 2px 一条的连续竖条纹，
     # 手持物那个尺寸上整根柄读成"一捆木棍"，石刃那把直接成了火把；round 2 收到
@@ -154,7 +127,7 @@ def tex_cord() -> Image.Image:
     """绳缠：搓过的植物纤维，斜向拧纹。参考 H35 S45 V42。"""
     rng = random.Random(0x5703)
     img = Image.new("RGBA", (16, 16), (140, 114, 77, 255))
-    _noise(img, rng, (140, 114, 77), 7, warm=3)
+    noise_fill(img, rng, (140, 114, 77), 7, warm=3)
     pixels = img.load()
     for start in range(-8, 16, 3):
         for step in range(16):
@@ -173,8 +146,8 @@ def tex_iron_forged() -> Image.Image:
     """锻打铁刃：锤痕面 + 锈斑。参考 H29 S20 V47（锈处 S 到 42）。"""
     rng = random.Random(0x5704)
     img = Image.new("RGBA", (16, 16), (132, 121, 110, 255))
-    _noise(img, rng, (132, 121, 110), 9, warm=4)
-    _blotch(img, rng, 4, (176, 167, 156), (2.4, 4.2))      # 锤面高光
+    noise_fill(img, rng, (132, 121, 110), 9, warm=4)
+    blotch(img, rng, 4, (176, 167, 156), (2.4, 4.2))      # 锤面高光
     # 暖偏不能去：round 1 做成纯灰（S10），渲出来和石刃那把分不开，读成石头。
     # 但锈也不能给满——round 2 给了 9 块大斑，96px 下整片刃读成"锈成一坨的铁块"
     # 而不是刃。参考图的锈是**沿棱和凹处的小片**，中间的锻面是干净的：这里收到
@@ -183,8 +156,8 @@ def tex_iron_forged() -> Image.Image:
     # 锈——真锈是斑不是线，规则的等角斜线在任何尺度下都读成刮蹭。全删，只留斑，
     # 并把底色从 V59 压到 V52（参考量得 V47，×1.25 该是 V59；但参考那把是**深色
     # 重锈**的旧铁，纯按系数放亮会得到一把崭新的钢刀）。
-    _blotch(img, rng, 7, (126, 76, 42), (1.1, 2.2))        # 锈斑：多而小
-    _blotch(img, rng, 3, (78, 72, 66), (1.6, 2.8))         # 暗坑
+    blotch(img, rng, 7, (126, 76, 42), (1.1, 2.2))        # 锈斑：多而小
+    blotch(img, rng, 3, (78, 72, 66), (1.6, 2.8))         # 暗坑
     return img
 
 
@@ -192,8 +165,8 @@ def tex_haft_pale() -> Image.Image:
     """铁匕首的木柄：新削的浅色木，比石刃那把亮一大截。参考 H32 S37 V65。"""
     rng = random.Random(0x5705)
     img = Image.new("RGBA", (16, 16), (206, 172, 130, 255))
-    _noise(img, rng, (206, 172, 130), 7, warm=4)
-    _blotch(img, rng, 4, (180, 148, 108), (2.2, 4.2))
+    noise_fill(img, rng, (206, 172, 130), 7, warm=4)
+    blotch(img, rng, 4, (180, 148, 108), (2.2, 4.2))
     pixels = img.load()
     for x in (4, 11):                                      # 只两条断续纹，同上
         for y in range(16):
@@ -206,9 +179,9 @@ def tex_iron_dark() -> Image.Image:
     """护环与铆钉：比刃暗一档的熟铁，少锈（常摩擦）。"""
     rng = random.Random(0x5706)
     img = Image.new("RGBA", (16, 16), (112, 108, 104, 255))
-    _noise(img, rng, (112, 108, 104), 9)
-    _blotch(img, rng, 3, (150, 146, 142), (2.2, 4.0))
-    _blotch(img, rng, 2, (84, 62, 44), (1.4, 2.4))
+    noise_fill(img, rng, (112, 108, 104), 9)
+    blotch(img, rng, 3, (150, 146, 142), (2.2, 4.0))
+    blotch(img, rng, 2, (84, 62, 44), (1.4, 2.4))
     return img
 
 
@@ -216,14 +189,14 @@ def tex_bone_shaft() -> Image.Image:
     """骨干：奶白，细密纵纹 + 淡褐土沁。参考 H39 S27 V72。"""
     rng = random.Random(0x5707)
     img = Image.new("RGBA", (16, 16), (229, 214, 182, 255))
-    _noise(img, rng, (229, 214, 182), 6, warm=3)
-    _blotch(img, rng, 5, (204, 186, 150), (2.4, 4.6))
+    noise_fill(img, rng, (229, 214, 182), 6, warm=3)
+    blotch(img, rng, 5, (204, 186, 150), (2.4, 4.6))
     pixels = img.load()
     for x in (5, 12):                                      # 纵纹只两条、断续、低对比
         for y in range(16):
             if (x * 5 + y * 3) % 3:
                 pixels[x, y] = (214, 198, 166, 255)
-    _blotch(img, rng, 4, (186, 162, 118), (1.8, 3.4))      # 土沁
+    blotch(img, rng, 4, (186, 162, 118), (1.8, 3.4))      # 土沁
     return img
 
 
@@ -231,9 +204,9 @@ def tex_bone_joint() -> Image.Image:
     """关节头：疏松骨质 + 更重的染色，明显比骨干脏。参考 H34 S51 V60。"""
     rng = random.Random(0x5708)
     img = Image.new("RGBA", (16, 16), (199, 172, 124, 255))
-    _noise(img, rng, (199, 172, 124), 9, warm=5)
-    _blotch(img, rng, 6, (160, 128, 82), (1.8, 3.6))
-    _blotch(img, rng, 3, (222, 202, 164), (1.6, 2.8))
+    noise_fill(img, rng, (199, 172, 124), 9, warm=5)
+    blotch(img, rng, 6, (160, 128, 82), (1.8, 3.6))
+    blotch(img, rng, 3, (222, 202, 164), (1.6, 2.8))
     return img
 
 
@@ -241,7 +214,7 @@ def tex_bone_ground() -> Image.Image:
     """磨出来的尖：斜向磨痕。参考图那一段的斜纹是这把刀最认得出的做工痕迹。"""
     rng = random.Random(0x5709)
     img = Image.new("RGBA", (16, 16), (221, 205, 170, 255))
-    _noise(img, rng, (221, 205, 170), 6, warm=2)
+    noise_fill(img, rng, (221, 205, 170), 6, warm=2)
     pixels = img.load()
     for start in range(-10, 16, 2):                        # 斜磨痕，1px
         for step in range(16):
@@ -249,89 +222,6 @@ def tex_bone_ground() -> Image.Image:
             if 0 <= x < 16 and 0 <= y < 16:
                 pixels[x, y] = (190, 172, 136, 255)
     return img
-
-
-# ── 手持 display ──────────────────────────────────────────────────────────
-# **不再抄 axe_bone 的 [0,-90,55] / [0,4,0]**，那组数是原版 `item/handheld` 的，
-# 而 handheld 伺候的是**平面 sprite**：贴图里刀刃走左下→右上的对角线，55° 正好
-# 把那条对角线掰正，[0,4,0] 补的是 sprite 握把点（约模型 (3,3)px）到方块中心的
-# 偏移。我们这套是**沿 +Y 立着的三维件**，两条前提都不成立——照抄的结果是刃朝
-# 斜下方 58°、握把离拳心 6.3px（拳头才 4px 宽）。
-#
-# 现在 `emit_offset` 已把握把点放到方块中心（= display 枢轴），于是：
-#
-#   rotation    [-80, 90, 0]
-#               Rx(-80)  **刃沿前臂出拳**，只偏 10°。这里**刻意不抄原版剑**：
-#                        原版把刃摆成⊥前臂（arm 垂下时刃水平朝前），那是平面
-#                        sprite 的产物，只在**手臂伸直**时成立。Bong 有 bendy-lib
-#                        肘弯，⊥ 的刃会跟着小臂转上去——实测两条匕首动画每一
-#                        tick 刃仰角都在 +63~+78°，横划那条**刃尖甚至越过肩往
-#                        身后指**，读成"举着火把"而不是握刀。拳头握刀的真解剖是
-#                        刃基本沿前臂出虎口，rx=-80 就是这个。
-#                        代价：手臂完全垂直时刃朝斜下 80°（贴腿垂刀的携行姿），
-#                        这正是匕首该有的收势，不是缺陷。
-#               Ry(90)   把刃面（模型薄轴 ±Z）转到玩家左右两侧，和原版剑一样：
-#                        侧看是一片刃，正面看是一条棱
-#   translation [0, -2, 1.5]
-#               握把点该落在**拳心**。MC 的挂点 `R_ATTACH·(1,2,-10)` = 臂系
-#               (-1,10,-2)，是臂盒底面往前 2px；拳心在臂盒底面往上 1.5px、z 居中，
-#               即 (-1, 8.5, 0)。差值换回 display 前的系就是 (0,-2,1.5)。
-#               —— 同一算法量原版剑，得 (0,-1.54,1.92)，两者同一个量级，互为佐证。
-#
-# 左手那组按本文件既有惯例**预取反 y/z 旋转**：`Transformation.apply(leftHanded)`
-# 自己还会再取反一次 y/z 旋转并翻 x 平移，两次抵消后左右手才是镜像而不是同姿。
-#
-# GUI / ground / fixed / head 要的是**整件居中**而不是握把居中，所以那几档用
-# `_centre_translation` 反解：MC 的点变换是 p = t + R·S·(v-8)，令几何中心落到
-# 目标点即可。少了这一步图标会被握把顶得偏出格子。
-def _centre_translation(rotation: list[float], scale: float, centre_px: float,
-                        target: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> list[float]:
-    """反解「让模型几何中心落在 target」的 display translation（px）。"""
-    rx, ry, rz = (math.radians(v) for v in rotation)
-
-    def _rot_x(v):
-        return (v[0], v[1] * math.cos(rx) - v[2] * math.sin(rx),
-                v[1] * math.sin(rx) + v[2] * math.cos(rx))
-
-    def _rot_y(v):
-        return (v[0] * math.cos(ry) + v[2] * math.sin(ry), v[1],
-                -v[0] * math.sin(ry) + v[2] * math.cos(ry))
-
-    def _rot_z(v):
-        return (v[0] * math.cos(rz) - v[1] * math.sin(rz),
-                v[0] * math.sin(rz) + v[1] * math.cos(rz), v[2])
-
-    # JOML rotationXYZ = Rx·Ry·Rz，作用到向量上是先 Z 再 Y 再 X
-    moved = _rot_x(_rot_y(_rot_z((0.0, centre_px * scale, 0.0))))
-    return [round(target[i] - moved[i], 3) for i in range(3)]
-
-
-def _display(scale: float, grip: float, length: float) -> dict:
-    """`grip`/`length` 单位是方块（授权系）。"""
-    centre_px = (length / 2.0 - grip) * 16.0      # 几何中心相对握把点，px
-
-    def centred(rotation, sc, target=(0.0, 0.0, 0.0)):
-        return {"rotation": rotation, "scale": [sc, sc, sc],
-                "translation": _centre_translation(rotation, sc, centre_px, target)}
-
-    fp = round(scale - 0.04, 4)
-    return {
-        "thirdperson_righthand": {"rotation": [-80, 90, 0], "translation": [0, -2.0, 1.5],
-                                  "scale": [scale, scale, scale]},
-        "thirdperson_lefthand": {"rotation": [-80, -90, 0], "translation": [0, -2.0, 1.5],
-                                 "scale": [scale, scale, scale]},
-        # FPV 这两档只把坐标系摆正（刃朝正前、刃面朝两侧），**数值未经真机标定**：
-        # 本 harness 渲不了第一人称，且 FPV 手臂另有 plan-fpv-cast-av-v1 在动。
-        "firstperson_righthand": {"rotation": [-80, 90, 0], "translation": [0, -2.0, -4.0],
-                                  "scale": [fp, fp, fp]},
-        "firstperson_lefthand": {"rotation": [-80, -90, 0], "translation": [0, -2.0, -4.0],
-                                 "scale": [fp, fp, fp]},
-        "ground": centred([0, 0, 0], 0.45, (0.0, 2.0, 0.0)),
-        # GUI 里刀太小看不清，放到 1.15 并转 45° 走对角（原版剑/匕首同一处理）
-        "gui": centred([0, 0, 45], 1.15),
-        "fixed": centred([0, 180, 0], 1.0),
-        "head": centred([0, 0, 0], 1.0, (0.0, 12.0, 0.0)),
-    }
 
 
 # ── 为什么三把都比参考"粗"一大截 ────────────────────────────────────────
@@ -386,7 +276,7 @@ STONE_KNIFE = HeldItem(
     # 拳心对准木柄+绳缠段的中点（柄 0~0.274 / 绳缠 0.274~0.400）：0.72 的显示
     # 缩放下拳头占模型 0.25/0.72 = 0.347 方块，正好被这段 0.400 的握把吃住。
     grip=0.20,
-    display=_display(0.72, 0.20, 0.722),
+    display=hand_display(0.72, 0.20, 0.722),
 )
 
 
@@ -400,7 +290,10 @@ IRON_DAGGER = HeldItem(
     host_item="iron_ingot",
     boxes=(
         Box("handle_butt", "dagger_haft", (0.0, 0.0200, 0.0), (0.0478, 0.0200, 0.0398)),
-        Box("handle_body", "dagger_haft", (0.0, 0.1495, 0.0), (0.0542, 0.1140, 0.0438)),
+        # 顶到 0.2695 而不是 0.2635：护环底在 0.2688，原值与它之间留着 0.0053 的缝，
+        # 和本段注释自己写的「木柄 0~0.269」也对不上。`assert_boxes_are_connected`
+        # 上线时揪出来的——整条刃 + 护环因此是**一块和柄不相连的浮空体**。
+        Box("handle_body", "dagger_haft", (0.0, 0.1525, 0.0), (0.0542, 0.1170, 0.0438)),
         # 单铆钉：参考图在柄下段约 88% 处，前后两面各露一个头 → 一根穿透的钉。
         Box("rivet", "dagger_fitting", (0.0, 0.0600, 0.0), (0.0132, 0.0132, 0.0476)),
         Box("guard", "dagger_fitting", (0.0, 0.2810, 0.0), (0.0788, 0.0122, 0.0518)),
@@ -418,7 +311,7 @@ IRON_DAGGER = HeldItem(
     # 木柄只有 0~0.269，比一个拳头(0.25/0.74 = 0.338)还短——护环正好压在拳头
     # 上沿，这是护环该在的位置；拳心取 0.14 让柄尾露出一点点。
     grip=0.14,
-    display=_display(0.74, 0.14, 0.775),
+    display=hand_display(0.74, 0.14, 0.775),
 )
 
 
@@ -460,7 +353,7 @@ BONE_SPIKE = HeldItem(
     ),
     # 握把是关节头(0~0.16)加一小段骨干：拳心取 0.14，髁压在掌心、虎口卡在骨干上。
     grip=0.14,
-    display=_display(0.76, 0.14, 0.795),
+    display=hand_display(0.76, 0.14, 0.795),
 )
 
 

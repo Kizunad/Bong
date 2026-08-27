@@ -201,6 +201,31 @@ public class ServerDataRouterTest {
         ), router.registeredTypes());
     }
 
+    @Test
+    void routesMineralProbeResultAsPureFeedbackDispatch() {
+        String json = """
+            {"v":1,"type":"mineral_probe_result","kind":"found","remaining_units":51,"display_name_zh":"赤铜矿脉"}
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(
+            json,
+            json.getBytes(StandardCharsets.UTF_8).length
+        );
+
+        assertFalse(result.isParseError(), "mineral_probe_result 应通过纯路由解析");
+        assertTrue(result.isHandled(), "合法矿脉回执应返回 handled dispatch");
+        ServerDataDispatch dispatch = result.dispatch();
+        MineralProbeFeedbackSpec feedback = dispatch.mineralProbeFeedback().orElseThrow(
+            () -> new AssertionError("router 应返回 feedback spec，不应在 route 中触碰 HUD/SFX")
+        );
+        assertEquals("「赤铜矿脉」灵脉 · 余 51 缕", feedback.actionbarText(),
+            "route 不得改写 found 文案");
+        assertEquals(0x6EE7B7, feedback.actionbarColor(),
+            "route 不得改写丰度颜色");
+        assertEquals(MineralProbeFeedbackSpec.SoundEffect.AMETHYST_CHIME, feedback.soundEffect(),
+            "route 不得改写 found 音效意图");
+    }
+
     /**
      * 防回归：agent_ui_request/agent_ui_close 已迁移到专属 channel，不应再出现在 ServerDataRouter 注册表。
      * 若此测试失败，说明有人误将 AgentUi 迁回 server_data 路径，会导致 production proto panic。
