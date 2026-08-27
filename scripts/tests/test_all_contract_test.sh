@@ -67,13 +67,18 @@ assert_contains "$SCRIPT" 'preview_launcher_pid=$!' 'preview 记录 wrapper chil
 assert_contains "$SCRIPT" 'kill "-$signal_name" "$preview_launcher_pid"' 'preview signal cleanup 转发到 wrapper child'
 assert_contains "$SCRIPT" 'if BONG_PREVIEW_PID_FILE="$REPORT_DIR/preview-server.pid"' 'preview 仅在 stop 成功分支处理 authority cleanup'
 assert_contains "$SCRIPT" 'preview_exit_cleanup_active=1' 'preview EXIT cleanup 有重入保护'
-EXIT_CLEANUP_CALL_LINE="$(grep -n 'preview_cleanup "\$exit_code"' "$SCRIPT" | head -1 | cut -d: -f1)"
-EXIT_TRAP_DISABLE_LINE="$(grep -n 'trap - EXIT INT TERM' "$SCRIPT" | tail -1 | cut -d: -f1)"
-if [[ -n "$EXIT_CLEANUP_CALL_LINE" && -n "$EXIT_TRAP_DISABLE_LINE" \
-    && "$EXIT_CLEANUP_CALL_LINE" -lt "$EXIT_TRAP_DISABLE_LINE" ]]; then
+if awk '
+    /^    preview_exit_cleanup\(\) \{/ { in_cleanup=1; next }
+    in_cleanup && /^    preview_signal_cleanup\(\) \{/ {
+        exit (cleanup_seen && !trap_after) ? 0 : 1
+    }
+    in_cleanup && /preview_cleanup "\$exit_code"/ { cleanup_seen=1; next }
+    in_cleanup && cleanup_seen && /trap - EXIT INT TERM/ { trap_after=1 }
+    END { if (cleanup_seen && !trap_after) exit 0; exit 1 }
+' "$SCRIPT"; then
     pass 'preview EXIT cleanup 在 stop 尝试后才解除 trap'
 else
-    fail 'preview EXIT cleanup 不得在 stop 尝试前解除 trap'
+    fail 'preview EXIT cleanup 不得在 cleanup 调用后无条件解除 trap'
 fi
 START_LINE="$(grep -n 'bash "\$ROOT/scripts/preview/run-server-headless.sh" --debug &' "$SCRIPT" | cut -d: -f1)"
 EXIT_TRAP_LINE="$(grep -n 'trap preview_exit_cleanup EXIT' "$SCRIPT" | cut -d: -f1)"
@@ -111,7 +116,7 @@ assert_rc 2 'unit 选择 scripts 返回 2，防止 contract 混入 unit'
 MISSING_REPORT="$SANDBOX/missing-tools-report"
 run_capture "$SANDBOX/missing.out" "$SANDBOX/missing.err" \
     env PATH=/usr/bin:/bin /bin/bash "$SCRIPT" --profile unit --suite server --report-dir "$MISSING_REPORT"
-assert_rc 1 '缺 Rust 工具不是静默成功'
+assert_rc 2 '缺 Rust 工具以明确的前置失败码返回'
 assert_file "$MISSING_REPORT/summary.json" '缺工具仍生成 summary.json'
 assert_file "$MISSING_REPORT/server/status" '缺工具仍生成 suite status'
 assert_contains "$MISSING_REPORT/server/status" 'SKIP' '缺工具状态显式为 SKIP'
@@ -203,7 +208,7 @@ run_capture "$SANDBOX/preview.out" "$SANDBOX/preview.err" \
     -u BONG_CLIENT_PREVIEW_DIR PATH="$FIXTURE/bin:/usr/bin:/bin" \
     /bin/bash "$FIXTURE/scripts/test-all.sh" \
     --profile preview --suite scripts --report-dir "$PREVIEW_REPORT"
-assert_rc 1 'preview 缺外部 raster handoff 返回非零'
+assert_rc 2 'preview 缺外部 raster handoff 以 BLOCKED 前置失败码返回'
 assert_contains "$PREVIEW_REPORT/scripts/status" 'BLOCKED' 'preview 缺外部 raster 明确标记 BLOCKED'
 assert_contains "$PREVIEW_REPORT/scripts/stderr.log" '缺少 BONG_TERRAIN_RASTER' 'preview BLOCKED 原因指向外部输入'
 
@@ -237,7 +242,7 @@ run_capture "$SANDBOX/preview-tool.out" "$SANDBOX/preview-tool.err" \
     BONG_PREVIEW_CONFIG="$PREVIEW_TOOL_FIXTURE/client/preview-harness.json" \
     /bin/bash "$PREVIEW_TOOL_FIXTURE/scripts/test-all.sh" \
     --profile preview --suite scripts --report-dir "$PREVIEW_TOOL_REPORT"
-assert_rc 1 'preview 缺 xvfb-run 不是静默成功'
+assert_rc 2 'preview 缺 xvfb-run 以明确的前置失败码返回'
 assert_contains "$PREVIEW_TOOL_REPORT/scripts/status" 'SKIP' 'preview 缺 xvfb-run 状态为 SKIP'
 assert_contains "$PREVIEW_TOOL_REPORT/scripts/stderr.log" '需要 xvfb-run' 'preview 缺 xvfb-run 原因写入报告'
 

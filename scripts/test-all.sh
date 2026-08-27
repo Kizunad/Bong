@@ -240,6 +240,7 @@ ENDED_AT=
 GIT_SHA=unknown
 REPORT_ERROR=0
 OVERALL_FAILURE=0
+PREFLIGHT_FAILURE=0
 PRECHECK_STATUS=PASS
 PRECHECK_REASON=
 PREVIEW_RASTER_DIR=
@@ -643,10 +644,6 @@ run_preview_handoff() {
         preview_shutdown_launcher TERM
         preview_cleanup "$exit_code"
         exit_code=$?
-        # If the function reached EXIT with an owned server, preview_cleanup
-        # above is the final bounded attempt. Disable traps only after it has
-        # returned so normal-path failures get this EXIT retry exactly once.
-        trap - EXIT INT TERM
         exit "$exit_code"
     }
     preview_signal_cleanup() {
@@ -812,6 +809,7 @@ for suite in "${SELECTED[@]}"; do
         continue
     fi
     if ! preflight_suite "$suite"; then
+        PREFLIGHT_FAILURE=1
         record_skip_or_blocked "$suite" "$PRECHECK_STATUS" "$PRECHECK_REASON" "$command_text" "$cwd" "$artifacts"
         previous_failed_suite="$suite"
         continue
@@ -827,6 +825,10 @@ if ((REPORT_ERROR == 1)); then
     exit 3
 fi
 printf '[test-all] profile=%s report=%s\n' "$PROFILE" "$REPORT_DIR"
+if ((PREFLIGHT_FAILURE == 1)); then
+    printf '[test-all] BLOCKED/SKIP: suite 前置条件未满足；详见 summary.json/summary.tsv\n' >&2
+    exit 2
+fi
 if ((OVERALL_FAILURE == 0)); then
     printf '[test-all] PASS: %d suite(s)\n' "$RECORD_COUNT"
     exit 0
