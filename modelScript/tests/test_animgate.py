@@ -320,7 +320,7 @@ class BalanceGateTest(unittest.TestCase):
     def test_a_proper_weight_shift_passes(self) -> None:
         r = ag.gate_balance(lambda t: 0.8, n=20)
         self.assertTrue(r.ok)
-        self.assertEqual(20, r.extra["frames"])
+        self.assertEqual(21, r.extra["frames"])  # n=20 → 采样 0/20..20/20 共 21 点，覆盖 [0,1]
         self.assertAlmostEqual(1.0, r.extra["same_side"])
 
     def test_wrong_side_is_caught(self) -> None:

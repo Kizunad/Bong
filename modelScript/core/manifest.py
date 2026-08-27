@@ -137,6 +137,21 @@ def parse_manifest(doc: dict, source: Path | None = None) -> Manifest:
         raise ValueError("manifest 必须在顶层声明 facing（\"+z\" / \"-z\" / \"+x\" / \"-x\"）")
     framing.parse_facing(facing)
 
+    # 提前校验：当前 mirror/asym 实现固定按模型 x 坐标分左右，但 facing=±x 时观者左右对应 ±z。
+    # 暂时拒绝这个组合，等真有横向资产再做投影重构。
+    if facing in ("+x", "-x"):
+        raw_features = doc.get("features", {})
+        if isinstance(raw_features, dict):
+            for key, spec in raw_features.items():
+                if not isinstance(spec, dict):
+                    continue
+                if spec.get("mirror") or spec.get("asym"):
+                    raise ValueError(
+                        f"特征 {key!r} 有 mirror/asym 约束，但 facing={facing!r}。"
+                        "当前实现固定按模型 x 坐标分左右，facing=±x 时观者左右对应 ±z，会误报。"
+                        "暂不支持 facing=±x 与左右约束组合；等真有横向资产再做投影重构。"
+                    )
+
     mirror_x = doc.get("mirror_x", 0.0)
     if not isinstance(mirror_x, (int, float)) or isinstance(mirror_x, bool):
         raise ValueError(f"mirror_x 必须是数字（中轴的 x 坐标），收到 {mirror_x!r}")

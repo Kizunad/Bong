@@ -31,8 +31,11 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import animcore  # noqa: E402
+try:
+    from . import animcore
+except ImportError:
+    # 测试环境通过 sys.path.insert 直接导入时走绝对导入
+    import animcore  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------- 线性代数 / 曲线

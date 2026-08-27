@@ -206,8 +206,10 @@ def gate_ground(lowest_at, n: int = FRAMES, sink_tol: float = SINK_TOL) -> AnimG
     lowest_at(t01) → (y, 骨名)。地面动作不该扎进地里，翼尖扫地尤其常见 —— 张翼威慑
     那一下最容易把初级飞羽插进土里。
     """
+    if n <= 0:
+        raise ValueError("采样数必须大于 0")
     worst, who, at = 1e9, "-", 0.0
-    for i in range(n):
+    for i in range(n + 1):
         t = i / n
         y, bone = lowest_at(t)
         if y < worst:
@@ -287,8 +289,10 @@ def gate_overlap(boxes_at, pairs, n: int = FRAMES,
 
     boxes_at(t01) → {组名: (lo, hi)}；pairs 是要查的组对。容差见 OVERLAP_TOL 那段。
     """
+    if n <= 0:
+        raise ValueError("采样数必须大于 0")
     worst, who, at = 0.0, "-", 0.0
-    for i in range(n):
+    for i in range(n + 1):
         t = i / n
         boxes = boxes_at(t)
         for a, b in pairs:
@@ -314,8 +318,10 @@ def gate_chain_break(boxes_at, chains: dict, n: int = FRAMES,
 
     chains: {链名: [组名, 组名, ...]}，按相邻两两量间隙。
     """
+    if n <= 0:
+        raise ValueError("采样数必须大于 0")
     worst, who, at = -9.0, "-", 0.0
-    for i in range(n):
+    for i in range(n + 1):
         t = i / n
         boxes = boxes_at(t)
         for label, groups in chains.items():
@@ -345,8 +351,10 @@ def gate_balance(frac_at, n: int = FRAMES, min_peak: float = BALANCE_MIN) -> Ani
     个百分点，同侧率仍是 100% —— 而那正是在冰面上平移的样子。所以还要求**峰值真的
     压过去**。这条门的鉴别力全在第二个判据上。
     """
+    if n <= 0:
+        raise ValueError("采样数必须大于 0")
     worst, best, n_bad, cnt = float("inf"), 0.0, 0, 0
-    for i in range(n):
+    for i in range(n + 1):
         frac = frac_at(i / n)
         if frac is None:
             continue
