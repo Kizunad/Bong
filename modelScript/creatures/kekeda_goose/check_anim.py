@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
+import animgate  # noqa: E402
 from anim_rig import Pose, build_tracks, wrap  # noqa: E402
 from rig import SIDES, Goose, Waddle, leg_chain  # noqa: E402
 
@@ -197,11 +198,7 @@ def head_clearance(g: Goose, pose) -> float:
     W = g.world(pose)
     head = _cluster(g, ("skull", "bill_upper", "jaw"), W)
     body = _cluster(g, ("plume_body",), W)
-    best = 1e9
-    for hlo, hhi in head:
-        for blo, bhi in body:
-            best = min(best, max(float(max(hlo[i] - bhi[i], blo[i] - hhi[i])) for i in range(3)))
-    return best
+    return animgate.min_gap(head, body)
 
 
 def _boxes(g: Goose, names, W):
@@ -217,10 +214,9 @@ def _boxes(g: Goose, names, W):
     return out
 
 
-def _gap(a, b) -> float:
-    """两组盒之间的最小分离（负 = 有重叠）。"""
-    return min(max(float(max(alo[i] - bhi[i], blo[i] - ahi[i])) for i in range(3))
-               for alo, ahi in a for blo, bhi in b)
+#: 两组盒之间的最小分离（负 = 有重叠）。判据在 core/animgate.py，那里连
+#: 「为什么必须按三轴分离量、不能量竖直净空」的理由一起收着。
+_gap = animgate.min_gap
 
 
 #: 会被姿态拉开的那些接缝：每条链逐段必须首尾相接。
@@ -279,14 +275,7 @@ def silhouette(g: Goose, ex: Exported, n: int = 60):
 
 
 def seam(ex: Exported, g: Goose) -> float:
-    a, b = ex.at(0.0), ex.at(1.0)
-    d = 0.0
-    for bone in g.order:
-        for attr in ("rot", "pos", "scale"):
-            if bone in a and bone in b:
-                d = max(d, max(abs(x - y) for x, y in zip(getattr(a[bone], attr),
-                                                          getattr(b[bone], attr))))
-    return d
+    return animgate.gate_seam(ex.at, g.order, SEAM_TOL).worst
 
 
 def gait_report(g: Goose, ex: Exported, cfg: dict, n: int = 160) -> list[str]:
