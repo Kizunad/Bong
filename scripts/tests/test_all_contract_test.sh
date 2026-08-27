@@ -70,6 +70,11 @@ if [[ -n "$START_LINE" && -n "$EXIT_TRAP_LINE" && "$EXIT_TRAP_LINE" -lt "$START_
 else
     fail 'preview cleanup trap 必须先于 server 启动调用注册'
 fi
+if grep -Fq -- 'preview_start_owned' "$SCRIPT"; then
+    fail 'preview 不得以启动前 PID 文件缺失冒充 server ownership'
+else
+    pass 'preview 启动阶段不以 PID pathname 冒充 server ownership'
+fi
 
 run_capture "$SANDBOX/list.out" "$SANDBOX/list.err" bash "$SCRIPT" --list
 assert_rc 0 '--list 返回 0'
