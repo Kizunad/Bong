@@ -99,7 +99,16 @@ publish_launch_handoff() {
     return 1
   fi
   bong_server_validate_pid_record_file "$temporary" || { rm -f -- "$temporary"; return 1; }
-  mv -f -- "$temporary" "$handoff_file" || { rm -f -- "$temporary"; return 1; }
+  # The destination was checked above only for diagnostics.  Exclusive hard
+  # linking is the publication gate: a concurrent invocation that wins the
+  # destination cannot be overwritten by this launch, and a symlink/directory
+  # substitution is rejected instead of being followed.
+  if ! ln -T -- "$temporary" "$handoff_file"; then
+    rm -f -- "$temporary"
+    echo "❌ Preview launch handoff 已存在或无法独占发布: $handoff_file" >&2
+    return 1
+  fi
+  rm -f -- "$temporary" || return 1
 }
 
 bong_server_publish_launch_identity() {

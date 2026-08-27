@@ -73,6 +73,12 @@ assert_contains "$SCRIPT" 'preview_read_handoff_identity' 'preview 只接受完�
 assert_contains "$SCRIPT" 'BONG_PREVIEW_EXPECTED_EXECUTABLE_IDENTITY' 'preview stop 传递完整 expected identity'
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'bong_server_publish_launch_state' 'preview wrapper 发布 authority handoff marker'
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'bong_server_publish_launch_identity' 'preview wrapper 独立发布 identity handoff'
+assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'ln -T -- "$temporary" "$handoff_file"' 'preview handoff 使用独占原子发布而非覆盖 rename'
+if grep -Fq 'mv -f -- "$temporary" "$handoff_file"' "$ROOT/scripts/preview/run-server-headless.sh"; then
+    fail 'preview handoff 不得用可覆盖 rename 发布'
+else
+    pass 'preview handoff 不用可覆盖 rename 发布'
+fi
 assert_contains "$ROOT/scripts/preview/run-server-headless.sh" 'BONG_PREVIEW_HANDOFF_FAILURE_EXIT=75' 'preview handoff failure 使用独立退出码'
 if grep -Fq 'bong_server_post_publication_rollback "preview launch-state publication rollback" || true' \
     "$ROOT/scripts/preview/run-server-headless.sh"; then
