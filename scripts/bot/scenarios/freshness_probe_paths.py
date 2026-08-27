@@ -36,7 +36,11 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
-from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES, drain_event_stream
+from ._rejection_helpers import (
+    AMBIENT_SERVER_DATA_TYPES,
+    _relative_now,
+    drain_event_stream,
+)
 
 DESCRIPTION = "freshness_probe：Awaken→神识未及告警、凝脉→FreshnessUpdate、无保鲜/坏实例→静默"
 MODULES = ["shelflife", "network"]
@@ -46,6 +50,7 @@ MEAT_ITEM = "food.mundane.cooked_meat"
 MEAT_PROFILE = "food_spoil_mundane_meat_v1"
 PLAIN_ITEM = "trade_crate"
 SILENT_WINDOW = 4.0
+REALM_SYNC_DRAIN_MAX = SILENT_WINDOW * 3.0
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
 # （network/carrier_state_emit.rs，ticks % TICKS_PER_SECOND==0 周期）。
 # player_state / inventory_snapshot 在本场景只随 Changed 组件发射（gap9 无
@@ -105,7 +110,7 @@ def run(env) -> None:
         # 之前截取——若在拒信（event_alert）消费后才锚定，先于拒信到达的
         # freshness_update 会被排除在静默窗口外，「先发精确保鲜、再发神识未及」的坏
         # 实现就撞不红（review finding 3/5）。
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = _relative_now(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         alert = bot.expect_server_data("event_alert", timeout=10.0)
         message = alert.data["payload"].get("message", "")
@@ -144,8 +149,7 @@ def run(env) -> None:
         # Bot reader 已收到（CI 高负载时实测可滞后约 1.5s）。排空上限必须覆盖完整的
         # 静默观察窗，并在排空完成后重新取水位，避免上一条命令的滞后事件被误归因于
         # freshness_probe。成功探针自身的副作用仍会在后面的静默扫描中撞红。
-        drain_event_stream(bot, quiet_s=0.5, max_s=SILENT_WINDOW)
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = _settle_realm_change(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update1 = bot.expect_server_data("freshness_update", timeout=10.0)
         f1 = _probe_payload_freshness(bot, update1, meat_instance)
@@ -225,7 +229,7 @@ def run(env) -> None:
         bot.expect_chat(f"[dev] gave {PLAIN_ITEM} x1", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
         plain = require_item(snapshot, PLAIN_ITEM)
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = _relative_now(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": plain["item"]["instance_id"]})
         _assert_no_freshness_update(bot, sent_at, "无保鲜 item 的探针应静默（NoFreshness 不发 S2C）")
         bot.assert_alive("无保鲜 freshness_probe 后")
@@ -235,7 +239,7 @@ def run(env) -> None:
         #    此前全部请求都用当前背包快照拿到的实例，从不在生产路径送非法实例——
         #    跳过 belongs_to_player、去探他人/任意 item 的坏实现能通过全部旧断言
         #    （central-review 2029 #6）。999999 是合法 wire 值但不在任何背包。
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = _relative_now(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": 999999})
         _assert_no_freshness_update(
             bot,
@@ -243,6 +247,16 @@ def run(env) -> None:
             "不存在的 instance_id 探针应被 dispatch 静默丢弃（belongs_to_player 拒绝）",
         )
         bot.assert_alive("freshness_probe 拒绝面全程")
+
+
+def _settle_realm_change(bot) -> float:
+    """排干 realm set 的异步同步流，并返回与 ``event.t`` 同钟的请求锚点。"""
+    drain_event_stream(
+        bot,
+        quiet_s=SILENT_WINDOW,
+        max_s=REALM_SYNC_DRAIN_MAX,
+    )
+    return _relative_now(bot)
 
 
 def _assert_no_freshness_update(
