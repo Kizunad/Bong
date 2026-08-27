@@ -125,7 +125,7 @@ class R7InventoryContractTest {
         // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
         // 与 outcome UI 投影；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         assertEquals(
-            "21350b44f9898963409824d56ec15e882166bf808c091435998de6148387b794",
+            "f41ca422b238ed78049a9f7b8a5b7421bbea3efc6c454ba082b0d649e2f4d493",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
