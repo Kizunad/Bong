@@ -10,8 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.Objects;
 
 /** 真实 Fabric/owo UI 截图状态机。 */
 final class UiPreviewSession {
@@ -30,7 +29,7 @@ final class UiPreviewSession {
     }
 
     private final UiPreviewConfig config;
-    private final Path outputDir;
+    private final UiPreviewArtifactSink artifacts;
     private Phase phase = Phase.WAIT_CLIENT;
     private int phaseTicks;
     private int totalTicks;
@@ -39,13 +38,13 @@ final class UiPreviewSession {
     private UiPreviewScene openedScene;
     private boolean stopRequested;
 
-    UiPreviewSession(UiPreviewConfig config) {
-        this.config = config;
-        this.outputDir = Path.of(config.outputDir()).toAbsolutePath();
+    UiPreviewSession(UiPreviewConfig config, UiPreviewArtifactSink artifacts) {
+        this.config = Objects.requireNonNull(config, "config 不能为空");
+        this.artifacts = Objects.requireNonNull(artifacts, "artifacts 不能为空");
         try {
-            UiPreviewResultFile.begin(outputDir);
+            artifacts.begin();
         } catch (IOException e) {
-            throw new IllegalStateException("无法创建 UI preview 输出目录: " + outputDir, e);
+            throw new IllegalStateException("无法初始化 UI preview 产物仓储", e);
         }
     }
 
@@ -58,8 +57,7 @@ final class UiPreviewSession {
         try {
             step(client);
         } catch (RuntimeException | IOException failure) {
-            cleanup(client);
-            recordFailureAndStop(client, failure);
+            recordFailureAndStop(client, attachCleanupFailure(failure, () -> cleanup(client)));
         }
     }
 
@@ -176,10 +174,6 @@ final class UiPreviewSession {
         UiPreviewShot shot = currentShot();
         // 等真实渲染帧完成后再检查输入命中；owo scrollbar 的 hit region 在 draw 时初始化。
         openedScene.validateGeometry(openedScreen, shot);
-        Path imagePath = outputDir.resolve("ui-" + shot.name() + ".png");
-        try (NativeImage image = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
-            image.writeTo(imagePath);
-        }
         String metadata = "scene_id=" + shot.sceneId() + "\n"
             + "framebuffer=" + client.getWindow().getFramebufferWidth() + "x"
             + client.getWindow().getFramebufferHeight() + "\n"
@@ -187,8 +181,10 @@ final class UiPreviewSession {
             + client.getWindow().getScaledHeight() + "\n"
             + "gui_scale=" + client.getWindow().getScaleFactor() + "\n"
             + "template_id=" + openedScene.selectedTemplateId(openedScreen) + "\n";
-        Files.writeString(outputDir.resolve("ui-" + shot.name() + ".txt"), metadata);
-        LOGGER.info("[ui-preview] saved {}", imagePath);
+        try (NativeImage image = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
+            String imagePath = artifacts.writeShot(shot.name(), image, metadata);
+            LOGGER.info("[ui-preview] saved {}", imagePath);
+        }
         advance(Phase.CLOSE_SCREEN);
     }
 
@@ -205,19 +201,18 @@ final class UiPreviewSession {
         if (phaseTicks < 5) {
             return;
         }
-        UiPreviewResultFile.passed(outputDir, shotIndex);
+        artifacts.passed(shotIndex);
         LOGGER.info("[ui-preview] completed {} screenshots in {} ticks", shotIndex, totalTicks);
-        if (config.exitOnComplete()) {
-            stopRequested = true;
+        CompletionDecision completion = completionDecision(config.exitOnComplete());
+        stopRequested = completion.stopTicks();
+        if (completion.stopClient()) {
             client.scheduleStop();
         }
     }
 
     private void recordFailureAndStop(MinecraftClient client, Throwable failure) {
         try {
-            UiPreviewResultFile.failed(
-                outputDir, shotIndex, phase.name(), shotName(), failure
-            );
+            artifacts.failed(shotIndex, phase.name(), shotName(), failure);
         } catch (IOException resultFailure) {
             failure.addSuppressed(resultFailure);
         }
@@ -236,6 +231,23 @@ final class UiPreviewSession {
         if (openedScene != null) {
             openedScene.cleanup();
         }
+    }
+
+    static Throwable attachCleanupFailure(Throwable primary, Runnable cleanup) {
+        Objects.requireNonNull(primary, "primary 不能为空");
+        Objects.requireNonNull(cleanup, "cleanup 不能为空");
+        try {
+            cleanup.run();
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != primary) {
+                primary.addSuppressed(cleanupFailure);
+            }
+        }
+        return primary;
+    }
+
+    static CompletionDecision completionDecision(boolean exitOnComplete) {
+        return new CompletionDecision(true, exitOnComplete);
     }
 
     private UiPreviewShot currentShot() {
@@ -261,5 +273,8 @@ final class UiPreviewSession {
         } catch (IllegalStateException notLoadedYet) {
             return false;
         }
+    }
+
+    record CompletionDecision(boolean stopTicks, boolean stopClient) {
     }
 }

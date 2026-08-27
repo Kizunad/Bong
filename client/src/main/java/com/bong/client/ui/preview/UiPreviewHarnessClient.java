@@ -36,7 +36,10 @@ public final class UiPreviewHarnessClient {
                     throw new IllegalArgumentException("未登记的 UI preview scene: " + shot.sceneId());
                 }
             }
-            UiPreviewSession session = new UiPreviewSession(config);
+            UiPreviewSession session = new UiPreviewSession(
+                config,
+                new UiPreviewResultFile(config.outputDir())
+            );
             ClientTickEvents.END_CLIENT_TICK.register(session::onTick);
             LOGGER.info("[ui-preview] installed config={} shots={} output={}",
                 path.toAbsolutePath(), config.screenshots().size(), config.outputDir());

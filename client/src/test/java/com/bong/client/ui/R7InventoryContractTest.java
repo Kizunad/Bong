@@ -117,8 +117,10 @@ class R7InventoryContractTest {
         // 最终摘要同时覆盖上述主线资产和本阶段所有 client/src/main 生产字节。
         // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
         // 本次重新冻结只包含 UiPreviewConfig 与 UiPreviewHarnessClient 两个生产 Java 文件。
+        // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
+        // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
         assertEquals(
-            "97635717b1b773393510eb4e5fffd4077ff4dfb14cc81321028e841d7996eee0",
+            "c275739ba9250bf444fd7e780146350d4d6610fb78550c61bc06ad91e30ea387",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

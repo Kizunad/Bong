@@ -80,6 +80,17 @@ class UiPreviewConfigTest {
             UiPreviewConfig.parse(Files.readString(write(tempDir, "{\"screenshots\":[]}"))));
     }
 
+    @Test
+    void duplicateShotNamesAreRejectedBeforeTheyCanOverwriteArtifacts() {
+        UiPreviewShot first = shot("same-name", "craft", 640, 480);
+        UiPreviewShot duplicate = shot("same-name", "craft", 800, 480);
+
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
+            new UiPreviewConfig("shots", 20, 20, 1, false, java.util.List.of(first, duplicate)));
+
+        assertTrue(failure.getMessage().contains("name 必须唯一"));
+    }
+
     private static String validShot(String sceneId) {
         return "{\"screenshots\":[" + shotBody(sceneId) + "]}";
     }
@@ -89,6 +100,24 @@ class UiPreviewConfigTest {
             + "\",\"framebuffer_width\":640,\"framebuffer_height\":480,\"gui_scale\":2,"
             + "\"expected_logical_width\":320,\"expected_logical_height\":240,"
             + "\"expected_template_id\":\"craft-compact\"}";
+    }
+
+    private static UiPreviewShot shot(
+        String name,
+        String sceneId,
+        int framebufferWidth,
+        int framebufferHeight
+    ) {
+        return new UiPreviewShot(
+            name,
+            sceneId,
+            framebufferWidth,
+            framebufferHeight,
+            2,
+            (framebufferWidth + 1) / 2,
+            (framebufferHeight + 1) / 2,
+            "craft-compact"
+        );
     }
 
     private static Path write(Path directory, String body) throws IOException {

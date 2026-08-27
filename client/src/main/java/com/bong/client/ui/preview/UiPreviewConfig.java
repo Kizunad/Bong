@@ -28,6 +28,9 @@ public record UiPreviewConfig(
         if (screenshots == null || screenshots.isEmpty()) {
             throw new IllegalArgumentException("screenshots 至少需要一个场景");
         }
+        if (screenshots.stream().map(UiPreviewShot::name).distinct().count() != screenshots.size()) {
+            throw new IllegalArgumentException("截图 name 必须唯一");
+        }
         screenshots = List.copyOf(screenshots);
     }
 

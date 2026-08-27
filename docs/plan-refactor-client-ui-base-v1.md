@@ -511,7 +511,9 @@ Insight lifecycle 必须证明 stale offer A 不能清除 offer B；精确 `offe
 
 **决议**：server/agent 不再以 XML/HTML/JS 描述 UI；跨端只交换带 `surface_id`、`template_id`、`session_id`、`revision`、immutable view data 和 typed `allowed_actions` 的语义 surface。client 通过本地 owo XML template registry 渲染，bot 通过同一 action registry 和 authoritative receipt 消费；R7 不擅自改现有 wire，raw XML 只作为 legacy compatibility input，真正 wire cutover 由 R6/schema/agent amendment 按 atomic activation 完成。
 
-**落点**：R7 `ui/contract/{surface,headless}/**`、`scripts/bot/` semantic driver；现有 `proto/bong/envelope.proto`、`agent/packages/schema/src/server-data.ts`、`scripts/bot/_agent_ui_helpers.py` 记录为跨轨接入证据；本 plan §2、§4.7、§5.4、P0R/P3。
+**调研依据**：legacy proto `UiOpen.xml` 位于 `proto/bong/envelope.proto:2731-2735`；当前 Agent UI 的 raw XML schema 位于 `agent/packages/schema/src/payloads/agent-ui.ts:50-88` 和 `agent/packages/schema/src/server-data.ts:1994-2022`；server 清洗并经专属 JSON channel 下发的路径位于 `server/src/network/agent_ui.rs:415-498`；client 运行时解析入口位于 `client/src/main/java/com/bong/client/agentui/AgentUiScreen.java:136-152,437-448`；本地模板白名单位于 `client/src/main/java/com/bong/client/ui/adapter/owo/OwoXmlTemplateRegistry.java:13-30,61-72`；bot 对当前四字段 raw payload 的验证位于 `scripts/bot/_agent_ui_helpers.py:68-145`。
+
+**落点**：R7 `ui/contract/{surface,headless}/**`、`scripts/bot/` semantic driver；上述 legacy/raw XML 入口只作为 R6/schema/agent amendment 的接入证据，不是新 semantic surface；本 plan §2、§4.7、§5.4、P0R/P3。
 
 ### #9 Viewport、缩放与输入坐标
 

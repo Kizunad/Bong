@@ -39,6 +39,10 @@ final class UiPreviewScenes {
     }
 
     private static final class CraftScene implements UiPreviewScene {
+        // 仅用于界面排版的玩家快照，不代表 qi_physics 全局灵气总量。
+        private static final double PREVIEW_PLAYER_QI_CURRENT = 63.0;
+        private static final double PREVIEW_PLAYER_QI_MAX = 96.0;
+
         @Override
         public void installFixture() {
             CraftStore.clear();
@@ -51,7 +55,7 @@ final class UiPreviewScenes {
                 .gridItem(item(1001L, "rust_iron", "锈铁片", 12), 0, 0)
                 .gridItem(item(1002L, "withered_herb", "枯草", 8), 0, 1)
                 .gridItem(item(1003L, "bitter_root", "苦根", 1), 0, 2)
-                .cultivation("醒灵", 80.0, 100.0, 1.0)
+                .cultivation("醒灵", PREVIEW_PLAYER_QI_CURRENT, PREVIEW_PLAYER_QI_MAX, 1.0)
                 .build());
             SkillSetStore.replace(SkillSetSnapshot.empty());
         }

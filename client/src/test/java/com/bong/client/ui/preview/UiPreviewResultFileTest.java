@@ -16,14 +16,14 @@ class UiPreviewResultFileTest {
         Path result = outputDir.resolve(UiPreviewResultFile.FILE_NAME);
         Files.writeString(result, "status=passed\n");
 
-        UiPreviewResultFile.begin(outputDir);
+        new UiPreviewResultFile(outputDir.toString()).begin();
 
         assertFalse(Files.exists(result), "新一轮截图开始前必须移除旧结果，禁止历史成功假绿");
     }
 
     @Test
     void passedRecordsCompletedCount(@TempDir Path outputDir) throws IOException {
-        UiPreviewResultFile.passed(outputDir, 7);
+        new UiPreviewResultFile(outputDir.toString()).passed(7);
 
         String result = Files.readString(outputDir.resolve(UiPreviewResultFile.FILE_NAME));
         assertTrue(result.contains("status=passed\n"));
@@ -32,8 +32,8 @@ class UiPreviewResultFileTest {
 
     @Test
     void failedRecordsContextOnSingleLines(@TempDir Path outputDir) throws IOException {
-        UiPreviewResultFile.failed(
-            outputDir, 5, "WAIT_VIEWPORT", "scale-three",
+        new UiPreviewResultFile(outputDir.toString()).failed(
+            5, "WAIT_VIEWPORT", "scale-three",
             new IllegalStateException("expected 334x241\nbut was 500x361")
         );
 
