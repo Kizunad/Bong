@@ -69,12 +69,15 @@ bug-hunt 定点轮（worktree `bughunt-loop-20260705-br`，范围只看 client i
 - `9490b5dbf` · 2026-08-26 · 补齐 Forge 存量键位运行时索引测试。
 - `8da381c9f` · 2026-08-26 · 同步 Forge 键位迁移的 R7 源码摘要。
 - `fa6bd905a` · 2026-08-27 · 合并最新主线并同步联合 R7 源码基线。
+- `507f39228` · 2026-08-27 · 补齐 Forge 键位迁移一次性版本标记及回改 U 测试。
+- `5d41219a4` · 2026-08-27 · 同步键位迁移版本标记的 R7 基线。
 
 ### 测试结果
 
-- `JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH ../scripts/build-token.sh gradle test build`：最终合并态 `4949 tests`、failures `0`、errors `0`，Gametest `3/3`，`BUILD SUCCESSFUL`。
+- `JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH ../scripts/build-token.sh gradle test build`：marker 返工后的 `4951 tests`、failures `0`、errors `0`，Gametest `3/3`，`BUILD SUCCESSFUL`。
 - `git fetch origin && git merge origin/main`：合并 `origin/main` 后解决两处 R7 fixture 冲突；以联合生产树真实 digest 重新冻结，再运行完整 Java 17 gate 通过。
-- fresh-context、read-only validator：对最终 HEAD 重新验证默认键唯一性、存量配置迁移、首 tick 前接线和物理索引刷新；最终 SHA 与结论见 PR 收尾证据。
+- fresh-context、read-only validator：对 `5d41219a4ba2c02d6e2f29bc9da94b183a193cbc` PASS，重新验证默认键唯一性、存量配置迁移、首 tick 前接线、物理索引刷新和一次性版本 marker；返工后新 SHA 的 validator 需在本次证据提交后再次执行。
+- GitHub workflow `33025769643` 首轮：除 `bot-e2e (1)` 外全部通过；失败唯一为与本 plan 无关的 `network_quickslot_config` 负向静默窗口，`freshness_probe_paths` 已通过。失败 job rerun 后 `total=86 pass=82 skip=4 fail=0`；该 rerun 针对前一最终 SHA，当前 marker 返工 HEAD 推送后须重新取得最终 workflow 证据。
 
 ### 跨仓库核验
 
