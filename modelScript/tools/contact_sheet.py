@@ -34,14 +34,16 @@ import sys
 from pathlib import Path
 
 LIB = Path(__file__).resolve().parents[1]
-REPO = LIB.parent
 for _d in ("core", "generators"):
     sys.path.insert(0, str(LIB / _d))
+import workspace  # noqa: E402
 
 import framing  # noqa: E402
 import manifest as mfmod  # noqa: E402
 
-OUTDIR = LIB / "out"
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
+OUTDIR = _WS.out
 
 
 def _manifest_notes(rc) -> list[str]:

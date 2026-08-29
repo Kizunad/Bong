@@ -37,14 +37,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import render_bbmodel as R  # noqa: E402
 import render_jian_in_hand as H  # noqa: E402
+import workspace  # noqa: E402
 
-sys.path.insert(0, str(REPO_TOOLS := Path(__file__).resolve().parents[2] / "client" / "tools"))
-import render_animation as RA  # noqa: E402  （复用它的 emotecraft JSON 采样）
+# emotecraft JSON 采样原先是从 client/tools/render_animation.py 借的，那条依赖是反的：
+# 渲染底座不该依赖调用方仓库的目录布局。现已提进 core/emote_anim.py。
+import emote_anim as RA  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[2]
-OUT_MATRIX = Path(__file__).resolve().parents[1] / "out" / "render_bend_matrix.png"
-OUT_POSE = Path(__file__).resolve().parents[1] / "out" / "render_player_pose.png"
-OUT_ANIM = Path(__file__).resolve().parents[1] / "out" / "render_anim_pose.png"
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
+OUT_MATRIX = _WS.out / "render_bend_matrix.png"
+OUT_POSE = _WS.out / "render_player_pose.png"
+OUT_ANIM = _WS.out / "render_anim_pose.png"
 MIN_RENDER_SIZE = 1
 MAX_RENDER_SIZE = 1024
 ANGLE_AXES = frozenset(("pitch", "yaw", "roll", "bend", "axis"))

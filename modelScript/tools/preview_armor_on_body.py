@@ -34,7 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "generators"))
 from armor_model_common import ArmorPart, TEXTURE_SIZE  # noqa: E402
 from render_bbmodel import render  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[2]
+import workspace  # noqa: E402
+
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
 PREVIEW_RES = 128
 SKIN_ORIGIN = (64, 0)  # 玩家皮肤在预览图集里的原点，UV 全部平移这个量
 MODEL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://bong.local/armor-preview")
@@ -369,7 +372,7 @@ def build_player_bbmodel(part: ArmorPart, skin: Image.Image,
 
 def write_player_bbmodel(part: ArmorPart, skin: Image.Image, armor_texture: Image.Image,
                          material: str, out_dir: Path | None = None) -> Path:
-    directory = out_dir or (Path(__file__).resolve().parents[1] / "models" / "armor" / material)
+    directory = out_dir or (_WS.models / "armor" / material)
     directory.mkdir(parents=True, exist_ok=True)
     name = "".join(word.capitalize() for word in part.key.split("_")) + "OnPlayer.bbmodel"
     path = directory / name
@@ -504,7 +507,7 @@ def main() -> None:
                              "如腿甲下摆压不压得住靴筒口）；件名取 <material>_set")
     args = parser.parse_args()
 
-    out_dir = Path(__file__).resolve().parents[1] / "out"
+    out_dir = _WS.out
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.dump_skin:
         path = out_dir / "preview_player_skin.png"

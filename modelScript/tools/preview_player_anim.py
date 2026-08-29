@@ -60,7 +60,11 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 LIB = Path(__file__).resolve().parents[1]
-REPO = LIB.parent
+sys.path.insert(0, str(LIB / "core"))
+import workspace  # noqa: E402
+
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
 for _d in (LIB / "core", LIB / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
