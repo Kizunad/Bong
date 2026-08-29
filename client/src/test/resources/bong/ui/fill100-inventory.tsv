@@ -54,10 +54,10 @@ craft/CraftRecipeListWidget.java	1	69	LEGAL	NONE	root = Containers.verticalFlow(
 craft/CraftRecipeListWidget.java	2	85	LEGAL	NONE	FlowLayout rowContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
 craft/CraftRecipeListWidget.java	3	88	COMMENT	NONE	// viewport 高度必须 Sizing.fixed —— owo 里 Sizing.fill(100) 是"撑满父容器整高"(非剩余
 craft/CraftRecipeListWidget.java	4	91	LEGAL	NONE	var scroll = Containers.verticalScroll(Sizing.fill(100), Sizing.fixed(LIST_VIEWPORT_HEIGHT), rowContent);
-craft/CraftRecipeListWidget.java	5	205	LEGAL	NONE	FlowLayout wrap = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-craft/CraftRecipeListWidget.java	6	207	LEGAL	NONE	FlowLayout first = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-craft/CraftRecipeListWidget.java	7	213	LEGAL	NONE	FlowLayout second = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-craft/CraftRecipeListWidget.java	8	240	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
+craft/CraftRecipeListWidget.java	5	206	LEGAL	NONE	FlowLayout wrap = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+craft/CraftRecipeListWidget.java	6	208	LEGAL	NONE	FlowLayout first = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+craft/CraftRecipeListWidget.java	7	214	LEGAL	NONE	FlowLayout second = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+craft/CraftRecipeListWidget.java	8	241	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
 craft/CraftScreenLayout.java	1	14	COMMENT	NONE	// 必须固定而非 Sizing.fill(100)：owo fill(100) = 占父整宽（非剩余空间），放在 horizontalFlow
 craft/WorkbenchScreen.java	1	103	LEGAL	NONE	Sizing.fill(100), Sizing.fixed(CraftScreenLayout.BODY_H));
 craft/WorkbenchScreen.java	2	183	LEGAL	NONE	Sizing.fill(100), Sizing.fixed(CraftScreenLayout.HEADER_H));

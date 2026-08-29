@@ -122,8 +122,10 @@ class R7InventoryContractTest {
         // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
         // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
         // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
+        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
+        // 与 outcome UI 投影；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         assertEquals(
-            "4330920f6f6a0d66faf6fc8efb4e35eb2c61c5537301b84298713dc588e3ac19",
+            "f41ca422b238ed78049a9f7b8a5b7421bbea3efc6c454ba082b0d649e2f4d493",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
@@ -320,7 +322,7 @@ class R7InventoryContractTest {
             "craft/CraftMaterialGrid.java:52",
             "craft/CraftMaterialGrid.java:53",
             "craft/CraftOutputPreview.java:32",
-            "craft/CraftRecipeListWidget.java:133",
+            "craft/CraftRecipeListWidget.java:134",
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
