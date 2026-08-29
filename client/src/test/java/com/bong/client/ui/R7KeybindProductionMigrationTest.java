@@ -42,6 +42,8 @@ class R7KeybindProductionMigrationTest {
         "cultivation/voidaction/VoidActionScreenBootstrap.java",
         "forge/ForgeScreenBootstrap.java",
         "tsy/ExtractInteractionBootstrap.java",
+        "lingtian/LingtianActionScreenBootstrap.java",
+        "spirittreasure/SpiritTreasureScreenBootstrap.java",
         "dying_elder/DyingElderInteractionKeybindings.java"
     );
     private static final Set<String> TARGET_OWNER_IDS = Set.of(
@@ -50,6 +52,8 @@ class R7KeybindProductionMigrationTest {
         "forge.open_screen",
         "tsy.extract_start",
         "tsy.extract_cancel",
+        "lingtian.open_action_screen",
+        "spirittreasure.open_screen",
         "dying_elder.give_dan",
         "dying_elder.refuse",
         "dying_elder.delay"
@@ -62,6 +66,8 @@ class R7KeybindProductionMigrationTest {
             "cultivation/voidaction/VoidActionScreenBootstrap.java", 1,
             "forge/ForgeScreenBootstrap.java", 1,
             "tsy/ExtractInteractionBootstrap.java", 2,
+            "lingtian/LingtianActionScreenBootstrap.java", 1,
+            "spirittreasure/SpiritTreasureScreenBootstrap.java", 1,
             "dying_elder/DyingElderInteractionKeybindings.java", 3
         );
 
@@ -76,7 +82,7 @@ class R7KeybindProductionMigrationTest {
         }
 
         List<ProductionBinding> actual = productionBindings();
-        assertEquals(8, actual.size(), "五个入口应迁移恰好八个生产绑定");
+        assertEquals(10, actual.size(), "七个入口应迁移恰好十个生产绑定");
         assertEquals(TARGET_OWNER_IDS, actual.stream()
             .map(ProductionBinding::ownerId)
             .collect(Collectors.toSet()),
@@ -107,6 +113,93 @@ class R7KeybindProductionMigrationTest {
             assertEquals(expected.category(), actual.category(),
                 "category 必须与冻结 fixture 对拍：" + actual.ownerId());
         }
+    }
+
+    @Test
+    void forgeLegacyMigrationIsRegisteredBeforeItsEndTickConsumer() throws IOException {
+        String source = R7SourceScan.read(CLIENT_ROOT.resolve(
+            "forge/ForgeScreenBootstrap.java"
+        ));
+        int lifecycleRegistration = source.indexOf(
+            "ClientLifecycleEvents.CLIENT_STARTED.register(ForgeScreenBootstrap::migrateLegacyBinding)"
+        );
+        int endTickRegistration = source.indexOf(
+            "ClientTickEvents.END_CLIENT_TICK.register(ForgeScreenBootstrap::onEndClientTick)"
+        );
+
+        assertTrue(lifecycleRegistration >= 0,
+            "Forge 必须在客户端首个 tick 前注册存量键位迁移回调");
+        assertTrue(endTickRegistration > lifecycleRegistration,
+            "Forge 的旧键位迁移接线必须先于 wasPressed 消费回调声明");
+        assertTrue(source.contains("migrationService().migrateOnce("),
+            "Forge 必须通过 input 应用服务编排一次性存量迁移");
+        assertTrue(source.contains("BongKeybindRegistry.global().migrateLegacyBoundKey("),
+            "迁移 action 必须继续通过按 translation key 的 registry seam 改绑");
+        assertTrue(source.contains("LEGACY_MIGRATION_ID")
+                && source.contains("forge-open-screen-u-v1"),
+            "Forge 的存量迁移 marker 必须带稳定版本 id");
+        assertTrue(source.contains("KeybindMigrationService.clientConfig()"),
+            "Forge 必须依赖迁移应用服务，不能自行编排 marker 状态");
+        assertFalse(source.contains("KeybindMigrationPersistence")
+                || source.contains("FabricLoader")
+                || source.contains("getConfigDir()"),
+            "Forge UI bootstrap 不得依赖迁移持久化接口或文件存储细节");
+        assertTrue(source.contains("client.options::setKeyCode"),
+            "迁移必须通过 GameOptions 持久化 UNKNOWN，而不是只改内存字段");
+        assertTrue(source.contains("client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY)")
+                && source.contains("KeyBinding.updateKeysByCode()"),
+            "marker 写失败时必须恢复旧 U 并刷新物理索引，不能留下未提交的 UNKNOWN 状态");
+        assertTrue(source.contains("while (keyBinding().wasPressed())")
+                && source.contains("if (ClientInputPolicy.shouldDispatchForgeOpen())"),
+            "Forge 必须先排空历史 U 的按键队列，再以 extracting 状态仲裁开屏，不能延迟重放");
+        assertTrue(source.contains("ClientInputPolicy.shouldDispatchForgeOpen()"),
+            "Forge 必须通过客户端共享输入仲裁策略执行 extracting 仲裁，不能直接依赖 TSY store");
+        assertTrue(source.contains("catch (IllegalStateException exception)"),
+            "CLIENT_STARTED 边界必须捕获 marker I/O 故障，不能阻断客户端启动");
+        assertTrue(source.contains("BongClient.LOGGER.error(")
+                && source.contains("migration was rolled back")
+                && source.contains("client startup will continue"),
+            "迁移持久化故障必须留下可观测 error，并明确回滚后继续启动");
+    }
+
+    @Test
+    void voidActionLegacyMigrationIsRegisteredBeforeItsEndTickConsumer() throws IOException {
+        String source = R7SourceScan.read(CLIENT_ROOT.resolve(
+            "cultivation/voidaction/VoidActionScreenBootstrap.java"
+        ));
+        int lifecycleRegistration = source.indexOf(
+            "ClientLifecycleEvents.CLIENT_STARTED.register(VoidActionScreenBootstrap::migrateLegacyBinding)"
+        );
+        int endTickRegistration = source.indexOf(
+            "ClientTickEvents.END_CLIENT_TICK.register(VoidActionScreenBootstrap::onEndClientTick)"
+        );
+
+        assertTrue(lifecycleRegistration >= 0,
+            "VoidAction 必须在客户端首个 tick 前注册 O 存量键位迁移回调");
+        assertTrue(endTickRegistration > lifecycleRegistration,
+            "VoidAction 的旧 O 键迁移接线必须先于 wasPressed 消费回调声明");
+        assertTrue(source.contains("migrationService().migrateOnce("),
+            "VoidAction 必须通过 input 应用服务编排一次性存量迁移");
+        assertTrue(source.contains("BongKeybindRegistry.global().migrateLegacyBoundKey("),
+            "VoidAction 迁移 action 必须继续通过按 translation key 的 registry seam 改绑");
+        assertTrue(source.contains("LEGACY_MIGRATION_ID")
+                && source.contains("void-action-open-screen-o-v1"),
+            "VoidAction 的存量迁移 marker 必须带稳定版本 id");
+        assertTrue(source.contains("KeybindMigrationService.clientConfig()"),
+            "VoidAction 必须依赖迁移应用服务，不能自行编排 marker 状态");
+        assertFalse(source.contains("KeybindMigrationPersistence")
+                || source.contains("FabricLoader")
+                || source.contains("getConfigDir()"),
+            "VoidAction bootstrap 不得依赖迁移持久化接口或文件存储细节");
+        assertTrue(source.contains("client.options::setKeyCode"),
+            "VoidAction 迁移必须通过 GameOptions 持久化 UNKNOWN");
+        assertTrue(source.contains("client.options.setKeyCode(keyBinding(), LEGACY_DEFAULT_KEY)")
+                && source.contains("KeyBinding.updateKeysByCode()"),
+            "VoidAction marker 写失败时必须恢复旧 O 并刷新物理索引");
+        assertTrue(source.contains("GLFW.GLFW_KEY_O"),
+            "VoidAction 迁移必须只处理旧默认 O，不覆盖玩家自定义键位");
+        assertTrue(source.contains("catch (IllegalStateException exception)"),
+            "VoidAction CLIENT_STARTED 边界必须捕获 marker I/O 故障");
     }
 
     @Test

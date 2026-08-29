@@ -10,6 +10,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.UnaryOperator;
 
 /**
@@ -114,6 +115,63 @@ public final class BongKeybindRegistry {
     /** Returns successful registrations in registration order, without mutable ownership. */
     public synchronized List<Registration> registrations() {
         return List.copyOf(registrations);
+    }
+
+    /**
+     * Migrates one persisted binding only when it still has the exact legacy
+     * key.  The translation key is the stable identity here: a player who
+     * changed the binding to another key must not have that choice rewritten.
+     *
+     * <p>The caller owns persistence (normally {@code GameOptions#setKeyCode})
+     * and must actually apply the replacement to the supplied binding.  The
+     * registry rebuilds Minecraft's physical-key index after a successful
+     * migration so the old key cannot continue to dispatch to the stale
+     * binding during this client session.</p>
+     *
+     * @return {@code true} when the exact legacy binding was migrated;
+     *         {@code false} when the current binding is already something else
+     */
+    public synchronized boolean migrateLegacyBoundKey(
+        String translationKey,
+        InputUtil.Key legacyKey,
+        InputUtil.Key replacementKey,
+        BiConsumer<KeyBinding, InputUtil.Key> rebinder
+    ) {
+        requireNonBlank(translationKey, "translation key");
+        Objects.requireNonNull(legacyKey, "legacy key must not be null");
+        Objects.requireNonNull(replacementKey, "replacement key must not be null");
+        Objects.requireNonNull(rebinder, "rebinder must not be null");
+
+        Registration registration = registrations.stream()
+            .filter(candidate -> candidate.spec().translationKey().equals(translationKey))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException(
+                "cannot migrate unregistered translation key: " + translationKey
+            ));
+        KeyBinding binding = registration.binding();
+        if (!isBoundTo(binding, legacyKey)) {
+            return false;
+        }
+
+        rebinder.accept(binding, replacementKey);
+        if (!isBoundTo(binding, replacementKey)) {
+            throw new IllegalStateException(
+                "rebinder did not apply replacement key for: " + translationKey
+            );
+        }
+        KeyBinding.updateKeysByCode();
+        return true;
+    }
+
+    private static boolean isBoundTo(KeyBinding binding, InputUtil.Key key) {
+        if (key.equals(InputUtil.UNKNOWN_KEY)) {
+            return binding.isUnbound();
+        }
+        return switch (key.getCategory()) {
+            case KEYSYM -> binding.matchesKey(key.getCode(), 0);
+            case SCANCODE -> binding.matchesKey(InputUtil.UNKNOWN_KEY.getCode(), key.getCode());
+            case MOUSE -> binding.matchesMouse(key.getCode());
+        };
     }
 
     private void rejectReservedConflicts(BindingOwner owner, PhysicalDefault key) {

@@ -34,12 +34,12 @@ public final class ExtractInteractionBootstrap {
                 new BongKeybindRegistry.BindingOwner("tsy.extract_cancel"),
                 CANCEL_KEY_TRANSLATION,
                 InputUtil.Type.KEYSYM,
-                InputUtil.UNKNOWN_KEY.getCode(),
+                GLFW.GLFW_KEY_U,
                 CATEGORY
             )
         );
         ClientTickEvents.END_CLIENT_TICK.register(ExtractInteractionBootstrap::onTick);
-        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/UNKNOWN");
+        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/U");
     }
 
     private static void onTick(MinecraftClient client) {

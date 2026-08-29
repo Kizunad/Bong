@@ -107,8 +107,7 @@ class R7InventoryContractTest {
         // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         //
         // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
-        // 矿脉反馈线程修复的 2170 文件基线上，随包新增木棍的两条玩家动画与背篓三份资源，
-        // client/src/main 下没有别的增删改。
+        // 矿脉反馈线程修复的 2170 文件基线上，主线随包新增木棍的两条玩家动画与背篓三份资源。
         //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
         //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
         //     + resources/assets/bong-client/textures/gui/items/back_basket.png
@@ -122,10 +121,15 @@ class R7InventoryContractTest {
         // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
         // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
         // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
+        // 本分支另新增 KeybindMigrationPersistence 与 KeybindMigrationService，并修改
+        // Forge、撤离、T/L 入口和键位注册接线，文件数 2189 → 2191；旧 options.txt 的
+        // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
+        // 随后补齐 VoidAction 旧 options.txt 中 O 绑定的一次性迁移，并将 extracting 仲裁
+        // 收口到客户端共享输入策略；生产源码树因此继续更新。
         // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
-        // 与 outcome UI 投影；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
+        // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         assertEquals(
-            "f41ca422b238ed78049a9f7b8a5b7421bbea3efc6c454ba082b0d649e2f4d493",
+            "2265b83ef4ddf9efcf0d14a7e06abe2ddfd90709feb024c91b2b27c4db48e40c",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

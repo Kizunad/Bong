@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 默认键位冲突导致双派发（`O` 抢屏 / `U` 误触发撤离取消） | fix_pr | ⬜ |
+| P0 | 默认键位冲突导致双派发（`O` 抢屏 / `U` 误触发撤离取消） | fix_pr | ✅ 2026-08-26 |
 
 ## P0 — 默认键位冲突导致双派发（`O` 抢屏 / `U` 误触发撤离取消）
 
@@ -45,3 +45,49 @@
 ## 审计来源
 
 bug-hunt 定点轮（worktree `bughunt-loop-20260705-br`，范围只看 client input / keybind / intent-adjacent 路径）。方法：全仓 grep 默认键位定义 → 复核 `BongClient` 注册顺序 → 回读既有计划与历史修复注释，排除已知 G 键问题和带显式仲裁的保留键后，留下这条 **report-only** 高置信结论：**client 默认键位没有全局唯一性约束，`O/U` 已经形成真实双派发 bug。**
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 默认键位修复**：`client/src/main/java/com/bong/client/forge/ForgeScreenBootstrap.java` 将 Forge 默认键改为 `UNKNOWN`；`client/src/main/java/com/bong/client/tsy/ExtractInteractionBootstrap.java` 保留撤离取消 `U` 并同步修正启动日志；Identity 面板保留 `O`，VoidAction 面板改为 `UNKNOWN`，从默认物理键层面消除两组无仲裁双派发。
+- **P0 存量配置迁移**：`client/src/main/java/com/bong/client/ui/BongKeybindRegistry.java` 在 `CLIENT_STARTED`、首个 Forge tick 消费前按完整 translation key 定位存量绑定；仅将仍为旧默认 `U` 的 Forge 配置迁移到 `UNKNOWN`，通过 `GameOptions#setKeyCode` 持久化并调用 `KeyBinding.updateKeysByCode()` 刷新物理索引，自定义键与已为 `UNKNOWN` 的配置保持不变。`client/src/main/java/com/bong/client/input/KeybindMigrationPersistence.java` 以 `hasCompleted` / `markCompleted` 隔离 marker 文件实现，UI registry 与 Forge bootstrap 不再暴露 `Path` / `markerFile` 存储细节。
+- **P0 全局契约**：新增 `client/src/test/java/com/bong/client/input/DefaultKeybindingUniquenessTest.java`，扫描 direct `KeyBinding` 与 `BongKeybindRegistry.BindingSpec`，覆盖所有默认键表达式、`UNKNOWN` fail-closed、`O/U` 唯一归属，并为唯一保留的 R 键重复绑定锁定 `BotanyHudBootstrap.shouldCaptureSpellVolumeKey()` 仲裁。
+- **P0 迁移契约**：`client/src/test/java/com/bong/client/ui/BongKeybindRegistryTest.java` 覆盖旧 `U` 迁移、自定义键保留、`UNKNOWN` 幂等，以及迁移前后物理 `U` 对 Forge `wasPressed()` 的真实派发差异；`client/src/test/java/com/bong/client/input/KeybindMigrationPersistenceTest.java` 覆盖跨实例持久化、多个 marker 保留与非法 ID；`R7KeybindProductionMigrationTest` 锁定 `CLIENT_STARTED` 注册早于 Forge `END_CLIENT_TICK` 消费及 UI 层无文件路径泄漏。
+- **P0 R7 对拍**：更新 `client/src/test/resources/bong/ui/keybind-migration.tsv`、`keybind-production-sites.tsv` 与 R7 source digest baseline；测试全部位于 `client/src/test/java/**`，未改 #2098/#2099 资产、动画或工具链。
+
+### 关键 commit
+
+- `c9f78dbca` · 2026-08-26 · 将 bughunt skeleton 升格为 active plan。
+- `8aab1c225` · 2026-08-26 · 修复 O/U 默认键冲突归属。
+- `3166d32e5` · 2026-08-26 · 补齐全局默认键唯一性契约测试。
+- `52f088602` · 2026-08-26 · 修正 O/U 屏幕断言契约。
+- `d9712e0c8` · 2026-08-26 · 更新 R7 生产源冻结摘要。
+- `5c852ce7b` · 2026-08-26 · 修正 TSY 撤离键位日志。
+- `d0b8466dd` · 2026-08-26 · 同步日志变更后的 R7 生产源冻结摘要。
+- `f11f2bca0` · 2026-08-26 · 迁移 Forge 存量 U 键位配置。
+- `9490b5dbf` · 2026-08-26 · 补齐 Forge 存量键位运行时索引测试。
+- `8da381c9f` · 2026-08-26 · 同步 Forge 键位迁移的 R7 源码摘要。
+- `fa6bd905a` · 2026-08-27 · 合并最新主线并同步联合 R7 源码基线。
+- `507f39228` · 2026-08-27 · 补齐 Forge 键位迁移一次性版本标记及回改 U 测试。
+- `5d41219a4` · 2026-08-27 · 同步键位迁移版本标记的 R7 基线。
+- `f2db1ce59` · 2026-08-27 · 按 inline review 初步抽离键位迁移持久化边界。
+- `81baef679` · 2026-08-27 · 将持久化服务正名为非 session store，并同步 R7 冻结基线。
+- `1d90c7899` · 2026-08-27 · 合并最新 `origin/main`（`7623bc2f8`），主线变更未触及 client。
+
+### 测试结果
+
+- `JAVA_HOME=/home/serverkizuna/opt/jdk-17.0.19+10 PATH=/home/serverkizuna/opt/jdk-17.0.19+10/bin:$PATH ../scripts/build-token.sh gradle test build`：持久化边界返工后的 `4953 tests`、failures `0`、errors `0`，Gametest `3/3`，`BUILD SUCCESSFUL`；合并最新主线后再次运行通过。
+- `git fetch origin && git merge origin/main`：紧邻合并最新 `origin/main`（`7623bc2f8`）；带入内容仅为 `modelScript/` 与根 `CLAUDE.md`，未触及 client，合并后完整 Java 17 gate 复验通过。
+- fresh-context、read-only validator：对 merge HEAD `1d90c789998d81f67779058d171ffcfdda48d48c` PASS，重新核验默认键唯一性、一次性存量迁移、`KeybindMigrationPersistence` 边界、R2 store 命名约束和 R7 digest；本 Finish Evidence commit 后继续对最终 SHA 复验。
+- GitHub workflow `33030064148`：对 review 返工前 HEAD `3a233437065bb0ebc543ca56e4c57568c0802bab` 的 preflight/schema/agent/client/server-test/build-release/smoke/chat-window/bot-e2e (1)/(2) 全部通过；当前持久化边界返工 HEAD 推送后由同一 PR 重新取得最终 workflow 证据。
+
+### 跨仓库核验
+
+- **client**：`BongKeybindRegistry.BindingSpec`、`KeybindMigrationPersistence`、`DefaultKeybindingUniquenessTest`、`IdentityPanelScreenBootstrap`、`VoidActionScreenBootstrap`、`ForgeScreenBootstrap`、`ExtractInteractionBootstrap` 均命中，覆盖注册、默认键扫描、一次性持久化与实际 `wasPressed()` 路由。
+- **server / agent / schema**：本 plan 仅涉及 Fabric client 输入与测试契约，不修改 server、agent、schema、Redis key 或 wire payload。
+
+### 遗留 / 后续
+
+- 玩家仍可在 Minecraft Controls 中手动把多个动作绑定到同一键；本修复约束的是项目默认绑定，运行时手动配置冲突不在本 plan 范围。
+- R 键重复绑定依赖现有明确仲裁层并由专测锁定；新增重复默认键必须先建立同等级仲裁与专属测试。

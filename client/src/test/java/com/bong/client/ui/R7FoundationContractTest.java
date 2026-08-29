@@ -47,6 +47,8 @@ class R7FoundationContractTest {
         "forge.open_screen",
         "tsy.extract_start",
         "tsy.extract_cancel",
+        "lingtian.open_action_screen",
+        "spirittreasure.open_screen",
         "dying_elder.give_dan",
         "dying_elder.refuse",
         "dying_elder.delay"
@@ -158,8 +160,8 @@ class R7FoundationContractTest {
             Map.entry("lingtian_open", "UNKNOWN"),
             Map.entry("identity_open", "O"),
             Map.entry("void_action_open", "UNKNOWN"),
-            Map.entry("forge_open", "U"),
-            Map.entry("extract_cancel", "UNKNOWN"),
+            Map.entry("forge_open", "UNKNOWN"),
+            Map.entry("extract_cancel", "U"),
             Map.entry("botany_auto", "UNKNOWN"),
             Map.entry("spell_volume_hold", "R"),
             Map.entry("dying_elder_give", "UNKNOWN"),
@@ -322,11 +324,11 @@ class R7FoundationContractTest {
             .filter(row -> !REGISTRY_MIGRATED_OWNER_IDS.contains(row.ownerId()))
             .toList();
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
-        assertEquals(18, actualSites.size(),
+        assertEquals(16, actualSites.size(),
             "remaining direct KeyBinding constructor-site count changed after registry migration");
         assertEquals(26, expected.size(), "the production-site manifest must retain all 26 logical bindings");
-        assertEquals(18, directExpected.size(),
-            "the direct-constructor subset must exclude exactly the eight registry-migrated bindings");
+        assertEquals(16, directExpected.size(),
+            "the direct-constructor subset must exclude exactly the ten registry-migrated bindings");
         assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "every logical binding needs one globally unique BindingOwner id");
@@ -341,13 +343,13 @@ class R7FoundationContractTest {
         assertEquals(resourceLines("/bong/ui/keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
-        assertEquals(26, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
-            "the remaining 18 direct constructors must expand to exactly 26 runtime bindings");
+        assertEquals(24, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "the remaining 16 direct constructors must expand to exactly 24 runtime bindings");
         Set<String> expandedTranslationKeys = new TreeSet<>();
         for (KeybindingSourceSite site : actualSites) {
             expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        assertEquals(26, expandedTranslationKeys.size(),
+        assertEquals(24, expandedTranslationKeys.size(),
             "every remaining direct runtime binding must have a unique effective translation key");
         for (KeybindProductionSiteRow row : directExpected) {
             KeybindingSourceSite actual = actualSites.stream()
@@ -371,7 +373,7 @@ class R7FoundationContractTest {
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
             directExpected, actualSites, keybindRows()
         );
-        assertEquals(26, expandedDefaults.size(),
+        assertEquals(24, expandedDefaults.size(),
             "the direct-site collision audit must inspect every remaining expanded default");
         Set<DefaultCollision> collisions = new TreeSet<>();
         for (int first = 0; first < expandedDefaults.size(); first++) {
