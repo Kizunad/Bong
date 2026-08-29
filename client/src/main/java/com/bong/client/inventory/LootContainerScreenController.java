@@ -1,6 +1,5 @@
 package com.bong.client.inventory;
 
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.ui.contract.UiScreenController;
 import com.bong.client.ui.contract.UiScreenScope;
 import com.bong.client.ui.contract.UiStateSource;
@@ -38,7 +37,7 @@ public final class LootContainerScreenController
     }
 
     public static LootContainerScreenController production(
-        LootContainerStateStore.OpenSession session,
+        LootContainerSession.Open session,
         Consumer<? super LootContainerScreenViewModel> listener,
         Executor executor
     ) {
@@ -79,7 +78,7 @@ public final class LootContainerScreenController
         if (closed || !opened || activeScope == null || activeScope.isClosed()) {
             return com.bong.client.ui.intent.UiIntentResult.rejected("loot screen is closed");
         }
-        if (!(viewModel.session() instanceof LootContainerStateStore.OpenSession open)) {
+        if (!(viewModel.session() instanceof LootContainerSession.Open open)) {
             return com.bong.client.ui.intent.UiIntentResult.rejected("loot session is closed");
         }
         long intentSessionId = intent instanceof LootContainerIntent.Move move

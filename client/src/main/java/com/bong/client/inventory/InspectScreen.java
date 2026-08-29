@@ -4520,7 +4520,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 && lootPanel.sessionId() == open.sessionId()) return; // same session already mounted
         // 新 session 到达时先卸载旧 panel，避免 UI 继续操作已失效容器。
         unmountLootPanel();
-        lootPanel = new LootContainerPanel(open);
+        lootPanel = new LootContainerPanel(LootContainerSessionAdapter.open(open));
         lootPanelLayout = lootPanel.build();
         // Insert before discardStrip
         int discardIdx = outerRow.children().indexOf(discardStrip);

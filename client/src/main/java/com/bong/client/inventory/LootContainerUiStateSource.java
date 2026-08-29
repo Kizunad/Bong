@@ -15,46 +15,47 @@ import java.util.function.Consumer;
 
 /** 将搜刮会话与玩家库存 listener 归一成一个 screen source。 */
 public final class LootContainerUiStateSource implements UiStateSource<LootContainerScreenViewModel> {
-    private final UiStateSource<LootContainerStateStore.Session> session;
+    private final UiStateSource<LootContainerSession> session;
     private final UiStateSource<InventoryModel> inventory;
     private final AtomicLong revision = new AtomicLong();
 
     private LootContainerUiStateSource(
-        UiStateSource<LootContainerStateStore.Session> session,
+        UiStateSource<LootContainerSession> session,
         UiStateSource<InventoryModel> inventory
     ) {
         this.session = Objects.requireNonNull(session, "session source must not be null");
         this.inventory = Objects.requireNonNull(inventory, "inventory source must not be null");
     }
 
-    public static LootContainerUiStateSource production(LootContainerStateStore.OpenSession expected) {
+    public static LootContainerUiStateSource production(LootContainerSession.Open expected) {
         Objects.requireNonNull(expected, "expected session must not be null");
         // current 在关闭时会变为 null，但关闭事件本身仍是 authoritative 状态；
         // 用最后一次事件保留 Closed，避免 source 把已关闭会话误读回 expected。
-        AtomicReference<LootContainerStateStore.Session> latest = new AtomicReference<>(expected);
+        AtomicReference<LootContainerSession> latest = new AtomicReference<>(expected);
         return new LootContainerUiStateSource(
             StoreUiStateSource.push(
                 () -> {
                     LootContainerStateStore.Session current = LootContainerStateStore.current();
                     if (current instanceof LootContainerStateStore.OpenSession open
                         && open.sessionId() == expected.sessionId()) {
-                        latest.set(current);
+                        latest.set(LootContainerSessionAdapter.open(open));
                     } else if (current instanceof LootContainerStateStore.Closed closed
                         && closed.sessionId() == expected.sessionId()) {
-                        latest.set(current);
+                        latest.set(new LootContainerSession.Closed(closed.sessionId(), closed.reason()));
                     } else if (current instanceof LootContainerStateStore.OpenSession) {
                         // 首次读取就遇到另一会话时直接 fail closed，不能把新会话投影到旧屏幕。
-                        latest.set(new LootContainerStateStore.Closed(expected.sessionId(), "session replaced"));
-                    } else if (current == null && latest.get() instanceof LootContainerStateStore.OpenSession) {
+                        latest.set(new LootContainerSession.Closed(expected.sessionId(), "session replaced"));
+                    } else if (current == null && latest.get() instanceof LootContainerSession.Open) {
                         // 断线清理不会补发 close 事件；读到空 current 时也不能让旧屏幕复活。
-                        latest.set(new LootContainerStateStore.Closed(expected.sessionId(), "session unavailable"));
+                        latest.set(new LootContainerSession.Closed(expected.sessionId(), "session unavailable"));
                     }
                     return latest.get();
                 },
                 listener -> {
                     LootContainerStateStore.Listener adapter = value -> {
-                        latest.set(value);
-                        listener.accept(value);
+                        LootContainerSession next = LootContainerSessionAdapter.from(value);
+                        latest.set(next);
+                        listener.accept(next);
                     };
                     LootContainerStateStore.addListener(adapter);
                     return UiSubscriptions.once(() -> LootContainerStateStore.removeListener(adapter));
@@ -69,6 +70,10 @@ public final class LootContainerUiStateSource implements UiStateSource<LootConta
                 }
             )
         );
+    }
+
+    public static LootContainerUiStateSource production(LootContainerStateStore.OpenSession expected) {
+        return production(LootContainerSessionAdapter.open(expected));
     }
 
     @Override
@@ -94,7 +99,7 @@ public final class LootContainerUiStateSource implements UiStateSource<LootConta
         }
     }
 
-    private LootContainerScreenViewModel next(LootContainerStateStore.Session sessionState) {
+    private LootContainerScreenViewModel next(LootContainerSession sessionState) {
         return new LootContainerScreenViewModel(revision.incrementAndGet(), sessionState, inventory.snapshot());
     }
 

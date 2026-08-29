@@ -1,6 +1,5 @@
 package com.bong.client.inventory;
 
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryModel;
@@ -49,7 +48,7 @@ public final class LootContainerPanel {
     private final DefaultUiScreenScope scope = new DefaultUiScreenScope();
     private boolean closed;
 
-    public LootContainerPanel(LootContainerStateStore.OpenSession session) {
+    public LootContainerPanel(LootContainerSession.Open session) {
         this.sessionId = session.sessionId();
         this.sourceKind = session.sourceKind();
         this.grade = session.grade();
@@ -163,7 +162,7 @@ public final class LootContainerPanel {
 
     private void applyViewModel(LootContainerScreenViewModel model) {
         if (closed) return;
-        if (model.session() instanceof LootContainerStateStore.OpenSession open
+        if (model.session() instanceof LootContainerSession.Open open
             && open.sessionId() == sessionId) {
             populateLootGrid(open);
         } else {
@@ -178,7 +177,7 @@ public final class LootContainerPanel {
         else client.execute(action);
     }
 
-    private void populateLootGrid(LootContainerStateStore.OpenSession open) {
+    private void populateLootGrid(LootContainerSession.Open open) {
         lootGrid.clearAll();
         if (open != null && open.sessionId() == sessionId) {
             for (InventoryModel.GridEntry entry : open.placedItems()) {

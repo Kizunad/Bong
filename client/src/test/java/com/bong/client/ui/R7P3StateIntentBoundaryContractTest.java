@@ -48,9 +48,13 @@ class R7P3StateIntentBoundaryContractTest {
             assertFalse(source.contains("net.minecraft"), relative + " controller 不得依赖 Minecraft");
             assertFalse(source.contains("io.wispforest.owo"), relative + " controller 不得依赖 owo");
             assertFalse(source.contains("ClientRequestSender"), relative + " controller 不得依赖 sender");
+            assertFalse(source.contains("LootContainerStateStore"), relative + " 不得依赖 HUD Store 类型");
             assertTrue(source.contains("UiIntentSink"), relative + " 必须暴露 typed sink");
             assertTrue(source.contains("UiStateSource"), relative + " 必须消费 UiStateSource");
         }
+        String viewModel = R7SourceScan.read(PRODUCTION_ROOT.resolve("inventory/LootContainerScreenViewModel.java"));
+        assertFalse(viewModel.contains("LootContainerStateStore"),
+            "loot ViewModel 不得依赖 HUD Store 类型");
     }
 
     @Test

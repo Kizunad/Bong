@@ -5,7 +5,6 @@ import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.DragState;
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.ui.contract.DefaultUiScreenScope;
 import com.bong.client.ui.contract.UiScreenScope;
 import com.bong.client.ui.intent.UiIntentResult;
@@ -65,7 +64,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     private final LootContainerScreenController controller;
     private final DefaultUiScreenScope scope = new DefaultUiScreenScope();
 
-    public LootContainerScreen(LootContainerStateStore.OpenSession session) {
+    public LootContainerScreen(LootContainerSession.Open session) {
         super(TITLE);
         this.sessionId = session.sessionId();
         this.sourceKind = session.sourceKind();
@@ -169,7 +168,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void applyViewModel(LootContainerScreenViewModel model) {
-        if (!(model.session() instanceof LootContainerStateStore.OpenSession open)
+        if (!(model.session() instanceof LootContainerSession.Open open)
             || open.sessionId() != sessionId) {
             // Closed 或另一份 session 都意味着当前 screen 已过期，不能继续展示旧容器。
             close();
@@ -191,7 +190,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    private void populateLootGrid(LootContainerStateStore.OpenSession open) {
+    private void populateLootGrid(LootContainerSession.Open open) {
         lootGrid.clearAll();
         if (open != null && open.sessionId() == sessionId) {
             for (InventoryModel.GridEntry entry : open.placedItems()) {

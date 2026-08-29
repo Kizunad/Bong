@@ -53,8 +53,16 @@ class AlchemyClientIntentSinkTest {
 
     @Test
     void duplicateLocalRecipeAndTransportFailureAreObservable() {
-        assertEquals("LOCAL_ACCEPTED", sink.dispatch(new AlchemyIntent.LearnRecipe("new_recipe")).kind().name());
-        assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.LearnRecipe("new_recipe")).kind().name());
+        transport.fail = true;
+        assertEquals("LOCAL_ERROR", sink.dispatch(new AlchemyIntent.LearnRecipe("retry_recipe")).kind().name());
+        assertTrue(RecipeScrollStore.snapshot().learned().stream()
+            .noneMatch(recipe -> recipe.id().equals("retry_recipe")),
+            "transport 失败时不能先写本地 Store，否则恢复后重试会被错误判为重复学习");
+
+        transport.fail = false;
+        assertEquals("LOCAL_ACCEPTED", sink.dispatch(new AlchemyIntent.LearnRecipe("retry_recipe")).kind().name());
+        assertEquals("LOCAL_REJECTED", sink.dispatch(new AlchemyIntent.LearnRecipe("retry_recipe")).kind().name());
+
         transport.fail = true;
         assertEquals("LOCAL_ERROR", sink.dispatch(new AlchemyIntent.TurnPage(1)).kind().name());
     }

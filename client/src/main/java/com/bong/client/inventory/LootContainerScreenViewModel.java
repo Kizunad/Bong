@@ -1,6 +1,5 @@
 package com.bong.client.inventory;
 
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.inventory.model.InventoryModel;
 
 import java.util.Objects;
@@ -8,7 +7,7 @@ import java.util.Objects;
 /** 搜刮屏不可变投影；Screen 不再直接读取 loot/inventory Store。 */
 public record LootContainerScreenViewModel(
     long revision,
-    LootContainerStateStore.Session session,
+    LootContainerSession session,
     InventoryModel inventory
 ) {
     public LootContainerScreenViewModel {
@@ -17,7 +16,7 @@ public record LootContainerScreenViewModel(
         Objects.requireNonNull(inventory, "inventory must not be null");
     }
 
-    public LootContainerStateStore.OpenSession openSession() {
-        return session instanceof LootContainerStateStore.OpenSession open ? open : null;
+    public LootContainerSession.Open openSession() {
+        return session instanceof LootContainerSession.Open open ? open : null;
     }
 }

@@ -130,8 +130,10 @@ class R7InventoryContractTest {
         // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         // P3 状态/意图边界批次 A 再加入 Alchemy/Trade/Loot controller、source、typed intent
         // 与 SemanticUiDriver；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
+        // 本次 review 返工新增 3 个长期 production boundary 类型：LootContainerSession、
+        // LootContainerSessionAdapter 与 TradeOfferPicker；只改变 Java production tree 摘要。
         assertEquals(
-            "077d8bfc0f4150e58011abca22b7aace8aeb9a72f481b5c6699136ba134dda06",
+            "d1180019e9c55a8d88bbb1ad8458217e5c5898ba11f9b14eb4b293745f1c6af8",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,13 +39,34 @@ class TradeOfferBoundaryTest {
     void selectionNeverFallsBackToAnotherItemWhenTheExactIdentityDisappears() {
         InventoryItem first = InventoryItem.createFull(42L, "a", "Alpha", 1, 1, 1, "common", "", 1, 1, 1);
         InventoryItem second = InventoryItem.createFull(91L, "z", "Zeta", 1, 1, 1, "common", "", 1, 1, 1);
-        List<InventoryItem> choices = List.of(first, second);
-        assertEquals(-1, TradeOfferScreen.selectionIndexForTests(choices, -1L),
+        TradeOfferPicker picker = new TradeOfferPicker(List.of(first, second));
+        assertEquals(-1, picker.selectedIndex(),
             "交易屏初始必须保持无选择，不能自动选第一件");
-        assertEquals(1, TradeOfferScreen.selectionIndexForTests(choices, 91L),
-            "库存更新时必须保留原 exact instance_id");
-        assertEquals(-1, TradeOfferScreen.selectionIndexForTests(List.of(first), 91L),
+        assertTrue(picker.move(1), "显式下一件操作应产生选择");
+        assertEquals(42L, picker.selectedInstanceId());
+        assertTrue(picker.move(1), "再次移动应切换到下一件");
+        assertEquals(91L, picker.selectedInstanceId());
+        picker.update(List.of(second));
+        assertEquals(0, picker.selectedIndex(), "库存更新时必须保留原 exact instance_id");
+        picker.update(List.of(first));
+        assertEquals(-1, picker.selectedIndex(),
             "exact instance_id 消失后必须回到无选择，不能静默改选其他物品");
+        assertTrue(picker.selectedFrom(List.of(second)).isEmpty(),
+            "提交时必须在 authoritative 快照中重新确认 exact instance_id");
+    }
+
+    @Test
+    void pickerSupportsExplicitPreviousAndRejectsEmptyOrZeroMovement() {
+        InventoryItem first = InventoryItem.createFull(42L, "a", "Alpha", 1, 1, 1, "common", "", 1, 1, 1);
+        InventoryItem second = InventoryItem.createFull(91L, "z", "Zeta", 1, 1, 1, "common", "", 1, 1, 1);
+        TradeOfferPicker picker = new TradeOfferPicker(List.of(first, second));
+        assertFalse(picker.move(0), "零步长不能偷偷产生选择");
+        assertTrue(picker.move(-1), "显式上一件应从最后一件开始");
+        assertEquals(91L, picker.selectedInstanceId());
+        picker.update(List.of());
+        assertFalse(picker.move(1), "没有可交换物品时不能移动选择");
+        assertTrue(picker.selectedFrom(List.of(first, second)).isEmpty(),
+            "没有选择时不能提交任意物品");
     }
 
     @Test

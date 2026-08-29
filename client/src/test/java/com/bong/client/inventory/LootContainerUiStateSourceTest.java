@@ -30,10 +30,10 @@ class LootContainerUiStateSourceTest {
         LootContainerStateStore.close(expected.sessionId(), "expired");
 
         LootContainerScreenViewModel closed = updates.get(updates.size() - 1);
-        assertInstanceOf(LootContainerStateStore.Closed.class, closed.session(),
+        assertInstanceOf(LootContainerSession.Closed.class, closed.session(),
             "close 事件必须穿过 source，不能因 Store current=null 回退成旧 open session");
-        assertEquals("expired", ((LootContainerStateStore.Closed) closed.session()).reason());
-        assertInstanceOf(LootContainerStateStore.Closed.class, source.snapshot().session(),
+        assertEquals("expired", ((LootContainerSession.Closed) closed.session()).reason());
+        assertInstanceOf(LootContainerSession.Closed.class, source.snapshot().session(),
             "关闭后再次读取 source 仍须保持 Closed，避免 late inventory update 复活界面");
     }
 
@@ -48,7 +48,7 @@ class LootContainerUiStateSourceTest {
         LootContainerStateStore.close(expected.sessionId(), "closed");
         InventoryStateStore.replace(InventoryModel.empty());
 
-        assertInstanceOf(LootContainerStateStore.Closed.class, updates.get(updates.size() - 1).session(),
+        assertInstanceOf(LootContainerSession.Closed.class, updates.get(updates.size() - 1).session(),
             "关闭后的库存推送不得把搜刮屏恢复为 expected open session");
     }
 
@@ -61,9 +61,9 @@ class LootContainerUiStateSourceTest {
         LootContainerStateStore.open(session(20L));
 
         LootContainerScreenViewModel initial = source.snapshot();
-        assertInstanceOf(LootContainerStateStore.Closed.class, initial.session(),
+        assertInstanceOf(LootContainerSession.Closed.class, initial.session(),
             "source 首次读取遇到另一 session 时必须 fail closed，不能把新 session 显示到旧 screen");
-        assertEquals("session replaced", ((LootContainerStateStore.Closed) initial.session()).reason());
+        assertEquals("session replaced", ((LootContainerSession.Closed) initial.session()).reason());
     }
 
     @Test
@@ -75,9 +75,9 @@ class LootContainerUiStateSourceTest {
         LootContainerStateStore.clearOnDisconnect();
 
         LootContainerScreenViewModel disconnected = source.snapshot();
-        assertInstanceOf(LootContainerStateStore.Closed.class, disconnected.session(),
+        assertInstanceOf(LootContainerSession.Closed.class, disconnected.session(),
             "断线清理不发事件时，source 也必须阻止旧搜刮 session 复活");
-        assertEquals("session unavailable", ((LootContainerStateStore.Closed) disconnected.session()).reason());
+        assertEquals("session unavailable", ((LootContainerSession.Closed) disconnected.session()).reason());
     }
 
     private static LootContainerStateStore.OpenSession session(long id) {

@@ -30,22 +30,26 @@ public final class TradeOfferIntentHandler implements IntentHandler {
     @Override
     public boolean dispatch(MinecraftClient client, InteractCandidate candidate) {
         EntityHitResult hit = playerHit(client);
-        if (hit == null) {
+        if (hit == null || candidate == null || candidate.intent() != InteractIntent.TradePlayer) {
             return false;
         }
-        // 默认交互没有明确 item instance_id，必须拒绝而不能自动选择排序后的第一件。
-        return false;
+        // 目标在打开 picker 前捕获；picker 提交时不再依赖变化中的准星。
+        client.setScreen(TradeOfferScreen.requestPicker("entity:" + hit.getEntity().getId()));
+        return true;
     }
 
     /** 由显式 picker 调用；只有当前库存中存在该 instance_id 才发送交易请求。 */
     public boolean dispatchSelected(MinecraftClient client, InteractCandidate candidate, long instanceId) {
-        EntityHitResult hit = playerHit(client);
-        if (hit == null || candidate == null || candidate.intent() != InteractIntent.TradePlayer || instanceId <= 0L) {
+        if (candidate == null || candidate.intent() != InteractIntent.TradePlayer || instanceId <= 0L) {
             return false;
         }
         if (TradeOfferScreenViewModel.findChoice(InventoryStateStore.snapshot(), instanceId).isEmpty()) return false;
+        String target = candidate.debugLabel();
+        if (!target.startsWith("trade_player:")) return false;
+        String entityId = target.substring("trade_player:".length());
+        if (entityId.isBlank()) return false;
         return TradeOfferClientIntentSink.production().dispatch(new TradeOfferIntent.Request(
-            "entity:" + hit.getEntity().getId(), instanceId
+            "entity:" + entityId, instanceId
         )).kind() == com.bong.client.ui.intent.UiIntentResult.Kind.LOCAL_ACCEPTED;
     }
 

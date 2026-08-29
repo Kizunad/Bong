@@ -50,13 +50,14 @@ public final class AlchemyClientIntentSink implements UiIntentSink<AlchemyIntent
             }
             if (intent instanceof AlchemyIntent.LearnRecipe learn) {
                 String id = required(learn.recipeId(), "recipe id");
-                boolean learned = RecipeScrollStore.learn(new RecipeScrollStore.RecipeEntry(
+                boolean alreadyLearned = RecipeScrollStore.snapshot().learned().stream()
+                    .anyMatch(recipe -> recipe.id().equals(id));
+                if (alreadyLearned) return UiIntentResult.rejected("recipe already learned");
+                // 先确认服务端 transport 接受，再更新本地镜像；失败后保留可重试状态。
+                transport.learnRecipe(id);
+                RecipeScrollStore.learn(new RecipeScrollStore.RecipeEntry(
                     id, id, "§7新悟得方子: " + id
                 ));
-                if (!learned) return UiIntentResult.rejected("recipe already learned");
-                // 保留旧屏幕的本地悟方语义：先更新本地镜像，再尝试通知服务端；
-                // transport 失败仍明确返回 LOCAL_ERROR，不把它伪装成 server 成功。
-                transport.learnRecipe(id);
                 return UiIntentResult.accepted();
             }
             if (intent instanceof AlchemyIntent.FeedSlot feed) {

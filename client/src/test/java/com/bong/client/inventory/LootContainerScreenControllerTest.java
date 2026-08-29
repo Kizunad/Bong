@@ -1,6 +1,5 @@
 package com.bong.client.inventory;
 
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.ui.contract.DefaultUiScreenScope;
 import com.bong.client.ui.contract.UiStateSource;
@@ -18,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class LootContainerScreenControllerTest {
     @Test
     void intentIsRejectedBeforeOpenAfterCloseAndForAnotherSession() {
-        LootContainerStateStore.OpenSession open = session(21L);
+        LootContainerSession.Open open = session(21L);
         AtomicReference<LootContainerScreenViewModel> state = new AtomicReference<>(
             new LootContainerScreenViewModel(0L, open, InventoryModel.empty())
         );
@@ -62,8 +61,8 @@ class LootContainerScreenControllerTest {
         return scope;
     }
 
-    private static LootContainerStateStore.OpenSession session(long id) {
-        return new LootContainerStateStore.OpenSession(id, "dead_drop", "rare", 2, 3, 0L, java.util.List.of());
+    private static LootContainerSession.Open session(long id) {
+        return new LootContainerSession.Open(id, "dead_drop", "rare", 2, 3, 0L, java.util.List.of());
     }
 
     private static final class SingleValueSource implements UiStateSource<LootContainerScreenViewModel> {

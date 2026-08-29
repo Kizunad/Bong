@@ -84,6 +84,14 @@ public final class TradeOfferScreenController
             boolean present = viewModel.choices().stream().anyMatch(item -> item.instanceId() == id);
             if (!present) return UiIntentResult.rejected("selected item is no longer in the current inventory snapshot");
         }
+        if (intent instanceof TradeOfferIntent.Request request) {
+            TradeOfferScreenViewModel current = source.snapshot();
+            boolean present = current.choices().stream()
+                .anyMatch(item -> item.instanceId() == request.offeredInstanceId());
+            if (!present) {
+                return UiIntentResult.rejected("selected item is no longer in the current inventory snapshot");
+            }
+        }
         if (intent instanceof TradeOfferIntent.Respond response
             && !Objects.equals(response.offerId(), viewModel.offer().offerId())) {
             return UiIntentResult.rejected("trade offer is stale");
