@@ -1,5 +1,6 @@
 pub(crate) mod combat;
 pub(crate) mod forge;
+pub(crate) mod inventory;
 /// 外置 Forge typed-dispatch 契约测试所需的最小公共接缝。
 ///
 /// Forge 实现模块本身保持 crate 内可见；这里只暴露 extractor、dispatcher 与其
@@ -7,6 +8,13 @@ pub(crate) mod forge;
 #[doc(hidden)]
 pub mod forge_contract {
     pub use super::forge::{dispatch_forge_request, try_into_forge_request, ForgeRequest};
+}
+/// 外置 inventory typed-dispatch 契约测试所需的最小公共接缝。
+#[doc(hidden)]
+pub mod inventory_contract {
+    pub use super::inventory::{
+        dispatch_inventory_request, try_into_inventory_request, InventoryRequest,
+    };
 }
 pub(crate) mod npc;
 pub(crate) mod production;
