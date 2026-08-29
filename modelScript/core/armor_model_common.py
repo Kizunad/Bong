@@ -2,6 +2,7 @@
 """护甲 bbmodel/贴图/真实三视图的确定性生成公共层。"""
 
 from __future__ import annotations
+import sys
 
 import base64
 import io
@@ -11,6 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace  # noqa: E402
 
 TEXTURE_SIZE = 64
 MODEL_NAMESPACE = uuid.UUID("cfbe55ab-8e59-4b47-8500-21f93600a1f9")
@@ -91,7 +95,12 @@ def _texture_data_url(texture: Image.Image) -> str:
     return "data:image/png;base64," + base64.b64encode(data.getvalue()).decode("ascii")
 
 
-def build_bbmodel(material: str, part: ArmorPart, texture: Image.Image) -> dict[str, object]:
+def build_bbmodel(
+    material: str,
+    part: ArmorPart,
+    texture: Image.Image,
+    namespace: str | None = None,
+) -> dict[str, object]:
     validate_part(part)
     if texture.size != (TEXTURE_SIZE, TEXTURE_SIZE):
         raise ValueError(f"texture must be {TEXTURE_SIZE}x{TEXTURE_SIZE}, got {texture.size}")
@@ -144,7 +153,7 @@ def build_bbmodel(material: str, part: ArmorPart, texture: Image.Image) -> dict[
     return {
         "meta": {"format_version": "4.10", "model_format": "free", "box_uv": False},
         "name": part.key,
-        "model_identifier": f"geometry.bong.{part.key}",
+        "model_identifier": f"geometry.{namespace or workspace.default().namespace}.{part.key}",
         "visible_box": [2, 2, 0.5],
         "resolution": {"width": TEXTURE_SIZE, "height": TEXTURE_SIZE},
         "elements": elements,
@@ -154,7 +163,7 @@ def build_bbmodel(material: str, part: ArmorPart, texture: Image.Image) -> dict[
                 "path": "",
                 "name": f"{material}_armor.png",
                 "folder": "armor",
-                "namespace": "bong",
+                "namespace": namespace or workspace.default().namespace,
                 "id": "0",
                 "width": TEXTURE_SIZE,
                 "height": TEXTURE_SIZE,

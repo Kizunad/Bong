@@ -31,6 +31,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace  # noqa: E402
+
 BLOCKBENCH_URL = "https://web.blockbench.net/"
 
 
@@ -185,7 +188,9 @@ def main() -> int:
     ap.add_argument("bbmodel", type=Path, help="输入 .bbmodel")
     ap.add_argument("--out-dir", type=Path, required=True, help="输出目录")
     ap.add_argument("--name", required=True, help="模型名（产出 <name>.geo.json / <name>.animation.json）")
-    ap.add_argument("--namespace", default="bong", help="命名空间（默认 bong）")
+    _ns = workspace.default().namespace
+    ap.add_argument("--namespace", default=_ns,
+                    help=f"命名空间（默认取 workspace 配置：{_ns}）")
     ap.add_argument("--timeout-ms", type=int, default=60000, help="单步等待上限（默认 60s）")
     args = ap.parse_args()
 

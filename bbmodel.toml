@@ -1,0 +1,18 @@
+# modelScript 工具链的项目根标记 + 布局声明。
+#
+# 存在即定义「项目根在这一层」——core/ 与 tools/ 不再靠 `parents[2]` 猜自己
+# 住在哪。库拆进独立 repo 后，调用方也是靠这个文件（或 $BBMODEL_PROJECT_ROOT）
+# 告诉库「根在哪、产出往哪写、资源命名空间叫什么」。
+#
+# 解析实现见 modelScript/core/workspace.py，发现顺序：
+#   显式传参 → $BBMODEL_PROJECT_ROOT → 本文件 → .git → cwd
+
+[workspace]
+# 生成脚本与产出所在目录（models/ out/ assets/ manifests/ 由它派生）
+lib = "modelScript"
+
+# MC 资源命名空间：写进 bbmodel 的 texture 元数据、导出资源路径都用它
+namespace = "bong"
+
+# 客户端资源树，供读 PlayerAnimator 动画 JSON / 写导出资产的工具使用
+client_resources = "client/src/main/resources"

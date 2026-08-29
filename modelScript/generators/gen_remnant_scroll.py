@@ -765,6 +765,7 @@ def main():
     print(f"[✓] 成功写入模型: {MODEL_OUT}")
 
     tex_path = OUT_DIR / "remnant_scroll_texture.png"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)  # out/ 不入库，干净 checkout 上不存在
     tex.save(tex_path)
     print(f"[✓] 成功保存贴图: {tex_path}")
 

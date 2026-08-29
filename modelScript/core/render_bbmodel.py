@@ -26,13 +26,15 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import framing  # noqa: E402
+import workspace  # noqa: E402
 
-# render_bbmodel.py 在 modelScript/core/ 下，仓库根是上两级。
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+# 项目根和产出目录由 workspace 解析，不再靠 `parents[2]` 猜「本文件住在
+# <仓库根>/modelScript/core/ 下」——那个假设在库被搬进独立 repo 后必然崩。
+_WS = workspace.Workspace.discover(start=Path(__file__))
 
-REPO = Path(__file__).resolve().parents[2]
-MODELS = Path(__file__).resolve().parents[1] / "models"
-OUTDIR = Path(__file__).resolve().parents[1] / "out"
+REPO = _WS.root
+MODELS = _WS.models
+OUTDIR = _WS.out
 
 # 三视图的角度不再硬编，改由 framing 按**声明的朝向**派生 —— 名字必须和实际照到的
 # 轴面对得上。默认 facing 沿用历史假定 `-z`（yaw=180 叫 FRONT），于是角度一个没变：
@@ -78,16 +80,13 @@ def _load_texture(entry, model_path):
         )
     if not src:
         raise ValueError(f"贴图 {entry.get('name')!r} 既无 source 也无内嵌数据")
-    # 路径按仓库根解析（bbmodel 里存的是 client/src/main/... 这种仓库相对路径），
+    # 路径按项目根解析（bbmodel 里存的是 client/src/main/... 这种仓库相对路径），
     # 找不到再退回按 bbmodel 自身所在目录解析。
-    cands = [_REPO_ROOT / src, Path(model_path).resolve().parent / src, Path(src)]
-    for c in cands:
-        if c.is_file():
-            return np.asarray(Image.open(c).convert("RGBA"), float)
-    raise FileNotFoundError(
-        f"贴图 {entry.get('name')!r} 的路径 {src!r} 在以下位置都找不到: "
-        + ", ".join(str(c) for c in cands)
-    )
+    try:
+        path = _WS.resolve_texture(src, near=model_path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"贴图 {entry.get('name')!r} 的{exc}") from None
+    return np.asarray(Image.open(path).convert("RGBA"), float)
 
 
 def _texture_index(texes, texture, model_path):

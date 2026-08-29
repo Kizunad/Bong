@@ -35,9 +35,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "generators"))
 import render_bbmodel as R  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL = Path(__file__).resolve().parents[1] / "models" / "BambooJianSingle.bbmodel"
-OUT = Path(__file__).resolve().parents[1] / "out" / "render_jian_in_hand.png"
+import workspace  # noqa: E402
+
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
+DEFAULT_MODEL = _WS.models / "BambooJianSingle.bbmodel"
+OUT = _WS.out / "render_jian_in_hand.png"
 
 
 def load_model_document(path: Path | None = None) -> dict:
