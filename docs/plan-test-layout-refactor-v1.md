@@ -2,7 +2,7 @@
 
 > **一句话主题**：保留 server/client/agent 各自的 canonical 测试根，禁止新增生产文件内联测试，并按可回滚的小批次把现有 Rust inline tests 外置；同时冻结执行命令、CI job 与报告产物所有权，落地 `scripts/test-all.sh` 统一入口。
 >
-> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 首批 pseudo-vein 模块已完成，后续模块与 P3-P4 尚未开始。
+> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 首批 pseudo-vein 与 tsy_container_search 模块已完成，后续模块与 P3-P4 尚未开始。
 >
 > **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `plan-test-layout-refactor-v1`，基于 `origin/main=eea1e73f2`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。外部 `BongWorldGen` 不属于本仓库或本 plan 的测试栈；Bong 仅保留 raster handoff 与 server/client preview 消费端。
 
@@ -190,6 +190,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **行为对拍**：迁移前 `../scripts/build-token.sh cargo test pseudo_vein_runtime::tests --lib` 为 `20 passed; 0 failed`；迁移后 `../scripts/build-token.sh cargo test --test pseudo_vein_runtime_unit` 为 `20 passed; 0 failed`。测试名、fixture、tick/数值、随机性（本模块无随机种子）和失败断言语义保持不变。
 - **最小 seam**：仅为外置 integration test 暴露 `#[doc(hidden)]` 的生命周期常量、`set_test_state`、fallback baseline 构造器、既有 `round3` 纯函数及 narration/VFX/throttle 纯行为 helper；不扩大模块整体可见性、不复制生产实现、不改变 gameplay 路径。原因与清理边界在 PR body 登记：这些 seam 仅服务于本模块外置测试，后续若稳定 public contract 形成，应在 Test Refactor P4 收口时评估删除或收窄。
 - **提交证据**：代码/测试/Cargo target 为 `5a0196e1a`（2026-08-30），validator finding 修复为 `3723db539`（2026-08-30）；最终 server 门禁 `fmt --check`、`clippy --all-targets -- -D warnings`、`cargo test` 均 exit 0，库测试 `12760 passed / 0 failed / 2 ignored`，外置 target `20 passed / 0 failed`。本条仅记录 P2 首批进度，P2 其它模块、P3、P4 仍未完成。
+
+### P2-02 tsy_container_search（✅ 2026-08-30）
+
+- **范围与落点**：仅迁移 `server/src/world/tsy_container_search.rs` 原 `#[cfg(test)] mod tests` 至 `server/tests/unit/world/tsy_container_search_test.rs`，由 `server/Cargo.toml` 的显式 `[[test]] name = "tsy_container_search_unit"` target 交给 Cargo 原生发现；生产模块不再保留该测试模块，未触及 pseudo-vein 或其它模块。
+- **迁移前后对拍**：迁移前 `../scripts/build-token.sh cargo test tsy_container_search::tests --lib` 为 `28 passed / 0 failed / 0 ignored`；迁移后 `../scripts/build-token.sh cargo test --test tsy_container_search_unit` 为 `28 passed / 0 failed / 0 ignored`。测试名、fixture、随机种子、tick/时间、常量、断言与失败语义保持不变。
+- **源码清单校正**：任务卡所述“29 个行为测试 + 7 个 helper”与 `origin/main=98a016785` 实际不符；迁移前逐项核验为 `28` 个 `#[test]` 与 7 个 helper（`make_inv`、`key_item`、`place_test_loot`、`placed_item_summaries`、`spirit_item`、`run_start_search_at_distance`、`collect_search_aborted`），未凭空新增第 29 个测试。
+- **最小 seam**：仅将 `is_in_combat`、`damaged_this_tick`、`find_key_in_inventory`、`place_loot_in_carried_inventory` 暴露为 `#[doc(hidden)] pub`，供外置 integration test 调用；四者均为已有纯/非 gameplay helper，未扩大模块整体可见性、未复制生产实现、未改变 live system。该 seam 原因、范围与清理边界登记至本 PR：若 P4 收口后形成稳定公共契约，则评估删除或进一步收窄。
+- **提交证据**：代码/测试/Cargo target 为 `8ed00ed31`（2026-08-30）；本条只记录 P2-02 迁移进度，P2 其它模块、P3、P4 仍未完成。
 
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
