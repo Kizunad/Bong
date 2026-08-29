@@ -42,14 +42,18 @@ from pathlib import Path
 import numpy as np
 
 LIB = Path(__file__).resolve().parents[1]
-REPO = LIB.parent
+sys.path.insert(0, str(LIB / "core"))
+import workspace  # noqa: E402
+
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
 for _d in (LIB / "core", LIB / "generators", LIB / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import preview_player_anim as P  # noqa: E402
 import render_animation as RA  # noqa: E402
 
-ANIM_DIR = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
+ANIM_DIR = _WS.player_animations
 SHOULDER = np.array(P.PIVOT_OF["rightArm_lo"], float)
 
 # template_id → (生成器模块, 模块里的 HeldItem 变量名)

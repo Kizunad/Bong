@@ -17,6 +17,7 @@
 """
 
 from __future__ import annotations
+import sys
 
 import base64
 import io
@@ -26,6 +27,9 @@ import uuid
 from pathlib import Path
 
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace  # noqa: E402
 
 Vec = tuple[float, float, float]
 
@@ -300,7 +304,7 @@ class Rig:
                 nodes[parent]["children"].append(nodes[name])
         return roots
 
-    def bbmodel(self, model_name: str) -> dict:
+    def bbmodel(self, model_name: str, namespace: str | None = None) -> dict:
         return {
             "meta": {"format_version": "4.10", "model_format": "free", "box_uv": False},
             "name": model_name,
@@ -312,7 +316,7 @@ class Rig:
                 "path": "",
                 "name": f"{model_name}.png",
                 "folder": "",
-                "namespace": "bong",
+                "namespace": namespace or workspace.default().namespace,
                 "id": "0",
                 "particle": True,
                 "render_mode": "default",

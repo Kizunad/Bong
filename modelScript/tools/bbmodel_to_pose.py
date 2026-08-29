@@ -60,8 +60,8 @@ from pathlib import Path
 import numpy as np
 
 LIB = Path(__file__).resolve().parents[1]
-REPO = LIB.parent
 sys.path.insert(0, str(LIB / "core"))
+import workspace  # noqa: E402
 
 import bb_anim_axes as AX  # noqa: E402
 from animkit import euler_of  # noqa: E402  R = Rz·Ry·Rx 的逆解
@@ -78,7 +78,9 @@ def pick_layers(doc: dict, assume: str = "auto"):
         return AX.READ_LAYERS, f"format_version {version} → Blockbench 存过盘"
     return AX.WRITE_LAYERS, f"format_version {version} → 生成器直出，未经 Blockbench"
 
-ANIM_DIR = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
+ANIM_DIR = _WS.player_animations
 TICKS_PER_SECOND = 20.0
 
 # MC part 名 → bbmodel 里的 group 前缀。与 `gen_jian_player_anim.PART_GROUPS` 同源，

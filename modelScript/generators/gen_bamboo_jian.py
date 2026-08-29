@@ -368,6 +368,7 @@ def render_preview(cubes, tex, out=PREVIEW_OUT):
            fill=(200, 200, 200))
     d.text((gap * 2 + tex_big.width, th + gap * 2 + 14),
            "bones: " + "  ".join(BONE_ORDER), fill=(180, 180, 180))
+    out.parent.mkdir(parents=True, exist_ok=True)  # out/ 不入库，干净 checkout 上不存在
     canvas.save(out)
     return out
 
