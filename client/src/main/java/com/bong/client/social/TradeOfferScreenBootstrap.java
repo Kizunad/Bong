@@ -101,8 +101,12 @@ public final class TradeOfferScreenBootstrap {
         }
     }
 
-    private static ScreenKind screenKindOf(Screen current, SocialStateStore.TradeOffer offer) {
+    static ScreenKind screenKindOf(Screen current, SocialStateStore.TradeOffer offer) {
         if (current instanceof TradeOfferScreen screen) {
+            if (screen.isRequestPicker()) {
+                // 出站 picker 不是 Store 持有的入站 offer；必须作为普通占用屏保留。
+                return ScreenKind.OTHER;
+            }
             return offer != null && screen.offerIdForTests().equals(offer.offerId())
                 ? ScreenKind.MATCHING_TRADE_OFFER
                 : ScreenKind.OTHER_TRADE_OFFER;

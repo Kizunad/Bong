@@ -56,6 +56,21 @@ class TradeOfferScreenBootstrapTest {
     }
 
     @Test
+    void requestPickerIsAnOccupiedOtherScreenWhenNoIncomingOfferExists() {
+        TradeOfferScreen picker = TradeOfferScreen.requestPicker("entity:42");
+        assertTrue(picker.isRequestPicker(), "出站 picker 必须标记为 request mode");
+        assertEquals(
+            TradeOfferScreenBootstrap.ScreenKind.OTHER,
+            TradeOfferScreenBootstrap.screenKindOf(picker, null),
+            "没有入站 offer 时，出站 picker 必须被视为普通占用屏，不能被 stale-offer 清理逻辑关闭"
+        );
+        assertEquals(
+            TradeOfferScreenBootstrap.Decision.NOOP,
+            TradeOfferScreenBootstrap.decide(null, TradeOfferScreenBootstrap.screenKindOf(picker, null), 1_000L)
+        );
+    }
+
+    @Test
     void noOfferButMatchingTradeScreenOpenClosesIt() {
         assertEquals(
             TradeOfferScreenBootstrap.Decision.CLOSE_SCREEN,

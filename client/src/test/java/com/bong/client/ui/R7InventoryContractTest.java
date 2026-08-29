@@ -133,7 +133,7 @@ class R7InventoryContractTest {
         // 本次 review 返工新增 3 个长期 production boundary 类型：LootContainerSession、
         // LootContainerSessionAdapter 与 TradeOfferPicker；只改变 Java production tree 摘要。
         assertEquals(
-            "d1180019e9c55a8d88bbb1ad8458217e5c5898ba11f9b14eb4b293745f1c6af8",
+            "070382d5c11b1e0b1a0af0c6124cbf123111e41928e22c55cfa605370c05b4e6",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

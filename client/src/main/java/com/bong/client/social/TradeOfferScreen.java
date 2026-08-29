@@ -225,6 +225,11 @@ public final class TradeOfferScreen extends Screen {
         return controller.viewModel().offer().offerId();
     }
 
+    /** Bootstrap 用于区分出站 picker 与入站邀请屏，避免误清理出站交互。 */
+    boolean isRequestPicker() {
+        return mode == Mode.REQUEST;
+    }
+
     /** 测试用：按 authoritative instance_id 查找当前 picker 的位置。 */
     static int selectionIndexForTests(List<InventoryItem> choices, long instanceId) {
         return TradeOfferPicker.indexOf(choices, instanceId);
