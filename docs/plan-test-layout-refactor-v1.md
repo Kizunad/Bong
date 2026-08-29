@@ -188,8 +188,8 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 
 - **范围与落点**：仅迁移 `server/src/world/pseudo_vein_runtime.rs` 原 `#[cfg(test)] mod tests` 的 20 个测试，外置到 `server/tests/unit/world/pseudo_vein_runtime_test.rs`；通过 `server/Cargo.toml` 的显式 `[[test]]` target 由 Cargo 原生发现。`tsy_container_search` 和其它模块未触及。
 - **行为对拍**：迁移前 `../scripts/build-token.sh cargo test pseudo_vein_runtime::tests --lib` 为 `20 passed; 0 failed`；迁移后 `../scripts/build-token.sh cargo test --test pseudo_vein_runtime_unit` 为 `20 passed; 0 failed`。测试名、fixture、tick/数值、随机性（本模块无随机种子）和失败断言语义保持不变。
-- **最小 seam**：仅为外置 integration test 暴露 `#[doc(hidden)]` 的生命周期常量、`set_test_state`、fallback baseline 构造器及 narration/VFX/throttle 纯行为 helper；不扩大模块整体可见性、不复制生产实现、不改变 gameplay 路径。原因与清理边界在 PR body 登记：这些 seam 仅服务于本模块外置测试，后续若稳定 public contract 形成，应在 Test Refactor P4 收口时评估删除或收窄。
-- **提交证据**：代码/测试/Cargo target 为 `5a0196e1a`（2026-08-30）；本条仅记录 P2 首批进度，P2 其它模块、P3、P4 仍未完成。
+- **最小 seam**：仅为外置 integration test 暴露 `#[doc(hidden)]` 的生命周期常量、`set_test_state`、fallback baseline 构造器、既有 `round3` 纯函数及 narration/VFX/throttle 纯行为 helper；不扩大模块整体可见性、不复制生产实现、不改变 gameplay 路径。原因与清理边界在 PR body 登记：这些 seam 仅服务于本模块外置测试，后续若稳定 public contract 形成，应在 Test Refactor P4 收口时评估删除或收窄。
+- **提交证据**：代码/测试/Cargo target 为 `5a0196e1a`（2026-08-30），validator finding 修复为 `3723db539`（2026-08-30）；最终 server 门禁 `fmt --check`、`clippy --all-targets -- -D warnings`、`cargo test` 均 exit 0，库测试 `12760 passed / 0 failed / 2 ignored`，外置 target `20 passed / 0 failed`。本条仅记录 P2 首批进度，P2 其它模块、P3、P4 仍未完成。
 
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
