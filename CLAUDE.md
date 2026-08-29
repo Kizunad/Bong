@@ -249,11 +249,11 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 ## 视觉资产纪律（NBT 建筑 / layout / 模型 / 贴图）
 
 - **3 轮打磨 + `<PROMISE>` 担保**：NBT 建筑、worldgen layout 摆位、复杂模型、视觉资产**禁止一把 commit**。Round 1 first cut → **Round 2 人工闸门** → Round 3 终轮，commit message 标 `(round N/3)`；终轮 commit 末尾写 `<PROMISE>...已 3 轮打磨...已检查[...]...仍存局限[...]</PROMISE>` 块（**拼写是 PROMISE 不是 PROMIS**）。纯 Rust/TS 逻辑 TODO 不适用。
-- **Round 2 是人工闸门，不是模型自评**：固定产出**一张给人看的接触表**，然后**停下等人一句话**再动 round 3。bbmodel 类走 `python3 modelScript/tools/contact_sheet.py <模型> --gates <生成器模块> --prev <上一轮>`，表里必须有四样：① 六个**诚实命名**的视角（标签写出实际照到的轴面）② 上一轮的**同一取景**对比 ③ manifest 点名结果 ④ 门禁的差分自证结果。
+- **Round 2 是人工闸门，不是模型自评**：固定产出**一张给人看的接触表**，然后**停下等人一句话**再动 round 3。bbmodel 类走 `bbmodel-contact-sheet <模型> --gates <生成器模块> --prev <上一轮>`，表里必须有四样：① 六个**诚实命名**的视角（标签写出实际照到的轴面）② 上一轮的**同一取景**对比 ③ manifest 点名结果 ④ 门禁的差分自证结果。
   - 改掉「自评」的理由是两次实测，**都恰好发生在自评这一步**：`yaw=180` 名义叫 FRONT 实渲 −z 面，害人在错的视角上连试三个亮度阈值去找一个本就不该出现的骨扣（几何/UV/材质从头到尾都是对的）；小草包前两轮**整件漏掉背带**（参考图里占比仅次于包身）而七道数值门全绿 —— 有没有背带根本不在任何一道门的问题域里。人看图三十秒能问出「背带呢」，模型跑四十分钟数值门也问不出来。
   - **任何「让模型自己判断像不像参考图」的设计都是错的** —— 自己出题自己判卷。特征清单 `modelScript/manifests/<Asset>.manifest.toml` **必须人写**，点名器只负责核对。
-- **「自检全绿」在做差分注入之前，信息量是零**：判据本身会假绿而模型不会怀疑它 —— 某版穿模判据白名单写反，**坏版本和修好的版本都报 17 处**，零区分力却两边都「有输出」。所以 `modelScript/core/gatekit.py` 每道门旁边就是它的注入器（动画侧同理见 `animgate.py`），跑 `--self-test` 先注入缺陷再跑，报不出违例的门直接算失效。新写判据先问一句：**把它该抓的东西造出来，它报得出来吗？**
-- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `modelScript/core/render_bbmodel.py` 看，别只信平涂示意图。
+- **「自检全绿」在做差分注入之前，信息量是零**：判据本身会假绿而模型不会怀疑它 —— 某版穿模判据白名单写反，**坏版本和修好的版本都报 17 处**，零区分力却两边都「有输出」。所以 `bbmodel_maker.gates.gatekit` 每道门旁边就是它的注入器（动画侧同理见 `animgate`），跑 `--self-test` 先注入缺陷再跑，报不出违例的门直接算失效。新写判据先问一句：**把它该抓的东西造出来，它报得出来吗？**
+- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / ... 函数，逐件单独预览，最后 `all_cubes()` 拼接（别整件一把梭埋掉单件缺陷）。bbmodel 真长相用 `bbmodel-render <模型>` 看，别只信平涂示意图。
 - **item icon 批量出**：新增 ItemTemplate 必配 icon，走 `/gen-image item`（批量、不需多轮）。跑不了 `/gen-image` 的 harness 标 `[BLOCKED: 需 /gen-image]`。
 
 ## 架构硬约束（entity / 动画）

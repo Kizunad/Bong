@@ -184,19 +184,25 @@
 | `client/tools/render_animation.py` 仍指着已删的 `modelScript/core` | 改为直接 import 库 |
 | `test_jian_player_tools` 按文件路径起子进程跑 CLI，路径已变 | 加 `_module_script()` 按已安装模块解析真实路径 |
 
-### 交人工：`CLAUDE.md` 有 3 处失效引用
+### `CLAUDE.md` 的 3 处失效引用 —— 已按用户批准修正
 
-仓库规矩是 `CLAUDE.md` 只人工改，故本 plan **不动它**。P3 之后失效的是：
+P3 删掉 `modelScript/core/` 与 5 个 tool 后，`CLAUDE.md` 的「视觉资产纪律」一节有 3 条
+命令失效。仓库规矩是 `CLAUDE.md` 只人工改，故先列出交人工；**用户 2026-08-30 批准后**
+在本 PR 内一并改掉：
 
-| 行 | 现在写的 | 应改成 |
+| 行 | 原 | 现 |
 |---|---|---|
 | L252 | `python3 modelScript/tools/contact_sheet.py <模型> --gates … --prev …` | `bbmodel-contact-sheet <模型> --gates … --prev …` |
-| L255 | `modelScript/core/gatekit.py` 每道门旁边就是它的注入器 | `bbmodel_maker.gates.gatekit` |
-| L256 | bbmodel 真长相用 `modelScript/core/render_bbmodel.py` 看 | `bbmodel-render <模型>` |
+| L255 | `modelScript/core/gatekit.py` 每道门旁边就是它的注入器（`animgate.py`） | `bbmodel_maker.gates.gatekit`（`animgate`） |
+| L256 | bbmodel 真长相用 `modelScript/core/render_bbmodel.py` 看 | bbmodel 真长相用 `bbmodel-render <模型>` 看 |
+
+只改路径，**规则本身一字未动**（Round 2 仍是人工闸门、清单仍必须人写、门禁仍必须先做
+差分注入）。
 
 另有两份 **skeleton** plan 引用旧路径，按「一个 PR 只动一个 plan」未动：
 `plan-split-body-animation-v1.md`（`modelScript/core/render_player_pose.py`）、
 `plan-held-item-registration-v1.md`（`modelScript/core/held_item_common.py`）。
+它们是草案，升 active 时顺手改即可。
 
 ## P4 —— SOLO generator 收编（机会主义）
 
