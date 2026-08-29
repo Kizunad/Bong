@@ -126,9 +126,10 @@ class R7InventoryContractTest {
         // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
         // 随后补齐 VoidAction 旧 options.txt 中 O 绑定的一次性迁移，并将 extracting 仲裁
         // 收口到客户端共享输入策略；生产源码树因此继续更新。
-        // 随后主线 #2109 新增异兽刺骨甲的四个随包资源并更新 manifest，文件数 2191 → 2195。
+        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
+        // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         assertEquals(
-            "21d1b56dff7e06144ec678a650ef6fb171c68a4afe8df8a24b5b70efe61420ce",
+            "f41ca422b238ed78049a9f7b8a5b7421bbea3efc6c454ba082b0d649e2f4d493",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
@@ -325,7 +326,7 @@ class R7InventoryContractTest {
             "craft/CraftMaterialGrid.java:52",
             "craft/CraftMaterialGrid.java:53",
             "craft/CraftOutputPreview.java:32",
-            "craft/CraftRecipeListWidget.java:133",
+            "craft/CraftRecipeListWidget.java:134",
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",

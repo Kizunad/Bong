@@ -227,7 +227,7 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         ensureSelection(skills);
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
-        recipeList.refresh(inventory, skills);
+        recipeList.refresh(CraftStore.recipes(), inventory, skills);
         CraftSessionStateView session = CraftStore.sessionState();
         actionBar.refresh(selected, inventory, session, skills);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());

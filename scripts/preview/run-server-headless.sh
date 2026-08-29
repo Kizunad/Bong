@@ -20,7 +20,10 @@ PROFILE_FLAG="--release"
 TARGET_PROFILE="release"
 TIMEOUT_SECONDS=90
 PORT=25565
-LOG_FILE="/tmp/bong-preview-server.log"
+# Callers such as scripts/test-all.sh can keep the server log inside their
+# run-private evidence directory. Preserve the historical path for direct
+# invocations that do not provide an explicit handoff.
+LOG_FILE="${BONG_PREVIEW_LOG_FILE:-/tmp/bong-preview-server.log}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +46,104 @@ TARGET_ROOT="$(bong_scoped_cargo_target "$REPO_ROOT/server")" \
   || { echo "❌ 无法解析 checkout-scoped Cargo target" >&2; exit 1; }
 PID_FILE="${BONG_PREVIEW_PID_FILE:-$(bong_server_runtime_dir)/bong-preview-server.pid}"
 export BONG_SERVER_PID_FILE="$PID_FILE"
+# When the preview runner launches this wrapper asynchronously, a non-zero
+# wrapper exit cannot by itself tell the parent whether the PID authority was
+# already published.  The optional markers are private, one-shot handoffs:
+# identity is published independently before the state marker, so a failure to
+# publish the latter still leaves the parent with the exact cleanup identity.
+# Direct invocations do not opt into either marker.
+LAUNCH_STATE_FILE="${BONG_PREVIEW_LAUNCH_STATE_FILE:-}"
+LAUNCH_IDENTITY_FILE="${BONG_PREVIEW_LAUNCH_IDENTITY_FILE:-}"
+# Contract with scripts/test-all.sh: this exit code means this wrapper reached
+# the handoff-publication branch. It is deliberately distinct from the normal
+# preexisting-record refusal, so a reused report directory cannot make the
+# parent stop another invocation's server merely because a PID file exists.
+BONG_PREVIEW_HANDOFF_FAILURE_EXIT=75
+
+bong_server_launch_record_matches() {
+  [ -n "${SERVER_PID:-}" ] || return 1
+  [ -e "$PID_FILE" ] && [ ! -L "$PID_FILE" ] || return 1
+  bong_server_read_record || return 1
+  [ "$BONG_SERVER_RECORDED_PID" = "$SERVER_PID" ] \
+    && [ "$BONG_SERVER_RECORDED_STARTTIME" = "$SERVER_STARTTIME" ] \
+    && [ "$BONG_SERVER_RECORDED_EXECUTABLE" = "$SERVER_BINARY" ] \
+    && [ "$BONG_SERVER_RECORDED_EXECUTABLE_IDENTITY" = "$SERVER_EXECUTABLE_IDENTITY" ]
+}
+
+publish_launch_handoff() {
+  local handoff_file="$1" expected_state="$2"
+  local directory record_directory temporary status
+
+  [ -n "$handoff_file" ] || return 0
+  directory="$(dirname -- "$handoff_file")"
+  record_directory="$(dirname -- "$PID_FILE")"
+  [ "$directory" = "$record_directory" ] || {
+    echo "❌ Preview launch handoff 必须与 PID authority 位于同一目录" >&2
+    return 1
+  }
+  bong_server_validate_pid_record_parent "$handoff_file" || {
+    echo "❌ Preview launch state 目录不安全: $directory" >&2
+    return 1
+  }
+  if [ -e "$handoff_file" ] || [ -L "$handoff_file" ]; then
+    echo "❌ Preview launch handoff 已存在，拒绝覆盖: $handoff_file" >&2
+    return 1
+  fi
+  temporary="$(umask 077 && mktemp "$directory/.bong-preview-launch-state.XXXXXX")" || return 1
+  chmod 600 -- "$temporary" || { rm -f -- "$temporary"; return 1; }
+  if ! printf 'state=%s\npid=%s\nstarttime=%s\nexecutable=%s\nexecutable_identity=%s\n' \
+      "$expected_state" \
+      "$SERVER_PID" "$SERVER_STARTTIME" "$SERVER_BINARY" "$SERVER_EXECUTABLE_IDENTITY" \
+      > "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  bong_server_validate_pid_record_file "$temporary" || { rm -f -- "$temporary"; return 1; }
+  # The destination was checked above only for diagnostics.  renameat2 with
+  # RENAME_NOREPLACE is the publication gate: it creates one final directory
+  # entry atomically, never overwrites a concurrent destination, and leaves no
+  # transient two-link handoff for readers that enforce links=1.
+  if python3 - "$temporary" "$handoff_file" <<'PY'
+import ctypes
+import errno
+import os
+import sys
+
+source = os.fsencode(sys.argv[1])
+destination = os.fsencode(sys.argv[2])
+libc = ctypes.CDLL(None, use_errno=True)
+try:
+    renameat2 = libc.renameat2
+except AttributeError:
+    sys.exit(1)
+renameat2.argtypes = [
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_uint,
+]
+renameat2.restype = ctypes.c_int
+if renameat2(-100, source, -100, destination, 1) != 0:
+    sys.exit(17 if ctypes.get_errno() == errno.EEXIST else 1)
+PY
+  then
+    :
+  else
+    status=$?
+    rm -f -- "$temporary"
+    echo "❌ Preview launch handoff 已存在或无法独占发布 (status=$status): $handoff_file" >&2
+    return 1
+  fi
+}
+
+bong_server_publish_launch_identity() {
+  publish_launch_handoff "$LAUNCH_IDENTITY_FILE" identity_published
+}
+
+bong_server_publish_launch_state() {
+  publish_launch_handoff "$LAUNCH_STATE_FILE" authority_published
+}
 
 # Launch phase is kept explicit so cancellation after authority publication cannot
 # be mistaken for the pre-publication, untracked-child case.  The post-publication
@@ -337,6 +438,46 @@ bong_server_launch_preview_locked() {
     esac
     return 1
   fi
+  # The identity handoff is the fallback authority for the parent runner. It is
+  # intentionally published before the human-readable state marker: marker
+  # publication may fail because a reused report directory already contains a
+  # state path, but the parent must still receive this launch's exact identity.
+  if ! bong_server_publish_launch_identity; then
+    echo "❌ 无法发布 preview launch identity handoff" >&2
+    if bong_server_post_publication_rollback "preview identity handoff publication rollback"; then
+      return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
+    else
+      status=$?
+    fi
+    echo "❌ identity handoff publication rollback 未确认 (status=$status)；保留 authority 供父 runner诊断" >&2
+    return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
+  fi
+  # Publish the parent handoff only after the lifecycle record itself has been
+  # atomically published.  If this communication step fails, roll back the
+  # server rather than leaving an authority the outer runner cannot discover.
+  if ! bong_server_publish_launch_state; then
+    echo "❌ 无法发布 preview launch authority handoff" >&2
+    if bong_server_post_publication_rollback "preview launch-state publication rollback"; then
+      return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
+    else
+      status=$?
+    fi
+    # The parent runner cannot infer ownership from a non-zero wrapper status.
+    # If identity-safe rollback is not confirmed, make one explicit handoff
+    # retry while the matching PID authority is still retained.  The retry is
+    # never allowed to overwrite an existing marker; the outer runner also
+    # has a record-based, identity-safe stop fallback for this fail-closed case.
+    echo "❌ launch-state publication rollback 未确认 (status=$status)；保留 authority 供父 runner identity-safe 重试清理" >&2
+    if [ -n "$LAUNCH_STATE_FILE" ] && bong_server_launch_record_matches \
+        && [ ! -e "$LAUNCH_STATE_FILE" ] && [ ! -L "$LAUNCH_STATE_FILE" ]; then
+      if bong_server_publish_launch_state; then
+        echo "⚠ 已补发 preview launch authority handoff；父 runner 必须执行 stop 重试" >&2
+      else
+        echo "❌ 无法补发 preview launch authority handoff；父 runner 必须按 authority record identity-safe 清理" >&2
+      fi
+    fi
+    return "$BONG_PREVIEW_HANDOFF_FAILURE_EXIT"
+  fi
   # The record is now published. Keep the cancellation traps installed until
   # disown and trap removal both complete; TERM/HUP in this interval must roll
   # back the newly published authority rather than use the pre-publication path.
@@ -389,7 +530,12 @@ bong_server_preview_start_locked() {
   bong_server_launch_preview_locked
 }
 
-bong_server_with_lock bong_server_preview_start_locked || exit 1
+if bong_server_with_lock bong_server_preview_start_locked; then
+  :
+else
+  status=$?
+  exit "$status"
+fi
 
 echo "[run-server-headless] PID=$SERVER_PID authority=$PID_FILE log=$LOG_FILE"
 
