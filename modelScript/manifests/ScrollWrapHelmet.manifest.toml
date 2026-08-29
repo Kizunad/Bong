@@ -1,0 +1,9 @@
+facing = "+z"
+mirror_x = 0.0
+size = 300
+
+[features]
+dome_crest = { elements = ["helm_dome_crest_"], must_show_in = ["FRONT", "3/4"], min_px = 600 }
+hanging_scroll_front = { elements = ["helm_scroll_front_"], must_show_in = ["FRONT", "3/4"], min_px = 1200 }
+hanging_scroll_back = { elements = ["helm_scroll_back_"], must_show_in = ["BACK", "3/4"], min_px = 1500 }
+rope_knot = { elements = ["helm_rope_knot_", "helm_rope_tail_", "helm_bell_charm"], must_show_in = ["SIDE_R", "3/4"], asym = "right" }
