@@ -6,9 +6,10 @@ use bong_server::network::vfx_event_emit::VfxEventRequest;
 use bong_server::player::gameplay::PendingGameplayNarrations;
 use bong_server::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use bong_server::qi_physics::ledger::{
-    pending_inflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    assert_conservation, pending_inflow_account, transfer_zone_qi_to_ledger, QiAccountId,
+    QiTransfer, QiTransferReason, WorldQiAccount, WorldQiSnapshot,
 };
-use bong_server::schema::common::{NarrationScope, NarrationStyle};
+use bong_server::schema::common::{NarrationScope, NarrationStyle, SPIRIT_QI_TOTAL};
 use bong_server::schema::pseudo_vein::PseudoVeinSeasonV1;
 use bong_server::schema::vfx_event::VfxEventPayloadV1;
 use bong_server::world::dimension::DimensionKind;
@@ -69,6 +70,52 @@ fn qi_conservation() {
         settlement.return_transfer.reason,
         QiTransferReason::PseudoVeinSettle
     );
+
+    // The pure settlement plan above must also survive the real external-zone ledger path:
+    // snapshot the complete observed total from the canonical SPIRIT_QI_TOTAL budget, execute
+    // the transfer, and prove that no qi is created or lost (era decay is explicitly zero).
+    let borrowed_absolute = settlement.return_transfer.amount;
+    let mut zone_spirit_qi = borrowed_absolute / QI_ZONE_UNIT_CAPACITY;
+    let mut ledger = WorldQiAccount::default();
+    ledger
+        .set_balance(
+            pending_inflow_account(),
+            SPIRIT_QI_TOTAL - borrowed_absolute,
+        )
+        .expect("the pending pool seed must be a finite non-negative budget remainder");
+    let before = WorldQiSnapshot {
+        player_qi: 0.0,
+        zone_qi: zone_spirit_qi * QI_ZONE_UNIT_CAPACITY,
+        container_qi: 0.0,
+        ledger_qi: ledger.total(),
+        era_decay_accum: 0.0,
+        budget_initial_total: SPIRIT_QI_TOTAL,
+        budget_current_total: SPIRIT_QI_TOTAL,
+    };
+
+    let applied = transfer_zone_qi_to_ledger(
+        &mut ledger,
+        "lingquan_marsh",
+        &mut zone_spirit_qi,
+        pending_inflow_account(),
+        borrowed_absolute,
+        QiTransferReason::PseudoVeinSettle,
+    )
+    .expect("the settlement transfer must be accepted by the canonical qi ledger")
+    .expect("a positive settlement must emit one transfer audit");
+    assert_eq!(applied, settlement.return_transfer);
+
+    let after = WorldQiSnapshot {
+        player_qi: 0.0,
+        zone_qi: zone_spirit_qi * QI_ZONE_UNIT_CAPACITY,
+        container_qi: 0.0,
+        ledger_qi: ledger.total(),
+        era_decay_accum: 0.0,
+        budget_initial_total: SPIRIT_QI_TOTAL,
+        budget_current_total: SPIRIT_QI_TOTAL,
+    };
+    assert_conservation(&before, &after, 0.0)
+        .expect("pseudo-vein settlement must preserve SPIRIT_QI_TOTAL with zero era decay");
 }
 
 #[test]
