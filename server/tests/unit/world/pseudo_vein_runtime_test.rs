@@ -578,7 +578,3 @@ fn zone(name: &str, spirit_qi: f64, x: f64) -> Zone {
         qi_inflow_per_min: 0.0,
     }
 }
-
-fn round3(value: f64) -> f64 {
-    (value * 1000.0).round() / 1000.0
-}

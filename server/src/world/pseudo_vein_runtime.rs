@@ -826,6 +826,7 @@ fn is_tide_turn(season: PseudoVeinSeasonV1) -> bool {
     )
 }
 
-fn round3(value: f64) -> f64 {
+#[doc(hidden)]
+pub fn round3(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
 }
