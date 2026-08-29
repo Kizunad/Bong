@@ -246,6 +246,7 @@ def render_preview(spec, cubes, tex, out):
     d.text((gap * 2 + iso_im.width, th + gap * 2 - 12), "TEXTURE 64x64 (x3)", fill=(200, 200, 200))
     d.text((gap, H_ - 16), f"{spec.key}  bones: " + "  ".join(spec.bone_order),
            fill=(180, 180, 180))
+    out.parent.mkdir(parents=True, exist_ok=True)  # out/ 不入库，干净 checkout 上不存在
     canvas.save(out)
     return out
 
@@ -780,6 +781,7 @@ def combine_previews(paths, out):
     for im in imgs:
         canvas.paste(im, (0, y), im)
         y += im.height + 8
+    out.parent.mkdir(parents=True, exist_ok=True)  # out/ 不入库，干净 checkout 上不存在
     canvas.save(out)
 
 
