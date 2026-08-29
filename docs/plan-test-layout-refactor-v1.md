@@ -2,7 +2,7 @@
 
 > **一句话主题**：保留 server/client/agent 各自的 canonical 测试根，禁止新增生产文件内联测试，并按可回滚的小批次把现有 Rust inline tests 外置；同时冻结执行命令、CI job 与报告产物所有权，落地 `scripts/test-all.sh` 统一入口。
 >
-> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2-P4 尚未开始，未批量迁移测试代码。
+> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 首批 pseudo-vein 模块已完成，后续模块与 P3-P4 尚未开始。
 >
 > **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `plan-test-layout-refactor-v1`，基于 `origin/main=eea1e73f2`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。外部 `BongWorldGen` 不属于本仓库或本 plan 的测试栈；Bong 仅保留 raster handoff 与 server/client preview 消费端。
 
@@ -10,7 +10,7 @@
 |------|------|------|
 | T0 / P0 | 三栈盘点、CI/产物地图、所有权矩阵冻结、统一入口契约设计 | ✅ 2026-08-23 |
 | P1 | 测试放置规则、禁止新增 inline、`scripts/test-all.sh` 与 owners 映射层 | ✅ 2026-08-28 |
-| P2 | Rust inline tests 首批按模块外置到 `server/tests/unit/**` 或专用测试文件 | ⬜ |
+| P2 | Rust inline tests 首批按模块外置到 `server/tests/unit/**` 或专用测试文件 | ⏳ |
 | P3 | CI 兼容接入、报告收口与迁移前后对拍 | ⬜ |
 | P4 | 剩余 Rust inline tests 分批外置、清点归零、全量回归 | ⬜ |
 
@@ -176,13 +176,20 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 5. **退出码**：0 仅当所有要求 suite 为 PASS；1 为测试失败；2 为 usage/config/preflight 错误；3 为报告写入/产物完整性错误；`--continue` 不吞掉任何失败。管道命令必须读取 `${PIPESTATUS[0]}`，不能用 `tail` 制造假绿。
 6. **CI 兼容**：P3 先让一个 job 以 `test-all.sh --profile unit --suite ...` 做 shadow/对拍，并继续执行原命令；只有 summary、退出码、原生报告和时限都对拍后，才考虑替换 job 内命令。artifact upload/download 名称、DAG needs 和 cleanup 语义在此之前不改。
 
-## P2 — Rust inline tests 首批外置（⬜）
+## P2 — Rust inline tests 首批外置（⏳）
 
 P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，并保留原测试名、fixture、随机种子和断言语义。首批优先选择 `server/src/world/pseudo_vein_runtime.rs:793-1332`、`server/src/world/tsy_container_search.rs:757-1661` 等边界清晰的模块；具体名单以迁移前 grep 快照为准。
 
 - **目标路径**：`server/tests/unit/<module>_test.rs`，由 `server/src/lib.rs` 暴露的公开 API 驱动；生产文件不得新增测试模块声明。
 - **私有访问**：先抽取最小、稳定、非 gameplay 的 test seam/fixture；不为迁移扩大整个模块可见性，不复制生产实现。无法合理抽取的遗留例外必须在 PR body 和 plan 迁移表登记，并单独安排清理。
 - **验收**：迁移前后定向 `cargo test <filter>` 测试数量、失败行为和产物一致；完成后跑 server 完整 fmt/clippy/test 门禁。
+
+### P2-01 pseudo-vein runtime（✅ 2026-08-30）
+
+- **范围与落点**：仅迁移 `server/src/world/pseudo_vein_runtime.rs` 原 `#[cfg(test)] mod tests` 的 20 个测试，外置到 `server/tests/unit/world/pseudo_vein_runtime_test.rs`；通过 `server/Cargo.toml` 的显式 `[[test]]` target 由 Cargo 原生发现。`tsy_container_search` 和其它模块未触及。
+- **行为对拍**：迁移前 `../scripts/build-token.sh cargo test pseudo_vein_runtime::tests --lib` 为 `20 passed; 0 failed`；迁移后 `../scripts/build-token.sh cargo test --test pseudo_vein_runtime_unit` 为 `20 passed; 0 failed`。测试名、fixture、tick/数值、随机性（本模块无随机种子）和失败断言语义保持不变。
+- **最小 seam**：仅为外置 integration test 暴露 `#[doc(hidden)]` 的生命周期常量、`set_test_state`、fallback baseline 构造器、既有 `round3` 纯函数及 narration/VFX/throttle 纯行为 helper；不扩大模块整体可见性、不复制生产实现、不改变 gameplay 路径。原因与清理边界在 PR body 登记：这些 seam 仅服务于本模块外置测试，后续若稳定 public contract 形成，应在 Test Refactor P4 收口时评估删除或收窄。
+- **提交证据**：代码/测试/Cargo target 为 `5a0196e1a`（2026-08-30），validator finding 修复为 `3723db539`（2026-08-30）；最终 server 门禁 `fmt --check`、`clippy --all-targets -- -D warnings`、`cargo test` 均 exit 0，库测试 `12760 passed / 0 failed / 2 ignored`，外置 target `20 passed / 0 failed`。本条仅记录 P2 首批进度，P2 其它模块、P3、P4 仍未完成。
 
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
