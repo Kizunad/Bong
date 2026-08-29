@@ -17,11 +17,10 @@ from pathlib import Path
 import numpy as np
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB_DIR / "core"))
 
-import framing  # noqa: E402
-import render_bbmodel  # noqa: E402
-from rigkit import Rig  # noqa: E402
+from bbmodel_maker.render import framing  # noqa: E402
+from bbmodel_maker.render import render_bbmodel  # noqa: E402
+from bbmodel_maker.rig.rigkit import Rig  # noqa: E402
 
 BG = (22, 23, 26)
 
@@ -271,7 +270,7 @@ class RenderViewsTest(unittest.TestCase):
 
     def test_auto_framing_would_have_lied_which_is_why_focus_is_mandatory(self) -> None:
         """反证：不固定取景时两张图会被各自拉满，宽度比退化成 ~1。"""
-        from render_bbmodel import render
+        from bbmodel_maker.render.render_bbmodel import render
 
         views = framing.views_for("+z", ("FRONT", "SIDE_R"))
         widths = [_silhouette(render(self.slab, yaw=v.yaw, pitch=v.pitch, size=240)[0])[0]

@@ -17,12 +17,12 @@ from pathlib import Path
 import numpy as np
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-for _d in ("core", "generators", "tools"):
+for _d in ("generators", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 
-import contact_sheet as cs  # noqa: E402
-import framing  # noqa: E402
-import manifest as mfmod  # noqa: E402
+from bbmodel_maker.workbench import contact_sheet as cs  # noqa: E402
+from bbmodel_maker.render import framing  # noqa: E402
+from bbmodel_maker.gates import manifest as mfmod  # noqa: E402
 
 MODEL = LIB_DIR / "models" / "GrassPouch.bbmodel"
 BG = (22, 23, 26)
@@ -138,7 +138,7 @@ class NotesTest(unittest.TestCase):
         self.assertEqual([], [ln for ln in lines if ln.startswith("!")])
 
     def test_gate_notes_flag_a_gate_without_discriminating_power(self) -> None:
-        import gatekit
+        from bbmodel_maker.gates import gatekit
         import gen_grass_pouch as gp
 
         blind = gatekit.AssetGates("盲门", gp.MATS, asym=gp.ASYM,

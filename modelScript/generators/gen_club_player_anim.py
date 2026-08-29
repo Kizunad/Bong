@@ -77,13 +77,12 @@ import numpy as np
 from PIL import Image
 
 LIB = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB / "core"))
 sys.path.insert(0, str(LIB / "tools"))
 sys.path.insert(0, str(LIB / "generators"))
 
-import render_jian_in_hand as H  # noqa: E402
-import render_player_pose as P  # noqa: E402
-import bb_anim_axes as AX  # noqa: E402
+from bbmodel_maker.render import held_item_render as H  # noqa: E402
+from bbmodel_maker.render import render_player_pose as P  # noqa: E402
+from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402
 from gen_jian_player_anim import (  # noqa: E402  骨架/关键帧的公共件，别再抄一份
     PART_GROUPS,
     TICKS_PER_SECOND,

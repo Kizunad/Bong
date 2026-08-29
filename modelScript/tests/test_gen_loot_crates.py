@@ -13,7 +13,7 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in ("core", "generators", "exporters", "tools"):
+for _d in ("generators", "exporters", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 sys.path.insert(0, str(REPO / "client" / "tools"))   # gen_lower_body_gait 属客户端动画工具
 

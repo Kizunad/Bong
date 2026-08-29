@@ -25,7 +25,7 @@ sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
 from gen_skeleton import PROFILES  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from rig import FINAL, Rig, rotmat  # noqa: E402
 
 OUT = HERE / "anim"

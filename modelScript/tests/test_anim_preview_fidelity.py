@@ -35,11 +35,11 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in (LIB_DIR / "core", LIB_DIR / "tools", REPO / "client" / "tools"):
+for _d in (LIB_DIR / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import render_animation as RA  # noqa: E402
-import render_bbmodel as RB  # noqa: E402
+from bbmodel_maker.render import render_bbmodel as RB  # noqa: E402
 
 MODELS = LIB_DIR / "models"
 ANIM = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"

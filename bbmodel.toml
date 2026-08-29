@@ -4,7 +4,7 @@
 # 住在哪。库拆进独立 repo 后，调用方也是靠这个文件（或 $BBMODEL_PROJECT_ROOT）
 # 告诉库「根在哪、产出往哪写、资源命名空间叫什么」。
 #
-# 解析实现见 modelScript/core/workspace.py，发现顺序：
+# 解析实现见 bbmodel_maker.workspace，发现顺序：
 #   显式传参 → $BBMODEL_PROJECT_ROOT → 本文件 → .git → cwd
 
 [workspace]

@@ -12,12 +12,12 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in ("core", "generators", "exporters", "tools"):
+for _d in ("generators", "exporters", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 sys.path.insert(0, str(REPO / "client" / "tools"))   # gen_lower_body_gait 属客户端动画工具
 
 import gen_bone_armor as bone
-from armor_model_common import ArmorPart, build_bbmodel, validate_part, write_material_assets
+from bbmodel_maker.model.armor_model_common import ArmorPart, build_bbmodel, validate_part, write_material_assets
 
 
 class BoneArmorGeneratorTest(unittest.TestCase):

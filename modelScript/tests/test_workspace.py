@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
-import workspace  # noqa: E402
-from workspace import Workspace  # noqa: E402
+from bbmodel_maker import workspace  # noqa: E402
+from bbmodel_maker.workspace import Workspace  # noqa: E402
 
 
 class DiscoveryPrecedenceTest(unittest.TestCase):

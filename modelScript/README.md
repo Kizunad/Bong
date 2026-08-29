@@ -1,19 +1,28 @@
 # modelScript
 
-Bong 的**离线 3D 资产工具链**：程序化生成 Blockbench `.bbmodel`、烘焙动画、headless 渲染核验、导出成
-client 能吃的 GeckoLib / vanilla ModelPart 资产。
+Bong 的**离线 3D 资产生产线**：一个脚本一件资产，产出 Blockbench `.bbmodel`、烘焙动画、
+导出成 client 能吃的 GeckoLib / vanilla ModelPart 资产。
 
-纯离线，不参与运行时。运行时真相始终在 `client/` 那边（`ArmorPartModel.CUBE_TABLES` 的 Java 表、
-`assets/bong/geo/*.geo.json`），这里产出的是**作者资产和校对图**。
+纯离线，不参与运行时。运行时真相始终在 `client/` 那边（`ArmorPartModel.CUBE_TABLES` 的
+Java 表、`assets/bong/geo/*.geo.json`），这里产出的是**作者资产和校对图**。
+
+> **通用底座已拆进独立仓库**：[bbmodel-maker](https://github.com/Kizunad/bbmodel-maker)
+> ——渲染器、骨骼动画、几何门禁、点名器、生图工作台都在那边，本目录只保留「Bong 有哪些
+> 资产、每件怎么生成」。版本锁在 `requirements.txt` 的 tag 上。
+
+```bash
+pip install -r modelScript/requirements.txt
+```
+
+项目根的 `bbmodel.toml` 告诉库「根在哪、产出往哪写、命名空间叫什么」。
 
 ```
 modelScript/
-├── core/         共用底座：渲染器 / 骨骼动画 / 装备骨架 / 格式转换
 ├── generators/   gen_*.py —— 一个脚本一件资产，程序化建模
 ├── creatures/    生物流水线：骨架 → 肌肉 → 皮毛 → 动画，每种一个子包
 ├── exporters/    bbmodel → GeckoLib geo.json / 贴图，写进 client 资源树
-├── tools/        摆位预览、变体派生、手绘稿改造
-├── tests/        587 例，CI 在 build-resourcepack.yml 里跑
+├── tools/        Bong 专属工具：参考图生成、玩家动画预览、手持物姿态解算
+├── tests/        CI 在 build-resourcepack.yml 里跑
 ├── manifests/    人写的特征清单（*.manifest.toml），点名器照它核对
 ├── assets/       手工输入：参考图 + Tripo 生成索引（入库）
 ├── models/       .bbmodel 产物与手工源（大宗产物 gitignored，见下）
@@ -27,18 +36,18 @@ modelScript/
 python3 modelScript/generators/gen_hide_armor.py
 
 # 看 bbmodel 真长相（别只信平涂示意图）
-python3 modelScript/core/render_bbmodel.py modelScript/models/Workbench.bbmodel
+bbmodel-render modelScript/models/Workbench.bbmodel
 
 # Round 2 人工闸门：六视角接触表 + 点名 + 差分自证，出完停下等人看
-python3 modelScript/tools/contact_sheet.py modelScript/models/GrassPouch.bbmodel \
+bbmodel-contact-sheet modelScript/models/GrassPouch.bbmodel \
     --gates gen_grass_pouch --prev modelScript/out/GrassPouch_round1.bbmodel
 
 # 单独跑点名器 / 单独跑门禁的差分自证
-python3 modelScript/core/manifest.py modelScript/models/GrassPouch.bbmodel
+python3 -m bbmodel_maker.gates.manifest modelScript/models/GrassPouch.bbmodel
 python3 modelScript/generators/gen_grass_pouch.py --self-test
 
 # 把护甲戴到真 MC 玩家模型上，查有没有漏盖
-python3 modelScript/tools/preview_armor_on_body.py gen_hide_armor --slot chest --coverage
+bbmodel-armor-preview gen_hide_armor --slot chest --coverage
 
 # 手持物动画：解姿态 / 量轨迹（别手调，pitch 和 bend 是相加的，直觉必错）
 python3 modelScript/tools/held_item_pose.py solve --item wooden_club --up 12:15 --elev 50:80
@@ -57,23 +66,25 @@ python3 modelScript/exporters/export_coffin_assets.py
 python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 ```
 
-## core/ ——共用底座
+## 底座在哪
 
-| 模块 | 干什么 |
-|------|--------|
-| `render_bbmodel.py` | z-buffer 软渲染 bbmodel（几何 + UV + 内嵌贴图）。视角名与角度由 `framing` 按声明朝向派生，三视图共用一个固定取景。`shading="mc"` 用 MC 的六面明暗 |
-| `framing.py` | **诚实的视角命名 + 固定取景**。资产声明 `facing`（+z/-z/+x/-x），六视角名由它派生，标签写出实际照到的轴面；`focus_for()` 出一组视角共用的取景，跨图跨轮才比得动 |
-| `manifest.py` | **人写的特征清单 + 点名器**。差分判据（抽掉该特征前后变了多少像素），自带遮挡正确性；材质普查走色相单位向量分类 |
-| `gatekit.py` | 七道几何门（孤儿/越界/退化/悬空/穿模/贴面就位/镜像），**每道门自带缺陷注入器** |
-| `animcore.py` | 动画层公共底座：旋转/曲线/关键帧落盘。`animkit` 与 `anim_rig` 都转发到它 |
-| `animgate.py` | 动画后验的通用判据（贴地/滑步/循环接缝/逐帧互穿/链断裂/质心平衡）+ 注入器 |
-| `render_player_pose.py` | vanilla 玩家模型的真 cuboid + `bend` 变形渲染，用来 headless 迭代 PlayerAnimator 姿态 |
-| `pose_render.py` | 给一组 `{骨名: [rx,ry,rz]}` 就烘焙出静帧 |
-| `armor_model_common.py` | 护甲专用：`Cube` / `ArmorPart` / mount 枢轴表 / box-UV 计算 / `write_material_assets` 一把出四件 |
-| `animkit.py` · `anim_rig.py` · `voxel_rig.py` · `rigkit.py` | 骨树正解/逆解、关键帧轨道、体素生物调色板与 Rig 容器。前两者的公共部分已并入 `animcore`；`creatures/{dainu_lion,horse}/rig.py` 里还各有一份 `rotmat`/`euler`/`affine`，是已知的剩余重复 |
-| `to_fmt410.py` | bbmodel 5.0 → 4.10 降级。**5.0 在 4.x 里打开是一个 cube 都看不见**，不报错，只是空场景 |
-| `bbmodel_to_geckolib.py` | 驱动 web Blockbench 官方 codec 做转换（Playwright），不手搓格式 |
-| `bb_anim_axes.py` | MC 玩家动画轴 ↔ bbmodel 轴的**唯一换算处**。⚠ **读写不是同一套符号**（Blockbench 读 animation 通道时取反 X/Y、存盘时不取反），`WRITE_LAYERS` / `READ_LAYERS` 分开，别当成互逆 |
+渲染器 / 骨骼动画 / 几何门禁 / 点名器 / 生图工作台全部在
+[bbmodel-maker](https://github.com/Kizunad/bbmodel-maker)：
+
+| 要什么 | 去哪 |
+|--------|------|
+| 软渲 bbmodel、三视图、固定取景 | `bbmodel_maker.render` |
+| 骨树正逆解、关键帧轨道、体素 Rig、PlayerAnimator 采样 | `bbmodel_maker.rig` |
+| 七道几何门 + 动画门（每道自带缺陷注入器）、人写清单点名器 | `bbmodel_maker.gates` |
+| 护甲骨架、box-UV、bbmodel 4.10 ↔ 5.0 | `bbmodel_maker.model` |
+| 接触表、护甲上身预览、变体派生、姿态回程 | `bbmodel_maker.workbench` |
+| 项目根 / 产出目录 / 命名空间解析 | `bbmodel_maker.Workspace` |
+
+那边的 README 有一份完整的踩坑清单（视角命名、共面 z-fighting、贴图分辨率、
+Blockbench 读写符号不对称等），写生成器前值得过一遍。
+
+**本仓库这边还留着两个工具**，因为它们依赖 `client/tools/` 的 biped 骨架数学与关节
+解剖判据，那部分还没搬：`tools/preview_player_anim.py`、`tools/held_item_pose.py`。
 
 ## models/ ——什么入库什么不入库
 
@@ -94,27 +105,25 @@ python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 
 改 `.gitignore` 加新目录时记住这条判据：**问"删了能不能用脚本重造出来"，不能就必须入库。**
 
-## 踩过的坑
+## 踩过的坑（本仓库特有的）
 
-- **1 texel ≈ 1 单位**：护甲 cube 的贴图分辨率就这么低，任何"逐 texel 的描边/虚线/交替缝线"放大后
-  都是棋盘格。细节要么做成几何，要么别做。
-- **共面 z-fighting**：两块 cube 同向外表面落在同一平面且投影相交 → 渲染器逐像素乱挑 → 一片高频噪点，
-  极容易被误读成"贴图脏了"。`gen_hide_armor.py` 里有个 `_assert_no_coplanar_faces()` 守卫，**必须跨
-  mount 比**（左右腿是两个 mount，但静止姿下已在同一片世界空间）。
-- **身体表面是精确平面**：臂顶 y=24、脚底 y=0。甲片停在那个值 = 和身体面共面打架。而且正交三视图
-  **结构上看不见水平面**，只能靠逐面采样（`preview_armor_on_body.py --coverage`）查出来。
-- **`ArmorPartModel.Mount` 只有六个**：`HEAD / BODY / LEFT_LEG / RIGHT_LEG / LEFT_FOOT / RIGHT_FOOT`。
-  **没有手臂 mount**（肩甲只能挂 BODY，不跟手臂摆动）；**LEGS 没有 BODY mount**（胯带必须按腿劈开，
-  跨步会错位，跨腿的绳结构做不出来）。
-- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / … 逐件单独预览，最后 `all_cubes()` 拼接。
-  整件一把梭会埋掉单件缺陷。
+- **`ArmorPartModel.Mount` 只有六个**：`HEAD / BODY / LEFT_LEG / RIGHT_LEG / LEFT_FOOT /
+  RIGHT_FOOT`。**没有手臂 mount**（肩甲只能挂 BODY，不跟手臂摆动）；**LEGS 没有 BODY
+  mount**（胯带必须按腿劈开，跨步会错位，跨腿的绳结构做不出来）。
+- **身体表面是精确平面**：臂顶 y=24、脚底 y=0。甲片停在那个值 = 和身体面共面打架。而且
+  正交三视图**结构上看不见水平面**，只能靠逐面采样（`bbmodel-armor-preview --coverage`）查出来。
+- **共面 z-fighting 必须跨 mount 比**：`gen_hide_armor.py` 里的 `_assert_no_coplanar_faces()`
+  就是这么写的——左右腿是两个 mount，但静止姿下已在同一片世界空间。
+- **复杂模型分部件做**：拆 `part_base()` / `part_body()` / … 逐件单独预览，最后 `all_cubes()`
+  拼接。整件一把梭会埋掉单件缺陷。
+- **落盘前一律 `mkdir(parents=True, exist_ok=True)`**：`out/` 不入库，干净 checkout 上不存在。
+  历史上 10 个生成器违反过这条，只有逐个开独立沙箱跑才暴露得出来。
+- **`models/` 里 `format_version 5.0` 的一律是手改稿**，生成器只写 4.10，重跑会覆盖。
+  `gen_jian_player` / `gen_herb_crate` 有守卫，其余没有。
 - **PlayerAnimator 四大库坑**见 `docs/player-animation-conventions.md`，写动画前必读。
-- **`yaw=180` 渲的是 −z 面**：背面剔除只画法线转到 +z 的面。视角名一律走 `framing`，别再手写角度表。
-- **自动取景不能跨图比较**：`render()` 不传 `focus` 时每张图各算各的包围盒中心与缩放。要比就传
-  `framing.focus_for()` 出来的公共取景。
-- **渲出来的 PNG 读不回来**：文件工具读不了图像内容，验证只能靠 PIL/numpy 逐像素采样；把采样结果
-  打成人类可读的数字表。数材质像素用**色相单位向量**（归一化后比距离，`< 0.035~0.05` 判命中）——
-  绝对亮度阈值在不同光照/朝向下会失效，色相不会。
+
+更通用的那些（视角命名、贴图分辨率、Blockbench 读写符号不对称、渲出来的 PNG 读不回来）
+在 [bbmodel-maker 的 README](https://github.com/Kizunad/bbmodel-maker#踩过的坑) 里。
 
 ## 玩家动画：改完要能改回来
 
@@ -125,15 +134,13 @@ python3 -m unittest discover -s modelScript/tests -p "test_*.py"
 python3 modelScript/generators/gen_club_player_anim.py
 
 # 回程：Blockbench 里改完 → 读回成 POSE 表，贴进 client/tools/gen_<anim>.py
-python3 modelScript/tools/bbmodel_to_pose.py modelScript/models/ClubPlayerAnim.bbmodel \
-    --anim club_smash --tick 5
-python3 modelScript/tools/bbmodel_to_pose.py modelScript/models/ClubPlayerAnim.bbmodel \
-    --anim club_smash --diff      # 只列出人改动过的轴
+bbmodel-to-pose modelScript/models/ClubPlayerAnim.bbmodel --anim club_smash --tick 5
+bbmodel-to-pose modelScript/models/ClubPlayerAnim.bbmodel --anim club_smash --diff
 ```
 
 回程以前是断的：手改的姿态卡在 bbmodel 里，生成器那份 POSE 还是旧的，两边就此分叉。
 
-**读 Blockbench 存的文件和读生成器直出的文件，符号不一样**（见 `bb_anim_axes`）。
+**读 Blockbench 存的文件和读生成器直出的文件，符号不一样**（见 `bbmodel_maker.rig.bb_anim_axes`）。
 `bbmodel_to_pose` 按 `meta.format_version` 自动选边（生成器只写 `4.10`，Blockbench 5 存盘
 一律变 `5.0`），拿不准用 `--assume blockbench|generator` 显式指定。选错边读出来的姿态是
 **镜像**的。
@@ -172,7 +179,7 @@ Round 3 终轮，commit message 标 `(round N/3)`，终轮末尾写 `<PROMISE>` 
 的接触表**，然后**停下等人一句话**：
 
 ```bash
-python3 modelScript/tools/contact_sheet.py <模型.bbmodel> --gates <生成器模块> --prev <上一轮.bbmodel>
+bbmodel-contact-sheet <模型.bbmodel> --gates <生成器模块> --prev <上一轮.bbmodel>
 ```
 
 表里四样，缺一不可：

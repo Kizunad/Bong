@@ -24,8 +24,7 @@ from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in (LIB_DIR / "core", LIB_DIR / "generators", LIB_DIR / "tools",
-           REPO / "client" / "tools"):
+for _d in (LIB_DIR / "generators", LIB_DIR / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import held_item_pose as HIP  # noqa: E402

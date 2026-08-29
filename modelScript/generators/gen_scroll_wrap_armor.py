@@ -43,7 +43,7 @@ from PIL import Image, ImageDraw
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
-from armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -405,7 +405,7 @@ def make_texture() -> Image.Image:
 
 def _assert_no_coplanar_faces(all_parts: tuple[ArmorPart, ...]) -> None:
     """严格检查同平面共面 Z-fighting。"""
-    from armor_model_common import MOUNT_X
+    from bbmodel_maker.model.armor_model_common import MOUNT_X
 
     def bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
         offset = MOUNT_X[cube.mount]
@@ -479,7 +479,7 @@ def generate(render_previews: bool = True) -> dict[str, Path]:
     # 导出 OnPlayer 穿戴资产
     import sys as _sys
     _sys.path.insert(0, str(REPO / "modelScript" / "tools"))
-    from preview_armor_on_body import make_player_skin, write_player_bbmodel
+    from bbmodel_maker.workbench.preview_armor_on_body import make_player_skin, write_player_bbmodel
     skin = make_player_skin()
     model_dir = LOCAL_MODELS / "armor" / MATERIAL
     for part in all_parts:

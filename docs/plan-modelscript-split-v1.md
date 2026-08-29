@@ -6,8 +6,8 @@
 |------|------|------|
 | P0 | 边界固化：`Workspace` 抽象消灭 `REPO = parents[2]`，掰正 core → `client/tools/` 反向依赖 | ✅ 2026-08-30 |
 | P1 | 新 repo `Kizunad/bbmodel-maker`（public）：filter-repo 抽子树历史 → `bbmodel_maker` 包 → 发 `v0.1.0` | ✅ 2026-08-30 |
-| P2 | Bong 接依赖：`pip install git+...@v0.1.0`，16 个 LIB generator + 6 个 creatures 包换 import，golden 回归 | ⬜ |
-| P3 | 收口：删已搬走的 `core/`+`tools/`，改 CI 与 `scripts/test-all.sh` 测试范围，README 拆两半 | ⬜ |
+| P2 | Bong 接依赖：`pip install git+...@v0.1.1`，89 个文件换 import，golden 回归 | ✅ 2026-08-30 |
+| P3 | 收口：删已搬走的 `core/`+`tools/`，改 CI，README 拆两半 | ✅ 2026-08-30（与 P2 合并执行，理由见下） |
 | P4 | （机会主义，不设期限）25 个 SOLO generator 按需收编到库 API | ⬜ |
 
 ---
@@ -142,20 +142,61 @@
   `rotate_about_axis` / `rot_x|y|z`）。那批是通用 MC bendy-lib 变换数学，该搬，但要连
   `anim_common` 一起，放 **v0.2**。
 
-## P2 —— Bong 接依赖
+## P2 + P3 —— Bong 接依赖并删除本地副本 ✅ 2026-08-30
 
-1. 新建 `modelScript/requirements.txt`：`bbmodel-maker @ git+https://github.com/Kizunad/bbmodel-maker@v0.1.0`（**版本锁死**，库改动不静默影响 Bong）
-2. 16 个 LIB generator + 6 个 `creatures/*` 包换 import（`from bbmodel_maker.render import render_bbmodel` 等）
-3. 3 个 Bong 专属 tool 留下并改为调库：`tools/gen_pipeline_refs.py`（读 `scripts/images/.env`，:28,91,92）、`tools/transform_laoshu.py`、`tools/recolor_animate_rat.py`
-4. **验收**：`test_golden_bytes.py` 全绿（重跑生成器字节不变）；`test_gen_*.py` 13 个 + `test_club_anims.py` + `test_jian_player_tools.py` + `test_export_coffin_assets.py` 全绿
+> **两阶段合并执行**。原计划 P2 只换 import、P3 才删本地副本，但中间态会让同一批模块
+> 在进程里存在**两个副本**（`framing` 与 `bbmodel_maker.render.framing` 是两个不同的
+> module 对象）。一旦有代码在两侧之间传对象，`isinstance` 就会莫名失配——这种 bug
+> 极难定位，为省一次 review 的分割去承担它不划算。
 
-## P3 —— 收口
+### 已落地
 
-1. `git rm` 掉已搬走的 `modelScript/core/` 与 7 个 `tools/`
-2. `.github/workflows/build-resourcepack.yml`：`:56` 的 `pip install numpy pillow` → `pip install -r modelScript/requirements.txt`；`:66` 的 discover 范围不变（Bong 侧测试仍在 `modelScript/tests/`）
-3. `scripts/test-all.sh:561,578` 与 `scripts/test-all-owners.tsv` 跟着改
-4. `modelScript/README.md` 拆两半：库那半搬去新 repo，Bong 这半只留「怎么出一件资产 + 本仓踩过的坑」
-5. **验收**：`bash scripts/test-all.sh` 绿；`bash scripts/build-resourcepack.sh` 产物 sha1 不变
+1. **`modelScript/requirements.txt`**：`bbmodel-maker @ git+…@v0.1.1` + numpy + pillow。
+   **版本锁死在 tag 上**，库改动不会静默改变本仓资产产出。
+2. **89 个文件换成真 package import**（generators 16 / creatures 40 / exporters 1 /
+   tools 6 / tests 18 + client/tools/render_animation.py）。
+3. **删除本地副本**：`modelScript/core/` 全部 19 个模块 + 5 个已迁移 tool
+   （`bbmodel_to_pose` `contact_sheet` `make_variants` `preview_armor_on_body`
+   `render_jian_in_hand`）。
+4. **`tools/` 只剩 5 个 Bong 专属**：`gen_pipeline_refs`（读 `scripts/images/.env` 出参考图）、
+   `transform_laoshu`、`recolor_animate_rat`、`preview_player_anim`、`held_item_pose`
+   （后两个依赖 `client/tools/anim_common` 的关节解剖判据与 biped 骨架数学，随 v0.2 一起搬）。
+5. **CI**：`build-resourcepack.yml` 的 `pip install numpy pillow` → `pip install -r
+   modelScript/requirements.txt`。`scripts/test-all.sh` 的 discover 路径不变，无需改。
+6. **README 拆两半**：`modelScript/README.md` 只留「Bong 有哪些资产、每件怎么生成」
+   + 本仓特有的坑（Mount 只有六个 / 身体表面是精确平面 / 共面必须跨 mount 比 / fmt5.0
+   手改稿 / out 目录 mkdir）；通用底座与通用坑指向新 repo。
+7. 顺带把 9 个文件里指向已删路径的注释/文档改成新位置
+   （creatures 的 rig 说明、`docs/asset-modeling-and-reference-pipeline.md` 等）。
+
+### 验收证据
+
+- `python3 -m unittest discover -s modelScript/tests -p "test_*.py"` → **661 tests, OK**
+- **golden 全绿** ⇒ 40 个生成器改用抽出去的库之后，**产出逐字节未变**
+
+### P2 期间发现的（都是「只有真装出去才显形」的）
+
+| 发现 | 处置 |
+|---|---|
+| **库 bug**：`manifest.py` 的 `MANIFEST_DIR = Path(__file__).parents[1] / "manifests"` 装进 site-packages 后指向包内部，报「清单必须人写」把责任推给人 | 库侧改走 `workspace.manifests` 并加 3 例钉住，**发 v0.1.1**，本仓 requirements 跟着升 |
+| **golden 沙箱不忠实**：沙箱只复制 `modelScript` + `client/tools` + 动画 JSON，**漏了仓库根的 `bbmodel.toml`**。库的命名空间兜底是中性的 `minecraft`，于是产出的 namespace 整体漂掉——而这种漂移在渲染图上完全看不出来 | 沙箱树补上 `bbmodel.toml`；golden 由红转绿 |
+| 改写脚本把 `for _d in (a, b):` 的元组删剩一项后**丢了尾逗号**，`("generators")` 变成字符串，迭代它是逐字符往 sys.path 塞 `'g'/'e'/'n'`——**不报错，静默失效** | 4 个文件补回逗号；后续所有批量改写都加了 `ast.parse` 自检 |
+| `client/tools/render_animation.py` 仍指着已删的 `modelScript/core` | 改为直接 import 库 |
+| `test_jian_player_tools` 按文件路径起子进程跑 CLI，路径已变 | 加 `_module_script()` 按已安装模块解析真实路径 |
+
+### 交人工：`CLAUDE.md` 有 3 处失效引用
+
+仓库规矩是 `CLAUDE.md` 只人工改，故本 plan **不动它**。P3 之后失效的是：
+
+| 行 | 现在写的 | 应改成 |
+|---|---|---|
+| L252 | `python3 modelScript/tools/contact_sheet.py <模型> --gates … --prev …` | `bbmodel-contact-sheet <模型> --gates … --prev …` |
+| L255 | `modelScript/core/gatekit.py` 每道门旁边就是它的注入器 | `bbmodel_maker.gates.gatekit` |
+| L256 | bbmodel 真长相用 `modelScript/core/render_bbmodel.py` 看 | `bbmodel-render <模型>` |
+
+另有两份 **skeleton** plan 引用旧路径，按「一个 PR 只动一个 plan」未动：
+`plan-split-body-animation-v1.md`（`modelScript/core/render_player_pose.py`）、
+`plan-held-item-registration-v1.md`（`modelScript/core/held_item_common.py`）。
 
 ## P4 —— SOLO generator 收编（机会主义）
 

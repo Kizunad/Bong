@@ -161,11 +161,11 @@ def bent_end_local(part: str, bend_axis_rad: float, bend_value_rad: float) -> np
 
 
 # ----- keyframe sampling ---------------------------------------------------
-# 这一段已提进 modelScript/core/emote_anim.py：它处理的是通用 MC 动画格式
-# （关键帧收集 / easing 曲线 / 按 tick 采样），跟 Bong 无关，而 modelScript 的
+# 这一段住在 bbmodel-maker 库里（bbmodel_maker.rig.emote_anim）：它处理的是通用 MC
+# 动画格式（关键帧收集 / easing 曲线 / 按 tick 采样），跟 Bong 无关，而建模工具链的
 # 渲染底座也要用。留在这里的话就是渲染底座反过来依赖客户端工具目录。
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modelScript" / "core"))
-from emote_anim import (  # noqa: E402
+# 装法见 modelScript/requirements.txt。
+from bbmodel_maker.rig.emote_anim import (  # noqa: E402
     AXIS_NAMES,
     BODY_PART_NAMES,
     apply_easing,

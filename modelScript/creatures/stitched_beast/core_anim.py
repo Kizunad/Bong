@@ -51,7 +51,7 @@ import core as C  # noqa: E402
 import gen_core as G  # noqa: E402
 from functools import lru_cache  # noqa: E402
 
-from anim_rig import (Pose, Rig, build_tracks, euler_of, smooth, wrap,  # noqa: E402
+from bbmodel_maker.rig.anim_rig import (Pose, Rig, build_tracks, euler_of, smooth, wrap,  # noqa: E402
                       write_bbmodel, write_geckolib)
 
 MODEL = G.OUT

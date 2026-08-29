@@ -22,7 +22,7 @@ vanilla item model JSON 路线也是合法值，不必重做几何。
     python3 modelScript/generators/gen_bamboo_jian.py               # 双锏
     python3 modelScript/generators/gen_bamboo_jian.py --single      # 单根（导手持 item 模型用）
     python3 modelScript/generators/gen_bamboo_jian.py --preview-only
-    python3 modelScript/core/render_bbmodel.py modelScript/models/BambooJian.bbmodel --three-view
+    bbmodel-render modelScript/models/BambooJian.bbmodel --three-view
 """
 
 from __future__ import annotations

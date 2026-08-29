@@ -25,6 +25,10 @@ SANDBOX_TREES = (
     "modelScript",
     "client/tools",
     "client/src/main/resources/assets/bong/player_animation",
+    # 项目根的 workspace 配置。**少了它沙箱就不是本项目**——bbmodel-maker 的
+    # 命名空间兜底是中性的 "minecraft"，没有这份配置产出里的 namespace 会整体漂掉，
+    # 而漂掉的形态（贴图元数据 + geometry.<ns>.<key>）在渲染图上完全看不出来。
+    "bbmodel.toml",
 )
 
 _UUID = re.compile(rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

@@ -771,7 +771,7 @@ def main():
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
     try:
-        import render_bbmodel
+        from bbmodel_maker.render import render_bbmodel
         print("[*] 正在渲染三视图与等轴透视图...")
         three_view_img, _ = render_bbmodel.render_three_view(MODEL_OUT)
         three_view_img.save(THREE_VIEW_OUT)
