@@ -4516,9 +4516,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void mountLootPanelIfActive() {
         LootContainerStateStore.Session session = LootContainerStateStore.current();
         if (!(session instanceof LootContainerStateStore.OpenSession open)) return;
-        if (lootPanel != null && !lootPanel.isClosed()) return; // already mounted
-
-        unmountLootPanel(); // clean up any stale panel
+        if (lootPanel != null && !lootPanel.isClosed()
+                && lootPanel.sessionId() == open.sessionId()) return; // same session already mounted
+        // 新 session 到达时先卸载旧 panel，避免 UI 继续操作已失效容器。
+        unmountLootPanel();
         lootPanel = new LootContainerPanel(open);
         lootPanelLayout = lootPanel.build();
         // Insert before discardStrip

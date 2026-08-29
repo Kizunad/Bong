@@ -128,8 +128,10 @@ class R7InventoryContractTest {
         // 收口到客户端共享输入策略；生产源码树因此继续更新。
         // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
         // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
+        // P3 状态/意图边界批次 A 再加入 Alchemy/Trade/Loot controller、source、typed intent
+        // 与 SemanticUiDriver；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         assertEquals(
-            "2265b83ef4ddf9efcf0d14a7e06abe2ddfd90709feb024c91b2b27c4db48e40c",
+            "077d8bfc0f4150e58011abca22b7aace8aeb9a72f481b5c6699136ba134dda06",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
@@ -316,10 +318,10 @@ class R7InventoryContractTest {
     @Test
     void clearChildrenInventoryPinsExactProductionSites() throws IOException {
         List<String> sites = List.of(
-            "alchemy/AlchemyScreen.java:538",
-            "alchemy/AlchemyScreen.java:578",
-            "alchemy/AlchemyScreen.java:607",
-            "alchemy/AlchemyScreen.java:636",
+            "alchemy/AlchemyScreen.java:520",
+            "alchemy/AlchemyScreen.java:568",
+            "alchemy/AlchemyScreen.java:601",
+            "alchemy/AlchemyScreen.java:634",
             "combat/inspect/SkillConfigPanelManager.java:76",
             "combat/inspect/SkillConfigPanelManager.java:84",
             "combat/inspect/TechniquesTabPanel.java:149",

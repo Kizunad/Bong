@@ -1,17 +1,15 @@
 package com.bong.client.social;
 
 import com.bong.client.inventory.model.InventoryItem;
-import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.contract.DefaultUiScreenScope;
+import com.bong.client.ui.contract.UiScreenScope;
+import com.bong.client.ui.intent.UiIntentResult;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 /** plan-social-v1 §6.2: minimal trade response prompt. */
@@ -24,21 +22,27 @@ public final class TradeOfferScreen extends Screen {
     private static final int WARNING_COLOR = 0xFFFFAA55;
     private static final int MAX_VISIBLE_ITEMS = 5;
 
-    private final SocialStateStore.TradeOffer offer;
-    private final List<InventoryItem> choices;
+    private final TradeOfferScreenController controller;
+    private final DefaultUiScreenScope scope = new DefaultUiScreenScope();
     private int selectedIndex;
+    private long selectedInstanceId;
     private boolean settled;
 
     public TradeOfferScreen(SocialStateStore.TradeOffer offer) {
         super(Text.literal("交易邀请"));
-        this.offer = offer;
-        this.choices = collectTradeChoices(InventoryStateStore.snapshot());
-        this.selectedIndex = choices.isEmpty() ? -1 : 0;
+        this.controller = TradeOfferScreenController.production(offer, this::applyViewModel, TradeOfferScreen::executeOnClientThread);
+        // 初始不替玩家选择物品；必须通过 picker/滚轮明确锁定 instance_id。
+        this.selectedIndex = -1;
+        this.selectedInstanceId = -1L;
     }
 
     @Override
     protected void init() {
         super.init();
+        if (!scope.isOpen()) {
+            scope.onOpen();
+            controller.onOpen(scope);
+        }
         int cx = width / 2;
         int y = height / 2 + 76;
         this.addDrawableChild(ButtonWidget.builder(Text.literal("上一件"), b -> moveSelection(-1))
@@ -69,7 +73,23 @@ public final class TradeOfferScreen extends Screen {
             settle(false);
             return;
         }
+        closeStateScope();
         super.close();
+    }
+
+    /**
+     * Minecraft 在直接切换到另一屏幕时只调用 removed()；这里也必须解绑
+     * source/controller，避免交易屏被 setScreen(null) 后继续监听库存。
+     */
+    @Override
+    public void removed() {
+        closeStateScope();
+        super.removed();
+    }
+
+    private void closeStateScope() {
+        if (scope != null && !scope.isClosed()) scope.close();
+        controller.onClose();
     }
 
     @Override
@@ -85,6 +105,8 @@ public final class TradeOfferScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+        TradeOfferScreenViewModel model = controller.viewModel();
+        List<InventoryItem> choices = model.choices();
         context.fill(0, 0, width, height, BG_COLOR);
         int panelW = Math.min(420, Math.max(320, width - 40));
         int panelH = 230;
@@ -92,7 +114,7 @@ public final class TradeOfferScreen extends Screen {
         int panelY = (height - panelH) / 2;
         context.fill(panelX, panelY, panelX + panelW, panelY + panelH, PANEL_COLOR);
         context.drawCenteredTextWithShadow(textRenderer, "◇ 交 易 邀 请 ◇", width / 2, panelY + 12, TITLE_COLOR);
-        context.drawCenteredTextWithShadow(textRenderer, "对方提供: " + itemLabel(offer.offeredItem()), width / 2, panelY + 34, TEXT_COLOR);
+        context.drawCenteredTextWithShadow(textRenderer, "对方提供: " + itemLabel(model.offer().offeredItem()), width / 2, panelY + 34, TEXT_COLOR);
         context.drawCenteredTextWithShadow(textRenderer, "倒计时: " + Math.max(0L, remainingMillis() / 1000L) + "s", width / 2, panelY + 50, WARNING_COLOR);
 
         int y = panelY + 74;
@@ -113,44 +135,77 @@ public final class TradeOfferScreen extends Screen {
     }
 
     private void moveSelection(int delta) {
+        List<InventoryItem> choices = controller.viewModel().choices();
         if (choices.isEmpty()) return;
-        selectedIndex = Math.floorMod(selectedIndex + delta, choices.size());
+        selectedIndex = selectedIndex < 0
+            ? delta < 0 ? choices.size() - 1 : 0
+            : Math.floorMod(selectedIndex + delta, choices.size());
+        selectedInstanceId = choices.get(selectedIndex).instanceId();
     }
 
     private void settle(boolean accepted) {
         if (settled) return;
         settled = true;
+        List<InventoryItem> choices = controller.viewModel().choices();
         Long requested = accepted && selectedIndex >= 0 && selectedIndex < choices.size()
             ? choices.get(selectedIndex).instanceId()
             : null;
-        ClientRequestSender.sendTradeOfferResponse(offer.offerId(), accepted && requested != null, requested);
-        SocialStateStore.clearTradeOffer(offer.offerId());
+        UiIntentResult result = controller.intentSink().dispatch(new TradeOfferIntent.Respond(
+            controller.viewModel().offer().offerId(), accepted, requested
+        ));
+        if (result.kind() == UiIntentResult.Kind.LOCAL_REJECTED || result.kind() == UiIntentResult.Kind.LOCAL_ERROR) {
+            settled = false;
+            return;
+        }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {
             mc.setScreen(null);
+        } else {
+            // 无客户端实例时（例如 headless 测试）也要完成本地生命周期清理。
+            closeStateScope();
         }
     }
 
     private long remainingMillis() {
-        return Math.max(0L, offer.expiresAtMs() - System.currentTimeMillis());
+        return Math.max(0L, controller.viewModel().offer().expiresAtMs() - System.currentTimeMillis());
     }
 
     public String offerIdForTests() {
-        return offer.offerId();
+        return controller.viewModel().offer().offerId();
     }
 
-    private static List<InventoryItem> collectTradeChoices(InventoryModel model) {
-        ArrayList<InventoryItem> items = new ArrayList<>();
-        if (model == null) return List.of();
-        for (InventoryModel.GridEntry entry : model.gridItems()) {
-            InventoryItem item = entry.item();
-            if (item != null && !item.isEmpty() && item.instanceId() > 0) items.add(item);
+    /** 测试用：按 authoritative instance_id 查找当前 picker 的位置。 */
+    static int selectionIndexForTests(List<InventoryItem> choices, long instanceId) {
+        if (choices == null || instanceId < 0L) return -1;
+        for (int index = 0; index < choices.size(); index++) {
+            InventoryItem item = choices.get(index);
+            if (item != null && item.instanceId() == instanceId) return index;
         }
-        for (InventoryItem item : model.hotbar()) {
-            if (item != null && !item.isEmpty() && item.instanceId() > 0) items.add(item);
+        return -1;
+    }
+
+    private void applyViewModel(TradeOfferScreenViewModel model) {
+        List<InventoryItem> choices = model.choices();
+        if (choices.isEmpty()) {
+            selectedIndex = -1;
+            selectedInstanceId = -1L;
+            return;
         }
-        items.sort(Comparator.comparing(InventoryItem::displayName).thenComparingLong(InventoryItem::instanceId));
-        return List.copyOf(items);
+        int retained = selectionIndexForTests(choices, selectedInstanceId);
+        if (retained < 0) {
+            // 原选择已经不在 authoritative 快照中，必须回到无选择状态，不能改选另一件。
+            selectedIndex = -1;
+            selectedInstanceId = -1L;
+            return;
+        }
+        selectedIndex = retained;
+        selectedInstanceId = choices.get(selectedIndex).instanceId();
+    }
+
+    private static void executeOnClientThread(Runnable action) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) action.run();
+        else client.execute(action);
     }
 
     private static String itemLabel(SocialStateStore.TradeItemSummary item) {

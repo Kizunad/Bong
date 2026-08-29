@@ -4,9 +4,7 @@ import com.bong.client.input.InteractCandidate;
 import com.bong.client.input.InteractIntent;
 import com.bong.client.input.IntentHandler;
 import com.bong.client.input.ReservedInteractionIntents;
-import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.network.ClientRequestSender;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.hit.EntityHitResult;
@@ -17,7 +15,7 @@ public final class TradeOfferIntentHandler implements IntentHandler {
     @Override
     public Optional<InteractCandidate> candidate(MinecraftClient client) {
         EntityHitResult hit = playerHit(client);
-        if (hit == null || TradeOfferScreenBootstrap.firstTradeItem(InventoryStateStore.snapshot()) == null) {
+        if (hit == null || TradeOfferScreenViewModel.collectChoices(InventoryStateStore.snapshot()).isEmpty()) {
             return Optional.empty();
         }
         double distanceSq = client.player.squaredDistanceTo(hit.getEntity());
@@ -35,12 +33,20 @@ public final class TradeOfferIntentHandler implements IntentHandler {
         if (hit == null) {
             return false;
         }
-        InventoryItem item = TradeOfferScreenBootstrap.firstTradeItem(InventoryStateStore.snapshot());
-        if (item == null) {
+        // 默认交互没有明确 item instance_id，必须拒绝而不能自动选择排序后的第一件。
+        return false;
+    }
+
+    /** 由显式 picker 调用；只有当前库存中存在该 instance_id 才发送交易请求。 */
+    public boolean dispatchSelected(MinecraftClient client, InteractCandidate candidate, long instanceId) {
+        EntityHitResult hit = playerHit(client);
+        if (hit == null || candidate == null || candidate.intent() != InteractIntent.TradePlayer || instanceId <= 0L) {
             return false;
         }
-        ClientRequestSender.sendTradeOfferRequest("entity:" + hit.getEntity().getId(), item.instanceId());
-        return true;
+        if (TradeOfferScreenViewModel.findChoice(InventoryStateStore.snapshot(), instanceId).isEmpty()) return false;
+        return TradeOfferClientIntentSink.production().dispatch(new TradeOfferIntent.Request(
+            "entity:" + hit.getEntity().getId(), instanceId
+        )).kind() == com.bong.client.ui.intent.UiIntentResult.Kind.LOCAL_ACCEPTED;
     }
 
     private static EntityHitResult playerHit(MinecraftClient client) {

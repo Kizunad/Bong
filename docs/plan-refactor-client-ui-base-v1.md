@@ -337,7 +337,7 @@ bot e2e 分三层记录：
 - **历史 foundation 已清理，不计入 neutral P1 完成**：`5e40e5ced` 的 owo 专用 `DiffListWidget` 和 `5822dd51a` 的 owo 专用 `BongScreenBase` 没有生产调用者，已连同测试和契约登记删除；`b48dd162c` 的 `BongKeybindRegistry` 仍因生产 bootstrap 接入而保留。旧实现的行为证据不再作为长期 API。
 - ✅ 2026-08-26 **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy`；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake 和 `StoreUiStateSource`；contract、intent、state、headless 包均未依赖 owo、vanilla widget、Minecraft 或具体 UI 库。
 - ✅ 2026-08-27 **P2 owo XML adapter + bootstrap reference slice**：唯一 owo XML host、Craft wide/compact 本地模板、host 生命周期、分阶段 bootstrap 和真实 Fabric/owo 截图/交互门均已落地；Store/Intent 解耦留给 P3。
-- ⬜ **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
+- ✅ 2026-08-30 **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
 - ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy**：将 14 个 vanilla Screen 和剩余 12 个 owo CODE Screen 全部重写为 owo XML，连同现有 2 个 XML_MODEL Screen 一并纳入唯一宿主；`CraftScreen` 已由 P2 完成 XML host 规范化，P3 继续处理其 semantic state/intent 边界。迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放。
 - ⬜ **P5 InspectScreen tab-first 拆解**：shell 只做一次 Store intake、一次 subscription scope 和交互 arbitration；tab panel 只接 immutable ViewModel + intent callback；不与 R10 server inventory 内部重排同窗口。
 - ⬜ **P6 Insight/HUD/Bootstrap 收口**：`offer_id` 保留到 ViewModel/Store/Screen；exact offerId settlement；Sparring invite 只消费 server-authoritative combat snapshot；恢复 `BongHudOrchestrator` qi radar main path；完成剩余 UI bootstrap registry 迁移。
@@ -393,6 +393,13 @@ bot e2e 分三层记录：
 - **交付**：先用 semantic surface + 本地 owo XML template 跑通一条完整 vertical slice；Screen 不直接依赖 `ClientRequestSender`、`ClientRequestProtocol`、network Handler；所有 Store 读取经 `UiStateSource`/ViewModel，所有输入经 typed sink；明确交易显式 picker 和 inventory `instance_id`；`SemanticUiDriver` 用同一 action registry 跑对应 bot roundtrip。
 - **测试**：非法参数、过期 session、late callback 和关闭后 intent 全部 fail closed；bot 不使用像素点击且能验证 open/action/receipt/revision/rejection/close/session isolation；Craft/Alchemy/Trade/Loot 的 server authoritative roundtrip、无 selection refusal、transport accepted 与 server accepted 分离、断线后 scope/Store 不串会话；existing UI C2S smoke 对拍。
 - **跨仓库**：R2 lifecycle、R6 router、schema/proto 不改；CraftStore 只消费 M-09 冻结 contract。
+
+#### P3 批次 A 验证证据
+
+- **落地模块**：`alchemy/{AlchemyScreenViewModel,AlchemyUiStateSource,AlchemyScreenController,AlchemyIntent,AlchemyClientIntentSink}.java`、`social/{TradeOfferScreenViewModel,TradeOfferUiStateSource,TradeOfferScreenController,TradeOfferIntent,TradeOfferClientIntentSink}.java`、`inventory/{LootContainerScreenViewModel,LootContainerUiStateSource,LootContainerScreenController,LootContainerIntent,LootContainerClientIntentSink}.java`；Craft 的同型边界沿用 P3 Craft slice；`ui/headless/SemanticUiDriver.java` 接入同一 action registry。
+- **边界结果**：目标 Screen/Panel 不再直接引用 Store、`ClientRequestSender`、`ClientRequestProtocol` 或 handler；所有状态通过 `UiStateSource` → immutable ViewModel，所有输入通过 guarded typed `UiIntentSink`；关闭 scope、late callback、过期 session、重复 request、stale revision 和 transport/local rejection 均 fail closed。
+- **身份与会话**：Trade picker 只接受当前 authoritative inventory 中明确的 `instance_id`，选择对象消失时不自动换选；Loot panel 按 `session_id` 卸载旧实例，禁止跨会话继续发送 move/close。
+- **测试结果**：定向 P3 JUnit 套件 15 条通过；同一 Gradle 任务额外执行的 Fabric GameTest 门 3 条通过；完整 `./gradlew test build` 通过，5044 条 JUnit 测试、0 failures、0 errors；未修改 server、agent/schema、protobuf、Redis key 或 wire shape。
 
 ### P4 — 全 Screen、keybind、线程与 open policy
 

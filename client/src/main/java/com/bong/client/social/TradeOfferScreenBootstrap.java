@@ -2,14 +2,10 @@ package com.bong.client.social;
 
 import com.bong.client.BongClient;
 import com.bong.client.hud.BongToast;
-import com.bong.client.inventory.model.InventoryItem;
-import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.intent.UiIntentResult;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
-
-import java.util.Comparator;
 
 public final class TradeOfferScreenBootstrap {
     // F4 fix — 交易邀请被其他 GUI 挡时 / 静默过期时的非阻塞提示色（沿用 BongToast.WARNING_COLOR 数值，
@@ -84,13 +80,16 @@ public final class TradeOfferScreenBootstrap {
         switch (decision) {
             case CLOSE_SCREEN -> client.setScreen(null);
             case DECLINE_EXPIRED -> {
-                ClientRequestSender.sendTradeOfferResponse(offer.offerId(), false, null);
-                SocialStateStore.clearTradeOffer(offer.offerId());
-                if (current instanceof TradeOfferScreen) {
-                    client.setScreen(null);
+                UiIntentResult result = TradeOfferClientIntentSink.production().dispatch(
+                    new TradeOfferIntent.Respond(offer.offerId(), false, null)
+                );
+                if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+                    if (current instanceof TradeOfferScreen) {
+                        client.setScreen(null);
+                    }
+                    notifyExpired();
+                    lastBlockedToastOfferId = "";
                 }
-                notifyExpired();
-                lastBlockedToastOfferId = "";
             }
             case OPEN_SCREEN -> {
                 client.setScreen(new TradeOfferScreen(offer));
@@ -132,15 +131,4 @@ public final class TradeOfferScreenBootstrap {
         lastBlockedToastOfferId = "";
     }
 
-    static InventoryItem firstTradeItem(InventoryModel model) {
-        if (model == null) return null;
-        return model.gridItems().stream()
-            .map(InventoryModel.GridEntry::item)
-            .filter(item -> item != null && !item.isEmpty() && item.instanceId() > 0)
-            .min(Comparator.comparing(InventoryItem::displayName).thenComparingLong(InventoryItem::instanceId))
-            .orElseGet(() -> model.hotbar().stream()
-                .filter(item -> item != null && !item.isEmpty() && item.instanceId() > 0)
-                .min(Comparator.comparing(InventoryItem::displayName).thenComparingLong(InventoryItem::instanceId))
-                .orElse(null));
-    }
 }
