@@ -5,7 +5,7 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | 边界固化：`Workspace` 抽象消灭 `REPO = parents[2]`，掰正 core → `client/tools/` 反向依赖 | ✅ 2026-08-30 |
-| P1 | 新 repo `Kizunad/bbmodel-maker`（public）：filter-repo 抽子树历史 → `bbmodel_maker` 包 → 发 `v0.1.0` | ⬜ |
+| P1 | 新 repo `Kizunad/bbmodel-maker`（public）：filter-repo 抽子树历史 → `bbmodel_maker` 包 → 发 `v0.1.0` | ✅ 2026-08-30 |
 | P2 | Bong 接依赖：`pip install git+...@v0.1.0`，16 个 LIB generator + 6 个 creatures 包换 import，golden 回归 | ⬜ |
 | P3 | 收口：删已搬走的 `core/`+`tools/`，改 CI 与 `scripts/test-all.sh` 测试范围，README 拆两半 | ⬜ |
 | P4 | （机会主义，不设期限）25 个 SOLO generator 按需收编到库 API | ⬜ |
@@ -94,24 +94,53 @@
 - **`workspace.DEFAULT_NAMESPACE = "bong"`**：库拆出去后默认值不该是某个具体项目的命名空间。
   P1 决定是改中性默认还是缺配置即报错。
 
-## P1 —— 新 repo `Kizunad/bbmodel-maker`（public）
+## P1 —— 新 repo `Kizunad/bbmodel-maker`（public）✅ 2026-08-30
 
-1. `git filter-repo --path modelScript/core --path modelScript/tools --path-rename modelScript/core:src/bbmodel_maker/ ...` 抽子树历史（**保留 blame**，用户已拍板）
-2. 重排成五个子包：
+仓库：https://github.com/Kizunad/bbmodel-maker · tag `v0.1.0` · CI `test` 绿（py3.11 + 3.12）
 
-   | 子包 | 收谁 |
-   |---|---|
-   | `bbmodel_maker.model` | `armor_model_common` `to_fmt410` `workspace` |
-   | `bbmodel_maker.rig` | `animcore` `animkit` `anim_rig` `voxel_rig` `rigkit` `bb_anim_axes` |
-   | `bbmodel_maker.render` | `render_bbmodel` `framing` `pose_render` `render_player_pose` `held_item_common` `held_item_render` |
-   | `bbmodel_maker.gates` | `gatekit` `animgate` `manifest` |
-   | `bbmodel_maker.workbench` | `contact_sheet` `preview_armor_on_body` `preview_player_anim` `make_variants` `held_item_pose` `bbmodel_to_pose` `bbmodel_to_geckolib` |
+### 已落地
 
-3. `pyproject.toml`：依赖 `numpy` `pillow`，`[project.optional-dependencies] geckolib = ["playwright"]`（`bbmodel_to_geckolib` 才需要），console_scripts 暴露 workbench CLI
-4. 迁 11 个库测试（4414 行）：`test_{animcore,animgate,anim_preview_fidelity,anim_retime,bb_anim_roundtrip,contact_sheet,framing,gatekit,manifest,held_item_pose,preview_armor_on_body}.py`
-5. 新 repo CI：`python -m unittest discover` + `ruff`
-6. LICENSE / README（英文 quickstart + 中文踩坑段落照搬）
-7. **验收**：新 repo CI 绿；`pip install git+https://github.com/Kizunad/bbmodel-maker@v0.1.0` 在干净 venv 里能装能 import；打 tag `v0.1.0`
+1. **历史抽取**：`git filter-repo` 按 47 条路径（35 现行 + 12 历史）抽子树，
+   `--path-rename` 到 `src/bbmodel_maker/`。**19 个提交，`git log --follow` 可回溯到
+   #394/#395**，跨过 2026-08-23 的 `scripts/models → modelScript` 重组。
+2. **五个子包**：`workspace`（跨层）/ `model` / `rig` / `render` / `gates` / `workbench`，
+   24 个模块。`render_jian_in_hand` → `render/held_item_render.py`。
+3. **35 处 `sys.path.insert` 全部换成真 package import**（P0 有意推迟的那项，在此一次改完）。
+4. **`pyproject.toml`**：依赖 `numpy` + `pillow`，`[geckolib]` extra 才要 `playwright`；
+   5 个 console_scripts（`bbmodel-render` / `bbmodel-contact-sheet` / `bbmodel-armor-preview` /
+   `bbmodel-to-pose` / `bbmodel-to-geckolib`），入口全部验证可解析可运行。
+5. **测试 248 例**：animcore 43 / animgate 69 / framing 38 / gatekit 60 / workspace 27 /
+   namespace 11。
+6. **CI**：py3.11 + 3.12 矩阵，额外一步「**空目录下 import 全部模块**」——库不该假设调用方
+   配了 `bbmodel.toml`。
+7. README（含从 Bong 带过来的踩坑清单）+ MIT LICENSE。
+
+### 验收证据
+
+- 干净 venv 里 `pip install git+https://github.com/Kizunad/bbmodel-maker@v0.1.0` 成功，
+  **29 个模块在仓库之外全部可导入**，`bbmodel-render --help` 可运行
+- 新 repo CI `test` 绿
+
+### P1 期间发现并修掉的
+
+| 发现 | 处置 |
+|---|---|
+| `bbmodel_to_pose` 的 `ANIM_DIR = _WS.player_animations` 在**模块级**求值。Bong 里配了 `client_resources` 所以没暴露；独立库里没配就**连 import 都失败**，而该模块另一半功能根本用不着它 | 改成惰性 `anim_dir()`；CI 加「空目录 import」步骤钉死这类回归 |
+| `DEFAULT_NAMESPACE = "bong"` —— 公共库的兜底值不该是某个具体项目的名字 | 改为 `"minecraft"`。Bong 侧不受影响（`bbmodel.toml` 显式声明了 `namespace = "bong"`） |
+| `test_namespace_param.test_repository_default_is_bong` 搬进库后**靠兜底值偶然通过**，等于没测 | 重写成「兜底值必须是中性的」 |
+
+### 未搬（连同理由）
+
+- **6 个测试文件留在 Bong**：`test_manifest` / `test_contact_sheet` / `test_gatekit` 的
+  `MigratedGeneratorsTest` / `test_anim_retime` / `test_bb_anim_roundtrip` /
+  `test_preview_armor_on_body`。它们拿**真实资产和生成器**当 fixture（某个具体的草包 /
+  背篓 bbmodel、`gen_hide_armor`、client 的动画 JSON），是「库 × 调用方资产」的集成测试。
+  库这边缺等价的**合成 fixture**，已写进新 repo README「已知缺口」。
+- **`preview_player_anim` / `held_item_pose` 两个工作台入口**：链式依赖
+  `client/tools/anim_common.assert_joint_fold_is_anatomical` 与 `render_animation` 的
+  biped 骨架数学（`bend_center` / `bent_end_local` / `part_rotation_matrix` /
+  `rotate_about_axis` / `rot_x|y|z`）。那批是通用 MC bendy-lib 变换数学，该搬，但要连
+  `anim_common` 一起，放 **v0.2**。
 
 ## P2 —— Bong 接依赖
 
