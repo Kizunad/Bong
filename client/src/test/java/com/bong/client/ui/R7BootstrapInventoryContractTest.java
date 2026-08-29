@@ -20,7 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class R7BootstrapInventoryContractTest {
     private static final Path CLIENT_SOURCE = R7SourceScan.productionRoot().resolve("BongClient.java");
     private static final Pattern EMPTY_REGISTER = Pattern.compile(
-        "(?m)^\\s*([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\.(register|registerDefaults)\\(\\)\\s*;");
+        "(?m)^\\s*([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*)"
+            + "\\.(register(?:[A-Z][\\w$]*)?|registerDefaults)\\(\\)\\s*;");
 
     @Test
     void uiBootstrapFixtureMatchesTheSourceDerivedRegistrationOrder() throws IOException {

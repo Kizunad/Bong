@@ -248,6 +248,37 @@ tasks.register('runClientPreview') {
     dependsOn('runClient')
 }
 
+// runClientUiPreview — 不连服务器，使用固定本地 fixture 打开真实 Screen 并截图。
+// 该入口验证的是 Minecraft 字体、GUI scale、owo inflate/mount 和 framebuffer，
+// 不以离线 XML 模拟图替代 production renderer。
+tasks.register('runClientUiPreview') {
+    group = 'fabric'
+    description = 'Run deterministic Fabric/owo UI screenshot scenarios'
+    dependsOn('runClient')
+    doLast {
+        def configuredPath = System.getenv('BONG_UI_PREVIEW_CONFIG')
+            ?: file('ui-preview-harness.json').absolutePath
+        def previewConfig = new groovy.json.JsonSlurper().parse(file(configuredPath))
+        def configuredOutput = new File(previewConfig.output_dir ?: 'ui-preview-screenshots')
+        def outputDir = configuredOutput.isAbsolute() ? configuredOutput : file('run/' + configuredOutput)
+        def resultFile = new File(outputDir, 'ui-preview-result.txt')
+        if (!resultFile.isFile()) {
+            throw new GradleException(
+                "UI preview 未生成本轮结果标记，客户端可能在状态机结束前退出: ${resultFile}")
+        }
+        def result = resultFile.readLines().findAll { it.contains('=') }.collectEntries { line ->
+            def parts = line.split('=', 2)
+            [(parts[0]): parts[1]]
+        }
+        def expectedCount = previewConfig.screenshots.size().toString()
+        if (result.status != 'passed' || result.completed != expectedCount) {
+            throw new GradleException(
+                "UI preview 失败: status=${result.status}, completed=${result.completed}/${expectedCount}, "
+                    + "phase=${result.phase}, shot=${result.shot}, detail=${result.detail}")
+        }
+    }
+}
+
 tasks.named('runClient').configure {
     // GeckoLib 在 dev 环境默认注册 example blocks/entities，会抢占 Bong 固定协议 raw id。
     // 生产 jar 不会注册这些 examples；runClient 需显式关闭，保持本地验证对齐 server。
@@ -256,6 +287,9 @@ tasks.named('runClient').configure {
 
     def isPreviewRun = gradle.startParameter.taskNames.any {
         it == 'runClientPreview' || it.endsWith(':runClientPreview')
+    }
+    def isUiPreviewRun = gradle.startParameter.taskNames.any {
+        it == 'runClientUiPreview' || it.endsWith(':runClientUiPreview')
     }
     if (isPreviewRun) {
         environment 'BONG_PREVIEW_HARNESS', '1'
@@ -268,5 +302,18 @@ tasks.named('runClient').configure {
         // 退出 → artifact 0 张图（首轮 CI 实测命中此 bug）。
         def previewServer = System.getenv('BONG_PREVIEW_SERVER') ?: '127.0.0.1:25565'
         args '--quickPlayMultiplayer', previewServer
+    }
+    if (isUiPreviewRun) {
+        environment 'BONG_UI_PREVIEW_HARNESS', '1'
+        def configuredPath = System.getenv('BONG_UI_PREVIEW_CONFIG')
+            ?: file('ui-preview-harness.json').absolutePath
+        environment 'BONG_UI_PREVIEW_CONFIG', configuredPath
+        doFirst {
+            // 先清理旧结果，避免客户端启动阶段异常时误读上一次的成功标记。
+            def previewConfig = new groovy.json.JsonSlurper().parse(file(configuredPath))
+            def configuredOutput = new File(previewConfig.output_dir ?: 'ui-preview-screenshots')
+            def outputDir = configuredOutput.isAbsolute() ? configuredOutput : file('run/' + configuredOutput)
+            delete new File(outputDir, 'ui-preview-result.txt')
+        }
     }
 }

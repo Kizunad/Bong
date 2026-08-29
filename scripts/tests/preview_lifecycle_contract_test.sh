@@ -106,8 +106,31 @@ fi
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
 : >"$TMP_ROOT/cargo-invocations.log"
+export BONG_PREVIEW_LAUNCH_STATE_FILE="$TMP_ROOT/runtime/launch.state"
+export BONG_PREVIEW_LAUNCH_IDENTITY_FILE="$TMP_ROOT/runtime/launch.identity"
 run_preview 5 >/dev/null
 [ -f "$BONG_PREVIEW_PID_FILE" ]
+# The wrapper must publish an explicit parent handoff only after the PID
+# authority exists.  The outer test-all runner uses this marker when the
+# wrapper later exits non-zero during post-publication rollback.
+[ -f "$BONG_PREVIEW_LAUNCH_STATE_FILE" ] || {
+  echo "successful preview did not publish the authority handoff marker" >&2
+  exit 1
+}
+grep -qx 'state=authority_published' "$BONG_PREVIEW_LAUNCH_STATE_FILE" || {
+  echo "authority handoff marker has no published state" >&2
+  exit 1
+}
+grep -qx 'state=identity_published' "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE" || {
+  echo "identity handoff marker has no published state" >&2
+  exit 1
+}
+for identity_field in pid starttime executable executable_identity; do
+  grep -q "^${identity_field}=" "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE" || {
+    echo "identity handoff marker is missing ${identity_field}" >&2
+    exit 1
+  }
+done
 # review finding [3]：默认 release profile 的 build 必须是 'build --locked --release'。
 # 旧 harness 不观测 build 调用，跳过 build / 用错 profile（如省略 --locked、忽略
 # --release）的实现照常绿。
@@ -125,6 +148,9 @@ grep -qx 'build --locked --release' "$TMP_ROOT/cargo-invocations.log" || {
 # 成功二次启动并覆盖记录（而非 bind 失败提前死亡、碰巧没改记录），本组断言必红。
 refuse_valid_before="$(cat "$BONG_PREVIEW_PID_FILE")"
 refuse_valid_pid="$(sed -n 's/^pid=//p' "$BONG_PREVIEW_PID_FILE")"
+refuse_valid_starttime="$(sed -n 's/^starttime=//p' "$BONG_PREVIEW_PID_FILE")"
+refuse_valid_executable="$(sed -n 's/^executable=//p' "$BONG_PREVIEW_PID_FILE")"
+refuse_valid_identity="$(sed -n 's/^executable_identity=//p' "$BONG_PREVIEW_PID_FILE")"
 if run_preview 1 >"$TMP_ROOT/refuse-valid.log" 2>&1; then
   echo "second launch while a valid running server's record exists unexpectedly succeeded" >&2
   exit 1
@@ -141,8 +167,34 @@ listener_on_25565 || {
   echo "second-launch refusal left the running server's 25565 listener gone" >&2
   exit 1
 }
-bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
+# An old launch must not stop a successor record that happens to reuse the
+# shared PID path.  This exercises the expected-identity comparison inside the
+# lifecycle lock, not just the parent runner's shell decision.
+if BONG_PREVIEW_EXPECTED_PID="$refuse_valid_pid" \
+    BONG_PREVIEW_EXPECTED_STARTTIME="$((refuse_valid_starttime + 1))" \
+    BONG_PREVIEW_EXPECTED_EXECUTABLE="$refuse_valid_executable" \
+    BONG_PREVIEW_EXPECTED_EXECUTABLE_IDENTITY="$refuse_valid_identity" \
+    bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
+    >"$TMP_ROOT/expected-mismatch.log" 2>&1; then
+  echo "stop accepted an expected identity mismatch" >&2
+  exit 1
+fi
+kill -0 "$refuse_valid_pid" 2>/dev/null || {
+  echo "expected identity mismatch stopped the live server" >&2
+  exit 1
+}
+listener_on_25565 || {
+  echo "expected identity mismatch released the live server listener" >&2
+  exit 1
+}
+BONG_PREVIEW_EXPECTED_PID="$refuse_valid_pid" \
+  BONG_PREVIEW_EXPECTED_STARTTIME="$refuse_valid_starttime" \
+  BONG_PREVIEW_EXPECTED_EXECUTABLE="$refuse_valid_executable" \
+  BONG_PREVIEW_EXPECTED_EXECUTABLE_IDENTITY="$refuse_valid_identity" \
+  bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
+rm -f -- "$BONG_PREVIEW_LAUNCH_STATE_FILE" "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE"
+unset BONG_PREVIEW_LAUNCH_STATE_FILE BONG_PREVIEW_LAUNCH_IDENTITY_FILE
 # 同一契约的稳定态：一次成功停服后记录已清，再调 stop 必须仍返回 0（幂等 no-op）——
 # 回归成「无记录时返回错误」的实现此断言必红（review finding 31447830772 [major]）。
 if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
@@ -311,6 +363,20 @@ fi
 exec "$REAL_PS" "\$@"
 EOF
 chmod 700 "$TMP_ROOT/bin/ps"
+
+# Publication rollback failure must be testable without weakening the
+# identity-safe production path: make descendant enumeration fail, while
+# leaving pgrep -x (used only by this harness) real for leak assertions.
+REAL_PGREP="$(command -v pgrep)"
+cat >"$TMP_ROOT/bin/pgrep" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${FAKE_PGREP_CHILD_ENUM_FAIL:-0}" = "1" ] && [[ "\$*" == "-P "* ]]; then
+  exit 2
+fi
+exec "$REAL_PGREP" "\$@"
+EOF
+chmod 700 "$TMP_ROOT/bin/pgrep"
 
 # review finding [1]：process-status=2 must be treated as a live direct child.
 # Inject uncertainty only after the authority record is published, so readiness
@@ -664,6 +730,83 @@ print("record-publication failure preview left the server holding 25565", file=s
 sys.exit(1)
 PY
 then
+  exit 1
+fi
+
+# Handoff marker publication failure + identity-safe rollback failure must
+# preserve the matching PID authority for the caller's stop retry. A preexisting
+# marker is the wrapper's fail-closed publication failure; pidfd and descendant
+# enumeration seams make both rollback paths genuinely unconfirmed. This runs
+# the real wrapper and the real stop command, unlike the outer-runner fixture.
+printf 'state=foreign\n' > "$TMP_ROOT/runtime/preexisting-launch.state"
+chmod 600 "$TMP_ROOT/runtime/preexisting-launch.state"
+export BONG_PREVIEW_LAUNCH_STATE_FILE="$TMP_ROOT/runtime/preexisting-launch.state"
+export BONG_PREVIEW_LAUNCH_IDENTITY_FILE="$TMP_ROOT/runtime/handoff.identity"
+export FAKE_PIDFD_SIGNAL_FAIL=1
+export FAKE_PGREP_CHILD_ENUM_FAIL=1
+if timeout 20 bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 2 \
+    >"$TMP_ROOT/handoff-publish-failure.log" 2>&1; then
+  unset BONG_PREVIEW_LAUNCH_STATE_FILE FAKE_PIDFD_SIGNAL_FAIL FAKE_PGREP_CHILD_ENUM_FAIL
+  echo "handoff publication failure unexpectedly succeeded" >&2
+  exit 1
+else
+  rc=$?
+fi
+unset FAKE_PIDFD_SIGNAL_FAIL FAKE_PGREP_CHILD_ENUM_FAIL
+[ "$rc" -ne 124 ] || {
+  echo "handoff publication failure rollback hung" >&2
+  exit 1
+}
+[ "$rc" -eq 75 ] || {
+  echo "handoff publication failure returned $rc instead of dedicated exit 75" >&2
+  exit 1
+}
+grep -q "launch-state publication rollback 未确认" "$TMP_ROOT/handoff-publish-failure.log" || {
+  echo "handoff publication failure did not report rollback uncertainty" >&2
+  exit 1
+}
+grep -q "保留 authority" "$TMP_ROOT/handoff-publish-failure.log" || {
+  echo "handoff publication failure did not hand off retained authority" >&2
+  exit 1
+}
+[ -f "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "handoff publication failure lost the matching PID authority" >&2
+  exit 1
+}
+[ -f "$BONG_PREVIEW_LAUNCH_IDENTITY_FILE" ] || {
+  echo "handoff publication failure lost the independent identity handoff" >&2
+  exit 1
+}
+[ "$(cat "$TMP_ROOT/runtime/preexisting-launch.state")" = "state=foreign" ] || {
+  echo "handoff publication failure overwrote the preexisting launch marker" >&2
+  exit 1
+}
+handoff_pid="$(sed -n 's/^pid=//p' "$BONG_PREVIEW_PID_FILE" 2>/dev/null || true)"
+[ -n "$handoff_pid" ] || {
+  echo "handoff publication failure lost the retained server PID" >&2
+  exit 1
+}
+kill -0 "$handoff_pid" 2>/dev/null || {
+  echo "handoff publication failure did not preserve the live server for stop retry (pid=$handoff_pid)" >&2
+  exit 1
+}
+# Restore normal lifecycle inspection and exercise the real identity-safe stop
+# against the retained record; no PID-only deletion is permitted here.
+unset BONG_PREVIEW_LAUNCH_STATE_FILE BONG_PREVIEW_LAUNCH_IDENTITY_FILE
+if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
+    >"$TMP_ROOT/handoff-publish-stop.log" 2>&1; then
+  echo "identity-safe stop could not clean retained authority" >&2
+  cat "$TMP_ROOT/handoff-publish-stop.log" >&2
+  exit 1
+fi
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "identity-safe stop left the retained authority record" >&2
+  exit 1
+}
+rm -f "$TMP_ROOT/runtime/preexisting-launch.state"
+rm -f "$TMP_ROOT/runtime/handoff.identity"
+if listener_on_25565; then
+  echo "identity-safe stop left the retained server listener" >&2
   exit 1
 fi
 

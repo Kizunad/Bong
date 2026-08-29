@@ -39,11 +39,12 @@ class R7InventoryContractTest {
         assertEquals(expectedRows, actualRows,
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
         assertEquals(30, expectedRows.size(), "fixture should contain 29 suffix files plus one non-suffix Screen");
-        assertEquals(15, count(expectedRows, "BASE_OWO"), "direct owo migration set changed");
+        assertEquals(14, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
+        assertEquals(1, count(expectedRows, "OWO_XML"), "P2 owo XML host set changed");
         assertEquals(14, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
         assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
-        assertEquals(15, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
-            "P1 base migration is limited to direct owo Screens");
+        assertEquals(14, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
+            "P1 base migration is limited to direct legacy owo Screens");
         assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
             "cultivation/voidaction/LegacyAssignPanel.java")),
             "suffix-only discovery must not lose a real Screen named LegacyAssignPanel");
@@ -56,7 +57,7 @@ class R7InventoryContractTest {
     void fill100InventoryPinsExactRegistrationSites() throws IOException {
         List<FillInventoryRow> rows = readFillInventory();
         List<R7SourceScan.TokenOccurrence> actual = R7SourceScan.tokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)");
-        assertEquals(92, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
+        assertEquals(89, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
         assertEquals(rows.stream().map(FillInventoryRow::stableKey).toList(),
             actual.stream().map(R7SourceScan.TokenOccurrence::stableKey).toList(),
             "the fixture must enumerate every production fill token in path-local order");
@@ -69,9 +70,9 @@ class R7InventoryContractTest {
         assertEquals(rows.stream().map(FillInventoryRow::source).toList(),
             actual.stream().map(R7SourceScan.TokenOccurrence::sourceLine).toList(),
             "every frozen source line must match production bytes");
-        assertEquals(20, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
+        assertEquals(19, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
             "the frozen fill inventory file set changed");
-        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L),
+        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 79L, "RISK", 5L),
             histogram(rows.stream().map(FillInventoryRow::verdict).toList()),
             "the frozen fill classification counts changed");
         assertEquals(expectedFillClassifications(), rows.stream()
@@ -82,9 +83,9 @@ class R7InventoryContractTest {
         List<R7SourceScan.StructuralTokenOccurrence> structural = readFillStructuralContext();
         assertEquals(structural, R7SourceScan.structuralTokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)"),
             "every executable fill site must match its production enclosing class, method, and source hash");
-        assertEquals(87, structural.size(),
+        assertEquals(84, structural.size(),
             "all executable fill sites must carry one frozen structural context");
-        assertEquals(87, structural.stream().map(R7SourceScan.StructuralTokenOccurrence::stableKey).distinct().count(),
+        assertEquals(84, structural.stream().map(R7SourceScan.StructuralTokenOccurrence::stableKey).distinct().count(),
             "structural-context stable keys must be unique");
     }
 
@@ -115,8 +116,16 @@ class R7InventoryContractTest {
         //     + resources/assets/bong/textures/entity/back_basket.png
         // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
         // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
+        // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
+        // 相对主线新增 14 个生产文件、修改 5 个且无删除，最终文件数 2175 → 2189。
+        // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
+        // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
+        // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
+        // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
+        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
+        // 与 outcome UI 投影；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
         assertEquals(
-            "bc4bc8073e76f20d718423c083ca0967e3fb8ad459c5fc7ef89d5de390a8e858",
+            "f41ca422b238ed78049a9f7b8a5b7421bbea3efc6c454ba082b0d649e2f4d493",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
@@ -151,6 +160,9 @@ class R7InventoryContractTest {
         List<ScreenInventoryRow> result = new java.util.ArrayList<>();
         for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(PRODUCTION_ROOT)) {
             String relative = PRODUCTION_ROOT.relativize(parsed.path()).toString().replace('\\', '/');
+            if (relative.startsWith("ui/adapter/owo/")) {
+                continue;
+            }
             List<DirectScreenDeclaration> declarations = new java.util.ArrayList<>();
             List<String> adapterStyles = new java.util.ArrayList<>();
             new TreePathScanner<Void, Void>() {
@@ -160,7 +172,8 @@ class R7InventoryContractTest {
                 public Void visitClass(ClassTree tree, Void unused) {
                     if (tree.getExtendsClause() != null) {
                         String parent = normalizeScreenParent(tree.getExtendsClause().toString());
-                        if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")) {
+                        if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")
+                            || parent.startsWith("OwoXmlScreenHost<")) {
                             declarations.add(new DirectScreenDeclaration(tree.getSimpleName().toString(), parent));
                         }
                     }
@@ -189,6 +202,7 @@ class R7InventoryContractTest {
             if (!declarations.isEmpty()) {
                 for (DirectScreenDeclaration declaration : declarations) {
                     boolean owo = declaration.parent().startsWith("BaseOwoScreen<");
+                    boolean xmlOwo = declaration.parent().startsWith("OwoXmlScreenHost<");
                     if (owo) {
                         assertEquals("BaseOwoScreen<FlowLayout>", declaration.parent(),
                             "new direct owo roots require an explicit migration decision: " + relative);
@@ -198,8 +212,8 @@ class R7InventoryContractTest {
                     result.add(new ScreenInventoryRow(
                         relative,
                         declaration.className(),
-                        owo ? "BASE_OWO" : "VANILLA_SCREEN",
-                        owo ? adapterStyles.get(0) : "VANILLA",
+                        owo ? "BASE_OWO" : xmlOwo ? "OWO_XML" : "VANILLA_SCREEN",
+                        owo ? adapterStyles.get(0) : xmlOwo ? "OWO_XML_TEMPLATE" : "VANILLA",
                         owo,
                         noteFor(relative)
                     ));
@@ -233,6 +247,9 @@ class R7InventoryContractTest {
         }
         if (normalized.startsWith("io.wispforest.owo.ui.base.BaseOwoScreen<")) {
             return normalized.substring("io.wispforest.owo.ui.base.".length());
+        }
+        if (normalized.startsWith("com.bong.client.ui.adapter.owo.OwoXmlScreenHost<")) {
+            return normalized.substring("com.bong.client.ui.adapter.owo.".length());
         }
         return normalized;
     }
@@ -272,7 +289,8 @@ class R7InventoryContractTest {
                 "combat/screen/ZhenfaLayoutScreen.java", "cultivation/voidaction/VoidActionScreen.java",
                 "forge/ForgeScreen.java", "identity/IdentityPanelScreen.java", "inspect/ItemInspectScreen.java",
                 "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
-            case "craft/CraftScreen.java", "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
+            case "craft/CraftScreen.java" -> "P2 owo XML vertical slice";
+            case "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
                 "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
                 "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java",
                 "ui/CultivationScreen.java" -> "Code-built FlowLayout";
@@ -304,7 +322,7 @@ class R7InventoryContractTest {
             "craft/CraftMaterialGrid.java:52",
             "craft/CraftMaterialGrid.java:53",
             "craft/CraftOutputPreview.java:32",
-            "craft/CraftRecipeListWidget.java:131",
+            "craft/CraftRecipeListWidget.java:134",
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
@@ -431,9 +449,6 @@ class R7InventoryContractTest {
             craft/CraftRecipeListWidget.java#6\tLEGAL\tNONE
             craft/CraftRecipeListWidget.java#7\tLEGAL\tNONE
             craft/CraftRecipeListWidget.java#8\tLEGAL\tNONE
-            craft/CraftScreen.java#1\tLEGAL\tNONE
-            craft/CraftScreen.java#2\tLEGAL\tNONE
-            craft/CraftScreen.java#3\tLEGAL\tTERMINAL_INTENTIONAL
             craft/CraftScreenLayout.java#1\tCOMMENT\tNONE
             craft/WorkbenchScreen.java#1\tLEGAL\tNONE
             craft/WorkbenchScreen.java#2\tLEGAL\tNONE

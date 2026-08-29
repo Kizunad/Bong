@@ -1,4 +1,13 @@
 pub(crate) mod combat;
+pub(crate) mod forge;
+/// 外置 Forge typed-dispatch 契约测试所需的最小公共接缝。
+///
+/// Forge 实现模块本身保持 crate 内可见；这里只暴露 extractor、dispatcher 与其
+/// typed request，避免 `server/tests/**` 为契约 pin 而依赖整个内部实现树。
+#[doc(hidden)]
+pub mod forge_contract {
+    pub use super::forge::{dispatch_forge_request, try_into_forge_request, ForgeRequest};
+}
 pub(crate) mod npc;
 pub(crate) mod production;
 pub(crate) mod social;

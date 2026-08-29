@@ -39,7 +39,6 @@ import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
 import com.bong.client.inventory.LootContainerScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
-import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.dying_elder.DyingElderInteractionKeybindings;
 import com.bong.client.movement.MovementKeybindings;
@@ -56,7 +55,8 @@ import com.bong.client.spirittreasure.SpiritTreasureScreenBootstrap;
 import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.tsy.SearchCancelInteractionBootstrap;
 import com.bong.client.ui.CultivationScreenBootstrap;
-import com.bong.client.ui.ScreenTransitionController;
+import com.bong.client.ui.ClientUiBootstrap;
+import com.bong.client.ui.preview.UiPreviewHarnessClient;
 import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
 import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
@@ -86,7 +86,7 @@ public class BongClient implements ClientModInitializer {
         NpcDialogueBubbleRenderer.register();
         NpcMoodIcon.register();
         HudRenderCallback.EVENT.register(BongHud::render);
-        ScreenTransitionController.register();
+        ClientUiBootstrap.registerScreenTransition();
         InteractionKeybindings.register();
         NpcInteractionLogControls.register();
         HudImmersionControls.register();
@@ -102,7 +102,7 @@ public class BongClient implements ClientModInitializer {
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();
         ForgeScreenBootstrap.register();
-        CraftScreenBootstrap.register();
+        ClientUiBootstrap.registerCraftScreen();
         IdentityPanelScreenBootstrap.register();
         LingtianActionScreenBootstrap.register();
         VoidActionScreenBootstrap.register();
@@ -157,6 +157,7 @@ public class BongClient implements ClientModInitializer {
         VoidErosionRenderBootstrap.register();
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
+        UiPreviewHarnessClient.install();
         IrisBootstrap.register();
         SodiumChunkReload.register();
         // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板本地超时 tick 驱动

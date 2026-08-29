@@ -46,16 +46,19 @@ public final class CraftActionBar {
                 onFill.run();
             }
         });
+        fillButton.id("craft-fill");
         fillButton.sizing(Sizing.fixed(70), Sizing.fixed(20));
         root.child(fillButton);
 
         minusButton = Components.button(Text.literal("-"), b -> setQuantity(quantity - 1, true));
+        minusButton.id("craft-minus");
         minusButton.sizing(Sizing.fixed(20), Sizing.fixed(20));
         root.child(minusButton);
         quantityLabel = label("1", 0xFFE8DDC4);
         quantityLabel.horizontalSizing(Sizing.fixed(28));
         root.child(quantityLabel);
         plusButton = Components.button(Text.literal("+"), b -> setQuantity(quantity + 1, true));
+        plusButton.id("craft-plus");
         plusButton.sizing(Sizing.fixed(20), Sizing.fixed(20));
         root.child(plusButton);
 
@@ -68,6 +71,7 @@ public final class CraftActionBar {
                 onStart.accept(quantity);
             }
         });
+        startButton.id("craft-start");
         startButton.sizing(Sizing.fixed(86), Sizing.fixed(20));
         root.child(startButton);
 

@@ -1,0 +1,40 @@
+{
+  "_doc": "真实 Fabric/owo UI 截图。framebuffer 经 GUI scale 换算为逻辑 viewport；状态机会严格对拍后才截图。",
+  "output_dir": "ui-preview-screenshots",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "craft-minimum",
+      "scene_id": "craft",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "craft-compact"
+    },
+    {
+      "name": "craft-odd",
+      "scene_id": "craft",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "craft-compact"
+    },
+    {
+      "name": "craft-wide",
+      "scene_id": "craft",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "craft"
+    }
+  ]
+}

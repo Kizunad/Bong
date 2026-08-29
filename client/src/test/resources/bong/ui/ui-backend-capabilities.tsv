@@ -1,4 +1,4 @@
 # backend	mc_version	status	production_dependency	fallback	evidence
 OWO	1.20.1	AVAILABLE	owo-lib-0.11.2	NONE	client/build.gradle
-VANILLA	1.20.1	AVAILABLE	minecraft-client	NONE	client/build.gradle
-THIRD_PARTY_HOST	1.20.1	OUT_OF_SCOPE	NONE	OWO|VANILLA	R7 plan section 2.1 excludes an additional production host
+VANILLA	1.20.1	MIGRATION_ONLY	minecraft-client	OWO	R7 pre-migration Screen inventory; no post-migration production host
+THIRD_PARTY_HOST	1.20.1	OUT_OF_SCOPE	NONE	OWO	R7 plan section 2.1 excludes an additional production host

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 最低 320x240 布局：交互栏固定可见，三块动态内容通过纵向滚动到达。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface>
+                <vanilla-translucent />
+            </surface>
+            <!-- 面板随逻辑 viewport 连续伸缩；根 padding 是稳定安全边距。 -->
+            <padding>
+                <horizontal>10</horizontal>
+                <vertical>6</vertical>
+            </padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="craft-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fill">100</horizontal>
+                        <vertical method="fill">100</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#0D0D15</flat>
+                        <outline>#4A4050</outline>
+                    </surface>
+                    <padding><all>6</all></padding>
+                    <gap>4</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <vertical-alignment>center</vertical-alignment>
+                    <children>
+                        <flow-layout id="craft-header" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <vertical-alignment>center</vertical-alignment>
+                            <gap>8</gap>
+                            <children>
+                                <label id="craft-title">
+                                    <text>手搓台</text>
+                                    <color>#FFFFFFFF</color>
+                                </label>
+                                <label id="craft-subtitle">
+                                    <text>C 关闭 · 滚动切换区域</text>
+                                    <color>#A8A8B8</color>
+                                </label>
+                            </children>
+                        </flow-layout>
+                        <scroll id="craft-content-scroll" direction="vertical">
+                            <flow-layout id="craft-scroll-content" direction="vertical">
+                                <sizing>
+                                    <horizontal method="fixed">276</horizontal>
+                                    <vertical method="content" />
+                                </sizing>
+                                <horizontal-alignment>center</horizontal-alignment>
+                                <gap>4</gap>
+                                <children>
+                                    <flow-layout id="recipe-host" direction="vertical">
+                                        <sizing>
+                                            <horizontal method="fixed">160</horizontal>
+                                            <vertical method="fixed">276</vertical>
+                                        </sizing>
+                                    </flow-layout>
+                                    <flow-layout id="material-host" direction="vertical">
+                                        <sizing>
+                                            <horizontal method="fixed">260</horizontal>
+                                            <vertical method="fixed">276</vertical>
+                                        </sizing>
+                                    </flow-layout>
+                                    <flow-layout id="output-host" direction="vertical">
+                                        <sizing>
+                                            <horizontal method="fixed">200</horizontal>
+                                            <vertical method="fixed">276</vertical>
+                                        </sizing>
+                                    </flow-layout>
+                                </children>
+                            </flow-layout>
+                            <sizing>
+                                <horizontal method="fixed">276</horizontal>
+                                <vertical method="fixed">156</vertical>
+                            </sizing>
+                            <scrollbar-thiccness>3</scrollbar-thiccness>
+                        </scroll>
+                        <flow-layout id="action-host" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fixed">276</horizontal>
+                                <vertical method="fixed">32</vertical>
+                            </sizing>
+                        </flow-layout>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

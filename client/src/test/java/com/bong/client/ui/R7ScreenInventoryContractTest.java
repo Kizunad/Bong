@@ -43,6 +43,10 @@ class R7ScreenInventoryContractTest {
                 .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
                 .sorted()
                 .toList()) {
+                String relative = PRODUCTION_ROOT.relativize(path).toString().replace('\\', '/');
+                if (relative.startsWith("ui/adapter/owo/")) {
+                    continue;
+                }
                 String source = R7SourceScan.read(path);
                 String normalizedSource = source.replaceAll("\\s+", "");
                 Matcher matcher = CLASS_EXTENDS.matcher(source);
@@ -50,12 +54,15 @@ class R7ScreenInventoryContractTest {
                     String parent = matcher.group(2).replaceAll("\\s+", "");
                     String host;
                     String style;
-                    if (parent.contains("BaseOwoScreen")) {
+                    if (parent.contains("BaseOwoScreen") || parent.contains("OwoXmlScreenHost")) {
                         host = "OWO";
-                        style = normalizedSource.contains("createAdapter(FlowLayout.class,this)")
+                        style = parent.contains("OwoXmlScreenHost")
+                            ? "OWO_XML_TEMPLATE"
+                            : normalizedSource.contains("createAdapter(FlowLayout.class,this)")
                             ? "XML_MODEL"
                             : "CODE";
-                        assertTrue(normalizedSource.contains("OwoUIAdapter.create")
+                        assertTrue(style.equals("OWO_XML_TEMPLATE")
+                                || normalizedSource.contains("OwoUIAdapter.create")
                                 || style.equals("XML_MODEL"),
                             "every direct owo Screen must expose one explicit adapter factory: " + path);
                     } else if (parent.equals("Screen") || parent.endsWith(".Screen")) {
@@ -65,7 +72,7 @@ class R7ScreenInventoryContractTest {
                         continue;
                     }
                     result.add(new ScreenAdapterRow(
-                        PRODUCTION_ROOT.relativize(path).toString().replace('\\', '/'),
+                        relative,
                         matcher.group(1),
                         host,
                         style,
