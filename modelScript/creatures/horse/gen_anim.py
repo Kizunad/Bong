@@ -1116,7 +1116,7 @@ def write_geckolib(rig: Rig, P, names: list[str], out: Path, loads: list[Load] |
 
     通道值与 bbmodel 同源（`build_tracks` 已转成 Blockbench/Bedrock 约定），所以曲线
     符号是对的；未验的是 GeckoLib 运行时对 loop / 插值 / 骨名解析的处理。正经导出路径
-    仍是 modelScript/core/bbmodel_to_geckolib.py（驱动 Blockbench 官方 codec）。
+    仍是 bbmodel_maker.workbench.bbmodel_to_geckolib（驱动 Blockbench 官方 codec）。
     """
     animations = {}
     for name, L in clips(names, loads or [BARE]):

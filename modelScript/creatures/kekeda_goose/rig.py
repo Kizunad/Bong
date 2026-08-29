@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """珂珂达 —— 绑定层：鹅的骨架怎么动，以及"动得对不对"由什么数字判定。
 
-通用的骨树/正解/逆解/导出在 modelScript/core/anim_rig.py，这里只放**鹅特有**的四件事：
+通用的骨树/正解/逆解/导出在 bbmodel_maker.rig.anim_rig，这里只放**鹅特有**的四件事：
 
 1. **腿是鸟腿**。股骨近水平埋在体腔里，外面看到的那个"反向的膝"其实是跗间关节
    （踝）。所以链是 femur → tibia(胫跗) → tarsus(跗跖) → foot(蹼)，限位按鸟给，
@@ -34,7 +34,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from anim_rig import Pose, Rig, smooth, wrap  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Pose, Rig, smooth, wrap  # noqa: E402
 
 MODELS = Path(__file__).resolve().parents[2] / "models" / "kekeda_goose"
 PLUME = MODELS / "KekedaPlume.bbmodel"

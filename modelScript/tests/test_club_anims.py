@@ -29,8 +29,7 @@ import numpy as np
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in (LIB_DIR / "core", LIB_DIR / "generators", LIB_DIR / "tools",
-           REPO / "client" / "tools"):
+for _d in (LIB_DIR / "generators", LIB_DIR / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import gen_wooden_club as GC  # noqa: E402

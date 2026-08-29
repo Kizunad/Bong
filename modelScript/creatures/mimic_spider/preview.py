@@ -26,7 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from spider_rig import BLOCK, MODELS, Pose, SpiderRig, fold_pose  # noqa: E402
 
 SHELL_RESERVE = 0.5  # 甲壳层加厚预留：框架折叠包围盒必须比方块再小一圈

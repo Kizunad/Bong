@@ -48,7 +48,7 @@ sys.path.insert(0, str(HERE))
 import gen_beast as GB  # noqa: E402
 import genome as GN  # noqa: E402
 import heads as HD  # noqa: E402
-from anim_rig import Pose, Rig, build_tracks, smooth, write_bbmodel, write_geckolib  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Pose, Rig, build_tracks, smooth, write_bbmodel, write_geckolib  # noqa: E402
 
 OUT_DIR = HERE.parents[2] / "models" / "stitched_beast"
 

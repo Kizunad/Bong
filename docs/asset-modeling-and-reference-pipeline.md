@@ -115,7 +115,7 @@ shoulder_skull = { elements = ["skull_"], must_show_in = ["FRONT", "SIDE_L"], as
 2. **Round 2 (人工闸门 - 停下等人看)**:
    - 运行接触表工具：
      ```bash
-     python3 modelScript/tools/contact_sheet.py modelScript/models/<Asset>.bbmodel \
+     bbmodel-contact-sheet modelScript/models/<Asset>.bbmodel \
          --gates gen_<asset> --prev modelScript/out/<Asset>_round1.bbmodel
      ```
    - 工具合成 6 个诚实视角（FRONT/BACK/SIDE_L/SIDE_R/3-4/TOP）、上轮对比、Manifest 点名与几何门自检。
@@ -134,7 +134,7 @@ shoulder_skull = { elements = ["skull_"], must_show_in = ["FRONT", "SIDE_L"], as
    注入 `client/src/main/java/.../ArmorPartModel.java` 的 Cube 表中。
 2. **人体试穿覆盖度核验**:
    ```bash
-   python3 modelScript/tools/preview_armor_on_body.py gen_<asset> --slot chest --coverage
+   bbmodel-armor-preview gen_<asset> --slot chest --coverage
    ```
 3. **跑通完整测试套件**:
    ```bash
@@ -172,10 +172,10 @@ gh pr create --head feat/<branch-name> \
 | :--- | :--- |
 | `modelScript/tools/gen_pipeline_refs.py` | 概念图、图标、MC 三视图、爆炸图 4 阶段分步生成工具 |
 | `modelScript/generators/` | 各资产程序化建模生成脚本 (`gen_*.py`) |
-| `modelScript/core/armor_model_common.py` | 护甲 Cube 结构体、挂载点基准、UV 计算及资产写入共通库 |
-| `modelScript/core/render_bbmodel.py` | Headless z-buffer 软渲染器与固定取景器 |
-| `modelScript/tools/contact_sheet.py` | Round 2 人工闸门接触表合成工具 |
-| `modelScript/tools/preview_armor_on_body.py` | 真原版 Minecraft 玩家流民人体模型试穿与覆盖度检测工具 |
+| `bbmodel_maker.model.armor_model_common` | 护甲 Cube 结构体、挂载点基准、UV 计算及资产写入共通库 |
+| `bbmodel_maker.render.render_bbmodel` | Headless z-buffer 软渲染器与固定取景器 |
+| `bbmodel_maker.workbench.contact_sheet` | Round 2 人工闸门接触表合成工具 |
+| `bbmodel_maker.workbench.preview_armor_on_body` | 真原版 Minecraft 玩家流民人体模型试穿与覆盖度检测工具 |
 | `modelScript/manifests/` | 人写特征清单 TOML 目录 |
 | `modelScript/assets/refs/` | 参考生图与设计底稿目录 |
 | `scripts/images/.env` | 生图 API 端点与 Key 配置文件 |

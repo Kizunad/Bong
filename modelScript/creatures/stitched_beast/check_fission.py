@@ -136,7 +136,7 @@ def main() -> int:
                    "检查 fragment.viable_sockets 是否真的按创面判")
 
     # ---- ⑦ 爆体动画：末帧碎片确实分开了，且不穿地太深
-    from anim_rig import Rig
+    from bbmodel_maker.rig.anim_rig import Rig
     rig = Rig(A.MODEL)
     end = A.sample(rig, "core_burst", 1.0)
     W = rig.world(end)

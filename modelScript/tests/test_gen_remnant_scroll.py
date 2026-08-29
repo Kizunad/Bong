@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIB_DIR = Path(__file__).resolve().parents[1]
-for _d in ("core", "generators"):
+for _d in ("generators",):
     sys.path.insert(0, str(LIB_DIR / _d))
 
 import gen_remnant_scroll as scroll

@@ -46,7 +46,7 @@ sys.path.insert(0, str(HERE))
 
 import gen_muscle as MU  # noqa: E402
 import gen_skeleton as SK  # noqa: E402
-from voxel_rig import Palette, Rig  # noqa: E402
+from bbmodel_maker.rig.voxel_rig import Palette, Rig  # noqa: E402
 
 OUT_DIR = SK.OUT_DIR
 

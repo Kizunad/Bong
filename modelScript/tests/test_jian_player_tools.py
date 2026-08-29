@@ -18,7 +18,7 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in ("core", "generators", "exporters", "tools"):
+for _d in ("generators", "exporters", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 sys.path.insert(0, str(REPO / "client" / "tools"))   # gen_lower_body_gait 属客户端动画工具
 
@@ -26,8 +26,22 @@ import gen_bamboo_jian as B
 import gen_jian_player as J
 import gen_jian_player_anim as A
 import gen_lower_body_gait as G
-import render_jian_in_hand as H
-import render_player_pose as P
+from bbmodel_maker.render import held_item_render as H
+from bbmodel_maker.render import render_player_pose as P
+
+
+
+def _module_script(dotted: str) -> Path:
+    """已迁进 bbmodel-maker 的 CLI，取它在安装位置的真实文件路径。
+
+    这些入口原先是 `modelScript/core/*.py` / `modelScript/tools/*.py`，现在住在库里。
+    测试仍按「起子进程跑脚本」验参数校验，所以要的是文件路径而不是模块名。
+    """
+    import importlib.util
+
+    spec = importlib.util.find_spec(dotted)
+    assert spec is not None and spec.origin, f"找不到已安装的模块 {dotted}"
+    return Path(spec.origin)
 
 
 class JianPlayerToolsTest(unittest.TestCase):
@@ -152,7 +166,7 @@ class JianPlayerToolsTest(unittest.TestCase):
             P.render_anim(Path("unused.json"), size=0)
 
     def test_render_player_pose_cli_rejects_invalid_size_and_accepts_maximum(self) -> None:
-        script = LIB_DIR / "core" / "render_player_pose.py"
+        script = _module_script("bbmodel_maker.render.render_player_pose")
         invalid = subprocess.run(
             [sys.executable, str(script), "--size", "0"],
             cwd=REPO,
@@ -212,7 +226,7 @@ class JianPlayerToolsTest(unittest.TestCase):
 
                         jian.reset_mock()
                         with patch.object(P, "grid", return_value=P.OUT_POSE):
-                            with patch.object(sys, "argv", [str(LIB_DIR / "core" / "render_player_pose.py"), "--pose", "stand", "--with-jian", "--size", "1"]):
+                            with patch.object(sys, "argv", ["render_player_pose", "--pose", "stand", "--with-jian", "--size", "1"]):
                                 P.main()
                         atlas.assert_called_with(True)
                         self.assertEqual(1, jian.call_count)
@@ -356,7 +370,7 @@ class JianPlayerToolsTest(unittest.TestCase):
                 self.assertIn(f"between 1 and {J.MAX_RENDER_SIZE}", result.stderr)
 
     def test_render_jian_in_hand_size_rejects_before_loading_model(self) -> None:
-        script = LIB_DIR / "tools" / "render_jian_in_hand.py"
+        script = _module_script("bbmodel_maker.render.held_item_render")
         missing_model = Path("does-not-exist.bbmodel")
         for size in (0, -1, H.MAX_RENDER_SIZE + 1):
             with self.subTest(size=size):

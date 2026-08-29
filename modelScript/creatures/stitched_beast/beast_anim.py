@@ -112,7 +112,7 @@ import head_anim as HA  # noqa: E402
 import heads as HD  # noqa: E402
 import limbs as LB  # noqa: E402
 import locomotion as LM  # noqa: E402
-from anim_rig import (Pose, Rig, build_tracks, euler, euler_of,  # noqa: E402
+from bbmodel_maker.rig.anim_rig import (Pose, Rig, build_tracks, euler, euler_of,  # noqa: E402
                       write_bbmodel, write_geckolib)
 
 OUT_DIR = HERE.parents[2] / "models" / "stitched_beast"

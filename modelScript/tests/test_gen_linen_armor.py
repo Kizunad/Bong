@@ -13,11 +13,11 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in ("core", "generators", "exporters", "tools"):
+for _d in ("generators", "exporters", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 
 import gen_linen_armor as linen
-from armor_model_common import ArmorPart, Cube, MOUNT_X, build_bbmodel, validate_part, write_material_assets
+from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, MOUNT_X, build_bbmodel, validate_part, write_material_assets
 
 
 def _part_with(cubes: tuple[Cube, ...]) -> ArmorPart:

@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 from gen_pelt import _corners  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 
 
 def main() -> int:

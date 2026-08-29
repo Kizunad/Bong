@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from rig import PELT, Rig, rotmat  # noqa: E402
 
 VIEWS = {"side": (90.0, 4.0), "34": (140.0, 12.0), "front": (180.0, 4.0), "back": (0.0, 8.0)}

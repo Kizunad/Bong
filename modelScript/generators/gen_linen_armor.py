@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
-from armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -352,7 +352,7 @@ def make_texture() -> Image.Image:
 
 def _assert_no_coplanar_faces(all_parts: tuple[ArmorPart, ...]) -> None:
     """严格检查同平面共面 Z-fighting。"""
-    from armor_model_common import MOUNT_X
+    from bbmodel_maker.model.armor_model_common import MOUNT_X
 
     def bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
         offset = MOUNT_X[cube.mount]

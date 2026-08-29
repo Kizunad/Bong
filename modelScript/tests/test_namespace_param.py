@@ -14,8 +14,8 @@ from pathlib import Path
 CORE = Path(__file__).resolve().parents[1] / "core"
 sys.path.insert(0, str(CORE))
 
-import armor_model_common as AMC  # noqa: E402
-import workspace  # noqa: E402
+from bbmodel_maker.model import armor_model_common as AMC  # noqa: E402
+from bbmodel_maker import workspace  # noqa: E402
 from PIL import Image  # noqa: E402
 
 
@@ -104,7 +104,7 @@ class HeldItemNamespaceTest(unittest.TestCase):
 
     @staticmethod
     def _item():
-        import held_item_common as HIC
+        from bbmodel_maker.render import held_item_common as HIC
 
         return HIC.HeldItem(
             key="test_blade",
@@ -122,7 +122,7 @@ class HeldItemNamespaceTest(unittest.TestCase):
         )
 
     def test_mtl_uses_workspace_namespace(self) -> None:
-        import held_item_common as HIC
+        from bbmodel_maker.render import held_item_common as HIC
 
         mtl = HIC.build_mtl(self._item())
         self.assertIn("map_Kd other:item/test_blade/0", mtl)
@@ -133,20 +133,20 @@ class HeldItemNamespaceTest(unittest.TestCase):
         )
 
     def test_model_json_uses_workspace_namespace(self) -> None:
-        import held_item_common as HIC
+        from bbmodel_maker.render import held_item_common as HIC
 
         payload = HIC.build_model_json(self._item())
         self.assertIn('"other:models/item/test_blade/test_blade.obj"', payload)
         self.assertNotIn("bong", payload)
 
     def test_explicit_namespace_beats_workspace(self) -> None:
-        import held_item_common as HIC
+        from bbmodel_maker.render import held_item_common as HIC
 
         self.assertIn("acme:", HIC.build_model_json(self._item(), namespace="acme"))
 
     def test_bbmodel_model_identifier_follows_namespace(self) -> None:
         """`model_identifier` 是 f"geometry.<ns>.<key>"，最早漏掉的就是它。"""
-        import held_item_common as HIC
+        from bbmodel_maker.render import held_item_common as HIC
 
         model = HIC.build_bbmodel(self._item())
         self.assertEqual(
@@ -158,7 +158,7 @@ class HeldItemNamespaceTest(unittest.TestCase):
     def test_signature_exposes_namespace(self) -> None:
         import inspect
 
-        import held_item_common as HIC
+        from bbmodel_maker.render import held_item_common as HIC
 
         for fn in (HIC.build_bbmodel, HIC.write_assets):
             with self.subTest(fn=fn.__name__):
@@ -179,8 +179,8 @@ class RigNamespaceTest(unittest.TestCase):
     def test_rig_builders_expose_namespace(self) -> None:
         import inspect
 
-        import rigkit
-        import voxel_rig
+        from bbmodel_maker.rig import rigkit
+        from bbmodel_maker.rig import voxel_rig
 
         for mod in (rigkit, voxel_rig):
             cls = next(

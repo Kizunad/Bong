@@ -42,12 +42,11 @@ from pathlib import Path
 import numpy as np
 
 LIB = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB / "core"))
-import workspace  # noqa: E402
+from bbmodel_maker import workspace  # noqa: E402
 
 _WS = workspace.Workspace.discover(start=Path(__file__))
 REPO = _WS.root
-for _d in (LIB / "core", LIB / "generators", LIB / "tools", REPO / "client" / "tools"):
+for _d in (LIB / "generators", LIB / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import preview_player_anim as P  # noqa: E402

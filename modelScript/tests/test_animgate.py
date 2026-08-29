@@ -17,9 +17,8 @@ from pathlib import Path
 import numpy as np
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB_DIR / "core"))
 
-import animgate as ag  # noqa: E402
+from bbmodel_maker.gates import animgate as ag  # noqa: E402
 
 
 class Ch:

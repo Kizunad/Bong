@@ -565,7 +565,7 @@ def write_geckolib(rig: Rig, names: list[str], out: Path) -> None:
     Bedrock 动画的旋转符号约定和 Blockbench 面板显示是否一致（X/Y 是否取反），我没
     有可对拍的实例：仓库里现有的 geo.json 骨骼旋转全是 0，modelScript/models 里也没有
     bbmodel ↔ animation.json 的同源对。所以正经路径是把 DainuLionRig.bbmodel 交给
-    modelScript/core/bbmodel_to_geckolib.py（驱动 Blockbench 官方 codec 导出），由
+    bbmodel_maker.workbench.bbmodel_to_geckolib（驱动 Blockbench 官方 codec 导出），由
     codec 负责这层约定；本函数只用于人眼查看曲线和兜底。
     """
     animations = {}

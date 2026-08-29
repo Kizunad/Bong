@@ -27,7 +27,7 @@ from pathlib import Path as _Path
 
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
 
-from armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -369,7 +369,7 @@ def _assert_no_coplanar_faces(all_parts: tuple[ArmorPart, ...]) -> None:
     肉眼极易误判成"贴图脏"。**不能只比同 mount**：左右腿是两个 mount，但静止
     姿下 MOUNT_X 已经把它们摆进同一片世界空间，裆缝处照样会打架。
     """
-    from armor_model_common import MOUNT_X
+    from bbmodel_maker.model.armor_model_common import MOUNT_X
 
     def bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
         offset = MOUNT_X[cube.mount]
@@ -408,7 +408,7 @@ VANILLA_BODY = ((-4.0, 4.0), (12.0, 24.0), (-2.0, 2.0))
 
 
 def _world_box(cube: Cube) -> tuple[tuple[float, float], ...]:
-    from armor_model_common import MOUNT_X
+    from bbmodel_maker.model.armor_model_common import MOUNT_X
 
     offset = MOUNT_X[cube.mount]
     origin = (cube.origin[0] + offset, cube.origin[1], cube.origin[2])
@@ -501,7 +501,7 @@ def _assert_inner_edges_meet(all_parts: tuple[ArmorPart, ...]) -> None:
     一坨。这条不变式一旦被后来的改动破坏，症状是「正视两条腿之间那道缝没了」，
     而共面检查抓不到（互相探过去是体积重叠，不是共面）。
     """
-    from armor_model_common import MOUNT_X
+    from bbmodel_maker.model.armor_model_common import MOUNT_X
 
     for part in all_parts:
         for cube in part.cubes:
@@ -521,7 +521,7 @@ def _assert_inner_edges_meet(all_parts: tuple[ArmorPart, ...]) -> None:
 def _assert_mirror_symmetry(all_parts: tuple[ArmorPart, ...]) -> None:
     """左右同名件必须严格镜像。x() 手滑写错正负号时，两只脚会长得不一样，
     而三视图正视里这种错误常常被自身遮挡住看不出来。"""
-    from armor_model_common import MOUNT_X
+    from bbmodel_maker.model.armor_model_common import MOUNT_X
 
     for part in all_parts:
         left = {c.name[:-5]: c for c in part.cubes if c.name.endswith("_left")}

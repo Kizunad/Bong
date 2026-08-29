@@ -46,7 +46,7 @@ import beast_anim as BA  # noqa: E402
 import core as C  # noqa: E402
 import gen_beast as GB  # noqa: E402
 import locomotion as LM  # noqa: E402
-from anim_rig import Pose, Rig  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Pose, Rig  # noqa: E402
 
 N = 40                 # 逐帧检查的采样数
 SKATE_TOL = 0.35       # 滑步容差 px。单帧的数值误差量级，一步的行程是它的几十倍

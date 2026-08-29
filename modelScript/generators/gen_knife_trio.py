@@ -52,7 +52,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
-from held_item_common import (  # noqa: E402
+from bbmodel_maker.render.held_item_common import (  # noqa: E402
     Box,
     HeldItem,
     Material,

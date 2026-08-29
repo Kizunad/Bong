@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_skeleton as SK  # noqa: E402
-from voxel_rig import Palette, Rig, Vec, lerp, smoothstep  # noqa: E402
+from bbmodel_maker.rig.voxel_rig import Palette, Rig, Vec, lerp, smoothstep  # noqa: E402
 
 OUT_DIR = SK.OUT_DIR
 
