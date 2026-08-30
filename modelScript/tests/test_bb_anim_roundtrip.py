@@ -172,7 +172,10 @@ class AnimationRoundTripTest(unittest.TestCase):
 
     CASES = (("ClubPlayerAnim.bbmodel", "club_smash"),
              ("ClubPlayerAnim.bbmodel", "club_sweep"),
-             ("JianPlayerAnim.bbmodel", "jian_dual_smash"))
+             ("JianPlayerAnim.bbmodel", "jian_dual_smash"),
+             # 脊骨剑：第一版这份文件里 8 条动画全是空的（`length=0 / bones=0`），
+             # 往返锁是最直接的兜底——没有帧就还原不出姿态，这里立刻红。
+             ("BeastSpineSwordPlayerAnim.bbmodel", "sword_spine_slash"))
 
     def _bbmodel_anim(self, filename, name):
         doc = json.loads((MODELS / filename).read_text(encoding="utf-8"))

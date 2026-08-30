@@ -20,12 +20,14 @@
  "gen_beast_spine_sword.py": {
   "exit": 0,
   "outputs": {
-   "BeastSpineSword.bbmodel": "b751dce22b255d6b46b169ccf6905948f540ac90315746252cc612546d09526b"
+   "BeastSpineSword.bbmodel": "44c98e10694380d3b27958d0b45fab35460eb397ed08e411a0e16fb79f8d80cd"
   }
  },
  "gen_beast_spine_sword_player_anim.py": {
-  "exit": 2,
-  "outputs": {}
+  "exit": 0,
+  "outputs": {
+   "BeastSpineSwordPlayerAnim.bbmodel": "3e30f57bd9f0f27e30bf3bfff18ffc4c6c68c522211fc5edcb2eedbf5535d4ec"
+  }
  },
  "gen_bone_armor.py": {
   "exit": 0,

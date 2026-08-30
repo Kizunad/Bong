@@ -1,14 +1,44 @@
 #!/usr/bin/env python3
-"""BeastSpineSwordPlayerAnim.bbmodel —— 玩家 + 异兽脊骨剑 (BeastSpineSword) + 内嵌手持与劈砍/横扫动画。
+"""BeastSpineSwordPlayerAnim.bbmodel —— 玩家 + 异兽脊骨剑 + 内嵌 Blockbench 动画。
 
-将玩家模型与异兽脊骨剑绑定，并烘入剑法核心动作：
-- `sword_cleave` (双手重劈)
-- `sword_swing_horiz` (横扫千军)
-- `sword_thrust` (破甲穿刺)
-- `sword_parry` (架剑招架)
-- `sword_infuse` (引煞封灵蓄力)
+骨架与 `gen_club_player_anim.py` 同构（每轴一层 group + bend 层 + 三轴 body），换成
+异兽脊骨剑挂右手，并把这几条烘进去供 Animate 模式播放/拖关键帧：
 
-在 Blockbench Animate 模式中可实时预览、拖拽调姿。
+    sword_spine_slash   本剑专属单手斜斩：扛剑过右肩 → 过顶 → 斜劈左前下 → 撕扯回抽
+    sword_spine_cleave  本剑专属双手竖斩：双手握柄举剑 → 沿中线整条劈下 → 挂住提回
+    sword_swing_horiz / sword_thrust / sword_parry / sword_infuse   借用的通用剑招
+    lower_walk / lower_sprint   纯下半身步态（上半身由架势轨道补齐，见下）
+
+## 两个坑（第一版都踩了，症状分别是"没有动画"和"剑飘在身外"）
+
+**1. 关键帧格式不是 `{"rotation": [...], "position": [...]}`。** Blockbench 的 animator
+要的是 `{"keyframes": [{"channel": "rotation"|"position", ...}]}`。第一版自己写了一份
+`bake_emotecraft_anim`，① 从 `doc["moves"]` 取动作（真实路径是 `doc["emote"]["moves"]`，
+取到的永远是空列表）② `keyframe()` 的参数顺序错位 ③ 弧度当角度用 ④ 轴符号按读侧写。
+四条叠在一起，加上一个 `except Exception: print("⚠ 失败")` 的静默兜底，产出的 8 条动画
+全是 `length=0 / bones=0`——文件在 Blockbench 里打得开，Animate 模式里一帧都没有。
+现在直接复用 `gen_club_player_anim.convert_animation`（轴换算收在 `rig.bb_anim_axes`
+的唯一一处），**并且不再吞异常**：烘不出来就崩，别再让空动画混过去。
+
+**2. 剑必须用出料系的握把点。** `BeastSpineSword.bbmodel` 现在按
+`held_item_common.emit_offset` 出料，握把点就落在方块中心 (8,8,8)（授权系那份柄尾在
+y=0 的坐标只活在生成器的 box 表里）。挂手就是把这一点搬到 `HAND_REST`。
+
+## 这不是游戏里的 display 变换
+
+两层静态 group（`sword_right_pitch` 180° 把剑尖从朝上翻成顺着小臂朝下、`sword_right_roll`
+备用）是**便于手调的近似**，留给你改握角。要看真机手持姿态用
+`modelScript/tools/preview_player_anim.py --hold ... --display ...`。
+
+## ⚠ 手改过就别再跑生成器
+
+这份是给人手调的。在 Blockbench 里改完存盘文件会变成 `format_version 5.0`，重跑本脚本
+会**整份覆盖**。改完把数值反推回 `client/tools/gen_sword_spine_slash.py` 的 POSE 表
+（换算见 `bbmodel-to-pose`），生成器和资产才不会分叉。
+
+用法:
+    python3 modelScript/generators/gen_beast_spine_sword_player_anim.py
+    python3 modelScript/generators/gen_beast_spine_sword_player_anim.py --anims sword_spine_slash
 """
 
 from __future__ import annotations
@@ -18,23 +48,21 @@ import base64
 import copy
 import io
 import json
-import math
 import sys
-import uuid
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 LIB = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB / "core"))
 sys.path.insert(0, str(LIB / "tools"))
 sys.path.insert(0, str(LIB / "generators"))
 
-from bbmodel_maker.rig import bb_anim_axes as AX
-from bbmodel_maker.render import held_item_render as H
-from bbmodel_maker.render import render_player_pose as P
-from gen_jian_player_anim import (
+from bbmodel_maker.render import held_item_render as H  # noqa: E402
+from bbmodel_maker.render import render_player_pose as P  # noqa: E402
+from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402  轴换算的唯一一处
+from gen_club_player_anim import convert_animation as bake_animation  # noqa: E402
+from gen_jian_player_anim import (  # noqa: E402  骨架/关键帧的公共件，别再抄一份
     PART_GROUPS,
     TICKS_PER_SECOND,
     _uuid,
@@ -51,7 +79,7 @@ OUT_BB = LIB / "models" / "BeastSpineSwordPlayerAnim.bbmodel"
 
 DEFAULT_ANIMS = [
     "sword_spine_slash",
-    "sword_cleave",
+    "sword_spine_cleave",
     "sword_swing_horiz",
     "sword_thrust",
     "sword_parry",
@@ -60,42 +88,45 @@ DEFAULT_ANIMS = [
     "lower_sprint",
 ]
 
-# 异兽脊骨剑握把点 (约在 y=3.4px 处，中心对准手心)
-SWORD_GRIP_PX = np.array([0.0, 3.4, 0.0])
+# 异兽脊骨剑是**出料系**：`gen_beast_spine_sword.EMIT_OFFSET` 已把握把点放到方块中心
+# (8,8,8)px，剑尖朝 +Y。挂到手上就是把这一点搬到 HAND_REST。
+SWORD_GRIP_PX = np.array([8.0, 8.0, 8.0])
+# 只挂右手：左手是活的副手，双手握由 leftArm 的姿态去贴，不再复制一把剑。
 SIDE = "right"
 
-
-def _png_data_url(img: Image.Image) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-
+# 纯下半身动画（lower_*）没有手臂轨道，播起来剑会垂到零姿态、读作"握法变了"。
+# 补一份恒定的持剑架势上半身——取本剑专属动作的 guard 帧。
+STANCE_ANIM = "sword_spine_slash"
+UPPER_PARTS = ("rightArm", "leftArm", "torso", "head")
 
 
 def load_sword():
-    """读取 BeastSpineSword.bbmodel，返回 (elements, 贴图, 贴图尺寸)。"""
+    """读剑 bbmodel，返回 (elements, 贴图, 贴图宽高)。"""
     doc = json.loads(SRC_SWORD.read_text(encoding="utf-8"))
     tex = doc["textures"][0]
     image = Image.open(
         io.BytesIO(base64.b64decode(tex["source"].split(",", 1)[1]))
     ).convert("RGBA")
-    w = int(tex.get("width", doc.get("resolution", {}).get("width", 64)))
-    h = int(tex.get("height", doc.get("resolution", {}).get("height", 64)))
-    return doc["elements"], image, (w, h)
+    res = doc.get("resolution", {"width": 64, "height": 64})
+    return doc["elements"], image, (int(res["width"]), int(res["height"]))
 
 
 def build_geometry():
-    """构建玩家与异兽脊骨剑几何及图集。"""
+    """→ (elements, outliner, group_uuid_by_name, atlas)。"""
     sword_elements, sword_tex, (sword_w, sword_h) = load_sword()
+    if sword_w > H.ATLAS or sword_h + H.WEAPON_V_OFF > H.ATLAS:
+        raise SystemExit(f"剑贴图 {sword_w}×{sword_h} 放不进 {H.ATLAS}² 图集的下半")
     atlas = Image.new("RGBA", (H.ATLAS, H.ATLAS), (0, 0, 0, 0))
     atlas.paste(H.make_skin(), (0, 0))
-    # 剑贴图拼入图集下半区
+    # **不缩放**贴到图集下半：剑贴图是 64² 四象限图集，缩放会把四种材质糊到一起。
+    # UV 因此只需整体下移 WEAPON_V_OFF，横向原样。
     atlas.paste(sword_tex, (0, H.WEAPON_V_OFF))
 
     elements: list[dict] = []
     gmap: dict[str, str] = {}
 
     def add_part(part_name):
+        """→ (最外层 roll group, bend group or None)。三层单轴：pitch→yaw→roll 由内到外。"""
         spec = P.PARTS[part_name]
         prefix, has_bend = PART_GROUPS[part_name]
         upper_ids, lower_ids = [], []
@@ -105,12 +136,10 @@ def build_geometry():
             (lower_ids if is_lower else upper_ids).append(el["uuid"])
         bend_group = None
         if has_bend:
-            bend_group = group(
-                f"{prefix}_bend", spec["bend_center"], lower_ids, color=6
-            )
+            bend_group = group(f"{prefix}_bend", spec["bend_center"], lower_ids, color=6)
             gmap[f"{prefix}_bend"] = bend_group["uuid"]
         node = list(upper_ids) + ([bend_group] if bend_group else [])
-        for axis_name in ("pitch", "yaw", "roll"):
+        for axis_name in ("pitch", "yaw", "roll"):   # 内 → 外
             g = group(f"{prefix}_{axis_name}", spec["pivot"], node, color=7)
             gmap[f"{prefix}_{axis_name}"] = g["uuid"]
             node = [g]
@@ -132,32 +161,41 @@ def build_geometry():
                 el["uuid"] = _uuid()
                 el["name"] = f"sword_{source['name']}"
                 for key in ("from", "to", "origin"):
-                    el[key] = [
-                        round(v + offset[i], 4) for i, v in enumerate(el[key])
-                    ]
+                    el[key] = [round(v + offset[i], 4) for i, v in enumerate(el[key])]
                 for face in el["faces"].values():
                     u1, v1, u2, v2 = face["uv"]
-                    face["uv"] = [
-                        u1,
-                        v1 + H.WEAPON_V_OFF,
-                        u2,
-                        v2 + H.WEAPON_V_OFF,
-                    ]
+                    face["uv"] = [u1, v1 + H.WEAPON_V_OFF, u2, v2 + H.WEAPON_V_OFF]
                 elements.append(el)
                 sword_ids.append(el["uuid"])
 
-            # 绕 X 翻转 180° 让剑尖顺着小臂方向延伸
+            # 握姿 = **剑身垂直于小臂**，不是顺着小臂。这两层静态角就是那个握姿：
+            #   pitch −90°  剑的局部 +Y（握把→剑尖）从"顺着手臂"扳成指向 −Z，
+            #               而 −Z 正是模型正面（`framing.LEGACY_FACING`）。手自然
+            #               垂下时剑平指身前，拳心真的能合拢在缠绳握把上。
+            #   roll  +90°  绕剑身自转，让刃口朝上下、剑面朝左右（本剑 blade 在局部
+            #               X 上宽 4.1px、Z 上厚 1.26px，刃在 ±X、面在 ±Z）。
+            #
+            # 上一版写的是 pitch 180°——剑尖顺着小臂朝下、和前臂完全平行，看着像"从
+            # 拳头里捅出来一根骨头"，握不住。用户在 Blockbench 里手摆 spine_slash 首帧
+            # 时把它改成了这个垂直握姿（实测局部欧拉 ≈ (−89.8, +2.5, +95.0)，2~5° 是拖
+            # gizmo 的抖动，这里取整为正交值）。
+            #
+            # 静态 group.rotation 走标准右手系（不吃动画通道的预取反），直接写角度。
+            # 真机里这一层由物品的 display.thirdperson_righthand 承担，不是动画的事——
+            # 所以**不要**改成逐动画的关键帧，那在游戏里表达不出来。
             pitch_g = group(
-                f"sword_{side}_pitch", hand, sword_ids, (180.0, 0.0, 0.0), color=1
+                f"sword_{side}_pitch", hand, sword_ids, (-90.0, 0.0, 0.0), color=1
             )
             roll_g = group(
-                f"sword_{side}_roll", hand, [pitch_g], (0.0, 0.0, 0.0), color=1
+                f"sword_{side}_roll", hand, [pitch_g], (0.0, 0.0, 90.0), color=1
             )
             gmap[f"sword_{side}_pitch"] = pitch_g["uuid"]
             gmap[f"sword_{side}_roll"] = roll_g["uuid"]
+            # 挂在小臂（bend 段）之下：肘一弯，剑跟着走
             (bend_group or top)["children"].append(roll_g)
         arms.append(top)
 
+    # body：位移一层 + 三层单轴旋转（本剑的动作有恒定 body.yaw，缺 yaw 层人就不侧身）
     node = [head, torso] + arms + legs
     for axis_name in ("pitch", "yaw", "roll"):
         g = group(f"root_{axis_name}", (0.0, 0.0, 0.0), node, color=3)
@@ -168,169 +206,93 @@ def build_geometry():
     return elements, [root_pos], gmap, atlas
 
 
-def bake_emotecraft_anim(name: str, doc: dict, gmap: dict[str, str]) -> dict:
-    """把 emotecraft v3 JSON 转换为 Blockbench animation 格式。"""
-    moves = doc.get("moves", [])
-    if not moves:
-        return {"name": name, "length": 0.0, "animators": {}}
-
-    end_tick = max(m.get("tick", 0) for m in moves)
-    anim_len = end_tick / TICKS_PER_SECOND
-
-    animators: dict[str, dict] = {}
-
-    def get_animator(bone_uuid: str) -> dict:
-        if bone_uuid not in animators:
-            animators[bone_uuid] = {
-                "name": bone_uuid,
-                "type": "bone",
-                "rotation": [],
-                "position": [],
-            }
-        return animators[bone_uuid]
-
-    for m in moves:
-        t_sec = m.get("tick", 0) / TICKS_PER_SECOND
-
-        # 1. body translation
-        body = m.get("body", {})
-        if "x" in body or "y" in body or "z" in body:
-            pos_x = body.get("x", 0.0) * 16.0
-            pos_y = -body.get("y", 0.0) * 16.0
-            pos_z = body.get("z", 0.0) * 16.0
-            anim = get_animator(gmap["root_pos"])
-            anim["position"].append(keyframe(t_sec, [pos_x, pos_y, pos_z]))
-
-        # 2. body rotation
-        if "yaw" in body or "pitch" in body or "roll" in body:
-            byaw = body.get("yaw", 0.0)
-            bpitch = body.get("pitch", 0.0)
-            broll = body.get("roll", 0.0)
-            if "root_pitch" in gmap and bpitch != 0.0:
-                get_animator(gmap["root_pitch"])["rotation"].append(
-                    keyframe(t_sec, [-bpitch, 0, 0])
-                )
-            if "root_yaw" in gmap and byaw != 0.0:
-                get_animator(gmap["root_yaw"])["rotation"].append(
-                    keyframe(t_sec, [0, byaw, 0])
-                )
-            if "root_roll" in gmap and broll != 0.0:
-                get_animator(gmap["root_roll"])["rotation"].append(
-                    keyframe(t_sec, [0, 0, -broll])
-                )
-
-        # 3. 各部位单轴与 bend
-        for part_name, (prefix, has_bend) in PART_GROUPS.items():
-            pdata = m.get(part_name, {})
-            if not pdata:
-                continue
-
-            pitch = pdata.get("pitch", 0.0)
-            yaw = pdata.get("yaw", 0.0)
-            roll = pdata.get("roll", 0.0)
-
-            # 单轴旋转
-            if f"{prefix}_pitch" in gmap:
-                get_animator(gmap[f"{prefix}_pitch"])["rotation"].append(
-                    keyframe(t_sec, [-pitch, 0, 0])
-                )
-            if f"{prefix}_yaw" in gmap:
-                get_animator(gmap[f"{prefix}_yaw"])["rotation"].append(
-                    keyframe(t_sec, [0, yaw, 0])
-                )
-            if f"{prefix}_roll" in gmap:
-                get_animator(gmap[f"{prefix}_roll"])["rotation"].append(
-                    keyframe(t_sec, [0, 0, -roll])
-                )
-
-            # bend 折弯层
-            if has_bend and "bend" in pdata and f"{prefix}_bend" in gmap:
-                bend_val = pdata.get("bend", 0.0)
-                axis_val = pdata.get("axis", 0.0)
-                rot_bend = AX.bend_to_bb(bend_val, axis_val)
-                get_animator(gmap[f"{prefix}_bend"])["rotation"].append(
-                    keyframe(t_sec, rot_bend)
-                )
-
-    return {
-        "name": name,
-        "uuid": _uuid(),
-        "loop": "once",
-        "length": round(anim_len, 4),
-        "animators": animators,
-    }
+def _stance_upper_axes() -> dict[str, dict]:
+    """架势首帧的上半身姿态——给纯下半身动画补预览轨道用。"""
+    _name, _emote, table = P.anim_pose_table(ANIM_DIR / f"{STANCE_ANIM}.json")
+    return {part: axes for part, axes in table[0][1].items() if part in UPPER_PARTS}
 
 
-def build_bbmodel(anim_names: list[str] = DEFAULT_ANIMS) -> dict:
+def _has_upper_body(json_path: Path) -> bool:
+    _name, _emote, table = P.anim_pose_table(json_path)
+    return any(part in UPPER_PARTS for _tick, pose in table for part in pose)
+
+
+def _fill_upper_body(anim: dict, gmap: dict) -> None:
+    """把恒定的持剑架势写进上半身轨道。**只补预览，emotecraft 源文件不动**。"""
+    animators = anim["animators"]
+
+    def track(group_name):
+        gid = gmap[group_name]
+        animators.setdefault(gid, {"name": group_name, "type": "bone", "keyframes": []})
+        return animators[gid]["keyframes"]
+
+    # 首末各钉一帧：单帧在 loop 动画里会被插值回 defaultValue（PlayerAnimator 那条坑
+    # 的 Blockbench 版本），两帧同值才真的"恒定"。
+    for t in (0.0, anim["length"]):
+        for part, axes in _stance_upper_axes().items():
+            prefix, has_bend = PART_GROUPS[part]
+            for axis_name in AX.AXIS_ORDER:
+                track(f"{prefix}_{axis_name}").append(
+                    keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
+            if has_bend:
+                bend = AX.bend_to_bb(axes.get("bend", 0.0), axes.get("axis", 0.0))
+                track(f"{prefix}_bend").append(
+                    keyframe("rotation", t, [round(bend, 4), 0.0, 0.0]))
+
+
+def convert_animation(json_path: Path, gmap: dict) -> dict:
+    """emotecraft v3 → Blockbench animation，纯下半身的补一份架势上半身。"""
+    anim = bake_animation(json_path, gmap)
+    if not _has_upper_body(json_path):
+        _fill_upper_body(anim, gmap)
+        print(f"    （{anim['name']}: 补了持剑架势上半身轨道供预览，源 JSON 未改）")
+    return anim
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--anims", nargs="*", default=DEFAULT_ANIMS)
+    ap.add_argument("--out", default=str(OUT_BB))
+    args = ap.parse_args()
+
     elements, outliner, gmap, atlas = build_geometry()
-
     animations = []
-    for aname in anim_names:
-        afile = ANIM_DIR / f"{aname}.json"
-        if afile.exists():
-            try:
-                doc = json.loads(afile.read_text(encoding="utf-8"))
-                anim_obj = bake_emotecraft_anim(aname, doc, gmap)
-                animations.append(anim_obj)
-            except Exception as e:
-                print(f"  ⚠ 烘焙动画 {aname} 失败: {e}")
-        else:
-            print(f"  ⚠ 动画文件不存在: {afile}")
+    for anim in args.anims:
+        path = ANIM_DIR / f"{anim}.json"
+        if not path.exists():
+            raise SystemExit(f"找不到动画 {path}")
+        # **不吞异常**：第一版的静默兜底正是"8 条动画全空"能混出门的原因。
+        animations.append(convert_animation(path, gmap))
 
-    tex_uuid = _uuid()
-    return {
-        "meta": {
-            "format_version": "4.10",
-            "model_format": "free",
-            "box_uv": False,
-        },
-        "name": "BeastSpineSwordPlayerAnim",
-        "model_identifier": "beast_spine_sword_player_anim",
-        "visible_box": [1, 1, 0],
+    buf = io.BytesIO()
+    atlas.save(buf, format="PNG")
+    model = {
+        "meta": {"format_version": "4.10", "model_format": "free", "box_uv": False},
+        "name": "beast_spine_sword_player_anim",
+        "model_identifier": "geometry.bong.beast_spine_sword_player_anim",
+        "visible_box": [3.0, 3.0, 2.0],
         "resolution": {"width": H.ATLAS, "height": H.ATLAS},
-        "elements": elements,
-        "outliner": outliner,
-        "textures": [
-            {
-                "path": "player_sword_atlas.png",
-                "name": "player_sword_atlas",
-                "folder": "item",
-                "namespace": "bong",
-                "id": "0",
-                "particle": False,
-                "render_mode": "default",
-                "visible": True,
-                "mode": "bitmap",
-                "saved": True,
-                "uuid": tex_uuid,
-                "source": _png_data_url(atlas),
-            }
-        ],
-        "animations": animations,
+        "elements": elements, "outliner": outliner, "animations": animations,
+        "textures": [{
+            "path": "", "name": "beast_spine_sword_player_anim.png",
+            "folder": "item", "namespace": "bong",
+            "id": "0", "width": H.ATLAS, "height": H.ATLAS,
+            "uv_width": H.ATLAS, "uv_height": H.ATLAS,
+            "particle": False, "render_mode": "default", "visible": True, "mode": "bitmap",
+            "saved": False, "uuid": _uuid(),
+            "source": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+        }],
     }
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="生成玩家持异兽脊骨剑及动画预览 .bbmodel"
-    )
-    parser.add_argument(
-        "--anims", nargs="+", default=DEFAULT_ANIMS, help="内嵌的动画列表"
-    )
-    parser.add_argument(
-        "--out", type=Path, default=OUT_BB, help="输出 .bbmodel 路径"
-    )
-    args = parser.parse_args()
-
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    bb_data = build_bbmodel(args.anims)
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(bb_data, f, indent=2, ensure_ascii=False)
-
-    print(f"✓ 成功生成玩家持剑动画模型: {args.out}")
-    print(
-        f"  包含 {len(bb_data['elements'])} 个立方体，{len(bb_data['animations'])} 条内嵌动画。"
-    )
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"BeastSpineSwordPlayerAnim: {len(elements)} elements / {len(animations)} animations")
+    for a in animations:
+        frames = sum(len(v["keyframes"]) for v in a["animators"].values())
+        print(f"  {a['name']:18s} {a['length']:.2f}s {a['loop']:5s} "
+              f"bones={len(a['animators'])} keyframes={frames}")
+    print(f"  → {out.relative_to(REPO) if out.is_relative_to(REPO) else out} "
+          f"({out.stat().st_size} B)")
 
 
 if __name__ == "__main__":
