@@ -1,3 +1,3 @@
 # scope	digest_algorithm	digest
 production-java	SHA-256	ca705e41ef5f0882ec55e5f93aabbccc23d7864184d767137e40b809284369ac
-production-input-no-assets	SHA-256	10febe11abb7a32b78c71a928323192437c9fc8bdffdcd8d21a838abc5480f63
+production-input-no-packed-assets	SHA-256	997911b2a54b7125f9b2f1bbf3fa3096252392df777bdf545c893fd8e4d7df1a

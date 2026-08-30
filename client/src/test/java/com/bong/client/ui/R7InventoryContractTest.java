@@ -103,22 +103,26 @@ class R7InventoryContractTest {
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
         //
-        // 2026-08-30 收窄：**排除 resources/assets/**。
+        // 2026-08-30 收窄：**排除「会被打进资源包的那批资产」**，注意不是排除整个
+        // resources/assets。
         //
-        // 原范围是整个 client/src/main（2207 文件），其中 1139 个是 resources/assets，
-        // 而那些字节已经被资源包 sha1 闸门逐字节钉住了——`client/resourcepack/manifest.json`
-        // 与 `server/src/network/resourcepack.rs` 的 sha1 必须等于实际构建出的包，服务端
-        // 还会把它通过 vanilla 协议下发给客户端校验。在这里再钉一遍买不到任何额外保证。
+        // 原范围是整个 client/src/main（2207 文件）。其中真正与另一道闸门重叠的，只有
+        // build-resourcepack.sh 实际收录的那 559 个——那些字节由资源包 sha1 闸门逐字节
+        // 钉住（构建出的包 sha1 必须出现在 server/src/network/resourcepack.rs 里，服务端
+        // 还会把它通过 vanilla 协议下发给客户端校验）。在这里再钉一遍买不到额外保证。
         //
-        // 代价却是实打实的：这条基线被重新冻结过 21 次，且**每一次美术资产 PR 都要重来**。
-        // 更糟的是它对合并顺序敏感——#2101 按规矩重新冻结了，仍然红，因为它算摘要时
-        // #2113 的四张卷帛甲贴图还没并进来。两个各自都对的 PR，合起来就破。这个会反复发生。
+        // **assets 下另有 580 个文件进不了资源包**（不在 INCLUDE_PREFIXES 里，例如
+        // bong-client/textures/gui/items/*），它们随 mod jar 发布，照样是随包字节，
+        // 必须留在本基线里——否则就成了两道闸门都不管的盲区。
         //
-        // 收窄后本条的范围是 Java（1066）+ fabric.mod.json + bong-client.mixins.json（2）。
-        // Java 那部分与 R7ProductionBaselineContractTest 重叠（那条只钉
-        // java/com/bong/client），是本条原有的冗余，未在本次改动中拆开；本条独有的覆盖
-        // 就是那两个 mod 配置文件，它们不进资源包，别处没人钉。
-        String scope = "production-input-no-assets";
+        // 收窄的代价是实打实省下的：这条基线被重新冻结过 21 次，且每一次美术资产 PR
+        // 都要重来。它还对合并顺序敏感——#2101 按规矩重新冻结了仍然红，因为算摘要时
+        // #2113 的四张卷帛甲贴图还没并进来。两个各自都对的 PR 合起来就破。
+        //
+        // 「谁进资源包」由 R7SourceScan 从 build-resourcepack.sh **解析**得来，不在这边
+        // 手抄一份——手抄必漂，打包器加一个 prefix 而这边不知道，那批文件就同时从两道
+        // 闸门底下漏掉。
+        String scope = "production-input-no-packed-assets";
         assertEquals(
             R7SourceScan.baselineDigest(scope),
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT, R7SourceScan::isNotShippedAsset),
@@ -142,37 +146,60 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void frozenBaselineScopeIgnoresShippedAssetsAndCatchesEverythingElse() throws IOException {
+    void frozenBaselineScopeIgnoresPackedAssetsAndCatchesEverythingElse() throws IOException {
         // 差分注入：把这条基线「该抓的」和「该放过的」都造出来，验证它分得清。
         //
-        // 收窄范围这种改动最容易出的错是把判据改废了——它照样全绿，但已经什么都不抓了。
-        // 某版穿模判据白名单写反、坏版本和修好的版本都报 17 处，就是这么来的。
+        // 收窄范围最容易出的错是把判据改废了——它照样全绿，但已经什么都不抓了。
+        // 这里最关键的一对是 **进包资产 vs 不进包资产**：前者归资源包 sha1 管，后者
+        // 只有本基线管。把两者一起放过，就出现了两道闸门都不管的盲区。
         Path root = Files.createTempDirectory("r7-scope-injection");
         Path java = Files.createDirectories(root.resolve("java/com/bong/client"));
-        Path assets = Files.createDirectories(root.resolve("resources/assets/bong/textures"));
+        Path assetRoot = Files.createDirectories(root.resolve("resources/assets"));
+        Path packed = Files.createDirectories(assetRoot.resolve("bong/textures/item"));
+        Path unpacked = Files.createDirectories(assetRoot.resolve("bong-client/textures/gui/items"));
         Path resources = root.resolve("resources");
         Files.writeString(java.resolve("Thing.java"), "class Thing {}");
-        Files.writeString(assets.resolve("a.png"), "PNG-A");
+        Files.writeString(packed.resolve("a.png"), "PACKED-A");
+        Files.writeString(unpacked.resolve("b.png"), "UNPACKED-B");
         Files.writeString(resources.resolve("fabric.mod.json"), "{}");
 
-        var include = R7SourceScan.excluding(assets.getParent().getParent());
+        Set<String> extensions = R7SourceScan.resourcePackIncludedExtensions();
+        List<String> prefixes = R7SourceScan.resourcePackIncludedPrefixes();
+        assertTrue(prefixes.contains("bong/textures/item"),
+            "打包器前缀表必须仍包含 bong/textures/item，否则本用例的「进包」样本已失真");
+        assertFalse(prefixes.contains("bong-client/textures/gui/items"),
+            "打包器前缀表不该包含 bong-client/textures/gui/items，否则本用例的「不进包」样本已失真");
+
+        var include = (java.util.function.Predicate<Path>) path ->
+            !R7SourceScan.isResourcePackAsset(path, assetRoot, extensions, prefixes);
         String baseline = R7SourceScan.sourceTreeDigest(root, include);
 
-        // ── 该放过的：资产改了、资产新增了，都不该撞这条基线 ──
-        Files.writeString(assets.resolve("a.png"), "PNG-A-CHANGED");
+        // ── 该放过的：进包资产改了 / 新增了，都不该撞本基线（归资源包 sha1 管）──
+        Files.writeString(packed.resolve("a.png"), "PACKED-A-CHANGED");
         assertEquals(baseline, R7SourceScan.sourceTreeDigest(root, include),
-            "期望：改动 resources/assets 下的字节不撞本基线（那些字节由资源包 sha1 闸门钉住），"
+            "期望：改动**会被打进资源包**的资产不撞本基线（那些字节由包 sha1 钉住），"
             + "实际撞了 —— 收窄没生效，美术资产 PR 会继续被迫重新冻结");
-        Files.writeString(assets.resolve("b.png"), "PNG-B");
+        Files.writeString(packed.resolve("c.png"), "PACKED-C");
         assertEquals(baseline, R7SourceScan.sourceTreeDigest(root, include),
-            "期望：新增 resources/assets 下的文件不撞本基线；实际撞了");
+            "期望：新增进包资产不撞本基线；实际撞了");
 
-        // ── 该抓的：Java 生产源与 mod 配置，一个都不许漏 ──
+        // ── 该抓的之一：**不进包**的资产。它随 mod jar 发布，别处没人钉 ──
+        Files.writeString(unpacked.resolve("b.png"), "UNPACKED-B-CHANGED");
+        String afterUnpacked = R7SourceScan.sourceTreeDigest(root, include);
+        assertNotEquals(baseline, afterUnpacked,
+            "期望：改动**进不了资源包**的资产必须撞本基线 —— 它不在 INCLUDE_PREFIXES 里，"
+            + "资源包 sha1 管不到它，本基线是它唯一的看守；实际摘要没变 = 出现了两道闸门"
+            + "都不管的盲区");
+        Files.writeString(unpacked.resolve("d.png"), "UNPACKED-D");
+        assertNotEquals(afterUnpacked, R7SourceScan.sourceTreeDigest(root, include),
+            "期望：新增不进包的资产必须撞本基线；实际摘要没变");
+
+        // ── 该抓的之二：Java 生产源与 mod 配置 ──
+        String beforeJava = R7SourceScan.sourceTreeDigest(root, include);
         Files.writeString(java.resolve("Thing.java"), "class Thing { int x; }");
         String afterJava = R7SourceScan.sourceTreeDigest(root, include);
-        assertNotEquals(baseline, afterJava,
+        assertNotEquals(beforeJava, afterJava,
             "期望：改动 Java 生产源必须撞本基线，否则收窄把判据改废了；实际摘要没变");
-
         Files.writeString(java.resolve("Added.java"), "class Added {}");
         assertNotEquals(afterJava, R7SourceScan.sourceTreeDigest(root, include),
             "期望：新增 Java 生产源必须撞本基线；实际摘要没变");
@@ -182,6 +209,27 @@ class R7InventoryContractTest {
         assertNotEquals(beforeConfig, R7SourceScan.sourceTreeDigest(root, include),
             "期望：改动 fabric.mod.json 必须撞本基线 —— 它不进资源包，本条是它唯一的看守；"
             + "实际摘要没变");
+    }
+
+    @Test
+    void resourcePackFilterIsParsedFromTheBuildScriptNotHandCopied() throws IOException {
+        // 「谁进资源包」必须**解析**自 build-resourcepack.sh。手抄一份必漂：打包器改了
+        // 前缀表而这边不知道，那批文件就同时从两道闸门底下漏掉，且两边都全绿。
+        List<String> prefixes = R7SourceScan.resourcePackIncludedPrefixes();
+        Set<String> extensions = R7SourceScan.resourcePackIncludedExtensions();
+        String script = R7SourceScan.read(R7SourceScan.resourcePackScript());
+
+        assertFalse(prefixes.isEmpty(), "从打包脚本解析出的前缀表不该为空");
+        assertFalse(extensions.isEmpty(), "从打包脚本解析出的扩展名白名单不该为空");
+        for (String prefix : prefixes) {
+            assertTrue(script.contains(prefix),
+                "解析出的前缀 " + prefix + " 必须真的出现在 " + R7SourceScan.resourcePackScript()
+                    + " 里；对不上说明解析逻辑已经和脚本脱节");
+        }
+        for (String extension : extensions) {
+            assertTrue(script.contains("*" + extension),
+                "解析出的扩展名 " + extension + " 必须真的出现在打包脚本的 case 分支里");
+        }
     }
 
     @Test

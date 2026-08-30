@@ -28,6 +28,11 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.TreeSet;
+import java.util.Set;
 
 final class R7SourceScan {
     private R7SourceScan() {
@@ -91,9 +96,95 @@ final class R7SourceScan {
         return path -> !path.toAbsolutePath().normalize().startsWith(normalized);
     }
 
-    /** 该文件是否**不**属于随资源包发布的资产。 */
+    private static final Pattern PACK_PREFIX_BLOCK =
+        Pattern.compile("INCLUDE_PREFIXES=\\((.*?)\\)", Pattern.DOTALL);
+    private static final Pattern PACK_QUOTED = Pattern.compile("\"([^\"]+)\"");
+    private static final Pattern PACK_EXTENSION_CASE =
+        Pattern.compile("^\\s*(\\*\\.[a-z0-9|*.]+)\\)\\s*;;\\s*$", Pattern.MULTILINE);
+
+    static Path resourcePackScript() {
+        return repositoryRoot().resolve("scripts").resolve("build-resourcepack.sh");
+    }
+
+    /**
+     * 打包器实际会收进资源包的路径前缀，**从 build-resourcepack.sh 解析**而不是在这里手抄。
+     *
+     * <p>手抄一份必然漂：打包器加一个 prefix，这边不知道，那批文件就同时从两道闸门底下漏掉。
+     * 解析不出来直接炸，不静默退化成空集合（空集合会让整个 assets 目录重新落回本基线，
+     * 撞红总比漏掉强，但更该做的是立刻告诉人「脚本格式变了」）。
+     */
+    static List<String> resourcePackIncludedPrefixes() {
+        String script = read(resourcePackScript());
+        Matcher block = PACK_PREFIX_BLOCK.matcher(script);
+        if (!block.find()) {
+            throw new AssertionError(
+                "无法从 " + resourcePackScript() + " 解析 INCLUDE_PREFIXES —— 打包脚本格式变了？"
+                + "本基线靠它划分「谁归资源包 sha1 管、谁归本基线管」，解析不出来必须停下。");
+        }
+        List<String> prefixes = new ArrayList<>();
+        Matcher quoted = PACK_QUOTED.matcher(block.group(1));
+        while (quoted.find()) {
+            prefixes.add(quoted.group(1).toLowerCase(Locale.ROOT));
+        }
+        if (prefixes.isEmpty()) {
+            throw new AssertionError("INCLUDE_PREFIXES 解析结果为空：" + resourcePackScript());
+        }
+        return List.copyOf(prefixes);
+    }
+
+    /** 打包器接受的扩展名，同样从脚本的 case 分支解析。 */
+    static Set<String> resourcePackIncludedExtensions() {
+        String script = read(resourcePackScript());
+        Matcher matcher = PACK_EXTENSION_CASE.matcher(script);
+        if (!matcher.find()) {
+            throw new AssertionError(
+                "无法从 " + resourcePackScript() + " 解析打包扩展名白名单 —— 打包脚本格式变了？");
+        }
+        Set<String> extensions = new TreeSet<>();
+        for (String token : matcher.group(1).split("\\|")) {
+            String trimmed = token.trim();
+            if (trimmed.startsWith("*.")) {
+                extensions.add(trimmed.substring(1).toLowerCase(Locale.ROOT));
+            }
+        }
+        if (extensions.isEmpty()) {
+            throw new AssertionError("打包扩展名白名单解析结果为空：" + resourcePackScript());
+        }
+        return Set.copyOf(extensions);
+    }
+
+    /**
+     * 该文件是否会被 build-resourcepack.sh 打进资源包。
+     *
+     * <p>**只有这些字节才由资源包 sha1 闸门钉住**。assets 目录下另有一大批文件（当前 580 个，
+     * 例如 {@code bong-client/textures/gui/items/*}）不在 INCLUDE_PREFIXES 里，进不了资源包，
+     * 但它们随 mod jar 发布——照样是随包字节，必须留在本基线里。
+     */
+    static boolean isResourcePackAsset(Path path) {
+        return isResourcePackAsset(path, shippedAssetRoot(),
+            resourcePackIncludedExtensions(), resourcePackIncludedPrefixes());
+    }
+
+    /** 可参数化版本，供对临时树做差分注入。 */
+    static boolean isResourcePackAsset(Path path, Path assetRoot,
+                                       Set<String> extensions, List<String> prefixes) {
+        Path root = assetRoot.toAbsolutePath().normalize();
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!normalized.startsWith(root)) {
+            return false;
+        }
+        String relative = root.relativize(normalized).toString().replace('\\', '/')
+            .toLowerCase(Locale.ROOT);
+        if (extensions.stream().noneMatch(relative::endsWith)) {
+            return false;
+        }
+        return prefixes.stream()
+            .anyMatch(prefix -> relative.equals(prefix) || relative.startsWith(prefix + "/"));
+    }
+
+    /** 该文件是否**不**由资源包 sha1 闸门钉住，因而必须留在 R7 冻结基线里。 */
     static boolean isNotShippedAsset(Path path) {
-        return excluding(shippedAssetRoot()).test(path);
+        return !isResourcePackAsset(path);
     }
 
     static long treeFileCount(Path root, Predicate<Path> include) throws IOException {
