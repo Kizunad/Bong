@@ -55,6 +55,18 @@ BLADE_Y0 = 7.20              # 剑身骨节起点
 BLADE_LEN = 17.00            # 10 节脊椎总长
 TIP_LEN = 3.60               # 穿刺骨尖长（总长 7.2 + 17.0 + 3.6 = 27.8px ≈ 1.74格）
 
+# ── 授权系 → 出料系 ───────────────────────────────────────────────────────
+# 上面的 box 表是**授权系**（柄尾 y=0、尖端朝 +Y），读写都顺手。但 MC 的 display
+# 变换绕**方块中心**转，不绕模型原点（`ItemRenderer.renderItem` 在 display 之后
+# 还有一个 translate(-0.5,-0.5,-0.5)），所以出料必须按 `held_item_common.emit_offset`
+# 把**握把点挪到方块中心**：emit = (8, 8 - grip, 8)。
+#
+# 差这一步的症状不是"display 数值没调好"，是整整半个方块的系统性偏移：预览里剑飘在
+# 拳头外（`preview_player_anim.py --hold` 实测偏出一整个身位），GUI 图标被推到格子角上。
+GRIP_PX = (GRIP_Y[0] + GRIP_Y[1]) / 2.0   # 3.4 —— 拳心对准处 = 缠绳握把中点
+BLOCK_CENTRE_PX = 8.0
+EMIT_OFFSET = (BLOCK_CENTRE_PX, BLOCK_CENTRE_PX - GRIP_PX, BLOCK_CENTRE_PX)
+
 SPINE_SEGS = 10              # 10 节脊椎骨
 HW_ROOT = 0.95               # 剑身根部中心椎骨半宽
 HW_TIP = 0.45                # 剑身末节中心椎骨半宽
@@ -386,8 +398,13 @@ def build_bbmodel() -> dict:
     group_children: dict[str, list[str]] = {b: [] for b in BONE_ORDER}
 
     for bone, material, name, frm, to, rot in all_cubes:
+        # UV 在授权系里算（贴图排布只看尺寸，不看绝对位置）
         if name not in uv_cache:
             uv_cache[name] = cube_faces_uv(frm, to, packers[material])
+
+        # 出料系 = 授权系 + EMIT_OFFSET（握把点落方块中心，见文件头常量段）
+        frm = [frm[i] + EMIT_OFFSET[i] for i in range(3)]
+        to = [to[i] + EMIT_OFFSET[i] for i in range(3)]
 
         cx = (frm[0] + to[0]) / 2.0
         cy = (frm[1] + to[1]) / 2.0
