@@ -77,6 +77,20 @@ jobs:
             client/gradle/wrapper/gradle-wrapper.properties
       - run: ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle test
         working-directory: client
+      - name: Run real owo XML UI preview
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a --server-args='-screen 0 1280x720x24' \
+            ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle runClientUiPreview
+        working-directory: client
+      - if: always()
+        name: Upload UI preview screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-client-ui-preview
+          path: client/run/ui-preview-screenshots/**
+          if-no-files-found: warn
       - if: always()
         uses: actions/upload-artifact@v4
         with:
