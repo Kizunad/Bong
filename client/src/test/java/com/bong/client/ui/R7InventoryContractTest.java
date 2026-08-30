@@ -134,10 +134,10 @@ class R7InventoryContractTest {
         //     M resources/assets/bong/player_animation/sword_swing_horiz.json   反手大斜斩，10t → 18t
         //   （同日复审后又重排了一次 swing_horiz：剑尖高度从 ∩ 改成 ∪，只动这一个文件）
         // 2026-08-30 第三次重冻（thrust / parry / infuse 按垂直握姿重做）：
-        //     M resources/assets/bong/player_animation/sword_thrust.json   收刃于右侧后转腕直刺
         //     M resources/assets/bong/player_animation/sword_parry.json    双手斜举架格
         //     M resources/assets/bong/player_animation/sword_infuse.json   竖剑抚刃循环（首尾改为同一近端本体）
-        //   三条 manifest 相位与 endTick 一字未动；infuse 保留腿的 z=±0.03 以维持与
+        //   sword_thrust 那一版被用户判定「做不好」撤回，已 git 还原成重做前的字节，
+        //   净效果是这次只动了 parry / infuse 两个文件。manifest 相位与 endTick 一字未动；infuse 保留腿的 z=±0.03 以维持与
         //   sword_infuse_release 的两段式交接轴声明对齐（否则 twoStageHandoff 撞红）。
         //   tracked 文件数不变（2209，全是 M）。
         // tracked 文件数 2207 → 2209（两个 A、一个 M、无 D；上面正文里的 2191 是更早的
@@ -146,7 +146,7 @@ class R7InventoryContractTest {
         // thrust / parry / infuse 一个字节没动。生成器与 .bbmodel 属工具/源工程、不随包
         // 发布，照旧不进本摘要。
         assertEquals(
-            "d6847dfaec559b7f6be9e97bf5296748276fc8763255b21f9a416db76ec7f295",
+            "1b346c07d239df0826f8dbdebaa4fc2c1769b08afac38e9c1e6a588d69a8c808",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );

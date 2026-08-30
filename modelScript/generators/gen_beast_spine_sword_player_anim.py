@@ -7,7 +7,10 @@
     sword_spine_slash   本剑专属单手斜斩：扛剑过右肩 → 过顶 → 斜劈左前下 → 撕扯回抽
     sword_spine_cleave  本剑专属双手竖斩：双手握柄举剑 → 沿中线整条劈下 → 挂住提回
     sword_swing_horiz   反手大斜斩：剑指左上 → 转刃过顶 → 斜劈右前下（走另一条对角线）
-    sword_thrust / sword_parry / sword_infuse   借用的通用剑招（尚未按本剑重做）
+    sword_parry / sword_infuse   通用剑招，已按本剑握姿重做
+    （sword_thrust 曾按本剑重做过一版，用户 2026-08-30 判定'做不好'撤回：垂直握姿下
+      剑尖恒在以肩为心 21~25.7px 的球面上，直刺的行程只能靠转向挣，读感不对。
+      共享的 sword_thrust.json 已还原成重做前的版本，本文件不再收它。）
     lower_walk / lower_sprint   纯下半身步态（上半身由架势轨道补齐，见下）
 
 ## 两个坑（第一版都踩了，症状分别是"没有动画"和"剑飘在身外"）
@@ -83,7 +86,6 @@ DEFAULT_ANIMS = [
     "sword_spine_slash",
     "sword_spine_cleave",
     "sword_swing_horiz",
-    "sword_thrust",
     "sword_parry",
     "sword_infuse",
     "lower_walk",

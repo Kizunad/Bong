@@ -654,10 +654,15 @@ class CarryStanceTest(unittest.TestCase):
 
 
 class BorrowedSwordMovesRebuiltForThisGripTest(unittest.TestCase):
-    """thrust / parry / infuse 按垂直握姿重做后的契约。
+    """parry / infuse 按垂直握姿重做后的契约。
 
-    三条都是用户手摆首尾、我补中段，所以这里锁的是"中段有没有真的把两端连成那个
+    两条都是用户手摆首尾、我补中段，所以这里锁的是"中段有没有真的把两端连成那个
     动作"——能用数字说清、错了就是错的那部分。
+
+    `sword_thrust` 也重做过一版，被用户判定"做不好"撤回了：垂直握姿下剑尖恒在以肩
+    为心 21~25.7px 的球面上，把手往前推不会把剑尖往前送（剑身指正前时肘从伸直折到
+    88° 也只拉回 4px），行程只能靠"撤刃到侧面再转回正前"挣，读感不像刺。共享的
+    `sword_thrust.json` 已还原成重做前的版本，这里因此没有它的门。
     """
 
     @classmethod
@@ -685,28 +690,6 @@ class BorrowedSwordMovesRebuiltForThisGripTest(unittest.TestCase):
                 "perp": float(np.linalg.norm(v - along * blade)),
             }
         return out
-
-    def test_thrust_wins_its_range_by_turning_the_blade_not_by_pushing_the_hand(self):
-        """直刺的行程必须来自"撤刃到侧面再转回正前"，不是"把手往前推"。
-
-        握姿是剑身⊥小臂，剑尖恒在以肩为心、半径 21~25.7px 的球面上——剑身指正前时
-        肘从伸直折到 88° 也只把剑尖拉回 4px，读不出"刺"。所以蓄势帧必须真的把刃甩到
-        侧面（剑身横向分量够大），发力帧再指回正前，行程才有 8px 以上。
-        """
-        track = self._track("sword_thrust")
-        load, strike = track[6], track[10]
-        self.assertGreater(
-            abs(load["blade"][0]), 0.5,
-            f"期望：蓄势帧刃真的甩到侧面（|blade.x| > 0.5）；实际 {np.round(load['blade'], 2)}"
-            "——没撤刃就没有行程可挣")
-        self.assertLess(
-            strike["blade"][2], -0.9,
-            f"期望：发力帧剑身指正前方（blade.z < -0.9）；实际 {np.round(strike['blade'], 2)}")
-        gain = float((load["tip"] - load["shoulder"])[2] - (strike["tip"] - strike["shoulder"])[2])
-        self.assertGreater(
-            gain, 8.0,
-            f"期望：剑尖相对肩的前伸至少涨 8px；实际 {gain:.1f}px——"
-            "这个数就是玩家看到的'刺出去多远'")
 
     def test_parry_raises_the_block_and_locks_both_hands_on(self):
         """架格：剑要真的抬起来，且 cast 完成帧起两只手都在柄上。"""
@@ -822,7 +805,6 @@ class BladeDoesNotPassThroughTheBodyTest(unittest.TestCase):
         "sword_spine_slash": 0.0,
         "sword_spine_cleave": -1.0,
         "sword_swing_horiz": 0.0,
-        "sword_thrust": 0.0,
         "sword_parry": 0.0,
         "sword_infuse": 0.0,
     }
