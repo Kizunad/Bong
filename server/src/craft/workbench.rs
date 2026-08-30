@@ -22,6 +22,7 @@ use crate::inventory::{
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
+use crate::network::gate::{DistanceRule, WORKBENCH_MAX_BLOCKS};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::gameplay::GameplayTick;
@@ -54,10 +55,10 @@ pub struct WorkbenchOpenPayload {
     pub position: [i32; 3],
 }
 
-/// 制作台最大交互距离（方块数）。
+/// 制作台最大交互距离的兼容别名（方块数）。
 ///
-/// §P2.4 & §8.1 #2：recipe.station == Some(Workbench) 时，玩家必须在此距离内。
-pub const WORKBENCH_INTERACT_RANGE: f64 = 3.0;
+/// 数值事实源是 [`DistanceRule::WORKBENCH`]；保留本名称避免破坏旧调用方。
+pub const WORKBENCH_INTERACT_RANGE: f64 = WORKBENCH_MAX_BLOCKS;
 
 /// 制作台物品 template_id。
 pub const WORKBENCH_ITEM_TEMPLATE: &str = "workbench_item";
@@ -71,15 +72,13 @@ pub struct WorkbenchOpenRequest {
     pub workbench: Entity,
 }
 
-/// 检查玩家位置是否在制作台 3 格交互范围内。
+/// 检查玩家位置是否符合制作台交互 reach profile。
 ///
-/// 使用 Chebyshev 距离（各轴最大分量 ≤ 3，与 MC 方块交互判定一致）。
+/// 保留 craft 域的公开 helper，距离 metric、边界与 fail-closed 语义
+/// 统一由 [`DistanceRule::WORKBENCH`] 定义。
 pub fn is_within_workbench_range(player_pos: [f64; 3], workbench_pos: [i32; 3]) -> bool {
-    let dx = (player_pos[0] - workbench_pos[0] as f64).abs();
-    let dy = (player_pos[1] - workbench_pos[1] as f64).abs();
-    let dz = (player_pos[2] - workbench_pos[2] as f64).abs();
-    // 使用 Chebyshev 距离（MC 式方块交互范围）
-    dx.max(dy).max(dz) <= WORKBENCH_INTERACT_RANGE
+    let workbench_pos = workbench_pos.map(f64::from);
+    DistanceRule::WORKBENCH.allows(player_pos, workbench_pos)
 }
 
 pub fn register(app: &mut App) {
