@@ -1,5 +1,6 @@
 package com.bong.client.ui;
 
+import com.bong.client.input.BongKeybindRegistry;
 import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.LiteralTree;
@@ -317,7 +318,7 @@ class R7KeybindProductionMigrationTest {
                     assertTrue(constructor instanceof ExecutableElement
                             && constructor.getEnclosingElement() instanceof TypeElement specOwner
                             && specOwner.getQualifiedName().contentEquals(
-                                "com.bong.client.ui.BongKeybindRegistry.BindingSpec"),
+                                "com.bong.client.input.BongKeybindRegistry.BindingSpec"),
                         "global registry 必须使用 BongKeybindRegistry.BindingSpec：" + sourcePath);
                     assertEquals(5, bindingSpec.getArguments().size(),
                         "BindingSpec 必须完整携带 owner/translation/type/default/category：" + sourcePath);
@@ -331,7 +332,7 @@ class R7KeybindProductionMigrationTest {
                     assertTrue(ownerConstructor instanceof ExecutableElement
                             && ownerConstructor.getEnclosingElement() instanceof TypeElement ownerType
                             && ownerType.getQualifiedName().contentEquals(
-                                "com.bong.client.ui.BongKeybindRegistry.BindingOwner"),
+                                "com.bong.client.input.BongKeybindRegistry.BindingOwner"),
                         "BindingSpec.owner 必须使用 BongKeybindRegistry.BindingOwner：" + sourcePath);
                     assertEquals(1, bindingOwner.getArguments().size(),
                         "BindingOwner 必须只接受一个 owner id：" + sourcePath);

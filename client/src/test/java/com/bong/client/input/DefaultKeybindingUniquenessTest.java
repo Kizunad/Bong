@@ -44,7 +44,7 @@ class DefaultKeybindingUniquenessTest {
     private static final Path EXTRACT_BOOTSTRAP =
         CLIENT_SOURCES.resolve("tsy/ExtractInteractionBootstrap.java");
     private static final Path KEYBIND_REGISTRY =
-        CLIENT_SOURCES.resolve("ui/BongKeybindRegistry.java");
+        CLIENT_SOURCES.resolve("input/BongKeybindRegistry.java");
 
     private static final Pattern DIRECT_KEY_BINDING =
         Pattern.compile("\\bnew\\s+KeyBinding\\s*\\(");
@@ -96,11 +96,11 @@ class DefaultKeybindingUniquenessTest {
                 binding.owner().equals("combat/CombatKeybindings.java:combat.quick_slot_9")),
             "全局扫描不能漏掉 registry 中带 F1+i 动态展开的快捷槽声明");
         assertTrue(bindings.stream().anyMatch(binding ->
-                binding.owner().equals("ui/BongKeybindRegistry.java:vanilla.chat")
+                binding.owner().equals("input/BongKeybindRegistry.java:vanilla.chat")
                     && binding.key().equals(new PhysicalKey("KEYSYM", "T"))),
             "全局扫描必须将 registry 中的 vanilla chat reservation 纳入冲突审计");
         assertTrue(bindings.stream().anyMatch(binding ->
-                binding.owner().equals("ui/BongKeybindRegistry.java:vanilla.advancements")
+                binding.owner().equals("input/BongKeybindRegistry.java:vanilla.advancements")
                     && binding.key().equals(new PhysicalKey("KEYSYM", "L"))),
             "全局扫描必须将 registry 中的 vanilla advancements reservation 纳入冲突审计");
     }

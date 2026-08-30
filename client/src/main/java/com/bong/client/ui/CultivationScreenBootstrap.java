@@ -1,6 +1,7 @@
 package com.bong.client.ui;
 
 import com.bong.client.BongClient;
+import com.bong.client.input.BongKeybindRegistry;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;

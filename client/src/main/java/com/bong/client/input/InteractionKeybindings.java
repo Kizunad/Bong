@@ -1,7 +1,6 @@
 package com.bong.client.input;
 
 import com.bong.client.BongClient;
-import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;

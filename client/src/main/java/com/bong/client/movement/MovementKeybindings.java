@@ -3,7 +3,7 @@ package com.bong.client.movement;
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
-import com.bong.client.ui.BongKeybindRegistry;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.input.Input;

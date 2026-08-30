@@ -1,6 +1,6 @@
 package com.bong.client.combat;
 
-import com.bong.client.ui.BongKeybindRegistry;
+import com.bong.client.input.BongKeybindRegistry;
 import net.minecraft.client.option.KeyBinding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,5 +1,6 @@
 package com.bong.client.ui;
 
+import com.bong.client.input.BongKeybindRegistry;
 import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.BinaryTree;
 import com.sun.source.tree.ExpressionTree;
@@ -531,7 +532,7 @@ class R7FoundationContractTest {
                         && executable.getSimpleName().contentEquals("register")
                         && executable.getEnclosingElement() instanceof TypeElement owner
                         && owner.getQualifiedName().contentEquals(
-                            "com.bong.client.ui.BongKeybindRegistry"
+                            "com.bong.client.input.BongKeybindRegistry"
                         )) {
                         assertEquals(1, tree.getArguments().size(),
                             "global registry register must receive one BindingSpec: " + parsed.path());
@@ -543,7 +544,7 @@ class R7FoundationContractTest {
                         assertTrue(constructor instanceof ExecutableElement
                                 && constructor.getEnclosingElement() instanceof TypeElement specOwner
                                 && specOwner.getQualifiedName().contentEquals(
-                                    "com.bong.client.ui.BongKeybindRegistry.BindingSpec"),
+                                    "com.bong.client.input.BongKeybindRegistry.BindingSpec"),
                             "registry registration must construct BindingSpec: " + parsed.path());
                         assertEquals(5, spec.getArguments().size(),
                             "BindingSpec must carry owner/translation/type/default/category: " + parsed.path());
