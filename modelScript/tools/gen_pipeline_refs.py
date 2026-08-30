@@ -113,7 +113,7 @@ class TKImageClient:
             "size": size,
         }
         t0 = time.time()
-        resp = requests.post(url, headers=headers, json=payload, timeout=90)
+        resp = requests.post(url, headers=headers, json=payload, timeout=180)
         elapsed = time.time() - t0
         if resp.status_code != 200:
             raise RuntimeError(f"文生图请求失败 ({resp.status_code}, 耗时 {elapsed:.1f}s): {resp.text}")
@@ -144,7 +144,7 @@ class TKImageClient:
             "size": size,
         }
         t0 = time.time()
-        resp = requests.post(url, headers=headers, files=files, data=data, timeout=90)
+        resp = requests.post(url, headers=headers, files=files, data=data, timeout=180)
         elapsed = time.time() - t0
         if resp.status_code != 200:
             raise RuntimeError(f"图生图请求失败 ({resp.status_code}, 耗时 {elapsed:.1f}s): {resp.text}")
