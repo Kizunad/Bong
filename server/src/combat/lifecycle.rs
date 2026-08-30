@@ -328,14 +328,15 @@ pub fn combat_state_tick(
     clock: Res<CombatClock>,
     mut state_q: Query<(&mut CombatState, Option<&mut Stamina>)>,
 ) {
-    if !clock.tick.is_multiple_of(COMBAT_STATE_TICK_INTERVAL_TICKS) {
-        return;
-    }
-
     for (mut state, stamina) in &mut state_q {
-        if let Some(window) = state.incoming_window.as_ref() {
-            if clock.tick >= window.expires_at_tick() {
-                state.incoming_window = None;
+        // 防御窗口仍按原有低频节拍清理；战斗窗口必须每 tick 检查，
+        // 否则截止 tick 不在整秒边界时不会产生 Changed<CombatState>，
+        // client HUD 可能继续显示过期的战斗态。
+        if clock.tick.is_multiple_of(COMBAT_STATE_TICK_INTERVAL_TICKS) {
+            if let Some(window) = state.incoming_window.as_ref() {
+                if clock.tick >= window.expires_at_tick() {
+                    state.incoming_window = None;
+                }
             }
         }
 
@@ -3320,6 +3321,40 @@ mod tests {
         let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
         assert!(state.in_combat_until_tick.is_none());
         assert!(state.incoming_window.is_none());
+        assert_eq!(stamina.state, StaminaState::Idle);
+    }
+
+    #[test]
+    fn combat_state_tick_clears_combat_window_on_non_interval_expiry_tick() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 7 });
+        app.add_systems(Update, combat_state_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Stamina {
+                    current: 40.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    last_drain_tick: None,
+                    state: StaminaState::Combat,
+                },
+                CombatState {
+                    in_combat_until_tick: Some(7),
+                    ..CombatState::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let state = app.world().entity(entity).get::<CombatState>().unwrap();
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert!(
+            state.in_combat_until_tick.is_none(),
+            "非整秒边界到期时必须清除 CombatState，才能触发 HUD 脱战快照"
+        );
         assert_eq!(stamina.state, StaminaState::Idle);
     }
 
