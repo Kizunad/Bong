@@ -35,6 +35,8 @@ public final class TradeOfferScreenBootstrap {
         MATCHING_TRADE_OFFER,
         /** 当前打开的是一份陈旧的 TradeOfferScreen（对应另一个 offerId，需要换新）。 */
         OTHER_TRADE_OFFER,
+        /** 当前打开的是玩家主动发起交易时的出站 picker。 */
+        REQUEST_PICKER,
         /** 当前打开的是别的（非交易）GUI。 */
         OTHER
     }
@@ -84,7 +86,7 @@ public final class TradeOfferScreenBootstrap {
                     new TradeOfferIntent.Respond(offer.offerId(), false, null)
                 );
                 if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
-                    if (current instanceof TradeOfferScreen) {
+                    if (isIncomingTradeScreen(screenKind)) {
                         client.setScreen(null);
                     }
                     notifyExpired();
@@ -104,14 +106,19 @@ public final class TradeOfferScreenBootstrap {
     static ScreenKind screenKindOf(Screen current, SocialStateStore.TradeOffer offer) {
         if (current instanceof TradeOfferScreen screen) {
             if (screen.isRequestPicker()) {
-                // 出站 picker 不是 Store 持有的入站 offer；必须作为普通占用屏保留。
-                return ScreenKind.OTHER;
+                // 出站 picker 不是 Store 持有的入站 offer；独立分类以避免过期清理误关。
+                return ScreenKind.REQUEST_PICKER;
             }
             return offer != null && screen.offerIdForTests().equals(offer.offerId())
                 ? ScreenKind.MATCHING_TRADE_OFFER
                 : ScreenKind.OTHER_TRADE_OFFER;
         }
         return current == null ? ScreenKind.NONE : ScreenKind.OTHER;
+    }
+
+    static boolean isIncomingTradeScreen(ScreenKind screenKind) {
+        return screenKind == ScreenKind.MATCHING_TRADE_OFFER
+            || screenKind == ScreenKind.OTHER_TRADE_OFFER;
     }
 
     /**

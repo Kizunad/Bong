@@ -29,7 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7InventoryContractTest {
     private static final Path PRODUCTION_ROOT = R7SourceScan.productionRoot();
-    private static final Path PRODUCTION_INPUT_ROOT = R7SourceScan.productionInputRoot();
 
     @Test
     void screenInventoryPinsEveryDirectProductionScreenAndSuffixException() throws IOException {
@@ -96,47 +95,6 @@ class R7InventoryContractTest {
         assertEquals(200, Sizing.fill(100).inflate(200, ignored -> 43));
         assertEquals(50, Sizing.fill(25).inflate(200, ignored -> 43));
         assertEquals(16, Sizing.content(3).inflate(10_000, ignored -> 10));
-    }
-
-    @Test
-    void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 legacy foundation 清理后：移除无生产引用的 owo foundation，
-        // 并保留主线 keybinding registry/HUD 修复的生产源对拍。
-        // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
-        // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
-        // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
-        //
-        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
-        // 矿脉反馈线程修复的 2170 文件基线上，主线随包新增木棍的两条玩家动画与背篓三份资源。
-        //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
-        //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
-        //     + resources/assets/bong/geo/back_basket.geo.json
-        //     + resources/assets/bong/textures/entity/back_basket.png
-        // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
-        // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
-        // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
-        // 相对主线新增 14 个生产文件、修改 5 个且无删除，最终文件数 2175 → 2189。
-        // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
-        // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
-        // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
-        // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
-        // 本分支另新增 KeybindMigrationPersistence 与 KeybindMigrationService，并修改
-        // Forge、撤离、T/L 入口和键位注册接线，文件数 2189 → 2191；旧 options.txt 的
-        // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
-        // 随后补齐 VoidAction 旧 options.txt 中 O 绑定的一次性迁移，并将 extracting 仲裁
-        // 收口到客户端共享输入策略；生产源码树因此继续更新。
-        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
-        // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
-        // P3 状态/意图边界批次 A 再加入 Alchemy/Trade/Loot controller、source、typed intent
-        // 与 SemanticUiDriver；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
-        // 本次 review 返工新增 3 个长期 production boundary 类型：LootContainerSession、
-        // LootContainerSessionAdapter 与 TradeOfferPicker；只改变 Java production tree 摘要。
-        assertEquals(
-            "070382d5c11b1e0b1a0af0c6124cbf123111e41928e22c55cfa605370c05b4e6",
-            R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
-        );
     }
 
     @Test

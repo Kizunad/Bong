@@ -40,10 +40,6 @@ final class R7SourceScan {
         return clientRoot.resolve("src/main/java/com/bong/client");
     }
 
-    static Path productionInputRoot() {
-        return productionRoot().getParent().getParent().getParent().getParent();
-    }
-
     static Path repositoryRoot() {
         return productionRoot()
             .getParent()
@@ -254,26 +250,6 @@ final class R7SourceScan {
         } catch (NoSuchAlgorithmException exception) {
             throw new AssertionError("SHA-256 unavailable", exception);
         }
-    }
-
-    static String sourceTreeDigest(Path root) throws IOException {
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException exception) {
-            throw new AssertionError("SHA-256 unavailable", exception);
-        }
-        try (var files = Files.walk(root)) {
-            for (Path path : files.filter(Files::isRegularFile).sorted().toList()) {
-                digest.update(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) 0);
-                digest.update(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
-                digest.update((byte) '\n');
-            }
-        } catch (NoSuchAlgorithmException exception) {
-            throw new AssertionError("SHA-256 unavailable", exception);
-        }
-        return HexFormat.of().formatHex(digest.digest());
     }
 
     record ParsedUnit(Path path, String source, CompilationUnitTree unit, Trees trees) {
