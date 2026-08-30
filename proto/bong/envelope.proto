@@ -762,6 +762,8 @@ message CombatHudState {
   float          qi_percent      = 2;
   float          stamina_percent = 3;
   DerivedAttrFlags derived       = 4;
+  // 服务端 CombatState 的权威战斗窗口；不能由 HUD 数值或本地输入推断。
+  bool           combat_active   = 5;
 }
 
 // ─── 10. KnockbackSync ────────────────────────────────────────

@@ -408,6 +408,7 @@ bot e2e 分三层记录：
 - **模块**：29 个 Screen（14 个 vanilla 重写 + 12 个剩余 owo CODE XML 化 + 1 个已由 P2 规范化为 XML host 的 `CraftScreen` + 2 个既有 XML_MODEL）、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`fill100-inventory.tsv` 相关站点。
 - **交付**：在已有 `BongKeybindRegistry` 全局注册和冲突校验基础上，补齐剩余 production keybind constructor 覆盖；29 个 Screen 全部通过 owo XML template registry 接入并保留 adapter classification、scope owner；2 个现有 XML/runtime 入口也必须收口到本地 template；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定；所有 Screen 使用 `UiLayoutPolicy`，不在 controller 写死 viewport px。
 - **测试**：source gate 禁止 raw network/sender imports、vanilla Screen/widget imports 和 owo CODE root；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复组件或订阅；Java 17 full gate。
+- **阻塞点状态（2026-08-30）**：`combat_hud_state.combat_active` 已由 server `CombatState.in_combat_until_tick` 计算，经 proto、Java handler/store 接入；`SparringInviteScreenBootstrap` 仅消费 `authoritativeSnapshot().combatActive()`，缺少合法权威快照时返回 `UNKNOWN` 并 fail closed。该项解除，但 P4 其余 Screen/keybind/thread/open/scale 交付仍未完成。
 - **边界**：R6 receive boundary 不重复 marshal；combat snapshot 缺失时 social policy fail closed。
 
 ### P5 — InspectScreen tab-first

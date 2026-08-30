@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "combat_hud_state",
+  "hp_percent": 1,
+  "qi_percent": 0,
+  "stamina_percent": 0.5,
+  "combat_active": false,
+  "derived": {
+    "flying": false,
+    "phasing": false,
+    "tribulation_locked": false
+  }
+}
