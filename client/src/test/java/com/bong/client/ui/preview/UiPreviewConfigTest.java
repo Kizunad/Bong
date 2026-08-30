@@ -17,7 +17,7 @@ class UiPreviewConfigTest {
     void checkedInConfigCoversMinimumOddAndWideRealRendererCases() throws IOException {
         UiPreviewConfig config = UiPreviewConfig.parse(
             Files.readString(Path.of("ui-preview-harness.json")));
-        assertEquals(5, config.screenshots().size());
+        assertEquals(6, config.screenshots().size());
         assertEquals("craft-compact", config.screenshots().get(0).expectedTemplateId());
         assertEquals(320, config.screenshots().get(0).expectedLogicalWidth());
         assertEquals(401, config.screenshots().get(1).expectedLogicalWidth(),
@@ -27,6 +27,8 @@ class UiPreviewConfigTest {
         assertEquals("terminate", config.screenshots().get(3).expectedTemplateId());
         assertEquals("coffin-menu", config.screenshots().get(4).sceneId());
         assertEquals("coffin-menu", config.screenshots().get(4).expectedTemplateId());
+        assertEquals("repair", config.screenshots().get(5).sceneId());
+        assertEquals("repair", config.screenshots().get(5).expectedTemplateId());
         assertTrue(config.screenshots().stream().allMatch(shot -> UiPreviewScenes.isRegistered(shot.sceneId())));
     }
 
