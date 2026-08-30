@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -141,3 +143,63 @@ class TestBeastSpineSword(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreviewOnlyFlagIsWiredTest(unittest.TestCase):
+    """`--preview-only` 必须真的只出预览、不写模型。
+
+    这个参数此前声明了却**没人读**：传了照样覆盖写 `--out`，而且一张预览都不产出
+    （Kody 在 PR #2128 上点出来的，属实）。死参数最坏的形态就是这种——它不报错，
+    只是默默做了你没让它做的事。仓库先例见 `gen_array_flag` / `gen_bamboo_jian`：
+    `--preview-only` 只跳过写模型，预览两种模式都出。
+    """
+
+    def _run(self, argv, out_model, out_preview):
+        with mock.patch.object(sys, "argv", ["gen_beast_spine_sword.py", *argv]), \
+             mock.patch.object(sword, "PREVIEW_OUT", out_preview), \
+             mock.patch("builtins.print"):
+            sword.main()
+
+    def test_preview_only_does_not_touch_the_model_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "should_not_exist.bbmodel"
+            preview = Path(tmp) / "preview.png"
+            self._run(["--preview-only", "--out", str(model)], model, preview)
+            self.assertFalse(
+                model.exists(),
+                f"期望：--preview-only 不写模型文件；实际 {model} 被写出来了——"
+                "这正是死参数最坏的形态：不报错，只是默默覆盖了你的文件")
+            self.assertTrue(preview.exists(), "期望：--preview-only 产出预览图；实际没有")
+
+    def test_preview_only_refuses_to_clobber_an_existing_model(self):
+        """更狠一点：目标文件已存在时，--preview-only 必须一个字节都不动它。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "existing.bbmodel"
+            model.write_text("SENTINEL", encoding="utf-8")
+            preview = Path(tmp) / "preview.png"
+            self._run(["--preview-only", "--out", str(model)], model, preview)
+            self.assertEqual(
+                model.read_text(encoding="utf-8"), "SENTINEL",
+                "期望：--preview-only 不碰已存在的模型文件；实际内容被覆盖了")
+
+    def test_default_mode_writes_both_the_model_and_the_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "out.bbmodel"
+            preview = Path(tmp) / "preview.png"
+            self._run(["--out", str(model)], model, preview)
+            self.assertTrue(model.exists(), "期望：默认模式写出 .bbmodel；实际没有")
+            doc = json.loads(model.read_text(encoding="utf-8"))
+            self.assertGreater(len(doc["elements"]), 0, "期望：写出的模型里有元素")
+            self.assertTrue(preview.exists(), "期望：默认模式同样产出预览图；实际没有")
+
+    def test_the_preview_is_an_actual_render_not_a_blank_canvas(self):
+        """预览得真的渲出东西——只建目录/存白图也能骗过'文件存在'。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            preview = Path(tmp) / "preview.png"
+            sword.render_preview(sword.build_bbmodel(), out=preview)
+            img = Image.open(preview).convert("RGB")
+            colors = {px for px in img.getdata()}
+            self.assertGreater(
+                len(colors), 20,
+                f"期望：预览图里有真实渲染出的多种颜色；实际只有 {len(colors)} 种——"
+                "多半渲了个空场景")

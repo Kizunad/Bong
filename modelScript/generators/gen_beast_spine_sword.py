@@ -24,7 +24,7 @@
 用法:
     python3 modelScript/generators/gen_beast_spine_sword.py
     python3 modelScript/generators/gen_beast_spine_sword.py --preview-only
-    python3 modelScript/core/render_bbmodel.py modelScript/models/BeastSpineSword.bbmodel --three-view
+    bbmodel-render modelScript/models/BeastSpineSword.bbmodel --three-view
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ import base64
 import io
 import json
 import math
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -480,21 +481,49 @@ def build_bbmodel() -> dict:
     return bbmodel
 
 
+def render_preview(bbmodel_data: dict, out: Path | None = None) -> Path:
+    """出一张 3/4 视角预览图。
+
+    `render_bbmodel.render` 吃的是**文件路径**不是 dict，所以先落一份临时 .bbmodel
+    再渲——`--preview-only` 下不能污染 `args.out`，临时文件用完即删。
+
+    `out` 缺省在**调用时**解析成 `PREVIEW_OUT`，不写成默认参数值：默认参数在函数定义
+    时就求值了，写死了调用方（和测试）就再也换不掉输出路径。
+    """
+    from bbmodel_maker.render import render_bbmodel as R
+
+    out = Path(out) if out is not None else PREVIEW_OUT
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_model = Path(tmp) / "preview.bbmodel"
+        tmp_model.write_text(json.dumps(bbmodel_data, ensure_ascii=False), encoding="utf-8")
+        img = R.render(str(tmp_model), size=600, shading="mc")
+    if isinstance(img, tuple):
+        img = img[0]
+    img.save(out)
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="生成异兽脊骨剑 .bbmodel 模型")
-    parser.add_argument("--preview-only", action="store_true", help="仅渲染预览图")
+    parser.add_argument("--preview-only", action="store_true", help="仅渲染预览图，不写 .bbmodel")
     parser.add_argument("--out", type=Path, default=BBMODEL_OUT, help="输出 .bbmodel 路径")
     args = parser.parse_args()
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    PREVIEW_OUT.parent.mkdir(parents=True, exist_ok=True)
-
     bbmodel_data = build_bbmodel()
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(bbmodel_data, f, indent=2, ensure_ascii=False)
 
-    print(f"✓ 成功导出 .bbmodel: {args.out}")
-    print(f"  包含 {len(bbmodel_data['elements'])} 个立方体，{len(bbmodel_data['outliner'])} 个 Group。")
+    # 与 gen_array_flag / gen_bamboo_jian 同构：--preview-only 只跳过写模型，预览照出。
+    # 之前这个参数声明了却没人读，传了照样覆盖写 args.out 且一张预览也不产出（Kody 在
+    # PR #2128 上点出来的，属实）。
+    if not args.preview_only:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(bbmodel_data, f, indent=2, ensure_ascii=False)
+        print(f"✓ 成功导出 .bbmodel: {args.out}")
+        print(f"  包含 {len(bbmodel_data['elements'])} 个立方体，{len(bbmodel_data['outliner'])} 个 Group。")
+
+    preview = render_preview(bbmodel_data)
+    print(f"  → preview: {preview}")
 
 
 if __name__ == "__main__":
