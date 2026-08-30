@@ -109,7 +109,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
-use crate::network::client_request::{combat, forge, npc, production};
+use crate::network::client_request::{combat, forge, inventory, npc, production};
 use crate::network::client_request::{social, world};
 use crate::network::gate::budget::BudgetStore;
 use crate::network::gate::{GateContext, GateDenialReason};
@@ -1427,17 +1427,36 @@ pub fn handle_client_request_payloads(
             Err(request) => request,
         };
 
+        let request = match inventory::try_into_inventory_request(request) {
+            Ok(inventory_request) => {
+                inventory::dispatch_inventory_request(
+                    inventory_request,
+                    ev.client,
+                    &mut alchemy_params,
+                    &mut combat_params,
+                    &mut dispatch,
+                    &mut dropped_loot_params,
+                    &mut skill_scroll_params,
+                    persistence.as_deref(),
+                    karma_weights.as_deref(),
+                    durability_changed_tx.as_deref_mut(),
+                    &mut clients,
+                    &mut inventories,
+                    &player_states,
+                    &mut commands,
+                );
+                continue;
+            }
+            Err(request) => request,
+        };
+
         if session::dispatch(
             &request,
             ev.client,
             &mut dispatch,
             &mut combat_params,
             &mut inventories,
-            &player_states,
-            &skill_scroll_params.cultivations,
             &mut clients,
-            &skill_scroll_params.positions,
-            &skill_scroll_params.dimensions,
             &mut commands,
             alchemy_params.vfx_events.as_deref_mut(),
         ) {
@@ -1983,39 +2002,6 @@ pub fn handle_client_request_payloads(
                     );
                 }
             }
-            ClientRequestV1::InventoryMoveIntent {
-                instance_id,
-                from,
-                to,
-                rotated,
-                ..
-            } => {
-                handle_inventory_move(
-                    ev.client,
-                    instance_id,
-                    from,
-                    to,
-                    rotated,
-                    &combat_params.item_registry,
-                    &mut inventories,
-                    &mut clients,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    karma_weights.as_deref(),
-                    durability_changed_tx.as_deref_mut(),
-                    &skill_scroll_params.positions,
-                    &skill_scroll_params.dimensions,
-                    alchemy_params.zones.as_deref_mut(),
-                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
-                    alchemy_params.attrition_applied_events.as_deref_mut(),
-                    alchemy_params.tsy_lifecycle.as_deref(),
-                    &mut dropped_loot_params.registry,
-                    alchemy_params.vfx_events.as_deref_mut(),
-                    combat_params.body_plans.as_deref(),
-                    combat_params.race_registry.as_deref(),
-                    &skill_scroll_params.morph_states,
-                );
-            }
             ClientRequestV1::EquipFalseSkin {
                 slot,
                 item_instance_id,
@@ -2076,23 +2062,6 @@ pub fn handle_client_request_payloads(
                     );
                 }
             }
-            ClientRequestV1::InventoryDiscardItem {
-                instance_id, from, ..
-            } => {
-                handle_inventory_discard(
-                    ev.client,
-                    instance_id,
-                    from,
-                    &mut inventories,
-                    &mut dropped_loot_params.registry,
-                    &combat_params.item_registry,
-                    &mut clients,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &dropped_loot_params.positions,
-                    &skill_scroll_params.dimensions,
-                );
-            }
             ClientRequestV1::TreasureActivate {
                 instance_id,
                 activate,
@@ -2140,25 +2109,6 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &player_states,
                     &skill_scroll_params.cultivations,
-                );
-            }
-            ClientRequestV1::PickupDroppedItem { instance_id, .. } => {
-                handle_pickup_dropped_item(
-                    ev.client,
-                    instance_id,
-                    &mut inventories,
-                    &mut dropped_loot_params.registry,
-                    &combat_params.item_registry,
-                    &mut clients,
-                    &player_states,
-                    &skill_scroll_params.cultivations,
-                    &dropped_loot_params.positions,
-                    &skill_scroll_params.dimensions,
-                    alchemy_params.zones.as_deref_mut(),
-                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
-                    alchemy_params.attrition_applied_events.as_deref_mut(),
-                    alchemy_params.tsy_lifecycle.as_deref(),
-                    persistence.as_deref(),
                 );
             }
             ClientRequestV1::RemainsLoot { remains_id, .. } => {
@@ -17375,7 +17325,7 @@ fn equip_slot_v1_for_runtime(slot: &str) -> Option<EquipSlotV1> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_inventory_move(
+pub(crate) fn handle_inventory_move(
     entity: valence::prelude::Entity,
     instance_id: u64,
     from: InventoryLocationV1,
@@ -17927,7 +17877,7 @@ fn client_position(positions: &Query<&valence::prelude::Position>, entity: Entit
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_inventory_discard(
+pub(crate) fn handle_inventory_discard(
     entity: Entity,
     instance_id: u64,
     from: InventoryLocationV1,
@@ -18017,7 +17967,7 @@ fn handle_inventory_discard(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_pickup_dropped_item(
+pub(crate) fn handle_pickup_dropped_item(
     entity: Entity,
     instance_id: u64,
     inventories: &mut Query<&mut PlayerInventory>,
