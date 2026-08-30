@@ -54,7 +54,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python model-tool dependencies
-        run: python3 -m pip install numpy pillow
+        run: python3 -m pip install -r modelScript/requirements.txt
 
       - name: Install zip tooling
         run: sudo apt-get update && sudo apt-get install -y zip

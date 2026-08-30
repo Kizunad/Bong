@@ -25,8 +25,8 @@ sys.path.insert(0, str(HERE))
 
 import core as C  # noqa: E402
 import gen_core as G  # noqa: E402
-from render_bbmodel import render, render_three_view  # noqa: E402
-from voxel_rig import Palette, Rig  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render, render_three_view  # noqa: E402
+from bbmodel_maker.rig.voxel_rig import Palette, Rig  # noqa: E402
 
 # 挂载点针的配色：三类各一色，跟本体的灰肉色拉开，一眼分得出类别。
 PIN_MATS = {"limb": (232, 96, 60), "head": (96, 176, 232), "vestige": (216, 200, 92)}

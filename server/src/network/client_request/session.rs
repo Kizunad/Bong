@@ -5,12 +5,10 @@
 //! typed request into the existing domain events and session helpers.
 
 use valence::message::SendMessage;
-use valence::prelude::{Client, Commands, Entity, Events, Position, Query, Username};
+use valence::prelude::{Client, Commands, Entity, Events, Query, Username};
 
-use crate::cultivation::components::Cultivation;
 use crate::inventory::PlayerInventory;
 use crate::schema::client_request::ClientRequestV1;
-use crate::world::dimension::CurrentDimension;
 use crate::world::extract_system::{
     CancelExtractRequest as CancelExtractRequestEvent,
     StartExtractRequest as StartExtractRequestEvent,
@@ -34,11 +32,7 @@ pub(crate) fn dispatch(
     dispatch: &mut ClientRequestDispatchParams,
     combat: &mut CombatRequestParams,
     inventories: &mut Query<&mut PlayerInventory>,
-    player_states: &Query<&crate::player::state::PlayerState>,
-    cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
-    positions: &Query<&Position>,
-    dimensions: &Query<&CurrentDimension>,
     commands: &mut Commands,
     vfx_events: Option<&mut Events<crate::network::vfx_event_emit::VfxEventRequest>>,
 ) -> bool {
@@ -139,37 +133,6 @@ pub(crate) fn dispatch(
             }
             true
         }
-        ClientRequestV1::ContainerOpen { entity_id, .. } => {
-            tracing::info!(
-                "[bong][network] client_request container_open entity={player:?} target_id={entity_id}"
-            );
-            let Some(entity_manager) = combat.entity_manager.as_deref() else {
-                tracing::warn!(
-                    "[bong][network] dropped container_open because EntityManager resource is missing"
-                );
-                return true;
-            };
-            let Some(target) = entity_manager.get_by_id(*entity_id) else {
-                tracing::debug!(
-                    "[bong][network] container_open rejected: no entity for protocol id {entity_id}"
-                );
-                if let Ok((_username, mut client)) = clients.get_mut(player) {
-                    client.send_chat_message("§c[容器] 目标不存在。");
-                }
-                return true;
-            };
-            if let Some(tx) = dispatch.container_open_tx.as_deref_mut() {
-                tx.send(crate::world::container_open::ContainerOpenRequest {
-                    client: player,
-                    target,
-                });
-            } else {
-                tracing::warn!(
-                    "[bong][network] dropped container_open because ContainerOpenRequest event resource is missing"
-                );
-            }
-            true
-        }
         ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
             tracing::info!(
                 "[bong][network] client_request workbench_open entity={player:?} target_id={entity_id}"
@@ -199,45 +162,6 @@ pub(crate) fn dispatch(
                     "[bong][network] dropped workbench_open because WorkbenchOpenRequest event resource is missing"
                 );
             }
-            true
-        }
-        ClientRequestV1::ExternalContainerMove {
-            session_id,
-            instance_id,
-            from,
-            to,
-            ..
-        } => {
-            super::handle_external_container_move(
-                player,
-                *session_id,
-                *instance_id,
-                from,
-                to,
-                dispatch,
-                combat,
-                inventories,
-                player_states,
-                cultivations,
-                clients,
-                positions,
-                dimensions,
-                commands,
-            );
-            true
-        }
-        ClientRequestV1::ExternalContainerClose { session_id, .. } => {
-            super::handle_external_container_close(
-                player,
-                *session_id,
-                dispatch,
-                combat,
-                inventories,
-                player_states,
-                cultivations,
-                clients,
-                commands,
-            );
             true
         }
         ClientRequestV1::ScrollReadRequest { instance_id, .. } => {

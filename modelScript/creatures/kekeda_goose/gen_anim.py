@@ -34,7 +34,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
-from anim_rig import (  # noqa: E402
+from bbmodel_maker.rig.anim_rig import (  # noqa: E402
     Pose, build_tracks, decay_shake, keyed, pulse, write_bbmodel, write_geckolib,
 )
 from rig import PLUME, Goose, Waddle, leg_chain  # noqa: E402

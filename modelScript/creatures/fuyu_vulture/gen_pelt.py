@@ -49,7 +49,7 @@ from gen_skeleton import SPECS  # noqa: E402
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "core"))
-from rigkit import (  # noqa: E402
+from bbmodel_maker.rig.rigkit import (  # noqa: E402
     Skeleton, SoftTissue, Vec, bake_file, element_bounds, lerp, mirror_violations,
     normalize, perp_to,
 )
@@ -662,7 +662,7 @@ def _leak_check(size: str, morph: str, res: int = 160) -> list[str]:
     """
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
-    from render_bbmodel import render  # noqa: PLC0415
+    from bbmodel_maker.render.render_bbmodel import render  # noqa: PLC0415
 
     import tempfile  # noqa: PLC0415
 

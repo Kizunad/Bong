@@ -49,7 +49,7 @@ sys.path.insert(0, str(HERE))
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "core"))
-from rigkit import Rig, Vec, lerp, normalize, perp_to  # noqa: E402
+from bbmodel_maker.rig.rigkit import Rig, Vec, lerp, normalize, perp_to  # noqa: E402
 
 REPO = HERE.parents[2]
 # 骨架 / 肌肉 / 各种预览都是**中间产物**，一律落 layers/；顶层只放最终的 9 个外观。

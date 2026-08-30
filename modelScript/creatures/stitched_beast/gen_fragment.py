@@ -31,7 +31,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import fragment as FR  # noqa: E402
 import gen_core as G  # noqa: E402
-from voxel_rig import Palette, Rig  # noqa: E402
+from bbmodel_maker.rig.voxel_rig import Palette, Rig  # noqa: E402
 
 OUT_DIR = G.OUT_DIR
 OUT = OUT_DIR / "StitchedBeastShard.bbmodel"

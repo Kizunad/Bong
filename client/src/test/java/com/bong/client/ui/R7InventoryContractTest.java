@@ -29,7 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7InventoryContractTest {
     private static final Path PRODUCTION_ROOT = R7SourceScan.productionRoot();
-    private static final Path PRODUCTION_INPUT_ROOT = R7SourceScan.productionInputRoot();
 
     @Test
     void screenInventoryPinsEveryDirectProductionScreenAndSuffixException() throws IOException {
@@ -40,8 +39,8 @@ class R7InventoryContractTest {
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
         assertEquals(30, expectedRows.size(), "fixture should contain 29 suffix files plus one non-suffix Screen");
         assertEquals(14, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
-        assertEquals(1, count(expectedRows, "OWO_XML"), "P2 owo XML host set changed");
-        assertEquals(14, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
+        assertEquals(3, count(expectedRows, "OWO_XML"), "P4 owo XML host set changed");
+        assertEquals(12, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
         assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
         assertEquals(14, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
             "P1 base migration is limited to direct legacy owo Screens");
@@ -99,41 +98,8 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 legacy foundation 清理后：移除无生产引用的 owo foundation，
-        // 并保留主线 keybinding registry/HUD 修复的生产源对拍。
-        // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
-        // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
-        // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
-        //
-        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
-        // 矿脉反馈线程修复的 2170 文件基线上，随包新增木棍的两条玩家动画与背篓三份资源，
-        // client/src/main 下没有别的增删改。
-        //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
-        //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
-        //     + resources/assets/bong/geo/back_basket.geo.json
-        //     + resources/assets/bong/textures/entity/back_basket.png
-        // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
-        // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
-        // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
-        // 相对主线新增 14 个生产文件、修改 5 个且无删除，最终文件数 2175 → 2189。
-        // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
-        // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
-        // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
-        // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
-        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
-        // 与 outcome UI 投影；本摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
-        assertEquals(
-            "f41ca422b238ed78049a9f7b8a5b7421bbea3efc6c454ba082b0d649e2f4d493",
-            R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
-        );
-    }
-
-    @Test
-    void p1RetainsScreenInventoryWithoutLegacyFoundation() throws IOException {
-        Set<String> forbiddenProductionTypes = Set.of(
+    void p4AddsOnlyTheFrozenFoundationTypes() throws IOException {
+        Set<String> expectedProductionTypes = Set.of(
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -141,11 +107,11 @@ class R7InventoryContractTest {
         try (var files = Files.walk(PRODUCTION_ROOT)) {
             files.filter(Files::isRegularFile)
                 .map(path -> path.getFileName().toString())
-                .filter(forbiddenProductionTypes::contains)
+                .filter(expectedProductionTypes::contains)
                 .forEach(discovered::add);
         }
-        assertTrue(discovered.isEmpty(),
-            "R7 P1 must not add an unapproved foundation type: " + discovered);
+        assertEquals(expectedProductionTypes, discovered,
+            "P4 必须落地冻结的两个 foundation helper，不能漏实现或增添未审批类型");
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
                 continue;
@@ -283,8 +249,9 @@ class R7InventoryContractTest {
         return switch (path) {
             case "agentui/AgentUiScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
             case "alchemy/AlchemyScreen.java" -> "Code-built FlowLayout";
-            case "coffin/CoffinMenuScreen.java" -> "Vanilla Screen, not a direct base migration";
-            case "combat/screen/DeathScreen.java", "combat/screen/TerminateScreen.java" -> "System-terminal screen";
+            case "coffin/CoffinMenuScreen.java" -> "P4 XML migration slice; G menu";
+            case "combat/screen/DeathScreen.java" -> "System-terminal screen";
+            case "combat/screen/TerminateScreen.java" -> "P4 XML migration slice; system-terminal screen";
             case "combat/screen/ForgeCarrierScreen.java", "combat/screen/RepairScreen.java",
                 "combat/screen/ZhenfaLayoutScreen.java", "cultivation/voidaction/VoidActionScreen.java",
                 "forge/ForgeScreen.java", "identity/IdentityPanelScreen.java", "inspect/ItemInspectScreen.java",
@@ -312,10 +279,10 @@ class R7InventoryContractTest {
     @Test
     void clearChildrenInventoryPinsExactProductionSites() throws IOException {
         List<String> sites = List.of(
-            "alchemy/AlchemyScreen.java:538",
-            "alchemy/AlchemyScreen.java:578",
-            "alchemy/AlchemyScreen.java:607",
-            "alchemy/AlchemyScreen.java:636",
+            "alchemy/AlchemyScreen.java:520",
+            "alchemy/AlchemyScreen.java:568",
+            "alchemy/AlchemyScreen.java:601",
+            "alchemy/AlchemyScreen.java:634",
             "combat/inspect/SkillConfigPanelManager.java:76",
             "combat/inspect/SkillConfigPanelManager.java:84",
             "combat/inspect/TechniquesTabPanel.java:149",

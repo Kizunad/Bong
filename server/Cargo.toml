@@ -14,6 +14,18 @@ path = "src/lib.rs"
 name = "bong-server"
 path = "src/main.rs"
 
+[[test]]
+name = "pseudo_vein_runtime_unit"
+path = "tests/unit/world/pseudo_vein_runtime_test.rs"
+
+[[test]]
+name = "tsy_container_search_unit"
+path = "tests/unit/world/tsy_container_search_test.rs"
+
+[[test]]
+name = "workbench_reach_profile"
+path = "tests/workbench_reach_profile.rs"
+
 [features]
 dev-techniques = []
 

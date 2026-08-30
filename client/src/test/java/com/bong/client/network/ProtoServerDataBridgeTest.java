@@ -168,7 +168,8 @@ class ProtoServerDataBridgeTest {
                 .setCombatHudState(Envelope.CombatHudState.newBuilder()
                         .setHpPercent(0.75f)
                         .setQiPercent(0.5f)
-                        .setStaminaPercent(1.0f))
+                        .setStaminaPercent(1.0f)
+                        .setCombatActive(true))
                 .build();
 
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
@@ -176,6 +177,7 @@ class ProtoServerDataBridgeTest {
 
         JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
         assertEquals("combat_hud_state", json.get("type").getAsString());
+        assertTrue(json.get("combat_active").getAsBoolean());
     }
 
     // ─── Happy path: CoffinState ─────────────────────────────────────

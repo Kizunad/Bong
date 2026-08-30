@@ -39,7 +39,7 @@ from pathlib import Path
 
 # --- modelScript 路径引导：共用底座在 core/ ---
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
-from rigkit import Rig, Vec, element_bounds, lerp  # noqa: E402
+from bbmodel_maker.rig.rigkit import Rig, Vec, element_bounds, lerp  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 OUT_DIR = Path(__file__).resolve().parents[1] / "models" / "bone_blocks"
@@ -623,7 +623,7 @@ def print_ref() -> int:
     live: dict[str, tuple[float, float, float]] = {}
     if LION.exists():
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
-        from rigkit import Skeleton
+        from bbmodel_maker.rig.rigkit import Skeleton
 
         sk = Skeleton(LION)
         baked = sk.baked_elements()

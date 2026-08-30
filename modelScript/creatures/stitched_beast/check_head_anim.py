@@ -43,7 +43,7 @@ sys.path.insert(0, str(HERE))
 import genome as GN  # noqa: E402
 import head_anim as HA  # noqa: E402
 import heads as HD  # noqa: E402
-from anim_rig import Rig, build_tracks  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Rig, build_tracks  # noqa: E402
 
 N = 48
 

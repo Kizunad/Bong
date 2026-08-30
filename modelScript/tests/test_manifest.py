@@ -17,11 +17,10 @@ from pathlib import Path
 import numpy as np
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB_DIR / "core"))
 sys.path.insert(0, str(LIB_DIR / "generators"))
 
-import framing  # noqa: E402
-import manifest as mf  # noqa: E402
+from bbmodel_maker.render import framing  # noqa: E402
+from bbmodel_maker.gates import manifest as mf  # noqa: E402
 
 MODEL = LIB_DIR / "models" / "GrassPouch.bbmodel"
 SHEET = LIB_DIR / "manifests" / "GrassPouch.manifest.toml"

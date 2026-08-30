@@ -184,6 +184,10 @@ pub struct CombatState {
     pub incoming_window: Option<DefenseWindow>,
 }
 
+/// 仅挂在存在战斗窗口的实体上，供逐 tick 到期检查避免扫描全部战斗组件。
+#[derive(Debug, Clone, Copy, Component, Default)]
+pub struct ActiveCombatWindow;
+
 impl CombatState {
     pub fn refresh_combat_window(&mut self, now_tick: u64) {
         let until_tick = now_tick.saturating_add(IN_COMBAT_WINDOW_TICKS);

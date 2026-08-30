@@ -35,8 +35,8 @@ from gen_pelt import MORPHS  # noqa: E402
 from gen_muscle import GROUPS as MGROUPS  # noqa: E402
 from gen_skeleton import PARTS, SPECS, build  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
-from render_bbmodel import render, render_three_view  # noqa: E402
-from rigkit import bake_file  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render, render_three_view  # noqa: E402
+from bbmodel_maker.rig.rigkit import bake_file  # noqa: E402
 
 
 _BAKED: dict[str, str] = {}

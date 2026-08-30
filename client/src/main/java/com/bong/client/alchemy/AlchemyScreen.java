@@ -1,21 +1,12 @@
 package com.bong.client.alchemy;
 
-import com.bong.client.alchemy.state.AlchemyAttemptHistoryStore;
-import com.bong.client.alchemy.state.AlchemyFurnaceStore;
-import com.bong.client.alchemy.state.AlchemyOutcomeForecastStore;
-import com.bong.client.alchemy.state.AlchemySessionStore;
-import com.bong.client.alchemy.state.ContaminationWarningStore;
-import com.bong.client.alchemy.state.InventoryMetaStore;
-import com.bong.client.alchemy.state.RecipeScrollStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.DragState;
-import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetSnapshot;
-import com.bong.client.skill.SkillSetStore;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
@@ -28,6 +19,10 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+
+import com.bong.client.ui.contract.DefaultUiScreenScope;
+import com.bong.client.ui.contract.UiScreenScope;
+import com.bong.client.ui.intent.UiIntentResult;
 
 import java.util.function.Consumer;
 
@@ -73,11 +68,10 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private BackpackGridPanel backpack;
     private final DragState dragState = new DragState();
     private final BlockPos furnacePos;
-    private Consumer<SkillSetSnapshot> skillListener;
-    private Consumer<InventoryModel> inventoryListener;
-    private Consumer<AlchemySessionStore.Snapshot> sessionListener;
     private AlchemySessionPresentationPlanner.Presentation sessionPresentation;
     private Consumer<AlchemySessionPresentationPlanner.Presentation> sessionPresentationObserver;
+    private final AlchemyScreenController controller;
+    private final DefaultUiScreenScope scope = new DefaultUiScreenScope();
     private boolean removed;
 
     private int dupFlashTicks = 0;
@@ -89,6 +83,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     public AlchemyScreen(BlockPos furnacePos) {
         super(TITLE);
         this.furnacePos = furnacePos;
+        this.controller = AlchemyScreenController.production(this::applyViewModel, AlchemyScreen::executeOnClientThread);
     }
 
     @Override
@@ -99,7 +94,10 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public void removed() {
         removed = true;
-        detachListeners();
+        if (scope != null && !scope.isClosed()) {
+            scope.close();
+        }
+        controller.onClose();
         super.removed();
     }
 
@@ -126,44 +124,16 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         panel.child(buildBottomStrip());
 
         root.child(panel);
-        backpack.populateFromModel(InventoryStateStore.snapshot());
-        refreshAlchemySkillText();
+        backpack.populateFromModel(controller.viewModel().inventory());
+        refreshView(controller.viewModel());
         removed = false;
-        attachListeners();
-    }
-
-    private void attachListeners() {
-        if (removed) return;
-        if (skillListener == null) {
-            skillListener = next -> runOnClientThread(this::refreshAlchemySkillText);
-            SkillSetStore.addListener(skillListener);
-        }
-        if (inventoryListener == null) {
-            inventoryListener = this::scheduleBackpackRefresh;
-            InventoryStateStore.addListener(inventoryListener);
-        }
-        if (sessionListener == null) {
-            sessionListener = this::scheduleSessionRefresh;
-            AlchemySessionStore.addListener(sessionListener);
+        if (!scope.isOpen()) {
+            scope.onOpen();
+            controller.onOpen(scope);
         }
     }
 
-    private void detachListeners() {
-        if (skillListener != null) {
-            SkillSetStore.removeListener(skillListener);
-            skillListener = null;
-        }
-        if (inventoryListener != null) {
-            InventoryStateStore.removeListener(inventoryListener);
-            inventoryListener = null;
-        }
-        if (sessionListener != null) {
-            AlchemySessionStore.removeListener(sessionListener);
-            sessionListener = null;
-        }
-    }
-
-    private void runOnClientThread(Runnable action) {
+    private static void executeOnClientThread(Runnable action) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null) {
             client.execute(action);
@@ -172,24 +142,26 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    /**
-     * F13：背包列改由 {@link InventoryStateStore} 驱动，仿 {@code CraftScreen.scheduleRefresh()}
-     * 的监听生命周期——{@link InventoryStateStore} 的回调线程未必是客户端主线程（javadoc:
-     * "Listener is called on the thread that calls replace()"），owo UI 组件必须回到主线程改。
-     * 与 {@code CraftScreen} 一致做 null 判空（而非无条件 {@code MinecraftClient.getInstance().execute}），
-     * 避免 client 尚未就绪/已释放时的 NPE。
-     */
-    private void scheduleBackpackRefresh(InventoryModel model) {
-        runOnClientThread(() -> refreshBackpack(model));
-    }
-
-    private void scheduleSessionRefresh(AlchemySessionStore.Snapshot session) {
-        runOnClientThread(() -> refreshSessionText(session));
-    }
-
-    private void refreshBackpack(InventoryModel model) {
+    private void refreshBackpack(com.bong.client.inventory.model.InventoryModel model) {
         if (backpack == null) return;
         backpack.populateFromModel(model);
+    }
+
+    private void applyViewModel(AlchemyScreenViewModel model) {
+        if (removed) return;
+        refreshView(model);
+    }
+
+    private void refreshView(AlchemyScreenViewModel model) {
+        refreshBackpack(model.inventory());
+        refreshAlchemySkillText(model);
+        refreshRecipeText(model);
+        refreshFurnaceText(model);
+        refreshSessionText(model);
+        refreshWeight(model);
+        refreshOutcomes(model);
+        refreshHistory(model);
+        refreshContamination(model);
     }
 
     private FlowLayout buildHeader() {
@@ -445,21 +417,20 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void turnPage(int delta) {
-        // C→S：发包给服务端；server 维护 per-client current_index 并回推 alchemy_recipe_book。
-        // 失败时回退本地 turn,保证离线/未连接也能翻页。
-        try {
-            com.bong.client.network.ClientRequestSender.sendAlchemyTurnPage(delta);
-        } catch (RuntimeException ignore) {
-            RecipeScrollStore.turn(delta);
-            refreshRecipeText();
-        }
+        // C→S：server 维护 current_index；adapter 保留未连接时的本地 fallback。
+        controller.intentSink().dispatch(new AlchemyIntent.TurnPage(delta));
+        controller.refreshFromSource();
     }
 
     // ================== REFRESH from Stores ==================
     private void refreshRecipeText() {
+        refreshRecipeText(controller.viewModel());
+    }
+
+    private void refreshRecipeText(AlchemyScreenViewModel model) {
         if (recipeTitle == null) return;
-        RecipeScrollStore.Snapshot snap = RecipeScrollStore.snapshot();
-        RecipeScrollStore.RecipeEntry cur = snap.current();
+        var snap = model.recipes();
+        var cur = snap.current();
         if (cur == null) {
             recipeTitle.text(Text.literal("§8（未悟方子）"));
             recipeSubtitle.text(Text.literal(""));
@@ -475,9 +446,14 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshAlchemySkillText() {
+        refreshAlchemySkillText(controller.viewModel());
+    }
+
+    private void refreshAlchemySkillText(AlchemyScreenViewModel model) {
         if (alchemySkillLabel == null) return;
+        SkillSetSnapshot skills = model.skills();
         alchemySkillLabel.text(Text.literal(formatAlchemySkillHeader(
-            SkillSetStore.snapshot().get(SkillId.ALCHEMY)
+            skills.get(SkillId.ALCHEMY)
         )));
     }
 
@@ -502,8 +478,12 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshFurnaceText() {
+        refreshFurnaceText(controller.viewModel());
+    }
+
+    private void refreshFurnaceText(AlchemyScreenViewModel model) {
         if (furnaceInfoLabel == null) return;
-        AlchemyFurnaceStore.Snapshot f = AlchemyFurnaceStore.snapshot();
+        var f = model.furnace();
         BlockPos shownPos = f.pos() != null ? f.pos() : furnacePos;
         furnaceInfoLabel.text(Text.literal(String.format(
             "§7%s · t%d 完整 %.0f/%.0f · %s",
@@ -515,12 +495,14 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshSessionText() {
-        refreshSessionText(AlchemySessionStore.snapshot());
+        refreshSessionText(controller.viewModel());
     }
 
-    private void refreshSessionText(AlchemySessionStore.Snapshot session) {
+    private void refreshSessionText(AlchemyScreenViewModel model) {
+        var furnace = model.furnace();
+        var session = model.session();
         sessionPresentation = AlchemySessionPresentationPlanner.describe(
-            AlchemyFurnaceStore.snapshot(),
+            furnace,
             session
         );
         if (sessionPresentationObserver != null) {
@@ -562,8 +544,12 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshWeight() {
+        refreshWeight(controller.viewModel());
+    }
+
+    private void refreshWeight(AlchemyScreenViewModel model) {
         if (weightLabel == null) return;
-        InventoryMetaStore.Snapshot m = InventoryMetaStore.snapshot();
+        var m = model.inventoryMeta();
         weightLabel.text(Text.literal(String.format(
             "§7重量 %.1f/%.1f", m.weightCurrent(), m.weightMax())));
         int pct = m.weightMax() > 0 ? Math.round(100f * m.weightCurrent() / m.weightMax()) : 0;
@@ -572,8 +558,12 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshOutcomes() {
+        refreshOutcomes(controller.viewModel());
+    }
+
+    private void refreshOutcomes(AlchemyScreenViewModel model) {
         if (outcomeRow == null) return;
-        AlchemyOutcomeForecastStore.Snapshot o = AlchemyOutcomeForecastStore.snapshot();
+        var o = model.outcome();
         outcomeRow.<FlowLayout>configure(layout -> {
             layout.clearChildren();
             layout.child(outcomeCard("perf", o.perfectPct(), 0xFF0A2A0A, 0xFF40FF80));
@@ -601,8 +591,12 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshHistory() {
+        refreshHistory(controller.viewModel());
+    }
+
+    private void refreshHistory(AlchemyScreenViewModel model) {
         if (historyBox == null) return;
-        java.util.List<AlchemyAttemptHistoryStore.Entry> entries = AlchemyAttemptHistoryStore.snapshot();
+        var entries = model.history();
         historyBox.<FlowLayout>configure(layout -> {
             layout.clearChildren();
             layout.child(Components.label(Text.literal("§7§l试药史")));
@@ -612,7 +606,7 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             }
             int from = Math.max(0, entries.size() - 3);
             for (int i = entries.size() - 1; i >= from; i--) {
-                AlchemyAttemptHistoryStore.Entry e = entries.get(i);
+                var e = entries.get(i);
                 String color = switch (e.bucket()) {
                     case "perfect" -> "§a";
                     case "good" -> "§2";
@@ -630,8 +624,12 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void refreshContamination() {
+        refreshContamination(controller.viewModel());
+    }
+
+    private void refreshContamination(AlchemyScreenViewModel model) {
         if (contaminationBox == null) return;
-        ContaminationWarningStore.Snapshot c = ContaminationWarningStore.snapshot();
+        var c = model.contamination();
         contaminationBox.<FlowLayout>configure(layout -> {
             layout.clearChildren();
             layout.child(Components.label(Text.literal("§d§l丹毒")));
@@ -723,13 +721,9 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
 
         if (pointInDropZone(mx, my) && dragged.itemId().startsWith(RECIPE_SCROLL_PREFIX)) {
             String id = dragged.itemId().substring(RECIPE_SCROLL_PREFIX.length());
-            boolean ok = RecipeScrollStore.learn(new RecipeScrollStore.RecipeEntry(
-                id, id, "§7新悟得方子: " + id
-            ));
-            if (ok) {
-                try {
-                    com.bong.client.network.ClientRequestSender.sendAlchemyLearnRecipe(id);
-                } catch (RuntimeException ignore) { }
+            UiIntentResult result = controller.intentSink().dispatch(new AlchemyIntent.LearnRecipe(id));
+            if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+                controller.refreshFromSource();
                 dragState.drop();
                 clearHighlights();
                 refreshRecipeText();
@@ -759,12 +753,9 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
                 furnaceSlots[fIdx].setItem(dragged, true);
                 int count = feedCountForSlot(activeRecipeId(), fIdx, dragged);
                 try {
-                    com.bong.client.network.ClientRequestSender.sendAlchemyFeedSlot(
-                        furnacePos,
-                        fIdx,
-                        dragged.itemId(),
-                        count
-                    );
+                    controller.intentSink().dispatch(new AlchemyIntent.FeedSlot(
+                        furnacePos, fIdx, dragged.itemId(), count
+                    ));
                 } catch (RuntimeException ignore) { }
                 dragState.drop();
                 clearHighlights();
@@ -798,9 +789,9 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private String activeRecipeId() {
-        AlchemySessionStore.Snapshot session = AlchemySessionStore.snapshot();
-        if (AlchemyFurnaceStore.snapshot().hasSession() && session.isActive()) return session.recipeId();
-        RecipeScrollStore.RecipeEntry current = RecipeScrollStore.snapshot().current();
+        var model = controller.viewModel();
+        if (model.furnace().hasSession() && model.session().isActive()) return model.session().recipeId();
+        var current = model.recipes().current();
         return current == null ? "" : current.id();
     }
 
@@ -918,13 +909,18 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     // plan-alchemy-v1 §3.3: F 注真元 / ↑↓ 调温
 
     void attachSessionListenerForTests() {
-        attachListeners();
+        if (removed) return;
+        if (!scope.isOpen()) {
+            scope.onOpen();
+            controller.onOpen(scope);
+        }
         refreshSessionText();
     }
 
     void detachSessionListenerForTests() {
         removed = true;
-        detachListeners();
+        if (scope != null && !scope.isClosed()) scope.close();
+        controller.onClose();
     }
 
     AlchemySessionPresentationPlanner.Presentation sessionPresentationForTests() {
@@ -938,7 +934,10 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     boolean takeBackForTests() {
-        return requestTakeBack();
+        // 该 seam 专门验证 sender 编码，不模拟 Screen host 生命周期；生产按键仍走 guarded controller。
+        return AlchemyClientIntentSink.production().dispatch(
+            new AlchemyIntent.TakeBack(furnacePos, 0)
+        ).kind() == UiIntentResult.Kind.LOCAL_ACCEPTED;
     }
 
     private static final double QI_INJECT_PER_TAP = 1.0;
@@ -947,36 +946,27 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private boolean requestTakeBack() {
         for (int i = 0; i < FURNACE_SLOTS; i++) {
             if (furnaceItems[i] != null) {
-                try {
-                    com.bong.client.network.ClientRequestSender.sendAlchemyTakeBack(furnacePos, i);
-                } catch (RuntimeException ignore) { }
-                return true;
+                return controller.intentSink().dispatch(new AlchemyIntent.TakeBack(furnacePos, i)).kind()
+                    == UiIntentResult.Kind.LOCAL_ACCEPTED;
             }
         }
-        try {
-            com.bong.client.network.ClientRequestSender.sendAlchemyTakeBack(furnacePos, 0);
-        } catch (RuntimeException ignore) { }
-        return true;
+        return controller.intentSink().dispatch(new AlchemyIntent.TakeBack(furnacePos, 0)).kind()
+            == UiIntentResult.Kind.LOCAL_ACCEPTED;
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         // GLFW key codes: F=70, UP=265, DOWN=264
         if (keyCode == 70) {
-            try {
-                com.bong.client.network.ClientRequestSender.sendAlchemyInjectQi(furnacePos, QI_INJECT_PER_TAP);
-            } catch (RuntimeException ignore) { }
+            controller.intentSink().dispatch(new AlchemyIntent.InjectQi(furnacePos, QI_INJECT_PER_TAP));
             return true;
         }
         if (keyCode == 73) {
-            RecipeScrollStore.RecipeEntry current = RecipeScrollStore.snapshot().current();
+            var current = controller.viewModel().recipes().current();
             if (current != null) {
-                try {
-                    com.bong.client.network.ClientRequestSender.sendAlchemyIgnite(
-                        furnacePos,
-                        canonicalRecipeId(current.id())
-                    );
-                } catch (RuntimeException ignore) { }
+                controller.intentSink().dispatch(new AlchemyIntent.Ignite(
+                    furnacePos, canonicalRecipeId(current.id())
+                ));
             }
             return true;
         }
@@ -984,14 +974,12 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
             return requestTakeBack();
         }
         if (keyCode == 265 || keyCode == 264) {
-            AlchemySessionStore.Snapshot s = AlchemySessionStore.snapshot();
+            var s = controller.viewModel().session();
             double cur = s.tempCurrent();
             double next = keyCode == 265
                 ? Math.min(1.0, cur + TEMP_ADJUST_STEP)
                 : Math.max(0.0, cur - TEMP_ADJUST_STEP);
-            try {
-                com.bong.client.network.ClientRequestSender.sendAlchemyAdjustTemp(furnacePos, next);
-            } catch (RuntimeException ignore) { }
+            controller.intentSink().dispatch(new AlchemyIntent.AdjustTemp(furnacePos, next));
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);

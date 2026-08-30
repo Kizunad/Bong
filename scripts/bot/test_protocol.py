@@ -13092,12 +13092,14 @@ class ProbePayloadDecodeTest(unittest.TestCase):
             + _pb_fixed32(2, 0.5)
             + _pb_fixed32(3, 0.25)
             + _pb_message(4, _pb_varint_field(3, 1))
+            + _pb_varint_field(5, 1)
         )
         decoded = proto_min.decode_server_data_envelope(_pb_message(9, inner))
         self.assertEqual(decoded["type"], "combat_hud_state")
         self.assertAlmostEqual(decoded["hp_percent"], 0.75)
         self.assertAlmostEqual(decoded["qi_percent"], 0.5)
         self.assertAlmostEqual(decoded["stamina_percent"], 0.25)
+        self.assertTrue(decoded["combat_active"])
         self.assertEqual(
             decoded["derived"],
             {"flying": False, "phasing": False, "tribulation_locked": True},

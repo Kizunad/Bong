@@ -765,12 +765,13 @@ def main():
     print(f"[✓] 成功写入模型: {MODEL_OUT}")
 
     tex_path = OUT_DIR / "remnant_scroll_texture.png"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)  # out/ 不入库，干净 checkout 上不存在
     tex.save(tex_path)
     print(f"[✓] 成功保存贴图: {tex_path}")
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
     try:
-        import render_bbmodel
+        from bbmodel_maker.render import render_bbmodel
         print("[*] 正在渲染三视图与等轴透视图...")
         three_view_img, _ = render_bbmodel.render_three_view(MODEL_OUT)
         three_view_img.save(THREE_VIEW_OUT)

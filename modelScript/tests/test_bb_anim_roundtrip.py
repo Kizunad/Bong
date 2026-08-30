@@ -36,15 +36,14 @@ from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in (LIB_DIR / "core", LIB_DIR / "generators", LIB_DIR / "tools",
-           REPO / "client" / "tools"):
+for _d in (LIB_DIR / "generators", LIB_DIR / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
-import bb_anim_axes as AX  # noqa: E402
-import bbmodel_to_pose as BP  # noqa: E402
+from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402
+from bbmodel_maker.workbench import bbmodel_to_pose as BP  # noqa: E402
 import gen_club_player_anim as GCP  # noqa: E402
 import gen_jian_player_anim as GJP  # noqa: E402
-import render_player_pose as RP  # noqa: E402
+from bbmodel_maker.render import render_player_pose as RP  # noqa: E402
 
 ANIM = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
 MODELS = LIB_DIR / "models"
@@ -173,7 +172,10 @@ class AnimationRoundTripTest(unittest.TestCase):
 
     CASES = (("ClubPlayerAnim.bbmodel", "club_smash"),
              ("ClubPlayerAnim.bbmodel", "club_sweep"),
-             ("JianPlayerAnim.bbmodel", "jian_dual_smash"))
+             ("JianPlayerAnim.bbmodel", "jian_dual_smash"),
+             # 脊骨剑：第一版这份文件里 8 条动画全是空的（`length=0 / bones=0`），
+             # 往返锁是最直接的兜底——没有帧就还原不出姿态，这里立刻红。
+             ("BeastSpineSwordPlayerAnim.bbmodel", "sword_spine_slash"))
 
     def _bbmodel_anim(self, filename, name):
         doc = json.loads((MODELS / filename).read_text(encoding="utf-8"))

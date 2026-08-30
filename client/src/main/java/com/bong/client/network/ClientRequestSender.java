@@ -117,6 +117,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeGeneric(type, payload));
     }
 
+    /** 终结屏：请求服务端创建新角色。 */
+    public static void sendCombatCreateNewCharacter() {
+        dispatch(ClientRequestProtocol.encodeCombatCreateNewCharacter());
+    }
+
     // ─── Inventory move intent ──────────────────────────────────────────────
 
     /**

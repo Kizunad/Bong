@@ -294,6 +294,7 @@ def render_preview(cubes, tex, out=PREVIEW_OUT):
     d.text((gap * 2 + iso_im.width, top_h + gap * 2 - 12),
            "TEXTURE 64x64 (x3) — wood / cloth / rune / bone", fill=(200, 200, 200))
     d.text((gap, canvas.height - 16), "parts: " + "  ".join(BONE_ORDER), fill=(180, 180, 180))
+    out.parent.mkdir(parents=True, exist_ok=True)  # out/ 不入库，干净 checkout 上不存在
     canvas.save(out)
     return out
 

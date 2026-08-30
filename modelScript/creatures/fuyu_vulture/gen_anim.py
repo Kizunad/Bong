@@ -41,7 +41,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
-from animkit import (  # noqa: E402
+from bbmodel_maker.rig.animkit import (  # noqa: E402
     Pose, build_tracks, keyed, pulse, smooth, write_animated_bbmodel, write_geckolib,
 )
 from rig import (  # noqa: E402

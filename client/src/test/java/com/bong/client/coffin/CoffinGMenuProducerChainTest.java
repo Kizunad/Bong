@@ -1,7 +1,6 @@
 package com.bong.client.coffin;
 
 import com.bong.client.network.ClientRequestSender;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
@@ -12,8 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * plan-coffin-tiers-v1 P3 — G 菜单 [回收] 生产链 Java 侧集成测试
@@ -26,9 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       的真实生产派生——marker 位于棺两格中心（server {@code coffin_marker_position}：
  *       lower+(1, 0, 0.5)），floor 后得到棺的 <b>upper</b> 格（lower.x+1, lower.y, lower.z）。</li>
  *   <li><b>菜单 → [回收] 按钮 → sender</b>：用上面派生的 upper 坐标构造真实
- *       {@link CoffinMenuScreen}，{@code init()} 后通过 {@code children()} 找到
- *       【回收】{@link ButtonWidget} 并 {@code onPress()}——直接触发生产按钮的 onClick，
- *       后者调用 {@link ClientRequestSender#sendCoffinMenuReclaim}。通过
+ *       {@link CoffinMenuScreen}，触发 XML [回收] 按钮绑定的 typed action，后者调用
+ *       {@link ClientRequestSender#sendCoffinMenuReclaim}。通过
  *       {@code ClientRequestSender.setBackendForTests} 捕获 Java 侧产出的 wire payload。</li>
  * </ol>
  * 断言 payload 携带的正是 <b>upper</b> 坐标（而非 lower）——真实客户端 G→菜单→[回收]
@@ -55,15 +51,6 @@ class CoffinGMenuProducerChainTest {
         );
     }
 
-    private static ButtonWidget reclaimButton(CoffinMenuScreen screen) {
-        for (Object child : screen.children()) {
-            if (child instanceof ButtonWidget button && "【回收】".equals(button.getMessage().getString())) {
-                return button;
-            }
-        }
-        return null;
-    }
-
     @Test
     void productionChainReclaimButtonEmitsUpperCoordinatePayload() {
         installCapture();
@@ -82,12 +69,9 @@ class CoffinGMenuProducerChainTest {
             "这是 dispatch 里对 marker 实体坐标的真实派生，不是 Python 镜像。期望 upper"
         );
 
-        // 2) 打开真实菜单 + 按真实 [回收] 按钮（生产 onClick -> sendCoffinMenuReclaim）。
+        // 2) 触发 XML [回收] 按钮绑定的生产动作。
         CoffinMenuScreen screen = new CoffinMenuScreen(coffinPos);
-        screen.init();
-        ButtonWidget reclaim = reclaimButton(screen);
-        assertNotNull(reclaim, "CoffinMenuScreen 应含【回收】ButtonWidget（G 菜单生产按钮）");
-        reclaim.onPress();
+        screen.onReclaim();
 
         // 3) 断言 Java 侧产出的 wire payload 使用 upper 坐标。
         assertEquals(1, sent.size(), "按下【回收】应恰好产生 1 条 client_request payload");

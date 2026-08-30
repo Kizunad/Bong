@@ -37,7 +37,7 @@ MODELS = Path(__file__).resolve().parents[2] / "models" / "kekeda_goose"
 OUT = HERE / "renders"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
-from render_bbmodel import render, render_three_view  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render, render_three_view  # noqa: E402
 
 from PIL import Image, ImageDraw  # noqa: E402
 

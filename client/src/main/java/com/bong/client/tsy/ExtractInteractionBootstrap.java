@@ -2,7 +2,7 @@ package com.bong.client.tsy;
 
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
-import com.bong.client.ui.BongKeybindRegistry;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
@@ -34,12 +34,12 @@ public final class ExtractInteractionBootstrap {
                 new BongKeybindRegistry.BindingOwner("tsy.extract_cancel"),
                 CANCEL_KEY_TRANSLATION,
                 InputUtil.Type.KEYSYM,
-                InputUtil.UNKNOWN_KEY.getCode(),
+                GLFW.GLFW_KEY_U,
                 CATEGORY
             )
         );
         ClientTickEvents.END_CLIENT_TICK.register(ExtractInteractionBootstrap::onTick);
-        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/UNKNOWN");
+        BongClient.LOGGER.info("Registered TSY extract keybindings on keys: Y/U");
     }
 
     private static void onTick(MinecraftClient client) {

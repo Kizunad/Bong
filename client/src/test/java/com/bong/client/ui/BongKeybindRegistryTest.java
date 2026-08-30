@@ -1,5 +1,6 @@
 package com.bong.client.ui;
 
+import com.bong.client.input.BongKeybindRegistry;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.junit.jupiter.api.Test;
@@ -8,9 +9,11 @@ import org.lwjgl.glfw.GLFW;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -193,6 +196,90 @@ class BongKeybindRegistryTest {
     }
 
     @Test
+    void legacyBindingMigratesByTranslationKeyAndUpdatesPhysicalIndex() {
+        BongKeybindRegistry registry = registry();
+        KeyBinding unrelated = registry.register(spec(
+            "owner.unrelated", "key.test.unrelated", GLFW.GLFW_KEY_K
+        ));
+        KeyBinding forge = registry.register(spec(
+            "owner.forge", "key.test.forge", GLFW.GLFW_KEY_U
+        ));
+        AtomicReference<InputUtil.Key> persisted = new AtomicReference<>();
+
+        KeyBinding.unpressAll();
+        KeyBinding.onKeyPressed(key(GLFW.GLFW_KEY_U));
+        assertTrue(forge.wasPressed(),
+            "before migration the persisted legacy U must still reach Forge's binding");
+        assertFalse(forge.wasPressed(), "the pre-migration press must be drained before migration");
+
+        boolean migrated = registry.migrateLegacyBoundKey(
+            "key.test.forge",
+            key(GLFW.GLFW_KEY_U),
+            InputUtil.UNKNOWN_KEY,
+            (binding, replacement) -> {
+                assertSame(forge, binding,
+                    "migration must select the binding by translation key, not registration order");
+                binding.setBoundKey(replacement);
+                persisted.set(replacement);
+            }
+        );
+
+        assertTrue(migrated, "an exact legacy U binding must be migrated");
+        assertTrue(forge.isUnbound(), "legacy Forge binding must become unbound");
+        assertEquals(InputUtil.UNKNOWN_KEY, persisted.get(),
+            "migration must pass UNKNOWN to the persistence seam");
+        assertTrue(unrelated.matchesKey(GLFW.GLFW_KEY_K, 0),
+            "migration must not alter another registered binding");
+
+        KeyBinding.onKeyPressed(key(GLFW.GLFW_KEY_U));
+        assertFalse(forge.wasPressed(),
+            "after migration the old U physical index must no longer dispatch to Forge");
+    }
+
+    @Test
+    void customizedBindingIsPreservedAndRebinderIsNotCalled() {
+        BongKeybindRegistry registry = registry();
+        KeyBinding forge = registry.register(spec(
+            "owner.forge.custom", "key.test.forge.custom", GLFW.GLFW_KEY_K
+        ));
+        AtomicInteger rebinderCalls = new AtomicInteger();
+
+        boolean migrated = registry.migrateLegacyBoundKey(
+            "key.test.forge.custom",
+            key(GLFW.GLFW_KEY_U),
+            InputUtil.UNKNOWN_KEY,
+            (binding, replacement) -> rebinderCalls.incrementAndGet()
+        );
+
+        assertFalse(migrated, "a player-customized K binding is not a legacy U binding");
+        assertEquals(0, rebinderCalls.get(),
+            "customized bindings must not reach the persistence seam");
+        assertTrue(forge.matchesKey(GLFW.GLFW_KEY_K, 0),
+            "player-customized key must remain unchanged");
+    }
+
+    @Test
+    void alreadyUnboundBindingIsIdempotentlyLeftUnchanged() {
+        BongKeybindRegistry registry = registry();
+        KeyBinding forge = registry.register(spec(
+            "owner.forge.unbound", "key.test.forge.unbound", InputUtil.UNKNOWN_KEY.getCode()
+        ));
+        AtomicInteger rebinderCalls = new AtomicInteger();
+
+        boolean migrated = registry.migrateLegacyBoundKey(
+            "key.test.forge.unbound",
+            key(GLFW.GLFW_KEY_U),
+            InputUtil.UNKNOWN_KEY,
+            (binding, replacement) -> rebinderCalls.incrementAndGet()
+        );
+
+        assertFalse(migrated, "an already UNKNOWN binding has no legacy value to migrate");
+        assertEquals(0, rebinderCalls.get(),
+            "idempotent no-op must not rewrite options.txt");
+        assertTrue(forge.isUnbound(), "already UNKNOWN must remain UNKNOWN");
+    }
+
+    @Test
     void nullAndBlankInputsFailFastAtTheContractBoundary() {
         assertThrows(NullPointerException.class, () -> new BongKeybindRegistry.BindingOwner(null));
         assertThrows(IllegalArgumentException.class, () -> new BongKeybindRegistry.BindingOwner("\t"));
@@ -246,6 +333,10 @@ class BongKeybindRegistryTest {
         return new BongKeybindRegistry.BindingSpec(
             new BongKeybindRegistry.BindingOwner(owner), translationKey, type, code, CATEGORY
         );
+    }
+
+    private static InputUtil.Key key(int code) {
+        return InputUtil.Type.KEYSYM.createFromCode(code);
     }
 
 }

@@ -8,7 +8,6 @@ from pathlib import Path
 import sys
 
 _REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO / "modelScript" / "core"))
 sys.path.insert(0, str(_REPO / "modelScript" / "generators"))
 
 from gen_mutated_bone_armor import (

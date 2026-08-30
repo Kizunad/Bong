@@ -36,8 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
-import animgate  # noqa: E402
-from animkit import Pose, build_tracks  # noqa: E402
+from bbmodel_maker.gates import animgate  # noqa: E402
+from bbmodel_maker.rig.animkit import Pose, build_tracks  # noqa: E402
 from rig import SIDES, VultureRig, unfold_pose  # noqa: E402
 
 SKATE_TOL = 0.055     # 相对髋高；超过这个值肉眼就看得出脚在蹭地
