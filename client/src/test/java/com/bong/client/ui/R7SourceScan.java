@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 final class R7SourceScan {
     private R7SourceScan() {
@@ -42,6 +43,63 @@ final class R7SourceScan {
 
     static Path productionInputRoot() {
         return productionRoot().getParent().getParent().getParent().getParent();
+    }
+
+    /**
+     * 随资源包发布的资产根。
+     *
+     * <p>这些字节由资源包 sha1 闸门逐字节钉住（{@code client/resourcepack/manifest.json}
+     * 与 {@code server/src/network/resourcepack.rs} 的 sha1 必须等于实际构建出的包），
+     * 服务端还会把该 sha1 通过 vanilla 协议下发给客户端校验。在这里再钉一遍买不到任何
+     * 额外保证，只会让每个美术资产 PR 都要重新冻结一次摘要。
+     */
+    /**
+     * 读 {@code production-source-baseline.tsv} 里某个 scope 的冻结摘要。
+     *
+     * <p>基线放 fixture 而不是源码字面量：重新冻结时 PR diff 里就是「某个 scope 的
+     * 摘要变了」一行，而不是埋在一段二十行的 Java 注释中间。
+     */
+    static String baselineDigest(String scope) throws IOException {
+        try (var stream = R7SourceScan.class.getResourceAsStream("/bong/ui/production-source-baseline.tsv")) {
+            if (stream == null) {
+                throw new AssertionError("missing production source baseline fixture");
+            }
+            String text = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            for (String line : text.lines().toList()) {
+                if (!isFixtureDataLine(line)) {
+                    continue;
+                }
+                String[] fields = line.split("\\t", -1);
+                if (fields.length == 3 && fields[0].equals(scope)) {
+                    if (!fields[1].equals("SHA-256")) {
+                        throw new AssertionError("scope " + scope + " must use the pinned digest algorithm");
+                    }
+                    return fields[2];
+                }
+            }
+        }
+        throw new AssertionError("production source baseline has no row for scope " + scope);
+    }
+
+    static Path shippedAssetRoot() {
+        return productionInputRoot().resolve("resources").resolve("assets");
+    }
+
+    /** 生成一个「排除 excludedRoot 子树」的谓词。做成参数化是为了能对临时树做差分注入。 */
+    static Predicate<Path> excluding(Path excludedRoot) {
+        Path normalized = excludedRoot.toAbsolutePath().normalize();
+        return path -> !path.toAbsolutePath().normalize().startsWith(normalized);
+    }
+
+    /** 该文件是否**不**属于随资源包发布的资产。 */
+    static boolean isNotShippedAsset(Path path) {
+        return excluding(shippedAssetRoot()).test(path);
+    }
+
+    static long treeFileCount(Path root, Predicate<Path> include) throws IOException {
+        try (var files = Files.walk(root)) {
+            return files.filter(Files::isRegularFile).filter(include).count();
+        }
     }
 
     static Path repositoryRoot() {
@@ -257,6 +315,10 @@ final class R7SourceScan {
     }
 
     static String sourceTreeDigest(Path root) throws IOException {
+        return sourceTreeDigest(root, path -> true);
+    }
+
+    static String sourceTreeDigest(Path root, Predicate<Path> include) throws IOException {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -264,7 +326,7 @@ final class R7SourceScan {
             throw new AssertionError("SHA-256 unavailable", exception);
         }
         try (var files = Files.walk(root)) {
-            for (Path path : files.filter(Files::isRegularFile).sorted().toList()) {
+            for (Path path : files.filter(Files::isRegularFile).filter(include).sorted().toList()) {
                 digest.update(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
                 digest.update((byte) 0);
                 digest.update(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));

@@ -24,6 +24,7 @@ import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -100,39 +101,87 @@ class R7InventoryContractTest {
 
     @Test
     void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 legacy foundation 清理后：移除无生产引用的 owo foundation，
-        // 并保留主线 keybinding registry/HUD 修复的生产源对拍。
         // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
-        // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
-        // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
         //
-        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
-        // 矿脉反馈线程修复的 2170 文件基线上，主线随包新增木棍的两条玩家动画与背篓三份资源。
-        //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
-        //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
-        //     + resources/assets/bong/geo/back_basket.geo.json
-        //     + resources/assets/bong/textures/entity/back_basket.png
-        // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
-        // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
-        // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
-        // 相对主线新增 14 个生产文件、修改 5 个且无删除，最终文件数 2175 → 2189。
-        // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
-        // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
-        // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
-        // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
-        // 本分支另新增 KeybindMigrationPersistence 与 KeybindMigrationService，并修改
-        // Forge、撤离、T/L 入口和键位注册接线，文件数 2189 → 2191；旧 options.txt 的
-        // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
-        // 随后补齐 VoidAction 旧 options.txt 中 O 绑定的一次性迁移，并将 extracting 仲裁
-        // 收口到客户端共享输入策略；生产源码树因此继续更新。
-        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
-        // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
+        // 2026-08-30 收窄：**排除 resources/assets/**。
+        //
+        // 原范围是整个 client/src/main（2207 文件），其中 1139 个是 resources/assets，
+        // 而那些字节已经被资源包 sha1 闸门逐字节钉住了——`client/resourcepack/manifest.json`
+        // 与 `server/src/network/resourcepack.rs` 的 sha1 必须等于实际构建出的包，服务端
+        // 还会把它通过 vanilla 协议下发给客户端校验。在这里再钉一遍买不到任何额外保证。
+        //
+        // 代价却是实打实的：这条基线被重新冻结过 21 次，且**每一次美术资产 PR 都要重来**。
+        // 更糟的是它对合并顺序敏感——#2101 按规矩重新冻结了，仍然红，因为它算摘要时
+        // #2113 的四张卷帛甲贴图还没并进来。两个各自都对的 PR，合起来就破。这个会反复发生。
+        //
+        // 收窄后本条的范围是 Java（1066）+ fabric.mod.json + bong-client.mixins.json（2）。
+        // Java 那部分与 R7ProductionBaselineContractTest 重叠（那条只钉
+        // java/com/bong/client），是本条原有的冗余，未在本次改动中拆开；本条独有的覆盖
+        // 就是那两个 mod 配置文件，它们不进资源包，别处没人钉。
+        String scope = "production-input-no-assets";
         assertEquals(
-            "2265b83ef4ddf9efcf0d14a7e06abe2ddfd90709feb024c91b2b27c4db48e40c",
-            R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
+            R7SourceScan.baselineDigest(scope),
+            R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT, R7SourceScan::isNotShippedAsset),
+            () -> {
+                long counted;
+                try {
+                    counted = R7SourceScan.treeFileCount(PRODUCTION_INPUT_ROOT, R7SourceScan::isNotShippedAsset);
+                } catch (IOException exception) {
+                    counted = -1;
+                }
+                return "R7 生产输入树漂移了（scope=" + scope + "，当前 " + counted + " 个文件，"
+                    + "范围 = " + PRODUCTION_INPUT_ROOT + " 减去 " + R7SourceScan.shippedAssetRoot() + "）。\n"
+                    + "这条基线只管**不随资源包发布**的生产字节：Java 生产源 + fabric.mod.json + mixins.json。\n"
+                    + "撞红说明其中有文件被增/删/改。用 `git diff --name-status <上一个绿的 commit> -- "
+                    + "client/src/main ':!client/src/main/resources/assets'` 看是哪些。\n"
+                    + "确认这些变更该发布之后，把下面的 actual 值写进 "
+                    + "client/src/test/resources/bong/ui/production-source-baseline.tsv 的 " + scope + " 行。\n"
+                    + "（改了 resources/assets 不会撞这条——那些字节归资源包 sha1 闸门管。）";
+            }
         );
+    }
+
+    @Test
+    void frozenBaselineScopeIgnoresShippedAssetsAndCatchesEverythingElse() throws IOException {
+        // 差分注入：把这条基线「该抓的」和「该放过的」都造出来，验证它分得清。
+        //
+        // 收窄范围这种改动最容易出的错是把判据改废了——它照样全绿，但已经什么都不抓了。
+        // 某版穿模判据白名单写反、坏版本和修好的版本都报 17 处，就是这么来的。
+        Path root = Files.createTempDirectory("r7-scope-injection");
+        Path java = Files.createDirectories(root.resolve("java/com/bong/client"));
+        Path assets = Files.createDirectories(root.resolve("resources/assets/bong/textures"));
+        Path resources = root.resolve("resources");
+        Files.writeString(java.resolve("Thing.java"), "class Thing {}");
+        Files.writeString(assets.resolve("a.png"), "PNG-A");
+        Files.writeString(resources.resolve("fabric.mod.json"), "{}");
+
+        var include = R7SourceScan.excluding(assets.getParent().getParent());
+        String baseline = R7SourceScan.sourceTreeDigest(root, include);
+
+        // ── 该放过的：资产改了、资产新增了，都不该撞这条基线 ──
+        Files.writeString(assets.resolve("a.png"), "PNG-A-CHANGED");
+        assertEquals(baseline, R7SourceScan.sourceTreeDigest(root, include),
+            "期望：改动 resources/assets 下的字节不撞本基线（那些字节由资源包 sha1 闸门钉住），"
+            + "实际撞了 —— 收窄没生效，美术资产 PR 会继续被迫重新冻结");
+        Files.writeString(assets.resolve("b.png"), "PNG-B");
+        assertEquals(baseline, R7SourceScan.sourceTreeDigest(root, include),
+            "期望：新增 resources/assets 下的文件不撞本基线；实际撞了");
+
+        // ── 该抓的：Java 生产源与 mod 配置，一个都不许漏 ──
+        Files.writeString(java.resolve("Thing.java"), "class Thing { int x; }");
+        String afterJava = R7SourceScan.sourceTreeDigest(root, include);
+        assertNotEquals(baseline, afterJava,
+            "期望：改动 Java 生产源必须撞本基线，否则收窄把判据改废了；实际摘要没变");
+
+        Files.writeString(java.resolve("Added.java"), "class Added {}");
+        assertNotEquals(afterJava, R7SourceScan.sourceTreeDigest(root, include),
+            "期望：新增 Java 生产源必须撞本基线；实际摘要没变");
+
+        String beforeConfig = R7SourceScan.sourceTreeDigest(root, include);
+        Files.writeString(resources.resolve("fabric.mod.json"), "{\"a\":1}");
+        assertNotEquals(beforeConfig, R7SourceScan.sourceTreeDigest(root, include),
+            "期望：改动 fabric.mod.json 必须撞本基线 —— 它不进资源包，本条是它唯一的看守；"
+            + "实际摘要没变");
     }
 
     @Test
