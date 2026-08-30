@@ -22,11 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 全 client 默认键位唯一性契约。
  *
- * <p>测试同时扫描直接 {@code new KeyBinding(...)} 与 R7 显式
- * {@code BongKeybindRegistry.BindingSpec} 两种生产声明，避免只守某一条注册路径。
+ * <p>测试扫描生产中的 R7 显式 {@code BongKeybindRegistry.BindingSpec} 声明；保留 direct
+ * constructor 解析是为了让任何绕过 registry 的回归立即进入同一份物理冲突审计。
  * 未识别的默认键表达式会立即失败，防止新增绑定悄悄绕过全局冲突审计。UNKNOWN
- * 代表可由玩家重绑的入口，不占用物理键；唯一保留的物理重复是 R 键，它由
- * {@code BotanyHudBootstrap.shouldCaptureSpellVolumeKey()} 明确仲裁并在专属测试中锁定。
+ * 代表可由玩家重绑的入口，不占用物理键。默认值冲突已由 registry 收口；
+ * {@code BotanyHudBootstrap.shouldCaptureSpellVolumeKey()} 仍作为运行时输入仲裁，
+ * 防止玩家自定义成同一物理键时双重消费。
  */
 class DefaultKeybindingUniquenessTest {
     private static final Path CLIENT_SOURCES = Path.of("src/main/java/com/bong/client");
@@ -68,22 +69,16 @@ class DefaultKeybindingUniquenessTest {
             + "\\s*,\\s*GLFW\\.GLFW_KEY_([A-Z0-9_]+)\\s*\\)\\s*\\)"
     );
 
-    private static final Map<PhysicalKey, List<String>> ALLOWED_DUPLICATES = Map.of(
-        new PhysicalKey("KEYSYM", "R"),
-        List.of(
-            "botany/BotanyHudBootstrap.java:AUTO_KEY_TRANSLATION",
-            "combat/CombatKeybindings.java:\"key.bong-client.spell_volume_hold\""
-        )
-    );
+    private static final Map<PhysicalKey, List<String>> ALLOWED_DUPLICATES = Map.of();
 
     @Test
-    void everyDefaultPhysicalKeyIsUniqueExceptTheExplicitlyArbitratedRPair() throws IOException {
+    void everyDefaultPhysicalKeyIsUniqueAfterRegistryMigration() throws IOException {
         Map<PhysicalKey, List<String>> duplicates = duplicateOwners(scanBindings());
 
         assertEquals(
             ALLOWED_DUPLICATES,
             duplicates,
-            "默认物理键出现未列名冲突；只有有明确仲裁层且有专属测试的 R 双绑可保留："
+            "默认物理键出现未列名冲突；所有 production default 必须由 registry 收口："
                 + duplicates
         );
     }
@@ -93,13 +88,13 @@ class DefaultKeybindingUniquenessTest {
         List<Binding> bindings = scanBindings();
 
         assertEquals(36, bindings.size(),
-            "全局扫描必须覆盖当前 24 个 direct runtime binding、10 个 registry binding 与 2 个 vanilla reservation");
+            "全局扫描必须覆盖当前 34 个 registry runtime binding 与 2 个 vanilla reservation");
         assertTrue(bindings.stream().anyMatch(binding ->
                 binding.owner().equals("identity/IdentityPanelScreenBootstrap.java:identity.open_panel")),
             "全局扫描不能漏掉 BongKeybindRegistry.BindingSpec 声明");
         assertTrue(bindings.stream().anyMatch(binding ->
-                binding.owner().equals("combat/CombatKeybindings.java:\"key.bong-client.quick_slot_\"+(i+1)")),
-            "全局扫描不能漏掉带 F1+i 动态展开的 direct KeyBinding 声明");
+                binding.owner().equals("combat/CombatKeybindings.java:combat.quick_slot_9")),
+            "全局扫描不能漏掉 registry 中带 F1+i 动态展开的快捷槽声明");
         assertTrue(bindings.stream().anyMatch(binding ->
                 binding.owner().equals("ui/BongKeybindRegistry.java:vanilla.chat")
                     && binding.key().equals(new PhysicalKey("KEYSYM", "T"))),
@@ -146,12 +141,12 @@ class DefaultKeybindingUniquenessTest {
     }
 
     @Test
-    void theOnlyPhysicalDuplicateKeepsItsDedicatedArbitrationGuard() {
+    void customPhysicalDuplicateKeepsItsDedicatedArbitrationGuard() {
         String combat = compact(codeOnly(read(COMBAT_KEYBINDINGS)));
         String botany = compact(codeOnly(read(BOTANY_HUD)));
 
         assertTrue(combat.contains("if(BotanyHudBootstrap.shouldCaptureSpellVolumeKey())"),
-            "R 双绑必须由 Combat→Botany 显式仲裁，不能恢复成两条独立消费链");
+            "玩家自定义成同键时必须由 Combat→Botany 显式仲裁，不能恢复成两条独立消费链");
         assertTrue(botany.contains("returnHarvestSessionStore.capturesReservedInput()"),
             "R 双绑的仲裁结果必须由当前采集 session 状态驱动");
     }
@@ -243,11 +238,20 @@ class DefaultKeybindingUniquenessTest {
                         + " -> " + arguments.get(0)
                 );
             }
-            String owner = relative(path) + ":"
-                + resolveString(ownerMatcher.group(1), stringConstants, path);
             String inputType = resolveInputType(arguments.get(2), path);
-            for (String key : resolveKeys(arguments.get(3), intConstants, path, new HashSet<>())) {
-                result.add(new Binding(new PhysicalKey(inputType, key), owner));
+            List<String> owners = resolveOwners(ownerMatcher.group(1), stringConstants, path);
+            List<String> keys = resolveKeys(arguments.get(3), intConstants, path, new HashSet<>());
+            if (owners.size() != keys.size()) {
+                throw new IllegalStateException(
+                    "BindingSpec owner/default 展开数量不一致: " + relative(path)
+                        + " -> owners=" + owners + ", keys=" + keys
+                );
+            }
+            for (int index = 0; index < owners.size(); index++) {
+                result.add(new Binding(
+                    new PhysicalKey(inputType, keys.get(index)),
+                    relative(path) + ":" + owners.get(index)
+                ));
             }
             searchFrom = closeParenthesis + 1;
         }
@@ -288,6 +292,20 @@ class DefaultKeybindingUniquenessTest {
         throw new IllegalStateException(
             "未识别的 BindingOwner 字符串表达式: " + relative(path) + " -> " + expression.trim()
         );
+    }
+
+    private static List<String> resolveOwners(
+        String expression,
+        Map<String, String> constants,
+        Path path
+    ) {
+        String normalized = compact(expression);
+        if (normalized.equals("\"combat.quick_slot_\"+(i+1)")) {
+            return java.util.stream.IntStream.rangeClosed(1, 9)
+                .mapToObj(index -> "combat.quick_slot_" + index)
+                .toList();
+        }
+        return List.of(resolveString(expression, constants, path));
     }
 
     private static String resolveInputType(String expression, Path path) {

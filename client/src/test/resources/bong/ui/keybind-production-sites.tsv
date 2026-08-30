@@ -1,5 +1,5 @@
 # owner_id	source_path	source_site	translation_contract	input_type	default_contract	category_contract	runtime_cardinality
-botany.auto_harvest	botany/BotanyHudBootstrap.java	autoHarvestKey	key.bong-client.botany_auto_harvest	KEYSYM	R	category.bong-client.controls	1
+botany.auto_harvest	botany/BotanyHudBootstrap.java	autoHarvestKey	key.bong-client.botany_auto_harvest	KEYSYM	UNKNOWN	category.bong-client.controls	1
 combat.quick_slot	combat/CombatKeybindings.java	QUICK_SLOT_KEYS[i]	key.bong-client.quick_slot_{1..9}	KEYSYM	F1..F9	category.bong-client.combat	9 from one source constructor
 combat.jiemai_react	combat/CombatKeybindings.java	jiemaiKey	key.bong-client.jiemai_react	KEYSYM	UNKNOWN	category.bong-client.combat	1
 combat.spell_volume_hold	combat/CombatKeybindings.java	spellVolumeKey	key.bong-client.spell_volume_hold	KEYSYM	R	category.bong-client.combat	1

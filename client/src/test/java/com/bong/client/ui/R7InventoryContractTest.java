@@ -98,8 +98,8 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void p1RetainsScreenInventoryWithoutLegacyFoundation() throws IOException {
-        Set<String> forbiddenProductionTypes = Set.of(
+    void p4AddsOnlyTheFrozenFoundationTypes() throws IOException {
+        Set<String> expectedProductionTypes = Set.of(
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -107,11 +107,11 @@ class R7InventoryContractTest {
         try (var files = Files.walk(PRODUCTION_ROOT)) {
             files.filter(Files::isRegularFile)
                 .map(path -> path.getFileName().toString())
-                .filter(forbiddenProductionTypes::contains)
+                .filter(expectedProductionTypes::contains)
                 .forEach(discovered::add);
         }
-        assertTrue(discovered.isEmpty(),
-            "R7 P1 must not add an unapproved foundation type: " + discovered);
+        assertEquals(expectedProductionTypes, discovered,
+            "P4 必须落地冻结的两个 foundation helper，不能漏实现或增添未审批类型");
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
                 continue;

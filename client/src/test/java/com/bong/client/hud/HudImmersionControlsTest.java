@@ -1,5 +1,6 @@
 package com.bong.client.hud;
 
+import com.bong.client.ui.BongKeybindRegistry;
 import net.minecraft.client.option.KeyBinding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,7 +35,7 @@ class HudImmersionControlsTest {
     void installsRegistrarResultAndConsumesIt() {
         List<KeyBinding> definitions = new ArrayList<>();
 
-        KeyBinding installed = HudImmersionControls.installToggleKey(definition -> {
+        KeyBinding installed = HudImmersionControls.installToggleKey(new BongKeybindRegistry(definition -> {
             definitions.add(definition);
             return new KeyBinding(
                 "test.registered.hud_immersive_toggle",
@@ -42,7 +43,7 @@ class HudImmersionControlsTest {
                 GLFW.GLFW_KEY_F10,
                 definition.getCategory()
             );
-        });
+        }, List.of(), java.util.Set.of()));
 
         assertEquals(1, definitions.size());
         KeyBinding definition = definitions.get(0);

@@ -1,7 +1,7 @@
 package com.bong.client.hud;
 
+import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -9,7 +9,6 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
-import java.util.function.UnaryOperator;
 
 public final class HudImmersionControls {
     private static final String CATEGORY = "category.bong-client";
@@ -43,17 +42,20 @@ public final class HudImmersionControls {
 
     private static KeyBinding keyBinding() {
         if (toggleKey == null) {
-            installToggleKey(KeyBindingHelper::registerKeyBinding);
+            installToggleKey(BongKeybindRegistry.global());
         }
         return toggleKey;
     }
 
-    static KeyBinding installToggleKey(UnaryOperator<KeyBinding> registrar) {
-        // Leave unbound so F1-F9 remain reserved for quick slots.
-        toggleKey = registrar.apply(
-            new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY)
-        );
-        return toggleKey;
+    static KeyBinding installToggleKey(BongKeybindRegistry registry) {
+        // 默认不绑键，F1-F9 留给快捷槽；玩家可在控制设置中显式重绑。
+        return toggleKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("hud.immersive_toggle"),
+            TOGGLE_KEY,
+            InputUtil.Type.KEYSYM,
+            InputUtil.UNKNOWN_KEY.getCode(),
+            CATEGORY
+        ));
     }
 
     static void resetControlsForTests() {

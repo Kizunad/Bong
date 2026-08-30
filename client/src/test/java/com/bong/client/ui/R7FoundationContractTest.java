@@ -41,19 +41,6 @@ class R7FoundationContractTest {
     private static final Path CLIENT_ROOT = R7SourceScan.productionRoot();
     private static final Path REPOSITORY_ROOT = R7SourceScan.repositoryRoot();
     private static final Path PLAN = REPOSITORY_ROOT.resolve("docs/plan-refactor-client-ui-base-v1.md");
-    private static final Set<String> REGISTRY_MIGRATED_OWNER_IDS = Set.of(
-        "identity.open_panel",
-        "void_action.open_screen",
-        "forge.open_screen",
-        "tsy.extract_start",
-        "tsy.extract_cancel",
-        "lingtian.open_action_screen",
-        "spirittreasure.open_screen",
-        "dying_elder.give_dan",
-        "dying_elder.refuse",
-        "dying_elder.delay"
-    );
-
     @Test
     void fixtureLoaderSkipsPlainAndOrdinalPrefixedHeaders() {
         assertFalse(R7SourceScan.isFixtureDataLine("# owner\tinput_type"));
@@ -320,19 +307,17 @@ class R7FoundationContractTest {
         assertEquals(List.of(), conflictExemptionRows(), "physical-default exemptions must remain empty");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
-        List<KeybindProductionSiteRow> directExpected = expected.stream()
-            .filter(row -> !REGISTRY_MIGRATED_OWNER_IDS.contains(row.ownerId()))
-            .toList();
+        List<KeybindProductionSiteRow> expectedSites = expected;
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
-        assertEquals(16, actualSites.size(),
-            "remaining direct KeyBinding constructor-site count changed after registry migration");
+        assertEquals(26, actualSites.size(),
+            "P4 requires every production keybinding site to use the global registry");
         assertEquals(26, expected.size(), "the production-site manifest must retain all 26 logical bindings");
-        assertEquals(16, directExpected.size(),
-            "the direct-constructor subset must exclude exactly the ten registry-migrated bindings");
+        assertEquals(26, expectedSites.size(),
+            "the registry-backed production subset must retain every logical binding");
         assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "every logical binding needs one globally unique BindingOwner id");
-        Set<SourceSiteIdentity> expectedIdentities = directExpected.stream()
+        Set<SourceSiteIdentity> expectedIdentities = expectedSites.stream()
             .map(row -> new SourceSiteIdentity(row.sourcePath(), row.sourceSite()))
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         Set<SourceSiteIdentity> actualIdentities = actualSites.stream()
@@ -343,15 +328,15 @@ class R7FoundationContractTest {
         assertEquals(resourceLines("/bong/ui/keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
-        assertEquals(24, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
-            "the remaining 16 direct constructors must expand to exactly 24 runtime bindings");
+        assertEquals(34, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "all 26 registry sites must expand to exactly 34 runtime bindings");
         Set<String> expandedTranslationKeys = new TreeSet<>();
         for (KeybindingSourceSite site : actualSites) {
             expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        assertEquals(24, expandedTranslationKeys.size(),
-            "every remaining direct runtime binding must have a unique effective translation key");
-        for (KeybindProductionSiteRow row : directExpected) {
+        assertEquals(34, expandedTranslationKeys.size(),
+            "every registry-backed runtime binding must have a unique effective translation key");
+        for (KeybindProductionSiteRow row : expectedSites) {
             KeybindingSourceSite actual = actualSites.stream()
                 .filter(site -> site.sourcePath().equals(row.sourcePath())
                     && site.sourceSite().equals(row.sourceSite()))
@@ -371,10 +356,10 @@ class R7FoundationContractTest {
                 "expanded runtime translation keys drifted for " + row.ownerId());
         }
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
-            directExpected, actualSites, keybindRows()
+            expectedSites, actualSites, keybindRows()
         );
-        assertEquals(24, expandedDefaults.size(),
-            "the direct-site collision audit must inspect every remaining expanded default");
+        assertEquals(34, expandedDefaults.size(),
+            "the registry-site collision audit must inspect every expanded default");
         Set<DefaultCollision> collisions = new TreeSet<>();
         for (int first = 0; first < expandedDefaults.size(); first++) {
             ExpandedProductionDefault left = expandedDefaults.get(first);
@@ -539,6 +524,48 @@ class R7FoundationContractTest {
         List<KeybindingSourceSite> result = new java.util.ArrayList<>();
         for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(CLIENT_ROOT)) {
             new TreePathScanner<Void, Void>() {
+                @Override
+                public Void visitMethodInvocation(MethodInvocationTree tree, Void unused) {
+                    Element method = parsed.trees().getElement(getCurrentPath());
+                    if (method instanceof ExecutableElement executable
+                        && executable.getSimpleName().contentEquals("register")
+                        && executable.getEnclosingElement() instanceof TypeElement owner
+                        && owner.getQualifiedName().contentEquals(
+                            "com.bong.client.ui.BongKeybindRegistry"
+                        )) {
+                        assertEquals(1, tree.getArguments().size(),
+                            "global registry register must receive one BindingSpec: " + parsed.path());
+                        assertTrue(tree.getArguments().get(0) instanceof NewClassTree,
+                            "global registry register must receive an explicit BindingSpec: " + parsed.path());
+                        NewClassTree spec = (NewClassTree) tree.getArguments().get(0);
+                        TreePath specPath = new TreePath(getCurrentPath(), spec);
+                        Element constructor = parsed.trees().getElement(specPath);
+                        assertTrue(constructor instanceof ExecutableElement
+                                && constructor.getEnclosingElement() instanceof TypeElement specOwner
+                                && specOwner.getQualifiedName().contentEquals(
+                                    "com.bong.client.ui.BongKeybindRegistry.BindingSpec"),
+                            "registry registration must construct BindingSpec: " + parsed.path());
+                        assertEquals(5, spec.getArguments().size(),
+                            "BindingSpec must carry owner/translation/type/default/category: " + parsed.path());
+                        String sourceSite = enclosingAssignmentTarget(getCurrentPath());
+                        assertNotNull(sourceSite,
+                            "registry registration needs a stable assignment target in " + parsed.path());
+                        result.add(new KeybindingSourceSite(
+                            CLIENT_ROOT.relativize(parsed.path()).toString().replace('\\', '/'),
+                            sourceSite,
+                            translationContract(resolveTranslationKeys(
+                                new TreePath(specPath, spec.getArguments().get(1)), parsed
+                            )),
+                            resolveInputType(new TreePath(specPath, spec.getArguments().get(2)), parsed),
+                            resolveDefaultContract(new TreePath(specPath, spec.getArguments().get(3)), parsed),
+                            resolveString(new TreePath(specPath, spec.getArguments().get(4)), parsed),
+                            resolveTranslationKeys(new TreePath(specPath, spec.getArguments().get(1)), parsed).size(),
+                            resolveTranslationKeys(new TreePath(specPath, spec.getArguments().get(1)), parsed)
+                        ));
+                    }
+                    return super.visitMethodInvocation(tree, unused);
+                }
+
                 @Override
                 public Void visitNewClass(NewClassTree tree, Void unused) {
                     TreePath constructorPath = getCurrentPath();
@@ -819,7 +846,7 @@ class R7FoundationContractTest {
         return List.of(
             new FoundationRow("BongKeybindRegistry", "type", "public final class BongKeybindRegistry", "R7", "Registrations are explicit and inspectable; no reflection or annotation discovery."),
             new FoundationRow("BongKeybindRegistry", "global", "public static BongKeybindRegistry global()", "R7", "Production has one registry instance so bootstrap-local registries cannot bypass conflict detection."),
-            new FoundationRow("BongKeybindRegistry", "constructor", "BongKeybindRegistry(UnaryOperator<KeyBinding> registrar, List<ReservedDefault> reservedDefaults, Set<ConflictExemption> exemptions)", "R7", "The package seam injects Fabric registration plus explicit vanilla reservations and exact exemptions."),
+            new FoundationRow("BongKeybindRegistry", "constructor", "BongKeybindRegistry(UnaryOperator<KeyBinding> registrar, List<ReservedDefault> reservedDefaults, Set<ConflictExemption> exemptions)", "R7", "公开注入 seam 允许跨 package 行为测试和适配器提供 Fabric registrar、显式 vanilla reservation 与精确 exemption；生产 bootstrap 仍必须使用 global()。"),
             new FoundationRow("BongKeybindRegistry", "register", "public KeyBinding register(BindingSpec spec)", "R7", "Duplicate owner identities and translation keys always fail; UNKNOWN defaults do not collide physically."),
             new FoundationRow("BongKeybindRegistry", "registrations", "public List<Registration> registrations()", "R7", "Inspection is immutable and preserves registration order."),
             new FoundationRow("BongKeybindRegistry", "binding-owner", "public record BindingOwner(String id)", "R7", "A non-blank globally unique owner id identifies one logical binding independent of its source file or translation text."),

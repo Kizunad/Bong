@@ -2,8 +2,8 @@ package com.bong.client.social;
 
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -27,15 +27,26 @@ public final class SpiritNicheRevealBootstrap {
     private static final String MARK_KEY_TRANSLATION = "key.bong-client.spirit_niche_mark_coordinate";
 
     private static KeyBinding markKey;
+    private static boolean registered;
 
     private SpiritNicheRevealBootstrap() {}
 
     public static void register() {
-        markKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(MARK_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_M, CATEGORY)
+        if (registered) {
+            return;
+        }
+        markKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("social.spirit_niche_mark"),
+                MARK_KEY_TRANSLATION,
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_M,
+                CATEGORY
+            )
         );
         ClientTickEvents.END_CLIENT_TICK.register(SpiritNicheRevealBootstrap::onEndClientTick);
         BongClient.LOGGER.info("Registered spirit niche reveal interaction: key M (active gaze+mark, edge-triggered).");
+        registered = true;
     }
 
     private static void onEndClientTick(MinecraftClient client) {

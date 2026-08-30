@@ -1,8 +1,8 @@
 package com.bong.client.craft;
 
 import com.bong.client.BongClient;
+import com.bong.client.ui.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -13,13 +13,18 @@ public final class CraftScreenBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String OPEN_KEY_TRANSLATION = "key.bong-client.open_craft_screen";
     private static KeyBinding openScreenKey;
+    private static boolean registered;
 
     private CraftScreenBootstrap() {}
 
     public static void register() {
+        if (registered) {
+            return;
+        }
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(CraftScreenBootstrap::onEndClientTick);
         BongClient.LOGGER.info("Registered craft screen bootstrap keybinding on key: C");
+        registered = true;
     }
 
     private static void onEndClientTick(MinecraftClient client) {
@@ -37,8 +42,14 @@ public final class CraftScreenBootstrap {
 
     private static KeyBinding keyBinding() {
         if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_C, CATEGORY)
+            openScreenKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("craft.open_screen"),
+                    OPEN_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    GLFW.GLFW_KEY_C,
+                    CATEGORY
+                )
             );
         }
         return openScreenKey;
