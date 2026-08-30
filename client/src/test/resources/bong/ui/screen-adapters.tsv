@@ -6,7 +6,7 @@ coffin/CoffinMenuScreen.java	CoffinMenuScreen	VANILLA	VANILLA	SCREEN_SCOPE
 combat/screen/DeathScreen.java	DeathScreen	VANILLA	VANILLA	SCREEN_SCOPE
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA	VANILLA	SCREEN_SCOPE
 combat/screen/RepairScreen.java	RepairScreen	VANILLA	VANILLA	SCREEN_SCOPE
-combat/screen/TerminateScreen.java	TerminateScreen	VANILLA	VANILLA	SCREEN_SCOPE
+combat/screen/TerminateScreen.java	TerminateScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA	VANILLA	SCREEN_SCOPE
 craft/CraftScreen.java	CraftScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 craft/WorkbenchScreen.java	WorkbenchScreen	OWO	CODE	SCREEN_SCOPE
