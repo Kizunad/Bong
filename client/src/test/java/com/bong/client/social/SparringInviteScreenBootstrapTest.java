@@ -102,23 +102,26 @@ class SparringInviteScreenBootstrapTest {
         SocialStateStore.SparringInvite active = invite("active", 5_000L);
         assertEquals(
             SparringInviteScreenBootstrap.Decision.OPEN_SCREEN,
-            SparringInviteScreenBootstrap.decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L)
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT)
         );
         assertEquals(
             SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
-            SparringInviteScreenBootstrap.decide(
+            decide(
                 active,
                 SparringInviteScreenBootstrap.ScreenKind.OTHER_SPARRING_INVITE,
-                1_000L
+                1_000L,
+                SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT
             ),
             "不同 inviteId 的切磋屏也属于占用态，不能被新邀请强制替换"
         );
         assertEquals(
             SparringInviteScreenBootstrap.Decision.NOOP,
-            SparringInviteScreenBootstrap.decide(
+            decide(
                 active,
                 SparringInviteScreenBootstrap.ScreenKind.MATCHING_SPARRING_INVITE,
-                1_000L
+                1_000L,
+                SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT
             )
         );
     }
@@ -207,24 +210,46 @@ class SparringInviteScreenBootstrapTest {
     @Test
     void combatStateReadsAuthoritativeCombatHudSnapshot() {
         assertEquals(
-            SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT,
+            SparringInviteScreenBootstrap.CombatState.UNKNOWN,
             combatStateOf(),
-            "无 combat snapshot 时默认脱战"
+            "无权威 combat snapshot 时必须保持 UNKNOWN 并由策略 fail closed"
         );
 
-        CombatHudStateStore.replace(com.bong.client.combat.CombatHudState.create(0.8f, 0.7f, 0.9f,
-            com.bong.client.combat.DerivedAttrFlags.none()));
+        CombatHudStateStore.replaceAuthoritative(
+            com.bong.client.combat.CombatHudState.createAuthoritative(
+                0.8f,
+                0.7f,
+                0.9f,
+                com.bong.client.combat.DerivedAttrFlags.none(),
+                true
+            )
+        );
         assertEquals(
             SparringInviteScreenBootstrap.CombatState.IN_COMBAT,
             combatStateOf(),
-            "server-authoritative combat_hud_state active 时必须进入战斗态"
+            "server-authoritative combat_hud_state combat_active=true 时必须进入战斗态"
+        );
+
+        CombatHudStateStore.replaceAuthoritative(
+            com.bong.client.combat.CombatHudState.createAuthoritative(
+                0.8f,
+                0.7f,
+                0.9f,
+                com.bong.client.combat.DerivedAttrFlags.none(),
+                false
+            )
+        );
+        assertEquals(
+            SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT,
+            combatStateOf(),
+            "server-authoritative combat_hud_state combat_active=false 时必须进入脱战态"
         );
 
         CombatHudStateStore.clear();
         assertEquals(
-            SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT,
+            SparringInviteScreenBootstrap.CombatState.UNKNOWN,
             combatStateOf(),
-            "combat_hud_state 清空后必须回到脱战态"
+            "combat_hud_state 清空后必须回到 UNKNOWN，避免没有权威输入时放行"
         );
     }
 
@@ -358,15 +383,17 @@ class SparringInviteScreenBootstrapTest {
 
     @Test
     void missingCombatProducerFailsClosedWithoutOpening() {
-        // CombatHudStateStore 从初始 empty() 态模拟"producer 尚未发送任何快照"
+        // CombatHudStateStore 从初始 empty() 态模拟 producer 尚未发送任何权威快照。
         SocialStateStore.SparringInvite active = invite("combat-unknown", 5_000L);
         SparringInviteScreenBootstrap.resetForTests();
         CombatHudStateStore.resetForTests();
 
         SparringInviteScreenBootstrap.Decision decision =
-            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L,
-                SparringInviteScreenBootstrap.CombatState.UNKNOWN);
+            SparringInviteScreenBootstrap.decide(
+                active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L
+            );
 
+        assertEquals(SparringInviteScreenBootstrap.CombatState.UNKNOWN, combatStateOf());
         assertEquals(
             SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
             decision,

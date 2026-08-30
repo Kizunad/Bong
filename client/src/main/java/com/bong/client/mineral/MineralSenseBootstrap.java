@@ -2,8 +2,8 @@ package com.bong.client.mineral;
 
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -39,6 +39,7 @@ public final class MineralSenseBootstrap {
     private static final String SENSE_KEY_TRANSLATION = "key.bong-client.mineral_sense";
 
     private static KeyBinding senseKey;
+    private static boolean registered;
 
     /**
      * 探针发送回调 seam —— 默认走真实 {@link ClientRequestSender}，测试可替换以断言
@@ -49,11 +50,21 @@ public final class MineralSenseBootstrap {
     private MineralSenseBootstrap() {}
 
     public static void register() {
-        senseKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(SENSE_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_N, CATEGORY)
+        if (registered) {
+            return;
+        }
+        senseKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("mineral.sense"),
+                SENSE_KEY_TRANSLATION,
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_N,
+                CATEGORY
+            )
         );
         ClientTickEvents.END_CLIENT_TICK.register(MineralSenseBootstrap::onEndClientTick);
         BongClient.LOGGER.info("Registered mineral-sense interaction: key N (active probe, edge-triggered).");
+        registered = true;
     }
 
     private static void onEndClientTick(MinecraftClient client) {

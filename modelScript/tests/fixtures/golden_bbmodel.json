@@ -1,0 +1,295 @@
+{
+ "gen_array_flag.py": {
+  "exit": 0,
+  "outputs": {
+   "ArrayFlagBasic.bbmodel": "b2bd07daeeff2801fa5dda2676460d61a3dbe8bb4f5b6692396cef8feeb117e4"
+  }
+ },
+ "gen_back_basket.py": {
+  "exit": 0,
+  "outputs": {
+   "BackBasket.bbmodel": "8248c4e43fc8edcb9b6da4ea1e9c131fa3b48ba718c6c1d6b3b834299d19fc2b"
+  }
+ },
+ "gen_bamboo_jian.py": {
+  "exit": 0,
+  "outputs": {
+   "BambooJian.bbmodel": "fc861dc6a5ad266abb619240d4e9859d98a43b740ef5975c790a41478ff86180"
+  }
+ },
+ "gen_beast_spine_sword.py": {
+  "exit": 0,
+  "outputs": {
+   "BeastSpineSword.bbmodel": "44c98e10694380d3b27958d0b45fab35460eb397ed08e411a0e16fb79f8d80cd"
+  }
+ },
+ "gen_beast_spine_sword_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "BeastSpineSwordPlayerAnim.bbmodel": "57ef7640e0cae442586b382799684e9916f92c2e4b71672a349ec2b35aa5de8c"
+  }
+ },
+ "gen_bone_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/bone/BoneBoots.bbmodel": "611da5e37d7c5457fe518563d03f54ea7e2a45aa847f83cb64bae5785968d598",
+   "armor/bone/BoneChestplate.bbmodel": "3cfba40fbdf7e0d785aa6bd3532b63a033b900d9280005615e70bda941fb199b",
+   "armor/bone/BoneHelmet.bbmodel": "2948f5cef6cc5a1666c911b9f60b76c6d7c893c7cc792095f0921d07f9449424",
+   "armor/bone/BoneLeggings.bbmodel": "d9b77541ea86c83936c5ebb9269ee30e7b4f0697c9113836f470d9ea423cc6be"
+  }
+ },
+ "gen_bone_blocks.py": {
+  "exit": 0,
+  "outputs": {
+   "bone_blocks/bone_claw.bbmodel": "d2a98dc44c8d3a5779cb2033e864633b7cead23f44405a6e05077b1372e5260e",
+   "bone_blocks/bone_femur.bbmodel": "95d1795a2d83e4d6c71d425b0cc34420cf32c74f528df5e0e5b5ec561b299734",
+   "bone_blocks/bone_jaw.bbmodel": "15eccb153036718cdf6895c90c6f34c360dc4621ee7e6be7899bef720ae86c87",
+   "bone_blocks/bone_pelvis.bbmodel": "a6569d4d7e8b4ad64014c91adc84ce633715b9475af0cddeb335d842e6e787e0",
+   "bone_blocks/bone_pile.bbmodel": "c1a62bb7aaa2d5eb4a56e85caeb657a59293120783c6672c6e96cdb9f2d399f9",
+   "bone_blocks/bone_rib.bbmodel": "4e1f2a40edded1e1203b52b91acff3590f6ce7a14a130298edd469f571cf26a2",
+   "bone_blocks/bone_skull_fragment.bbmodel": "62d439d21aeea109a52481f11375c3e9e66caa0d5b45b5337de1690409bc123e",
+   "bone_blocks/bone_spine.bbmodel": "b4f47d3f2e891dbd8b53c2ce9c0d1097596b99c9688610ff462e4ce279aeeabd"
+  }
+ },
+ "gen_bone_shield.py": {
+  "exit": 0,
+  "outputs": {
+   "BoneShield.bbmodel": "eb1e6f7912b6c54ccae5288a0cbd8ba9b136140aafe5bbd89d2c18cea3fc5f54"
+  }
+ },
+ "gen_bronze_coffin.py": {
+  "exit": 0,
+  "outputs": {
+   "BronzeCoffin.bbmodel": "f900768af3c747eac274550fc5d173e41c705b04816dd511ff101b30a19e3374"
+  }
+ },
+ "gen_chi_sui_cao.py": {
+  "exit": 0,
+  "outputs": {
+   "ChiSuiCao.bbmodel": "abc9d2cfa8886a4270e9979f605047456aa92c95da5586460f867550c18e7f12"
+  }
+ },
+ "gen_club_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "ClubPlayerAnim.bbmodel": "24a24c8f7f5b23ab868841579d3c01c414c2b2549bba955481ffdb2aa813743c"
+  }
+ },
+ "gen_dead_drop_box.py": {
+  "exit": 0,
+  "outputs": {
+   "DeadDropBox.bbmodel": "97dde7b09f5f9fa4d242301474d3e9824d2dfed81ba6dea15243687691aaebac"
+  }
+ },
+ "gen_furniture.py": {
+  "exit": 0,
+  "outputs": {
+   "MeditationMat.bbmodel": "6308c8f1cbf03e2b9e445398817ee8ceeb1819977794befd8e79893b9cc73340",
+   "MoistureBase.bbmodel": "773ea41cb793734a02f4e4d2b0619a2800bd5738212737d200e5caa4f244e2e4",
+   "SimpleBed.bbmodel": "c550ee4e1bb9c95ff47e18570a4f1f04bb2b3258e3abeba030d63a3afe54843d",
+   "SpiritStoneRack.bbmodel": "42dfff1ae596407a01f15714b629426123f1e44745f53abd025cac749910bcee"
+  }
+ },
+ "gen_grass_pouch.py": {
+  "exit": 0,
+  "outputs": {
+   "GrassPouch.bbmodel": "90d99189434e97478c1d7c02d6c4ae0baeb7fa04db79260bbc482cfec8b66729"
+  }
+ },
+ "gen_gu_yuan_gen.py": {
+  "exit": 0,
+  "outputs": {
+   "GuYuanGen.bbmodel": "283d62ec4f97d97f3272f6a2f914219caab108d787a8596ae6546ac3817d1402"
+  }
+ },
+ "gen_hei_gu_jun.py": {
+  "exit": 0,
+  "outputs": {
+   "HeiGuJun.bbmodel": "98506cc695a43ae465d9cf6fd816a8f9b19da47118e4743f7979a67a2d2f5bb8"
+  }
+ },
+ "gen_herb_crate.py": {
+  "exit": 0,
+  "outputs": {}
+ },
+ "gen_hide_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/hide/HideBoots.bbmodel": "35ff6134897710f6d463e251a0fdf71041e5da573b86c9b37e0da203775f846d",
+   "armor/hide/HideChestplate.bbmodel": "337c16a9fbbe66bfea03344516c2db0ceabb4159100274b114ecc5ab38bb82dc",
+   "armor/hide/HideHelmet.bbmodel": "c740a5292e181ef575969d36a9b9038bb9d9bd429232ccb2cba562f64cc85b9b",
+   "armor/hide/HideLeggings.bbmodel": "30fa94ec25cb35b32c479a6c3af26c839bf2302d5ba582d3e28ec8dbd7e2f269",
+   "armor/hide/textures/hide_boots/0.png": "98de6e934cae645fe1ec05e5c5a92b066a4bf53054cce1a2962fe4fd8df0fa4c",
+   "armor/hide/textures/hide_chestplate/0.png": "98de6e934cae645fe1ec05e5c5a92b066a4bf53054cce1a2962fe4fd8df0fa4c",
+   "armor/hide/textures/hide_helmet/0.png": "98de6e934cae645fe1ec05e5c5a92b066a4bf53054cce1a2962fe4fd8df0fa4c",
+   "armor/hide/textures/hide_leggings/0.png": "98de6e934cae645fe1ec05e5c5a92b066a4bf53054cce1a2962fe4fd8df0fa4c"
+  }
+ },
+ "gen_hua_xing_gen.py": {
+  "exit": 0,
+  "outputs": {
+   "HuaXingGen.bbmodel": "2466478965570915188fd7c112ce9fcbf313147cfd37677ca922ffb6470f9249"
+  }
+ },
+ "gen_iron_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/iron/IronBoots.bbmodel": "864a6aab359d4bd1d5fbdf77b2eaf0bbe269be4a03815e1d98437eb997c94f4c",
+   "armor/iron/IronChestplate.bbmodel": "515352e6aacbb096e4951a9129b781150923505f0924059a62e5489a52c7ec98",
+   "armor/iron/IronHelmet.bbmodel": "224fa7144ad4a78099f3379f149f8e98fee6821a39bb7231b7ebae0a9db20f01",
+   "armor/iron/IronLeggings.bbmodel": "0eef974dcf87c94c40fd094672de5c4bf5cd7153f1dcee7135381fcd04b3d5ba"
+  }
+ },
+ "gen_jade_coffin.py": {
+  "exit": 0,
+  "outputs": {
+   "JadeCoffin.bbmodel": "700ec576f1becc4d5aa4d5905339dc67548000f5b4764fa21bac6eed37b1b1b7"
+  }
+ },
+ "gen_jian_player.py": {
+  "exit": 1,
+  "outputs": {}
+ },
+ "gen_jian_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "JianPlayerAnim.bbmodel": "cf4fbbbb845b777820aab31850e2116fa852b3b84205f5246da7813bdd274ab8"
+  }
+ },
+ "gen_knife_trio.py": {
+  "exit": 0,
+  "outputs": {
+   "BoneSpike.bbmodel": "859856494d5fc07b72f7c715c83b75e7d9e96f102b9595afb14e6882055105d6",
+   "IronDagger.bbmodel": "dcfcc894322340f66770824e8f1319f1df1387331e9dbc9b95dd58978a505c4d",
+   "StoneKnife.bbmodel": "dd4ed4fc68f6bbad008c04e9708197c5d41ac72f7b1a91a6c3aa486adaa2c2d7"
+  }
+ },
+ "gen_linen_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/linen/LinenChestplate.bbmodel": "4211da047383d04a18eacb813cfaf445bb510bcce65f041c3fb00a047e3e0aa0",
+   "armor/linen/LinenLeggings.bbmodel": "e3ae39e2140847c339c4348f048dd9f34ad0b6cb3a19525a49c53218834f9057",
+   "armor/linen/textures/linen_chestplate/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
+   "armor/linen/textures/linen_leggings/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d"
+  }
+ },
+ "gen_ling_yan_shi_zhi.py": {
+  "exit": 0,
+  "outputs": {
+   "LingYanShiZhi.bbmodel": "0da143682592fd791ad03bff97eacbec98e9e64dfbd2160c77cf8b1145e5a631"
+  }
+ },
+ "gen_long_lin_tai.py": {
+  "exit": 0,
+  "outputs": {
+   "LongLinTai.bbmodel": "de8bcd06d47a59e17e1d2fcf1b7010a7125d08a79afdecd45f91ca059eda2f60"
+  }
+ },
+ "gen_loot_crates.py": {
+  "exit": 0,
+  "outputs": {
+   "lootcrate/LootCrateAshUrn.bbmodel": "9d888154e4131be3a0276bda0d4e2bab5e4edf3c7712080939d53df5985b60cb",
+   "lootcrate/LootCrateBoneLash.bbmodel": "52761fec915997830a78a919a1f31b61657e1acd660176ee9748849f96b47b1e",
+   "lootcrate/LootCrateRustTrunk.bbmodel": "83a1edd7233d7775656a7c3cd31cd21c7e0216c11d7380ca3ef41215f52dee2f",
+   "lootcrate/LootCrateTalisman.bbmodel": "0c0ab1a43342efa1379c324784f4f956e1cc3c1ac1c9c86e45f07749b34f6991",
+   "lootcrate/LootCrateVineChest.bbmodel": "a53281684311983f81f19064b8e89db4e00e26e8caef8ddc30632323f7ea2f13"
+  }
+ },
+ "gen_mundane_coffin.py": {
+  "exit": 0,
+  "outputs": {
+   "MundaneCoffin.bbmodel": "f96c8a511d01859c048a82886c8a0cc5fb201f007b3da078ff423969d48acf53"
+  }
+ },
+ "gen_mutated_bone_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/mutated_bone/MutatedBoneChestplate.bbmodel": "cc9642d3579d193be77078dbae5bb6aceae1d8c259d62492b6d4c47acf329bc4",
+   "armor/mutated_bone/MutatedBoneChestplateOnPlayer.bbmodel": "256f53deb348b3ccb08474f895ba9ad66eda70f9d0b4a6e2d25060b1310a2cd6",
+   "armor/mutated_bone/MutatedBoneLeggings.bbmodel": "71b2b967470cc78ae6da3b6ae8a1336c30be04ae7fd548d2a951df648a81b11c",
+   "armor/mutated_bone/MutatedBoneLeggingsOnPlayer.bbmodel": "697282b98f4b5426407aa45b4b3ce879ed58e5c77013adaa2f872a8cbd8c5b19"
+  }
+ },
+ "gen_remnant_scroll.py": {
+  "exit": 0,
+  "outputs": {
+   "RemnantScroll.bbmodel": "c4fba96734706dfb87997a486e23530f84a05305c1a41a0dbec40a55e1994551"
+  }
+ },
+ "gen_scroll_wrap_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/scroll_wrap/ScrollWrapBoots.bbmodel": "f3b8f34320eff8293bdceff80695bb3d5616b775cbda963f6fa63777fb1334e6",
+   "armor/scroll_wrap/ScrollWrapBootsOnPlayer.bbmodel": "7851a8d7b6445822118f13024195c16b0692810e8b79a4e673dd1743a5f5a599",
+   "armor/scroll_wrap/ScrollWrapChestplate.bbmodel": "b9bb83ba09316f3a9979447b91ded21062d2df930811751ebbdd044614b5a84f",
+   "armor/scroll_wrap/ScrollWrapChestplateOnPlayer.bbmodel": "416c5001f7337fc814003fe28fcd3f44bee6526821fd31bbd0cca7e49da4479a",
+   "armor/scroll_wrap/ScrollWrapHelmet.bbmodel": "134625c57d63ed5740b14f987da532ae0873d42165b074d238b66f1bee7e2c8f",
+   "armor/scroll_wrap/ScrollWrapHelmetOnPlayer.bbmodel": "1b11f5ab551c6d7aadfce1c0c2cb4b0429be07e1c66b164aedebcc56ce1fd968",
+   "armor/scroll_wrap/ScrollWrapLeggings.bbmodel": "8afaf3491513f4ece48f14c6e2e4a12fdef14f79ecbbeae2eb0e291be3a6f3e7",
+   "armor/scroll_wrap/ScrollWrapLeggingsOnPlayer.bbmodel": "fb6155e9e3c4667f65209aa736962bbffd2d55a58ebee9fbc0cf5438ab2507eb"
+  }
+ },
+ "gen_shou_xin_cao.py": {
+  "exit": 0,
+  "outputs": {
+   "ShouXinCao.bbmodel": "5f2a1d2a99fe690f9ea606e29d38f452002a2a966715c60b5344436f7fcfd604"
+  }
+ },
+ "gen_stone_coffin.py": {
+  "exit": 0,
+  "outputs": {
+   "StoneCoffin.bbmodel": "d5d55f5314eaa4bdbb3ff4a6d3d453c3f0620bf22eae31b47acde067e520c3c9"
+  }
+ },
+ "gen_straw_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/straw/StrawBoots.bbmodel": "914458b760ec0342300be5d7c8f10aed0f75b33a3e5b18d36698fce561a49d3a",
+   "armor/straw/StrawLeggings.bbmodel": "5d70803a2876f3e6d0d99dbbd953934d35addd9466c543d745de8215daf63c13",
+   "armor/straw/textures/straw_boots/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e",
+   "armor/straw/textures/straw_leggings/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e"
+  }
+ },
+ "gen_trade_crate.py": {
+  "exit": 0,
+  "outputs": {
+   "TradeCrate.bbmodel": "bdc6e00833bdf335b95de8f3de6fb5320a2ddf9b45dc75caa6acc5014c91af9e"
+  }
+ },
+ "gen_tui_gu_teng.py": {
+  "exit": 0,
+  "outputs": {
+   "TuiGuTeng.bbmodel": "4de3e8023079b53ed2eaa5589c59247341cecfe8b221c2a931972944af53500e"
+  }
+ },
+ "gen_wooden_club.py": {
+  "exit": 0,
+  "outputs": {
+   "WoodenClub.bbmodel": "0505231b92665458f2379b1918a6f17c442db8bc510734c8df6d5a150794d7fa"
+  }
+ },
+ "gen_wooden_shield.py": {
+  "exit": 0,
+  "outputs": {
+   "WoodenShield.bbmodel": "bfba26665fb916ea5a05d32f4bfec54af0ebcf47a0788b050ed5b96cbe8615ed"
+  }
+ },
+ "gen_workbench.py": {
+  "exit": 0,
+  "outputs": {
+   "Workbench.bbmodel": "064f70eb9c99c30e580dd04fa5f7c34af1f649933b2b96b81ba25709e53550c9"
+  }
+ },
+ "gen_xu_yuan_rui.py": {
+  "exit": 0,
+  "outputs": {
+   "XuYuanRui.bbmodel": "0fa72fe49eb7e787d61b002685178ddb59566dddbfd34fcb1a6e2e342b02f4b7"
+  }
+ },
+ "gen_xue_po_lian.py": {
+  "exit": 0,
+  "outputs": {
+   "XuePoLian.bbmodel": "cd9b4e7a4c5c3e21a7ce9231325bfe7f26bea8e93d5844dac7e175f98e46fbed"
+  }
+ }
+}

@@ -4,8 +4,8 @@ import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestSender;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetStore;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.input.Input;
 import net.minecraft.client.option.KeyBinding;
@@ -21,15 +21,20 @@ public final class BotanyHudBootstrap {
     /** plan-skill-v1 §6.1：herbalism Lv.3 解锁自动采集。 */
     private static final int HERBALISM_AUTO_UNLOCK_LV = 3;
     private static KeyBinding autoHarvestKey;
+    private static boolean registered;
 
     private BotanyHudBootstrap() {
     }
 
     public static void register() {
+        if (registered) {
+            return;
+        }
         autoHarvestKey();
         ClientTickEvents.START_CLIENT_TICK.register(BotanyHudBootstrap::onStartClientTick);
         ClientTickEvents.END_CLIENT_TICK.register(BotanyHudBootstrap::onEndClientTick);
-        BongClient.LOGGER.info("Botany HUD bootstrap ready: manual via inventory key, auto via R.");
+        BongClient.LOGGER.info("Botany HUD bootstrap ready: manual via inventory key, auto harvest is configurable.");
+        registered = true;
     }
 
     public static boolean shouldCaptureSpellVolumeKey() {
@@ -124,8 +129,14 @@ public final class BotanyHudBootstrap {
 
     private static KeyBinding autoHarvestKey() {
         if (autoHarvestKey == null) {
-            autoHarvestKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(AUTO_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, CATEGORY)
+            autoHarvestKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("botany.auto_harvest"),
+                    AUTO_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    InputUtil.UNKNOWN_KEY.getCode(),
+                    CATEGORY
+                )
             );
         }
         return autoHarvestKey;

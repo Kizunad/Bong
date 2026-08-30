@@ -735,7 +735,7 @@ python3 modelScript/creatures/stitched_beast/beast_anim.py --seed 7          # �
 python3 modelScript/creatures/stitched_beast/beast_anim.py --seed 7 --list   # 步态/躯干/接合面余量报表
 python3 modelScript/creatures/stitched_beast/check_beast_anim.py --seed 7    # 整兽动画十二项自检
 python3 modelScript/creatures/stitched_beast/render_core_anim.py --beast 7 --only beast_walk --view 34
-python3 modelScript/core/render_bbmodel.py modelScript/models/stitched_beast/StitchedBeast_7.bbmodel --three-view
+bbmodel-render modelScript/models/stitched_beast/StitchedBeast_7.bbmodel --three-view
 ```
 
 > 出图必须带 **`--bud-growth 0.12`**：没长肢的槽按几何契约建在满尺寸（嫁接动画要用），

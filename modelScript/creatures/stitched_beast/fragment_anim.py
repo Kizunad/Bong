@@ -40,8 +40,8 @@ import core as C  # noqa: E402
 import core_anim as A  # noqa: E402
 import fragment as FR  # noqa: E402
 import gen_fragment as GF  # noqa: E402
-from anim_rig import Pose, Rig, build_tracks, euler, euler_of, smooth, wrap  # noqa: E402
-from anim_rig import write_bbmodel, write_geckolib  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Pose, Rig, build_tracks, euler, euler_of, smooth, wrap  # noqa: E402
+from bbmodel_maker.rig.anim_rig import write_bbmodel, write_geckolib  # noqa: E402
 
 LOBES = FR.default_lobes()
 MODEL = GF.OUT

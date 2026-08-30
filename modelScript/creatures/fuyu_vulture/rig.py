@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """腐羽鹫 —— 绑定层：鸟类专属的肢链、限位与摆姿原语。
 
-通用的骨树正解 / 二连杆闭式逆解 / 曲线工具 / 关键帧导出在 `modelScript/core/animkit.py`；
+通用的骨树正解 / 二连杆闭式逆解 / 曲线工具 / 关键帧导出在 `bbmodel_maker.rig.animkit`；
 这里只放**鸟**的部分：Z 字腿的逆解参数、颈的分段加权、翼的抬掠折、尾的展收。
 
 两足和四足的差别不只是"少两条腿"：
@@ -26,7 +26,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from animkit import (  # noqa: E402
+from bbmodel_maker.rig.animkit import (  # noqa: E402
     Pose, PoseRig, align, clamp01, euler, euler_of, slerp, smooth,
 )
 

@@ -1,11 +1,10 @@
 package com.bong.client.inventory;
 
-import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.network.ClientRequestProtocol;
-import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.contract.DefaultUiScreenScope;
+import com.bong.client.ui.contract.UiScreenScope;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.container.Containers;
@@ -23,7 +22,7 @@ import net.minecraft.text.Text;
  *
  * <p>Not a screen — gets mounted into InspectScreen's outerRow when
  * a coffin session is active. Encapsulates the loot grid, timer bar,
- * and state store listener.</p>
+ * and screen-level state/intent boundary.</p>
  */
 public final class LootContainerPanel {
     private static final int BG_COLOR = 0xFF0D0D15;
@@ -45,10 +44,11 @@ public final class LootContainerPanel {
     private LabelComponent timerLabel;
     private FlowLayout timerBarFill;
     private FlowLayout container; // root FlowLayout of this panel
-    private LootContainerStateStore.Listener storeListener;
+    private final LootContainerScreenController controller;
+    private final DefaultUiScreenScope scope = new DefaultUiScreenScope();
     private boolean closed;
 
-    public LootContainerPanel(LootContainerStateStore.OpenSession session) {
+    public LootContainerPanel(LootContainerSession.Open session) {
         this.sessionId = session.sessionId();
         this.sourceKind = session.sourceKind();
         this.grade = session.grade();
@@ -57,6 +57,8 @@ public final class LootContainerPanel {
         this.timeoutWallSecs = session.timeoutWallSecs();
         this.openedAtSecs = System.currentTimeMillis() / 1000;
         this.extContainerId = "ext_" + sessionId;
+        this.controller = LootContainerScreenController.production(session, this::applyViewModel,
+            LootContainerPanel::executeOnClientThread);
     }
 
     /**
@@ -73,7 +75,7 @@ public final class LootContainerPanel {
 
         // Loot grid
         lootGrid = new BackpackGridPanel(extContainerId, lootRows, lootCols);
-        populateLootGrid();
+        populateLootGrid(controller.viewModel().openSession());
         container.child(lootGrid.container());
 
         // Timer bar
@@ -89,18 +91,11 @@ public final class LootContainerPanel {
         timerLabel.color(Color.ofArgb(0xFFAAAAAA));
         container.child(timerLabel);
 
-        // Listen for loot container state changes
-        storeListener = session -> {
-            MinecraftClient.getInstance().execute(() -> {
-                if (session instanceof LootContainerStateStore.OpenSession open
-                    && open.sessionId() == sessionId) {
-                    populateLootGrid();
-                }
-            });
-        };
-        LootContainerStateStore.addListener(storeListener);
-
         updateTimer();
+        if (!scope.isOpen()) {
+            scope.onOpen();
+            controller.onOpen(scope);
+        }
         return container;
     }
 
@@ -136,18 +131,16 @@ public final class LootContainerPanel {
      */
     public void sendMove(long instanceId, String fromContainer, int fromRow, int fromCol,
                          String toContainer, int toRow, int toCol) {
-        ClientRequestSender.sendExternalContainerMove(
-            sessionId, instanceId,
-            new ClientRequestProtocol.ContainerLoc(fromContainer, fromRow, fromCol),
-            new ClientRequestProtocol.ContainerLoc(toContainer, toRow, toCol)
-        );
+        controller.intentSink().dispatch(new LootContainerIntent.Move(
+            sessionId, instanceId, fromContainer, fromRow, fromCol, toContainer, toRow, toCol
+        ));
     }
 
     /**
      * Send an external container close request to the server.
      */
     public void sendClose() {
-        ClientRequestSender.sendExternalContainerClose(sessionId);
+        controller.intentSink().dispatch(new LootContainerIntent.Close(sessionId));
     }
 
     /**
@@ -159,21 +152,34 @@ public final class LootContainerPanel {
     }
 
     /**
-     * Clean up the store listener. Must be called when unmounting.
+     * 关闭 screen-level source/controller。必须在从宿主卸载时调用。
      */
     public void dispose() {
-        if (storeListener != null) {
-            LootContainerStateStore.removeListener(storeListener);
-            storeListener = null;
-        }
+        if (scope != null && !scope.isClosed()) scope.close();
+        controller.onClose();
         closed = true;
     }
 
-    private void populateLootGrid() {
-        lootGrid.clearAll();
-        LootContainerStateStore.Session session = LootContainerStateStore.current();
-        if (session instanceof LootContainerStateStore.OpenSession open
+    private void applyViewModel(LootContainerScreenViewModel model) {
+        if (closed) return;
+        if (model.session() instanceof LootContainerSession.Open open
             && open.sessionId() == sessionId) {
+            populateLootGrid(open);
+        } else {
+            // 宿主下一次收到 open/close 事件时会卸载这个已过期 panel。
+            dispose();
+        }
+    }
+
+    private static void executeOnClientThread(Runnable action) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) action.run();
+        else client.execute(action);
+    }
+
+    private void populateLootGrid(LootContainerSession.Open open) {
+        lootGrid.clearAll();
+        if (open != null && open.sessionId() == sessionId) {
             for (InventoryModel.GridEntry entry : open.placedItems()) {
                 lootGrid.place(entry.item(), entry.row(), entry.col());
             }

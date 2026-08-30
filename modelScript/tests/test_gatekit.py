@@ -17,12 +17,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB_DIR / "core"))
 sys.path.insert(0, str(LIB_DIR / "generators"))
 
-import gatekit  # noqa: E402
-from gatekit import AssetGates, InjectionImpossible, Seat  # noqa: E402
-from rigkit import Rig  # noqa: E402
+from bbmodel_maker.gates import gatekit  # noqa: E402
+from bbmodel_maker.gates.gatekit import AssetGates, InjectionImpossible, Seat  # noqa: E402
+from bbmodel_maker.rig.rigkit import Rig  # noqa: E402
 
 MATS = {"hard": (200, 200, 200), "soft": (100, 90, 80), "trim": (150, 140, 120)}
 

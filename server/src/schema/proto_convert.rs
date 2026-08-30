@@ -2183,6 +2183,7 @@ fn combat_hud_state_to_proto(s: &super::combat_hud::CombatHudStateV1) -> bong::C
         hp_percent: s.hp_percent,
         qi_percent: s.qi_percent,
         stamina_percent: s.stamina_percent,
+        combat_active: s.combat_active,
         derived: Some(bong::DerivedAttrFlags {
             flying: s.derived.flying,
             phasing: s.derived.phasing,
@@ -6669,6 +6670,7 @@ mod tests {
                 hp_percent: 1.0,
                 qi_percent: 1.0,
                 stamina_percent: 1.0,
+                combat_active: false,
                 derived: DerivedAttrFlagsV1::default(),
             })),
             fix!(ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 {

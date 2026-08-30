@@ -8,12 +8,12 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in ("core", "generators", "exporters", "tools"):
+for _d in ("generators", "exporters", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 
 import gen_hide_armor
-import preview_armor_on_body as P
-from armor_model_common import MOUNT_PIVOT
+from bbmodel_maker.workbench import preview_armor_on_body as P
+from bbmodel_maker.model.armor_model_common import MOUNT_PIVOT
 
 BODY_CENTER = (0.0, 24.0, 0.0)
 

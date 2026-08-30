@@ -36,7 +36,7 @@ STAGE_OUT = HERE / "stages"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
-from render_bbmodel import load_bbmodel, render, render_three_view  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import load_bbmodel, render, render_three_view  # noqa: E402
 
 from gen_pelt import COATS  # noqa: E402
 from gen_skeleton import PROFILES  # noqa: E402

@@ -30,9 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
-from anim_rig import rotmat  # noqa: E402
+from bbmodel_maker.rig.anim_rig import rotmat  # noqa: E402
 from check_anim import Exported  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from rig import PLUME, Goose  # noqa: E402
 
 OUT = HERE / "renders" / "5_anim"

@@ -17,11 +17,10 @@ from pathlib import Path
 import numpy as np
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(LIB_DIR / "core"))
 
-import anim_rig  # noqa: E402
-import animcore  # noqa: E402
-import animkit  # noqa: E402
+from bbmodel_maker.rig import anim_rig  # noqa: E402
+from bbmodel_maker.rig import animcore  # noqa: E402
+from bbmodel_maker.rig import animkit  # noqa: E402
 
 
 class RotationTest(unittest.TestCase):

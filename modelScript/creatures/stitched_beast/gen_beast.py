@@ -32,7 +32,7 @@ import gen_core as GC  # noqa: E402
 import genome as GN  # noqa: E402
 import heads as HD  # noqa: E402
 import limbs as LB  # noqa: E402
-from voxel_rig import Palette, Rig  # noqa: E402
+from bbmodel_maker.rig.voxel_rig import Palette, Rig  # noqa: E402
 
 OUT_DIR = HERE.parents[2] / "models" / "stitched_beast"
 

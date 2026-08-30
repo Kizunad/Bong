@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import core_anim as A  # noqa: E402
-from anim_rig import Rig  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Rig  # noqa: E402
 
 
 def world_z(rig: Rig, pose, bone: str) -> float:

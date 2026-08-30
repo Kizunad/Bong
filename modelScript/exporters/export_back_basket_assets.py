@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
 from export_coffin_assets import _load, build_geo, extract_texture  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 BBMODEL = Path(__file__).resolve().parents[1] / "models" / "BackBasket.bbmodel"

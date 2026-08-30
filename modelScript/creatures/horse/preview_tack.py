@@ -37,7 +37,7 @@ sys.path.insert(0, str(HERE))
 from gen_skeleton import PROFILES  # noqa: E402
 from gen_tack import KINDS  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 
 BG = (14, 15, 17)
 # yaw 的朝向实测过（render 的 yaw=178 是马脸朝镜头，0 是马尾），别照猜。

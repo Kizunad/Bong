@@ -70,7 +70,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import genome as GN  # noqa: E402
 import locomotion as LM  # noqa: E402
-import voxel_rig as VR  # noqa: E402
+from bbmodel_maker.rig import voxel_rig as VR  # noqa: E402
 
 # ---------------------------------------------------------------- 物性常数
 # 全部是**量出来的真实值**，不是可以拧的旋钮。改这里等于改物理，不是改风格。

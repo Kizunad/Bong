@@ -1,10 +1,11 @@
 package com.bong.client.coffin;
 
-import com.bong.client.network.ClientRequestSender;
+import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
+import com.bong.client.ui.intent.UiIntentResult;
+import com.bong.client.ui.intent.UiIntentSink;
+import io.wispforest.owo.ui.component.ButtonComponent;
+import io.wispforest.owo.ui.container.FlowLayout;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
@@ -18,20 +19,21 @@ import java.util.Objects;
  *   <li>[入眠] — 发送 {@code coffin_enter}，进入卧棺状态；</li>
  *   <li>[回收] — 发送 {@code coffin_menu_reclaim}，拆棺返还合成材料；</li>
  * </ul>
- * 仿 {@link com.bong.client.cultivation.voidaction.VoidActionScreen} 的极简布局：
- * 半透明背景 + 居中面板 + ButtonWidget 操作按钮。不暂停游戏（{@code shouldPause=false}）。</p>
+ * 组件树由本地 owo XML 模板描述，Java 只负责绑定两个类型化意图。
+ * 菜单不暂停游戏（{@code shouldPause=false}）。</p>
  */
-public final class CoffinMenuScreen extends Screen {
-    private static final int BG_COLOR      = 0xD0101018;
-    private static final int PANEL_COLOR   = 0xE0181C24;
-    private static final int TITLE_COLOR   = 0xFFE9D9A6;
-
-    /** 目标棺的任意一格坐标（server 端 registry 按 lower/upper 归一）。 */
+public final class CoffinMenuScreen extends OwoXmlScreenHost<FlowLayout> {
     private final BlockPos coffinPos;
+    private final UiIntentSink<CoffinMenuIntent> intentSink;
 
     public CoffinMenuScreen(BlockPos coffinPos) {
-        super(Text.literal("延寿棺"));
+        this(coffinPos, CoffinMenuClientIntentSink.production());
+    }
+
+    CoffinMenuScreen(BlockPos coffinPos, UiIntentSink<CoffinMenuIntent> intentSink) {
+        super(Text.literal("延寿棺"), FlowLayout.class, "coffin-menu");
         this.coffinPos = Objects.requireNonNull(coffinPos, "coffinPos must not be null");
+        this.intentSink = Objects.requireNonNull(intentSink, "intentSink must not be null");
     }
 
     @Override
@@ -39,55 +41,34 @@ public final class CoffinMenuScreen extends Screen {
         return false;
     }
 
+    /** XML 负责面板和按钮布局；这里只登记 typed action callback。 */
     @Override
-    protected void init() {
-        super.init();
-        int cx = width / 2;
-        int top = height / 2 - 20;
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("【入眠】"),
-                b -> onEnter())
-            .dimensions(cx - 74, top, 148, 20)
-            .build());
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("【回收】"),
-                b -> onReclaim())
-            .dimensions(cx - 74, top + 26, 148, 20)
-            .build());
+    protected void bindTemplate(FlowLayout root) {
+        label("coffin-title").text(Text.literal("◇ 延 寿 棺 ◇"));
+        component(ButtonComponent.class, "coffin-enter")
+            .onPress(button -> dispatch(new CoffinMenuIntent.Enter(coffinPos)));
+        component(ButtonComponent.class, "coffin-reclaim")
+            .onPress(button -> dispatch(new CoffinMenuIntent.Reclaim(coffinPos)));
     }
 
-    @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        context.fill(0, 0, width, height, BG_COLOR);
-        int panelW = Math.min(240, Math.max(180, width - 40));
-        int panelH = 80;
-        int panelX = (width - panelW) / 2;
-        int panelY = (height - panelH) / 2;
-        context.fill(panelX, panelY, panelX + panelW, panelY + panelH, PANEL_COLOR);
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            "◇ 延 寿 棺 ◇",
-            width / 2,
-            panelY + 10,
-            TITLE_COLOR
-        );
-        super.render(context, mouseX, mouseY, delta);
-    }
-
+    /** 保留给生产交互链测试的动作入口，实际按钮也只通过同一 typed sink。 */
     private void onEnter() {
-        ClientRequestSender.sendCoffinEnter(coffinPos);
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc != null && mc.currentScreen == this) {
-            mc.setScreen(null);
+        dispatch(new CoffinMenuIntent.Enter(coffinPos));
+    }
+
+    /** XML [回收] 按钮对应的生产动作，供交互链测试复用。 */
+    void onReclaim() {
+        dispatch(new CoffinMenuIntent.Reclaim(coffinPos));
+    }
+
+    private void dispatch(CoffinMenuIntent intent) {
+        UiIntentResult result = intentSink.dispatch(intent);
+        if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+            closeIfCurrentScreen();
         }
     }
 
-    /**
-     * [回收] 按钮动作（ButtonWidget 的 onClick 直接调用本方法）。package-private 供
-     * {@code CoffinGMenuProducerChainTest} 按真实按钮触发路径驱动（review finding [1]）。
-     */
-    void onReclaim() {
-        ClientRequestSender.sendCoffinMenuReclaim(coffinPos);
+    private void closeIfCurrentScreen() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.currentScreen == this) {
             mc.setScreen(null);

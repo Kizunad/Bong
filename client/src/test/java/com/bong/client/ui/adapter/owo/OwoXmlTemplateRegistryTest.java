@@ -17,18 +17,22 @@ class OwoXmlTemplateRegistryTest {
     void productionRegistryContainsWideAndCompactCraftTemplates() {
         OwoXmlTemplateRegistry registry = OwoXmlTemplateRegistry.production();
         assertEquals(
-            java.util.Set.of("craft", "craft-compact"),
+            java.util.Set.of("craft", "craft-compact", "terminate", "coffin-menu"),
             registry.templateIds(),
-            "P2 reference slice 必须同时登记宽屏和最低 viewport 模板");
+            "生产 registry 必须只登记已接入的本地 XML 模板");
         assertEquals(OwoXmlTemplateRegistry.CRAFT, registry.identifierFor("craft"));
         assertEquals(OwoXmlTemplateRegistry.CRAFT_COMPACT, registry.identifierFor("craft-compact"));
+        assertEquals(OwoXmlTemplateRegistry.TERMINATE, registry.identifierFor("terminate"));
+        assertEquals(OwoXmlTemplateRegistry.COFFIN_MENU, registry.identifierFor("coffin-menu"));
     }
 
     @Test
     void checkedInCraftTemplatesAreValidOwoModels() throws Exception {
         for (String resource : new String[] {
             "/assets/bong/owo_ui/craft.xml",
-            "/assets/bong/owo_ui/craft-compact.xml"
+            "/assets/bong/owo_ui/craft-compact.xml",
+            "/assets/bong/owo_ui/terminate.xml",
+            "/assets/bong/owo_ui/coffin-menu.xml"
         }) {
             try (InputStream stream = getClass().getResourceAsStream(resource)) {
                 assertNotNull(stream, "缺少随包发布的 owo XML: " + resource);

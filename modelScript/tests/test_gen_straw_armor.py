@@ -18,11 +18,11 @@ from dataclasses import replace
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-for _d in ("core", "generators", "tools"):
+for _d in ("generators", "tools"):
     sys.path.insert(0, str(LIB_DIR / _d))
 
 import gen_straw_armor as straw  # noqa: E402
-from armor_model_common import ArmorPart, Cube, MOUNT_X, build_bbmodel, validate_part  # noqa: E402
+from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, MOUNT_X, build_bbmodel, validate_part  # noqa: E402
 
 
 def _part_with(cubes: tuple[Cube, ...]) -> ArmorPart:

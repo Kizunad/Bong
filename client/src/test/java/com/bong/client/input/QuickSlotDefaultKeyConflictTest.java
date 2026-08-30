@@ -56,11 +56,11 @@ public class QuickSlotDefaultKeyConflictTest {
     @Test
     void productionUsesFabricInstallersAndTopLevelBootstrap() {
         assertCodeContains(read(COMBAT_KEYBINDINGS),
-            "installBindings(KeyBindingHelper::registerKeyBinding)");
+            "installBindings(BongKeybindRegistry.global())");
         assertCodeContains(read(HUD_IMMERSION),
-            "installToggleKey(KeyBindingHelper::registerKeyBinding)");
+            "installToggleKey(BongKeybindRegistry.global())");
         assertCodeContains(read(NPC_INTERACTION_LOG),
-            "installInteractionLogKey(KeyBindingHelper::registerKeyBinding)");
+            "installInteractionLogKey(BongKeybindRegistry.global())");
 
         String client = read(BONG_CLIENT);
         assertCodeContains(client, "NpcInteractionLogControls.register()");
@@ -111,7 +111,7 @@ public class QuickSlotDefaultKeyConflictTest {
             }
         }
 
-        if (source.contains("new KeyBinding") || source.contains("extends KeyBinding")) {
+        if (source.contains("new KeyBinding[") || source.contains("extends KeyBinding")) {
             var numericMatcher = RAW_RESERVED_KEY_CODE.matcher(source);
             while (numericMatcher.find()) {
                 uses.add(new ReservedKeyUse(relative, numericMatcher.group()));

@@ -55,7 +55,7 @@ python3 modelScript/creatures/kekeda_goose/render_anim.py --gif  # 连拍图 + G
 
 ## 动画（九条）
 
-`modelScript/core/anim_rig.py` 是与物种无关的底座（骨树 / 正解 / 逆解 / 关键帧导出），
+`bbmodel_maker.rig.anim_rig` 是与物种无关的底座（骨树 / 正解 / 逆解 / 关键帧导出），
 `rig.py` 放鹅特有的四件事（鸟腿链与限位、两足平衡、17 节颈的两个旋钮、泄殖腔口），
 `gen_anim.py` 写动作，`check_anim.py` 做后验。
 

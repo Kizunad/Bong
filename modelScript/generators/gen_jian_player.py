@@ -48,8 +48,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import render_bbmodel as R  # noqa: E402
-import render_jian_in_hand as H  # noqa: E402
+from bbmodel_maker.render import render_bbmodel as R  # noqa: E402
+from bbmodel_maker.render import held_item_render as H  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 SRC_JIAN = Path(__file__).resolve().parents[1] / "models" / "BambooJianSingle.bbmodel"

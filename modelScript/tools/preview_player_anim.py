@@ -60,14 +60,17 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 LIB = Path(__file__).resolve().parents[1]
-REPO = LIB.parent
-for _d in (LIB / "core", LIB / "tools", REPO / "client" / "tools"):
+from bbmodel_maker import workspace  # noqa: E402
+
+_WS = workspace.Workspace.discover(start=Path(__file__))
+REPO = _WS.root
+for _d in (LIB / "tools", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import anim_common as AC  # noqa: E402  关节解剖判据的唯一定义处
 import render_animation as RA  # noqa: E402  复用它已验证的 PlayerAnimator/bendy 数学
-from preview_armor_on_body import make_player_skin  # noqa: E402
-from render_bbmodel import _load_texture, load_bbmodel, render  # noqa: E402
+from bbmodel_maker.workbench.preview_armor_on_body import make_player_skin  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import _load_texture, load_bbmodel, render  # noqa: E402
 
 NS = uuid.UUID("6b1d0f3a-2c47-4e58-9a10-77c3f9e0b542")
 S_FLIP = np.diag([1.0, -1.0, 1.0])        # ModelPart(y↓) ↔ Bedrock(y↑) 的手性夹层

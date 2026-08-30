@@ -39,8 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
-import animgate  # noqa: E402
-from anim_rig import Pose, build_tracks, wrap  # noqa: E402
+from bbmodel_maker.gates import animgate  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Pose, build_tracks, wrap  # noqa: E402
 from rig import SIDES, Goose, Waddle, leg_chain  # noqa: E402
 
 GAITS = {"walk": G.WALK, "run": G.TROT}

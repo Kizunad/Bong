@@ -1022,7 +1022,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     app.add_systems(
         Update,
         (
-            combat_hud_state_emit::emit_combat_hud_state_payloads,
+            combat_hud_state_emit::emit_combat_hud_state_payloads
+                .in_set(crate::combat::CombatSystemSet::Emit),
             wounds_snapshot_emit::emit_wounds_snapshot_payloads,
             // After apply_defense_intents writes incoming_window the same tick.
             defense_window_emit::emit_defense_window_payloads

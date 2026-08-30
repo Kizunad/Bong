@@ -43,11 +43,37 @@ public final class CraftOutcomeFeedback {
         Objects.requireNonNull(completeSound, "completeSound");
         Objects.requireNonNull(refresh, "refresh");
 
-        if (event.kind() == CraftStore.CraftOutcomeEvent.Kind.COMPLETED) {
+        apply(CraftOutcomeView.from(event), flashTicksSink, completeSound, refresh);
+    }
+
+    /** 应用已经脱离 Store 的 UI outcome 投影。 */
+    public static void apply(
+        CraftOutcomeView event,
+        IntConsumer flashTicksSink,
+        CompleteSoundPlayer completeSound,
+        Runnable refresh
+    ) {
+        Objects.requireNonNull(event, "event");
+        Objects.requireNonNull(flashTicksSink, "flashTicksSink");
+        Objects.requireNonNull(completeSound, "completeSound");
+        Objects.requireNonNull(refresh, "refresh");
+
+        if (event.kind() == CraftOutcomeView.Kind.COMPLETED) {
             flashTicksSink.accept(COMPLETED_FLASH_TICKS);
             completeSound.play();
         }
         refresh.run();
+    }
+
+    /** ViewModel 入口：屏幕不需要认识 Store 的事件实现类型。 */
+    public static void apply(
+        CraftScreenViewModel model,
+        IntConsumer flashTicksSink,
+        CompleteSoundPlayer completeSound,
+        Runnable refresh
+    ) {
+        Objects.requireNonNull(model, "model must not be null");
+        model.latestOutcome().ifPresent(event -> apply(event, flashTicksSink, completeSound, refresh));
     }
 
     /** 生产默认完成音：仅当 client.player 存在时播放，恰好一声 LEVELUP。 */

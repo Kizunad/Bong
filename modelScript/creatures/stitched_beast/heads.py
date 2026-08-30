@@ -83,7 +83,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import genome as GN  # noqa: E402
 import limbs as LB  # noqa: E402
-import voxel_rig as VR  # noqa: E402
+from bbmodel_maker.rig import voxel_rig as VR  # noqa: E402
 
 PX = LB.PX
 G = LB.G

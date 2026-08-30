@@ -30,7 +30,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import core_anim as A  # noqa: E402
 import fragment_anim as FA  # noqa: E402
-from anim_rig import Rig  # noqa: E402
+from bbmodel_maker.rig.anim_rig import Rig  # noqa: E402
 from check_core_anim import pose_delta  # noqa: E402
 
 

@@ -38,7 +38,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 
-from voxel_rig import Palette, Rig, Vec, catmull, curve_length, lerp  # noqa: E402
+from bbmodel_maker.rig.voxel_rig import Palette, Rig, Vec, catmull, curve_length, lerp  # noqa: E402
 
 REPO = HERE.parents[2]
 OUT_DIR = Path(__file__).resolve().parents[2] / "models" / "kekeda_goose"

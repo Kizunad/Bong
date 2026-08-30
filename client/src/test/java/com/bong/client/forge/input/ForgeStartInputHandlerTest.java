@@ -1,6 +1,8 @@
 package com.bong.client.forge.input;
 
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.input.ClientInputPolicy;
+import com.bong.client.tsy.ExtractStateStore;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
@@ -30,6 +32,7 @@ class ForgeStartInputHandlerTest {
     @AfterEach
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
+        ExtractStateStore.resetForTests();
     }
 
     private void install() {
@@ -164,6 +167,24 @@ class ForgeStartInputHandlerTest {
         assertTrue(
             ForgeStartInputHandler.startModeAvailable(done),
             "已完成会话（sessionId>0 但 active=false）必须放行再次起炉"
+        );
+    }
+
+    @Test
+    void forgeOpenInputIsAvailableWhenExtractionIsIdle() {
+        assertTrue(
+            ClientInputPolicy.shouldDispatchForgeOpen(),
+            "非撤离状态允许消费 Forge 按键并请求打开锻炉屏幕"
+        );
+    }
+
+    @Test
+    void forgeOpenInputIsRejectedWhileExtractionIsActive() {
+        ExtractStateStore.markStarted(42L, "tsy_lingxu_01", 20, 1_000L);
+
+        assertFalse(
+            ClientInputPolicy.shouldDispatchForgeOpen(),
+            "撤离进行时即使 Forge 暂时回滚到历史 U，也不能派发 Forge 开屏"
         );
     }
 }

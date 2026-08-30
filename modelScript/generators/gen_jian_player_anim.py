@@ -59,9 +59,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-import bb_anim_axes as AX  # noqa: E402  MC ↔ bbmodel 轴换算的唯一一处
-import render_jian_in_hand as H  # noqa: E402
-import render_player_pose as P  # noqa: E402
+from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402  MC ↔ bbmodel 轴换算的唯一一处
+from bbmodel_maker.render import held_item_render as H  # noqa: E402
+from bbmodel_maker.render import render_player_pose as P  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 ANIM_DIR = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"

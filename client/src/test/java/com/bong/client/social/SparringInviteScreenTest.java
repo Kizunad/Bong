@@ -1,5 +1,8 @@
 package com.bong.client.social;
 
+import com.bong.client.combat.CombatHudState;
+import com.bong.client.combat.CombatHudStateStore;
+import com.bong.client.combat.DerivedAttrFlags;
 import com.bong.client.network.ClientRequestSender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +22,7 @@ public class SparringInviteScreenTest {
     void reset() {
         ClientRequestSender.resetBackendForTests();
         SocialStateStore.resetForTests();
+        CombatHudStateStore.resetForTests();
     }
 
     @Test
@@ -45,6 +49,10 @@ public class SparringInviteScreenTest {
         SocialStateStore.enqueueSparringInvite(second);
         ClientRequestSender.setBackendForTests((channel, payload) ->
             sentPayloads.add(new String(payload, StandardCharsets.UTF_8))
+        );
+        // 排队晋级测试显式注入 server 权威脱战帧，避免把缺失 producer 当成可开屏。
+        CombatHudStateStore.replaceAuthoritative(
+            CombatHudState.createAuthoritative(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none(), false)
         );
 
         new SparringInviteScreen(first).close();

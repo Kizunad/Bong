@@ -36,8 +36,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
-import gatekit  # noqa: E402
-from rigkit import Rig  # noqa: E402
+from bbmodel_maker.gates import gatekit  # noqa: E402
+from bbmodel_maker.rig.rigkit import Rig  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 # 落 models/ 顶层：.gitignore:109 排掉了 models/*/ 所有子目录（只白名单

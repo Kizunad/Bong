@@ -24,11 +24,11 @@ from pathlib import Path
 from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
-for _d in ("core", "generators"):
+for _d in ("generators",):
     sys.path.insert(0, str(LIB_DIR / _d))
 
 import gen_wooden_club as club  # noqa: E402
-from held_item_common import (  # noqa: E402
+from bbmodel_maker.render.held_item_common import (  # noqa: E402
     GAP_TOLERANCE,
     MIN_CONTACT_RATIO,
     TILE,

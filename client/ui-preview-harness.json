@@ -35,6 +35,26 @@
       "expected_logical_width": 683,
       "expected_logical_height": 384,
       "expected_template_id": "craft"
+    },
+    {
+      "name": "terminate-minimum",
+      "scene_id": "terminate",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "terminate"
+    },
+    {
+      "name": "coffin-menu-minimum",
+      "scene_id": "coffin-menu",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "coffin-menu"
     }
   ]
 }

@@ -32,19 +32,19 @@ class R7XmlMigrationContractTest {
         assertTrue(rows.stream().allMatch(row -> row.targetHost().equals("OWO")
                 && row.targetStyle().equals("OWO_XML_TEMPLATE")),
             "the post-migration production target must be owo XML for every Screen");
-        assertEquals(14, rows.stream().filter(row -> row.currentHost().equals("VANILLA")).count(),
-            "the migration inventory must account for all 14 vanilla Screens");
+        assertEquals(12, rows.stream().filter(row -> row.currentHost().equals("VANILLA")).count(),
+            "the migration inventory must account for all remaining vanilla Screens");
         assertEquals(12, rows.stream().filter(row -> row.currentHost().equals("OWO")
                 && row.currentStyle().equals("CODE")).count(),
             "the migration inventory must account for the remaining 12 owo code-built Screens");
         assertEquals(2, rows.stream().filter(row -> row.currentHost().equals("OWO")
                 && row.currentStyle().equals("XML_MODEL")).count(),
             "the two existing XML-based owo Screens must remain explicitly covered");
-        assertEquals(1, rows.stream().filter(row -> row.currentHost().equals("OWO")
+        assertEquals(3, rows.stream().filter(row -> row.currentHost().equals("OWO")
                 && row.currentStyle().equals("OWO_XML_TEMPLATE")).count(),
-            "CraftScreen must remain the P2 owo XML reference slice");
-        assertEquals(Map.of("REWRITE_VANILLA", 14L, "REWRITE_OWO_CODE", 12L,
-                "NORMALIZE_XML_TEMPLATE", 3L),
+            "已迁移的 owo XML Screen 必须在 inventory 中显式登记");
+        assertEquals(Map.of("REWRITE_VANILLA", 12L, "REWRITE_OWO_CODE", 12L,
+                "NORMALIZE_XML_TEMPLATE", 3L, "COMPLETE", 2L),
             rows.stream().collect(Collectors.groupingBy(MigrationRow::status, Collectors.counting())),
             "migration status counts must match the current Screen audit");
     }

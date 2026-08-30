@@ -27,8 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core"))
 sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
-from animkit import Pose, rotmat  # noqa: E402
-from render_bbmodel import render  # noqa: E402
+from bbmodel_maker.rig.animkit import Pose, rotmat  # noqa: E402
+from bbmodel_maker.render.render_bbmodel import render  # noqa: E402
 from rig import VultureRig  # noqa: E402
 
 VIEWS = {"side": (90.0, 6.0), "34": (138.0, 14.0), "front": (180.0, 6.0),

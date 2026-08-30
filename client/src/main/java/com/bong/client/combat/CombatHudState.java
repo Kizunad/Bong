@@ -10,26 +10,31 @@ import java.util.Objects;
  * displays.
  */
 public final class CombatHudState {
-    private static final CombatHudState EMPTY = new CombatHudState(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none(), false);
+    private static final CombatHudState EMPTY = new CombatHudState(
+        1.0f, 1.0f, 1.0f, DerivedAttrFlags.none(), false, false
+    );
 
     private final float hpPercent;
     private final float qiPercent;
     private final float staminaPercent;
     private final DerivedAttrFlags derived;
     private final boolean active;
+    private final boolean combatActive;
 
     private CombatHudState(
         float hpPercent,
         float qiPercent,
         float staminaPercent,
         DerivedAttrFlags derived,
-        boolean active
+        boolean active,
+        boolean combatActive
     ) {
         this.hpPercent = hpPercent;
         this.qiPercent = qiPercent;
         this.staminaPercent = staminaPercent;
         this.derived = Objects.requireNonNull(derived, "derived");
         this.active = active;
+        this.combatActive = combatActive;
     }
 
     public static CombatHudState empty() {
@@ -47,7 +52,38 @@ public final class CombatHudState {
             clamp01(qiPercent),
             clamp01(staminaPercent),
             derived == null ? DerivedAttrFlags.none() : derived,
-            true
+            true,
+            false
+        );
+    }
+
+    /** 从 combat_hud_state 权威帧构造，同时保留 HUD 显示和战斗窗口两个语义。 */
+    public static CombatHudState createAuthoritative(
+        float hpPercent,
+        float qiPercent,
+        float staminaPercent,
+        DerivedAttrFlags derived,
+        boolean combatActive
+    ) {
+        return new CombatHudState(
+            clamp01(hpPercent),
+            clamp01(qiPercent),
+            clamp01(staminaPercent),
+            derived == null ? DerivedAttrFlags.none() : derived,
+            true,
+            combatActive
+        );
+    }
+
+    /** 只替换 derived flags，不改变快照来源或服务端战斗窗口。 */
+    public CombatHudState withDerived(DerivedAttrFlags nextDerived) {
+        return new CombatHudState(
+            hpPercent,
+            qiPercent,
+            staminaPercent,
+            nextDerived == null ? DerivedAttrFlags.none() : nextDerived,
+            active,
+            combatActive
         );
     }
 
@@ -76,5 +112,10 @@ public final class CombatHudState {
 
     public boolean active() {
         return active;
+    }
+
+    /** 服务端 CombatState 战斗窗口，不等同于 HUD 快照是否已激活。 */
+    public boolean combatActive() {
+        return combatActive;
     }
 }

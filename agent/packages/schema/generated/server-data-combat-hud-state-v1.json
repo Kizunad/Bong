@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "type",
+    "hp_percent",
+    "qi_percent",
+    "stamina_percent",
+    "combat_active",
+    "derived"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "type": {
+      "const": "combat_hud_state",
+      "type": "string"
+    },
+    "hp_percent": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "qi_percent": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "stamina_percent": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "combat_active": {
+      "type": "boolean"
+    },
+    "derived": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "flying",
+        "phasing",
+        "tribulation_locked"
+      ],
+      "properties": {
+        "flying": {
+          "type": "boolean"
+        },
+        "phasing": {
+          "type": "boolean"
+        },
+        "tribulation_locked": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "x-bong-typebox-source-sha256": "bd25d5b0b04c340ce260523ac6446faee6b10c15b06e7c7dd816a85867d743aa"
+}
