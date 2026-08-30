@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 养护界面的组件树由 XML 持有，Java 只绑定耐久快照和提交意图。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface>
+                <vanilla-translucent />
+            </surface>
+            <padding><all>12</all></padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="repair-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fill">100</horizontal>
+                        <vertical method="content">0</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#182010</flat>
+                        <outline>#526542</outline>
+                    </surface>
+                    <padding><all>12</all></padding>
+                    <gap>7</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="repair-title">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#80FF80</color>
+                            <shadow>true</shadow>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <label id="repair-durability">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#E0E0E0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <flow-layout id="repair-durability-track" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fixed">200</horizontal>
+                                <vertical method="fixed">8</vertical>
+                            </sizing>
+                            <surface>
+                                <flat>#303030</flat>
+                                <outline>#101010</outline>
+                            </surface>
+                            <children>
+                                <flow-layout id="repair-durability-fill" direction="horizontal">
+                                    <sizing>
+                                        <horizontal method="fixed">0</horizontal>
+                                        <vertical method="fill">100</vertical>
+                                    </sizing>
+                                </flow-layout>
+                            </children>
+                        </flow-layout>
+                        <flow-layout id="repair-actions" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fixed">208</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <gap>8</gap>
+                            <children>
+                                <button id="repair-steel">
+                                    <sizing>
+                                        <horizontal method="fixed">100</horizontal>
+                                        <vertical method="fixed">20</vertical>
+                                    </sizing>
+                                    <text>投入精钢锭</text>
+                                    <renderer><vanilla /></renderer>
+                                </button>
+                                <button id="repair-pill">
+                                    <sizing>
+                                        <horizontal method="fixed">100</horizontal>
+                                        <vertical method="fixed">20</vertical>
+                                    </sizing>
+                                    <text>投入丹药</text>
+                                    <renderer><vanilla /></renderer>
+                                </button>
+                            </children>
+                        </flow-layout>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>
