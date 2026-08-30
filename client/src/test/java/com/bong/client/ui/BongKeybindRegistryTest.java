@@ -1,5 +1,6 @@
 package com.bong.client.ui;
 
+import com.bong.client.input.BongKeybindRegistry;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.junit.jupiter.api.Test;

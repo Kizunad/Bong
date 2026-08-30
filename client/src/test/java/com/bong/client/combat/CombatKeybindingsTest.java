@@ -1,5 +1,6 @@
 package com.bong.client.combat;
 
+import com.bong.client.input.BongKeybindRegistry;
 import net.minecraft.client.option.KeyBinding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,10 +32,10 @@ class CombatKeybindingsTest {
     @Test
     void onlyNineQuickSlotDefinitionsOwnF1ThroughF9() {
         List<KeyBinding> definitions = new ArrayList<>();
-        CombatKeybindings.installBindings(binding -> {
+        CombatKeybindings.installBindings(new BongKeybindRegistry(binding -> {
             definitions.add(binding);
             return binding;
-        });
+        }, List.of(), Set.of()));
 
         assertEquals(QuickSlotConfig.SLOT_COUNT + 4, definitions.size(),
             "Combat 的快捷槽与四个辅助键必须全部经过同一 registrar");
@@ -57,7 +58,7 @@ class CombatKeybindingsTest {
     @Test
     void registrarResultIsInstalledAndReadByQuickSlotConsumer() {
         Map<String, KeyBinding> installedByDefinition = new LinkedHashMap<>();
-        CombatKeybindings.installBindings(definition -> {
+        CombatKeybindings.installBindings(new BongKeybindRegistry(definition -> {
             KeyBinding installed = new KeyBinding(
                 "test.registered." + definition.getTranslationKey(),
                 definition.getDefaultKey().getCategory(),
@@ -66,7 +67,7 @@ class CombatKeybindingsTest {
             );
             installedByDefinition.put(definition.getTranslationKey(), installed);
             return installed;
-        });
+        }, List.of(), Set.of()));
 
         List<Integer> dispatchedSlots = new ArrayList<>();
         CombatKeybindings.setQuickSlotHandler(dispatchedSlots::add);
@@ -84,7 +85,7 @@ class CombatKeybindingsTest {
     @Test
     void disconnectCleanupDropsOldPressesButPreservesBindingsAndIntentHandler() {
         Map<String, KeyBinding> installedByDefinition = new LinkedHashMap<>();
-        CombatKeybindings.installBindings(definition -> {
+        CombatKeybindings.installBindings(new BongKeybindRegistry(definition -> {
             KeyBinding installed = new KeyBinding(
                 "test.reconnect." + definition.getTranslationKey(),
                 definition.getDefaultKey().getCategory(),
@@ -93,7 +94,7 @@ class CombatKeybindingsTest {
             );
             installedByDefinition.put(definition.getTranslationKey(), installed);
             return installed;
-        });
+        }, List.of(), Set.of()));
         List<Integer> dispatchedSlots = new ArrayList<>();
         CombatKeybindings.setQuickSlotHandler(dispatchedSlots::add);
         CombatKeybindings.setHeldEdgesForTests(true, true);

@@ -2,15 +2,14 @@ package com.bong.client.combat;
 
 import com.bong.client.BongClient;
 import com.bong.client.botany.BotanyHudBootstrap;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.function.IntConsumer;
-import java.util.function.UnaryOperator;
 
 /**
  * Combat-HUD key bindings (§7). Registers F1-F9 quick-use keys, the Jiemai
@@ -47,15 +46,16 @@ public final class CombatKeybindings {
     }
 
     public static void register() {
-        installBindings(KeyBindingHelper::registerKeyBinding);
+        installBindings(BongKeybindRegistry.global());
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
         BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, jiemai [unbound], R, event stream toggle, shield hold).");
     }
 
-    static void installBindings(UnaryOperator<KeyBinding> registrar) {
+    static void installBindings(BongKeybindRegistry registry) {
         for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
-            QUICK_SLOT_KEYS[i] = registrar.apply(new KeyBinding(
+            QUICK_SLOT_KEYS[i] = registry.register(new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("combat.quick_slot_" + (i + 1)),
                 "key.bong-client.quick_slot_" + (i + 1),
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_F1 + i,
@@ -67,29 +67,33 @@ public final class CombatKeybindings {
         // KeyBinding.wasPressed() 都触发 → 冲刺的同时企图发截脉。截脉是有严格 server
         // 窗口期的反应技，不适合占用常用键、更不应「不小心按到就可能发 C2S」。改为默认
         // 未绑定，由玩家在控制设置里显式分配一个不冲突的键。
-        jiemaiKey = registrar.apply(new KeyBinding(
+        jiemaiKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.jiemai_react"),
             "key.bong-client.jiemai_react",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_UNKNOWN,
+            InputUtil.UNKNOWN_KEY.getCode(),
             CATEGORY
         ));
-        spellVolumeKey = registrar.apply(new KeyBinding(
+        spellVolumeKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.spell_volume_hold"),
             "key.bong-client.spell_volume_hold",
             InputUtil.Type.KEYSYM,
             GLFW.GLFW_KEY_R,
             CATEGORY
         ));
-        eventStreamToggleKey = registrar.apply(new KeyBinding(
+        eventStreamToggleKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.event_stream_toggle"),
             "key.bong-client.event_stream_toggle",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_UNKNOWN,
+            InputUtil.UNKNOWN_KEY.getCode(),
             CATEGORY
         ));
         // plan-shield-block-v1 P1 — 举盾持键（默认未绑定；主要路径是右键 MixinMouse 仲裁）。
-        shieldHoldKey = registrar.apply(new KeyBinding(
+        shieldHoldKey = registry.register(new BongKeybindRegistry.BindingSpec(
+            new BongKeybindRegistry.BindingOwner("combat.shield_hold"),
             "key.bong-client.shield_hold",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_UNKNOWN,
+            InputUtil.UNKNOWN_KEY.getCode(),
             CATEGORY
         ));
     }

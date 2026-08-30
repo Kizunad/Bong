@@ -3,8 +3,8 @@ package com.bong.client.movement;
 import com.bong.client.BongClient;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.input.Input;
 import net.minecraft.client.option.KeyBinding;
@@ -25,8 +25,14 @@ public final class MovementKeybindings {
         if (registered) {
             return;
         }
-        dashKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(DASH_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, CATEGORY)
+        dashKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("movement.dash"),
+                DASH_KEY_TRANSLATION,
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_V,
+                CATEGORY
+            )
         );
         ClientTickEvents.END_CLIENT_TICK.register(MovementKeybindings::onEndClientTick);
         registered = true;

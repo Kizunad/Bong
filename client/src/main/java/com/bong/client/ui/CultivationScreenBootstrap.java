@@ -1,10 +1,10 @@
 package com.bong.client.ui;
 
 import com.bong.client.BongClient;
+import com.bong.client.input.BongKeybindRegistry;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
@@ -15,14 +15,19 @@ public final class CultivationScreenBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String OPEN_KEY_TRANSLATION = "key.bong-client.open_cultivation_screen";
     private static KeyBinding openScreenKey;
+    private static boolean registered;
 
     private CultivationScreenBootstrap() {
     }
 
     public static void register() {
+        if (registered) {
+            return;
+        }
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(CultivationScreenBootstrap::onEndClientTick);
         BongClient.LOGGER.info("Registered cultivation screen bootstrap keybinding on key: K");
+        registered = true;
     }
 
     private static void onEndClientTick(MinecraftClient client) {
@@ -37,8 +42,14 @@ public final class CultivationScreenBootstrap {
 
     private static KeyBinding keyBinding() {
         if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, CATEGORY)
+            openScreenKey = BongKeybindRegistry.global().register(
+                new BongKeybindRegistry.BindingSpec(
+                    new BongKeybindRegistry.BindingOwner("ui.cultivation.open_screen"),
+                    OPEN_KEY_TRANSLATION,
+                    InputUtil.Type.KEYSYM,
+                    GLFW.GLFW_KEY_K,
+                    CATEGORY
+                )
             );
         }
 

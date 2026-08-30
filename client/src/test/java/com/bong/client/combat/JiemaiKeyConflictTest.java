@@ -51,7 +51,7 @@ public class JiemaiKeyConflictTest {
         assertFalse(containsDefaultV(combat),
             "期望 CombatKeybindings 不再把截脉键默认绑到 V（已改 GLFW_KEY_UNKNOWN），"
                 + "实际仍含 GLFW_KEY_V —— V 键冲突回归");
-        assertTrue(combat.contains("jiemai_react") && combat.contains("GLFW.GLFW_KEY_UNKNOWN"),
+        assertTrue(combat.contains("jiemai_react") && combat.contains("InputUtil.UNKNOWN_KEY.getCode()"),
             "期望截脉反应键仍注册且默认 UNKNOWN（玩家显式绑定），实际未找到对应注册");
     }
 
