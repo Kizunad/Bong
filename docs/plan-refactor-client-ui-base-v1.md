@@ -337,7 +337,7 @@ bot e2e 分三层记录：
 - **历史 foundation 已清理，不计入 neutral P1 完成**：`5e40e5ced` 的 owo 专用 `DiffListWidget` 和 `5822dd51a` 的 owo 专用 `BongScreenBase` 没有生产调用者，已连同测试和契约登记删除；`b48dd162c` 的 `BongKeybindRegistry` 仍因生产 bootstrap 接入而保留。旧实现的行为证据不再作为长期 API。
 - ✅ 2026-08-26 **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy`；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake 和 `StoreUiStateSource`；contract、intent、state、headless 包均未依赖 owo、vanilla widget、Minecraft 或具体 UI 库。
 - ✅ 2026-08-27 **P2 owo XML adapter + bootstrap reference slice**：唯一 owo XML host、Craft wide/compact 本地模板、host 生命周期、分阶段 bootstrap 和真实 Fabric/owo 截图/交互门均已落地；Store/Intent 解耦留给 P3。
-- ⬜ **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
+- ✅ 2026-08-30 **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
 - ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy**：将 14 个 vanilla Screen 和剩余 12 个 owo CODE Screen 全部重写为 owo XML，连同现有 2 个 XML_MODEL Screen 一并纳入唯一宿主；`CraftScreen` 已由 P2 完成 XML host 规范化，P3 继续处理其 semantic state/intent 边界。迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放。
 - ⬜ **P5 InspectScreen tab-first 拆解**：shell 只做一次 Store intake、一次 subscription scope 和交互 arbitration；tab panel 只接 immutable ViewModel + intent callback；不与 R10 server inventory 内部重排同窗口。
 - ⬜ **P6 Insight/HUD/Bootstrap 收口**：`offer_id` 保留到 ViewModel/Store/Screen；exact offerId settlement；Sparring invite 只消费 server-authoritative combat snapshot；恢复 `BongHudOrchestrator` qi radar main path；完成剩余 UI bootstrap registry 迁移。
@@ -351,17 +351,19 @@ bot e2e 分三层记录：
 
 - **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory；冻结 semantic surface 的必需 identity/revision/action 字段和 legacy raw XML 隔离；登记 `UiDriver` 外部接口；冻结 `OWO` 唯一 production backend capability、`MIN_SUPPORTED_VIEWPORT`、逻辑/physical 坐标转换和 odd-resolution matrix。
 
-- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryContractTest`、`R7StoreStateSourceContractTest`、`R7BackendCapabilitiesContractTest`、`R7SemanticViewportContractTest`、`R7ProductionBaselineContractTest`；production source hash 对拍，确认 no production behavior change。
+- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryContractTest`、`R7StoreStateSourceContractTest`、`R7BackendCapabilitiesContractTest`、`R7SemanticViewportContractTest`；focused fixture 从 production source 派生并提供具体文件/符号诊断。全树 production digest 仅作为 P0R 一次性历史举证，不作为后续阶段的长期门禁。
+
+长期门禁只覆盖 R7-owned 的 screen、state、intent、bootstrap、semantic 和 viewport 接缝；客户端其他资源、并行 PR 新增的 production 文件以及无关美术资产不属于 R7 contract drift。若需要证明某次阶段确实没有生产变更，应在该阶段单独生成一次性审计证据，不更新长期 fixture。
 
 - **跨仓库**：不在 R7 内直接改 schema/proto/Redis/CustomPayload；现有 `proto/bong/envelope.proto`、`agent/packages/schema/src/server-data.ts`、`scripts/bot/_agent_ui_helpers.py` 的 raw XML 耦合登记为 R6/schema/agent amendment 输入，未完成 atomic activation 前只保留 legacy regression。
 
 #### P0R Finish Evidence
 
-- **落地清单**：新增 source-derived Screen adapter、Store source、bootstrap order、semantic/intent/viewport、UI dependency、backend capability 和 production Java digest contract tests；长期 fixture 统一使用 `ui/` 语义文件名，不再使用阶段性 `r7-` 前缀。未新增 `client/src/main/java` production adapter、Screen migration 或 wire/schema 字段；P2 已完成 `CraftScreen` 的 XML host，当前 14 个 vanilla、12 个 owo CODE 与 2 个 XML_MODEL 入口仍是 P3-P4 的明确迁移债务。
-- **关键证据**：P0R 原始快照的 production Java source tree SHA-256 为 `66502bbf20e7be0999576c612eac5b53d23c81ca9c5e8c3cad91e67bc3558f2b`；随后清理了无生产调用者的两个 legacy foundation，当前 digest 由 cleanup/P1 提交重新冻结；迁移前 Screen inventory 对拍为 29 个（15 owo、14 vanilla）；BongClient UI bootstrap 对拍为 30 个模块；Store source fixture 对拍通过。
+- **落地清单**：新增 source-derived Screen adapter、Store source、bootstrap order、semantic/intent/viewport、UI dependency、backend capability 和 focused contract tests；长期 fixture 统一使用 `ui/` 语义文件名，不再使用阶段性 `r7-` 前缀。未新增 `client/src/main/java` production adapter、Screen migration 或 wire/schema 字段；P2 已完成 `CraftScreen` 的 XML host，当前 14 个 vanilla、12 个 owo CODE 与 2 个 XML_MODEL 入口仍是 P3-P4 的明确迁移债务。
+- **关键证据**：P0R 原始快照的 production Java source tree SHA-256 为 `66502bbf20e7be0999576c612eac5b53d23c81ca9c5e8c3cad91e67bc3558f2b`，该摘要是一次性历史证据，不再覆盖后续资源或并行 PR 的变更；迁移前 Screen inventory 对拍为 29 个（15 owo、14 vanilla）；BongClient UI bootstrap 对拍为 30 个模块；Store source fixture 对拍通过。
 - **测试结果**：`./gradlew test --tests 'com.bong.client.ui.R7*ContractTest' --tests com.bong.client.insight.InsightOfferScreenTest --tests com.bong.client.insight.InsightOfferStoreTest -x runGametest` 通过；Java 17 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"` 通过，包含 3 个 Fabric GameTest。
 - **跨仓库核验**：未修改 server、agent/schema、protobuf、Redis key、CustomPayload 或 R2/R6 owner 文件；semantic surface 继续与模板实现分离，现有 raw XML 仍标记为 legacy 输入，后续 wire cutover 仍由 R6/schema/agent amendment 负责。
-- **遗留 / 后续**：P1 library-neutral core 已完成；P2 已完成 Craft XML reference slice，P3-P7 仍未开始。无生产引用的 legacy foundation 已删除，下一阶段继续迁移 14 个 vanilla Screen、12 个剩余 owo CODE Screen 和 2 个 XML_MODEL 运行时入口；`VANILLA` 仅留在迁移前统计，第三方 host 明确 OUT_OF_SCOPE。
+- **遗留 / 后续**：P1 library-neutral core、P2 Craft XML reference slice 和 P3 状态/意图边界迁移已完成；P4-P7 仍待实施。无生产引用的 legacy foundation 已删除，下一阶段继续迁移 14 个 vanilla Screen、12 个剩余 owo CODE Screen 和 2 个 XML_MODEL 运行时入口；`VANILLA` 仅留在迁移前统计，第三方 host 明确 OUT_OF_SCOPE。
 
 ### P1 — library-neutral core ✅ 2026-08-26
 
@@ -393,6 +395,13 @@ bot e2e 分三层记录：
 - **交付**：先用 semantic surface + 本地 owo XML template 跑通一条完整 vertical slice；Screen 不直接依赖 `ClientRequestSender`、`ClientRequestProtocol`、network Handler；所有 Store 读取经 `UiStateSource`/ViewModel，所有输入经 typed sink；明确交易显式 picker 和 inventory `instance_id`；`SemanticUiDriver` 用同一 action registry 跑对应 bot roundtrip。
 - **测试**：非法参数、过期 session、late callback 和关闭后 intent 全部 fail closed；bot 不使用像素点击且能验证 open/action/receipt/revision/rejection/close/session isolation；Craft/Alchemy/Trade/Loot 的 server authoritative roundtrip、无 selection refusal、transport accepted 与 server accepted 分离、断线后 scope/Store 不串会话；existing UI C2S smoke 对拍。
 - **跨仓库**：R2 lifecycle、R6 router、schema/proto 不改；CraftStore 只消费 M-09 冻结 contract。
+
+#### P3 批次 A 验证证据
+
+- **落地模块**：`alchemy/{AlchemyScreenViewModel,AlchemyUiStateSource,AlchemyScreenController,AlchemyIntent,AlchemyClientIntentSink}.java`、`social/{TradeOfferScreenViewModel,TradeOfferUiStateSource,TradeOfferScreenController,TradeOfferIntent,TradeOfferClientIntentSink}.java`、`inventory/{LootContainerScreenViewModel,LootContainerUiStateSource,LootContainerScreenController,LootContainerIntent,LootContainerClientIntentSink}.java`；Craft 的同型边界沿用 P3 Craft slice；`ui/headless/SemanticUiDriver.java` 接入同一 action registry。
+- **边界结果**：目标 Screen/Panel 不再直接引用 Store、`ClientRequestSender`、`ClientRequestProtocol` 或 handler；所有状态通过 `UiStateSource` → immutable ViewModel，所有输入通过 guarded typed `UiIntentSink`；关闭 scope、late callback、过期 session、重复 request、stale revision 和 transport/local rejection 均 fail closed。
+- **身份与会话**：Trade picker 只接受当前 authoritative inventory 中明确的 `instance_id`，选择对象消失时不自动换选；Loot panel 按 `session_id` 卸载旧实例，禁止跨会话继续发送 move/close。
+- **测试结果**：定向 P3 JUnit 套件 15 条通过；同一 Gradle 任务额外执行的 Fabric GameTest 门 3 条通过；完整 `./gradlew test build` 通过，5044 条 JUnit 测试、0 failures、0 errors；未修改 server、agent/schema、protobuf、Redis key 或 wire shape。
 
 ### P4 — 全 Screen、keybind、线程与 open policy
 
