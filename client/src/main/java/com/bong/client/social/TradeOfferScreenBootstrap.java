@@ -67,7 +67,7 @@ public final class TradeOfferScreenBootstrap {
         if (screenKind == ScreenKind.MATCHING_TRADE_OFFER) {
             return Decision.NOOP;
         }
-        if (screenKind == ScreenKind.OTHER) {
+        if (screenKind == ScreenKind.OTHER || screenKind == ScreenKind.REQUEST_PICKER) {
             return Decision.BLOCKED_TOAST;
         }
         // NONE（没有屏幕）或 OTHER_TRADE_OFFER（陈旧的交易屏）都需要换一份新的 TradeOfferScreen。

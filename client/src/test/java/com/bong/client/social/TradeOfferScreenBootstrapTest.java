@@ -88,6 +88,19 @@ class TradeOfferScreenBootstrapTest {
     }
 
     @Test
+    void activeIncomingOfferDoesNotReplaceOutgoingRequestPicker() {
+        assertEquals(
+            TradeOfferScreenBootstrap.Decision.BLOCKED_TOAST,
+            TradeOfferScreenBootstrap.decide(
+                offer("t-active", 5_000L),
+                TradeOfferScreenBootstrap.ScreenKind.REQUEST_PICKER,
+                1_000L
+            ),
+            "活跃入站 offer 遇到出站 picker 时必须提示而不是替换玩家当前操作的 picker"
+        );
+    }
+
+    @Test
     void noOfferButMatchingTradeScreenOpenClosesIt() {
         assertEquals(
             TradeOfferScreenBootstrap.Decision.CLOSE_SCREEN,
