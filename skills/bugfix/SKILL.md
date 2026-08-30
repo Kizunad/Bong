@@ -1,6 +1,6 @@
 ---
 name: bugfix
-description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在常驻 slot/branch 中完成原子 claim、进驻、promotion、第一性原理证真或证伪、最小修复、绑定干净 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施与 validator。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
+description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在常驻 slot/branch 中完成原子 claim、进驻、promotion、第一性原理证真或证伪、最小修复、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
 ---
 
 # Bong BugFix 主干调度
@@ -20,11 +20,9 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 ## 启动参数、并发与资源
 
-- 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
+- 启动时读取并保持两个独立参数：实施数量 `N`、实施模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
 - 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 slot/task 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
-- 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
-- 把平台总 agent 槽位纳入启动准入：主干占 1 槽，并永久为实际 validator 预留至少 1 槽。容量可查时，每次补位按实时快照计算 `min(max(0, N - 当前实施 agent 数), max(0, platform_total - live_agents - 未入 snapshot reservation - validator_reserve - 未计入 live 的主干占位))`；容量不可查时只按 `max(0, N - 当前实施 agent 数)` 补位，编译并发仍由独立 token 限制为 2。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
-- validator 授权必须同时满足逻辑 `validator_token ≤3` 和平台真实剩余槽位；主干通过当前 harness 实际提供的状态查询对拍 live agent。每个已 GRANTED/ACKED/RECOVERING、但尚未出现在 live snapshot 的 validator token 都先预占 1 个平台槽；只有状态查询确认对应 validator 已出现后才转为 snapshot-accounted，避免重复授权或双扣。容量不可查时 validator 一次只授权 1 个。
+- 平台总 agent 槽位纳入启动准入：主干占 1 槽。容量可查时，每次补位按实时快照计算 `min(max(0, N - 当前实施 agent 数), max(0, platform_total - live_agents - 未计入 live 的主干占位))`；容量不可查时只按 `max(0, N - 当前实施 agent 数)` 补位，编译并发仍由独立 token 限制为 2。平台满载、已有无关 agent 或 outstanding reservation 都会减少可启动数；超额任务进 FIFO，不 spawn。
 - 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
 - 所有运行者执行 `df -h /`。磁盘超过 90% 时，主干运行 `bash scripts/wt-janitor.sh`（report-only）并按报告回收遗留：仅 PR **MERGED** 且干净、无非缓存 ignored（`.env` 等）、无未合入 patch 的树用 `--apply` 自动收（squash 后用 `git cherry` 判等价）；CLOSED/UNKNOWN/无 PR/脏树一律交人工。常驻 slot 的 `server/target`/`client/build` 保温缓存**不属于**「私有可再生生成物」，不参与任何任务级清理。
@@ -77,7 +75,7 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 - `claude_code_cli` 是当前 Claude Code 2.1.207 的生产 adapter：宿主必须暴露 `Bash` 与 `Monitor`，并通过 `python3 skills/bugfix/scripts/claude_code_adapter.py` 调用真实 CLI。`spawn` 使用 `claude --background`；`status` 使用 `claude agents --json --all` 并以完整 `sessionId` 作为 canonical ID；`resume` 使用 `claude --resume <sessionId> --background`；`wait` 必须把 adapter 的有限 `wait` 子命令交给宿主 `Monitor`，由退出/超时事件唤醒主干。该 CLI 没有父子 agent 双向 message API，因此 token 协议强制 phase-yield：子任务在结果中返回结构化请求后结束，主干再把 grant/checkpoint 放入 resume prompt。
 - `claude_tools` 只适用于宿主在**当前会话工具清单**中真实暴露全部三个工具的旧 Claude harness；不得把 `claude_code_cli` 的 CLI 命令冒充这些工具。Claude Agent SDK 若由产品接入 Managed Agents，可用 session/thread event stream 实现 spawn/message/status/wait/resume，但必须另写可执行 adapter 并验证事件链，不能只凭 SDK 文档选中分支。
-- 当前宿主缺任一 `required_tools` 时必须 fail closed：记录缺失能力并停止启动 BugFix loop，不得执行部分状态机。尤其等待能力缺失时不能用 shell sleep/busy-poll 冒充；缺可枚举 canonical ID 的 status 时不能授权 validator token。
+- 当前宿主缺任一 `required_tools` 时必须 fail closed：记录缺失能力并停止启动 BugFix loop，不得执行部分状态机。尤其等待能力缺失时不能用 shell sleep/busy-poll 冒充。
 - 修改 `claude_code_cli` adapter 或契约时，除纯内存 dry-run 外必须运行 `python3 skills/bugfix/scripts/claude_code_adapter_test.py`；该测试驱动真实 `claude --background` → `claude agents --json` → 有限 wait → `claude --resume`，并清理探针 session。provider 429 时至少退避 120 秒再重跑。
 - 支持子 agent 主动发消息的 harness：用本分支真实 message API 发送结构化 token 消息；主干用本分支真实 wait/status API 接收和对拍。
 - 不支持子 agent 在运行中等待父级输入，或能力探测不确定时：强制使用 **phase-yield/checkpoint**。实施 agent 结构化返回 `TOKEN_REQUEST + checkpoint` 后结束当前 turn，主干入 FIFO；获准后通过该 harness 的 `resume_agent` / `followup_task` / `send_input` / Agent continuation 恢复同一任务。不得假设子 agent 能主动 `wait_agent` 等父级。
@@ -90,21 +88,19 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 | token | 容量 | 持有阶段 | 状态表字段 |
 |---|---:|---|---|
 | `compile_token` | 2 | 进入任何编译/完整门禁前至该轮命令结束 | token id、task、agent、grant time、phase |
-| `validator_token` | 3 | spawn validator 前至 validator 已关闭 | token id、task、agent、validator、target SHA、grant time |
 
 按上方适配器选择真实接口完成可恢复握手：
 
-1. 实施 agent 发送或 phase-yield 返回：`TOKEN_REQUEST{"request_id":"<uuid>","type":"compile|validator","task":"<id>","agent":"<canonical agent id>","phase":"<phase>","head":"<sha>","generation":N,"checkpoint":"<resume data>"}`；**未收到有效 grant 禁止编译或 spawn validator**。
+1. 实施 agent 发送或 phase-yield 返回：`TOKEN_REQUEST{"request_id":"<uuid>","type":"compile","task":"<id>","agent":"<canonical agent id>","phase":"<phase>","head":"<sha>","generation":N,"checkpoint":"<resume data>"}`；**未收到有效 grant 禁止编译**。
 2. 主干按 `request_id` 幂等去重，落唯一状态表、排入 FIFO。grant 前重新读取权威 task 的 task/phase/head/generation；逻辑容量与实时平台槽位都满足时，先原子登记 holder，再返回 `TOKEN_GRANTED{"request_id":"...","token_id":"...","type":"...","task":"...","phase":"...","head":"...","generation":N,"expires_at":"..."}`。
 3. 实施 agent 核对 request/task/phase/head/generation/expiry 后发送或返回 `TOKEN_ACK{...}`，ACK 后 token 才可使用。主干对**每次** ACK（包括重复 ACK）重新读取权威状态；任何漂移都原子 stale/cancel。重复 request 返回同一队列状态或同一 grant；状态未漂移时重复 ACK 幂等。
-4. validator token ACK 后，实施 agent 用 harness spawn 返回的 **canonical validator agent ID** 上报 `VALIDATOR_SPAWNED{"request_id":"...","token_id":"...","validator_agent_id":"...","task":"...","phase":"...","target_sha":"...","generation":N}`。该 ID 与 request/token/task/phase/SHA/generation 一对一绑定；一个 validator 实例在其完整生命周期内只能消费一个 reservation，release/close 后也不得跨 reservation 复用同一 canonical ID。只有 live snapshot 精确包含同一 canonical ID 才可标 snapshot-accounted；无关 agent、另一 validator 或仅总数增长均无效。
-5. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + token_id + agent + phase + head + generation`；进入 `RECOVERING` 前、生成每一份 followup payload 前、处理恢复结果时都重新读取权威 task，任一 HEAD/generation/来源 phase 漂移立即 stale/cancel 且不再占 token。任务权威态允许且只允许 `task.phase=RECOVERING && recovery_from=grant.phase` 与 broker RECOVERING 临时对应；恢复结果逐字段回传并与原 grant 对拍。禁止另开无状态 agent 猜测续点。
-6. 完成、FAIL、超时、异常时，实施 agent 发送或返回绑定 `request_id + token_id + agent + phase + head + generation + reason` 的 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回绑定原 request 身份与 reason 的 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`；同 request 的重复终态消息只有完整 payload 相同才幂等。
-7. grant 绑定 request_id、task、agent、phase、head、generation。任一变化、token 已回收、非 FIFO 当前授权或 ACK 前过期都原子 stale；旧 token 禁止 ACK/recovery/release。
-8. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，每轮 recovery sweep 都先对拍权威 task，漂移立即 stale/cancel；状态未漂移时只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的迟到消息一律拒绝。
-9. `compile_token` 在该轮门禁任一出口释放；`validator_token` 在 validator 关闭后任一出口释放，spawn 失败也释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
+4. 已结束/idle agent 通过当前 harness 的 resume/followup 入口恢复，payload 必须包含 `checkpoint + request_id + agent + phase + head + generation`；进入 `RECOVERING` 前、生成每一份 followup payload 前、处理恢复结果时都重新读取权威 task，任一 HEAD/generation/来源 phase 漂移立即 stale/cancel 且不再占 token。任务权威态允许且只允许 `task.phase=RECOVERING && recovery_from=grant.phase` 与 broker RECOVERING 临时对应；恢复结果逐字段回传并与原 grant 对拍。禁止另开无状态 agent 猜测续点。
+5. 完成、FAIL、超时、异常时，实施 agent 发送或返回绑定 `request_id + agent + phase + head + generation + reason` 的 `TOKEN_RELEASED{...}`；排队取消或 grant 失效返回绑定原 request 身份与 reason 的 `TOKEN_CANCELLED{...}`。主干确认后释放并回 `TOKEN_RELEASE_ACK{...}`；同 request 的重复终态消息只有完整 payload 相同才幂等。
+6. grant 绑定 request_id、task、agent、phase、head、generation。任一变化、token 已回收、非 FIFO 当前授权或 ACK 前过期都原子 stale；旧 token 禁止 ACK/recovery/release。
+7. 重复 RELEASE/CANCEL 必须幂等 no-op；同 request_id 但 payload 不同视为协议错误。每次唤醒用当前 harness 实际状态查询对拍 holder；失联先进入 `RECOVERING`，每轮 recovery sweep 都先对拍权威 task，漂移立即 stale/cancel；状态未漂移时只有 resume/send-input/followup 明确失败或恢复 TTL 到期才回收。回收后的迟到消息一律拒绝。
+8. `compile_token` 在该轮门禁任一出口释放。任务 BLOCKED/CLOSED、用户停止或 worktree 清理前，主干取消排队项并核验无悬挂 token。
 
-从仓库根运行 `python3 skills/bugfix/scripts/state_machine_dry_run.py` 验证这套状态机。该 dry-run 不调用 GitHub 写 API，覆盖容量/FIFO、消息握手、异常回收、claim/main-sync/verdict 与持续等待契约；修改资源协议时必须同步更新并运行。
+从仓库根运行 `python3 skills/bugfix/scripts/state_machine_dry_run.py` 验证这套状态机。该 dry-run 不调用 GitHub 写 API，覆盖容量/FIFO、消息握手、异常回收、claim/main-sync 与持续等待契约；修改资源协议时必须同步更新并运行。
 
 ## 启动上下文与任务表
 
@@ -112,12 +108,12 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 
 维护唯一任务/资源状态表；以下字段不得省略：
 
-| skeleton | agent | worktree | branch | phase | generation | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | expires_at | ack | validator_agent_id | recovery_deadline | release_reason | checkpoint | head | validator evidence | gate evidence | PR | review/e2e |
+| skeleton | agent | worktree | branch | phase | generation | token_type | request_id | token_id | queue_pos | holder | request_phase | requested_at | granted_at | expires_at | ack | recovery_deadline | release_reason | checkpoint | head | gate evidence | PR | review/e2e |
 |---|---|---|---|---|---:|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → FIX_VALIDATING → GATING → REBASING → REBASE_VALIDATING → ARCHIVING → FINAL_VALIDATING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`。只有 `FINAL_VALIDATING → PR_OPEN`；合法边、必经里程碑、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
+phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/NOT_BUG → GATING → REBASING → ARCHIVING → PR_OPEN → GATES → CLOSED`，失联暂态 `RECOVERING`，或终态 `BLOCKED`；合法边、必经里程碑、互斥分支、终态和返工回流以 dry-run 的 `TaskPhase/ALLOWED_EDGES` 为可执行契约。
 
-状态迁移不能靠“走过 phase”解锁：三个 validating 关口都必须由 token broker 消费 `request_id + token_id + canonical validator_agent_id + phase + target_sha + generation + PASS + completed_at`；只有 token 仍为 ACKED、实例完成一对一绑定、canonical ID 非空且确实 live 并已 snapshot-accounted、所有字段与权威 grant 一致时才落证据。`GATING → REBASING` 必须有当前 HEAD/generation 的成功 gate evidence；主线同步也必须记录当前 HEAD/generation 的成功 sync evidence。主线同步、HEAD 变化或任何返工回流会递增 generation，并清除旧 SHA/generation 的 validator/gate/sync 证据与闭环里程碑；进入 `PR_OPEN/GATES`（包括从其进入 RECOVERING）后禁止原地改 HEAD，必须先走 `GATES → FIXING/NOT_BUG` 返工边。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进；`GATES → CLOSED` 必须再次核验当前非空 HEAD/generation 的 `FINAL_VALIDATING` PASS，再保存并核验同一 HEAD/generation 的 PR number、与权威 repository/number 精确拼出的 PR URL、远端 SHA、无重复名称的 `review`/`e2e`/CodeRabbit 及所有已登记 related check 明细均为 SUCCESS，以及与启动时权威实施/validator/reviewer 模型三元组逐项完全一致的规范精确 ID，禁止用聚合布尔值或自报模型代替证据。
+状态迁移不能靠“走过 phase”解锁：每个阶段都必须保存与当前 `head`、`generation` 对应的 gate evidence；`GATING → REBASING` 必须有当前 HEAD/generation 的成功 gate evidence，主线同步也必须记录当前 HEAD/generation 的成功 sync evidence。主线同步、HEAD 变化或任何返工回流会递增 generation，并清除旧 SHA/generation 的 gate/sync 证据；进入 `PR_OPEN/GATES`（包括从其进入 RECOVERING）后禁止原地改 HEAD，必须先走 `GATES → FIXING/NOT_BUG` 返工边。FAIL、缺证据、错误 SHA 或旧 generation 均不得推进；`GATES → CLOSED` 必须核验当前非空 HEAD/generation 的 PR number、与权威 repository/number 精确拼出的 PR URL、远端 SHA、无重复名称的 review/e2e/相关 checks 均为 SUCCESS，以及与启动时实施模型一致的规范精确 ID，禁止用聚合布尔值或自报模型代替证据。
 
 ## 选择与派发 skeleton
 
@@ -196,29 +192,9 @@ Model: gpt-5.6-sol-xhigh
 - gameplay/真元改动必须满足守恒、世界观和 A/V 硬约束。改 schema 时重建 `@bong/schema` dist；headless/e2e 启服设置 `BONG_SKIP_SKIN_PREFETCH=1`。
 - 在 `VERIFYING`、`FIXING` 或 `NOT_BUG` 阶段运行任何会编译/构建的复现或针对性测试前，同样必须申请 `compile_token`；针对性测试与完整门禁共享容量，但用途和结果分开记录。
 
-### 4. 绑定 HEAD 的无上下文 validator
+### 4. 完整本地门禁
 
-修复或证伪提交完成后进入 `FIX_VALIDATING`。先执行 `git status --porcelain=v1 --untracked-files=all` 并要求输出为空；确认 index、工作区和所有预期生成文件都已分类，需进入 PR 的改动已形成带 `Model:` trailer 的 commit。脏工作区禁止启动 validator。
-
-实施 subagent 必须先申请并收到主干的 `validator_token` 明确授权，才能创建全新 validator；主干不得代开，实施者不得自证。每轮 prompt 只提供：
-
-- 绝对 worktree 路径；
-- 待审 `target_head_sha=$(git -C <worktree> rev-parse HEAD)`；
-- 允许读取的权威材料：`AGENTS.md`、必要项目文档、active/原 skeleton 历史、`origin/main...target_head_sha` diff、原始测试日志；
-- read-only、第一性原理与固定输出契约。
-
-要求 validator 第一步在该绝对路径运行 `git status --porcelain=v1 --untracked-files=all` 和 `git rev-parse HEAD`。工作区非空或实际 SHA 不等于 `target_head_sha` 时，立即输出 `FAIL <target_head_sha>：DIRTY_WORKTREE/HEAD_MISMATCH`。结论只能是：
-
-- `PASS <target_head_sha>` + 简短证据；或
-- `FAIL <target_head_sha>` + `file:line` + 必修项 + 失败依据。
-
-要求 validator 对抗检查真伪、可达性、已有防护、回归风险、注册/consumer 接线、测试饱和度、真元守恒与 plan scope。verdict 返回后，实施 subagent 再次核验 `git status --porcelain=v1 --untracked-files=all` 为空且 HEAD 仍等于 `target_head_sha`；否则 verdict 失效。PASS、FAIL、超时、异常四条出口都立即关闭 validator。
-
-FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一个全新无上下文 validator。**HEAD 或工作区只要变化，旧 verdict 立即作废，禁止复用。**
-
-### 5. 完整本地门禁
-
-当前 HEAD 获得 PASS 后，实施 subagent 必须先申请并收到主干的 `compile_token` 明确授权，才能按所有受影响栈在正确目录运行完整门禁：
+实施 subagent 必须先申请并收到主干的 `compile_token` 明确授权，才能按所有受影响栈在正确目录运行完整门禁：
 
 - server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`
 - client：`scripts/build-token.sh gradle test build`，严格使用 JDK 17
@@ -228,49 +204,48 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 管道命令必须保留真实退出码（例如检查 `${PIPESTATUS[0]}`），不得把本分支引入的失败称为 pre-existing。
 
-门禁若产生 tracked/untracked 文件，先分类：PR 所需产物必须单独提交并对新 HEAD 回 step 4；纯私有且可再生的 ignored 产物可保留到闭环清理。任何未分类或未提交改动都使旧 PASS 失效。
+门禁若产生 tracked/untracked 文件，先分类：PR 所需产物必须单独提交并重新跑受影响门禁；纯私有且可再生的 ignored 产物可保留到闭环清理。任何未分类或未提交改动都阻止继续推进。
 
-### 6. 同步最新主线并复验
+### 5. 同步最新主线并复验
 
 门禁全绿后执行 `git fetch origin`，立即用 merge-base 分类，不允许直接运行会默认生成提交的 `git merge origin/main`：
 
 - **already-up-to-date**：`origin/main` 已是 HEAD 祖先，不改 HEAD，保留当前门禁证据。
-- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 没有 agent 新建 commit，因此无需新增 trailer；HEAD 变化后重跑受影响栈完整门禁，再进入下方 `REBASE_VALIDATING`。
-- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；PASS 后用中文消息和精确 trailer 显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复" -m "Model: <实际实施模型精确 id>"`。随后确认工作区干净并进入下方 `REBASE_VALIDATING`。
+- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 没有 agent 新建 commit，因此无需新增 trailer；HEAD 变化后重跑受影响栈完整门禁。
+- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；通过后用中文消息和精确 trailer 显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复" -m "Model: <实际实施模型精确 id>"`。
 
-任何同步带入变化都必须重跑受影响栈完整门禁；冲突或触及修复相关文件时扩大针对性复验。**HEAD 或工作区变化会使旧 validator verdict 失效。**
+任何同步带入变化都必须重跑受影响栈完整门禁；冲突或触及修复相关文件时扩大针对性复验。
 
-三种同步分支收口后都进入 `REBASE_VALIDATING`，对同步判定后的当前干净 HEAD 重新申请 validator token；PASS 后才能进入 `ARCHIVING`。不得从首次 `FIX_VALIDATING` 或 `ARCHIVING` 直接开 PR。
+三种同步分支收口后都进入 `ARCHIVING`；不得从未通过本地门禁的状态直接开 PR。
 
-任何返工或新提交都回到 step 4，按“新 SHA validator → 完整门禁 → fetch 后分类同步主线 → 条件复验”重新闭环。
+任何返工或新提交都重新跑受影响栈门禁，并按本节同步最新主线。
 
-### 7. Finish Evidence 与归档
+### 6. Finish Evidence 与归档
 
-只有 step 4–6 全部对当前代码成立且不存在 `[BLOCKED: ...]` 时才归档：
+只有 step 4–5 全部对当前代码成立且不存在 `[BLOCKED: ...]` 时才归档：
 
 1. 把 plan 所有阶段标成 `✅ YYYY-MM-DD`。
 2. 填写严格命名的 `## Finish Evidence`，包含落地清单、关键 commit、完整测试结果、跨栈核验、遗留/后续。
 3. 运行 `bash scripts/plan-finish.sh <name>`，确认它把 active plan 移到 `docs/finished_plans/`。
 4. 以独立中文归档 commit 提交，并带精确 `Model:` trailer。
 
-归档是开 PR 前最后一次允许的 mutation。归档 commit 后进入 `FINAL_VALIDATING`；立即对归档后的**最终 HEAD SHA**再启动一个全新无上下文 read-only validator，取得 `PASS <final_sha>`。只有该 phase 能转入 `PR_OPEN`。若 FAIL，返工时只原地更新现有 Finish Evidence/归档文件，不重复 promotion、追加第二份 Finish Evidence 或再次移动文件，并重新走 step 4–7。最终 PASS 后禁止再修改分支内容。
+归档是开 PR 前最后一次允许的 mutation。归档 commit 后重新跑受影响栈门禁；若 review 返工，只原地更新现有 Finish Evidence/归档文件，不重复 promotion、追加第二份 Finish Evidence 或再次移动文件。
 
-### 8. Push、PR 与 gates
+### 7. Push、PR 与 gates
 
-push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空、HEAD 等于最后一次 `PASS <final_sha>`，并确认所有预期改动均已提交。用 `git log origin/main..HEAD` 检查本分支新增的**每一个 commit**都存在且仅使用真实精确 id 的 `Model:` trailer；缺失、空值、`AI`、`agent`、`unknown` 等值一律阻止 push。
+push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空，并确认所有预期改动均已提交。用 `git log origin/main..HEAD` 检查本分支新增的**每一个 commit**都存在且仅使用真实精确 id 的 `Model:` trailer；缺失、空值、`AI`、`agent`、`unknown` 等值一律阻止 push。
 
-只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论、完整测试、validator SHA verdict。创建时只写入当时已知的两个精确模型字段：
+只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论和完整测试。创建时写入实施模型字段：
 
 ```text
 Model: <实际实施模型精确 id>
-Validator-Model: <实际 validator 模型精确 id>
 ```
 
-首轮 review 返回前，PR body 必须**省略** `Reviewer-Model`，禁止猜测、`pending` 或 `unknown` 占位。执行 `gh pr comment <PR> --body "/review"` 发独立评论；review 返回并能从权威结果确认精确模型后，使用 `gh pr edit` 原地补入 `Reviewer-Model: <精确 id>`。若 CLI 的项目字段查询故障，允许用等价 GitHub REST PATCH 更新同一 PR body。等待 `/review`、CodeRabbit、e2e 与相关 checks。
+PR 创建和 push 新提交后由 Kody 自动 review，不发送手动 `/review` 或 `/review-next` 评论；发现问题或需要针对最新 HEAD 复审时，才执行 `gh pr comment <PR> --body "@kody review --force"`。等待 Kody、e2e 与相关 checks。
 
-闭环前重新读取 PR body，严格校验 `Model`、`Validator-Model`、`Reviewer-Model` 三字段均存在且为实际精确 id；review 尚未返回模型时不得 CLOSED，继续按等待协议处理，也不得补猜测值。基础设施或计费故障保留原始证据并标 `BLOCKED`，不得伪装通过；忽略无关的 `chatgpt-codex-connector` usage-limit 噪音。
+闭环前重新读取 PR body，严格校验 `Model` 字段为实际精确 id；基础设施或计费故障保留原始证据并标 `BLOCKED`，不得伪装通过；忽略无关的 `chatgpt-codex-connector` usage-limit 噪音。
 
-`CLOSED` 定义为：PR 已创建、远端 SHA 对拍、最终 HEAD validator PASS、必需 review 无 blocker/major、e2e 与相关 checks 全绿、PR body 模型字段完整。除非用户另行授权，不自动 merge。
+`CLOSED` 定义为：PR 已创建、远端 SHA 对拍、必需 review 无 blocker/major、e2e 与相关 checks 全绿、PR body 模型字段完整。除非用户另行授权，不自动 merge。
 
 ## CLOSED 清理、claim 生命周期与返工
 
@@ -278,7 +253,7 @@ Validator-Model: <实际 validator 模型精确 id>
 
 PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 
-1. 记录 PR URL、最终 SHA、结论、测试、validator 和 gate 状态，关闭实施 subagent。
+1. 记录 PR URL、最终 SHA、结论、测试和 gate 状态，关闭实施 subagent。
 2. 在 slot 内执行 `git status --porcelain=v1 --untracked-files=all`，确认没有源码、用户 WIP 或未提交改动，也没有本流程产生的孤儿 stash；不干净则停止清理并派恢复。
 3. 识别并删除**明确属于该任务、独占、ignored、可再生**的非缓存生成物（`.tmp` 日志、临时导出等），再次确认没有源码/WIP。**保留 slot 的 `server/target`/`client/build` 保温缓存**，显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它们。
 4. 在 slot 内执行 `git checkout --detach origin/main` 脱离任务分支；slot 保持 locked，**不 remove、不 prune**。
@@ -306,8 +281,8 @@ review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，�
 
 完成四方 SHA 对拍后才进入任务面。
 
-返工必须幂等：不重复 claim、promotion、Finish Evidence 章节或归档移动。按“修复并提交 → 新 HEAD validator → 完整门禁 → fetch 后按 step 6 分类同步最新主线 → 条件复验与新 SHA validator → 原地更新 Finish Evidence（若证据变化）→ 最终 HEAD validator → push 同一分支 → 等新 HEAD e2e → 独立评论 `/review`”完整闭环。返工产生的每个 commit 和最终 PR body 仍必须使用精确模型字段。
+返工必须幂等：不重复 claim、promotion、Finish Evidence 章节或归档移动。按“修复并提交 → 完整门禁 → fetch 后同步最新主线 → 条件复验 → 原地更新 Finish Evidence（若证据变化）→ push 同一分支 → 等新 HEAD e2e 与自动 review → 发现问题时发送 `@kody review --force`”完整闭环。返工产生的每个 commit 和最终 PR body 仍必须使用精确模型字段。
 
 ## 状态汇报
 
-持续运行时只汇报当前 N 路任务、phase、最终/validator SHA、PR/gate、BLOCKED 原因与空槽，不把大段 diff/日志灌回主干上下文。用户说“停止”后不再领取新任务；让正在进行的破坏性操作安全落点，再报告所有 worktree、branch、claim 和 PR 状态。
+持续运行时只汇报当前 N 路任务、phase、最终 SHA、PR/gate、BLOCKED 原因与空槽，不把大段 diff/日志灌回主干上下文。用户说“停止”后不再领取新任务；让正在进行的破坏性操作安全落点，再报告所有 worktree、branch、claim 和 PR 状态。
