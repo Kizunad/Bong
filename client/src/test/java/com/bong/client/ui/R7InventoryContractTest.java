@@ -128,8 +128,17 @@ class R7InventoryContractTest {
         // 收口到客户端共享输入策略；生产源码树因此继续更新。
         // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
         // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
+        // 2026-08-30 重新冻结（异兽脊骨剑动画）——本次动的全是随包发布的动画 JSON：
+        //     + resources/assets/bong/player_animation/sword_spine_slash.json   本剑单手斜斩 20t
+        //     + resources/assets/bong/player_animation/sword_spine_cleave.json  本剑双手竖斩 20t
+        //     M resources/assets/bong/player_animation/sword_swing_horiz.json   反手大斜斩，10t → 18t
+        // tracked 文件数 2207 → 2209（两个 A、一个 M、无 D；上面正文里的 2191 是更早的
+        // 叙述残留，早已与实际计数分叉，以本行为准）。`sword_swing_horiz` 没有 server
+        // 技能消费也没有 anim_spec_manifest 钉时长，改时长安全；共享的 sword_cleave /
+        // thrust / parry / infuse 一个字节没动。生成器与 .bbmodel 属工具/源工程、不随包
+        // 发布，照旧不进本摘要。
         assertEquals(
-            "2265b83ef4ddf9efcf0d14a7e06abe2ddfd90709feb024c91b2b27c4db48e40c",
+            "8febaa71e97bc87ca26e3eb1e384e6185d1a6c7a9bbdf6dcd8354093310bc04d",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
