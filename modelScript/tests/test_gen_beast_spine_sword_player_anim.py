@@ -475,11 +475,47 @@ class SwingHorizIsTheOtherDiagonalTest(unittest.TestCase):
             f"期望：两条重斜斩走相反的对角线（swing {swing_dir:+.0f} / slash {slash_dir:+.0f}）；"
             "实际同向——远处看会撞脸")
 
-    def test_swing_horiz_really_comes_down_from_the_shoulder(self):
-        """"从肩部斜斩下来"：剑尖要真的过头顶再落到腰下。"""
-        ys = [f["tip"][1] for f in self._track("sword_swing_horiz").values()]
-        self.assertGreater(max(ys), 38.0, f"期望：最高点过头顶（y > 38）；实际 {max(ys):.1f}")
-        self.assertLess(min(ys), 16.0, f"期望：最低点落到腰下（y < 16）；实际 {min(ys):.1f}")
+    def test_swing_horiz_tip_height_is_a_valley_not_an_arch(self):
+        """剑尖高度必须是 ∪（先降后升），不许拱出一个高于起手的峰。
+
+        「从肩部斜斩下来」的意思就是剑**已经在肩上**，直接砍，不再多举一次。第一版在
+        中段插了一拍"转刃过顶"，高度走成 32.7 → 33.8 → 42.3 → 29.8 → 12.3，先拱起
+        再落下（∩），用户看图当场指出来了。
+
+        反过来 `sword_spine_slash` **该有**过顶峰——用户对它的要求原话是"手臂抬起然后
+        ……斜斩"。两条的形状差异是有意的，所以这条门只管 swing_horiz，下面
+        `test_the_slash_and_cleave_do_swing_overhead` 反向锁住另外两条。
+        """
+        track = self._track("sword_swing_horiz")
+        ticks = sorted(track)
+        ys = [track[t]["tip"][1] for t in ticks]
+        bottom = int(np.argmin(ys))
+
+        self.assertEqual(
+            ys.index(max(ys)), 0,
+            f"期望：全程最高点就是起手帧（∪ 形）；实际最高点在 tick {ticks[ys.index(max(ys))]}"
+            f"（高度曲线 {[round(y, 1) for y in ys]}）——中途拱起来就是 ∩ 了")
+        self.assertLess(min(ys), 16.0, f"期望：谷底落到腰下（y < 16）；实际 {min(ys):.1f}")
+        self.assertTrue(
+            all(ys[i] >= ys[i + 1] - 0.5 for i in range(bottom)),
+            f"期望：谷底之前逐帧下沉（允许 0.5px 抖动）；实际 {[round(y, 1) for y in ys]}")
+        self.assertGreater(
+            ys[-1], min(ys) + 4.0,
+            f"期望：收势把剑尖抬回来（比谷底高 4px 以上）；实际谷底 {min(ys):.1f} → "
+            f"收势 {ys[-1]:.1f}，∪ 的右半边没了")
+
+    def test_the_slash_and_cleave_do_swing_overhead(self):
+        """反向锁：另外两条**要**举过头顶——形状差异是有意的，不是漏改。
+
+        没有这条，把三条动作一起压平成 ∪ 也能全绿，"两招看得出区别"就守不住了。
+        """
+        for name in ("sword_spine_slash", "sword_spine_cleave"):
+            with self.subTest(anim=name):
+                ys = [f["tip"][1] for f in self._track(name).values()]
+                self.assertGreater(
+                    max(ys), 40.0,
+                    f"{name}: 期望剑尖举过头顶（y > 40，用户原话是'手臂抬起'）；"
+                    f"实际最高只有 {max(ys):.1f}")
 
     def test_the_strike_frame_actually_reaches_out(self):
         """发力帧手臂要伸出去。
@@ -597,3 +633,98 @@ class CarryStanceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BladeDoesNotPassThroughTheBodyTest(unittest.TestCase):
+    """刃身不许插进自己身上——**逐插值 tick** 查，用**有向盒**查。
+
+    两件事第一版都做错了，值得写下来：
+
+    1. **只查关键帧不够。** 引擎播的是关键帧之间的线性插值，中间那一段才最容易插进
+       身体。这里按 tick 重建插值姿态再查。
+    2. **不能用轴对齐包围盒。** 部件一旦被旋转，AABB 就被撑大——右腿 pitch −6°/bend 22°
+       时 AABB 在 z 上有 8.3px 深，而腿盒本身只有 4px。用 AABB 量 `sword_spine_cleave`
+       得到"插进去 1.13px"，换成把点变换回部件局部系精确比对之后只剩 0.76px，差的那
+       0.37px 全是虚胖。
+
+    口径：**头不查**（手举到耳边时刃根本来就贴着头盒——头 ±4px 宽而肩在 x=−5，三条
+    动作全都"命中"，那是 MC 骨架自带的贴合，玩家看不出来）；量程从剑格往外取
+    （刃长的 30% 起），跳过握在拳头里的那一小段。
+    """
+
+    #: 每条动作允许的最小间隙（px；负 = 允许的插入深度）。
+    #: `sword_spine_cleave` 的 −0.76px 是**已知且已量过**的遗留：重劈收势那两 tick，
+    #: 刃根擦过右大腿顶端靠近髋点的位置。挪手臂能修但剑尖要漂 5~8px（会改掉用户正在
+    #: 审的那条动作），挪腿没用（碰点就在髋枢轴附近，转腿不动它）。所以先按 −1.0 封顶
+    #: 锁住"不许更糟"，等用户对 cleave 拍板后再动。
+    TOLERANCE = {
+        "sword_spine_slash": 0.0,
+        "sword_spine_cleave": -1.0,
+        "sword_swing_horiz": 0.0,
+    }
+    BODY_PARTS = {"torso": "torso_bend", "rightLeg": "leg_right_bend",
+                  "leftLeg": "leg_left_bend", "leftArm": "arm_left_bend"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rig = PoseRig(GEN.OUT_BB)
+
+    @staticmethod
+    def _lerp(a, b, f):
+        if isinstance(a, dict):
+            return {k: BladeDoesNotPassThroughTheBodyTest._lerp(a.get(k, 0.0), b.get(k, 0.0), f)
+                    for k in set(a) | set(b)}
+        return a + (b - a) * f
+
+    def _interpolated(self, anim_name):
+        """→ [(tick, pose)]，逐 tick 重建关键帧之间的线性插值。"""
+        _n, emote, table = RP.anim_pose_table(ANIM / f"{anim_name}.json")
+        keys = dict(table)
+        ts = sorted(keys)
+        for tick in range(ts[0], int(emote["endTick"]) + 1):
+            lo = max([t for t in ts if t <= tick], default=ts[0])
+            hi = min([t for t in ts if t >= tick], default=ts[-1])
+            f = 0.0 if hi == lo else (tick - lo) / (hi - lo)
+            yield tick, {p: self._lerp(keys[lo].get(p, {}), keys[hi].get(p, {}), f)
+                         for p in set(keys[lo]) | set(keys[hi])}
+
+    @staticmethod
+    def _signed_gap(point, bone_matrix, box):
+        """正 = 盒外间隙；负 = 插入深度。点先变换回部件局部系 —— OBB 的精确解。"""
+        local = (np.linalg.inv(bone_matrix) @ np.append(point, 1.0))[:3]
+        lo, hi = np.asarray(box[0], float), np.asarray(box[1], float)
+        outside = np.maximum(np.maximum(lo - local, local - hi), 0.0)
+        if np.any(outside > 0):
+            return float(np.linalg.norm(outside))
+        return -float(np.min(np.minimum(local - lo, hi - local)))
+
+    def _worst_gap(self, anim_name):
+        worst = (1e9, None, None)
+        for tick, pose in self._interpolated(anim_name):
+            W = self.rig.world(_rig_pose(pose))
+            M = W["sword_right_pitch"]
+            points = [_world(M, _sword_local(s * SWORD_LEN_PX))
+                      for s in np.linspace(0.30, 1.0, 24)]
+            for part, bone in self.BODY_PARTS.items():
+                box = RP.PARTS[part]["box"]
+                for p in points:
+                    gap = self._signed_gap(p, W[bone], box)
+                    if gap < worst[0]:
+                        worst = (gap, tick, part)
+        return worst
+
+    def test_the_blade_clears_the_body_through_every_interpolated_tick(self):
+        for name, floor in self.TOLERANCE.items():
+            with self.subTest(anim=name):
+                gap, tick, part = self._worst_gap(name)
+                self.assertGreaterEqual(
+                    gap, floor,
+                    f"{name}: 期望刃身离身体不少于 {floor:+.2f}px；实际 {gap:+.2f}px "
+                    f"@ tick {tick} 的 {part}（负 = 插进去的深度）")
+
+    def test_the_new_swing_actually_clears_and_does_not_merely_scrape(self):
+        """新做的这条要有真间隙，不能刚好卡在 0。"""
+        gap, tick, part = self._worst_gap("sword_swing_horiz")
+        self.assertGreater(
+            gap, 0.5,
+            f"期望：swing_horiz 全程刃身离身体 > 0.5px；实际 {gap:+.2f}px @ tick {tick} {part}")

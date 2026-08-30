@@ -132,13 +132,14 @@ class R7InventoryContractTest {
         //     + resources/assets/bong/player_animation/sword_spine_slash.json   本剑单手斜斩 20t
         //     + resources/assets/bong/player_animation/sword_spine_cleave.json  本剑双手竖斩 20t
         //     M resources/assets/bong/player_animation/sword_swing_horiz.json   反手大斜斩，10t → 18t
+        //   （同日复审后又重排了一次 swing_horiz：剑尖高度从 ∩ 改成 ∪，只动这一个文件）
         // tracked 文件数 2207 → 2209（两个 A、一个 M、无 D；上面正文里的 2191 是更早的
         // 叙述残留，早已与实际计数分叉，以本行为准）。`sword_swing_horiz` 没有 server
         // 技能消费也没有 anim_spec_manifest 钉时长，改时长安全；共享的 sword_cleave /
         // thrust / parry / infuse 一个字节没动。生成器与 .bbmodel 属工具/源工程、不随包
         // 发布，照旧不进本摘要。
         assertEquals(
-            "8febaa71e97bc87ca26e3eb1e384e6185d1a6c7a9bbdf6dcd8354093310bc04d",
+            "2d5e37d870a844e81e94a54e856c603d2eb9f259acaabe9b30031fdee437f6d6",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
         );
