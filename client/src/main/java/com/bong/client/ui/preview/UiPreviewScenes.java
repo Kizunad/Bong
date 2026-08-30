@@ -6,6 +6,7 @@ import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.combat.screen.TerminateScreen;
 import com.bong.client.combat.store.TerminateStateStore;
+import com.bong.client.coffin.CoffinMenuScreen;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
@@ -23,7 +24,8 @@ import java.util.Map;
 final class UiPreviewScenes {
     private static final Map<String, UiPreviewScene> SCENES = Map.of(
         "craft", new CraftScene(),
-        "terminate", new TerminateScene()
+        "terminate", new TerminateScene(),
+        "coffin-menu", new CoffinMenuScene()
     );
 
     private UiPreviewScenes() {
@@ -314,6 +316,66 @@ final class UiPreviewScenes {
                 throw new IllegalStateException(
                     "终结屏关键组件越界: " + id + " -> " + bounds + ", viewport=" + width + "x" + height);
             }
+        }
+    }
+
+    private static final class CoffinMenuScene implements UiPreviewScene {
+        @Override
+        public void installFixture() {
+        }
+
+        @Override
+        public Screen createScreen() {
+            return new CoffinMenuScreen(new net.minecraft.util.math.BlockPos(4, 65, 7));
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof CoffinMenuScreen coffin)) {
+                throw new IllegalStateException("coffin scene 打开的不是 CoffinMenuScreen");
+            }
+            return coffin.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof CoffinMenuScreen coffin && coffin.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof CoffinMenuScreen coffin && coffin.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof CoffinMenuScreen coffin)) {
+                throw new IllegalStateException("coffin scene 打开的不是 CoffinMenuScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = coffin.componentBoundsForPreview("coffin-panel");
+            if (!panel.fitsInside(width, height)) {
+                throw new IllegalStateException("延寿棺面板越出 viewport: " + panel + ", viewport=" + width + "x" + height);
+            }
+            for (String id : new String[] {"coffin-title", "coffin-enter", "coffin-reclaim"}) {
+                ComponentBounds bounds = coffin.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("延寿棺组件越界: " + id + " -> " + bounds);
+                }
+                String hit = coffin.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException("延寿棺组件中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            if (!coffin.focusOrderForPreview().contains("coffin-enter")
+                || !coffin.focusOrderForPreview().contains("coffin-reclaim")) {
+                throw new IllegalStateException("延寿棺按钮没有进入 Tab 焦点顺序");
+            }
+        }
+
+        @Override
+        public void cleanup() {
         }
     }
 }
