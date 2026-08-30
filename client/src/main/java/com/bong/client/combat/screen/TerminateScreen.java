@@ -1,13 +1,16 @@
 package com.bong.client.combat.screen;
 
+import com.bong.client.combat.TerminateClientIntentSink;
+import com.bong.client.combat.TerminateIntent;
 import com.bong.client.combat.store.TerminateStateStore;
-import com.bong.client.network.ClientRequestSender;
 import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
+import com.bong.client.ui.intent.UiIntentSink;
 import io.wispforest.owo.ui.component.ButtonComponent;
 import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.container.FlowLayout;
 import net.minecraft.text.Text;
 
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -16,13 +19,22 @@ import java.util.stream.Collectors;
  */
 public final class TerminateScreen extends OwoXmlScreenHost<FlowLayout> {
     private final TerminateStateStore.State state;
+    private final UiIntentSink<TerminateIntent> intentSink;
     private LabelComponent finalWordsLabel;
     private LabelComponent epilogueLabel;
     private LabelComponent archetypeLabel;
 
     public TerminateScreen(TerminateStateStore.State state) {
+        this(state, TerminateClientIntentSink.production());
+    }
+
+    TerminateScreen(
+        TerminateStateStore.State state,
+        UiIntentSink<TerminateIntent> intentSink
+    ) {
         super(Text.literal("\u7ec8\u7ed3"), FlowLayout.class, "terminate");
         this.state = state == null ? TerminateStateStore.State.HIDDEN : state;
+        this.intentSink = Objects.requireNonNull(intentSink, "intentSink must not be null");
     }
 
     @Override
@@ -44,7 +56,7 @@ public final class TerminateScreen extends OwoXmlScreenHost<FlowLayout> {
         archetypeLabel.text(Text.literal(formatArchetype(state.archetypeSuggestion())));
 
         component(ButtonComponent.class, "terminate-create-character")
-            .onPress(button -> ClientRequestSender.send("combat_create_new_character", null));
+            .onPress(button -> intentSink.dispatch(new TerminateIntent.CreateNewCharacter()));
     }
 
     @Override
