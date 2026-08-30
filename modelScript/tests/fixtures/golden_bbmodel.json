@@ -17,6 +17,16 @@
    "BambooJian.bbmodel": "fc861dc6a5ad266abb619240d4e9859d98a43b740ef5975c790a41478ff86180"
   }
  },
+ "gen_beast_spine_sword.py": {
+  "exit": 0,
+  "outputs": {
+   "BeastSpineSword.bbmodel": "b751dce22b255d6b46b169ccf6905948f540ac90315746252cc612546d09526b"
+  }
+ },
+ "gen_beast_spine_sword_player_anim.py": {
+  "exit": 2,
+  "outputs": {}
+ },
  "gen_bone_armor.py": {
   "exit": 0,
   "outputs": {
