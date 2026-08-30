@@ -1562,6 +1562,7 @@ mod tests {
             hp_percent: 0.85,
             qi_percent: 0.42,
             stamina_percent: 0.91,
+            combat_active: true,
             derived: Some(DerivedAttrFlags {
                 flying: true,
                 phasing: false,
@@ -1573,6 +1574,7 @@ mod tests {
         assert_eq!(decoded.hp_percent, 0.85, "hp_percent 不匹配");
         assert_eq!(decoded.qi_percent, 0.42, "qi_percent 不匹配");
         assert_eq!(decoded.stamina_percent, 0.91, "stamina_percent 不匹配");
+        assert!(decoded.combat_active, "combat_active 应为 true");
         let derived = decoded.derived.expect("derived 应存在");
         assert!(derived.flying, "flying 应为 true");
         assert!(!derived.phasing, "phasing 应为 false");
@@ -1585,6 +1587,7 @@ mod tests {
             hp_percent: 0.0,
             qi_percent: 0.0,
             stamina_percent: 0.0,
+            combat_active: false,
             derived: Some(DerivedAttrFlags {
                 flying: false,
                 phasing: false,
@@ -1598,6 +1601,10 @@ mod tests {
         assert_eq!(decoded.hp_percent, 0.0);
         assert_eq!(decoded.qi_percent, 0.0);
         assert_eq!(decoded.stamina_percent, 0.0);
+        assert!(
+            !decoded.combat_active,
+            "proto3 默认 combat_active 应为 false"
+        );
     }
 
     #[test]
@@ -1606,6 +1613,7 @@ mod tests {
             hp_percent: 1.0,
             qi_percent: 1.0,
             stamina_percent: 1.0,
+            combat_active: true,
             derived: Some(DerivedAttrFlags {
                 flying: true,
                 phasing: true,
@@ -1616,6 +1624,7 @@ mod tests {
         let decoded =
             CombatHudState::decode(bytes.as_slice()).expect("CombatHudState max decode 失败");
         assert_eq!(decoded.hp_percent, 1.0);
+        assert!(decoded.combat_active, "combat_active 应为 true");
         let derived = decoded.derived.unwrap();
         assert!(derived.flying);
         assert!(derived.phasing);
@@ -1628,11 +1637,16 @@ mod tests {
             hp_percent: 0.5,
             qi_percent: 0.5,
             stamina_percent: 0.5,
+            combat_active: false,
             derived: None,
         };
         let bytes = state.encode_to_vec();
         let decoded = CombatHudState::decode(bytes.as_slice())
             .expect("CombatHudState without derived decode 失败");
+        assert!(
+            !decoded.combat_active,
+            "无战斗窗口快照必须保持 combat_active=false"
+        );
         assert!(decoded.derived.is_none(), "derived 应为 None");
     }
 
@@ -1644,6 +1658,7 @@ mod tests {
                     hp_percent: 0.75,
                     qi_percent: 0.50,
                     stamina_percent: 1.0,
+                    combat_active: true,
                     derived: Some(DerivedAttrFlags {
                         flying: false,
                         phasing: true,
@@ -1658,6 +1673,7 @@ mod tests {
         match decoded.payload {
             Some(server_data_envelope::Payload::CombatHudState(c)) => {
                 assert_eq!(c.hp_percent, 0.75);
+                assert!(c.combat_active, "envelope 中的 combat_active 应为 true");
                 assert!(c.derived.unwrap().phasing);
             }
             other => panic!("期望 CombatHudState payload，实际 {other:?}"),
@@ -4110,6 +4126,7 @@ mod tests {
                 hp_percent: 1.0,
                 qi_percent: 1.0,
                 stamina_percent: 1.0,
+                combat_active: false,
                 derived: None,
             }),
             server_data_envelope::Payload::KnockbackSync(KnockbackSync {
@@ -11431,6 +11448,7 @@ mod tests {
                     hp_percent: 0.85,
                     qi_percent: 0.67,
                     stamina_percent: 0.92,
+                    combat_active: true,
                     derived: Some(DerivedAttrFlags {
                         flying: false,
                         phasing: false,

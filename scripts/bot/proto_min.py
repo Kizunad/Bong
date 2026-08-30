@@ -219,6 +219,7 @@ def _combat_hud_state(data: bytes) -> dict[str, Any]:
         "hp_percent": _float32(fields, 1),
         "qi_percent": _float32(fields, 2),
         "stamina_percent": _float32(fields, 3),
+        "combat_active": bool(_varint(fields, 5)),
         "derived": {
             "flying": bool(_varint(derived, 1)),
             "phasing": bool(_varint(derived, 2)),

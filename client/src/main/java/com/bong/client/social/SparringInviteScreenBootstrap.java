@@ -1,5 +1,6 @@
 package com.bong.client.social;
 
+import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.network.ClientRequestSender;
@@ -11,7 +12,7 @@ import net.minecraft.client.gui.screen.Screen;
  * 切磋邀请的礼貌开屏引导（plan-social-v1 + R7 P4 combat-aware consumer）。
  *
  * <p>决策输入（R7 P4 生产接线）：server-authoritative combat snapshot
- * （{@code CombatHudStateStore.snapshot().active()}）。战斗中或被屏挡住时邀请保留在既有
+ * （{@code CombatHudStateStore.authoritativeSnapshot().combatActive()}）。战斗中或被屏挡住时邀请保留在既有
  * domain Store，bootstrap 按 identity 持有 {@code alreadyNotified}：首次阻塞 DEFER_NOTIFY
  * （toast 一次），重复同 identity DEFER_SILENT，新 identity 恢复通知资格；脱战且空屏且
  * 未过 TTL 才 OPEN_SCREEN，先到 TTL 则 EXPIRE（decline）。缺少 authoritative combat
@@ -63,11 +64,11 @@ public final class SparringInviteScreenBootstrap {
 
     /** 从 server-authoritative combat snapshot 派生战斗态；缺失 producer → UNKNOWN (fail closed)。 */
     static CombatState combatStateOf() {
-        com.bong.client.combat.CombatHudState snapshot = CombatHudStateStore.snapshot();
+        CombatHudState snapshot = CombatHudStateStore.authoritativeSnapshot();
         if (snapshot == null) {
             return CombatState.UNKNOWN;
         }
-        return snapshot.active() ? CombatState.IN_COMBAT : CombatState.NOT_IN_COMBAT;
+        return snapshot.combatActive() ? CombatState.IN_COMBAT : CombatState.NOT_IN_COMBAT;
     }
 
     static Decision decide(SocialStateStore.SparringInvite invite, ScreenKind screenKind, long nowMs) {

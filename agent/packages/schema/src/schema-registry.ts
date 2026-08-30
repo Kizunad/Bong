@@ -110,6 +110,7 @@ import {
   ZhenfaTriggerRequestV1,
 } from "./client-request.js";
 import {
+  CombatHudStateV1,
   QuickSlotConfigV1,
   QuickSlotEntryV1,
   SkillBarConfigV1,
@@ -309,6 +310,7 @@ import {
   ServerDataFullPowerChargingStateV1,
   ServerDataFullPowerExhaustedStateV1,
   ServerDataFullPowerReleaseV1,
+  ServerDataCombatHudStateV1,
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,
   ServerDataTribulationStateV1,
@@ -714,6 +716,7 @@ export const SCHEMA_REGISTRY = {
   serverDataFullPowerChargingStateV1: ServerDataFullPowerChargingStateV1,
   serverDataFullPowerReleaseV1: ServerDataFullPowerReleaseV1,
   serverDataFullPowerExhaustedStateV1: ServerDataFullPowerExhaustedStateV1,
+  combatHudStateV1: CombatHudStateV1,
   qiColorObservedV1: QiColorObservedV1,
   quickSlotEntryV1: QuickSlotEntryV1,
   quickSlotConfigV1: QuickSlotConfigV1,
@@ -723,6 +726,7 @@ export const SCHEMA_REGISTRY = {
   skillConfigV1: SkillConfigV1,
   skillConfigSnapshotV1: SkillConfigSnapshotV1,
   serverDataQuickSlotConfigV1: ServerDataQuickSlotConfigV1,
+  serverDataCombatHudStateV1: ServerDataCombatHudStateV1,
   serverDataSkillBarConfigV1: ServerDataSkillBarConfigV1,
   serverDataTechniquesSnapshotV1: ServerDataTechniquesSnapshotV1,
   serverDataSkillConfigSnapshotV1: ServerDataSkillConfigSnapshotV1,
@@ -1259,6 +1263,9 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataFullPowerReleaseV1,
   "server-data-full-power-exhausted-state-v1.json":
     SCHEMA_REGISTRY.serverDataFullPowerExhaustedStateV1,
+  "combat-hud-state-v1.json": SCHEMA_REGISTRY.combatHudStateV1,
+  "server-data-combat-hud-state-v1.json":
+    SCHEMA_REGISTRY.serverDataCombatHudStateV1,
   "qi-color-observed-v1.json": SCHEMA_REGISTRY.qiColorObservedV1,
   "quick-slot-entry-v1.json": SCHEMA_REGISTRY.quickSlotEntryV1,
   "quick-slot-config-v1.json": SCHEMA_REGISTRY.quickSlotConfigV1,

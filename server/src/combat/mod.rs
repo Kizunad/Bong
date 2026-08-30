@@ -372,6 +372,13 @@ pub fn register(app: &mut App) {
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
     );
+    // 活跃战斗窗口逐 tick 精确到期；拆开注册避免超过 Bevy 0.14 系统元组上限。
+    app.add_systems(
+        Update,
+        lifecycle::combat_window_expiry_tick
+            .in_set(CombatSystemSet::Physics)
+            .after(lifecycle::combat_state_tick),
+    );
     // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 2）：断线时正
     // 处于 AwaitingRevival 的角色重连后必须重新收到死亡屏/DeathCinematic，不能静默"裸奔"
     // 在这个阻断攻防、又会被 auto_confirm_revival_decisions 强制结算的状态里。独立
