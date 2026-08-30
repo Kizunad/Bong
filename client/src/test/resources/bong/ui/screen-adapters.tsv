@@ -2,7 +2,7 @@
 # path	class_name	host	adapter_style	lifecycle_owner
 agentui/AgentUiScreen.java	AgentUiScreen	OWO	XML_MODEL	SCREEN_SCOPE
 alchemy/AlchemyScreen.java	AlchemyScreen	OWO	CODE	SCREEN_SCOPE
-coffin/CoffinMenuScreen.java	CoffinMenuScreen	VANILLA	VANILLA	SCREEN_SCOPE
+coffin/CoffinMenuScreen.java	CoffinMenuScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/DeathScreen.java	DeathScreen	VANILLA	VANILLA	SCREEN_SCOPE
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA	VANILLA	SCREEN_SCOPE
 combat/screen/RepairScreen.java	RepairScreen	VANILLA	VANILLA	SCREEN_SCOPE

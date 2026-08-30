@@ -39,8 +39,8 @@ class R7InventoryContractTest {
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
         assertEquals(30, expectedRows.size(), "fixture should contain 29 suffix files plus one non-suffix Screen");
         assertEquals(14, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
-        assertEquals(2, count(expectedRows, "OWO_XML"), "P4 owo XML host set changed");
-        assertEquals(13, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
+        assertEquals(3, count(expectedRows, "OWO_XML"), "P4 owo XML host set changed");
+        assertEquals(12, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
         assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
         assertEquals(14, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
             "P1 base migration is limited to direct legacy owo Screens");
@@ -249,7 +249,7 @@ class R7InventoryContractTest {
         return switch (path) {
             case "agentui/AgentUiScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
             case "alchemy/AlchemyScreen.java" -> "Code-built FlowLayout";
-            case "coffin/CoffinMenuScreen.java" -> "Vanilla Screen, not a direct base migration";
+            case "coffin/CoffinMenuScreen.java" -> "P4 XML migration slice; G menu";
             case "combat/screen/DeathScreen.java" -> "System-terminal screen";
             case "combat/screen/TerminateScreen.java" -> "P4 XML migration slice; system-terminal screen";
             case "combat/screen/ForgeCarrierScreen.java", "combat/screen/RepairScreen.java",

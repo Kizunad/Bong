@@ -9,11 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * plan-coffin-tiers-v1 P3 — {@link CoffinMenuScreen} 最小单元测试。
  *
- * <p>CodeRabbit minor F: 构造函数 null 检查 + 正常构造不抛异常。</p>
+ * <p>构造函数 null 检查 + 正常构造不抛异常。</p>
  *
- * <p>注意：{@link CoffinMenuScreen} 继承自 {@code net.minecraft.client.gui.screen.Screen}，
- * 构造函数仅调用 {@code super(Text.literal(...))} 并存储 {@code coffinPos}。
- * Minecraft 的 {@code Screen} 构造函数在 headless 环境不依赖游戏实例，因此可直接 new。</p>
+ * <p>注意：{@link CoffinMenuScreen} 继承自 owo XML 宿主，构造函数只保存位置和意图边界，
+ * 不会在 headless 单元测试中加载组件树。</p>
  */
 class CoffinMenuScreenTest {
 

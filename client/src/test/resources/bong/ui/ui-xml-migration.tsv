@@ -1,7 +1,7 @@
 # path	class_name	current_host	current_style	target_host	target_style	status
 agentui/AgentUiScreen.java	AgentUiScreen	OWO	XML_MODEL	OWO	OWO_XML_TEMPLATE	NORMALIZE_XML_TEMPLATE
 alchemy/AlchemyScreen.java	AlchemyScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
-coffin/CoffinMenuScreen.java	CoffinMenuScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
+coffin/CoffinMenuScreen.java	CoffinMenuScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
 combat/screen/DeathScreen.java	DeathScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 combat/screen/RepairScreen.java	RepairScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
