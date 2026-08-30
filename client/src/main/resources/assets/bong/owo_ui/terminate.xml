@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 终结屏的组件树由 XML 持有，Java 只绑定终局快照和按钮意图。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface>
+                <vanilla-translucent />
+            </surface>
+            <padding><all>16</all></padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="terminate-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fill">100</horizontal>
+                        <vertical method="content">0</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#101014</flat>
+                        <outline>#51405F</outline>
+                    </surface>
+                    <padding><all>14</all></padding>
+                    <gap>8</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="terminate-title">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <text>—— 终焉之言 ——</text>
+                            <color>#FFBB66FF</color>
+                            <shadow>true</shadow>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <label id="terminate-final-words">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <max-width>360</max-width>
+                            <color>#FFD0D0D0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                            <line-height>12</line-height>
+                        </label>
+                        <label id="terminate-epilogue">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <max-width>360</max-width>
+                            <color>#FFD0D0D0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <label id="terminate-archetype">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <max-width>360</max-width>
+                            <color>#FFBB66FF</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <button id="terminate-create-character">
+                            <sizing>
+                                <horizontal method="fixed">160</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <text>创建新角色</text>
+                            <renderer>
+                                <vanilla />
+                            </renderer>
+                        </button>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

@@ -19,10 +19,12 @@ import java.util.function.Function;
 public final class OwoXmlTemplateRegistry {
     public static final Identifier CRAFT = new Identifier("bong", "craft");
     public static final Identifier CRAFT_COMPACT = new Identifier("bong", "craft-compact");
+    public static final Identifier TERMINATE = new Identifier("bong", "terminate");
 
     private static final Map<String, Identifier> PRODUCTION_TEMPLATES = Map.of(
         "craft", CRAFT,
-        "craft-compact", CRAFT_COMPACT
+        "craft-compact", CRAFT_COMPACT,
+        "terminate", TERMINATE
     );
     private static final OwoXmlTemplateRegistry PRODUCTION = new OwoXmlTemplateRegistry(
         UIModelLoader::get,

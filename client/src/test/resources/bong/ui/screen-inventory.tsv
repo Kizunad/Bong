@@ -5,7 +5,7 @@ coffin/CoffinMenuScreen.java	CoffinMenuScreen	VANILLA_SCREEN	VANILLA	false	Vanil
 combat/screen/DeathScreen.java	DeathScreen	VANILLA_SCREEN	VANILLA	false	System-terminal screen
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 combat/screen/RepairScreen.java	RepairScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
-combat/screen/TerminateScreen.java	TerminateScreen	VANILLA_SCREEN	VANILLA	false	System-terminal screen
+combat/screen/TerminateScreen.java	TerminateScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; system-terminal screen
 combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 craft/CraftScreen.java	CraftScreen	OWO_XML	OWO_XML_TEMPLATE	false	P2 owo XML vertical slice
 craft/WorkbenchScreen.java	WorkbenchScreen	BASE_OWO	CODE	true	Code-built FlowLayout

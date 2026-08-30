@@ -2,24 +2,26 @@ package com.bong.client.combat.screen;
 
 import com.bong.client.combat.store.TerminateStateStore;
 import com.bong.client.network.ClientRequestSender;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
+import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
+import io.wispforest.owo.ui.component.ButtonComponent;
+import io.wispforest.owo.ui.component.LabelComponent;
+import io.wispforest.owo.ui.container.FlowLayout;
 import net.minecraft.text.Text;
+
+import java.util.stream.Collectors;
 
 /**
  * Final termination overlay (plan §U4). Displays final words + epilogue + a
  * "create new character" button.
  */
-public final class TerminateScreen extends Screen {
-    public static final int BG_COLOR = 0xF0000000;
-    public static final int TITLE_COLOR = 0xFFBB66FF;
-    public static final int TEXT_COLOR = 0xFFD0D0D0;
-
+public final class TerminateScreen extends OwoXmlScreenHost<FlowLayout> {
     private final TerminateStateStore.State state;
+    private LabelComponent finalWordsLabel;
+    private LabelComponent epilogueLabel;
+    private LabelComponent archetypeLabel;
 
     public TerminateScreen(TerminateStateStore.State state) {
-        super(Text.literal("\u7ec8\u7ed3"));
+        super(Text.literal("\u7ec8\u7ed3"), FlowLayout.class, "terminate");
         this.state = state == null ? TerminateStateStore.State.HIDDEN : state;
     }
 
@@ -29,14 +31,20 @@ public final class TerminateScreen extends Screen {
     @Override
     public boolean shouldCloseOnEsc() { return false; }
 
+    /** XML 负责布局；这里仅绑定服务端快照和 typed button callback。 */
     @Override
-    protected void init() {
-        super.init();
-        int y = height - 60;
-        this.addDrawableChild(ButtonWidget.builder(
-            Text.literal("\u521b\u5efa\u65b0\u89d2\u8272"),
-            b -> ClientRequestSender.send("combat_create_new_character", null)
-        ).dimensions(width / 2 - 80, y, 160, 20).build());
+    protected void bindTemplate(FlowLayout root) {
+        label("terminate-title");
+        finalWordsLabel = label("terminate-final-words");
+        epilogueLabel = label("terminate-epilogue");
+        archetypeLabel = label("terminate-archetype");
+
+        finalWordsLabel.text(Text.literal(formatFinalWords(state.finalWords())));
+        epilogueLabel.text(Text.literal(state.epilogue()));
+        archetypeLabel.text(Text.literal(formatArchetype(state.archetypeSuggestion())));
+
+        component(ButtonComponent.class, "terminate-create-character")
+            .onPress(button -> ClientRequestSender.send("combat_create_new_character", null));
     }
 
     @Override
@@ -47,33 +55,17 @@ public final class TerminateScreen extends Screen {
         }
     }
 
-    @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        context.fill(0, 0, width, height, BG_COLOR);
-        context.drawCenteredTextWithShadow(
-            this.textRenderer, "\u2015\u2015 \u7ec8\u7109\u4e4b\u8a00 \u2015\u2015", width / 2, 60, TITLE_COLOR
-        );
-        int y = 86;
-        for (String line : state.finalWords().split("\\r?\\n")) {
-            if (line.isBlank()) continue;
-            context.drawCenteredTextWithShadow(this.textRenderer, line, width / 2, y, TEXT_COLOR);
-            y += 14;
+    static String formatFinalWords(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
         }
-        y += 18;
-        if (!state.epilogue().isBlank()) {
-            context.drawCenteredTextWithShadow(
-                this.textRenderer, state.epilogue(), width / 2, y, TEXT_COLOR
-            );
-            y += 14;
-        }
-        if (!state.archetypeSuggestion().isBlank()) {
-            context.drawCenteredTextWithShadow(
-                this.textRenderer,
-                "\u5efa\u8bae\u65b0\u89d2\u8272\u539f\u578b: " + state.archetypeSuggestion(),
-                width / 2, y + 24, TITLE_COLOR
-            );
-        }
-        super.render(context, mouseX, mouseY, delta);
+        return raw.lines()
+            .filter(line -> !line.isBlank())
+            .collect(Collectors.joining("\n"));
+    }
+
+    static String formatArchetype(String raw) {
+        return raw == null || raw.isBlank() ? "" : "\u5efa\u8bae\u65b0\u89d2\u8272\u539f\u578b: " + raw;
     }
 
     TerminateStateStore.State stateForTests() { return state; }
