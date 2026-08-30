@@ -874,3 +874,53 @@ class BladeDoesNotPassThroughTheBodyTest(unittest.TestCase):
         self.assertGreater(
             gap, 0.5,
             f"期望：swing_horiz 全程刃身离身体 > 0.5px；实际 {gap:+.2f}px @ tick {tick} {part}")
+
+
+class RigLimitsHoldAcrossTheWholeSetTest(unittest.TestCase):
+    """终轮复验：本剑这套动作全都待在 MC 骨架的可用范围内。
+
+    `anim_common.emit_json` 已经在出料时挡住了两条（`assert_joint_fold_is_anatomical`
+    的关节反折、`_check_loop_closure` 的循环闭环），但**腿的摆幅没人管**——
+    `docs/player-animation-conventions.md` 与 CLAUDE.md 都写着 MC 没有 IK、
+    `leg.pitch` 超过 ~35~40° 腿根就和腹部脱开，强度要靠膝 `bend` 堆而不是加大 pitch。
+    这条规矩此前只活在文档里，谁写超了都不会撞红。
+
+    （被撤回的那版 `sword_thrust` 深弓步正好写在 −40 的边界上，是这条门的直接由来。）
+    """
+
+    LEG_PITCH_LIMIT = 40.0
+
+    def test_no_frame_pushes_a_leg_past_the_hip_detach_angle(self):
+        for name in GEN.DEFAULT_ANIMS:
+            _n, _e, table = RP.anim_pose_table(ANIM / f"{name}.json")
+            for tick, pose in table:
+                for part in ("rightLeg", "leftLeg"):
+                    pitch = float(pose.get(part, {}).get("pitch", 0.0))
+                    with self.subTest(anim=name, tick=tick, part=part):
+                        self.assertLessEqual(
+                            abs(pitch), self.LEG_PITCH_LIMIT,
+                            f"{name} tick {tick} 的 {part}.pitch = {pitch:+.1f}°，"
+                            f"超过 {self.LEG_PITCH_LIMIT}° 上限——MC 没有 IK，"
+                            "腿根会和腹部脱开；强度请堆膝 bend，别加大 pitch")
+
+    def test_arm_bends_stay_anatomical_across_the_set(self):
+        """手臂只许朝前折（axis=180 且 bend ≥ 0）——反折就是肘朝反方向弯。
+
+        `emit_json` 出料时已经挡一道；这里从**产出的 JSON** 再验一遍，覆盖"绕过
+        生成器直接改 JSON"那条路。
+        """
+        for name in GEN.DEFAULT_ANIMS:
+            _n, _e, table = RP.anim_pose_table(ANIM / f"{name}.json")
+            for tick, pose in table:
+                for part in ("rightArm", "leftArm"):
+                    axes = pose.get(part, {})
+                    if "bend" not in axes:
+                        continue
+                    with self.subTest(anim=name, tick=tick, part=part):
+                        self.assertGreaterEqual(
+                            float(axes["bend"]), 0.0,
+                            f"{name} tick {tick} {part}: bend 不许为负")
+                        self.assertAlmostEqual(
+                            float(axes.get("axis", 0.0)), 180.0, delta=1.0,
+                            msg=f"{name} tick {tick} {part}: 手臂 bend 的 axis 必须是 180"
+                                "（0 = 肘朝后折）")
