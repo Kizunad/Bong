@@ -207,136 +207,32 @@ for pr_n in [PR-1..PR-N]:
 
 ### 6.5 Kody review 等待协议
 
-PR 创建时 Kody 必跑，push 新提交后通常也会重跑但不保证。
+PR 创建时以及 push 新提交后由 Kody 自动 review。流程不发送 `/review`、`/review-next` 或 `@kody start-review`；如果 review 发现问题，修复并 push 后通常会自动增量 review，需要明确启动新一轮时才在 PR 根评论发送 `@kody review --force`。
 
-**Kody 不是 check run，`gh pr checks` 里看不到它**——它出的是 PR 评论：总结走 issue comment，具体问题走行内 review comment。
+**Kody 不是 check run，`gh pr checks` 里看不到它**——它通过 PR issue 评论给出总结，通过行内 review 评论给出具体问题。
 
 #### 判"这一轮审的是不是当前 HEAD"
 
-**只比时间戳不够**：旧 HEAD 的延迟评论会落在新 push 之后，被当成本轮结论，等于放没被审过的代码进 main。**必须核 SHA**。
-
-⚠️ **核 SHA 有个坑：不能用行内评论的 `commit_id`。** GitHub 会把它改写成"该评论仍然适用的最新 commit"，于是旧评论自动显示成当前 HEAD。真实归属看行内评论的 **`original_commit_id`**。PR #2058 实测：6 条评论全部写于 `93f88bedb`，其中 4 条的 `commit_id` 已被改写成 `c8e57c24a`——照 `commit_id` 判会得出"Kody 审过我的修复"这个假结论。另外两个同样会放过未审代码的坑：**认不了 `user.login`**（Kody 用仓库 owner 账号发言）和**忘了 `--paginate`**（默认每页 30 条）。
+只比时间戳不够：旧 HEAD 的延迟评论可能落在新 push 之后。行内评论优先使用 `original_commit_id` 对拍当前 HEAD，不能使用 GitHub 可能改写过的 `commit_id`，并用 `--paginate` 拉取完整评论：
 
 ```bash
 HEAD=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
-OWNER_ID=141109150          # Kizunad；Kody 借这个账号发言，见下面「marker 不是身份认证」
 
-# ① 针对当前 HEAD 的 Kody 行内意见。四个条件缺一不可：
-#    - original_commit_id：commit_id 会被 GitHub 改写成"仍适用的最新 commit"
-#    - <!-- kody-codereview 标记：Kody 没有独立账号，只能靠它认出处
-#    - user.id：挡住 fork 贡献者伪造 marker（挡不住 owner 自己，见下）
-#    - --paginate：默认每页 30 条，长 PR 会漏掉后面几页
 gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments \
-  | jq -r --arg h "$HEAD" --argjson uid "$OWNER_ID" '.[]
-      | select(.original_commit_id == $h
-               and .user.id == $uid
-               and (.body | contains("<!-- kody-codereview")))
-      | "\(.created_at)  \(.path):\(.line // .original_line)"'   # 行过期时 .line 为 null
-
-# ② 无意见那一轮只有 issue comment、不带 SHA。**这段是"配对不干净时"才用的备选**
-#    （主路径见下面「能证 vs 证不了」一节：先看 ① 有没有行内意见，再按配对法推定；
-#     Kody 常在 push 后自动审完、补发触发它不重跑，所以别把这段当成必经之路）。
-#    用它时靠"晚于本轮触发评论"来绑定：
-#    触发评论必须**精确匹配**，不能用 contains：Kody 自己那条"代码审查完成"的
-#    使用指南里就带着 `@kody start-review` 字样，contains 会把它当成触发评论，
-#    于是 TRIGGER_AT 永远等于最新那条 Kody 评论，这个校验就自废了（实测 #2061
-#    上 contains 命中 3 条、全是 Kody 自己发的；精确匹配命中 0 条才是对的）。
-#    还要注意 `-s`：`--paginate` 是**每页一个 JSON 数组**，不加 -s 的话 `max`
-#    会逐页各算一个、输出多行，TRIGGER_AT 变成多行字符串后比较全乱。上面两条
-#    查询只做过滤不做聚合（`.[]` 逐页发射匹配项，结果正确），只有这里要聚合。
-TRIGGER_AT=$(gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
-  | jq -sr '[.[][] | select(.body | test("^\\s*@kody start-review\\s*$")) | .created_at] | max // empty')
-
-# ⚠️ 空值必须显式挡掉，别直接把空串喂给下面的 --arg t：
-#    `.created_at > ""` 对**所有**评论都成立 ⇒ 整轮 fail-open，比不做这个校验更糟。
-#    （不加 `// empty` 时 jq 给的是字符串 "null"，`"2026..." > "null"` 恰好为 false
-#      而侥幸 fail-closed —— 别依赖这个 ASCII 巧合。）
-if [ -z "$TRIGGER_AT" ]; then
-  echo "本轮没发过 @kody start-review ⇒ 这条备选路径不成立，回主路径（配对法/推新 commit）" >&2
-  exit 1
-fi
-#    这里认的是 `<!-- kody-codereview-completed-`（**带 -completed-**），不是裸标记。
-#    裸标记有三类会命中，只有第一类是审查结论：
-#      ① 审查结论「代码审查完成 / Kody 审查完成」—— 同时带 -completed- 和裸标记
-#      ② PR 摘要 —— 只有裸标记，**不是**结论
-#      ③ 任何正文里提到该标记的评论，**包括你自己回复时引用它**（实测 #2061
-#         上我的一条说明性回复就命中了裸标记；后来我在回复里引用了
-#         `-completed-` 字样，连加长后的 contains 也照样被自己命中）
-#    所以匹配用**完整形态的正则** `<!-- kody-codereview-completed-<数字>-<随机> -->`
-#    而不是 contains：散文里引用前缀不会带那串 id，正则就不会误命中。
-#    实测 #2061：contains 命中 7 条、严格正则 6 条，差的那条正是我自己的回复。
-gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
-  | jq -r --arg t "$TRIGGER_AT" --argjson uid "$OWNER_ID" '.[]
-      | select((.body | test("<!-- kody-codereview-completed-[0-9]+-[a-z0-9]+ -->"))
-               and .user.id == $uid
-               and .created_at > $t)
-      | "\(.created_at)"'
+  | jq -r --arg h "$HEAD" '.[]
+      | select(.original_commit_id == $h)
+      | "\(.created_at)  \(.path):\(.line // .original_line)"'
 ```
 
-`TRIGGER_AT` 为空（本轮没发过 `@kody start-review`）时第二条查询不成立——那就**没有**
-可采信的 clean 结论，别退化成"看最新那条"，那正是旧 HEAD 结论冒充本轮的入口。
-
-⚠️ **marker 不是身份认证，别当门禁凭证用。** `<!-- kody-codereview` 写在**用户可写的
-body** 里，仓库 owner 完全可以手打一条同样的评论。而且 Kody 借的就是 owner 账号
-（`login=Kizunad` / `type=User` / `id=141109150` / `author_association=OWNER`），
-API 层没有任何字段能把它和真人分开：review 对象 body 为空（`body_len=0`）认不了 marker，
-也没有可供事后校验的 webhook 签名。所以这套判据的定位是**防自己搞错**（防旧 HEAD 的
-结论冒充本轮），不是防恶意伪造；真要防伪造得让 Kody 用独立 App 账号发言，那是配置层的事，
-不是这份文档能兜的。
-
-`pulls/<PR>/reviews` 端点也带真实 `commit_id`，但 Kody 的 review 对象 **body 是空的**
-（实测 `body_len=0`），认不出是不是它发的，所以不拿它当权威——真要用得靠行内意见的
-`pull_request_review_id` 反查。直接走上面的行内意见更简单。
-
-**先把两件事分开：能证的 vs 证不了的。**
-
-- **能证（这是阻塞判据）**：行内意见带 `original_commit_id`，SHA 对得上就是对得上。
-  当前 HEAD 只要还有行内意见 ⇒ **没过**，不用讨论归属。
-- **证不了**：Kody 查无问题时只发一条 issue comment，既不产生 review 对象、正文也
-  不带任何 commit SHA。**API 层没有任何字段能把这条 clean 结论绑到某个 HEAD 上。**
-  所以下面全是**启发式**，不是证明——用它可以，但别说成"已验证通过"。
-
-**为什么不能改成"只认触发后的新 verdict"**：那会死锁。Kody 常在 push 后十几秒就
-自动审完，这时再补 `@kody start-review` 它**不重跑**。#2061 实测 HEAD 03:09:41 push、
-verdict 03:10:00，我的触发 03:10:23 落在结论之后，之后再没有新 verdict——按"必须晚于
-触发"这条 PR 永远过不了。#2066 上手动触发同样没催出额外 verdict。
-
-**启发式（用时必须连同它的失效条件一起讲）**：把每个 commit 时间与每条 verdict 时间
-排在一起，若每个更早的 commit 都已各自配到过一条 verdict，就把晚于当前 HEAD push 的
-verdict 当作当前 HEAD 的。
-
-```bash
-{ gh pr view <PR> --json commits --jq '.commits[] | "\(.committedDate) COMMIT  \(.oid[:9])"'
-  gh api --paginate repos/{owner}/{repo}/issues/<PR>/comments \
-    | jq -r --argjson uid "$OWNER_ID" '.[]
-        | select((.body|test("<!-- kody-codereview-completed-[0-9]+-[a-z0-9]+ -->"))
-                 and .user.id==$uid)
-        | "\(.created_at) verdict"'; } | sort
-```
-
-**它什么时候会骗你**：这套只在"一个 commit 恰好一条 verdict"时成立，而这只是对第三方
-服务的**观察**（#2061 6:6、#2066 4:4），不是任何地方保证的不变式。只要某个旧 HEAD 出了
-第二条 verdict 并迟到落在新 push 之后，计数就对齐不上，你会把旧结论认领给新 HEAD ——
-这正是 Kody 在 #2061 上指出的漏洞，成立。
-
-**需要确定性时**：不要靠这个启发式，也别指望触发——**推一个新 commit**（哪怕
-`--allow-empty`），让 Kody 对新 HEAD 自动跑一轮，此时未结清的 push 只有这一个，
-新 verdict 的归属就没有歧义。
-
-**汇报口径**：走启发式而没走"新 commit"那条路时，说法只能是「当前 HEAD 无行内意见，
-clean 结论按时间配对推定属于本 HEAD」，**不许说成「已验证通过审查」**。
-（#2058 实证过这个缺口：`c8e57c24a` 上零 review 对象，只有一条不带 SHA 的"未发现问题"。）
+当前 HEAD 仍有对应的 Kody 行内意见时，必须处理后再合并。Kody 的 clean 总结可能不携带 SHA；这类结果不能伪造精确 SHA 绑定，需要确定性复审时，修复并 push 后发送 `@kody review --force`。
 
 **等待节奏硬约束**：
 
-- **禁止 sleep loop / busy poll**——必须 `ScheduleWakeup`
-- 每回合 1200s（20 min，避免忙轮询）
-- 最多 3 回合 = 总 60 min 卡死才停交人工
-- 修完 review 意见**必须重新等 Kody re-review**，不自行判定"我修好了应该过"。
-- 自动 review 未启动，或要针对最新 HEAD 显式复审时，在 PR 根评论执行 `@kody start-review`。**已废弃的 `/review-next` 不要再发**——它不触发任何 workflow，之后出现的 Kody 结论是自动跑的，不是它拉起来的。
-- CodeRabbit 已由 `.coderabbit.yaml` 关掉自动触发（`auto_review.enabled: false`），**不在等待范围内**；没有它的评论是正常的，需要时才 `@coderabbitai review`。
-- 多 PR 场景每个 PR 各自走完整等待协议，前一个未 APPROVED/收敛不开下一个
-
+- **禁止 sleep loop / busy poll**，使用当前 harness 提供的真实等待机制（Claude 使用 `ScheduleWakeup`）。
+- 每回合 1200s（20 min），最多 3 回合；仍无 Kody 反馈就停交人工，不自动 merge。
+- 修完 review 意见必须重新等待 Kody re-review，不能自行判定"我修好了应该过"。
+- CodeRabbit 已由 `.coderabbit.yaml` 关闭自动触发，不在默认等待范围内；确实需要第二双眼睛时才按需评论 `@coderabbitai review`。
+- 多 PR 场景每个 PR 各自走完整等待协议，前一个未收敛不开下一个。
 ### 6.6 §10 章节模板
 
 新立 plan 的 §10 章节按本指南 §六 各小节顺序写（建筑多轮 / 多 PR / subagent / Kody 等待），最末加一节 **§10.N 单次 consume-plan 全自动到 merge**，重申"用户提交 `/consume-plan` 后即可下班，醒来看 plan 是否在 finished_plans/"。
