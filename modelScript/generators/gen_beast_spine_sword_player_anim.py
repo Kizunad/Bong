@@ -104,16 +104,27 @@ SIDE = "right"
 # 上半身在真机里由招式动画或 vanilla 透传接管——真要做"持剑跑动"得另起一条
 # UPPER_BODY 通道的架势动画并接触发，不在本文件范围内。
 #
-# 数值来自用户 2026-08-30 在 Blockbench 里 `lower_sprint` t0 手摆的持剑跑动架势
-# （剑横在身前、剑尖指向右前方，双手都搭在缠绳握把上），按静态垂直握姿反解回
-# 手臂四轴：剑尖残差 0.13px，左手离柄 0.56px。torso/head 是用户未动的原值。
-STANCE_POSE = {
-    "rightArm": dict(pitch=-62.7, yaw=+23.7, roll=-101.5, bend=24.9, axis=180),
-    "leftArm": dict(pitch=-79.3, yaw=+47.2, roll=-31.7, bend=16.8, axis=180),
-    "torso": dict(pitch=+2, yaw=+14),
-    "head": dict(pitch=-2, yaw=-6, roll=+0.7),
+# **走和跑是两个握法**（用户 2026-08-30 拍板）：
+#   walk   —— 扛在肩上（借 `sword_spine_slash` 的起手帧），行走时省力的携行姿态
+#   sprint —— 横在身前、双手都搭在缠绳握把上（用户在 Blockbench 里 `lower_sprint`
+#             t0 手摆，按静态垂直握姿反解回手臂四轴：剑尖残差 0.13px、左手离柄 0.56px）
+# torso/head 两条共用同一组（用户未改动的原值）。
+_STANCE_UPPER = dict(torso=dict(pitch=+2, yaw=+14), head=dict(pitch=-2, yaw=-6, roll=+0.7))
+STANCE_POSES = {
+    "lower_walk": dict(
+        rightArm=dict(pitch=-117.9, yaw=-3.3, roll=-17.4, bend=44.5, axis=180),
+        leftArm=dict(pitch=+23.5, yaw=+28.0, roll=-24.0, bend=29.5, axis=180),
+        **_STANCE_UPPER,
+    ),
+    "lower_sprint": dict(
+        rightArm=dict(pitch=-62.7, yaw=+23.7, roll=-101.5, bend=24.9, axis=180),
+        leftArm=dict(pitch=-79.3, yaw=+47.2, roll=-31.7, bend=16.8, axis=180),
+        **_STANCE_UPPER,
+    ),
 }
-UPPER_PARTS = tuple(STANCE_POSE)
+#: 没登记的纯下半身动画退回扛肩姿态（携行是默认，横持是冲刺专用）。
+DEFAULT_STANCE = STANCE_POSES["lower_walk"]
+UPPER_PARTS = tuple(DEFAULT_STANCE)
 
 
 def load_sword():
@@ -227,7 +238,7 @@ def _has_upper_body(json_path: Path) -> bool:
     return any(part in UPPER_PARTS for _tick, pose in table for part in pose)
 
 
-def _fill_upper_body(anim: dict, gmap: dict) -> None:
+def _fill_upper_body(anim: dict, gmap: dict, stance: dict) -> None:
     """把恒定的持剑架势写进上半身轨道。**只补预览，emotecraft 源文件不动**。"""
     animators = anim["animators"]
 
@@ -239,7 +250,7 @@ def _fill_upper_body(anim: dict, gmap: dict) -> None:
     # 首末各钉一帧：单帧在 loop 动画里会被插值回 defaultValue（PlayerAnimator 那条坑
     # 的 Blockbench 版本），两帧同值才真的"恒定"。
     for t in (0.0, anim["length"]):
-        for part, axes in STANCE_POSE.items():
+        for part, axes in stance.items():
             prefix, has_bend = PART_GROUPS[part]
             for axis_name in AX.AXIS_ORDER:
                 track(f"{prefix}_{axis_name}").append(
@@ -254,8 +265,10 @@ def convert_animation(json_path: Path, gmap: dict) -> dict:
     """emotecraft v3 → Blockbench animation，纯下半身的补一份架势上半身。"""
     anim = bake_animation(json_path, gmap)
     if not _has_upper_body(json_path):
-        _fill_upper_body(anim, gmap)
-        print(f"    （{anim['name']}: 补了持剑架势上半身轨道供预览，源 JSON 未改）")
+        stance = STANCE_POSES.get(anim["name"], DEFAULT_STANCE)
+        _fill_upper_body(anim, gmap, stance)
+        which = "横持" if stance is STANCE_POSES["lower_sprint"] else "扛肩"
+        print(f"    （{anim['name']}: 补了{which}持剑架势上半身轨道供预览，源 JSON 未改）")
     return anim
 
 

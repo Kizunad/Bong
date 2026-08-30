@@ -580,36 +580,58 @@ class SwingHorizIsTheOtherDiagonalTest(unittest.TestCase):
 
 
 class CarryStanceTest(unittest.TestCase):
-    """纯下半身动画补的**持剑架势**：真双手握 + 只活在预览里。"""
+    """纯下半身动画补的**持剑架势**：走/跑两个握法 + 只活在预览里。
+
+    用户 2026-08-30 拍板：走路扛肩（省力携行），冲刺横持（双手压住剑身）。两条必须
+    真的不一样——共用一份就等于把这条区分丢了。
+    """
 
     @classmethod
     def setUpClass(cls):
         cls.rig = PoseRig(GEN.OUT_BB)
-        cls.world = cls.rig.world(_rig_pose(dict(GEN.STANCE_POSE)))
 
-    def test_the_stance_holds_the_grip_with_both_hands(self):
-        """架势是双手握：左手掌心贴在柄尾一个手宽内。
+    def _world(self, name):
+        return self.rig.world(_rig_pose(dict(GEN.STANCE_POSES[name])))
 
-        参照组仍是通用 `sword_cleave` 的 8~16px——那是"看起来像但其实没握上"。
-        """
-        M = self.world["sword_right_pitch"]
+    @staticmethod
+    def _grip_gap(world):
+        M = world["sword_right_pitch"]
         offhand = _world(M, _sword_local(-3.0))
-        lhand = _world(self.world["arm_left_bend"], np.asarray(H.HAND_REST["left"], float))
-        gap = float(np.linalg.norm(lhand - offhand))
-        self.assertLess(
-            gap, 3.0,
-            f"期望：架势左手离柄尾 < 3px（真双手握）；实际 {gap:.1f}px")
+        lhand = _world(world["arm_left_bend"], np.asarray(H.HAND_REST["left"], float))
+        return float(np.linalg.norm(lhand - offhand))
 
-    def test_the_stance_carries_the_blade_across_the_body(self):
-        """剑横在身前、剑尖指向角色右前方——不是竖着扛在肩上。"""
-        M = self.world["sword_right_pitch"]
-        blade = _blade_dir(M)
-        self.assertLess(
-            blade[0], -0.7,
-            f"期望：剑尖指向角色右侧（x 分量 < -0.7）；实际 {np.round(blade, 2)}")
-        self.assertLess(
-            abs(blade[1]), 0.6,
-            f"期望：剑身大体水平（|y| < 0.6）；实际 {np.round(blade, 2)}")
+    def test_sprint_carries_the_blade_across_the_body_with_both_hands(self):
+        """冲刺架势：剑横在身前、剑尖指向角色右前方，两只手都在柄上。
+
+        参照组是通用 `sword_cleave` 的 8~16px —— 那是"看起来像但其实没握上"。
+        """
+        W = self._world("lower_sprint")
+        blade = _blade_dir(W["sword_right_pitch"])
+        self.assertLess(blade[0], -0.7,
+                        f"期望：剑尖指向角色右侧（x 分量 < -0.7）；实际 {np.round(blade, 2)}")
+        self.assertLess(abs(blade[1]), 0.6,
+                        f"期望：剑身大体水平（|y| < 0.6）；实际 {np.round(blade, 2)}")
+        self.assertLess(self._grip_gap(W), 3.0,
+                        f"期望：左手离柄尾 < 3px（真双手握）；实际 {self._grip_gap(W):.1f}px")
+
+    def test_walk_shoulders_the_blade_one_handed(self):
+        """行走架势：剑扛在右肩后上方，左手是自由的——省力的携行姿态。"""
+        W = self._world("lower_walk")
+        tip = _world(W["sword_right_pitch"], _sword_local(SWORD_LEN_PX))
+        self.assertGreater(tip[1], 28.0, f"期望：剑尖高过肩（y > 28）；实际 {tip[1]:.1f}")
+        self.assertGreater(tip[2], 8.0, f"期望：剑尖在身后（z > 8，−Z 是正面）；实际 {tip[2]:.1f}")
+        self.assertGreater(
+            self._grip_gap(W), 8.0,
+            f"期望：扛肩是单手，左手放开（离柄 > 8px）；实际 {self._grip_gap(W):.1f}px")
+
+    def test_the_two_gaits_do_not_share_one_stance(self):
+        """走和跑必须是两个握法——共用一份就把用户拍板的区分丢了。"""
+        walk = _world(self._world("lower_walk")["sword_right_pitch"], _sword_local(SWORD_LEN_PX))
+        sprint = _world(self._world("lower_sprint")["sword_right_pitch"], _sword_local(SWORD_LEN_PX))
+        self.assertGreater(
+            float(np.linalg.norm(walk - sprint)), 20.0,
+            f"期望：两条步态的剑尖落点差 > 20px；实际 walk={np.round(walk,1)} "
+            f"sprint={np.round(sprint,1)}")
 
     def test_the_stance_never_leaks_into_the_shipped_gait_json(self):
         """架势只补预览。`lower_*` 出料 JSON 必须仍然只写腿和 body。
@@ -631,8 +653,147 @@ class CarryStanceTest(unittest.TestCase):
                     "上半身会被步态踩掉")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class BorrowedSwordMovesRebuiltForThisGripTest(unittest.TestCase):
+    """thrust / parry / infuse 按垂直握姿重做后的契约。
+
+    三条都是用户手摆首尾、我补中段，所以这里锁的是"中段有没有真的把两端连成那个
+    动作"——能用数字说清、错了就是错的那部分。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rig = PoseRig(GEN.OUT_BB)
+
+    def _track(self, anim_name):
+        _n, _e, table = RP.anim_pose_table(ANIM / f"{anim_name}.json")
+        out = {}
+        for tick, pose in table:
+            W = self.rig.world(_rig_pose(pose))
+            M = W["sword_right_pitch"]
+            grip = _world(M, _sword_local(0.0))
+            tip = _world(M, _sword_local(SWORD_LEN_PX))
+            blade = (tip - grip) / np.linalg.norm(tip - grip)
+            lhand = _world(W["arm_left_bend"], np.asarray(H.HAND_REST["left"], float))
+            v = lhand - grip
+            along = float(v @ blade)
+            out[tick] = {
+                "tip": tip, "grip": grip, "blade": blade, "lhand": lhand,
+                "offhand": _world(M, _sword_local(-3.0)),
+                "shoulder": _world(W["arm_right_pitch"],
+                                   np.asarray(RP.PARTS["rightArm"]["pivot"], float)),
+                "along": along,
+                "perp": float(np.linalg.norm(v - along * blade)),
+            }
+        return out
+
+    def test_thrust_wins_its_range_by_turning_the_blade_not_by_pushing_the_hand(self):
+        """直刺的行程必须来自"撤刃到侧面再转回正前"，不是"把手往前推"。
+
+        握姿是剑身⊥小臂，剑尖恒在以肩为心、半径 21~25.7px 的球面上——剑身指正前时
+        肘从伸直折到 88° 也只把剑尖拉回 4px，读不出"刺"。所以蓄势帧必须真的把刃甩到
+        侧面（剑身横向分量够大），发力帧再指回正前，行程才有 8px 以上。
+        """
+        track = self._track("sword_thrust")
+        load, strike = track[6], track[10]
+        self.assertGreater(
+            abs(load["blade"][0]), 0.5,
+            f"期望：蓄势帧刃真的甩到侧面（|blade.x| > 0.5）；实际 {np.round(load['blade'], 2)}"
+            "——没撤刃就没有行程可挣")
+        self.assertLess(
+            strike["blade"][2], -0.9,
+            f"期望：发力帧剑身指正前方（blade.z < -0.9）；实际 {np.round(strike['blade'], 2)}")
+        gain = float((load["tip"] - load["shoulder"])[2] - (strike["tip"] - strike["shoulder"])[2])
+        self.assertGreater(
+            gain, 8.0,
+            f"期望：剑尖相对肩的前伸至少涨 8px；实际 {gain:.1f}px——"
+            "这个数就是玩家看到的'刺出去多远'")
+
+    def test_parry_raises_the_block_and_locks_both_hands_on(self):
+        """架格：剑要真的抬起来，且 cast 完成帧起两只手都在柄上。"""
+        track = self._track("sword_parry")
+        ticks = sorted(track)
+        self.assertGreater(
+            track[ticks[-1]]["tip"][1] - track[0]["tip"][1], 8.0,
+            f"期望：架格把剑尖抬高 8px 以上；实际 "
+            f"{track[ticks[-1]]['tip'][1] - track[0]['tip'][1]:.1f}px")
+        for tick in (4, 6, 8, 10):
+            with self.subTest(tick=tick):
+                gap = float(np.linalg.norm(track[tick]["lhand"] - track[tick]["offhand"]))
+                self.assertLess(
+                    gap, 5.0,
+                    f"tick {tick}: 期望左掌扣在柄上（离柄尾 < 5px）；实际 {gap:.1f}px")
+
+    def test_parry_actually_snaps_outward_before_settling(self):
+        """弹开那一下要看得见：strike 段末把剑尖顶出去，再回落稳住。"""
+        track = self._track("sword_parry")
+        out = float(np.linalg.norm(track[6]["tip"] - track[4]["tip"]))
+        back = float(np.linalg.norm(track[10]["tip"] - track[6]["tip"]))
+        self.assertGreater(out, 2.0, f"期望：4→6 外推 > 2px；实际 {out:.1f}px")
+        self.assertGreater(back, 1.0, f"期望：6→10 回落 > 1px；实际 {back:.1f}px——"
+                                      "顶出去不收就不是弹开，是慢慢举起来")
+
+    def test_infuse_is_a_closed_loop(self):
+        """循环动画首尾必须逐轴同值。
+
+        用户手摆的 t0 / t28 是**抚刃的近端与远端**，不是循环的首尾——首尾不同值的
+        循环在引擎里每周期抽一下（PlayerAnimator 那条"循环单帧衰减"的坑）。所以远端
+        放 t14，近端占首尾。
+        """
+        _n, emote, table = RP.anim_pose_table(ANIM / "sword_infuse.json")
+        self.assertTrue(emote["isLoop"], "期望：sword_infuse 是循环段")
+        keys = dict(table)
+        first, last = keys[0], keys[int(emote["endTick"])]
+        for part in set(first) | set(last):
+            with self.subTest(part=part):
+                for axis in set(first.get(part, {})) | set(last.get(part, {})):
+                    self.assertAlmostEqual(
+                        float(first.get(part, {}).get(axis, 0.0)),
+                        float(last.get(part, {}).get(axis, 0.0)), places=4,
+                        msg=f"期望：{part}.{axis} 在 tick 0 与 endTick 同值；实际分叉了")
+
+    def test_infuse_really_strokes_along_the_blade_and_comes_back(self):
+        """左掌沿刃身推出去**再收回来**——去程回程都要有，且掌贴着刃走不是凭空挥。
+
+        只锁"顶点不在首末帧"是不够的：把掌推出去、一路端着、最后一帧才弹回来，
+        照样满足那条，可播起来就是"推出去 → 突然瞬移回柄"。所以这里同时锁顶点
+        位置（中段 30%~70%）和两侧行程各自的幅度。
+        """
+        track = self._track("sword_infuse")
+        ticks = sorted(track)
+        along = [track[t]["along"] for t in ticks]
+        peak = int(np.argmax(along))
+        span = max(along) - min(along)
+        readable = [f"t{t}:{a:.1f}" for t, a in zip(ticks, along)]
+
+        self.assertGreater(
+            span, 5.0,
+            f"期望：左掌沿刃行程 > 5px；实际 {span:.1f}px（{readable}）")
+        lo, hi = 0.3 * ticks[-1], 0.7 * ticks[-1]
+        self.assertTrue(
+            lo <= ticks[peak] <= hi,
+            f"期望：推抚顶点落在整段的 30%~70%（tick {lo:.0f}~{hi:.0f}）；"
+            f"实际在 tick {ticks[peak]}（{readable}）——顶点靠边 = 只有单程，"
+            "循环回跳时掌会瞬移")
+        self.assertGreater(
+            along[peak] - along[0], 0.6 * span,
+            f"期望：去程走满行程的 60% 以上；实际 {along[peak] - along[0]:.1f}/{span:.1f}px")
+        self.assertGreater(
+            along[peak] - along[-1], 0.6 * span,
+            f"期望：回程收满行程的 60% 以上；实际 {along[peak] - along[-1]:.1f}/{span:.1f}px")
+        # 顶点位置 + 两侧幅度都对，仍可能是"推出去一路端着、末帧才弹回柄"——那在引擎里
+        # 是掌瞬移。所以再锁一条：掌沿刃的**速度**不许有突变，任何一段都不得超过
+        # 匀速推抚（span / 半周期）的 2 倍（好版本实测 1.2 倍，注入的'末帧弹回'是 2.3 倍）。
+        uniform = span / (ticks[-1] / 2.0)
+        rates = [(abs(along[i + 1] - along[i]) / (ticks[i + 1] - ticks[i]))
+                 for i in range(len(ticks) - 1)]
+        self.assertLess(
+            max(rates), 2.0 * uniform,
+            f"期望：掌沿刃的速度不超过匀速推抚（{uniform:.2f}px/t）的 2.0 倍；"
+            f"实际最快一段 {max(rates):.2f}px/t（逐段 {[round(r, 2) for r in rates]}）"
+            "——某一段突然窜出去/缩回来 = 掌在瞬移")
+        self.assertLess(
+            max(track[t]["perp"] for t in ticks), 8.0,
+            "期望：左掌全程贴着刃身走（离刃轴 < 8px）；实际掌飘到刃外了")
 
 
 class BladeDoesNotPassThroughTheBodyTest(unittest.TestCase):
@@ -661,6 +822,9 @@ class BladeDoesNotPassThroughTheBodyTest(unittest.TestCase):
         "sword_spine_slash": 0.0,
         "sword_spine_cleave": -1.0,
         "sword_swing_horiz": 0.0,
+        "sword_thrust": 0.0,
+        "sword_parry": 0.0,
+        "sword_infuse": 0.0,
     }
     BODY_PARTS = {"torso": "torso_bend", "rightLeg": "leg_right_bend",
                   "leftLeg": "leg_left_bend", "leftArm": "arm_left_bend"}
