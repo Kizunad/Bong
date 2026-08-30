@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{
     bevy_ecs, bevy_ecs::system::SystemParam, Added, Client, Commands, Entity, EventReader,
-    EventWriter, Events, GameMode, Position, Query, Res, ResMut, Username, Without,
+    EventWriter, Events, GameMode, Position, Query, Res, ResMut, Username, With, Without,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -61,11 +61,12 @@ use crate::world::spirit_eye::SpiritEyeRegistry;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{
-    CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings, RevivalDecision,
-    ShieldDrainOverride, SkillBarBindings, Stamina, StaminaState, StatusEffects, UnlockedStyles,
-    Wounds, ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
-    HEALTH_REGEN_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS,
-    REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
+    ActiveCombatWindow, CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings,
+    RevivalDecision, ShieldDrainOverride, SkillBarBindings, Stamina, StaminaState, StatusEffects,
+    UnlockedStyles, Wounds, ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS,
+    COMBAT_STATE_TICK_INTERVAL_TICKS, HEALTH_REGEN_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION,
+    REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS,
+    TICKS_PER_SECOND,
 };
 use super::events::{
     CombatEvent, DeathCinematicPublished, DeathEvent, DeathInsightRequested, RevivalActionIntent,
@@ -144,11 +145,13 @@ struct DeathScreenContext<'a> {
 
 pub fn sync_combat_state_from_events(
     mut events: EventReader<CombatEvent>,
+    mut commands: Commands,
     mut actors: Query<(&mut CombatState, &mut Stamina)>,
 ) {
     for event in events.read() {
         if let Ok((mut state, mut stamina)) = actors.get_mut(event.attacker) {
             state.refresh_combat_window(event.resolved_at_tick);
+            commands.entity(event.attacker).insert(ActiveCombatWindow);
             state.last_attack_at_tick = Some(event.resolved_at_tick);
             stamina.current = (stamina.current - ATTACK_STAMINA_COST).clamp(0.0, stamina.max);
             stamina.last_drain_tick = Some(event.resolved_at_tick);
@@ -161,6 +164,7 @@ pub fn sync_combat_state_from_events(
 
         if let Ok((mut state, mut stamina)) = actors.get_mut(event.target) {
             state.refresh_combat_window(event.resolved_at_tick);
+            commands.entity(event.target).insert(ActiveCombatWindow);
             // 举盾态与精疲状态不被战斗事件覆盖（让 stamina_tick 维护其 drain/drain-零 逻辑）。
             if !matches!(
                 stamina.state,
@@ -324,36 +328,48 @@ pub fn stamina_tick(
     }
 }
 
-pub fn combat_state_tick(
-    clock: Res<CombatClock>,
-    mut state_q: Query<(&mut CombatState, Option<&mut Stamina>)>,
-) {
-    for (mut state, stamina) in &mut state_q {
-        // 防御窗口仍按原有低频节拍清理；战斗窗口必须每 tick 检查，
-        // 否则截止 tick 不在整秒边界时不会产生 Changed<CombatState>，
-        // client HUD 可能继续显示过期的战斗态。
-        if clock.tick.is_multiple_of(COMBAT_STATE_TICK_INTERVAL_TICKS) {
-            if let Some(window) = state.incoming_window.as_ref() {
-                if clock.tick >= window.expires_at_tick() {
-                    state.incoming_window = None;
-                }
+pub fn combat_state_tick(clock: Res<CombatClock>, mut state_q: Query<&mut CombatState>) {
+    if !clock.tick.is_multiple_of(COMBAT_STATE_TICK_INTERVAL_TICKS) {
+        return;
+    }
+
+    for mut state in &mut state_q {
+        // 防御窗口不要求截止 tick 的 HUD 同步，继续按低频节拍清理。
+        if let Some(window) = state.incoming_window.as_ref() {
+            if clock.tick >= window.expires_at_tick() {
+                state.incoming_window = None;
             }
+        }
+    }
+}
+
+/// 精确清理活跃战斗窗口，触发 `Changed<CombatState>` 让 HUD 在截止 tick 发送脱战态。
+pub fn combat_window_expiry_tick(
+    clock: Res<CombatClock>,
+    mut commands: Commands,
+    mut state_q: Query<(Entity, &mut CombatState, Option<&mut Stamina>), With<ActiveCombatWindow>>,
+) {
+    for (entity, mut state, stamina) in &mut state_q {
+        let Some(until_tick) = state.in_combat_until_tick else {
+            // 复活等其它生命周期路径可能先清除窗口；同步移除标记避免无效轮询。
+            commands.entity(entity).remove::<ActiveCombatWindow>();
+            continue;
+        };
+        if clock.tick < until_tick {
+            continue;
         }
 
-        if let Some(until_tick) = state.in_combat_until_tick {
-            if clock.tick >= until_tick {
-                state.in_combat_until_tick = None;
-                if let Some(mut stamina) = stamina {
-                    if stamina.state == StaminaState::Combat {
-                        stamina.state = if stamina.current <= 0.0 {
-                            StaminaState::Exhausted
-                        } else {
-                            StaminaState::Idle
-                        };
-                    }
-                }
+        state.in_combat_until_tick = None;
+        if let Some(mut stamina) = stamina {
+            if stamina.state == StaminaState::Combat {
+                stamina.state = if stamina.current <= 0.0 {
+                    StaminaState::Exhausted
+                } else {
+                    StaminaState::Idle
+                };
             }
         }
+        commands.entity(entity).remove::<ActiveCombatWindow>();
     }
 }
 
@@ -3282,6 +3298,16 @@ mod tests {
         assert!(attacker_stamina.current >= 94.0);
         assert_eq!(attacker_stamina.state, StaminaState::Combat);
         assert_eq!(target_stamina.state, StaminaState::Combat);
+        assert!(
+            app.world()
+                .entity(attacker)
+                .contains::<ActiveCombatWindow>(),
+            "攻击方进入战斗窗口时必须挂活跃标记，供精确到期系统消费"
+        );
+        assert!(
+            app.world().entity(target).contains::<ActiveCombatWindow>(),
+            "受击方进入战斗窗口时必须挂活跃标记，供精确到期系统消费"
+        );
     }
 
     #[test]
@@ -3290,7 +3316,10 @@ mod tests {
         app.insert_resource(CombatClock {
             tick: COMBAT_STATE_TICK_INTERVAL_TICKS,
         });
-        app.add_systems(Update, combat_state_tick);
+        app.add_systems(
+            Update,
+            (combat_state_tick, combat_window_expiry_tick).chain(),
+        );
 
         let entity = app
             .world_mut()
@@ -3311,6 +3340,7 @@ mod tests {
                         duration_ms: 100,
                     }),
                 },
+                ActiveCombatWindow,
                 Lifecycle::default(),
             ))
             .id();
@@ -3322,13 +3352,17 @@ mod tests {
         assert!(state.in_combat_until_tick.is_none());
         assert!(state.incoming_window.is_none());
         assert_eq!(stamina.state, StaminaState::Idle);
+        assert!(
+            !app.world().entity(entity).contains::<ActiveCombatWindow>(),
+            "战斗窗口到期后必须移除活跃标记，避免继续进入逐 tick 查询"
+        );
     }
 
     #[test]
-    fn combat_state_tick_clears_combat_window_on_non_interval_expiry_tick() {
+    fn combat_window_expiry_tick_clears_combat_window_on_non_interval_expiry_tick() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 7 });
-        app.add_systems(Update, combat_state_tick);
+        app.add_systems(Update, combat_window_expiry_tick);
 
         let entity = app
             .world_mut()
@@ -3344,6 +3378,7 @@ mod tests {
                     in_combat_until_tick: Some(7),
                     ..CombatState::default()
                 },
+                ActiveCombatWindow,
             ))
             .id();
 
@@ -3356,6 +3391,10 @@ mod tests {
             "非整秒边界到期时必须清除 CombatState，才能触发 HUD 脱战快照"
         );
         assert_eq!(stamina.state, StaminaState::Idle);
+        assert!(
+            !app.world().entity(entity).contains::<ActiveCombatWindow>(),
+            "战斗窗口到期后必须移除活跃标记，避免继续进入逐 tick 查询"
+        );
     }
 
     #[test]
