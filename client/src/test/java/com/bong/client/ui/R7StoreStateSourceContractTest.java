@@ -64,7 +64,8 @@ class R7StoreStateSourceContractTest {
         try (var files = Files.walk(PRODUCTION_ROOT)) {
             for (Path path : files.filter(Files::isRegularFile)
                 .filter(candidate -> candidate.getFileName().toString().endsWith("Screen.java")
-                    || candidate.getFileName().toString().endsWith("Bootstrap.java"))
+                    || candidate.getFileName().toString().endsWith("Bootstrap.java")
+                    || candidate.getFileName().toString().endsWith("UiStateSource.java"))
                 .toList()) {
                 result.add(R7SourceScan.read(path));
             }

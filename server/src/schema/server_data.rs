@@ -4526,6 +4526,7 @@ mod tests {
                 hp_percent: 1.0,
                 qi_percent: 1.0,
                 stamina_percent: 1.0,
+                combat_active: false,
                 derived: DerivedAttrFlagsV1::default(),
             }),
             ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 { wounds: vec![] }),

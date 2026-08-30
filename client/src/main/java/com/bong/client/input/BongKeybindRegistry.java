@@ -1,4 +1,4 @@
-package com.bong.client.ui;
+package com.bong.client.input;
 
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.option.KeyBinding;
@@ -50,8 +50,13 @@ public final class BongKeybindRegistry {
         KeyBinding create(String translationKey, InputUtil.Type type, int defaultCode, String category);
     }
 
-    /** Package-private injection seam used by behavior tests and client bootstrap wiring. */
-    BongKeybindRegistry(
+    /**
+     * 行为测试和非 Fabric 适配器使用的注入 seam。
+     *
+     * <p>生产 bootstrap 必须使用 {@link #global()}；公开构造器只提供可替换 registrar 的
+     * 隔离测试/适配实例，不会改变 production singleton。</p>
+     */
+    public BongKeybindRegistry(
         UnaryOperator<KeyBinding> registrar,
         List<ReservedDefault> reservedDefaults,
         Set<ConflictExemption> exemptions

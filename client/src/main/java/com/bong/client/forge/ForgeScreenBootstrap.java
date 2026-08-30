@@ -3,7 +3,7 @@ package com.bong.client.forge;
 import com.bong.client.BongClient;
 import com.bong.client.input.ClientInputPolicy;
 import com.bong.client.input.KeybindMigrationService;
-import com.bong.client.ui.BongKeybindRegistry;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;

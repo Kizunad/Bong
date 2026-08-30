@@ -263,6 +263,8 @@ pub struct CombatHudStateV1 {
     pub qi_percent: f32,
     /// 体力百分比 [0.0, 1.0]。
     pub stamina_percent: f32,
+    /// 是否处于服务端 CombatState 的战斗窗口。
+    pub combat_active: bool,
     pub derived: DerivedAttrFlagsV1,
 }
 
@@ -347,6 +349,7 @@ mod tests {
             hp_percent: 0.85,
             qi_percent: 0.42,
             stamina_percent: 0.91,
+            combat_active: true,
             derived: DerivedAttrFlagsV1 {
                 flying: true,
                 phasing: false,

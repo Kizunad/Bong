@@ -1,7 +1,7 @@
 # component	symbol	signature	owner	invariant
 BongKeybindRegistry	type	public final class BongKeybindRegistry	R7	Registrations are explicit and inspectable; no reflection or annotation discovery.
 BongKeybindRegistry	global	public static BongKeybindRegistry global()	R7	Production has one registry instance so bootstrap-local registries cannot bypass conflict detection.
-BongKeybindRegistry	constructor	BongKeybindRegistry(UnaryOperator<KeyBinding> registrar, List<ReservedDefault> reservedDefaults, Set<ConflictExemption> exemptions)	R7	The package seam injects Fabric registration plus explicit vanilla reservations and exact exemptions.
+BongKeybindRegistry	constructor	BongKeybindRegistry(UnaryOperator<KeyBinding> registrar, List<ReservedDefault> reservedDefaults, Set<ConflictExemption> exemptions)	R7	公开注入 seam 允许跨 package 行为测试和适配器提供 Fabric registrar、显式 vanilla reservation 与精确 exemption；生产 bootstrap 仍必须使用 global()。
 BongKeybindRegistry	register	public KeyBinding register(BindingSpec spec)	R7	Duplicate owner identities and translation keys always fail; UNKNOWN defaults do not collide physically.
 BongKeybindRegistry	registrations	public List<Registration> registrations()	R7	Inspection is immutable and preserves registration order.
 BongKeybindRegistry	binding-owner	public record BindingOwner(String id)	R7	A non-blank globally unique owner id identifies one logical binding independent of its source file or translation text.

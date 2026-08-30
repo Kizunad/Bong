@@ -1,11 +1,11 @@
 ---
 name: consume-plan
-description: 开 worktree → Workflow 多 agent 实施 docs/plan-<name>.md（设计收口→逐阶段实施→对抗审查，全程在 worktree 内）→ PR → 查 merge conflict → 等 CI+review → 自行判定 → 自动 merge → 清理。全自动；测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断采纳，仅严重设计问题/反复修不过才交人工。无 Workflow 工具的 harness 退化为线性实施。用法：/consume-plan <plan-name>（不含 plan- 前缀和 .md 后缀）
+description: 开 worktree → Workflow 多 agent 实施 docs/plan-<name>.md（设计收口→逐阶段实施，全程在 worktree 内）→ PR → 查 merge conflict → 等 CI+自动 review → 自行判定 → 自动 merge → 清理。全自动；测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断采纳，仅严重设计问题/反复修不过才交人工。无 Workflow 工具的 harness 退化为线性实施。用法：/consume-plan <plan-name>（不含 plan- 前缀和 .md 后缀）
 ---
 
 # consume-plan $ARGUMENTS
 
-消费 `docs/plan-$ARGUMENTS.md`：**step 3 实施由 Workflow 多 agent 编排**（设计收口→逐阶段实施→对抗审查，全程在 worktree 内），其余步骤线性。**全自动到 merge**——PR 创建后**独立发 comment** `/review` 触发 review 引擎（写在 PR body 里不生效，bot 只捕获 issue comment），step 6 等 review 反馈（`/review` 引擎 + CodeRabbit）后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
+消费 `docs/plan-$ARGUMENTS.md`：**step 3 实施由 Workflow 多 agent 编排**（设计收口→逐阶段实施，全程在 worktree 内），其余步骤线性。**全自动到 merge**——PR 创建后等待 Kody 自动 review，step 6 读取 review 反馈，step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge；返工后仅在需要复审时发送 `@kody review --force`。
 
 实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；review 意见自行判断采纳；merge conflict 先尝试 rebase（≤2 轮），拿不准交人工。不自动跳过失败 TODO。
 
@@ -71,7 +71,7 @@ echo "[ok] cwd=$WT_ABS branch=$BRANCH"
 
 ## 3. 实施 plan（Workflow 多 agent 编排）
 
-实施交给 **Workflow 工具**编排，三段流水：**设计收口（并行只读）→ 逐阶段实施（按 P 依赖顺序，串行）→ 对抗审查（并行只读）**，全程在 `$WT_ABS` 内。Workflow 是 slash command 显式授权的合法入口（满足 Workflow 工具的 opt-in 条件）。
+实施交给 **Workflow 工具**编排，两段流水：**设计收口（并行只读）→ 逐阶段实施（按 P 依赖顺序，串行）**，全程在 `$WT_ABS` 内。Workflow 是 slash command 显式授权的合法入口（满足 Workflow 工具的 opt-in 条件）。
 
 > 当前 harness 无 Workflow 工具 → 跳到 **§3.5 线性 fallback**，其余步骤不变。
 
@@ -92,11 +92,10 @@ echo "[workflow-in] WT_ABS=$WT_ABS PLAN=$PLAN PHASES=$PHASES"
 ```js
 export const meta = {
   name: 'consume-plan-impl',
-  description: 'Workflow 实施 docs/plan-<PLAN>：设计收口→逐阶段实施→对抗审查（全程 worktree 内）',
+  description: 'Workflow 实施 docs/plan-<PLAN>：设计收口→逐阶段实施（全程 worktree 内）',
   phases: [
     { title: 'Design', detail: '并行只读：收口开放问题 + 接入面 + 逐阶段工作项' },
     { title: 'Implement', detail: '按 P 依赖顺序逐阶段实施 + atomic commit + 测试矩阵' },
-    { title: 'Verify', detail: '并行对抗审查累积 diff：契约/饱和测试/CLAUDE.md/回归' },
   ],
 }
 const WT = args.wtAbs, PLAN = args.plan, PHASES = args.phases
@@ -108,10 +107,6 @@ const PLAN_DESIGN = { type:'object', required:['summary','decisions','workItems'
   workItems:{type:'array',items:{type:'object',required:['phase','what','files'],properties:{phase:{type:'string'},what:{type:'string'},files:{type:'array',items:{type:'string'}}}}} }}
 const IMPL = { type:'object', required:['phase','commits','testsPassed','testsFailed','fmtClippyPass','blocked','summary'], properties:{
   phase:{type:'string'},commits:{type:'array',items:{type:'string'}},testsPassed:{type:'integer'},testsFailed:{type:'integer'},fmtClippyPass:{type:'boolean'},blocked:{type:'string',description:'空=通过；非空=失败命令+错误原文'},summary:{type:'string'} }}
-const VERDICT = { type:'object', required:['dimension','passed','issues'], properties:{
-  dimension:{type:'string'},passed:{type:'boolean'},
-  issues:{type:'array',items:{type:'object',required:['severity','location','desc'],properties:{severity:{type:'string',enum:['blocker','major','minor']},location:{type:'string'},desc:{type:'string'}}}} }}
-
 phase('Design')
 const design = await agent(`读 ${WT}/docs/plan-${PLAN}.md + 相关代码（只读，不改不 commit）。${GUARD}
 产出：① 收口 plan 所有"§N 开放问题"——每条给决议 + file:line 落点（决议只在本次 context 用，**不写回 plan 文档**）；② 接入面（进料/出料/共享类型/跨仓库契约 symbol）；③ 把实施拆成按 P 依赖排序的 workItems（每项标 phase + 改哪些文件）。按 schema 输出。`,
@@ -133,21 +128,7 @@ ${GUARD}
   if (r.blocked) break   // 某阶段卡住即停，保留 worktree commit
 }
 
-phase('Verify')
-let verdicts = []
-if (!implResults.some(r => r.blocked)) {
-  const DIMS = [
-    '契约与回归：本 PR 是否破坏外部可观察行为/IO/协议/现有运行时？散布/序列化/状态机有无回归？',
-    '饱和测试完整性：happy/边界/错误/状态转换有无漏 case？有无 #[ignore]/注释测试/改断言蒙混？',
-    'plan 目标对齐 + CLAUDE.md/worldview/qi_physics 守恒合规',
-  ]
-  verdicts = (await parallel(DIMS.map(d => () =>
-    agent(`对抗审查 ${WT} 内本次累积 diff（\`git -C ${WT} diff origin/main...HEAD\`）。只读，不改不 commit。${GUARD}
-维度：${d}。**尽力证伪**——默认有问题，找不到才放行。按 schema 给 verdict + issues(blocker/major/minor + location + desc)。`,
-      { phase:'Verify', schema: VERDICT })))).filter(Boolean)
-}
-
-return { design, implResults, verdicts, blocked: (implResults.find(r => r.blocked) || {}).blocked || null }
+return { design, implResults, blocked: (implResults.find(r => r.blocked) || {}).blocked || null }
 ```
 
 **测试矩阵**（实施 agent 与 §3.5 fallback 共用；agent 把 `$WT_ABS` 换成 `${WT}`）：
@@ -166,13 +147,11 @@ cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/s
 ### 3.3 读 workflow 结果
 
 - `blocked` 非空（某阶段实施卡住）→ 按"失败统一行为"停：保留 `$WT_ABS` 内 commit，输出失败命令 + 原文 + `$WT_ABS`，交人工。**不**继续后续阶段、**不** `cd` 离开。
-- `verdicts` 含 `blocker` / `major` → 在 `$WT_ABS` 内修复（可再起一个 fix agent，或主流程直接改）+ 重跑对应测试矩阵 + 重新审查该维度；**≤2 轮**仍不过交人工。修复范围严格限于审查指向的具体问题。
-- `verdicts` 仅 `minor`（nit/主观）→ 记录不强改，最终输出里说明。
-- 全过 → 进 §3.4。
+- 实施阶段全部完成且本地测试矩阵全绿 → 进 §3.4。
 
 ### 3.4 全 P 完成后：写 Finish Evidence + 归档（提 PR 前最后一步）
 
-实施 + 审查全过后，**提 PR 之前**由**主流程**（非 workflow agent）按 workflow 返回的 `implResults` / `design` 写 evidence（docs 写权限仅限于此，见核心约束 #5）。所有 P0/P1/§N 都通过后：
+实施阶段完成且本地测试矩阵全绿后，**提 PR 之前**由**主流程**（非 workflow agent）按 workflow 返回的 `implResults` / `design` 写 evidence（docs 写权限仅限于此，见核心约束 #5）。所有 P0/P1/§N 都通过后：
 
 1. 在 `$WT_ABS/docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，至少包含：
    - **落地清单**：每个 P 对应的真实模块/文件路径
@@ -227,18 +206,18 @@ PR_URL=$(gh pr create \
 
 ---
 
-**有阻断意见请加前缀 \`BLOCKING:\` 或选 Request changes，否则按下方规则自动处理。**（review 触发见 PR 评论区独立 comment）
+**有阻断意见请加前缀 \`BLOCKING:\` 或选 Request changes，否则按下方规则自动处理。**（PR 创建后由 Kody 自动 review）
 
 <details>
 <summary>📜 自动 merge 协议（点击展开）</summary>
 
-本 PR 由 \`/consume-plan\` 全自动消费产出。CI 全绿 + review 反馈（\`/review\` 引擎 / CodeRabbit）至少 1 条后，主流程会**自行判定**意见严重性并自动 squash merge：
+本 PR 由 \`/consume-plan\` 全自动消费产出。CI 全绿 + Kody 自动 review 反馈后，主流程会**自行判定**意见严重性并自动 squash merge：
 
 - **严重**（bug / 安全 / 与 plan 目标矛盾 / 违反 \`CLAUDE.md\` / \`worldview.md\` / 命中 \`BLOCKING:\` 或 \`CHANGES_REQUESTED\`）→ 必修，CI 重绿后再 merge
 - **中等**（明确质量问题但不影响功能：错误处理缺失、命名误导、文档与代码不符）→ 自行决定修或不修，不修会在 PR 内回复理由
 - **轻微**（nit / style / 主观偏好 / "可以考虑"语气）→ 默认不采纳，merge 前统一回一条说明
 
-reviewer 缺席（30 min 内无反馈）→ 停交人工，不自动 merge。
+Kody review 缺席（等待窗口内无反馈）→ 停交人工，不自动 merge。
 
 </details>
 
@@ -247,11 +226,6 @@ EOF
 )")
 PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
 echo "PR: $PR_URL (#$PR_NUM)"
-
-# 独立 comment 触发 /review 引擎
-# —— 写在 PR body 里 bot 不会捕获，必须以独立 issue comment 形式发才生效。
-# 不要用 @pi / @hive / @claude —— 会 mention 到 GitHub 上的真实陌生用户。
-gh pr comment "$PR_NUM" --body "/review"
 ```
 
 **不加 `--auto`**——主流程要先看 review 评论再 merge（step 6 → 7 → 8 顺序），不能让 GitHub auto-merge 抢跑过 review 判定。
@@ -324,7 +298,7 @@ git rebase origin/main
 
 ```bash
 cd "$WT_ABS"
-gh pr checks "$PR_NUM" --watch --fail-fast
+gh pr checks "$PR_NUM" --watch
 ```
 
 - exit 0 = 全绿 → 进入 step 6
@@ -340,44 +314,18 @@ gh pr checks "$PR_NUM" --watch --fail-fast
    - 修复范围同 step 3：限于引起 CI 失败的 patch 本身
 4. 本地不能复现 / infra 问题 / 2 轮仍红 → **停**，输出失败 check 名 + 日志摘要 + PR URL + `$WT_ABS`，交人工
 
-## 6. 等 review 反馈
+## 6. 等 Kody 自动 review 反馈
 
-step 4 已通过独立 comment `/review` 触发 review 引擎；CodeRabbit 自动跑（额度耗尽限流失败是计费问题不是代码问题）。轮询直到**至少 1 条 review 反馈**（`/review` 引擎的 github-actions 评论，或 CodeRabbit review）才放行——没拿到任何 review 反馈就不 merge。
+PR 创建和 push 新提交后由 Kody 自动 review，流程不再发送 `/review` 或其他手动触发评论。使用当前 harness 的真实等待机制（如 `ScheduleWakeup`），每回合重新检查 Kody 反馈；禁止用 shell `sleep` loop 或 busy-poll。直到**至少 1 条 Kody review 反馈**才放行；没有拿到 review 反馈就不 merge。
 
-> gate 只看 `/review` + CodeRabbit，**绝不等 Codex**——`chatgpt-codex-connector`（"Codex usage limits reached"）是与本仓库无关的噪音，忽略。
+> gate 只看 Kody，**绝不等 Codex**——`chatgpt-codex-connector`（"Codex usage limits reached"）是与本仓库无关的噪音，忽略。CodeRabbit 未启用自动触发，不在默认等待范围内；确实需要第二双眼睛时再按需评论 `@coderabbitai review`。
 
-```bash
-cd "$WT_ABS"
-
-TIMEOUT_SEC=1800   # 30 min（review 引擎平均 5–20 min，留 buffer）
-INTERVAL=60
-START=$(date +%s)
-SEEN_REVIEW=0
-
-while :; do
-  ELAPSED=$(( $(date +%s) - START ))
-
-  # 拉所有 review + issue 评论的 author，按小写匹配
-  AUTHORS=$(gh pr view "$PR_NUM" --json comments,reviews \
-    --jq '[.comments[].author.login, .reviews[].author.login] | .[]' 2>/dev/null \
-    | tr '[:upper:]' '[:lower:]' | sort -u)
-
-  echo "$AUTHORS" | grep -qE 'github-actions|coderabbit' && SEEN_REVIEW=1
-
-  echo "[wait-review] elapsed=${ELAPSED}s review=$SEEN_REVIEW"
-
-  [ "$SEEN_REVIEW" = "1" ] && break
-  [ "$ELAPSED" -ge "$TIMEOUT_SEC" ] && break
-  sleep "$INTERVAL"
-done
-
-echo "[review-status] review=$SEEN_REVIEW elapsed=${ELAPSED}s"
-```
+每回合唤醒后，读取 `gh pr view "$PR_NUM" --json comments,reviews`，按 Kody 的评论标记确认是否已有反馈。最多等待 3 回合（每回合约 1200 秒）；仍无反馈就停交人工，不自动 merge。
 
 放行条件分两种：
 
 - **review 到** (`review=1`) → 拉评论原文进 step 7
-- **review 没到**（30 min 仍 0）→ **停，不 merge**。这种通常是 `/review` comment 没被 workflow 捕获或 bot 离线，输出 PR URL + `$WT_ABS` 交人工
+- **review 没到**（30 min 仍 0）→ **停，不 merge**。通常是 Kody 自动 review 未启动或服务离线，输出 PR URL + `$WT_ABS` 交人工
 
 拉评论原文（review 到后拉）：
 
@@ -415,7 +363,7 @@ gh api "repos/{owner}/{repo}/pulls/$PR_NUM/comments" \
 
 - **严重（bug / 安全 / 破坏运行时 / 严重违反 CLAUDE.md / 与 plan 目标矛盾 / 与 worldview.md 冲突 / 命中 7.0 强阻断信号）**：必须修
   - 走 step 3 的"有限修复循环（≤2 轮）"：atomic fix commit + 跑对应子项目测试 + `cd "$WT_ABS" && git push`
-  - 修完**回 step 5 重等 CI 全绿**，再**重新等 re-review**（push 后 CodeRabbit 自动增量 review；`/review` 引擎需重发 `/review` comment），不自判"我修好了应该过"
+  - 修完**回 step 5 重等 CI 全绿**，然后在 PR 根评论发送 `@kody review --force` 强制复审，不自判"我修好了应该过"
   - re-review 无新严重意见 → 进 step 8；**re-review 最多 2 轮**，仍有新严重意见 → 交人工（7.3），避免无限循环
 - **中等（明确质量问题但不影响功能：错误处理缺失、命名误导、文档与代码不符、明显的边界 case 未处理）**：自行决定
   - 决定修 → 同上有限修复，CI 过后进 step 8

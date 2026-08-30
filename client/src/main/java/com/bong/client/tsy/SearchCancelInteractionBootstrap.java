@@ -4,8 +4,8 @@ import com.bong.client.BongClient;
 import com.bong.client.hud.SearchHudState;
 import com.bong.client.hud.SearchHudStateStore;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.input.BongKeybindRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -25,16 +25,27 @@ public final class SearchCancelInteractionBootstrap {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String CANCEL_KEY_TRANSLATION = "key.bong-client.tsy_search_cancel";
     private static KeyBinding cancelKey;
+    private static boolean registered;
 
     private SearchCancelInteractionBootstrap() {
     }
 
     public static void register() {
-        cancelKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(CANCEL_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_H, CATEGORY)
+        if (registered) {
+            return;
+        }
+        cancelKey = BongKeybindRegistry.global().register(
+            new BongKeybindRegistry.BindingSpec(
+                new BongKeybindRegistry.BindingOwner("tsy.search_cancel"),
+                CANCEL_KEY_TRANSLATION,
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_H,
+                CATEGORY
+            )
         );
         ClientTickEvents.END_CLIENT_TICK.register(SearchCancelInteractionBootstrap::onTick);
         BongClient.LOGGER.info("Registered TSY search cancel keybinding on key: H");
+        registered = true;
     }
 
     private static void onTick(MinecraftClient client) {

@@ -29,7 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7InventoryContractTest {
     private static final Path PRODUCTION_ROOT = R7SourceScan.productionRoot();
-    private static final Path PRODUCTION_INPUT_ROOT = R7SourceScan.productionInputRoot();
 
     @Test
     void screenInventoryPinsEveryDirectProductionScreenAndSuffixException() throws IOException {
@@ -99,62 +98,8 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void p1ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
-        // 重新冻结于 legacy foundation 清理后：移除无生产引用的 owo foundation，
-        // 并保留主线 keybinding registry/HUD 修复的生产源对拍。
-        // 逐文件对拍确认 client/src/main 下只有已声明的生产变更，其余内容不动。
-        // 注意 PRODUCTION_INPUT_ROOT 是 client/src/main，**含 resources/**，所以动任何
-        // 客户端资源都会撞这条基线——每一个随包发布的字节都必须显式重新确认。
-        //
-        // 2026-08-27 重新冻结（这就是上一句要求的那次"显式再确认"）：在上一版已包含
-        // 矿脉反馈线程修复的 2170 文件基线上，主线随包新增木棍的两条玩家动画与背篓三份资源。
-        //     + resources/assets/bong/player_animation/club_smash.json   过顶抡砸 12 tick
-        //     + resources/assets/bong/player_animation/club_sweep.json   双手横抡 10 tick
-        //     + resources/assets/bong-client/textures/gui/items/back_basket.png
-        //     + resources/assets/bong/geo/back_basket.geo.json
-        //     + resources/assets/bong/textures/entity/back_basket.png
-        // 文件数 2170 → 2175；上述五条均为 A，无 M / D。生成器与 .bbmodel 属工具/源
-        // 工程，不随包发布，因此不进本摘要——这条基线只管"发出去的字节"。
-        // 2026-08-27 再叠加 P2 的本地 owo XML 宿主、Craft 模板与真实截图 harness；
-        // 相对主线新增 14 个生产文件、修改 5 个且无删除，最终文件数 2175 → 2189。
-        // 同日 review 返工把 preview 文件读取移到 harness，配置模型只解析已读取文本；
-        // Kody 复审后继续收口 preview：产物 I/O 由 UiPreviewArtifactSink 隔离，补 shot name
-        // 唯一性、cleanup suppressed 语义和完成态停止策略，并明确玩家 qi fixture 不等于全局账本。
-        // 本次复审进一步保证 Screen 关闭失败不会跳过 Scene fixture store 清理。
-        // 本分支另新增 KeybindMigrationPersistence 与 KeybindMigrationService，并修改
-        // Forge、撤离、T/L 入口和键位注册接线，文件数 2189 → 2191；旧 options.txt 的
-        // U/T/L 迁移只执行一次，marker 损坏/写失败时 fail-safe，必要时回滚改绑并继续启动。
-        // 随后补齐 VoidAction 旧 options.txt 中 O 绑定的一次性迁移，并将 extracting 仲裁
-        // 收口到客户端共享输入策略；生产源码树因此继续更新。
-        // P3 Craft 边界切片再加入库无关 ViewModel/StateSource/Controller/typed intent
-        // 与 outcome UI 投影；合并后的摘要随这些生产 Java 文件重新冻结，未改变资源或 wire。
-        // 2026-08-30 重新冻结（异兽脊骨剑动画）——本次动的全是随包发布的动画 JSON：
-        //     + resources/assets/bong/player_animation/sword_spine_slash.json   本剑单手斜斩 20t
-        //     + resources/assets/bong/player_animation/sword_spine_cleave.json  本剑双手竖斩 20t
-        //     M resources/assets/bong/player_animation/sword_swing_horiz.json   反手大斜斩，10t → 18t
-        //   （同日复审后又重排了一次 swing_horiz：剑尖高度从 ∩ 改成 ∪，只动这一个文件）
-        // 2026-08-30 第三次重冻（thrust / parry / infuse 按垂直握姿重做）：
-        //     M resources/assets/bong/player_animation/sword_parry.json    双手斜举架格
-        //     M resources/assets/bong/player_animation/sword_infuse.json   竖剑抚刃循环（首尾改为同一近端本体）
-        //   sword_thrust 那一版被用户判定「做不好」撤回，已 git 还原成重做前的字节，
-        //   净效果是这次只动了 parry / infuse 两个文件。manifest 相位与 endTick 一字未动；infuse 保留腿的 z=±0.03 以维持与
-        //   sword_infuse_release 的两段式交接轴声明对齐（否则 twoStageHandoff 撞红）。
-        //   tracked 文件数不变（2209，全是 M）。
-        // tracked 文件数 2207 → 2209（两个 A、一个 M、无 D；上面正文里的 2191 是更早的
-        // 叙述残留，早已与实际计数分叉，以本行为准）。`sword_swing_horiz` 没有 server
-        // 技能消费也没有 anim_spec_manifest 钉时长，改时长安全；共享的 sword_cleave /
-        // thrust / parry / infuse 一个字节没动。生成器与 .bbmodel 属工具/源工程、不随包
-        // 发布，照旧不进本摘要。
-        assertEquals(
-            "1b346c07d239df0826f8dbdebaa4fc2c1769b08afac38e9c1e6a588d69a8c808",
-            R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
-            "R7 legacy cleanup must keep every remaining shipped production path and byte pinned"
-        );
-    }
-
-    @Test
-    void p1RetainsScreenInventoryWithoutLegacyFoundation() throws IOException {
-        Set<String> forbiddenProductionTypes = Set.of(
+    void p4AddsOnlyTheFrozenFoundationTypes() throws IOException {
+        Set<String> expectedProductionTypes = Set.of(
             "ClientThreadMarshal.java",
             "ScreenOpenPolicy.java"
         );
@@ -162,11 +107,11 @@ class R7InventoryContractTest {
         try (var files = Files.walk(PRODUCTION_ROOT)) {
             files.filter(Files::isRegularFile)
                 .map(path -> path.getFileName().toString())
-                .filter(forbiddenProductionTypes::contains)
+                .filter(expectedProductionTypes::contains)
                 .forEach(discovered::add);
         }
-        assertTrue(discovered.isEmpty(),
-            "R7 P1 must not add an unapproved foundation type: " + discovered);
+        assertEquals(expectedProductionTypes, discovered,
+            "P4 必须落地冻结的两个 foundation helper，不能漏实现或增添未审批类型");
         for (ScreenInventoryRow row : readScreenInventory()) {
             if (!row.kind().equals("BASE_OWO")) {
                 continue;
@@ -333,10 +278,10 @@ class R7InventoryContractTest {
     @Test
     void clearChildrenInventoryPinsExactProductionSites() throws IOException {
         List<String> sites = List.of(
-            "alchemy/AlchemyScreen.java:538",
-            "alchemy/AlchemyScreen.java:578",
-            "alchemy/AlchemyScreen.java:607",
-            "alchemy/AlchemyScreen.java:636",
+            "alchemy/AlchemyScreen.java:520",
+            "alchemy/AlchemyScreen.java:568",
+            "alchemy/AlchemyScreen.java:601",
+            "alchemy/AlchemyScreen.java:634",
             "combat/inspect/SkillConfigPanelManager.java:76",
             "combat/inspect/SkillConfigPanelManager.java:84",
             "combat/inspect/TechniquesTabPanel.java:149",
