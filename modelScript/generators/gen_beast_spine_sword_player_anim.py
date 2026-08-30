@@ -6,7 +6,8 @@
 
     sword_spine_slash   本剑专属单手斜斩：扛剑过右肩 → 过顶 → 斜劈左前下 → 撕扯回抽
     sword_spine_cleave  本剑专属双手竖斩：双手握柄举剑 → 沿中线整条劈下 → 挂住提回
-    sword_swing_horiz / sword_thrust / sword_parry / sword_infuse   借用的通用剑招
+    sword_swing_horiz   反手大斜斩：剑指左上 → 转刃过顶 → 斜劈右前下（走另一条对角线）
+    sword_thrust / sword_parry / sword_infuse   借用的通用剑招（尚未按本剑重做）
     lower_walk / lower_sprint   纯下半身步态（上半身由架势轨道补齐，见下）
 
 ## 两个坑（第一版都踩了，症状分别是"没有动画"和"剑飘在身外"）
@@ -24,11 +25,12 @@
 `held_item_common.emit_offset` 出料，握把点就落在方块中心 (8,8,8)（授权系那份柄尾在
 y=0 的坐标只活在生成器的 box 表里）。挂手就是把这一点搬到 `HAND_REST`。
 
-## 这不是游戏里的 display 变换
+## 握姿是**静态**的，不是逐动画关键帧
 
-两层静态 group（`sword_right_pitch` 180° 把剑尖从朝上翻成顺着小臂朝下、`sword_right_roll`
-备用）是**便于手调的近似**，留给你改握角。要看真机手持姿态用
-`modelScript/tools/preview_player_anim.py --hold ... --display ...`。
+两层静态 group（`sword_right_pitch` −90° + `sword_right_roll` +90°）把剑身扳成**垂直于
+小臂**，见下面 `add_part` 里的长注释。真机里这一层由物品的 `display.thirdperson_righthand`
+承担——一个招式一个握角在游戏里表达不出来，所以在 Blockbench 里拖 `sword_*` 骨只能当
+取景草稿，**必须反解回手臂四轴**才算数（`bbmodel-to-pose` + 本目录的反解流程）。
 
 ## ⚠ 手改过就别再跑生成器
 
@@ -95,9 +97,23 @@ SWORD_GRIP_PX = np.array([8.0, 8.0, 8.0])
 SIDE = "right"
 
 # 纯下半身动画（lower_*）没有手臂轨道，播起来剑会垂到零姿态、读作"握法变了"。
-# 补一份恒定的持剑架势上半身——取本剑专属动作的 guard 帧。
-STANCE_ANIM = "sword_spine_slash"
-UPPER_PARTS = ("rightArm", "leftArm", "torso", "head")
+# 补一份恒定的持剑架势上半身。
+#
+# **这份架势只活在预览里，不进 emotecraft 源文件。** `lower_walk` / `lower_sprint`
+# 按设计只写 leftLeg/rightLeg/body（`gen_lower_body_gait.assert_lower_only` 挡着），
+# 上半身在真机里由招式动画或 vanilla 透传接管——真要做"持剑跑动"得另起一条
+# UPPER_BODY 通道的架势动画并接触发，不在本文件范围内。
+#
+# 数值来自用户 2026-08-30 在 Blockbench 里 `lower_sprint` t0 手摆的持剑跑动架势
+# （剑横在身前、剑尖指向右前方，双手都搭在缠绳握把上），按静态垂直握姿反解回
+# 手臂四轴：剑尖残差 0.13px，左手离柄 0.56px。torso/head 是用户未动的原值。
+STANCE_POSE = {
+    "rightArm": dict(pitch=-62.7, yaw=+23.7, roll=-101.5, bend=24.9, axis=180),
+    "leftArm": dict(pitch=-79.3, yaw=+47.2, roll=-31.7, bend=16.8, axis=180),
+    "torso": dict(pitch=+2, yaw=+14),
+    "head": dict(pitch=-2, yaw=-6, roll=+0.7),
+}
+UPPER_PARTS = tuple(STANCE_POSE)
 
 
 def load_sword():
@@ -206,12 +222,6 @@ def build_geometry():
     return elements, [root_pos], gmap, atlas
 
 
-def _stance_upper_axes() -> dict[str, dict]:
-    """架势首帧的上半身姿态——给纯下半身动画补预览轨道用。"""
-    _name, _emote, table = P.anim_pose_table(ANIM_DIR / f"{STANCE_ANIM}.json")
-    return {part: axes for part, axes in table[0][1].items() if part in UPPER_PARTS}
-
-
 def _has_upper_body(json_path: Path) -> bool:
     _name, _emote, table = P.anim_pose_table(json_path)
     return any(part in UPPER_PARTS for _tick, pose in table for part in pose)
@@ -229,7 +239,7 @@ def _fill_upper_body(anim: dict, gmap: dict) -> None:
     # 首末各钉一帧：单帧在 loop 动画里会被插值回 defaultValue（PlayerAnimator 那条坑
     # 的 Blockbench 版本），两帧同值才真的"恒定"。
     for t in (0.0, anim["length"]):
-        for part, axes in _stance_upper_axes().items():
+        for part, axes in STANCE_POSE.items():
             prefix, has_bend = PART_GROUPS[part]
             for axis_name in AX.AXIS_ORDER:
                 track(f"{prefix}_{axis_name}").append(

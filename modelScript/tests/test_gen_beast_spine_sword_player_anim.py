@@ -326,10 +326,6 @@ class AnimationsAreActuallyBakedTest(unittest.TestCase):
             f"多出来的多半是架势 filler 误伤")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BladeTravelsWhereTheAnimationSaysTest(unittest.TestCase):
     """两条本剑专属动作的**剑尖轨迹**契约。
 
@@ -426,3 +422,178 @@ class BladeTravelsWhereTheAnimationSaysTest(unittest.TestCase):
             (ANIM / "sword_cleave.json").exists(),
             "期望：共享的 sword_cleave.json 原地不动；实际不见了",
         )
+
+
+class SwingHorizIsTheOtherDiagonalTest(unittest.TestCase):
+    """`sword_swing_horiz` 按本剑口径重做后的契约：**另一条对角线** + 同量级顿挫。
+
+    两条重斜斩要能被玩家从远处一眼分开，所以这里锁的是"走哪条对角线"这个可判定的
+    事实，而不是"好不好看"（那是 round 2 人工闸门的事）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rig = PoseRig(GEN.OUT_BB)
+
+    def _track(self, anim_name):
+        _n, _e, table = RP.anim_pose_table(ANIM / f"{anim_name}.json")
+        out = {}
+        for tick, pose in table:
+            W = self.rig.world(_rig_pose(pose))
+            M = W["sword_right_pitch"]
+            grip = _world(M, _sword_local(0.0))
+            tip = _world(M, _sword_local(SWORD_LEN_PX))
+            shoulder = _world(W["arm_right_pitch"], np.asarray(RP.PARTS["rightArm"]["pivot"], float))
+            out[tick] = {"tip": tip, "grip": grip, "shoulder": shoulder}
+        return out
+
+    def test_swing_horiz_runs_the_opposite_diagonal_from_the_slash(self):
+        """起手在角色左上、落点在右下——正好和 `sword_spine_slash` 相反。
+
+        两条动作要是同向，玩家就只看得出"又劈了一下"，分不出是哪一招。
+        """
+        swing = self._track("sword_swing_horiz")
+        slash = self._track("sword_spine_slash")
+
+        def sweep(track):
+            ticks = sorted(track)
+            return track[ticks[0]]["tip"][0], min(f["tip"][0] for f in track.values())
+
+        start_x, end_x = swing[0]["tip"][0], min(f["tip"][0] for f in swing.values())
+        self.assertGreater(
+            start_x, +8.0,
+            f"期望：swing_horiz 起手剑尖在角色左侧（x > +8）；实际 x={start_x:.1f}")
+        self.assertLess(
+            end_x, -8.0,
+            f"期望：swing_horiz 落到角色右侧（x < -8）；实际最右 {end_x:.1f}")
+
+        swing_dir = np.sign(end_x - start_x)
+        slash_start = slash[0]["tip"][0]
+        slash_dir = np.sign(max(f["tip"][0] for f in slash.values()) - slash_start)
+        self.assertEqual(
+            swing_dir, -slash_dir,
+            f"期望：两条重斜斩走相反的对角线（swing {swing_dir:+.0f} / slash {slash_dir:+.0f}）；"
+            "实际同向——远处看会撞脸")
+
+    def test_swing_horiz_really_comes_down_from_the_shoulder(self):
+        """"从肩部斜斩下来"：剑尖要真的过头顶再落到腰下。"""
+        ys = [f["tip"][1] for f in self._track("sword_swing_horiz").values()]
+        self.assertGreater(max(ys), 38.0, f"期望：最高点过头顶（y > 38）；实际 {max(ys):.1f}")
+        self.assertLess(min(ys), 16.0, f"期望：最低点落到腰下（y < 16）；实际 {min(ys):.1f}")
+
+    def test_the_strike_frame_actually_reaches_out(self):
+        """发力帧手臂要伸出去。
+
+        握姿垂直后剑尖离肩最远只有 `sqrt(臂长² + 刃长²) ≈ 25.7px`（剑身⊥小臂，两段
+        勾股而不是相加）。手臂缩着劈 = 剑尖离肩 20px 出头，看着像在胸前比划；这条门
+        要求斩入~发力段至少有一帧伸到 22px 以上。
+        """
+        armlen = float(np.linalg.norm(
+            np.asarray(RP.PARTS["rightArm"]["pivot"], float) - HAND_R))
+        envelope = float(np.hypot(armlen, SWORD_LEN_PX))
+        for name in ("sword_swing_horiz", "sword_spine_slash"):
+            with self.subTest(anim=name):
+                reach = [float(np.linalg.norm(f["tip"] - f["shoulder"]))
+                         for f in self._track(name).values()]
+                self.assertLessEqual(
+                    max(reach), envelope + 0.5,
+                    f"{name}: 期望剑尖不超出 {envelope:.1f}px 工作空间；实际 {max(reach):.1f}")
+                self.assertGreater(
+                    max(reach), 22.0,
+                    f"{name}: 期望发力段剑尖伸到离肩 > 22px；实际最远只有 {max(reach):.1f}px")
+
+    def test_the_hitch_stays_the_size_the_user_signed_off(self):
+        """顿挫（IMPACT → RIP 那一小提）保持 `sword_spine_slash` 的量级。
+
+        用户验收 round 2 时点名这个量"刚刚好"，别加大也别抹平：抹平就没有"倒钩咬住
+        肉再撕"的读感，加大就变成第二次挥砍。
+        """
+        def hitch(name, impact, rip):
+            track = self._track(name)
+            return float(np.linalg.norm(track[rip]["tip"] - track[impact]["tip"]))
+
+        ref = hitch("sword_spine_slash", 10, 13)
+        got = hitch("sword_swing_horiz", 10, 13)
+        self.assertGreater(
+            got, 0.6 * ref,
+            f"期望：顿挫位移与 spine_slash（{ref:.1f}px）同量级；实际只有 {got:.1f}px——"
+            "小到看不出就等于没有这一拍")
+        self.assertLess(
+            got, 2.2 * ref,
+            f"期望：顿挫位移不超过 spine_slash（{ref:.1f}px）的 2.2 倍；实际 {got:.1f}px——"
+            "这么大已经是第二次挥砍了")
+
+    def test_swing_horiz_is_smoother_than_the_version_it_replaced(self):
+        """关节角二阶差分：整条弧要连贯，不能"抽一下"。
+
+        标定：`sword_spine_slash`（用户认可）12.7 °/t²，`sword_spine_cleave` 36.3，
+        被替换掉的旧 `sword_swing_horiz` 是 49.7——那个数字就是抽动的来源。
+        """
+        _n, _e, table = RP.anim_pose_table(ANIM / "sword_swing_horiz.json")
+        ticks = [t for t, _ in table]
+        keys = ("pitch", "yaw", "roll", "bend")
+        X = np.array([[float(pose["rightArm"].get(k, 0.0)) for k in keys] for _, pose in table])
+        worst = max(
+            float(np.max(np.abs((X[i + 1] - X[i]) / (ticks[i + 1] - ticks[i])
+                                - (X[i] - X[i - 1]) / (ticks[i] - ticks[i - 1]))))
+            for i in range(1, len(ticks) - 1)
+        )
+        self.assertLess(
+            worst, 25.0,
+            f"期望：右臂二阶差分 < 25 °/t²（旧版 49.7 是抽动的来源）；实际 {worst:.1f}")
+
+
+class CarryStanceTest(unittest.TestCase):
+    """纯下半身动画补的**持剑架势**：真双手握 + 只活在预览里。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rig = PoseRig(GEN.OUT_BB)
+        cls.world = cls.rig.world(_rig_pose(dict(GEN.STANCE_POSE)))
+
+    def test_the_stance_holds_the_grip_with_both_hands(self):
+        """架势是双手握：左手掌心贴在柄尾一个手宽内。
+
+        参照组仍是通用 `sword_cleave` 的 8~16px——那是"看起来像但其实没握上"。
+        """
+        M = self.world["sword_right_pitch"]
+        offhand = _world(M, _sword_local(-3.0))
+        lhand = _world(self.world["arm_left_bend"], np.asarray(H.HAND_REST["left"], float))
+        gap = float(np.linalg.norm(lhand - offhand))
+        self.assertLess(
+            gap, 3.0,
+            f"期望：架势左手离柄尾 < 3px（真双手握）；实际 {gap:.1f}px")
+
+    def test_the_stance_carries_the_blade_across_the_body(self):
+        """剑横在身前、剑尖指向角色右前方——不是竖着扛在肩上。"""
+        M = self.world["sword_right_pitch"]
+        blade = _blade_dir(M)
+        self.assertLess(
+            blade[0], -0.7,
+            f"期望：剑尖指向角色右侧（x 分量 < -0.7）；实际 {np.round(blade, 2)}")
+        self.assertLess(
+            abs(blade[1]), 0.6,
+            f"期望：剑身大体水平（|y| < 0.6）；实际 {np.round(blade, 2)}")
+
+    def test_the_stance_never_leaks_into_the_shipped_gait_json(self):
+        """架势只补预览。`lower_*` 出料 JSON 必须仍然只写腿和 body。
+
+        `LowerBodyGaitController` 把步态挂在 LOWER_BODY 通道，上半身靠
+        PlayerAnimator 的"无关键帧就原样透传"交给招式动画；一旦架势漏进 JSON，
+        跑动就会把玩家正在放的招式上半身抹平。
+        """
+        import json as _json
+
+        for name in ("lower_walk", "lower_sprint"):
+            with self.subTest(anim=name):
+                moves = _json.loads((ANIM / f"{name}.json").read_text())["emote"]["moves"]
+                leaked = {k for m in moves for k in m} - {"tick", "easing", "body",
+                                                          "leftLeg", "rightLeg"}
+                self.assertEqual(
+                    leaked, set(),
+                    f"期望：{name}.json 只写 body/双腿；实际漏进了 {sorted(leaked)}——"
+                    "上半身会被步态踩掉")
+
+
+if __name__ == "__main__":
+    unittest.main()
