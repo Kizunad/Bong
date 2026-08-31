@@ -44,6 +44,14 @@
                             <color>#E0E0E0</color>
                             <horizontal-text-alignment>center</horizontal-text-alignment>
                         </label>
+                        <label id="repair-feedback">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#FF8080</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
                         <flow-layout id="repair-durability-track" direction="horizontal">
                             <sizing>
                                 <horizontal method="fixed">200</horizontal>

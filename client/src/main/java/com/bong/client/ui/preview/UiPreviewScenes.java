@@ -388,7 +388,10 @@ final class UiPreviewScenes {
 
         @Override
         public Screen createScreen() {
-            return new RepairScreen("锈骨剑", 0.42f, 4242L, 1, 64, 2);
+            // 预览不应触碰真实网络；组合根注入一个确定性本地 sink。
+            return new RepairScreen(
+                "锈骨剑", 0.42f, 4242L, 1, 64, 2, intent ->
+                    com.bong.client.ui.intent.UiIntentResult.accepted());
         }
 
         @Override

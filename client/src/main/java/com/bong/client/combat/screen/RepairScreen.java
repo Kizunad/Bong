@@ -1,6 +1,5 @@
 package com.bong.client.combat.screen;
 
-import com.bong.client.combat.RepairClientIntentSink;
 import com.bong.client.combat.RepairIntent;
 import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
 import com.bong.client.ui.intent.UiIntentResult;
@@ -26,27 +25,10 @@ public final class RepairScreen extends OwoXmlScreenHost<FlowLayout> {
     private final int stationY;
     private final int stationZ;
     private final UiIntentSink<RepairIntent> intentSink;
+    private LabelComponent feedbackLabel;
+    private String feedbackText = "";
 
     public RepairScreen(
-        String weaponLabel,
-        float durabilityNorm,
-        long weaponInstanceId,
-        int stationX,
-        int stationY,
-        int stationZ
-    ) {
-        this(
-            weaponLabel,
-            durabilityNorm,
-            weaponInstanceId,
-            stationX,
-            stationY,
-            stationZ,
-            RepairClientIntentSink.production()
-        );
-    }
-
-    RepairScreen(
         String weaponLabel,
         float durabilityNorm,
         long weaponInstanceId,
@@ -79,6 +61,9 @@ public final class RepairScreen extends OwoXmlScreenHost<FlowLayout> {
         LabelComponent durabilityLabel = label("repair-durability");
         durabilityLabel.text(Text.literal("耐久: " + Math.round(durabilityNorm * 100) + "%"));
 
+        feedbackLabel = label("repair-feedback");
+        feedbackLabel.text(Text.literal(feedbackText));
+
         FlowLayout durabilityFill = component(FlowLayout.class, "repair-durability-fill");
         durabilityFill.horizontalSizing(Sizing.fixed(Math.round(durabilityNorm * DURABILITY_BAR_WIDTH)));
         durabilityFill.surface(Surface.flat(durabilityColor()));
@@ -89,7 +74,7 @@ public final class RepairScreen extends OwoXmlScreenHost<FlowLayout> {
             .onPress(button -> dispatch("pill"));
     }
 
-    private void dispatch(String material) {
+    void dispatch(String material) {
         UiIntentResult result = intentSink.dispatch(new RepairIntent.Commit(
             material,
             weaponInstanceId,
@@ -99,6 +84,12 @@ public final class RepairScreen extends OwoXmlScreenHost<FlowLayout> {
         ));
         if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
             closeIfCurrentScreen();
+            return;
+        }
+        // 本地拒绝或传输失败必须留在当前界面，并把原因反馈给玩家。
+        feedbackText = "养护未提交: " + result.reason();
+        if (feedbackLabel != null) {
+            feedbackLabel.text(Text.literal(feedbackText));
         }
     }
 
@@ -141,5 +132,9 @@ public final class RepairScreen extends OwoXmlScreenHost<FlowLayout> {
 
     public int durabilityBarWidthForTests() {
         return DURABILITY_BAR_WIDTH;
+    }
+
+    String feedbackTextForTests() {
+        return feedbackText;
     }
 }
