@@ -1,6 +1,5 @@
 package com.bong.client.combat.screen;
 
-import com.bong.client.combat.RepairClientIntentSink;
 import com.bong.client.combat.RepairIntent;
 import com.bong.client.ui.intent.UiIntentSink;
 
@@ -14,10 +13,6 @@ public final class RepairScreenFactory {
 
     public RepairScreenFactory(UiIntentSink<RepairIntent> intentSink) {
         this.intentSink = Objects.requireNonNull(intentSink, "intentSink must not be null");
-    }
-
-    public static RepairScreenFactory production() {
-        return new RepairScreenFactory(RepairClientIntentSink.production());
     }
 
     public RepairScreen create(

@@ -1,6 +1,8 @@
 package com.bong.client.inventory;
 
 import com.bong.client.BongClient;
+import com.bong.client.combat.RepairClientIntentSink;
+import com.bong.client.combat.screen.RepairScreenFactory;
 import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
@@ -89,7 +91,9 @@ public final class InspectScreenBootstrap {
             sy = (int) Math.floor(client.player.getY());
             sz = (int) Math.floor(client.player.getZ());
         }
-        client.setScreen(com.bong.client.combat.screen.RepairScreenFactory.production().create(
+        // 组合根持有生产 transport，工厂本身只接收抽象 sink。
+        RepairScreenFactory factory = new RepairScreenFactory(RepairClientIntentSink.production());
+        client.setScreen(factory.create(
             item.displayName(), (float) item.durability(), item.instanceId(), sx, sy, sz));
     }
 }
