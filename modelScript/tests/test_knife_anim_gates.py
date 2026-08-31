@@ -66,6 +66,9 @@ class DaggerAnimationGateTest(unittest.TestCase):
     def test_dagger_grip_switch(self):
         self.assertFalse(self._fails("dagger_grip_switch"))
 
+    def test_dagger_reverse_grip_switch(self):
+        self.assertFalse(self._fails("dagger_reverse_grip_switch"))
+
 
 class GripIsAMeasurableQuantityTest(unittest.TestCase):
     """v4 的核心回归：**把 `rightItem` 骨头拿掉，新门必须当场报红**。
@@ -133,6 +136,51 @@ class GripIsAMeasurableQuantityTest(unittest.TestCase):
         self.assertEqual([0.0, -90.0, -170.0, -190.0],
                          KG._unwrap([0.0, -90.0, -170.0, 170.0]))
         self.assertEqual([10.0, 20.0], KG._unwrap([10.0, 20.0]), "不跨界时不该改动")
+
+
+class GripSwitchPairTest(unittest.TestCase):
+    """换握去/回两条必须是**焊死的一对**。
+
+    这对存在的理由是个系统层的账：one-shot emote 的 stopTick 混出会把 `rightItem`
+    拉回 0，"换完握就一直反握"单条 emote 表达不了。回程做成一招之后，握法状态由
+    "当前播的是哪一条"承载 —— 前提是两端严丝合缝，否则来回切会在衔接处跳，而这种跳
+    只有连着播才看得见，接触表那种静态图完全看不出来。
+    """
+
+    PAIR = ("dagger_grip_switch", "dagger_reverse_grip_switch")
+
+    def test_the_two_ends_are_axis_for_axis_identical(self):
+        a, b = (KG.KnifeTake(n, KG.DAGGER_MODEL) for n in self.PAIR)
+        pairs = ({(p, ax) for p, axes in a.kfs.items() for ax in axes}
+                 | {(p, ax) for p, axes in b.kfs.items() for ax in axes})
+        for my, other, my_t, other_t in ((a, b, 0.0, 8.0), (a, b, 8.0, 0.0)):
+            for part, axis in sorted(pairs):
+                with self.subTest(part=part, axis=axis, tick=my_t):
+                    self.assertAlmostEqual(
+                        my.sample(part, axis, my_t), other.sample(part, axis, other_t),
+                        places=6,
+                        msg=f"{self.PAIR[0]}@t{my_t:g} 与 {self.PAIR[1]}@t{other_t:g} 的 "
+                            f"{part}.{axis} 对不上 —— 来回切会跳")
+
+    def test_they_sweep_the_grip_in_opposite_directions(self):
+        angs = {}
+        for name in self.PAIR:
+            take = KG.KnifeTake(name, KG.DAGGER_MODEL)
+            series = KG._unwrap([take.grip_angle_at(t)[0] for t in take.ticks])
+            angs[name] = series[-1] - series[0]
+        self.assertLess(angs[self.PAIR[0]] * angs[self.PAIR[1]], 0.0,
+                        f"一去一回必须反向，实测扫过 {angs}")
+        for name, swept in angs.items():
+            self.assertAlmostEqual(abs(swept), 180.0, delta=KG.FLIP_TOL,
+                                   msg=f"{name} 扫过 {swept:.1f}°，不是半圈")
+
+    def test_both_pass_through_the_same_outward_corridor(self):
+        """半程时刃都该指向玩家右外侧 —— 反过来会横穿身体前方往躯干/头上蹭。"""
+        for name in self.PAIR:
+            take = KG.KnifeTake(name, KG.DAGGER_MODEL)
+            mid = take.grip_angle_at(4.0)[0]
+            self.assertLess(mid, 0.0,
+                            f"{name} 半程握法角 {mid:+.0f}°，走廊反了")
 
 
 class GateGeometryUnitTest(unittest.TestCase):

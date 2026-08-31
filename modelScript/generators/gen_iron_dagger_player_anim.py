@@ -56,6 +56,7 @@ DEFAULT_ANIMS = [
     "dagger_slash",
     "dagger_reverse_slash",
     "dagger_grip_switch",
+    "dagger_reverse_grip_switch",
     "sword_parry",
     "lower_walk",
     "lower_sprint",
@@ -259,9 +260,19 @@ def main():
 
     elements, outliner, gmap, atlas = build_geometry()
     animations = []
+    # 默认清单里的动画**必须存在**。以前这里对缺失一律 `continue`，于是
+    # DEFAULT_ANIMS 写错一个名字、或新动画还没 `git add`（golden 沙箱只复制已跟踪
+    # 文件），产出的 bbmodel 会静默少一条动画 —— 而 golden 会把这个少了一条的结果
+    # 当成正确基线记下来。2026-09-01 加 dagger_reverse_grip_switch 时实测踩到。
+    # 显式 `--anims` 仍然宽容，那是临时挑几条烘的用法。
+    strict = args.anims is DEFAULT_ANIMS
     for anim in args.anims:
         path = ANIM_DIR / f"{anim}.json"
         if not path.exists():
+            if strict:
+                raise SystemExit(
+                    f"DEFAULT_ANIMS 里的 {anim} 在 {ANIM_DIR} 找不到。"
+                    f"新动画忘了 git add？（golden 沙箱只复制已跟踪文件）")
             continue
         try:
             animations.append(convert_animation(path, gmap))

@@ -32,7 +32,9 @@ from gen_iron_dagger_player_anim import (  # noqa: E402
 
 GRIPPED = {"dagger_reverse_slash": {0: 180.0, 8: 180.0},
            "dagger_grip_switch": {0: 0.0, 2: 12.0, 3: -18.0, 4: -78.0,
-                                  5: -140.0, 6: -172.0, 8: 180.0}}
+                                  5: -140.0, 6: -172.0, 8: 180.0},
+           "dagger_reverse_grip_switch": {0: 180.0, 2: 168.0, 3: 162.0, 4: 102.0,
+                                          5: 40.0, 6: 8.0, 8: 0.0}}
 UNGRIPPED = ("dagger_stab", "dagger_slash")
 
 
@@ -150,6 +152,41 @@ class ItemSpinMathTest(unittest.TestCase):
                                msg=f"半圈之后刃向应指向 −Y，实际 {blade}")
         self.assertAlmostEqual(local[0][0], 1.0, places=4,
                                msg="刃口轴（X）在这次翻转里必须原地不动")
+
+    def test_a_series_that_crosses_half_a_turn_stays_continuous(self):
+        """theta 越过 ±180 时欧拉主值会跳 360 —— emote 逐轴插值就会反绕一圈。
+
+        实测：theta = −192° 的 roll 主值是 **+173**，紧接在 −180 的 roll = −180 之后。
+        逐轴线性插值会让那一轴走 353° 的远路，渲出来是刀在半路猛地反转一圈再转回来，
+        而每一帧单独看都对。`item_spin_series` 必须把它连续化成 −187。
+        """
+        thetas = [-180.0, -192.0, -162.0, -102.0, -40.0, 0.0]
+        naive = [AC.item_spin(self.disp, BLADE_EDGE_AXIS, t) for t in thetas]
+        self.assertGreater(abs(naive[1]["roll"] - naive[0]["roll"]), 300.0,
+                           "前提没成立：主值在 −192° 处本来就该跳，不跳就没这个坑")
+
+        series = AC.item_spin_series(self.disp, BLADE_EDGE_AXIS, thetas)
+        for i in range(1, len(series)):
+            for axis in ("pitch", "yaw", "roll"):
+                step = abs(series[i][axis] - series[i - 1][axis])
+                self.assertLess(step, 180.0,
+                                f"{axis} 在第 {i} 步跳了 {step:.0f}° —— 连续化没生效")
+
+    def test_continuity_never_changes_the_pose(self):
+        """连续化只给某一轴加减 360°k，姿态必须一帧不变。"""
+        thetas = [-180.0, -192.0, -162.0, -102.0, -40.0, 0.0]
+        for theta, axes in zip(thetas, AC.item_spin_series(self.disp, BLADE_EDGE_AXIS, thetas)):
+            back, off = AC.item_spin_angle(self.disp, BLADE_EDGE_AXIS, axes)
+            self.assertAlmostEqual(
+                (back - theta + 180.0) % 360.0 - 180.0, 0.0, places=3,
+                msg=f"连续化把 θ={theta}° 改成了 {back}° —— 那不是加减整圈")
+            self.assertLess(off, 1e-3)
+
+    def test_a_series_within_one_turn_is_untouched(self):
+        """没越界时连续化必须是恒等的 —— 否则已入库的正向那条出料会无谓地变。"""
+        thetas = [0.0, 12.0, -18.0, -78.0, -140.0, -172.0, -180.0]
+        self.assertEqual([AC.item_spin(self.disp, BLADE_EDGE_AXIS, t) for t in thetas],
+                         AC.item_spin_series(self.disp, BLADE_EDGE_AXIS, thetas))
 
     def test_it_refuses_axes_it_cannot_solve(self):
         with self.assertRaises(NotImplementedError):

@@ -38,22 +38,29 @@ t0=0° / t8≈180° 两帧，把「换握」明确写了出来。本版按它重
     tick 6  基本到位（θ=−172），拳略过冲
     tick 8  用户手摆的反握收势（θ=−180）
 
-## 一条留给系统层的账
+## 回程是另一招，不是状态层
 
-本条是 one-shot emote：`stopTick` 之后 `rightItem` 会随混出回到 0，也就是**刀会自己
-转回正握**。要让"换完握就一直是反握"，得由持握状态层（一条保持性的 idle/hold 动画）
-接手，单条 emote 表达不了。手臂姿态同理。
+本条是 one-shot emote：`stopTick` 之后 `rightItem` 随混出回到 0，刀会自己转回正握。
+让"换完握就一直反握"有两条路 —— 加一层保持性的持握状态层，或者把回程也做成一招。
+本仓选后者：`dagger_reverse_grip_switch`（反握 → 正握）与本条两端**逐轴焊死**
+（`gate_chain` 钉住），握法状态由"当前播的是哪一条"承载，不需要额外状态层。
+
+这对焊缝也是用户 2026-08-31 手摆四条首末帧之后，唯一被补回来的一段：四招之间的架势
+各摆各的、谁也不等于谁，但换握这一对内部是闭合的。
 """
 
-from anim_common import emit_json, item_spin
+from anim_common import emit_json, item_spin_series
 
 DAGGER_DISPLAY_ROT = (0.0, -90.0, 55.0)
 BLADE_EDGE_AXIS = (1.0, 0.0, 0.0)
 
-
-def grip(theta_deg: float) -> dict:
-    """刀在手里绕刃口轴转 theta 度。0 = 正握，−180 = 反握。"""
-    return item_spin(DAGGER_DISPLAY_ROT, BLADE_EDGE_AXIS, theta_deg)
+# theta：0 = 正握，−180 = 反握。整串一起换算并**逐轴连续化** —— 本条的 theta 没越过
+# ±180，连续化是恒等的；走这条路是因为回程那条（`gen_dagger_reverse_grip_switch`）
+# 的反向预备会送到 −192°，在那里欧拉主值会跳 360，逐轴插值就反绕一圈。两条走同一
+# 条换算路径，改 theta 的人不需要先知道自己有没有越界。
+TICKS = (0, 2, 3, 4, 5, 6, 8)
+THETAS = (0.0, +12.0, -18.0, -78.0, -140.0, -172.0, -180.0)
+GRIP = dict(zip(TICKS, item_spin_series(DAGGER_DISPLAY_ROT, BLADE_EDGE_AXIS, THETAS)))
 
 
 POSE = {
@@ -66,7 +73,7 @@ POSE = {
         leftArm=dict(pitch=+11.7, yaw=+27.6, roll=-17.3, bend=+15.0, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, roll=-0.0, bend=+22.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, roll=-0.0, bend=+20.0, axis=0),
-        rightItem=grip(0.0),
+        rightItem=GRIP[0],
     ),
     2: dict(  # 反向预备：刃先往回压一点，拳微沉
         easing="OUTQUAD",
@@ -77,7 +84,7 @@ POSE = {
         leftArm=dict(pitch=+9.0, yaw=+28.5, roll=-15.9, bend=+17.7, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, bend=+21.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, bend=+21.0, axis=0),
-        rightItem=grip(+12.0),
+        rightItem=GRIP[2],
     ),
     3: dict(  # 起转
         easing="INCUBIC",
@@ -88,7 +95,7 @@ POSE = {
         leftArm=dict(pitch=+7.0, yaw=+29.0, roll=-14.0, bend=+20.0, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, bend=+21.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, bend=+21.0, axis=0),
-        rightItem=grip(-18.0),
+        rightItem=GRIP[3],
     ),
     4: dict(  # 刃过横：指向右外侧，离身体最远
         easing="INCUBIC",
@@ -99,7 +106,7 @@ POSE = {
         leftArm=dict(pitch=+4.7, yaw=+30.2, roll=-12.0, bend=+24.1, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, bend=+21.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, bend=+21.0, axis=0),
-        rightItem=grip(-78.0),
+        rightItem=GRIP[4],
     ),
     5: dict(  # 转过大半，拳抬到位
         easing="OUTQUAD",
@@ -110,7 +117,7 @@ POSE = {
         leftArm=dict(pitch=+1.1, yaw=+31.3, roll=-10.0, bend=+25.8, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, bend=+21.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, bend=+21.0, axis=0),
-        rightItem=grip(-140.0),
+        rightItem=GRIP[5],
     ),
     6: dict(  # 基本到位，拳略过冲
         easing="INOUTSINE",
@@ -121,7 +128,7 @@ POSE = {
         leftArm=dict(pitch=-2.3, yaw=+32.6, roll=-7.7, bend=+25.5, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, bend=+21.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, bend=+21.0, axis=0),
-        rightItem=grip(-172.0),
+        rightItem=GRIP[6],
     ),
     8: dict(  # 用户手摆的反握收势
         easing="INOUTSINE",
@@ -132,7 +139,7 @@ POSE = {
         leftArm=dict(pitch=-7.1, yaw=+28.4, roll=-5.4, bend=+20.0, axis=180),
         rightLeg=dict(pitch=-12.0, yaw=+4.0, roll=-0.0, bend=+22.0, axis=0),
         leftLeg=dict(pitch=+12.0, yaw=+2.0, roll=-0.0, bend=+20.0, axis=0),
-        rightItem=grip(-180.0),
+        rightItem=GRIP[8],
     ),
 }
 

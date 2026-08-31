@@ -120,6 +120,27 @@ def item_spin(display_rotation, local_axis, theta_deg: float) -> dict:
     return {"pitch": round(pitch, 4), "yaw": round(yaw, 4), "roll": round(roll, 4)}
 
 
+def item_spin_series(display_rotation, local_axis, thetas) -> list[dict]:
+    """一串 theta -> 一串 `rightItem` 三元组，**逐轴连续化**。
+
+    为什么不能逐帧各调各的 `item_spin`：欧拉分解取的是主值，theta 越过 ±180 时某一轴
+    会跳 360°。emote 是**逐轴线性插值**的，跳过去之后那一轴会朝反方向绕整整一圈 ——
+    渲出来是刀在半路猛地反转一圈再转回来，而每一帧单独看都对。
+
+    连续化只给某一轴加减 360°k。`Rz(roll)·Ry(yaw)·Rx(pitch)` 里任何一个因子加 360°
+    都是同一个旋转，所以姿态一帧不变，变的只是插值走哪条路。
+    """
+    out = []
+    for theta in thetas:
+        axes = item_spin(display_rotation, local_axis, theta)
+        if out:
+            prev = out[-1]
+            axes = {k: round(v + 360.0 * round((prev[k] - v) / 360.0), 4)
+                    for k, v in axes.items()}
+        out.append(axes)
+    return out
+
+
 def item_spin_angle(display_rotation, local_axis, item_axes: dict) -> tuple[float, float]:
     """`item_spin` 的逆：`rightItem` 的三个角 -> (theta, 偏轴角)，度。
 
