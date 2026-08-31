@@ -49,3 +49,11 @@ value = 8.0      # 返工前只有 6.2px（刀身长 11px），观众看不出�
 key = "never_lifts_into_the_torch_pose"
 check = "tip_below"
 value = 26.0     # 下巴线；返工前刀尖常年在 29~32
+
+[[feature]]
+key = "the_grip_stays_forward"
+check = "grip_angle_at"
+tick = 0.0
+value = 0        # 直刺全程正握。握法在 v4 才成为一个可量的量（`rightItem` 骨头），
+                 # 补这一条是为了「误加手持物旋转」也有人写的清单接着
+tol = 8.0

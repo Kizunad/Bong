@@ -67,6 +67,74 @@ class DaggerAnimationGateTest(unittest.TestCase):
         self.assertFalse(self._fails("dagger_grip_switch"))
 
 
+class GripIsAMeasurableQuantityTest(unittest.TestCase):
+    """v4 的核心回归：**把 `rightItem` 骨头拿掉，新门必须当场报红**。
+
+    这不是造一个假缺陷 —— 「没有手持物骨头」正是 v1~v3 三个版本的真实形状。当时
+    `dagger_grip_switch` 全程握法角 0°（刀在手里一动没动）却被判合格，
+    `dagger_reverse_slash` 号称反握实际全程正握。两条都必须被下面的用例钉死。
+    """
+
+    @staticmethod
+    def _strip_item_bone(name):
+        """还原成 v3：同一条动画，但手持物骨头不存在。"""
+        take = KG.KnifeTake(name, KG.DAGGER_MODEL)
+        take.kfs = {k: v for k, v in take.kfs.items() if k != "rightItem"}
+        return take
+
+    def test_a_grip_switch_without_the_item_bone_fails_the_flip_gate(self):
+        take = self._strip_item_bone("dagger_grip_switch")
+        res = KG.gate_flip(take.grip_angle_at, take.ticks, item_at=take.item_at)
+        self.assertFalse(res.ok,
+                         f"手臂照抬照转、刀却一度没动，也必须判红。实际：{res.detail}")
+        self.assertLess(res.worst, 1.0,
+                        f"没有手持物骨头时握法角必须恒为 0，实测 {res.worst}")
+
+    def test_the_shipped_grip_switch_passes_the_same_gate(self):
+        take = KG.KnifeTake("dagger_grip_switch", KG.DAGGER_MODEL)
+        res = KG.gate_flip(take.grip_angle_at, take.ticks, item_at=take.item_at)
+        self.assertTrue(res.ok, f"出料版必须过这道门。实际：{res.detail}")
+
+    def test_a_reverse_slash_without_the_item_bone_fails_the_hold_gate(self):
+        take = self._strip_item_bone("dagger_reverse_slash")
+        res = KG.gate_grip_hold(take.grip_angle_at, take.ticks, 180.0)
+        self.assertFalse(res.ok,
+                         f"号称反握、实际全程正握，必须判红。实际：{res.detail}")
+        self.assertGreater(res.worst, 170.0,
+                           f"偏差应接近整整 180°，实测 {res.worst}")
+
+    def test_the_shipped_reverse_slash_holds_the_reverse_grip_all_the_way(self):
+        take = KG.KnifeTake("dagger_reverse_slash", KG.DAGGER_MODEL)
+        res = KG.gate_grip_hold(take.grip_angle_at, take.ticks, 180.0)
+        self.assertTrue(res.ok, f"出料版必须全程反握。实际：{res.detail}")
+
+    def test_forward_grip_animations_report_exactly_zero(self):
+        """正握两招不该带任何手持物旋转 —— 带了就是误加，也得报。"""
+        for name in ("dagger_stab", "dagger_slash"):
+            take = KG.KnifeTake(name, KG.DAGGER_MODEL)
+            worst = max(abs(take.grip_angle_at(t)[0]) for t in take.ticks)
+            self.assertLess(worst, 1e-6, f"{name} 不该有握法旋转，实测最大 {worst}")
+
+    def test_the_grip_angle_is_independent_of_the_arm_pose(self):
+        """握法角量的是「刀相对手」，手臂怎么摆都不该影响它。
+
+        这一条把 v3 那个错误判断反过来钉住：当时的结论是「刃相对前臂的朝向恒等于零，
+        所以这个量没法用」——**前半句对，后半句错**。剥掉手臂差异之后剩下的正是
+        手持物骨头，它恰恰是唯一该管这件事的东西。
+        """
+        take = KG.KnifeTake("dagger_reverse_slash", KG.DAGGER_MODEL)
+        angles = [take.grip_angle_at(t)[0] for t in take.ticks]
+        # 这条动画手臂从 pitch −151 扫到 −26、bend 从 10 折到 51，握法角必须纹丝不动
+        self.assertLess(max(angles) - min(angles), 1e-6,
+                        f"手臂扫过 125°，握法角却应恒定，实测跨度 {max(angles) - min(angles)}")
+
+    def test_unwrap_keeps_a_half_turn_from_reading_as_a_reversal(self):
+        """主值序列跨 ±180 会跳；不连续化就会把一次干净翻转读成「反向晃了 180°」。"""
+        self.assertEqual([0.0, -90.0, -170.0, -190.0],
+                         KG._unwrap([0.0, -90.0, -170.0, 170.0]))
+        self.assertEqual([10.0, 20.0], KG._unwrap([10.0, 20.0]), "不跨界时不该改动")
+
+
 class GateGeometryUnitTest(unittest.TestCase):
     """门内部那几个几何小工具的正反用例 —— 它们错了，上面两层一起假绿。"""
 
@@ -118,22 +186,37 @@ class GateThresholdProvenanceTest(unittest.TestCase):
         self.assertLess(KG.ELEV_CEIL, 39.0,
                         "返工前最坏 +48°、次坏 +41°；上限必须卡在它们之下")
 
-    def test_flip_thresholds_sit_between_the_measured_bad_and_good(self):
-        """2026-08-31 重标：用户把转刀手摆成「边抬边翻」，两个数都跟着动。
+    def test_flip_target_is_a_real_half_turn_not_the_v3_stand_in(self):
+        """v4：换握量的是「刀在手里转过多少」，门限回到 180±12。
 
-        同口径实测（`gate_flip` 的 docstring 里有完整表）：
-          dagger_stab          握把 6.2px / 刃向 26.7°  ← 完全没换握的参照
-          dagger_grip_switch        11.3px /       67.0°  ← 本设计
-          dagger_slash              15.1px /       87.1°  ← 一次完整挥砍的参照
+        **v3 的 55° 是个教训，不是历史细节**：当时链上没有 `rightItem` 骨头，握法这个
+        量在数据里根本不存在，判据只好退而量世界刃向 —— 而那个量对一次普通挥砍也有
+        87°。门限于是被从 180 一路调到 55，去迁就一条**根本没在换握**的动画。
+        新门限的两侧都有实测：用户手摆的两帧是 177.5° 与 180.5°（容差必须盖住），
+        「完全没换握」是 0°（必须被拒）。
         """
-        self.assertGreater(KG.FLIP_MIN_DEG, 26.7,
-                           "下限低于「完全没换握」的实测值就放行了 v1 那版")
-        self.assertLessEqual(KG.FLIP_MIN_DEG, 67.0,
-                            "下限高过本设计达成的 67° 就是把可行解写成不及格")
+        self.assertEqual(180.0, KG.FLIP_TARGET, "换握就是把刃倒转半圈，没有第二个数")
+        self.assertGreaterEqual(KG.FLIP_TOL, 3.0,
+                                "容差要盖得住用户手摆的 177.5° / 180.5°")
+        self.assertLess(KG.FLIP_TOL, 90.0,
+                        "容差大到 90 就把「转了一半」也放行了")
+        self.assertGreater(KG.FLIP_TARGET - KG.FLIP_TOL, 90.0,
+                           "下沿必须高过半圈的一半，否则「刃只侧过来」也算换握")
         self.assertGreater(KG.FLIP_TRAVEL_MAX, 11.3,
                            "上限低于本设计的握把行程，等于门限贴着地板")
         self.assertLess(KG.FLIP_TRAVEL_MAX, 15.1,
                         "上限放到「一次完整挥砍」的行程以上，转刀退化成挥刀也报不出来")
+
+    def test_off_axis_ceiling_separates_interpolation_residue_from_a_wrong_axis_flip(self):
+        """偏轴门限夹在两族实测之间：插值残差 9.8°，绕错轴 180°。
+
+        emote 逐轴线性插值一段 60°/tick 的自转，中间帧不会精确落在纯 X 旋转的单参
+        子群上 —— 这是格式本身的代价，不是缺陷。而绕刀面法线翻会**全程**报大偏轴。
+        """
+        self.assertGreater(KG.GRIP_OFF_AXIS_MAX, 9.8,
+                           "门限低于插值残差 = 干净动画永远报警")
+        self.assertLess(KG.GRIP_OFF_AXIS_MAX, 90.0,
+                        "门限放到 90 以上，绕刀面法线翻也报不出来")
 
     def test_decel_ratio_sits_between_a_real_finish_and_a_hard_stop(self):
         """收势减速：四条实测末格占峰速 0~1%；被掐断的极端是 100%。"""

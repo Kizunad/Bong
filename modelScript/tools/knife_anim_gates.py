@@ -81,22 +81,21 @@ TELEPORT_MAX = 9.0
 
 # 换握动作里，世界刃向必须至少转过这么多度，同时握把不许"整个挥出去"（见 `gate_flip`）。
 #
-# 2026-08-31 重标：用户手摆的两端把转刀从「原地转腕」改成了「一边抬起来一边翻腕」
-# （反握低位 → 正握胸前架），两个数都得跟着动。四条动画同口径实测：
-#
-#   动画                 握把离首帧最远   世界刃向最大转过
-#   dagger_stab              6.2px            26.7°   ← 完全没换握的参照
-#   dagger_grip_switch      10.1px            66.7°   ← 本条
-#   dagger_slash            15.1px            87.1°   ← 一次完整挥砍的参照
-#
-# 下限取 55：远高于「等于没换握」的 26.7（v1 那版转刀就是 26°），又低于本设计达成的
-# 66.7。上限取 13px：卡在本条的 10.1 和「一次挥砍」的 15.1 之间 —— 转刀要是退化成
-# 挥一刀，这条会红。两个数都夹在**实测的坏值与好值之间**，不是贴着天花板设的。
-FLIP_MIN_DEG = 55.0
-FLIP_TRAVEL_MAX = 13.0
+# 换握的门限见 `gate_flip` 上方（v4 起量的是「刀在手里转过多少」，不再是世界刃向）。
+# 这里留一条记录，因为它是本套门禁栽过的最大一个跟头：
+#   v3 的 FLIP_MIN_DEG = 55° 是**为了让一条根本没换握的动画通过**而定的。当时链上
+#   没有 `rightItem` 骨头，握法这个量在数据里不存在，于是判据退化成量世界刃向 ——
+#   而那个量对一次普通挥砍也有 87°。门限被从 180 一路调到 55 去迁就替代品，
+#   看起来"夹在实测的坏值与好值之间"，实际上量的根本不是要管的那件事。
+#   教训：门报的数一直"合理"，不代表它在报你要的东西。
 
 # 肘最小折角。匕首够不着，伸直只是把手腕送到对方面前 —— 这条是匕首和剑的分界。
 ELBOW_MIN_DEG = 15.0
+
+# 肘开合幅度下限。四条实测跨度：直刺 48.6°、下劈 20.4°、反握斩 41.0°、换握 17.5°；
+# 「肘锁死」的注入版是 0°。取 12：低于最小的那条（换握 17.5，它本来就不是发力招），
+# 高于板子动作的 0。
+ELBOW_SPAN_MIN = 12.0
 
 # 首末帧逐轴允许的差（弧度）。非循环招连击时首帧接末帧，差一点就跳一下。
 GUARD_TOL = 1e-6
@@ -170,7 +169,9 @@ class KnifeTake:
         doc = json.loads((ANIM_DIR / f"{anim}.json").read_text(encoding="utf-8"))
         self.name = anim
         self.emote = doc.get("emote", doc)
-        self.kfs = RA.collect_keyframes(self.emote)
+        self.kfs = P.collect_keyframes(self.emote)
+        # 剥掉手持物骨头的同一条动画 —— `grip_angle_at` 拿它当"没转刀"的对照。
+        self.kfs_bare = {k: v for k, v in self.kfs.items() if k not in P.ITEM_PART_OF.values()}
         self.end = float(self.emote.get("endTick", 8))
         self.disp = display_of(bbmodel)
         self.grip_px, self.tip_px, self.butt_px = held_item_probe(bbmodel)
@@ -182,6 +183,36 @@ class KnifeTake:
         """→ (握把, 刃尖, 柄尾) 的 Bedrock 世界坐标。"""
         M = P.hand_transform(self.kfs, t, self.disp)
         return (M @ self.grip_px)[:3], (M @ self.tip_px)[:3], (M @ self.butt_px)[:3]
+
+    def grip_angle_at(self, t: float) -> tuple[float, float]:
+        """→ (握法角 θ, 偏轴角)，度。刀**在手里**转过的角度，与手臂姿态无关。
+
+        这是本套门禁 v4 加进来的量。**它以前被判定成"恒等于零"** —— 那个判定在当时
+        是对的：手持物被 display 变换焊死在前臂上，没有 `rightItem` 骨头时刃相对前臂
+        的朝向按定义不变。于是「换握」在数据里根本不存在，`gate_flip` 只好退而量世界
+        刃向，而那个量对一次普通挥砍也有 87°，分辨不了。
+
+        算法：同一 tick 上算两次手持物变换 —— 一次带 `rightItem`，一次把它剥掉 ——
+        取 `R_rest⁻¹ · R_item`。链上其余部分（肩、bend、R_ATTACH、display）全部相消，
+        剩下的正好是刀在**自己局部系**里的那个旋转，即 `R_disp⁻¹·R_item·R_disp`。
+        display 的均匀缩放是标量，同样相消。
+
+        θ 取该矩阵绕刀身局部 **X（刃口轴）** 的分量：`atan2(M[2,1], M[1,1])`，
+        0 = 正握、±180 = 反握。**不要改回"轴角分解"那种写法** —— 半圈旋转的轴没有
+        符号，θ=±180 时符号会随数值噪声乱跳，实测让门报出「反向预备 180°」这种鬼话。
+        返回的是主值（−180, 180]，跨 ±180 的连续化由调用方 `_unwrap` 做。
+
+        第二个返回值 = `M·x̂` 离 `x̂` 多远：绕刀面法线（Z）翻同样能把刃倒过来，但会
+        把刃口翻到另一侧，是另一个动作，报 90°。纯 X 旋转恒为 0，与 θ 大小无关。
+        """
+        R = P.hand_transform(self.kfs, t, self.disp)[:3, :3]
+        R0 = P.hand_transform(self.kfs_bare, t, self.disp)[:3, :3]
+        M = np.linalg.inv(R0) @ R
+        theta = math.degrees(math.atan2(M[2, 1], M[1, 1]))
+        x_img = M @ np.array([1.0, 0.0, 0.0])
+        x_img = x_img / np.linalg.norm(x_img)
+        off = math.degrees(math.acos(np.clip(float(x_img[0]), -1.0, 1.0)))
+        return theta, off
 
     def blade_dir_at(self, t: float) -> np.ndarray:
         g, tip, _ = self.item_at(t)
@@ -319,28 +350,45 @@ def gate_elev(item_at, ticks, ceil=ELEV_CEIL, since=None) -> KnifeGateResult:
                            f"最大 {worst:+.0f}°（t{wt:g}），上限 {ceil:.0f}°{win}")
 
 
+BEHIND_LATERAL = 6.0     # 只有横向落在身体后方"投影里"的刀尖才算绕背：躯干半宽 4 +
+                         # 2px 余量。刀尖甩到体侧 x=−7.6（换握的反握收势就是这样）时
+                         # 深度再大也只是"在身体旁边"，遮不住也穿不进。
+
+
 def gate_behind(item_at, torso_frame_at, ticks, cap=BEHIND_MAX,
-                until=None) -> KnifeGateResult:
+                until=None, lateral=BEHIND_LATERAL) -> KnifeGateResult:
     """刀尖不许绕到自己背后去。
 
-    `until` 把窗口收在跟随动作之前。反握上撕的收势本来就要把刃甩到右后（用户手摆的
-    末帧刀尖在体坐标 z=+13.2）—— 那是撕开之后的余势，不是败笔。而这条门当初要抓的
-    是**蓄势段刀尖绕到后脑勺**（返工前实测 z=+8.9），那一段在撞击帧之前，收在窗口里
-    teeth 不丢；窗口之后由 `gate_selfclip` / `gate_head` / `gate_decel` 接着看。
+    两处收窄，各有实测理由：
+
+    `lateral`：只看横向落在躯干投影内的刀尖。反握的收势刃自然朝身后垂，但刀尖在
+    体侧（换握末帧实测 x=−7.6，躯干半宽才 4）—— 那是"在身边"，不是"绕到背后"。
+    按深度一刀切会把这种正常收势判红，而真正要抓的「蓄势段刀尖绕到后脑勺」
+    （返工前实测 z=+8.9、x=−1.2）横向就在躯干投影里，teeth 不丢。
+
+    `until` 把窗口收在跟随动作之前，给「撕开之后的余势」留出空间；窗口之后由
+    `gate_selfclip` / `gate_head` / `gate_decel` 接着看。
     """
     lim = ticks[-1] if until is None else until
-    worst, wt = -1e9, 0.0
+    worst, wt, skipped = -1e9, 0.0, 0
     for t in ticks:
         if t > lim + 1e-9:
             continue
         _g, tip, _b = item_at(t)
-        z = float((torso_frame_at(t) @ np.append(tip, 1.0))[2])
-        if z > worst:
-            worst, wt = z, t
+        loc = (torso_frame_at(t) @ np.append(tip, 1.0))[:3]
+        if abs(float(loc[0])) > lateral:
+            skipped += 1
+            continue
+        if float(loc[2]) > worst:
+            worst, wt = float(loc[2]), t
+    if worst < -1e8:          # 全程都在体侧
+        return KnifeGateResult("behind", "刀尖绕背", True, 0.0,
+                               f"刀尖全程在体侧（横向 >{lateral:g}px），不构成绕背")
     ok = worst <= cap
     win = "" if until is None else f"，窗口 t≤{until:g}"
+    side = f"，{skipped} 帧在体侧不计" if skipped else ""
     return KnifeGateResult("behind", "刀尖绕背", ok, worst,
-                           f"体坐标最深 z={worst:+.1f}（t{wt:g}），上限 {cap:+.1f}{win}")
+                           f"体坐标最深 z={worst:+.1f}（t{wt:g}），上限 {cap:+.1f}{win}{side}")
 
 
 def gate_head(item_at, limbs_at, head_frame_at, ticks, margin=HEAD_MARGIN) -> KnifeGateResult:
@@ -639,37 +687,119 @@ def gate_blendout(emote, min_blend=BLENDOUT_MIN) -> KnifeGateResult:
                            f"下限 {min_blend:g}")
 
 
-def gate_flip(item_at, ticks, floor=FLIP_MIN_DEG,
-              travel_cap=FLIP_TRAVEL_MAX) -> KnifeGateResult:
-    """换握必须真把刃翻过来：刃的世界朝向转过 ≥ floor，同时握把没有"整个挥出去"。
+GRIP_TOL = 12.0          # 「握法没变」的容差。四条实测：保持型动画全程 0.00°，
+                         # 换握那条走满 180°。12° 卡在两者之间，且大于插值噪声（<0.6°）。
+GRIP_OFF_AXIS_MAX = 20.0 # 翻转轴离刃口轴多远算"翻错了轴"。绕刀面法线（Z）翻会**全程**
+                         # 报 90°，包括关键帧本身。20 的余量留给插值残差：emote 逐轴
+                         # 线性插值一段 60°/tick 的自转，中间帧不会精确落在纯 X 旋转的
+                         # 单参子群上，实测最大偏 9.8°（关键帧上恒为 0.0°）。
+                         # 保持型动画（正握/反握不变）全程 0.0°。
+FLIP_TARGET = 180.0      # 换握 = 刃倒转半圈。
+FLIP_TOL = 12.0          # 用户手摆的两帧分别是 177.5° 与 180.5°，容差要盖住手摆抖动。
+FLIP_BACKLASH_MAX = 25.0 # 允许的反向预备幅度；超过这个就不是预备，是来回晃。
+FLIP_TRAVEL_MAX = 13.0   # 握把行程上限：换握要读成"转刀"不是"挥刀"。四条实测
+                         # 直刺 6.2px / 换握 11.3px / 挥砍 15.1px，卡在后两者之间。
 
-    第一版量的是「刃相对前臂的朝向」，那是个**恒等于零的量** —— 手持物被 display 变换
-    焊死在前臂上，相对朝向按定义不会变，门永远报 0°，干净动画也过不了。换握在 MC 里
-    只能靠转手腕/前臂实现，观众读到的正是「手没动，刀掉了个头」，所以判据是这两条的
-    合取：世界刃向转够 + 握把行程小。
+
+def _unwrap(series):
+    """把主值序列连续化：相邻步长超过半圈就补 ±360。
+
+    没有这一步，0 → −180 的翻转在末端会因为 atan2 的主值边界跳成 +180，
+    门于是把一次干净的单向翻转读成"反向晃了 180°"。
     """
-    def dir_at(t):
-        g, tip, _b = item_at(t)
-        d = tip - g
-        return d / np.linalg.norm(d)
+    out = [series[0]]
+    for v in series[1:]:
+        prev = out[-1]
+        k = round((prev - v) / 360.0)
+        out.append(v + 360.0 * k)
+    return out
 
-    d0, g0 = dir_at(ticks[0]), item_at(ticks[0])[0]
-    turn, wt, travel = 0.0, 0.0, 0.0
-    for t in ticks:
-        ang = math.degrees(math.acos(np.clip(float(d0 @ dir_at(t)), -1, 1)))
-        if ang > turn:
-            turn, wt = ang, t
-        travel = max(travel, float(np.linalg.norm(item_at(t)[0] - g0)))
-    ok = turn >= floor and travel <= travel_cap
+
+def gate_flip(grip_angle_at, ticks, target=FLIP_TARGET, tol=FLIP_TOL,
+              travel_cap=FLIP_TRAVEL_MAX, backlash=FLIP_BACKLASH_MAX,
+              item_at=None) -> KnifeGateResult:
+    """换握必须真把刀在手里翻过来：**握法角**走满 ±180°，单调，且手别整个挥出去。
+
+    v3 及以前这道门量的是「世界刃向转过多少度」，那是被迫的替代品 —— 当时链上没有
+    `rightItem` 骨头，握法这个量恒等于零（见 `KnifeTake.grip_angle_at`）。替代品的
+    代价是它对一次普通挥砍也报 87°，于是门限被一路调到 55° 才放得过设计值 67° 的
+    "换握"，而那条动画**根本没在换握**。现在量的是真东西，门限回到 180±12。
+
+    四条合取：
+      ① 终值 |θ| 落在 target ± tol —— 翻到位；
+      ② 翻转轴贴着刃口轴（偏轴 ≤ 8°）—— 别绕刀面法线翻，那会把刃口翻到另一侧；
+      ③ 反向预备幅度 ≤ 25° 且此后单调 —— 中途来回晃不算换握；
+      ④ 握把行程 ≤ 上限 —— 读成转刀不是挥刀。
+    """
+    rows = [(t,) + grip_angle_at(t) for t in ticks]
+    angs = _unwrap([r[1] for r in rows])
+    worst_off = max(r[2] for r in rows)
+    end_ang = abs(angs[-1])
+    direction = -1.0 if angs[-1] < 0 else 1.0
+    signed = [direction * a for a in angs]
+    back = -min(0.0, min(signed))
+    drops = [signed[i - 1] - signed[i]
+             for i in range(1, len(signed)) if signed[i] < signed[i - 1] - 0.5]
+    travel = 0.0
+    if item_at is not None:
+        g0 = item_at(ticks[0])[0]
+        travel = max(float(np.linalg.norm(item_at(t)[0] - g0)) for t in ticks)
     why = []
-    if turn < floor:
-        why.append("刃没翻过来")
-    if travel > travel_cap:
-        why.append("手整个挥出去了，不是转腕")
-    return KnifeGateResult("flip", "换握幅度", ok, turn,
-                           f"世界刃向最大转过 {turn:.0f}°（t{wt:g}，下限 {floor:.0f}°）、"
+    if abs(end_ang - target) > tol:
+        why.append(f"没翻到位（终值 {end_ang:.0f}°，要 {target:.0f}±{tol:.0f}）")
+    if worst_off > GRIP_OFF_AXIS_MAX:
+        why.append(f"翻错了轴（离刃口轴 {worst_off:.0f}°）")
+    if back > backlash:
+        why.append(f"反向晃了 {back:.0f}°")
+    if drops and max(drops) > backlash:
+        why.append(f"中途倒回 {max(drops):.0f}°")
+    if item_at is not None and travel > travel_cap:
+        why.append(f"手整个挥出去了（握把行程 {travel:.1f}px）")
+    return KnifeGateResult("flip", "换握", not why, end_ang,
+                           f"握法角走到 {end_ang:.0f}°（要 {target:.0f}±{tol:.0f}）、"
+                           f"偏轴最大 {worst_off:.1f}°、反向预备 {back:.0f}°、"
+                           f"最大回退 {max(drops) if drops else 0.0:.0f}°、"
                            f"握把行程 {travel:.1f}px（上限 {travel_cap:.0f}px）"
-                           + ("" if ok else " —— " + "，".join(why)))
+                           + ("" if not why else " —— " + "，".join(why)))
+
+
+def gate_grip_hold(grip_angle_at, ticks, expect: float,
+                   tol=GRIP_TOL) -> KnifeGateResult:
+    """不换握的招，握法必须**全程**钉在声明的那一档上。
+
+    这条抓的是两类静默缺陷：① 反握招的 `rightItem` 漏打帧 / 只打了一端，刀在半路
+    自己转回正握（`Axis.findAfter` 会给循环动画合成默认值末帧，正是这个形状）；
+    ② 正握招被误加了手持物旋转。两者渲出来都只是"刀有点歪"，肉眼很难定性。
+    """
+    rows = [(t,) + grip_angle_at(t) for t in ticks]
+    angs = _unwrap([r[1] for r in rows])
+    worst_t, worst_d = ticks[0], 0.0
+    for (t, _a, _o), a in zip(rows, angs):
+        d = abs(abs(a) - abs(expect))
+        if d > worst_d:
+            worst_t, worst_d = t, d
+    worst_off = max(r[2] for r in rows)
+    ok = worst_d <= tol and worst_off <= GRIP_OFF_AXIS_MAX
+    name = "反握" if abs(expect) > 90 else "正握"
+    return KnifeGateResult("grip_hold", f"握法保持（{name}）", ok, worst_d,
+                           f"全程离 {abs(expect):.0f}° 最远 {worst_d:.1f}°（t{worst_t:g}，"
+                           f"容差 {tol:.0f}°）、偏轴最大 {worst_off:.1f}°"
+                           + ("" if ok else " —— 刀在半路自己转了"))
+
+
+def gate_elbow_range(bend_at, ticks, floor: float) -> KnifeGateResult:
+    """肘的开合幅度下限 —— 抓「整条动画肘锁死不动」的假动作。
+
+    和 `gate_elbow`（全程 bend ≥ N）互补，不是替代：那条抓"肘打直了没力",
+    这条抓"肘压根没参与"。反握斩击那条的起手式是用户手摆的直臂（bend 14.5°），
+    `gate_elbow` 在它身上是错的门，`gate_elbow_range` 才是对的（实测跨度 41°）。
+    """
+    vals = [bend_at(t) for t in ticks]
+    span = max(vals) - min(vals)
+    return KnifeGateResult("elbow_range", "肘开合幅度", span >= floor, span,
+                           f"bend 跨度 {span:.0f}°（{min(vals):.0f}→{max(vals):.0f}，"
+                           f"下限 {floor:.0f}°）"
+                           + ("" if span >= floor else " —— 肘全程锁死，动作是块板子"))
 
 
 def gate_easing(easings, load_tick) -> KnifeGateResult:
@@ -901,10 +1031,33 @@ def kill_blendout_by(emote):
     return out
 
 
-def freeze_flip_by(item_at, at: float = 0.0):
-    """刃向焊死不动 —— flip 门该抓的「握姿根本没换」。"""
+def freeze_grip_by(grip_angle_at, at: float = 0.0):
+    """刀在手里一动不动 —— flip 门该抓的「握姿根本没换」。
+
+    这正是 v3 那条 `dagger_grip_switch` 的真实形状：手臂照样抬照样转，但刀相对手
+    一度没动。旧那版 flip 门（量世界刃向）**放它过了**，因为手臂的动作本身就贡献了
+    67° 的世界刃向变化。
+    """
     def wrapped(t):
-        return item_at(at)
+        return grip_angle_at(at)
+    return wrapped
+
+
+def drift_grip_by(grip_angle_at, delta: float = 40.0, ticks=None):
+    """握法在半路自己漂走 —— grip_hold 门该抓的「反握招漏打帧，刀转回正握」。"""
+    span = (ticks[-1] - ticks[0]) if ticks else 8.0
+
+    def wrapped(t):
+        ang, off = grip_angle_at(t)
+        sign = 1.0 if ang >= 0 else -1.0
+        return ang - sign * delta * (t - (ticks[0] if ticks else 0.0)) / max(span, 1e-9), off
+    return wrapped
+
+
+def lock_elbow_by(bend_at, at: float = 0.0):
+    """肘全程锁死 —— elbow_range 门该抓的板子动作。"""
+    def wrapped(t):
+        return bend_at(at)
     return wrapped
 
 
@@ -946,9 +1099,11 @@ class KnifeGates:
     reach_min: float = REACH_MIN
     elbow_min: float | None = ELBOW_MIN_DEG
     elbow_until: float | None = None
+    elbow_span_min: float = ELBOW_SPAN_MIN
+    grip_hold: float | None = 0.0   # 不换握的招声明的握法档（0=正握，180=反握）
     skips: tuple = ()          # (门名, 不适用的理由) —— report 里照样打出来
     guard_parts: tuple | None = None
-    flip_min: float = FLIP_MIN_DEG
+    flip_target: float = FLIP_TARGET
     flip_travel: float = FLIP_TRAVEL_MAX
     extra: dict = field(default_factory=dict)
 
@@ -989,6 +1144,9 @@ class KnifeGates:
             out.append((lambda src=None: gate_elbow(src or tk.bend_deg_at, ticks,
                                                     self.elbow_min, self.elbow_until),
                         lambda: straighten_elbow_by(tk.bend_deg_at)))
+        out.append((lambda src=None: gate_elbow_range(src or tk.bend_deg_at, ticks,
+                                                      self.elbow_span_min),
+                    lambda: lock_elbow_by(tk.bend_deg_at)))
         if self.chain_links:
             out.append((lambda src=None: gate_chain(
                 src or tk.sample, tk.axes, self.chain_links, self.chain_tol),
@@ -1014,9 +1172,14 @@ class KnifeGates:
                 tk.sample, src or other.sample, self.distinct_from),
                 lambda: clone_other_by(tk.sample)))
         if self.expect_flip:
-            out.append((lambda src=None: gate_flip(src or tk.item_at, ticks,
-                                                   self.flip_min, self.flip_travel),
-                        lambda: freeze_flip_by(tk.item_at)))
+            out.append((lambda src=None: gate_flip(
+                src or tk.grip_angle_at, ticks, self.flip_target,
+                travel_cap=self.flip_travel, item_at=tk.item_at),
+                lambda: freeze_grip_by(tk.grip_angle_at)))
+        elif self.grip_hold is not None:
+            out.append((lambda src=None: gate_grip_hold(
+                src or tk.grip_angle_at, ticks, self.grip_hold),
+                lambda: drift_grip_by(tk.grip_angle_at, ticks=ticks)))
         return tuple(out)
 
     def run_all(self):
@@ -1079,22 +1242,27 @@ LOWER_PARTS = ("body", "torso", "head", "rightLeg", "leftLeg")
 SUITE = {
     # 直刺：用户把末帧摆成完全伸展（bend 6.9°），肘那条门收在收势之前
     "dagger_stab": dict(load_tick=3.0, hit_tick=5.0, distinct_from="dagger_slash",
-                        guard_parts=LOWER_PARTS, elbow_until=6.0),
+                        guard_parts=LOWER_PARTS, elbow_until=6.0, grip_hold=0.0),
     # 过顶下劈：起手式是刃朝天的高架（用户手摆，刀尖 y=41.1、仰角 +68°），刀尖/仰角
     # 两条门因此从撞击帧起算 —— 蓄势段举刀是设计，劈完还举着才是败笔。
     # 肘：整条是直臂挥（末帧 bend 1.6°），门收在蓄势段（实测 12~21°）。
     "dagger_slash": dict(load_tick=3.0, hit_tick=5.0, distinct_from="dagger_reverse_slash",
                          guard_parts=LOWER_PARTS,
                          tip_since=5.0, elev_since=5.0,
-                         elbow_min=10.0, elbow_until=3.0),
-    # 反握上撕：整条是刃自胸前下垂 → 扫过正下方 → 向右后撕开，**刃越过背面是招式本身**
-    # （用户手摆的末帧刀尖在体坐标 z=+13.2）。绕背那条门因此收在弧线底之前（t≤4，实测
-    # 窗口内最深 −5.9，余量 8.9px）—— 它当初要抓的「蓄势时刀尖绕到后脑勺」（返工前
-    # z=+8.9）正落在这个窗口里，teeth 没丢。窗口之后由 `gate_selfclip` / `gate_head` 看。
+                         elbow_min=10.0, elbow_until=3.0, grip_hold=0.0),
+    # 反握斩击（v4 重做）：整条**反握**——刀在手里绕刃口轴转了 180°，刃自拳下垂。
+    # 这件事以前表达不出来（链上没有 `rightItem`），所以 v3 把它做成了手臂拧过去的
+    # 一个姿势，招式的身份整个是错的。`grip_hold=180` 把它钉死。
+    #
+    # `elbow_min` 在这条上是错的门：用户手摆的起手式就是直臂（bend 14.5°），蓄势更直
+    # （9.9°）。直臂抡下来本来就是这条招的样子，改由 `gate_elbow_range` 抓「肘锁死」。
     "dagger_reverse_slash": dict(load_tick=3.0, hit_tick=5.0, distinct_from="dagger_stab",
                                  guard_parts=LOWER_PARTS,
-                                 behind_until=4.0, elbow_until=6.0),
-    # 转刀不是发力招：没有蓄势→撞击段，换的是握姿。
+                                 behind_until=4.0, elbow_min=None, grip_hold=180.0,
+                                 skips=(("肘不打直",
+                                         "用户手摆的起手式是直臂（bend 14.5°）、蓄势 9.9°；"
+                                         "直臂抡下来是本招的形，改由「肘开合幅度」把关"),)),
+    # 换握：不是发力招，没有蓄势→撞击段，换的是握姿本身。
     "dagger_grip_switch": dict(expect_flip=True, guard_parts=LOWER_PARTS),
 }
 

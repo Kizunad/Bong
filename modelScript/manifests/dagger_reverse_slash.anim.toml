@@ -1,54 +1,73 @@
 # dagger_reverse_slash —— 「这条动作应该看得出什么」的人写清单。
 #
-# **招式在 v3 变了**：v2 是「自右上向左下斜斩」，2026-08-31 用户手摆的两端把它改成了
-# **刃自胸前垂下 → 扫过正下方 → 向右后撕开**的反手撕。清单整个重写。
+# **招式在 v4 又变了一次，而且这次变的是身份**：v2/v3 都把「反握」当成手臂拧过去的一个
+# 姿势去做，那是表达不出来的 —— 手持物被 display 变换焊死在前臂上。2026-09-01 用户在
+# Blockbench 里给匕首自己那根骨头（`dagger_right_pitch`）打了一帧 ≈180°，把「反握」写成
+# 了它本来的样子：**刀在手里绕刃口轴倒转半圈**。同时重摆了右臂两端。
+#
+# 第一条特征因此是全清单里最要紧的一条：**握法**。它在 v3 里根本没有对应的量。
 #
 # 状态：草案（由实施方拟，等人工审核后才算数）。
 
-name = "匕首反握撕斩"
-beats = "t0 用户手摆的反握低架 → t2/t3 刃前探蓄势 → t4 扫过弧底 → t5 撕开 → t6 甩到最高最后 → t8 用户手摆的右后收势"
+name = "匕首反握斩击"
+beats = "t0 用户手摆的过顶反握起手 → t2/t3 沿脊线倒退蓄势 → t4 拳砸下 → t5 撞击（峰速） → t6 过冲 → t8 用户手摆的收势"
+
+[[feature]]
+key = "the_grip_is_reversed_the_whole_way"
+check = "grip_angle_at"
+tick = 0.0
+value = 180      # 刀在手里倒转半圈 = 反握。这条动画从头到尾不该换握
+tol = 12.0
+
+[[feature]]
+key = "the_grip_is_still_reversed_at_impact"
+check = "grip_angle_at"
+tick = 5.0
+value = 180      # 中途转回正握 = 招式身份丢了（v3 就是全程正握）
+tol = 12.0
+
+[[feature]]
+key = "the_grip_is_still_reversed_at_the_finish"
+check = "grip_angle_at"
+tick = 8.0
+value = 180
+tol = 12.0
 
 [[feature]]
 key = "guard_matches_the_hand_placed_frame"
 check = "grip_at"
 tick = 0.0
-value = [-4.5, 18.5, -5.6]
+value = [-6.9, 28.3, -5.7]   # 用户手摆的起手式，回读值
 tol = 0.6
 
 [[feature]]
 key = "finish_matches_the_hand_placed_frame"
 check = "grip_at"
 tick = 8.0
-value = [-6.8, 21.0, 0.8]
+value = [-1.6, 20.6, -8.0]   # 用户手摆的收势，回读值
 tol = 0.6
 
 [[feature]]
-key = "the_guard_hangs_the_blade_down"
+key = "the_guard_hangs_the_blade_straight_down"
 check = "blade_elev_at"
 tick = 0.0
-value = -64      # 反握 = 刃自拳下垂；翘上来就不是反握了
+value = -76      # 反握过顶起手：拳在肩上、刃自拳下垂。翘上来就成了"举火把"
+tol = 12.0
+
+[[feature]]
+key = "the_blade_stays_below_the_horizon_at_impact"
+check = "blade_elev_at"
+tick = 5.0
+value = -36      # 撞击帧刃仍明显朝下 —— 平上去就成了横挥，不是斩
 tol = 15.0
 
 [[feature]]
-key = "the_arc_passes_straight_down"
-check = "blade_elev_at"
-tick = 4.0
-value = -84      # 弧底：刃扫过正下方。这一帧是整条动作的支点，丢了就成了"平移"
-tol = 12.0
-
-[[feature]]
-key = "the_finish_levels_out_behind"
-check = "blade_elev_at"
-tick = 8.0
-value = 4        # 撕完刃基本水平指向右后
-tol = 12.0
-
-[[feature]]
-key = "the_blade_really_tears"
-check = "tip_travel_min"
-value = 28.0     # 四条里刀尖行程最长的一条（实测 34.7）
+key = "the_fist_really_rakes_across"
+check = "grip_travel_min"
+value = 9.0      # 这条招的可读性来自**拳的行程**（实测 11.9px），不是刀尖位移：
+                 # 两端一钉死，刃就像雨刷一样绕着几乎不动的刀尖扫扇面
 
 [[feature]]
 key = "never_lifts_into_the_torch_pose"
 check = "tip_below"
-value = 26.0
+value = 26.0     # 下巴线。反握时刀尖天然很低（实测最高 18.3），这条主要防返工时翻车

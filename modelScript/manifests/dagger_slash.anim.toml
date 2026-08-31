@@ -56,3 +56,11 @@ value = 30.0     # 一次过顶劈的刀尖行程；低于这个数读成"点了
 key = "the_hand_really_drops"
 check = "grip_travel_min"
 value = 14.0     # 握把从头顶落到腰际
+
+[[feature]]
+key = "the_grip_stays_forward"
+check = "grip_angle_at"
+tick = 0.0
+value = 0        # 过顶下劈全程正握。握法在 v4 才成为一个可量的量（`rightItem` 骨头），
+                 # 补这一条是为了「误加手持物旋转」也有人写的清单接着
+tol = 8.0

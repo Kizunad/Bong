@@ -57,7 +57,7 @@ def key_ticks(emote) -> list[float]:
 def _load(path: Path):
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
     emote = doc.get("emote", doc)
-    return emote, RA.collect_keyframes(emote)
+    return emote, P.collect_keyframes(emote)
 
 
 def _union_focus(scene, ids, held_ids, disp, kfs_list, ends):
@@ -115,11 +115,21 @@ def manifest_check(name: str, take: KG.KnifeTake) -> tuple[list[str], int]:
             got = math.degrees(math.asin(v[1] / np.linalg.norm(v)))
             ok = abs(got - float(want)) <= float(feat.get("tol", 15.0))
             detail = f"elev@t{tick:g}={got:+.0f} want {want:+g}"
+        elif kind == "grip_angle_at":
+            got, off = take.grip_angle_at(tick)
+            ok = (abs(abs(got) - abs(float(want))) <= float(feat.get("tol", 12.0))
+                  and off <= KG.GRIP_OFF_AXIS_MAX)
+            detail = f"grip@t{tick:g}={got:+.0f}deg want {float(want):+g} off-axis {off:.1f}"
         elif kind == "grip_travel_min":
             pts = np.array([take.item_at(t)[0] for t in take.ticks])
             got = float(np.linalg.norm(pts.max(0) - pts.min(0)))
             ok = got >= float(want)
             detail = f"grip span={got:.1f} >= {want}"
+        elif kind == "grip_travel_max":
+            pts = np.array([take.item_at(t)[0] for t in take.ticks])
+            got = float(np.linalg.norm(pts.max(0) - pts.min(0)))
+            ok = got <= float(want)
+            detail = f"grip span={got:.1f} <= {want}"
         elif kind == "tip_travel_min":
             pts = np.array([take.item_at(t)[1] for t in take.ticks])
             got = float(np.linalg.norm(pts.max(0) - pts.min(0)))
