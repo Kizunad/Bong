@@ -63,6 +63,19 @@
    "BronzeCoffin.bbmodel": "f900768af3c747eac274550fc5d173e41c705b04816dd511ff101b30a19e3374"
   }
  },
+ "gen_bronze_saber.py": {
+  "exit": 0,
+  "outputs": {
+   "BronzeSaber.bbmodel": "8a7c15a1b238bdf711d1fac45747160f25f37d6e89d29ed79aa1d9c56a05ccf8"
+  }
+ },
+ "gen_bronze_saber_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "BronzeSaber.bbmodel": "8a7c15a1b238bdf711d1fac45747160f25f37d6e89d29ed79aa1d9c56a05ccf8",
+   "BronzeSaberPlayerAnim.bbmodel": "7b782344ff7ea4279e300ddd07b1e0c68071e3d506fe8343c1cd0b6ca105b80a"
+  }
+ },
  "gen_chi_sui_cao.py": {
   "exit": 0,
   "outputs": {
