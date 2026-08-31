@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <!-- 暗器注入面板的布局与静态文案由 XML 持有，Java 只绑定状态和 typed action。 -->
+    <components>
+        <flow-layout direction="vertical">
+            <sizing>
+                <horizontal method="fill">100</horizontal>
+                <vertical method="fill">100</vertical>
+            </sizing>
+            <surface>
+                <vanilla-translucent />
+            </surface>
+            <padding>
+                <horizontal>10</horizontal>
+                <vertical>6</vertical>
+            </padding>
+            <horizontal-alignment>center</horizontal-alignment>
+            <vertical-alignment>center</vertical-alignment>
+            <children>
+                <flow-layout id="forge-carrier-panel" direction="vertical">
+                    <sizing>
+                        <horizontal method="fill">100</horizontal>
+                        <vertical method="content">0</vertical>
+                    </sizing>
+                    <surface>
+                        <flat>#101820</flat>
+                        <outline>#51606A</outline>
+                    </surface>
+                    <padding><all>12</all></padding>
+                    <gap>7</gap>
+                    <horizontal-alignment>center</horizontal-alignment>
+                    <children>
+                        <label id="forge-carrier-title">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <text>◇ 暗 器 注 入 ◇</text>
+                            <color>#FFE9D9A6</color>
+                            <shadow>true</shadow>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <label id="forge-carrier-selection">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#FFD0D8E0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <flow-layout id="forge-carrier-item-actions" direction="horizontal">
+                            <sizing>
+                                <horizontal method="fixed">240</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <gap>8</gap>
+                            <children>
+                                <button id="forge-carrier-dagger">
+                                    <sizing>
+                                        <horizontal method="fixed">116</horizontal>
+                                        <vertical method="fixed">20</vertical>
+                                    </sizing>
+                                    <text>选择: 飞刀</text>
+                                    <renderer><vanilla /></renderer>
+                                </button>
+                                <button id="forge-carrier-needle">
+                                    <sizing>
+                                        <horizontal method="fixed">116</horizontal>
+                                        <vertical method="fixed">20</vertical>
+                                    </sizing>
+                                    <text>选择: 飞针</text>
+                                    <renderer><vanilla /></renderer>
+                                </button>
+                            </children>
+                        </flow-layout>
+                        <label id="forge-carrier-qi-label">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#FFD0D0D0</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <slider id="forge-carrier-qi-slider">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <value>0.5</value>
+                            <text>真元注入</text>
+                        </slider>
+                        <label id="forge-carrier-feedback">
+                            <sizing>
+                                <horizontal method="fill">100</horizontal>
+                                <vertical method="content">0</vertical>
+                            </sizing>
+                            <color>#FFFF8080</color>
+                            <horizontal-text-alignment>center</horizontal-text-alignment>
+                        </label>
+                        <button id="forge-carrier-submit">
+                            <sizing>
+                                <horizontal method="fixed">160</horizontal>
+                                <vertical method="fixed">20</vertical>
+                            </sizing>
+                            <text>开始注入</text>
+                            <renderer><vanilla /></renderer>
+                        </button>
+                    </children>
+                </flow-layout>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

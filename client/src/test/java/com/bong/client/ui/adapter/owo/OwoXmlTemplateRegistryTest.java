@@ -17,7 +17,7 @@ class OwoXmlTemplateRegistryTest {
     void productionRegistryContainsWideAndCompactCraftTemplates() {
         OwoXmlTemplateRegistry registry = OwoXmlTemplateRegistry.production();
         assertEquals(
-            java.util.Set.of("craft", "craft-compact", "terminate", "coffin-menu", "repair", "death"),
+            java.util.Set.of("craft", "craft-compact", "terminate", "coffin-menu", "repair", "death", "forge-carrier"),
             registry.templateIds(),
             "生产 registry 必须只登记已接入的本地 XML 模板");
         assertEquals(OwoXmlTemplateRegistry.CRAFT, registry.identifierFor("craft"));
@@ -26,6 +26,7 @@ class OwoXmlTemplateRegistryTest {
         assertEquals(OwoXmlTemplateRegistry.COFFIN_MENU, registry.identifierFor("coffin-menu"));
         assertEquals(OwoXmlTemplateRegistry.REPAIR, registry.identifierFor("repair"));
         assertEquals(OwoXmlTemplateRegistry.DEATH, registry.identifierFor("death"));
+        assertEquals(OwoXmlTemplateRegistry.FORGE_CARRIER, registry.identifierFor("forge-carrier"));
     }
 
     @Test
@@ -36,7 +37,8 @@ class OwoXmlTemplateRegistryTest {
             "/assets/bong/owo_ui/terminate.xml",
             "/assets/bong/owo_ui/coffin-menu.xml",
             "/assets/bong/owo_ui/repair.xml",
-            "/assets/bong/owo_ui/death.xml"
+            "/assets/bong/owo_ui/death.xml",
+            "/assets/bong/owo_ui/forge-carrier.xml"
         }) {
             try (InputStream stream = getClass().getResourceAsStream(resource)) {
                 assertNotNull(stream, "缺少随包发布的 owo XML: " + resource);

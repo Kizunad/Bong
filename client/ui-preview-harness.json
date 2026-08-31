@@ -85,6 +85,26 @@
       "expected_logical_width": 401,
       "expected_logical_height": 241,
       "expected_template_id": "death"
+    },
+    {
+      "name": "forge-carrier-minimum",
+      "scene_id": "forge-carrier",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "forge-carrier"
+    },
+    {
+      "name": "forge-carrier-odd",
+      "scene_id": "forge-carrier",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "forge-carrier"
     }
   ]
 }
