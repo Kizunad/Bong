@@ -140,6 +140,18 @@
    "armor/iron/IronLeggings.bbmodel": "0eef974dcf87c94c40fd094672de5c4bf5cd7153f1dcee7135381fcd04b3d5ba"
   }
  },
+ "gen_iron_dagger.py": {
+  "exit": 0,
+  "outputs": {
+   "IronDagger.bbmodel": "6a96f19a4e6513f3f34165df01272a537a3ec94d18a0a308cdc45238fef1acee"
+  }
+ },
+ "gen_iron_dagger_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "IronDaggerPlayerAnim.bbmodel": "9eb73518f56474e3c62a1f47fd6aec8a60d076673616ad6f00881cd484dccb39"
+  }
+ },
  "gen_jade_coffin.py": {
   "exit": 0,
   "outputs": {
