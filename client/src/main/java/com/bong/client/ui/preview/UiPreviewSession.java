@@ -290,6 +290,7 @@ final class UiPreviewSession {
             OwoXmlTemplateRegistry.production().require("coffin-menu");
             OwoXmlTemplateRegistry.production().require("repair");
             OwoXmlTemplateRegistry.production().require("death");
+            OwoXmlTemplateRegistry.production().require("forge-carrier");
             return true;
         } catch (IllegalStateException notLoadedYet) {
             return false;

@@ -4,6 +4,7 @@ import com.bong.client.craft.CraftCategory;
 import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
+import com.bong.client.combat.screen.ForgeCarrierScreen;
 import com.bong.client.combat.screen.TerminateScreen;
 import com.bong.client.combat.screen.RepairScreen;
 import com.bong.client.combat.screen.DeathScreen;
@@ -31,6 +32,7 @@ final class UiPreviewScenes {
         "terminate", new TerminateScene(),
         "coffin-menu", new CoffinMenuScene(),
         "repair", new RepairScene(),
+        "forge-carrier", new ForgeCarrierScene(),
         "death", new DeathScene()
     );
 
@@ -450,6 +452,85 @@ final class UiPreviewScenes {
             }
             if (!repair.focusOrderForPreview().containsAll(List.of("repair-steel", "repair-pill"))) {
                 throw new IllegalStateException("养护按钮没有进入 Tab 焦点顺序");
+            }
+        }
+
+        @Override
+        public void cleanup() {
+        }
+    }
+
+    private static final class ForgeCarrierScene implements UiPreviewScene {
+        @Override
+        public void installFixture() {
+        }
+
+        @Override
+        public Screen createScreen() {
+            // 预览只验证 XML 布局与输入绑定，不触碰真实网络 transport。
+            return new ForgeCarrierScreen("needle", 0.65,
+                intent -> com.bong.client.ui.intent.UiIntentResult.accepted());
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof ForgeCarrierScreen forgeCarrier)) {
+                throw new IllegalStateException("forge-carrier scene 打开的不是 ForgeCarrierScreen");
+            }
+            return forgeCarrier.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof ForgeCarrierScreen forgeCarrier && forgeCarrier.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof ForgeCarrierScreen forgeCarrier
+                && forgeCarrier.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof ForgeCarrierScreen forgeCarrier)) {
+                throw new IllegalStateException("forge-carrier scene 打开的不是 ForgeCarrierScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = forgeCarrier.componentBoundsForPreview("forge-carrier-panel");
+            requireInViewport("forge-carrier-panel", panel, width, height);
+            for (String id : new String[] {
+                "forge-carrier-title", "forge-carrier-selection", "forge-carrier-item-actions",
+                "forge-carrier-qi-label", "forge-carrier-qi-slider", "forge-carrier-submit"
+            }) {
+                ComponentBounds bounds = forgeCarrier.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("暗器注入组件越界: " + id + " -> " + bounds);
+                }
+            }
+            for (String id : new String[] {
+                "forge-carrier-dagger", "forge-carrier-needle", "forge-carrier-qi-slider",
+                "forge-carrier-submit"
+            }) {
+                ComponentBounds bounds = forgeCarrier.componentBoundsForPreview(id);
+                String hit = forgeCarrier.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException(
+                        "暗器注入控件中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            if (!forgeCarrier.focusOrderForPreview().containsAll(List.of(
+                "forge-carrier-dagger", "forge-carrier-needle", "forge-carrier-qi-slider",
+                "forge-carrier-submit"))) {
+                throw new IllegalStateException("暗器注入控件没有进入 Tab 焦点顺序");
+            }
+        }
+
+        private static void requireInViewport(String id, ComponentBounds bounds, int width, int height) {
+            if (!bounds.fitsInside(width, height)) {
+                throw new IllegalStateException(
+                    "暗器注入关键组件越界: " + id + " -> " + bounds + ", viewport=" + width + "x" + height);
             }
         }
 
