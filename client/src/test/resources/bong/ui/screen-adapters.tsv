@@ -3,8 +3,8 @@
 agentui/AgentUiScreen.java	AgentUiScreen	OWO	XML_MODEL	SCREEN_SCOPE
 alchemy/AlchemyScreen.java	AlchemyScreen	OWO	CODE	SCREEN_SCOPE
 coffin/CoffinMenuScreen.java	CoffinMenuScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
-combat/screen/DeathScreen.java	DeathScreen	VANILLA	VANILLA	SCREEN_SCOPE
-combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA	VANILLA	SCREEN_SCOPE
+combat/screen/DeathScreen.java	DeathScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
+combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/RepairScreen.java	RepairScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/TerminateScreen.java	TerminateScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA	VANILLA	SCREEN_SCOPE

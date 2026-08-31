@@ -30,7 +30,8 @@ public enum ScreenHudVisibility {
 
     static ScreenHudVisibility forScreenClass(Class<? extends Screen> screenClass) {
         Objects.requireNonNull(screenClass, "screenClass");
-        if (DeathScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
+        if (DeathScreen.class.isAssignableFrom(screenClass)
+            || com.bong.client.combat.screen.DeathScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
         if (GameMenuScreen.class.isAssignableFrom(screenClass)) return HIDDEN;
         if (AgentUiScreen.class.isAssignableFrom(screenClass)) return AGENT_UI_ONLY;
         String clsName = screenClass.getName();

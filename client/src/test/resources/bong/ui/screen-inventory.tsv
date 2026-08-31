@@ -2,8 +2,8 @@
 agentui/AgentUiScreen.java	AgentUiScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory
 alchemy/AlchemyScreen.java	AlchemyScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 coffin/CoffinMenuScreen.java	CoffinMenuScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; G menu
-combat/screen/DeathScreen.java	DeathScreen	VANILLA_SCREEN	VANILLA	false	System-terminal screen
-combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+combat/screen/DeathScreen.java	DeathScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; system-terminal screen
+combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice;暗器注入
 combat/screen/RepairScreen.java	RepairScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; weapon repair
 combat/screen/TerminateScreen.java	TerminateScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; system-terminal screen
 combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen

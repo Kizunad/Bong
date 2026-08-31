@@ -199,6 +199,13 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **最小 seam**：仅将 `is_in_combat`、`damaged_this_tick`、`find_key_in_inventory`、`place_loot_in_carried_inventory` 暴露为 `#[doc(hidden)] pub`，供外置 integration test 调用；四者均为已有纯/非 gameplay helper，未扩大模块整体可见性、未复制生产实现、未改变 live system。该 seam 原因、范围与清理边界登记至本 PR：若 P4 收口后形成稳定公共契约，则评估删除或进一步收窄。
 - **提交证据**：代码/测试/Cargo target 为 `8ed00ed31`（2026-08-30）；本条只记录 P2-02 迁移进度，P2 其它模块、P3、P4 仍未完成。
 
+### P2-03 lingtian range_gate（✅ 2026-08-31）
+
+- **范围与落点**：仅迁移 `server/src/lingtian/range_gate.rs` 原 `#[cfg(test)] mod tests` 的全部 9 个测试及 `validate_from_world`、`target` 两个必要 helper 至 `server/tests/unit/lingtian/range_gate_test.rs`；新增 `server/Cargo.toml` 的显式 `range_gate_unit` target。生产文件删除内联测试体，保留 `systems.rs` 现有测试依赖的 cfg(test) denial-log 支撑，未改变生产逻辑。
+- **迁移前后对拍**：迁移前 `flock /tmp/bong-cargo.lock ../scripts/build-token.sh cargo test lingtian::range_gate::tests --lib` 为 `9 passed / 0 failed / 0 ignored`；迁移后 `flock /tmp/bong-cargo.lock ../scripts/build-token.sh cargo test --test range_gate_unit` 为 `9 passed / 0 failed / 0 ignored`。9 个原测试名、断言、边界/错误分支和失败语义保持不变。
+- **完整 gate**：`flock /tmp/bong-cargo.lock bash -lc '../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library `12725 passed / 0 failed / 2 ignored`，bin `18 passed / 0 failed`，外置 `range_gate_unit` `9 passed / 0 failed`，其它 integration targets 与 doc-tests 无失败。
+- **提交证据**：本 P2-03 代码、外置测试、Cargo target 与 evidence 更新由本分支提交；P2 其它模块、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。

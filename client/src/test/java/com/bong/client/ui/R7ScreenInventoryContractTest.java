@@ -28,9 +28,9 @@ class R7ScreenInventoryContractTest {
         assertEquals(expected, actual,
             "R7 Screen adapter inventory drifted; update the fixture only after reviewing the new production declaration");
         assertEquals(29, actual.size(), "P0R must keep the current 29 direct Screen inventory entries");
-        assertEquals(18, actual.stream().filter(row -> row.host().equals("OWO")).count(),
+        assertEquals(20, actual.stream().filter(row -> row.host().equals("OWO")).count(),
             "owo host count changed without an explicit migration decision");
-        assertEquals(11, actual.stream().filter(row -> row.host().equals("VANILLA")).count(),
+        assertEquals(9, actual.stream().filter(row -> row.host().equals("VANILLA")).count(),
             "vanilla host count changed without an explicit migration decision");
         assertTrue(actual.stream().allMatch(row -> row.lifecycleOwner().equals("SCREEN_SCOPE")),
             "every adapter row must retain screen-local lifecycle ownership");
