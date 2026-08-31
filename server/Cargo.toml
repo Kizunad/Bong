@@ -23,6 +23,10 @@ name = "tsy_container_search_unit"
 path = "tests/unit/world/tsy_container_search_test.rs"
 
 [[test]]
+name = "craft_recipe_unit"
+path = "tests/unit/craft/recipe_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
