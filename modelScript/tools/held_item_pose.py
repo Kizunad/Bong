@@ -317,7 +317,7 @@ def solve_off_hand_chain(item, display, right_poses, *, span=(0.20, 0.65),
 
 def track(display, tip, name: str, samples: int = 0):
     emote = json.loads((ANIM_DIR / f"{name}.json").read_text(encoding="utf-8"))["emote"]
-    kfs = RA.collect_keyframes(emote)
+    kfs = P.collect_keyframes(emote)
     end = float(emote["endTick"])
     n = samples or int(end * 16) + 1
     points = np.array([_mc((P.item_attach_modelpart(kfs, end * i / (n - 1), display) @ tip)[:3]
@@ -478,7 +478,7 @@ def main() -> int:
     if args.dump:
         emote = json.loads((ANIM_DIR / f"{args.anim}.json").read_text(
             encoding="utf-8"))["emote"]
-        kfs = RA.collect_keyframes(emote)
+        kfs = P.collect_keyframes(emote)
         print("  逐 tick 棍头（右/上/前，相对右肩）+ 离头部包围盒：")
         for i in range(int(end * 4) + 1):
             t = i / 4.0
@@ -498,7 +498,7 @@ def main() -> int:
     if args.grip:
         emote = json.loads((ANIM_DIR / f"{args.anim}.json").read_text(
             encoding="utf-8"))["emote"]
-        kfs = RA.collect_keyframes(emote)
+        kfs = P.collect_keyframes(emote)
         # 取样到 1/4 tick。**只卡整 tick 会漏**：两条手臂各自在关节空间插值，棍由右臂
         # 带着走，左臂走的是另一条路——关键帧上都对齐，中段照样能甩脱。木棍横抡实测整
         # tick 最远 2.05px，而 t4.5 实际是 4.31px，差了一倍。

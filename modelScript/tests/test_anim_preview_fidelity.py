@@ -665,6 +665,86 @@ class HeldItemAttachTest(unittest.TestCase):
                         f"拳头只有 4px 宽，超过 0.5px 就看得出刀没被握住")
 
 
+class HeldItemBoneTest(unittest.TestCase):
+    """`rightItem` 那根骨头在挂载链里的位置 —— 摆错一格，正握/反握就是另一个姿态。
+
+    运行时的调用序（`PlayerAnimator.HeldItemMixin.changeItemLocation` 注入在
+    `HeldItemFeatureRenderer` 调 `renderItem` 之前）：
+
+        translateToHand · Rx(-90) · Ry(180) · T(±1,2,-10)
+        · [T(item_pos) · Rz(roll) · Ry(yaw) · Rx(pitch)]      ← 本骨头
+        · T(display.translation) · R_disp · S · T(-8,-8,-8)
+
+    关键是它在 **T(hand) 之后、T(display.translation) 之前**。放到 display 平移之后，
+    刀会绕自己的几何中心转而不是绕握把转；放到 R_ATTACH 之前，转的就成了整条手臂。
+    两种错法渲出来都"像是转了一下"，只有量才分得开。
+    """
+
+    IDENT = {"rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [1, 1, 1]}
+    DISP = {"rotation": [0, -90, 55], "translation": [0, 2.5, -0.5], "scale": [0.85] * 3}
+
+    def setUp(self):
+        import preview_player_anim as P
+        self.P = P
+
+    def _kfs(self, **item_axes):
+        moves = [{"tick": 0, "easing": "linear", "rightArm": {"pitch": 0.3, "bend": 0.5,
+                                                              "axis": math.pi}}]
+        if item_axes:
+            moves.append({"tick": 0, "easing": "linear", "rightItem": dict(item_axes)})
+        return self.P.collect_keyframes({"moves": moves})
+
+    def test_an_absent_item_bone_is_exactly_the_identity(self):
+        """没有这根骨头的 150 条动画必须一字不差地保持原样。"""
+        bare = self.P.item_attach_modelpart(self._kfs(), 0.0, self.DISP)
+        zero = self.P.item_attach_modelpart(self._kfs(pitch=0.0, yaw=0.0, roll=0.0),
+                                            0.0, self.DISP)
+        np.testing.assert_allclose(bare, zero, atol=1e-12,
+                                   err_msg="缺省的手持物骨头必须等价于全 0")
+
+    def test_the_bone_composes_as_Rz_Ry_Rx(self):
+        """作用序与 `HeldItemMixin` 逐字对齐：mulPose(ZP) → mulPose(YP) → mulPose(XP)。"""
+        p, y, r = 0.3, -0.2, 0.7
+        got = self.P.item_bone_matrix(self._kfs(pitch=p, yaw=y, roll=r), 0.0)
+        want = RA.part_rotation_matrix(p, y, r)
+        np.testing.assert_allclose(got, want, atol=1e-12,
+                                   err_msg="手持物骨头的合成次序与身体部件不一致")
+
+    def test_it_pivots_the_item_about_the_hand_not_about_the_blade_centre(self):
+        """display 为单位阵时，握把（模型枢轴 8,8,8）必须**原地不动**。
+
+        这条区分「骨头挂在 T(display.translation) 之前」和「挂在之后」：挂到之后
+        刀会绕自己的中心转，握把跟着跑掉。
+        """
+        base = self.P.item_attach_modelpart(self._kfs(), 0.0, self.IDENT)
+        spun = self.P.item_attach_modelpart(self._kfs(pitch=math.pi), 0.0, self.IDENT)
+        pivot = np.array([8.0, 8.0, 8.0, 1.0])
+        np.testing.assert_allclose((base @ pivot)[:3], (spun @ pivot)[:3], atol=1e-9,
+                                   err_msg="转刀时握把不该挪窝")
+
+    def test_it_turns_the_item_without_touching_the_arm(self):
+        """骨头只动刀，不动手臂 —— 挂到 R_ATTACH 之前就会把整条臂一起转过去。"""
+        bare = self.P.segment_transforms(self._kfs(), 0.0)
+        spun = self.P.segment_transforms(self._kfs(pitch=math.pi), 0.0)
+        for name in ("rightArm_up", "rightArm_lo", "torso", "head"):
+            np.testing.assert_allclose(
+                bare[name], spun[name], atol=1e-12,
+                err_msg=f"{name} 被手持物骨头带动了 —— 这根骨头只该动刀")
+
+    def test_a_half_turn_reverses_the_blade_in_world_space(self):
+        """半圈之后刃向必须整个倒过来（同一手臂姿态下）。"""
+        blade = []
+        for axes in ({}, {"pitch": math.radians(110.0), "roll": math.radians(-180.0)}):
+            M = self.P.item_attach_modelpart(self._kfs(**axes), 0.0, self.DISP)
+            g = (M @ np.array([8.0, 8.0, 8.0, 1.0]))[:3]
+            tip = (M @ np.array([8.0, 21.1, 8.0, 1.0]))[:3]
+            d = tip - g
+            blade.append(d / np.linalg.norm(d))
+        cos = float(blade[0] @ blade[1])
+        self.assertLess(cos, -0.99,
+                        f"正握与反握的刃向应几乎反向，实测夹角余弦 {cos:.4f}")
+
+
 class DaggerStanceTest(unittest.TestCase):
     """站架：`body.yaw` 是**整个人**（含头/腿/手持物）唯一的转身通道。
 

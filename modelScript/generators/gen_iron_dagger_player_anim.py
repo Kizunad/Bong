@@ -17,6 +17,7 @@ import base64
 import copy
 import io
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -31,6 +32,9 @@ from bbmodel_maker.render import held_item_render as H  # noqa: E402
 from bbmodel_maker.render import render_player_pose as P  # noqa: E402
 from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402
 from gen_club_player_anim import convert_animation as bake_animation  # noqa: E402
+import preview_player_anim as PPA  # noqa: E402  认 rightItem 的关键帧收集器
+import anim_common as AC  # noqa: E402  item_spin / item_spin_angle 的唯一定义处
+import render_animation as RA_  # noqa: E402
 from gen_jian_player_anim import (  # noqa: E402
     PART_GROUPS,
     TICKS_PER_SECOND,
@@ -191,12 +195,58 @@ def _fill_upper_body(anim: dict, gmap: dict, stance: dict) -> None:
                     keyframe("rotation", t, [round(bend, 4), 0.0, 0.0]))
 
 
+BLADE_EDGE_AXIS = (1.0, 0.0, 0.0)   # 刀身局部 +X = 刃口方向（刃宽 1.6px 的那一轴）
+
+
+def _dagger_display_rot():
+    doc = json.loads(SRC_DAGGER.read_text(encoding="utf-8"))
+    return tuple(doc["display"]["thirdperson_righthand"]["rotation"])
+
+
+def _fill_grip(anim: dict, gmap: dict, json_path: Path) -> None:
+    """把出料 JSON 的 `rightItem` 烘进 `dagger_right_pitch` 这一层。
+
+    **不烘的后果不是"bbmodel 少一点信息"**：正握 / 反握的区别整个看不见，人在
+    Blockbench 里打开这条动画会以为刀一直是正握；更糟的是他一存盘，回读的时候这层
+    没有关键帧 = 读成 0（`bbmodel_to_pose._value_at` 不插值），反握就此丢失。
+    2026-09-01 这条链路补上之前，四条匕首动画在 bbmodel 侧全都缺这根骨头。
+
+    符号：`rightItem` 的三个角先还原成「绕刃口轴转了 theta」（`item_spin_angle`），
+    再按**写侧**符号落盘（`AX.rotation_to_bb`，bb.x = +theta），与手臂各层同一套 ——
+    Blockbench 读入时对 X 取反，正好抵消。`dagger_right_pitch` 的静止 rotation 是
+    (-90,0,0)、与动画值同轴相加，所以这一层的动画值就是纯粹的额外自转量。
+    """
+    emote = json.loads(json_path.read_text(encoding="utf-8"))["emote"]
+    kfs = PPA.collect_keyframes(emote)
+    item = kfs.get("rightItem")
+    if not item:
+        return
+    to_deg = (lambda v: math.degrees(v)) if not emote.get("degrees", True) else (lambda v: v)
+    disp_rot = _dagger_display_rot()
+    gid = gmap["dagger_right_pitch"]
+    anim["animators"].setdefault(gid, {"name": "dagger_right_pitch", "type": "bone",
+                                       "keyframes": []})
+    track = anim["animators"][gid]["keyframes"]
+    for tick in sorted({t for axis in item.values() for t, *_ in axis}):
+        axes = {a: to_deg(RA_.sample_axis(kfs, "rightItem", a, float(tick)))
+                for a in ("pitch", "yaw", "roll")}
+        theta, off = AC.item_spin_angle(disp_rot, BLADE_EDGE_AXIS, axes)
+        if off > 1.0:
+            raise ValueError(
+                f"{anim['name']} t{tick}: rightItem 不是一个绕刃口轴的纯自转"
+                f"（偏轴 {off:.1f}°），烘成单层 pitch 会把它悄悄改形。"
+                f"要么改回绕刃口轴，要么先把 dagger_right_roll/yaw 那两层也接上。")
+        track.append(keyframe("rotation", tick / TICKS_PER_SECOND,
+                              AX.rotation_to_bb({"pitch": theta}, "pitch")))
+
+
 def convert_animation(json_path: Path, gmap: dict) -> dict:
     """emotecraft v3 → Blockbench animation，纯下半身的补一份架势上半身。"""
     anim = bake_animation(json_path, gmap)
     if not _has_upper_body(json_path):
         stance = STANCE_POSES.get(anim["name"], DEFAULT_STANCE)
         _fill_upper_body(anim, gmap, stance)
+    _fill_grip(anim, gmap, json_path)
     return anim
 
 
