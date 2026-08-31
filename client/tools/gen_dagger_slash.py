@@ -1,154 +1,138 @@
 #!/usr/bin/env python3
-"""dagger_slash — 匕首横划（WoundKind::Cut 的匕首版）。
+"""dagger_slash —— 匕首过顶下劈（WoundKind::Slash 的匕首版）。
 
-## 为什么不能沿用 sword_slash_down
+## v3：招式本身被用户改掉了
 
-普攻动画此前只按 `WoundKind` 选（`vfx_animation_trigger.rs::attack_anim_for_wound_kind`），
-匕首砍人播的是**剑的过头劈**。握一把 0.7 格长的石刃做双手大剑的下劈，
-读起来是"这人拿着看不见的剑"。
+v2 是横划（刀拉到右外侧、横扫过身前）。2026-08-31 用户在 Blockbench 里重摆的两端把它
+改成了**过顶下劈**：
 
-匕首和剑在身法上的硬区别，本动画围绕这三条建：
+| | 握把 | 刃向仰角 | 肘 bend |
+|---|---|---|---|
+| t0 起手 | (−2.8, 30.7, −9.2) | **+68°**（刃朝天，刀尖 y=41.1） | 12°（几乎打直） |
+| t8 收势 | (+0.2, 16.4, −11.4) | −16°（前下） | 1.6°（打直） |
 
-1. **肘全程不伸直。** 剑刺 impact 时 `bend=3`（整条手臂打直够远）；匕首够不着，
-   伸直只是把自己的手腕送到对方面前。这里 impact 仍留 `bend=58`，收势 76。
-   —— 这条由 `test_gen_dagger_anims.py` 钉死，改小了会退回成"短剑"。
-2. **腰给的是读感，不是刀弧。** torso yaw 走 +24 → +42 → −20 共 62° 转矩，符合
-   §2.5「躯干扭转幅度 > 手臂自身 yaw」——但要清楚它**带不动刀**：`torso.*` 只作用
-   于躯干 ModelPart 本体，头/臂/腿各自独立（conventions §L243）。刀的位移全部来自
-   右臂自身的 pitch/yaw/roll/bend。想让腰真的甩动手臂只能用 `body.yaw`，代价是头
-   也跟着转、读成「整个人转身」（§L246），本招不采用。
-   实测刀尖 LOAD→IMPACT 位移 16.9，剑横劈 13.4，够用。
-3. **副手是活的。** 刀斗里副手抬在胸前挡/抓，不是配重。这里 leftArm 走完整的
-   load-snap 反相：guard 98 → LOAD 微展 84 → IMPACT 猛收 116。
+两端只差 `rightArm.pitch` 72°（−112.1 → −40.2），其余轴几乎不动 —— 整条就是**肩关节
+绕 X 轴的一次摆动**。
 
-## 8 tick 分段（docs/player-animation-conventions.md §1）
+## 为什么这条不反解，直接写欧拉角
 
-    tick 0  guard    侧身，刀在右胸前（FPV 可见，§3）
-    tick 2  腿先动    后腿蹬地 bend 14→34（kinetic chain 起点）
-    tick 3  LOAD     腰扭到极限 +42°，刀收内侧，副手微展（反相）
-    tick 5  IMPACT   腰猛转正到 −20°，刀横扫过身前，副手猛收（OUTQUAD）
-    tick 6  overshoot 腕再翻 10°、肘再收 6°（末端关节滞后 1 tick）
-    tick 8  == tick 0
+反解在这里帮倒忙。目标点落在手臂够得着的**边缘**上（握把要到 y≈31，肩在 y≈22，
+臂展约 12px），最小二乘在两个等价分支之间跳，插值路径随之乱窜 —— 实测刀尖单格瞬移
+16.7px、刃向偏离 slerp 116°、17/65 帧前臂穿头。改成沿用户那条欧拉直线逐帧写，路径
+按定义就是设计好的那条：瞬移降到 5.8px、刃向偏离 18°、穿头 0 帧。
 
-峰值错开：腿 t2 → 腰 t3 → 肩 t5 → 肘/腕 t6。
+**这不是"放弃反解"，是选对工具**：单关节单轴的摆动，欧拉空间就是它的自然参数化；
+反解适合的是「手要到某个点、刃要指某个方向」这种被 display 变换耦合住的多轴问题
+（直刺、反握上撕、转刀仍在用）。
 
-## 姿态被推翻重调过一次（round 3/3）
+## 门禁跟着招式一起改（`knife_anim_gates.SUITE`）
 
-round 1/2 的姿态是照着一个**手持物挂点算错的预览**调出来的：那版预览缺
-`R_ATTACH`、把 display translation 当成旋转后再加、还漏了方块中心重定心，刀根本
-没在手上。等挂点修对了再量，才发现这套姿态每一 tick 的**刃仰角都在 +33~+43°**，
-而修挂点之前用原版剑那种⊥握法量出来是 +63~+78°、刃尖越过肩往身后指——渲出来
-读成"举着火把"，和下面写的"低架、刀在右胸前"完全是两回事。
+- **刀尖高度 / 刃仰角改成从撞击帧起算**（`tip_since` / `elev_since` = 5.0）。蓄势段
+  举刀过顶是设计（用户手摆的起手式刀尖就在 y=41.1）；一刀切只能把门限抬到 45，那就
+  成了纯棘轮什么都锁不住。真正的败笔是**劈完了刀还举在脸前**，所以窗口从 t5 起算、
+  门限维持在下巴线 26 —— 实测撞击帧刀尖 25.1，余量 0.9px（很紧，这是设计：刃正好在
+  撞击帧扫过下巴高度）。蓄势段由 `gate_head` / `gate_selfclip` 兜着。
+- **肘不打直收在蓄势段**（`elbow_until` = 3.0、下限 10）。用户把整条摆成直臂挥
+  （末帧 bend 1.6°），这条对收势段不再成立；蓄势段仍有意义 —— 实测 12~21°，一个
+  从头锁死直臂的版本会被它抓住。
+- **收势闭合收窄到下盘**：用户没动 body/torso/head/两腿，那边首末仍逐轴相同；手臂
+  那一头交给 `gate_decel` + `gate_blendout`。
 
-修法只动**竖直面**这一路：`rightArm.pitch` 全帧 +20、`leftArm.pitch` 全帧 +30，
-把手从肩高压回上胸；yaw / roll / z / bend / easing **一格没动**——横向编排（腰转
-62°、counter-pull、错峰）是这条动画的骨架，和读错刃向无关。修完刃仰角落在
-+14~+24°、刀尖从"过头顶"回到胸口高度。由 `DaggerBladeReadTest` 钉死（<45°、
-且前向分量恒 >0）。
+## 8 tick 分段
 
-## 站架：由 `body.yaw` 给，不是 `torso.yaw`
+    tick 0  起手     用户手摆：刀举过头顶、刃朝天
+    tick 2  再仰一寸  向后蓄（pitch −121），肘微收
+    tick 3  LOAD     蓄势极点（pitch −127，bend 21）；腰扭到极限
+    tick 4  过中线    刃扫过水平前一格（这一帧钉住弧线中点）
+    tick 5  IMPACT   刃扫到下巴高度（刀尖 y=25.1，仰角 +16°）；峰速实测落在 t5.00
+    tick 6  overshoot 继续劈到最低（tip y=12.5），腕滞后
+    tick 8  用户手摆的低位伸展定格
 
-`torso.*` 只作用于躯干 ModelPart，头/臂/腿各自独立（conventions §L243）。所以
-round 1~3 那个"侧身"其实是 **24° 的躯干扭转**，胯和腿全程正对前方——量出来右脚
-只比左脚靠后 1.4px。症状很隐蔽：眼睛把**胸口**读成朝向，于是 3/4 机位看起来才
-像正面（用户 2026-08-25 一眼指出）。
+## easing
 
-`body.yaw` 是唯一能转整个人（含头、腿、手持物）的通道，这里取 **-34° 恒定**：
-34° = FRONT 机位(180) 与 3/4 机位(146) 的夹角，符号取负因为**转机位 +θ ≡ 转身体
--θ**（`_bodyyaw_sweep.png` 逐格比对确认）。于是原先只有在 3/4 机位才看得到的那个
-姿态，现在正对敌人就是这样。
-
-两条配套约束：
-
-- **恒定**，不逐帧变。站架是站架，挥砍的转体由 `torso.yaw` 给（它本来就在走
-  +24 → +42 → -20 那条 62° 曲线）。body 跟着动的话脚会在地上打滑。
-- **头反向补 +34°**，保持世界朝向不变（本条动画原本是 -12°，补偿后仍是 -12°）。
-  不补的话角色是"侧着身、还把脸扭开"，看不到敌人。
-
-纯 yaw 不动高度，所以 round 3/3 那批刃向锁（仰角 / 刀尖高度）数值一格未变，
-仍然绿。`DaggerStanceTest` 另外钉住"恒定 + 头朝向 + body 不许有 pitch/roll"。
-
-## easing 的管辖方向（conventions §15）
-
-每帧的 easing 管的是「**本帧 → 下一帧**」这一段，不是「怎么到达本帧」——
-PlayerAnimator 的 `isEasingBefore` 默认 false，取的是 `before.ease`。所以按段写在
-起始侧：t0/t2 蓄势用 OUT 族（松出去、到 LOAD 时几乎静止），**t3 发力用 INCUBIC**
-（从静止单调加速，最快点落在撞击帧），t5 余势 OUTQUAD 卸力，t6 收势 INOUTSINE。
-
-这条一开始写错过：OUTQUAD 写在 t5/t6 上，本意是「到撞击时减速」，实际管的是撞击
-**之后**那两段——量出来峰速落在 t6.0 的收招段而不是撞击，且收势起手有 0.10 → 1.53
-的 15 倍速度断层。改完峰速回到 t4.8（撞击前最后一帧）并提高 70%。
+t0/t2 蓄势 OUT 族，**t3/t4 发力 INCUBIC**（连着两格单调加速到撞击），t5 余势
+OUTQUAD，t6 收势 INOUTSINE。
 """
 
 from anim_common import emit_json
 
 POSE = {
-    0: dict(  # guard —— 侧身低架，刀在右胸前（实测刃仰 +14°、刀尖在胸口高度）
+    0: dict(  # 用户手摆的过顶高架 —— 刃朝天，刀尖 y=41.1
         easing="OUTSINE",
-        body=dict(x=+0.02, y=0.0, z=0.0, yaw=-34),
-        head=dict(pitch=-3, yaw=+22),
-        torso=dict(pitch=+2, yaw=+24),
-        rightArm=dict(pitch=-16, yaw=-14, roll=-8, bend=76, axis=180),
-        leftArm=dict(pitch=-22, yaw=+24, roll=-10, bend=98, axis=180),
-        rightLeg=dict(pitch=+8, yaw=+6, bend=14, z=+0.04),
-        leftLeg=dict(pitch=-12, yaw=+4, bend=20, z=-0.05),
+        body=dict(x=+0.02, y=+0.00, z=+0.00, yaw=-30.0),
+        head=dict(pitch=+1.0, yaw=+28.0, roll=-0.0),
+        torso=dict(pitch=+4.0, yaw=+14.0, roll=-0.0),
+        rightArm=dict(pitch=-112.1, yaw=+1.3, roll=-5.6, bend=+12.0, axis=180),
+        leftArm=dict(pitch=-41.5, yaw=+60.0, roll=-49.0, bend=+15.0, axis=180),
+        rightLeg=dict(pitch=-12.0, yaw=+4.0, roll=-0.0, bend=+22.0, axis=0),
+        leftLeg=dict(pitch=+12.0, yaw=+2.0, roll=-0.0, bend=+20.0, axis=0),
     ),
-    2: dict(  # 腿先动 —— 后腿蹬地，链条从下往上启动
+    2: dict(  # 再仰一寸 —— 向后蓄（pitch −121），肘微收
         easing="OUTQUAD",
-        body=dict(x=+0.04, y=+0.01, z=-0.02, yaw=-34),
-        head=dict(pitch=-4, yaw=+20),
-        torso=dict(pitch=+3, yaw=+32),
-        rightArm=dict(pitch=-13, yaw=-20, roll=-11, bend=84, axis=180),
-        leftArm=dict(pitch=-19, yaw=+27, roll=-9, bend=88, axis=180),  # load 微展
-        rightLeg=dict(pitch=+16, yaw=+6, bend=34, z=+0.06),
-        leftLeg=dict(pitch=-10, yaw=+4, bend=18, z=-0.05),
+        body=dict(x=+0.04, y=+0.01, z=-0.03, yaw=-30.0),
+        head=dict(pitch=+1.0, yaw=+26.0),
+        torso=dict(pitch=+5.0, yaw=+24.0),
+        rightArm=dict(pitch=-121.0, yaw=+3.0, roll=-9.0, bend=+17.0, axis=180),
+        leftArm=dict(pitch=-39.0, yaw=+60.0, roll=-49.0, bend=+16.0, axis=180),
+        rightLeg=dict(pitch=-10.0, yaw=+4.0, bend=+18.0, axis=0),
+        leftLeg=dict(pitch=+16.0, yaw=+2.0, bend=+30.0, axis=0),
     ),
-    3: dict(  # LOAD —— 腰到极限，刀收内侧（仍在 guard 范畴，不越到反侧）
+    3: dict(  # LOAD —— 蓄势极点（pitch −127、bend 21）；腰扭到极限
         easing="INCUBIC",
-        body=dict(x=+0.05, y=+0.02, z=-0.05, yaw=-34),
-        head=dict(pitch=-5, yaw=+18),
-        torso=dict(pitch=+4, yaw=+42),
-        rightArm=dict(pitch=-10, yaw=-26, roll=-14, bend=88, axis=180),
-        leftArm=dict(pitch=-16, yaw=+30, roll=-8, bend=84, axis=180),
-        rightLeg=dict(pitch=+18, yaw=+6, bend=40, z=+0.06),
-        leftLeg=dict(pitch=-8, yaw=+4, bend=16, z=-0.04),
+        body=dict(x=+0.05, y=+0.02, z=-0.05, yaw=-30.0),
+        head=dict(pitch=+0.0, yaw=+24.0),
+        torso=dict(pitch=+6.0, yaw=+32.0),
+        rightArm=dict(pitch=-127.0, yaw=+4.0, roll=-12.0, bend=+21.0, axis=180),
+        leftArm=dict(pitch=-37.0, yaw=+60.0, roll=-49.0, bend=+17.0, axis=180),
+        rightLeg=dict(pitch=-8.0, yaw=+4.0, bend=+16.0, axis=0),
+        leftLeg=dict(pitch=+18.0, yaw=+2.0, bend=+34.0, axis=0),
     ),
-    5: dict(  # IMPACT —— 腰猛转正，刀横扫过身前；肘仍留 58°
+    4: dict(  # 过中线 —— 刃扫过水平前一格，钉住弧线中点
+        easing="INCUBIC",
+        body=dict(x=+0.02, y=+0.01, z=+0.05, yaw=-30.0),
+        head=dict(pitch=+2.0, yaw=+28.0),
+        torso=dict(pitch=+7.0, yaw=+8.0),
+        rightArm=dict(pitch=-104.0, yaw=+5.5, roll=-15.0, bend=+16.0, axis=180),
+        leftArm=dict(pitch=-34.0, yaw=+60.0, roll=-49.0, bend=+16.0, axis=180),
+        rightLeg=dict(pitch=-15.0, yaw=+6.0, bend=+24.0, axis=0),
+        leftLeg=dict(pitch=+20.0, yaw=+1.0, bend=+22.0, axis=0),
+    ),
+    5: dict(  # IMPACT —— 刃扫到下巴高度（刀尖 y=25.1，仰角 +16°）
         easing="OUTQUAD",
-        body=dict(x=-0.03, y=-0.01, z=+0.12, yaw=-34),
-        head=dict(pitch=+2, yaw=+40),
-        torso=dict(pitch=+5, yaw=-20),
-        rightArm=dict(pitch=-30, yaw=+30, roll=+14, bend=58, axis=180),
-        leftArm=dict(pitch=-28, yaw=+10, roll=-24, bend=116, axis=180),  # counter-pull
-        rightLeg=dict(pitch=+4, yaw=+10, bend=12, z=+0.02),
-        leftLeg=dict(pitch=-24, yaw=+2, bend=38, z=-0.08),
+        body=dict(x=-0.02, y=-0.01, z=+0.14, yaw=-30.0),
+        head=dict(pitch=+4.0, yaw=+32.0),
+        torso=dict(pitch=+8.0, yaw=-18.0),
+        rightArm=dict(pitch=-66.0, yaw=+7.5, roll=-19.0, bend=+8.0, axis=180),
+        leftArm=dict(pitch=-30.0, yaw=+60.0, roll=-49.0, bend=+15.0, axis=180),
+        rightLeg=dict(pitch=-22.0, yaw=+8.0, bend=+32.0, axis=0),
+        leftLeg=dict(pitch=+22.0, yaw=+0.0, bend=+12.0, axis=0),
     ),
-    6: dict(  # overshoot —— 末端关节滞后 1 tick：腕再翻、肘再收
+    6: dict(  # overshoot —— 继续劈到最低（刀尖 y=12.5），腕滞后
         easing="INOUTSINE",
-        body=dict(x=-0.02, y=-0.01, z=+0.13, yaw=-34),
-        head=dict(pitch=+3, yaw=+42),
-        torso=dict(pitch=+5, yaw=-26),
-        rightArm=dict(pitch=-32, yaw=+38, roll=+24, bend=52, axis=180),
-        leftArm=dict(pitch=-26, yaw=+8, roll=-26, bend=112, axis=180),
-        rightLeg=dict(pitch=+3, yaw=+10, bend=11, z=+0.02),
-        leftLeg=dict(pitch=-26, yaw=+2, bend=40, z=-0.09),
+        body=dict(x=-0.01, y=-0.01, z=+0.16, yaw=-30.0),
+        head=dict(pitch=+5.0, yaw=+34.0),
+        torso=dict(pitch=+8.0, yaw=-22.0),
+        rightArm=dict(pitch=-36.0, yaw=+9.0, roll=-23.0, bend=+3.0, axis=180),
+        leftArm=dict(pitch=-27.5, yaw=+60.0, roll=-49.0, bend=+15.0, axis=180),
+        rightLeg=dict(pitch=-24.0, yaw=+8.0, bend=+34.0, axis=0),
+        leftLeg=dict(pitch=+23.0, yaw=+0.0, bend=+10.0, axis=0),
     ),
-    8: dict(  # 回 guard（与 tick 0 完全一致，连击友好）
+    8: dict(  # 用户手摆的低位伸展定格
         easing="INOUTSINE",
-        body=dict(x=+0.02, y=0.0, z=0.0, yaw=-34),
-        head=dict(pitch=-3, yaw=+22),
-        torso=dict(pitch=+2, yaw=+24),
-        rightArm=dict(pitch=-16, yaw=-14, roll=-8, bend=76, axis=180),
-        leftArm=dict(pitch=-22, yaw=+24, roll=-10, bend=98, axis=180),
-        rightLeg=dict(pitch=+8, yaw=+6, bend=14, z=+0.04),
-        leftLeg=dict(pitch=-12, yaw=+4, bend=20, z=-0.05),
+        body=dict(x=+0.02, y=+0.00, z=+0.00, yaw=-30.0),
+        head=dict(pitch=+1.0, yaw=+28.0, roll=-0.0),
+        torso=dict(pitch=+4.0, yaw=+14.0, roll=-0.0),
+        rightArm=dict(pitch=-40.1, yaw=+9.4, roll=-23.1, bend=+1.6, axis=180),
+        leftArm=dict(pitch=-26.5, yaw=+60.0, roll=-49.0, bend=+15.0, axis=180),
+        rightLeg=dict(pitch=-12.0, yaw=+4.0, roll=-0.0, bend=+22.0, axis=0),
+        leftLeg=dict(pitch=+12.0, yaw=+2.0, roll=-0.0, bend=+20.0, axis=0),
     ),
 }
 
 DESCRIPTION = (
-    "v1 匕首横划: 肘全程不伸直（impact 仍 bend=58，对比剑刺 bend=3），"
-    "腰扭 62° 只给读感（torso 带不动刀，刀弧全由右臂自身给），"
-    "副手 load-snap 反相 98 → 84 → 116，腿 t2 → 腰 t3 → 肩 t5 → 腕 t6 错峰。"
+    "v3 匕首过顶下劈: 首末两帧人手摆（刃朝天的过顶高架 → 低位伸展定格），中间按欧拉"
+    "直线补 5 帧; 刀尖行程 30px，撞击帧刃扫到下巴高度(y=25.1)，峰速落在 t5; 蓄势段"
+    "肘收到 21°，收势靠 endTick→stopTick 两 tick 混出带回站架。"
 )
 
 if __name__ == "__main__":
