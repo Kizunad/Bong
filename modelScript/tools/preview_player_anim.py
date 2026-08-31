@@ -211,6 +211,60 @@ A_TO_BEDROCK = np.array([[1.0, 0.0, 0.0, 0.0],
                          [0.0, 0.0, 0.0, 1.0]])
 
 
+ITEM_PART_OF = {True: "rightItem", False: "leftItem"}
+
+
+def collect_keyframes(emote: dict) -> dict:
+    """`RA.collect_keyframes` + **手持物那两根骨头**。
+
+    库里的 `bbmodel_maker.rig.emote_anim.collect_keyframes` 按 `BODY_PART_NAMES`
+    七个身体部件过滤，`rightItem` / `leftItem` 被静默丢掉——而 PlayerAnimator 认它们
+    （`HeldItemMixin.changeItemLocation`）。丢掉的后果不是"少一点细节"：**正握 /
+    反握的区别整个消失**，预览与门禁都会把一条根本没换握的动画读成合格的换握
+    （见 `anim_common.ITEM_PARTS` 注释）。
+
+    返回值是同一个 kfs 结构，只是多两个键。`RA.sample_axis` 查不到键就回落到
+    `default_axis_value` = 0，所以对没有手持物骨头的另外 150 条动画完全等价。
+    """
+    kfs = RA.collect_keyframes(emote)
+    for move in emote["moves"]:
+        tick = int(move["tick"])
+        easing = move.get("easing", "linear")
+        for part, axes in move.items():
+            if part not in AC.ITEM_PARTS or not isinstance(axes, dict):
+                continue
+            for axis, value in axes.items():
+                if axis not in AC.ITEM_AXES:
+                    continue
+                kfs.setdefault(part, {}).setdefault(axis, []).append(
+                    (tick, float(value), easing))
+    for part in AC.ITEM_PARTS:
+        for axis_list in kfs.get(part, {}).values():
+            axis_list.sort(key=lambda row: row[0])
+    return kfs
+
+
+def item_bone_matrix(kfs, tick: float, right: bool = True) -> np.ndarray:
+    """`rightItem` / `leftItem` 那根骨头在手持物局部系里的 3×3。
+
+    逐字对齐 `HeldItemMixin.changeItemLocation`：
+
+        mulPose(Axis.ZP.rotation(rot.z))   // roll
+        mulPose(Axis.YP.rotation(rot.y))   // yaw
+        mulPose(Axis.XP.rotation(rot.x))   // pitch
+
+    合成即 `Rz(roll)·Ry(yaw)·Rx(pitch)`，与身体部件的
+    `part_rotation_matrix` 同构（`get3DTransform(..., ROTATION, ...)` 返回的
+    x/y/z 就是 pitch/yaw/roll，见 `KeyframeAnimationPlayer.get3DTransform`）。
+    """
+    part = ITEM_PART_OF[bool(right)]
+    return RA.part_rotation_matrix(
+        RA.sample_axis(kfs, part, "pitch", tick),
+        RA.sample_axis(kfs, part, "yaw", tick),
+        RA.sample_axis(kfs, part, "roll", tick),
+    )
+
+
 def item_attach_modelpart(kfs, tick: float, display: dict, right: bool = True) -> np.ndarray:
     """手持物模型 px 坐标 → ModelPart 空间（含肩枢轴平移），逐步对齐 MC 调用序。
 
@@ -219,6 +273,7 @@ def item_attach_modelpart(kfs, tick: float, display: dict, right: bool = True) -
         T(肩枢轴) · R_arm
         · T(0,4,0) · R_bend · T(0,-4,0)       PlayerAnimator HeldItemMixin
         · R_ATTACH · T(±1, 2, -10)            HeldItemFeatureRenderer
+        · R_item                               PlayerAnimator HeldItemMixin（rightItem）
         · T(display.translation) · R_disp · S  ItemRenderer / Transformation.apply
         · T(-8,-8,-8)                          方块中心重定心
 
@@ -251,7 +306,9 @@ def item_attach_modelpart(kfs, tick: float, display: dict, right: bool = True) -
             @ _aff(R_arm, np.zeros(3))
             @ _about(R_bend, ITEM_BEND_PIVOT_PX)
             @ _aff(R_ATTACH, np.zeros(3))
-            @ _aff(np.eye(3), hand + trans)
+            @ _aff(np.eye(3), hand)
+            @ _aff(item_bone_matrix(kfs, tick, right), np.zeros(3))
+            @ _aff(np.eye(3), trans)
             @ _aff(R_disp @ scale, np.zeros(3))
             @ _aff(np.eye(3), -BLOCK_CENTRE_PX))
 
@@ -465,7 +522,7 @@ def main() -> int:
     # 截断**，GIF 只播到 t8，整段收势看不见，而工具还理直气壮地打印"原速 400ms"。
     doc = json.loads(args.json.read_text(encoding="utf-8"))
     emote = doc.get("emote", doc)
-    kfs = RA.collect_keyframes(emote)
+    kfs = collect_keyframes(emote)
     ticks = [float(t) for t in args.ticks.split(",")]
 
     display = {"rotation": [0, -90, 55], "translation": [0, 4, 0], "scale": [0.8] * 3}
