@@ -8,7 +8,7 @@ use super::events::{
 };
 use super::registry::MineralRegistry;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::network::gate::{DistanceRule, NEARBY_INTERACT_MAX_BLOCKS};
+use crate::reach::{DistanceRule, NEARBY_INTERACT_MAX_BLOCKS};
 
 const MIN_PROBE_REALM_RANK: u8 = 2;
 /// Compatibility alias for callers that still name the mineral probe radius.
