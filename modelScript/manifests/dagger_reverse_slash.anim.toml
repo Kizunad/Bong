@@ -1,0 +1,54 @@
+# dagger_reverse_slash —— 「这条动作应该看得出什么」的人写清单。
+#
+# **招式在 v3 变了**：v2 是「自右上向左下斜斩」，2026-08-31 用户手摆的两端把它改成了
+# **刃自胸前垂下 → 扫过正下方 → 向右后撕开**的反手撕。清单整个重写。
+#
+# 状态：草案（由实施方拟，等人工审核后才算数）。
+
+name = "匕首反握撕斩"
+beats = "t0 用户手摆的反握低架 → t2/t3 刃前探蓄势 → t4 扫过弧底 → t5 撕开 → t6 甩到最高最后 → t8 用户手摆的右后收势"
+
+[[feature]]
+key = "guard_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 0.0
+value = [-4.5, 18.5, -5.6]
+tol = 0.6
+
+[[feature]]
+key = "finish_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 8.0
+value = [-6.8, 21.0, 0.8]
+tol = 0.6
+
+[[feature]]
+key = "the_guard_hangs_the_blade_down"
+check = "blade_elev_at"
+tick = 0.0
+value = -64      # 反握 = 刃自拳下垂；翘上来就不是反握了
+tol = 15.0
+
+[[feature]]
+key = "the_arc_passes_straight_down"
+check = "blade_elev_at"
+tick = 4.0
+value = -84      # 弧底：刃扫过正下方。这一帧是整条动作的支点，丢了就成了"平移"
+tol = 12.0
+
+[[feature]]
+key = "the_finish_levels_out_behind"
+check = "blade_elev_at"
+tick = 8.0
+value = 4        # 撕完刃基本水平指向右后
+tol = 12.0
+
+[[feature]]
+key = "the_blade_really_tears"
+check = "tip_travel_min"
+value = 28.0     # 四条里刀尖行程最长的一条（实测 34.7）
+
+[[feature]]
+key = "never_lifts_into_the_torch_pose"
+check = "tip_below"
+value = 26.0

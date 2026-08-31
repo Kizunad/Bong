@@ -1,0 +1,58 @@
+# dagger_slash —— 「这条动作应该看得出什么」的人写清单。
+#
+# **招式在 v3 变了**：v2 是横划，2026-08-31 用户手摆的两端把它改成了过顶下劈
+# （起手式刃朝天、刀尖 y=41.1；收势低位前伸）。所以这份清单整个重写过，不是在旧题目
+# 上打补丁。
+#
+# 注意这条**没有** `tip_below`：举刀过顶是这一招的定义。刀尖高度由
+# `knife_anim_gates` 的窗口版门管（从撞击帧起算，门限仍是下巴线 26）。
+#
+# 状态：草案（由实施方拟，等人工审核后才算数）。
+
+name = "匕首过顶下劈"
+beats = "t0 用户手摆的过顶高架 → t2/t3 再仰一寸蓄势 → t4 过中线 → t5 劈到下巴高度 → t6 劈到底 → t8 用户手摆的低位定格"
+
+[[feature]]
+key = "guard_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 0.0
+value = [-2.8, 30.7, -9.2]
+tol = 0.6
+
+[[feature]]
+key = "finish_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 8.0
+value = [0.2, 16.4, -11.4]
+tol = 0.6
+
+[[feature]]
+key = "the_load_points_the_blade_at_the_sky"
+check = "blade_elev_at"
+tick = 3.0
+value = 78       # 蓄势极点刃朝天；掉到 45 以下就不是过顶劈，是斜削
+tol = 18.0
+
+[[feature]]
+key = "impact_sweeps_through_the_chin_line"
+check = "blade_elev_at"
+tick = 5.0
+value = 15       # 撞击帧刃正扫过下巴高度往下走
+tol = 18.0
+
+[[feature]]
+key = "the_finish_points_down_and_forward"
+check = "blade_elev_at"
+tick = 8.0
+value = -16      # 收势刃朝前下 —— 劈完了刀不许还翘着
+tol = 12.0
+
+[[feature]]
+key = "the_blade_really_sweeps"
+check = "tip_travel_min"
+value = 30.0     # 一次过顶劈的刀尖行程；低于这个数读成"点了一下"
+
+[[feature]]
+key = "the_hand_really_drops"
+check = "grip_travel_min"
+value = 14.0     # 握把从头顶落到腰际

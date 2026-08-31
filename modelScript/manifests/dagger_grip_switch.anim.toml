@@ -1,0 +1,53 @@
+# dagger_grip_switch —— 「这条动作应该看得出什么」的人写清单。
+#
+# **方向在 v3 反了过来**：v2 是正握 → 反握的原地转腕，2026-08-31 用户手摆的两端改成了
+# **反握 → 正握、边抬边翻**。清单整个重写。
+#
+# 衔接：v2 的两端焊死在 dagger_stab / dagger_reverse_slash 的架势帧上。用户手摆之后
+# 四条动画的起手式各摆各的（实测 t0 与 dagger_reverse_slash t0 差 138.4°），焊接不再
+# 成立，`gate_chain` 已从 SUITE 撤掉。要恢复得由人先定「以哪一条的起手式为准」。
+#
+# 状态：草案（由实施方拟，等人工审核后才算数）。
+
+name = "匕首转刀（反握 → 正握）"
+beats = "t0 用户手摆的反握低位 → t2 微沉蓄势 → t4 翻到一半 → t5 刃转正朝前 → t6 到位并前送一寸 → t8 用户手摆的正握胸前架"
+
+[[feature]]
+key = "guard_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 0.0
+value = [-3.7, 13.1, -5.7]
+tol = 0.6
+
+[[feature]]
+key = "finish_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 8.0
+value = [-4.3, 21.5, -11.3]
+tol = 0.6
+
+[[feature]]
+key = "starts_in_a_reverse_grip"
+check = "blade_elev_at"
+tick = 0.0
+value = -46      # 刃朝下 = 反握
+tol = 14.0
+
+[[feature]]
+key = "passes_through_the_horizontal"
+check = "blade_elev_at"
+tick = 4.0
+value = -18      # 翻到一半，刃过水平前 —— 这一帧看不出在翻，整条就白做了
+tol = 14.0
+
+[[feature]]
+key = "ends_in_a_forward_grip"
+check = "blade_elev_at"
+tick = 8.0
+value = 19       # 刃朝前偏上 = 正握
+tol = 12.0
+
+[[feature]]
+key = "the_blade_really_turns_over"
+check = "tip_travel_min"
+value = 20.0     # 实测 24.7；低于这个数读成"抖了一下"而不是"换了握"

@@ -1,0 +1,51 @@
+# dagger_stab —— 「这条动作应该看得出什么」的人写清单。
+#
+# 这份文件**是题目，不是答案**：工具只负责按它点名，不负责判断动作像不像匕首直刺。
+# 让模型自己出题自己判卷是本仓视觉资产纪律明令禁止的（`CLAUDE.md` 视觉资产纪律）。
+#
+# v3（2026-08-31）：首末两帧改成用户在 Blockbench 里手摆的那两帧。下面两条
+# `*_matches_the_hand_placed_frame` 就是把他画的东西原样钉住 —— 之后任何一轮返工
+# 只要动了端点，这里立刻报。其余几条才是「中间怎么走」的题目。
+#
+# 状态：草案（由实施方拟，等人工审核后才算数）。
+
+name = "匕首低位直刺"
+beats = "t0 用户手摆起手 → t2 后腿蹬地 → t3 刀收右肋点下压 → t5 直出撞击 → t6 过冲 → t8 用户手摆的伸展定格"
+
+[[feature]]
+key = "guard_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 0.0
+value = [-4.4, 16.5, -9.5]   # 用户手摆的起手式，回读值
+tol = 0.6
+
+[[feature]]
+key = "finish_matches_the_hand_placed_frame"
+check = "grip_at"
+tick = 8.0
+value = [-2.5, 20.8, -13.6]  # 用户手摆的收势，回读值
+tol = 0.6
+
+[[feature]]
+key = "the_load_chambers_the_point_down"
+check = "blade_elev_at"
+tick = 3.0
+value = -28      # 蓄势时刃压向腹线；不压下去就没有"由下往上顶"的读感
+tol = 15.0
+
+[[feature]]
+key = "impact_levels_the_blade"
+check = "blade_elev_at"
+tick = 5.0
+value = 0        # 撞击帧刃必须摆平 —— 不然那不是刺，是往天上捅
+tol = 15.0
+
+[[feature]]
+key = "the_hand_actually_travels"
+check = "grip_travel_min"
+value = 8.0      # 返工前只有 6.2px（刀身长 11px），观众看不出这是一次出手
+
+[[feature]]
+key = "never_lifts_into_the_torch_pose"
+check = "tip_below"
+value = 26.0     # 下巴线；返工前刀尖常年在 29~32

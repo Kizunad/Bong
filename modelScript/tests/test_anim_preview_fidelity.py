@@ -35,7 +35,10 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in (LIB_DIR / "tools", REPO / "client" / "tools"):
+# `gen_knife_trio` 住在 generators/ 下。少了这一条，下面六条匕首判据全部以
+# `ModuleNotFoundError` 收场 —— 而 unittest 把它计成 FAIL 混在其它输出里，没人回头看，
+# 于是这四条动画一路漂到「刃仰角 +48°、刀尖高出肩 10px」都没有任何一道门报过警。
+for _d in (LIB_DIR / "tools", LIB_DIR / "generators", REPO / "client" / "tools"):
     sys.path.insert(0, str(_d))
 
 import render_animation as RA  # noqa: E402
@@ -353,99 +356,42 @@ class BendUnitTest(unittest.TestCase):
                            "换 bend 轴后手心几乎没变——axis 多半也被双重转换了")
 
 
-class DaggerAnimationTest(unittest.TestCase):
-    """两条匕首动画的设计意图锁。"""
+class DaggerSuiteDelegationTest(unittest.TestCase):
+    """四条匕首动画的判据**只有一处定义**：`modelScript/tools/knife_anim_gates.py`。
 
-    ANIMS = ("dagger_slash", "dagger_stab")
+    这里原本抄了一份（刃仰角、刀尖高度、峰速落点、肘不打直、收势闭合、可分辨性）。
+    两份判据各挂各的手持物 —— 这边量的是 `gen_knife_trio` 的石刃（display
+    `[-80,90,0]`，刃基本沿前臂），门那边量的是 `IronDagger.bbmodel`（display
+    `[0,-90,55]`，本仓 `tripo_to_sml.HANDHELD_DISPLAY` 的默认握法，刃相对前臂偏前
+    35°）。同一套姿态在两种握法下的刃仰角天然差三十多度，于是「撞击帧刃要水平」这条
+    在两边永远不可能同时成立 —— 一份必然假绿或假红，而看的人以为它们在说同一件事。
 
-    def _kfs(self, name):
-        e = json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))
-        return RA.collect_keyframes(e.get("emote", e))
+    所以这里只保留**委托**：门跑不过就红在这。判据、门限和它们的标定理由都在门模块里。
+    """
 
-    def _moves(self, name):
-        e = json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))
-        return (e.get("emote", e))["moves"]
+    def _gates(self):
+        import knife_anim_gates as KG
+        return KG
 
-    def test_strike_segment_carries_an_accelerating_easing(self):
-        """发力段 t3→t5 的 easing 写在 t3 上，且必须是 IN 族。
+    def test_every_dagger_animation_passes_its_gates(self):
+        KG = self._gates()
+        bad = {}
+        for name in sorted(KG.SUITE):
+            fails = [g.label for g in KG.build(name).run_all() if not g.ok]
+            if fails:
+                bad[name] = fails
+        self.assertFalse(
+            bad, f"匕首动画没过门：{bad} —— 跑 "
+                 f"`python3 modelScript/tools/knife_anim_gates.py` 看逐条明细")
 
-        §15.2 的坑：直觉会把 OUTQUAD 写在撞击帧 t5 上，以为那是"到撞击时减速"，
-        实际它管的是撞击**之后**。后果可量：峰速落在 t6 的收招段而不是撞击。
-        conventions 里的 `assertAxisDense` 只查"显式且非 linear"，INOUTSINE 照样
-        放行——所以这条得单独锁。
-        """
-        for name in self.ANIMS:
-            eases = {m["tick"]: m.get("easing") for m in self._moves(name)}
-            self.assertTrue(
-                str(eases.get(3, "")).startswith("IN")
-                and not str(eases.get(3, "")).startswith("INOUT"),
-                f"{name} 的 t3（发力段起始帧）easing 是 {eases.get(3)!r}，"
-                f"应为 IN 族（INQUAD/INCUBIC…）才能从静止加速到撞击")
-
-    def test_peak_speed_lands_on_the_impact_tick(self):
-        """刀尖峰速必须出现在撞击帧 t5 之前的最后一格，不能落在收招段。"""
-        import preview_player_anim as P
-        knife = RB.load_bbmodel(MODELS / "StoneKnife.bbmodel")[0]
-        V = np.array([p for vs, _, _ in knife for p in vs])
-        tip = V[int(V[:, 1].argmax())]
-        # 取生成器里的真值，别在测试里另写一份——写死过一次 [0,-90,55]，
-        # 结果生成器改了刃向而测试还在量旧握法。
-        import gen_knife_trio as GK
-        disp = GK.STONE_KNIFE.display["thirdperson_righthand"]
-        for name in self.ANIMS:
-            kfs = self._kfs(name)
-            pos = []
-            for i in range(33):
-                m = P.hand_transform(kfs, 8.0 * i / 32, disp)
-                pos.append(m[:3, :3] @ tip + m[:3, 3])
-            speed = np.linalg.norm(np.diff(np.array(pos), axis=0), axis=1)
-            peak_tick = 8.0 * int(speed.argmax()) / 32
-            self.assertTrue(
-                3.0 < peak_tick <= 5.0,
-                f"{name} 峰速在 t{peak_tick:.1f}，应落在发力段 (3, 5]。"
-                f"落在 t6 附近说明 easing 写在了错误的帧上（§15.2）")
-
-    def test_elbow_never_straightens(self):
-        """匕首和剑的核心区别：肘全程不伸直。
-
-        剑刺 impact 时 bend=3（整条手臂打直够远），匕首够不着，伸直只是把手腕送
-        到对方面前。改小了这条就退化成"短剑"。
-        """
-        for name in self.ANIMS:
-            bends = [math.degrees(v) for _, v, _ in self._kfs(name)["rightArm"]["bend"]]
-            self.assertGreaterEqual(
-                min(bends), 15.0,
-                f"{name} 右肘最小 bend={min(bends):.0f}°，匕首不该把手臂打直")
-
-    def test_returns_exactly_to_the_guard_pose(self):
-        """末帧必须与首帧逐轴一致，否则连击时会跳一下。"""
-        for name in self.ANIMS:
-            kfs = self._kfs(name)
-            for part, axes in kfs.items():
-                for axis, lst in axes.items():
-                    first = RA.sample_axis(kfs, part, axis, 0.0)
-                    last = RA.sample_axis(kfs, part, axis, 8.0)
-                    self.assertAlmostEqual(
-                        first, last, places=6,
-                        msg=f"{name} 的 {part}.{axis} 首帧 {first:.4f} ≠ 末帧 {last:.4f}")
-
-    def test_both_daggers_are_distinguishable_from_each_other(self):
-        """横划和直刺必须是两个能分辨的动作，不能只是数值微调。"""
-        a, b = (self._kfs(n) for n in self.ANIMS)
-        diffs = []
-        for part in ("rightArm", "leftArm", "torso", "body"):
-            for axis in ("pitch", "yaw", "roll", "bend", "z"):
-                if axis not in a.get(part, {}) or axis not in b.get(part, {}):
-                    continue
-                for t in (0.0, 3.0, 5.0):
-                    diffs.append(abs(RA.sample_axis(a, part, axis, t)
-                                     - RA.sample_axis(b, part, axis, t)))
-        self.assertGreater(max(diffs), math.radians(25),
-                           "两条匕首动画在所有采样点都过于接近，玩家分辨不出")
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_the_gates_themselves_still_discriminate(self):
+        """门自己得有鉴别力：注入对应缺陷后必须报。"""
+        KG = self._gates()
+        broken = {name: KG.build(name).self_test(verbose=False)
+                  for name in sorted(KG.SUITE)}
+        broken = {k: v for k, v in broken.items() if v}
+        self.assertFalse(
+            broken, f"这些动画上有门失效（干净就红，或注入缺陷后仍绿）：{broken}")
 
 
 class JointAnatomyGuardTest(unittest.TestCase):
@@ -719,75 +665,6 @@ class HeldItemAttachTest(unittest.TestCase):
                         f"拳头只有 4px 宽，超过 0.5px 就看得出刀没被握住")
 
 
-class DaggerBladeReadTest(unittest.TestCase):
-    """匕首动画的**刃向读感**回归锁。
-
-    这两条锁的是一次真实事故：动画的姿态是照着一个**挂点算错的预览**调出来的，
-    结果每一 tick 刃仰角都在 +63~+78°、横划那条刃尖还越过肩往身后指——渲出来
-    读成"举着火把"。姿态本身在数值上"没毛病"，只有把刀真正摆对了才看得见。
-    """
-
-    ANIMS = ("dagger_slash", "dagger_stab")
-
-    def _blade(self, name, tick):
-        import preview_player_anim as P
-        import gen_knife_trio as GK
-        kfs = RA.collect_keyframes(
-            json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
-        M = P.item_attach_modelpart(kfs, tick, GK.STONE_KNIFE.display["thirdperson_righthand"])
-        d = M[:3, :3] @ np.array([0.0, 1.0, 0.0])
-        d /= np.linalg.norm(d)
-        # ModelPart：+Y 朝下、+Z 朝身后
-        return math.degrees(math.asin(-d[1])), -d[2]
-
-    def test_blade_never_points_behind_the_player(self):
-        for name in self.ANIMS:
-            for i in range(33):
-                tick = 8.0 * i / 32
-                elev, forward = self._blade(name, tick)
-                self.assertGreater(
-                    forward, 0.0,
-                    f"{name} t{tick:g}: 刃的前向分量 {forward:+.3f} —— 刀尖指向自己身后")
-
-    def test_blade_stays_out_of_the_torch_zone(self):
-        """刃仰角全程 < 30°。
-
-        阈值取 30 是量出来的分界，不是拍的：返工前这两条是 42.9° / 39.6°，返工后是
-        23.6° / 16.3°。45° 那种"看着宽松点"的阈值**放行返工前的姿态**，等于没锁。
-        """
-        for name in self.ANIMS:
-            worst = max((self._blade(name, 8.0 * i / 32)[0], 8.0 * i / 32) for i in range(33))
-            self.assertLess(
-                worst[0], 30.0,
-                f"{name} t{worst[1]:g} 刃仰角 {worst[0]:.1f}° ≥ 30°，读成举火把而不是持刀")
-
-    def test_blade_tip_never_rises_above_the_shoulder(self):
-        """刀尖不许高过肩线——"举火把"最直接的判据，比仰角更贴近肉眼读到的东西。
-
-        返工前刀尖最高到肩上 4.6px（越过下巴、贴着脸），返工后落在肩下 0.3px 以内。
-        """
-        import preview_player_anim as P
-        import gen_knife_trio as GK
-        item = GK.STONE_KNIFE
-        tip_y = 8.0 + (max(b.high[1] for b in item.boxes) - item.grip) * 16.0
-        disp = item.display["thirdperson_righthand"]
-        for name in self.ANIMS:
-            kfs = RA.collect_keyframes(
-                json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
-            for i in range(33):
-                tick = 8.0 * i / 32
-                M = P.item_attach_modelpart(kfs, tick, disp)
-                y = (M @ np.array([8.0, tip_y, 8.0, 1.0]))[1] - 2.0   # 相对肩枢轴，+ 朝下
-                self.assertGreater(
-                    y, -1.0,
-                    f"{name} t{tick:g}: 刀尖高出肩线 {-y:.2f}px —— 这就是「举火把」的读感")
-
-    def test_the_thrust_actually_levels_the_blade(self):
-        """直刺的撞击帧刃必须接近水平——否则那不是刺，是往地上戳。"""
-        elev, _ = self._blade("dagger_stab", 5.0)
-        self.assertLess(abs(elev), 15.0, f"dagger_stab 撞击帧刃仰角 {elev:.1f}°，不像直刺")
-
-
 class DaggerStanceTest(unittest.TestCase):
     """站架：`body.yaw` 是**整个人**（含头/腿/手持物）唯一的转身通道。
 
@@ -946,3 +823,7 @@ class PreviewEndTickTest(unittest.TestCase):
             self.assertGreater(P._end_tick(emote), 0.0, f"{path.name}: endTick 非正")
             checked += 1
         self.assertGreater(checked, 100, "动画资产一个都没扫到，这条锁失去了对象")
+
+
+if __name__ == "__main__":
+    unittest.main()
