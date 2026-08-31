@@ -5,6 +5,7 @@ import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.combat.screen.TerminateScreen;
+import com.bong.client.combat.screen.RepairScreen;
 import com.bong.client.combat.store.TerminateStateStore;
 import com.bong.client.coffin.CoffinMenuScreen;
 import com.bong.client.inventory.model.InventoryItem;
@@ -25,7 +26,8 @@ final class UiPreviewScenes {
     private static final Map<String, UiPreviewScene> SCENES = Map.of(
         "craft", new CraftScene(),
         "terminate", new TerminateScene(),
-        "coffin-menu", new CoffinMenuScene()
+        "coffin-menu", new CoffinMenuScene(),
+        "repair", new RepairScene()
     );
 
     private UiPreviewScenes() {
@@ -371,6 +373,79 @@ final class UiPreviewScenes {
             if (!coffin.focusOrderForPreview().contains("coffin-enter")
                 || !coffin.focusOrderForPreview().contains("coffin-reclaim")) {
                 throw new IllegalStateException("延寿棺按钮没有进入 Tab 焦点顺序");
+            }
+        }
+
+        @Override
+        public void cleanup() {
+        }
+    }
+
+    private static final class RepairScene implements UiPreviewScene {
+        @Override
+        public void installFixture() {
+        }
+
+        @Override
+        public Screen createScreen() {
+            // 预览不应触碰真实网络；组合根注入一个确定性本地 sink。
+            return new RepairScreen(
+                "锈骨剑", 0.42f, 4242L, 1, 64, 2, intent ->
+                    com.bong.client.ui.intent.UiIntentResult.accepted());
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof RepairScreen repair)) {
+                throw new IllegalStateException("repair scene 打开的不是 RepairScreen");
+            }
+            return repair.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof RepairScreen repair && repair.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof RepairScreen repair && repair.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof RepairScreen repair)) {
+                throw new IllegalStateException("repair scene 打开的不是 RepairScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = repair.componentBoundsForPreview("repair-panel");
+            if (!panel.fitsInside(width, height)) {
+                throw new IllegalStateException("养护面板越出 viewport: " + panel + ", viewport=" + width + "x" + height);
+            }
+            for (String id : new String[] {
+                "repair-title", "repair-durability", "repair-durability-track", "repair-actions",
+                "repair-steel", "repair-pill"
+            }) {
+                ComponentBounds bounds = repair.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("养护组件越界: " + id + " -> " + bounds);
+                }
+            }
+            ComponentBounds fill = repair.componentBoundsForPreview("repair-durability-fill");
+            if (fill.width() != Math.round(repair.durabilityNormForTests() * repair.durabilityBarWidthForTests())
+                || fill.height() <= 0) {
+                throw new IllegalStateException("养护耐久条没有反映快照: " + fill);
+            }
+            for (String id : new String[] {"repair-steel", "repair-pill"}) {
+                ComponentBounds bounds = repair.componentBoundsForPreview(id);
+                String hit = repair.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException("养护按钮中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            if (!repair.focusOrderForPreview().containsAll(List.of("repair-steel", "repair-pill"))) {
+                throw new IllegalStateException("养护按钮没有进入 Tab 焦点顺序");
             }
         }
 

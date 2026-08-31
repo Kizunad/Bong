@@ -55,6 +55,16 @@
       "expected_logical_width": 320,
       "expected_logical_height": 240,
       "expected_template_id": "coffin-menu"
+    },
+    {
+      "name": "repair-minimum",
+      "scene_id": "repair",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "repair"
     }
   ]
 }
