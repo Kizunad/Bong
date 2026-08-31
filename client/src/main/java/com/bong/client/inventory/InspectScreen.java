@@ -4491,25 +4491,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void openRepairScreen(InventoryItem item) {
-        if (item == null || item.instanceId() == 0L) return;
-        MinecraftClient client = MinecraftClient.getInstance();
-        int sx = 0;
-        int sy = 64;
-        int sz = 0;
-        if (client.player != null) {
-            sx = (int) Math.floor(client.player.getX());
-            sy = (int) Math.floor(client.player.getY());
-            sz = (int) Math.floor(client.player.getZ());
-        }
-        client.setScreen(new com.bong.client.combat.screen.RepairScreen(
-            item.displayName(),
-            (float) item.durability(),
-            item.instanceId(),
-            sx,
-            sy,
-            sz,
-            com.bong.client.combat.RepairClientIntentSink.production()
-        ));
+        InspectScreenBootstrap.openRepairScreen(MinecraftClient.getInstance(), item);
     }
 
     // ==================== Loot panel mount/unmount ====================

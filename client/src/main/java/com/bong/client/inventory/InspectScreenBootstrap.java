@@ -75,4 +75,21 @@ public final class InspectScreenBootstrap {
     static InspectScreen createScreen(InventoryModel snapshot) {
         return new InspectScreen(snapshot);
     }
+
+    /**
+     * 由应用层组装养护界面的生产依赖，避免 InspectScreen 直接依赖网络设施。
+     */
+    static void openRepairScreen(MinecraftClient client, com.bong.client.inventory.model.InventoryItem item) {
+        if (client == null || item == null || item.instanceId() == 0L) return;
+        int sx = 0;
+        int sy = 64;
+        int sz = 0;
+        if (client.player != null) {
+            sx = (int) Math.floor(client.player.getX());
+            sy = (int) Math.floor(client.player.getY());
+            sz = (int) Math.floor(client.player.getZ());
+        }
+        client.setScreen(com.bong.client.combat.screen.RepairScreenFactory.production().create(
+            item.displayName(), (float) item.durability(), item.instanceId(), sx, sy, sz));
+    }
 }
