@@ -1,9 +1,11 @@
 package com.bong.client.forge;
 
 import com.bong.client.BongClient;
+import com.bong.client.combat.ForgeCarrierScreenBootstrap;
 import com.bong.client.input.ClientInputPolicy;
 import com.bong.client.input.KeybindMigrationService;
 import com.bong.client.input.BongKeybindRegistry;
+import com.bong.client.combat.screen.ForgeCarrierScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
@@ -100,6 +102,23 @@ public final class ForgeScreenBootstrap {
                 return;
             }
             client.setScreen(new ForgeScreen());
+        });
+    }
+
+    /**
+     * 由现有锻炉界面转入暗器注入界面；生产 sink 必须通过组合根组装。
+     *
+     * <p>该入口保持在 forge 应用层，避免 XML Screen 自行创建网络实现。</p>
+     */
+    static void requestOpenForgeCarrierScreen(MinecraftClient client) {
+        if (client == null) {
+            return;
+        }
+        client.execute(() -> {
+            if (client.currentScreen instanceof ForgeCarrierScreen) {
+                return;
+            }
+            client.setScreen(ForgeCarrierScreenBootstrap.create());
         });
     }
 }
