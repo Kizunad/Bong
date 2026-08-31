@@ -6,7 +6,7 @@ combat/screen/DeathScreen.java	DeathScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice;暗器注入
 combat/screen/RepairScreen.java	RepairScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; weapon repair
 combat/screen/TerminateScreen.java	TerminateScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; system-terminal screen
-combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; 阵法布置
 craft/CraftScreen.java	CraftScreen	OWO_XML	OWO_XML_TEMPLATE	false	P2 owo XML vertical slice
 craft/WorkbenchScreen.java	WorkbenchScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 cultivation/TechniqueScrollReadScreen.java	TechniqueScrollReadScreen	NON_SCREEN_HELPER	NONE	false	Suffix matches Screen.java but class is a toast/text helper

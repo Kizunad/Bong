@@ -291,6 +291,7 @@ final class UiPreviewSession {
             OwoXmlTemplateRegistry.production().require("repair");
             OwoXmlTemplateRegistry.production().require("death");
             OwoXmlTemplateRegistry.production().require("forge-carrier");
+            OwoXmlTemplateRegistry.production().require("zhenfa-layout");
             return true;
         } catch (IllegalStateException notLoadedYet) {
             return false;
