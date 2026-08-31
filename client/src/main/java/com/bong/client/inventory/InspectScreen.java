@@ -6,7 +6,6 @@ import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarStore;
-import com.bong.client.combat.RepairClientIntentSink;
 import com.bong.client.combat.inspect.TechniqueDragDecision;
 import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.combat.inspect.StatusPanelExtension;
@@ -4509,7 +4508,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             sx,
             sy,
             sz,
-            RepairClientIntentSink.production()
+            com.bong.client.combat.RepairClientIntentSink.production()
         ));
     }
 
