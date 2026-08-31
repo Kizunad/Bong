@@ -150,13 +150,18 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
         );
     }
 
-    private void dispatch(DeathIntent intent) {
+    void dispatch(DeathIntent intent) {
         UiIntentResult result = intentSink.dispatch(intent);
-        if (result.kind() != UiIntentResult.Kind.LOCAL_ACCEPTED) {
-            feedbackText = "操作未提交: " + result.reason();
+        if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+            feedbackText = "";
             if (feedbackLabel != null) {
                 feedbackLabel.text(Text.literal(feedbackText));
             }
+            return;
+        }
+        feedbackText = "操作未提交: " + result.reason();
+        if (feedbackLabel != null) {
+            feedbackLabel.text(Text.literal(feedbackText));
         }
     }
 
