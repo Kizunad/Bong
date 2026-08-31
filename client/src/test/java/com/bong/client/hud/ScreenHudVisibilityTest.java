@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.agentui.AgentUiScreen;
+import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.insight.InsightCategory;
 import com.bong.client.insight.InsightChoice;
 import com.bong.client.insight.InsightOfferScreen;
@@ -48,6 +49,13 @@ class ScreenHudVisibilityTest {
         assertEquals(
             ScreenHudVisibility.HIDDEN,
             ScreenHudVisibility.forScreen(new DeathScreen(Text.literal("death"), false))
+        );
+        assertEquals(
+            ScreenHudVisibility.HIDDEN,
+            ScreenHudVisibility.forScreen(new com.bong.client.combat.screen.DeathScreen(
+                new DeathStateStore.State(true, "pk", 0.5f, List.of(), 0L, true, true),
+                intent -> com.bong.client.ui.intent.UiIntentResult.accepted()
+            ))
         );
         assertEquals(
             ScreenHudVisibility.HIDDEN,

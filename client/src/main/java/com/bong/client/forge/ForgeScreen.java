@@ -267,6 +267,11 @@ public final class ForgeScreen extends Screen {
         if (TemperingInputHandler.handleKey(this, keyCode)) {
             return true;
         }
+        if (keyCode == GLFW.GLFW_KEY_C) {
+            // 在既有锻炉入口内打开暗器注入屏，由应用组合根组装生产网络 sink。
+            ForgeScreenBootstrap.requestOpenForgeCarrierScreen(client);
+            return true;
+        }
         if (keyCode == 85) { // U
             this.close();
             return true;

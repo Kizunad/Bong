@@ -304,5 +304,9 @@
   "outputs": {
    "XuePoLian.bbmodel": "cd9b4e7a4c5c3e21a7ce9231325bfe7f26bea8e93d5844dac7e175f98e46fbed"
   }
+ },
+ "gen_zhenyuan_mine.py": {
+  "exit": 2,
+  "outputs": {}
  }
 }

@@ -23,6 +23,10 @@ name = "tsy_container_search_unit"
 path = "tests/unit/world/tsy_container_search_test.rs"
 
 [[test]]
+name = "range_gate_unit"
+path = "tests/unit/lingtian/range_gate_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
