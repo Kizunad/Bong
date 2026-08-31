@@ -1,0 +1,40 @@
+# 真元诡雷 zhenyuan_mine —— 特征点名清单
+#
+# 人写特征清单，核对真元诡雷的关键视觉要素：
+# 1. 碎裂玄武岩/暗银岩板 (4 Stone Plates)
+# 2. 贯穿裂隙暗底 (Base Slab & Bed)
+# 3. 核心真元阵眼环与炽烈喷发尖刺 (Energy Core & Burst Spikes)
+# 4. 幽蓝冷光电弧真元渠 (Cold Arc Channels)
+# 5. 四角锁灵骨桩 (4 Corner Bone Posts)
+# 6. 四边仿古铜箍/蚀铁锁扣 (4 Metal Clasps / Straps)
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+stone       = [45, 48, 54]
+fissure     = [16, 15, 18]
+energy_hot  = [255, 135, 25]
+energy_cold = [100, 225, 255]
+bone        = [215, 202, 176]
+brass_iron  = [150, 118, 65]
+
+[features]
+# 破碎岩石基底与四大主石板
+rock_plates = { elements = ["plate_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1000, SIDE_R = 1000 } }
+
+# 贯穿十字裂隙底座
+fissure_bed = { elements = ["base_slab", "bed_edge_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 250, SIDE_R = 250 } }
+
+# 核心真元喷发突刺与火脉渠
+energy_burst = { elements = ["core_burst_", "core_spike_", "channel_hot_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 200, SIDE_R = 200 } }
+
+# 幽蓝缜密电弧渠
+cold_arcs = { elements = ["arc_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 80, SIDE_R = 80 } }
+
+# 四角锁灵骨柱（带关节头与锁链）
+bone_posts = { elements = ["bone_post_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 350, SIDE_R = 350 } }
+
+# 四边仿古铜箍/蚀铁锁扣
+metal_clasps = { elements = ["clasp_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 150, SIDE_R = 150 } }
