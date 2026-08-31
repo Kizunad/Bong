@@ -6,7 +6,10 @@ import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.combat.screen.TerminateScreen;
 import com.bong.client.combat.screen.RepairScreen;
+import com.bong.client.combat.screen.DeathScreen;
+import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.combat.store.TerminateStateStore;
+import com.bong.client.death.DeathCinematicState;
 import com.bong.client.coffin.CoffinMenuScreen;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
@@ -27,7 +30,8 @@ final class UiPreviewScenes {
         "craft", new CraftScene(),
         "terminate", new TerminateScene(),
         "coffin-menu", new CoffinMenuScene(),
-        "repair", new RepairScene()
+        "repair", new RepairScene(),
+        "death", new DeathScene()
     );
 
     private UiPreviewScenes() {
@@ -451,6 +455,101 @@ final class UiPreviewScenes {
 
         @Override
         public void cleanup() {
+        }
+    }
+
+    private static final class DeathScene implements UiPreviewScene {
+        @Override
+        public void installFixture() {
+            DeathStateStore.replace(new DeathStateStore.State(
+                true,
+                "pk",
+                0.42f,
+                List.of("不甘心", "旧名未曾留下", "愿后来者少走一段旧路"),
+                Long.MAX_VALUE,
+                true,
+                true,
+                "fortune",
+                2,
+                "ordinary",
+                0.0,
+                0,
+                0.0,
+                0,
+                0.0,
+                false,
+                DeathCinematicState.INACTIVE
+            ));
+        }
+
+        @Override
+        public Screen createScreen() {
+            return new DeathScreen(
+                DeathStateStore.snapshot(),
+                intent -> com.bong.client.ui.intent.UiIntentResult.accepted()
+            );
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof DeathScreen death)) {
+                throw new IllegalStateException("death scene 打开的不是 DeathScreen");
+            }
+            return death.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof DeathScreen death && death.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof DeathScreen death && death.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof DeathScreen death)) {
+                throw new IllegalStateException("death scene 打开的不是 DeathScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = death.componentBoundsForPreview("death-panel");
+            if (!panel.fitsInside(width, height)) {
+                throw new IllegalStateException("死亡屏面板越出 viewport: " + panel + ", viewport=" + width + "x" + height);
+            }
+            for (String id : new String[] {
+                "death-title", "death-luck", "death-luck-track", "death-content-scroll",
+                "death-phase", "death-countdown", "death-final-words-title",
+                "death-final-words", "death-actions",
+                "death-reincarnate", "death-terminate"
+            }) {
+                ComponentBounds bounds = death.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("死亡屏组件越界: " + id + " -> " + bounds);
+                }
+            }
+            ComponentBounds fill = death.componentBoundsForPreview("death-luck-fill");
+            if (fill.width() != Math.round(death.stateForTests().luckRemaining() * 220f)
+                || fill.height() <= 0) {
+                throw new IllegalStateException("死亡屏概率条没有反映快照: " + fill);
+            }
+            for (String id : List.of("death-reincarnate", "death-terminate")) {
+                ComponentBounds bounds = death.componentBoundsForPreview(id);
+                String hit = death.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException("死亡屏按钮中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            if (!death.focusOrderForPreview().containsAll(List.of("death-reincarnate", "death-terminate"))) {
+                throw new IllegalStateException("死亡屏按钮没有进入 Tab 焦点顺序");
+            }
+        }
+
+        @Override
+        public void cleanup() {
+            SessionScopedStoreRegistry.clearAllOnDisconnect();
         }
     }
 }

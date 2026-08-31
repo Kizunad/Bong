@@ -288,6 +288,8 @@ final class UiPreviewSession {
             OwoXmlTemplateRegistry.production().require("craft-compact");
             OwoXmlTemplateRegistry.production().require("terminate");
             OwoXmlTemplateRegistry.production().require("coffin-menu");
+            OwoXmlTemplateRegistry.production().require("repair");
+            OwoXmlTemplateRegistry.production().require("death");
             return true;
         } catch (IllegalStateException notLoadedYet) {
             return false;

@@ -1,5 +1,6 @@
 package com.bong.client.combat.screen;
 
+import com.bong.client.combat.DeathScreenBootstrap;
 import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.combat.store.TerminateStateStore;
 import net.minecraft.client.MinecraftClient;
@@ -26,7 +27,7 @@ public final class CombatScreenOpener {
 
         DeathStateStore.State death = DeathStateStore.snapshot();
         if (death.visible() && !(current instanceof DeathScreen) && !(current instanceof TerminateScreen)) {
-            mc.setScreen(new DeathScreen(death));
+            mc.setScreen(DeathScreenBootstrap.create(death));
         }
     }
 }
