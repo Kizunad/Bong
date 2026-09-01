@@ -12,7 +12,7 @@ craft/WorkbenchScreen.java	WorkbenchScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE
 cultivation/voidaction/LegacyAssignPanel.java	LegacyAssignPanel	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 forge/ForgeScreen.java	ForgeScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
-identity/IdentityPanelScreen.java	IdentityPanelScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
+identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
 insight/InsightOfferScreen.java	InsightOfferScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
 inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 inventory/InspectScreen.java	InspectScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE

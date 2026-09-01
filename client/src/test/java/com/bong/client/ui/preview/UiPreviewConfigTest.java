@@ -17,7 +17,7 @@ class UiPreviewConfigTest {
     void checkedInConfigCoversMinimumOddAndWideRealRendererCases() throws IOException {
         UiPreviewConfig config = UiPreviewConfig.parse(
             Files.readString(Path.of("ui-preview-harness.json")));
-        assertEquals(11, config.screenshots().size());
+        assertEquals(15, config.screenshots().size());
         assertEquals("craft-compact", config.screenshots().get(0).expectedTemplateId());
         assertEquals(320, config.screenshots().get(0).expectedLogicalWidth());
         assertEquals(401, config.screenshots().get(1).expectedLogicalWidth(),
@@ -37,8 +37,16 @@ class UiPreviewConfigTest {
         assertEquals("forge-carrier", config.screenshots().get(8).expectedTemplateId());
         assertEquals(401, config.screenshots().get(9).expectedLogicalWidth());
         assertEquals("forge-carrier", config.screenshots().get(9).expectedTemplateId());
-        assertEquals("zhenfa-layout", config.screenshots().get(10).sceneId());
-        assertEquals("zhenfa-layout", config.screenshots().get(10).expectedTemplateId());
+        assertEquals("identity-panel-empty", config.screenshots().get(10).sceneId());
+        assertEquals("identity-panel", config.screenshots().get(10).expectedTemplateId());
+        assertEquals("identity-panel", config.screenshots().get(11).sceneId());
+        assertEquals(320, config.screenshots().get(11).expectedLogicalHeight());
+        assertEquals("identity-panel", config.screenshots().get(12).sceneId());
+        assertEquals(401, config.screenshots().get(12).expectedLogicalWidth());
+        assertEquals("identity-panel", config.screenshots().get(13).sceneId());
+        assertEquals(683, config.screenshots().get(13).expectedLogicalWidth());
+        assertEquals("zhenfa-layout", config.screenshots().get(14).sceneId());
+        assertEquals("zhenfa-layout", config.screenshots().get(14).expectedTemplateId());
         assertTrue(config.screenshots().stream().allMatch(shot -> UiPreviewScenes.isRegistered(shot.sceneId())));
     }
 

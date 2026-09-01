@@ -12,7 +12,7 @@ craft/WorkbenchScreen.java	WorkbenchScreen	BASE_OWO	CODE	true	Code-built FlowLay
 cultivation/TechniqueScrollReadScreen.java	TechniqueScrollReadScreen	NON_SCREEN_HELPER	NONE	false	Suffix matches Screen.java but class is a toast/text helper
 cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 forge/ForgeScreen.java	ForgeScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
-identity/IdentityPanelScreen.java	IdentityPanelScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; identity panel
 insight/InsightOfferScreen.java	InsightOfferScreen	BASE_OWO	CODE	true	Code-built modal FlowLayout
 inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 inventory/InspectScreen.java	InspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout; P3 split target
