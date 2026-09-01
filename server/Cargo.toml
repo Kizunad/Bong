@@ -27,6 +27,10 @@ name = "craft_recipe_unit"
 path = "tests/unit/craft/recipe_test.rs"
 
 [[test]]
+name = "alchemy_furnace_unit"
+path = "tests/unit/alchemy/furnace_test.rs"
+
+[[test]]
 name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
 

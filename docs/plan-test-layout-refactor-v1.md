@@ -2,7 +2,7 @@
 
 > **一句话主题**：保留 server/client/agent 各自的 canonical 测试根，禁止新增生产文件内联测试，并按可回滚的小批次把现有 Rust inline tests 外置；同时冻结执行命令、CI job 与报告产物所有权，落地 `scripts/test-all.sh` 统一入口。
 >
-> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 首批 pseudo-vein、tsy_container_search、lingtian range_gate 与 craft recipe 模块已完成，后续模块与 P3-P4 尚未开始。
+> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 首批 pseudo-vein、tsy_container_search、lingtian range_gate、craft recipe 与 alchemy furnace 模块已完成，后续模块与 P3-P4 尚未开始。
 >
 > **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `plan-test-layout-refactor-v1`，基于 `origin/main=eea1e73f2`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。外部 `BongWorldGen` 不属于本仓库或本 plan 的测试栈；Bong 仅保留 raster handoff 与 server/client preview 消费端。
 
@@ -212,6 +212,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **迁移前后对拍**：迁移前 `cd server && ../scripts/build-token.sh cargo test craft::recipe::tests` 为 `28 passed / 0 failed`；迁移后 `cd server && ../scripts/build-token.sh cargo test --test craft_recipe_unit` 为 `28 passed / 0 failed`。
 - **完整 gate**：server fmt check 通过；clippy `--all-targets -- -D warnings` 通过；`cargo test` 通过，library 为 `12697 passed / 0 failed / 2 ignored`，bin 为 `18 passed / 0 failed`，`craft_recipe_unit` 为 `28 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试、`craft_recipe_unit` target 与本条 evidence 对应 commit 为 `a19dddf11c69653f0d2f4bd62671af28149d8100`；PR #2137 已合并到 `4fa2b9af5a8a31ad56f3f7fc605b52892d743903`。P2 其它模块、P3、P4 仍未完成。
+
+### P2-05 炼丹炉（✅ 2026-09-01）
+
+- **范围与落点**：仅将 `server/src/alchemy/furnace.rs` 原 `#[cfg(test)] mod tests` 的全部 7 个 `#[test]` 外置到 `server/tests/unit/alchemy/furnace_test.rs`，并新增 `server/Cargo.toml` 的显式 `alchemy_furnace_unit` test target；生产文件删除内联测试体，运行时代码未改动。原测试没有独立 helper，测试内的 `AlchemySession` 与 `BlockPos` fixture 构造均按原语义保留。
+- **迁移前后对拍**：迁移前 `cd server && ../scripts/build-token.sh cargo test alchemy::furnace::tests` 为 `7 passed / 0 failed`；迁移后 `cd server && ../scripts/build-token.sh cargo test --test alchemy_furnace_unit` 为 `7 passed / 0 failed`。7 个原测试名、边界/错误分支、时间/随机性和断言语义保持不变。
+- **公开 API 与 seam**：外置测试仅使用 `bong_server::alchemy` 的公开 `AlchemyFurnace`、`AlchemySession`、`furnace_tier_from_item_id` 以及 Valence `BlockPos`；无需新增 doc-hidden seam、扩大可见性或复制生产实现。
+- **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 通过；library 为 `12690 passed / 0 failed / 2 ignored`，bin 为 `18 passed / 0 failed`，`alchemy_furnace_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `alchemy_furnace_unit` target 对应 commit 为 `f11d0f430e8e48e91be575a33aa5cca3ea68f191`（2026-09-01）。本条仅记录 P2-05 进度；P2 其它模块、P3、P4 仍未完成。
 
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
