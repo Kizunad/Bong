@@ -2,7 +2,7 @@
   "version": 3,
   "author": "Bong",
   "name": "herb_knife_unfold",
-  "description": "凡铁采药刀甩腕亮刃展开",
+  "description": "凡铁采药刀甩腕亮刃展开（Blockbench 预览）",
   "emote": {
     "beginTick": 0,
     "endTick": 8,
@@ -36,13 +36,6 @@
       {
         "tick": 0,
         "easing": "OUTSINE",
-        "body": {
-          "yaw": -0.0872665
-        }
-      },
-      {
-        "tick": 0,
-        "easing": "OUTSINE",
         "head": {
           "pitch": 0.1745329
         }
@@ -52,13 +45,6 @@
         "easing": "OUTSINE",
         "head": {
           "yaw": -0.1047198
-        }
-      },
-      {
-        "tick": 0,
-        "easing": "OUTSINE",
-        "head": {
-          "roll": 0.0
         }
       },
       {
@@ -225,13 +211,6 @@
       {
         "tick": 4,
         "easing": "OUTQUAD",
-        "body": {
-          "yaw": 0.0698132
-        }
-      },
-      {
-        "tick": 4,
-        "easing": "OUTQUAD",
         "head": {
           "pitch": 0.0872665
         }
@@ -241,13 +220,6 @@
         "easing": "OUTQUAD",
         "head": {
           "yaw": 0.0349066
-        }
-      },
-      {
-        "tick": 4,
-        "easing": "OUTQUAD",
-        "head": {
-          "roll": 0.0
         }
       },
       {
@@ -414,13 +386,6 @@
       {
         "tick": 8,
         "easing": "INOUTSINE",
-        "body": {
-          "yaw": 0.0
-        }
-      },
-      {
-        "tick": 8,
-        "easing": "INOUTSINE",
         "head": {
           "pitch": 0.0
         }
@@ -528,13 +493,6 @@
         "easing": "INOUTSINE",
         "rightLeg": {
           "yaw": 0.0
-        }
-      },
-      {
-        "tick": 8,
-        "easing": "INOUTSINE",
-        "rightLeg": {
-          "roll": 0.0
         }
       },
       {
@@ -563,13 +521,6 @@
         "easing": "INOUTSINE",
         "leftLeg": {
           "yaw": 0.0
-        }
-      },
-      {
-        "tick": 8,
-        "easing": "INOUTSINE",
-        "leftLeg": {
-          "roll": 0.0
         }
       },
       {
