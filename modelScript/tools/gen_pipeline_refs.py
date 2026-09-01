@@ -242,7 +242,10 @@ def generate_single_step(
             ref_path = tv_path if tv_path.exists() else (out_dir / f"ref_{subject_name}_concept.png")
         print(f"\n[执行步骤: MC 体素爆炸分解图 (Exploded View)]")
         print(f"  参考图: {ref_path}")
-        full_prompt = PROMPT_TEMPLATES["exploded"]
+        if prompt:
+            full_prompt = prompt
+        else:
+            full_prompt = PROMPT_TEMPLATES["exploded"]
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
         out_file.write_bytes(img_bytes)
