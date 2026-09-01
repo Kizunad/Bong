@@ -23,6 +23,7 @@ public final class IdentityPanelScreen extends OwoXmlScreenHost<FlowLayout> {
     private final UiIntentSink<IdentityPanelIntent> intentSink;
     private IdentityPanelState state;
     private TextBoxComponent nameField;
+    private ButtonComponent newButton;
     private LabelComponent cooldownLabel;
     private LabelComponent emptyLabel;
     private LabelComponent overflowLabel;
@@ -52,7 +53,7 @@ public final class IdentityPanelScreen extends OwoXmlScreenHost<FlowLayout> {
         cooldownLabel = label("identity-cooldown");
         emptyLabel = label("identity-empty");
         overflowLabel = label("identity-overflow");
-        component(ButtonComponent.class, "identity-new")
+        newButton = component(ButtonComponent.class, "identity-new")
             .onPress(button -> dispatchNew());
         component(ButtonComponent.class, "identity-rename")
             .onPress(button -> dispatchRename());
@@ -68,7 +69,8 @@ public final class IdentityPanelScreen extends OwoXmlScreenHost<FlowLayout> {
     @Override
     protected void onHostOpened(UiScreenScope scope) {
         var subscription = stateSource.subscribe(next -> {
-            Runnable refresh = () -> refresh(next);
+            // 状态通知可能在屏幕 removed() 后才抵达客户端队列，必须重新检查生命周期。
+            Runnable refresh = () -> scope.runIfOpen(() -> refresh(next));
             MinecraftClient client = MinecraftClient.getInstance();
             if (client != null) {
                 client.execute(refresh);
@@ -119,6 +121,7 @@ public final class IdentityPanelScreen extends OwoXmlScreenHost<FlowLayout> {
             return;
         }
         cooldownLabel.text(Text.literal(cooldownLine(state)));
+        newButton.active(state.cooldownPassed());
         emptyLabel.text(state.identities().isEmpty() ? Text.literal("暂无身份数据") : EMPTY_TEXT);
         int count = Math.min(state.identities().size(), MAX_VISIBLE_IDENTITIES);
         for (int index = 0; index < MAX_VISIBLE_IDENTITIES; index++) {
