@@ -7,7 +7,6 @@
 pub mod actions;
 pub mod components;
 pub mod ledger_hooks;
-pub mod legacy;
 
 use valence::prelude::{App, IntoSystemConfigs, Update};
 

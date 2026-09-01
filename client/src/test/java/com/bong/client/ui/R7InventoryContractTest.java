@@ -37,16 +37,13 @@ class R7InventoryContractTest {
 
         assertEquals(expectedRows, actualRows,
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
-        assertEquals(30, expectedRows.size(), "fixture should contain 29 suffix files plus one non-suffix Screen");
+        assertEquals(29, expectedRows.size(), "fixture should contain 28 suffix files plus one non-suffix Screen");
         assertEquals(14, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
         assertEquals(8, count(expectedRows, "OWO_XML"), "P4 owo XML host set changed");
-        assertEquals(7, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
+        assertEquals(6, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
         assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
         assertEquals(14, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
             "P1 base migration is limited to direct legacy owo Screens");
-        assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
-            "cultivation/voidaction/LegacyAssignPanel.java")),
-            "suffix-only discovery must not lose a real Screen named LegacyAssignPanel");
         assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
             "cultivation/TechniqueScrollReadScreen.java") && row.kind().equals("NON_SCREEN_HELPER")),
             "suffix-only discovery must not count TechniqueScrollReadScreen as a Screen");
@@ -195,14 +192,7 @@ class R7InventoryContractTest {
                 ));
             }
         }
-        result.sort((left, right) -> {
-            boolean leftLegacy = left.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
-            boolean rightLegacy = right.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
-            if (leftLegacy != rightLegacy) {
-                return leftLegacy ? 1 : -1;
-            }
-            return left.path().compareTo(right.path());
-        });
+        result.sort(java.util.Comparator.comparing(ScreenInventoryRow::path));
         return result;
     }
 
@@ -270,8 +260,6 @@ class R7InventoryContractTest {
             case "inventory/InspectScreen.java" -> "Code-built FlowLayout; P3 split target";
             case "social/SparringInviteScreen.java", "social/TradeOfferScreen.java" -> "Vanilla modal screen";
             case "ui/DynamicXmlScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
-            case "cultivation/voidaction/LegacyAssignPanel.java" ->
-                "Real Screen missed by the Screen.java suffix inventory";
             default -> throw new AssertionError("fixture note mapping missing for " + path);
         };
     }

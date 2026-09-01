@@ -172,7 +172,7 @@ fn apply_due_qi_return(
                 return Err(entry);
             }
         }
-        VoidActionKind::SuppressTsy | VoidActionKind::LegacyAssign => {}
+        VoidActionKind::SuppressTsy => {}
     }
     Ok(())
 }

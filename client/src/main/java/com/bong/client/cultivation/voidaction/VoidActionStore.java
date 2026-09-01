@@ -1,7 +1,6 @@
 package com.bong.client.cultivation.voidaction;
 
 import java.util.EnumMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -40,16 +39,6 @@ public final class VoidActionStore {
         update(current -> current.withTargetZone(zoneId));
     }
 
-    public static void setLegacyDraft(String inheritorId, List<Long> itemInstanceIds, String message) {
-        update(current -> new Snapshot(
-            current.targetZoneId(),
-            current.cooldownReadyAtTicks(),
-            sanitize(inheritorId, "heir"),
-            itemInstanceIds == null ? List.of() : List.copyOf(itemInstanceIds),
-            message == null || message.isBlank() ? null : message.trim()
-        ));
-    }
-
     public static void markDispatched(VoidActionKind kind, long nowTick) {
         update(current -> {
             EnumMap<VoidActionKind, Long> next = new EnumMap<>(VoidActionKind.class);
@@ -57,13 +46,7 @@ public final class VoidActionStore {
             if (kind.cooldownTicks() > 0L) {
                 next.put(kind, nowTick + kind.cooldownTicks());
             }
-            return new Snapshot(
-                current.targetZoneId(),
-                next,
-                current.legacyInheritorId(),
-                current.legacyItemInstanceIds(),
-                current.legacyMessage()
-            );
+            return new Snapshot(current.targetZoneId(), next);
         });
     }
 
@@ -91,10 +74,7 @@ public final class VoidActionStore {
 
     public record Snapshot(
         String targetZoneId,
-        Map<VoidActionKind, Long> cooldownReadyAtTicks,
-        String legacyInheritorId,
-        List<Long> legacyItemInstanceIds,
-        String legacyMessage
+        Map<VoidActionKind, Long> cooldownReadyAtTicks
     ) {
         public Snapshot {
             targetZoneId = sanitize(targetZoneId, DEFAULT_ZONE_ID);
@@ -103,17 +83,14 @@ public final class VoidActionStore {
                 cooldowns.putAll(cooldownReadyAtTicks);
             }
             cooldownReadyAtTicks = Map.copyOf(cooldowns);
-            legacyInheritorId = sanitize(legacyInheritorId, "heir");
-            legacyItemInstanceIds = legacyItemInstanceIds == null ? List.of() : List.copyOf(legacyItemInstanceIds);
-            legacyMessage = legacyMessage == null || legacyMessage.isBlank() ? null : legacyMessage.trim();
         }
 
         public static Snapshot empty() {
-            return new Snapshot(DEFAULT_ZONE_ID, Map.of(), "heir", List.of(), null);
+            return new Snapshot(DEFAULT_ZONE_ID, Map.of());
         }
 
         public Snapshot withTargetZone(String zoneId) {
-            return new Snapshot(zoneId, cooldownReadyAtTicks, legacyInheritorId, legacyItemInstanceIds, legacyMessage);
+            return new Snapshot(zoneId, cooldownReadyAtTicks);
         }
 
         public long readyAtTick(VoidActionKind kind) {

@@ -15,13 +15,6 @@ pub enum VoidActionRequestV1 {
         zone_id: String,
         geometry: BarrierGeometry,
     },
-    LegacyAssign {
-        inheritor_id: String,
-        #[serde(default)]
-        item_instance_ids: Vec<u64>,
-        #[serde(default)]
-        message: Option<String>,
-    },
 }
 
 impl VoidActionRequestV1 {
@@ -30,7 +23,6 @@ impl VoidActionRequestV1 {
             Self::SuppressTsy { .. } => VoidActionKind::SuppressTsy,
             Self::ExplodeZone { .. } => VoidActionKind::ExplodeZone,
             Self::Barrier { .. } => VoidActionKind::Barrier,
-            Self::LegacyAssign { .. } => VoidActionKind::LegacyAssign,
         }
     }
 
@@ -39,7 +31,6 @@ impl VoidActionRequestV1 {
             Self::SuppressTsy { zone_id }
             | Self::ExplodeZone { zone_id }
             | Self::Barrier { zone_id, .. } => zone_id.clone(),
-            Self::LegacyAssign { inheritor_id, .. } => inheritor_id.clone(),
         }
     }
 }
@@ -174,34 +165,11 @@ mod tests {
     }
 
     #[test]
-    fn request_kind_maps_legacy_assign() {
-        assert_eq!(
-            VoidActionRequestV1::LegacyAssign {
-                inheritor_id: "heir".to_string(),
-                item_instance_ids: vec![],
-                message: None,
-            }
-            .kind(),
-            VoidActionKind::LegacyAssign
-        );
-    }
-
-    #[test]
     fn target_label_uses_zone_for_zone_actions() {
         let request = VoidActionRequestV1::ExplodeZone {
             zone_id: "spawn".to_string(),
         };
         assert_eq!(request.target_label(), "spawn");
-    }
-
-    #[test]
-    fn target_label_uses_heir_for_legacy() {
-        let request = VoidActionRequestV1::LegacyAssign {
-            inheritor_id: "heir".to_string(),
-            item_instance_ids: Vec::new(),
-            message: None,
-        };
-        assert_eq!(request.target_label(), "heir");
     }
 
     #[test]
@@ -234,13 +202,13 @@ mod tests {
     #[test]
     fn broadcast_channel_uses_kind() {
         let event = VoidActionBroadcastV1::new(
-            VoidActionKind::LegacyAssign,
+            VoidActionKind::Barrier,
             "actor",
             "Actor",
-            "heir",
+            "spawn",
             1,
             "text",
         );
-        assert_eq!(event.channel_name(), "bong:void_action/legacy_assign");
+        assert_eq!(event.channel_name(), "bong:void_action/barrier");
     }
 }

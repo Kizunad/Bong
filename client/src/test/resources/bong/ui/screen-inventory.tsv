@@ -28,4 +28,3 @@ social/TradeOfferScreen.java	TradeOfferScreen	VANILLA_SCREEN	VANILLA	false	Vanil
 spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 ui/CultivationScreen.java	CultivationScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 ui/DynamicXmlScreen.java	DynamicXmlScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory
-cultivation/voidaction/LegacyAssignPanel.java	LegacyAssignPanel	VANILLA_SCREEN	VANILLA	false	Real Screen missed by the Screen.java suffix inventory

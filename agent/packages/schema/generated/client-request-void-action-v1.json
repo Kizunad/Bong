@@ -110,47 +110,9 @@
               }
             }
           }
-        },
-        {
-          "additionalProperties": false,
-          "type": "object",
-          "required": [
-            "kind",
-            "inheritor_id"
-          ],
-          "properties": {
-            "kind": {
-              "const": "legacy_assign",
-              "type": "string"
-            },
-            "inheritor_id": {
-              "minLength": 1,
-              "maxLength": 128,
-              "type": "string"
-            },
-            "item_instance_ids": {
-              "type": "array",
-              "items": {
-                "minimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              }
-            },
-            "message": {
-              "anyOf": [
-                {
-                  "maxLength": 512,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
         }
       ]
     }
   },
-  "x-bong-typebox-source-sha256": "e9002972913c3d47b51c79695279a4690f3566026c4d00d936ab7979c354c2fe"
+  "x-bong-typebox-source-sha256": "50e756cabd283b2788a14590987afbaf56553e28f20518d5cd24682365170830"
 }

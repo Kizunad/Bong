@@ -48,7 +48,7 @@ pub enum ClientRequestV1 {
     StartDuXu {
         v: u8,
     },
-    /// plan-void-actions-v1 — 化虚专属四类世界级 action。
+    /// plan-void-actions-v1 — 化虚专属三类世界级 action。
     VoidAction {
         v: u8,
         request: VoidActionRequestV1,

@@ -2758,31 +2758,6 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
 
     let current_version: i32 =
         connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-    if current_version < 18 {
-        let transaction = connection.transaction()?;
-        transaction.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS legacy_letterbox (
-                owner_id TEXT PRIMARY KEY,
-                inheritor_id TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                assigned_at_tick INTEGER NOT NULL CHECK (assigned_at_tick >= 0),
-                reject_until_tick INTEGER NOT NULL CHECK (reject_until_tick >= 0),
-                status TEXT NOT NULL,
-                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
-                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
-            );
-            CREATE INDEX IF NOT EXISTS idx_legacy_letterbox_inheritor
-            ON legacy_letterbox (inheritor_id, status);
-            ",
-        )?;
-        assert_legacy_letterbox_schema_ready(&transaction)?;
-        transaction.execute_batch("PRAGMA user_version = 18;")?;
-        transaction.commit()?;
-    }
-
-    let current_version: i32 =
-        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if current_version < 19 {
         let transaction = connection.transaction()?;
         transaction.execute_batch(
@@ -3973,43 +3948,6 @@ fn assert_social_faction_reputations_schema_ready(
         }
     }
 
-    Ok(())
-}
-
-fn assert_legacy_letterbox_schema_ready(
-    transaction: &rusqlite::Transaction<'_>,
-) -> rusqlite::Result<()> {
-    let columns = table_columns(transaction, "legacy_letterbox")?;
-    let required = [
-        "owner_id",
-        "inheritor_id",
-        "payload_json",
-        "assigned_at_tick",
-        "reject_until_tick",
-        "status",
-        "schema_version",
-        "last_updated_wall",
-    ];
-    if let Some(missing) = required
-        .iter()
-        .find(|column| !columns.iter().any(|name| name == **column))
-    {
-        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-            io::Error::other(format!(
-                "v18 migration completed but legacy_letterbox column {missing} missing"
-            )),
-        )));
-    }
-    let index_exists: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_legacy_letterbox_inheritor'",
-        [],
-        |row| row.get(0),
-    )?;
-    if index_exists != 1 {
-        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-            io::Error::other("v18 migration completed but legacy_letterbox index missing"),
-        )));
-    }
     Ok(())
 }
 
@@ -11194,7 +11132,6 @@ mod persistence_tests {
             "social_renown",
             "social_spirit_niches",
             "social_faction_memberships",
-            "legacy_letterbox",
             "void_action_cooldowns",
             "high_renown_milestones",
             "spirit_treasure_world",
@@ -11337,34 +11274,6 @@ mod persistence_tests {
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should still be readable");
         assert_eq!(user_version, 19);
-    }
-
-    #[test]
-    fn v18_migration_rejects_partial_legacy_letterbox_schema() {
-        let db_path = database_path("v18-partial-legacy-letterbox");
-        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
-            .expect("temp db parent should be created");
-        let connection = Connection::open(&db_path).expect("db should open");
-        connection
-            .execute_batch(
-                "
-                CREATE TABLE legacy_letterbox (
-                    owner_id TEXT PRIMARY KEY
-                );
-                PRAGMA user_version = 17;
-                ",
-            )
-            .expect("partial legacy table should be created");
-        drop(connection);
-
-        bootstrap_sqlite(&db_path, "server-run-test")
-            .expect_err("partial legacy_letterbox schema must block v18 migration");
-
-        let connection = Connection::open(&db_path).expect("db should reopen");
-        let user_version: i32 = connection
-            .query_row("PRAGMA user_version;", [], |row| row.get(0))
-            .expect("user_version should be readable");
-        assert_eq!(user_version, 17);
     }
 
     #[test]
