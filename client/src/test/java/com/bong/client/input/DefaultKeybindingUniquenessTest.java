@@ -125,8 +125,8 @@ class DefaultKeybindingUniquenessTest {
             "forge/ForgeScreenBootstrap.java:forge.open_screen", "UNKNOWN");
 
         String identity = codeOnly(read(IDENTITY_BOOTSTRAP));
-        assertTrue(identity.contains("client.setScreen(new IdentityPanelScreen());"),
-            "O 的唯一默认 owner 必须仍打开身份面板这个独占 screen");
+        assertTrue(identity.contains("client.setScreen(create());"),
+            "O 的唯一默认 owner 必须通过组合根打开身份面板这个独占 screen");
         String voidAction = codeOnly(read(VOID_ACTION_BOOTSTRAP));
         assertTrue(voidAction.contains("client.setScreen(new VoidActionScreen());"),
             "化虚行动保留可重绑入口时必须仍打开自己的独占 screen");

@@ -5,14 +5,10 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 /**
- * plan-bughunt-client-identity-panel-stale-session-v1 — {@link IdentityPanelScreenBootstrap#onStoreChanged}
- * 的 null-safety 契约测试。
+ * 身份面板 store 通知的 null-safety 契约测试。
  *
- * <p>无头 JUnit 环境下没有真实渲染窗口，{@code MinecraftClient.getInstance()} 恒为 {@code null}
- * （全仓惯例：owo/vanilla screen 的 {@code MinecraftClient} 依赖部分不做完整 UI 树单测，见
- * {@code AlchemyScreenInventoryWiringTest} 文档注释）。这里只锁住"store 通知触发时，缺少
- * 真实 client 不能抛异常"这条防线——{@code IdentityPanelStateStore.clearOnDisconnect()} 在
- * server/agent 侧集成测试或工具脚本里也可能在没有真实 MinecraftClient 的语境下被触发。
+ * <p>无头 JUnit 环境下没有真实渲染窗口，{@code MinecraftClient.getInstance()} 恒为 {@code null}；
+ * 这里锁住断线或工具态通知不会因为缺少 client 而抛异常。
  */
 final class IdentityPanelScreenBootstrapTest {
     @Test

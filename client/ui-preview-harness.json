@@ -105,6 +105,46 @@
       "expected_logical_width": 401,
       "expected_logical_height": 241,
       "expected_template_id": "forge-carrier"
+    },
+    {
+      "name": "identity-panel-empty",
+      "scene_id": "identity-panel-empty",
+      "framebuffer_width": 640,
+      "framebuffer_height": 640,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 320,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "identity-panel-minimum",
+      "scene_id": "identity-panel",
+      "framebuffer_width": 640,
+      "framebuffer_height": 640,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 320,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "identity-panel-odd",
+      "scene_id": "identity-panel",
+      "framebuffer_width": 801,
+      "framebuffer_height": 641,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 321,
+      "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "identity-panel-wide",
+      "scene_id": "identity-panel",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "identity-panel"
     }
   ]
 }

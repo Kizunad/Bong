@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class IdentityPanelScreenTest {
     @Test
@@ -23,5 +24,16 @@ final class IdentityPanelScreenTest {
 
         assertEquals("* #1 白面", IdentityPanelScreen.formatEntryLine(active, 1));
         assertEquals("  #0 旧名 [冷藏]", IdentityPanelScreen.formatEntryLine(frozen, 1));
+    }
+
+    @Test
+    void typedIntentNormalizesNamesAndRejectsBlankValues() {
+        assertEquals("夜行 人", new IdentityPanelIntent.NewIdentity("  夜行   人  ").name());
+        assertEquals("白面", new IdentityPanelIntent.RenameIdentity(" 白面 ").name());
+        assertThrows(IllegalArgumentException.class,
+            () -> new IdentityPanelIntent.NewIdentity("   "));
+        assertThrows(IllegalArgumentException.class,
+            () -> new IdentityPanelIntent.RenameIdentity(null));
+        assertEquals(0, new IdentityPanelIntent.SwitchIdentity(-1).identityId());
     }
 }

@@ -24,6 +24,7 @@ public final class OwoXmlTemplateRegistry {
     public static final Identifier REPAIR = new Identifier("bong", "repair");
     public static final Identifier DEATH = new Identifier("bong", "death");
     public static final Identifier FORGE_CARRIER = new Identifier("bong", "forge-carrier");
+    public static final Identifier IDENTITY_PANEL = new Identifier("bong", "identity-panel");
 
     private static final Map<String, Identifier> PRODUCTION_TEMPLATES = Map.of(
         "craft", CRAFT,
@@ -32,7 +33,8 @@ public final class OwoXmlTemplateRegistry {
         "coffin-menu", COFFIN_MENU,
         "repair", REPAIR,
         "death", DEATH,
-        "forge-carrier", FORGE_CARRIER
+        "forge-carrier", FORGE_CARRIER,
+        "identity-panel", IDENTITY_PANEL
     );
     private static final OwoXmlTemplateRegistry PRODUCTION = new OwoXmlTemplateRegistry(
         UIModelLoader::get,

@@ -1,83 +1,42 @@
 package com.bong.client.identity;
 
+import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
+import com.bong.client.ui.contract.UiScreenScope;
+import com.bong.client.ui.contract.UiStateSource;
+import com.bong.client.ui.intent.UiIntentResult;
+import com.bong.client.ui.intent.UiIntentSink;
+import io.wispforest.owo.ui.component.ButtonComponent;
+import io.wispforest.owo.ui.component.LabelComponent;
+import io.wispforest.owo.ui.component.TextBoxComponent;
+import io.wispforest.owo.ui.container.FlowLayout;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 
-import java.util.List;
+import java.util.Objects;
 
-/** plan-identity-v1 P5：玩家身份面板，发 `/identity` slash command 到 server 权威校验。 */
-public final class IdentityPanelScreen extends Screen {
-    private static final int PANEL_WIDTH = 300;
-    private static final int ROW_HEIGHT = 24;
+/** 身份面板；XML 声明布局，Java 只绑定状态、行按钮和 typed intent。 */
+public final class IdentityPanelScreen extends OwoXmlScreenHost<FlowLayout> {
     private static final int MAX_VISIBLE_IDENTITIES = 6;
+    private static final Text EMPTY_TEXT = Text.literal(" ");
 
-    private TextFieldWidget nameField;
+    private final UiStateSource<IdentityPanelState> stateSource;
+    private final UiIntentSink<IdentityPanelIntent> intentSink;
+    private IdentityPanelState state;
+    private TextBoxComponent nameField;
+    private LabelComponent cooldownLabel;
+    private LabelComponent emptyLabel;
+    private LabelComponent overflowLabel;
+    private final LabelComponent[] entryLabels = new LabelComponent[MAX_VISIBLE_IDENTITIES];
+    private final ButtonComponent[] switchButtons = new ButtonComponent[MAX_VISIBLE_IDENTITIES];
 
-    public IdentityPanelScreen() {
-        super(Text.literal("身份"));
-    }
-
-    @Override
-    protected void init() {
-        IdentityPanelState state = IdentityPanelStateStore.snapshot();
-        int left = (width - PANEL_WIDTH) / 2;
-        int top = Math.max(20, height / 2 - 108);
-
-        nameField = new TextFieldWidget(textRenderer, left + 12, top + 40, PANEL_WIDTH - 24, 20, Text.literal("身份名"));
-        nameField.setMaxLength(32);
-        nameField.setPlaceholder(Text.literal("新身份 / 改名"));
-        addDrawableChild(nameField);
-
-        ButtonWidget createButton = ButtonWidget.builder(
-            Text.literal("新建"),
-            button -> sendIdentityCommand(newIdentityCommand(nameField.getText()))
-        ).dimensions(left + 12, top + 64, 88, 20).build();
-        createButton.active = state.cooldownPassed();
-        addDrawableChild(createButton);
-
-        addDrawableChild(ButtonWidget.builder(
-            Text.literal("改名"),
-            button -> sendIdentityCommand(renameIdentityCommand(nameField.getText()))
-        ).dimensions(left + 106, top + 64, 88, 20).build());
-
-        int rowY = top + 96;
-        List<IdentityPanelEntry> entries = state.identities();
-        int count = Math.min(entries.size(), MAX_VISIBLE_IDENTITIES);
-        for (int i = 0; i < count; i++) {
-            IdentityPanelEntry entry = entries.get(i);
-            ButtonWidget switchButton = ButtonWidget.builder(
-                Text.literal(entry.identityId() == state.activeIdentityId() ? "当前" : "切换"),
-                button -> sendIdentityCommand(switchIdentityCommand(entry.identityId()))
-            ).dimensions(left + PANEL_WIDTH - 84, rowY + i * ROW_HEIGHT - 2, 72, 20).build();
-            switchButton.active = entry.identityId() != state.activeIdentityId() && state.cooldownPassed();
-            addDrawableChild(switchButton);
-        }
-    }
-
-    @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        renderBackground(context);
-        IdentityPanelState state = IdentityPanelStateStore.snapshot();
-        int left = (width - PANEL_WIDTH) / 2;
-        int top = Math.max(20, height / 2 - 108);
-
-        context.fill(left, top, left + PANEL_WIDTH, top + 224, 0xCC101214);
-        context.drawBorder(left, top, PANEL_WIDTH, 224, 0xFF4A4A55);
-        context.drawTextWithShadow(textRenderer, Text.literal("身份"), left + 12, top + 12, 0xFFFFFFFF);
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal(cooldownLine(state)),
-            left + 12,
-            top + 26,
-            state.cooldownPassed() ? 0xFF9FD3A0 : 0xFFFFC66D
-        );
-
-        renderIdentityRows(context, state, left, top + 96);
-        super.render(context, mouseX, mouseY, delta);
+    public IdentityPanelScreen(
+        UiStateSource<IdentityPanelState> stateSource,
+        UiIntentSink<IdentityPanelIntent> intentSink
+    ) {
+        super(Text.literal("身份"), FlowLayout.class, "identity-panel");
+        this.stateSource = Objects.requireNonNull(stateSource, "stateSource must not be null");
+        this.intentSink = Objects.requireNonNull(intentSink, "intentSink must not be null");
+        this.state = stateSource.snapshot();
     }
 
     @Override
@@ -85,33 +44,114 @@ public final class IdentityPanelScreen extends Screen {
         return false;
     }
 
-    private void renderIdentityRows(DrawContext context, IdentityPanelState state, int left, int rowTop) {
-        List<IdentityPanelEntry> entries = state.identities();
-        if (entries.isEmpty()) {
-            context.drawTextWithShadow(textRenderer, Text.literal("暂无身份数据"), left + 12, rowTop, 0xFFAAAAAA);
+    /** XML 已声明六行固定身份槽；这里只挂载按钮动作并填充首帧快照。 */
+    @Override
+    protected void bindTemplate(FlowLayout root) {
+        nameField = component(TextBoxComponent.class, "identity-name");
+        nameField.setPlaceholder(Text.literal("新身份 / 改名"));
+        cooldownLabel = label("identity-cooldown");
+        emptyLabel = label("identity-empty");
+        overflowLabel = label("identity-overflow");
+        component(ButtonComponent.class, "identity-new")
+            .onPress(button -> dispatchNew());
+        component(ButtonComponent.class, "identity-rename")
+            .onPress(button -> dispatchRename());
+        for (int index = 0; index < MAX_VISIBLE_IDENTITIES; index++) {
+            int row = index;
+            entryLabels[index] = label("identity-entry-" + index);
+            switchButtons[index] = component(ButtonComponent.class, "identity-switch-" + index)
+                .onPress(button -> dispatchSwitch(row));
+        }
+        refresh(state);
+    }
+
+    @Override
+    protected void onHostOpened(UiScreenScope scope) {
+        var subscription = stateSource.subscribe(next -> {
+            Runnable refresh = () -> refresh(next);
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client != null) {
+                client.execute(refresh);
+            } else {
+                refresh.run();
+            }
+        });
+        // Store 监听器属于屏幕生命周期，关闭时必须先撤销再释放 owo 组件树。
+        scope.addCleanup(subscription::close);
+    }
+
+    private void dispatchNew() {
+        dispatchName(true);
+    }
+
+    private void dispatchRename() {
+        dispatchName(false);
+    }
+
+    private void dispatchName(boolean create) {
+        String rawName = nameField == null ? "" : nameField.getText();
+        String normalized = rawName == null ? "" : rawName.trim().replaceAll("\\s+", " ");
+        if (normalized.isEmpty()) {
             return;
         }
+        dispatch(create
+            ? new IdentityPanelIntent.NewIdentity(normalized)
+            : new IdentityPanelIntent.RenameIdentity(normalized));
+    }
 
-        int count = Math.min(entries.size(), MAX_VISIBLE_IDENTITIES);
-        for (int i = 0; i < count; i++) {
-            IdentityPanelEntry entry = entries.get(i);
-            int y = rowTop + i * ROW_HEIGHT;
-            int color = entry.identityId() == state.activeIdentityId() ? 0xFFFFFFFF : 0xFFB8B8B8;
-            context.drawTextWithShadow(textRenderer, Text.literal(formatEntryLine(entry, state.activeIdentityId())), left + 12, y, color);
+    private void dispatchSwitch(int row) {
+        if (row < 0 || row >= state.identities().size()) {
+            return;
         }
-        if (entries.size() > MAX_VISIBLE_IDENTITIES) {
-            context.drawTextWithShadow(
-                textRenderer,
-                Text.literal("另有 " + (entries.size() - MAX_VISIBLE_IDENTITIES) + " 个身份"),
-                left + 12,
-                rowTop + count * ROW_HEIGHT,
-                0xFF888888
+        dispatch(new IdentityPanelIntent.SwitchIdentity(state.identities().get(row).identityId()));
+    }
+
+    private void dispatch(IdentityPanelIntent intent) {
+        UiIntentResult result = intentSink.dispatch(intent);
+        if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
+            closeIfCurrentScreen();
+        }
+    }
+
+    private void refresh(IdentityPanelState next) {
+        state = next == null ? IdentityPanelState.empty() : next;
+        if (cooldownLabel == null) {
+            return;
+        }
+        cooldownLabel.text(Text.literal(cooldownLine(state)));
+        emptyLabel.text(state.identities().isEmpty() ? Text.literal("暂无身份数据") : EMPTY_TEXT);
+        int count = Math.min(state.identities().size(), MAX_VISIBLE_IDENTITIES);
+        for (int index = 0; index < MAX_VISIBLE_IDENTITIES; index++) {
+            if (index >= count) {
+                // owo 0.11.2 的空 LabelComponent 在 tooltip 命中时会访问 -1 样式索引；
+                // 用不可见空格保留合法文本样式，视觉上仍等同于空行。
+                entryLabels[index].text(EMPTY_TEXT);
+                switchButtons[index].setMessage(EMPTY_TEXT);
+                switchButtons[index].active(false);
+                continue;
+            }
+            IdentityPanelEntry entry = state.identities().get(index);
+            entryLabels[index].text(Text.literal(formatEntryLine(entry, state.activeIdentityId())));
+            switchButtons[index].setMessage(
+                Text.literal(entry.identityId() == state.activeIdentityId() ? "当前" : "切换")
             );
+            switchButtons[index].active(
+                entry.identityId() != state.activeIdentityId() && state.cooldownPassed()
+            );
+        }
+        int overflow = state.identities().size() - MAX_VISIBLE_IDENTITIES;
+        overflowLabel.text(overflow > 0 ? Text.literal("另有 " + overflow + " 个身份") : EMPTY_TEXT);
+    }
+
+    private void closeIfCurrentScreen() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.currentScreen == this) {
+            client.setScreen(null);
         }
     }
 
     static String switchIdentityCommand(int identityId) {
-        return "identity switch " + Math.max(0, identityId);
+        return IdentityPanelIntent.command(new IdentityPanelIntent.SwitchIdentity(identityId));
     }
 
     static String newIdentityCommand(String rawName) {
@@ -129,29 +169,17 @@ public final class IdentityPanelScreen extends Screen {
     }
 
     private static String commandWithName(String prefix, String rawName) {
-        String name = sanitizeName(rawName);
+        String name = rawName == null ? "" : rawName.trim().replaceAll("\\s+", " ");
         return name.isEmpty() ? "" : prefix + " " + name;
     }
 
-    private static String sanitizeName(String rawName) {
-        return rawName == null ? "" : rawName.trim().replaceAll("\\s+", " ");
-    }
-
     private static String cooldownLine(IdentityPanelState state) {
-        if (state.cooldownPassed()) {
-            return "切换冷却：可用";
-        }
-        return "切换冷却：" + state.cooldownRemainingTicks() + " ticks";
+        return state.cooldownPassed()
+            ? "切换冷却：可用"
+            : "切换冷却：" + state.cooldownRemainingTicks() + " ticks";
     }
 
-    private void sendIdentityCommand(String command) {
-        if (command == null || command.isBlank()) {
-            return;
-        }
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player != null && client.player.networkHandler != null) {
-            client.player.networkHandler.sendCommand(command);
-        }
-        client.setScreen(null);
+    IdentityPanelState stateForTests() {
+        return state;
     }
 }
