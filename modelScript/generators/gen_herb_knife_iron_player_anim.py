@@ -198,8 +198,16 @@ def _fill_upper_body(anim: dict, gmap: dict, stance: dict) -> None:
                 track(f"{prefix}_{axis_name}").append(
                     keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
             if has_bend:
+                # **必须走 `AX.bend_to_bb`**，不能直接把 bend 塞进 X。bend 也走
+                # animation 通道，同样吃写侧的 X 预取反：`axis=180`（本仓手臂全用它）
+                # 时正解是 `bb.x = -bend`。这里原先写的是裸 `+bend`，符号正好反 ——
+                # 于是 lower_walk / lower_sprint 在 Blockbench 里**两条手臂的肘都朝
+                # 反方向折**。（`convert_animation` 那条主路径一直是对的，只有这个
+                # 补预览用的分支漏了。）
                 track(f"{prefix}_bend").append(
-                    keyframe("rotation", t, [axes.get("bend", 0.0), 0.0, 0.0]))
+                    keyframe("rotation", t,
+                             [round(AX.bend_to_bb(axes.get("bend", 0.0),
+                                                  axes.get("axis", 0.0)), 4), 0.0, 0.0]))
 
 
 def build_bbmodel():
