@@ -131,6 +131,12 @@
    "HerbKnifeIron.bbmodel": "5aab6a76d69d851a77e4826ff6fe1ce4b010cd38fac4a5217d82bc6b1c6e0e22"
   }
  },
+ "gen_herb_knife_iron_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbKnifeIronPlayerAnim.bbmodel": "b961fff0bc43b0a0f1f0987214dd521af66585b5e5d5781b950ace3814ce8c91"
+  }
+ },
  "gen_hide_armor.py": {
   "exit": 0,
   "outputs": {

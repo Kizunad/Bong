@@ -53,5 +53,38 @@ class TestGenHerbKnifeIron(unittest.TestCase):
         self.assertTrue(textures[0].get("source", "").startswith("data:image/png;base64,"))
 
 
+class TestGenHerbKnifeIronPlayerAnim(unittest.TestCase):
+    """验证玩家 + 凡铁采药刀动画 HerbKnifeIronPlayerAnim.bbmodel"""
+
+    def setUp(self):
+        self.player_anim_path = MODELS_DIR / "HerbKnifeIronPlayerAnim.bbmodel"
+        self.assertTrue(self.player_anim_path.exists(), f"文件不存在: {self.player_anim_path}")
+        self.doc = json.loads(self.player_anim_path.read_text(encoding="utf-8"))
+
+    def test_player_anim_structure(self):
+        """结构与贴图包含 1 张 Atlas 图集"""
+        textures = self.doc.get("textures", [])
+        self.assertEqual(len(textures), 1)
+        self.assertEqual(self.doc.get("name"), "HerbKnifeIronPlayerAnim")
+
+    def test_animations_baked(self):
+        """烘焙的采药与折刀动画数量"""
+        anims = self.doc.get("animations", [])
+        anim_names = [a.get("name") for a in anims]
+        for expected in ["herb_harvest", "herb_knife_slash", "herb_knife_unfold"]:
+            self.assertIn(expected, anim_names, f"缺失烘焙动画: {expected}")
+
+    def test_player_animation_json_files(self):
+        """验证生成的 emotecraft v3 JSON 动画文件"""
+        anim_dir = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
+        for anim_file in ["herb_harvest.json", "herb_knife_slash.json", "herb_knife_unfold.json"]:
+            path = anim_dir / anim_file
+            self.assertTrue(path.exists(), f"缺少动画 JSON 文件: {path}")
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(doc.get("version"), 3)
+            self.assertIn("moves", doc.get("emote", {}))
+            self.assertGreater(len(doc["emote"]["moves"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
