@@ -46,7 +46,7 @@ pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
 // agent 订阅后按 zone_halfstep_count 路由 player / zone narration。
 pub const CH_HALFSTEP_RECHALLENGE: &str = "bong:tribulation/halfstep_rechallenge";
 
-// 化虚专属 action（plan-void-actions-v1）：四类行为各自 fanout，agent 侧
+// 化虚专属 action（plan-void-actions-v1）：三类行为各自 fanout，agent 侧
 // 订阅后统一生成全服 narration。
 pub const CH_VOID_ACTION_SUPPRESS_TSY: &str = "bong:void_action/suppress_tsy";
 pub const CH_VOID_ACTION_EXPLODE_ZONE: &str = "bong:void_action/explode_zone";

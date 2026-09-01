@@ -2,6 +2,15 @@
 
 化虚专属 action 由三类组成：镇压坍缩渊、引爆区域、化虚障。所有 action 均受 `Realm::Void`、真元、寿元和冷却门禁约束；真元通过 `qi_physics::ledger` 流转，寿元通过 `lifespan` API 扣减，公告统一由 agent 以 `broadcast` 范围发布。
 
+## 接口契约
+
+- **Inputs**：server 接收 `ClientRequestV1::VoidAction`（`request: VoidActionRequestV1`、`caster`、`requested_at_tick`），并读取 caster 的 `Cultivation`、`LifespanComponent`、`LifeRecord`、`VoidActionCooldowns` 与可选的 `ZoneRegistry`/`TsyZoneStateRegistry`；真元账本输入为 `WorldQiAccount` 与 `WorldQiBudget`。
+- **Outputs**：成功 action 追加 `LifeRecord.void_actions` 与 `BiographyEntry::VoidAction`，更新 `void_action_cooldowns`，按 action 写入 `VoidQiReturnSchedule`/`BarrierField`，并发出 `VoidActionBroadcast`；Redis bridge 将其序列化为 `VoidActionBroadcastV1`，按 `bong:void_action/{suppress_tsy,explode_zone,barrier}` fanout。agent 产出的公开旁白统一发布到 `CH_AGENT_NARRATE = "bong:agent_narrate"`。
+- **Shared types/events**：跨端共享 `VoidActionKind`、`BarrierGeometry`、`VoidActionRequestV1`、`VoidActionResponseV1`、`VoidActionBroadcastV1`、`VoidActionStateV1`；server 事件为 `VoidActionIntent`、`VoidActionBroadcast`、`JueBiTriggerEvent`、`CultivationDeathTrigger`，真元审计使用 `QiTransfer` 与 `QiTransferReason::VoidAction`。
+- **Contracts**：协议入口是 `proto/bong/envelope.proto` 的 `bong::VoidAction` 三成员 oneof；server schema 为 `server/src/schema/void_actions.rs`，agent TypeBox 为 `agent/packages/schema/src/void-actions.ts`，agent runtime 为 `VoidActionNarrationRuntime`，client 发送入口为 `ClientRequestProtocol.encodeVoidAction*`/`ClientRequestSender.sendVoidAction*`，UI 入口为 `VoidActionScreenBootstrap`。
+- **Qi ledger contract**：caster 消耗走 `debit_caster_qi_to_account` → `QiTransfer::new(..., QiTransferReason::VoidAction)` → `WorldQiAccount::transfer`；区域 action 使用 `borrow_explode_zone_qi`（`EXPLODE_ZONE_DECAY_TICKS` 六个月回流）与 `schedule_barrier_return`，到期由 `apply_due_qi_returns` 结算。不得直接修改 ledger 余额绕过 `QiTransfer` 审计。
+- **Worldview anchor**：化虚天花板与维护成本见 `worldview.md §三 L63-L81`；灵气零和与守恒见 `worldview.md §一 L15-L22`、`§十 L872-L880`；坍缩渊生命周期与遗物骨架见 `worldview.md §十六 L1372-L1407`，负压/道伥回收见 `worldview.md §十六 L1411-L1423`、`L1597-L1619`。
+
 ## 阶段总览
 
 | 阶段 | 状态 | 交付物 |
@@ -34,7 +43,7 @@
 - server：`scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。
 - agent：先 `npm run build -w @bong/schema`，再运行 schema 与 tiandao workspace 测试；generated JSON schema 由源定义重生成并通过 freshness gate。
 - client：`scripts/build-token.sh gradle test build`；R7 screen inventory 已同步为 28 个 direct Screen、6 个 vanilla Screen。
-- 全树清理验证：旧 action 标识、继承字段和死信箱符号在源码、协议、测试与文档中均无残留。
+- 全树清理验证：旧 action 的生产标识、继承字段和业务处理路径均已移除；数据库仅保留一次性 v44 破坏性迁移，用于删除历史遗留表，不提供兼容读写。
 
 ## Finish Evidence
 

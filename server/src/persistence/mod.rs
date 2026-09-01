@@ -87,8 +87,9 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 /// `awaiting_decision`/`state` 全部被 `Lifecycle::default()` 抹回满状态新角色）；
 /// v40 持久化 R5 真元事务固定 overflow 池；v41 持久化坍缩渊 drain 固定池；
 /// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放；
-/// v43 移除已退役亡者公开站点的 `deceased_snapshots.public_path` 投影字段。
-const CURRENT_USER_VERSION: i32 = 43;
+/// v43 移除已退役亡者公开站点的 `deceased_snapshots.public_path` 投影字段；
+/// v44 破坏性清理已退役的 `legacy_letterbox` 表及其索引，不保留兼容数据。
+const CURRENT_USER_VERSION: i32 = 44;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -3500,6 +3501,21 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             assert_deceased_snapshots_schema_ready(&transaction)?;
         }
         transaction.execute_batch("PRAGMA user_version = 43;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 44 {
+        let transaction = connection.transaction()?;
+        // 传承死信箱已完全退役；旧数据库中的表和索引必须一并删除。
+        transaction.execute_batch(
+            "
+            DROP INDEX IF EXISTS idx_legacy_letterbox_inheritor;
+            DROP TABLE IF EXISTS legacy_letterbox;
+            PRAGMA user_version = 44;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -19126,6 +19142,81 @@ mod persistence_tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version should query");
         assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v44_migration_removes_retired_legacy_letterbox_schema_and_is_idempotent() {
+        let db_path = database_path("v44-legacy-letterbox-cleanup");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v44-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE legacy_letterbox (
+                    owner_id TEXT PRIMARY KEY,
+                    inheritor_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    assigned_at_tick INTEGER NOT NULL,
+                    reject_until_tick INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL
+                );
+                CREATE INDEX idx_legacy_letterbox_inheritor
+                ON legacy_letterbox (inheritor_id, status);
+                INSERT INTO legacy_letterbox (
+                    owner_id, inheritor_id, payload_json, assigned_at_tick,
+                    reject_until_tick, status, schema_version, last_updated_wall
+                ) VALUES ('offline:retired', 'offline:recipient', '{}', 1, 2, 'pending', 1, 3);
+                PRAGMA user_version = 43;
+                ",
+            )
+            .expect("fixture should emulate a v43 database with the retired table");
+
+        apply_migrations(&mut connection).expect("v44 migration should remove retired schema");
+
+        let retired_table: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'legacy_letterbox'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("retired table query should succeed");
+        assert_eq!(
+            retired_table, None,
+            "v44 must delete the retired table and its data"
+        );
+        let retired_index: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_legacy_letterbox_inheritor'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("retired index query should succeed");
+        assert_eq!(
+            retired_index, None,
+            "v44 must delete the retired inheritor index"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        apply_migrations(&mut connection)
+            .expect("reapplying v44 migration must remain idempotent after cleanup");
+        let user_version_after_retry: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain queryable after retry");
+        assert_eq!(user_version_after_retry, CURRENT_USER_VERSION);
 
         drop(connection);
         let _ = fs::remove_dir_all(root);
