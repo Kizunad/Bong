@@ -25,12 +25,11 @@ use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::trade::{NpcPlayerReputation, NpcTradeInventory};
 use crate::player::state::PlayerState;
+use crate::reach::DistanceRule;
 use crate::schema::client_request::ClientRequestV1;
 use crate::social::components::{faction_for_zone, FactionReputation, FactionReputationTier};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
-
-const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
 
 type NpcEngagementItem = (
     &'static Position,
@@ -397,9 +396,7 @@ pub(crate) fn resolve_npc_engagement_target(
         return None;
     }
     let npc_position = npc_position.get();
-    if player_position.distance_squared(npc_position)
-        > NPC_INTERACTION_MAX_DISTANCE * NPC_INTERACTION_MAX_DISTANCE
-    {
+    if !DistanceRule::nearby_interact().allows(player_position, npc_position) {
         return None;
     }
     let player_identities = npc_params.identities.get(player).ok();
