@@ -1,0 +1,4 @@
+# 仅登记本次已批准的协议删除；指纹是 type/path/message 的 SHA-256。
+# reason 用于审计，不会扩大匹配范围；其他 breaking finding 仍然 fail-closed。
+MESSAGE_NO_DELETE	bong/envelope.proto	64fe7f8c77cd20d72a07e2dab9a439f9137b9ca252ee26ed9c5eca0039eafd68	删除已退役的化虚传承 action 消息，运行时与协议均不再提供兼容入口。
+FIELD_NO_DELETE	bong/envelope.proto	828eb6a32be00e92bb1baf6fed7a24d5466f41cff8298a53d1c1aa76dd2c919b	删除 VoidAction.oneof 中已退役的传承分支，字段编号不再复用。
