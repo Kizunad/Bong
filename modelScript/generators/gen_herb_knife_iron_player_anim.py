@@ -132,16 +132,21 @@ def build_geometry():
                 elements.append(el)
                 knife_ids.append(el["uuid"])
 
-            # 挂接刀身（垂直于小臂）
-            pitch_g = group(
-                f"knife_{side}_pitch", hand, knife_ids, (-90.0, 0.0, 0.0), color=1
+            # 挂接刀身。这一组静态旋转是**拟合出来的**，不是随手摆的：目标是让
+            # Blockbench 里看到的刀和游戏里一致。游戏那边走
+            # `held_item_common.hand_display` 的 `[-80, 90, 0]` + 方块中心重定心
+            # （见 `preview_player_anim.item_attach_modelpart` 逐字对齐的那条链），
+            # 静止臂下柄朝下 (0,-0.98,+0.17)、刃朝上后 (-0.53,+0.84,-0.15)。
+            # 上一版照抄脊骨剑的 (-90,0,0)+(0,0,90)，那是**竖直握姿**：柄笔直朝前
+            # (0,0,+1)，等于在 Blockbench 里对着一把"从拳头里向前捅出去"的刀调姿态，
+            # 而游戏里它是垂下来的——两边看到的根本不是同一件事。
+            # 拟合残差 0.069（两个方向向量的欧氏距离和）；det 差一个镜像，刀是扁片，
+            # 方向上体现不出来。
+            knife_g = group(
+                f"knife_{side}", hand, knife_ids, (-75.0, 80.0, 105.0), color=1
             )
-            roll_g = group(
-                f"knife_{side}_roll", hand, [pitch_g], (0.0, 0.0, 90.0), color=1
-            )
-            gmap[f"knife_{side}_pitch"] = pitch_g["uuid"]
-            gmap[f"knife_{side}_roll"] = roll_g["uuid"]
-            (bend_group or top)["children"].append(roll_g)
+            gmap[f"knife_{side}"] = knife_g["uuid"]
+            (bend_group or top)["children"].append(knife_g)
         arms.append(top)
 
     # body：位移一层 + 三层单轴旋转

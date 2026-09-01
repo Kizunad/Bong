@@ -36,6 +36,7 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+from bbmodel_maker.render.held_item_common import hand_display
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
@@ -409,48 +410,15 @@ def build_bbmodel(cubes: list[tuple] | None = None, texture_img: Image.Image | N
                 "source": tex_b64,
             }
         ],
-        "display": {
-            "thirdperson_righthand": {
-                "rotation": [0, 90, -55],
-                "translation": [0, 4.0, 1.5],
-                "scale": [0.85, 0.85, 0.85]
-            },
-            "thirdperson_lefthand": {
-                "rotation": [0, -90, 55],
-                "translation": [0, 4.0, 1.5],
-                "scale": [0.85, 0.85, 0.85]
-            },
-            "firstperson_righthand": {
-                "rotation": [0, -90, 25],
-                "translation": [1.13, 3.2, 1.13],
-                "scale": [0.68, 0.68, 0.68]
-            },
-            "firstperson_lefthand": {
-                "rotation": [0, 90, -25],
-                "translation": [1.13, 3.2, 1.13],
-                "scale": [0.68, 0.68, 0.68]
-            },
-            "ground": {
-                "rotation": [0, 0, 0],
-                "translation": [0, 2, 0],
-                "scale": [0.7, 0.7, 0.7]
-            },
-            "gui": {
-                "rotation": [0, 90, -45],
-                "translation": [0, 0, 0],
-                "scale": [1.0, 1.0, 1.0]
-            },
-            "head": {
-                "rotation": [0, 0, 0],
-                "translation": [0, 0, 0],
-                "scale": [1.0, 1.0, 1.0]
-            },
-            "fixed": {
-                "rotation": [0, 180, 0],
-                "translation": [0, 0, 0],
-                "scale": [0.8, 0.8, 0.8]
-            }
-        }
+        # display 走库里那份**唯一**的握持解（`held_item_common.hand_display`）：
+        # 关键是 `DEFAULT_HAND_ROTATION = (-80, 90, 0)` 里的 Rx(-80) —— 它把件放倒、
+        # 沿前臂出虎口。之前这里手写成 `[0, 90, -55]` + `translation [0, 4, 1.5]`，
+        # 少了这一层：刀不在拳头里，而是竖在胸口正中央往上戳（实测 t0 刀身压在躯干
+        # 贴图上、t4 顶到下巴）。手持物动画全靠这个挂点定位，挂点错了姿态再准也白调
+        # ——这正是匕首那次"照着算错的预览调姿态"事故的同一个坑。
+        # grip / length 取授权系（刀尾绳穗 y=0 起算）：握把点在方块中心 y=8 → 0.5 格，
+        # 全长到柄冠 y=13.2 → 0.825 格。
+        "display": hand_display(0.80, 0.5, 0.825, gui_spin=45.0),
     }
     return bbmodel, cubes, texture_img
 

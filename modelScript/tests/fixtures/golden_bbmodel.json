@@ -128,13 +128,13 @@
  "gen_herb_knife_iron.py": {
   "exit": 0,
   "outputs": {
-   "HerbKnifeIron.bbmodel": "5aab6a76d69d851a77e4826ff6fe1ce4b010cd38fac4a5217d82bc6b1c6e0e22"
+   "HerbKnifeIron.bbmodel": "06da7d3acea84bb6d6eebfbf2cb42bee694cf5b6b47564d519cf9ea885612e61"
   }
  },
  "gen_herb_knife_iron_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "HerbKnifeIronPlayerAnim.bbmodel": "b961fff0bc43b0a0f1f0987214dd521af66585b5e5d5781b950ace3814ce8c91"
+   "HerbKnifeIronPlayerAnim.bbmodel": "a49dc9563182483a8b1b33b2cc004037203a0b47cda59327dd9dcfd552f91e46"
   }
  },
  "gen_hide_armor.py": {

@@ -1,21 +1,45 @@
 #!/usr/bin/env python3
-"""herb_harvest — 凡铁采药刀俯身采割灵草动作（Blockbench 预览专用）。
+"""herb_harvest —— 凡铁采药刀俯身勾割灵草。
 
-这是一个**演示动画**，用于在 Blockbench 中预览玩家持刀采集的姿态。
-不是游戏中的实战动画，因此不使用 guard pose 框架。
+## 动作
 
-动作设计：
-    - 玩家深蹲俯身，左手按住灵草基底，右手持采药刀勾割根茎
-    - 强调稳定、精确、流畅，体现专业采药动作
-    - 结构：动作姿态 → vanilla neutral (0,0,0)
+持刀架势 → 俯身探刃、左手拨开草叶按住茎 → 刃贴着茎根切入 → 顺着鹰嘴的内弧**往回勾带**
+（这才是这把刀真正的用法：钩住茎往身前拉着割，不是劈）→ 直起身，左手托着割下来的草。
 
-时长：12 tick
+14 tick。首帧 = 末帧 = `herb_knife_stance.GUARD`，连着采第二株时不必先垂手再举
+（conventions §2.1）。
 
-阶段划分：
-    tick 0  = 深蹲俯身姿态（左手探地，右手持刀抬起蓄势）
-    tick 4  = 下刀勾割（刀刃贴地切入根茎）
-    tick 8  = 提刃收势（刀尖向后拉割）
-    tick 12 = 回到 vanilla neutral (完全放松站立)
+## 分段（easing 写在**段首帧**上——它管的是这一帧到下一帧那一段）
+
+| tick | 段 | 干什么 |
+|------|----|--------|
+| 0  | guard      | 持刀架势，静态一眼能认出"手里有把干活的小刀" |
+| 3  | 俯身入位   | 膝先屈到 22°/16°、躯干折到 16°、头看向草、左手前探拨叶 |
+| 6  | 割入       | 躯干 26°，刃最低点落到世界 y 12.4、肩前 8.2px，进草区 |
+| 8  | 勾带       | 腕外翻 36°→58°，刃沿鹰嘴内弧往身前上方拉 —— 末端过冲在这里 |
+| 11 | 起身       | 躯干回 14°，左手托草，刀提到腰前 |
+| 14 | guard      | 逐轴等于 tick 0 |
+
+前倾封顶 26°：`hip_hinge` 只补得平水平那一半，竖直残差 `12(1-cosθ)` 在 26° 时是 1.21px，
+再深髋缝就过门限了（`herb_knife_stance.HIP_SEAM_MAX = 1.40`）。
+
+## 为什么右臂全程单调朝"下—前"走
+
+conventions §2.3：发力肢从起手到撞击必须单调，反向蓄势只给躯干/头。所以刀不在中途
+"先抬一下再砍"——起手架势本身就带着刀，t3 继续往下，t6 到位。真正的反向蓄势由躯干
+（t0 前倾 8° → t3 16° → t6 26°）和头承担。
+
+## 上一版错在哪（重做的由来）
+
+1. **腰断**：`torso.pitch=+28~32` 而两条腿反向摆，髋缝实测 **6.61px**（按解剖锚点量；
+   一条腿才 4px 宽）。torso 的枢轴在**脖子**不在腰，前倾必须把上半身整体前移
+   `-12·sinθ` 才等价于"绕胯折"，见 `herb_knife_stance.hip_hinge`。
+2. **左手甩到身后**：注释写"左臂探地按住灵草基底"，值却是 `pitch=+48`——臂的正 pitch
+   是往**身后**摆。手根本不在草上。
+3. **刀不在草上**：刃的最前点在**架势帧**（z=-9.9）比在割入帧（z=-7.6）还靠前——
+   动作的方向是把刀往回收，不是探出去。
+4. **收势收成立正**：末帧写成全零 vanilla neutral，采完一株整个人"啪"地站直，刀也不
+   见了；连采两株中间要经过一次立正。
 """
 
 import sys
@@ -24,81 +48,81 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "client" / "tools"))
 from anim_common import emit_json  # noqa: E402
-
-# 运动学改进点：
-# 1. 深蹲时双腿不对称（右腿承重深蹲，左腿前伸平衡）
-# 2. 俯身时 torso + head 协同，避免颈椎过度折叠
-# 3. 右臂持刀下刀时，torso 微扭配合，形成 kinetic chain
-# 4. body.y 下沉要配合双腿 bend，避免"悬浮蹲"
-# 5. 左臂探地时 pitch 不超 50°（避免 MC 无 IK 导致的断臂）
+from herb_knife_stance import guard_pose, stance  # noqa: E402
 
 POSE = {
-    # ========== 深蹲俯身姿态 ==========
-    0: dict(
-        easing="OUTSINE",
-        body=dict(x=0.0, y=-0.24, z=+0.09),  # 重心下沉并前移
-        head=dict(pitch=+32, yaw=-5),  # 头部低垂注视地面
-        torso=dict(pitch=+28, yaw=+8),  # 躯干前倾
-        # 右臂：持刀抬起蓄势（准备下刀）
-        rightArm=dict(pitch=-42, yaw=+12, roll=-26, bend=58, axis=180),
-        # 左臂：探地按住灵草基底（pitch 控制在 48° 避免断臂）
-        leftArm=dict(pitch=+48, yaw=-16, roll=+22, bend=42, axis=180),
-        # 右腿：深蹲承重（bend 38 配合 body.y 下沉）
-        rightLeg=dict(pitch=-36, yaw=0, bend=38, axis=0),
-        # 左腿：前伸辅助平衡
-        leftLeg=dict(pitch=+16, yaw=0, bend=34, axis=0),
+    # ── guard：持刀架势 ────────────────────────────────────────────────
+    0: guard_pose("INOUTSINE"),
+
+    # ── 俯身入位：躯干折下去、头找草、左手前探拨叶 ────────────────────
+    # 这一段**腿先动**（膝屈到 22°/16°），躯干只走三分之一——kinetic chain 的第一环，
+    # 峰速落在 t1 附近。左臂 pitch 取负才是往身前伸（这是上一版最刺眼的错）。
+    3: dict(
+        easing="INQUAD",                       # 段首 IN 族 = 从静止加速冲向割入帧
+        **stance(
+            16.0, 8.0,
+            head=dict(pitch=26.0, yaw=-8.0),
+            right_arm=dict(pitch=-20.0, yaw=5.0, roll=28.0, bend=38.0),
+            left_arm=dict(pitch=-34.0, yaw=-16.0, roll=14.0, bend=36.0),
+            right_leg=dict(pitch=-14.0, yaw=8.0, bend=22.0),
+            left_leg=dict(pitch=10.0, yaw=6.0, bend=16.0),
+        ),
     ),
 
-    # ========== 下刀勾割 ==========
-    4: dict(
-        easing="INOUTQUAD",
-        body=dict(x=+0.02, y=-0.26, z=+0.11),  # 身体略前倾施力
-        head=dict(pitch=+38, yaw=-3),  # 专注注视切割点
-        torso=dict(pitch=+32, yaw=+12),  # 躯干微扭配合右臂
-        # 右臂：刀刃贴地斜切入土（pitch +28° 向下，配合 torso 扭转）
-        rightArm=dict(pitch=+28, yaw=+6, roll=-32, bend=36, axis=180),
-        # 左臂：按紧植物稳定姿势（略微用力下压）
-        leftArm=dict(pitch=+50, yaw=-14, roll=+26, bend=46, axis=180),
-        # 双腿：保持深蹲（稳定下盘）
-        rightLeg=dict(pitch=-38, yaw=0, bend=40, axis=0),
-        leftLeg=dict(pitch=+18, yaw=0, bend=36, axis=0),
+    # ── 割入（IMPACT）：刃最低点探进草区 ──────────────────────────────
+    # 右臂这组是扫格子解出来的：刃最低落到世界 y 13.0、最前伸到肩前 8.5px，刃仰角
+    # +16°（近水平），读作"刃贴着茎切进去"而不是"往地上戳"。躯干在这一段走完剩下的
+    # 14°（峰速落在 t4~5），肩/肘跟着到位——腿→腰→肩肘的顺序就是这么错开的。
+    6: dict(
+        easing="OUTQUAD",                      # 割入后急刹，接勾带
+        **stance(
+            26.0, 2.0,
+            head=dict(pitch=34.0, yaw=-4.0),
+            right_arm=dict(pitch=-42.0, yaw=-40.0, roll=36.0, bend=12.0),
+            left_arm=dict(pitch=-40.0, yaw=-20.0, roll=16.0, bend=42.0),
+            right_leg=dict(pitch=-16.0, yaw=8.0, bend=26.0),
+            left_leg=dict(pitch=11.0, yaw=6.0, bend=18.0),
+        ),
     ),
 
-    # ========== 提刃收势 ==========
+    # ── 勾带：腕外翻，刃沿鹰嘴内弧往身前上方拉 ────────────────────────
+    # 这把刀的招牌动作——鹰嘴是**钩住往回拉着割**的，不是劈的。腕的峰速落在这一段
+    # （roll 40 → 58），是 kinetic chain 的最后一环，也是末端过冲。
     8: dict(
         easing="INOUTSINE",
-        body=dict(x=0.0, y=-0.23, z=+0.08),  # 重心回收
-        head=dict(pitch=+34, yaw=-4),  # 头部开始抬起
-        torso=dict(pitch=+26, yaw=+6),  # 躯干回正
-        # 右臂：刀尖向后拉割（pitch 回到 +12°，提刃动作）
-        rightArm=dict(pitch=+12, yaw=-12, roll=-18, bend=62, axis=180),
-        # 左臂：松开植物，手掌离地
-        leftArm=dict(pitch=+38, yaw=-18, roll=+18, bend=40, axis=180),
-        # 双腿：开始起身（bend 减小）
-        rightLeg=dict(pitch=-34, yaw=0, bend=36, axis=0),
-        leftLeg=dict(pitch=+14, yaw=0, bend=34, axis=0),
+        **stance(
+            22.0, 6.0,
+            head=dict(pitch=30.0, yaw=-6.0),
+            right_arm=dict(pitch=-16.0, yaw=-26.0, roll=58.0, bend=48.0),
+            left_arm=dict(pitch=-30.0, yaw=-14.0, roll=10.0, bend=48.0),
+            right_leg=dict(pitch=-14.0, yaw=8.0, bend=22.0),
+            left_leg=dict(pitch=10.0, yaw=6.0, bend=16.0),
+        ),
     ),
 
-    # ========== 回到 vanilla neutral ==========
-    12: dict(
+    # ── 起身：左手托着割下来的草，刀提回腰前 ──────────────────────────
+    11: dict(
         easing="INOUTSINE",
-        # 完全放松的站立姿态
-        body=dict(x=0.0, y=0.0, z=0.0),
-        head=dict(pitch=0, yaw=0),
-        torso=dict(pitch=0, yaw=0),
-        rightArm=dict(pitch=0.0, yaw=0.0, roll=0.0, bend=0.0, axis=180),
-        leftArm=dict(pitch=0.0, yaw=0.0, roll=0.0, bend=0.0, axis=180),
-        rightLeg=dict(pitch=0.0, yaw=0.0, bend=0.0, axis=0),
-        leftLeg=dict(pitch=0.0, yaw=0.0, bend=0.0, axis=0),
+        **stance(
+            14.0, 11.0,
+            head=dict(pitch=18.0, yaw=-10.0),
+            right_arm=dict(pitch=-10.0, yaw=10.0, roll=26.0, bend=46.0),
+            left_arm=dict(pitch=-20.0, yaw=-4.0, roll=-2.0, bend=34.0),
+            right_leg=dict(pitch=-8.0, yaw=9.0, bend=13.0),
+            left_leg=dict(pitch=6.0, yaw=7.0, bend=9.0),
+        ),
     ),
+
+    # ── 回 guard ──────────────────────────────────────────────────────
+    14: guard_pose("INOUTSINE"),
 }
 
 if __name__ == "__main__":
     emit_json(
         POSE,
         name="herb_harvest",
-        description="凡铁采药刀俯身专注采割灵草（Blockbench 预览）",
-        end_tick=12,
-        stop_tick=14,
+        description="凡铁采药刀俯身勾割灵草：探刃 → 贴茎切入 → 沿鹰嘴内弧回勾带起",
+        end_tick=14,
+        stop_tick=16,
         is_loop=False,
     )

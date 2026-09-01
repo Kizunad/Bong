@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
-"""herb_knife_slash — 凡铁采药刀短快反手割击动作（Blockbench 预览专用）。
+"""herb_knife_slash —— 凡铁采药刀反手横掠割。
 
-这是一个**演示动画**，用于在 Blockbench 中预览玩家持刀战斗的姿态。
-不是游戏中的实战动画，因此不使用 guard pose 框架。
+## 动作
 
-动作设计：
-    - 小幅度迅速反手割划，适合采药刀短刃的特点
-    - 从侧腰蓄势，向前斜向划出
-    - 强调速度和流畅性，不是重型武器的大开大合
-    - 结构：动作姿态 → vanilla neutral (0,0,0)
+持刀架势 → 躯干右拧、刀带到右腰外侧蓄势 → 反手自右向左横掠过身前，刃口朝内**拉着割**
+→ 腕再翻一格过冲 → 收回架势。
 
-时长：9 tick（比采集动作更快）
+10 tick。首帧 = 末帧 = `herb_knife_stance.GUARD`，连着挥第二刀不必经过立正。
 
-阶段划分：
-    tick 0 = 反手起手姿态（刀拉至侧腰）
-    tick 2 = 蓄势拉至极限（身体扭转，重心下沉）
-    tick 5 = 迅捷割击（impact frame，刀尖划出）
-    tick 9 = 回到 vanilla neutral (完全放松站立)
+## 为什么是"掠割"不是"劈砍"
+
+刀身连柄一共 13px，刃是鹰嘴内弧——这种刀吃的是**拉**不是**砸**。所以撞击帧要的不是
+把手臂抡圆，而是把刃送出身前、再横着拖过去：门禁 `reach` 卡的就是"刃有没有真的离开
+身体"（上一版刃尖最远只到 z=-2.3，躯干前脸就在 -2，等于在自己肚子上蹭）。
+
+肘全程留 ≥20°（`DaggerAnimationTest.test_elbow_never_straightens` 的同一条理由）：
+短刃打直手臂够不到更远，只会把手腕送到对方跟前。
+
+## 分段（easing 写在段首帧）
+
+| tick | 段 | 干什么 |
+|------|----|--------|
+| 0  | guard    | 持刀架势 |
+| 2  | 引刀     | 躯干右拧到 30°、刀带到右腰外侧；手臂自己只回拉 8°（§2.3：反向蓄势归躯干） |
+| 5  | 掠割     | 躯干反拧到 -12°，刃扫过身前 z≈-10、掠到身体左侧 |
+| 6  | 过冲     | 腕再外翻 12°、刃继续往左走一格 —— 打碎"到位即冻结" |
+| 10 | guard    | 逐轴等于 tick 0 |
 """
 
 import sys
@@ -25,80 +34,66 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "client" / "tools"))
 from anim_common import emit_json  # noqa: E402
-
-# 运动学改进点：
-# 1. 蓄势阶段 torso yaw 向右扭转（与 impact 方向相反，形成扭转势能）
-# 2. Impact 时 torso 反向扭转 + body.z 前冲，形成 kinetic chain
-# 3. 右臂 pitch 从负值（后拉）到正值（前划），形成完整弧线
-# 4. 双腿配合重心转移（蓄势时右腿 bend 增加，impact 时左腿 pitch 增加）
-# 5. 左臂配合平衡（蓄势时收紧，impact 时展开）
+from herb_knife_stance import guard_pose, stance  # noqa: E402
 
 POSE = {
-    # ========== 反手起手姿态 ==========
-    0: dict(
-        easing="OUTSINE",
-        body=dict(x=+0.02, y=-0.02, z=0.0),
-        head=dict(pitch=-2, yaw=-4),
-        torso=dict(pitch=+4, yaw=+10),  # 身体略右转
-        # 右臂：反手微拉至侧腰
-        rightArm=dict(pitch=-36, yaw=-22, roll=+26, bend=36, axis=180),
-        # 左臂：自然摆放
-        leftArm=dict(pitch=+16, yaw=+16, roll=-12, bend=16, axis=180),
-        # 双腿：略微下蹲准备
-        rightLeg=dict(pitch=-8, yaw=+2, bend=10, axis=0),
-        leftLeg=dict(pitch=+6, yaw=+2, bend=8, axis=0),
-    ),
+    # ── guard ─────────────────────────────────────────────────────────
+    0: guard_pose("INOUTSINE"),
 
-    # ========== 蓄势拉至极限 ==========
+    # ── 引刀：躯干右拧蓄势，手臂只小幅回拉 ────────────────────────────
+    # §2.3：发力肢不做反向 anticipation，反向那一下交给躯干和头。手臂 yaw 只从
+    # +24 回到 +32（8°，仍在架势范畴），躯干却从 +14 拧到 +30 —— 视觉上的"拉满"
+    # 是躯干给的，手臂全程朝撞击方向单调走。
     2: dict(
         easing="INQUAD",
-        body=dict(x=+0.04, y=-0.03, z=-0.04),  # 重心后移下沉
-        head=dict(pitch=-4, yaw=-3),
-        torso=dict(pitch=+2, yaw=+18),  # 躯干右转到极限（蓄势）
-        # 右臂：刀拉至侧腰极限位置
-        rightArm=dict(pitch=-58, yaw=-28, roll=+32, bend=52, axis=180),
-        # 左臂：收紧配合平衡
-        leftArm=dict(pitch=+22, yaw=+22, roll=-16, bend=22, axis=180),
-        # 右腿：承重下蹲
-        rightLeg=dict(pitch=-14, yaw=+2, bend=14, axis=0),
-        leftLeg=dict(pitch=+10, yaw=+2, bend=12, axis=0),
+        **stance(
+            10.0, 30.0,
+            head=dict(pitch=4.0, yaw=-22.0),   # 头反向补偿，脸仍朝着目标
+            right_arm=dict(pitch=2.0, yaw=32.0, roll=8.0, bend=62.0),
+            left_arm=dict(pitch=14.0, yaw=20.0, roll=-14.0, bend=30.0),
+            right_leg=dict(pitch=-14.0, yaw=16.0, bend=20.0),
+            left_leg=dict(pitch=10.0, yaw=14.0, bend=14.0),
+        ),
     ),
 
-    # ========== 迅捷割击（Impact Frame）==========
+    # ── 掠割（IMPACT）：刃送出身前、横掠到左 ──────────────────────────
+    # 这组是扫格子解出来的：刃最前伸到肩前 10.3px、最低 y 17.5、扫到身体左侧 4.5px，
+    # 刃仰角 -3°（水平），读作"横着拉过去"。
     5: dict(
         easing="OUTQUAD",
-        body=dict(x=-0.04, y=-0.02, z=+0.14),  # 重心前冲
-        head=dict(pitch=+6, yaw=+8),
-        torso=dict(pitch=+12, yaw=-16),  # 躯干左转（反向释放扭转势能）
-        # 右臂：刀尖向前斜向划出（pitch 正值，形成完整弧线）
-        rightArm=dict(pitch=+32, yaw=+18, roll=-22, bend=18, axis=180),
-        # 左臂：后展配合平衡
-        leftArm=dict(pitch=-16, yaw=-14, roll=+16, bend=26, axis=180),
-        # 双腿：重心前移（左腿前伸）
-        rightLeg=dict(pitch=-6, yaw=+2, bend=20, axis=0),
-        leftLeg=dict(pitch=+18, yaw=+2, bend=6, axis=0),
+        **stance(
+            14.0, -12.0,
+            head=dict(pitch=8.0, yaw=10.0),
+            right_arm=dict(pitch=-60.0, yaw=-35.0, roll=20.0, bend=25.0),
+            left_arm=dict(pitch=-6.0, yaw=-18.0, roll=6.0, bend=38.0),
+            right_leg=dict(pitch=-10.0, yaw=4.0, bend=18.0),
+            left_leg=dict(pitch=12.0, yaw=2.0, bend=10.0),
+        ),
     ),
 
-    # ========== 回到 vanilla neutral ==========
-    9: dict(
+    # ── 过冲：腕再翻一格，刃继续往左走 ────────────────────────────────
+    6: dict(
         easing="INOUTSINE",
-        # 完全放松的站立姿态
-        body=dict(x=0.0, y=0.0, z=0.0),
-        head=dict(pitch=0, yaw=0),
-        torso=dict(pitch=0, yaw=0),
-        rightArm=dict(pitch=0.0, yaw=0.0, roll=0.0, bend=0.0, axis=180),
-        leftArm=dict(pitch=0.0, yaw=0.0, roll=0.0, bend=0.0, axis=180),
-        rightLeg=dict(pitch=0.0, yaw=0.0, bend=0.0, axis=0),
-        leftLeg=dict(pitch=0.0, yaw=0.0, bend=0.0, axis=0),
+        **stance(
+            16.0, -18.0,
+            head=dict(pitch=10.0, yaw=14.0),
+            right_arm=dict(pitch=-52.0, yaw=-46.0, roll=32.0, bend=34.0),
+            left_arm=dict(pitch=-2.0, yaw=-22.0, roll=8.0, bend=42.0),
+            right_leg=dict(pitch=-9.0, yaw=2.0, bend=16.0),
+            left_leg=dict(pitch=12.0, yaw=0.0, bend=9.0),
+        ),
     ),
+
+    # ── 回 guard ──────────────────────────────────────────────────────
+    10: guard_pose("INOUTSINE"),
 }
 
 if __name__ == "__main__":
     emit_json(
         POSE,
         name="herb_knife_slash",
-        description="凡铁采药刀短快反手割击（Blockbench 预览）",
-        end_tick=9,
-        stop_tick=11,
+        description="凡铁采药刀反手横掠割：右拧引刀 → 刃出身前自右向左拉割 → 腕翻过冲",
+        end_tick=10,
+        stop_tick=12,
         is_loop=False,
     )

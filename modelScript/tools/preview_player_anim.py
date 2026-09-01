@@ -146,6 +146,16 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
 
     组合顺序照 `render_animation.solve_skeleton` 的口径（body → part → bend），
     区别是那边只留关节点坐标，这里保留整条旋转链——摆 bbmodel 需要姿态不只是位置。
+
+    **part 的 x/y/z 是"把枢轴挪到哪儿"，不是"绕哪儿转"**。运行时那边
+    `ModelPart.translateAndRotate` 先 `translate(x,y,z)` 再转，而 cuboid 顶点存的是
+    **相对枢轴**的局部坐标，所以枢轴一挪整块跟着走（原版潜行就靠这个：`leg.z=4`
+    把两条腿整体往身后挪 4px 去接住前倾的胯）。本函数的几何却是按**静止枢轴**烘成
+    绝对坐标的，早先写成 `_about(R, 枢轴+偏移)` —— 那只是换了个旋转中心：展开是
+    `p + R(v − p)`，比正解 `p + R(v − p₀)` 多减了一个 `R·offset`，恰好把偏移抵消掉。
+    症状是**偏移完全不动画面**：`leg.z` 从 0 调到 5.3px，髋缝一格没变（实测 1.50 →
+    1.50），于是"腿往后挪接住胯"这条修法在预览里永远看不出效果，只能误判成没用。
+    正解是绕**静止枢轴** P₀ 转完再整体平移 D（ModelPart 的 +y 朝下，过桥时翻号）。
     """
     body_m = body_matrix(kfs, tick, body_disp_scale)
 
@@ -153,10 +163,10 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
     for name in PIVOT_OF:
         part = PART_OF[name]
         p = RA.sample_part(kfs, part, tick)
-        pivot_b = _pt(np.array(PIVOT_OF[name], float)
-                      + np.array([p["x"], p["y"], p["z"]], float))
+        pivot_b = _pt(np.array(PIVOT_OF[name], float))
+        offset_b = np.array([p["x"], -p["y"], p["z"]], float)
         R_part = _rot(RA.part_rotation_matrix(p["pitch"], p["yaw"], p["roll"]))
-        seg = _about(R_part, pivot_b)
+        seg = _aff(np.eye(3), offset_b) @ _about(R_part, pivot_b)
 
         if name.endswith("_lo"):
             # 下段：上段之后再绕 bend_center 转 bend 角。bendy-lib 的轴向量在
