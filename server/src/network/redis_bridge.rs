@@ -53,12 +53,12 @@ use crate::schema::channels::{
     CH_TERRITORY_NARRATION_REQUEST, CH_TIANDAO_HUNT_NARRATION_REQUEST, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
-    CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
-    CH_VOID_ACTION_SUPPRESS_TSY, CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE,
-    CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
-    CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT,
-    CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED, ELDER_ENCOUNTER_DURABLE_REDIS_KEY, QI_LEDGER_REDIS_KEY,
+    CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_SUPPRESS_TSY,
+    CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
+    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
+    CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
+    ELDER_ENCOUNTER_DURABLE_REDIS_KEY, QI_LEDGER_REDIS_KEY,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -293,7 +293,7 @@ pub enum RedisOutbound {
     CraftOutcome(crate::schema::craft::CraftOutcomeV1),
     /// plan-craft-v1 P3 — 三渠道解锁广播，agent narration 首学/师承/顿悟 trigger
     RecipeUnlocked(crate::schema::craft::RecipeUnlockedV1),
-    /// plan-void-actions-v1 — 化虚四类世界级 action 公告。
+    /// plan-void-actions-v1 — 化虚三类世界级 action 公告。
     VoidAction(VoidActionBroadcastV1),
     /// plan-dandao-runtime-wiring-v1 P2 — 变异阶段推进叙事事件（bong:mutation_event）。
     MutationEvent(MutationEventV1),
@@ -1835,7 +1835,6 @@ fn void_action_fanout_channels(event: &VoidActionBroadcastV1) -> Vec<&'static st
         VoidActionKind::SuppressTsy => CH_VOID_ACTION_SUPPRESS_TSY,
         VoidActionKind::ExplodeZone => CH_VOID_ACTION_EXPLODE_ZONE,
         VoidActionKind::Barrier => CH_VOID_ACTION_BARRIER,
-        VoidActionKind::LegacyAssign => CH_VOID_ACTION_LEGACY_ASSIGN,
     };
     vec![channel]
 }

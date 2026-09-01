@@ -5,15 +5,14 @@ use valence::prelude::{bevy_ecs, Commands, Entity, Events, Query, Res, ResMut, R
 
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::tick::CultivationClock;
-use crate::qi_physics::constants::QI_EPSILON;
+use crate::qi_physics::constants::{QI_EPSILON, QI_EXPLODE_ZONE_RETURN_TICKS};
 use crate::qi_physics::{
     QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
 };
 use crate::world::zone::{Zone, ZoneRegistry};
 
 use super::components::{
-    BarrierField, VoidActionKind, BARRIER_QI_COST, EXPLODE_ZONE_DECAY_TICKS, EXPLODE_ZONE_QI_COST,
-    TICKS_PER_DAY,
+    BarrierField, VoidActionKind, BARRIER_QI_COST, EXPLODE_ZONE_QI_COST, TICKS_PER_DAY,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -109,7 +108,7 @@ pub fn borrow_explode_zone_qi(
         owner_id: owner_id.to_string(),
         zone_id: zone.name.clone(),
         amount: borrow_amount,
-        due_tick: now_tick.saturating_add(EXPLODE_ZONE_DECAY_TICKS),
+        due_tick: now_tick.saturating_add(QI_EXPLODE_ZONE_RETURN_TICKS),
     };
     schedule.push(scheduled.clone());
     Ok(scheduled)
@@ -172,7 +171,7 @@ fn apply_due_qi_return(
                 return Err(entry);
             }
         }
-        VoidActionKind::SuppressTsy | VoidActionKind::LegacyAssign => {}
+        VoidActionKind::SuppressTsy => {}
     }
     Ok(())
 }
@@ -416,7 +415,7 @@ mod tests {
         let mut schedule = VoidQiReturnSchedule::default();
         let entry = borrow_explode_zone_qi(&mut budget, &mut z, "offline:Void", 10, &mut schedule)
             .expect("budget can cover explode borrow");
-        assert_eq!(entry.due_tick, 10 + EXPLODE_ZONE_DECAY_TICKS);
+        assert_eq!(entry.due_tick, 10 + QI_EXPLODE_ZONE_RETURN_TICKS);
     }
 
     #[test]

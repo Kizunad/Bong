@@ -405,7 +405,7 @@ plans:
   pr_refs:
   - 163
   blocking_on: []
-  summary: server void action、VoidActionKind/Request、ledger hooks、BarrierField、LegacyAssign、agent runtime/schema 与 client screen/store 已落地。
+  summary: server 三类化虚 action、VoidActionKind/Request、ledger hooks、BarrierField、agent runtime/schema 与 client screen/store 已落地。
 - file: finished_plans/plan-inventory-v2.md
   group: gameplay-npc
   title: 背包 v2 堆叠与批量入包

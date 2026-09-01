@@ -57,7 +57,6 @@ public class VoidActionClientTest {
     void clearOnDisconnect_replacesEmptySnapshotAndNotifiesLongLivedListeners() {
         List<VoidActionStore.Snapshot> notifications = new ArrayList<>();
         VoidActionStore.addListener(notifications::add);
-        VoidActionStore.setLegacyDraft("old-heir", List.of(7L), "旧会话");
         notifications.clear();
 
         VoidActionStore.clearOnDisconnect();
@@ -74,17 +73,4 @@ public class VoidActionClientTest {
         assertEquals("fresh-zone", notifications.get(1).targetZoneId());
     }
 
-    @Test
-    void legacyParserAcceptsCommaSeparatedIds() {
-        assertEquals(List.of(1001L, 1002L, 1003L), LegacyAssignPanel.parseIds("1001, 1002,,1003"));
-    }
-
-    @Test
-    void storeKeepsLegacyDraft() {
-        VoidActionStore.setLegacyDraft("heir", List.of(7L), " 一封死信 ");
-        VoidActionStore.Snapshot snapshot = VoidActionStore.snapshot();
-        assertEquals("heir", snapshot.legacyInheritorId());
-        assertEquals(List.of(7L), snapshot.legacyItemInstanceIds());
-        assertEquals("一封死信", snapshot.legacyMessage());
-    }
 }

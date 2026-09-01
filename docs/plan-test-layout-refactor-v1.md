@@ -221,6 +221,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 通过；library 为 `12690 passed / 0 failed / 2 ignored`，bin 为 `18 passed / 0 failed`，`alchemy_furnace_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `alchemy_furnace_unit` target 对应 commit 为 `f11d0f430e8e48e91be575a33aa5cca3ea68f191`（2026-09-01）。本条仅记录 P2-05 进度；P2 其它模块、P3、P4 仍未完成。
 
+### P2-06 processed_input（✅ 2026-09-01）
+
+- **范围与落点**：仅将 `server/src/alchemy/processed_input.rs` 原 `#[cfg(test)] mod tests` 的全部 3 个 `#[test]` 外置到 `server/tests/unit/alchemy/processed_input_test.rs`，并新增 `server/Cargo.toml` 的显式 `processed_input_unit` test target；生产文件删除内联测试体，运行时代码未改动。原测试名、断言、边界和错误语义均保留。
+- **迁移前后对拍**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test alchemy::processed_input::tests --lib'` 为 `3 passed / 0 failed / 0 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test processed_input_unit'` 为 `3 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅使用 `bong_server::alchemy` 公开 API；未复制生产实现，未新增测试 seam，未扩大无关可见性，未改变 wire、Redis、时间、随机性或玩法行为。
+- **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12687 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`processed_input_unit` 为 `3 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试、`processed_input_unit` target 对应 commit 为 `b765cc1a81bbb60b1871d068fdb5417fefc1eb82`（2026-09-01）。本条仅记录 P2-06 进度；P2 其它模块、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。

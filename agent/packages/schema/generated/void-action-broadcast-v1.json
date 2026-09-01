@@ -31,10 +31,6 @@
         {
           "const": "barrier",
           "type": "string"
-        },
-        {
-          "const": "legacy_assign",
-          "type": "string"
         }
       ]
     },
@@ -76,5 +72,5 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "1f4e2615a70da7f9c0aa956fa17da22daa811bd80625df6f7b04d5123562c1a7"
+  "x-bong-typebox-source-sha256": "339e6f08b0411044f3dded2912cbf0ac8beb4aa255a778d77b781a7b8670f1a6"
 }

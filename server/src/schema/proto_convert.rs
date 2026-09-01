@@ -3530,19 +3530,6 @@ fn void_action_request_to_proto(r: &super::void_actions::VoidActionRequestV1) ->
                 )),
             }
         }
-        VoidActionRequestV1::LegacyAssign {
-            inheritor_id,
-            item_instance_ids,
-            message,
-        } => bong::VoidAction {
-            request: Some(bong::void_action::Request::LegacyAssign(
-                bong::VoidActionLegacyAssign {
-                    inheritor_id: inheritor_id.clone(),
-                    item_instance_ids: item_instance_ids.clone(),
-                    message: message.clone(),
-                },
-            )),
-        },
     }
 }
 

@@ -15,7 +15,6 @@ pub const SUPPRESS_TSY_COOLDOWN_TICKS: u64 = 30 * TICKS_PER_DAY;
 pub const EXPLODE_ZONE_COOLDOWN_TICKS: u64 = 90 * TICKS_PER_DAY;
 pub const BARRIER_COOLDOWN_TICKS: u64 = 7 * TICKS_PER_DAY;
 pub const BARRIER_TTL_TICKS: u64 = TICKS_PER_MONTH;
-pub const EXPLODE_ZONE_DECAY_TICKS: u64 = 6 * TICKS_PER_MONTH;
 pub const DAOXIANG_SUPPRESS_EXTENSION_TICKS: u64 = 3 * TICKS_PER_MONTH;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -24,23 +23,16 @@ pub enum VoidActionKind {
     SuppressTsy,
     ExplodeZone,
     Barrier,
-    LegacyAssign,
 }
 
 impl VoidActionKind {
-    pub const ALL: [Self; 4] = [
-        Self::SuppressTsy,
-        Self::ExplodeZone,
-        Self::Barrier,
-        Self::LegacyAssign,
-    ];
+    pub const ALL: [Self; 3] = [Self::SuppressTsy, Self::ExplodeZone, Self::Barrier];
 
     pub const fn wire_name(self) -> &'static str {
         match self {
             Self::SuppressTsy => "suppress_tsy",
             Self::ExplodeZone => "explode_zone",
             Self::Barrier => "barrier",
-            Self::LegacyAssign => "legacy_assign",
         }
     }
 
@@ -49,7 +41,6 @@ impl VoidActionKind {
             "suppress_tsy" => Some(Self::SuppressTsy),
             "explode_zone" => Some(Self::ExplodeZone),
             "barrier" => Some(Self::Barrier),
-            "legacy_assign" => Some(Self::LegacyAssign),
             _ => None,
         }
     }
@@ -59,7 +50,6 @@ impl VoidActionKind {
             Self::SuppressTsy => SUPPRESS_TSY_QI_COST,
             Self::ExplodeZone => EXPLODE_ZONE_QI_COST,
             Self::Barrier => BARRIER_QI_COST,
-            Self::LegacyAssign => 0.0,
         }
     }
 
@@ -68,7 +58,6 @@ impl VoidActionKind {
             Self::SuppressTsy => SUPPRESS_TSY_LIFESPAN_COST_YEARS,
             Self::ExplodeZone => EXPLODE_ZONE_LIFESPAN_COST_YEARS,
             Self::Barrier => BARRIER_LIFESPAN_COST_YEARS,
-            Self::LegacyAssign => 0,
         }
     }
 
@@ -77,7 +66,6 @@ impl VoidActionKind {
             Self::SuppressTsy => SUPPRESS_TSY_COOLDOWN_TICKS,
             Self::ExplodeZone => EXPLODE_ZONE_COOLDOWN_TICKS,
             Self::Barrier => BARRIER_COOLDOWN_TICKS,
-            Self::LegacyAssign => 0,
         }
     }
 }
@@ -248,7 +236,6 @@ mod tests {
         assert_eq!(VoidActionKind::SuppressTsy.wire_name(), "suppress_tsy");
         assert_eq!(VoidActionKind::ExplodeZone.wire_name(), "explode_zone");
         assert_eq!(VoidActionKind::Barrier.wire_name(), "barrier");
-        assert_eq!(VoidActionKind::LegacyAssign.wire_name(), "legacy_assign");
         assert_eq!(
             VoidActionKind::from_wire_name("suppress_tsy"),
             Some(VoidActionKind::SuppressTsy)
@@ -287,12 +274,6 @@ mod tests {
             VoidActionCost::for_kind(VoidActionKind::Barrier).lifespan_years,
             30
         );
-    }
-
-    #[test]
-    fn legacy_assign_has_no_runtime_cost() {
-        assert_eq!(VoidActionKind::LegacyAssign.qi_cost(), 0.0);
-        assert_eq!(VoidActionKind::LegacyAssign.lifespan_cost_years(), 0);
     }
 
     #[test]
@@ -389,16 +370,6 @@ mod tests {
             VoidActionKind::Barrier,
             10 + BARRIER_COOLDOWN_TICKS
         ));
-    }
-
-    #[test]
-    fn legacy_assign_does_not_set_cooldown() {
-        let mut cooldowns = VoidActionCooldowns::default();
-        cooldowns.set_used("offline:Void", VoidActionKind::LegacyAssign, 10);
-        assert_eq!(
-            cooldowns.ready_at("offline:Void", VoidActionKind::LegacyAssign),
-            0
-        );
     }
 
     #[test]

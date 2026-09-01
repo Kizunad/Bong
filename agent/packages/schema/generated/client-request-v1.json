@@ -172,44 +172,6 @@
                   }
                 }
               }
-            },
-            {
-              "additionalProperties": false,
-              "type": "object",
-              "required": [
-                "kind",
-                "inheritor_id"
-              ],
-              "properties": {
-                "kind": {
-                  "const": "legacy_assign",
-                  "type": "string"
-                },
-                "inheritor_id": {
-                  "minLength": 1,
-                  "maxLength": 128,
-                  "type": "string"
-                },
-                "item_instance_ids": {
-                  "type": "array",
-                  "items": {
-                    "minimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  }
-                },
-                "message": {
-                  "anyOf": [
-                    {
-                      "maxLength": 512,
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              }
             }
           ]
         }
@@ -3472,5 +3434,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "b5011e99c4f1d741e778218c523476d44b11d42e7befd2b857666ffeece7c2b8"
+  "x-bong-typebox-source-sha256": "f806a60410286d8a07ef0a4c299a21d75f782877852138b3196823ee638678d3"
 }

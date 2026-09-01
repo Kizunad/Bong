@@ -11,11 +11,7 @@
     {
       "const": "barrier",
       "type": "string"
-    },
-    {
-      "const": "legacy_assign",
-      "type": "string"
     }
   ],
-  "x-bong-typebox-source-sha256": "8a621447fc269ce1dcf9a188f7774bea3229f0b65a6db6ddad80c17c6d0f92dd"
+  "x-bong-typebox-source-sha256": "0e6b6466ab81d4f8671e9c67d2ea4002cc0d24c18d4730b854ac5cb716b96239"
 }

@@ -98,14 +98,6 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
-    void encodesVoidActionLegacyAssign() {
-        assertEquals(
-            "{\"type\":\"void_action\",\"v\":1,\"request\":{\"kind\":\"legacy_assign\",\"inheritor_id\":\"heir\",\"item_instance_ids\":[1001,1002],\"message\":\"留给后来人\"}}",
-            ClientRequestProtocol.encodeVoidActionLegacyAssign("heir", List.of(1001L, 1002L), " 留给后来人 ")
-        );
-    }
-
-    @Test
     void rejectsVoidActionBarrierWithBlankZone() {
         assertThrows(
             IllegalArgumentException.class,
@@ -118,14 +110,6 @@ public class ClientRequestProtocolTest {
         assertThrows(
             IllegalArgumentException.class,
             () -> ClientRequestProtocol.encodeVoidActionBarrier("spawn", 1.0, 64.0, 2.0, 0.0)
-        );
-    }
-
-    @Test
-    void rejectsVoidActionLegacyAssignWithNegativeItemId() {
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> ClientRequestProtocol.encodeVoidActionLegacyAssign("heir", List.of(-1L), "留给后来人")
         );
     }
 
