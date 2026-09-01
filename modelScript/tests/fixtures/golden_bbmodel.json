@@ -125,6 +125,12 @@
   "exit": 0,
   "outputs": {}
  },
+ "gen_herb_knife_iron.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbKnifeIron.bbmodel": "5aab6a76d69d851a77e4826ff6fe1ce4b010cd38fac4a5217d82bc6b1c6e0e22"
+  }
+ },
  "gen_hide_armor.py": {
   "exit": 0,
   "outputs": {
@@ -306,7 +312,9 @@
   }
  },
  "gen_zhenyuan_mine.py": {
-  "exit": 2,
-  "outputs": {}
+  "exit": 0,
+  "outputs": {
+   "ZhenyuanMine.bbmodel": "18d35232ed47a46e9f0ced1398a548699914a118add61ce42c12f34ad269598d"
+  }
  }
 }
