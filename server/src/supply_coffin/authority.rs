@@ -5,12 +5,15 @@
 
 use valence::prelude::DVec3;
 
+use crate::reach::{DistanceRule, EXTERNAL_SESSION_MAX_BLOCKS, SUPPLY_COFFIN_OPEN_MAX_BLOCKS};
 use crate::world::dimension::DimensionKind;
 
 use super::ActiveSupplyCoffin;
 
-pub(crate) const SUPPLY_COFFIN_OPEN_MAX_DISTANCE: f64 = 4.5;
-pub(crate) const SUPPLY_COFFIN_SESSION_MAX_DISTANCE: f64 = 6.5;
+#[allow(dead_code)]
+pub(crate) const SUPPLY_COFFIN_OPEN_MAX_DISTANCE: f64 = SUPPLY_COFFIN_OPEN_MAX_BLOCKS;
+#[allow(dead_code)]
+pub(crate) const SUPPLY_COFFIN_SESSION_MAX_DISTANCE: f64 = EXTERNAL_SESSION_MAX_BLOCKS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SupplyCoffinAuthorityFailure {
@@ -29,7 +32,7 @@ pub(crate) fn authorize_supply_coffin_open(
         active,
         player_pos,
         player_dimension,
-        SUPPLY_COFFIN_OPEN_MAX_DISTANCE,
+        DistanceRule::SUPPLY_COFFIN_OPEN,
     )
 }
 
@@ -42,7 +45,7 @@ pub(crate) fn authorize_supply_coffin_session(
         active,
         player_pos,
         player_dimension,
-        SUPPLY_COFFIN_SESSION_MAX_DISTANCE,
+        DistanceRule::EXTERNAL_SESSION,
     )
 }
 
@@ -50,7 +53,7 @@ fn authorize_supply_coffin(
     active: Option<&ActiveSupplyCoffin>,
     player_pos: DVec3,
     player_dimension: Option<DimensionKind>,
-    max_distance: f64,
+    distance_rule: DistanceRule,
 ) -> Result<f64, SupplyCoffinAuthorityFailure> {
     let active = active.ok_or(SupplyCoffinAuthorityFailure::MissingSource)?;
     let player_dimension =
@@ -60,7 +63,7 @@ fn authorize_supply_coffin(
     }
 
     let distance = active.pos.distance(player_pos);
-    if !distance.is_finite() || distance > max_distance {
+    if !distance_rule.allows(active.pos, player_pos) {
         return Err(SupplyCoffinAuthorityFailure::OutOfRange);
     }
     Ok(distance)

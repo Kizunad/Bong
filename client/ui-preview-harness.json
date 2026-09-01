@@ -145,6 +145,16 @@
       "expected_logical_width": 683,
       "expected_logical_height": 384,
       "expected_template_id": "identity-panel"
+    },
+    {
+      "name": "zhenfa-layout-minimum",
+      "scene_id": "zhenfa-layout",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "zhenfa-layout"
     }
   ]
 }

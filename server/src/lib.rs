@@ -93,6 +93,7 @@ pub mod qi_physics;
 // BONG_PREVIEW_MODE=1 env 下激活实际 system；register() 一定会注册 event 类型
 // 让 chat_collector 编译通过。
 pub mod preview;
+pub mod reach;
 #[allow(dead_code)]
 pub mod schema;
 pub mod server_readiness;
