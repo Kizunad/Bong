@@ -5,6 +5,7 @@ import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.combat.screen.ForgeCarrierScreen;
+import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.combat.screen.TerminateScreen;
 import com.bong.client.combat.screen.RepairScreen;
 import com.bong.client.combat.screen.DeathScreen;
@@ -33,6 +34,7 @@ final class UiPreviewScenes {
         "coffin-menu", new CoffinMenuScene(),
         "repair", new RepairScene(),
         "forge-carrier", new ForgeCarrierScene(),
+        "zhenfa-layout", new ZhenfaLayoutScene(),
         "death", new DeathScene()
     );
 
@@ -531,6 +533,77 @@ final class UiPreviewScenes {
             if (!bounds.fitsInside(width, height)) {
                 throw new IllegalStateException(
                     "暗器注入关键组件越界: " + id + " -> " + bounds + ", viewport=" + width + "x" + height);
+            }
+        }
+
+        @Override
+        public void cleanup() {
+        }
+    }
+
+    private static final class ZhenfaLayoutScene implements UiPreviewScene {
+        @Override
+        public void installFixture() {
+        }
+
+        @Override
+        public Screen createScreen() {
+            // 预览只验证 XML 布局与输入绑定，不触碰真实网络 transport。
+            return ZhenfaLayoutScreen.preview();
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof ZhenfaLayoutScreen zhenfa)) {
+                throw new IllegalStateException("zhenfa scene 打开的不是 ZhenfaLayoutScreen");
+            }
+            return zhenfa.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof ZhenfaLayoutScreen zhenfa && zhenfa.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof ZhenfaLayoutScreen zhenfa && zhenfa.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof ZhenfaLayoutScreen zhenfa)) {
+                throw new IllegalStateException("zhenfa scene 打开的不是 ZhenfaLayoutScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = zhenfa.componentBoundsForPreview("zhenfa-panel");
+            if (!panel.fitsInside(width, height)) {
+                throw new IllegalStateException("阵法面板越出 viewport: " + panel);
+            }
+            for (String id : new String[] {
+                "zhenfa-title", "zhenfa-summary", "zhenfa-trigger-actions", "zhenfa-qi-slider",
+                "zhenfa-feedback", "zhenfa-place"
+            }) {
+                ComponentBounds bounds = zhenfa.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("阵法组件越界: " + id + " -> " + bounds);
+                }
+            }
+            for (String id : new String[] {
+                "zhenfa-trigger-proximity", "zhenfa-trigger-contact", "zhenfa-trigger-timed",
+                "zhenfa-qi-slider", "zhenfa-place"
+            }) {
+                ComponentBounds bounds = zhenfa.componentBoundsForPreview(id);
+                String hit = zhenfa.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException("阵法控件中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            if (!zhenfa.focusOrderForPreview().containsAll(List.of(
+                "zhenfa-trigger-proximity", "zhenfa-trigger-contact", "zhenfa-trigger-timed",
+                "zhenfa-qi-slider", "zhenfa-place"))) {
+                throw new IllegalStateException("阵法控件没有进入 Tab 焦点顺序");
             }
         }
 
