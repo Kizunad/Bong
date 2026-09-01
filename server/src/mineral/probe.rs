@@ -8,9 +8,11 @@ use super::events::{
 };
 use super::registry::MineralRegistry;
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::reach::{DistanceRule, NEARBY_INTERACT_MAX_BLOCKS};
 
 const MIN_PROBE_REALM_RANK: u8 = 2;
-pub const MINERAL_PROBE_MAX_DISTANCE: f64 = 6.0;
+/// Compatibility alias for callers that still name the mineral probe radius.
+pub const MINERAL_PROBE_MAX_DISTANCE: f64 = NEARBY_INTERACT_MAX_BLOCKS;
 
 fn realm_rank(realm: Realm) -> u8 {
     match realm {
@@ -82,8 +84,7 @@ pub fn is_probe_target_in_range(player_pos: DVec3, target: BlockPos) -> bool {
         f64::from(target.y) + 0.5,
         f64::from(target.z) + 0.5,
     );
-    player_pos.distance_squared(target_center)
-        <= MINERAL_PROBE_MAX_DISTANCE * MINERAL_PROBE_MAX_DISTANCE
+    DistanceRule::NEARBY_INTERACT.allows(player_pos, target_center)
 }
 
 fn denied(intent: &MineralProbeIntent, reason: MineralProbeDenialReason) -> MineralProbeResponse {
