@@ -7,7 +7,6 @@ use valence::prelude::{bevy_ecs, Component};
 
 use super::components::{ColorKind, MeridianId, Realm};
 use super::void::components::{VoidActionKind, VoidActionLogEntry};
-use super::void::legacy::LegacyLetterbox;
 use crate::skill::components::SkillId;
 
 const UNASSIGNED_CHARACTER_ID: &str = "unassigned:life_record";
@@ -269,7 +268,7 @@ pub enum BiographyEntry {
         minutes_since_spawn: u32,
         tick: u64,
     },
-    /// plan-void-actions-v1 — 化虚者四类世界级 action 公开入生平卷。
+    /// plan-void-actions-v1 — 化虚者三类世界级 action 公开入生平卷。
     VoidAction {
         kind: VoidActionKind,
         target: String,
@@ -329,12 +328,6 @@ pub struct LifeRecord {
     pub skill_milestones: Vec<SkillMilestone>,
     #[serde(default)]
     pub void_actions: Vec<VoidActionLogEntry>,
-    #[serde(default)]
-    pub legacy_inheritor: Option<String>,
-    #[serde(default)]
-    pub legacy_items: Vec<u64>,
-    #[serde(default)]
-    pub legacy_letterbox: Option<LegacyLetterbox>,
     pub spirit_root_first: Option<MeridianId>,
 }
 
@@ -354,9 +347,6 @@ impl LifeRecord {
             death_insights: Vec::new(),
             skill_milestones: Vec::new(),
             void_actions: Vec::new(),
-            legacy_inheritor: None,
-            legacy_items: Vec::new(),
-            legacy_letterbox: None,
             spirit_root_first: None,
         }
     }
@@ -784,26 +774,6 @@ mod tests {
 
         assert_eq!(decoded.character_id, UNASSIGNED_CHARACTER_ID);
         assert!(decoded.death_insights.is_empty());
-    }
-
-    #[test]
-    fn serde_defaults_missing_void_action_fields_for_legacy_records() {
-        let legacy = serde_json::json!({
-            "character_id": "offline:Alice",
-            "created_at": 5,
-            "biography": [],
-            "insights_taken": [],
-            "skill_milestones": [],
-            "spirit_root_first": null,
-        });
-
-        let decoded: LifeRecord =
-            serde_json::from_value(legacy).expect("legacy life record should deserialize");
-
-        assert!(decoded.void_actions.is_empty());
-        assert_eq!(decoded.legacy_inheritor, None);
-        assert!(decoded.legacy_items.is_empty());
-        assert_eq!(decoded.legacy_letterbox, None);
     }
 
     #[test]

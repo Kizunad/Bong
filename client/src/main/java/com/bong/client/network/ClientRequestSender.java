@@ -88,10 +88,6 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeVoidActionBarrier(zoneId, centerX, centerY, centerZ, radius));
     }
 
-    public static void sendVoidActionLegacyAssign(String inheritorId, List<Long> itemInstanceIds, String message) {
-        dispatch(ClientRequestProtocol.encodeVoidActionLegacyAssign(inheritorId, itemInstanceIds, message));
-    }
-
     public static void sendHeartDemonDecision(Integer chosenIdx) {
         dispatch(ClientRequestProtocol.encodeHeartDemonDecision(chosenIdx));
     }

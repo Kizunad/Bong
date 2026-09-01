@@ -285,27 +285,6 @@ public final class ClientRequestProtocol {
         return encodeVoidAction(request);
     }
 
-    public static String encodeVoidActionLegacyAssign(String inheritorId, List<Long> itemInstanceIds, String message) {
-        JsonObject request = voidActionRequest(VoidActionKind.LEGACY_ASSIGN);
-        request.addProperty("inheritor_id", requireNonBlank(inheritorId, "inheritorId"));
-        JsonArray items = new JsonArray();
-        if (itemInstanceIds != null) {
-            for (Long instanceId : itemInstanceIds) {
-                if (instanceId == null || instanceId < 0) {
-                    throw new IllegalArgumentException("itemInstanceIds must contain only non-negative ids");
-                }
-                items.add(instanceId.longValue());
-            }
-        }
-        request.add("item_instance_ids", items);
-        if (message == null || message.isBlank()) {
-            request.add("message", com.google.gson.JsonNull.INSTANCE);
-        } else {
-            request.addProperty("message", message.trim());
-        }
-        return encodeVoidAction(request);
-    }
-
     /** 心魔劫决定 C2S 回执。{@code chosenIdx = null} 表示超时或未选。 */
     public static String encodeHeartDemonDecision(Integer chosenIdx) {
         JsonObject obj = envelope("heart_demon_decision");

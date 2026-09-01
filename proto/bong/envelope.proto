@@ -3625,18 +3625,11 @@ message VoidActionBarrier {
   double radius   = 5;
 }
 
-message VoidActionLegacyAssign {
-  string          inheritor_id     = 1;
-  repeated uint64 item_instance_ids = 2;
-  optional string message          = 3;
-}
-
 message VoidAction {
   oneof request {
     VoidActionSuppressTsy suppress_tsy  = 1;
     VoidActionExplodeZone explode_zone  = 2;
     VoidActionBarrier     barrier       = 3;
-    VoidActionLegacyAssign legacy_assign = 4;
   }
 }
 

@@ -11,7 +11,6 @@ export const VoidActionKindV1 = Type.Union([
   Type.Literal("suppress_tsy"),
   Type.Literal("explode_zone"),
   Type.Literal("barrier"),
-  Type.Literal("legacy_assign"),
 ]);
 export type VoidActionKindV1 = Static<typeof VoidActionKindV1>;
 
@@ -57,17 +56,6 @@ export const VoidActionRequestV1 = Type.Union([
       kind: Type.Literal("barrier"),
       zone_id: Type.String({ minLength: 1, maxLength: 128 }),
       geometry: BarrierGeometryV1,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      kind: Type.Literal("legacy_assign"),
-      inheritor_id: Type.String({ minLength: 1, maxLength: 128 }),
-      item_instance_ids: Type.Optional(
-        Type.Array(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
-      ),
-      message: Type.Optional(Type.Union([Type.String({ maxLength: 512 }), Type.Null()])),
     },
     { additionalProperties: false },
   ),

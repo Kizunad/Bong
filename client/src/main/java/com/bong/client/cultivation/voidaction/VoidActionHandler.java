@@ -2,8 +2,6 @@ package com.bong.client.cultivation.voidaction;
 
 import com.bong.client.network.ClientRequestSender;
 
-import java.util.List;
-
 public final class VoidActionHandler {
     private static final double DEFAULT_BARRIER_RADIUS = 24.0;
 
@@ -31,18 +29,6 @@ public final class VoidActionHandler {
         if (!canDispatch(VoidActionKind.BARRIER, nowTick)) return false;
         ClientRequestSender.sendVoidActionBarrier(zoneId, x, y, z, radius);
         VoidActionStore.markDispatched(VoidActionKind.BARRIER, nowTick);
-        return true;
-    }
-
-    public static boolean dispatchLegacyAssign(
-        String inheritorId,
-        List<Long> itemInstanceIds,
-        String message,
-        long nowTick
-    ) {
-        if (!canDispatch(VoidActionKind.LEGACY_ASSIGN, nowTick)) return false;
-        ClientRequestSender.sendVoidActionLegacyAssign(inheritorId, itemInstanceIds, message);
-        VoidActionStore.markDispatched(VoidActionKind.LEGACY_ASSIGN, nowTick);
         return true;
     }
 

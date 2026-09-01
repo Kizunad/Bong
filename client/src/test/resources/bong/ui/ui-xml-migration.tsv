@@ -9,7 +9,6 @@ combat/screen/TerminateScreen.java	TerminateScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_
 combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
 craft/CraftScreen.java	CraftScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	NORMALIZE_XML_TEMPLATE
 craft/WorkbenchScreen.java	WorkbenchScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
-cultivation/voidaction/LegacyAssignPanel.java	LegacyAssignPanel	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 forge/ForgeScreen.java	ForgeScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
