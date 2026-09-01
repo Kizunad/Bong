@@ -3,22 +3,25 @@
 
 ## 动作
 
-手探到右胯外侧摸刀（腕内扣、刀贴着腿）→ 腕再往下沉一格蓄住 → 前臂沿弧线甩上来、
-腕猛地外翻，靠惯性把刃甩开锁定 → 腕过冲一格 → 落进持刀架势。
+手探到右胯外侧摸刀（腕内扣、刀贴着腿）→ 肘再折深一格蓄住 → 前臂沿弧线甩上来、腕
+猛地外翻，靠惯性把刃甩开锁定 → 落进持刀架势。10 tick。
 
-10 tick。这一条**首帧不等于末帧**，而且是故意的：它是"从没拿刀到拿着刀"的过渡，
-起手在胯边、收势在架势上。末帧逐轴等于 `herb_knife_stance.GUARD`，所以
-`unfold → harvest` / `unfold → slash` 接得上，中间不会跳一格。
+这一条**首帧不等于末帧**，而且是故意的：它是"从没拿刀到拿着刀"的过渡，起手在胯边、
+收势在架势上。末帧逐轴等于持刀架势，所以 `unfold → harvest` / `unfold → slash`
+接得上，中间不会跳一格。
 
 ## 分段（easing 写在段首帧）
 
 | tick | 段 | 干什么 |
 |------|----|--------|
-| 0  | 摸刀   | 手在右胯外侧、腕内扣（roll -16），刀几乎贴着大腿外面 |
-| 2  | 沉腕   | 手外展到胯外侧、肘折深到 68° —— 这是甩之前的"压弹簧" |
-| 5  | 抡臂   | 前臂沿弧线抡上来，腕还没翻（roll 只走到 +2） |
-| 6  | 翻腕   | 腕在**一个 tick 内**从 +2 翻到 +44 —— "开刃"就是这一下，也是链条最后一环 |
-| 10 | 架势   | 落进 GUARD |
+| 0  | 摸刀   | 手在右胯外侧、腕内扣（roll −12），刀几乎贴着大腿外面 |
+| 2  | 沉腕   | 肘折深到 74°、微屈膝——甩之前的"压弹簧" |
+| 5  | 抡臂   | 前臂沿弧线抡上来，腕**还没翻**（roll 只走到 0） |
+| 6  | 翻腕   | 腕在**一个 tick 内**从 0 翻到 +18 —— "开刃"就是这一下，链条最后一环 |
+| 10 | 架势   | 落进持刀架势 |
+
+腕留到最后一格才翻，是为了让链条末端单独占一个峰（腿 → 腰 → 肩 → 肘 → 腕）。腕跟着
+肘一起翻的版本，五条链路的峰全压在同一 tick，读作"咔一下全到位"（§2.2）。
 
 ## 已知局限（写在这里免得下一轮又去调姿态）
 
@@ -39,60 +42,53 @@ from herb_knife_stance import guard_pose, stance  # noqa: E402
 
 POSE = {
     # ── 摸刀：手探到右胯外侧，腕内扣 ──────────────────────────────────
+    # 手臂 pitch 取小正值 = 略往身后，正是"摸胯上的刀"该在的位置。
     0: dict(
         easing="INOUTSINE",
         **stance(
-            6.0, 18.0,
-            head=dict(pitch=16.0, yaw=-18.0),      # 低头看自己的胯，找刀
-            right_arm=dict(pitch=6.0, yaw=28.0, roll=-16.0, bend=30.0),
-            left_arm=dict(pitch=10.0, yaw=12.0, roll=-8.0, bend=18.0),
-            right_leg=dict(pitch=-4.0, yaw=10.0, bend=6.0),
-            left_leg=dict(pitch=3.0, yaw=8.0, bend=4.0),
+            0.12, 18.0, leg_depth=0.05,
+            head=dict(pitch=16.0, yaw=-14.0),      # 低头看自己的胯，找刀
+            right_arm=dict(pitch=10.0, yaw=22.0, roll=-6.0, bend=20.0),
+            left_arm=dict(pitch=-6.0, yaw=8.0, roll=-4.0, bend=16.0),
+            leg_split=4.0,
         ),
     ),
 
-    # ── 沉腕：压弹簧。肘折到 68°，手外展到胯外侧 ──────────────────────
-    # `yaw` 必须把手带出体外：第一版写 yaw=20 / roll=-34，刀扎进躯干 1.32px（自穿门
-    # 报的），因为腕扣得太死、刀身贴着小腹转了进去。
+    # ── 沉腕：压弹簧。肘折到 68° ──────────────────────────────────────
     # §2.3 的反向蓄势只给躯干/头，但这里"沉"的是**手腕自己**——甩腕这个动作的发力
     # 方向就是"先沉后甩"，沉的那一下和甩在同一条轨道上，不是绕远路的 V 形。
     2: dict(
         easing="INQUAD",
         **stance(
-            9.0, 22.0,
-            head=dict(pitch=20.0, yaw=-20.0),
-            right_arm=dict(pitch=12.0, yaw=30.0, roll=-20.0, bend=68.0),
-            left_arm=dict(pitch=14.0, yaw=16.0, roll=-10.0, bend=24.0),
-            right_leg=dict(pitch=-8.0, yaw=12.0, bend=12.0),
-            left_leg=dict(pitch=6.0, yaw=10.0, bend=8.0),
+            0.24, 24.0, leg_depth=0.62,
+            head=dict(pitch=20.0, yaw=-16.0),
+            right_arm=dict(pitch=14.0, yaw=24.0, roll=-10.0, bend=68.0),
+            left_arm=dict(pitch=-2.0, yaw=10.0, roll=-6.0, bend=22.0),
+            leg_split=5.0,
         ),
     ),
 
     # ── 抡臂：前臂沿弧线上来，腕**先不翻** ────────────────────────────
-    # 腕留在最后一格才翻，是为了让链条的末端单独占一个峰（腿 t1 → 腰/肩/肘 t3~5 →
-    # 腕 t5）。腕跟着肘一起翻的版本，五条链路的峰全压在 t4.8，`stagger` 门直接报废。
     5: dict(
         easing="OUTQUAD",
         **stance(
-            12.0, 8.0,
-            head=dict(pitch=6.0, yaw=-6.0),        # 头抬起来看刃
-            right_arm=dict(pitch=-30.0, yaw=8.0, roll=2.0, bend=26.0),
-            left_arm=dict(pitch=2.0, yaw=8.0, roll=-12.0, bend=30.0),
-            right_leg=dict(pitch=-6.0, yaw=10.0, bend=10.0),
-            left_leg=dict(pitch=5.0, yaw=8.0, bend=6.0),
+            0.10, 4.0, leg_depth=0.20,
+            head=dict(pitch=4.0, yaw=-4.0),        # 头抬起来看刃
+            right_arm=dict(pitch=-44.0, yaw=-10.0, roll=0.0, bend=24.0),
+            left_arm=dict(pitch=-10.0, yaw=6.0, roll=-4.0, bend=26.0),
+            leg_split=3.0,
         ),
     ),
 
-    # ── 翻腕开刃（SNAP）：一格之内翻 42°，肘同时回弹 ──────────────────
+    # ── 翻腕开刃（SNAP）：一格之内翻 18°，肘同时回折 ──────────────────
     6: dict(
         easing="INOUTSINE",
         **stance(
-            10.0, 11.0,
-            head=dict(pitch=8.0, yaw=-8.0),
-            right_arm=dict(pitch=-22.0, yaw=14.0, roll=44.0, bend=38.0),
-            left_arm=dict(pitch=6.0, yaw=10.0, roll=-10.0, bend=26.0),
-            right_leg=dict(pitch=-5.0, yaw=10.0, bend=9.0),
-            left_leg=dict(pitch=4.0, yaw=8.0, bend=5.0),
+            0.06, 8.0, leg_depth=0.10,
+            head=dict(pitch=6.0, yaw=-6.0),
+            right_arm=dict(pitch=-32.0, yaw=-14.0, roll=18.0, bend=46.0),
+            left_arm=dict(pitch=-8.0, yaw=6.0, roll=-4.0, bend=24.0),
+            leg_split=4.0,
         ),
     ),
 

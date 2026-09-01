@@ -27,7 +27,9 @@ for _d in (REPO / "modelScript" / "tools", REPO / "client" / "tools"):
 
 import player_anim_gates as G  # noqa: E402
 import render_animation as RA  # noqa: E402
-from herb_knife_stance import GUARD, HERB_ZONE, hip_hinge  # noqa: E402
+from herb_knife_stance import (  # noqa: E402
+    ARM_ROLL_MAX, GUARD, HERB_ZONE, HIP_TWIST, _hip_follow,
+)
 
 ANIM = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
 KNIFE = REPO / "modelScript" / "models" / "HerbKnifeIron.bbmodel"
@@ -127,8 +129,10 @@ class ChannelDisciplineTest(unittest.TestCase):
                 self.assertEqual([], used, f"{name} 用到了 body.{used}")
 
     def test_no_pivot_offset_on_arms_or_legs_except_the_documented_one(self):
-        """手臂/腿的 x/y 不许用：运行时是**绝对赋值**（静止枢轴 臂 y=2 / 腿 y=12），
-        预览是相加，两边差 2~12px。z 可以用（静止枢轴 0 / 0.1，差 0.1px）。
+        """手臂/腿的 x/y 不许用：运行时是**绝对赋值**（`getBodyOffset` →
+        `getValueAtCurrentTick(value0)`，value0 = 静止枢轴 臂 y=2 / 腿 y=12），
+        而预览按"静止枢轴 + 偏移"算，两边差 2~12px。腿的 z 可以用（静止枢轴 0.1，
+        差 0.1px），也正是俯身补偿要用的那条。
         """
         for name in ANIMS:
             with self.subTest(anim=name):
@@ -138,24 +142,88 @@ class ChannelDisciplineTest(unittest.TestCase):
                               for axis in axes if axis in ("x", "y")})
                 self.assertEqual([], bad, f"{name} 用到了 {bad}")
 
-    def test_upper_body_lean_matches_the_torso_pitch_everywhere(self):
-        """俯身补偿不许漏：每一个关键帧的 torso/head/双臂 z 都必须 == hip_hinge(torso.pitch)。
+    def test_the_legs_follow_the_hip_on_every_keyframe(self):
+        """俯身补偿不许漏：每个关键帧两条腿的 `z` 都必须 == `_hip_follow(torso.pitch)`。
 
-        漏掉一帧就腰断一帧，而静态图上要盯着髋缝才看得出来——这正是上一版的死法。
+        `torso` 的枢轴在脖子，前倾把胯甩到身后 `12·sinθ`；腿不跟着挪就是腰断。漏掉
+        一帧就断一帧，而静态图上不盯着髋缝根本看不出来——上一版就是这么全绿交出去、
+        被一眼看出"上半身下半身直接分离"的。
+
+        判据取**关键帧**：中间帧由插值给出，而 `z` 与 `torso.pitch` 都是线性插值，
+        两端对上、中间就对得上（`sin` 的弧度差在 34° 内 < 0.3px）。
+        """
+        for name in ANIMS:
+            with self.subTest(anim=name):
+                em = _emote(name)
+                kfs = RA.collect_keyframes(em)
+                ticks = sorted({m["tick"] for m in em["moves"]})
+                for t in ticks:
+                    pitch = math.degrees(RA.sample_axis(kfs, "torso", "pitch", float(t)))
+                    want = _hip_follow(pitch)
+                    for leg in ("rightLeg", "leftLeg"):
+                        got = RA.sample_axis(kfs, leg, "z", float(t))
+                        self.assertAlmostEqual(
+                            want, got, places=1,
+                            msg=f"{name} t{t} {leg}.z={got:.2f}，"
+                                f"但 torso.pitch={pitch:.1f}° 要求 {want:.2f}")
+
+    def test_the_hips_turn_with_the_torso(self):
+        """躯干拧转时胯必须跟着转 —— 否则就是"胸口拧着、腿正对前方"。
+
+        `torso.yaw` 只作用于躯干那**一个** ModelPart（conventions §7.3），头/臂/腿
+        各自独立。上一版全程 `torso.yaw=14°` 而两条腿 yaw 只有站架的固定值，那正是
+        "上半身下半身分离"的另一半。判据：腿的 yaw / 躯干的 yaw 恒等于设计比值。
+        """
+        want_ratio = HIP_TWIST / (1.0 - HIP_TWIST)
+        for name in ANIMS:
+            with self.subTest(anim=name):
+                em = _emote(name)
+                kfs = RA.collect_keyframes(em)
+                for t in sorted({m["tick"] for m in em["moves"]}):
+                    torso = RA.sample_axis(kfs, "torso", "yaw", float(t))
+                    if abs(math.degrees(torso)) < 0.5:
+                        continue
+                    for leg in ("rightLeg", "leftLeg"):
+                        got = RA.sample_axis(kfs, leg, "yaw", float(t)) / torso
+                        self.assertAlmostEqual(
+                            want_ratio, got, places=2,
+                            msg=f"{name} t{t}: {leg}.yaw / torso.yaw = {got:.3f}，"
+                                f"设计值 {want_ratio:.3f} —— 胯没跟着躯干转")
+
+    def test_the_two_legs_stay_a_single_pelvis(self):
+        """两条腿的屈膝量、跟随位移、跟随转体必须逐帧相等。
+
+        它们由 `stance()` 的同一个数派生，分开写就会漂。只有 `pitch` 允许分前后脚。
+        """
+        for name in ANIMS:
+            with self.subTest(anim=name):
+                em = _emote(name)
+                kfs = RA.collect_keyframes(em)
+                for t in sorted({m["tick"] for m in em["moves"]}):
+                    for axis in ("bend", "z", "yaw"):
+                        r = RA.sample_axis(kfs, "rightLeg", axis, float(t))
+                        lf = RA.sample_axis(kfs, "leftLeg", axis, float(t))
+                        self.assertAlmostEqual(
+                            r, lf, places=4,
+                            msg=f"{name} t{t}: rightLeg.{axis}={r:.4f} ≠ "
+                                f"leftLeg.{axis}={lf:.4f} —— 两条腿不是同一个胯了")
+
+    def test_arm_roll_stays_inside_the_repo_envelope(self):
+        """手臂 roll 封顶 —— roll 转的是**肘的折弯平面**。
+
+        上一版右腕 roll 最深到 58°，把前臂从矢状面掀到了侧面，读感就是"肘往外翻"，
+        而仓库 163 条动画里手臂 roll 从没超过 ±35°（`fist_punch_right` v10 的 ±35 是
+        极值，绝大多数在 ±12 以内）。
         """
         for name in ANIMS:
             with self.subTest(anim=name):
                 kfs = RA.collect_keyframes(_emote(name))
-                end = float(_emote(name)["endTick"])
-                for i in range(int(end) + 1):
-                    pitch = math.degrees(RA.sample_axis(kfs, "torso", "pitch", float(i)))
-                    want = hip_hinge(pitch)
-                    for part in ("torso", "head", "rightArm", "leftArm"):
-                        got = RA.sample_axis(kfs, part, "z", float(i))
-                        self.assertAlmostEqual(
-                            want, got, places=1,
-                            msg=f"{name} t{i} {part}.z={got:.2f}，"
-                                f"但 torso.pitch={pitch:.1f}° 要求 {want:.2f}")
+                for part in ("rightArm", "leftArm"):
+                    rolls = [abs(math.degrees(v)) for _, v, _ in kfs[part]["roll"]]
+                    # 容差是**度→弧度→度**的往返误差（JSON 存弧度），不是给姿态放水
+                    self.assertLessEqual(
+                        max(rolls), ARM_ROLL_MAX + 1e-3,
+                        f"{name} {part} roll 峰值 {max(rolls):.0f}° > {ARM_ROLL_MAX}°")
 
 
 class KnifeReadTest(unittest.TestCase):
@@ -179,8 +247,12 @@ class KnifeReadTest(unittest.TestCase):
                 self.assertTrue(r.ok, f"{name}: 刀尖高出肩线 {r.worst:.2f}px（{r.detail}）")
 
     def test_harvest_blade_actually_reaches_the_herb(self):
-        """采割帧刃要同时够低（≤{}px）且够前（≤{}px）。""".format(
-            HERB_ZONE["y_max"], HERB_ZONE["z_max"])
+        """采割帧刃要同时够低（≤{}px）且够前（≤{}px）。
+
+        上限是**这套骨架的极限**而不是"贴地"：屈膝不会让上半身下沉（各部件是兄弟
+        不是链，torso 枢轴恒在 y=24），真正的下蹲只有 `body.y` 做得到，而那条通道的
+        符号未定（见 `herb_knife_stance` 模块文档）。所以割的是一格高灵草的茎中段。
+        """.format(HERB_ZONE["y_max"], HERB_ZONE["z_max"])
         frames = G.sample(_emote("herb_harvest"), _knife())
         cut = min(frames, key=lambda f: abs(f.tick - 6.0))
         self.assertLessEqual(float(cut.blade_pts[:, 1].min()), HERB_ZONE["y_max"])

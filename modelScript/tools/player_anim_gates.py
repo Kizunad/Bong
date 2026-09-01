@@ -15,9 +15,12 @@ modelScript/README「自检全绿在做差分注入之前，信息量是零」�
 假绿，而模型不会怀疑它。所以每道门旁边写一个**把它该抓的缺陷造出来**的注入器，
 `--self-test` 先注入再跑，报不出违例的门直接算失效。
 
-本文件里的门就是这么校准的——`hip_seam` 的门限 1.2px 不是拍的：静止姿实测 0.10px、
-原版潜行约 1.7px、上一版 `herb_harvest` 实测 5.6~7.1px。1.2 卡在"补偿到位"和"忘了补偿"
-之间，两边都留了三倍余量。
+本文件里的门就是这么校准的。而这一轮还多了一条教训：**注入器全过，也可能整套门问的
+就不是该问的问题**。上一版九道门全绿，人一眼就说"上半身下半身直接分离了、手肘都是
+反向的"——因为 `hip_seam` 量的是单个解剖锚点的错位，那个数会被**正常关节转动**顶起来
+（躯干拧 14° 就报 2px），门限只好放宽到 1.4px，放宽之后对真断裂也就没反应了。
+所以门限一律改成**拿仓库已认可资产在同一判据下量出来**，不再自己拍数（见
+`herb_knife_stance.LIMB_GAP_MAX` 的三条基准）。
 
 ## 用法
 
@@ -56,7 +59,7 @@ from anim_common import build_doc  # noqa: E402
 from herb_knife_stance import (  # noqa: E402
     GROUND_SINK_MAX,
     HERB_ZONE,
-    HIP_SEAM_MAX,
+    LIMB_GAP_MAX,
     SELF_CLIP_MAX,
     SLASH_REACH_Z,
 )
@@ -85,28 +88,52 @@ class Frame:
         return min(float(v[:, 1].min()) for v in self.seg_pts.values())
 
     @property
-    def hip_seam(self) -> float:
-        """躯干底面中心与两条腿顶面中心之间的错位（px）。
+    def limb_gap(self) -> float:
+        """相邻两段之间的**最小间距**（px）。0 = 还挨着，>0 就是真的裂开了。
 
-        **量的是「同一个解剖点」被两边各自送到了哪儿**，不是最近角点距离：
-        - 躯干那一侧取静止姿下的底面中心 `(0, 12, 0)`，跟着 torso 的变换走；
-        - 腿那一侧取两条腿的顶面中心 `(±1.9, 12, 0)`（正好是髋枢轴），跟着腿的变换走。
-
-        两个坑都踩过：① 取"最近角点距离"，躯干一拧 `yaw=30°` 就报 4.74px 违例，而图上
-        腰是好的——判据把"拧腰"当成"腰断"；② 改成"取当前最高/最低的那几个点求均值"，
-        腿一旋转，"最高点"就换成了某个旋上来的角，均值跟着漂，静止腿和抬腿量出两个数。
-        锚在静止姿的解剖点上，纯 yaw 恒为 0，纯抬腿恒为 0，只有"胯被甩到身后"才报数。
+        取颈与两处髋里最差的一处。判据本身见 `_obb_gap`——它和上一版那种"解剖锚点
+        错位"最大的区别是：**分得开"转"和"断"**。
         """
-        torso = _apply(self.seg_xform["torso"], _TORSO_HIP)
-        legs = np.mean([_apply(self.seg_xform[leg], anchor)
-                        for leg, anchor in _LEG_TOPS.items()], axis=0)
-        return float(np.linalg.norm(torso - legs))
+        return max(_obb_gap(self.seg_xform[a], a, self.seg_xform[b], b)
+                   for a, b in _SEAM_PAIRS)
 
 
-#: 静止姿下的解剖锚点（Bedrock px）。躯干底面中心 = 腰线中点；两条腿的顶面中心 = 髋枢轴。
-_TORSO_HIP = np.array([0.0, 12.0, 0.0])
-_LEG_TOPS = {"rightLeg_up": np.array([-1.9, 12.0, 0.0]),
-             "leftLeg_up": np.array([1.9, 12.0, 0.0])}
+#: 要检查"还连着吗"的相邻段。颈 + 两处髋——这三处是俯身/转体会撕开的地方。
+#: 肩不在列：手臂绕肩枢轴转是原版行为，转到 24° 肩口自然张开，量它必然把正常动作
+#: 判成断裂（上一版就是这么把"手臂转了"和"腰断了"混作一谈的）。
+_SEAM_PAIRS = (("head", "torso"), ("torso", "rightLeg_up"), ("torso", "leftLeg_up"))
+
+#: 每段表面的采样点（Bedrock 静止坐标），1px 一格。
+def _surface(name: str) -> np.ndarray:
+    spec = {sg[0]: sg for sg in P.SEGMENTS}[name]
+    _n, pivot, frm, size, _uv = spec
+    lo = np.array(pivot, float) + np.array(frm, float)
+    hi = lo + np.array(size, float)
+    axes = [np.arange(lo[i], hi[i] + 1e-9, 1.0) for i in range(3)]
+    pts = []
+    for ax in range(3):
+        for v in (lo[ax], hi[ax]):
+            grid = np.meshgrid(*[axes[i] if i != ax else np.array([v])
+                                 for i in range(3)], indexing="ij")
+            pts.append(np.stack([grid[i].ravel() for i in range(3)], 1))
+    return np.array([P._pt(q) for q in np.unique(np.vstack(pts), axis=0)])
+
+
+_SURF = {n: _surface(n) for n in {x for pair in _SEAM_PAIRS for x in pair}}
+
+
+def _obb_gap(Ta, a, Tb, b) -> float:
+    """两段之间的**最小间距**（px）。0 = 还挨着（含相交），>0 就是肉眼可见的洞。
+
+    这是上一版 `hip_seam` 的替代品。旧口径量的是"静止时重合的一对解剖锚点动画后
+    错开多少"——那个数会被**正常关节转动**顶起来（躯干拧 14° 就报 2px），于是门限
+    只能放宽到 1.4px 以上，而放宽之后它对真断裂也就没反应了：上一版三条动画全绿，
+    人一看就说"上半身下半身直接分离了"。
+    改量真空隙之后，"转"和"断"分得开：手臂/躯干怎么转，只要没被平移开，间距恒为 0。
+    """
+    A = (Ta[:3, :3] @ _SURF[a].T).T + Ta[:3, 3]
+    B = (Tb[:3, :3] @ _SURF[b].T).T + Tb[:3, 3]
+    return float(np.linalg.norm(A[:, None, :] - B[None, :, :], axis=2).min())
 
 
 def _apply(T: np.ndarray, p: np.ndarray) -> np.ndarray:
@@ -204,15 +231,17 @@ class GateResult:
         return f"  {mark} {self.key:<12s} {self.label:<22s} 实测 {self.worst:7.2f} / 门限 {self.limit:6.2f}   {self.detail}"
 
 
-def gate_hip_seam(frames, limit=HIP_SEAM_MAX) -> GateResult:
-    """腰断门：躯干底面与腿顶面不许被躯干前倾甩开。
+def gate_limb_gap(frames, limit=LIMB_GAP_MAX) -> GateResult:
+    """散架门：颈与两处髋，相邻两段之间不许出现真空隙。
 
-    `torso` 的枢轴在脖子，前倾会把胯端甩到身后 `12·sinθ`；不补腿的 z 就是腰断。
-    上一版 `herb_harvest` 实测 5.6~7.1px。
+    `torso` 的枢轴在脖子，前倾会把胯端甩到身后 `12·sinθ`；不让腿跟着挪就是腰断。
+    门限不是自己拍的，是拿**仓库已认可资产**在同一判据下量出来的：
+    `bow_salute` 2.49px、`harvest_crouch` 1.50px、`dagger_slash` 0.19px——取采集
+    姿态本尊那一档 1.50。
     """
-    worst = max(frames, key=lambda f: f.hip_seam)
-    return GateResult("hip_seam", "腰断（髋缝）", worst.hip_seam <= limit,
-                      worst.hip_seam, limit, f"最差在 t{worst.tick:.1f}")
+    worst = max(frames, key=lambda f: f.limb_gap)
+    return GateResult("limb_gap", "散架（真空隙）", worst.limb_gap <= limit,
+                      worst.limb_gap, limit, f"最差在 t{worst.tick:.1f}")
 
 
 def gate_ground(frames, limit=GROUND_SINK_MAX) -> GateResult:
@@ -290,7 +319,8 @@ def gate_sweep(frames, window: tuple[float, float], min_path: float,
     失败），最远前伸只从 -13.51 掉到 -12.11，判据几乎没动。而**刃心走过的路程**从
     10.99px 掉到 3.98px，差 2.8 倍。够不够得着和有没有挥出去是两件事，这道门量后者。
 
-    门限取干净版的七成：反手割 10.99 → 7.5，采割 6.21 → 4.3。
+    门限取干净版的七成，并且**必须由 `--self-test` 证明注入版落在门限之下**：
+    采割 10.40 → 7.3、反手割 7.06 → 4.9（注入后 2.82）、开刃 6.0 → 4.2。
     """
     lo, hi = window
     path, prev, far = 0.0, None, 99.0
@@ -386,18 +416,19 @@ class InjectionImpossible(RuntimeError):
     pass
 
 
-def inject_no_hip_comp(pose: dict) -> dict:
-    """抽掉上半身的 z 前移 —— 只留 `torso.pitch`，胯就被甩到身后，腰断。
+def inject_no_hip_follow(pose: dict) -> dict:
+    """抽掉两条腿的跟随位移 —— 只留 `torso.pitch`，胯就被甩到身后，腰断。
 
-    这正是上一版 `herb_harvest` 的成因（同一判据下实测 6.61px）。注入点必须跟着
-    `herb_knife_stance.stance` 走：补偿从"腿往后挪"改成"上半身往前挪"之后，第一版
-    注入器还在抽腿的 z，抽了个空——干净版和注入版都报 1.20px，零区分力。
+    **注入点必须跟着 `herb_knife_stance` 的补偿方式走**，这一条踩过两次：补偿从
+    "腿往后挪"改成"上半身往前挪"时，注入器还在抽腿的 z，抽了个空——干净版和注入版
+    都报同一个数，那道门当时是零区分力的绿灯。现在补偿又换回了腿的 z，注入器也跟着
+    换回来。改 `stance` 的补偿方式 = 必须同时改这里，否则自证会静默失效。
     """
     out = _copy_pose(pose)
     for frame in out.values():
-        for part in ("torso", "head", "rightArm", "leftArm"):
-            if part in frame:
-                frame[part] = {k: v for k, v in frame[part].items() if k != "z"}
+        for leg in ("rightLeg", "leftLeg"):
+            if leg in frame:
+                frame[leg] = {k: v for k, v in frame[leg].items() if k != "z"}
     return out
 
 
@@ -503,16 +534,16 @@ def _copy_pose(pose: dict) -> dict:
 #: 两道时间窗要拿它当基准："刃到过草区"和"刃在下刀那一刻到草区"是两回事。
 PROFILES = {
     "harvest": dict(
-        gates=("hip_seam", "ground", "self_clip", "torch", "herb_zone", "sweep",
+        gates=("limb_gap", "ground", "self_clip", "torch", "herb_zone", "sweep",
                "guard", "settle", "stagger"),
-        impact=6.0, sweep_window=(3.0, 8.0), sweep_min=4.3),
+        impact=6.0, sweep_window=(3.0, 8.0), sweep_min=7.3),
     "slash": dict(
-        gates=("hip_seam", "ground", "self_clip", "torch", "sweep",
+        gates=("limb_gap", "ground", "self_clip", "torch", "sweep",
                "guard", "settle", "stagger"),
-        impact=5.0, sweep_window=(2.0, 6.0), sweep_min=7.5),
+        impact=5.0, sweep_window=(2.0, 6.0), sweep_min=4.9),
     "draw": dict(
-        gates=("hip_seam", "ground", "self_clip", "torch", "sweep", "settle", "stagger"),
-        impact=5.0, sweep_window=(2.0, 6.0), sweep_min=6.0),
+        gates=("limb_gap", "ground", "self_clip", "torch", "sweep", "settle", "stagger"),
+        impact=5.0, sweep_window=(2.0, 6.0), sweep_min=4.2),
 }
 
 
@@ -521,7 +552,7 @@ def run_gates(emote: dict, knife_doc: dict, profile: str) -> list[GateResult]:
     impact = spec["impact"]
     frames = sample(emote, knife_doc)
     table = {
-        "hip_seam": lambda: gate_hip_seam(frames),
+        "limb_gap": lambda: gate_limb_gap(frames),
         "ground": lambda: gate_ground(frames),
         "self_clip": lambda: gate_self_clip(frames),
         "torch": lambda: gate_torch_read(frames),
@@ -542,7 +573,7 @@ def emote_of(pose: dict, end: int) -> dict:
 # ---------------------------------------------------------------- 自证
 _SELF_TEST = (
     # (门, 注入器, 用哪条动画的 pose 当底子)
-    ("hip_seam", inject_no_hip_comp, "herb_harvest"),
+    ("limb_gap", inject_no_hip_follow, "herb_harvest"),
     ("ground", inject_sink, "herb_harvest"),
     ("self_clip", inject_knife_into_head, "herb_knife_slash"),
     ("torch", inject_torch, "herb_knife_slash"),
@@ -570,7 +601,7 @@ def _load_pose(name: str) -> tuple[dict, int]:
 def self_test(knife_doc: dict) -> int:
     """先注入缺陷再跑：报不出违例的门算失效，返回失效门的个数。"""
     single = {
-        "hip_seam": gate_hip_seam, "ground": gate_ground, "self_clip": gate_self_clip,
+        "limb_gap": gate_limb_gap, "ground": gate_ground, "self_clip": gate_self_clip,
         "torch": gate_torch_read, "herb_zone": gate_herb_zone, "sweep": gate_sweep,
     }
     failed = 0
