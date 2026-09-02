@@ -26,6 +26,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
+use crate::reach::DistanceRule;
 use crate::schema::server_data::{CoffinGradeV1, CoffinStateV1, ServerDataPayloadV1, ServerDataV1};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 pub const MUNDANE_COFFIN_ITEM_ID: &str = "mundane_coffin";
@@ -98,7 +99,6 @@ impl CoffinGrade {
 }
 
 const COFFIN_AMBIENT_INTERVAL_TICKS: u64 = 3 * TICKS_PER_SECOND;
-const COFFIN_INTERACT_MAX_DISTANCE_SQ: f64 = 36.0;
 /// plan-coffin-tiers-v1 P2 — marker 渲染 state：0 = intact（在棺 / 掀盖 state 待 P3）。
 const COFFIN_MARKER_VISUAL_STATE: u8 = 0;
 
@@ -1301,13 +1301,22 @@ fn block_is_air(layer: &ChunkLayer, pos: BlockPos) -> bool {
         .unwrap_or(true)
 }
 
-fn coffin_target_is_close(position: &Position, target: BlockPos) -> bool {
+/// 检查玩家位置是否符合延寿棺交互 reach profile。
+///
+/// 延寿棺的四条交互链路（放置、进棺、破坏、菜单回收）都通过这个 adapter，
+/// 距离 metric、边界和非有限坐标的 fail-closed 语义统一由共享
+/// [`DistanceRule::NEARBY_INTERACT`] 定义。
+pub fn is_coffin_target_in_range(player_pos: DVec3, target: BlockPos) -> bool {
     let target_center = DVec3::new(
         f64::from(target.x) + 0.5,
         f64::from(target.y) + 0.5,
         f64::from(target.z) + 0.5,
     );
-    position.get().distance_squared(target_center) <= COFFIN_INTERACT_MAX_DISTANCE_SQ
+    DistanceRule::NEARBY_INTERACT.allows(player_pos, target_center)
+}
+
+fn coffin_target_is_close(position: &Position, target: BlockPos) -> bool {
+    is_coffin_target_in_range(position.get(), target)
 }
 
 /// plan-bughunt-coffin-dimension-gate-v1 — 普通延寿棺的 `CoffinRegistry` / marker 恒定挂在
@@ -2153,7 +2162,7 @@ mod tests {
         //       锁定「较全返还」语义（与 Break 随机部分返还形成对比）。
         let (mut app, client_entity) = app_with_reclaim_system();
         // ScenarioSingleClient 玩家默认在原点 (0,0,0)；棺紧贴原点（center ≈ 0.5），
-        // 距离远小于 COFFIN_INTERACT_MAX_DISTANCE_SQ(36)，通过近距校验。
+        // 距离远小于共享 6 格欧氏 reach profile，通过近距校验。
         let lower = BlockPos::new(0, 0, 0);
 
         let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
@@ -2224,7 +2233,7 @@ mod tests {
 
     #[test]
     fn ecs_coffin_break_rejected_when_player_too_far() {
-        // 安全门控回归：玩家距棺 > COFFIN_INTERACT_MAX_DISTANCE_SQ(36) 时，
+        // 安全门控回归：玩家距棺超出共享 6 格欧氏 reach profile 时，
         // handle_coffin_breaks 必须拒绝——
         //   (a) registry 仍保有该棺；
         //   (b) marker 实体仍存在；
@@ -3202,6 +3211,41 @@ mod tests {
     }
 
     #[test]
+    fn ecs_coffin_place_rejected_when_player_too_far() {
+        // 远距拒绝侧：放置不得登记棺，也不得在 reach 门之前消费背包物品。
+        let (mut app, client_entity, item_instance_id, _helper) =
+            app_with_place_system_holding_coffin();
+        let target = BlockPos::new(0, 0, 0);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(Position::new([100.0, 0.0, 100.0]));
+
+        app.world_mut().send_event(CoffinPlaceRequest {
+            player: client_entity,
+            pos: target,
+            item_instance_id,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(target)
+                .is_none(),
+            "远距放置被拒后 registry 不应登记棺于 {target:?}"
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(client_entity)
+            .expect("client should carry PlayerInventory");
+        assert!(
+            inventory_item_by_instance(inventory, item_instance_id).is_some(),
+            "远距放置被拒必须发生在消费物品之前，棺材物品实例应仍在背包中"
+        );
+    }
+
+    #[test]
     fn ecs_coffin_place_rejected_sends_place_rejected_chat() {
         // review finding [2]：放置被拒必须推请求特定的 chat 回执「[棺] 放置被拒」——
         // bot/验证据此判定放置结果，不再依赖 /give 包序快照屏障。伪造 instance 落在
@@ -3391,6 +3435,37 @@ mod tests {
         assert!(
             app.world().get::<CoffinComponent>(client_entity).is_some(),
             "主世界 + 近距进棺后玩家实体应挂载 CoffinComponent"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_enter_rejected_when_player_too_far() {
+        // 远距拒绝侧：进棺不得占用 registry，也不得写入玩家的 CoffinComponent。
+        let (mut app, client_entity, lower, _helper) =
+            app_with_enter_system_and_registered_coffin();
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(Position::new([100.0, 0.0, 100.0]));
+
+        app.world_mut().send_event(CoffinEnterRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .expect("registered coffin should remain available")
+                .occupied_by
+                .is_none(),
+            "远距进棺被拒后 registry 不应标记为已占用"
+        );
+        assert!(
+            app.world().get::<CoffinComponent>(client_entity).is_none(),
+            "远距进棺被拒后玩家实体不应挂载 CoffinComponent"
         );
     }
 
@@ -3609,6 +3684,45 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("[棺]") && m.contains("主世界")),
             "维度拒绝必须下发 chat 反馈；实际 messages={messages:?}"
+        );
+    }
+
+    #[test]
+    fn ecs_coffin_reclaim_rejected_when_player_too_far() {
+        // 远距拒绝侧：菜单回收不得移除 registry/marker，也不得发放材料。
+        let (mut app, client_entity) = app_with_reclaim_system();
+        let lower = BlockPos::new(0, 0, 0);
+        let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(Position::new([100.0, 0.0, 100.0]));
+
+        app.world_mut().send_event(CoffinMenuReclaimRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .is_some(),
+            "远距回收被拒后 registry 应仍保有 {lower:?}"
+        );
+        assert!(
+            app.world().get_entity(marker).is_some(),
+            "远距回收被拒后 marker 实体应仍存在（{marker:?}）"
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(client_entity)
+            .expect("client should carry PlayerInventory");
+        let total_items: usize = inventory.containers.iter().map(|c| c.items.len()).sum();
+        assert_eq!(
+            total_items, 0,
+            "远距回收被拒后背包不应收到任何材料，实得 {total_items} 件"
         );
     }
 
