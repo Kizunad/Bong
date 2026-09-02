@@ -237,6 +237,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skill_runtime_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skill_runtime_unit` target 对应 commit 为 `17ee3cf81`（2026-09-02）。本条仅记录 P2-08 进度；P2 总体、P3、P4 仍未完成。
 
+### P2-11 environment overlay（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/world/environment_overlay.rs` 原 `#[cfg(test)] mod tests` 的 9 个测试及 `zone_at`、`overworld_zone`、`spawn_default` 三个必要 fixture/helper 外置到 `server/tests/unit/world/environment_overlay_test.rs`，并新增 `server/Cargo.toml` 的显式 `environment_overlay_unit` target。生产文件删除全部 inline test body；未改动态雾堤运行时、AABB 相交规则、wire、schema、Redis、client、AV、qi ledger 或其它模块。
+- **迁移对拍与行为**：保留 9 个原测试名、fixture、AABB 坐标、density/tick 数值和断言语义，覆盖递增 id、反转 AABB 归一化、非有限 density 防御性归零、FogVeil 字段映射、dimension 过滤、闭区间贴边相交、寿命到期/常驻和 remove/clear 行为。`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test environment_overlay_unit'`：`9 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用既有公开 `bong_server::world::environment_overlay::{EnvironmentOverlays, DEFAULT_FOG_BANK_TINT}`、`bong_server::world::environment::EnvironmentEffect`、`DimensionKind` 与 `Zone` 字段；未新增 `#[doc(hidden)]` seam，未复制 `aabb_overlaps` 或其它生产实现，未扩大无关 API。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12664 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`environment_overlay_unit` 为 `9 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试与 `environment_overlay_unit` target 对应 commit 为 `4bc898e0d`（2026-09-03）。本条仅记录 P2-11 进度；P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
