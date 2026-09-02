@@ -45,6 +45,8 @@ pub mod freshness_probe_emit;
 pub mod full_power_emit;
 pub mod gameplay_vfx;
 pub mod gate;
+// R6 P1 —— contract-first S2C emit scope/builder；暂不接入 production producer。
+pub mod emit;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_move_rejected_emit;

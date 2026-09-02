@@ -27,6 +27,13 @@
 
 R10 dropped-loot 契约优先：registry mutation、join，以及 recipient 的 dimension/range observation bucket/owner/admin permission key 变化都递增该 recipient projection revision；context key 变化先生成新的 `projection_epoch`/`reset_token`/`projection_digest` binding，发 reset 使 client fail-closed 清旧视图，再以 dimension/range spatial index + dirty-recipient queue 重建；每个 page 必须回显同一 binding，不允许旧 context page 参与新 assembly，也不允许每 recipient 扫描全 4096 rows。每 tick 最多重建 64 个 projection、发送 4 MiB sync bytes，超额保留 dirty/最新 revision并合并中间版本；reset/revocation 优先于新增可见页。只有完全相同 visibility key + projection digest 可复用编码；rejected receipt 携带 reason/instance/from/to，并测两 recipient 正反可见性。
 
+### P1 当前切片证据：S2C emit scope contract（2026-09-02）
+
+- `server/src/network/emit/mod.rs` 已声明 `EmitScope`、`ReplayPolicy`、`JoinSnapshotKey`、`ServerDataEmission`、`EmitReport` 与 `emit_server_data(...)`；builder 对每个 emission 只调用一次 `serialize_server_data_payload`，并在 `bong:server_data` 上复用同一不可变 bytes。
+- `EmitScope::Global`、`Dimension`、`Zone`、`Player` 的 recipient 语义由独立 `server/tests/emit_scope_contract.rs` 锁定：Zone 严格先同维，再经 `ZoneRegistry::find_zone` + `Position` 解析 canonical zone；缺 metadata、registry、目标或不匹配均零发送，Player 不广播回退。
+- `ReplayPolicy::JoinSnapshot(JoinSnapshotKey)` 仅作为 `ServerDataEmission.replay` 登记元数据；本 builder 不查询业务 registry、不隐式拼装快照。
+- 本切片状态明确为 **declared / unwired / test-only**：`server/src/network/mod.rs` 只公开模块，未迁移任何现有 `*_emit.rs` producer，未接入 production producer，也不宣称 production reachable；craft、schema generation 与后续 client/router 仍由 P1 其它切片/后续阶段负责。
+
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
 active：server-data-s2c-schema-union-drift（TS union 补齐走 regenerate）、spirit-treasure-chat-key-conflict 除外（归 R7）。
