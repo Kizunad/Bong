@@ -35,6 +35,10 @@ name = "processed_input_unit"
 path = "tests/unit/alchemy/processed_input_test.rs"
 
 [[test]]
+name = "skill_runtime_unit"
+path = "tests/unit/skill/runtime_test.rs"
+
+[[test]]
 name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
 
