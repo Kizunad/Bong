@@ -12,6 +12,21 @@
 - **骨架与 reminder**：已检查 `docs/plans-skeleton/plan-refactor-master-v1.md`、`docs/plans-skeleton/reminder.md:1-28` 和全部 UI/client 相关 skeleton；没有同名的 R7 child skeleton，也没有 reminder 条目要求另建 UI contract。master skeleton 保留计划族的 Wave、ownership、headless 总约束；本文件作为 R7 active child 只负责 client UI contract、adapter、Screen/HUD/keybind 和 viewport seam，拆分理由是避免把 9 条重构轨道的跨轨裁决与单轨实施细节混在同一份可消费 plan 中。
 - **HUD 现状**：生产链路由 `HudRenderCallback.EVENT` → `BongHud.render` → `BongHudOrchestrator.buildCommands` → `BongHud.renderCommands(DrawContext)` 提交；当前盘点为 98 个 production Java 文件、62 个 `HudRenderLayer`、46 个 `*HudPlanner`、3 个独立 renderer、67 个 HUD 测试文件，另有爆脉、虚蚀、幻觉、共鸣锁等直接 `DrawContext` overlay。`renderSurface` 仅用于测试，不是生产入口；client 当前没有 NanoSVG/JNI/native 依赖或跨平台 native 打包体系。
 
+## Pre-P0 Decisions（2026-09-02）
+
+### HUD 统一 SVG 表现后端
+
+**决议**：HUD 的几何表现统一由 runtime SVG 描述，NanoSVG 仅解析受限 SVG 子集，自有 `SvgTessellator` 生成不可变 `SvgMesh`，最终严格通过 Minecraft GUI API 提交。HUD Store、semantic planner、C2S intent、S2C payload 和 `HudRenderLayer` 不依赖 parser/native；动态文字与物品图标继续使用 Minecraft GUI 的文字/item API，作为明确例外。
+
+**代码探索证据**：
+
+- 注册入口是 `client/src/main/java/com/bong/client/BongClient.java:82-89`，其中 `HudRenderCallback.EVENT.register(BongHud::render)` 位于 UI bootstrap 之前。
+- 生产入口是 `client/src/main/java/com/bong/client/BongHud.java:66-73`；命令收集在 `BongHud.java:124-151`，旧 primitive `DrawContext` 分支在 `BongHud.java:153-253`。
+- semantic planner 主入口是 `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:124-145`；layer 枚举和顺序由 `client/src/main/java/com/bong/client/hud/HudRenderLayer.java:3-80` 固定。
+- `renderSurface` 仅出现在测试 harness；当前 `client/build.gradle:45-51` 没有 NanoSVG/JNI/native 依赖，因此 P4 必须显式交付 parser ABI、受控 native loader、资源校验与平台失败诊断。
+
+**边界与交付顺序**：P4 交付 `HudRenderBackend`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 和首个真实 layer；P5 迁移 62 个 layer 与所有直接 overlay。`RenderLayer.getGui()` 在 1.20.1 中使用 `POSITION_COLOR + QUADS`，每个 tessellated triangle 必须编码为退化 quad `(a,b,c,c)`；禁止独立 framebuffer、实体渲染 layer、浏览器/Canvas/NanoVG、直接 OpenGL program。长期 fixture 使用 `ui-svg-hud-contract.tsv` 与 `ui-svg-hud-inventory.tsv`，具体签名、白名单、预算、失败语义和截图门以后续章节为准。
+
 ## 0. 改写目的与不可变范围
 
 旧版 R7 以 `BongScreenBase extends BaseOwoScreen` 为公共基类，能改善当前 owo 屏幕，但不能作为未来 UI 库迁移边界。本版将 R7 从“owo UI 重构”改为“UI contract-first + adapter migration”计划：
@@ -576,16 +591,9 @@ Insight lifecycle 必须证明 stale offer A 不能清除 offer B；精确 `offe
 
 **落点**：`client/src/main/java/com/bong/client/ui/contract/UiViewport.java`、`UiLayoutPolicy.java`、`ui/adapter/owo/**`；本 plan §4.8、P2/P4/P7。
 
-## §9.2 决议（R7 HUD 范围扩展，2026-09-02）
+## §9.2 决议索引
 
-### #10 HUD 统一 SVG 表现后端，R7 内一次性收口
-
-**决议**：
-1. `docs/svg` 不再只是非约束草图；R7 P4/P5 将 HUD 生产表现迁为 runtime SVG。NanoSVG 仅解析受限 SVG 子集，自有 `SvgTessellator` 生成不可变 `SvgMesh`，业务状态和 planner 不依赖 parser/native。
-2. 最终渲染严格落在 Minecraft GUI：`DrawContext` + GUI `MatrixStack` + `VertexConsumerProvider.Immediate` + `RenderLayer.getGui()`；因 1.20.1 GUI layer 使用 `POSITION_COLOR + QUADS`，triangle 统一编码为退化 quad 后提交。禁止独立 framebuffer、世界渲染 layer、浏览器/Canvas/NanoVG、直接 OpenGL program。
-3. P4 交付 parser/native loader、asset registry、tessellator、emitter 和首个真实 layer；P5 完成 62 个 layer 与所有直接 HUD overlay，删除旧 primitive DrawContext path、`renderSurface` 和生产 fallback。动态文字与物品图标是明确的 GUI 合规例外，继续走 Minecraft 字体/item API。
-
-**落点**：`client/src/main/java/com/bong/client/BongHud.java:56-257`；`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:124-510`；`client/src/main/java/com/bong/client/hud/HudRenderLayer.java:3-80`；`client/src/test/resources/bong/ui/ui-svg-hud-contract.tsv`；`client/src/test/resources/bong/ui/ui-svg-hud-inventory.tsv`；本 plan《HUD SVG 表现后端契约（R7 P4/P5）》。
+HUD SVG 的范围、代码探索证据和实施前置条件已在本 plan 开头的 `Pre-P0 Decisions` 收口；本节只保留索引，避免 P4/P5 实施者误以为该决议是在 P0 之后才生效。详细契约见《HUD SVG 表现后端契约（R7 P4/P5）》及 `ui-svg-hud-contract.tsv`、`ui-svg-hud-inventory.tsv`。
 
 ## 10. 实施工作流
 
