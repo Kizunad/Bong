@@ -284,8 +284,9 @@ class PartOffsetUnitTest(unittest.TestCase):
       （若单位是格，缺省该是 0.00625）
     """
 
-    # 出料侧的符号：X 预取反 + Y 翻 + Z 同号（与 `body_position_to_bb` 同一套）
-    SIGNS = {"x": -1.0, "y": -1.0, "z": +1.0}
+    # 出料侧的符号：**只翻 Y**。部件位移本就在 ModelPart 空间（右臂两边都在 x=-5），
+    # 不该再翻 X——X 预取反是 `body` 独有的，它活在 `scale(-1,-1,1)` 之前的实体空间。
+    SIGNS = {"x": +1.0, "y": -1.0, "z": +1.0}
     IDX = {"x": 0, "y": 1, "z": 2}
 
     def _anim(self, filename, name):

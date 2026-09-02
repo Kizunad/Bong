@@ -19,10 +19,6 @@
         {
           "const": "barrier",
           "type": "string"
-        },
-        {
-          "const": "legacy_assign",
-          "type": "string"
         }
       ]
     },
@@ -32,5 +28,5 @@
       "type": "integer"
     }
   },
-  "x-bong-typebox-source-sha256": "308305e2fae6a52dcf9bfe16401405ce7e2a493ccade6f729efecc8cc9426be2"
+  "x-bong-typebox-source-sha256": "c24798bc948865ff554041339b91968d8fd1fc290f2883105d74cd46cbc22570"
 }

@@ -6,13 +6,13 @@ combat/screen/DeathScreen.java	DeathScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice;暗器注入
 combat/screen/RepairScreen.java	RepairScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; weapon repair
 combat/screen/TerminateScreen.java	TerminateScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; system-terminal screen
-combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; 阵法布置
 craft/CraftScreen.java	CraftScreen	OWO_XML	OWO_XML_TEMPLATE	false	P2 owo XML vertical slice
 craft/WorkbenchScreen.java	WorkbenchScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 cultivation/TechniqueScrollReadScreen.java	TechniqueScrollReadScreen	NON_SCREEN_HELPER	NONE	false	Suffix matches Screen.java but class is a toast/text helper
 cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 forge/ForgeScreen.java	ForgeScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
-identity/IdentityPanelScreen.java	IdentityPanelScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO_XML	OWO_XML_TEMPLATE	false	P4 XML migration slice; identity panel
 insight/InsightOfferScreen.java	InsightOfferScreen	BASE_OWO	CODE	true	Code-built modal FlowLayout
 inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 inventory/InspectScreen.java	InspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout; P3 split target
@@ -28,4 +28,3 @@ social/TradeOfferScreen.java	TradeOfferScreen	VANILLA_SCREEN	VANILLA	false	Vanil
 spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
 ui/CultivationScreen.java	CultivationScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 ui/DynamicXmlScreen.java	DynamicXmlScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory
-cultivation/voidaction/LegacyAssignPanel.java	LegacyAssignPanel	VANILLA_SCREEN	VANILLA	false	Real Screen missed by the Screen.java suffix inventory

@@ -12,6 +12,12 @@ import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.combat.store.TerminateStateStore;
 import com.bong.client.death.DeathCinematicState;
 import com.bong.client.coffin.CoffinMenuScreen;
+import com.bong.client.combat.screen.ZhenfaLayoutScreen;
+import com.bong.client.identity.IdentityPanelEntry;
+import com.bong.client.identity.IdentityPanelScreen;
+import com.bong.client.identity.IdentityPanelState;
+import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.identity.IdentityPanelUiStateSource;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
@@ -33,7 +39,10 @@ final class UiPreviewScenes {
         "coffin-menu", new CoffinMenuScene(),
         "repair", new RepairScene(),
         "forge-carrier", new ForgeCarrierScene(),
-        "death", new DeathScene()
+        "death", new DeathScene(),
+        "identity-panel", new IdentityPanelScene(false),
+        "identity-panel-empty", new IdentityPanelScene(true),
+        "zhenfa-layout", new ZhenfaLayoutScene()
     );
 
     private UiPreviewScenes() {
@@ -539,6 +548,77 @@ final class UiPreviewScenes {
         }
     }
 
+    private static final class ZhenfaLayoutScene implements UiPreviewScene {
+        @Override
+        public void installFixture() {
+        }
+
+        @Override
+        public Screen createScreen() {
+            // 预览只验证 XML 布局与输入绑定，不触碰真实网络 transport。
+            return ZhenfaLayoutScreen.preview();
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof ZhenfaLayoutScreen zhenfa)) {
+                throw new IllegalStateException("zhenfa scene 打开的不是 ZhenfaLayoutScreen");
+            }
+            return zhenfa.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof ZhenfaLayoutScreen zhenfa && zhenfa.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof ZhenfaLayoutScreen zhenfa && zhenfa.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof ZhenfaLayoutScreen zhenfa)) {
+                throw new IllegalStateException("zhenfa scene 打开的不是 ZhenfaLayoutScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = zhenfa.componentBoundsForPreview("zhenfa-panel");
+            if (!panel.fitsInside(width, height)) {
+                throw new IllegalStateException("阵法面板越出 viewport: " + panel);
+            }
+            for (String id : new String[] {
+                "zhenfa-title", "zhenfa-summary", "zhenfa-trigger-actions", "zhenfa-qi-slider",
+                "zhenfa-feedback", "zhenfa-place"
+            }) {
+                ComponentBounds bounds = zhenfa.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("阵法组件越界: " + id + " -> " + bounds);
+                }
+            }
+            for (String id : new String[] {
+                "zhenfa-trigger-proximity", "zhenfa-trigger-contact", "zhenfa-trigger-timed",
+                "zhenfa-qi-slider", "zhenfa-place"
+            }) {
+                ComponentBounds bounds = zhenfa.componentBoundsForPreview(id);
+                String hit = zhenfa.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException("阵法控件中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            if (!zhenfa.focusOrderForPreview().containsAll(List.of(
+                "zhenfa-trigger-proximity", "zhenfa-trigger-contact", "zhenfa-trigger-timed",
+                "zhenfa-qi-slider", "zhenfa-place"))) {
+                throw new IllegalStateException("阵法控件没有进入 Tab 焦点顺序");
+            }
+        }
+
+        @Override
+        public void cleanup() {
+        }
+    }
+
     private static final class DeathScene implements UiPreviewScene {
         @Override
         public void installFixture() {
@@ -631,6 +711,118 @@ final class UiPreviewScenes {
         @Override
         public void cleanup() {
             SessionScopedStoreRegistry.clearAllOnDisconnect();
+        }
+    }
+
+    private static final class IdentityPanelScene implements UiPreviewScene {
+        private final boolean empty;
+
+        private IdentityPanelScene(boolean empty) {
+            this.empty = empty;
+        }
+
+        @Override
+        public void installFixture() {
+            if (empty) {
+                IdentityPanelStateStore.replace(IdentityPanelState.empty());
+                return;
+            }
+            IdentityPanelStateStore.replace(new IdentityPanelState(
+                2,
+                480L,
+                0L,
+                List.of(
+                    entry(0, "旧名", -80, true),
+                    entry(1, "行路人", 12, false),
+                    entry(2, "当前身份", 75, false),
+                    entry(3, "药铺掌柜", 4, false),
+                    entry(4, "锈骨匠", -3, true),
+                    entry(5, "渡口客", 18, false),
+                    entry(6, "未登记名", 0, false)
+                )
+            ));
+        }
+
+        @Override
+        public Screen createScreen() {
+            // 预览只验证 XML 布局和状态绑定，输入走本地 sink，不发送网络命令。
+            return new IdentityPanelScreen(
+                IdentityPanelUiStateSource.production(),
+                ignored -> com.bong.client.ui.intent.UiIntentResult.accepted()
+            );
+        }
+
+        @Override
+        public String selectedTemplateId(Screen screen) {
+            if (!(screen instanceof IdentityPanelScreen identity)) {
+                throw new IllegalStateException("identity scene 打开的不是 IdentityPanelScreen");
+            }
+            return identity.selectedTemplateIdForTests();
+        }
+
+        @Override
+        public boolean isReady(Screen screen) {
+            return screen instanceof IdentityPanelScreen identity && identity.hostReadyForTests();
+        }
+
+        @Override
+        public boolean initializationFailed(Screen screen) {
+            return screen instanceof IdentityPanelScreen identity
+                && identity.hostInitializationFailedForTests();
+        }
+
+        @Override
+        public void validateGeometry(Screen screen, UiPreviewShot shot) {
+            if (!(screen instanceof IdentityPanelScreen identity)) {
+                throw new IllegalStateException("identity scene 打开的不是 IdentityPanelScreen");
+            }
+            int width = shot.expectedLogicalWidth();
+            int height = shot.expectedLogicalHeight();
+            ComponentBounds panel = identity.componentBoundsForPreview("identity-panel");
+            if (!panel.fitsInside(width, height)) {
+                throw new IllegalStateException(
+                    "身份面板越出 viewport: " + panel + ", viewport=" + width + "x" + height);
+            }
+            for (String id : new String[] {
+                "identity-title", "identity-cooldown", "identity-name", "identity-name-actions",
+                "identity-empty", "identity-rows", "identity-overflow"
+            }) {
+                ComponentBounds bounds = identity.componentBoundsForPreview(id);
+                if (!panel.contains(bounds) || !bounds.fitsInside(width, height)) {
+                    throw new IllegalStateException("身份面板组件越界: " + id + " -> " + bounds);
+                }
+            }
+            List<String> hitTargets = new java.util.ArrayList<>(List.of("identity-new", "identity-rename"));
+            if (!empty) {
+                hitTargets.add("identity-switch-0");
+                hitTargets.add("identity-switch-5");
+            }
+            for (String id : hitTargets) {
+                ComponentBounds bounds = identity.componentBoundsForPreview(id);
+                String hit = identity.componentIdAtForPreview(bounds.centerX(), bounds.centerY());
+                if (!id.equals(hit)) {
+                    throw new IllegalStateException(
+                        "身份面板控件中心命中错误: expected=" + id + ", actual=" + hit);
+                }
+            }
+            List<String> focus = identity.focusOrderForPreview();
+            for (String id : List.of("identity-name", "identity-new", "identity-rename")) {
+                if (!focus.contains(id)) {
+                    throw new IllegalStateException("身份面板缺少 Tab 焦点组件: " + id + " -> " + focus);
+                }
+            }
+            if (!empty && !focus.contains("identity-switch-0")) {
+                throw new IllegalStateException("身份面板可用身份按钮没有进入 Tab 焦点顺序: " + focus);
+            }
+        }
+
+        @Override
+        public void cleanup() {
+            SessionScopedStoreRegistry.clearAllOnDisconnect();
+        }
+
+        private static IdentityPanelEntry entry(int id, String name, int reputation, boolean frozen) {
+            return new IdentityPanelEntry(id, name, reputation, frozen, List.of());
         }
     }
 }

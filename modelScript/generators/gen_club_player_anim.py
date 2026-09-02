@@ -198,18 +198,20 @@ def build_geometry():
 
 
 def part_position_to_bb(axes: dict) -> list[float]:
-    """part 级 `x/y/z`（**ModelPart 枢轴 px，不是格**）→ 写进文件的 bb position（px）。
+    """**部件**的 `x/y/z` → 写进文件的 bb position（px）。
 
-    与 `AX.body_position_to_bb` 的区别只有一处：**不乘 `PX_PER_BLOCK`**。理由见
-    `convert_animation` 里的长注释；符号（X 预取反 + Y 翻）保持一致。
+    不能复用 `AX.body_position_to_bb`——那一份是给 `body.*` 用的，两件事差两层：
 
-    读回来的一侧要注意：库里的 `bbmodel_to_pose._position_from` 是按 body 的口径写的，
-    带 `/ PX_PER_BLOCK`，对 part 级位移同样偏 16 倍。两侧对称地错 ⇒ 往返锁结构性地
-    看不见这个 bug（`test_bb_anim_roundtrip` 的 docstring 自己写明了「锁不住两侧同时
-    改错」）。所以 part 位移的单位由 `test_bb_anim_roundtrip.PartOffsetUnitTest`
-    **直接读文件里的 px 值**来钉，不经过任何共用换算。
+    | | `body.x/y/z` | 部件（head/torso/臂/腿）的 `x/y/z` |
+    |-|-------------|-----------------------------------|
+    | 单位 | **格**（`matrixStack.translate`，1 格 = 16px）| **px**（直接写进 `ModelPart.pivotX/Y/Z`，见 `AnimationApplier.updatePart`；原版潜行的 `leg.z = 4.0F` 就是 4 px）|
+    | 坐标系 | `scale(-1,-1,1)` **之前**的实体空间，x/y 相对 ModelPart 翻号 | ModelPart 空间，与 bb rig 的枢轴表同号（右臂两边都在 x=-5）|
+
+    照抄 body 那份的后果是**乘了 16 又翻了 x**：凡铁采药刀的俯身补偿 `leg.z` 峰值
+    4.70px 被烘成 75.2，在 Blockbench 里两条腿甩到身后四格多。口径与
+    `preview_player_anim.segment_transforms` 的 `offset_b` 对齐（只翻 y）。
     """
-    return [round(-float(axes.get("x", 0.0)), 4),
+    return [round(float(axes.get("x", 0.0)), 4),
             round(-float(axes.get("y", 0.0)), 4),
             round(float(axes.get("z", 0.0)), 4)]
 

@@ -10,7 +10,7 @@ import com.bong.client.coffin.TutorialCoffinPosRules;
 import com.bong.client.coffin.TutorialCoffinPosStore;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.craft.WorkbenchPlaceDust;
-import com.bong.client.combat.screen.ZhenfaLayoutScreen;
+import com.bong.client.combat.ZhenfaLayoutScreenBootstrap;
 import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.interaction.ClientInteractionItemResolver;
 import com.bong.client.entity.BongModeledEntity;
@@ -105,7 +105,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
 
         ClientRequestProtocol.ZhenfaKind zhenfaTrapKind = ClientInteractionItemResolver.zhenfaKindForItem(mainHand);
         if (zhenfaTrapKind != null && mainHand.instanceId() > 0) {
-            client.setScreen(new ZhenfaLayoutScreen(
+            client.setScreen(ZhenfaLayoutScreenBootstrap.create(
                 hit.getBlockPos(),
                 zhenfaTrapKind,
                 mainHand.instanceId(),

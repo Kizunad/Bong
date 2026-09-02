@@ -7,12 +7,11 @@ combat/screen/DeathScreen.java	DeathScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/RepairScreen.java	RepairScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 combat/screen/TerminateScreen.java	TerminateScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
-combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA	VANILLA	SCREEN_SCOPE
+combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 craft/CraftScreen.java	CraftScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 craft/WorkbenchScreen.java	WorkbenchScreen	OWO	CODE	SCREEN_SCOPE
-cultivation/voidaction/LegacyAssignPanel.java	LegacyAssignPanel	VANILLA	VANILLA	SCREEN_SCOPE
 forge/ForgeScreen.java	ForgeScreen	VANILLA	VANILLA	SCREEN_SCOPE
-identity/IdentityPanelScreen.java	IdentityPanelScreen	VANILLA	VANILLA	SCREEN_SCOPE
+identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO	OWO_XML_TEMPLATE	SCREEN_SCOPE
 insight/InsightOfferScreen.java	InsightOfferScreen	OWO	CODE	SCREEN_SCOPE
 inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA	VANILLA	SCREEN_SCOPE
 inventory/InspectScreen.java	InspectScreen	OWO	CODE	SCREEN_SCOPE

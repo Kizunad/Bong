@@ -255,8 +255,8 @@ class R7KeybindProductionMigrationTest {
             "identity 必须先 lazy register 再挂 tick handler");
         assertTrue(identity.contains("while (keyBinding().wasPressed())"),
             "identity 的按键路由必须继续通过 keyBinding().wasPressed()");
-        assertTrue(identity.contains("client.setScreen(new IdentityPanelScreen());"),
-            "identity 的屏幕打开行为不能被迁移改动");
+        assertTrue(identity.contains("client.setScreen(create());"),
+            "identity 的屏幕打开行为必须保留，并通过组合根创建 XML 屏幕");
 
         String voidAction = source("cultivation/voidaction/VoidActionScreenBootstrap.java");
         assertBefore(voidAction, "keyBinding();", "ClientTickEvents.END_CLIENT_TICK.register",

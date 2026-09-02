@@ -26,7 +26,7 @@
  "gen_beast_spine_sword_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "BeastSpineSwordPlayerAnim.bbmodel": "1060229c860de9330b5207167c7355ac7fd8f1aa0d97b53766e899aa86a30b6d"
+   "BeastSpineSwordPlayerAnim.bbmodel": "772e40d93fe1755a548543d288137c5a1edee966dc0ff5d961f709bc52ef8685"
   }
  },
  "gen_bone_armor.py": {
@@ -72,8 +72,7 @@
  "gen_bronze_saber_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "BronzeSaber.bbmodel": "8a7c15a1b238bdf711d1fac45747160f25f37d6e89d29ed79aa1d9c56a05ccf8",
-   "BronzeSaberPlayerAnim.bbmodel": "7b782344ff7ea4279e300ddd07b1e0c68071e3d506fe8343c1cd0b6ca105b80a"
+   "BronzeSaberPlayerAnim.bbmodel": "56c41f5ae5765650906ee8a2ee712da5ca073561da59f7bf7117cb4cd9ab41ed"
   }
  },
  "gen_chi_sui_cao.py": {
@@ -85,7 +84,7 @@
  "gen_club_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "ClubPlayerAnim.bbmodel": "f4f114d6ebff63aaea2a1ebc7b6e79a1aa3fbaeb4ddfda5ef957c22781b3549a"
+   "ClubPlayerAnim.bbmodel": "03c55214b5af95dc6817d518e8fa1de51aee9c0fb7c4487819576a0c252fe04a"
   }
  },
  "gen_dead_drop_box.py": {
@@ -125,6 +124,30 @@
   "exit": 0,
   "outputs": {}
  },
+ "gen_herb_knife_iron.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbKnifeIron.bbmodel": "06da7d3acea84bb6d6eebfbf2cb42bee694cf5b6b47564d519cf9ea885612e61"
+  }
+ },
+ "gen_herb_knife_iron_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbKnifeIronPlayerAnim.bbmodel": "b4cbf3e8d7e0d6a12082244cc78424a48b0dc79f08860c2eef3eedb01e18e914"
+  }
+ },
+ "gen_herb_sickle.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbSickle.bbmodel": "c05c0c88e9695168aa3923a3534eb3a48ac33031f54b4b527a5567d9e4609a30"
+  }
+ },
+ "gen_herb_sickle_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbSicklePlayerAnim.bbmodel": "11940ddf3a93f4489b82831b479fd09bbef87ad4b89780e7cd7abca187202815"
+  }
+ },
  "gen_hide_armor.py": {
   "exit": 0,
   "outputs": {
@@ -151,6 +174,18 @@
    "armor/iron/IronChestplate.bbmodel": "515352e6aacbb096e4951a9129b781150923505f0924059a62e5489a52c7ec98",
    "armor/iron/IronHelmet.bbmodel": "224fa7144ad4a78099f3379f149f8e98fee6821a39bb7231b7ebae0a9db20f01",
    "armor/iron/IronLeggings.bbmodel": "0eef974dcf87c94c40fd094672de5c4bf5cd7153f1dcee7135381fcd04b3d5ba"
+  }
+ },
+ "gen_iron_dagger.py": {
+  "exit": 0,
+  "outputs": {
+   "IronDagger.bbmodel": "6a96f19a4e6513f3f34165df01272a537a3ec94d18a0a308cdc45238fef1acee"
+  }
+ },
+ "gen_iron_dagger_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "IronDaggerPlayerAnim.bbmodel": "0849a315ae704a4433f776dd568d0bd54e36d4ccfd3b730108e1f6d88e930d34"
   }
  },
  "gen_jade_coffin.py": {
@@ -306,7 +341,9 @@
   }
  },
  "gen_zhenyuan_mine.py": {
-  "exit": 2,
-  "outputs": {}
+  "exit": 0,
+  "outputs": {
+   "ZhenyuanMine.bbmodel": "18d35232ed47a46e9f0ced1398a548699914a118add61ce42c12f34ad269598d"
+  }
  }
 }

@@ -3,8 +3,7 @@ package com.bong.client.cultivation.voidaction;
 public enum VoidActionKind {
     SUPPRESS_TSY("suppress_tsy", "镇压坍缩渊", 200.0, 50, 30L * 24L * 60L * 60L * 20L),
     EXPLODE_ZONE("explode_zone", "引爆区域", 300.0, 100, 90L * 24L * 60L * 60L * 20L),
-    BARRIER("barrier", "化虚障", 150.0, 30, 7L * 24L * 60L * 60L * 20L),
-    LEGACY_ASSIGN("legacy_assign", "道统传承", 0.0, 0, 0L);
+    BARRIER("barrier", "化虚障", 150.0, 30, 7L * 24L * 60L * 60L * 20L);
 
     private final String wireName;
     private final String label;
