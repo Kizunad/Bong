@@ -39,6 +39,10 @@ name = "skill_runtime_unit"
 path = "tests/unit/skill/runtime_test.rs"
 
 [[test]]
+name = "environment_overlay_unit"
+path = "tests/unit/world/environment_overlay_test.rs"
+
+[[test]]
 name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
 
