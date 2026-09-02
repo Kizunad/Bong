@@ -197,6 +197,25 @@ def build_geometry():
     return elements, [root_pos], gmap, atlas
 
 
+def part_position_to_bb(axes: dict) -> list[float]:
+    """**部件**的 `x/y/z` → 写进文件的 bb position（px）。
+
+    不能复用 `AX.body_position_to_bb`——那一份是给 `body.*` 用的，两件事差两层：
+
+    | | `body.x/y/z` | 部件（head/torso/臂/腿）的 `x/y/z` |
+    |-|-------------|-----------------------------------|
+    | 单位 | **格**（`matrixStack.translate`，1 格 = 16px）| **px**（直接写进 `ModelPart.pivotX/Y/Z`，见 `AnimationApplier.updatePart`；原版潜行的 `leg.z = 4.0F` 就是 4 px）|
+    | 坐标系 | `scale(-1,-1,1)` **之前**的实体空间，x/y 相对 ModelPart 翻号 | ModelPart 空间，与 bb rig 的枢轴表同号（右臂两边都在 x=-5）|
+
+    照抄 body 那份的后果是**乘了 16 又翻了 x**：凡铁采药刀的俯身补偿 `leg.z` 峰值
+    4.70px 被烘成 75.2，在 Blockbench 里两条腿甩到身后四格多。口径与
+    `preview_player_anim.segment_transforms` 的 `offset_b` 对齐（只翻 y）。
+    """
+    return [round(float(axes.get("x", 0.0)), 4),
+            round(-float(axes.get("y", 0.0)), 4),
+            round(float(axes.get("z", 0.0)), 4)]
+
+
 def convert_animation(json_path: Path, gmap: dict) -> dict:
     name, emote, table = P.anim_pose_table(json_path)
     animators: dict[str, dict] = {}
@@ -228,7 +247,7 @@ def convert_animation(json_path: Path, gmap: dict) -> dict:
             # 会把它当成"人改过"一路报出来，是个永久的假阳性。
             if any(abs(axes.get(k, 0.0)) > 1e-9 for k in "xyz"):
                 track(f"{prefix}_{AX.AXIS_ORDER[-1]}").append(
-                    keyframe("position", t, AX.body_position_to_bb(axes)))
+                    keyframe("position", t, part_position_to_bb(axes)))
             if has_bend:
                 track(f"{prefix}_bend").append(
                     keyframe("rotation", t,
