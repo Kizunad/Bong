@@ -39,6 +39,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from bbmodel_maker.render.held_item_common import hand_display
+
 REPO = Path(__file__).resolve().parents[2]
 MODEL_DIR = Path(__file__).resolve().parents[1] / "models"
 OUT_DIR = Path(__file__).resolve().parents[1] / "out"
@@ -382,30 +384,46 @@ def build_bbmodel_json() -> dict:
                 "source": tex_base64,
             }
         ],
-        "display": {
-            "thirdperson_righthand": {
-                "rotation": [0, 60, -45],
-                "translation": [0, 2.5, 1.5],
-                "scale": [0.85, 0.85, 0.85],
-            },
-            "firstperson_righthand": {
-                "rotation": [0, -75, 25],
-                "translation": [1.13, 3.2, 1.13],
-                "scale": [0.72, 0.72, 0.72],
-            },
-            "ground": {
-                "rotation": [0, 0, 0],
-                "translation": [0, 2, 0],
-                "scale": [0.65, 0.65, 0.65],
-            },
-            "gui": {
-                "rotation": [0, -90, -45],
-                "translation": [1.0, 1.0, 0],
-                "scale": [0.85, 0.85, 0.85],
-            },
-        },
+        "display": build_display(),
     }
     return bbmodel
+
+
+# ── 手持变换 ─────────────────────────────────────────────────────────────────
+# 全长（方块）：握把点在 GRIP_PX，刃尖在授权系最高点。两者都从几何真值取，别写死
+# ——改了刃长而这里还是旧数，刀就会从拳心漂出去。
+GRIP_BLOCKS = GRIP_PX / PX
+
+
+def blade_tip_px() -> float:
+    """授权系里刃尖的高度，**从几何真值量**而不是另写一个常量。
+
+    写死过一次就会有第二次：刃长一改、这里没跟上，`hand_display` 算出的几何中心
+    就偏，刀从拳心漂出去，而所有数值门照样绿（它们量的是同一个错值）。
+    """
+    return max(to[1] for _, _, _, _, to, _, _ in build_cubes())
+
+
+def length_blocks() -> float:
+    return blade_tip_px() / PX
+
+
+def build_display() -> dict:
+    """采药刀的 display 变换。
+
+    **不再手写。** 原先这里是手拍的 `rotation [0,60,-45] / translation [0,2.5,1.5]`，
+    量出来的后果是：接在任何一条动画上，刃仰角都被那 45° roll 翻到 +43.9°、刀尖
+    高出肩线 7.6px——渲出来是「举着火把」而不是「握着采药刀」。同一条动画换成刀
+    三件套的 display 立刻是 +13.8° / 肩下 1.3px，**姿态没动一格**。也就是说那半个
+    错读感来自手持变换本身，不是动画。
+
+    改用 `hand_display`（`DEFAULT_HAND_ROTATION = (-80, 90, 0)`）——整条手持物挂点
+    链、`DaggerBladeReadTest` 那批刃向锁、`test_grip_of_every_knife_sits_in_the_fist`
+    的拳心判据全部是照它标定的。采药刀跟着走同一套，量出来的数才和刀三件套可比。
+
+    `gui_spin=45`：细长件走对角线才占满 GUI 格子（原版剑/匕首同一处理）。
+    """
+    return hand_display(0.85, GRIP_BLOCKS, length_blocks())
 
 
 def self_test():

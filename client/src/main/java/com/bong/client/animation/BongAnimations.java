@@ -52,6 +52,12 @@ public final class BongAnimations {
     public static final Identifier RUNE_DRAW = new Identifier(MOD_ID, "rune_draw");
     public static final Identifier EAT_FOOD = new Identifier(MOD_ID, "eat_food");
     public static final Identifier HARVEST_CROUCH = new Identifier(MOD_ID, "harvest_crouch");
+    // 采药刀专属：割地上的药株（HARVEST_CROUCH 循环作业）→ 割断那一刀（SICKLE_REAP）；
+    // 齐胸的藤蔓走 SICKLE_STAND_CUT；被扑上来时用 SICKLE_DEFEND（凡器应急，不是兵器身法，
+    // 刀三件套的普攻仍走 dagger_slash）。四条的判据锁在 modelScript/tests/test_sickle_anims.py。
+    public static final Identifier SICKLE_REAP = new Identifier(MOD_ID, "sickle_reap");
+    public static final Identifier SICKLE_STAND_CUT = new Identifier(MOD_ID, "sickle_stand_cut");
+    public static final Identifier SICKLE_DEFEND = new Identifier(MOD_ID, "sickle_defend");
     public static final Identifier LOOT_BEND = new Identifier(MOD_ID, "loot_bend");
     public static final Identifier STEALTH_CROUCH = new Identifier(MOD_ID, "stealth_crouch");
     public static final Identifier IDLE_BREATHE = new Identifier(MOD_ID, "idle_breathe");
