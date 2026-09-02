@@ -301,18 +301,32 @@ class AnimationsAreActuallyBakedTest(unittest.TestCase):
                         f"期望：{name} 补上了 {bone} 的架势轨道；实际没有——"
                         f"手臂会停在零姿态，读作'握法变了'")
 
-    def test_the_stance_filler_is_constant_and_pinned_at_both_ends(self):
-        """补的是**恒定**姿态：首末各一帧同值，单帧在 loop 里会被插值回默认值。"""
+    def test_the_stance_filler_is_pinned_at_both_ends(self):
+        """架势必须**首末各钉一帧且同值**——这是循环闭合，不是"架势不许动"。
+
+        原先这条叫 `..._is_constant_and_pinned_at_both_ends`，顺带断言了整条轨道只有
+        两帧。那一半是把「本剑的携行姿恰好是静态的」当成了机制的约束：`fill_upper_body`
+        的注释只解释了**为什么钉首末两帧**（单帧在 loop 里会被插值回 defaultValue），
+        从来没有一条理由要求中间不能有帧。采药刀那份补的就是**摆臂**（相位表形态，
+        中间多一帧），机制层面完全成立。
+
+        所以这里只保留真正的不变量：相位 0 与相位 1 必须逐轴同值。本剑仍然是静态携行
+        姿（走路扛肩），由下面 `CarryStanceTest` 的两条按语义钉死，不靠"只有两帧"来兜。
+        """
         anim = self.anims["lower_walk"]
         by_name = {a["name"]: a for a in anim["animators"].values()}
         kfs = [k for k in by_name["arm_right_pitch"]["keyframes"] if k["channel"] == "rotation"]
-        self.assertEqual(len(kfs), 2, f"期望：架势轨道首末各一帧；实际 {len(kfs)} 帧")
+        self.assertGreaterEqual(len(kfs), 2, f"期望：架势轨道至少首末两帧；实际 {len(kfs)} 帧")
         times = sorted(k["time"] for k in kfs)
-        self.assertAlmostEqual(times[0], 0.0, places=6)
-        self.assertAlmostEqual(times[1], anim["length"], places=6)
-        values = [tuple(k["data_points"][0].values()) for k in kfs]
-        self.assertEqual(values[0], values[1],
-                         f"期望：两帧同值（恒定架势）；实际 {values}")
+        self.assertAlmostEqual(times[0], 0.0, places=6,
+                               msg="架势必须在相位 0 有帧，否则 findBefore 会返回 defaultValue")
+        self.assertAlmostEqual(times[-1], anim["length"], places=6,
+                               msg="架势必须在末帧有帧，否则循环中段被拖回 defaultValue")
+        first = next(k for k in kfs if abs(k["time"]) < 1e-6)
+        last = next(k for k in kfs if abs(k["time"] - anim["length"]) < 1e-6)
+        self.assertEqual(
+            tuple(first["data_points"][0].values()), tuple(last["data_points"][0].values()),
+            "期望：首末两帧同值（循环闭合）；不同值的话每个周期会「啪」地跳一下")
 
     def test_upper_body_animations_are_not_filled(self):
         """已经有手臂轨道的动画不许被架势覆盖——那会把招式的起手姿态抹平。"""

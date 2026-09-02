@@ -39,7 +39,10 @@ sys.path.insert(0, str(LIB / "generators"))
 from bbmodel_maker.render import held_item_render as H  # noqa: E402
 from bbmodel_maker.render import render_player_pose as P  # noqa: E402
 from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402
-from gen_club_player_anim import convert_animation as bake_animation  # noqa: E402
+from gen_club_player_anim import (  # noqa: E402
+    convert_animation as bake_animation,
+    fill_upper_body,
+)
 from gen_jian_player_anim import (  # noqa: E402
     PART_GROUPS,
     TICKS_PER_SECOND,
@@ -66,6 +69,49 @@ DEFAULT_ANIMS = [
 
 SICKLE_GRIP_PX = np.array([8.0, 8.0, 8.0])
 SIDE = "right"
+
+# ── 携行架势：纯下半身动画的上半身补位（只补预览，出料 JSON 一个字节不动）─────────
+#
+# `lower_walk` / `lower_sprint` 按分身契约只写 leftLeg/rightLeg/body，运行时上半身
+# 交给招式动画或 vanilla 透传。但 bbmodel 是离线审图用的、没有"上层"，不补的话预览
+# 里两条胳膊死垂、刀悬在身侧——采药刀这份此前正是如此（剑和刀那两份早就有架势填充，
+# 唯独这里没有）。
+#
+# **这里用的是动态架势**（`fill_upper_body` 支持的相位表形态），不是剑/刀那种恒定
+# 携行姿：采药人空手走路时手臂本来就该摆。四组数**来自仓库所有者 2026-09-02 在
+# Blockbench 里手摆的姿态**，这里只做两处必要的搬运：
+#
+#   1. 肘弯当常量。手改稿只在 t0 打了一帧 bend，读回来另一端是 0——那是单帧在 loop
+#      里被插值回 defaultValue 的假象，不是作者设成了 0。
+#   2. 两个极值按腿的相位落位。相位 0 处 `rightLeg.pitch = -swing`（右腿在前），所以
+#      相位 0 取「右臂后摆 / 左臂前摆」那一端，半周期换边，相位 1 收口回 0。
+#      符号：arm.pitch < 0 = 手臂前摆（实测 pitch=-70 时手前伸 9.8px）。
+#
+# 两端不是互为镜像（右臂 +30↔0、左臂 -7.5↔+17.5），摆幅本就不对称——那是手改稿的
+# 原样，没有替作者"修正"成对称。
+def _swing(r0, l0, r1, l1, bend):
+    """(相位0 右/左臂 pitch, 半周期 右/左臂 pitch, 恒定肘弯) → 相位表。"""
+    def pose(r, l):
+        return dict(
+            rightArm=dict(pitch=r, yaw=0.0, roll=0.0, bend=bend, axis=180),
+            leftArm=dict(pitch=l, yaw=0.0, roll=0.0, bend=bend, axis=180),
+        )
+    return {0.0: pose(r0, l0), 0.5: pose(r1, l1), 1.0: pose(r0, l0)}
+
+
+STANCE_POSES = {
+    "lower_walk": _swing(+30.0, -7.5, 0.0, +17.5, 15.0),
+    "lower_sprint": _swing(+25.0, -30.0, -25.0, +35.0, 30.0),
+}
+#: 没登记的纯下半身动画退回行走摆臂。
+DEFAULT_STANCE = STANCE_POSES["lower_walk"]
+UPPER_PARTS = ("rightArm", "leftArm")
+
+
+def _has_upper_body(json_path) -> bool:
+    """出料 JSON 已经写了手臂 → 那是招式动画，绝不许被架势覆盖。"""
+    _name, _emote, table = P.anim_pose_table(json_path)
+    return any(part in UPPER_PARTS for _tick, pose in table for part in pose)
 
 
 def load_sickle():
@@ -178,6 +224,10 @@ def build_bbmodel():
                 f"缺动画资产: {f}\n"
                 f"    先跑 python3 client/tools/gen_{anim_name}.py 出料，再回来烘。")
         baked = bake_animation(f, gmap)
+        if not _has_upper_body(f):
+            fill_upper_body(baked, gmap,
+                            STANCE_POSES.get(anim_name, DEFAULT_STANCE), PART_GROUPS)
+            print(f"    （{anim_name}: 补了持刀摆臂架势供预览，源 JSON 未改）")
         baked_animations.append(baked)
 
     bbmodel = {

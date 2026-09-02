@@ -33,7 +33,10 @@ sys.path.insert(0, str(LIB / "generators"))
 from bbmodel_maker.render import held_item_render as H  # noqa: E402
 from bbmodel_maker.render import render_player_pose as P  # noqa: E402
 from bbmodel_maker.rig import bb_anim_axes as AX  # noqa: E402
-from gen_club_player_anim import convert_animation as bake_animation  # noqa: E402
+from gen_club_player_anim import (  # noqa: E402
+    convert_animation as bake_animation,
+    fill_upper_body,
+)
 from gen_jian_player_anim import (  # noqa: E402
     PART_GROUPS,
     TICKS_PER_SECOND,
@@ -181,33 +184,13 @@ def _has_upper_body(json_path: Path) -> bool:
     return any(part in UPPER_PARTS for _tick, pose in table for part in pose)
 
 
-def _fill_upper_body(anim: dict, gmap: dict, stance: dict) -> None:
-    """把恒定的持刀架势写进上半身轨道。只补预览，emotecraft 源文件不动。"""
-    animators = anim["animators"]
-
-    def track(group_name):
-        gid = gmap[group_name]
-        animators.setdefault(gid, {"name": group_name, "type": "bone", "keyframes": []})
-        return animators[gid]["keyframes"]
-
-    for t in (0.0, anim["length"]):
-        for part, axes in stance.items():
-            prefix, has_bend = PART_GROUPS[part]
-            for axis_name in AX.AXIS_ORDER:
-                track(f"{prefix}_{axis_name}").append(
-                    keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
-            if has_bend:
-                bend = AX.bend_to_bb(axes.get("bend", 0.0), axes.get("axis", 0.0))
-                track(f"{prefix}_bend").append(
-                    keyframe("rotation", t, [round(bend, 4), 0.0, 0.0]))
-
 
 def convert_animation(json_path: Path, gmap: dict) -> dict:
     """emotecraft v3 → Blockbench animation，纯下半身的补一份持刀架势上半身。"""
     anim = bake_animation(json_path, gmap)
     if not _has_upper_body(json_path):
         stance = STANCE_POSES.get(anim["name"], DEFAULT_STANCE)
-        _fill_upper_body(anim, gmap, stance)
+        fill_upper_body(anim, gmap, stance, PART_GROUPS)
         which = "冲刺横持" if stance is STANCE_POSES["lower_sprint"] else "持刀携行"
         print(f"    （{anim['name']}: 补了{which}架势上半身轨道供预览，源 JSON 未改）")
     return anim

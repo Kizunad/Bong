@@ -214,6 +214,64 @@ def part_position_to_bb(axes: dict) -> list[float]:
             round(float(axes.get("z", 0.0)), 4)]
 
 
+def fill_upper_body(anim: dict, gmap: dict, stance, part_groups: dict) -> None:
+    """给**纯下半身**动画补一份上半身，只补预览，出料 JSON 一个字节不动。
+
+    ## 为什么需要它
+
+    `lower_walk` / `lower_sprint` 这批按分身契约只写 leftLeg/rightLeg/body（见
+    `client/tools/gen_lower_body_gait.py`），运行时上半身交给招式动画或 vanilla 透传。
+    可 bbmodel 是**离线审图**用的，没有"上层"——不补的话预览里两条胳膊直接死垂，
+    武器悬在身侧，看不出这人是不是拿着东西在走。
+
+    ## `stance` 的两种形态
+
+    * **单个 pose**（`{part: {axis: value}}`）——恒定架势。剑的「走路扛肩」、刀的
+      「持刀携行」都是这种：携行姿态本来就不动。
+    * **相位表**（`{相位: pose}`，相位是周期的比例 0.0~1.0）——**动态架势**。手臂
+      随步子摆动这种就得用它。
+
+    原先只支持第一种，而且没有任何技术理由——填充函数的注释只解释了「为什么钉首末
+    两帧」（单帧在 loop 里会被 Blockbench/PlayerAnimator 插值回 defaultValue），没有
+    一条要求两帧**同值**。约束其实只有三条：不许漏进出料 JSON、循环必须闭合、已有
+    上半身的动画不许覆盖——都与动不动无关。
+
+    用相位比例而不是绝对 tick，是因为同一套架势要挂到周期不同的几档步态上
+    （walk 20t / sprint 12t），写死 tick 换一档就错位。
+
+    恒定架势展开成 `{0.0: pose, 1.0: 同一个 pose}`，与改造前逐字节一致。
+    """
+    if not isinstance(next(iter(stance.values())), dict) or "pitch" in next(iter(stance.values())):
+        table = {0.0: stance, 1.0: stance}          # 恒定架势：首末同值
+    else:
+        table = dict(stance)
+        if 1.0 not in table:
+            if 0.0 not in table:
+                raise ValueError("动态架势必须有相位 0.0（循环起点）")
+            table[1.0] = table[0.0]                 # 自动收口
+        if table[0.0] != table[1.0]:
+            raise ValueError("动态架势的相位 0.0 与 1.0 必须逐轴同值，否则循环会跳一下")
+
+    animators = anim["animators"]
+
+    def track(group_name):
+        gid = gmap[group_name]
+        animators.setdefault(gid, {"name": group_name, "type": "bone", "keyframes": []})
+        return animators[gid]["keyframes"]
+
+    for phase in sorted(table):
+        t = round(anim["length"] * phase, 6)
+        for part, axes in table[phase].items():
+            prefix, has_bend = part_groups[part]
+            for axis_name in AX.AXIS_ORDER:
+                track(f"{prefix}_{axis_name}").append(
+                    keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
+            if has_bend:
+                bend = AX.bend_to_bb(axes.get("bend", 0.0), axes.get("axis", 0.0))
+                track(f"{prefix}_bend").append(
+                    keyframe("rotation", t, [round(bend, 4), 0.0, 0.0]))
+
+
 def convert_animation(json_path: Path, gmap: dict) -> dict:
     name, emote, table = P.anim_pose_table(json_path)
     animators: dict[str, dict] = {}
