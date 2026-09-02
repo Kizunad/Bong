@@ -229,6 +229,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12687 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`processed_input_unit` 为 `3 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
 - **提交证据**：代码、外置测试、`processed_input_unit` target 对应 commit 为 `b765cc1a81bbb60b1871d068fdb5417fefc1eb82`（2026-09-01）。本条仅记录 P2-06 进度；P2 其它模块、P3、P4 仍未完成。
 
+### P2-08 skill runtime（✅ 2026-09-02）
+
+- **范围与落点**：仅将 `server/src/skill/mod.rs` 原 `#[cfg(test)] mod tests` 中实际存在的 7 个 skill runtime 测试外置到 `server/tests/unit/skill/runtime_test.rs`，并新增 `server/Cargo.toml` 的显式 `skill_runtime_unit` target；其中包含任务卡列出的 4 个核心行为测试及同模块已有的 3 个 runtime 回归测试。`skill/components.rs`、`skill/config.rs`、`skill/curve.rs`、`skill/events.rs` 的 inline tests 未迁移，生产 runtime、XP 公式、境界、wire、schema、Redis、client、AV、qi ledger 均未改动。
+- **行为与定向验证**：保留 `register_adds_all_four_events`、`xp_above_cap_is_scaled_down_to_thirty_percent`、`xp_below_cap_is_not_scaled`、`record_skill_lv_up_appends_milestone` 及其余原测试名、fixture、tick/数值和断言语义；`register` 仍注册 `SkillXpGain`、`SkillLvUp`、`SkillCapChanged`、`SkillScrollUsed`，上限以上 XP 仍按既有规则缩放为 30%，上限以内不缩放，升级记录仍由 `record_skill_lv_up` 写入既有 narration 与 milestone 字段。`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test skill_runtime_unit'`：`7 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用已有运行时公开符号 `bong_server::skill::{register, consume_skill_xp_gain, record_skill_lv_up}` 及既有数据类型；未新增 `#[doc(hidden)]` seam，`default_skill_lv_up_narration` 生产 helper 保持私有且实现未复制到测试，`server/src/skill/mod.rs` 不再包含 inline test body。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skill_runtime_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `skill_runtime_unit` target 对应 commit 为 `17ee3cf81`（2026-09-02）。本条仅记录 P2-08 进度；P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
