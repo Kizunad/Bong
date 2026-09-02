@@ -72,8 +72,7 @@
  "gen_bronze_saber_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "BronzeSaber.bbmodel": "8a7c15a1b238bdf711d1fac45747160f25f37d6e89d29ed79aa1d9c56a05ccf8",
-   "BronzeSaberPlayerAnim.bbmodel": "8ffc8e14f074778ffc5bcca4abb0c500a2f448dd557b7afaf53eb862e2f9b94a"
+   "BronzeSaberPlayerAnim.bbmodel": "56c41f5ae5765650906ee8a2ee712da5ca073561da59f7bf7117cb4cd9ab41ed"
   }
  },
  "gen_chi_sui_cao.py": {
@@ -135,6 +134,18 @@
   "exit": 0,
   "outputs": {
    "HerbKnifeIronPlayerAnim.bbmodel": "b4cbf3e8d7e0d6a12082244cc78424a48b0dc79f08860c2eef3eedb01e18e914"
+  }
+ },
+ "gen_herb_sickle.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbSickle.bbmodel": "c05c0c88e9695168aa3923a3534eb3a48ac33031f54b4b527a5567d9e4609a30"
+  }
+ },
+ "gen_herb_sickle_player_anim.py": {
+  "exit": 0,
+  "outputs": {
+   "HerbSicklePlayerAnim.bbmodel": "11940ddf3a93f4489b82831b479fd09bbef87ad4b89780e7cd7abca187202815"
   }
  },
  "gen_hide_armor.py": {
