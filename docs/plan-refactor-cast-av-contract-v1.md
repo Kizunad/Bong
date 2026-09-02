@@ -425,6 +425,12 @@ WAVE-2 PRODUCTION:
 - 冻结并建立唯一 unified registration lookup（skill entries + item-cast entries）、accepted-key lookup/consumer interface 与 inert entry ledger（`C-13` 的 contract slice），但不让该 lookup 或任何 producer production-reachable，也不创建 test-only 平行 registry。`C-04` 的 connection/tracking-epoch BEGIN producer 与 real-producer live slice 留到 Wave 2 atomic activation；R6 据冻结的 domain content 生成 `C-02/C-03` mirrors，本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。`D-07` 依赖 P3 的 `C-13` full registration migration，留在 P3 gate。
 - PUC-01 只建立 Wave 2 activation 所需的完整 registration ledger：逐项列出全部 accepted producer keys、对应完整五件套、terminal producer 与唯一 consumer；该 ledger 不授权 subset live path。严禁在 duplicate owner 未清、完整 registration/assets 未齐或 unique consumer 未安装时启用任何 real producer。
 
+#### P1/C-13 contract-first evidence（2026-09-02）
+
+- `server/src/cast/mod.rs` 建立唯一 `SkillRegistrationLedger`：`SkillRegistration::Skill { skill_id, definition, resolver, cast_mode, audience, av }` 与 `SkillRegistration::ItemCast { item_template_id, cast_variant, av_binding_key, av }` 共用 `RegistrationKey` lookup；item-cast/QUICK_SLOT 的 `skill_id()` 固定返回 `None`，没有 item→skill 隐式映射。
+- 同一文件冻结 `SkillAvBinding` 五件套（animation/VFX/audio(SFX)/HUD/icon）及 phase binding、NPC 显式免除类型、`SkillAvConsumer` 唯一 consumer seam；ledger 只保存 `Declared`/`Unwired`/`TestOnly` inert 状态，未安装 Bevy resource、未接真实 producer，不创建 test-only 平行 registry。
+- `cast::tests` 的 10 条独立 contract pin 覆盖统一 lookup、key identity、skill/item-cast 区分、QUICK_SLOT null skill id、AV key/channel uniqueness、resolver/dedicated 约束、definition/phase 非法输入、audience/NPC arm 与 inert state/request；重复、空值和非法 registration 在 ledger 发生 mutation 前 fail-fast。
+
 ### P2 — 双源清除 + 全退出终态 ⬜
 
 - 完成 `C-12`：Baomai/Tuike 余下双源归一；duplicate-owner removal 是 Wave 2 activation 的前置门，不能推迟到 consumer 已启用之后。对 Wave 2 将接入的移动、污染、控制、用户取消、死亡、断线、换维度 cast producer 做 `R-08/R-11..R-15` 强制回归，但不在 P2 首次接线。generic Fled brace 继续由独立 non-cast lifecycle 验收，不列入 `D-21` cast stop semantics。`cast_stop_semantics`、`cast_av_phase_regression` 两个 bot scenario 在本阶段锁定 single-owner/终态契约，Wave 2 再接入真实 live path。其余 producer 继续完整旧路径。
