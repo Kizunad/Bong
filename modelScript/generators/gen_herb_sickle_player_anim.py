@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """HerbSicklePlayerAnim.bbmodel —— 玩家 + 采药刀 + 内嵌 Blockbench 玩家手持采药动作。
 
-挂右手持采药刀，并将专属动作与手持采药姿态烘培进 Blockbench：
-    1. harvest_crouch    - 采药蹲伏：身体压低，右手持采药刀向地面探取割药
-    2. dagger_slash      - 采药刀应急防身挥击（短促挥割）
-    3. lower_walk        - 基础行走
-    4. lower_sprint      - 基础疾跑
+挂右手持采药刀，并把**采药刀自己的四条动作**与两条基础位移烘培进 Blockbench：
+
+    1. harvest_crouch    - 割地上的药株（循环 20t，刃尖离地 7.5px）
+    2. sickle_reap       - 割根一刀（一次性 10t，刀尖行程 15.5px）
+    3. sickle_stand_cut  - 站立割齐胸的藤蔓（循环 24t，刃尖离地 15.9px）
+    4. sickle_defend     - 应急防身横划（一次性 8t，肘最浅 42° 不打直）
+    5. lower_walk        - 基础行走
+    6. lower_sprint      - 基础疾跑
+
+**`dagger_slash` 不在这里**：它是刀三件套（石刃 / 凡铁匕首 / 骨刺）按 `WoundKind` 选的
+普攻，站架和身法都是兵器的（`body.yaw=-34°` 完整格斗架、腰转 62° 送肩）。采药刀是
+`category=tool` 的凡器，防身走自己的 `sickle_defend`（人往后躲、肘折更深、副手护脸）。
+把它烘进采药刀的 bbmodel 会让审图的人以为那是采药刀的动作。
 
 用法:
     python3 modelScript/generators/gen_herb_sickle_player_anim.py
@@ -49,7 +57,9 @@ OUT_BB = LIB / "models" / "HerbSicklePlayerAnim.bbmodel"
 
 DEFAULT_ANIMS = [
     "harvest_crouch",
-    "dagger_slash",
+    "sickle_reap",
+    "sickle_stand_cut",
+    "sickle_defend",
     "lower_walk",
     "lower_sprint",
 ]
@@ -98,7 +108,7 @@ def build_geometry():
         bend_group = None
         if has_bend:
             bend_group = group(f"{prefix}_bend", spec["bend_center"], lower_ids, color=6)
-            gmap[f"{prefix}_bend"] = bend_group["uuid manh"] if "uuid manh" in bend_group else bend_group["uuid"]
+            gmap[f"{prefix}_bend"] = bend_group["uuid"]
         node = list(upper_ids) + ([bend_group] if bend_group else [])
         for axis_name in ("pitch", "yaw", "roll"):
             g = group(f"{prefix}_{axis_name}", spec["pivot"], node, color=7)
@@ -162,8 +172,11 @@ def build_bbmodel():
     for anim_name in DEFAULT_ANIMS:
         f = ANIM_DIR / f"{anim_name}.json"
         if not f.exists():
-            print(f"  [跳过动画 {anim_name}]: 未找到 {f}")
-            continue
+            # 静默跳过会让 bbmodel 少烘一条而没人发现（审图的人只会看到"这条没做"）。
+            # 这些资产都由 `client/tools/gen_<name>.py` 出料，缺了就是没跑生成器。
+            raise SystemExit(
+                f"缺动画资产: {f}\n"
+                f"    先跑 python3 client/tools/gen_{anim_name}.py 出料，再回来烘。")
         baked = bake_animation(f, gmap)
         baked_animations.append(baked)
 
