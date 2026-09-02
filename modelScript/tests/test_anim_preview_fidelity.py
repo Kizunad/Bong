@@ -35,7 +35,14 @@ from PIL import Image
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 REPO = LIB_DIR.parent
-for _d in (LIB_DIR / "tools", REPO / "client" / "tools"):
+# generators/ 必须在列：`gen_knife_trio` / `gen_herb_sickle` 里存着刀的 display
+# 变换与几何真值，刃向那几道门全靠它们取真值而不是在测试里另写一份。拆库
+# （#2117）时这一条掉了，于是六道门整整一段时间是 ModuleNotFoundError 而不是
+# 断言失败——unittest 把 ERROR 和 FAIL 分开计，扫一眼"没红"就过去了，刀举在
+# 脸旁边像举火把照样放行。缺目录直接炸，别让门再瞎一次。
+for _d in (LIB_DIR / "tools", LIB_DIR / "generators", REPO / "client" / "tools"):
+    if not _d.is_dir():
+        raise RuntimeError(f"测试依赖的目录不存在: {_d}")
     sys.path.insert(0, str(_d))
 
 import render_animation as RA  # noqa: E402

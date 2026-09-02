@@ -197,6 +197,23 @@ def build_geometry():
     return elements, [root_pos], gmap, atlas
 
 
+def part_position_to_bb(axes: dict) -> list[float]:
+    """part 级 `x/y/z`（**ModelPart 枢轴 px，不是格**）→ 写进文件的 bb position（px）。
+
+    与 `AX.body_position_to_bb` 的区别只有一处：**不乘 `PX_PER_BLOCK`**。理由见
+    `convert_animation` 里的长注释；符号（X 预取反 + Y 翻）保持一致。
+
+    读回来的一侧要注意：库里的 `bbmodel_to_pose._position_from` 是按 body 的口径写的，
+    带 `/ PX_PER_BLOCK`，对 part 级位移同样偏 16 倍。两侧对称地错 ⇒ 往返锁结构性地
+    看不见这个 bug（`test_bb_anim_roundtrip` 的 docstring 自己写明了「锁不住两侧同时
+    改错」）。所以 part 位移的单位由 `test_bb_anim_roundtrip.PartOffsetUnitTest`
+    **直接读文件里的 px 值**来钉，不经过任何共用换算。
+    """
+    return [round(-float(axes.get("x", 0.0)), 4),
+            round(-float(axes.get("y", 0.0)), 4),
+            round(float(axes.get("z", 0.0)), 4)]
+
+
 def convert_animation(json_path: Path, gmap: dict) -> dict:
     name, emote, table = P.anim_pose_table(json_path)
     animators: dict[str, dict] = {}
@@ -223,12 +240,29 @@ def convert_animation(json_path: Path, gmap: dict) -> dict:
             for axis_name in AX.AXIS_ORDER:
                 track(f"{prefix}_{axis_name}").append(
                     keyframe("rotation", t, AX.rotation_to_bb(axes, axis_name)))
-            # **part 级位移也要烘**。锏那份只烘旋转，于是腿的 z（步幅前后错开，
-            # ±0.05~0.10 格 = 0.8~1.6px）在 bbmodel 里整个丢了——`bbmodel_to_pose --diff`
-            # 会把它当成"人改过"一路报出来，是个永久的假阳性。
+            # **part 级位移也要烘**。锏那份只烘旋转，于是腿的 z（步幅前后错开）在
+            # bbmodel 里整个丢了——`bbmodel_to_pose --diff` 会把它当成"人改过"一路
+            # 报出来，是个永久的假阳性。
+            #
+            # **但不能套 `body_position_to_bb`**：那个函数带 `× PX_PER_BLOCK`，因为
+            # `body.x/y/z` 确实是**格**（运行时走 MatrixStack，见 `PlayerRendererMixin`）。
+            # part 级的 `x/y/z` 不是——它是**绝对 ModelPart 枢轴 px**，四处独立佐证：
+            #   · `anim_common` 的 docstring：「model pixels × 1/16 for body, **raw for
+            #     part offsets**」；
+            #   · `render_animation.solve_skeleton` 算的是 `pivot(px) + offset`；
+            #   · PlayerAnimator 的 `AnimationApplier.updatePart` 把值直接写进
+            #     `ModelPart.x/y/z`（px），缺省值 seed 自 vanilla 的 px；
+            #   · conventions §7.1 记的 `rightLeg.z` 默认值 `0.1f`，正是 vanilla 的 px 值
+            #     （若是格，缺省该是 0.00625）。
+            # 套上去就是把 px 当格再乘 16。这条错了很久没被发现，因为存量动画的
+            # `leg.z` 全是 ±0.05~0.10 这种量级（放大后也才 ±0.8~1.6px，看不出来）；
+            # 采药刀那批按 vanilla 蹲伏的量级写了 ±2.0px，放大成 ±32px，两腿在
+            # Blockbench 里直接飞出去 3.5 格——是仓库所有者打开文件一眼看出来的。
+            #
+            # 符号沿用 `body_position_to_bb` 的同一套（X 预取反 + Y 翻），只是不缩放。
             if any(abs(axes.get(k, 0.0)) > 1e-9 for k in "xyz"):
                 track(f"{prefix}_{AX.AXIS_ORDER[-1]}").append(
-                    keyframe("position", t, AX.body_position_to_bb(axes)))
+                    keyframe("position", t, part_position_to_bb(axes)))
             if has_bend:
                 track(f"{prefix}_bend").append(
                     keyframe("rotation", t,

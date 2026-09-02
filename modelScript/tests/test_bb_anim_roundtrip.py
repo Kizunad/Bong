@@ -44,6 +44,7 @@ from bbmodel_maker.workbench import bbmodel_to_pose as BP  # noqa: E402
 import gen_club_player_anim as GCP  # noqa: E402
 import gen_jian_player_anim as GJP  # noqa: E402
 from bbmodel_maker.render import render_player_pose as RP  # noqa: E402
+import render_animation as RA  # noqa: E402  运行时口径的独立求解器，用来和烘培侧交叉对拍单位
 
 ANIM = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong" / "player_animation"
 MODELS = LIB_DIR / "models"
@@ -175,7 +176,17 @@ class AnimationRoundTripTest(unittest.TestCase):
              ("JianPlayerAnim.bbmodel", "jian_dual_smash"),
              # 脊骨剑：第一版这份文件里 8 条动画全是空的（`length=0 / bones=0`），
              # 往返锁是最直接的兜底——没有帧就还原不出姿态，这里立刻红。
-             ("BeastSpineSwordPlayerAnim.bbmodel", "sword_spine_slash"))
+             ("BeastSpineSwordPlayerAnim.bbmodel", "sword_spine_slash"),
+             # 采药刀四条。这里挂上的直接理由是**它差点被漏烘**：动画在
+             # `client/tools/` 重做完了，`gen_herb_sickle_player_anim.py` 却没重跑，
+             # bbmodel 里留着上一轮的旧姿态（还挂着已经还给刀三件套的 dagger_slash）。
+             # 往返锁盯的正是"bbmodel 里的那一份和源 JSON 不是同一个东西"。
+             ("HerbSicklePlayerAnim.bbmodel", "harvest_crouch"),
+             ("HerbSicklePlayerAnim.bbmodel", "sickle_reap"),
+             ("HerbSicklePlayerAnim.bbmodel", "sickle_stand_cut"),
+             # sickle_defend 是这批里唯一用了 `body.yaw`（站架）的，
+             # 于是也是唯一走 `_body` → `root_*` 那四条轨道的往返用例。
+             ("HerbSicklePlayerAnim.bbmodel", "sickle_defend"))
 
     def _bbmodel_anim(self, filename, name):
         doc = json.loads((MODELS / filename).read_text(encoding="utf-8"))
@@ -198,6 +209,16 @@ class AnimationRoundTripTest(unittest.TestCase):
                         got, f"{name} t{tick}: 读回来少了 {part}")
                     for axis, value in axes.items():
                         if axis == "axis":
+                            continue
+                        if part != "_body" and axis in ("x", "y", "z"):
+                            # part 级位移**故意不在这里比**：库里的
+                            # `bbmodel_to_pose._position_from` 是按 body 口径写的，
+                            # 带 `/ PX_PER_BLOCK`，而 part 级的 x/y/z 是 ModelPart 枢轴
+                            # px 不是格。写侧曾经也这么错（套了 `body_position_to_bb`），
+                            # 两侧对称 ⇒ 这条往返断言照样绿，正是本文件 docstring 说的
+                            # 「锁不住两侧同时改错」。写侧已修（`part_position_to_bb`），
+                            # 读侧在库里改不动，所以单位改由 `PartOffsetUnitTest`
+                            # 直接读文件里的 px 值来钉，不经过任何共用换算。
                             continue
                         self.assertAlmostEqual(
                             float(value), float(got.get(axis, 0.0)), places=2,
@@ -234,6 +255,111 @@ class AnimationRoundTripTest(unittest.TestCase):
                       BP.pick_layers({"meta": {"format_version": "5.0"}})[0])
         self.assertIs(AX.READ_LAYERS,
                       BP.pick_layers({"meta": {"format_version": "4.10"}}, "blockbench")[0])
+
+
+class PartOffsetUnitTest(unittest.TestCase):
+    """part 级 `x/y/z` 的**单位**：ModelPart 枢轴 px，不是格。
+
+    ## 这道门为什么必须绕开共用换算
+
+    写侧曾经拿 `AX.body_position_to_bb`（带 `× PX_PER_BLOCK`）去烘 part 位移，读侧
+    `bbmodel_to_pose._position_from` 又带 `/ PX_PER_BLOCK`——**两侧对称地错**，于是
+    `AnimationRoundTripTest` 那条往返断言一路绿，而文件里的值是真值的 16 倍。
+
+    这个 bug 活了很久没被发现，因为存量动画的 `leg.z` 都是 ±0.05~0.10 那种量级
+    （放大后也才 ±0.8~1.6px）。采药刀那批按 vanilla 蹲伏的量级写了 ±2.0px，放大成
+    ±32px——两腿在 Blockbench 里飞出 3.5 格，是仓库所有者打开文件一眼看出来的。
+
+    所以这道门**只读文件里的原始 px 数**，再与 `render_animation.solve_skeleton`
+    （运行时口径：`pivot(px) + offset`）交叉对拍。它和写侧不共用任何一行换算代码，
+    两侧一起改错也骗不过它。
+
+    ## 单位的四处独立佐证
+
+    · `anim_common` docstring：「model pixels × 1/16 for body, **raw for part offsets**」
+    · `render_animation.solve_skeleton`：`pivot_local = pivot + pivot_offset`（px + px）
+    · PlayerAnimator `AnimationApplier.updatePart`：值直接写进 `ModelPart.x/y/z`（px），
+      缺省 seed 自 vanilla 的 px
+    · conventions §7.1：`rightLeg.z` 的 defaultValue 是 `0.1f`——vanilla 的 px 值
+      （若单位是格，缺省该是 0.00625）
+    """
+
+    # 出料侧的符号：X 预取反 + Y 翻 + Z 同号（与 `body_position_to_bb` 同一套）
+    SIGNS = {"x": -1.0, "y": -1.0, "z": +1.0}
+    IDX = {"x": 0, "y": 1, "z": 2}
+
+    def _anim(self, filename, name):
+        doc = json.loads((MODELS / filename).read_text(encoding="utf-8"))
+        for anim in doc.get("animations", []):
+            if anim["name"] == name:
+                return anim
+        self.fail(f"{filename} 里没有动画 {name}")
+
+    def _raw_position(self, anim, bone, tick):
+        """直接从文件里取该骨在该 tick 的 position 三元组，不经任何换算。"""
+        animators = anim.get("animators", {})
+        it = animators.values() if isinstance(animators, dict) else animators
+        for an in it:
+            if not isinstance(an, dict) or an.get("name") != bone:
+                continue
+            for kf in an.get("keyframes", []) or []:
+                if kf.get("channel") != "position":
+                    continue
+                if abs(float(kf.get("time", -1)) * 20.0 - tick) > 1e-6:
+                    continue
+                dp = (kf.get("data_points") or [{}])[0]
+                return [float(dp.get(k, 0) or 0) for k in "xyz"]
+        return None
+
+    def test_part_offsets_are_written_in_raw_pixels(self):
+        """源 POSE 里的 `leg.z = -2.0`（px）在文件里就该是 -2.0，不是 -32。"""
+        checked = 0
+        for filename, name in AnimationRoundTripTest.CASES:
+            anim = self._anim(filename, name)
+            _n, _e, table = RP.anim_pose_table(ANIM / f"{name}.json")
+            for tick, source in table:
+                for part, axes in source.items():
+                    if part == "_body":
+                        continue
+                    prefix = BP.PART_PREFIX.get(part)
+                    if prefix is None:
+                        continue
+                    want = {k: float(v) for k, v in axes.items() if k in self.IDX}
+                    if not any(abs(v) > 1e-9 for v in want.values()):
+                        continue
+                    got = self._raw_position(anim, f"{prefix}_{AX.AXIS_ORDER[-1]}", tick)
+                    self.assertIsNotNone(
+                        got, f"{name} t{tick} {part}: 源里有位移，文件里却没烘 position")
+                    for k, v in want.items():
+                        self.assertAlmostEqual(
+                            v * self.SIGNS[k], got[self.IDX[k]], places=3,
+                            msg=f"{name} t{tick} {part}.{k}: 源 {v}px → 文件 "
+                                f"{got[self.IDX[k]]}px。差 16 倍就是又把 px 当格了"
+                                f"（part 级位移是 ModelPart 枢轴 px，只有 body 是格）")
+                        checked += 1
+        self.assertGreater(
+            checked, 0,
+            "一个 part 级位移都没查到——这道门变成空覆盖了。CASES 里至少要有一条"
+            "用了 leg.z 的动画（采药刀那四条都用）")
+
+    def test_the_bake_agrees_with_the_runtime_skeleton_solver(self):
+        """交叉对拍：把文件里的 px 值还原成源单位，必须和 `solve_skeleton` 用的是同一个数。
+
+        `solve_skeleton` 是运行时口径的独立实现（`pivot(px) + offset`）。它和烘培侧
+        不共用换算代码，所以两边一致才说明单位真的对上了。
+        """
+        filename, name = "HerbSicklePlayerAnim.bbmodel", "harvest_crouch"
+        anim = self._anim(filename, name)
+        kfs = RA.collect_keyframes(
+            json.loads((ANIM / f"{name}.json").read_text(encoding="utf-8"))["emote"])
+        for part, prefix in (("rightLeg", "leg_right"), ("leftLeg", "leg_left")):
+            runtime_z = float(RA.sample_part(kfs, part, 0.0)["z"])
+            baked = self._raw_position(anim, f"{prefix}_{AX.AXIS_ORDER[-1]}", 0)
+            self.assertIsNotNone(baked, f"{part} 的位移没烘进 {filename}")
+            self.assertAlmostEqual(
+                runtime_z, baked[2] * self.SIGNS["z"], places=3,
+                msg=f"{part}.z：运行时求解器读到 {runtime_z}px，bbmodel 里烘的是 "
+                    f"{baked[2]}px——两套实现对不上，单位又错了一侧")
 
 
 class PoseTickContractTest(unittest.TestCase):

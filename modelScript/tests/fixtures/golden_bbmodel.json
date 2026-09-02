@@ -26,7 +26,7 @@
  "gen_beast_spine_sword_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "BeastSpineSwordPlayerAnim.bbmodel": "57ef7640e0cae442586b382799684e9916f92c2e4b71672a349ec2b35aa5de8c"
+   "BeastSpineSwordPlayerAnim.bbmodel": "1060229c860de9330b5207167c7355ac7fd8f1aa0d97b53766e899aa86a30b6d"
   }
  },
  "gen_bone_armor.py": {
@@ -85,7 +85,7 @@
  "gen_club_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "ClubPlayerAnim.bbmodel": "24a24c8f7f5b23ab868841579d3c01c414c2b2549bba955481ffdb2aa813743c"
+   "ClubPlayerAnim.bbmodel": "f4f114d6ebff63aaea2a1ebc7b6e79a1aa3fbaeb4ddfda5ef957c22781b3549a"
   }
  },
  "gen_dead_drop_box.py": {
