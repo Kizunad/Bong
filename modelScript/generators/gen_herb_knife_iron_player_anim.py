@@ -2,11 +2,21 @@
 """HerbKnifeIronPlayerAnim.bbmodel —— 玩家 + 凡铁采药刀 + 内嵌 Blockbench 专属采药/折刀动画。
 
 包含动画：
-    1. herb_harvest        - 凡铁采药刀俯身专注采割灵草动作
-    2. herb_knife_slash    - 凡铁采药刀短快反手割击动作
-    3. herb_knife_unfold   - 凡铁折叠采药刀甩腕亮刃展开
-    4. lower_walk          - 手持采药刀携行步态
-    5. lower_sprint        - 手持采药刀疾行冲刺步态
+    1. herb_harvest            - 凡铁采药刀俯身勾割灵草
+    2. herb_knife_slash        - 凡铁采药刀反手横掠割
+    3. herb_knife_unfold       - 凡铁折叠采药刀甩腕开刃
+    4. herb_knife_carry_walk   - 持刀携行步态（**真正会上线的那条**，自带手臂摆动）
+    5. lower_sprint            - 全局冲刺步态（采药刀暂无携行变体，上半身是现补的预览）
+
+## 第 4 条为什么是 carry 而不是 lower_walk
+
+`GaitVariants` 在手持采药刀时会把 WALK 档换成 `herb_knife_carry_walk`，所以在
+Blockbench 里该看的是**它**。`lower_walk` 是空手/别的武器才播的那条，摆在这个工程里
+只会让人对着一条根本不会跟采药刀同时出现的动画调姿态。
+
+carry 那条自带手臂轨道，`_fill_upper_body` 不会再给它补预览架势（`_has_upper_body`
+判真）——所见即所得。`lower_sprint` 还没有携行变体（理由见
+`client/tools/gen_herb_knife_carry_gait.py` 模块文档），仍然走补预览那条路。
 
 用法:
     python3 modelScript/generators/gen_herb_knife_iron_player_anim.py
@@ -52,7 +62,7 @@ DEFAULT_ANIMS = [
     "herb_harvest",
     "herb_knife_slash",
     "herb_knife_unfold",
-    "lower_walk",
+    "herb_knife_carry_walk",
     "lower_sprint",
 ]
 
@@ -162,6 +172,7 @@ def build_geometry():
 
 _STANCE_UPPER = dict(torso=dict(pitch=+2, yaw=+10), head=dict(pitch=-2, yaw=-4, roll=0.0))
 STANCE_POSES = {
+    # `herb_knife_carry_walk` 不在此列——它自带手臂轨道，不需要补。
     "lower_walk": dict(
         rightArm=dict(pitch=-35.0, yaw=-15.0, roll=+20.0, bend=30.0, axis=180),
         leftArm=dict(pitch=+15.0, yaw=+15.0, roll=-10.0, bend=15.0, axis=180),
