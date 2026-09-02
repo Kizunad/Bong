@@ -85,7 +85,7 @@
 
 ### 出料
 
-- 新 zone + POI 进 `worldgen` blueprint（deterministic layout，P0）
+- 聚落地形/layout 进**独立仓库 [BongWorldGen](https://github.com/Kizunad/BongWorldGen)**（地形生成已于最新 main 迁出本仓库）；Bong 侧只消费其产出的 raster + 注册 `server/zones.json`（P0）
 - `SettlementRegistry` / `HideoutRegistry`（由 `SpiritNicheRegistry` 改名）/ `CaravanRegistry` / `DistressBeaconRegistry` 进持久化
 - emit `SettlementEnteredEvent` / `HideoutUpgradedEvent` / `CaravanDepartedEvent` / `CaravanRaidedEvent` / `DistressBeaconFiredEvent` / `EscortDispatchedEvent` → agent 天道叙事 + `world::events`
 - 劫掠 → `KarmaWeightStore::mark_player` → 既有定向天劫链路
@@ -169,7 +169,7 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P0 | 聚落骨架：worldgen deterministic layout + zone 注册 + 不杀令 + 镇卫 | ⬜ |
+| P0 | 聚落骨架：**跨仓库**（BongWorldGen 出 layout / Bong 出 zone + settlement 模块 + 镇卫） | ⬜ |
 | P1 | **灵龛 → 宿窟迁移**：放置校验收紧 + 全栈改名 + 存档迁移 + 波及 plan 协调 | ⬜ |
 | P2 | 宿窟等级与租约：L1-L5 / 骨币租金 / 欠租封存 / 客户端 UI | ⬜ |
 | P3 | 宿窟工位：丹炉 / 锻台 / 灵田 / 蒲团 / 封灵台 / 藏匿阵 / 防潮架 | ⬜ |
@@ -187,7 +187,9 @@
 
 ### 交付物
 
-1. **5 个聚落定点**（`worldgen/blueprint/settlement/*.json`，deterministic layout，遵 docs/CLAUDE.md §6.2 禁 noise density）
+1. **5 个聚落定点** —— **注意：地形生成已迁出本仓库**，本条是**跨仓库交付**：
+   - **BongWorldGen 侧**（`../BongWorldGen`，独立 repo + 独立 PR）：聚落 layout 定义与 raster 产出，deterministic layout，遵 docs/CLAUDE.md §6.2「人工建筑禁 noise density」
+   - **Bong 侧**：`server/zones.json` 注册 5 条低灵气 zone + `settlement` 模块读取；raster 经 `scripts/dev-reload.sh` 的交接校验（`BONG_TERRAIN_RASTER_DIR` / manifest）消费
 
 | 聚落 | zone id | 位置 | 类型 | 灵气 | 定位 |
 |---|---|---|---|---|---|
@@ -210,8 +212,8 @@
 ### 验收抓手
 
 - `server::world::settlement::tests::{settlement_lookup_by_position, nearest_settlement_for_migration, peace_zone_pvp_marks_wanted, tribe_camp_weaker_enforcement}`
-- worldgen layout determinism：同 seed 两次坐标一致；layout 半径内 decoration density mask 为 0
-- zone：5 条新 zone，`spirit_qi ≤ 0.08`，`raster_check` 通过
+- **BongWorldGen 侧**：layout determinism（同 seed 两次坐标一致）；layout 半径内 decoration density mask 为 0——测试跑在该仓库内
+- **Bong 侧**：`server/zones.json` 5 条新 zone，`spirit_qi ≤ 0.08`；`bash scripts/dev-reload.sh` 的 raster 交接校验通过（manifest 存在且被 server 正确 mmap）
 - 建筑资产 **3 轮打磨 + `<PROMISE>`**
 
 ---
@@ -483,12 +485,13 @@
 | PR | 范围 | 依赖 |
 |---|---|---|
 | **PR-0** | **C3（+C1/C2/C4）worldview canon 改动——人工 PR** | — |
-| PR-1 | P0 worldgen layout + zone + `settlement` 模块 + 镇卫 + 覆盖图 | — |
-| PR-2 | P1 迁移 A：放置校验收紧 + server/schema/proto 改名 | PR-0(C3), PR-1 |
+| **PR-1a** | **BongWorldGen 仓库**：5 聚落 layout + raster 产出 + determinism 测试 | — |
+| PR-1b | Bong 仓库：`server/zones.json` 5 zone + `settlement` 模块 + 镇卫 + 覆盖图 | PR-1a |
+| PR-2 | P1 迁移 A：放置校验收紧 + server/schema/proto 改名 | PR-0(C3), PR-1b |
 | PR-3 | P1 迁移 B：client 改名 + 资产改造 + 存档迁移 | PR-2 |
 | PR-4 | P2 等级/租约 + `HideoutScreen` | PR-3 |
 | PR-5 | P3 工位接线 | PR-4 |
-| PR-6 | P4 驮队 server + 镖客队 + 离屏推进 | PR-1/4 |
+| PR-6 | P4 驮队 server + 镖客队 + 离屏推进 | PR-1b/4 |
 | PR-7 | P4 驮车实体 + 客户端 UI/HUD | PR-6 |
 | PR-8 | P5 劫掠 + 押镖 + 通缉 | PR-7 |
 | PR-9 | **P6 信号弹接应**（server + 视听 + HUD + 玩家接单） | PR-8 |
@@ -501,7 +504,7 @@
 - PR-2/PR-3 是**改名 + 迁移**，风险最高：单独跑全栈门禁 + e2e，不与任何并行 PR 共改 `social/` 与 schema
 - 建筑/模型资产 PR（PR-1、PR-3、PR-7）走 3 轮打磨 + `<PROMISE>`
 - 每 PR 独立 subagent 实施，主线只收 200-500 token 结论
-- 门禁按栈跑：server `cargo fmt/clippy/test`；client `gradle test build`；agent/schema `npm test`；worldgen `bash scripts/dev-reload.sh`
+- 门禁按栈跑：server `cargo fmt/clippy/test`；client `gradle test build`；agent/schema `npm test`；**地形改动在 `../BongWorldGen` 内自测**，Bong 侧只跑 `bash scripts/dev-reload.sh` 校验 raster 交接
 
 ---
 
