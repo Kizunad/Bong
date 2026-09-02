@@ -1,6 +1,6 @@
-# plan-refactor-client-ui-base-v1 — Client UI 可替换库边界 + Screen/Store/Intent/Bootstrap 分层（重构轨 R7）
+# plan-refactor-client-ui-base-v1 — Client UI 可替换库边界 + Screen/Store/Intent/Bootstrap 分层 + SVG HUD 表现后端（重构轨 R7）
 
-> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：在不改变 server/schema/wire 行为的前提下，把 client UI 的状态读取、用户意图、屏幕生命周期、列表协调和 bootstrap 注册抽成库无关契约，最终以 owo XML 作为唯一生产 UI 宿主；以当前 28 个 Screen 和 `InspectScreen` 为迁移对象，为后续替换 owo-lib 提供单一切换边界。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：在不改变 server/schema/wire 行为的前提下，把 client UI 的状态读取、用户意图、屏幕生命周期、列表协调和 bootstrap 注册抽成库无关契约，最终以 owo XML 作为唯一生产 UI 宿主，并将 HUD 矢量表现统一收口到 NanoSVG 解析、自有 tessellation 和 Minecraft GUI 提交；以当前 28 个 Screen 和 `InspectScreen` 为迁移对象，为后续替换 owo-lib 提供单一切换边界。
 
 ## Integration Preflight（2026-08-25）
 
@@ -10,6 +10,7 @@
 - **已完成计划**：已检索 `docs/finished_plans/`，重点对照 `plan-client.md`、`plan-HUD-v1.md`、`plan-alchemy-client-v1.md`、`plan-agent-ui-data-v1.md`、`plan-agent-ui-close-reason-drop-v1.md` 及相关 client/session/UI 结论；R7 只抽取现有 Store、HUD、agent UI close 和 client screen 的外部行为，不重新拥有这些 domain。
 - **进行中计划**：已枚举 `docs/plan-*.md`，重点核对 `plan-refactor-client-store-lifecycle-v1.md`、`plan-refactor-wire-s2c-v1.md`、`plan-client-login-ux-v1.md` 以及 alchemy/forge/lingtian session UI bugfix plans；R7 将 Store 断线清理留给 R2、bridge/router 留给 R6，不改其 owner 文件。
 - **骨架与 reminder**：已检查 `docs/plans-skeleton/plan-refactor-master-v1.md`、`docs/plans-skeleton/reminder.md:1-28` 和全部 UI/client 相关 skeleton；没有同名的 R7 child skeleton，也没有 reminder 条目要求另建 UI contract。master skeleton 保留计划族的 Wave、ownership、headless 总约束；本文件作为 R7 active child 只负责 client UI contract、adapter、Screen/HUD/keybind 和 viewport seam，拆分理由是避免把 9 条重构轨道的跨轨裁决与单轨实施细节混在同一份可消费 plan 中。
+- **HUD 现状**：生产链路由 `HudRenderCallback.EVENT` → `BongHud.render` → `BongHudOrchestrator.buildCommands` → `BongHud.renderCommands(DrawContext)` 提交；当前盘点为 98 个 production Java 文件、62 个 `HudRenderLayer`、46 个 `*HudPlanner`、3 个独立 renderer、67 个 HUD 测试文件，另有爆脉、虚蚀、幻觉、共鸣锁等直接 `DrawContext` overlay。`renderSurface` 仅用于测试，不是生产入口；client 当前没有 NanoSVG/JNI/native 依赖或跨平台 native 打包体系。
 
 ## 0. 改写目的与不可变范围
 
@@ -18,7 +19,7 @@
 1. **库无关核心**：状态读取、订阅生命周期、列表 diff/reconcile、intent dispatch、Screen open policy、bootstrap module contract 不得 import owo、Fabric widget 或 vanilla drawable。
 2. **单一生产适配路径**：当前 28 个 Screen 全部使用 owo XML 模板；删除后的历史条目只保留在迁移前盘点，不再建立 `VanillaScreenHost` 或保留 vanilla 兼容宿主。
 3. **协议不变**：不修改 server、TypeBox shape、protobuf envelope、Redis key、`ClientRequestProtocol` 编码或 `bong:server_data`/`bong:client_request` channel。现有 sender/handler 行为只通过 adapter 复用。
-4. **所有权不变**：R2 仍独占 Store 断线清理，R6 仍独占网络 receiver/bridge/router，R9 仍独占 cast domain；R7 只消费它们冻结的外部契约。
+4. **所有权不变**：R2 仍独占 Store 断线清理，R6 仍独占网络 receiver/bridge/router，R9 仍独占 cast domain；R7 只消费它们冻结的外部契约。HUD SVG 只消费已有 semantic snapshot，不改变 Store、wire、schema 或 server 数值。
 5. **分批迁移**：先落 contract、fake、source gate 和一条 owo XML 垂直切片，再批量迁移 28 个 Screen；不得把 28 个 Screen、109 个 Store 和 80 个 Handler 混成一次提交。
 
 ## 1. 基线证据（2026-08-24 复核）
@@ -79,7 +80,8 @@ UI input
 - **网络**：R6 的 `ProtoServerDataBridge`、`ServerDataRouter`、`ServerDataHandler` 已完成 client-thread receive boundary；R7 不重新 marshal 网络 receiver。
 - **输入**：现有 keybinding、Screen widget callback、HUD/overlay gesture；迁移后均由 owo XML host 转换成 typed intent。
 - **启动**：`BongClient.onInitializeClient()` 的 UI/HUD/keybind bootstrap call set；网络、render、audio、debug module 不被 R7 统一吞并。
-- **worldview / qi_physics**：纯 client 基础设施，不新增玩法、境界、经济或真元/灵气公式；不调用、不修改 `qi_physics`，不改变任何守恒 ledger。
+- **worldview / qi_physics**：纯 client 基础设施，不新增玩法、境界、经济或真元/灵气公式；不调用、不修改 `qi_physics`，不改变任何守恒 ledger。SVG 只消费已有 semantic HUD snapshot，不改变 Store、wire、schema 或 server 数值。
+- **共享类型**：HUD 表现边界冻结为 `HudRenderBackend`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter`；签名、线程约束和失败语义由 `ui-svg-hud-contract.tsv` 固定。
 
 ### 3.2 出料
 
@@ -330,6 +332,48 @@ bot e2e 分三层记录：
 
 `scripts/bot/_agent_ui_helpers.py` 已有 `bong:agent_ui_cmd`、`bong:agent_ui_request`、`bong:agent_ui_close`、`bong:agent_ui_response` 的 request shape、按钮回执、dismiss、关闭和负向路径；P0R 必须把这些 helper 重定位为 semantic driver 的兼容实现，并标出仍依赖 raw XML 的路径。raw XML 路径在新 semantic surface 未完成前只能作为 legacy regression，不能成为新 adapter 的验收门。
 
+## HUD SVG 表现后端契约（R7 P4/P5）
+
+R7 的最终目标是：HUD 的几何表现统一由 SVG 资源描述，NanoSVG 只负责解析，自有 tessellator 负责把路径变成不可变 mesh，最终仍在 Minecraft 1.20.1 的 GUI 渲染阶段提交。HUD 的 Store、semantic planner、C2S intent、S2C payload 和 `HudRenderLayer` 不依赖 NanoSVG；SVG 是可替换的表现后端，不是业务模型。
+
+### 1. 生产链路与类型边界
+
+```text
+Store / server snapshot
+  -> BongHudOrchestrator（semantic frame）
+  -> HudRenderBackend
+  -> SvgHudAssetRegistry（白名单资源 + 缓存）
+  -> NanoSvgParser（只解析）
+  -> SvgDocument（不可变 Java 数据）
+  -> SvgTessellator（只做几何）
+  -> SvgMesh（不可变三角形）
+  -> MinecraftGuiMeshEmitter（DrawContext GUI buffer）
+```
+
+- `HudRenderBackend`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 是 R7-owned 类型，签名、线程约束和失败语义冻结在 `client/src/test/resources/bong/ui/ui-svg-hud-contract.tsv`。
+- `NanoSvgParser` 的 public API 不暴露 native pointer、arena、C struct 或 parser 生命周期；native 结果必须在 adapter 内复制成受约束的 Java 数值，native 解析器不得直接触碰 `DrawContext`、`RenderSystem` 或 OpenGL。
+- `SvgHudAssetRegistry` 只接受 `assets/bong-client/svg/hud/` 下的资源和显式 manifest；拒绝 `..`、外部 URI、网络 URL、`DOCTYPE`/`ENTITY`、超出大小/节点/曲线段/顶点预算的资源。资源重载时完成 parse+tessellate，渲染帧只读取 immutable cache。
+- dynamic HUD 值通过受限 binding（颜色、opacity、visibility、transform、clip 范围和 progress）注入 mesh；禁止每帧字符串拼 SVG、重新 parse 或重新 tessellate。动态文字保留 `DrawContext`/`TextRenderer` 提交，物品图标保留 Minecraft GUI item renderer；两者属于明确的 GUI 合规例外，不得回流到 planner。
+
+### 2. NanoSVG/native 交付边界
+
+- P4 必须落一个可审计的 NanoSVG adapter 和 native loader：固定 NanoSVG 版本、源码许可证、ABI 版本、资源校验和加载错误诊断；至少打包 Linux x86_64、Linux aarch64、Windows x86_64、macOS x86_64、macOS arm64 五个平台，平台库不存在或 ABI 不匹配时 fail closed 并给出可定位日志，不静默切换到另一套 SVG parser。
+- native 库只能由 Fabric client 在受控资源路径解包后加载；不得允许任意路径、环境变量或网络内容指定 native library。JNI 层只提供 parser 函数，所有 tessellation、mesh 生命周期和 GUI 提交留在 Java 侧。
+- NanoSVG 的文本、image、filter、mask、foreignObject、gradient、外部 stylesheet 等不在 V1 支持范围；资源校验必须明确拒绝或记录 unsupported，而不是生成半成品 mesh。路径子集至少覆盖 `path`、`rect`、`circle`、`ellipse`、`polygon`、transform、opacity、fill-rule、stroke、join、cap、洞和 cubic bezier。
+
+### 3. Minecraft GUI 提交约束
+
+- emitter 只能接收 `DrawContext`、当前 GUI `MatrixStack` 和已缓存 `SvgMesh`；禁止世界坐标、`VertexConsumerProvider` 的实体 layer、独立 framebuffer、浏览器/Canvas/NanoVG、直接自建 OpenGL program 或 `RenderSystem` draw call。
+- 1.20.1 的 `RenderLayer.getGui()` 是 `POSITION_COLOR + QUADS`，不是三角形 buffer。V1 emitter 必须把每个 tessellated triangle `(a,b,c)` 编码为退化 quad `(a,b,c,c)`，经 `context.getVertexConsumers().getBuffer(RenderLayer.getGui())` 提交，并在 `DrawContext.draw(...)` 边界内批量 flush；不得把三角形直接塞进 QUADS buffer。
+- GUI layer 的 alpha、depth、blend、z 顺序必须沿用 Minecraft GUI phase；`HudRenderLayer` 的现有顺序是唯一 layer order，mesh 不能靠浮点 z 或世界深度重排。发射器必须拒绝 NaN/Infinity、越界坐标和超过顶点预算的 mesh。
+- `BongHud.renderCommands` 最终只负责收集 frame、应用 `ScreenHudVisibility` 和调用 `HudRenderBackend`；P5 完成后不得再按 `isRect`、`isTexturedRect`、`isEdgeVignette` 等旧 primitive 分支直接画 HUD。
+
+### 4. 全量迁移与删除门
+
+- `ui-svg-hud-inventory.tsv` 逐行登记全部 62 个 `HudRenderLayer`、46 个 `*HudPlanner`、直接 HUD overlay（爆脉、虚蚀、幻觉、共鸣锁等）、对应 SVG asset、dynamic binding、文字/物品 GUI 例外和测试 owner；允许多个 layer 复用同一 SVG asset，但每个 layer 必须有独立可核验 binding。
+- P4 只允许首个真实 layer（优先已恢复 main path 的 `QI_RADAR` 或同等复杂 layer）接入 `SvgHudBackend`，同时保留旧 backend 作为受测迁移过渡；过渡 fallback 只能在 P4/P5 中存在，不能进入最终归档状态。
+- P5 必须让 inventory 中所有 layer 和直接 overlay 经过同一个 backend，迁移所有 planner 的 semantic output，补齐 malformed/unsupported/native unavailable/tessellation failure/资源重载/visibility/lifecycle 分支测试，并删除旧的逐组件 DrawContext shape path、测试专用 `renderSurface` 以及生产 fallback。删除前必须有旧/新截图 parity 证据和全量 inventory 对拍，不能以“主 HUD 看起来正常”代替。
+
 ## 6. 阶段总览
 
 - ✅ 2026-07-30 **旧 P0 盘点基线**：迁移前真实 Screen **29** 个、92 fill、15 clearChildren、keybind 冲突、R2/R6 ownership fixture 已存在；仅 docs/tests/resources，未改变 production behavior。后续已删除一个退役 Screen，当前盘点为 28 个。
@@ -338,20 +382,20 @@ bot e2e 分三层记录：
 - ✅ 2026-08-26 **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy`；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake 和 `StoreUiStateSource`；contract、intent、state、headless 包均未依赖 owo、vanilla widget、Minecraft 或具体 UI 库。
 - ✅ 2026-08-27 **P2 owo XML adapter + bootstrap reference slice**：唯一 owo XML host、Craft wide/compact 本地模板、host 生命周期、分阶段 bootstrap 和真实 Fabric/owo 截图/交互门均已落地；Store/Intent 解耦留给 P3。
 - ✅ 2026-08-30 **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
-- ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy**：将 6 个 vanilla Screen 和剩余 12 个 owo CODE Screen 全部重写为 owo XML，连同现有 2 个 XML_MODEL Screen 一并纳入唯一宿主；`CraftScreen` 已由 P2 完成 XML host 规范化，P3 继续处理其 semantic state/intent 边界。迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放。
+- ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy + SVG HUD 后端 vertical slice**：将 6 个 vanilla Screen 和剩余 12 个 owo CODE Screen 全部重写为 owo XML，连同现有 2 个 XML_MODEL Screen 一并纳入唯一宿主；`CraftScreen` 已由 P2 完成 XML host 规范化，P3 继续处理其 semantic state/intent 边界。迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放；同时落地 NanoSVG parser/native adapter、不可变 `SvgDocument`/`SvgMesh`、自有 tessellator、Minecraft GUI emitter、runtime SVG 资源白名单和首个真实 HUD layer 接线。
 - ⬜ **P5 InspectScreen tab-first 拆解**：shell 只做一次 Store intake、一次 subscription scope 和交互 arbitration；tab panel 只接 immutable ViewModel + intent callback；不与 R10 server inventory 内部重排同窗口。
 - ⬜ **P6 Insight/HUD/Bootstrap 收口**：`offer_id` 保留到 ViewModel/Store/Screen；exact offerId settlement；Sparring invite 只消费 server-authoritative combat snapshot；恢复 `BongHudOrchestrator` qi radar main path；完成剩余 UI bootstrap registry 迁移。
-- ⬜ **P7 全量验收 + 归档**：semantic/headless contract、source gate、Java 17 build、bot UI roundtrip、UI C2S smoke、reconnect freshness、resolution/input geometry matrix、真实客户端五大屏回归全部通过后，补 Finish Evidence 并归档被完整吸收的计划。
+- ⬜ **P7 全量验收 + 归档**：semantic/headless contract、source gate、Java 17 build、bot UI roundtrip、UI C2S smoke、reconnect freshness、resolution/input geometry matrix、真实客户端五大屏回归全部通过；`ui-svg-hud-inventory.tsv` 的 62 个 layer 和直接 overlay 全部命中同一 `HudRenderBackend`，并完成旧 primitive path、`renderSurface` 与生产 fallback 删除后，补 Finish Evidence 并归档被完整吸收的计划。
 
 ## 7. 分阶段交付物与验收抓手
 
 ### P0R — contract rebase + semantic/owo migration gate（ZERO production behavior change）
 
-- **模块**：`client/ui/{contract,state,intent,bootstrap}/` 的契约 fixture（含 `UiStateSourceMode`、`UiSurfaceProjection`、`UiActionRegistry`、`UiViewport`）；长期保留 `ui-contract.tsv`、`screen-adapters.tsv`、`store-state-sources.tsv`、`intent-boundary.tsv`、`ui-dependency-allowlist.tsv`、`ui-bootstrap-modules.tsv`、`semantic-surface.tsv`、`viewport-matrix.tsv` 和 `ui-backend-capabilities.tsv`。
+- **模块**：`client/ui/{contract,state,intent,bootstrap}/` 的契约 fixture（含 `UiStateSourceMode`、`UiSurfaceProjection`、`UiActionRegistry`、`UiViewport`）；长期保留 `ui-contract.tsv`、`screen-adapters.tsv`、`store-state-sources.tsv`、`intent-boundary.tsv`、`ui-dependency-allowlist.tsv`、`ui-bootstrap-modules.tsv`、`semantic-surface.tsv`、`viewport-matrix.tsv`、`ui-backend-capabilities.tsv`、`ui-svg-hud-contract.tsv` 和 `ui-svg-hud-inventory.tsv`。
 
-- **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory；冻结 semantic surface 的必需 identity/revision/action 字段和 legacy raw XML 隔离；登记 `UiDriver` 外部接口；冻结 `OWO` 唯一 production backend capability、`MIN_SUPPORTED_VIEWPORT`、逻辑/physical 坐标转换和 odd-resolution matrix。
+- **交付**：29 Screen adapter classification、UI import dependency rules、Store subscription semantics、Intent local-transport semantics、BongClient UI bootstrap module inventory；冻结 semantic surface 的必需 identity/revision/action 字段和 legacy raw XML 隔离；登记 `UiDriver` 外部接口；冻结 `OWO` 唯一 production backend capability、`MIN_SUPPORTED_VIEWPORT`、逻辑/physical 坐标转换和 odd-resolution matrix；登记 62 个 HUD layer、46 个 planner、直接 overlay 与 SVG backend owner。
 
-- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryContractTest`、`R7StoreStateSourceContractTest`、`R7BackendCapabilitiesContractTest`、`R7SemanticViewportContractTest`；focused fixture 从 production source 派生并提供具体文件/符号诊断。全树 production digest 仅作为 P0R 一次性历史举证，不作为后续阶段的长期门禁。
+- **测试**：`R7FoundationContractTest`、`R7ScreenInventoryContractTest`、`R7UiDependencyContractTest`、`R7BootstrapInventoryContractTest`、`R7StoreStateSourceContractTest`、`R7BackendCapabilitiesContractTest`、`R7SemanticViewportContractTest`；focused fixture 从 production source 派生并提供具体文件/符号诊断。全树 production digest 仅作为 P0R 一次性历史举证，不作为后续阶段的长期门禁。SVG backend 的 parser/tessellator/emitter contract 在 P4 单独验证，不能用全树 digest 代替。
 
 长期门禁只覆盖 R7-owned 的 screen、state、intent、bootstrap、semantic 和 viewport 接缝；客户端其他资源、并行 PR 新增的 production 文件以及无关美术资产不属于 R7 contract drift。若需要证明某次阶段确实没有生产变更，应在该阶段单独生成一次性审计证据，不更新长期 fixture。
 
@@ -403,11 +447,11 @@ bot e2e 分三层记录：
 - **身份与会话**：Trade picker 只接受当前 authoritative inventory 中明确的 `instance_id`，选择对象消失时不自动换选；Loot panel 按 `session_id` 卸载旧实例，禁止跨会话继续发送 move/close。
 - **测试结果**：定向 P3 JUnit 套件 15 条通过；同一 Gradle 任务额外执行的 Fabric GameTest 门 3 条通过；完整 `./gradlew test build` 通过，5044 条 JUnit 测试、0 failures、0 errors；未修改 server、agent/schema、protobuf、Redis key 或 wire shape。
 
-### P4 — 全 Screen、keybind、线程与 open policy
+### P4 — 全 Screen、keybind、线程、open policy 与 SVG HUD vertical slice
 
-- **模块**：28 个 Screen（6 个 vanilla 重写 + 12 个剩余 owo CODE XML 化 + 8 个既有 owo XML 模板 + 2 个 XML_MODEL）、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`fill100-inventory.tsv` 相关站点。
-- **交付**：在已有 `BongKeybindRegistry` 全局注册和冲突校验基础上，补齐剩余 production keybind constructor 覆盖；28 个 Screen 全部通过 owo XML template registry 接入并保留 adapter classification、scope owner；2 个现有 XML/runtime 入口也必须收口到本地 template；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定；所有 Screen 使用 `UiLayoutPolicy`，不在 controller 写死 viewport px。
-- **测试**：source gate 禁止 raw network/sender imports、vanilla Screen/widget imports 和 owo CODE root；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复组件或订阅；Java 17 full gate。
+- **模块**：28 个 Screen（6 个 vanilla 重写 + 12 个剩余 owo CODE XML 化 + 8 个既有 owo XML 模板 + 2 个 XML_MODEL）、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`fill100-inventory.tsv` 相关站点；`client/src/main/java/com/bong/client/hud/svg/**` 的 NanoSVG/native adapter、asset registry、`SvgDocument`/`SvgMesh`、tessellator、GUI emitter 与首个真实 HUD layer。
+- **交付**：在已有 `BongKeybindRegistry` 全局注册和冲突校验基础上，补齐剩余 production keybind constructor 覆盖；28 个 Screen 全部通过 owo XML template registry 接入并保留 adapter classification、scope owner；2 个现有 XML/runtime 入口也必须收口到本地 template；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定；所有 Screen 使用 `UiLayoutPolicy`，不在 controller 写死 viewport px；同时接入首个真实 HUD layer 的 `SvgHudBackend`，保留旧 backend 仅作受测迁移过渡。
+- **测试**：source gate 禁止 raw network/sender imports、vanilla Screen/widget imports 和 owo CODE root；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复组件或订阅；`NanoSvgParserTest`、`SvgTessellatorTest`、`MinecraftGuiMeshEmitterTest` 覆盖白名单、malformed/native failure、曲线/洞/stroke/fill-rule/transform/opacity、NaN/Infinity/预算拒绝和 triangle→degenerate-quad；Java 17 full gate。
 - **阻塞点状态（2026-08-30）**：`combat_hud_state.combat_active` 已由 server `CombatState.in_combat_until_tick` 计算，经 proto、Java handler/store 接入；`SparringInviteScreenBootstrap` 仅消费 `authoritativeSnapshot().combatActive()`，缺少合法权威快照时返回 `UNKNOWN` 并 fail closed。该项解除，但 P4 其余 Screen/keybind/thread/open/scale 交付仍未完成。
 - **边界**：R6 receive boundary 不重复 marshal；combat snapshot 缺失时 social policy fail closed。
 
@@ -418,11 +462,11 @@ bot e2e 分三层记录：
 - **测试**：tab switch 不新增 listener；旧 listener exactly-once close；drag/drop、tooltip、context overlay 跨 tab 行为不变；list identity/selection/scroll 保留；P3 迁移的 sender import gate继续通过。
 - **边界**：不等待、不改 R10 server inventory core，只守现有 view-model/wire contract。
 
-### P6 — Insight/HUD/bootstrap 收口
+### P6 — Insight/HUD/bootstrap 收口与全量 SVG 迁移
 
-- **模块**：`InsightOfferHandler`、`HeartDemonOfferHandler` 的窄转换接缝、`InsightOfferViewModel/Store/Screen/Bootstrap`、`SparringInviteScreenBootstrap`、`BongHudOrchestrator`、剩余 UI bootstrap。
-- **交付**：`offer_id` 不丢失；distinct offer + reused trigger 不合并；exact offerId claim/compare-and-clear exactly-once；social invite 读取 server-authoritative combat snapshot；qi radar main path 恢复；UI registry 清单与 BongClient call set 收口。
-- **测试**：`insight-settlement.tsv` 全 terminal causes、stale A/duplicate callback 不影响 B、combat notify/silent/open/expire、缺 combat producer fail closed、凝脉及以上 `HudRenderLayer.QI_RADAR` 与 negative-qi/TSY false-signal/nearby markers。
+- **模块**：`InsightOfferHandler`、`HeartDemonOfferHandler` 的窄转换接缝、`InsightOfferViewModel/Store/Screen/Bootstrap`、`SparringInviteScreenBootstrap`、`BongHudOrchestrator`、剩余 UI bootstrap，以及 `ui-svg-hud-inventory.tsv` 登记的全部 layer/overlay。
+- **交付**：`offer_id` 不丢失；distinct offer + reused trigger 不合并；exact offerId claim/compare-and-clear exactly-once；social invite 读取 server-authoritative combat snapshot；qi radar main path 恢复；UI registry 清单与 BongClient call set 收口；62 个 layer 和直接 overlay 统一经过同一个 `HudRenderBackend`，动态文字/物品图标保留明确的 Minecraft GUI 例外。
+- **测试**：`insight-settlement.tsv` 全 terminal causes、stale A/duplicate callback 不影响 B、combat notify/silent/open/expire、缺 combat producer fail closed、凝脉及以上 `HudRenderLayer.QI_RADAR` 与 negative-qi/TSY false-signal/nearby markers；inventory 全量对拍、malformed/unsupported/native unavailable、资源重载、visibility/lifecycle 和 SVG 截图 parity。
 - **跨仓库**：`InsightDecision` 当前仅 `trigger_id`/`choice_idx`；未新增 offer_id wire，不宣称 wire-level offer isolation。
 
 ### P7 — 验收与归档
@@ -456,8 +500,9 @@ bot e2e 分三层记录：
 5. vanilla 与 owo 是否共享同一个 Screen controller/view-model 契约？
 6. InspectScreen 是否按 tab-first 拆解，是否与 R10 server inventory 同窗口？
 7. `ScreenOpenPolicy` 的 passive invite 是否战斗中延迟、通知一次，还是立即丢弃？
+8. HUD 是否将 `docs/svg` 设计稿升级为 runtime SVG，以及 NanoSVG/native、tessellation 和 Minecraft GUI 提交边界如何固定？
 
-全部在下节收口；原问题保留作历史回溯，实施以 §9.1 为准。
+全部在下节收口；原问题保留作历史回溯，实施以 §9.1/§9.2 为准。
 
 ## §9.1 决议（pre-P0 contract rebase，2026-08-24）
 
@@ -531,11 +576,22 @@ Insight lifecycle 必须证明 stale offer A 不能清除 offer B；精确 `offe
 
 **落点**：`client/src/main/java/com/bong/client/ui/contract/UiViewport.java`、`UiLayoutPolicy.java`、`ui/adapter/owo/**`；本 plan §4.8、P2/P4/P7。
 
+## §9.2 决议（R7 HUD 范围扩展，2026-09-02）
+
+### #10 HUD 统一 SVG 表现后端，R7 内一次性收口
+
+**决议**：
+1. `docs/svg` 不再只是非约束草图；R7 P4/P5 将 HUD 生产表现迁为 runtime SVG。NanoSVG 仅解析受限 SVG 子集，自有 `SvgTessellator` 生成不可变 `SvgMesh`，业务状态和 planner 不依赖 parser/native。
+2. 最终渲染严格落在 Minecraft GUI：`DrawContext` + GUI `MatrixStack` + `VertexConsumerProvider.Immediate` + `RenderLayer.getGui()`；因 1.20.1 GUI layer 使用 `POSITION_COLOR + QUADS`，triangle 统一编码为退化 quad 后提交。禁止独立 framebuffer、世界渲染 layer、浏览器/Canvas/NanoVG、直接 OpenGL program。
+3. P4 交付 parser/native loader、asset registry、tessellator、emitter 和首个真实 layer；P5 完成 62 个 layer 与所有直接 HUD overlay，删除旧 primitive DrawContext path、`renderSurface` 和生产 fallback。动态文字与物品图标是明确的 GUI 合规例外，继续走 Minecraft 字体/item API。
+
+**落点**：`client/src/main/java/com/bong/client/BongHud.java:56-257`；`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:124-510`；`client/src/main/java/com/bong/client/hud/HudRenderLayer.java:3-80`；`client/src/test/resources/bong/ui/ui-svg-hud-contract.tsv`；`client/src/test/resources/bong/ui/ui-svg-hud-inventory.tsv`；本 plan《HUD SVG 表现后端契约（R7 P4/P5）》。
+
 ## 10. 实施工作流
 
 ### 10.1 适用边界
 
-纯 client 逻辑与 UI adapter 重构，不产出 NBT、worldgen layout、模型或贴图，不适用视觉资产三轮打磨。每个逻辑单元使用中文 atomic commit，并带真实执行模型 `Model:` trailer；不改 `docs/worldview.md`、`docs/library/`、schema shape 或依赖版本。
+纯 client 逻辑与 UI adapter 重构，不产出 NBT、worldgen layout、模型或贴图；允许新增 runtime SVG 资源、NanoSVG native adapter、Java tessellator、GUI emitter 及截图 fixture。SVG HUD 资源按视觉资产纪律执行 3 轮 screenshot review，终轮 commit 需带 `<PROMISE>`。每个逻辑单元使用中文 atomic commit，并带真实执行模型 `Model:` trailer；不改 `docs/worldview.md`、`docs/library/`、schema shape 或依赖版本。
 
 ### 10.2 多 PR 依赖顺序
 
@@ -543,10 +599,10 @@ Insight lifecycle 必须证明 stale offer A 不能清除 offer B；精确 `offe
 2. **PR-2 / P1 library-neutral core**：`ui/contract`、state adapter、intent result、reconciler、bootstrap graph fake；不迁生产 Screen。
 3. **PR-3 / P2 owo XML adapter reference**：唯一 owo XML host；以 `CraftScreen` 为第一条垂直切片；UI registry 只登记 `OWO` 和 resolution/input geometry gate。
 4. **PR-4 / P3 state/intent boundary A**：semantic surface + owo XML vertical slice、`SemanticUiDriver` bot roundtrip，以及 Alchemy/Craft/Trade/Loot；迁移直接 sender/handler import，wire 变更只走 R6/schema atomic amendment。
-5. **PR-5 / P4 full Screen/input/scale policy**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移。
-6. **PR-6 / P5 Inspect split**：tab-first shell/panels，行为不变。
-7. **PR-7 / P6 integration + acceptance**：Insight/HUD/bootstrap 收口，完整 client gate、UI C2S smoke、reconnect evidence。
-8. **PR-8 / P7 archive**：仅在所有阶段和被吸收计划具备 Finish Evidence 后归档。
+5. **PR-5 / P4 full Screen/input/scale policy + SVG backend slice**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移；落地 NanoSVG/native adapter、asset registry、不可变 document/mesh、自有 tessellator、GUI emitter 和首个真实 HUD layer。
+6. **PR-6 / P5 Inspect split + 全量 HUD 表现迁移**：tab-first shell/panels，行为不变；按 `ui-svg-hud-inventory.tsv` 迁移 62 个 layer、直接 overlay 和 `HudRenderCommand` primitive adapter，保留文字/物品 GUI 例外。
+7. **PR-7 / P6 parity、极端分辨率和删除旧路径**：完成 Insight/HUD/bootstrap 收口、SVG screenshot parity、`320x240`/`401x241`/`683x384`/超宽/竖屏和 GUI scale 1-4 验证，删除旧 primitive DrawContext path、`renderSurface` 和生产 fallback。
+8. **PR-8 / P7 archive**：所有阶段、SVG acceptance 和被吸收计划具备 Finish Evidence 后归档。
 
 前一 PR 的最终 HEAD 未通过 Java 17 gate、fresh-context validator、review、e2e 并 merge 前，不得开始下一阶段。任何 HEAD 变化都使旧 validator/e2e 证据失效。
 
@@ -582,6 +638,7 @@ Agent(
 - `UiDriver` 与 Java client 共享 action registry、参数校验、`ClientRequestProtocol` 编码和 authoritative receipt；bot semantic roundtrip 能覆盖 UI 功能而不依赖渲染/输入设备；local transport accepted 与 server result 分离。
 - `UiViewport`/`UiLayoutPolicy` 在固定最低、奇怪、超宽、超窄和竖屏矩阵下通过 no-overlap/no-clipping/in-bounds/text-fit/hit-test/coordinate-roundtrip；GUI scale、window scale 和 owo XML input mapping 对拍。
 - `BongClient` UI/HUD/keybind module registry 的 owner/dependency/order/idempotence pin 全绿；network/render/audio/debug registration 未被误收编。
+- 62 个 `HudRenderLayer`、46 个 planner 和全部直接 HUD overlay 均经同一 `HudRenderBackend`；奇怪分辨率 `320x240`、`401x241`、`683x384`、超宽、竖屏及 GUI scale 1-4 的 screenshot harness 证明 framebuffer 非空、mesh bounds 不越界、alpha/layer order 正确；旧 primitive DrawContext 分支、`renderSurface` 与生产 fallback 已删除。
 - Java 17 full gate、`ui_c2s_smoke`、`reconnect_state_freshness` 及必要 `runClient` 真实 Screen 回归通过。
 
 终态补充 `## Finish Evidence`：阶段落点、关键 commit、测试命令/数量、server/agent/client symbol 对拍、遗留项；全部阶段完成后迁入 `docs/finished_plans/plan-refactor-client-ui-base-v1.md`。
