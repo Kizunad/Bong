@@ -25,7 +25,7 @@ import com.bong.client.hud.HudTextHelper;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.hud.SvgHudFrame;
 import com.bong.client.hud.SvgHudFramePlanner;
-import com.bong.client.hud.svg.SvgHudBackend;
+import com.bong.client.hud.svg.HudRenderBackend;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.tiandao.TiandaoPresenceHudPlanner;
@@ -68,6 +68,11 @@ public class BongHud {
     private static final int TOAST_VERTICAL_PADDING = 4;
 
     public static void render(DrawContext context, float tickDelta) {
+        render(context, tickDelta, HudRenderBackend.NOOP);
+    }
+
+    /** Fabric 回调入口；具体表现后端由组合根注入，便于替换 SVG 实现。 */
+    public static void render(DrawContext context, float tickDelta, HudRenderBackend backend) {
         MinecraftClient client = MinecraftClient.getInstance();
         long nowMillis = System.currentTimeMillis();
         ClientConnectionStatusStore.tick(Util.getMeasuringTimeMs(), nowMillis);
@@ -88,7 +93,7 @@ public class BongHud {
             nowMillis,
             () -> captureHudFrameInput(client, nowMillis),
             (commands, visibility, svgHudFrame) ->
-                renderCommands(context, client, commands, visibility, nowMillis, svgHudFrame)
+                renderCommands(context, client, commands, visibility, nowMillis, svgHudFrame, backend)
         );
     }
 
@@ -166,7 +171,8 @@ public class BongHud {
         List<HudRenderCommand> commands,
         ScreenHudVisibility visibility,
         long nowMillis,
-        SvgHudFrame svgHudFrame
+        SvgHudFrame svgHudFrame,
+        HudRenderBackend backend
     ) {
 
         for (HudRenderCommand command : commands) {
@@ -264,7 +270,7 @@ public class BongHud {
         }
 
         // SVG HUD 放在全屏 tint/vignette 之后，避免视觉反馈层覆盖雷达造成闪烁。
-        SvgHudBackend.renderProduction(context, client, visibility, svgHudFrame);
+        backend.render(context, client, visibility, svgHudFrame);
 
         // HUD 回调结束时一次性提交所有 GUI layer，避免 SVG 与其他 overlay 交错 flush。
         context.draw();
