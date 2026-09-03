@@ -245,6 +245,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skill_runtime_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skill_runtime_unit` target 对应 commit 为 `17ee3cf81`（2026-09-02）。本条仅记录 P2-08 进度；P2 总体、P3、P4 仍未完成。
 
+### P2-10 rift_portal（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/world/rift_portal.rs` 原 `#[cfg(test)] mod tests` 的全部 3 个测试外置到 `server/tests/unit/world/rift_portal_test.rs`，并新增 `server/Cargo.toml` 的显式 `rift_portal_unit` target；生产文件不再包含该测试体，运行时代码、fixture 内容和其它测试路径未改动。
+- **行为与定向验证**：保留 `rift_kind_extract_table_matches_worldview`、`rift_kind_entry_exit_permissions`、`default_tsy_portals_fixture_loads` 原测试名、fixture、断言和行为；`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test rift_portal_unit'`：`3 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用已有公开 API `RiftKind::{base_extract_ticks, allows_entry, allows_exit}`、`load_tsy_portals_from_path` 及公开 registry 数据；无需新增 public/test seam，未复制生产逻辑，未扩大无关可见性。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`rift_portal_unit` 为 `3 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `rift_portal_unit` target 对应 commit 为 `e170e26e1`（2026-09-03）。本条仅记录 P2-10 进度；P2 总体、P3、P4 仍未完成。
+
 ### P2-11 environment overlay（✅ 2026-09-03）
 
 - **范围与落点**：仅将 `server/src/world/environment_overlay.rs` 原 `#[cfg(test)] mod tests` 的 9 个测试及 `zone_at`、`overworld_zone`、`spawn_default` 三个必要 fixture/helper 外置到 `server/tests/unit/world/environment_overlay_test.rs`，并新增 `server/Cargo.toml` 的显式 `environment_overlay_unit` target。生产文件删除全部 inline test body；未改动态雾堤运行时、AABB 相交规则、wire、schema、Redis、client、AV、qi ledger 或其它模块。
