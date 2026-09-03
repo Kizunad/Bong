@@ -128,7 +128,8 @@ public final class PreviewSession {
             return;
         }
         // 关 HUD 避免聊天/toast 字遮挡
-        client.options.hudHidden = true;
+        // SVG 截图 fixture 需要保留真实 HUD；普通地形预览仍隐藏 HUD 避免遮挡。
+        client.options.hudHidden = !"1".equals(System.getenv("BONG_SVG_HUD_PREVIEW"));
         if (client.getToastManager() != null) {
             client.getToastManager().clear();
         }
