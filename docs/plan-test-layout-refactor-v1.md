@@ -284,6 +284,13 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - 对拍至少覆盖退出码、测试计数、失败 suite、原生 Cargo 输出和 `.sisyphus/evidence/**`；差异必须归因后才能切换 job 命令。
 - Client/Schema/Tiandao 仅接入其已有 canonical path 和原生命令，不借 P3 改源测试目录；统一报告只索引 Gradle/JUnit、Cargo、Vitest 和脚本原生产物，不强制新增无消费者的 JUnit 转换。
 
+### P3-01 server-test shadow（⏳ 2026-09-03）
+
+- **范围与落点**：仅在 `.github/workflows/e2e.yml` 的 `server-test` job 增加 `../scripts/test-all.sh --profile unit --suite server` shadow；原有 `working-directory: server` 的 `../scripts/build-token.sh cargo test` 仍执行，未改 `needs`、25 分钟 timeout、`CARGO_TARGET_DIR`、`schema-dist` 下载、`evidence-server-test` 上传或下游 DAG/cleanup 语义。
+- **run-private 对拍证据**：每次 CI 运行写入 `.sisyphus/evidence/test-all/server-shadow/<run-id>/`，shadow 保留 `summary.json`/`summary.tsv`、suite 原生日志；native 保留完整 `cargo test` 输出与命令/状态/退出码；`comparison.json`/`comparison.tsv` 记录 wrapper process/suite exit code、native exit code、按 Cargo target 汇总的 passed/failed/ignored/measured/filtered-out 计数、失败 suite/测试以及 `native-report.diff`。
+- **失败传播**：shadow 与 native 均不后台执行；native 输出通过 `PIPESTATUS[0]` 取真实命令退出码，tee/报告错误分别失败；比较步骤不吞失败，native 非零优先按其真实码退出，native 成功而 wrapper 失败时传播 wrapper 码，双方成功但报告不一致时返回比较失败码。
+- **提交证据**：待本分支最终主线合并后的定向 gate、完整 server gate、CI/e2e 与 Kody review 结果补录；P3 仍未完成，尚未切换或删除原生 job 命令。
+
 ## P4 — 剩余 Rust inline tests 分批外置与归零（⬜）
 
 - 根据 P0 grep 快照维护 `inline-test-inventory.tsv`：模块、测试数量、目标路径、私有 seam、责任人、迁移 PR、对拍命令、状态。
