@@ -59,6 +59,10 @@ name = "rift_portal_unit"
 path = "tests/unit/world/rift_portal_test.rs"
 
 [[test]]
+name = "skin_packet_unit"
+path = "tests/unit/skin/packet_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
