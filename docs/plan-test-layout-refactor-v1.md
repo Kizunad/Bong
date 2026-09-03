@@ -261,6 +261,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12664 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`environment_overlay_unit` 为 `9 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
 - **提交证据**：代码、外置测试与 `environment_overlay_unit` target 对应 commit 为 `4bc898e0d`（2026-09-03）。本条仅记录 P2-11 进度；P2 总体、P3、P4 仍未完成。
 
+### P2-13 skin packet（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/skin/packet.rs` 原 `#[cfg(test)] mod tests` 的 2 个测试及 `test_skin` helper 外置到 `server/tests/unit/skin/packet_test.rs`，并新增 `server/Cargo.toml` 的显式 `skin_packet_unit` target；生产文件删除 inline test body，未改 `NpcPlayerInfoUpdateS2c`/`NpcPlayerInfoRemoveS2c` 运行时编码、MC 1.20.1 packet ID、skin 协议或其它模块。
+- **行为与协议对拍**：保留 `player_info_packet_matches_protocol_field_order`、`player_info_packet_id_is_mc_1_20_1_player_list_update` 原测试名、`test_skin` fixture、完整协议字节断言、编码字段顺序、packet ID 与错误语义；迁移前 `skin::packet::tests` 为 `2 passed / 0 failed / 0 ignored`，迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test skin_packet_unit'` 为 `2 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用已有公开 `NpcPlayerInfoUpdateS2c`/`NpcPlayerInfoRemoveS2c` 的 `Encode`、`Packet::ID`、`SignedSkin`/`SkinSource` 与 Valence packet IDs；未新增 seam，未复制生产实现，未扩大无关可见性。
+- **完整 gate**：主线合并后按提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12654 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skin_packet_unit` 为 `2 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `skin_packet_unit` target 对应 commit 为 `b28d41c09`（2026-09-03）；本条仅记录 P2-13 进度，P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
