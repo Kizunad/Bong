@@ -261,6 +261,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12664 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`environment_overlay_unit` 为 `9 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
 - **提交证据**：代码、外置测试与 `environment_overlay_unit` target 对应 commit 为 `4bc898e0d`（2026-09-03）。本条仅记录 P2-11 进度；P2 总体、P3、P4 仍未完成。
 
+### P2-12 shader state（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/shader/mod.rs` 原 `#[cfg(test)] mod tests` 的全部 7 个测试外置到 `server/tests/unit/shader/state_test.rs`，并新增 `server/Cargo.toml` 的显式 `shader_state_unit` target；生产文件删除 inline test body，`shader_state_fields!` 宏、`ShaderStatePayload` 字段、`FIELD_NAMES`、JSON 序列化和 shader/client 行为均未改动。
+- **迁移对拍与行为**：保留 `default_all_zeros`、`serializes_to_valid_json`、`field_mut_all_known`、`field_mut_unknown_returns_none`、`field_names_count_matches_struct`、`field_mut_write_read_round_trip`、`deserializes_from_json` 原测试名、断言、边界和错误语义；迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test shader::tests --lib'` 为 `7 passed / 0 failed / 0 ignored`（`12651 filtered out`），迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test shader_state_unit'` 为 `7 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅使用既有公开 `bong_server::shader::ShaderStatePayload` 及其 `Default`、`to_json_bytes`、`field_mut`、`FIELD_NAMES` API；未新增 seam、扩大可见性或复制生产实现。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12649 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`shader_state_unit` 为 `7 passed / 0 failed / 0 ignored`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试与 `shader_state_unit` target 对应 commit 为 `f8c4bc9ff`（2026-09-03）。本条仅记录 P2-12 进度；P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
