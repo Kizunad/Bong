@@ -44,6 +44,11 @@ pub mod audio;
 #[allow(dead_code)]
 pub mod body_plan;
 pub mod botany;
+// cast：R9 P1 C-13 contract-first registration shape。这里只暴露 inert
+// declarations/ledger/consumer interface；Wave 2 atomic activation 前不得接入生产
+// producer，也不得把它当作现有 SkillRegistry 的第二条 live path。
+#[allow(dead_code)]
+pub mod cast;
 pub mod cmd;
 pub mod coffin;
 pub mod combat;

@@ -35,8 +35,36 @@ name = "processed_input_unit"
 path = "tests/unit/alchemy/processed_input_test.rs"
 
 [[test]]
+name = "server_readiness_unit"
+path = "tests/unit/server_readiness_test.rs"
+
+[[test]]
+name = "skill_runtime_unit"
+path = "tests/unit/skill/runtime_test.rs"
+
+[[test]]
+name = "environment_overlay_unit"
+path = "tests/unit/world/environment_overlay_test.rs"
+
+[[test]]
+name = "shader_state_unit"
+path = "tests/unit/shader/state_test.rs"
+
+[[test]]
 name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
+
+[[test]]
+name = "dimension_unit"
+path = "tests/unit/world/dimension_test.rs"
+
+[[test]]
+name = "rift_portal_unit"
+path = "tests/unit/world/rift_portal_test.rs"
+
+[[test]]
+name = "skin_packet_unit"
+path = "tests/unit/skin/packet_test.rs"
 
 [[test]]
 name = "workbench_reach_profile"

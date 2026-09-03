@@ -93,7 +93,10 @@ SEGMENTS = (
 )
 PIVOT_OF = {s[0]: s[1] for s in SEGMENTS}
 PART_OF = {s[0]: s[0].split("_")[0] for s in SEGMENTS}
-BODY_PIVOT = np.array([0.0, 12.0, 0.0])   # 腰点：body.* 的整体旋转绕它
+#: `body.*` 的旋转枢轴。逐字来自 `PlayerRendererMixin.applyBodyTransforms`：位移写的是
+#: `translate(x, y + 0.7, z)`，转完再 `translate(0, -0.7, 0)` —— 那对 ±0.7 就是枢轴
+#: （0.7 格 = 11.2px，实体原点在脚底，所以枢轴在腰），净位移正是 (x, y, z) 格。
+BODY_PIVOT = np.array([0.0, 11.2, 0.0])
 
 
 # ── 基础变换 ──────────────────────────────────────────────────────────────
@@ -132,11 +135,43 @@ def _axis_rot(axis: np.ndarray, angle: float) -> np.ndarray:
     ])
 
 
+#: `body.x/y/z` 的真实单位是**格**：`PlayerRendererMixin.applyBodyTransforms` 把值直接
+#: 喂给 `matrixStack.translate(x, y+0.7, z)`，那是实体空间，1 格 = 16 px。而本文件的
+#: 几何全是 px，也就是说**预览把 body 位移渲小了 16 倍**——`harvest_crouch` 全靠
+#: `body.y=0.3` 下蹲，渲出来只有 0.3px，一个名字就叫"蹲"的动画在预览里站得笔直。
+#:
+#: **明知是错的，为什么没改**：改成 16 之后 `DaggerBladeReadTest` 那四条刃向锁立刻
+#: 转红（刀尖过肩、刃指向身后、直刺不水平）。那不是测试的问题——是 `dagger_slash` /
+#: `dagger_stab` 用了 `body.x/y/z`，它们当年就是**照着这个渲小了 16 倍的预览**标定的，
+#: 换成真尺度后确实越界。要动它就得连那两条动画一起重调，属于另一件事，不该顺手夹带。
+#: 留在这里当作已定位的账：真值 16，现渲 1，差 16 倍，改它 = 重做匕首那两条。
+BODY_PX_PER_BLOCK_TRUE = 16.0
+
+
 def body_matrix(kfs, tick: float, body_disp_scale: float = 1.0) -> np.ndarray:
-    """`body.*` 的整体变换，Bedrock 空间。肢体和手持物都要左乘它。"""
+    """`body.*` 的整体变换，Bedrock 空间。肢体和手持物都要左乘它。
+
+    位移有两处已定位的偏差，都**没有**在这里改（理由分别见下）：
+
+    1. **量级差 16 倍**：见 `BODY_PX_PER_BLOCK_TRUE`。
+    2. **符号仍未定**——这里保留历史口径，不动。理由是两边证据打架，而这正是
+       `project_body_axis_preview_drift` 记下"符号存疑、动前先进游戏实证"的那一条：
+
+       - **源码推**：位移发生在 `setupRotations` RETURN，即 `scale(-1,-1,1)` **之前**
+         的实体空间（+Y 世界朝上）。模型的脸在 ModelPart 的 -z，而 scale 不翻 z，
+         所以那个空间里 +z 也是**身后**。推论：`body.y` 正 = 上、`body.z` 正 = 后。
+       - **资产反证**：仓库里四条名字自证方向的动画**全部相反**——`dash_forward`
+         峰值 `body.z=+0.30`、`fist_punch_right` 撞击 `+0.22`（conventions §12 原话
+         "前冲 lunge"，是人在游戏里看过之后写的）、`dodge_back` 峰值 `-0.50`、
+         `harvest_crouch` 下蹲 `body.y=+0.3`。四条一致地反过来。
+
+       四位作者同时写反、还有人在游戏里验过并写进正典，比"我这段空间推导有漏"要
+       不可信得多。所以**不假装这里已经定论**：`body.*` 的符号只能靠 `/anim test`
+       实机定，在那之前预览维持原样，凡铁采药刀那三条动画也一格 `body.*` 都不用。
+    """
     body = RA.sample_part(kfs, "body", tick)
     body_R = _rot(RA.part_rotation_matrix(body["pitch"], body["yaw"], body["roll"]))
-    # body.x/y/z 是位移不是点，只翻 y 的符号
+    # body.x/y/z 是位移不是点：y 翻号（Bedrock y 朝上）、z 翻号（Bedrock 身前是 -z）
     body_t = np.array([body["x"], -body["y"], body["z"]], float) * body_disp_scale
     return _aff(np.eye(3), body_t) @ _about(body_R, BODY_PIVOT)
 
@@ -146,6 +181,16 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
 
     组合顺序照 `render_animation.solve_skeleton` 的口径（body → part → bend），
     区别是那边只留关节点坐标，这里保留整条旋转链——摆 bbmodel 需要姿态不只是位置。
+
+    **part 的 x/y/z 是"把枢轴挪到哪儿"，不是"绕哪儿转"**。运行时那边
+    `ModelPart.translateAndRotate` 先 `translate(x,y,z)` 再转，而 cuboid 顶点存的是
+    **相对枢轴**的局部坐标，所以枢轴一挪整块跟着走（原版潜行就靠这个：`leg.z=4`
+    把两条腿整体往身后挪 4px 去接住前倾的胯）。本函数的几何却是按**静止枢轴**烘成
+    绝对坐标的，早先写成 `_about(R, 枢轴+偏移)` —— 那只是换了个旋转中心：展开是
+    `p + R(v − p)`，比正解 `p + R(v − p₀)` 多减了一个 `R·offset`，恰好把偏移抵消掉。
+    症状是**偏移完全不动画面**：`leg.z` 从 0 调到 5.3px，髋缝一格没变（实测 1.50 →
+    1.50），于是"腿往后挪接住胯"这条修法在预览里永远看不出效果，只能误判成没用。
+    正解是绕**静止枢轴** P₀ 转完再整体平移 D（ModelPart 的 +y 朝下，过桥时翻号）。
     """
     body_m = body_matrix(kfs, tick, body_disp_scale)
 
@@ -153,10 +198,10 @@ def segment_transforms(kfs, tick: float, body_disp_scale: float = 1.0) -> dict[s
     for name in PIVOT_OF:
         part = PART_OF[name]
         p = RA.sample_part(kfs, part, tick)
-        pivot_b = _pt(np.array(PIVOT_OF[name], float)
-                      + np.array([p["x"], p["y"], p["z"]], float))
+        pivot_b = _pt(np.array(PIVOT_OF[name], float))
+        offset_b = np.array([p["x"], -p["y"], p["z"]], float)
         R_part = _rot(RA.part_rotation_matrix(p["pitch"], p["yaw"], p["roll"]))
-        seg = _about(R_part, pivot_b)
+        seg = _aff(np.eye(3), offset_b) @ _about(R_part, pivot_b)
 
         if name.endswith("_lo"):
             # 下段：上段之后再绕 bend_center 转 bend 角。bendy-lib 的轴向量在

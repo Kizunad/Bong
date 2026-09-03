@@ -33,6 +33,10 @@ class LowerBodyGaitControllerTest {
             if (animId != null) {
                 BongAnimationRegistry.register(animId, minimalAnimation());
             }
+            Identifier carry = GaitVariants.resolve(gait, GaitVariants.HERB_KNIFE_IRON);
+            if (carry != null) {
+                BongAnimationRegistry.register(carry, minimalAnimation());
+            }
         }
     }
 
@@ -41,6 +45,81 @@ class LowerBodyGaitControllerTest {
         LowerBodyGaitController.resetForTests();
         AnimationLayerManager.resetForTest();
         BongAnimationPlayer.resetForTest();
+    }
+
+    @Test
+    void switchingWeaponInsideTheSameGaitSwapsTheAnimation() {
+        // 档位没变（一直 WALK），但手里从空手换成采药刀——只比档位会认为"没变化"
+        // 而不换动画，玩家走着走着手型不跟着刀走
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK, null);
+        assertEquals(GaitSelector.Gait.WALK.animId(),
+            LowerBodyGaitController.activeAnimIdForTests());
+
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.WALK, GaitVariants.HERB_KNIFE_IRON);
+
+        assertEquals(GaitVariants.resolve(GaitSelector.Gait.WALK, GaitVariants.HERB_KNIFE_IRON),
+            LowerBodyGaitController.activeAnimIdForTests(),
+            "同档位换武器必须切到携行变体");
+        assertEquals(GaitSelector.Gait.WALK, LowerBodyGaitController.activeGaitForTests(),
+            "档位本身没变");
+    }
+
+    @Test
+    void puttingTheWeaponAwaySwitchesBackToTheGlobalGait() {
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.WALK, GaitVariants.HERB_KNIFE_IRON);
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK, null);
+
+        assertEquals(GaitSelector.Gait.WALK.animId(),
+            LowerBodyGaitController.activeAnimIdForTests(),
+            "收刀后必须切回全局步态，手臂交还上层");
+    }
+
+    @Test
+    void sameGaitAndSameWeaponStillDoesNotRestart() {
+        // 反向锁：加了 animId 判据之后，"没变化就不重播"这条不能被顺手破坏
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.WALK, GaitVariants.HERB_KNIFE_IRON);
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.WALK, GaitVariants.HERB_KNIFE_IRON);
+
+        assertEquals(1, layerCount(stack), "同档位同武器连续 tick 必须复用已有层");
+    }
+
+    @Test
+    void gaitWithoutACarryVariantKeepsTheGlobalAnimationEvenHoldingTheKnife() {
+        // JOG 没有携行变体：拿着刀慢跑仍走全局步态，且不该被判成"变化了"反复重播
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.JOG, GaitVariants.HERB_KNIFE_IRON);
+
+        assertEquals(GaitSelector.Gait.JOG.animId(),
+            LowerBodyGaitController.activeAnimIdForTests(),
+            "无变体的档位应回落到全局步态");
+
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.JOG, GaitVariants.HERB_KNIFE_IRON);
+        assertEquals(1, layerCount(stack), "回落档位连续 tick 也不该重播");
+    }
+
+    @Test
+    void clearingActiveAlsoForgetsTheAnimId() {
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(
+            stack, playerId, GaitSelector.Gait.WALK, GaitVariants.HERB_KNIFE_IRON);
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.NONE, null);
+
+        assertNull(LowerBodyGaitController.activeAnimIdForTests(),
+            "停掉通道后 animId 必须一并清空，否则下次同 id 会被误判成'没变化'");
     }
 
     @Test

@@ -560,7 +560,6 @@ pub struct SkillScrollRequestParams<'w, 's> {
 
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
-const QI_COLOR_INSPECT_MAX_DISTANCE: f64 = 6.0;
 const GIVE_DAN_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
@@ -11175,20 +11174,121 @@ mod tests {
             .is_empty());
     }
 
+    fn qi_color_inspect_test_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.add_plugins(EntityPlugin);
+        register_request_app(&mut app);
+        app.insert_resource(CapturedQiColorInspectRequests::default());
+        app.add_systems(
+            Update,
+            capture_qi_color_inspect_requests.after(handle_client_request_payloads),
+        );
+        app
+    }
+
+    fn send_qi_color_inspect_payload(app: &mut App, observer: Entity, observed: &str) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: observer,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::QiColorInspect {
+                    v: 1,
+                    observed: observed.to_string(),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+    }
+
+    #[test]
+    fn qi_color_inspect_rejects_self_cross_dimension_and_malformed_targets_without_side_effects() {
+        let mut app = qi_color_inspect_test_app();
+        let (client_bundle, _helper) = create_mock_client("QiColorObserver");
+        let observer = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(observer).insert((
+            Position(DVec3::ZERO),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        let observed = app
+            .world_mut()
+            .spawn((
+                EntityKind::VILLAGER,
+                EntityId::default(),
+                Position(DVec3::new(1.0, 0.0, 0.0)),
+                OldPosition::new(DVec3::new(1.0, 0.0, 0.0)),
+                CurrentDimension(DimensionKind::Tsy),
+            ))
+            .id();
+
+        // EntityPlugin assigns the protocol ids that the C2S resolver is allowed to consume.
+        app.update();
+        let observer_id = app
+            .world()
+            .get::<EntityId>(observer)
+            .expect("the observer must have an authoritative protocol entity id")
+            .get();
+        let observed_id = app
+            .world()
+            .get::<EntityId>(observed)
+            .expect("the observed entity must have an authoritative protocol entity id")
+            .get();
+        let entity_count_before = app.world().entities().len();
+
+        send_qi_color_inspect_payload(&mut app, observer, &format!("entity:{observer_id}"));
+        send_qi_color_inspect_payload(&mut app, observer, &format!("entity:{observed_id}"));
+        send_qi_color_inspect_payload(&mut app, observer, "entity:not-a-number");
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<CapturedQiColorInspectRequests>()
+                .0
+                .is_empty(),
+            "self-target, cross-dimension, and malformed entity id denials must emit no QiColorInspectRequest"
+        );
+        assert_eq!(
+            app.world().entities().len(),
+            entity_count_before,
+            "QiColorInspect denials must not spawn or despawn ECS entities"
+        );
+        assert_eq!(
+            app.world()
+                .get::<Position>(observer)
+                .expect("observer position must remain present")
+                .get(),
+            DVec3::ZERO,
+            "QiColorInspect denials must not mutate the observer position"
+        );
+        assert_eq!(
+            app.world()
+                .get::<CurrentDimension>(observed)
+                .expect("observed dimension must remain present")
+                .0,
+            DimensionKind::Tsy,
+            "QiColorInspect denials must not mutate the observed dimension"
+        );
+    }
+
     #[test]
     fn qi_color_inspect_scope_requires_near_same_dimension_target() {
         assert_eq!(parse_qi_color_inspect_protocol_id("entity:42"), Some(42));
         assert_eq!(parse_qi_color_inspect_protocol_id("entity_bits:42"), None);
         assert_eq!(parse_qi_color_inspect_protocol_id("entity:bad"), None);
 
+        let (_, nearby_interact_radius) = crate::reach::DistanceRule::NEARBY_INTERACT
+            .profile_parts()
+            .expect("NearbyInteract must remain a named distance profile");
         assert!(is_qi_color_inspect_position_in_scope(
             DVec3::ZERO,
-            DVec3::new(QI_COLOR_INSPECT_MAX_DISTANCE, 0.0, 0.0),
+            DVec3::new(nearby_interact_radius, 0.0, 0.0),
             true,
         ));
         assert!(!is_qi_color_inspect_position_in_scope(
             DVec3::ZERO,
-            DVec3::new(QI_COLOR_INSPECT_MAX_DISTANCE + 0.01, 0.0, 0.0),
+            DVec3::new(nearby_interact_radius + 0.01, 0.0, 0.0),
             true,
         ));
         assert!(!is_qi_color_inspect_position_in_scope(
@@ -16829,8 +16929,7 @@ fn is_qi_color_inspect_position_in_scope(
     same_dimension: bool,
 ) -> bool {
     same_dimension
-        && observer_position.distance_squared(observed_position)
-            <= QI_COLOR_INSPECT_MAX_DISTANCE * QI_COLOR_INSPECT_MAX_DISTANCE
+        && crate::reach::DistanceRule::NEARBY_INTERACT.allows(observer_position, observed_position)
 }
 
 fn dimension_kind_for(dimensions: &Query<&CurrentDimension>, entity: Entity) -> DimensionKind {

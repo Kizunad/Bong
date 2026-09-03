@@ -229,6 +229,62 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12687 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`processed_input_unit` 为 `3 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
 - **提交证据**：代码、外置测试、`processed_input_unit` target 对应 commit 为 `b765cc1a81bbb60b1871d068fdb5417fefc1eb82`（2026-09-01）。本条仅记录 P2-06 进度；P2 其它模块、P3、P4 仍未完成。
 
+### P2-07 server readiness（✅ 2026-09-02）
+
+- **范围与落点**：仅将 `server/src/server_readiness.rs` 原 `#[cfg(test)] mod tests` 的 5 个 `#[test]` 与 `TestDir` fixture 外置到 `server/tests/unit/server_readiness_test.rs`，并新增 `server/Cargo.toml` 的显式 `server_readiness_unit` target；生产文件删除内联测试体，readiness 运行时实现未改动。
+- **行为对拍**：`server_readiness_unit` 为 `5 passed / 0 failed / 0 ignored`，保留原测试名、断言语义和临时目录 Drop 清理；覆盖精确 `pid=<pid>\n` 行、Unix `0600`、临时文件清理、目标已存在时 `AlreadyExists` 且不覆盖、并发一胜一败且败方为 `AlreadyExists`、临时文件名冲突重试并保留外部文件，以及无 filename 路径拒绝。
+- **最小 seam**：仅将既有生产 `publish` 标为 `#[doc(hidden)] pub`，作为外置测试调用 seam；未暴露 `publish_created_temporary` 或 `TestDir`，未扩大无关 API，未复制生产实现。
+- **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12674 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`server_readiness_unit` 为 `5 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试、`server_readiness_unit` target 对应 commit 为 `5fe3b8605`（2026-09-02）。本条仅记录 P2-07 进度；P2 其它模块、P3、P4 仍未完成。
+
+### P2-08 skill runtime（✅ 2026-09-02）
+
+- **范围与落点**：仅将 `server/src/skill/mod.rs` 原 `#[cfg(test)] mod tests` 中实际存在的 7 个 skill runtime 测试外置到 `server/tests/unit/skill/runtime_test.rs`，并新增 `server/Cargo.toml` 的显式 `skill_runtime_unit` target；其中包含任务卡列出的 4 个核心行为测试及同模块已有的 3 个 runtime 回归测试。`skill/components.rs`、`skill/config.rs`、`skill/curve.rs`、`skill/events.rs` 的 inline tests 未迁移，生产 runtime、XP 公式、境界、wire、schema、Redis、client、AV、qi ledger 均未改动。
+- **行为与定向验证**：保留 `register_adds_all_four_events`、`xp_above_cap_is_scaled_down_to_thirty_percent`、`xp_below_cap_is_not_scaled`、`record_skill_lv_up_appends_milestone` 及其余原测试名、fixture、tick/数值和断言语义；`register` 仍注册 `SkillXpGain`、`SkillLvUp`、`SkillCapChanged`、`SkillScrollUsed`，上限以上 XP 仍按既有规则缩放为 30%，上限以内不缩放，升级记录仍由 `record_skill_lv_up` 写入既有 narration 与 milestone 字段。`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test skill_runtime_unit'`：`7 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用已有运行时公开符号 `bong_server::skill::{register, consume_skill_xp_gain, record_skill_lv_up}` 及既有数据类型；未新增 `#[doc(hidden)]` seam，`default_skill_lv_up_narration` 生产 helper 保持私有且实现未复制到测试，`server/src/skill/mod.rs` 不再包含 inline test body。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skill_runtime_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `skill_runtime_unit` target 对应 commit 为 `17ee3cf81`（2026-09-02）。本条仅记录 P2-08 进度；P2 总体、P3、P4 仍未完成。
+
+### P2-09 world dimension（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/world/dimension.rs` 原 `#[cfg(test)] mod tests` 的全部 6 个 `#[test]` 外置到 `server/tests/unit/world/dimension_test.rs`，并新增 `server/Cargo.toml` 的显式 `dimension_unit` target；生产文件删除本模块测试体，保留其它 crate 内测试依赖的既有 `mark_test_layer_as_overworld` 最小 test seam。`DimensionKind`、`CurrentDimension`、`DimensionLayers`、TSY 注册配置及其它 gameplay、wire、Redis、schema 均未改动。
+- **迁移前后对拍**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test world::dimension::tests --lib'` 为 `6 passed / 0 failed / 0 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test dimension_unit'` 为 `6 passed / 0 failed / 0 ignored`。测试名、fixture、断言语义保持不变。
+- **公开 API 与 seam**：外置测试仅调用 `bong_server::world::dimension` 已有公开 API 与 Valence registry 类型，未复制生产实现、未新增 public seam；保留的 `mark_test_layer_as_overworld` 仅因其它尚未迁移的 crate 内测试仍依赖它，未扩大可见性或改变运行时行为。
+- **最新主线合并后复验**：基于 `origin/main=c52c7933e` 执行 `git fetch origin && git merge origin/main`，无冲突并生成 merge commit `d36f98757`；合并后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test dimension_unit'` 仍为 `6 passed / 0 failed / 0 ignored`。
+- **完整 gate**：合并后重新执行任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0；library 为 `12650 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`dimension_unit` 为 `6 passed / 0 failed / 0 ignored`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `dimension_unit` target 对应 `e9bd7f11c`（2026-09-03）；格式修正对应 `8a15b805c`（2026-09-03）；本轮合并后复验对应 `d36f98757`（2026-09-03）。本条仅记录 P2-09 进度；P2 总体、P3、P4 仍未完成。
+
+### P2-10 rift_portal（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/world/rift_portal.rs` 原 `#[cfg(test)] mod tests` 的全部 3 个测试外置到 `server/tests/unit/world/rift_portal_test.rs`，并新增 `server/Cargo.toml` 的显式 `rift_portal_unit` target；生产文件不再包含该测试体，运行时代码、fixture 内容和其它测试路径未改动。
+- **行为与定向验证**：保留 `rift_kind_extract_table_matches_worldview`、`rift_kind_entry_exit_permissions`、`default_tsy_portals_fixture_loads` 原测试名、fixture、断言和行为；`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test rift_portal_unit'`：`3 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用已有公开 API `RiftKind::{base_extract_ticks, allows_entry, allows_exit}`、`load_tsy_portals_from_path` 及公开 registry 数据；无需新增 public/test seam，未复制生产逻辑，未扩大无关可见性。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`rift_portal_unit` 为 `3 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `rift_portal_unit` target 对应 commit 为 `e170e26e1`（2026-09-03）。本条仅记录 P2-10 进度；P2 总体、P3、P4 仍未完成。
+
+### P2-11 environment overlay（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/world/environment_overlay.rs` 原 `#[cfg(test)] mod tests` 的 9 个测试及 `zone_at`、`overworld_zone`、`spawn_default` 三个必要 fixture/helper 外置到 `server/tests/unit/world/environment_overlay_test.rs`，并新增 `server/Cargo.toml` 的显式 `environment_overlay_unit` target。生产文件删除全部 inline test body；未改动态雾堤运行时、AABB 相交规则、wire、schema、Redis、client、AV、qi ledger 或其它模块。
+- **迁移对拍与行为**：保留 9 个原测试名、fixture、AABB 坐标、density/tick 数值和断言语义，覆盖递增 id、反转 AABB 归一化、非有限 density 防御性归零、FogVeil 字段映射、dimension 过滤、闭区间贴边相交、寿命到期/常驻和 remove/clear 行为。`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test environment_overlay_unit'`：`9 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用既有公开 `bong_server::world::environment_overlay::{EnvironmentOverlays, DEFAULT_FOG_BANK_TINT}`、`bong_server::world::environment::EnvironmentEffect`、`DimensionKind` 与 `Zone` 字段；未新增 `#[doc(hidden)]` seam，未复制 `aabb_overlaps` 或其它生产实现，未扩大无关 API。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12664 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`environment_overlay_unit` 为 `9 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试与 `environment_overlay_unit` target 对应 commit 为 `4bc898e0d`（2026-09-03）。本条仅记录 P2-11 进度；P2 总体、P3、P4 仍未完成。
+
+### P2-12 shader state（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/shader/mod.rs` 原 `#[cfg(test)] mod tests` 的全部 7 个测试外置到 `server/tests/unit/shader/state_test.rs`，并新增 `server/Cargo.toml` 的显式 `shader_state_unit` target；生产文件删除 inline test body，`shader_state_fields!` 宏、`ShaderStatePayload` 字段、`FIELD_NAMES`、JSON 序列化和 shader/client 行为均未改动。
+- **迁移对拍与行为**：保留 `default_all_zeros`、`serializes_to_valid_json`、`field_mut_all_known`、`field_mut_unknown_returns_none`、`field_names_count_matches_struct`、`field_mut_write_read_round_trip`、`deserializes_from_json` 原测试名、断言、边界和错误语义；迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test shader::tests --lib'` 为 `7 passed / 0 failed / 0 ignored`（`12651 filtered out`），迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test shader_state_unit'` 为 `7 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅使用既有公开 `bong_server::shader::ShaderStatePayload` 及其 `Default`、`to_json_bytes`、`field_mut`、`FIELD_NAMES` API；未新增 seam、扩大可见性或复制生产实现。
+- **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12649 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`shader_state_unit` 为 `7 passed / 0 failed / 0 ignored`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试与 `shader_state_unit` target 对应 commit 为 `f8c4bc9ff`（2026-09-03）。本条仅记录 P2-12 进度；P2 总体、P3、P4 仍未完成。
+### P2-13 skin packet（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/skin/packet.rs` 原 `#[cfg(test)] mod tests` 的 2 个测试及 `test_skin` helper 外置到 `server/tests/unit/skin/packet_test.rs`，并新增 `server/Cargo.toml` 的显式 `skin_packet_unit` target；生产文件删除 inline test body，未改 `NpcPlayerInfoUpdateS2c`/`NpcPlayerInfoRemoveS2c` 运行时编码、MC 1.20.1 packet ID、skin 协议或其它模块。
+- **行为与协议对拍**：保留 `player_info_packet_matches_protocol_field_order`、`player_info_packet_id_is_mc_1_20_1_player_list_update` 原测试名、`test_skin` fixture、完整协议字节断言、编码字段顺序、packet ID 与错误语义；迁移前 `skin::packet::tests` 为 `2 passed / 0 failed / 0 ignored`，迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test skin_packet_unit'` 为 `2 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用已有公开 `NpcPlayerInfoUpdateS2c`/`NpcPlayerInfoRemoveS2c` 的 `Encode`、`Packet::ID`、`SignedSkin`/`SkinSource` 与 Valence packet IDs；未新增 seam，未复制生产实现，未扩大无关可见性。
+- **完整 gate**：主线合并后按提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12654 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skin_packet_unit` 为 `2 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `skin_packet_unit` target 对应 commit 为 `b28d41c09`（2026-09-03）；本条仅记录 P2-13 进度，P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
