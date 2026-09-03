@@ -22,10 +22,12 @@
 
 **代码探索证据**：
 
-- 注册入口是 `client/src/main/java/com/bong/client/BongClient.java:82-89`，其中 `HudRenderCallback.EVENT.register(BongHud::render)` 位于 UI bootstrap 之前。
-- 生产入口是 `client/src/main/java/com/bong/client/BongHud.java:66-73`；命令收集在 `BongHud.java:124-151`，旧 primitive `DrawContext` 分支在 `BongHud.java:153-253`。
+- 注册入口是 `client/src/main/java/com/bong/client/BongClient.java:92-94`，由 `BongHudRenderer` 组合 `HudRenderBackend`，并注册 SVG 资源 reload listener；两者均位于 UI bootstrap 之前。
+- 生产入口是 `client/src/main/java/com/bong/client/BongHud.java:70-97`；命令收集在 `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:124-145`，旧 primitive `DrawContext` 分支在 `BongHud.java:153-253`。
 - semantic planner 主入口是 `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:124-145`；layer 枚举和顺序由 `client/src/main/java/com/bong/client/hud/HudRenderLayer.java:3-80` 固定。
-- `renderSurface` 仅出现在测试 harness；当前 `client/build.gradle:45-51` 没有 NanoSVG/JNI/native 依赖。P4 当前只固定 parser ABI、受限 Java compatibility parser、资源校验和 GUI 提交边界；native loader 属于后续独立交付，不得把本 slice 记为 native 完成。
+- 资源生命周期由 `client/src/main/java/com/bong/client/hud/svg/SvgHudResourceReloadListener.java:10-26` 门禁，`SvgHudBackend.invalidateAssets()` 清除成功与失败缓存；`renderSurface` 仅出现在测试 harness。当前 `client/build.gradle:45-51` 没有 NanoSVG/JNI/native 依赖。P4 当前只固定 parser ABI、受限 Java compatibility parser、资源校验和 GUI 提交边界；native loader 属于后续独立交付，不得把本 slice 记为 native 完成。
+
+**计划章节映射**：上述入口与边界证据对应本计划 §HUD SVG 表现后端契约、§6 P4 阶段总览、§7 P4 测试抓手和 §9.2 决议索引；实现顺序与删除门以 §HUD SVG 表现后端契约第 4 节为准。
 
 **边界与交付顺序**：P4 交付 `HudRenderBackend`、`SvgHudAssetRegistry`、`SvgParser`、Java compatibility `NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 和首个真实 layer；P5 迁移 62 个 layer 与所有直接 overlay。`RenderLayer.getGui()` 在 1.20.1 中使用 `POSITION_COLOR + QUADS`，每个 tessellated triangle 必须编码为退化 quad `(a,c,b,b)`；禁止独立 framebuffer、实体渲染 layer、浏览器/Canvas/NanoVG、直接 OpenGL program。长期 fixture 使用 `ui-svg-hud-contract.tsv` 与 `ui-svg-hud-inventory.tsv`，具体签名、白名单、预算、失败语义和截图门以后续章节为准。
 
