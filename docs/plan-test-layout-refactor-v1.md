@@ -229,6 +229,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12687 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`processed_input_unit` 为 `3 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
 - **提交证据**：代码、外置测试、`processed_input_unit` target 对应 commit 为 `b765cc1a81bbb60b1871d068fdb5417fefc1eb82`（2026-09-01）。本条仅记录 P2-06 进度；P2 其它模块、P3、P4 仍未完成。
 
+### P2-07 server readiness（✅ 2026-09-02）
+
+- **范围与落点**：仅将 `server/src/server_readiness.rs` 原 `#[cfg(test)] mod tests` 的 5 个 `#[test]` 与 `TestDir` fixture 外置到 `server/tests/unit/server_readiness_test.rs`，并新增 `server/Cargo.toml` 的显式 `server_readiness_unit` target；生产文件删除内联测试体，readiness 运行时实现未改动。
+- **行为对拍**：`server_readiness_unit` 为 `5 passed / 0 failed / 0 ignored`，保留原测试名、断言语义和临时目录 Drop 清理；覆盖精确 `pid=<pid>\n` 行、Unix `0600`、临时文件清理、目标已存在时 `AlreadyExists` 且不覆盖、并发一胜一败且败方为 `AlreadyExists`、临时文件名冲突重试并保留外部文件，以及无 filename 路径拒绝。
+- **最小 seam**：仅将既有生产 `publish` 标为 `#[doc(hidden)] pub`，作为外置测试调用 seam；未暴露 `publish_created_temporary` 或 `TestDir`，未扩大无关 API，未复制生产实现。
+- **完整 gate**：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12674 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`server_readiness_unit` 为 `5 passed / 0 failed`，doc-tests 为 `3 passed / 0 failed / 5 ignored`，其它 integration targets 无失败。
+- **提交证据**：代码、外置测试、`server_readiness_unit` target 对应 commit 为 `5fe3b8605`（2026-09-02）。本条仅记录 P2-07 进度；P2 其它模块、P3、P4 仍未完成。
+
 ### P2-08 skill runtime（✅ 2026-09-02）
 
 - **范围与落点**：仅将 `server/src/skill/mod.rs` 原 `#[cfg(test)] mod tests` 中实际存在的 7 个 skill runtime 测试外置到 `server/tests/unit/skill/runtime_test.rs`，并新增 `server/Cargo.toml` 的显式 `skill_runtime_unit` target；其中包含任务卡列出的 4 个核心行为测试及同模块已有的 3 个 runtime 回归测试。`skill/components.rs`、`skill/config.rs`、`skill/curve.rs`、`skill/events.rs` 的 inline tests 未迁移，生产 runtime、XP 公式、境界、wire、schema、Redis、client、AV、qi ledger 均未改动。
