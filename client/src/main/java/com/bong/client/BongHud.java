@@ -23,6 +23,10 @@ import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.HudTextHelper;
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.hud.SvgHudFrame;
+import com.bong.client.hud.SvgHudFramePlanner;
+import com.bong.client.hud.svg.SvgHudBackend;
+import com.bong.client.state.PlayerStateStore;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.tiandao.TiandaoPresenceHudPlanner;
 import com.bong.client.tiandao.TiandaoPresenceStore;
@@ -83,7 +87,8 @@ public class BongHud {
             currentScreen,
             nowMillis,
             () -> captureHudFrameInput(client, nowMillis),
-            (commands, visibility) -> renderCommands(context, client, commands, visibility, nowMillis)
+            (commands, visibility, svgHudFrame) ->
+                renderCommands(context, client, commands, visibility, nowMillis, svgHudFrame)
         );
     }
 
@@ -125,7 +130,11 @@ public class BongHud {
             }
         }
 
-        renderer.render(filterCommandsForVisibility(commands, visibility), visibility);
+        renderer.render(
+            filterCommandsForVisibility(commands, visibility),
+            visibility,
+            frame.svgHudFrame()
+        );
     }
 
     private static HudFrameInput captureHudFrameInput(MinecraftClient client, long nowMillis) {
@@ -140,6 +149,7 @@ public class BongHud {
             screenHeight,
             computeBotanyAnchor(client),
             captureRuntimeContext(client),
+            SvgHudFramePlanner.plan(PlayerStateStore.snapshot(), screenWidth, screenHeight),
             () -> computeSpiritualSenseIndicators(client),
             () -> TiandaoPresenceHudPlanner.buildCommands(
                     TiandaoPresenceStore.snapshot(),
@@ -155,7 +165,8 @@ public class BongHud {
         MinecraftClient client,
         List<HudRenderCommand> commands,
         ScreenHudVisibility visibility,
-        long nowMillis
+        long nowMillis,
+        SvgHudFrame svgHudFrame
     ) {
 
         for (HudRenderCommand command : commands) {
@@ -251,11 +262,21 @@ public class BongHud {
                 InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
             }
         }
+
+        // SVG HUD 放在全屏 tint/vignette 之后，避免视觉反馈层覆盖雷达造成闪烁。
+        SvgHudBackend.renderProduction(context, client, visibility, svgHudFrame);
+
+        // HUD 回调结束时一次性提交所有 GUI layer，避免 SVG 与其他 overlay 交错 flush。
+        context.draw();
     }
 
     @FunctionalInterface
     interface HudCommandRenderer {
-        void render(List<HudRenderCommand> commands, ScreenHudVisibility visibility);
+        void render(
+            List<HudRenderCommand> commands,
+            ScreenHudVisibility visibility,
+            SvgHudFrame svgHudFrame
+        );
     }
 
     record HudFrameInput(
@@ -267,6 +288,7 @@ public class BongHud {
         int screenHeight,
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext,
+        SvgHudFrame svgHudFrame,
         Supplier<List<EdgeIndicatorCmd>> spiritualSenseIndicators,
         Supplier<List<HudRenderCommand>> supplementalCommands
     ) {
@@ -280,6 +302,7 @@ public class BongHud {
             screenWidth = Math.max(0, screenWidth);
             screenHeight = Math.max(0, screenHeight);
             runtimeContext = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
+            svgHudFrame = svgHudFrame == null ? SvgHudFrame.hidden() : svgHudFrame;
             spiritualSenseIndicators = safeListSupplier(spiritualSenseIndicators);
             supplementalCommands = safeListSupplier(supplementalCommands);
         }
