@@ -1,0 +1,10 @@
+# symbol	owner	layer	status	evidence
+# GUI 绕序：SVG 三角形提交为 (a,c,b,b)，与 Minecraft DrawContext.fill 的正面绕序一致。
+HudRenderBackend	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	HudRenderBackendTest
+SvgParser	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	NanoSvgParserTest
+SvgHudAssetRegistry	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	SvgHudAssetRegistryTest
+NanoSvgParser	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	NanoSvgParserTest
+SvgDocument	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	SvgTessellatorTest
+SvgMesh	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	SvgTessellatorTest
+SvgTessellator	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	SvgTessellatorTest
+MinecraftGuiMeshEmitter	client/src/main/java/com/bong/client/hud/svg	QI_RADAR	IMPLEMENTED	MinecraftGuiMeshEmitterTest

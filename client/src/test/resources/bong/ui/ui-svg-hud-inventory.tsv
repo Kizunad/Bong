@@ -1,0 +1,2 @@
+# layer	planner	asset	binding	gui_exception	test_owner
+QI_RADAR	QiDensityRadarHudPlanner	bong-client:svg/hud/qi-radar.svg	realm_gate+negative_qi_tint	NONE	HudRenderBackendTest
