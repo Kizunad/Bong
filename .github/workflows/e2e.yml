@@ -409,13 +409,17 @@ jobs:
 
           report_diff = list(
               difflib.unified_diff(
-                  shadow_lines,
-                  native_lines,
+                  sorted(shadow_lines),
+                  sorted(native_lines),
                   fromfile="shadow/normalized-native-report",
                   tofile="native/normalized-cargo-report",
                   lineterm="",
               )
           )
+          if report_diff:
+              differences.append(
+                  f"规范化原生报告存在差异，共 {len(report_diff)} 行；详见 native-report.diff"
+              )
           diff_path = report_root / "native-report.diff"
           try:
               diff_path.write_text(
