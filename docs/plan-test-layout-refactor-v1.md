@@ -245,6 +245,15 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12672 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skill_runtime_unit` 为 `7 passed / 0 failed`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skill_runtime_unit` target 对应 commit 为 `17ee3cf81`（2026-09-02）。本条仅记录 P2-08 进度；P2 总体、P3、P4 仍未完成。
 
+### P2-09 world dimension（✅ 2026-09-03）
+
+- **范围与落点**：仅将 `server/src/world/dimension.rs` 原 `#[cfg(test)] mod tests` 的全部 6 个 `#[test]` 外置到 `server/tests/unit/world/dimension_test.rs`，并新增 `server/Cargo.toml` 的显式 `dimension_unit` target；生产文件删除本模块测试体，保留其它 crate 内测试依赖的既有 `mark_test_layer_as_overworld` 最小 test seam。`DimensionKind`、`CurrentDimension`、`DimensionLayers`、TSY 注册配置及其它 gameplay、wire、Redis、schema 均未改动。
+- **迁移前后对拍**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test world::dimension::tests --lib'` 为 `6 passed / 0 failed / 0 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test dimension_unit'` 为 `6 passed / 0 failed / 0 ignored`。测试名、fixture、断言语义保持不变。
+- **公开 API 与 seam**：外置测试仅调用 `bong_server::world::dimension` 已有公开 API 与 Valence registry 类型，未复制生产实现、未新增 public seam；保留的 `mark_test_layer_as_overworld` 仅因其它尚未迁移的 crate 内测试仍依赖它，未扩大可见性或改变运行时行为。
+- **最新主线合并后复验**：基于 `origin/main=c52c7933e` 执行 `git fetch origin && git merge origin/main`，无冲突并生成 merge commit `d36f98757`；合并后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test dimension_unit'` 仍为 `6 passed / 0 failed / 0 ignored`。
+- **完整 gate**：合并后重新执行任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0；library 为 `12650 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`dimension_unit` 为 `6 passed / 0 failed / 0 ignored`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码、外置测试与 `dimension_unit` target 对应 `e9bd7f11c`（2026-09-03）；格式修正对应 `8a15b805c`（2026-09-03）；本轮合并后复验对应 `d36f98757`（2026-09-03）。本条仅记录 P2-09 进度；P2 总体、P3、P4 仍未完成。
+
 ### P2-10 rift_portal（✅ 2026-09-03）
 
 - **范围与落点**：仅将 `server/src/world/rift_portal.rs` 原 `#[cfg(test)] mod tests` 的全部 3 个测试外置到 `server/tests/unit/world/rift_portal_test.rs`，并新增 `server/Cargo.toml` 的显式 `rift_portal_unit` target；生产文件不再包含该测试体，运行时代码、fixture 内容和其它测试路径未改动。

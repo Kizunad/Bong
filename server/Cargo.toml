@@ -51,6 +51,10 @@ name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
 
 [[test]]
+name = "dimension_unit"
+path = "tests/unit/world/dimension_test.rs"
+
+[[test]]
 name = "rift_portal_unit"
 path = "tests/unit/world/rift_portal_test.rs"
 
