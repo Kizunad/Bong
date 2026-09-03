@@ -51,6 +51,10 @@ name = "dimension_unit"
 path = "tests/unit/world/dimension_test.rs"
 
 [[test]]
+name = "rift_portal_unit"
+path = "tests/unit/world/rift_portal_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
