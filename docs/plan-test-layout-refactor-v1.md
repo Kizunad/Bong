@@ -285,6 +285,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：主线合并后按提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12654 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skin_packet_unit` 为 `2 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skin_packet_unit` target 对应 commit 为 `b28d41c09`（2026-09-03）；本条仅记录 P2-13 进度，P2 总体、P3、P4 仍未完成。
 
+### P2-15 forge history（✅ 2026-09-04）
+
+- **范围与落点**：仅将 `server/src/forge/history.rs` 原有 `#[cfg(test)]` 模块中的 2 个测试外置到 `server/tests/unit/forge/history_test.rs`，并新增 `server/Cargo.toml` 的显式 `forge_history_unit` target；生产文件不再包含该测试体。`ForgeAttempt::from_bucket` 的 bucket 映射、`ForgeHistory::recent` 的尾部语义、forge gameplay、schema、wire、qi 及其它模块均未改动。
+- **迁移对拍与行为**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test forge::history::tests --lib'` 为 `2 passed / 0 failed / 0 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test forge_history_unit'` 为 `2 passed / 0 failed / 0 ignored`。`bucket_tag_mapping` 与 `recent_tails_n_entries` 的测试名、fixture、断言和行为保持不变。
+- **公开 API 与 seam**：外置测试仅使用既有公开 API `bong_server::forge::history::{ForgeAttempt, ForgeHistory}` 与 `bong_server::forge::events::ForgeBucket`；未复制生产逻辑、未新增或扩大可见性 seam。
+- **最新主线与完整 gate**：提交前执行 `git fetch origin && git merge origin/main`，`origin/main` 从 `79d953416` 更新至 `fdabe0f0b` 并 fast-forward 合并；主线已有 `shader_state_unit` target 及 plan 条目均保留。slot-3 执行任务卡指定的 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` 并通过：library `12639 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed`，`forge_history_unit` `2 passed / 0 failed`，其它 targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：forge history 外置代码与 `forge_history_unit` target 对应 commit 为 `9ba197724`（2026-09-04）；本条仅记录 P2-15 进度，P2 其它模块、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
