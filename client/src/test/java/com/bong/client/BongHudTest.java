@@ -14,6 +14,7 @@ import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.hud.SearchHudState;
 import com.bong.client.hud.SearchProgressHudPlanner;
+import com.bong.client.hud.SvgHudFrame;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -136,7 +137,7 @@ public class BongHudTest {
                 frameBuildCount[0]++;
                 return emptyHudFrameInput(320, 180);
             },
-            (commands, visibility) -> {
+            (commands, visibility, svgHudFrame) -> {
                 renderedFrames.add(commands);
                 renderedVisibilities.add(visibility);
             }
@@ -180,7 +181,7 @@ public class BongHudTest {
             screen,
             1_000L,
             () -> emptyHudFrameInput(320, 180),
-            (commands, visibility) -> renderedFrames.add(commands)
+            (commands, visibility, svgHudFrame) -> renderedFrames.add(commands)
         );
 
         assertEquals(1, renderedFrames.size(), "AGENT_UI_ONLY 仍应执行最终 renderer，而非提前返回");
@@ -199,7 +200,7 @@ public class BongHudTest {
                 frameBuildCount[0]++;
                 return emptyHudFrameInput(320, 180);
             },
-            (commands, visibility) -> renderCount[0]++
+            (commands, visibility, svgHudFrame) -> renderCount[0]++
         );
 
         assertEquals(0, frameBuildCount[0], "HIDDEN 屏幕不得采样 HUD frame");
@@ -348,6 +349,7 @@ public class BongHudTest {
             screenHeight,
             null,
             HudRuntimeContext.empty(),
+            SvgHudFrame.hidden(),
             List::of,
             List::of
         );

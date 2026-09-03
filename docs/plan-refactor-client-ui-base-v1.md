@@ -16,16 +16,18 @@
 
 ### HUD 统一 SVG 表现后端
 
-**决议**：HUD 的几何表现统一由 runtime SVG 描述，NanoSVG 仅解析受限 SVG 子集，自有 `SvgTessellator` 生成不可变 `SvgMesh`，最终严格通过 Minecraft GUI API 提交。HUD Store、semantic planner、C2S intent、S2C payload 和 `HudRenderLayer` 不依赖 parser/native；动态文字与物品图标继续使用 Minecraft GUI 的文字/item API，作为明确例外。
+**决议**：HUD 的几何表现统一由 runtime SVG 描述，`SvgParser` 只解析受限 SVG 子集，自有 `SvgTessellator` 生成不可变 `SvgMesh`，最终严格通过 Minecraft GUI API 提交。HUD Store、semantic planner、C2S intent、S2C payload 和 `HudRenderLayer` 不依赖 parser/native；动态文字与物品图标继续使用 Minecraft GUI 的文字/item API，作为明确例外。
+
+**当前实现边界**：`NanoSvgParser` 是 `SvgParser` 的 Java compatibility slice，使用安全 StAX 解析受限 V1 子集；它不是 JNI/native NanoSVG loader，也不代表 native loader 已完成。若未来接入 NanoSVG native provider，只能替换 `SvgParser` 实现，并须单独交付跨平台打包、加载失败诊断和对应门禁。
 
 **代码探索证据**：
 
 - 注册入口是 `client/src/main/java/com/bong/client/BongClient.java:82-89`，其中 `HudRenderCallback.EVENT.register(BongHud::render)` 位于 UI bootstrap 之前。
 - 生产入口是 `client/src/main/java/com/bong/client/BongHud.java:66-73`；命令收集在 `BongHud.java:124-151`，旧 primitive `DrawContext` 分支在 `BongHud.java:153-253`。
 - semantic planner 主入口是 `client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:124-145`；layer 枚举和顺序由 `client/src/main/java/com/bong/client/hud/HudRenderLayer.java:3-80` 固定。
-- `renderSurface` 仅出现在测试 harness；当前 `client/build.gradle:45-51` 没有 NanoSVG/JNI/native 依赖，因此 P4 必须显式交付 parser ABI、受控 native loader、资源校验与平台失败诊断。
+- `renderSurface` 仅出现在测试 harness；当前 `client/build.gradle:45-51` 没有 NanoSVG/JNI/native 依赖。P4 当前只固定 parser ABI、受限 Java compatibility parser、资源校验和 GUI 提交边界；native loader 属于后续独立交付，不得把本 slice 记为 native 完成。
 
-**边界与交付顺序**：P4 交付 `HudRenderBackend`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 和首个真实 layer；P5 迁移 62 个 layer 与所有直接 overlay。`RenderLayer.getGui()` 在 1.20.1 中使用 `POSITION_COLOR + QUADS`，每个 tessellated triangle 必须编码为退化 quad `(a,b,c,c)`；禁止独立 framebuffer、实体渲染 layer、浏览器/Canvas/NanoVG、直接 OpenGL program。长期 fixture 使用 `ui-svg-hud-contract.tsv` 与 `ui-svg-hud-inventory.tsv`，具体签名、白名单、预算、失败语义和截图门以后续章节为准。
+**边界与交付顺序**：P4 交付 `HudRenderBackend`、`SvgHudAssetRegistry`、`SvgParser`、Java compatibility `NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 和首个真实 layer；P5 迁移 62 个 layer 与所有直接 overlay。`RenderLayer.getGui()` 在 1.20.1 中使用 `POSITION_COLOR + QUADS`，每个 tessellated triangle 必须编码为退化 quad `(a,c,b,b)`；禁止独立 framebuffer、实体渲染 layer、浏览器/Canvas/NanoVG、直接 OpenGL program。长期 fixture 使用 `ui-svg-hud-contract.tsv` 与 `ui-svg-hud-inventory.tsv`，具体签名、白名单、预算、失败语义和截图门以后续章节为准。
 
 ## 0. 改写目的与不可变范围
 
@@ -96,7 +98,7 @@ UI input
 - **输入**：现有 keybinding、Screen widget callback、HUD/overlay gesture；迁移后均由 owo XML host 转换成 typed intent。
 - **启动**：`BongClient.onInitializeClient()` 的 UI/HUD/keybind bootstrap call set；网络、render、audio、debug module 不被 R7 统一吞并。
 - **worldview / qi_physics**：纯 client 基础设施，不新增玩法、境界、经济或真元/灵气公式；不调用、不修改 `qi_physics`，不改变任何守恒 ledger。SVG 只消费已有 semantic HUD snapshot，不改变 Store、wire、schema 或 server 数值。
-- **共享类型**：HUD 表现边界冻结为 `HudRenderBackend`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter`；签名、线程约束和失败语义由 `ui-svg-hud-contract.tsv` 固定。
+- **共享类型**：HUD 表现边界冻结为 `HudRenderBackend`、`SvgParser`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter`；签名、线程约束和失败语义由 `ui-svg-hud-contract.tsv` 固定。
 
 ### 3.2 出料
 
@@ -365,21 +367,21 @@ Store / server snapshot
   -> MinecraftGuiMeshEmitter（DrawContext GUI buffer）
 ```
 
-- `HudRenderBackend`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 是 R7-owned 类型，签名、线程约束和失败语义冻结在 `client/src/test/resources/bong/ui/ui-svg-hud-contract.tsv`。
+- `HudRenderBackend`、`SvgParser`、`SvgHudAssetRegistry`、`NanoSvgParser`、`SvgDocument`、`SvgMesh`、`SvgTessellator`、`MinecraftGuiMeshEmitter` 是 R7-owned 类型，签名、线程约束和失败语义冻结在 `client/src/test/resources/bong/ui/ui-svg-hud-contract.tsv`。
 - `NanoSvgParser` 的 public API 不暴露 native pointer、arena、C struct 或 parser 生命周期；native 结果必须在 adapter 内复制成受约束的 Java 数值，native 解析器不得直接触碰 `DrawContext`、`RenderSystem` 或 OpenGL。
 - `SvgHudAssetRegistry` 只接受 `assets/bong-client/svg/hud/` 下的资源和显式 manifest；拒绝 `..`、外部 URI、网络 URL、`DOCTYPE`/`ENTITY`、超出大小/节点/曲线段/顶点预算的资源。资源重载时完成 parse+tessellate，渲染帧只读取 immutable cache。
 - dynamic HUD 值通过受限 binding（颜色、opacity、visibility、transform、clip 范围和 progress）注入 mesh；禁止每帧字符串拼 SVG、重新 parse 或重新 tessellate。动态文字保留 `DrawContext`/`TextRenderer` 提交，物品图标保留 Minecraft GUI item renderer；两者属于明确的 GUI 合规例外，不得回流到 planner。
 
-### 2. NanoSVG/native 交付边界
+### 2. NanoSVG/parser 交付边界
 
-- P4 必须落一个可审计的 NanoSVG adapter 和 native loader：固定 NanoSVG 版本、源码许可证、ABI 版本、资源校验和加载错误诊断；至少打包 Linux x86_64、Linux aarch64、Windows x86_64、macOS x86_64、macOS arm64 五个平台，平台库不存在或 ABI 不匹配时 fail closed 并给出可定位日志，不静默切换到另一套 SVG parser。
-- native 库只能由 Fabric client 在受控资源路径解包后加载；不得允许任意路径、环境变量或网络内容指定 native library。JNI 层只提供 parser 函数，所有 tessellation、mesh 生命周期和 GUI 提交留在 Java 侧。
-- NanoSVG 的文本、image、filter、mask、foreignObject、gradient、外部 stylesheet 等不在 V1 支持范围；资源校验必须明确拒绝或记录 unsupported，而不是生成半成品 mesh。路径子集至少覆盖 `path`、`rect`、`circle`、`ellipse`、`polygon`、transform、opacity、fill-rule、stroke、join、cap、洞和 cubic bezier。
+- P4 vertical slice 固定 `SvgParser` ABI、资源校验、失败语义和 Java compatibility `NanoSvgParser`；当前实现使用 JDK StAX 解析受限 V1 图元，明确不宣称 JNI/native NanoSVG 已交付。native provider 属于后续独立交付，接入时只能替换 `SvgParser` 实现并继续通过同一 contract gate。
+- 后续 native provider 若落地，必须固定 NanoSVG 版本、源码许可证、ABI 版本和加载错误诊断；至少覆盖 Linux x86_64、Linux aarch64、Windows x86_64、macOS x86_64、macOS arm64 五个平台。平台库不存在或 ABI 不匹配时必须 fail closed 并给出可定位日志，不得静默切换到另一套 parser。
+- native 库只能由 Fabric client 在受控资源路径解包后加载；不得允许任意路径、环境变量或网络内容指定 native library。JNI 层只提供 parser 函数，所有 tessellation、mesh 生命周期和 GUI 提交留在 Java 侧。NanoSVG 的文本、image、filter、mask、foreignObject、gradient、外部 stylesheet 等不在 V1 支持范围；资源校验必须明确拒绝或记录 unsupported，而不是生成半成品 mesh。
 
 ### 3. Minecraft GUI 提交约束
 
 - emitter 只能接收 `DrawContext`、当前 GUI `MatrixStack` 和已缓存 `SvgMesh`；禁止世界坐标、`VertexConsumerProvider` 的实体 layer、独立 framebuffer、浏览器/Canvas/NanoVG、直接自建 OpenGL program 或 `RenderSystem` draw call。
-- 1.20.1 的 `RenderLayer.getGui()` 是 `POSITION_COLOR + QUADS`，不是三角形 buffer。V1 emitter 必须把每个 tessellated triangle `(a,b,c)` 编码为退化 quad `(a,b,c,c)`，经 `context.getVertexConsumers().getBuffer(RenderLayer.getGui())` 提交，并在 `DrawContext.draw(...)` 边界内批量 flush；不得把三角形直接塞进 QUADS buffer。
+- 1.20.1 的 `RenderLayer.getGui()` 是 `POSITION_COLOR + QUADS`，不是三角形 buffer。V1 emitter 必须把每个 tessellated triangle `(a,b,c)` 编码为退化 quad `(a,c,b,b)`，经 `context.getVertexConsumers().getBuffer(RenderLayer.getGui())` 提交，并在 `DrawContext.draw(...)` 边界内批量 flush；不得把三角形直接塞进 QUADS buffer。
 - GUI layer 的 alpha、depth、blend、z 顺序必须沿用 Minecraft GUI phase；`HudRenderLayer` 的现有顺序是唯一 layer order，mesh 不能靠浮点 z 或世界深度重排。发射器必须拒绝 NaN/Infinity、越界坐标和超过顶点预算的 mesh。
 - `BongHud.renderCommands` 最终只负责收集 frame、应用 `ScreenHudVisibility` 和调用 `HudRenderBackend`；P5 完成后不得再按 `isRect`、`isTexturedRect`、`isEdgeVignette` 等旧 primitive 分支直接画 HUD。
 
@@ -397,7 +399,7 @@ Store / server snapshot
 - ✅ 2026-08-26 **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy`；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake 和 `StoreUiStateSource`；contract、intent、state、headless 包均未依赖 owo、vanilla widget、Minecraft 或具体 UI 库。
 - ✅ 2026-08-27 **P2 owo XML adapter + bootstrap reference slice**：唯一 owo XML host、Craft wide/compact 本地模板、host 生命周期、分阶段 bootstrap 和真实 Fabric/owo 截图/交互门均已落地；Store/Intent 解耦留给 P3。
 - ✅ 2026-08-30 **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
-- ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy + SVG HUD 后端 vertical slice**：将 6 个 vanilla Screen 和剩余 12 个 owo CODE Screen 全部重写为 owo XML，连同现有 2 个 XML_MODEL Screen 一并纳入唯一宿主；`CraftScreen` 已由 P2 完成 XML host 规范化，P3 继续处理其 semantic state/intent 边界。迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放；同时落地 NanoSVG parser/native adapter、不可变 `SvgDocument`/`SvgMesh`、自有 tessellator、Minecraft GUI emitter、runtime SVG 资源白名单和首个真实 HUD layer 接线。
+- ⬜ **P4 Screen 批量迁移 + input/thread/open/scale policy + SVG HUD 后端 vertical slice**：将 6 个 vanilla Screen 和剩余 12 个 owo CODE Screen 全部重写为 owo XML，连同现有 2 个 XML_MODEL Screen 一并纳入唯一宿主；`CraftScreen` 已由 P2 完成 XML host 规范化，P3 继续处理其 semantic state/intent 边界。迁移 keybind registry、`ClientThreadMarshal`、`ScreenOpenPolicy`、fill 风险、identity-sensitive list 和 responsive layout；普通 hotkey 不重放；同时落地 `SvgParser`、Java compatibility `NanoSvgParser`、不可变 `SvgDocument`/`SvgMesh`、自有 tessellator、Minecraft GUI emitter、runtime SVG 资源白名单和首个真实 HUD layer 接线，native provider 另行交付。
 - ⬜ **P5 InspectScreen tab-first 拆解**：shell 只做一次 Store intake、一次 subscription scope 和交互 arbitration；tab panel 只接 immutable ViewModel + intent callback；不与 R10 server inventory 内部重排同窗口。
 - ⬜ **P6 Insight/HUD/Bootstrap 收口**：`offer_id` 保留到 ViewModel/Store/Screen；exact offerId settlement；Sparring invite 只消费 server-authoritative combat snapshot；恢复 `BongHudOrchestrator` qi radar main path；完成剩余 UI bootstrap registry 迁移。
 - ⬜ **P7 全量验收 + 归档**：semantic/headless contract、source gate、Java 17 build、bot UI roundtrip、UI C2S smoke、reconnect freshness、resolution/input geometry matrix、真实客户端五大屏回归全部通过；`ui-svg-hud-inventory.tsv` 的 62 个 layer 和直接 overlay 全部命中同一 `HudRenderBackend`，并完成旧 primitive path、`renderSurface` 与生产 fallback 删除后，补 Finish Evidence 并归档被完整吸收的计划。
@@ -464,9 +466,9 @@ Store / server snapshot
 
 ### P4 — 全 Screen、keybind、线程、open policy 与 SVG HUD vertical slice
 
-- **模块**：28 个 Screen（6 个 vanilla 重写 + 12 个剩余 owo CODE XML 化 + 8 个既有 owo XML 模板 + 2 个 XML_MODEL）、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`fill100-inventory.tsv` 相关站点；`client/src/main/java/com/bong/client/hud/svg/**` 的 NanoSVG/native adapter、asset registry、`SvgDocument`/`SvgMesh`、tessellator、GUI emitter 与首个真实 HUD layer。
+- **模块**：28 个 Screen（6 个 vanilla 重写 + 12 个剩余 owo CODE XML 化 + 8 个既有 owo XML 模板 + 2 个 XML_MODEL）、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy`、`ScreenTransitionController`、`fill100-inventory.tsv` 相关站点；`client/src/main/java/com/bong/client/hud/svg/**` 的 `SvgParser`、Java compatibility `NanoSvgParser`、asset registry、`SvgDocument`/`SvgMesh`、tessellator、GUI emitter 与首个真实 HUD layer。
 - **交付**：在已有 `BongKeybindRegistry` 全局注册和冲突校验基础上，补齐剩余 production keybind constructor 覆盖；28 个 Screen 全部通过 owo XML template registry 接入并保留 adapter classification、scope owner；2 个现有 XML/runtime 入口也必须收口到本地 template；四个现有 `client.execute` consumer 逐个验真；普通 hotkey drop、passive social offer defer、system terminal priority 固定；所有 Screen 使用 `UiLayoutPolicy`，不在 controller 写死 viewport px；同时接入首个真实 HUD layer 的 `SvgHudBackend`，保留旧 backend 仅作受测迁移过渡。
-- **测试**：source gate 禁止 raw network/sender imports、vanilla Screen/widget imports 和 owo CODE root；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复组件或订阅；`NanoSvgParserTest`、`SvgTessellatorTest`、`MinecraftGuiMeshEmitterTest` 覆盖白名单、malformed/native failure、曲线/洞/stroke/fill-rule/transform/opacity、NaN/Infinity/预算拒绝和 triangle→degenerate-quad；Java 17 full gate。
+- **测试**：source gate 禁止 raw network/sender imports、vanilla Screen/widget imports 和 owo CODE root；keybind physical duplicate/vanilla reservation/UNKNOWN；thread already-on/off-thread/null executor；open policy 35 条 vectors；fill geometry 与 clearChildren identity tests；resolution matrix 全尺寸/GUI scale 的 no-overlap/no-clipping/in-bounds/text-fit/hit-test；resize 不重复组件或订阅；`NanoSvgParserTest`、`SvgTessellatorTest`、`MinecraftGuiMeshEmitterTest` 覆盖白名单、malformed/unsupported/parser failure、图元/opacity、NaN/Infinity/预算拒绝和 triangle→degenerate-quad；Java 17 full gate。
 - **阻塞点状态（2026-08-30）**：`combat_hud_state.combat_active` 已由 server `CombatState.in_combat_until_tick` 计算，经 proto、Java handler/store 接入；`SparringInviteScreenBootstrap` 仅消费 `authoritativeSnapshot().combatActive()`，缺少合法权威快照时返回 `UNKNOWN` 并 fail closed。该项解除，但 P4 其余 Screen/keybind/thread/open/scale 交付仍未完成。
 - **边界**：R6 receive boundary 不重复 marshal；combat snapshot 缺失时 social policy fail closed。
 
@@ -599,7 +601,7 @@ HUD SVG 的范围、代码探索证据和实施前置条件已在本 plan 开头
 
 ### 10.1 适用边界
 
-纯 client 逻辑与 UI adapter 重构，不产出 NBT、worldgen layout、模型或贴图；允许新增 runtime SVG 资源、NanoSVG native adapter、Java tessellator、GUI emitter 及截图 fixture。SVG HUD 资源按视觉资产纪律执行 3 轮 screenshot review，终轮 commit 需带 `<PROMISE>`。每个逻辑单元使用中文 atomic commit，并带真实执行模型 `Model:` trailer；不改 `docs/worldview.md`、`docs/library/`、schema shape 或依赖版本。
+纯 client 逻辑与 UI adapter 重构，不产出 NBT、worldgen layout、模型或贴图；允许新增 runtime SVG 资源、受限 Java parser adapter、Java tessellator、GUI emitter 及截图 fixture。后续 native provider 需另立交付并单独完成平台打包门禁。SVG HUD 资源按视觉资产纪律执行 3 轮 screenshot review，终轮 commit 需带 `<PROMISE>`。每个逻辑单元使用中文 atomic commit，并带真实执行模型 `Model:` trailer；不改 `docs/worldview.md`、`docs/library/`、schema shape 或依赖版本。
 
 ### 10.2 多 PR 依赖顺序
 
@@ -607,7 +609,7 @@ HUD SVG 的范围、代码探索证据和实施前置条件已在本 plan 开头
 2. **PR-2 / P1 library-neutral core**：`ui/contract`、state adapter、intent result、reconciler、bootstrap graph fake；不迁生产 Screen。
 3. **PR-3 / P2 owo XML adapter reference**：唯一 owo XML host；以 `CraftScreen` 为第一条垂直切片；UI registry 只登记 `OWO` 和 resolution/input geometry gate。
 4. **PR-4 / P3 state/intent boundary A**：semantic surface + owo XML vertical slice、`SemanticUiDriver` bot roundtrip，以及 Alchemy/Craft/Trade/Loot；迁移直接 sender/handler import，wire 变更只走 R6/schema atomic amendment。
-5. **PR-5 / P4 full Screen/input/scale policy + SVG backend slice**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移；落地 NanoSVG/native adapter、asset registry、不可变 document/mesh、自有 tessellator、GUI emitter 和首个真实 HUD layer。
+5. **PR-5 / P4 full Screen/input/scale policy + SVG backend slice**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移；落地 `SvgParser`、Java compatibility parser、asset registry、不可变 document/mesh、自有 tessellator、GUI emitter 和首个真实 HUD layer。native provider 另行交付。
 6. **PR-6 / P5 Inspect split + 全量 HUD 表现迁移**：tab-first shell/panels，行为不变；按 `ui-svg-hud-inventory.tsv` 迁移 62 个 layer、直接 overlay 和 `HudRenderCommand` primitive adapter，保留文字/物品 GUI 例外。
 7. **PR-7 / P6 parity、极端分辨率和删除旧路径**：完成 Insight/HUD/bootstrap 收口、SVG screenshot parity、`320x240`/`401x241`/`683x384`/超宽/竖屏和 GUI scale 1-4 验证，删除旧 primitive DrawContext path、`renderSurface` 和生产 fallback。
 8. **PR-8 / P7 archive**：所有阶段、SVG acceptance 和被吸收计划具备 Finish Evidence 后归档。

@@ -32,6 +32,7 @@ import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.forge.ForgeScreenBootstrap;
 import com.bong.client.iris.IrisBootstrap;
 import com.bong.client.hud.HudImmersionControls;
+import com.bong.client.hud.svg.SvgHudPreviewHarness;
 import com.bong.client.identity.IdentityPanelScreenBootstrap;
 import com.bong.client.input.DefaultInteractionHandlers;
 import com.bong.client.input.InteractionKeybindings;
@@ -158,6 +159,7 @@ public class BongClient implements ClientModInitializer {
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
         UiPreviewHarnessClient.install();
+        SvgHudPreviewHarness.install();
         IrisBootstrap.register();
         SodiumChunkReload.register();
         // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板本地超时 tick 驱动
