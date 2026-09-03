@@ -224,13 +224,14 @@ jobs:
             report_error=3
           fi
 
-          # 保留原有 working-directory=server 的原生命令；tee 只复制输出，
+          # 保留原有 working-directory=server 的原生命令；stdout 用 tee
+          # 复制，stderr 单独留存，避免 tracing 行插入 cargo 的测试结果。
           # PIPESTATUS[0] 才是 build-token/cargo test 的真实退出码。
           if ! printf '%s\n' 'cd server && ../scripts/build-token.sh cargo test' \
             > "$native_report/command.txt"; then
             report_error=3
           fi
-          ../scripts/build-token.sh cargo test 2>&1 | tee "$native_report/stdout.log"
+          ../scripts/build-token.sh cargo test 2> "$native_report/stderr.log" | tee "$native_report/stdout.log"
           native_pipeline_status=("${PIPESTATUS[@]}")
           native_exit="${native_pipeline_status[0]:-125}"
           native_tee_exit="${native_pipeline_status[1]:-125}"
@@ -271,7 +272,9 @@ jobs:
               r"(\d+) passed;\s*(\d+) failed;\s*(\d+) ignored;\s*"
               r"(\d+) measured;\s*(\d+) filtered out;"
           )
-          case_re = re.compile(r"^test\s+(.+?)\s+\.\.\.\s+(ok|FAILED|ignored)\s*$")
+          # Keep only the cargo test result token when a runner appends a
+          # tracing diagnostic to the same result line.
+          case_re = re.compile(r"^test\s+(.+?)\s+\.\.\.\s+(ok|FAILED|ignored)(?=\s|$)")
 
           def read(path, required=True):
               try:
@@ -336,8 +339,9 @@ jobs:
           shadow_stdout = read(shadow_report / "server/stdout.log")
           shadow_stderr = read(shadow_report / "server/stderr.log")
           native_stdout = read(native_report / "stdout.log")
+          native_stderr = read(native_report / "stderr.log")
           shadow_lines = canonical_lines(shadow_stdout + "\n" + shadow_stderr)
-          native_lines = canonical_lines(native_stdout)
+          native_lines = canonical_lines(native_stdout + "\n" + native_stderr)
           shadow_counts, shadow_records = counts(shadow_lines)
           native_counts, native_records = counts(native_lines)
           shadow_failed_tests = failed_tests(shadow_lines)
