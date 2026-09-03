@@ -1,6 +1,5 @@
 use bong_server::world::dimension::{
-    register_tsy_dimension, CurrentDimension, DimensionKind, DimensionLayers,
-    TSY_DIMENSION_IDENT,
+    register_tsy_dimension, CurrentDimension, DimensionKind, DimensionLayers, TSY_DIMENSION_IDENT,
 };
 use valence::prelude::{DimensionTypeRegistry, Entity};
 use valence::registry::dimension_type::DimensionEffects;
