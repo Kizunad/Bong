@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import pathlib
 import re
+import shlex
 import subprocess
+import tempfile
 import unittest
 
 
@@ -126,6 +128,62 @@ printf 'normal=%s timeout=%s\\n' "$normal_exit" "$timeout_exit"
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("normal=23 timeout=124", completed.stdout)
+
+    def test_tiandao_stage_reports_timeout_and_native_exit(self) -> None:
+        source = E2E_REDIS.read_text(encoding="utf-8")
+        stage_start = source.index(
+            'if ! [[ "$TIANDAO_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then'
+        )
+        anchor_start = source.index(
+            '\nif wait_for_pattern "$TIANDAO_LOG"', stage_start
+        )
+        stage = source[stage_start:anchor_start]
+
+        def run_stage(body: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = pathlib.Path(temporary)
+                bin_dir = root / "bin"
+                run_dir = root / "run"
+                bin_dir.mkdir()
+                run_dir.mkdir()
+                tsx = bin_dir / "tsx"
+                tsx.write_text(
+                    "#!/usr/bin/env bash\nset -euo pipefail\n" + body,
+                    encoding="utf-8",
+                )
+                tsx.chmod(0o755)
+                prelude = "\n".join(
+                    (
+                        "set -euo pipefail",
+                        f"ROOT={shlex.quote(str(ROOT))}",
+                        f"NODE_BIN={shlex.quote(str(bin_dir))}",
+                        f"RUN_DIR={shlex.quote(str(run_dir))}",
+                        f"TIANDAO_LOG={shlex.quote(str(run_dir / 'tiandao.log'))}",
+                        "REDIS_URL=redis://127.0.0.1:6379",
+                        f"TIANDAO_TIMEOUT_SECONDS={timeout_seconds}",
+                        "TIANDAO_KILL_GRACE_SECONDS=1",
+                        "finalize_failure() { printf 'FAIL stage=%s message=%s\\n' \"$1\" \"$2\"; exit 1; }",
+                    )
+                )
+                return subprocess.run(
+                    ["bash", "-c", prelude + "\n" + stage],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+        timed_out = run_stage("sleep 30\n", timeout_seconds=1)
+        self.assertEqual(timed_out.returncode, 1, timed_out.stderr)
+        self.assertIn("Non-mock Tiandao timed out", timed_out.stdout)
+        self.assertIn("exit=124", timed_out.stdout)
+        self.assertRegex(timed_out.stdout, r"elapsed=[0-9]+s")
+        self.assertIn("log=", timed_out.stdout)
+        self.assertIn("run_dir=", timed_out.stdout)
+
+        native_failure = run_stage("exit 23\n", timeout_seconds=2)
+        self.assertEqual(native_failure.returncode, 1, native_failure.stderr)
+        self.assertIn("Non-mock Tiandao exited with code 23", native_failure.stdout)
+        self.assertIn("exit=23", native_failure.stdout)
 
 
 if __name__ == "__main__":
