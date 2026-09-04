@@ -20,6 +20,10 @@
 - **worldview 锚点**：不涉及玩法、命名、境界、经济或区域；不修改 `docs/worldview.md`。
 - **qi_physics 锚点**：不涉及真元/灵气计算；不新增物理常数、ledger 路径或相关测试。
 
+## Integration Preflight
+
+已检查 `docs/worldview.md`、`docs/finished_plans/`、现有 `docs/plan-*.md`、`docs/plans-skeleton/plan-*.md` 与 `docs/plans-skeleton/reminder.md`，并核对 `scripts/e2e-redis.sh`、`scripts/smoke-test-e2e.sh`、`.github/workflows/e2e.yml` 及既有实现；本 plan 与现有 active plans、已实现 plans、matching skeletons/reminders 无重复，骨架已作为本 bugfix 的唯一计划来源，无需合并到其他骨架。
+
 ## Bug 证据与边界
 
 已定位的主路径是 `scripts/e2e-redis.sh:1207-1229`：非 mock Tiandao 阶段以无 timeout 的前台 `npx tsx` 运行，后续三个 60 秒 `wait_for_pattern` 只有在该命令返回后才会执行。`npx` 在 workspace 缺少本地解析时还会尝试从 registry 安装 `tsx`，使 CI gate 依赖运行时网络。
@@ -66,7 +70,7 @@
 
 - **P0**：`scripts/e2e-redis.sh` 的 `CURRENT_STAGE=tiandao` 阶段用 `timeout` 包住既有 task-13 one-tick 入口，默认 120 秒、TERM 后 5 秒 KILL；捕获并记录真实 wrapper 退出码、耗时、`TIANDAO_LOG` 和 `RUN_DIR`，超时/原生非零统一经过现有 `finalize_failure` 收口。原三个 60 秒 `wait_for_pattern` 锚点及 cleanup 顺序保留。
 - **P1**：非 mock Tiandao 改用 `agent/node_modules/.bin/tsx`，缺失或不可执行时 fail fast 并给出 `npm ci` 修复提示；关键路径不再调用 `npx` 运行时访问 registry。
-- **P2**：`scripts/e2e-redis.sh` 的 Redis probe、schema build、north-rift preview 与 `scripts/smoke-test-e2e.sh` 的前台阶段均使用有界执行；新增 `scripts/tests/e2e_redis_hang_guard_contract_test.py` 锁定 timeout、workspace tsx、native exit 与诊断语义，并由 `.github/workflows/e2e.yml` preflight 执行。未改 agent task、server/gameplay、schema/wire、client 或测试场景语义。
+- **P2**：`scripts/e2e-redis.sh` 的 Redis probe、schema build、north-rift preview 与 `scripts/smoke-test-e2e.sh` 的前台阶段均使用有界执行；smoke 外层 Redis e2e 单独使用默认 40s KILL grace，覆盖 e2e cleanup 默认 30s 优雅停止加 2s KILL 窗口。新增 `scripts/tests/e2e_redis_hang_guard_contract_test.py` 锁定 timeout、workspace tsx、native exit、cleanup grace 与诊断语义，并由 `.github/workflows/e2e.yml` preflight 执行。未改 agent task、server/gameplay、schema/wire、client 或测试场景语义。
 - **P3**：本分支先从 `origin/main` 的 `d1b80331015211e439823859f1f6f39ce2f97e22` 合并到 `e7bfd6a4b5fdfafa96883dd0715b3ab6913315b5`（机械合并 `6e328d110b0fa140dfcce6a7914fea7edbbb68f3`），随后在收口前再次合并最新 `origin/main=33053a55a7b6b79c9ee709ab07830e60d4dde6e7`（机械合并 `dcdd78513e99c9e193b0f24ba49beb4f2e0abf36`）；每次合并后均复跑受影响脚本/CI 合同与静态核验，归档后完成无上下文 validator，PR CI 继续承担干净 runner 上的完整 smoke/e2e 正常路径核验。
 
 ### 关键 commit
