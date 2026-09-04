@@ -285,18 +285,20 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：主线合并后按提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12654 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skin_packet_unit` 为 `2 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skin_packet_unit` target 对应 commit 为 `b28d41c09`（2026-09-03）；本条仅记录 P2-13 进度，P2 总体、P3、P4 仍未完成。
 
-## P3 — CI 兼容、报告收口与迁移对拍（⬜）
+## P3 — CI 兼容、报告收口与迁移对拍（⏳）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
 - 对拍至少覆盖退出码、测试计数、失败 suite、原生 Cargo 输出和 `.sisyphus/evidence/**`；差异必须归因后才能切换 job 命令。
 - Client/Schema/Tiandao 仅接入其已有 canonical path 和原生命令，不借 P3 改源测试目录；统一报告只索引 Gradle/JUnit、Cargo、Vitest 和脚本原生产物，不强制新增无消费者的 JUnit 转换。
 
-### P3-01 server-test shadow（⏳ 2026-09-03）
+### P3-01 server-test shadow（✅ 2026-09-04）
 
 - **范围与落点**：仅在 `.github/workflows/e2e.yml` 的 `server-test` job 增加 `../scripts/test-all.sh --profile unit --suite server` shadow；原有 `working-directory: server` 的 `../scripts/build-token.sh cargo test` 仍执行，未改 `needs`、25 分钟 timeout、`CARGO_TARGET_DIR`、`schema-dist` 下载、`evidence-server-test` 上传或下游 DAG/cleanup 语义。
 - **run-private 对拍证据**：每次 CI 运行写入 `.sisyphus/evidence/test-all/server-shadow/<run-id>/`，shadow 保留 `summary.json`/`summary.tsv`、suite 原生日志；native 保留完整 `cargo test` 输出与命令/状态/退出码；`comparison.json`/`comparison.tsv` 记录 wrapper process/suite exit code、native exit code、按 Cargo target 汇总的 passed/failed/ignored/measured/filtered-out 计数、失败 suite/测试以及 `native-report.diff`。
 - **失败传播**：shadow 与 native 均不后台执行；native 输出通过 `PIPESTATUS[0]` 取真实命令退出码，tee/报告错误分别失败；比较步骤不吞失败，native 非零优先按其真实码退出，native 成功而 wrapper 失败时传播 wrapper 码，双方成功但报告不一致时返回比较失败码。
-- **提交证据**：待本分支最终主线合并后的定向 gate、完整 server gate、CI/e2e 与 Kody review 结果补录；P3 仍未完成，尚未切换或删除原生 job 命令。
+- **验证证据**：修复 workflow 内嵌 Python 缩进后，`bash -n scripts/test-all.sh`、server-test run block 的 `bash -n`、两段内嵌 Python 的 AST 解析和 workflow/job/DAG 静态核验均通过；build-token contract `23/23`、`scripts/tests/test_all_contract_test.sh` `90/90`、CI entrypoint `11` 文件及 signal/fallback/proto/preview-lifecycle/cargo-target scope contracts 全部 PASS。shadow 与 native 在同一正确 server 工作目录串行对拍均为 `comparison=PASS`：wrapper process exit `0`、shadow suite exit `0`、native cargo exit `0`，两侧均为 `12877 passed / 0 failed / 7 ignored`，失败 suite/测试为空，规范化原生报告差异为 `0` 行；native 通过 `PIPESTATUS[0]` 记录真实退出码，无后台进程、`tail` 或失败吞没。
+- **主线合并后 gate**：基于 `origin/main=fdabe0f0b` 执行 `git fetch origin && git merge origin/main`，无冲突，merge commit 为 `472bcd9b8`；合并后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test shader_state_unit'` 为 `7 passed / 0 failed / 0 ignored`。随后指定 server gate exit `0`：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；library 为 `12641 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed / 0 ignored`，`shader_state_unit` 为 `7 passed / 0 failed / 0 ignored`，其余 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交与审查证据**：P3 代码与严格报告解析对应 `2a73e9627`、`cb02d5fa0`、`5ef2b4cd1`；本 P3 evidence 对应本次中文 docs commit。原生 `cargo test` 命令仍保留，未切换、删除或替换；P3-01 已完成，P3 后续步骤仍未完成。
 
 ## P4 — 剩余 Rust inline tests 分批外置与归零（⬜）
 
