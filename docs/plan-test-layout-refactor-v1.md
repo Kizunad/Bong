@@ -285,6 +285,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：主线合并后按提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12654 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skin_packet_unit` 为 `2 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skin_packet_unit` target 对应 commit 为 `b28d41c09`（2026-09-03）；本条仅记录 P2-13 进度，P2 总体、P3、P4 仍未完成。
 
+### P2-16 schema client payload（✅ 2026-09-04）
+
+- **范围与落点**：仅将 `server/src/schema/client_payload.rs` 原 `#[cfg(test)] mod tests` 的全部 9 个测试（7 个 sample 反序列化、1 个全样本 roundtrip、1 个 `ClientPayloadType` literals）外置到 `server/tests/unit/schema/client_payload_test.rs`，并新增 `server/Cargo.toml` 的显式 `client_payload_unit` target；生产 schema、TypeBox、samples、wire、Redis、玩法与其它迁移范围未改动。
+- **迁移对拍与行为**：保留 `deserialize_welcome_sample`、`deserialize_heartbeat_sample`、`deserialize_narration_sample`、`deserialize_zone_info_sample`、`deserialize_event_alert_sample`、`deserialize_locust_swarm_warning_sample`、`deserialize_player_state_sample`、`roundtrip_all_client_payload_samples`、`deserialize_client_payload_type_literals` 原测试名、`include_str!` sample 路径、serde `tag`/`rename_all` 语义、断言与错误语义；迁移前 `schema::client_payload::tests` 为 `9 passed / 0 failed / 0 ignored`，迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test client_payload_unit'` 为 `9 passed / 0 failed / 0 ignored`。
+- **公开 API 与 seam**：外置测试仅调用既有公开 `ClientPayloadV1`、`ClientPayloadType`、`EventAlertSeverity`、`EventKind` 及 serde API；未复制生产实现、未新增 seam、未扩大可见性。
+- **主线合并与完整 gate**：基于 `origin/main=fdabe0f0b528815472f1660fb08a2486c8762fd1` 执行 `git fetch origin && git merge origin/main`，无冲突并生成 merge commit `bb9f1b78d`；格式修正 commit 为 `2b8c4f1aa`。修正后定向测试仍为 `9 passed / 0 failed / 0 ignored`；`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0，library 为 `12632 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`client_payload_unit` 为 `9 passed / 0 failed`，其它独立 Cargo targets 与 doc-tests 均无失败。
+- **提交证据**：P2-16 代码、`client_payload_unit` target 与测试迁移对应 `699e5b545`（2026-09-03）；主线合并对应 `bb9f1b78d`，格式修正对应 `2b8c4f1aa`。本条仅记录 P2-16 进度，P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
