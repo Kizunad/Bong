@@ -34,6 +34,21 @@ class NanoSvgParserTest {
     }
 
     @Test
+    void convertsSvgRgbaColorsToMinecraftArgb() throws Exception {
+        SvgDocument document = parser.parse(xml("""
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+              <rect x="0" y="0" width="10" height="10" fill="#11223380"/>
+            </svg>
+            """));
+
+        assertEquals(
+            0x80112233,
+            effectiveColor(document.shapes().get(0)),
+            "SVG #RRGGBBAA 必须重排为 Minecraft GUI 使用的 #AARRGGBB"
+        );
+    }
+
+    @Test
     void acceptsMixedPolygonCoordinateSeparators() throws Exception {
         SvgDocument document = parser.parse(xml("""
             <svg xmlns="http://www.w3.org/2000/svg" width="40px" height="20px">
