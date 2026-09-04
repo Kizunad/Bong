@@ -203,6 +203,23 @@ assert_contains "$CONTINUE_REPORT/summary.json" '"exit_code":23' 'summary 保留
 assert_contains "$FIXTURE_LOG" 'gradle test build' 'continue 确实调用后续 client 命令'
 assert_contains "$CONTINUE_REPORT/summary.json" '"owner":"Server owner"' 'summary 含 owner 映射'
 
+UNIT_SERVER_REPORT="$SANDBOX/unit-server-report"
+UNIT_SERVER_FIXTURE_LOG="$SANDBOX/unit-server-fixture-commands.log"
+run_capture "$SANDBOX/unit-server.out" "$SANDBOX/unit-server.err" \
+    env PATH="$FIXTURE/bin:/usr/bin:/bin" FIXTURE_LOG="$UNIT_SERVER_FIXTURE_LOG" \
+    /bin/bash "$FIXTURE/scripts/test-all.sh" \
+    --profile unit --suite server --report-dir "$UNIT_SERVER_REPORT"
+assert_rc 0 'unit server shadow runner 可独立通过'
+assert_file "$UNIT_SERVER_REPORT/server/status" 'unit server 写入 status'
+assert_contains "$UNIT_SERVER_REPORT/server/status" 'PASS' 'unit server 状态为 PASS'
+assert_contains "$UNIT_SERVER_FIXTURE_LOG" 'cargo test' 'unit server 调用原生 cargo test'
+if grep -Fq 'cargo fmt --check' "$UNIT_SERVER_FIXTURE_LOG" \
+    || grep -Fq 'cargo clippy --all-targets -- -D warnings' "$UNIT_SERVER_FIXTURE_LOG"; then
+    fail 'unit server shadow 不应追加 fmt/clippy，避免与原生 cargo test 对拍失真'
+else
+    pass 'unit server shadow 不追加 fmt/clippy'
+fi
+
 UNIT_CLIENT_REPORT="$SANDBOX/unit-client-report"
 UNIT_FIXTURE_LOG="$SANDBOX/unit-fixture-commands.log"
 run_capture "$SANDBOX/unit-client.out" "$SANDBOX/unit-client.err" \

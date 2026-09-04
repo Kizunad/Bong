@@ -183,7 +183,8 @@ resolve_suites() {
 
 list_command() {
     case "$1:$PROFILE" in
-        server:unit|server:full) printf '%s' 'server build-token cargo fmt/clippy/test（full 追加 cargo build）' ;;
+        server:unit) printf '%s' 'server build-token cargo test' ;;
+        server:full) printf '%s' 'server build-token cargo fmt/clippy/test（full 追加 cargo build）' ;;
         client:unit) printf '%s' 'client build-token gradle test（保留 runGametest 依赖）' ;;
         client:full) printf '%s' 'client build-token gradle test build（含 runGametest）' ;;
         schema:unit) printf '%s' 'agent npm run build/check/test -w @bong/schema' ;;
@@ -488,9 +489,7 @@ run_suite() {
 run_server_unit() {
     (
         cd -- "$ROOT/server" || exit 1
-        "$ROOT/scripts/build-token.sh" cargo fmt --check &&
-            "$ROOT/scripts/build-token.sh" cargo clippy --all-targets -- -D warnings &&
-            "$ROOT/scripts/build-token.sh" cargo test
+        "$ROOT/scripts/build-token.sh" cargo test
     )
 }
 run_server_full() {
@@ -921,7 +920,7 @@ suite_artifacts() {
 }
 suite_command() {
     case "$PROFILE:$1" in
-        unit:server) printf '%s' 'cd server && build-token cargo fmt --check && build-token cargo clippy --all-targets -- -D warnings && build-token cargo test' ;;
+        unit:server) printf '%s' 'cd server && build-token cargo test' ;;
         unit:client) printf '%s' 'cd client && build-token gradle test（保留 runGametest 依赖）' ;;
         unit:schema) printf '%s' 'cd agent && npm run build/check/test -w @bong/schema' ;;
         unit:tiandao) printf '%s' 'cd agent/packages/tiandao && npm test（含 tsc 前置）' ;;

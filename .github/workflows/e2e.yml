@@ -191,8 +191,335 @@ jobs:
           name: schema-dist
           path: agent/packages/schema
           merge-multiple: true
-      - working-directory: server
-        run: ../scripts/build-token.sh cargo test
+      - name: Shadow server test-all and retain native Cargo test
+        working-directory: server
+        run: |
+          set -uo pipefail
+          set +e
+          repo_root="${GITHUB_WORKSPACE:-$(cd .. && pwd -P)}"
+          run_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
+          report_root="$repo_root/.sisyphus/evidence/test-all/server-shadow/$run_id"
+          shadow_report="$report_root/shadow"
+          native_report="$report_root/native"
+          if [[ -e "$report_root" || -L "$report_root" ]]; then
+            printf 'server-test shadow report 已存在，拒绝复用：%s\n' "$report_root" >&2
+            exit 3
+          fi
+          if ! mkdir -p -- "$native_report"; then
+            printf 'server-test shadow report 无法创建：%s\n' "$report_root" >&2
+            exit 3
+          fi
+          report_error=0
+
+          if ! printf '%s\n' 'cd server && ../scripts/test-all.sh --profile unit --suite server' \
+            > "$report_root/shadow-command.txt"; then
+            report_error=3
+          fi
+          ../scripts/test-all.sh \
+            --profile unit \
+            --suite server \
+            --report-dir "$shadow_report"
+          wrapper_exit=$?
+          if ! printf '%s\n' "$wrapper_exit" > "$report_root/wrapper-exit-code"; then
+            report_error=3
+          fi
+
+          # 保留原有 working-directory=server 的原生命令；stdout 用 tee
+          # 复制，stderr 单独留存，避免 tracing 行插入 cargo 的测试结果。
+          # PIPESTATUS[0] 才是 build-token/cargo test 的真实退出码。
+          if ! printf '%s\n' 'cd server && ../scripts/build-token.sh cargo test' \
+            > "$native_report/command.txt"; then
+            report_error=3
+          fi
+          ../scripts/build-token.sh cargo test 2> "$native_report/stderr.log" | tee "$native_report/stdout.log"
+          native_pipeline_status=("${PIPESTATUS[@]}")
+          native_exit="${native_pipeline_status[0]:-125}"
+          native_tee_exit="${native_pipeline_status[1]:-125}"
+          if ! printf '%s\n' "$native_exit" > "$native_report/exit-code"; then
+            report_error=3
+          fi
+          if ! printf '%s\n' "$native_tee_exit" > "$native_report/tee-exit-code"; then
+            report_error=3
+          fi
+          if [[ "$native_exit" -eq 0 ]]; then
+            if ! printf '%s\n' PASS > "$native_report/status"; then report_error=3; fi
+          else
+            if ! printf '%s\n' FAIL > "$native_report/status"; then report_error=3; fi
+          fi
+
+          if [[ "$native_tee_exit" -ne 0 ]]; then report_error=3; fi
+          python3 - "$report_root" "$shadow_report" "$native_report" \
+            "$wrapper_exit" "$native_exit" "$native_tee_exit" "$report_error" <<'PY'
+          import difflib
+          import json
+          import pathlib
+          import re
+          import sys
+
+          report_root = pathlib.Path(sys.argv[1])
+          shadow_report = pathlib.Path(sys.argv[2])
+          native_report = pathlib.Path(sys.argv[3])
+          wrapper_process_exit = int(sys.argv[4])
+          native_process_exit = int(sys.argv[5])
+          native_tee_exit = int(sys.argv[6])
+          report_error = int(sys.argv[7])
+
+          differences = []
+          errors = []
+          ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+          result_re = re.compile(
+              r"test result:\s*(ok|FAILED)\.\s*"
+              r"(\d+) passed;\s*(\d+) failed;\s*(\d+) ignored;\s*"
+              r"(\d+) measured;\s*(\d+) filtered out;"
+          )
+          # Keep only the cargo test result token when a runner appends a
+          # tracing diagnostic to the same result line.
+          case_re = re.compile(r"^test\s+(.+?)\s+\.\.\.\s+(ok|FAILED|ignored)(?=\s|$)")
+
+          def read(path, required=True):
+              try:
+                  return path.read_text(encoding="utf-8", errors="replace")
+              except OSError as exc:
+                  if required:
+                      errors.append(f"无法读取 {path}: {exc}")
+                  return ""
+
+          def canonical_lines(text):
+              lines = []
+              for raw_line in text.splitlines():
+                  line = ansi.sub("", raw_line).strip()
+                  result = result_re.search(line)
+                  if result:
+                      status, passed, failed, ignored, measured, filtered = result.groups()
+                      lines.append(
+                          "test result: "
+                          f"{status}. {passed} passed; {failed} failed; {ignored} ignored; "
+                          f"{measured} measured; {filtered} filtered out;"
+                      )
+                      continue
+                  case = case_re.match(line)
+                  if case:
+                      lines.append(f"test {case.group(1)} ... {case.group(2)}")
+              return lines
+
+          def counts(lines):
+              records = []
+              for line in lines:
+                  result = result_re.search(line)
+                  if result:
+                      status, passed, failed, ignored, measured, filtered = result.groups()
+                      records.append(
+                          {
+                              "status": status,
+                              "passed": int(passed),
+                              "failed": int(failed),
+                              "ignored": int(ignored),
+                              "measured": int(measured),
+                              "filtered_out": int(filtered),
+                          }
+                      )
+              total = {
+                  "targets": len(records),
+                  "passed": sum(item["passed"] for item in records),
+                  "failed": sum(item["failed"] for item in records),
+                  "ignored": sum(item["ignored"] for item in records),
+                  "measured": sum(item["measured"] for item in records),
+                  "filtered_out": sum(item["filtered_out"] for item in records),
+              }
+              return total, records
+
+          def failed_tests(lines):
+              names = []
+              for line in lines:
+                  case = case_re.match(line)
+                  if case and case.group(2) == "FAILED":
+                      names.append(case.group(1))
+              return sorted(set(names))
+
+          shadow_stdout = read(shadow_report / "server/stdout.log")
+          shadow_stderr = read(shadow_report / "server/stderr.log")
+          native_stdout = read(native_report / "stdout.log")
+          native_stderr = read(native_report / "stderr.log")
+          shadow_lines = canonical_lines(shadow_stdout + "\n" + shadow_stderr)
+          native_lines = canonical_lines(native_stdout + "\n" + native_stderr)
+          shadow_counts, shadow_records = counts(shadow_lines)
+          native_counts, native_records = counts(native_lines)
+          shadow_failed_tests = failed_tests(shadow_lines)
+          native_failed_tests = failed_tests(native_lines)
+
+          summary_path = shadow_report / "summary.json"
+          try:
+              summary = json.loads(read(summary_path))
+          except (json.JSONDecodeError, TypeError) as exc:
+              summary = {}
+              errors.append(f"shadow summary.json 不是有效 JSON: {exc}")
+
+          suites = summary.get("suites", []) if isinstance(summary, dict) else []
+          server_suites = [item for item in suites if item.get("suite") == "server"]
+          if len(server_suites) != 1:
+              errors.append(f"shadow summary 必须恰好有一个 server suite，实际 {len(server_suites)}")
+              shadow_suite = {}
+          else:
+              shadow_suite = server_suites[0]
+          shadow_suite_status = shadow_suite.get("status")
+          shadow_suite_exit = shadow_suite.get("exit_code")
+          if not isinstance(shadow_suite_exit, int):
+              errors.append("shadow server suite 缺少整数 exit_code")
+              shadow_suite_exit = 125
+
+          shadow_failure_suites = [
+              item.get("suite")
+              for item in suites
+              if item.get("status") != "PASS" and item.get("suite")
+          ]
+          native_failure_suites = []
+          if native_process_exit != 0 or native_counts["failed"] > 0:
+              native_failure_suites.append("server")
+
+          if shadow_suite_status == "PASS" and shadow_suite_exit != 0:
+              differences.append("shadow server suite 标记 PASS 但 exit_code 非 0")
+          if shadow_suite_status != "PASS" and shadow_suite_exit == 0:
+              differences.append("shadow server suite 非 PASS 但 exit_code 为 0")
+          if shadow_suite_exit != native_process_exit:
+              differences.append(
+                  "shadow suite exit_code 与原生 cargo test exit_code 不一致："
+                  f"shadow={shadow_suite_exit} native={native_process_exit}"
+              )
+          if (wrapper_process_exit == 0) != (native_process_exit == 0):
+              differences.append(
+                  "wrapper/native 成功性不一致："
+                  f"wrapper={wrapper_process_exit} native={native_process_exit}"
+              )
+          if shadow_counts != native_counts:
+              differences.append(
+                  f"测试计数不一致：shadow={shadow_counts} native={native_counts}"
+              )
+          if shadow_failure_suites != native_failure_suites:
+              differences.append(
+                  f"失败 suite 不一致：shadow={shadow_failure_suites} native={native_failure_suites}"
+              )
+          if shadow_failed_tests != native_failed_tests:
+              differences.append(
+                  f"失败测试不一致：shadow={shadow_failed_tests} native={native_failed_tests}"
+              )
+          if not shadow_records:
+              errors.append("shadow 原生日志没有可解析的 test result 计数")
+          if not native_records:
+              errors.append("native Cargo 输出没有可解析的 test result 计数")
+          if native_tee_exit != 0:
+              errors.append(f"native Cargo 报告 tee 失败，tee_exit={native_tee_exit}")
+          if report_error != 0:
+              errors.append(f"报告写入/采集失败，report_error={report_error}")
+
+          report_diff = list(
+              difflib.unified_diff(
+                  sorted(shadow_lines),
+                  sorted(native_lines),
+                  fromfile="shadow/normalized-native-report",
+                  tofile="native/normalized-cargo-report",
+                  lineterm="",
+              )
+          )
+          if report_diff:
+              differences.append(
+                  f"规范化原生报告存在差异，共 {len(report_diff)} 行；详见 native-report.diff"
+              )
+          diff_path = report_root / "native-report.diff"
+          try:
+              diff_path.write_text(
+                  "\n".join(report_diff)
+                  + ("\n" if report_diff else "No normalized native report differences.\n"),
+                  encoding="utf-8",
+              )
+          except OSError as exc:
+              errors.append(f"无法写入 native-report.diff: {exc}")
+
+          status = "PASS" if not differences and not errors else "FAIL"
+          comparison = {
+              "status": status,
+              "report_root": str(report_root),
+              "shadow_report": str(shadow_report),
+              "native_report": str(native_report),
+              "wrapper_exit_code": wrapper_process_exit,
+              "native_exit_code": native_process_exit,
+              "wrapper": {
+                  "exit_code": wrapper_process_exit,
+                  "suite_exit_code": shadow_suite_exit,
+                  "suite_status": shadow_suite_status,
+                  "test_counts": shadow_counts,
+                  "test_result_records": shadow_records,
+                  "failed_tests": shadow_failed_tests,
+                  "failed_suites": shadow_failure_suites,
+              },
+              "native": {
+                  "exit_code": native_process_exit,
+                  "tee_exit_code": native_tee_exit,
+                  "test_counts": native_counts,
+                  "test_result_records": native_records,
+                  "failed_tests": native_failed_tests,
+                  "failed_suites": native_failure_suites,
+              },
+              "exit_code_comparison": {
+                  "wrapper_process_vs_native_outcome": (wrapper_process_exit == 0)
+                  == (native_process_exit == 0),
+                  "wrapper_suite_vs_native_exact": shadow_suite_exit == native_process_exit,
+              },
+              "test_count_comparison": shadow_counts == native_counts,
+              "failed_suite_comparison": shadow_failure_suites == native_failure_suites,
+              "native_report_diff": str(diff_path),
+              "native_report_diff_lines": len(report_diff),
+              "differences": differences,
+              "errors": errors,
+          }
+          try:
+              (report_root / "comparison.json").write_text(
+                  json.dumps(comparison, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              tsv_rows = [
+                  ("comparison_status", status, "", status == "PASS"),
+                  ("wrapper_process_exit_code", wrapper_process_exit, native_process_exit, wrapper_process_exit == native_process_exit),
+                  ("wrapper_suite_exit_code", shadow_suite_exit, native_process_exit, shadow_suite_exit == native_process_exit),
+                  ("test_counts", json.dumps(shadow_counts, sort_keys=True), json.dumps(native_counts, sort_keys=True), shadow_counts == native_counts),
+                  ("failed_suites", ",".join(shadow_failure_suites), ",".join(native_failure_suites), shadow_failure_suites == native_failure_suites),
+                  ("failed_tests", ",".join(shadow_failed_tests), ",".join(native_failed_tests), shadow_failed_tests == native_failed_tests),
+                  ("native_report_diff_lines", len(report_diff), "0", not report_diff),
+              ]
+              with (report_root / "comparison.tsv").open("w", encoding="utf-8") as handle:
+                  handle.write("metric\tshadow\tnative\tmatch\n")
+                  for metric, shadow, native, match in tsv_rows:
+                      handle.write(f"{metric}\t{shadow}\t{native}\t{str(match).upper()}\n")
+          except OSError as exc:
+              print(f"无法写入 comparison report: {exc}", file=sys.stderr)
+              sys.exit(3)
+
+          print(
+              f"server-test shadow comparison={status} "
+              f"wrapper_exit={wrapper_process_exit} suite_exit={shadow_suite_exit} "
+              f"native_exit={native_process_exit} "
+              f"shadow_tests={shadow_counts} native_tests={native_counts} "
+              f"report={report_root}"
+          )
+          if status != "PASS":
+              for message in differences + errors:
+                  print(f"server-test shadow difference: {message}", file=sys.stderr)
+              sys.exit(1)
+          PY
+          comparison_exit=$?
+
+          if [[ "$native_tee_exit" -ne 0 || "$report_error" -ne 0 ]]; then
+            exit 3
+          fi
+          if [[ "$native_exit" -ne 0 ]]; then
+            exit "$native_exit"
+          fi
+          if [[ "$wrapper_exit" -ne 0 ]]; then
+            exit "$wrapper_exit"
+          fi
+          if [[ "$comparison_exit" -ne 0 ]]; then
+            exit "$comparison_exit"
+          fi
+          exit 0
       - if: always()
         uses: actions/upload-artifact@v4
         with:
