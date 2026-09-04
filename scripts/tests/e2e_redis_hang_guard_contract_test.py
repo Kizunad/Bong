@@ -57,6 +57,11 @@ class E2ERedisHangGuardContractTest(unittest.TestCase):
         source = E2E_REDIS.read_text(encoding="utf-8")
         stage = source.index('CURRENT_STAGE="schema"')
         schema = source.index("npm run build", stage)
+        self.assertIn(
+            'cd "$ROOT/agent/packages/schema" &&',
+            source[stage:schema],
+            "schema 构建必须在目录切换失败时停止，不能在错误目录继续执行",
+        )
         self.assertIn("timeout --signal=TERM", source[max(stage, schema - 180) : schema])
 
         preview = source.index('python3 "$ROOT/scripts/bot/run_scenarios.py"')

@@ -1172,8 +1172,8 @@ echo ""
 CURRENT_STAGE="schema"
 echo "=== [$TASK_ID][$SCRIPT_TAG][2/8] Schema build ==="
 if (
-  cd "$ROOT/agent/packages/schema"
-  PATH="$NODE_BIN:$PATH" timeout --signal=TERM --kill-after=5s 300s npm run build
+  cd "$ROOT/agent/packages/schema" &&
+    PATH="$NODE_BIN:$PATH" timeout --signal=TERM --kill-after=5s 300s npm run build
 ) >>"$REDIS_LOG" 2>&1; then
   pass "schema build"
 else
