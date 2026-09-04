@@ -1,6 +1,4 @@
-use bong_server::schema::client_payload::{
-    ClientPayloadType, ClientPayloadV1, EventAlertSeverity,
-};
+use bong_server::schema::client_payload::{ClientPayloadType, ClientPayloadV1, EventAlertSeverity};
 use bong_server::schema::common::EventKind;
 
 const WELCOME_SAMPLE: &str =
@@ -85,9 +83,8 @@ fn deserialize_zone_info_sample() {
 
 #[test]
 fn deserialize_event_alert_sample() {
-    let payload: ClientPayloadV1 = serde_json::from_str(EVENT_ALERT_SAMPLE).expect(
-        "client-payload-event-alert.sample.json should deserialize into ClientPayloadV1",
-    );
+    let payload: ClientPayloadV1 = serde_json::from_str(EVENT_ALERT_SAMPLE)
+        .expect("client-payload-event-alert.sample.json should deserialize into ClientPayloadV1");
 
     match payload {
         ClientPayloadV1::EventAlert { v, event_alert } => {
@@ -126,9 +123,8 @@ fn deserialize_locust_swarm_warning_sample() {
 
 #[test]
 fn deserialize_player_state_sample() {
-    let payload: ClientPayloadV1 = serde_json::from_str(PLAYER_STATE_SAMPLE).expect(
-        "client-payload-player-state.sample.json should deserialize into ClientPayloadV1",
-    );
+    let payload: ClientPayloadV1 = serde_json::from_str(PLAYER_STATE_SAMPLE)
+        .expect("client-payload-player-state.sample.json should deserialize into ClientPayloadV1");
 
     match payload {
         ClientPayloadV1::PlayerState { v, player_state } => {
