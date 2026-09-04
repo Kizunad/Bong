@@ -1,14 +1,10 @@
 use valence::prelude::{BlockPos, DVec3, Entity, Position, Query};
 
+use crate::reach::DistanceRule;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 #[cfg(test)]
 use std::sync::Mutex;
-
-/// Canonical maximum distance for player-to-lingtian interactions, before the
-/// block-center tolerance used by the interaction contract.
-pub const LINGTIAN_INTERACT_MAX_DISTANCE: f64 = 4.0;
-const LINGTIAN_INTERACT_TOLERANCE: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LingtianInteractionDenial {
@@ -36,8 +32,7 @@ pub fn is_lingtian_position_in_scope(
         f64::from(target.y) + 0.5,
         f64::from(target.z) + 0.5,
     );
-    actor_position.distance(target_center)
-        <= LINGTIAN_INTERACT_MAX_DISTANCE + LINGTIAN_INTERACT_TOLERANCE
+    DistanceRule::LINGTIAN_INTERACT.allows(actor_position, target_center)
 }
 
 pub fn validate_lingtian_interaction(
