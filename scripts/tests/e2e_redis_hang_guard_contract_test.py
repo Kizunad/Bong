@@ -84,6 +84,15 @@ class E2ERedisHangGuardContractTest(unittest.TestCase):
             'SMOKE_E2E_TIMEOUT_SECONDS="${BONG_SMOKE_E2E_TIMEOUT_SECONDS:-1500}"',
             source,
         )
+        self.assertIn(
+            'SMOKE_E2E_KILL_GRACE_SECONDS="${BONG_SMOKE_E2E_KILL_GRACE_SECONDS:-40}"',
+            source,
+            "e2e 外层 KILL 宽限必须覆盖 e2e-redis.sh 的 cleanup 窗口",
+        )
+        self.assertIn(
+            'require_positive_timeout "BONG_SMOKE_E2E_KILL_GRACE_SECONDS"',
+            source,
+        )
         self.assertIn("exit=$stage_exit", source)
 
         commands = (
@@ -109,6 +118,11 @@ class E2ERedisHangGuardContractTest(unittest.TestCase):
             'if bash "$ROOT/scripts/e2e-redis.sh"',
             source,
             "smoke wrapper 不得留下无界 e2e 子进程",
+        )
+        e2e_stage = source[source.index('CURRENT_STAGE="e2e"') :]
+        self.assertIn(
+            'run_bounded "$SMOKE_E2E_TIMEOUT_SECONDS" "$SMOKE_E2E_KILL_GRACE_SECONDS"',
+            e2e_stage,
         )
 
     def test_bounded_runner_preserves_native_failure_and_timeout(self) -> None:
