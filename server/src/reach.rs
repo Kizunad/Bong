@@ -88,12 +88,18 @@ impl DistanceRule {
         Self::euclidean3d_squared(NEARBY_INTERACT_MAX_BLOCKS)
     }
 
+    /// The lingtian interaction reach profile.
+    pub const fn lingtian_interact() -> Self {
+        Self::euclidean3d_squared(LINGTIAN_INTERACT_MAX_BLOCKS)
+    }
+
     /// Named constants for callers that prefer frozen values over constructors.
     pub const WORKBENCH: Self = Self::workbench();
     pub const DROPPED_LOOT: Self = Self::dropped_loot();
     pub const SUPPLY_COFFIN_OPEN: Self = Self::supply_coffin_open();
     pub const EXTERNAL_SESSION: Self = Self::external_session();
     pub const NEARBY_INTERACT: Self = Self::nearby_interact();
+    pub const LINGTIAN_INTERACT: Self = Self::lingtian_interact();
 
     /// Euclidean profile constructor. The comparison remains squared.
     pub const fn euclidean3d_squared(max_blocks: f64) -> Self {
@@ -185,3 +191,4 @@ pub const DROPPED_LOOT_MAX_BLOCKS: f64 = 2.5;
 pub const SUPPLY_COFFIN_OPEN_MAX_BLOCKS: f64 = 4.5;
 pub const EXTERNAL_SESSION_MAX_BLOCKS: f64 = 6.5;
 pub const NEARBY_INTERACT_MAX_BLOCKS: f64 = 6.0;
+pub const LINGTIAN_INTERACT_MAX_BLOCKS: f64 = 4.5;

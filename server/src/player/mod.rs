@@ -2042,7 +2042,7 @@ mod tests {
         let (persistence, data_dir, _db_path) = sqlite_persistence("reconnect-lingtian-gate");
 
         // 存档玩家上次离线在灵田目标旁（Overworld，目标 (0,64,0) 中心 (0.5,64.5,0.5)，
-        // 玩家 (2.5,64.5,0.5) 距离 2.0 < LINGTIAN_INTERACT_MAX_DISTANCE + TOLERANCE）。
+        // 玩家 (2.5,64.5,0.5) 距离 2.0，位于共享灵田交互 reach profile 内）。
         crate::player::state::save_player_slices(
             &persistence,
             "Azure",
