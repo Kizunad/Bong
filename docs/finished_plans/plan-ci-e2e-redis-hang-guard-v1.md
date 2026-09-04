@@ -1,15 +1,15 @@
 # plan-ci-e2e-redis-hang-guard-v1
 
-> **骨架（草案）**。一句话主题：给 CI smoke 的 Redis e2e 非 mock Tiandao 入口建立硬超时与 hermetic workspace 执行边界，让外部命令在远小于 job 上限处明确失败并保留诊断，而不是把 GitHub job 烧满后静默取消。
+> **Active plan**。一句话主题：给 CI smoke 的 Redis e2e 非 mock Tiandao 入口建立硬超时与 hermetic workspace 执行边界，让外部命令在远小于 job 上限处明确失败并保留诊断，而不是把 GitHub job 烧满后静默取消。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | `scripts/e2e-redis.sh` 非 mock Tiandao 调用的超时、失败 stage 与运行目录诊断 | ⬜ |
-| P1 | 使用 workspace 内 `agent/node_modules/.bin/tsx`，缺失时 fail fast，禁止 `npx` 运行时拉包 | ⬜ |
-| P2 | 扫描 `scripts/e2e-redis.sh` / `scripts/smoke-test-e2e.sh` 同类前台阻塞调用，补必要 contract pin，不改变测试语义 | ⬜ |
-| P3 | 受影响脚本验证、故障注入证据、主线复验与归档 | ⬜ |
+| P0 | `scripts/e2e-redis.sh` 非 mock Tiandao 调用的超时、失败 stage 与运行目录诊断 | ✅ 2026-09-05 |
+| P1 | 使用 workspace 内 `agent/node_modules/.bin/tsx`，缺失时 fail fast，禁止 `npx` 运行时拉包 | ✅ 2026-09-05 |
+| P2 | 扫描 `scripts/e2e-redis.sh` / `scripts/smoke-test-e2e.sh` 同类前台阻塞调用，补必要 contract pin，不改变测试语义 | ✅ 2026-09-05 |
+| P3 | 受影响脚本验证、故障注入证据、主线复验与归档 | ✅ 2026-09-05 |
 
 ## 接入面 checklist
 
@@ -59,3 +59,42 @@
 
 - 全部阶段完成并填充 Finish Evidence 后，按 BugFix 流程将本 skeleton promotion 为 active，最终归档为 `docs/finished_plans/plan-ci-e2e-redis-hang-guard-v1.md`。
 - 不修改其他 plan、`docs/CLAUDE.md`、`docs/worldview.md`、Cargo、schema 或玩法。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0**：`scripts/e2e-redis.sh` 的 `CURRENT_STAGE=tiandao` 阶段用 `timeout` 包住既有 task-13 one-tick 入口，默认 120 秒、TERM 后 5 秒 KILL；捕获并记录真实 wrapper 退出码、耗时、`TIANDAO_LOG` 和 `RUN_DIR`，超时/原生非零统一经过现有 `finalize_failure` 收口。原三个 60 秒 `wait_for_pattern` 锚点及 cleanup 顺序保留。
+- **P1**：非 mock Tiandao 改用 `agent/node_modules/.bin/tsx`，缺失或不可执行时 fail fast 并给出 `npm ci` 修复提示；关键路径不再调用 `npx` 运行时访问 registry。
+- **P2**：`scripts/e2e-redis.sh` 的 Redis probe、schema build、north-rift preview 与 `scripts/smoke-test-e2e.sh` 的前台阶段均使用有界执行；新增 `scripts/tests/e2e_redis_hang_guard_contract_test.py` 锁定 timeout、workspace tsx、native exit 与诊断语义，并由 `.github/workflows/e2e.yml` preflight 执行。未改 agent task、server/gameplay、schema/wire、client 或测试场景语义。
+- **P3**：本分支从 `origin/main` 的 `d1b80331015211e439823859f1f6f39ce2f97e22` 合并到最新 `origin/main` `e7bfd6a4b5fdfafa96883dd0715b3ab6913315b5`，机械合并提交为 `6e328d110b0fa140dfcce6a7914fea7edbbb68f3`；归档前完成脚本验证与无上下文 validator，PR CI 继续承担干净 runner 上的完整 smoke/e2e 正常路径核验。
+
+### 关键 commit
+
+- `0add17c3b`（2026-09-05）：建立 `plan-ci-e2e-redis-hang-guard-v1` 骨架。
+- `7ad796261`（2026-09-05）：将骨架 promotion 为 Active plan。
+- `a99a86d49`（2026-09-05）：为 task-13 非 mock Tiandao 入口建立 workspace 执行与硬超时失败收口。
+- `524325f84`（2026-09-05）：新增 hang-guard contract 并接入 e2e preflight。
+- `7b7d0a50b`（2026-09-05）：补齐 native exit/timeout 动态对拍与相邻前台阶段边界。
+- `6e328d110`（2026-09-05）：合并最新 `origin/main`，保留双方主线变更。
+
+### 测试结果
+
+- `bash -n scripts/e2e-redis.sh scripts/smoke-test-e2e.sh`：通过。
+- `python3 scripts/tests/e2e_redis_hang_guard_contract_test.py`：5 tests passed，覆盖 workspace tsx、缺失入口、timeout、native exit 23 与日志诊断。
+- `bash scripts/tests/test_all_contract_test.sh`：95 passed；`bash scripts/tests/build_token_test.sh`：23 passed；`python3 scripts/tests/ci_build_token_entrypoint_test.py`：11 passed；`python3 scripts/tests/signal_boundary_contract_test.py`：7 passed；`python3 scripts/tests/fallback_world_readiness_contract_test.py`：8 passed；`python3 scripts/tests/proto_breaking_base_ref_contract_test.py`：8 passed；preview lifecycle、cargo target scope、server provenance contract：通过。
+- `git diff --check`：通过；workflow YAML 静态核验：通过。
+- 真实 Redis/schema e2e 的 `RUN_LABEL=ci-e2e-redis-hang-guard-normal` 在 server release build 达到既有 600 秒 build guard，manifest 明确为 `status=FAILED stage=server`；随后 `BONG_E2E_BUILD_TIMEOUT_SECONDS=1800 RUN_LABEL=ci-e2e-redis-hang-guard-release-cached` 仍在首次 release 冷编译阶段达到 1800 秒，manifest 同样明确为 `stage=server`，未进入 Tiandao。两次均保留 `server.log` 与 run directory，未将编译环境失败伪报为 Tiandao 或正常 e2e 通过；动态 contract 已独立证明目标 timeout/native-exit 行为。
+- 无上下文、read-only validator（模型 `gpt-5.6-luna`）对代码 HEAD `7b7d0a50b843fc9c96f5946f201e211b49304534` 返回 PASS；归档后的最终 HEAD 已重新执行同类 validator。
+
+### 跨仓库核验
+
+- **scripts/CI**：`scripts/e2e-redis.sh`、`scripts/smoke-test-e2e.sh` 与 `.github/workflows/e2e.yml` 仅增加有界执行和合同检查；原 Redis channel proof、server lifecycle、cleanup、pattern anchors、DAG 与 artifact 语义保留。
+- **agent**：继续执行既有 `agent/packages/tiandao/src/task-13-one-tick.ts`，仅由 workspace 内已有 `tsx` 入口启动；未改 agent runtime、schema 或 Redis 协议。
+- **server/client/schema**：无生产代码、Cargo 依赖、wire/schema、client 行为或 gameplay 改动；e2e 仍使用既有 server build 与 task-13 链路。
+
+### 遗留 / 后续
+
+- 本地 slot-4 首次 release 冷编译在 600 秒和临时 1800 秒 guard 内均未完成，故不宣称本地正常 e2e PASS；PR 的干净 CI runner 负责验证 server-test/smoke 正常链路，失败时保留原生 artifact。
+- timeout 默认值、job timeout、三项 `wait_for_pattern` 与 cleanup 语义未放宽；缺失 workspace `tsx` 时仍 fail closed，不允许回退到 registry 下载。
+- plan 已按 BugFix 三态流转归档；PR 开出后等待 CI/Kody/inline review，未经用户指示不自行合并。
