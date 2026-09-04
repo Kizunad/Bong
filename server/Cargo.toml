@@ -82,6 +82,10 @@ path = "tests/unit/alchemy/recipe_fragment_test.rs"
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
+[[test]]
+name = "give_dan_reach_profile"
+path = "tests/give_dan_reach_profile.rs"
+
 [features]
 dev-techniques = []
 

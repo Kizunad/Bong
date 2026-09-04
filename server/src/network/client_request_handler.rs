@@ -560,7 +560,6 @@ pub struct SkillScrollRequestParams<'w, 's> {
 
 const CHANNEL: &str = "bong:client_request";
 const SUPPORTED_VERSION: u8 = 1;
-const GIVE_DAN_MAX_DISTANCE: f64 = 6.0;
 /// plan-cultivation-v1 §3.1：服用突破辅助丹药的 buff 持续时间（5 分钟）。
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
@@ -11315,34 +11314,6 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn give_dan_target_scope_requires_same_dimension_and_six_block_boundary() {
-        assert!(is_give_dan_target_in_scope(
-            DVec3::ZERO,
-            DVec3::new(GIVE_DAN_MAX_DISTANCE, 0.0, 0.0),
-            DimensionKind::Overworld,
-            DimensionKind::Overworld,
-        ));
-        assert!(!is_give_dan_target_in_scope(
-            DVec3::ZERO,
-            DVec3::new(GIVE_DAN_MAX_DISTANCE + 0.01, 0.0, 0.0),
-            DimensionKind::Overworld,
-            DimensionKind::Overworld,
-        ));
-        assert!(!is_give_dan_target_in_scope(
-            DVec3::ZERO,
-            DVec3::ZERO,
-            DimensionKind::Overworld,
-            DimensionKind::Tsy,
-        ));
-        assert!(!is_give_dan_target_in_scope(
-            DVec3::new(f64::NAN, 0.0, 0.0),
-            DVec3::ZERO,
-            DimensionKind::Overworld,
-            DimensionKind::Overworld,
-        ));
-    }
-
     fn production_scroll_request_app() -> App {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -16957,8 +16928,7 @@ fn is_give_dan_target_in_scope(
     elder_dimension: DimensionKind,
 ) -> bool {
     player_dimension == elder_dimension
-        && player_position.distance_squared(elder_position)
-            <= GIVE_DAN_MAX_DISTANCE * GIVE_DAN_MAX_DISTANCE
+        && crate::reach::DistanceRule::NEARBY_INTERACT.allows(player_position, elder_position)
 }
 
 fn reject_give_dan_target(
