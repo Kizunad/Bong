@@ -46,6 +46,10 @@ MODULES = ["network"]
 # 伪造 session token：u64 高位全 1，不可能是服务端分配的真实 session id。
 FORGED_SESSION_ID = 0xFFFF_FFFF_FFFF_FF00
 
+# server `world::entity_model::TRADE_CRATE_ENTITY_KIND` 的协议镜像。
+# 放置成功的 trade_crate 只能由这个 marker 类型开启容器 session。
+TRADE_CRATE_ENTITY_KIND = 166
+
 
 def _move_request(
     session_id: int, instance_id: int, from_loc: dict, to_loc: dict
@@ -74,6 +78,8 @@ PROBE_ITEM_ID = "fan_tie"
 
 # central-review 1993 #3：放置搜索整体有界（批量发出后单次等待），不再逐候选各等 0.8s。
 PLACEMENT_SEARCH_DEADLINE_S = 5.0
+PLACEMENT_BATCH_SIZE = 8
+PLACEMENT_BATCH_WAIT_S = 0.5
 
 
 def _total_stack_count(snapshot: dict, item_id: str) -> int:
@@ -165,6 +171,101 @@ def _placement_candidates(bot) -> list[tuple[int, int, int]]:
     return candidates
 
 
+def _spawn_matches_candidate_position(
+    event, candidates: list[tuple[int, int, int]]
+) -> bool:
+    """判断 entity_spawn 是否落在本轮候选货箱 marker 的格心附近。"""
+    data = event.data
+    return any(
+        abs(data.get("x", float("nan")) - (position[0] + 0.5)) <= 0.25
+        and abs(data.get("y", float("nan")) - position[1]) <= 0.25
+        and abs(data.get("z", float("nan")) - (position[2] + 0.5)) <= 0.25
+        for position in candidates
+    )
+
+
+def _spawn_at_attempted(
+    event, candidates: list[tuple[int, int, int]], sent_at: float
+) -> bool:
+    """只接受本轮新到达且类型正确的 trade_crate marker。"""
+    return (
+        event.kind == "entity_spawn"
+        and event.t > sent_at
+        and event.data.get("type") == TRADE_CRATE_ENTITY_KIND
+        and _spawn_matches_candidate_position(event, candidates)
+    )
+
+
+def _candidate_spawn_diagnostics(
+    bot, candidates: list[tuple[int, int, int]], sent_at: float
+) -> str:
+    """列出候选格实际收到的 spawn 类型、坐标和实体 id，辅助定位场景环境冲突。"""
+    observed = []
+    for event in bot.events_of("entity_spawn"):
+        if event.t <= sent_at or not _spawn_matches_candidate_position(event, candidates):
+            continue
+        data = event.data
+        observed.append(
+            "type={type}, entity_id={entity_id}, pos=({x}, {y}, {z})".format(
+                type=data.get("type"),
+                entity_id=data.get("entity_id"),
+                x=data.get("x"),
+                y=data.get("y"),
+                z=data.get("z"),
+            )
+        )
+    return "; ".join(observed) if observed else "无"
+
+
+def _place_trade_crate_until_marker(
+    bot, candidates: list[tuple[int, int, int]], item_instance_id: int
+):
+    """分批尝试放置货箱，并在共享 deadline 内返回新 marker。"""
+    search_started_at = time.monotonic()
+    sent_at = search_started_at - bot.t0
+    deadline = search_started_at + PLACEMENT_SEARCH_DEADLINE_S
+    attempted: list[tuple[int, int, int]] = []
+
+    for batch_start in range(0, len(candidates), PLACEMENT_BATCH_SIZE):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        batch = candidates[batch_start : batch_start + PLACEMENT_BATCH_SIZE]
+        attempted.extend(batch)
+        for cx, cy, cz in batch:
+            bot.intent(
+                {
+                    "type": "block_place",
+                    "v": 1,
+                    "x": cx,
+                    "y": cy,
+                    "z": cz,
+                    "item_instance_id": item_instance_id,
+                    "target_face": "north",
+                }
+            )
+
+        # 每批只占用一小段等待预算，避免无反馈的失败放置阻塞后续候选；所有批次
+        # 共享同一个 deadline，迟到的前批 marker 仍可在后续 wait_for 中被历史扫描到。
+        wait_timeout = min(PLACEMENT_BATCH_WAIT_S, remaining)
+        try:
+            return (
+                bot.wait_for(
+                    lambda event: _spawn_at_attempted(event, attempted, sent_at),
+                    timeout=wait_timeout,
+                    description=(
+                        "trade_crate 放置批次后出现容器 Marker entity_spawn "
+                        f"（批次起点 {batch_start}）"
+                    ),
+                ),
+                sent_at,
+            )
+        except BotAssertionError:
+            continue
+
+    return None, sent_at
+
+
 def _open_real_session(bot) -> dict:
     """创建并打开一个真实外部容器 session，并把一个真实背包物品移入容器。
 
@@ -222,52 +323,18 @@ def _open_real_session(bot) -> dict:
     # 才抛错（fail-closed，issued-to-closed 重放是核心覆盖，环境缺口不得静默跳过，
     # review finding 3）。
     #
-    # **批量发出 + 单次有界等待（central-review 1993 #3）**：server 按连接**串行**处理
-    # block_place —— 被拒候选在 can_place_block 处 continue（不消耗实例、不发事件），
-    # 第一个能放置的候选消耗 crate 实例并 spawn marker，其后候选因实例已消耗在
-    # consume_item_instance_once 被拒（no-op）。故全部候选一次性发出后**只等一次**
-    # marker spawn：predicate 匹配任意候选格（±0.25 紧 box 只命中本格 marker，候选格
-    # 间距 ≥1，不误收邻近既有实体）且 wait_for 从事件历史头部重扫 —— 迟到 spawn 不丢
-    # （旧 review finding 1 语义保留）。总时延有界于 PLACEMENT_SEARCH_DEADLINE_S，不再
-    # 逐候选各等 0.8s、按候选数线性放大（旧 86 候选全 stone 拒绝 ≈ 69s）。
-    spawn = None
-    sent_at = time.monotonic() - bot.t0
     candidates = _placement_candidates(bot)
-    for cx, cy, cz in candidates:
-        bot.intent(
-            {
-                "type": "block_place",
-                "v": 1,
-                "x": cx,
-                "y": cy,
-                "z": cz,
-                "item_instance_id": crate["item"]["instance_id"],
-                "target_face": "north",
-            }
-        )
-
-    def _spawn_at_attempted(e) -> bool:
-        if e.kind != "entity_spawn" or e.t <= sent_at:
-            return False
-        return any(
-            abs(e.data["x"] - (p[0] + 0.5)) <= 0.25
-            and abs(e.data["y"] - p[1]) <= 0.25
-            and abs(e.data["z"] - (p[2] + 0.5)) <= 0.25
-            for p in candidates
-        )
-
-    try:
-        spawn = bot.wait_for(
-            _spawn_at_attempted,
-            timeout=PLACEMENT_SEARCH_DEADLINE_S,
-            description="trade_crate 放置后任意候选格出现容器 Marker entity_spawn",
-        )
-    except BotAssertionError:
-        spawn = None
+    # server 按连接串行处理 block_place。每批 8 个请求给 server 留出处理窗口，
+    # 找到 marker 立即停止，避免成功消费实例后仍灌入其余几十个无效请求；失败批次
+    # 不消费实例，可以继续复用同一 trade_crate。总耗时仍受单一 deadline 限制。
+    spawn, sent_at = _place_trade_crate_until_marker(
+        bot, candidates, crate["item"]["instance_id"]
+    )
     if spawn is None:
         raise BotAssertionError(
             "stale-session 场景在玩家射程内所有候选格都无法放置 trade_crate Marker："
-            "issued-to-closed 重放是核心覆盖，环境缺口不得静默跳过（review finding 3）"
+            "issued-to-closed 重放是核心覆盖，环境缺口不得静默跳过（review finding 3）；"
+            f"候选范围内实际 spawn：{_candidate_spawn_diagnostics(bot, candidates, sent_at)}"
         )
 
     bot.intent({"type": "container_open", "v": 1, "entity_id": spawn.data["entity_id"]})

@@ -5782,6 +5782,131 @@ def _stale_session_close_bot(probe_snapshot: dict) -> _RejectionFakeBot:
 
 
 class StaleSessionScenarioTest(unittest.TestCase):
+    def test_trade_crate_placement_stops_after_first_batch_hit(self):
+        candidates = [(index, 64, 20) for index in range(10)]
+        bot = mock.MagicMock()
+        bot.t0 = 0.0
+        bot.wait_for.return_value = _FakeEvent(
+            2.0,
+            "entity_spawn",
+            {
+                "entity_id": 1661,
+                "type": stale_session_scenario.TRADE_CRATE_ENTITY_KIND,
+                "x": 0.5,
+                "y": 64.0,
+                "z": 20.5,
+            },
+        )
+
+        spawn, _sent_at = stale_session_scenario._place_trade_crate_until_marker(
+            bot, candidates, item_instance_id=501
+        )
+
+        self.assertIsNotNone(spawn, "第一批命中 marker 时必须立即返回")
+        self.assertEqual(
+            bot.intent.call_count,
+            stale_session_scenario.PLACEMENT_BATCH_SIZE,
+            "第一批命中后不得继续向连接灌入后续候选请求",
+        )
+        bot.wait_for.assert_called_once()
+
+    def test_trade_crate_placement_continues_after_batch_miss(self):
+        candidates = [(index, 64, 20) for index in range(10)]
+        bot = mock.MagicMock()
+        bot.t0 = 0.0
+        bot.wait_for.side_effect = [
+            BotAssertionError("第一批无 marker"),
+            _FakeEvent(
+                2.0,
+                "entity_spawn",
+                {
+                    "entity_id": 1661,
+                    "type": stale_session_scenario.TRADE_CRATE_ENTITY_KIND,
+                    "x": 8.5,
+                    "y": 64.0,
+                    "z": 20.5,
+                },
+            ),
+        ]
+
+        spawn, _sent_at = stale_session_scenario._place_trade_crate_until_marker(
+            bot, candidates, item_instance_id=501
+        )
+
+        self.assertIsNotNone(spawn, "前批未命中时必须继续搜索下一批")
+        self.assertEqual(bot.intent.call_count, len(candidates))
+        self.assertEqual(bot.wait_for.call_count, 2)
+
+    def test_trade_crate_placement_stops_when_shared_deadline_expires(self):
+        candidates = [(index, 64, 20) for index in range(20)]
+        bot = mock.MagicMock()
+        bot.t0 = 0.0
+        bot.wait_for.side_effect = BotAssertionError("批次无 marker")
+        # start=0；第一批检查仍有预算，等待后时钟已到 5s，下一批不得重置 deadline。
+        with mock.patch.object(
+            stale_session_scenario.time,
+            "monotonic",
+            side_effect=[0.0, 0.0, 5.0],
+        ):
+            spawn, _sent_at = stale_session_scenario._place_trade_crate_until_marker(
+                bot, candidates, item_instance_id=501
+            )
+
+        self.assertIsNone(spawn, "共享 deadline 到期后必须停止搜索")
+        self.assertEqual(
+            bot.intent.call_count,
+            stale_session_scenario.PLACEMENT_BATCH_SIZE,
+            "deadline 到期不得发送下一批候选请求",
+        )
+        bot.wait_for.assert_called_once()
+
+    def test_trade_crate_spawn_predicate_requires_marker_type_and_candidate_position(self):
+        candidates = [(10, 64, 20)]
+        valid = _FakeEvent(
+            2.0,
+            "entity_spawn",
+            {
+                "entity_id": 1661,
+                "type": stale_session_scenario.TRADE_CRATE_ENTITY_KIND,
+                "x": 10.5,
+                "y": 64.0,
+                "z": 20.5,
+            },
+        )
+        wrong_type = _FakeEvent(
+            2.1,
+            "entity_spawn",
+            {"entity_id": 1651, "type": 165, "x": 10.5, "y": 64.0, "z": 20.5},
+        )
+        wrong_position = _FakeEvent(
+            2.2,
+            "entity_spawn",
+            {
+                "entity_id": 1662,
+                "type": stale_session_scenario.TRADE_CRATE_ENTITY_KIND,
+                "x": 11.5,
+                "y": 64.0,
+                "z": 20.5,
+            },
+        )
+
+        self.assertTrue(
+            stale_session_scenario._spawn_at_attempted(valid, candidates, sent_at=1.0),
+            "候选格格心出现 type=166 的新 entity_spawn 才能作为货箱 marker",
+        )
+        self.assertFalse(
+            stale_session_scenario._spawn_at_attempted(
+                wrong_type, candidates, sent_at=1.0
+            ),
+            "坐标正确但类型错误的实体不得被当成 trade_crate marker",
+        )
+        self.assertFalse(
+            stale_session_scenario._spawn_at_attempted(
+                wrong_position, candidates, sent_at=1.0
+            ),
+            "类型正确但坐标不在本轮候选格的实体不得被当成 trade_crate marker",
+        )
+
     def test_content_fingerprint_ignores_revision_but_detects_content(self):
         before = _stale_session_snapshot(7)
         after_give = _stale_session_snapshot(8)

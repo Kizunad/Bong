@@ -25,7 +25,6 @@ class SvgHudFramePlannerTest {
     @Test
     void showsRadarFromCondenseWithStableBottomLeftLayout() {
         SvgHudFrame frame = SvgHudFramePlanner.plan(player("凝脉", 0.0), SCREEN_WIDTH, SCREEN_HEIGHT);
-
         assertTrue(frame.visible(), "凝脉阶段必须生成可提交的雷达 frame");
         assertEquals(EXPECTED_X, frame.x(), "雷达 x 坐标必须与既有 mini-body anchor 对齐");
         assertEquals(EXPECTED_Y, frame.y(), "雷达 y 坐标必须保持底部安全边距");
