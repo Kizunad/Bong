@@ -292,6 +292,7 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **公开 API 与 seam**：外置测试仅调用既有公开 `ClientPayloadV1`、`ClientPayloadType`、`EventAlertSeverity`、`EventKind` 及 serde API；未复制生产实现、未新增 seam、未扩大可见性。
 - **主线合并与完整 gate**：基于 `origin/main=fdabe0f0b528815472f1660fb08a2486c8762fd1` 执行 `git fetch origin && git merge origin/main`，无冲突并生成 merge commit `bb9f1b78d`；格式修正 commit 为 `2b8c4f1aa`。修正后定向测试仍为 `9 passed / 0 failed / 0 ignored`；`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0，library 为 `12632 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`client_payload_unit` 为 `9 passed / 0 failed`，其它独立 Cargo targets 与 doc-tests 均无失败。
 - **提交证据**：P2-16 代码、`client_payload_unit` target 与测试迁移对应 `699e5b545`（2026-09-03）；主线合并对应 `bb9f1b78d`，格式修正对应 `2b8c4f1aa`。本条仅记录 P2-16 进度，P2 总体、P3、P4 仍未完成。
+- **最终收口证据**：最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，确认最新 `origin/main=1cfec210df91357eb16329ca8ce6ae71a651ebdf` 已由 `404151a82` 合入且无待合并变更；随后同一 slot 的提升权限 locked server gate exit 0，library 为 `12632 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`client_payload_unit` 为 `9 passed / 0 failed`，全部既有独立 Cargo targets 与 doc-tests 均通过。
 
 ## P3 — CI 兼容、报告收口与迁移对拍（⬜）
 
