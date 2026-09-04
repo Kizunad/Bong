@@ -9,6 +9,8 @@ import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Optional;
+
 /** R7 P4 首个真实 SVG layer：QI_RADAR。 */
 public final class SvgHudBackend implements HudRenderBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-svg-hud");
@@ -22,16 +24,12 @@ public final class SvgHudBackend implements HudRenderBackend {
     private SvgHudBackend() {
     }
 
-    public static void renderProduction(
-        DrawContext context,
-        MinecraftClient client,
-        ScreenHudVisibility visibility,
-        SvgHudFrame frame
-    ) {
-        INSTANCE.renderLayer(context, client, visibility, frame);
-    }
-
     private static final SvgHudBackend INSTANCE = new SvgHudBackend();
+
+    /** 由客户端组合根注入 HUD 回调，表现层外不暴露具体实现细节。 */
+    public static HudRenderBackend production() {
+        return INSTANCE;
+    }
 
     @Override
     public void render(
@@ -59,41 +57,44 @@ public final class SvgHudBackend implements HudRenderBackend {
         }
         // 示例是独立的预览 fixture，不应被服务器 player_state 覆盖本地境界而隐藏。
         if (previewExampleEnabled) {
-            try {
-                renderPreviewExample(context, client, width, height);
-            } catch (RuntimeException failure) {
-                LOGGER.error("[svg] example.svg 资源加载/提交失败，已跳过本帧", failure);
-            }
+            renderPreviewExample(context, client, width, height);
         }
         SvgHudFrame safeFrame = frame == null ? SvgHudFrame.hidden() : frame;
         if (!safeFrame.visible()) {
             return;
         }
         // 生产 layer 只消费应用层已经规划好的 frame，不在这里反查业务 Store。
-        try {
-            SvgMesh mesh = registry(client.getResourceManager()).get(QI_RADAR);
-            EMITTER.emit(
-                context,
-                mesh,
-                safeFrame.x(),
-                safeFrame.y(),
-                safeFrame.scale(),
-                safeFrame.tint()
-            );
-        } catch (RuntimeException failure) {
-            // 资源错误必须 fail closed，不能让 HUD 线程因单个 SVG 崩溃。
-            LOGGER.error("[svg] QI_RADAR 资源加载/提交失败，已跳过本帧", failure);
-        }
+        emit(context, client, QI_RADAR, safeFrame.x(), safeFrame.y(), safeFrame.scale(), safeFrame.tint());
     }
 
     /** 预览专用示例，放在右上方以避开左下角既有 HUD。 */
     private static void renderPreviewExample(DrawContext context, MinecraftClient client, int width, int height) {
-        SvgMesh mesh = registry(client.getResourceManager()).get(EXAMPLE);
         int panelWidth = 180;
         int panelHeight = 72;
         int x = Math.max(8, width - panelWidth - 12);
         int y = Math.max(40, Math.min(48, height - panelHeight - 8));
-        EMITTER.emit(context, mesh, x, y, 1.0f, 0xFFFFFFFF);
+        emit(context, client, EXAMPLE, x, y, 1.0f, 0xFFFFFFFF);
+    }
+
+    private static void emit(
+        DrawContext context,
+        MinecraftClient client,
+        Identifier resource,
+        int x,
+        int y,
+        float scale,
+        int tint
+    ) {
+        Optional<SvgMesh> mesh = registry(client.getResourceManager()).find(resource);
+        if (mesh.isEmpty()) {
+            return;
+        }
+        try {
+            EMITTER.emit(context, mesh.get(), x, y, scale, tint);
+        } catch (RuntimeException failure) {
+            // 几何提交失败不影响其余 HUD；资源失败已由 registry 缓存并仅记录一次。
+            LOGGER.error("[svg] HUD mesh 提交失败，资源={}", resource, failure);
+        }
     }
 
     static void enablePreviewExample() {
@@ -115,9 +116,19 @@ public final class SvgHudBackend implements HudRenderBackend {
         return current;
     }
 
+    /** F3+T 完成后失效成功和失败缓存，让下次帧从新资源包重新加载。 */
+    static void invalidateAssets() {
+        synchronized (SvgHudBackend.class) {
+            if (registry != null) {
+                registry.clear();
+            }
+            registry = null;
+            lastResourceManager = null;
+        }
+    }
+
     static void resetForTests() {
-        registry = null;
-        lastResourceManager = null;
+        invalidateAssets();
         previewExampleEnabled = false;
     }
 }
