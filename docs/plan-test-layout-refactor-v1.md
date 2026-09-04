@@ -1,8 +1,8 @@
 # plan-test-layout-refactor-v1 — 三栈测试外置布局、所有权冻结与统一入口设计
 
-> **一句话主题**：保留 server/client/agent 各自的 canonical 测试根，禁止新增生产文件内联测试，并按可回滚的小批次把现有 Rust inline tests 外置；同时冻结执行命令、CI job 与报告产物所有权，落地 `scripts/test-all.sh` 统一入口。
+> **一句话主题**：以稳定业务契约为准保留必要测试，维护 server/client/agent 各自的 canonical 测试根；Rust 既有 inline tests 先分类，再按可回滚的小批次外置、合并、删除或保留独立私有测试模块；同时冻结执行命令、CI job 与报告产物所有权，落地 `scripts/test-all.sh` 统一入口。
 >
-> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 首批 pseudo-vein、tsy_container_search、lingtian range_gate、craft recipe 与 alchemy furnace 模块已完成，后续模块与 P3-P4 尚未开始。
+> **当前状态**：Active plan；T0 设计盘点与“独立测试根 + 分阶段外置”决议已完成，P1 统一入口/owners/report contract 已交付；P2 已完成多批历史外置迁移，P3-01 server-test shadow 已完成。2026-09-05 起，未开始的迁移与已外置测试的收缩均采用本计划的契约筛选规则；P2、P3、P4 仍在进行。
 >
 > **盘点基线**：2026-08-23，专用 worktree `.agent-worktrees/test-refactor-init`（分支 `plan-test-layout-refactor-v1`，基于 `origin/main=eea1e73f2`）。数量是目录扫描快照，不是测试用例总数；新增测试后以本矩阵的路径/命令契约为准。外部 `BongWorldGen` 不属于本仓库或本 plan 的测试栈；Bong 仅保留 raster handoff 与 server/client preview 消费端。
 
@@ -10,9 +10,9 @@
 |------|------|------|
 | T0 / P0 | 三栈盘点、CI/产物地图、所有权矩阵冻结、统一入口契约设计 | ✅ 2026-08-23 |
 | P1 | 测试放置规则、禁止新增 inline、`scripts/test-all.sh` 与 owners 映射层 | ✅ 2026-08-28 |
-| P2 | Rust inline tests 首批按模块外置到 `server/tests/unit/**` 或专用测试文件 | ⏳ |
-| P3 | CI 兼容接入、报告收口与迁移前后对拍 | ⬜ |
-| P4 | 剩余 Rust inline tests 分批外置、清点归零、全量回归 | ⬜ |
+| P2 | Rust tests 外置与契约筛选策略重基线 | ⏳ |
+| P3 | CI 兼容接入、报告收口与迁移对拍 | ⏳ |
+| P4 | 剩余 Rust tests 按契约筛选后外置、合并、删除或保留私有模块，并完成全量回归 | ⬜ |
 
 ## 为什么最初独立成 skeleton
 
@@ -50,17 +50,17 @@
 
 | 栈 | canonical 测试位置 | 新增测试规则 | 现有 inline 迁移规则 |
 |---|---|---|---|
-| Rust | `server/tests/unit/**`、`server/tests/**`、`server/benches/**` | 不得在 `server/src/**` 新增 `#[cfg(test)] mod tests` 测试体；优先测试公开行为 | 按模块小批次迁移到 `server/tests/unit/**`；若确实依赖私有实现，先抽取稳定的 test seam/fixture，否则使用与模块同目录的专用 `tests.rs`，不得继续内联在生产文件 |
+| Rust | `server/tests/unit/**`、`server/tests/**`、`server/benches/**`；例外为经登记的 `server/src/**/tests.rs` | 不得把测试体继续写在生产实现文件；优先测试公开可观察行为。只有私有纯逻辑的必要契约无法经公开 API 验证、且外置会迫使生产 API 变形时，才可使用独立 `tests.rs` | 每个模块先做契约分类，再决定外置、合并、删除或保留独立 `tests.rs`；禁止为搬迁新增仅供测试调用的 `pub`/`#[doc(hidden)]` seam |
 | Fabric | `client/src/test/java/**`、`client/src/test/resources/**`、`client/src/gametest/java/**` | 测试类、fixture、GameTest 分别放在既有 source set；生产 Java 不放测试方法 | 现有外置路径保持不变，仅在业务触及该模块时整理命名/目录 |
 | Agent | `agent/packages/schema/tests/**`、`agent/packages/tiandao/tests/**` | Vitest 用例、samples/generated 对拍均放包级测试目录；生产 `src/**` 不新增测试体 | 现有外置路径保持不变，不把 schema 与 tiandao 合并成单一目录 |
 | 根脚本 | `scripts/tests/**`、`scripts/preview/**`、显式 smoke/E2E 脚本 | contract/validator 与跨栈场景留在脚本根；不得复制到三栈目录 | 只整理归属和报告索引，不改变脚本的前置、Redis、时间或 artifact 语义 |
 
 ### 不变式与边界
 
-1. **新测试先外置**：所有后续业务 PR 的任务卡必须附带本节；若测试代码进入生产文件，PR body 必须说明私有访问原因、替代方案评估和清理期限，否则视为不符合 plan。
-2. **迁移不改行为**：迁移只改变测试 source path、fixture 所有权和构建发现方式；断言、协议、Redis key、时间/随机种子和产物命名不得借机调整。
-3. **不机械破坏私有边界**：Rust 集成测试无法访问私有符号时，不通过扩大可见性或复制实现来“迁移”；先提取最小稳定 test seam，仍无法合理抽取时保留专用 `tests.rs` 并记录理由。
-4. **业务与搬迁分离**：大批量文件移动单独成 PR；业务修复 PR 只新增外置测试或迁移同一模块所需的最小用例，避免 review 混入无关 rename。
+1. **新测试先外置**：所有后续业务 PR 的任务卡必须附带本节；确有私有访问必要时，测试体放入独立 `tests.rs`，PR body 说明该私有契约、外置为何会扭曲生产 API，以及复审条件。
+2. **迁移先分类，不以数量守恒为目标**：每个待迁移测试或同构测试组必须记录其受保护契约、风险和处置（保留、表驱动合并、替换或删除）。迁移前后的测试数量、名称、fixture 文案、随机种子和实现镜像断言不构成验收条件；已识别的协议、权限、守恒、状态转换和回归契约必须保持可验证。
+3. **不机械破坏私有边界**：Rust 集成测试无法访问私有符号时，不通过扩大可见性、复制实现或新增仅供测试调用的 `pub`/`#[doc(hidden)]` seam 来“迁移”；优先验证公开可观察行为，必要时保留专用 `tests.rs` 并记录理由。P2 既有 seam 是历史迁移债务，P4 必须逐项审计并在不服务生产契约时收窄或删除。
+4. **业务与测试重构分离**：大批量测试移动、收缩或 seam 清理单独成 PR；业务修复 PR 只新增能证明该改动风险的最小契约测试，避免 review 混入无关 rename 或测试数量竞赛。
 5. **栈级门禁不变**：Rust 运行 `fmt --check`、`clippy --all-targets -- -D warnings`、`cargo test`；Client 运行 `gradle test build`（保留 `runGametest` 依赖）；Schema/Tiandao 运行各自 `npm test`，不得用统一入口省略原生前置。
 
 ## T0 / P0 — 三栈现状盘点与边界冻结 ✅ 2026-08-23
@@ -118,7 +118,7 @@
 
 | 资产类型 | Canonical source / producer | 测试执行 owner | 报告/产物 consumer | 冻结规则 |
 |---|---|---|---|---|
-| Rust unit/integration/bench | 迁移前 `server/src/**` + `server/tests/**`；目标 `server/tests/unit/**`、`server/tests/**`、`server/benches/**` | Server | Server owner；CI job 仅收集 | 新测试不得进入生产文件；迁移 PR 只移动测试与必要的最小 test seam，不由 wrapper 重写断言 |
+| Rust unit/integration/bench | 迁移前 `server/src/**` + `server/tests/**`；目标 `server/tests/unit/**`、`server/tests/**`、`server/benches/**`，必要时为独立 `server/src/**/tests.rs` | Server | Server owner；CI job 仅收集 | 新测试不得进入生产实现文件；迁移 PR 先登记受保护契约，不新增测试专用 public seam，允许移除实现镜像断言 |
 | Fabric JUnit/GameTest/fixtures | `client/src/test/**`、`client/src/gametest/**`、`client/src/test/resources/**` | Client | Gradle report、CI client、preview consumer | 不把 GameTest 混入 JUnit 源目录；不改 `build/**` 原生输出路径 |
 | TypeBox schema | `agent/packages/schema/tests/**` + samples/generated | Schema | agent/server/client contract jobs | source/generated/sample 变更必须同 PR 对拍 |
 | Tiandao runtime | `agent/packages/tiandao/tests/**` | Tiandao | Agent owner、Redis/E2E jobs | `npm test` 的 tsc 前置不能被统一入口省略 |
@@ -176,13 +176,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 5. **退出码**：0 仅当所有要求 suite 为 PASS；1 为测试失败；2 为 usage/config/preflight 错误；3 为报告写入/产物完整性错误；`--continue` 不吞掉任何失败。管道命令必须读取 `${PIPESTATUS[0]}`，不能用 `tail` 制造假绿。
 6. **CI 兼容**：P3 先让一个 job 以 `test-all.sh --profile unit --suite ...` 做 shadow/对拍，并继续执行原命令；只有 summary、退出码、原生报告和时限都对拍后，才考虑替换 job 内命令。artifact upload/download 名称、DAG needs 和 cleanup 语义在此之前不改。
 
-## P2 — Rust inline tests 首批外置（⏳）
+## P2 — Rust tests 外置与契约筛选策略（⏳）
 
-P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，并保留原测试名、fixture、随机种子和断言语义。首批优先选择 `server/src/world/pseudo_vein_runtime.rs:793-1332`、`server/src/world/tsy_container_search.rs:757-1661` 等边界清晰的模块；具体名单以迁移前 grep 快照为准。
+历史 P2 外置记录保留其当时的一对一迁移证据，不倒改为新的结论。此后每个模块先完成契约分类：只保留能锁住稳定业务契约的测试；同构测试可表驱动合并；实现镜像和无外部风险的 fixture 断言可以删除或改为行为测试。首批复审优先选择 `server/tests/unit/shader/state_test.rs`、`server/tests/unit/world/dimension_test.rs`、`server/tests/unit/schema/client_payload_test.rs` 与 `server/tests/unit/world/tsy_container_search_test.rs`。
 
-- **目标路径**：`server/tests/unit/<module>_test.rs`，由 `server/src/lib.rs` 暴露的公开 API 驱动；生产文件不得新增测试模块声明。
-- **私有访问**：先抽取最小、稳定、非 gameplay 的 test seam/fixture；不为迁移扩大整个模块可见性，不复制生产实现。无法合理抽取的遗留例外必须在 PR body 和 plan 迁移表登记，并单独安排清理。
-- **验收**：迁移前后定向 `cargo test <filter>` 测试数量、失败行为和产物一致；完成后跑 server 完整 fmt/clippy/test 门禁。
+- **目标路径**：默认使用 `server/tests/unit/<module>_test.rs`，由 `server/src/lib.rs` 暴露的公开 API 驱动；只有外置会扭曲生产 API 的私有纯逻辑，才可保留独立 `server/src/**/tests.rs`。
+- **私有访问**：不得为迁移新增仅供测试调用的 public seam。已有 `#[doc(hidden)] pub` seam 必须在复审中标注其生产消费者；没有生产消费者且无法改为公开行为测试时，测试应移入独立 `tests.rs` 或被删除。
+- **验收**：迁移前后定向 `cargo test <filter>` 只用于确认构建发现和回归；验收依据是受保护契约仍被覆盖、删除项有分类理由，以及 server 完整 fmt/clippy/test 门禁通过，而不是测试数量或断言字面完全一致。
 
 ### P2-01 pseudo-vein runtime（✅ 2026-08-30）
 
@@ -310,10 +310,18 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **最终收口证据**：最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，确认最新 `origin/main=1cfec210df91357eb16329ca8ce6ae71a651ebdf` 已由 `404151a82` 合入且无待合并变更；随后同一 slot 的提升权限 locked server gate exit 0，library 为 `12632 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`client_payload_unit` 为 `9 passed / 0 failed`，全部既有独立 Cargo targets 与 doc-tests 均通过。
 - **最新主线收口证据**：本次最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，将最新 `origin/main=dd7c63107496050f1e9bb937a624477525b64022` 合入并形成合并提交 `a6e96851c8fae239098606a1706e698755055504`；合并带入 P2-15 的 `forge_history_unit` target、外置测试及 plan evidence，同时保留 P2-01～P2-16（含 P2-12 shader）证据和全部既有 Cargo test targets。因触及 `server/Cargo.toml`、server 测试和 active plan，随后同一 slot 执行提升权限 locked server gate，exit 0：library `12627 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed`，`client_payload_unit` `9 passed / 0 failed`，`recipe_fragment_unit` `3 passed / 0 failed`，`shader_state_unit` `7 passed / 0 failed`，`skin_packet_unit` `2 passed / 0 failed`，`forge_history_unit` `2 passed / 0 failed`，其余 integration targets 与 doc-tests（`3 passed / 0 failed / 5 ignored`）均通过。
 
+### P2 测试准入策略重基线（✅ 2026-09-05）
+
+- **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
+- **合并或替换**：多个 enum 值、输入值或 fixture 仅经过同一无分支路径时，保留能区分行为等价类的代表 case，必要时使用表驱动测试；不再因“每个 enum 变体”或“所有组合”本身而新增同构断言。
+- **删除或改写**：字段总数、私有字段顺序、内部默认构造细节、放置算法的任意扫描顺序、sample 的叙事文案/演示 tick/地图名，以及仅 grep 源码函数名、变量名或 shell 写法的断言，除非它们已被证明是对外兼容契约。此类测试应删除，或改为验证不重叠、可解析、权限拒绝、失败清理等可观察结果。
+- **既有 seam 审计**：`server/src/world/pseudo_vein_runtime.rs` 的 `set_test_state` 与 `from_test_snapshot` 是 P2-01 新增的明确测试 seam；`pseudo_vein_phase_narration`、`should_emit_visual`、`pseudo_vein_vfx_request` 与 `round3` 同时被运行时系统调用，但为外置测试而导出并标记为 `#[doc(hidden)]`。P4 对该组和其它 `#[doc(hidden)] pub` 项逐项记录生产消费者、受保护契约与处置；不能证明生产必要性的入口不得因测试布局而长期保留。
+- **P4 前置**：在继续任何 inline 搬迁前，`inline-test-inventory.tsv` 必须为每个模块或同构测试组记录受保护契约、风险、处置、目标位置、是否需要私有访问及 seam 处置。四个首批复审模块用于验证该分类规则；测试数量变化必须可由该清单解释，但不需要与迁移前相同。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⏳）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
-- 对拍至少覆盖退出码、测试计数、失败 suite、原生 Cargo 输出和 `.sisyphus/evidence/**`；差异必须归因后才能切换 job 命令。
+- 对拍至少覆盖退出码、要求 suite、受保护契约对应的测试选择、原生 Cargo 输出和 `.sisyphus/evidence/**`；测试计数只作诊断信息，变化须有分类理由但不自动阻塞切换。
 - Client/Schema/Tiandao 仅接入其已有 canonical path 和原生命令，不借 P3 改源测试目录；统一报告只索引 Gradle/JUnit、Cargo、Vitest 和脚本原生产物，不强制新增无消费者的 JUnit 转换。
 
 ### P3-01 server-test shadow（✅ 2026-09-04）
@@ -330,18 +338,19 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **最新主线合并后的受影响范围复验（2026-09-04）**：基于 `origin/main=c25f22762` 紧邻执行 `git fetch origin && git merge origin/main`，无冲突生成 merge commit `204f3d639`；`recipe_fragment_unit` 定向测试为 `3 passed / 0 failed / 0 ignored`，最终完整 server gate exit `0`，library 为 `12638 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed / 0 ignored`，`shader_state_unit` 为 `7 passed / 0 failed / 0 ignored`，全部 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。合并后的差异仍仅为 `.github/workflows/e2e.yml`、`scripts/test-all.sh`、`scripts/tests/test_all_contract_test.sh` 与本 plan evidence；bash 语法、95 项脚本 contract、内嵌 Python AST 及 workflow 静态核验均通过。
 - **P2-15 主线合并后的最终 gate（2026-09-04）**：最新 `origin/main=dd7c63107` 包含主线 P2-15 forge history 外置变更；提交 evidence 后再次执行紧邻 `git fetch origin && git merge origin/main`，无冲突生成 merge commit `ade5a9ab9`。合并后 `recipe_fragment_unit` 为 `3 passed / 0 failed / 0 ignored`，`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与完整 `cargo test` 均 exit `0`；library 为 `12636 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed / 0 ignored`，`shader_state_unit` 为 `7 passed / 0 failed / 0 ignored`，所有 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。本轮 bash/脚本 contract、workflow 静态核验与 shadow/native 退出码及 passed/failed/ignored 对拍均保持 PASS。
 
-## P4 — 剩余 Rust inline tests 分批外置与归零（⬜）
+## P4 — 剩余 Rust tests 的筛选、迁移与收口（⬜）
 
-- 根据 P0 grep 快照维护 `inline-test-inventory.tsv`：模块、测试数量、目标路径、私有 seam、责任人、迁移 PR、对拍命令、状态。
-- 以一个模块一个 PR 的节奏迁移剩余 `server/src/**` 测试；每个 PR 不混入业务行为变化、无关格式化或跨模块 rename。
-- 归零门禁：生产源码中除明确登记的临时例外外，不再出现 `#[cfg(test)]` 测试体；`scripts/test-all.sh --profile unit --suite server`、原生 Cargo 门禁和 server CI 全绿。
-- P4 完成后才能将本 plan 全阶段标记 ✅；没有“默认无需搬路径”的回退路线。
+- 根据 P0 grep 快照维护 `inline-test-inventory.tsv`：模块/测试组、受保护契约、风险、处置（保留/合并/替换/删除）、目标路径、私有访问理由、现有或待删 seam、责任人、迁移 PR、对拍命令、状态。测试数量只作审计辅助，不是完成度指标。
+- 以一个模块一个 PR 的节奏处理剩余 `server/src/**` 测试；每个 PR 必须先完成该模块分类，可外置必要行为测试、合并同构测试、删除实现镜像，或保留经说明的独立 `tests.rs`。PR 不混入运行时业务行为变化、无关格式化或跨模块 rename。
+- 收口门禁：所有 P0 快照中的测试体和 P2 的测试专用 public seam 都有处置记录；生产实现文件不新增测试体；仅剩经登记、确有私有契约理由的独立 `tests.rs`；`scripts/test-all.sh --profile unit --suite server`、原生 Cargo 门禁和 server CI 全绿。
+- P4 完成后才能将本 plan 全阶段标记 ✅。完成标准是必要契约的可验证覆盖和无测试专用 API 债务，不是 `#[cfg(test)]` 或测试数量机械归零。
 
 ## 验收抓手（T0）
 
 - `docs/plan-test-layout-refactor-v1.md` 为当前 active plan，`scripts/test-all.sh`、`scripts/test-all-owners.tsv` 与 `scripts/tests/test_all_contract_test.sh` 已按 P1 交付。
 - 盘点覆盖三栈及根 preview/contract tooling 的 source directory、local command、CI job、native report/artifact；每行都有 owner 和 consumer。
 - 矩阵明确区分测试语义 owner、编排 owner、报告 producer/consumer；P1 交付的 `scripts/test-all-owners.tsv` 必须能逐行核验 suite/path/evidence 三列，且声明跨栈 smoke 不得复制场景。
+- P2 测试准入策略已冻结：协议/安全/守恒/状态转换/兼容与真实回归保留；实现镜像、fixture 文案、内部顺序和源码文本扫描须分类收缩。后续 P4 的 `inline-test-inventory.tsv` 是处置审计依据，不以测试数量归零验收。
 - `git diff --name-only`（在 T0 干净基线核验时）只应出现当时的 skeleton 文件；P1 本轮不要求清理工作树中已有的用户文件。
 - 本轮不修改任何 `server/**`、`client/**`、`agent/**` 测试路径，不修改 `.github/workflows/**`，不添加依赖；外部 BongWorldGen 不在本 PR 的路径/命令/CI 变更范围内。
 
@@ -403,10 +412,10 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 
 ```text
 Test Refactor 附录（plan-test-layout-refactor-v1）
-- 测试位置：<server/tests/unit/** | server/tests/** | client/src/test/** | client/src/gametest/** | agent/packages/*/tests/** | scripts/tests/**>
-- 禁止：不得在生产文件新增 #[cfg(test)]/测试体；不得把不同栈测试合并到顶层 test/。
-- 若必须 inline：写明私有访问原因、已评估的 test seam、清理期限，并在 PR body 登记例外。
-- 迁移边界：只改变测试路径/所有权，不改变行为、协议、Redis key、时间/随机种子或报告 artifact。
-- 验证：运行受影响栈完整门禁，并附测试数量/失败分支/外部报告证据。
+- 测试位置：<server/tests/unit/** | server/tests/** | server/src/**/tests.rs（仅登记例外） | client/src/test/** | client/src/gametest/** | agent/packages/*/tests/** | scripts/tests/**>
+- 禁止：不得在生产实现文件新增测试体；不得为搬迁新增仅供测试调用的 pub/doc-hidden seam；不得把不同栈测试合并到顶层 test/。
+- 私有契约：若必须使用 `tests.rs`，写明公开 API 为何不足、外置为何会扭曲生产 API，以及复审条件；先评估公开可观察行为，不以新 seam 作为默认解法。
+- 分类：为每个测试或同构测试组记录受保护契约、风险与处置（保留/合并/替换/删除）。协议、权限、守恒、状态转换、兼容与真实回归不可因收缩而丢失；字段数、内部顺序、fixture 文案和源码文本扫描默认删除或改为行为断言。
+- 验证：运行受影响栈完整门禁，并附受保护契约、失败分支和外部报告证据；测试数量变化只需能由分类记录解释。
 - 大规模移动：拆成独立迁移 PR，不与业务行为变更混合。
 ```
