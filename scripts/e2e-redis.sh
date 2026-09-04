@@ -24,6 +24,8 @@ FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=
 # transaction a bounded 30s graceful window before identity-safe KILL fallback.
 E2E_SERVER_STOP_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_GRACE_SECONDS:-30}"
 E2E_SERVER_STOP_KILL_GRACE_SECONDS="${BONG_E2E_SERVER_STOP_KILL_GRACE_SECONDS:-2}"
+TIANDAO_TIMEOUT_SECONDS="${BONG_E2E_TIANDAO_TIMEOUT_SECONDS:-120}"
+TIANDAO_KILL_GRACE_SECONDS="${BONG_E2E_TIANDAO_KILL_GRACE_SECONDS:-5}"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -124,7 +126,9 @@ wait_for_pattern() {
 probe_redis() {
   (
     cd "$ROOT/agent/packages/tiandao"
-    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
+    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" \
+      timeout --signal=TERM --kill-after=2s 10s \
+      node --input-type=module <<'NODE'
 import Redis from "ioredis";
 
 const IORedis = Redis.default ?? Redis;
@@ -1167,7 +1171,10 @@ pass "redis ready"
 echo ""
 CURRENT_STAGE="schema"
 echo "=== [$TASK_ID][$SCRIPT_TAG][2/8] Schema build ==="
-if (cd "$ROOT/agent/packages/schema" && PATH="$NODE_BIN:$PATH" npm run build) >>"$REDIS_LOG" 2>&1; then
+if (
+  cd "$ROOT/agent/packages/schema" &&
+    PATH="$NODE_BIN:$PATH" timeout --signal=TERM --kill-after=5s 300s npm run build
+) >>"$REDIS_LOG" 2>&1; then
   pass "schema build"
 else
   finalize_failure "schema" "schema build failed; see $REDIS_LOG"
@@ -1205,10 +1212,56 @@ fi
 echo ""
 CURRENT_STAGE="tiandao"
 echo "=== [$TASK_ID][$SCRIPT_TAG][5/8] Non-mock Tiandao one-tick closure ==="
-(
+if ! [[ "$TIANDAO_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  finalize_failure \
+    "tiandao" \
+    "BONG_E2E_TIANDAO_TIMEOUT_SECONDS must be a positive integer; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+if ! [[ "$TIANDAO_KILL_GRACE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  finalize_failure \
+    "tiandao" \
+    "BONG_E2E_TIANDAO_KILL_GRACE_SECONDS must be a positive integer; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+if ! command -v timeout >/dev/null 2>&1; then
+  finalize_failure \
+    "tiandao" \
+    "required timeout command is unavailable; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+TIANDAO_TSX="$NODE_BIN/tsx"
+if [ ! -x "$TIANDAO_TSX" ]; then
+  finalize_failure \
+    "tiandao" \
+    "workspace tsx executable is missing: $TIANDAO_TSX; run npm ci in $ROOT/agent; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+TIANDAO_STARTED_AT="$(date +%s)"
+TIANDAO_EXIT=0
+if (
   cd "$RUN_DIR"
-  PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" npx tsx "$ROOT/agent/packages/tiandao/src/task-13-one-tick.ts"
+  PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" \
+    timeout \
+    --signal=TERM \
+    --kill-after="${TIANDAO_KILL_GRACE_SECONDS}s" \
+    "${TIANDAO_TIMEOUT_SECONDS}s" \
+    "$TIANDAO_TSX" "$ROOT/agent/packages/tiandao/src/task-13-one-tick.ts"
 ) >"$TIANDAO_LOG" 2>&1
+then
+  TIANDAO_EXIT=0
+else
+  TIANDAO_EXIT=$?
+fi
+TIANDAO_ELAPSED_SECONDS=$(( $(date +%s) - TIANDAO_STARTED_AT ))
+echo "[tiandao] command=$TIANDAO_TSX exit=$TIANDAO_EXIT elapsed=${TIANDAO_ELAPSED_SECONDS}s timeout=${TIANDAO_TIMEOUT_SECONDS}s log=$TIANDAO_LOG run_dir=$RUN_DIR"
+
+if [ "$TIANDAO_EXIT" -eq 124 ] || [ "$TIANDAO_EXIT" -eq 137 ]; then
+  finalize_failure \
+    "tiandao" \
+    "Non-mock Tiandao timed out (exit=$TIANDAO_EXIT, elapsed=${TIANDAO_ELAPSED_SECONDS}s, limit=${TIANDAO_TIMEOUT_SECONDS}s); command=$TIANDAO_TSX; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
+if [ "$TIANDAO_EXIT" -ne 0 ]; then
+  finalize_failure \
+    "tiandao" \
+    "Non-mock Tiandao exited with code $TIANDAO_EXIT after ${TIANDAO_ELAPSED_SECONDS}s; command=$TIANDAO_TSX; log=$TIANDAO_LOG; run_dir=$RUN_DIR"
+fi
 
 if wait_for_pattern "$TIANDAO_LOG" "\\[tiandao\\] connected to Redis at" 60; then
   pass "tiandao connected"
@@ -1387,6 +1440,7 @@ run_north_rift_preview() {
   # 无论走 CLI 还是环境默认都能拿到本次 run 的隔离段。
   if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
     NORTH_RIFT_RUN_TAG="$NORTH_RIFT_RUN_TAG" \
+    timeout --signal=TERM --kill-after=5s 300s \
     python3 "$ROOT/scripts/bot/run_scenarios.py" \
       --host 127.0.0.1 \
       --port 25565 \
