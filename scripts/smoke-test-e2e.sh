@@ -15,6 +15,10 @@ MANIFEST_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-manifest.txt"
 
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+SMOKE_STAGE_TIMEOUT_SECONDS="${BONG_SMOKE_STAGE_TIMEOUT_SECONDS:-300}"
+SMOKE_SERVER_TIMEOUT_SECONDS="${BONG_SMOKE_SERVER_TIMEOUT_SECONDS:-900}"
+SMOKE_E2E_TIMEOUT_SECONDS="${BONG_SMOKE_E2E_TIMEOUT_SECONDS:-1500}"
+SMOKE_TIMEOUT_KILL_GRACE_SECONDS="${BONG_SMOKE_TIMEOUT_KILL_GRACE_SECONDS:-5}"
 
 SCHEMA_LOG="$RUN_DIR/schema.log"
 AGENT_LOG="$RUN_DIR/agent.log"
@@ -75,28 +79,63 @@ finalize_failure() {
   exit 1
 }
 
+require_positive_timeout() {
+  local name="$1"
+  local value="$2"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    finalize_failure "preflight" "$name must be a positive integer"
+  fi
+}
+
+run_bounded() {
+  local timeout_seconds="$1"
+  local kill_grace_seconds="$2"
+  shift 2
+  timeout \
+    --signal=TERM \
+    --kill-after="${kill_grace_seconds}s" \
+    "${timeout_seconds}s" \
+    "$@"
+}
+
 echo "===== $TASK_ID $SCRIPT_TAG ====="
 echo "run_label: $RUN_LABEL"
 echo "run_id: $RUN_ID"
 echo "run_dir: $RUN_DIR"
 echo "log_file: $LOG_FILE"
 
+if ! command -v timeout >/dev/null 2>&1; then
+  finalize_failure "preflight" "required timeout command is unavailable"
+fi
+require_positive_timeout "BONG_SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_STAGE_TIMEOUT_SECONDS"
+require_positive_timeout "BONG_SMOKE_SERVER_TIMEOUT_SECONDS" "$SMOKE_SERVER_TIMEOUT_SECONDS"
+require_positive_timeout "BONG_SMOKE_E2E_TIMEOUT_SECONDS" "$SMOKE_E2E_TIMEOUT_SECONDS"
+require_positive_timeout "BONG_SMOKE_TIMEOUT_KILL_GRACE_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS"
+
 echo ""
 CURRENT_STAGE="server-lifecycle"
 echo "=== [$TASK_ID][$SCRIPT_TAG][0/7] Managed server lifecycle regression ==="
-if bash "$ROOT/scripts/test-server-lifecycle.sh"; then
+if run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" \
+  bash "$ROOT/scripts/test-server-lifecycle.sh"; then
   pass "managed server PID lifecycle"
 else
-  finalize_failure "server-lifecycle" "managed server lifecycle regression failed"
+  stage_exit=$?
+  finalize_failure \
+    "server-lifecycle" \
+    "managed server lifecycle regression failed (exit=$stage_exit, timeout=${SMOKE_STAGE_TIMEOUT_SECONDS}s)"
 fi
 
 echo ""
 CURRENT_STAGE="dev-reload-detach"
 echo "=== [$TASK_ID][$SCRIPT_TAG][1/7] Dev reload detach regression ==="
-if bash "$ROOT/scripts/test-dev-reload-disown.sh"; then
+if run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" \
+  bash "$ROOT/scripts/test-dev-reload-disown.sh"; then
   pass "dev-reload detached process lifecycle"
 else
-  finalize_failure "dev-reload-detach" "dev-reload detach regression failed"
+  stage_exit=$?
+  finalize_failure \
+    "dev-reload-detach" \
+    "dev-reload detach regression failed (exit=$stage_exit, timeout=${SMOKE_STAGE_TIMEOUT_SECONDS}s)"
 fi
 
 echo ""
@@ -110,15 +149,19 @@ CURRENT_STAGE="schema"
 echo "=== [$TASK_ID][$SCRIPT_TAG][2/6] Schema staged smoke ==="
 if (
   cd "$ROOT/agent/packages/schema" && \
-    PATH="$NODE_BIN:$PATH" npm run check && \
-    PATH="$NODE_BIN:$PATH" npm test && \
-    PATH="$NODE_BIN:$PATH" npm run generate
+    export PATH="$NODE_BIN:$PATH" && \
+    run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" npm run check && \
+    run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" npm test && \
+    run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" npm run generate
 ) >"$SCHEMA_LOG" 2>&1; then
   pass "schema check"
   pass "schema test"
   pass "schema generate"
 else
-  finalize_failure "schema" "schema staged smoke failed; see $SCHEMA_LOG"
+  stage_exit=$?
+  finalize_failure \
+    "schema" \
+    "schema staged smoke failed (exit=$stage_exit, timeout=${SMOKE_STAGE_TIMEOUT_SECONDS}s per command); see $SCHEMA_LOG"
 fi
 
 echo ""
@@ -126,13 +169,17 @@ CURRENT_STAGE="agent"
 echo "=== [$TASK_ID][$SCRIPT_TAG][3/6] Agent staged smoke ==="
 if (
   cd "$ROOT/agent/packages/tiandao" && \
-    PATH="$NODE_BIN:$PATH" npm run check && \
-    PATH="$NODE_BIN:$PATH" npm test
+    export PATH="$NODE_BIN:$PATH" && \
+    run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" npm run check && \
+    run_bounded "$SMOKE_STAGE_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" npm test
 ) >"$AGENT_LOG" 2>&1; then
   pass "tiandao check"
   pass "tiandao test"
 else
-  finalize_failure "agent" "tiandao staged smoke failed; see $AGENT_LOG"
+  stage_exit=$?
+  finalize_failure \
+    "agent" \
+    "tiandao staged smoke failed (exit=$stage_exit, timeout=${SMOKE_STAGE_TIMEOUT_SECONDS}s per command); see $AGENT_LOG"
 fi
 
 echo ""
@@ -142,20 +189,28 @@ if (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  "$ROOT/scripts/build-token.sh" cargo test
+  run_bounded "$SMOKE_SERVER_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" \
+    "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_LOG" 2>&1; then
   pass "server wrapper cargo test"
 else
-  finalize_failure "server" "server staged smoke failed; see $SERVER_LOG"
+  stage_exit=$?
+  finalize_failure \
+    "server" \
+    "server staged smoke failed (exit=$stage_exit, timeout=${SMOKE_SERVER_TIMEOUT_SECONDS}s); see $SERVER_LOG"
 fi
 
 echo ""
 CURRENT_STAGE="e2e"
 echo "=== [$TASK_ID][$SCRIPT_TAG][5/6] Redis e2e closure ==="
-if bash "$ROOT/scripts/e2e-redis.sh" >"$E2E_LOG" 2>&1; then
+if run_bounded "$SMOKE_E2E_TIMEOUT_SECONDS" "$SMOKE_TIMEOUT_KILL_GRACE_SECONDS" \
+  bash "$ROOT/scripts/e2e-redis.sh" >"$E2E_LOG" 2>&1; then
   pass "e2e redis harness"
 else
-  finalize_failure "e2e" "e2e redis harness failed; see $E2E_LOG"
+  stage_exit=$?
+  finalize_failure \
+    "e2e" \
+    "e2e redis harness failed (exit=$stage_exit, timeout=${SMOKE_E2E_TIMEOUT_SECONDS}s); see $E2E_LOG"
 fi
 
 CURRENT_STAGE="summary"
