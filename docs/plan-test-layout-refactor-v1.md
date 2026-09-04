@@ -285,6 +285,14 @@ P2 按模块拆成多个原子 PR，每个 PR 只迁移一个模块的测试，�
 - **完整 gate**：主线合并后按提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library 为 `12654 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`skin_packet_unit` 为 `2 passed / 0 failed`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码、外置测试与 `skin_packet_unit` target 对应 commit 为 `b28d41c09`（2026-09-03）；本条仅记录 P2-13 进度，P2 总体、P3、P4 仍未完成。
 
+### P2-14 alchemy recipe_fragment（✅ 2026-09-04）
+
+- **范围与落点**：仅将 `server/src/alchemy/recipe_fragment.rs` 原有的 3 个 `#[test]` 及 `recipe_with_stage_count` fixture 外置到 `server/tests/unit/alchemy/recipe_fragment_test.rs`，并新增 `server/Cargo.toml` 的显式 `recipe_fragment_unit` target；生产文件不再包含本模块测试体，炼丹运行时、schema、wire、Redis、qi 及其它模块未改动。
+- **迁移对拍与行为**：迁移前 `alchemy::recipe_fragment::tests` 为 `3 passed / 0 failed / 0 ignored`，迁移后 `recipe_fragment_unit` 为 `3 passed / 0 failed / 0 ignored`。保留 `normalized_fragment_drops_unknown_stage_and_clamps_quality`、`fragment_with_at_least_half_stages_keeps_partial_quality_cap`、`fragment_below_half_stages_is_capped_to_tier_one` 原测试名、边界、断言、recipe fixture 语义和 quality/stage 规则。
+- **公开 API 与 seam**：外置测试仅调用 `bong_server::alchemy::recipe` 与 `bong_server::alchemy::recipe_fragment` 的公开 API；未新增 seam、扩大可见性或复制生产实现。
+- **完整 gate**：基于 `origin/main=fdabe0f0b528815472f1660fb08a2486c8762fd1` 合并后，在本 slot 执行 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0；fmt、clippy 均通过，library 为 `12638 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`recipe_fragment_unit` 为 `3 passed / 0 failed / 0 ignored`，其它 integration targets 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：P2-14 代码、外置测试与 `recipe_fragment_unit` target 对应实现 commit 为 `5bd05a6839abbb99287a036b91eafde191a68b7e`；合并最新主线的 commit 为 `e89e5519cd88c2ea9f76cdec1ee229b46d1dc012`。主线合并后保留全部既有 P2-01～P2-13 条目及其它 Cargo test targets；本条为独立 P2-14 evidence，P2 总体、P3、P4 仍未完成。
+
 ## P3 — CI 兼容、报告收口与迁移对拍（⏳）
 
 - 先在 `.github/workflows/e2e.yml` 的 `server-test` job 进行 shadow run：`test-all.sh --profile unit --suite server` 与原 `cargo test` 并行执行，保留原命令、DAG、`evidence-server-test` artifact 和超时。
