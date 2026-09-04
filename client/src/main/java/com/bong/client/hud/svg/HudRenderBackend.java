@@ -8,6 +8,8 @@ import net.minecraft.client.gui.DrawContext;
 /** HUD 表现后端的替换边界；业务状态和几何资源不从这里反向读取。 */
 @FunctionalInterface
 public interface HudRenderBackend {
+    HudRenderBackend NOOP = (context, client, visibility, frame) -> { };
+
     void render(
         DrawContext context,
         MinecraftClient client,

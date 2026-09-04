@@ -341,7 +341,13 @@ public final class NanoSvgParser implements SvgParser {
         }
         try {
             long parsed = Long.parseLong(hex, 16);
-            return hex.length() == 6 ? (int) (0xFF000000L | parsed) : (int) parsed;
+            if (hex.length() == 6) {
+                return (int) (0xFF000000L | parsed);
+            }
+            // SVG 的八位颜色是 RRGGBBAA，Minecraft GUI 使用的 int 是 AARRGGBB。
+            int rgb = (int) (parsed >>> 8);
+            int alpha = (int) (parsed & 0xFF);
+            return (alpha << 24) | rgb;
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("SVG fill 颜色格式错误: " + raw, e);
         }

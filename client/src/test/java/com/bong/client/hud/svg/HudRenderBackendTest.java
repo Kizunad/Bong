@@ -1,6 +1,8 @@
 package com.bong.client.hud.svg;
 
 import com.bong.client.hud.ScreenHudVisibility;
+import net.minecraft.resource.ResourceManager;
+import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -53,6 +55,7 @@ class HudRenderBackendTest {
     void svgBackendUsesTheFrozenVisibilityAndGuiSubmissionBoundary() throws IOException {
         String backend = Files.readString(sourcePath("src/main/java/com/bong/client/hud/svg/SvgHudBackend.java"));
         String bongHud = Files.readString(sourcePath("src/main/java/com/bong/client/BongHud.java"));
+        String bongClient = Files.readString(sourcePath("src/main/java/com/bong/client/BongClient.java"));
         assertTrue(backend.contains("implements HudRenderBackend"));
         assertTrue(backend.contains("SvgHudFrame frame"),
             "SVG 后端必须消费应用层传入的不可变 frame");
@@ -60,8 +63,14 @@ class HudRenderBackendTest {
             "SVG layer 必须遵守 FULL HUD 可见性门");
         assertTrue(bongHud.contains("SvgHudFramePlanner.plan("),
             "生产 HUD 必须在捕获 frame 时调用语义 planner");
-        assertTrue(bongHud.contains("SvgHudBackend.renderProduction(context, client, visibility, svgHudFrame)"),
-            "生产 HUD 必须把 ScreenHudVisibility 和语义 frame 传给 SVG 后端");
+        assertTrue(bongHud.contains("HudRenderBackend backend"),
+            "BongHud 必须只依赖表现后端接口");
+        assertTrue(bongHud.contains("backend.render(context, client, visibility, svgHudFrame)"),
+            "生产 HUD 必须把 ScreenHudVisibility 和语义 frame 交给注入的后端");
+        assertFalse(bongHud.contains("SvgHudBackend"),
+            "BongHud 不得直接依赖具体 SVG 后端");
+        assertTrue(bongClient.contains("new BongHudRenderer(SvgHudBackend.production())"),
+            "SVG 具体实现必须只在 BongClient 组合根装配");
         assertFalse(backend.contains("PlayerStateStore"),
             "SVG 后端不得直接读取 PlayerStateStore");
         assertFalse(backend.contains("PlayerStateViewModel"),
@@ -70,6 +79,20 @@ class HudRenderBackendTest {
             "SVG 后端不得直接执行境界门控");
         assertTrue(backend.contains("MinecraftGuiMeshEmitter"));
         assertFalse(backend.contains("RenderSystem"), "SVG 后端不得直接触碰 OpenGL 提交 API");
+    }
+
+    @Test
+    void reloadListenerInvalidatesTheCachedBackendRegistry() {
+        SvgHudBackend.resetForTests();
+        ResourceManager manager = emptyResourceManager();
+        SvgHudAssetRegistry beforeReload = SvgHudBackend.registry(manager);
+
+        new SvgHudResourceReloadListener().reload(manager);
+
+        SvgHudAssetRegistry afterReload = SvgHudBackend.registry(manager);
+        assertFalse(beforeReload == afterReload,
+            "资源重载必须丢弃旧 registry，避免 F3+T 后继续使用旧资源包的 mesh");
+        SvgHudBackend.resetForTests();
     }
 
     private static List<String> fixture(String resource) throws IOException {
@@ -95,5 +118,45 @@ class HudRenderBackendTest {
         Path base = Files.isDirectory(CLIENT_ROOT.resolve("src")) ? CLIENT_ROOT : CLIENT_ROOT.resolve("client");
         String normalized = relative.startsWith("client/") ? relative.substring("client/".length()) : relative;
         return base.resolve(normalized);
+    }
+
+    private static ResourceManager emptyResourceManager() {
+        return new ResourceManager() {
+            @Override
+            public java.util.Set<String> getAllNamespaces() {
+                return java.util.Set.of("bong-client");
+            }
+
+            @Override
+            public java.util.Optional<net.minecraft.resource.Resource> getResource(Identifier id) {
+                return java.util.Optional.empty();
+            }
+
+            @Override
+            public List<net.minecraft.resource.Resource> getAllResources(Identifier id) {
+                return List.of();
+            }
+
+            @Override
+            public java.util.Map<Identifier, net.minecraft.resource.Resource> findResources(
+                String startingPath,
+                java.util.function.Predicate<Identifier> allowedPathPredicate
+            ) {
+                return java.util.Map.of();
+            }
+
+            @Override
+            public java.util.Map<Identifier, List<net.minecraft.resource.Resource>> findAllResources(
+                String startingPath,
+                java.util.function.Predicate<Identifier> allowedPathPredicate
+            ) {
+                return java.util.Map.of();
+            }
+
+            @Override
+            public java.util.stream.Stream<net.minecraft.resource.ResourcePack> streamResourcePacks() {
+                return java.util.stream.Stream.empty();
+            }
+        };
     }
 }

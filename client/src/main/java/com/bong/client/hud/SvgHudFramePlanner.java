@@ -20,7 +20,7 @@ public final class SvgHudFramePlanner {
 
     public static SvgHudFrame plan(PlayerStateViewModel player, int screenWidth, int screenHeight) {
         PlayerStateViewModel state = player == null ? PlayerStateViewModel.empty() : player;
-        if (screenWidth <= 0 || screenHeight <= 0 || !HudRealmGate.atLeastCondense(state.realm())) {
+        if (screenWidth <= 0 || screenHeight <= 0 || !HudRealmGate.atLeast(state.realm(), 2)) {
             return SvgHudFrame.hidden();
         }
         int y = screenHeight - PANEL_SIZE - BOTTOM_MARGIN;
