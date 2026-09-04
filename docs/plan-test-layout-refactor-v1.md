@@ -345,6 +345,14 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - 收口门禁：所有 P0 快照中的测试体和 P2 的测试专用 public seam 都有处置记录；生产实现文件不新增测试体；仅剩经登记、确有私有契约理由的独立 `tests.rs`；`scripts/test-all.sh --profile unit --suite server`、原生 Cargo 门禁和 server CI 全绿。
 - P4 完成后才能将本 plan 全阶段标记 ✅。完成标准是必要契约的可验证覆盖和无测试专用 API 债务，不是 `#[cfg(test)]` 或测试数量机械归零。
 
+### P4-前置 inline-test-inventory（✅ 2026-09-05）
+
+- **清单落点与范围**：新增 `docs/inline-test-inventory.tsv`，以 P0 快照 `dd7c63107` 的 700 个模块行作为历史覆盖，并在当前 `origin/main=33053a55a7b6b79c9ee709ab07830e60d4dde6e7` 复核路径；`schema/client_payload.rs` 保留为已由 P2-16 外置的历史处置记录，当前额外发现的 `npc/scattered_cultivator.rs` 作为单独增量行登记。清单共 16 列，测试数量仅作诊断，不作为守恒验收。
+- **首批逐条复审**：清单逐条登记 `schema/proto_gen.rs` 的 382 项、`network/client_request_handler.rs` 当前 270 项（快照诊断值 271）、`persistence/mod.rs` 的 172 项；另登记 `world/pseudo_vein_runtime.rs` 的既有 seam 审计。协议/兼容/错误、权限/原子性、持久化兼容、真元守恒与真实状态转换标为保留；同构 roundtrip 标为可合并；内部实现镜像/源码扫描不作为契约。
+- **persistence 结论**：172 个 inline 测试约依赖 86 个私有生产符号，多数同时服务生产路径，未批量开放。首批 8 个 migration/bootstrap 测试只需 `apply_migrations`、`CURRENT_USER_VERSION`、`CURRENT_SCHEMA_VERSION` 与已有公开 `bootstrap_sqlite`；前三个旧 seam 均记录为“无独立生产消费者 → 待撤回”，临时目录和 database path 仅为测试 fixture；其余 migration/backup/runtime/social/qi 测试逐条记录为登记的 `server/src/persistence/tests.rs` 私有契约例外。
+- **seam 审计**：全仓逐项记录 18 个 `#[doc(hidden)] pub` 声明，其中 11 个有生产消费者而保留，7 个仅测试消费者并标记待撤回/替换；`server_readiness::publish`、伪脉生命周期/VFX/舍入 helper 与 `tsy_container_search` 的四个安全/库存 helper 均以生产引用为据，不批量删除。未新增 public 或 `#[doc(hidden)]` seam。
+- **对拍与边界**：每个首批测试记录 locked `cargo test` 过滤器与目标路径对拍命令；本批次仅分类/审计和 plan evidence，不搬迁、删除测试，不修改生产代码、Cargo、CI 或其它 plan。后续迁移必须以本清单为前置，并按当前 Kody-only 调度约束进行审查。
+
 ## 验收抓手（T0）
 
 - `docs/plan-test-layout-refactor-v1.md` 为当前 active plan，`scripts/test-all.sh`、`scripts/test-all-owners.tsv` 与 `scripts/tests/test_all_contract_test.sh` 已按 P1 交付。
