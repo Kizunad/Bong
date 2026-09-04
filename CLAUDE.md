@@ -171,23 +171,23 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 1. **Claim + 进驻常驻 slot**：subagent 是 claim ref 的**唯一创建主体**。分支名固定 `bugfix/<plan-basename>`，认领 = create-ref API 原子创建远端分支：`gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/bugfix/plan-X" -f sha="$(git rev-parse origin/main)"`——**201 = 认领到手**；**422 先甄别再判占用**（查响应体 / `git ls-remote` 确认同名 ref 确实存在才算被占、回报主干换任务；其他原因的 422 = 流程错误，上报诊断而不是换任务）。认领成功后 `git fetch origin bugfix/plan-X` 同步远端引用，再进驻主干分派的常驻 slot：先用 `out=$(bash scripts/slot_registry.sh acquire --slot slot-k --task <plan> --branch bugfix/plan-X --claim-sha <sha> --agent <id>)` 原子获取 reservation，并从仅本次 stdout 提取 `OWNER_TOKEN`（默认 status 不暴露；失败=换 slot/排队，禁止无 reservation checkout）→ 核验 detached + `git status --porcelain=v1 --untracked-files=all` 为空 + ignored 仅缓存白名单 → 本地分支不存在时 `git checkout -B bugfix/plan-X origin/bugfix/plan-X` 并执行带 `--agent <canonical-id> --owner-token "$owner_token"` 的 `mark-created-local --value true`，本地分支已存在则直接 `git checkout` 并核验 SHA==claim SHA（不一致转人工，**禁 `checkout -B` 覆盖残留提交**，`created_local_branch` 保持 false）+ 显式设 upstream，配置 upstream 后，只通过带 `--agent <id> --owner-token "$owner_token"` 的 `occupy` executable gate 进驻（由命令自己重验 canonical path、registered+locked、branch/HEAD/upstream/claim、dirty/untracked/ignored）；slot 不存在时主干先 `git worktree add --lock --detach` 一次性创建。**进驻失败回滚**：slot 内 detach（若已 checkout）+ `bash scripts/slot_registry.sh rollback --slot slot-k --task <plan> --agent <id> --owner-token "$owner_token"`，**仅当 stdout `DELETE_LOCAL_BRANCH=true`（本轮新建本地分支）才 `git branch -D`**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工。远端 claim ref 也只允许该 subagent 在「本轮 create-ref 刚创建、PR 尚未创建、且删除前重新查询确认远端 SHA 仍等于本轮 claim SHA」三项同时成立时回滚删除并核验不存在；否则保留 ref 交主干。slot 不 remove。
 2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
 3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
-   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
+   - **真 bug** → 最小正确修复 + 最小契约测试锁住该 bug 的可观察行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
    - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
 4. **本地门禁**：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；BongWorldGen：在独立仓库运行其 `pytest` 和生成器测试。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
 5. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或触及修复相关文件 → 重新跑受影响栈门禁
 6. **归档**：把 plan 各阶段状态更新为 `✅ YYYY-MM-DD` + 补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3）——归档前置与三态流转契约一致（全部阶段 ✅ 且 Finish Evidence 齐），然后独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
 7. **Push + 开 PR**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 reviewer 模型）。PR 有新提交/变动时默认由 Kody 自动 review；发现问题或需要复审时，再执行 `gh pr comment <PR> --body "@kody review --force"`。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
 
-## Testing — 饱和化测试
+## Testing — 契约驱动的必要测试
 
-**核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
+**核心原则**：测试保护稳定、可观察且有真实回归风险的业务契约，不以测试数量、覆盖率、每个函数或每个 enum 变体都命中为目标。每个测试或表驱动测试组必须能回答“保护什么契约、避免什么风险”；回答不出来的测试应删除或改写。
 
-- **饱和覆盖**：每个新加的函数 / 组件 / 协议都要测 ① happy path ② 所有边界（empty / max / boundary off-by-one）③ 所有错误分支（invalid input、权限、状态前置）④ 所有状态转换（enum 变体、生命周期阶段）。覆盖到"想不出还能加什么 case"为止
-- **测契约不测实现**：断言外部可观察的行为（IO、协议、副作用、payload 结构），不要绑死内部调用次数 / 私有字段 / 中间步骤。重构内部不应让测试红
-- **mock 顶位时接口必须完整**：当下游模块未实装（plan A 依赖 plan B 的 P0），mock 暴露的接口要和真实最终形态一致；测试要覆盖 mock 的全部行为分支，让真实 impl 接入时"只换 impl 不改测试"。**接口先于实现锁定，测试同时锁定接口**
-- **schema / enum / 状态机有专属 pin 测试**：每个 TypeBox / serde variant 都要有正反 sample 对拍；每个 enum 变体至少一条专属 case；每个 state transition (A→B、A→C、A→A) 都有命中用例。schema 改动连同 sample 一起改
-- **集成测试走完整链路**：单元测试不能替代集成测试。client 发请求 → server 处理 → emit payload → client 收到 这种端到端路径要有专门的 e2e 用例，不要假设单元拼起来就是对的
-- **失败信息带修复线索**：assert 写清"期望是 X 因为 Y，实际是 Z"，而不是 `assertEq(a, b)` 一行带过。撞红时不需要 git blame 才能理解为什么
+- **必须保留的契约**：安全/权限、原子性/并发、真元守恒、具有不同外部结果的状态转换、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。跨栈链路只有在消息、序列化、异步时序或副作用无法由单栈测试证明时才写 E2E。
+- **硬编码值的边界**：packet ID、编码顺序、文件权限、版本化 type tag、领域物理常量和明确对外配置可以精确断言；优先引用生产常量。字段数量、私有字段顺序、默认构造细节、fixture 文案/地图名/演示 tick、扫描顺序和源码字符串不是契约，除非有明确外部消费者证明相反。
+- **最小判别集**：每个行为等价类保留一个代表 case 加必要边界；多个 enum/input 走同一无分支路径时用代表 case 或表驱动合并，不做组合穷举。只有不同 variant 或 state transition 导致不同可观察结果时才分别测试。
+- **测契约不测实现**：断言 IO、协议、副作用、持久化结果和 payload 结构；不要绑定私有字段、调用次数或中间步骤。等价重构不应让测试红。源码 grep、函数名、变量名或命令拼写断言不能替代行为测试。
+- **mock 只覆盖被依赖的契约**：下游未实装时，mock 提供调用方需要的真实接口和行为；不为 mock 自身的所有内部实现分支写同构测试。真实实现接入后保留同一调用方契约。
+- **失败信息带修复线索**：assert 写清期望的契约和失败原因；删除测试也必须在测试重构记录中说明其实现镜像性质或与保留测试的重复关系。
 
 ---
 
