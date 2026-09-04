@@ -1,6 +1,6 @@
 # plan-ci-e2e-redis-hang-guard-v1
 
-> **Active plan**。一句话主题：给 CI smoke 的 Redis e2e 非 mock Tiandao 入口建立硬超时与 hermetic workspace 执行边界，让外部命令在远小于 job 上限处明确失败并保留诊断，而不是把 GitHub job 烧满后静默取消。
+> **Finished plan**。一句话主题：给 CI smoke 的 Redis e2e 非 mock Tiandao 入口建立硬超时与 hermetic workspace 执行边界，让外部命令在远小于 job 上限处明确失败并保留诊断，而不是把 GitHub job 烧满后静默取消。
 
 ## 阶段总览
 
@@ -67,7 +67,7 @@
 - **P0**：`scripts/e2e-redis.sh` 的 `CURRENT_STAGE=tiandao` 阶段用 `timeout` 包住既有 task-13 one-tick 入口，默认 120 秒、TERM 后 5 秒 KILL；捕获并记录真实 wrapper 退出码、耗时、`TIANDAO_LOG` 和 `RUN_DIR`，超时/原生非零统一经过现有 `finalize_failure` 收口。原三个 60 秒 `wait_for_pattern` 锚点及 cleanup 顺序保留。
 - **P1**：非 mock Tiandao 改用 `agent/node_modules/.bin/tsx`，缺失或不可执行时 fail fast 并给出 `npm ci` 修复提示；关键路径不再调用 `npx` 运行时访问 registry。
 - **P2**：`scripts/e2e-redis.sh` 的 Redis probe、schema build、north-rift preview 与 `scripts/smoke-test-e2e.sh` 的前台阶段均使用有界执行；新增 `scripts/tests/e2e_redis_hang_guard_contract_test.py` 锁定 timeout、workspace tsx、native exit 与诊断语义，并由 `.github/workflows/e2e.yml` preflight 执行。未改 agent task、server/gameplay、schema/wire、client 或测试场景语义。
-- **P3**：本分支从 `origin/main` 的 `d1b80331015211e439823859f1f6f39ce2f97e22` 合并到最新 `origin/main` `e7bfd6a4b5fdfafa96883dd0715b3ab6913315b5`，机械合并提交为 `6e328d110b0fa140dfcce6a7914fea7edbbb68f3`；归档前完成脚本验证与无上下文 validator，PR CI 继续承担干净 runner 上的完整 smoke/e2e 正常路径核验。
+- **P3**：本分支先从 `origin/main` 的 `d1b80331015211e439823859f1f6f39ce2f97e22` 合并到 `e7bfd6a4b5fdfafa96883dd0715b3ab6913315b5`（机械合并 `6e328d110b0fa140dfcce6a7914fea7edbbb68f3`），随后在收口前再次合并最新 `origin/main=33053a55a7b6b79c9ee709ab07830e60d4dde6e7`（机械合并 `dcdd78513e99c9e193b0f24ba49beb4f2e0abf36`）；每次合并后均复跑受影响脚本/CI 合同与静态核验，归档后完成无上下文 validator，PR CI 继续承担干净 runner 上的完整 smoke/e2e 正常路径核验。
 
 ### 关键 commit
 
@@ -77,6 +77,7 @@
 - `524325f84`（2026-09-05）：新增 hang-guard contract 并接入 e2e preflight。
 - `7b7d0a50b`（2026-09-05）：补齐 native exit/timeout 动态对拍与相邻前台阶段边界。
 - `6e328d110`（2026-09-05）：合并最新 `origin/main`，保留双方主线变更。
+- `dcdd78513`（2026-09-05）：再次合并最新 `origin/main`，保留主线文档/流程变更。
 
 ### 测试结果
 
@@ -84,8 +85,9 @@
 - `python3 scripts/tests/e2e_redis_hang_guard_contract_test.py`：5 tests passed，覆盖 workspace tsx、缺失入口、timeout、native exit 23 与日志诊断。
 - `bash scripts/tests/test_all_contract_test.sh`：95 passed；`bash scripts/tests/build_token_test.sh`：23 passed；`python3 scripts/tests/ci_build_token_entrypoint_test.py`：11 passed；`python3 scripts/tests/signal_boundary_contract_test.py`：7 passed；`python3 scripts/tests/fallback_world_readiness_contract_test.py`：8 passed；`python3 scripts/tests/proto_breaking_base_ref_contract_test.py`：8 passed；preview lifecycle、cargo target scope、server provenance contract：通过。
 - `git diff --check`：通过；workflow YAML 静态核验：通过。
+- 最新主线合并后 `POST_MERGE_AFFECTED_SCRIPTS_GATE=PASS`：上述 bash、hang-guard、test-all、build-token、CI entrypoint、signal/fallback/proto、preview lifecycle、cargo target、server provenance 合同均重新通过。
 - 真实 Redis/schema e2e 的 `RUN_LABEL=ci-e2e-redis-hang-guard-normal` 在 server release build 达到既有 600 秒 build guard，manifest 明确为 `status=FAILED stage=server`；随后 `BONG_E2E_BUILD_TIMEOUT_SECONDS=1800 RUN_LABEL=ci-e2e-redis-hang-guard-release-cached` 仍在首次 release 冷编译阶段达到 1800 秒，manifest 同样明确为 `stage=server`，未进入 Tiandao。两次均保留 `server.log` 与 run directory，未将编译环境失败伪报为 Tiandao 或正常 e2e 通过；动态 contract 已独立证明目标 timeout/native-exit 行为。
-- 无上下文、read-only validator（模型 `gpt-5.6-luna`）对代码 HEAD `7b7d0a50b843fc9c96f5946f201e211b49304534` 返回 PASS；归档后的最终 HEAD 已重新执行同类 validator。
+- 无上下文、read-only validator 对初次归档 HEAD `a423362f85ca27d510d34958774faa58ab208ab6` 返回 PASS；主线再次合并并补充本证据后，对最终归档 HEAD 重新执行同类 validator，结论与 SHA 见 PR/收口证据。
 
 ### 跨仓库核验
 
