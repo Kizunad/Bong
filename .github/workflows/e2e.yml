@@ -54,6 +54,7 @@ jobs:
         run: |
           bash scripts/tests/build_token_test.sh
           python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/e2e_redis_hang_guard_contract_test.py
           python3 scripts/tests/signal_boundary_contract_test.py
           python3 scripts/tests/fallback_world_readiness_contract_test.py
           python3 scripts/tests/proto_breaking_base_ref_contract_test.py
