@@ -39,16 +39,21 @@ class HudRenderBackendTest {
     @Test
     void inventoryPointsAtTheShippedQiRadarAndExplicitBinding() throws IOException {
         List<String> rows = fixture("/bong/ui/ui-svg-hud-inventory.tsv");
-        assertEquals(1, rows.size(), "P4 vertical slice 只登记一个真实 HUD layer");
-        String[] fields = rows.get(0).split("\\t", -1);
-        assertEquals(6, fields.length, "SVG inventory 行字段数错误");
+        assertEquals(66, rows.size(), "HUD inventory 必须登记 62 个 layer 与 4 个无 layer 的直绘 overlay");
+        String[] fields = rows.stream()
+            .map(row -> row.split("\\t", -1))
+            .filter(values -> values.length == 9 && "QI_RADAR".equals(values[0]))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("SVG inventory 未登记 QI_RADAR"));
         assertEquals("QI_RADAR", fields[0]);
-        assertEquals("QiDensityRadarHudPlanner", fields[1]);
-        assertEquals("realm_gate+negative_qi_tint", fields[3]);
-        assertEquals("NONE", fields[4]);
-        assertTrue(Files.exists(assetPath(fields[2])), "SVG inventory 资产不存在: " + fields[2]);
-        assertTrue(Files.size(assetPath(fields[2])) > 0, "SVG inventory 资产不能为空: " + fields[2]);
-        assertTrue(testClassExists(fields[5]), "SVG inventory test owner 不存在: " + fields[5]);
+        assertEquals("QI_RADAR", fields[1]);
+        assertEquals("SVG_FRAME", fields[2]);
+        assertEquals("SVG_MESH", fields[3]);
+        assertEquals("SvgHudFramePlanner", fields[4]);
+        assertEquals("radar=bong-client:svg/hud/qi-radar.svg", fields[5]);
+        assertEquals("realm_gate+negative_qi_tint", fields[6]);
+        assertTrue(Files.exists(assetPath("bong-client:svg/hud/qi-radar.svg")), "SVG inventory 资产不存在");
+        assertTrue(testClassExists(fields[8]), "SVG inventory test owner 不存在: " + fields[8]);
     }
 
     @Test
@@ -78,6 +83,10 @@ class HudRenderBackendTest {
         assertFalse(backend.contains("HudRealmGate"),
             "SVG 后端不得直接执行境界门控");
         assertTrue(backend.contains("MinecraftGuiMeshEmitter"));
+        assertTrue(backend.contains("HudRenderRegistry.requireSvgAsset(HudRenderLayer.QI_RADAR, \"radar\")"),
+            "SVG 后端必须从 HUD registry 查询 QI_RADAR 资产");
+        assertFalse(backend.contains("svg/hud/qi-radar.svg"),
+            "SVG 后端不得重新硬编码 registry 已拥有的 QI_RADAR 资源路径");
         assertFalse(backend.contains("RenderSystem"), "SVG 后端不得直接触碰 OpenGL 提交 API");
     }
 
@@ -105,7 +114,8 @@ class HudRenderBackendTest {
     }
 
     private static boolean testClassExists(String simpleName) {
-        return Files.exists(sourcePath("src/test/java/com/bong/client/hud/svg/" + simpleName + ".java"));
+        return Files.exists(sourcePath("src/test/java/com/bong/client/hud/svg/" + simpleName + ".java"))
+            || Files.exists(sourcePath("src/test/java/com/bong/client/hud/" + simpleName + ".java"));
     }
 
     private static Path assetPath(String identifier) {

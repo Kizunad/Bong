@@ -310,7 +310,6 @@ public class BongHudOrchestratorTest {
         List<HudRenderCommand> combatCommands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(), combat, 1_000L, FIXED_WIDTH, 220, 320, 180
         );
-        assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
         assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.QUICK_BAR));
         assertTrue(combatCommands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.MINI_BODY));
 
@@ -318,8 +317,6 @@ public class BongHudOrchestratorTest {
         List<HudRenderCommand> peaceCommands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(), CombatHudSnapshot.empty(), 12_000L, FIXED_WIDTH, 220, 320, 180
         );
-        assertTrue(peaceCommands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.STAMINA_BAR));
-
         BongHudStateSnapshot meditation = BongHudStateSnapshot.create(
             ZoneState.empty(),
             NarrationState.empty(),

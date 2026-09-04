@@ -1,6 +1,8 @@
 package com.bong.client.hud.svg;
 
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.hud.HudRenderRegistry;
+import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.hud.SvgHudFrame;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -14,7 +16,6 @@ import java.util.Optional;
 /** R7 P4 首个真实 SVG layer：QI_RADAR。 */
 public final class SvgHudBackend implements HudRenderBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-svg-hud");
-    private static final Identifier QI_RADAR = Identifier.of("bong-client", "svg/hud/qi-radar.svg");
     private static final Identifier EXAMPLE = Identifier.of("bong-client", "svg/hud/example.svg");
     private static final MinecraftGuiMeshEmitter EMITTER = new MinecraftGuiMeshEmitter();
     private static volatile ResourceManager lastResourceManager;
@@ -38,10 +39,10 @@ public final class SvgHudBackend implements HudRenderBackend {
         ScreenHudVisibility visibility,
         SvgHudFrame frame
     ) {
-        renderLayer(context, client, visibility, frame);
+        renderLayers(context, client, visibility, frame);
     }
 
-    private void renderLayer(
+    private void renderLayers(
         DrawContext context,
         MinecraftClient client,
         ScreenHudVisibility visibility,
@@ -64,7 +65,15 @@ public final class SvgHudBackend implements HudRenderBackend {
             return;
         }
         // 生产 layer 只消费应用层已经规划好的 frame，不在这里反查业务 Store。
-        emit(context, client, QI_RADAR, safeFrame.x(), safeFrame.y(), safeFrame.scale(), safeFrame.tint());
+        emit(
+            context,
+            client,
+            HudRenderRegistry.requireSvgAsset(HudRenderLayer.QI_RADAR, "radar"),
+            safeFrame.x(),
+            safeFrame.y(),
+            safeFrame.scale(),
+            safeFrame.tint()
+        );
     }
 
     /** 预览专用示例，放在右上方以避开左下角既有 HUD。 */
