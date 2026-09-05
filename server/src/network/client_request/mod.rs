@@ -18,5 +18,12 @@ pub mod inventory_contract {
 }
 pub(crate) mod npc;
 pub(crate) mod production;
+pub(crate) mod scroll;
 pub(crate) mod social;
 pub(crate) mod world;
+
+// The typed scroll extractor is crate-private production plumbing. Keep its
+// small protocol contract test beside the client-request modules rather than
+// adding a test-only public seam for an integration target.
+#[cfg(test)]
+mod tests;
