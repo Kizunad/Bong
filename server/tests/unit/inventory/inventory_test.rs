@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bong_server::inventory::*;
-use bong_server::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
 use bong_server::world::dimension::DimensionKind;
 
 fn test_template(

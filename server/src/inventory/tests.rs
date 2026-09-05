@@ -1,5 +1,73 @@
 use super::*;
 
+// apply_inventory_move 的私有 fixture 仍被本文件其余测试复用；外置测试保留
+// 独立副本，因为集成测试不能访问本模块的私有测试 helper。
+fn make_test_inventory_with_one_item() -> PlayerInventory {
+    let item = ItemInstance {
+        instance_id: 42,
+        template_id: "rat_tail".to_string(),
+        display_name: "噬元鼠尾".to_string(),
+        grid_w: 1,
+        grid_h: 1,
+        weight: 0.2,
+        rarity: ItemRarity::Common,
+        description: String::new(),
+        stack_count: 1,
+        spirit_quality: 1.0,
+        durability: 1.0,
+        freshness: None,
+        mineral_id: None,
+        charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
+        alchemy: None,
+        lingering_owner_qi: None,
+    };
+    PlayerInventory {
+        triggered_treasures: Vec::new(),
+        revision: InventoryRevision(7),
+        containers: vec![
+            ContainerState {
+                quick_access: false,
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+                owner_instance_id: None,
+            },
+            ContainerState {
+                quick_access: false,
+                id: SMALL_POUCH_CONTAINER_ID.to_string(),
+                name: "小口袋".to_string(),
+                rows: 3,
+                cols: 3,
+                items: Vec::new(),
+                owner_instance_id: None,
+            },
+            ContainerState {
+                quick_access: false,
+                id: FRONT_SATCHEL_CONTAINER_ID.to_string(),
+                name: "前挂包".to_string(),
+                rows: 3,
+                cols: 4,
+                items: Vec::new(),
+                owner_instance_id: None,
+            },
+        ],
+        equipped: HashMap::new(),
+        hotbar: Default::default(),
+        bone_coins: 0,
+        max_weight: 50.0,
+    }
+}
+
 const BLOCK_ITEM_TEMPLATE_IDS: [&str; 14] = [
     "earth_crumb",
     "hardened_soil",
@@ -362,19 +430,6 @@ fn clear_inventory_fixture() -> (ItemRegistry, PlayerInventory, u64) {
         quick_access: false,
     });
     (registry, inventory, pack_instance_id)
-}
-
-fn assert_container_has_no_overlaps(container: &ContainerState) {
-    for (left_index, left) in container.items.iter().enumerate() {
-        for right in container.items.iter().skip(left_index + 1) {
-            assert!(
-                !placed_item_footprints_overlap(left, right),
-                "items `{}` and `{}` should not overlap",
-                left.instance.template_id,
-                right.instance.template_id
-            );
-        }
-    }
 }
 
 #[test]
