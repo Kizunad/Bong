@@ -16,7 +16,7 @@
 
 ### HUD 统一 SVG 表现后端
 
-**范围裁剪（2026-09-05，用户决议）**：移除 `QI_RADAR` 整项功能，包括旧 `QiDensityRadarHudPlanner` 的浓度标记、周边气息白点、TSY 假信号，SVG 阵盘资源与专用 `SvgHudFrame`/`SvgHudFramePlanner`，以及 layer、布局、沉浸模式和 registry 登记。同步删除恢复雷达主路径的骨架，不再把恢复该 HUD 作为 P6 交付物。共用 `ZoneState`、境界门、`PerceptionEdgeState` 和威胁指示继续服务现有功能；方向条在下述常驻裁剪决议中移除，server/schema/wire 不变。
+**范围裁剪（2026-09-05，用户决议）**：基于代码探索决定移除 `QI_RADAR` 整项功能（历史入口为 `client/src/main/java/com/bong/client/BongHud.java:80-86`，语义规划器为已删除的 `client/src/main/java/com/bong/client/hud/QiDensityRadarHudPlanner.java`，登记/资源入口现由 `client/src/main/java/com/bong/client/hud/HudRenderRegistry.java:21-31` 对拍）；详见本计划 §9.2 决议索引。裁剪内容包括旧 `QiDensityRadarHudPlanner` 的浓度标记、周边气息白点、TSY 假信号，SVG 阵盘资源与专用 `SvgHudFrame`/`SvgHudFramePlanner`，以及 layer、布局、沉浸模式和 registry 登记。同步删除恢复雷达主路径的骨架，不再把恢复该 HUD 作为 P6 交付物。共用 `ZoneState`、境界门、`PerceptionEdgeState` 和威胁指示继续服务现有功能；方向条在下述常驻裁剪决议中移除，server/schema/wire 不变。
 
 **裁剪依据与影响边界**：雷达在裁剪前的唯一生产绘制接线是 `client/src/main/java/com/bong/client/BongHud.java`（`474d9d93a^`: `SvgHudFramePlanner.plan` 与 `SvgHudBackend.render` 调用），语义来源是 `client/src/main/java/com/bong/client/hud/QiDensityRadarHudPlanner.java`（已由 `474d9d93a` 删除），表现登记是 `client/src/main/java/com/bong/client/hud/HudRenderRegistry.java`（旧 `QI_RADAR`/`SvgHudFramePlanner`/`qi-radar.svg` 行，现已删除）。同一提交删除 `client/src/main/resources/assets/bong-client/svg/hud/qi-radar.svg`、`client/src/main/java/com/bong/client/hud/SvgHudFrame.java` 和 `SvgHudFramePlanner.java`，并移除 `HudRenderLayer.QI_RADAR`、`HudLayoutPreset.Widget.QI_RADAR`、沉浸模式成员及对应 TSV/契约登记；这是“完整删除”，不是停用兼容路径。
 
@@ -634,7 +634,7 @@ HUD SVG 的范围、代码探索证据和实施前置条件已在本 plan 开头
 3. **PR-3 / P2 owo XML adapter reference**：唯一 owo XML host；以 `CraftScreen` 为第一条垂直切片；UI registry 只登记 `OWO` 和 resolution/input geometry gate。
 4. **PR-4 / P3 state/intent boundary A**：semantic surface + owo XML vertical slice、`SemanticUiDriver` bot roundtrip，以及 Alchemy/Craft/Trade/Loot；迁移直接 sender/handler import，wire 变更只走 R6/schema atomic amendment。
 5. **PR-5 / P4 full Screen/input/scale policy + SVG backend slice**：剩余 Screen、keybind、thread marshal、open policy、fill/list 和 responsive viewport 迁移；落地 `SvgParser`、Java compatibility parser、asset registry、不可变 document/mesh、自有 tessellator、GUI emitter 和首个真实 HUD layer。native provider 另行交付。
-6. **PR-6 / P5 Inspect split + 全量 HUD 表现迁移**：tab-first shell/panels，行为不变；按 `ui-svg-hud-inventory.tsv` 迁移 59 个 layer、直接 overlay 和 `HudRenderCommand` primitive adapter，保留文字/物品 GUI 例外。
+6. **PR-6 / P5 Inspect split + 全量 HUD 表现迁移**：tab-first shell/panels，行为不变；按 `ui-svg-hud-inventory.tsv` 迁移 61 个 layer、直接 overlay 和 `HudRenderCommand` primitive adapter，保留文字/物品 GUI 例外。
 7. **PR-7 / P6 parity、极端分辨率和删除旧路径**：完成 Insight/HUD/bootstrap 收口、SVG screenshot parity、`320x240`/`401x241`/`683x384`/超宽/竖屏和 GUI scale 1-4 验证，删除旧 primitive DrawContext path、`renderSurface` 和生产 fallback。
 8. **PR-8 / P7 archive**：所有阶段、SVG acceptance 和被吸收计划具备 Finish Evidence 后归档。
 

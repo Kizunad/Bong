@@ -16,6 +16,8 @@ import com.bong.client.inventory.model.BodyPart;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.PhysicalBody;
 import com.bong.client.inventory.model.WoundLevel;
+import com.bong.client.ui.contract.DefaultUiScreenScope;
+import com.bong.client.ui.contract.UiScreenScope;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.GameMenuScreen;
@@ -28,6 +30,7 @@ import java.util.List;
 /** 显式截图场景：用既有 Screen 作画布，调用真实 HUD planner 和 GUI 提交器。 */
 final class HudCorePreviewScene implements UiPreviewScene {
     private final int phase;
+    private UiScreenScope scope;
     private int renderedFrames;
 
     HudCorePreviewScene(int phase) {
@@ -42,26 +45,32 @@ final class HudCorePreviewScene implements UiPreviewScene {
     @Override
     public Screen createScreen() {
         renderedFrames = 0;
+        scope = new DefaultUiScreenScope();
         return new GameMenuScreen(false);
     }
 
     @Override
     public void afterOpen(Screen screen) {
+        UiScreenScope activeScope = scope;
+        activeScope.onOpen();
+        ScreenEvents.remove(screen).register(removed -> activeScope.close());
         ScreenEvents.afterRender(screen).register((current, context, mouseX, mouseY, delta) -> {
-            MinecraftClient client = MinecraftClient.getInstance();
-            // 此 Screen 的原内容已提交；独立画布只在预览白名单场景内存在。
-            context.draw();
-            context.getMatrices().push();
-            context.getMatrices().translate(0, 0, 400);
-            context.fill(0, 0, current.width, current.height, 0xFF172129);
-            context.drawTextWithShadow(client.textRenderer,
-                "SVG HUD / " + label(), 12, 12, 0xFFE8E3D4);
-            context.drawTextWithShadow(client.textRenderer,
-                current.width + " x " + current.height + " / " + templateId(), 12, 28, 0xFF9BB5BF);
-            BongHud.drawCommandBatch(context, client, commands(current.width, current.height), SvgHudBackend.production());
-            context.draw();
-            context.getMatrices().pop();
-            renderedFrames++;
+            activeScope.runIfOpen(() -> {
+                MinecraftClient client = MinecraftClient.getInstance();
+                // 此 Screen 的原内容已提交；独立画布只在预览白名单场景内存在。
+                context.draw();
+                context.getMatrices().push();
+                context.getMatrices().translate(0, 0, 400);
+                context.fill(0, 0, current.width, current.height, 0xFF172129);
+                context.drawTextWithShadow(client.textRenderer,
+                    "SVG HUD / " + label(), 12, 12, 0xFFE8E3D4);
+                context.drawTextWithShadow(client.textRenderer,
+                    current.width + " x " + current.height + " / " + templateId(), 12, 28, 0xFF9BB5BF);
+                BongHud.drawCommandBatch(context, client, commands(current.width, current.height), SvgHudBackend.production());
+                context.draw();
+                context.getMatrices().pop();
+                renderedFrames++;
+            });
         });
     }
 
@@ -139,5 +148,10 @@ final class HudCorePreviewScene implements UiPreviewScene {
             (int) ((y + 0.5) * image.getHeight() / screen.height));
     }
 
-    @Override public void cleanup() {}
+    @Override
+    public void cleanup() {
+        if (scope != null) {
+            scope.close();
+        }
+    }
 }

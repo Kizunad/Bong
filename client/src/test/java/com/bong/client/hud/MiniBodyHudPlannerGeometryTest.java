@@ -343,13 +343,13 @@ class MiniBodyHudPlannerGeometryTest {
         ));
 
         long noLayoutFrames = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
-            .filter(cmd -> cmd.isVector() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
             .count();
 
         BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
         BodyPlanLayoutStore.setCurrentPlanId("humanoid");
         long withLayoutFrames = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
-            .filter(cmd -> cmd.isVector() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
             .count();
 
         assertEquals(24L, noLayoutFrames, "leg_l maps to thigh/calf/foot × 2 corners = 6 frames × 4 border rects");

@@ -235,8 +235,9 @@ public final class MiniBodyHudPlanner {
     }
 
     private static void appendThickFrame(List<HudRenderCommand> out, int cx, int cy, int color) {
-        appendBorder(out, cx - 4, cy - 4, 8, 8, color);
-        appendBorder(out, cx - 3, cy - 3, 6, 6, color);
+        // 部位抗性边框保留矩形几何，测试以此区分双层边框契约。
+        appendRectBorder(out, cx - 4, cy - 4, 8, 8, color);
+        appendRectBorder(out, cx - 3, cy - 3, 6, 6, color);
     }
 
     private static void appendDashedFrame(List<HudRenderCommand> out, int cx, int cy, int color) {
@@ -485,6 +486,13 @@ public final class MiniBodyHudPlanner {
         out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y + h - 1, w, 1, color));
         out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y, 1, h, color));
         out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x + w - 1, y, 1, h, color));
+    }
+
+    private static void appendRectBorder(List<HudRenderCommand> out, int x, int y, int w, int h, int color) {
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, w, 1, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y + h - 1, w, 1, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 1, h, color));
+        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + w - 1, y, 1, h, color));
     }
 
     // ==================== Test-only geometry accessors ====================
