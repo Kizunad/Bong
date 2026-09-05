@@ -310,6 +310,14 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **最终收口证据**：最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，确认最新 `origin/main=1cfec210df91357eb16329ca8ce6ae71a651ebdf` 已由 `404151a82` 合入且无待合并变更；随后同一 slot 的提升权限 locked server gate exit 0，library 为 `12632 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`client_payload_unit` 为 `9 passed / 0 failed`，全部既有独立 Cargo targets 与 doc-tests 均通过。
 - **最新主线收口证据**：本次最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，将最新 `origin/main=dd7c63107496050f1e9bb937a624477525b64022` 合入并形成合并提交 `a6e96851c8fae239098606a1706e698755055504`；合并带入 P2-15 的 `forge_history_unit` target、外置测试及 plan evidence，同时保留 P2-01～P2-16（含 P2-12 shader）证据和全部既有 Cargo test targets。因触及 `server/Cargo.toml`、server 测试和 active plan，随后同一 slot 执行提升权限 locked server gate，exit 0：library `12627 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed`，`client_payload_unit` `9 passed / 0 failed`，`recipe_fragment_unit` `3 passed / 0 failed`，`shader_state_unit` `7 passed / 0 failed`，`skin_packet_unit` `2 passed / 0 failed`，`forge_history_unit` `2 passed / 0 failed`，其余 integration targets 与 doc-tests（`3 passed / 0 failed / 5 ignored`）均通过。
 
+### P2-17 schema proto_gen 协议 pin（✅ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 当前 HEAD 的 382 条 `schema/proto_gen.rs` 逐条分类，将生产文件收缩为 11 行 `pub mod bong { include!(...) }` 入口；测试外置到 `server/tests/unit/schema/proto_gen_test.rs`，并新增显式 `proto_gen_unit` Cargo target。未改 `proto/*.proto`、`build.rs`、生成链、schema/wire、client、agent 或玩法。
+- **契约处置**：382 条中 54 条保留协议枚举、错误字节、兼容演进和外部 payload 结构 pin；328 条同构 roundtrip 由一个表驱动 `merged_protocol_pin_cases` runner 调用并以测试名报告失败；删除 0 条。每个减少项均对应 TSV 的“合并”处置，未新增 `pub`、`#[doc(hidden)]` 或其它测试 seam，也未复制生产实现。
+- **迁移对拍**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test schema::proto_gen::tests --lib'` 为 `381 passed / 0 failed / 1 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test proto_gen_unit'` 为 `55 passed / 0 failed / 0 ignored`。原 ignored benchmark 已作为 TSV 合并 case 纳入 runner，未再静默跳过。
+- **完整门禁**：当前 HEAD 执行任务卡指定的提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library、main binary、全部独立 Cargo targets、integration targets 与 doc-tests 均无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码与 target 对应 `461646f15`（2026-09-05），runner 格式修正对应 `74323058f`（2026-09-05）；本条仅记录 P2-17 进度，P2 总体、P3、P4 仍未完成。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。

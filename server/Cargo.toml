@@ -75,6 +75,10 @@ name = "client_payload_unit"
 path = "tests/unit/schema/client_payload_test.rs"
 
 [[test]]
+name = "proto_gen_unit"
+path = "tests/unit/schema/proto_gen_test.rs"
+
+[[test]]
 name = "recipe_fragment_unit"
 path = "tests/unit/alchemy/recipe_fragment_test.rs"
 
