@@ -1106,7 +1106,6 @@ pub(super) fn delete_npc_hot_rows(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn load_npc_state_from_connection(
     connection: &Connection,
     char_id: &str,

@@ -211,8 +211,6 @@ pub(super) fn dispatch_persistence_shutdown_flushes(world: &mut World) {
     }
 }
 
-/// plan-territory-v1 P0：zone_influence 快照 system（节流 ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS）。
-
 pub fn bootstrap_sqlite(db_path: &Path, server_run_id: &str) -> rusqlite::Result<()> {
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)

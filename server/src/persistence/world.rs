@@ -116,6 +116,7 @@ pub(super) fn flush_zone_runtime_slice(
     )
 }
 
+/// plan-territory-v1 P0：zone_influence 快照 system（节流 ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS）。
 pub(super) fn persist_zone_influence_system(
     settings: Res<PersistenceSettings>,
     mut snapshot_state: ResMut<ZoneInfluenceSnapshotState>,
