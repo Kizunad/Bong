@@ -83,6 +83,10 @@ name = "recipe_fragment_unit"
 path = "tests/unit/alchemy/recipe_fragment_test.rs"
 
 [[test]]
+name = "inventory_unit"
+path = "tests/unit/inventory/inventory_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
