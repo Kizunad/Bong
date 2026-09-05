@@ -381,7 +381,6 @@ pub(super) fn load_agent_eras_from_connection(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-
 pub(super) fn load_agent_decisions_from_connection(
     connection: &Connection,
 ) -> io::Result<Vec<AgentDecisionRecord>> {
