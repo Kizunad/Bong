@@ -60,13 +60,13 @@ class HudImmersionModeTest {
     void cultivationFilterHidesQuickBar() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, 1, 2, 3, 4, 0xFFFFFFFF),
-            HudRenderCommand.rect(HudRenderLayer.ZONE, 1, 2, 3, 4, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.ZONE_TRANSITION, 1, 2, 3, 4, 0xFFFFFFFF)
         );
 
         List<HudRenderCommand> filtered = HudImmersionMode.filter(commands, HudImmersionMode.Mode.CULTIVATION);
 
         assertEquals(1, filtered.size());
-        assertEquals(HudRenderLayer.ZONE, filtered.get(0).layer());
+        assertEquals(HudRenderLayer.ZONE_TRANSITION, filtered.get(0).layer());
     }
 
     @Test

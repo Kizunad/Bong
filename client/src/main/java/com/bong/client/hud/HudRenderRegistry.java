@@ -19,14 +19,16 @@ import java.util.Set;
  */
 public final class HudRenderRegistry {
     private static final List<SurfaceDefinition> PRODUCTION_SURFACES = validate(List.of(
-        command(HudRenderLayer.BASELINE, "BongHudOrchestrator", "client_connection", "动态文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.ZONE, "ZoneHudRenderer+BongHudOrchestrator", "zone_state+negative_pressure", "动态文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.COMPASS, "DirectionalCompassHudPlanner", "zone_state+runtime_context+clock", "方位动态文字仍走 Minecraft GUI"),
+        command(HudRenderLayer.OVERWEIGHT, "OverweightHudPlanner", "inventory_overweight", "动态文字仍走 Minecraft GUI"),
+        command(HudRenderLayer.ZONE_TRANSITION, "ZoneTransitionHudPlanner", "zone_transition+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.THREAT_INDICATOR, "ThreatIndicatorHudPlanner", "player_state+perception+tribulation", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.HUD_VARIANT, "HudEnvironmentVariantPlanner", "zone_state+extract_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.TARGET_INFO, "TargetInfoHudPlanner", "target_snapshot+clock", "目标名称仍走 Minecraft GUI"),
-        command(HudRenderLayer.MINI_BODY, "MiniBodyHudPlanner", "combat_snapshot+inventory+season", "数值文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+cast_state", "物品与技能图标、文字仍走 Minecraft GUI"),
+        vector(HudRenderLayer.MINI_BODY, "MiniBodyHudPlanner", "combat_snapshot+inventory+season+clock",
+            "数值文字仍走 Minecraft GUI", List.of(
+                asset("fill", "fill.svg"), asset("body", "mini-body.svg"))),
+        vector(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+equipment+cooldown+clock",
+            "物品与技能图标、文字仍走 Minecraft GUI", List.of(asset("fill", "fill.svg"))),
         command(HudRenderLayer.CAST_BAR, "QuickBarHudPlanner", "cast_state", "动态文字不适用"),
         command(HudRenderLayer.EVENT_STREAM, "EventStreamHudPlanner+CombatJuiceHudPlanner", "event_stream+combat_clock", "事件文字仍走 Minecraft GUI"),
         command(HudRenderLayer.JIEMAI_RING, "JiemaiRingHudPlanner", "defense_window+clock", "动态文字仍走 Minecraft GUI"),
@@ -54,7 +56,6 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.HOME_SEQUENCE, "HomeSequence", "home_sequence+inventory+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.REALM_COLLAPSE, "RealmCollapseHudPlanner", "realm_collapse_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.MERIDIAN_OPEN, "MeridianOpenHudPlanner", "meridian_open_state", "动态文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.CONNECTION_STATUS, "ConnectionStatusIndicator", "connection_status+clock", "状态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.VORTEX_CHARGE, "WoliuV2HudPlanner+VortexChargeProgressHud", "vortex_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.VORTEX_COOLDOWN, "WoliuV2HudPlanner+VortexCooldownOverlay", "vortex_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.VORTEX_BACKFIRE, "WoliuV2HudPlanner+BackfireWarningHud", "vortex_state+clock", "动态文字仍走 Minecraft GUI"),
@@ -107,6 +108,24 @@ public final class HudRenderRegistry {
         return PRODUCTION_SURFACES.stream()
             .filter(surface -> surface.path() == RenderPath.DIRECT_OVERLAY)
             .toList();
+    }
+
+    public static Identifier requireVectorAsset(HudRenderLayer layer, String key) {
+        SurfaceDefinition surface = require(layer);
+        return surface.svgAssets().stream().filter(asset -> asset.key().equals(key))
+            .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                "未登记的 HUD 图形: " + layer + "/" + key)).resource();
+    }
+
+    private static SvgAsset asset(String key, String file) {
+        return new SvgAsset(key, Identifier.of("bong-client", "svg/hud/" + file));
+    }
+
+    private static SurfaceDefinition vector(
+        HudRenderLayer layer, String owner, String binding, String exception, List<SvgAsset> assets
+    ) {
+        return new SurfaceDefinition(layer.name(), Optional.of(layer), owner, RenderPath.SVG_COMMAND,
+            Presentation.SVG_MESH, assets, binding, exception, "HudRenderRegistryTest");
     }
 
     private static SurfaceDefinition command(
@@ -167,7 +186,7 @@ public final class HudRenderRegistry {
                 lastLayerOrdinal = layer.ordinal();
             }
             boolean hasAssets = !surface.svgAssets().isEmpty();
-            if ((surface.path() == RenderPath.SVG_FRAME) != hasAssets) {
+            if ((surface.path() == RenderPath.SVG_COMMAND) != hasAssets) {
                 throw new IllegalStateException("SVG surface 必须且只能登记 SVG 资源: " + surface.surfaceId());
             }
             Set<String> assetKeys = new HashSet<>();
@@ -176,10 +195,10 @@ public final class HudRenderRegistry {
                     throw new IllegalStateException("HUD SVG 资产键重复: " + surface.surfaceId() + "/" + asset.key());
                 }
             }
-            if (surface.path() == RenderPath.SVG_FRAME && surface.presentation() != Presentation.SVG_MESH) {
-                throw new IllegalStateException("SVG frame 必须提交 SVG mesh: " + surface.surfaceId());
+            if (surface.path() == RenderPath.SVG_COMMAND && surface.presentation() != Presentation.SVG_MESH) {
+                throw new IllegalStateException("SVG command 必须提交 SVG mesh: " + surface.surfaceId());
             }
-            if (surface.path() != RenderPath.SVG_FRAME && surface.presentation() != Presentation.MINECRAFT_GUI) {
+            if (surface.path() != RenderPath.SVG_COMMAND && surface.presentation() != Presentation.MINECRAFT_GUI) {
                 throw new IllegalStateException("非 SVG surface 必须保持 Minecraft GUI 提交: " + surface.surfaceId());
             }
         }
@@ -202,7 +221,7 @@ public final class HudRenderRegistry {
     public enum RenderPath {
         COMMAND,
         DIRECT_OVERLAY,
-        SVG_FRAME
+        SVG_COMMAND
     }
 
     public enum Presentation {

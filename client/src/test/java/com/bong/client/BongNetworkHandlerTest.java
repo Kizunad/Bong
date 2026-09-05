@@ -389,9 +389,8 @@ public class BongNetworkHandlerTest {
 
     /**
      * plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelStateStore 此前只有
-     * resetForTest()（测试专用），生产态清理清单里完全没有它。断线重连后 HUD 角标
-     * （{@code IdentityHudCornerLabel}）会短暂展示上一 session 的 active identity，且若玩家在
-     * 这段窗口打开 {@code IdentityPanelScreen}，面板会用旧快照 init 出按钮（回调固化旧
+     * resetForTest()（测试专用），生产态清理清单里完全没有它。断线重连后若玩家在
+     * 新快照到达之前打开 {@code IdentityPanelScreen}，面板会用旧快照 init 出按钮（回调固化旧
      * identityId），后续新 session 的 fresh payload 只能改文字改不了按钮，形成 split-brain UI。
      * 本测试锁住"断线清理路径必须清空 IdentityPanelStateStore"。
      */

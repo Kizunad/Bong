@@ -50,7 +50,7 @@ public class OverweightHudPlannerTest {
 
         List<HudRenderCommand> commands = OverweightHudPlanner.buildCommands(FIXED_WIDTH, 220);
         assertEquals(1, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
+        assertEquals(HudRenderLayer.OVERWEIGHT, commands.get(0).layer());
         assertTrue(commands.get(0).text().contains("超载"));
     }
 }

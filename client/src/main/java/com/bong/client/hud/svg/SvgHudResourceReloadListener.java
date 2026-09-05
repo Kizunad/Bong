@@ -6,7 +6,7 @@ import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.util.Identifier;
 
-/** 在客户端资源重载完成时丢弃 SVG HUD 的成功与失败缓存。 */
+/** 资源重载阶段重建 SVG HUD 的成功与失败缓存，避免解析进入正常渲染帧。 */
 public final class SvgHudResourceReloadListener implements SimpleSynchronousResourceReloadListener {
     private static final Identifier ID = Identifier.of("bong-client", "svg_hud");
 
@@ -23,5 +23,6 @@ public final class SvgHudResourceReloadListener implements SimpleSynchronousReso
     @Override
     public void reload(ResourceManager manager) {
         SvgHudBackend.invalidateAssets();
+        SvgHudBackend.registry(manager);
     }
 }

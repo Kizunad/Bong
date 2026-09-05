@@ -87,8 +87,10 @@ public final class ThreatIndicatorHudPlanner {
     }
 
     private static Edge edgeFor(double dx, double dz, double yawDegrees) {
-        double bearing = DirectionalCompassHudPlanner.bearingDegrees(0.0, 0.0, dx, dz);
-        double delta = DirectionalCompassHudPlanner.signedDelta(bearing, yawDegrees);
+        double bearing = HudRuntimeContext.normalizeDegrees(Math.toDegrees(Math.atan2(dx, dz)));
+        double delta = bearing - HudRuntimeContext.normalizeDegrees(yawDegrees);
+        if (delta > 180.0) delta -= 360.0;
+        if (delta < -180.0) delta += 360.0;
         if (delta >= -45.0 && delta <= 45.0) return Edge.TOP;
         if (delta > 45.0 && delta < 135.0) return Edge.RIGHT;
         if (delta < -45.0 && delta > -135.0) return Edge.LEFT;

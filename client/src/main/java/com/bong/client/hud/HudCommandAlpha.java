@@ -10,6 +10,10 @@ final class HudCommandAlpha {
         }
         double factor = Math.max(0.0, Math.min(1.0, Double.isFinite(alphaFactor) ? alphaFactor : 1.0));
         int color = multiplyAlpha(command.color(), factor);
+        if (command.isVector()) {
+            return HudRenderCommand.vector(command.layer(), command.text(),
+                command.x(), command.y(), command.width(), command.height(), color);
+        }
         if (command.isText()) {
             return HudRenderCommand.text(command.layer(), command.text(), command.x(), command.y(), color);
         }

@@ -6,10 +6,25 @@ import java.util.Objects;
 /** SVG tessellation 的不可变三角形网格。 */
 public final class SvgMesh {
     private final List<Triangle> triangles;
+    private final float width;
+    private final float height;
 
     public SvgMesh(List<? extends Triangle> triangles) {
+        this(1.0f, 1.0f, triangles);
+    }
+
+    public SvgMesh(float width, float height, List<? extends Triangle> triangles) {
+        if (!Float.isFinite(width) || !Float.isFinite(height) || width <= 0.0f || height <= 0.0f) {
+            throw new IllegalArgumentException("SVG mesh 画布必须是有限正数");
+        }
+        this.width = width;
+        this.height = height;
         this.triangles = List.copyOf(Objects.requireNonNull(triangles, "triangles"));
     }
+
+    public float width() { return width; }
+
+    public float height() { return height; }
 
     public List<Triangle> triangles() {
         return triangles;

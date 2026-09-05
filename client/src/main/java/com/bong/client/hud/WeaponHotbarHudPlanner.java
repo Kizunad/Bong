@@ -103,7 +103,7 @@ public final class WeaponHotbarHudPlanner {
     private static void drawWeaponSlot(
         List<HudRenderCommand> out, int x, int y, int totalH, EquippedWeapon w
     ) {
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, SLOT_W, totalH, BG_COLOR));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y, SLOT_W, totalH, BG_COLOR));
         appendBorder(out, x, y, SLOT_W, totalH, BORDER_COLOR);
 
         String glyph = kindToGlyph(w.weaponKind());
@@ -118,12 +118,10 @@ public final class WeaponHotbarHudPlanner {
         int durTrackW = SLOT_W - 4;
         int durFilledW = Math.round(w.durabilityRatio() * durTrackW);
         int durColor = durabilityColor(w.durabilityRatio());
-        out.add(HudRenderCommand.rect(
-            HudRenderLayer.QUICK_BAR, x + 2, durY, durTrackW, DURABILITY_H, DURABILITY_BG_COLOR
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x + 2, durY, durTrackW, DURABILITY_H, DURABILITY_BG_COLOR
         ));
         if (durFilledW > 0) {
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.QUICK_BAR, x + 2, durY, durFilledW, DURABILITY_H, durColor
+            out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x + 2, durY, durFilledW, DURABILITY_H, durColor
             ));
         }
     }
@@ -136,7 +134,7 @@ public final class WeaponHotbarHudPlanner {
         List<HudRenderCommand> out, int x, int y, int totalH, EquippedShield shield
     ) {
         final int SHIELD_BORDER_COLOR = 0xFF4080C0; // 蓝：盾牌专属边框
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, SLOT_W, totalH, BG_COLOR));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y, SLOT_W, totalH, BG_COLOR));
         appendBorder(out, x, y, SLOT_W, totalH, SHIELD_BORDER_COLOR);
 
         out.add(HudRenderCommand.text(
@@ -149,12 +147,10 @@ public final class WeaponHotbarHudPlanner {
         int durTrackW = SLOT_W - 4;
         int durFilledW = Math.round(shield.durabilityRatio() * durTrackW);
         int durColor = durabilityColor(shield.durabilityRatio());
-        out.add(HudRenderCommand.rect(
-            HudRenderLayer.QUICK_BAR, x + 2, durY, durTrackW, DURABILITY_H, DURABILITY_BG_COLOR
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x + 2, durY, durTrackW, DURABILITY_H, DURABILITY_BG_COLOR
         ));
         if (durFilledW > 0) {
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.QUICK_BAR, x + 2, durY, durFilledW, DURABILITY_H, durColor
+            out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x + 2, durY, durFilledW, DURABILITY_H, durColor
             ));
         }
     }
@@ -162,7 +158,7 @@ public final class WeaponHotbarHudPlanner {
     private static void drawTreasureSlot(
         List<HudRenderCommand> out, int x, int y, int totalH, EquippedTreasure treasure
     ) {
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, SLOT_W, totalH, BG_COLOR));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y, SLOT_W, totalH, BG_COLOR));
         appendBorder(out, x, y, SLOT_W, totalH, BORDER_COLOR);
         out.add(HudRenderCommand.itemTexture(
             HudRenderLayer.QUICK_BAR,
@@ -201,9 +197,9 @@ public final class WeaponHotbarHudPlanner {
     }
 
     private static void appendBorder(List<HudRenderCommand> out, int x, int y, int w, int h, int c) {
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, w, 1, c));
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y + h - 1, w, 1, c));
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, 1, h, c));
-        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + w - 1, y, 1, h, c));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y, w, 1, c));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y + h - 1, w, 1, c));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y, 1, h, c));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x + w - 1, y, 1, h, c));
     }
 }

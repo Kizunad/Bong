@@ -48,9 +48,9 @@ class MiniBodyHudPlannerTest {
         List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
 
         assertFalse(cmds.isEmpty());
-        // Every command must be a rect and live on the MINI_BODY layer.
+        // 人体几何统一交给矢量后端，不能夹带旧矩形提交路径。
         for (HudRenderCommand c : cmds) {
-            assertTrue(c.isRect(), "expected all rect: " + c.kind());
+            assertTrue(c.isVector(), "人体图形必须走矢量命令: " + c.kind());
             assertEquals(HudRenderLayer.MINI_BODY, c.layer());
         }
     }
@@ -80,7 +80,7 @@ class MiniBodyHudPlannerTest {
         List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
 
         long blueFrameRects = cmds.stream()
-            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .filter(cmd -> cmd.isVector() && cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
             .count();
         assertEquals(24L, blueFrameRects,
             "server leg_l should map to thigh/calf/foot, each with a 2px frame");
@@ -96,7 +96,7 @@ class MiniBodyHudPlannerTest {
         List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
 
         long redFrameRects = cmds.stream()
-            .filter(cmd -> cmd.isRect() && cmd.color() == MiniBodyHudPlanner.BODY_PART_WEAKEN_FRAME_COLOR)
+            .filter(cmd -> cmd.isVector() && cmd.color() == MiniBodyHudPlanner.BODY_PART_WEAKEN_FRAME_COLOR)
             .count();
         assertEquals(8L, redFrameRects, "body_part_weaken should draw a dashed 1px frame");
     }
@@ -112,20 +112,24 @@ class MiniBodyHudPlannerTest {
     }
 
     @Test
-    void qiBarFillsProportionally() {
-        CombatHudState full = CombatHudState.create(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none());
-        CombatHudState mid = CombatHudState.create(1.0f, 0.5f, 1.0f, DerivedAttrFlags.none());
-        CombatHudState empty = CombatHudState.create(1.0f, 0.0f, 1.0f, DerivedAttrFlags.none());
-
-        // Use the blink-off phase (500ms) so low-threshold border rects don't skew the count.
-        long blinkOff = 500L;
-        int fullSize = MiniBodyHudPlanner.buildCommands(full, null, null, blinkOff, 1920, 1080).size();
-        int midSize = MiniBodyHudPlanner.buildCommands(mid, null, null, blinkOff, 1920, 1080).size();
-        int emptySize = MiniBodyHudPlanner.buildCommands(empty, null, null, blinkOff, 1920, 1080).size();
-
-        // When qi is 0%, the qi fill rect is omitted (one less command).
-        assertTrue(emptySize < midSize, "empty qi skips fill rect: empty=" + emptySize + " mid=" + midSize);
-        assertEquals(fullSize, midSize, "non-zero qi always emits the fill rect");
+    void qiAndStaminaFillsFollowCurrentSnapshotAndStayBottomAligned() {
+        int bottom = MiniBodyHudPlanner.anchorY(320, 240)
+            + MiniBodyHudPlanner.BAR_Y_OFFSET + MiniBodyHudPlanner.BAR_H;
+        for (float ratio : new float[] {1.0f, 0.5f, 0.0f, 0.75f}) {
+            CombatHudState state = CombatHudState.create(1.0f, ratio, ratio, DerivedAttrFlags.none());
+            List<HudRenderCommand> commands = MiniBodyHudPlanner.buildCommands(state, null, null, 500L, 320, 240);
+            for (int color : new int[] {MiniBodyHudPlanner.QI_FILL_COLOR, MiniBodyHudPlanner.STAMINA_FILL_COLOR}) {
+                var fill = commands.stream().filter(c -> c.isVector() && c.color() == color).findFirst();
+                if (ratio == 0.0f) {
+                    assertTrue(fill.isEmpty(), "耗尽时不应保留前一帧填充");
+                } else {
+                    HudRenderCommand command = fill.orElseThrow();
+                    assertEquals(Math.round(ratio * MiniBodyHudPlanner.BAR_H), command.height(), "条高必须反映当前比例");
+                    assertEquals(bottom, command.y() + command.height(), "动态缩短只能改变上沿，底部锚点不漂移");
+                }
+            }
+            assertEquals(ratio, state.qiPercent(), "绘制不得修改输入快照");
+        }
     }
 
     @Test
@@ -144,7 +148,7 @@ class MiniBodyHudPlannerTest {
         );
 
         int winterQiColor = SeasonVisuals.qiBarColor(MiniBodyHudPlanner.QI_FILL_COLOR, winter, 0L);
-        assertTrue(cmds.stream().anyMatch(cmd -> cmd.isRect() && cmd.color() == winterQiColor));
+        assertTrue(cmds.stream().anyMatch(cmd -> cmd.isVector() && cmd.color() == winterQiColor));
         assertTrue(cmds.stream().noneMatch(HudRenderCommand::isText));
     }
 
@@ -215,7 +219,7 @@ class MiniBodyHudPlannerTest {
 
         assertEquals(base + 1, withArtifact.size());
         assertTrue(withArtifact.stream().anyMatch(cmd ->
-            cmd.isRect()
+            cmd.isVector()
                 && cmd.width() == MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE
                 && cmd.height() == MiniBodyHudPlanner.ARTIFACT_INDICATOR_SIZE
                 && cmd.color() != MiniBodyHudPlanner.ARTIFACT_INDICATOR_COLOR_FALLBACK

@@ -14,6 +14,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** SVG 基础设施契约：后端边界与资源重载不依赖具体 HUD 组件。 */
@@ -65,7 +66,8 @@ class HudRenderBackendTest {
     @Test
     void reloadListenerInvalidatesTheCachedBackendRegistry() {
         SvgHudBackend.resetForTests();
-        ResourceManager manager = emptyResourceManager();
+        List<Identifier> reads = new java.util.ArrayList<>();
+        ResourceManager manager = emptyResourceManager(reads);
         SvgHudAssetRegistry beforeReload = SvgHudBackend.registry(manager);
 
         new SvgHudResourceReloadListener().reload(manager);
@@ -73,6 +75,18 @@ class HudRenderBackendTest {
         SvgHudAssetRegistry afterReload = SvgHudBackend.registry(manager);
         assertFalse(beforeReload == afterReload,
             "资源重载必须丢弃旧 registry，避免 F3+T 后继续使用旧资源包的 mesh");
+        int readsAfterReload = reads.size();
+        ResourceManager clientWrapper = emptyResourceManager(reads);
+        assertSame(afterReload, SvgHudBackend.registry(clientWrapper),
+            "reload 内层 manager 和 client 外层 wrapper 不同也不能触发帧内重复加载");
+        for (var surface : com.bong.client.hud.HudRenderRegistry.productionSurfaces()) {
+            for (var asset : surface.svgAssets()) {
+                afterReload.find(asset.resource());
+            }
+        }
+        assertEquals(readsAfterReload, reads.size(), "生产资源（含失败）必须已在 reload 阶段缓存");
+        assertFalse(reads.contains(Identifier.of("bong-client", "svg/hud/example.svg")),
+            "正常资源预热不能导入测试示例");
         SvgHudBackend.resetForTests();
     }
 
@@ -96,7 +110,7 @@ class HudRenderBackendTest {
         return base.resolve(normalized);
     }
 
-    private static ResourceManager emptyResourceManager() {
+    private static ResourceManager emptyResourceManager(List<Identifier> reads) {
         return new ResourceManager() {
             @Override
             public java.util.Set<String> getAllNamespaces() {
@@ -105,6 +119,7 @@ class HudRenderBackendTest {
 
             @Override
             public java.util.Optional<net.minecraft.resource.Resource> getResource(Identifier id) {
+                reads.add(id);
                 return java.util.Optional.empty();
             }
 

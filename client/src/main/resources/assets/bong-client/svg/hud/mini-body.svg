@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="75" viewBox="0 0 30 75">
+    <!-- 首轮保留原人体轮廓与锚点，伤势和部位效果独立动态覆盖。 -->
+    <rect x="11" y="0" width="8" height="8" fill="#ffffff"/>
+    <rect x="9" y="9" width="12" height="25" fill="#ffffff"/>
+    <rect x="3" y="10" width="5" height="22" fill="#ffffff"/>
+    <rect x="22" y="10" width="5" height="22" fill="#ffffff"/>
+    <rect x="9" y="35" width="5" height="35" fill="#ffffff"/>
+    <rect x="16" y="35" width="5" height="35" fill="#ffffff"/>
+</svg>

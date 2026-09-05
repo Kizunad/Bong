@@ -80,20 +80,6 @@ class ConnectionStatusIndicatorTest {
         assertTrue(snapshot.tooltip().contains("断开 11s"));
     }
 
-    @Test
-    void indicator_builds_bottom_right_dot() {
-        List<HudRenderCommand> commands = ConnectionStatusIndicator.buildCommands(
-            ConnectionStatusIndicator.evaluate(true, 42L, 0L, 0L),
-            320,
-            180
-        );
-
-        assertEquals(1, commands.size());
-        assertEquals(HudRenderLayer.CONNECTION_STATUS, commands.get(0).layer());
-        assertTrue(commands.get(0).isRect());
-        assertEquals(302, commands.get(0).x());
-        assertEquals(152, commands.get(0).y());
-    }
 
     @Test
     void disconnect_toast_once() {

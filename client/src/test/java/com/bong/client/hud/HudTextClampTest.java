@@ -37,7 +37,7 @@ public class HudTextClampTest {
     void emptyChildRenderersRemainSafeNoOps() {
         List<HudRenderCommand> commands = new ArrayList<>();
 
-        assertTrue(!ZoneHudRenderer.append(commands, ZoneState.empty(), FIXED_WIDTH, 120, 10, 22));
+        assertTrue(ZoneTransitionHudPlanner.buildCommands(ZoneState.empty(), 0L, FIXED_WIDTH, 320, 240).isEmpty());
         assertTrue(!ToastHudRenderer.append(commands, 0L, FIXED_WIDTH, 120, 10, 34));
         assertTrue(!VisualHudRenderer.append(commands, VisualEffectState.none(), 0L, FIXED_WIDTH, 120, 320, 180));
         assertTrue(commands.isEmpty());

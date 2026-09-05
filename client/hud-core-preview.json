@@ -1,0 +1,190 @@
+{
+  "_doc": "真实 Minecraft GUI 的常驻 HUD 动态状态与分辨率截图；只在显式 UI preview 模式使用。",
+  "output_dir": "hud-core-screenshots-round2",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 8,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "hud-minimum-full",
+      "scene_id": "hud-core-full",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "hud-core-0"
+    },
+    {
+      "name": "hud-minimum-low",
+      "scene_id": "hud-core-low",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "hud-core-1"
+    },
+    {
+      "name": "hud-minimum-recovered",
+      "scene_id": "hud-core-recovered",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "hud-core-2"
+    },
+    {
+      "name": "hud-odd-full",
+      "scene_id": "hud-core-full",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "hud-core-0"
+    },
+    {
+      "name": "hud-odd-low",
+      "scene_id": "hud-core-low",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "hud-core-1"
+    },
+    {
+      "name": "hud-odd-recovered",
+      "scene_id": "hud-core-recovered",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "hud-core-2"
+    },
+    {
+      "name": "hud-wide-full",
+      "scene_id": "hud-core-full",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "hud-core-0"
+    },
+    {
+      "name": "hud-wide-low",
+      "scene_id": "hud-core-low",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "hud-core-1"
+    },
+    {
+      "name": "hud-wide-recovered",
+      "scene_id": "hud-core-recovered",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "hud-core-2"
+    },
+    {
+      "name": "hud-portrait-full",
+      "scene_id": "hud-core-full",
+      "framebuffer_width": 640,
+      "framebuffer_height": 960,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 480,
+      "expected_template_id": "hud-core-0"
+    },
+    {
+      "name": "hud-portrait-low",
+      "scene_id": "hud-core-low",
+      "framebuffer_width": 640,
+      "framebuffer_height": 960,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 480,
+      "expected_template_id": "hud-core-1"
+    },
+    {
+      "name": "hud-portrait-recovered",
+      "scene_id": "hud-core-recovered",
+      "framebuffer_width": 640,
+      "framebuffer_height": 960,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 480,
+      "expected_template_id": "hud-core-2"
+    },
+    {
+      "name": "hud-scale-one-full",
+      "scene_id": "hud-core-full",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 1,
+      "expected_logical_width": 640,
+      "expected_logical_height": 480,
+      "expected_template_id": "hud-core-0"
+    },
+    {
+      "name": "hud-scale-one-low",
+      "scene_id": "hud-core-low",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 1,
+      "expected_logical_width": 640,
+      "expected_logical_height": 480,
+      "expected_template_id": "hud-core-1"
+    },
+    {
+      "name": "hud-scale-one-recovered",
+      "scene_id": "hud-core-recovered",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 1,
+      "expected_logical_width": 640,
+      "expected_logical_height": 480,
+      "expected_template_id": "hud-core-2"
+    },
+    {
+      "name": "hud-scale-four-full",
+      "scene_id": "hud-core-full",
+      "framebuffer_width": 1280,
+      "framebuffer_height": 960,
+      "gui_scale": 4,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "hud-core-0"
+    },
+    {
+      "name": "hud-scale-four-low",
+      "scene_id": "hud-core-low",
+      "framebuffer_width": 1280,
+      "framebuffer_height": 960,
+      "gui_scale": 4,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "hud-core-1"
+    },
+    {
+      "name": "hud-scale-four-recovered",
+      "scene_id": "hud-core-recovered",
+      "framebuffer_width": 1280,
+      "framebuffer_height": 960,
+      "gui_scale": 4,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "hud-core-2"
+    }
+  ]
+}

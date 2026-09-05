@@ -1,13 +1,12 @@
 # surface_id	layer	current_path	presentation	owner	svg_assets	dynamic_binding	gui_exception	test_owner
 # 当前路径是生产事实，不是迁移目标；空 assets 表示该 surface 尚未使用 runtime SVG。
-BASELINE	BASELINE	COMMAND	MINECRAFT_GUI	BongHudOrchestrator		client_connection	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
-ZONE	ZONE	COMMAND	MINECRAFT_GUI	ZoneHudRenderer+BongHudOrchestrator		zone_state+negative_pressure	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
-COMPASS	COMPASS	COMMAND	MINECRAFT_GUI	DirectionalCompassHudPlanner		zone_state+runtime_context+clock	方位动态文字仍走 Minecraft GUI	HudRenderRegistryTest
+OVERWEIGHT	OVERWEIGHT	COMMAND	MINECRAFT_GUI	OverweightHudPlanner		inventory_overweight	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
+ZONE_TRANSITION	ZONE_TRANSITION	COMMAND	MINECRAFT_GUI	ZoneTransitionHudPlanner		zone_transition+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 THREAT_INDICATOR	THREAT_INDICATOR	COMMAND	MINECRAFT_GUI	ThreatIndicatorHudPlanner		player_state+perception+tribulation	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 HUD_VARIANT	HUD_VARIANT	COMMAND	MINECRAFT_GUI	HudEnvironmentVariantPlanner		zone_state+extract_state	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 TARGET_INFO	TARGET_INFO	COMMAND	MINECRAFT_GUI	TargetInfoHudPlanner		target_snapshot+clock	目标名称仍走 Minecraft GUI	HudRenderRegistryTest
-MINI_BODY	MINI_BODY	COMMAND	MINECRAFT_GUI	MiniBodyHudPlanner		combat_snapshot+inventory+season	数值文字仍走 Minecraft GUI	HudRenderRegistryTest
-QUICK_BAR	QUICK_BAR	COMMAND	MINECRAFT_GUI	QuickBarHudPlanner+WeaponHotbarHudPlanner		hotbar+skillbar+cast_state	物品与技能图标、文字仍走 Minecraft GUI	HudRenderRegistryTest
+MINI_BODY	MINI_BODY	SVG_COMMAND	SVG_MESH	MiniBodyHudPlanner	fill=bong-client:svg/hud/fill.svg;body=bong-client:svg/hud/mini-body.svg	combat_snapshot+inventory+season+clock	数值文字仍走 Minecraft GUI	HudRenderRegistryTest
+QUICK_BAR	QUICK_BAR	SVG_COMMAND	SVG_MESH	QuickBarHudPlanner+WeaponHotbarHudPlanner	fill=bong-client:svg/hud/fill.svg	hotbar+skillbar+equipment+cooldown+clock	物品与技能图标、文字仍走 Minecraft GUI	HudRenderRegistryTest
 CAST_BAR	CAST_BAR	COMMAND	MINECRAFT_GUI	QuickBarHudPlanner		cast_state	动态文字不适用	HudRenderRegistryTest
 EVENT_STREAM	EVENT_STREAM	COMMAND	MINECRAFT_GUI	EventStreamHudPlanner+CombatJuiceHudPlanner		event_stream+combat_clock	事件文字仍走 Minecraft GUI	HudRenderRegistryTest
 JIEMAI_RING	JIEMAI_RING	COMMAND	MINECRAFT_GUI	JiemaiRingHudPlanner		defense_window+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
@@ -35,7 +34,6 @@ TSY_EXTRACT	TSY_EXTRACT	COMMAND	MINECRAFT_GUI	ExtractProgressHudPlanner		extract
 HOME_SEQUENCE	HOME_SEQUENCE	COMMAND	MINECRAFT_GUI	HomeSequence		home_sequence+inventory+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 REALM_COLLAPSE	REALM_COLLAPSE	COMMAND	MINECRAFT_GUI	RealmCollapseHudPlanner		realm_collapse_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 MERIDIAN_OPEN	MERIDIAN_OPEN	COMMAND	MINECRAFT_GUI	MeridianOpenHudPlanner		meridian_open_state	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
-CONNECTION_STATUS	CONNECTION_STATUS	COMMAND	MINECRAFT_GUI	ConnectionStatusIndicator		connection_status+clock	状态文字仍走 Minecraft GUI	HudRenderRegistryTest
 VORTEX_CHARGE	VORTEX_CHARGE	COMMAND	MINECRAFT_GUI	WoliuV2HudPlanner+VortexChargeProgressHud		vortex_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 VORTEX_COOLDOWN	VORTEX_COOLDOWN	COMMAND	MINECRAFT_GUI	WoliuV2HudPlanner+VortexCooldownOverlay		vortex_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 VORTEX_BACKFIRE	VORTEX_BACKFIRE	COMMAND	MINECRAFT_GUI	WoliuV2HudPlanner+BackfireWarningHud		vortex_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest

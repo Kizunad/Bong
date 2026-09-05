@@ -145,7 +145,7 @@ class HudImmersionMatrixTest {
     }
 
     private static boolean isNewHudLayer(HudRenderLayer layer) {
-        return layer == HudRenderLayer.COMPASS
+        return layer == HudRenderLayer.BOTANY
             || layer == HudRenderLayer.THREAT_INDICATOR
             || layer == HudRenderLayer.HUD_VARIANT;
     }

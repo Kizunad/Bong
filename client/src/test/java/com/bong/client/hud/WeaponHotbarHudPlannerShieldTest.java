@@ -71,10 +71,18 @@ class WeaponHotbarHudPlannerShieldTest {
     void shieldEquipped_rendersDurabilityBar() {
         EquippedShieldStore.equip(new EquippedShield(1L, "wooden_shield", 60f, 100f));
         List<HudRenderCommand> cmds = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-        // 耐久条 = 至少 2 个 rect（bg + filled），加上背景 + border，总 rect 应 > 2
-        long rectCount = cmds.stream().filter(HudRenderCommand::isRect).count();
-        assertTrue(rectCount >= 2,
-            "盾牌槽应渲染背景 + 耐久条（至少 2 个 rect），实际 rectCount=" + rectCount);
+        HudRenderCommand track = cmds.stream().filter(cmd -> cmd.isVector()
+            && cmd.color() == WeaponHotbarHudPlanner.DURABILITY_BG_COLOR).findFirst().orElseThrow();
+        HudRenderCommand fill = cmds.stream().filter(cmd -> cmd.isVector()
+            && cmd.color() == WeaponHotbarHudPlanner.DURABILITY_FG_FULL_COLOR).findFirst().orElseThrow();
+        assertEquals(Math.round(track.width() * 0.6f), fill.width(), "盾牌填充宽度应反映当前耐久比例");
+        assertEquals(track.x(), fill.x(), "耐久填充应从轨道左端开始");
+        assertEquals(track.y(), fill.y());
+
+        EquippedShieldStore.equip(new EquippedShield(1L, "wooden_shield", 0f, 100f));
+        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).stream()
+            .noneMatch(cmd -> cmd.isVector() && cmd.color() == WeaponHotbarHudPlanner.DURABILITY_FG_LOW_COLOR),
+            "耐久耗尽时应移除填充，不保留前一帧的宽度");
     }
 
     @Test

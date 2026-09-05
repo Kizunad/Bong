@@ -25,6 +25,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SvgHudAssetRegistryTest {
     @Test
+    void registeredProductionAssetsHaveReusableGeometryAndViewport() {
+        SvgHudAssetRegistry registry = new SvgHudAssetRegistry(mainResourceManager());
+        for (var surface : com.bong.client.hud.HudRenderRegistry.productionSurfaces()) {
+            for (var asset : surface.svgAssets()) {
+                SvgMesh mesh = registry.get(asset.resource());
+                assertTrue(mesh.triangleCount() > 0, "已登记的生产资产必须有几何: " + asset.resource());
+                assertTrue(mesh.width() > 0 && mesh.height() > 0, "动态缩放需要保留 SVG 画布尺寸");
+                assertSame(mesh, registry.get(asset.resource()), "帧间必须重用资源几何");
+                registry.clear();
+                org.junit.jupiter.api.Assertions.assertNotSame(mesh, registry.get(asset.resource()),
+                    "资源重载后必须重新读取并三角化，不能保留旧资源包几何");
+            }
+        }
+        assertThrows(IllegalArgumentException.class, () -> com.bong.client.hud.HudRenderRegistry
+            .requireVectorAsset(com.bong.client.hud.HudRenderLayer.QUICK_BAR, "body"),
+            "不能跨 layer 使用未登记的图形 key");
+    }
+
+    @Test
     void requiresAResourceManagerBeforeLoadingAssets() {
         assertThrows(NullPointerException.class, () -> new SvgHudAssetRegistry(null));
     }

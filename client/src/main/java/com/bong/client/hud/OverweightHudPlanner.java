@@ -30,6 +30,6 @@ public final class OverweightHudPlanner {
             return List.of();
         }
 
-        return List.of(HudRenderCommand.text(HudRenderLayer.BASELINE, clipped, X, Y, COLOR));
+        return List.of(HudRenderCommand.text(HudRenderLayer.OVERWEIGHT, clipped, X, Y, COLOR));
     }
 }

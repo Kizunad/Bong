@@ -1,8 +1,10 @@
 package com.bong.client.hud;
 
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 public final class HudRenderCommand {
+    private static final Pattern VECTOR_KEY = Pattern.compile("[a-z][a-z0-9-]*");
     private final HudRenderLayer layer;
     private final Kind kind;
     private final String text;
@@ -72,6 +74,16 @@ public final class HudRenderCommand {
 
     public static HudRenderCommand rect(HudRenderLayer layer, int x, int y, int width, int height, int color) {
         return new HudRenderCommand(layer, Kind.RECT, "", x, y, width, height, color, 0.0, 1.0, null);
+    }
+
+    /** 逻辑图形键由表现 registry 解析；业务 planner 不持有 SVG 文件或解析器。 */
+    public static HudRenderCommand vector(
+        HudRenderLayer layer, String key, int x, int y, int width, int height, int color
+    ) {
+        if (key == null || !VECTOR_KEY.matcher(key).matches()) {
+            throw new IllegalArgumentException("HUD 图形键必须为小写连字符标识");
+        }
+        return new HudRenderCommand(layer, Kind.VECTOR, key, x, y, width, height, color, 0.0, 1.0, null);
     }
 
     public static HudRenderCommand edgeIndicator(HudRenderLayer layer, String kind, int x, int y, int color, double intensity) {
@@ -181,6 +193,10 @@ public final class HudRenderCommand {
         return kind == Kind.RECT;
     }
 
+    public boolean isVector() {
+        return kind == Kind.VECTOR;
+    }
+
     public boolean isTexturedRect() {
         return kind == Kind.TEXTURED_RECT;
     }
@@ -198,6 +214,7 @@ public final class HudRenderCommand {
     }
 
     public enum Kind {
+        VECTOR,
         TEXT,
         SCALED_TEXT,
         SCREEN_TINT,

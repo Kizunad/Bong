@@ -79,6 +79,7 @@ final class UiPreviewSession {
         boolean ready = client.getWindow() != null
             && client.getFramebuffer() != null
             && client.getWindow().getFramebufferWidth() > 0
+            && client.getOverlay() == null
             && templatesLoaded();
         if (ready && phaseTicks >= 5) {
             advance(Phase.CONFIGURE_VIEWPORT);
@@ -156,6 +157,7 @@ final class UiPreviewSession {
                     "布局模板错误: expected=" + currentShot().expectedTemplateId()
                         + ", actual=" + actualTemplate);
             }
+            openedScene.afterOpen(openedScreen);
             advance(Phase.SETTLE);
             return;
         }
@@ -172,6 +174,9 @@ final class UiPreviewSession {
 
     private void shoot(MinecraftClient client) throws IOException {
         UiPreviewShot shot = currentShot();
+        if (client.getOverlay() != null || client.currentScreen != openedScreen) {
+            throw new IllegalStateException("截图时屏幕被替换或仍有加载遮罩，禁止生成伪证据");
+        }
         // 等真实渲染帧完成后再检查输入命中；owo scrollbar 的 hit region 在 draw 时初始化。
         openedScene.validateGeometry(openedScreen, shot);
         String metadata = "scene_id=" + shot.sceneId() + "\n"
@@ -182,6 +187,7 @@ final class UiPreviewSession {
             + "gui_scale=" + client.getWindow().getScaleFactor() + "\n"
             + "template_id=" + openedScene.selectedTemplateId(openedScreen) + "\n";
         try (NativeImage image = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
+            openedScene.validateImage(openedScreen, image);
             String imagePath = artifacts.writeShot(shot.name(), image, metadata);
             LOGGER.info("[ui-preview] saved {}", imagePath);
         }

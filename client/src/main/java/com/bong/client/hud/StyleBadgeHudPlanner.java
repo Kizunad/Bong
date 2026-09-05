@@ -36,7 +36,7 @@ public final class StyleBadgeHudPlanner {
         if (!showFakeSkin && !showVortex) return out;
 
         int x = MiniBodyHudPlanner.MARGIN_X;
-        int y = screenHeight - MiniBodyHudPlanner.PANEL_H - MiniBodyHudPlanner.MARGIN_Y - BADGE_H - 2;
+        int y = MiniBodyHudPlanner.anchorY(screenWidth, screenHeight) - BADGE_H - 2;
         if (y < 2) y = 2;
 
         if (showFakeSkin) {

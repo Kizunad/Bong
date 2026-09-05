@@ -52,7 +52,7 @@ public final class SvgTessellator {
             }
         }
         validateMeshBounds(triangles, document.width(), document.height());
-        return new SvgMesh(triangles);
+        return new SvgMesh(document.width(), document.height(), triangles);
     }
 
     private static void addQuad(

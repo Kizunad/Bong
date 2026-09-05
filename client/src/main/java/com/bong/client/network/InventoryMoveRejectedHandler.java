@@ -16,8 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code reason}/{@code required_realm}/{@code slot}/{@code cap}，见
  * {@code InventoryMoveRejectedV1} @ schema/server_data.rs），组装 "天道警示：" 前缀
  * 文案后走 <b>活链路</b>：{@link BongToast#show(String, int, long, long)} 重载
- * （不经过 {@code show(NarrationState,...)} narration 管线，也不引用死代码
- * {@code BongEventAlertOverlay} / 非 network 包 {@code EventAlertHandler}）。
+ * （不经过 {@code show(NarrationState,...)} narration 管线，也不依赖具体 HUD 绘制类）。
  * <p>
  * 境界不足（{@code realm_too_low}）时用 {@link RealmLabel#displayName(String)} 现场把
  * server 下发的英文 tag（如 {@code "Condense"}）转中文（"凝脉"），不在 server 端硬编中文，

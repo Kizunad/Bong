@@ -53,7 +53,7 @@ public class BongHudOrchestratorTest {
     }
 
     @Test
-    void emptyStateBuildsBaselineOnly() {
+    void emptyStateHasNoPersistentPlaceholder() {
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             BongHudStateSnapshot.empty(),
             0L,
@@ -61,37 +61,12 @@ public class BongHudOrchestratorTest {
             220
         );
 
-        assertEquals(1, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
-        assertEquals(BongHudOrchestrator.BASELINE_LABEL, commands.get(0).text());
-        assertEquals(10, commands.get(0).x());
-        assertEquals(10, commands.get(0).y());
+        assertTrue(commands.isEmpty(), "没有有效状态时不再显示连接占位文字");
     }
 
-    @Test
-    void renderOrderStaysBaselineZoneToastVisual() {
-        BongHudStateSnapshot snapshot = BongHudStateSnapshot.create(
-            ZoneState.create("jade_valley", "Jade Valley", 0.74, 3, 100L),
-            NarrationState.create("zone", "jade_valley", "The valley formation is shifting.", "system_warning"),
-            VisualEffectState.create("fog_tint", 0.75, 1_000L, 0L)
-        );
-        BongToast.show(snapshot.narrationState(), 0L);
-
-        List<HudRenderLayer> layers = BongHudOrchestrator.buildCommands(snapshot, 250L, FIXED_WIDTH, 220)
-            .stream()
-            .map(HudRenderCommand::layer)
-            .toList();
-
-        assertEquals(List.of(
-            HudRenderLayer.BASELINE,
-            HudRenderLayer.ZONE,
-            HudRenderLayer.TOAST,
-            HudRenderLayer.VISUAL
-        ), layers);
-    }
 
     @Test
-    void localNegativePressureAppearsBelowZoneLine() {
+    void localNegativePressureDoesNotProducePersistentText() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
             "Solidify",
             "offline:Azure",
@@ -114,7 +89,7 @@ public class BongHudOrchestratorTest {
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(snapshot, 250L, FIXED_WIDTH, 220);
 
-        assertTrue(commands.stream().anyMatch(cmd -> "灵压 -0.80".equals(cmd.text())));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().startsWith("灵压")), "常驻灵压数字已移除");
     }
 
     @Test
@@ -163,17 +138,11 @@ public class BongHudOrchestratorTest {
         );
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(snapshot, 0L, FIXED_WIDTH, 72);
-        HudRenderCommand zoneCommand = commands.get(1);
-        HudRenderCommand toastCommand = commands.get(2);
+        assertEquals(1, commands.size());
+        HudRenderCommand toast = commands.get(0);
+        assertTrue(toast.isToast());
+        assertTrue(FIXED_WIDTH.measure(toast.text()) <= 72);
 
-        assertEquals(HudRenderLayer.ZONE, zoneCommand.layer());
-        assertEquals(HudRenderLayer.TOAST, toastCommand.layer());
-        assertTrue(zoneCommand.text().endsWith("..."));
-        assertTrue(toastCommand.isToast());
-        assertTrue(toastCommand.text().endsWith("..."));
-        assertTrue(FIXED_WIDTH.measure(zoneCommand.text()) <= 72);
-        assertTrue(FIXED_WIDTH.measure(toastCommand.text()) <= 72);
-        assertEquals(3, commands.size());
     }
 
     @Test
@@ -189,14 +158,13 @@ public class BongHudOrchestratorTest {
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(laterSnapshot, 4_000L, FIXED_WIDTH, 220);
 
-        assertEquals(2, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
-        assertEquals(HudRenderLayer.TOAST, commands.get(1).layer());
-        assertTrue(commands.get(1).text().startsWith("天道警示：") || commands.get(1).text().startsWith("天道警示"));
+        assertEquals(1, commands.size());
+        assertEquals(HudRenderLayer.TOAST, commands.get(0).layer());
+        assertTrue(commands.get(0).text().startsWith("天道警示"));
     }
 
     @Test
-    void overlyNarrowWidthDropsOversizedContentWithoutBreakingBaseline() {
+    void overlyNarrowWidthDropsOversizedContent() {
         BongHudStateSnapshot snapshot = BongHudStateSnapshot.create(
             ZoneState.create("jade_valley", "Ancient Jade Valley", 0.8, 2, 100L),
             NarrationState.create("zone", "jade_valley", "Danger rises swiftly.", "system_warning"),
@@ -205,12 +173,11 @@ public class BongHudOrchestratorTest {
 
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(snapshot, 0L, FIXED_WIDTH, 2);
 
-        assertEquals(1, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
+        assertTrue(commands.isEmpty());
     }
 
     @Test
-    void overweightIndicatorAppearsBelowBaselineWhenInventoryExceedsLimit() {
+    void overweightWarningRemainsConditional() {
         InventoryStateStore.applyAuthoritativeSnapshot(
             InventoryModel.builder()
                 .containers(InventoryModel.DEFAULT_CONTAINERS)
@@ -226,14 +193,13 @@ public class BongHudOrchestratorTest {
             220
         );
 
-        assertEquals(2, commands.size());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(0).layer());
-        assertEquals(HudRenderLayer.BASELINE, commands.get(1).layer());
-        assertTrue(commands.get(1).text().contains("超载"));
+        assertEquals(1, commands.size());
+        assertEquals(HudRenderLayer.OVERWEIGHT, commands.get(0).layer());
+        assertTrue(commands.get(0).text().contains("超载"));
     }
 
     @Test
-    void identityHudCornerLabelIsIncludedWhenIdentityStateExists() {
+    void identityDataDoesNotCreatePersistentLabel() {
         IdentityPanelStateStore.replace(new IdentityPanelState(
             0,
             100L,
@@ -250,7 +216,7 @@ public class BongHudOrchestratorTest {
             180
         );
 
-        assertTrue(commands.stream().anyMatch(cmd -> "[#0] 白面".equals(cmd.text())));
+        assertTrue(commands.stream().noneMatch(cmd -> "[#0] 白面".equals(cmd.text())), "身份仍可在面板查看，但不再常驻 HUD");
     }
 
     @Test

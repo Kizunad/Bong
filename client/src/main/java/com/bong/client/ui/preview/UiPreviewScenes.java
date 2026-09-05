@@ -33,16 +33,19 @@ import java.util.Map;
 
 /** UI 截图场景白名单。新增场景必须显式登记并提供确定性 fixture。 */
 final class UiPreviewScenes {
-    private static final Map<String, UiPreviewScene> SCENES = Map.of(
-        "craft", new CraftScene(),
-        "terminate", new TerminateScene(),
-        "coffin-menu", new CoffinMenuScene(),
-        "repair", new RepairScene(),
-        "forge-carrier", new ForgeCarrierScene(),
-        "death", new DeathScene(),
-        "identity-panel", new IdentityPanelScene(false),
-        "identity-panel-empty", new IdentityPanelScene(true),
-        "zhenfa-layout", new ZhenfaLayoutScene()
+    private static final Map<String, UiPreviewScene> SCENES = Map.ofEntries(
+        Map.entry("craft", new CraftScene()),
+        Map.entry("terminate", new TerminateScene()),
+        Map.entry("coffin-menu", new CoffinMenuScene()),
+        Map.entry("repair", new RepairScene()),
+        Map.entry("forge-carrier", new ForgeCarrierScene()),
+        Map.entry("death", new DeathScene()),
+        Map.entry("identity-panel", new IdentityPanelScene(false)),
+        Map.entry("identity-panel-empty", new IdentityPanelScene(true)),
+        Map.entry("zhenfa-layout", new ZhenfaLayoutScene()),
+        Map.entry("hud-core-full", new HudCorePreviewScene(0)),
+        Map.entry("hud-core-low", new HudCorePreviewScene(1)),
+        Map.entry("hud-core-recovered", new HudCorePreviewScene(2))
     );
 
     private UiPreviewScenes() {

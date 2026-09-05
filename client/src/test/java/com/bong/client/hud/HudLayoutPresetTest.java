@@ -19,7 +19,7 @@ class HudLayoutPresetTest {
     void presetSwitchesOnCombatState() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.THREAT_INDICATOR, 0, 0, 10, 2, 0xFFFF0000),
-            HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.BOTANY, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
         List<HudRenderCommand> peace = HudLayoutPreset.filter(
@@ -49,7 +49,7 @@ class HudLayoutPresetTest {
     @Test
     void densityOverridesPreset() {
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF),
+            HudRenderCommand.rect(HudRenderLayer.BOTANY, 0, 0, 10, 2, 0xFFFFFFFF),
             HudRenderCommand.rect(HudRenderLayer.EVENT_STREAM, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
@@ -60,7 +60,7 @@ class HudLayoutPresetTest {
             1_000L
         );
 
-        assertTrue(minimal.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.COMPASS));
+        assertTrue(minimal.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.BOTANY));
         assertTrue(minimal.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.EVENT_STREAM));
     }
 

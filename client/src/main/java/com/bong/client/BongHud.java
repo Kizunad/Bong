@@ -56,14 +56,6 @@ import java.util.function.Supplier;
 
 public class BongHud {
     private static final int HUD_TEXT_MAX_WIDTH = 220;
-    static final String BASELINE_STATUS_TEXT = BongHudOrchestrator.BASELINE_LABEL;
-    static final int BASELINE_TEXT_COLOR = 0xFFFFFF;
-    private static final int BASELINE_X = 10;
-    private static final int BASELINE_Y = 10;
-    private static final int TOAST_BACKGROUND_COLOR = 0x88000000;
-    private static final int TOAST_HORIZONTAL_PADDING = 4;
-    private static final int TOAST_VERTICAL_PADDING = 4;
-
     public static void render(DrawContext context, float tickDelta) {
         render(context, tickDelta, HudRenderBackend.NOOP);
     }
@@ -169,7 +161,60 @@ public class BongHud {
         HudRenderBackend backend
     ) {
 
+        drawCommandBatch(context, client, commands, backend);
+
+        renderBaomaiV3HudForProduction(
+            new DrawContextHudSurface(context, client),
+            nowMillis,
+            visibility
+        );
+
+        // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
+        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
+        // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
+        if (visibility == ScreenHudVisibility.FULL) {
+            CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
+            VoidErosionHudOverlay.render(context, client.textRenderer);
+            com.bong.client.fauna.HallucinationHudOverlay.render(context);
+            long estimatedTick = nowMillis / 50L;
+            ResonanceLockMeterHud.render(
+                context,
+                client.textRenderer,
+                client.getWindow().getScaledWidth(),
+                client.getWindow().getScaledHeight(),
+                estimatedTick,
+                nowMillis
+            );
+        }
+
+        int scaledWidth = client.getWindow().getScaledWidth();
+        int scaledHeight = client.getWindow().getScaledHeight();
         for (HudRenderCommand command : commands) {
+            if (command.isScreenTint()) {
+                OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            } else if (command.isEdgeVignette()) {
+                EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            } else if (command.isEdgeInkWash()) {
+                InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            }
+        }
+
+        // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
+        backend.render(context, client, visibility);
+
+        // HUD 回调结束时一次性提交所有 GUI layer，避免 SVG 与其他 overlay 交错 flush。
+        context.draw();
+    }
+
+    /** 生产与截图共用同一命令提交器；不会采样或修改任何 Store。 */
+    public static void drawCommandBatch(
+        DrawContext context, MinecraftClient client, List<HudRenderCommand> commands, HudRenderBackend backend
+    ) {
+        for (HudRenderCommand command : commands) {
+            if (command.isVector()) {
+                backend.renderVector(context, client, command);
+                continue;
+            }
             if (command.isText()) {
                 context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
                 continue;
@@ -227,47 +272,6 @@ public class BongHud {
             }
         }
 
-        renderBaomaiV3HudForProduction(
-            new DrawContextHudSurface(context, client),
-            nowMillis,
-            visibility
-        );
-
-        // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
-        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
-        // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
-        if (visibility == ScreenHudVisibility.FULL) {
-            CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
-            VoidErosionHudOverlay.render(context, client.textRenderer);
-            com.bong.client.fauna.HallucinationHudOverlay.render(context);
-            long estimatedTick = nowMillis / 50L;
-            ResonanceLockMeterHud.render(
-                context,
-                client.textRenderer,
-                client.getWindow().getScaledWidth(),
-                client.getWindow().getScaledHeight(),
-                estimatedTick,
-                nowMillis
-            );
-        }
-
-        int scaledWidth = client.getWindow().getScaledWidth();
-        int scaledHeight = client.getWindow().getScaledHeight();
-        for (HudRenderCommand command : commands) {
-            if (command.isScreenTint()) {
-                OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            } else if (command.isEdgeVignette()) {
-                EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            } else if (command.isEdgeInkWash()) {
-                InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            }
-        }
-
-        // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
-        backend.render(context, client, visibility);
-
-        // HUD 回调结束时一次性提交所有 GUI layer，避免 SVG 与其他 overlay 交错 flush。
-        context.draw();
     }
 
     @FunctionalInterface
@@ -454,36 +458,11 @@ public class BongHud {
                         || layer == com.bong.client.hud.HudRenderLayer.CAST_BAR
                         || layer == com.bong.client.hud.HudRenderLayer.EVENT_STREAM
                         || layer == com.bong.client.hud.HudRenderLayer.TSY_EXTRACT
-                        || layer == com.bong.client.hud.HudRenderLayer.BASELINE;
+                        || layer == com.bong.client.hud.HudRenderLayer.OVERWEIGHT;
                 })
                 .toList();
             case HIDDEN -> List.of();
         };
-    }
-
-    static HudSnapshot snapshot(long nowMs) {
-        return new HudSnapshot(
-            BASELINE_STATUS_TEXT,
-            NarrationState.getCurrentToast(nowMs),
-            ZoneState.getCurrentZone(),
-            EventAlertState.getCurrentBanner(nowMs),
-            nowMs
-        );
-    }
-
-    static void renderSurface(HudSurface surface, HudSnapshot snapshot) {
-        Objects.requireNonNull(surface, "surface");
-        Objects.requireNonNull(snapshot, "snapshot");
-
-        surface.drawTextWithShadow(snapshot.baselineText(), BASELINE_X, BASELINE_Y, BASELINE_TEXT_COLOR);
-        BongZoneHud.render(surface, snapshot.zone(), snapshot.nowMs());
-        BongEventAlertOverlay.render(surface, snapshot.eventAlert());
-        renderToast(surface, snapshot.toast());
-        com.bong.client.lingtian.LingtianSessionHud.render(
-            surface,
-            com.bong.client.lingtian.state.LingtianSessionStore.snapshot()
-        );
-        com.bong.client.combat.baomai.v3.BaomaiV3Hud.render(surface, snapshot.nowMs());
     }
 
     /**
@@ -516,24 +495,6 @@ public class BongHud {
 
         matrices.pop();
         RenderSystem.disableBlend();
-    }
-
-    private static void renderToast(HudSurface surface, NarrationState.ToastState toast) {
-        if (toast == null || toast.text().isBlank()) {
-            return;
-        }
-
-        int width = surface.measureText(toast.text());
-        int x = (surface.windowWidth() - width) / 2;
-        int y = surface.windowHeight() / 4;
-        surface.fill(
-            x - TOAST_HORIZONTAL_PADDING,
-            y - TOAST_VERTICAL_PADDING,
-            x + width + TOAST_HORIZONTAL_PADDING,
-            y + 12,
-            TOAST_BACKGROUND_COLOR
-        );
-        surface.drawText(toast.text(), x, y, toast.color(), true);
     }
 
     private static final class DrawContextHudSurface implements HudSurface {
@@ -590,15 +551,4 @@ public class BongHud {
         void drawText(String text, int x, int y, int color, boolean shadow);
     }
 
-    record HudSnapshot(
-        String baselineText,
-        NarrationState.ToastState toast,
-        ZoneState.ZoneHudState zone,
-        EventAlertState.BannerState eventAlert,
-        long nowMs
-    ) {
-        HudSnapshot {
-            Objects.requireNonNull(baselineText, "baselineText");
-        }
-    }
 }

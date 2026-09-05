@@ -61,13 +61,6 @@ public class ZoneStateTest {
         assertTrue(snapshot.noCadence());
     }
 
-    @Test
-    public void bigTitleAlphaFadesPredictably() {
-        assertEquals(255, BongZoneHud.bigTitleAlpha(1_000L, 1_000L));
-        assertEquals(255, BongZoneHud.bigTitleAlpha(2_500L, 1_000L));
-        assertEquals(128, BongZoneHud.bigTitleAlpha(2_750L, 1_000L));
-        assertEquals(0, BongZoneHud.bigTitleAlpha(3_000L, 1_000L));
-    }
 
     @Test
     public void emptyZoneStateRemainsClear() {

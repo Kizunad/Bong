@@ -6,7 +6,6 @@ import java.util.List;
 
 public enum HudLayoutPreset {
     COMBAT(EnumSet.of(
-        Widget.COMPASS,
         Widget.THREAT,
         Widget.MINI_BODY,
         Widget.BARS,
@@ -16,7 +15,6 @@ public enum HudLayoutPreset {
         Widget.CRITICAL
     )),
     EXPLORATION(EnumSet.of(
-        Widget.COMPASS,
         Widget.ZONE,
         Widget.BARS,
         Widget.EVENT_STREAM,
@@ -107,9 +105,8 @@ public enum HudLayoutPreset {
             return Widget.ALWAYS;
         }
         return switch (layer) {
-            case BASELINE -> Widget.ALWAYS;
-            case ZONE, HUD_VARIANT -> Widget.ZONE;
-            case COMPASS -> Widget.COMPASS;
+            case OVERWEIGHT -> Widget.ALWAYS;
+            case ZONE_TRANSITION, HUD_VARIANT -> Widget.ZONE;
             case THREAT_INDICATOR, EDGE_FEEDBACK, NEAR_DEATH, TRIBULATION -> Widget.THREAT;
             case MINI_BODY, DERIVED_ATTR, STATUS_EFFECTS, MOVEMENT_HUD -> Widget.BARS;
             case QUICK_BAR, CAST_BAR, SPELL_VOLUME, CARRIER, JIEMAI_RING, VORTEX_CHARGE, VORTEX_COOLDOWN,
@@ -127,7 +124,7 @@ public enum HudLayoutPreset {
             case LINGTIAN_OVERLAY -> Widget.LINGTIAN;
             case PROCESSING_HUD, SEARCH_PROGRESS, TSY_EXTRACT, HOME_SEQUENCE, REALM_COLLAPSE, GATHERING -> Widget.PROCESSING;
             case MERIDIAN_OPEN -> Widget.MERIDIAN;
-            case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD, CONNECTION_STATUS,
+            case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD,
                 HALLUCINATION -> Widget.CRITICAL;
             case YIDAO -> Widget.CRITICAL;
             // plan-agent-ui-data-v1 P3：天道动态面板 VFX（fade-in/vignette/shake）归 CRITICAL（常驻）
@@ -151,7 +148,6 @@ public enum HudLayoutPreset {
     public enum Widget {
         ALWAYS,
         ZONE,
-        COMPASS,
         THREAT,
         MINI_BODY,
         BARS,

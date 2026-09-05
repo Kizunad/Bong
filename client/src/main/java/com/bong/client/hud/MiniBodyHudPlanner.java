@@ -24,11 +24,9 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Left-bottom mini-body + qi / stamina vertical bars (§2.1).
+ * 左下人体与真元、体力条（§2.1）；窄屏自动避开快捷栏。
  *
- * <p>Anchored to the screen's bottom-left corner (keeps consistent offset
- * regardless of MC GUI scale). Emits a deterministic list of rects + text so it
- * is trivially unit-testable without touching the Minecraft draw context.
+ * <p>按当前快照投影逻辑图形、尺寸和颜色，不依赖 SVG 解析器或具体 UI 库。
  */
 public final class MiniBodyHudPlanner {
     static final int MARGIN_X = 6;
@@ -96,11 +94,10 @@ public final class MiniBodyHudPlanner {
         }
 
         int anchorX = MARGIN_X;
-        int anchorY = screenHeight - PANEL_H - MARGIN_Y;
+        int anchorY = anchorY(screenWidth, screenHeight);
 
         // Panel background
-        out.add(HudRenderCommand.rect(
-            HudRenderLayer.MINI_BODY,
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill",
             anchorX,
             anchorY,
             PANEL_W,
@@ -118,6 +115,20 @@ public final class MiniBodyHudPlanner {
         return out;
     }
 
+    /** 窄屏把人体抬到快捷栏上方；保持伤势锚点和条形比例不变。 */
+    static int anchorY(int screenWidth, int screenHeight) {
+        int quickWidth = QuickBarHudPlanner.TOTAL_SLOTS * QuickBarHudPlanner.SLOT_SIZE
+            + (QuickBarHudPlanner.TOTAL_SLOTS - 1) * QuickBarHudPlanner.SLOT_GAP;
+        int leftSlot = (screenWidth - quickWidth) / 2
+            - WeaponHotbarHudPlanner.SLOT_GAP_TO_HOTBAR - WeaponHotbarHudPlanner.SLOT_W;
+        int bottom = screenHeight - MARGIN_Y;
+        if (leftSlot < MARGIN_X + PANEL_W + MARGIN_X) {
+            bottom = screenHeight - QuickBarHudPlanner.LOWER_BOTTOM_MARGIN
+                - 2 * QuickBarHudPlanner.SLOT_SIZE - QuickBarHudPlanner.UPPER_GAP - MARGIN_Y;
+        }
+        return Math.max(MARGIN_Y, bottom - PANEL_H);
+    }
+
     private static void appendSilhouette(
         List<HudRenderCommand> out,
         int anchorX,
@@ -126,31 +137,8 @@ public final class MiniBodyHudPlanner {
         int bx = anchorX + BODY_X_OFFSET;
         int by = anchorY + BODY_Y_OFFSET;
 
-        // Head (top circle emulated by square — silhouette stays legible at HUD scale).
-        int headSize = 8;
-        out.add(HudRenderCommand.rect(
-            HudRenderLayer.MINI_BODY,
-            bx + (BODY_W - headSize) / 2,
-            by,
-            headSize,
-            headSize,
-            BODY_COLOR
-        ));
-
-        // Torso
-        int torsoX = bx + 9;
-        int torsoY = by + 9;
-        int torsoW = 12;
-        int torsoH = 25;
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, torsoX, torsoY, torsoW, torsoH, BODY_COLOR));
-
-        // Arms
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 3, by + 10, 5, 22, BODY_COLOR));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 22, by + 10, 5, 22, BODY_COLOR));
-
-        // Legs
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 9, by + 35, 5, 35, BODY_COLOR));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, bx + 16, by + 35, 5, 35, BODY_COLOR));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "body",
+            bx, by, BODY_W, BODY_H, BODY_COLOR));
     }
 
     private static void appendWoundDots(
@@ -173,8 +161,7 @@ public final class MiniBodyHudPlanner {
             int[] pos = locatePart(bx, by, part);
             int dotSize = dotSizeFor(level);
             int dotColor = dotColorFor(level);
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.MINI_BODY,
+            out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill",
                 pos[0] - dotSize / 2,
                 pos[1] - dotSize / 2,
                 dotSize,
@@ -255,14 +242,14 @@ public final class MiniBodyHudPlanner {
     private static void appendDashedFrame(List<HudRenderCommand> out, int cx, int cy, int color) {
         int x = cx - 4;
         int y = cy - 4;
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 3, 1, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 5, y, 3, 1, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y + 7, 3, 1, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 5, y + 7, 3, 1, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 1, 3, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y + 5, 1, 3, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 7, y, 1, 3, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + 7, y + 5, 1, 3, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y, 3, 1, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x + 5, y, 3, 1, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y + 7, 3, 1, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x + 5, y + 7, 3, 1, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y, 1, 3, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y + 5, 1, 3, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x + 7, y, 1, 3, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x + 7, y + 5, 1, 3, color));
     }
 
     private static void appendBrokenArmorCracks(
@@ -325,8 +312,7 @@ public final class MiniBodyHudPlanner {
 
         int x = anchorX + BODY_X_OFFSET + BODY_W + 1;
         int y = anchorY + BODY_Y_OFFSET + 1;
-        out.add(HudRenderCommand.rect(
-            HudRenderLayer.MINI_BODY,
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill",
             x,
             y,
             ARTIFACT_INDICATOR_SIZE,
@@ -354,8 +340,7 @@ public final class MiniBodyHudPlanner {
             {2, -1}
         };
         for (int[] p : pts) {
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.MINI_BODY,
+            out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill",
                 cx + p[0],
                 cy + p[1],
                 1,
@@ -474,12 +459,12 @@ public final class MiniBodyHudPlanner {
         int fillColor,
         long nowMillis
     ) {
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, topY, BAR_W, BAR_H, BAR_TRACK_COLOR));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, topY, BAR_W, BAR_H, BAR_TRACK_COLOR));
 
         int fillHeight = Math.max(0, Math.min(BAR_H, Math.round(fillRatio * BAR_H)));
         if (fillHeight > 0) {
             int fillY = topY + (BAR_H - fillHeight);
-            out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, fillY, BAR_W, fillHeight, fillColor));
+            out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, fillY, BAR_W, fillHeight, fillColor));
         }
 
         // Low-threshold border flash: 500ms on / 500ms off blink.
@@ -496,10 +481,10 @@ public final class MiniBodyHudPlanner {
         int h,
         int color
     ) {
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, w, 1, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y + h - 1, w, 1, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x, y, 1, h, color));
-        out.add(HudRenderCommand.rect(HudRenderLayer.MINI_BODY, x + w - 1, y, 1, h, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y, w, 1, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y + h - 1, w, 1, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x, y, 1, h, color));
+        out.add(HudRenderCommand.vector(HudRenderLayer.MINI_BODY, "fill", x + w - 1, y, 1, h, color));
     }
 
     // ==================== Test-only geometry accessors ====================

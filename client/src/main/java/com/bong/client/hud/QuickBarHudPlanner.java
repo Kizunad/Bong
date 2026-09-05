@@ -118,6 +118,18 @@ public final class QuickBarHudPlanner {
         return out;
     }
 
+    /** 仅投影服务端冷却截止时间，不修改领域计时；未知时长保留完整遮罩。 */
+    private static void appendCooldown(
+        List<HudRenderCommand> out, int x, int y, long untilMs, int durationMs, long nowMs
+    ) {
+        if (untilMs <= nowMs) return;
+        double remaining = durationMs > 0 ? Math.min(1.0, ((double) untilMs - nowMs) / durationMs) : 1.0;
+        int size = SLOT_SIZE - 2;
+        int height = Math.max(1, (int) Math.ceil(size * remaining));
+        out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill",
+            x + 1, y + 1 + size - height, size, height, COOLDOWN_OVERLAY_COLOR));
+    }
+
     private static void appendQuickUseRow(
         List<HudRenderCommand> out,
         QuickSlotConfig cfg,
@@ -129,7 +141,7 @@ public final class QuickBarHudPlanner {
         QuickSlotConfig config = cfg == null ? QuickSlotConfig.empty() : cfg;
         for (int i = 0; i < TOTAL_SLOTS; i++) {
             int x = leftX + i * (SLOT_SIZE + SLOT_GAP);
-            out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, SLOT_SIZE, SLOT_SIZE, SLOT_BG_COLOR));
+            out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill", x, y, SLOT_SIZE, SLOT_SIZE, SLOT_BG_COLOR));
             appendBorder(out, HudRenderLayer.QUICK_BAR, x, y, SLOT_SIZE, SLOT_SIZE, QUICK_LABEL_COLOR);
 
             QuickSlotEntry entry = config.slot(i);
@@ -138,8 +150,7 @@ public final class QuickBarHudPlanner {
             }
 
             // 已绑定 → 槽内淡绿色背景 + 物品 PNG 贴图（128×128 缩到 SLOT_SIZE×SLOT_SIZE 内）。
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.QUICK_BAR,
+            out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill",
                 x + 1, y + 1,
                 SLOT_SIZE - 2, SLOT_SIZE - 2,
                 SLOT_BOUND_FILL_COLOR
@@ -149,10 +160,7 @@ public final class QuickBarHudPlanner {
                 HudRenderLayer.QUICK_BAR, entry.itemId(), x + ICON_INSET, y + ICON_INSET, iconSize
             ));
 
-            // Cooldown mask
-            if (config.isOnCooldown(i, nowMillis)) {
-                out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, COOLDOWN_OVERLAY_COLOR));
-            }
+            appendCooldown(out, x, y, config.cooldownUntilMs(i), entry.cooldownMs(), nowMillis);
 
             // Cast bar for the active slot
             if (castState != null && castState.source() == CastState.Source.QUICK_SLOT && castState.slot() == i) {
@@ -180,8 +188,7 @@ public final class QuickBarHudPlanner {
 
             SkillBarEntry skillEntry = skills.slot(i);
             if (skillEntry != null && skillEntry.kind() == SkillBarEntry.Kind.ITEM) {
-                out.add(HudRenderCommand.rect(
-                    HudRenderLayer.QUICK_BAR,
+                out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill",
                     x + 1, y + 1,
                     SLOT_SIZE - 2, SLOT_SIZE - 2,
                     SLOT_BOUND_FILL_COLOR
@@ -202,15 +209,12 @@ public final class QuickBarHudPlanner {
                         0xFFFFFFFF
                     ));
                 }
-                if (skills.isOnCooldown(i, nowMillis)) {
-                    out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, COOLDOWN_OVERLAY_COLOR));
-                }
+                appendCooldown(out, x, y, skills.cooldownUntilMs(i), skillEntry.cooldownMs(), nowMillis);
                 continue;
             }
 
             if (skillEntry != null && skillEntry.kind() == SkillBarEntry.Kind.SKILL) {
-                out.add(HudRenderCommand.rect(
-                    HudRenderLayer.QUICK_BAR,
+                out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill",
                     x + 1, y + 1,
                     SLOT_SIZE - 2, SLOT_SIZE - 2,
                     0x404080FF
@@ -228,9 +232,7 @@ public final class QuickBarHudPlanner {
                 } else {
                     out.addAll(iconCommands);
                 }
-                if (skills.isOnCooldown(i, nowMillis)) {
-                    out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, COOLDOWN_OVERLAY_COLOR));
-                }
+                appendCooldown(out, x, y, skills.cooldownUntilMs(i), skillEntry.cooldownMs(), nowMillis);
                 if (castState != null && castState.source() == CastState.Source.SKILL_BAR && castState.slot() == i) {
                     appendCastBar(out, x, y + SLOT_SIZE + 1, castState, nowMillis);
                 }
@@ -243,8 +245,7 @@ public final class QuickBarHudPlanner {
             if (item == null) continue;
 
             // 同 F-bar：淡白底 + 真实 PNG 贴图（缺 PNG 时 MC 会显示 missing_texture）。
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.QUICK_BAR,
+            out.add(HudRenderCommand.vector(HudRenderLayer.QUICK_BAR, "fill",
                 x + 1, y + 1,
                 SLOT_SIZE - 2, SLOT_SIZE - 2,
                 0x40FFFFFF
@@ -286,9 +287,9 @@ public final class QuickBarHudPlanner {
         int h,
         int color
     ) {
-        out.add(HudRenderCommand.rect(layer, x, y, w, 1, color));
-        out.add(HudRenderCommand.rect(layer, x, y + h - 1, w, 1, color));
-        out.add(HudRenderCommand.rect(layer, x, y, 1, h, color));
-        out.add(HudRenderCommand.rect(layer, x + w - 1, y, 1, h, color));
+        out.add(HudRenderCommand.vector(layer, "fill", x, y, w, 1, color));
+        out.add(HudRenderCommand.vector(layer, "fill", x, y + h - 1, w, 1, color));
+        out.add(HudRenderCommand.vector(layer, "fill", x, y, 1, h, color));
+        out.add(HudRenderCommand.vector(layer, "fill", x + w - 1, y, 1, h, color));
     }
 }

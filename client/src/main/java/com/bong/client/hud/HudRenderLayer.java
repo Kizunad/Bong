@@ -1,9 +1,8 @@
 package com.bong.client.hud;
 
 public enum HudRenderLayer {
-    BASELINE,
-    ZONE,
-    COMPASS,
+    OVERWEIGHT,
+    ZONE_TRANSITION,
     THREAT_INDICATOR,
     HUD_VARIANT,
     TARGET_INFO,
@@ -37,7 +36,6 @@ public enum HudRenderLayer {
     HOME_SEQUENCE,
     REALM_COLLAPSE,
     MERIDIAN_OPEN,
-    CONNECTION_STATUS,
     VORTEX_CHARGE,
     VORTEX_COOLDOWN,
     VORTEX_BACKFIRE,

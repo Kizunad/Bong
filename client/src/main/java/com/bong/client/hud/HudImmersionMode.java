@@ -31,8 +31,8 @@ public final class HudImmersionMode {
     private static volatile long meditationStartedAtMs = -1L;
     private static volatile boolean autoMeditationImmersive = true;
     private static final EnumSet<HudRenderLayer> VISIBLE_CULTIVATION = EnumSet.of(
-        HudRenderLayer.BASELINE,
-        HudRenderLayer.ZONE,
+        HudRenderLayer.OVERWEIGHT,
+        HudRenderLayer.ZONE_TRANSITION,
         HudRenderLayer.THREAT_INDICATOR,
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.MINI_BODY,
@@ -50,9 +50,8 @@ public final class HudImmersionMode {
         HudRenderLayer.REALM_COLLAPSE
     );
     private static final EnumSet<HudRenderLayer> VISIBLE_OTHER = EnumSet.of(
-        HudRenderLayer.BASELINE,
-        HudRenderLayer.ZONE,
-        HudRenderLayer.COMPASS,
+        HudRenderLayer.OVERWEIGHT,
+        HudRenderLayer.ZONE_TRANSITION,
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.TARGET_INFO,
         HudRenderLayer.MINI_BODY,

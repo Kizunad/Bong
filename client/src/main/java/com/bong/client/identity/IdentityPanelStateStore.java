@@ -57,8 +57,8 @@ public final class IdentityPanelStateStore {
      *
      * <p>{@code snapshot} 是跨 session 存活的 static；此前没有生产态清理入口，断线重连后
      * 上一 server 推送的 identity 列表 / active identity 会继续留在内存里，直到新 session
-     * 首个 {@code identity_panel_state} payload 到达为止。这段窗口内 {@link IdentityHudCornerLabel}
-     * 会展示上一局身份，且若玩家在此期间打开 {@link IdentityPanelScreen}，面板会用旧快照
+     * 首个 {@code identity_panel_state} payload 到达为止。若玩家在此期间打开
+     * {@link IdentityPanelScreen}，面板会用旧快照
      * init 出按钮（回调固化旧 identityId），后续 fresh payload 只能改文字改不了按钮，造成
      * split-brain UI。复用 {@link #replace(IdentityPanelState)} 保证监听者（含面板重建）
      * 同步收到清空通知。

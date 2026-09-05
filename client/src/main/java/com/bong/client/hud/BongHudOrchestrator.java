@@ -4,7 +4,6 @@ import com.bong.client.BongClientFeatures;
 import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
-import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogHudPlanner;
 import com.bong.client.npc.NpcInteractionLogStore;
@@ -13,21 +12,15 @@ import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.tsy.ExtractState;
 import com.bong.client.tsy.ExtractStateStore;
-import com.bong.client.ui.ClientConnectionStatusStore;
-import com.bong.client.ui.ConnectionStatusIndicator;
 import com.bong.client.visual.realm_vision.PerceptionEdgeState;
 import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public final class BongHudOrchestrator {
-    public static final String BASELINE_LABEL = "Bong Client Connected";
-
-    private static final int BASELINE_X = 10;
-    private static final int BASELINE_Y = 10;
-    private static final int LINE_HEIGHT = 12;
+    private static final int TOAST_X = 10;
+    private static final int TOAST_Y = 10;
     private static final int DEFAULT_TEXT_WIDTH = 220;
 
     private BongHudOrchestrator() {
@@ -147,36 +140,11 @@ public final class BongHudOrchestrator {
         HudEnvironmentVariant environmentVariant = HudEnvironmentVariant.from(safeSnapshot.zoneState(), extractState);
         int normalizedWidth = normalizeWidth(maxTextWidth);
         List<HudRenderCommand> commands = new ArrayList<>();
-        commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, BASELINE_LABEL, BASELINE_X, BASELINE_Y, 0xFFFFFF));
-
-        int nextY = BASELINE_Y + LINE_HEIGHT;
-        if (ZoneHudRenderer.append(
-            commands,
-            safeSnapshot.zoneState(),
-            nowMillis,
-            widthMeasurer,
-            normalizedWidth,
-            BASELINE_X,
-            nextY,
-            screenWidth,
-            screenHeight
-        )) {
-            nextY += LINE_HEIGHT;
-        }
-        if (appendLocalNegPressure(
-            commands,
-            PlayerStateStore.snapshot(),
-            widthMeasurer,
-            normalizedWidth,
-            BASELINE_X,
-            nextY
-        )) {
-            nextY += LINE_HEIGHT;
-        }
-
-        if (BongClientFeatures.ENABLE_TOASTS
-            && ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, BASELINE_X, nextY)) {
-            nextY += LINE_HEIGHT;
+        commands.addAll(ZoneTransitionHudPlanner.buildCommands(
+            safeSnapshot.zoneState(), nowMillis, widthMeasurer, screenWidth, screenHeight
+        ));
+        if (BongClientFeatures.ENABLE_TOASTS) {
+            ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, TOAST_X, TOAST_Y);
         }
 
         commands.addAll(OverweightHudPlanner.buildCommands(widthMeasurer, normalizedWidth));
@@ -244,18 +212,6 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
-        if (HudRealmGate.atLeastCondense(playerState.realm())) {
-            commands.addAll(DirectionalCompassHudPlanner.buildCommands(
-                safeSnapshot.zoneState(),
-                extractState,
-                mode,
-                runtime,
-                widthMeasurer,
-                screenWidth,
-                screenHeight,
-                nowMillis
-            ));
-        }
         commands.addAll(ThreatIndicatorHudPlanner.buildCommands(
             playerState,
             perceptionState,
@@ -486,12 +442,6 @@ public final class BongHudOrchestrator {
             nowMillis
         ));
         commands.addAll(MeridianOpenHudPlanner.buildCommands(widthMeasurer, screenWidth, screenHeight));
-        commands.addAll(IdentityHudCornerLabel.buildCommands(widthMeasurer, screenWidth));
-        commands.addAll(ConnectionStatusIndicator.buildCommands(
-            ClientConnectionStatusStore.snapshot(nowMillis),
-            screenWidth,
-            screenHeight
-        ));
 
         List<HudRenderCommand> layoutCommands = HudLayoutPreset.filter(
             commands,
@@ -512,25 +462,4 @@ public final class BongHudOrchestrator {
         return requestedWidth > 0 ? requestedWidth : DEFAULT_TEXT_WIDTH;
     }
 
-    static boolean appendLocalNegPressure(
-        List<HudRenderCommand> commands,
-        PlayerStateViewModel playerState,
-        HudTextHelper.WidthMeasurer widthMeasurer,
-        int maxWidth,
-        int x,
-        int y
-    ) {
-        PlayerStateViewModel safePlayerState = playerState == null ? PlayerStateViewModel.empty() : playerState;
-        if (safePlayerState.localNegPressure() >= 0.0 || widthMeasurer == null || maxWidth <= 0) {
-            return false;
-        }
-
-        String text = String.format(Locale.ROOT, "灵压 %.2f", safePlayerState.localNegPressure());
-        String clipped = HudTextHelper.clipToWidth(text, maxWidth, widthMeasurer);
-        if (clipped.isEmpty()) {
-            return false;
-        }
-        commands.add(HudRenderCommand.text(HudRenderLayer.ZONE, clipped, x, y, 0x9FD3FF));
-        return true;
-    }
 }

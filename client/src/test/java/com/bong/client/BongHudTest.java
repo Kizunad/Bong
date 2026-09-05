@@ -53,48 +53,7 @@ public class BongHudTest {
         HudLayoutPreferenceStore.resetForTests();
     }
 
-    @Test
-    public void emptyStateStillRendersBaselineWithoutToast() {
-        BongHud.HudSnapshot snapshot = BongHud.snapshot(1_000L);
-        RecordingHudSurface surface = new RecordingHudSurface(320, 180);
 
-        assertEquals("Bong Client Connected", snapshot.baselineText());
-        assertNull(snapshot.toast());
-        assertDoesNotThrow(() -> BongHud.renderSurface(surface, snapshot));
-
-        assertEquals(1, surface.shadowTexts.size());
-        assertEquals("Bong Client Connected", surface.shadowTexts.get(0).text());
-        assertEquals(10, surface.shadowTexts.get(0).x());
-        assertEquals(10, surface.shadowTexts.get(0).y());
-        assertTrue(surface.fillRects.isEmpty());
-        assertTrue(surface.drawTexts.isEmpty());
-    }
-
-    @Test
-    public void toastStateRendersCenteredOverlay() {
-        NarrationState.recordNarration(
-                new BongServerPayload.Narration("broadcast", "雷劫将至，速避高处。", "system_warning", null),
-                1_000L,
-                ignored -> {
-                }
-        );
-
-        BongHud.HudSnapshot snapshot = BongHud.snapshot(2_000L);
-        RecordingHudSurface surface = new RecordingHudSurface(200, 100);
-
-        assertDoesNotThrow(() -> BongHud.renderSurface(surface, snapshot));
-
-        assertEquals(1, surface.shadowTexts.size());
-        assertEquals(1, surface.fillRects.size());
-        assertEquals(1, surface.drawTexts.size());
-        assertEquals(snapshot.toast().text(), surface.drawTexts.get(0).text());
-        assertEquals(0xFF5555, surface.drawTexts.get(0).color());
-        assertTrue(surface.drawTexts.get(0).shadow());
-
-        int expectedWidth = surface.measureText(snapshot.toast().text());
-        assertEquals((200 - expectedWidth) / 2, surface.drawTexts.get(0).x());
-        assertEquals(25, surface.drawTexts.get(0).y());
-    }
 
     @Test
     public void productionPathRendersBaomaiV3HudOnlyInFullHudMode() {
@@ -211,7 +170,7 @@ public class BongHudTest {
         List<HudRenderCommand> commands = new ArrayList<>(
             SearchProgressHudPlanner.buildCommands(SearchHudState.completed("残棺"), 320, 180)
         );
-        commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, "baseline", 0, 0, 0xFFFFFF));
+        commands.add(HudRenderCommand.text(HudRenderLayer.OVERWEIGHT, "baseline", 0, 0, 0xFFFFFF));
         commands.add(HudRenderCommand.text(HudRenderLayer.CAST_BAR, "cast", 0, 0, 0xFFFFFF));
         commands.add(HudRenderCommand.screenTint(HudRenderLayer.AGENT_UI, 0xCC000000));
 
@@ -259,8 +218,8 @@ public class BongHudTest {
         );
         assertTrue(hidden.isEmpty(), "HIDDEN 必须过滤全部命令，实际命令=" + hidden);
         assertTrue(
-            inventory.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BASELINE),
-            "INVENTORY_DIMMED 应保留 BASELINE，因为库存界面仍显示基础 HUD，实际命令=" + inventory
+            inventory.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.OVERWEIGHT),
+            "INVENTORY_DIMMED 应保留 OVERWEIGHT，因为库存界面仍显示超载提示，实际命令=" + inventory
         );
         assertTrue(
             castOnly.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.CAST_BAR),
@@ -275,12 +234,12 @@ public class BongHudTest {
     @Test
     public void commandVisibilityFiltersEveryPolicyWithoutLayerLeakage() {
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.text(HudRenderLayer.BASELINE, "baseline", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.OVERWEIGHT, "baseline", 0, 0, 0xFFFFFF),
             HudRenderCommand.text(HudRenderLayer.QUICK_BAR, "quick", 0, 0, 0xFFFFFF),
             HudRenderCommand.text(HudRenderLayer.CAST_BAR, "cast", 0, 0, 0xFFFFFF),
             HudRenderCommand.text(HudRenderLayer.EVENT_STREAM, "event", 0, 0, 0xFFFFFF),
             HudRenderCommand.text(HudRenderLayer.TSY_EXTRACT, "extract", 0, 0, 0xFFFFFF),
-            HudRenderCommand.text(HudRenderLayer.ZONE, "zone", 0, 0, 0xFFFFFF),
+            HudRenderCommand.text(HudRenderLayer.ZONE_TRANSITION, "zone", 0, 0, 0xFFFFFF),
             HudRenderCommand.screenTint(HudRenderLayer.AGENT_UI, 0xCC000000),
             HudRenderCommand.edgeVignette(HudRenderLayer.AGENT_UI, 0x661A0D40),
             HudRenderCommand.rect(HudRenderLayer.AGENT_UI, 0, 0, 320, 1, 0x22000000)
@@ -297,7 +256,7 @@ public class BongHudTest {
         );
         assertEquals(
             List.of(
-                HudRenderLayer.BASELINE,
+                HudRenderLayer.OVERWEIGHT,
                 HudRenderLayer.QUICK_BAR,
                 HudRenderLayer.CAST_BAR,
                 HudRenderLayer.EVENT_STREAM,
