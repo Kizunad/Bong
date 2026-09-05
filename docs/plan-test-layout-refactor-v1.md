@@ -316,6 +316,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **迁移对拍与完整性**：迁移前基线为 inventory 386 条测试通过；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test inventory::tests --lib'` 为 `374 passed / 0 failed / 0 ignored`（inventory 私有测试 346 条，另含既有 `schema::inventory` 28 条），外置 `inventory_unit` 定向测试为 40 条通过；原 386 个测试名在 `tests.rs` 与 `inventory_unit` 的并集中逐一对拍，无测试名丢失。原测试断言、边界/错误语义和涉及真元的守恒断言均保留；仅移除已无调用的测试辅助函数 `assert_container_has_no_overlaps`。
 - **公开 API 与 seam**：外置测试仅使用已有 `bong_server::inventory` 公开类型/函数、`bong_server::world::dimension::DimensionKind` 与测试 fixture；未复制生产实现，未新增或扩大 `pub`/`#[doc(hidden)]` seam。私有测试继续在模块测试上下文中验证私有解析和 ECS 装配，不为外置而改变生产可见性。
 - **提交证据**：逐条分类清单对应 `476a98576`（2026-09-05），40 条外置与 `inventory_unit` target 对应 `8c69a171f`，fixture/清单收口对应 `562d0b702`；每个提交均带 `Model: gpt-5.6-luna`。本条仅记录 P2-17 本批次；后续 inventory 契约收缩与其它模块仍属 P4 范围。
+### P2-17 schema proto_gen 协议 pin（✅ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 当前 HEAD 的 382 条 `schema/proto_gen.rs` 逐条分类，将生产文件收缩为 11 行 `pub mod bong { include!(...) }` 入口；测试外置到 `server/tests/unit/schema/proto_gen_test.rs`，并新增显式 `proto_gen_unit` Cargo target。未改 `proto/*.proto`、`build.rs`、生成链、schema/wire、client、agent 或玩法。
+- **契约处置**：382 条中 54 条保留协议枚举、错误字节、兼容演进和外部 payload 结构 pin；328 条同构 roundtrip 由一个表驱动 `merged_protocol_pin_cases` runner 调用并以测试名报告失败；删除 0 条。每个减少项均对应 TSV 的“合并”处置，未新增 `pub`、`#[doc(hidden)]` 或其它测试 seam，也未复制生产实现。
+- **迁移对拍**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test schema::proto_gen::tests --lib'` 为 `381 passed / 0 failed / 1 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test proto_gen_unit'` 为 `55 passed / 0 failed / 0 ignored`。原 ignored benchmark 已作为 TSV 合并 case 纳入 runner，未再静默跳过。
+- **完整门禁**：当前 HEAD 执行任务卡指定的提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library、main binary、全部独立 Cargo targets、integration targets 与 doc-tests 均无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码与 target 对应 `461646f15`（2026-09-05），runner 格式修正对应 `74323058f`（2026-09-05）；本条仅记录 P2-17 进度，P2 总体、P3、P4 仍未完成。
 
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
@@ -359,6 +366,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **persistence 结论**：172 个 inline 测试约依赖 86 个私有生产符号，多数同时服务生产路径，未批量开放。首批 8 个 migration/bootstrap 测试只需 `apply_migrations`、`CURRENT_USER_VERSION`、`CURRENT_SCHEMA_VERSION` 与已有公开 `bootstrap_sqlite`；前三个旧 seam 均记录为“无独立生产消费者 → 待撤回”，临时目录和 database path 仅为测试 fixture；其余 migration/backup/runtime/social/qi 测试逐条记录为登记的 `server/src/persistence/tests.rs` 私有契约例外。
 - **seam 审计**：全仓逐项记录 18 个 `#[doc(hidden)] pub` 声明，其中 11 个有生产消费者而保留，7 个仅测试消费者并标记待撤回/替换；`server_readiness::publish`、伪脉生命周期/VFX/舍入 helper 与 `tsy_container_search` 的四个安全/库存 helper 均以生产引用为据，不批量删除。未新增 public 或 `#[doc(hidden)]` seam。
 - **对拍与边界**：每个首批测试记录 locked `cargo test` 过滤器与目标路径对拍命令；本批次仅分类/审计和 plan evidence，不搬迁、删除测试，不修改生产代码、Cargo、CI 或其它 plan。后续迁移必须以本清单为前置，并按当前 Kody-only 调度约束进行审查。
+
+### P4 persistence/mod.rs 私有契约测试迁移（✅ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 已登记的 172 条逐条复核结果，将 `server/src/persistence/mod.rs` 的单一 `persistence_tests` 测试体原样移入 `server/src/persistence/tests.rs`，由 `#[cfg(test)] mod tests;` 作为 persistence 子模块编译；保留测试名称、fixture、断言、迁移/事务/WAL/并发/NPC/zone/player/social/qi durable 契约，不删除受保护测试，也不新增独立 integration target。
+- **生产边界**：`mod.rs` 从实际 20,819 行降至 9,755 行，`tests.rs` 实际 10,996 行并保留 172 个 `#[test]`；生产实现、迁移链、SQL、表结构、事务边界和 R3 P0 接入点未改动。三条 inventory seam 记录经生产引用核验：`apply_migrations`、`CURRENT_USER_VERSION`、`CURRENT_SCHEMA_VERSION` 仍被生产 bootstrap/持久化路径使用，因此撤回的是测试专用访问路径，生产私有符号按硬边界保留。
+- **私有契约理由**：约 86 个私有生产符号多数同时服务生产路径；同级 `tests.rs` 子模块可直接验证这些登记的私有契约，不需要新增 `pub`、`pub(crate)` 或 `#[doc(hidden)]` seam，不复制生产逻辑。公开可观察行为不足以覆盖迁移/schema/原子性/失败回滚边界的测试继续留在登记的 `server/src/persistence/tests.rs`。
+- **验证**：迁移后定向命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test persistence::tests --lib'` 通过，目标 persistence 测试 172 条全部通过（同过滤器同时命中既有 `mineral::persistence::tests` 17 条与 `spiritwood::persistence::tests` 19 条，合计 `208 passed / 0 failed / 0 ignored`）。完整 server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit `0`：library `12626 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed / 0 ignored`，全部 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。迁移前后测试名称集合 `172/172` 对拍一致；本 evidence 对应当前迁移提交，主线合并后将按流程复验受影响栈。
 
 ## 验收抓手（T0）
 
