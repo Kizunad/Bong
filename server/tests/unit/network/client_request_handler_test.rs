@@ -164,6 +164,13 @@ use bong_server::world::tsy_container_search::{
 };
 use bong_server::world::tsy_lifecycle::TsyZoneStateRegistry;
 use bong_server::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+fn load_test_technique_registry() -> TechniqueRegistry {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/techniques.toml");
+    TechniqueRegistry::load_from_path(path, &bong_server::body_plan::RaceRegistry::default())
+        .expect("checked-in technique catalog must load")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,12 +209,6 @@ mod tests {
     };
     use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
-
-    fn load_test_technique_registry() -> TechniqueRegistry {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/techniques.toml");
-        TechniqueRegistry::load_from_path(path, &bong_server::body_plan::RaceRegistry::default())
-            .expect("checked-in technique catalog must load")
-    }
 
     fn mark_test_layer_as_overworld(app: &mut App) {
         let world = app.world_mut();
