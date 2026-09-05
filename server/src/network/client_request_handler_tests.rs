@@ -8,368 +8,383 @@ use super::*;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
 use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRequiredMeridian};
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
-use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState};
+use crate::inventory::{
+    ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+};
 use crate::world::dimension::{DimensionKind, DimensionLayers};
 use valence::prelude::{App, BlockPos, DVec3, Entity, EntityLayerId, Update};
 
-    #[test]
-    fn combat_pill_buff_status_payload_preserves_hud_fields() {
-        let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 2)
-            .expect("valid pill buff status payload should serialize");
-        let value: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("test build emits JSON server_data");
-        assert_eq!(value["type"], "pill_buff_status");
-        assert_eq!(value["buff_id"], "tie_bi_san");
-        assert_eq!(value["remaining_ticks"], 3600);
-        assert_eq!(value["effect_multiplier"], 1.25);
-    }
+#[test]
+fn combat_pill_buff_status_payload_preserves_hud_fields() {
+    let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 2)
+        .expect("valid pill buff status payload should serialize");
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("test build emits JSON server_data");
+    assert_eq!(value["type"], "pill_buff_status");
+    assert_eq!(value["buff_id"], "tie_bi_san");
+    assert_eq!(value["remaining_ticks"], 3600);
+    assert_eq!(value["effect_multiplier"], 1.25);
+}
 
-    #[test]
-    fn combat_pill_buff_status_rejects_invalid_multiplier() {
-        assert!(build_pill_buff_status_payload("tie_bi_san", 1800, f32::NAN, 1).is_none());
-        assert!(build_pill_buff_status_payload("tie_bi_san", 1800, 0.0, 1).is_none());
-    }
+#[test]
+fn combat_pill_buff_status_rejects_invalid_multiplier() {
+    assert!(build_pill_buff_status_payload("tie_bi_san", 1800, f32::NAN, 1).is_none());
+    assert!(build_pill_buff_status_payload("tie_bi_san", 1800, 0.0, 1).is_none());
+}
 
-    #[test]
-    fn combat_pill_buff_status_rejects_empty_buff_id() {
-        assert!(build_pill_buff_status_payload("  ", 1800, 1.25, 1).is_none());
-    }
+#[test]
+fn combat_pill_buff_status_rejects_empty_buff_id() {
+    assert!(build_pill_buff_status_payload("  ", 1800, 1.25, 1).is_none());
+}
 
-    #[test]
-    fn combat_pill_buff_status_duration_zero_uses_base_ticks() {
-        let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 0)
-            .expect("zero duration multiplier uses one duration");
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["remaining_ticks"], 1800);
-    }
+#[test]
+fn combat_pill_buff_status_duration_zero_uses_base_ticks() {
+    let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 0)
+        .expect("zero duration multiplier uses one duration");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["remaining_ticks"], 1800);
+}
 
-    #[test]
-    fn combat_pill_buff_status_remaining_ticks_clamps_to_u32_max() {
-        let bytes = build_pill_buff_status_payload("tie_bi_san", u64::from(u32::MAX), 1.25, 2)
-            .expect("oversized duration should serialize after clamping");
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["remaining_ticks"], u64::from(u32::MAX));
-    }
+#[test]
+fn combat_pill_buff_status_remaining_ticks_clamps_to_u32_max() {
+    let bytes = build_pill_buff_status_payload("tie_bi_san", u64::from(u32::MAX), 1.25, 2)
+        .expect("oversized duration should serialize after clamping");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["remaining_ticks"], u64::from(u32::MAX));
+}
 
-    #[test]
-    fn external_session_zero_timeout_is_not_expired_but_finite_deadline_is_inclusive() {
-        assert!(!external_session_is_expired(0, u64::MAX));
-        assert!(!external_session_is_expired(101, 100));
-        assert!(external_session_is_expired(100, 100));
-    }
+#[test]
+fn external_session_zero_timeout_is_not_expired_but_finite_deadline_is_inclusive() {
+    assert!(!external_session_is_expired(0, u64::MAX));
+    assert!(!external_session_is_expired(101, 100));
+    assert!(external_session_is_expired(100, 100));
+}
 
-    #[test]
-    fn requester_gate_dimension_falls_back_to_entity_layer() {
-        let overworld = Entity::from_raw(101);
-        let tsy = Entity::from_raw(102);
-        let layers = DimensionLayers { overworld, tsy };
-        assert_eq!(
-            dimension_for_target_layer(None, Some(&EntityLayerId(overworld)), Some(&layers)),
-            Some(DimensionKind::Overworld)
-        );
-        assert_eq!(
-            dimension_for_target_layer(None, Some(&EntityLayerId(tsy)), Some(&layers)),
-            Some(DimensionKind::Tsy)
-        );
-        assert_eq!(
-            dimension_for_target_layer(
-                None,
-                Some(&EntityLayerId(Entity::from_raw(103))),
-                Some(&layers),
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn meridian_label_maps_regular_and_extraordinary_channels() {
-        let cases = [
-            (MeridianId::Lung, "肺经"),
-            (MeridianId::LargeIntestine, "大肠经"),
-            (MeridianId::Stomach, "胃经"),
-            (MeridianId::Spleen, "脾经"),
-            (MeridianId::Heart, "心经"),
-            (MeridianId::SmallIntestine, "小肠经"),
-            (MeridianId::Bladder, "膀胱经"),
-            (MeridianId::Kidney, "肾经"),
-            (MeridianId::Pericardium, "心包经"),
-            (MeridianId::TripleEnergizer, "三焦经"),
-            (MeridianId::Gallbladder, "胆经"),
-            (MeridianId::Liver, "肝经"),
-            (MeridianId::Ren, "任脉"),
-            (MeridianId::Du, "督脉"),
-            (MeridianId::Chong, "冲脉"),
-            (MeridianId::Dai, "带脉"),
-            (MeridianId::YinQiao, "阴跷脉"),
-            (MeridianId::YangQiao, "阳跷脉"),
-            (MeridianId::YinWei, "阴维脉"),
-            (MeridianId::YangWei, "阳维脉"),
-        ];
-        for (id, expected) in cases {
-            assert_eq!(meridian_label(&id.channel_id()), expected, "label for {id:?}");
-        }
-    }
-
-    #[test]
-    fn meridian_label_falls_back_for_unknown_channel_id() {
-        assert_eq!(
-            meridian_label(&crate::cultivation::components::MeridianChannelId::new(
-                "tail_fin_channel",
-            )),
-            "未知经脉"
-        );
-    }
-
-    #[test]
-    fn alchemy_explode_tier_three_scales_backlash_above_tier_one() {
-        let tier_one = scale_alchemy_explosion_damage(40.0, 1);
-        let tier_three = scale_alchemy_explosion_damage(40.0, 3);
-        assert!(tier_one > 0.0);
-        assert!(tier_three > tier_one);
-        assert_eq!(tier_three, 80.0);
-        assert!(scale_alchemy_explosion_crack(0.3, 3) > scale_alchemy_explosion_crack(0.3, 1));
-    }
-
-    fn lookup_item(instance_id: u64) -> ItemInstance {
-        ItemInstance {
-            instance_id,
-            template_id: "bone_whistle".to_string(),
-            display_name: "测试物品".to_string(),
-            grid_w: 1,
-            grid_h: 1,
-            weight: 0.1,
-            rarity: ItemRarity::Common,
-            description: String::new(),
-            stack_count: 1,
-            spirit_quality: 0.0,
-            durability: 1.0,
-            freshness: None,
-            mineral_id: None,
-            charges: None,
-            forge_quality: None,
-            forge_color: None,
-            forge_side_effects: Vec::new(),
-            forge_achieved_tier: None,
-            alchemy: None,
-            lingering_owner_qi: None,
-        }
-    }
-
-    fn lookup_inventory() -> PlayerInventory {
-        PlayerInventory {
-            revision: InventoryRevision(0),
-            containers: vec![ContainerState {
-                quick_access: false,
-                id: "main_pack".to_string(),
-                name: "main_pack".to_string(),
-                rows: 5,
-                cols: 7,
-                items: Vec::new(),
-                owner_instance_id: None,
-            }],
-            equipped: Default::default(),
-            hotbar: Default::default(),
-            bone_coins: 0,
-            max_weight: 50.0,
-            triggered_treasures: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn inventory_instance_id_by_template_prefers_containers_hotbar_then_equipped() {
-        let mut inventory = lookup_inventory();
-        inventory.containers[0].items.push(PlacedItemState {
-            row: 0,
-            col: 0,
-            instance: lookup_item(11),
-        });
-        inventory.hotbar[0] = Some(lookup_item(22));
-        inventory.equipped.insert(
-            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-            crate::inventory::SlotContents::held_single(lookup_item(33)),
-        );
-        assert_eq!(inventory_instance_id_by_template(&inventory, "bone_whistle"), Some(11));
-        inventory.containers[0].items.clear();
-        assert_eq!(inventory_instance_id_by_template(&inventory, "bone_whistle"), Some(22));
-    }
-
-    #[test]
-    fn inventory_instance_id_by_template_finds_worn_equipped_item() {
-        let mut inventory = lookup_inventory();
-        inventory.equipped.insert(
-            crate::inventory::EQUIP_SLOT_CHEST.to_string(),
-            crate::inventory::SlotContents::worn_single(lookup_item(44)),
-        );
-        assert_eq!(inventory_instance_id_by_template(&inventory, "bone_whistle"), Some(44));
-    }
-
-    #[test]
-    fn inventory_instance_id_by_template_uses_stable_equipped_slot_order() {
-        let mut inventory = lookup_inventory();
-        inventory.equipped.insert(
-            crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-            crate::inventory::SlotContents::held_single(lookup_item(55)),
-        );
-        inventory.equipped.insert(
-            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-            crate::inventory::SlotContents::held_single(lookup_item(66)),
-        );
-        assert_eq!(inventory_instance_id_by_template(&inventory, "bone_whistle"), Some(66));
-    }
-
-    #[test]
-    fn inventory_instance_id_by_template_returns_none_when_missing() {
-        assert_eq!(
-            inventory_instance_id_by_template(&lookup_inventory(), "bone_whistle"),
-            None
-        );
-    }
-
-    #[test]
-    fn qi_color_inspect_scope_requires_near_same_dimension_target() {
-        assert_eq!(parse_qi_color_inspect_protocol_id("entity:42"), Some(42));
-        assert_eq!(parse_qi_color_inspect_protocol_id("entity_bits:42"), None);
-        assert_eq!(parse_qi_color_inspect_protocol_id("entity:bad"), None);
-        let (_, radius) = crate::reach::DistanceRule::NEARBY_INTERACT
-            .profile_parts()
-            .expect("NearbyInteract must remain a named distance profile");
-        assert!(is_qi_color_inspect_position_in_scope(
-            DVec3::ZERO,
-            DVec3::new(radius, 0.0, 0.0),
-            true
-        ));
-        assert!(!is_qi_color_inspect_position_in_scope(
-            DVec3::ZERO,
-            DVec3::new(radius + 0.01, 0.0, 0.0),
-            true
-        ));
-        assert!(!is_qi_color_inspect_position_in_scope(
-            DVec3::ZERO,
-            DVec3::new(1.0, 0.0, 0.0),
-            false
-        ));
-    }
-
-    #[test]
-    fn give_dan_target_state_gate_accepts_only_live_receiving_states() {
-        use crate::fauna::dying_elder::{DyingElderState, DYING_ELDER_DAN_THRESHOLD};
-        assert!(dying_elder_can_receive_dan(&DyingElderState::Plea));
-        assert!(dying_elder_can_receive_dan(&DyingElderState::Recovering {
-            dan_received: DYING_ELDER_DAN_THRESHOLD - 1,
-        }));
-        assert!(!dying_elder_can_receive_dan(&DyingElderState::Recovering {
-            dan_received: DYING_ELDER_DAN_THRESHOLD,
-        }));
-        assert!(!dying_elder_can_receive_dan(&DyingElderState::Betrayal));
-        assert!(!dying_elder_can_receive_dan(&DyingElderState::Dead {
-            dead_by_betrayal: false,
-        }));
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_no_deps_passes() {
-        assert!(check_player_skill_meridian_gate(
-            "unknown.skill",
-            &[],
-            &MeridianSystem::default(),
-            None,
-            None,
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_rejects_severed_via_required() {
-        let ms = MeridianSystem::default();
-        let mut severed = MeridianSeveredPermanent::default();
-        severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 1);
-        let required = [TechniqueRequiredMeridian {
-            channel: "Lung".to_string(),
-            min_health: 0.5,
-        }];
-        assert_eq!(
-            check_player_skill_meridian_gate("test.skill", &required, &ms, Some(&severed), None),
-            Err(MeridianId::Lung)
-        );
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_rejects_low_integrity_via_required() {
-        let mut ms = MeridianSystem::default();
-        let lung = ms.get_mut(MeridianId::Lung);
-        lung.opened = true;
-        lung.integrity = 0.3;
-        let required = [TechniqueRequiredMeridian {
-            channel: "Lung".to_string(),
-            min_health: 0.5,
-        }];
-        assert_eq!(
-            check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
-            Err(MeridianId::Lung)
-        );
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_rejects_via_deps_table_severed() {
-        let ms = MeridianSystem::default();
-        let mut severed = MeridianSeveredPermanent::default();
-        severed.insert(MeridianId::Heart, SeveredSource::BackfireOverload, 5);
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("test.skill", vec![MeridianId::Heart]);
-        assert_eq!(
-            check_player_skill_meridian_gate("test.skill", &[], &ms, Some(&severed), Some(&deps)),
-            Err(MeridianId::Heart)
-        );
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_required() {
-        let mut ms = MeridianSystem::default();
-        ms.get_mut(MeridianId::Lung).integrity = 1.0;
-        let required = [TechniqueRequiredMeridian {
-            channel: "Lung".to_string(),
-            min_health: 0.5,
-        }];
-        assert_eq!(
-            check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
-            Err(MeridianId::Lung)
-        );
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_deps_table() {
-        let ms = MeridianSystem::default();
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("test.skill", vec![MeridianId::Stomach]);
-        assert_eq!(
-            check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps)),
-            Err(MeridianId::Stomach)
-        );
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_passes_when_opened_and_integrity_satisfied() {
-        let mut ms = MeridianSystem::default();
-        let lung = ms.get_mut(MeridianId::Lung);
-        lung.opened = true;
-        lung.integrity = 0.8;
-        let required = [TechniqueRequiredMeridian {
-            channel: "Lung".to_string(),
-            min_health: 0.5,
-        }];
-        assert!(check_player_skill_meridian_gate("test.skill", &required, &ms, None, None).is_ok());
-    }
-
-    #[test]
-    fn check_player_skill_meridian_gate_helper_unit_deps_table_passes_when_opened() {
-        let mut ms = MeridianSystem::default();
-        ms.get_mut(MeridianId::Kidney).opened = true;
-        let mut deps = SkillMeridianDependencies::default();
-        deps.declare("test.skill", vec![MeridianId::Kidney]);
-        assert!(check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps)).is_ok());
-    }
-        "[bong][dying_elder] give_dan preflight accepted: player {player_entity:?} → elder {elder_entity:?} pill={pill_instance_id}"
+#[test]
+fn requester_gate_dimension_falls_back_to_entity_layer() {
+    let overworld = Entity::from_raw(101);
+    let tsy = Entity::from_raw(102);
+    let layers = DimensionLayers { overworld, tsy };
+    assert_eq!(
+        dimension_for_target_layer(None, Some(&EntityLayerId(overworld)), Some(&layers)),
+        Some(DimensionKind::Overworld)
     );
+    assert_eq!(
+        dimension_for_target_layer(None, Some(&EntityLayerId(tsy)), Some(&layers)),
+        Some(DimensionKind::Tsy)
+    );
+    assert_eq!(
+        dimension_for_target_layer(
+            None,
+            Some(&EntityLayerId(Entity::from_raw(103))),
+            Some(&layers),
+        ),
+        None
+    );
+}
+
+#[test]
+fn meridian_label_maps_regular_and_extraordinary_channels() {
+    let cases = [
+        (MeridianId::Lung, "肺经"),
+        (MeridianId::LargeIntestine, "大肠经"),
+        (MeridianId::Stomach, "胃经"),
+        (MeridianId::Spleen, "脾经"),
+        (MeridianId::Heart, "心经"),
+        (MeridianId::SmallIntestine, "小肠经"),
+        (MeridianId::Bladder, "膀胱经"),
+        (MeridianId::Kidney, "肾经"),
+        (MeridianId::Pericardium, "心包经"),
+        (MeridianId::TripleEnergizer, "三焦经"),
+        (MeridianId::Gallbladder, "胆经"),
+        (MeridianId::Liver, "肝经"),
+        (MeridianId::Ren, "任脉"),
+        (MeridianId::Du, "督脉"),
+        (MeridianId::Chong, "冲脉"),
+        (MeridianId::Dai, "带脉"),
+        (MeridianId::YinQiao, "阴跷脉"),
+        (MeridianId::YangQiao, "阳跷脉"),
+        (MeridianId::YinWei, "阴维脉"),
+        (MeridianId::YangWei, "阳维脉"),
+    ];
+    for (id, expected) in cases {
+        assert_eq!(
+            meridian_label(&id.channel_id()),
+            expected,
+            "label for {id:?}"
+        );
+    }
+}
+
+#[test]
+fn meridian_label_falls_back_for_unknown_channel_id() {
+    assert_eq!(
+        meridian_label(&crate::cultivation::components::MeridianChannelId::new(
+            "tail_fin_channel",
+        )),
+        "未知经脉"
+    );
+}
+
+#[test]
+fn alchemy_explode_tier_three_scales_backlash_above_tier_one() {
+    let tier_one = scale_alchemy_explosion_damage(40.0, 1);
+    let tier_three = scale_alchemy_explosion_damage(40.0, 3);
+    assert!(tier_one > 0.0);
+    assert!(tier_three > tier_one);
+    assert_eq!(tier_three, 80.0);
+    assert!(scale_alchemy_explosion_crack(0.3, 3) > scale_alchemy_explosion_crack(0.3, 1));
+}
+
+fn lookup_item(instance_id: u64) -> ItemInstance {
+    ItemInstance {
+        instance_id,
+        template_id: "bone_whistle".to_string(),
+        display_name: "测试物品".to_string(),
+        grid_w: 1,
+        grid_h: 1,
+        weight: 0.1,
+        rarity: ItemRarity::Common,
+        description: String::new(),
+        stack_count: 1,
+        spirit_quality: 0.0,
+        durability: 1.0,
+        freshness: None,
+        mineral_id: None,
+        charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
+        alchemy: None,
+        lingering_owner_qi: None,
+    }
+}
+
+fn lookup_inventory() -> PlayerInventory {
+    PlayerInventory {
+        revision: InventoryRevision(0),
+        containers: vec![ContainerState {
+            quick_access: false,
+            id: "main_pack".to_string(),
+            name: "main_pack".to_string(),
+            rows: 5,
+            cols: 7,
+            items: Vec::new(),
+            owner_instance_id: None,
+        }],
+        equipped: Default::default(),
+        hotbar: Default::default(),
+        bone_coins: 0,
+        max_weight: 50.0,
+        triggered_treasures: Vec::new(),
+    }
+}
+
+#[test]
+fn inventory_instance_id_by_template_prefers_containers_hotbar_then_equipped() {
+    let mut inventory = lookup_inventory();
+    inventory.containers[0].items.push(PlacedItemState {
+        row: 0,
+        col: 0,
+        instance: lookup_item(11),
+    });
+    inventory.hotbar[0] = Some(lookup_item(22));
+    inventory.equipped.insert(
+        crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+        crate::inventory::SlotContents::held_single(lookup_item(33)),
+    );
+    assert_eq!(
+        inventory_instance_id_by_template(&inventory, "bone_whistle"),
+        Some(11)
+    );
+    inventory.containers[0].items.clear();
+    assert_eq!(
+        inventory_instance_id_by_template(&inventory, "bone_whistle"),
+        Some(22)
+    );
+}
+
+#[test]
+fn inventory_instance_id_by_template_finds_worn_equipped_item() {
+    let mut inventory = lookup_inventory();
+    inventory.equipped.insert(
+        crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+        crate::inventory::SlotContents::worn_single(lookup_item(44)),
+    );
+    assert_eq!(
+        inventory_instance_id_by_template(&inventory, "bone_whistle"),
+        Some(44)
+    );
+}
+
+#[test]
+fn inventory_instance_id_by_template_uses_stable_equipped_slot_order() {
+    let mut inventory = lookup_inventory();
+    inventory.equipped.insert(
+        crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
+        crate::inventory::SlotContents::held_single(lookup_item(55)),
+    );
+    inventory.equipped.insert(
+        crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+        crate::inventory::SlotContents::held_single(lookup_item(66)),
+    );
+    assert_eq!(
+        inventory_instance_id_by_template(&inventory, "bone_whistle"),
+        Some(66)
+    );
+}
+
+#[test]
+fn inventory_instance_id_by_template_returns_none_when_missing() {
+    assert_eq!(
+        inventory_instance_id_by_template(&lookup_inventory(), "bone_whistle"),
+        None
+    );
+}
+
+#[test]
+fn qi_color_inspect_scope_requires_near_same_dimension_target() {
+    assert_eq!(parse_qi_color_inspect_protocol_id("entity:42"), Some(42));
+    assert_eq!(parse_qi_color_inspect_protocol_id("entity_bits:42"), None);
+    assert_eq!(parse_qi_color_inspect_protocol_id("entity:bad"), None);
+    let (_, radius) = crate::reach::DistanceRule::NEARBY_INTERACT
+        .profile_parts()
+        .expect("NearbyInteract must remain a named distance profile");
+    assert!(is_qi_color_inspect_position_in_scope(
+        DVec3::ZERO,
+        DVec3::new(radius, 0.0, 0.0),
+        true
+    ));
+    assert!(!is_qi_color_inspect_position_in_scope(
+        DVec3::ZERO,
+        DVec3::new(radius + 0.01, 0.0, 0.0),
+        true
+    ));
+    assert!(!is_qi_color_inspect_position_in_scope(
+        DVec3::ZERO,
+        DVec3::new(1.0, 0.0, 0.0),
+        false
+    ));
+}
+
+#[test]
+fn give_dan_target_state_gate_accepts_only_live_receiving_states() {
+    use crate::fauna::dying_elder::{DyingElderState, DYING_ELDER_DAN_THRESHOLD};
+    assert!(dying_elder_can_receive_dan(&DyingElderState::Plea));
+    assert!(dying_elder_can_receive_dan(&DyingElderState::Recovering {
+        dan_received: DYING_ELDER_DAN_THRESHOLD - 1,
+    }));
+    assert!(!dying_elder_can_receive_dan(&DyingElderState::Recovering {
+        dan_received: DYING_ELDER_DAN_THRESHOLD,
+    }));
+    assert!(!dying_elder_can_receive_dan(&DyingElderState::Betrayal));
+    assert!(!dying_elder_can_receive_dan(&DyingElderState::Dead {
+        dead_by_betrayal: false,
+    }));
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_no_deps_passes() {
+    assert!(check_player_skill_meridian_gate(
+        "unknown.skill",
+        &[],
+        &MeridianSystem::default(),
+        None,
+        None,
+    )
+    .is_ok());
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_rejects_severed_via_required() {
+    let ms = MeridianSystem::default();
+    let mut severed = MeridianSeveredPermanent::default();
+    severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 1);
+    let required = [TechniqueRequiredMeridian {
+        channel: "Lung".to_string(),
+        min_health: 0.5,
+    }];
+    assert_eq!(
+        check_player_skill_meridian_gate("test.skill", &required, &ms, Some(&severed), None),
+        Err(MeridianId::Lung)
+    );
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_rejects_low_integrity_via_required() {
+    let mut ms = MeridianSystem::default();
+    let lung = ms.get_mut(MeridianId::Lung);
+    lung.opened = true;
+    lung.integrity = 0.3;
+    let required = [TechniqueRequiredMeridian {
+        channel: "Lung".to_string(),
+        min_health: 0.5,
+    }];
+    assert_eq!(
+        check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
+        Err(MeridianId::Lung)
+    );
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_rejects_via_deps_table_severed() {
+    let ms = MeridianSystem::default();
+    let mut severed = MeridianSeveredPermanent::default();
+    severed.insert(MeridianId::Heart, SeveredSource::BackfireOverload, 5);
+    let mut deps = SkillMeridianDependencies::default();
+    deps.declare("test.skill", vec![MeridianId::Heart]);
+    assert_eq!(
+        check_player_skill_meridian_gate("test.skill", &[], &ms, Some(&severed), Some(&deps)),
+        Err(MeridianId::Heart)
+    );
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_required() {
+    let mut ms = MeridianSystem::default();
+    ms.get_mut(MeridianId::Lung).integrity = 1.0;
+    let required = [TechniqueRequiredMeridian {
+        channel: "Lung".to_string(),
+        min_health: 0.5,
+    }];
+    assert_eq!(
+        check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
+        Err(MeridianId::Lung)
+    );
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_deps_table() {
+    let ms = MeridianSystem::default();
+    let mut deps = SkillMeridianDependencies::default();
+    deps.declare("test.skill", vec![MeridianId::Stomach]);
+    assert_eq!(
+        check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps)),
+        Err(MeridianId::Stomach)
+    );
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_passes_when_opened_and_integrity_satisfied() {
+    let mut ms = MeridianSystem::default();
+    let lung = ms.get_mut(MeridianId::Lung);
+    lung.opened = true;
+    lung.integrity = 0.8;
+    let required = [TechniqueRequiredMeridian {
+        channel: "Lung".to_string(),
+        min_health: 0.5,
+    }];
+    assert!(check_player_skill_meridian_gate("test.skill", &required, &ms, None, None).is_ok());
+}
+
+#[test]
+fn check_player_skill_meridian_gate_helper_unit_deps_table_passes_when_opened() {
+    let mut ms = MeridianSystem::default();
+    ms.get_mut(MeridianId::Kidney).opened = true;
+    let mut deps = SkillMeridianDependencies::default();
+    deps.declare("test.skill", vec![MeridianId::Kidney]);
+    assert!(check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps)).is_ok());
 }
 
 #[cfg(test)]
@@ -662,6 +677,7 @@ mod take_pill_tests {
             "forced winter phase should slow spoil checks immediately"
         );
     }
+}
 
 #[cfg(test)]
 mod named_faction_reputation_tests {
@@ -1286,3 +1302,4 @@ mod skill_bar_ownership_gate_tests {
             "remaining plots must stay addressable after index refresh"
         );
     }
+}

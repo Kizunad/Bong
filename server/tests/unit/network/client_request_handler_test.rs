@@ -30,7 +30,9 @@ use bong_server::combat::events::RevivalActionIntent;
 use bong_server::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use bong_server::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
 use bong_server::combat::needle::IntentSource;
-use bong_server::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
+use bong_server::combat::tuike::{
+    can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest,
+};
 use bong_server::combat::CombatClock;
 use bong_server::craft::workbench::workbench_block_pos;
 use bong_server::craft::WorkbenchBlock;
@@ -69,9 +71,8 @@ use bong_server::inventory::{
     add_item_to_player_inventory_with_alchemy, apply_inventory_move_with_race,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
-    DroppedLootRegistry,
-    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
-    InventoryMoveRejectReason, ItemInstance, PlayerInventory,
+    DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
+    InventoryMoveOutcome, InventoryMoveRejectReason, ItemInstance, PlayerInventory,
 };
 use bong_server::inventory::{
     AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
@@ -186,23 +187,24 @@ mod tests {
         StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
         StartReplenishRequest, StartTillRequest,
     };
-    use bong_server::npc::faction::{FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation};
+    use bong_server::npc::faction::{
+        FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation,
+    };
     use bong_server::skill::components::{ScrollId, SkillId, SkillSet};
+    use bong_server::zhenfa::trap_content::TrapTargetFace;
     use bong_server::zhenfa::{
         ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
     };
-    use bong_server::zhenfa::trap_content::TrapTargetFace;
     use valence::entity::{EntityId, EntityPlugin};
     use valence::prelude::{
-        ident, App, BlockPos, BlockState, DVec3, Entity, EntityKind, EventReader,
-        EntityLayer, IntoSystemConfigs, OldPosition, Position, ResMut, UnloadedChunk, Update,
+        ident, App, BlockPos, BlockState, DVec3, Entity, EntityKind, EntityLayer, EventReader,
+        IntoSystemConfigs, OldPosition, Position, ResMut, UnloadedChunk, Update,
     };
     use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
 
     fn load_test_technique_registry() -> TechniqueRegistry {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("assets/techniques.toml");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/techniques.toml");
         TechniqueRegistry::load_from_path(path, &bong_server::body_plan::RaceRegistry::default())
             .expect("checked-in technique catalog must load")
     }
@@ -635,7 +637,9 @@ mod tests {
     }
 
     fn run_supply_coffin_open_payload_case(player_pos: DVec3) -> (App, Entity, u64, Vec<String>) {
-        use bong_server::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use bong_server::inventory::external_container::{
+            ExternalContainer, ExternalContainerRegistry,
+        };
         use bong_server::supply_coffin::interact::{
             handle_supply_coffin_interact, SupplyCoffinOpenRequest, SupplyCoffinOpened,
         };
@@ -806,7 +810,9 @@ mod tests {
         source_col: u64,
         denial_count: usize,
     ) -> (App, Entity, Entity, Vec<String>) {
-        use bong_server::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use bong_server::inventory::external_container::{
+            ExternalContainer, ExternalContainerRegistry,
+        };
         use bong_server::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
 
         const SESSION_ID: u64 = 77;
@@ -1290,7 +1296,9 @@ mod tests {
         source_row: u64,
         source_col: u64,
     ) -> (App, Entity, Entity, Vec<String>) {
-        use bong_server::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+        use bong_server::inventory::external_container::{
+            ExternalContainer, ExternalContainerRegistry,
+        };
 
         const SESSION_ID: u64 = 77;
         const INSTANCE_ID: u64 = 7001;
@@ -2017,7 +2025,8 @@ mod tests {
         assert!(
             messages.iter().any(|message| {
                 message.contains("炼丹产物入袋失败")
-                    && message.contains(bong_server::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID)
+                    && message
+                        .contains(bong_server::alchemy::residue::FAILED_PILL_RESIDUE_TEMPLATE_ID)
             }),
             "grant failure must surface alchemy error chat, messages={messages:?}"
         );
@@ -2637,8 +2646,7 @@ mod tests {
         );
         app.add_systems(
             Update,
-            handle_client_request_payloads
-                .in_set(bong_server::lingtian::LingtianRequestIngressSet),
+            handle_client_request_payloads.in_set(bong_server::lingtian::LingtianRequestIngressSet),
         );
 
         let (client_bundle, _helper) = create_mock_client("IngressWiring");
@@ -3439,7 +3447,9 @@ mod tests {
             Some(1),
             "已易形为 human 的 whale 本体应能穿上 Species([human]) 门的胸甲——装备门必须\
              用 MorphState.form 而不是继续冒用本体 intrinsic race，实测装备槽：{:?}",
-            inventory.equipped.get(bong_server::inventory::EQUIP_SLOT_CHEST)
+            inventory
+                .equipped
+                .get(bong_server::inventory::EQUIP_SLOT_CHEST)
         );
     }
 
@@ -3467,7 +3477,9 @@ mod tests {
         assert!(
             equipped_chest.is_none(),
             "未易形的 whale 本体应被 Species([human]) 门拒绝穿戴，实测装备槽：{:?}",
-            inventory.equipped.get(bong_server::inventory::EQUIP_SLOT_CHEST)
+            inventory
+                .equipped
+                .get(bong_server::inventory::EQUIP_SLOT_CHEST)
         );
         // 应仍留在原背包容器里，而不是被静默吞掉。
         let still_in_pack = inventory.containers[0]
@@ -4532,9 +4544,10 @@ mod tests {
                 data: json.to_vec().into_boxed_slice(),
             });
         app.update();
-        let events = app
-            .world()
-            .resource::<valence::prelude::Events<bong_server::cmd::dev::block_picker::BlockPickerGiveIntent>>();
+        let events =
+            app.world().resource::<valence::prelude::Events<
+                bong_server::cmd::dev::block_picker::BlockPickerGiveIntent,
+            >>();
         let collected = events
             .iter_current_update_events()
             .cloned()
@@ -4968,7 +4981,8 @@ mod tests {
                         && matches!(
                             placed.instance.alchemy,
                             Some(AlchemyItemData::PillResidue {
-                                residue_kind: bong_server::alchemy::residue::PillResidueKind::FlawedPill,
+                                residue_kind:
+                                    bong_server::alchemy::residue::PillResidueKind::FlawedPill,
                                 ..
                             })
                         )
@@ -5156,7 +5170,9 @@ mod tests {
             .next()
             .expect("alchemy ignite should emit vapor vfx");
         match &emitted.payload {
-            bong_server::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+            bong_server::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                event_id, ..
+            } => {
                 assert_eq!(event_id, gameplay_vfx::ALCHEMY_BREW_VAPOR);
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
@@ -5175,9 +5191,7 @@ mod tests {
                     anim_id,
                     priority,
                     ..
-                } if anim_id == "bong:alchemy_stir" => {
-                    Some((target_player, priority))
-                }
+                } if anim_id == "bong:alchemy_stir" => Some((target_player, priority)),
                 _ => None,
             })
             .collect()
@@ -5236,11 +5250,7 @@ mod tests {
             stirs[0].0, player_uuid,
             "alchemy_stir 应发给干预者本人（target_player = 干预者 uuid）"
         );
-        assert_eq!(
-            stirs[0].1,
-            1000,
-            "alchemy_stir 优先级应为战斗动作档"
-        );
+        assert_eq!(stirs[0].1, 1000, "alchemy_stir 优先级应为战斗动作档");
     }
 
     /// 重复触发语义：每次干预生效各配一次搅拌动画（两次干预两动画，1:1 无去重）。
@@ -5824,7 +5834,6 @@ mod tests {
         assert_eq!(session.started_at_tick, 0);
         assert_eq!(session.last_progress, 0.0);
         assert_eq!(session.phase, BotanyPhase::InProgress);
-
     }
 
     #[test]
@@ -6168,7 +6177,11 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             bong_server::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-            bong_server::inventory::SlotContents::held_single(inventory_test_item(77, "bone_whistle", 1)),
+            bong_server::inventory::SlotContents::held_single(inventory_test_item(
+                77,
+                "bone_whistle",
+                1,
+            )),
         );
         let mut quick_slots = QuickSlotBindings::default();
         assert!(quick_slots.set(0, Some(77)));
@@ -6243,7 +6256,11 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             bong_server::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-            bong_server::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+            bong_server::inventory::SlotContents::held_single(inventory_test_item(
+                77,
+                "guyuan_pill",
+                1,
+            )),
         );
         let mut quick_slots = QuickSlotBindings::default();
         assert!(quick_slots.set(0, Some(77)));
@@ -6339,7 +6356,11 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             bong_server::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-            bong_server::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+            bong_server::inventory::SlotContents::held_single(inventory_test_item(
+                77,
+                "guyuan_pill",
+                1,
+            )),
         );
         let mut quick_slots = QuickSlotBindings::default();
         assert!(quick_slots.set(0, Some(77)));
@@ -6437,7 +6458,11 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             bong_server::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-            bong_server::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+            bong_server::inventory::SlotContents::held_single(inventory_test_item(
+                77,
+                "guyuan_pill",
+                1,
+            )),
         );
         let mut quick_slots = QuickSlotBindings::default();
         assert!(quick_slots.set(0, Some(77)));
@@ -6495,12 +6520,18 @@ mod tests {
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
 
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             bong_server::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-            bong_server::inventory::SlotContents::held_single(inventory_test_item(77, "earth_crumb", 1)),
+            bong_server::inventory::SlotContents::held_single(inventory_test_item(
+                77,
+                "earth_crumb",
+                1,
+            )),
         );
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -6540,7 +6571,9 @@ mod tests {
     fn quick_slot_bind_atomically_mirrors_block_item_into_skill_bar() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
 
         let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -6590,7 +6623,9 @@ mod tests {
     fn quick_slot_bind_rejects_unheld_item_without_mutating_or_persisting() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
         let mut quick = QuickSlotBindings::default();
         let _ = quick.set(3, Some(77));
         let mut skillbar = SkillBarBindings::default();
@@ -6624,7 +6659,9 @@ mod tests {
     fn quick_slot_bind_missing_skillbar_rejects_before_quick_slot_mutation() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
         let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let entity = app
@@ -6657,7 +6694,9 @@ mod tests {
     fn quick_slot_bind_clears_only_the_old_auto_mirrored_item() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
         let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
         inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
         let mut quick = QuickSlotBindings::default();
@@ -6742,7 +6781,9 @@ mod tests {
     fn quick_slot_bind_persistence_failure_leaves_both_components_unchanged() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
         let invalid_db_path = std::env::temp_dir();
         app.insert_resource(PlayerStatePersistence::with_db_path(
             std::env::temp_dir(),
@@ -6796,7 +6837,9 @@ mod tests {
             .expect("test sqlite should bootstrap");
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
         app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
         let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -6833,7 +6876,9 @@ mod tests {
     fn quick_slot_bind_accepts_128_cjk_request_id_and_rejects_129() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
 
         let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -6878,7 +6923,9 @@ mod tests {
     fn quick_slot_bind_rejects_empty_string_item_id_without_unbinding() {
         let mut app = App::new();
         register_request_app(&mut app);
-        app.insert_resource(bong_server::inventory::load_item_registry().expect("item registry loads"));
+        app.insert_resource(
+            bong_server::inventory::load_item_registry().expect("item registry loads"),
+        );
 
         let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
         let mut quick_slots = QuickSlotBindings::default();
@@ -7995,7 +8042,8 @@ mod tests {
         app.add_event::<bong_server::craft::RecipeUnlockedEvent>();
         app.add_systems(
             Update,
-            bong_server::network::craft_emit::apply_unlock_intents.after(handle_client_request_payloads),
+            bong_server::network::craft_emit::apply_unlock_intents
+                .after(handle_client_request_payloads),
         );
         app
     }
@@ -8334,17 +8382,20 @@ mod tests {
         let dead_caster = app.world_mut().spawn_empty().id();
         app.world_mut().despawn(dead_caster);
 
-        app.world_mut().send_event(bong_server::craft::CraftUnlockIntent {
-            caster: dead_caster,
-            player_id: player_id.clone(),
-            recipe_id: recipe_id.clone(),
-            source: bong_server::craft::UnlockEventSource::Scroll {
-                item_template: "scroll_workbench_lantern".to_string(),
-            },
-        });
+        app.world_mut()
+            .send_event(bong_server::craft::CraftUnlockIntent {
+                caster: dead_caster,
+                player_id: player_id.clone(),
+                recipe_id: recipe_id.clone(),
+                source: bong_server::craft::UnlockEventSource::Scroll {
+                    item_template: "scroll_workbench_lantern".to_string(),
+                },
+            });
         app.update();
 
-        let unlock_state = app.world().resource::<bong_server::craft::RecipeUnlockState>();
+        let unlock_state = app
+            .world()
+            .resource::<bong_server::craft::RecipeUnlockState>();
         assert!(
             unlock_state.is_unlocked(&player_id, &recipe_id),
             "unlock must commit via intent.player_id even when caster entity is already despawned"
@@ -11378,7 +11429,8 @@ dispatch = "direct_generic"
         assert!(
             !syncs
                 .iter()
-                .any(|s| s.outcome == bong_server::schema::combat_hud::CastOutcomeV1::RejectRaceMismatch),
+                .any(|s| s.outcome
+                    == bong_server::schema::combat_hud::CastOutcomeV1::RejectRaceMismatch),
             "人形本体不应被 race gate 拒绝；实际 syncs={syncs:?}"
         );
         let attack_intents = app
@@ -11937,13 +11989,14 @@ dispatch = "direct_generic"
             if packet.channel.as_str() != bong_server::network::agent_bridge::SERVER_DATA_CHANNEL {
                 continue;
             }
-            let Ok(payload) = serde_json::from_slice::<bong_server::schema::server_data::ServerDataV1>(
-                packet.data.0 .0,
-            ) else {
+            let Ok(payload) = serde_json::from_slice::<
+                bong_server::schema::server_data::ServerDataV1,
+            >(packet.data.0 .0) else {
                 continue;
             };
-            if let bong_server::schema::server_data::ServerDataPayloadV1::InventoryMoveRejected(data) =
-                payload.payload
+            if let bong_server::schema::server_data::ServerDataPayloadV1::InventoryMoveRejected(
+                data,
+            ) = payload.payload
             {
                 payloads.push(data);
             }
