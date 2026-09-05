@@ -3,7 +3,6 @@
 BASELINE	BASELINE	COMMAND	MINECRAFT_GUI	BongHudOrchestrator		client_connection	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 ZONE	ZONE	COMMAND	MINECRAFT_GUI	ZoneHudRenderer+BongHudOrchestrator		zone_state+negative_pressure	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 COMPASS	COMPASS	COMMAND	MINECRAFT_GUI	DirectionalCompassHudPlanner		zone_state+runtime_context+clock	方位动态文字仍走 Minecraft GUI	HudRenderRegistryTest
-QI_RADAR	QI_RADAR	SVG_FRAME	SVG_MESH	SvgHudFramePlanner	radar=bong-client:svg/hud/qi-radar.svg	realm_gate+negative_qi_tint	动态文字不适用	HudRenderBackendTest
 THREAT_INDICATOR	THREAT_INDICATOR	COMMAND	MINECRAFT_GUI	ThreatIndicatorHudPlanner		player_state+perception+tribulation	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 HUD_VARIANT	HUD_VARIANT	COMMAND	MINECRAFT_GUI	HudEnvironmentVariantPlanner		zone_state+extract_state	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 TARGET_INFO	TARGET_INFO	COMMAND	MINECRAFT_GUI	TargetInfoHudPlanner		target_snapshot+clock	目标名称仍走 Minecraft GUI	HudRenderRegistryTest

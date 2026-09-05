@@ -6,7 +6,6 @@ import java.util.List;
 
 public enum HudLayoutPreset {
     COMBAT(EnumSet.of(
-        Widget.QI_RADAR,
         Widget.COMPASS,
         Widget.THREAT,
         Widget.MINI_BODY,
@@ -18,7 +17,6 @@ public enum HudLayoutPreset {
     )),
     EXPLORATION(EnumSet.of(
         Widget.COMPASS,
-        Widget.QI_RADAR,
         Widget.ZONE,
         Widget.BARS,
         Widget.EVENT_STREAM,
@@ -27,7 +25,6 @@ public enum HudLayoutPreset {
         Widget.CRITICAL
     )),
     CULTIVATION(EnumSet.of(
-        Widget.QI_RADAR,
         Widget.BARS,
         Widget.EVENT_STREAM,
         Widget.PROCESSING,
@@ -113,7 +110,6 @@ public enum HudLayoutPreset {
             case BASELINE -> Widget.ALWAYS;
             case ZONE, HUD_VARIANT -> Widget.ZONE;
             case COMPASS -> Widget.COMPASS;
-            case QI_RADAR -> Widget.QI_RADAR;
             case THREAT_INDICATOR, EDGE_FEEDBACK, NEAR_DEATH, TRIBULATION -> Widget.THREAT;
             case MINI_BODY, DERIVED_ATTR, STATUS_EFFECTS, MOVEMENT_HUD -> Widget.BARS;
             case QUICK_BAR, CAST_BAR, SPELL_VOLUME, CARRIER, JIEMAI_RING, VORTEX_CHARGE, VORTEX_COOLDOWN,
@@ -155,7 +151,6 @@ public enum HudLayoutPreset {
     public enum Widget {
         ALWAYS,
         ZONE,
-        QI_RADAR,
         COMPASS,
         THREAT,
         MINI_BODY,
