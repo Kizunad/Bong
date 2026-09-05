@@ -353,6 +353,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **seam 审计**：全仓逐项记录 18 个 `#[doc(hidden)] pub` 声明，其中 11 个有生产消费者而保留，7 个仅测试消费者并标记待撤回/替换；`server_readiness::publish`、伪脉生命周期/VFX/舍入 helper 与 `tsy_container_search` 的四个安全/库存 helper 均以生产引用为据，不批量删除。未新增 public 或 `#[doc(hidden)]` seam。
 - **对拍与边界**：每个首批测试记录 locked `cargo test` 过滤器与目标路径对拍命令；本批次仅分类/审计和 plan evidence，不搬迁、删除测试，不修改生产代码、Cargo、CI 或其它 plan。后续迁移必须以本清单为前置，并按当前 Kody-only 调度约束进行审查。
 
+### P4 client_request_handler 内联测试处置（⏳ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 已登记的 270 条 `server/src/network/client_request_handler.rs` 测试逐条处置；删除原文件 inline test body，保留 71 条确需父模块私有 helper/私有 ECS 装配的契约测试在登记的 `server/src/network/client_request_handler_tests.rs`，其余 199 条由公开 C2S ingress 外置到 `server/tests/unit/network/client_request_handler_test.rs`。新增 `client_request_handler_unit` Cargo target，并保留 `server/Cargo.toml` 全部既有 test/bench targets。
+- **契约与边界**：测试名称集合基线/当前均为 270；安全/权限、跨进程 dispatch、状态转换、库存/真元副作用与失败原子性断言均保留，未新增 `pub` 或 `#[doc(hidden)]` 测试 seam，未复制生产实现。私有登记仅承载无法由公开 ingress 稳定驱动的纯 helper/私有 ECS 契约；公开测试使用 `bong_server` 已有 API。未改 client_request 域生产模块、schema、wire、Redis、qi 或其它模块。
+- **文件行数核对**：迁移后 `client_request_handler.rs` 实际为 7,666 行。任务卡对约 2,500 行 / master §8 `<3000` 的估算与当前基线不符：删除 inline tests 后仍有被 `handle_client_request_payloads` 及 typed domain route 调用的既有生产 helper；本批次硬边界禁止移动/删除生产逻辑，因此不在证据中宣称已达到 `<3000`，后续若要继续收缩须另立生产重构范围。
+- **当前提交与验证状态**：代码/target 对应 `83b5f5891`，私有登记结构与格式修正对应 `003201af9`；270 个测试名对拍为 `0` 缺失、`0` 新增。锁内私有/公开定向测试与 server 完整 fmt/clippy/test、最新主线合并复验待本批次收口后补入；本条 evidence 独立于既有 P2 条目。
+
 ## 验收抓手（T0）
 
 - `docs/plan-test-layout-refactor-v1.md` 为当前 active plan，`scripts/test-all.sh`、`scripts/test-all-owners.tsv` 与 `scripts/tests/test_all_contract_test.sh` 已按 P1 交付。
