@@ -355,6 +355,16 @@ class MiniBodyHudPlannerGeometryTest {
         assertEquals(24L, noLayoutFrames, "leg_l maps to thigh/calf/foot × 2 corners = 6 frames × 4 border rects");
         assertEquals(noLayoutFrames, withLayoutFrames,
             "loading a humanoid layout must not change how many resist frames get drawn, only where");
+
+        MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080).stream()
+            .filter(cmd -> cmd.color() == MiniBodyHudPlanner.BODY_PART_RESIST_FRAME_COLOR)
+            .forEach(cmd -> {
+                assertTrue(cmd.isVector(), "动态部位边框必须走 fill.svg vector 命令");
+                assertEquals("fill", cmd.text(), "部位边框只能使用白名单 fill 资源");
+                assertTrue((cmd.width() == 1 && cmd.height() >= 1)
+                        || (cmd.height() == 1 && cmd.width() >= 1),
+                    "部位边框必须由水平或垂直细条组成");
+            });
     }
 
     @Test
