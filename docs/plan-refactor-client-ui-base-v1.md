@@ -18,6 +18,12 @@
 
 **范围裁剪（2026-09-05，用户决议）**：移除 `QI_RADAR` 整项功能，包括旧 `QiDensityRadarHudPlanner` 的浓度标记、周边气息白点、TSY 假信号，SVG 阵盘资源与专用 `SvgHudFrame`/`SvgHudFramePlanner`，以及 layer、布局、沉浸模式和 registry 登记。同步删除恢复雷达主路径的骨架，不再把恢复该 HUD 作为 P6 交付物。共用 `ZoneState`、境界门、`PerceptionEdgeState`、方向条和威胁指示继续服务现有功能；server/schema/wire 不变。
 
+**裁剪依据与影响边界**：雷达在裁剪前的唯一生产绘制接线是 `client/src/main/java/com/bong/client/BongHud.java`（`474d9d93a^`: `SvgHudFramePlanner.plan` 与 `SvgHudBackend.render` 调用），语义来源是 `client/src/main/java/com/bong/client/hud/QiDensityRadarHudPlanner.java`（已由 `474d9d93a` 删除），表现登记是 `client/src/main/java/com/bong/client/hud/HudRenderRegistry.java`（旧 `QI_RADAR`/`SvgHudFramePlanner`/`qi-radar.svg` 行，现已删除）。同一提交删除 `client/src/main/resources/assets/bong-client/svg/hud/qi-radar.svg`、`client/src/main/java/com/bong/client/hud/SvgHudFrame.java` 和 `SvgHudFramePlanner.java`，并移除 `HudRenderLayer.QI_RADAR`、`HudLayoutPreset.Widget.QI_RADAR`、沉浸模式成员及对应 TSV/契约登记；这是“完整删除”，不是停用兼容路径。
+
+共享功能未被裁剪：`client/src/main/java/com/bong/client/network/SpiritualSenseTargetsHandler.java:21-31` 仍将 `spiritual_sense_targets` 写入 `PerceptionEdgeStateStore` 并派生 SpiritEye 状态；`client/src/main/java/com/bong/client/visual/realm_vision/PerceptionEdgeStateStore.java:12-22` 仍提供 snapshot/replace/断线清理；`client/src/main/java/com/bong/client/hud/BongHudOrchestrator.java:137-139,215-223` 仍读取感知快照并调用 `ThreatIndicatorHudPlanner`；`client/src/main/java/com/bong/client/hud/ThreatIndicatorHudPlanner.java:26-58` 继续生成威胁边缘/渡劫反馈。`BongClient.java:92-93` 仍注册 HUD 回调与 SVG reload listener，现有 SVG 登记与后端边界仍由 registry/TSV 契约测试保护。
+
+**计划映射**：上述删除证据属于 P4 的“首个真实 HUD 选择与删除门”验收；共享感知/威胁链路属于 P4/P6 的保留动态 binding 与全量 inventory 对拍，P6 不恢复 QI_RADAR，而是继续迁移当前 registry 中保留的 layer/overlay。验收必须同时满足 `HudRenderRegistryTest` 的 layer/TSV 对拍、`ThreatIndicatorHudPlannerTest` 的共享感知契约和 Java 17 全量门禁；因此雷达裁剪不会被误判为删除 spiritual-sense/威胁功能。
+
 **裁剪后的 SVG 进度**：保留 parser、tessellator、GUI emitter、资源缓存/reload 与 `example.svg`。示例只在 `BONG_SVG_HUD_PREVIEW=1` 时加载和绘制；当前没有生产 SVG surface，P4 的首个真实 HUD 完整迁移仍待选取其他保留组件完成，不能将测试示例计作完成。
 
 **测试调整记录**：删除退役功能专用的 `QiDensityRadarHudPlannerTest`、`SvgHudFramePlannerTest` 和 orchestrator 的雷达停用断言；删除雷达资源登记的重复断言与易漂移的 surface/三角形数量断言。完整登记仍由 `HudRenderRegistryTest` 对拍枚举、直接 overlay 和 TSV；布局、沉浸渐隐/Alt 预览测试改用保留的方向条或人体 HUD；资源加载与缓存测试合并到 `example.svg`，继续覆盖失败缓存和资源重载。测试范围随功能裁剪收窄，不保留失去生产消费者的旧契约。

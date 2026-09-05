@@ -26,6 +26,10 @@ public final class SvgHudBackend implements HudRenderBackend {
 
     /** 由客户端组合根注入 HUD 回调，表现层外不暴露具体实现细节。 */
     public static HudRenderBackend production() {
+        // 预览示例必须由显式环境变量打开；正常联机环境保持 fail closed。
+        if ("1".equals(System.getenv("BONG_SVG_HUD_PREVIEW"))) {
+            enablePreviewExample();
+        }
         return INSTANCE;
     }
 
