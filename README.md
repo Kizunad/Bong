@@ -19,6 +19,7 @@ Bong 是一个以「**末法时代**」为核心的 AI-Native 修仙沙盒：
 - **末法残土的生存逻辑** —— 匮乏、算计、信息差、搜打撤。苟得住才活得久，但苟太久会被天道盯上。
 
 世界观正典见 [`docs/worldview.md`](docs/worldview.md)（唯一权威，所有玩法/命名/经济的锚点）。
+世界观的**独立维护库**已拆出至 [末法Cantu](https://github.com/Kizunad/MofaCantu)——正典按章拆分 + 三十八卷馆藏 + 按题材分十卷的写作大纲。
 
 ## 核心玩法
 
@@ -67,6 +68,7 @@ Bong 是一个以「**末法时代**」为核心的 AI-Native 修仙沙盒：
 | `agent/` | TypeScript · openai · ioredis | "天道" LLM Agent 层：三 Agent 并发推演 + Arbiter 仲裁 + WorldModel 持久化 |
 | `schema/`（agent/packages） | TypeBox | IPC schema 唯一真源，双端生成 + sample 对拍 |
 | [BongWorldGen](https://github.com/Kizunad/BongWorldGen) | Python · NumPy | 独立的 seed 可复现地形生成器；导出 mmap-friendly raster 供运行时按需生成 chunk |
+| [末法Cantu](https://github.com/Kizunad/MofaCantu) | Markdown · JSON | 世界观设定库：正典十八节 + 馆藏三十八卷 + 十卷写作大纲 + 悬案与留白清单 |
 | `scripts/` | bash / Python | dev harness：构建、e2e、bot 场景回归、视觉资产工具链 |
 
 ## 快速开始
@@ -99,6 +101,7 @@ bash scripts/smoke-test.sh
 | 文档 | 内容 |
 |------|------|
 | [`docs/worldview.md`](docs/worldview.md) | 世界观正典（唯一权威：境界 / 经济 / 命名 / 区域表） |
+| [末法Cantu](https://github.com/Kizunad/MofaCantu) | 世界观设定库（独立仓库）：分章正典 · 馆藏 · 写作大纲 · 悬案清单 |
 | [`docs/CLAUDE.md`](docs/CLAUDE.md) | 开发工作流：Plan 体系、接入面 checklist、孤岛红旗清单 |
 | [`docs/roadmap.md`](docs/roadmap.md) | 里程碑路线图 |
 | [`docs/finished_plans/`](docs/finished_plans/) | 已落地玩法 plan（100+ 份，含各系统接口面） |

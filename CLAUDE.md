@@ -6,6 +6,7 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 - **client/** — Fabric 1.20.1 微端（Java 17，owo-lib UI）
 - **agent/** — LLM "天道" agent 层（TypeScript，三 Agent 并发推演）
 - **BongWorldGen** — 独立的 Python/NumPy 地形生成库（<https://github.com/Kizunad/BongWorldGen>）
+- **末法Cantu** — 独立的世界观设定库（<https://github.com/Kizunad/MofaCantu>）：正典分章 + 馆藏三十八卷 + 十卷写作大纲
 
 ## Quick commands
 
@@ -77,6 +78,7 @@ bash scripts/smoke-test.sh
 - **NPC AI**：big-brain Utility AI（Scorer → Action 模式），Position ↔ Transform 同步桥
 - **地形生成**：已从本仓库迁出至 [BongWorldGen](https://github.com/Kizunad/BongWorldGen)。Bong 只负责读取生成后的 raster，并在运行时按需生成 chunk；生成器、荒野分类、河流与洞穴数据均由独立库维护。
 - **Dev harness**：`scripts/dev-reload.sh` 只负责服务端重建与重启；地形生成和地形数据校验在 BongWorldGen 内执行。
+- **世界观**：正典与馆藏的**独立维护库**为 [末法Cantu](https://github.com/Kizunad/MofaCantu)（正典按章拆分、馆藏索引重建、十卷写作大纲、悬案与留白清单）。本仓库的 `docs/worldview.md` 与 `docs/library/` 仍是代码侧引用的锚点，不随之改动。
 - `#[allow(dead_code)]` on `mod schema` in main.rs — schema 模块用于 IPC 对齐，尚未接入运行时
 
 ## Current milestone
@@ -214,7 +216,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 ## 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
 
-唯一权威 `docs/worldview.md`。下面是**最常被违反**的几条，违反 = review 直接打回：
+唯一权威 `docs/worldview.md`（独立维护库见 [末法Cantu](https://github.com/Kizunad/MofaCantu)，其中 `notes/悬案与留白.md` 记录了正典自身已知的错引与数值冲突）。下面是**最常被违反**的几条，违反 = review 直接打回：
 
 - **六境界**（worldview.md §三 L67-L72，顺序固定；worldview.md §三 L63 明禁旧称）：**醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚**。严禁上古称呼：练气 / 筑基 / 金丹 / 元婴。
 - **命名禁词**（worldview.md §三 L63 的命名原则落地速查）：末法时代禁用 玄/陨/星/仙/太/古；优选衰败素朴意象 残/碎/锈/杂/粗/髓/朴/枯。例外：已入世俗医药的矿名（丹砂/朱砂/雄黄）OK。
