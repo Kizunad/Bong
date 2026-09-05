@@ -22,14 +22,6 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.BASELINE, "BongHudOrchestrator", "client_connection", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.ZONE, "ZoneHudRenderer+BongHudOrchestrator", "zone_state+negative_pressure", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.COMPASS, "DirectionalCompassHudPlanner", "zone_state+runtime_context+clock", "方位动态文字仍走 Minecraft GUI"),
-        svg(
-            HudRenderLayer.QI_RADAR,
-            "SvgHudFramePlanner",
-            "realm_gate+negative_qi_tint",
-            "动态文字不适用",
-            "HudRenderBackendTest",
-            svgAsset("radar", Identifier.of("bong-client", "svg/hud/qi-radar.svg"))
-        ),
         command(HudRenderLayer.THREAT_INDICATOR, "ThreatIndicatorHudPlanner", "player_state+perception+tribulation", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.HUD_VARIANT, "HudEnvironmentVariantPlanner", "zone_state+extract_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.TARGET_INFO, "TargetInfoHudPlanner", "target_snapshot+clock", "目标名称仍走 Minecraft GUI"),
@@ -111,18 +103,6 @@ public final class HudRenderRegistry {
         return surface;
     }
 
-    /** 返回 SVG layer 的已登记资源；非 SVG layer 或未知资产键均表示表现边界被错误绕过。 */
-    public static Identifier requireSvgAsset(HudRenderLayer layer, String assetKey) {
-        SurfaceDefinition surface = require(layer);
-        return surface.svgAssets().stream()
-            .filter(asset -> asset.key().equals(assetKey))
-            .map(SvgAsset::resource)
-            .findFirst()
-            .orElseThrow(() -> new IllegalArgumentException(
-                "HUD layer 未登记 SVG 资源: " + layer + "/" + assetKey
-            ));
-    }
-
     public static List<SurfaceDefinition> directOverlays() {
         return PRODUCTION_SURFACES.stream()
             .filter(surface -> surface.path() == RenderPath.DIRECT_OVERLAY)
@@ -145,27 +125,6 @@ public final class HudRenderRegistry {
             dynamicBinding,
             guiException,
             "HudRenderRegistryTest"
-        );
-    }
-
-    private static SurfaceDefinition svg(
-        HudRenderLayer layer,
-        String owner,
-        String dynamicBinding,
-        String guiException,
-        String testOwner,
-        SvgAsset... assets
-    ) {
-        return new SurfaceDefinition(
-            layer.name(),
-            Optional.of(layer),
-            owner,
-            RenderPath.SVG_FRAME,
-            Presentation.SVG_MESH,
-            List.of(assets),
-            dynamicBinding,
-            guiException,
-            testOwner
         );
     }
 
@@ -249,10 +208,6 @@ public final class HudRenderRegistry {
     public enum Presentation {
         MINECRAFT_GUI,
         SVG_MESH
-    }
-
-    private static SvgAsset svgAsset(String key, Identifier resource) {
-        return new SvgAsset(key, resource);
     }
 
     /** 一个 surface 可以登记多个 SVG 视觉面，但资源 ID 始终集中于此。 */

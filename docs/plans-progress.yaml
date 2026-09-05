@@ -63,7 +63,7 @@ plans:
   pr_refs:
   - 203
   blocking_on: []
-  summary: QiDensityRadarHudPlanner、DirectionalCompassHudPlanner、ThreatIndicatorHudPlanner、HudLayoutPreset 与 altPeek 测试均落地。
+  summary: DirectionalCompassHudPlanner、ThreatIndicatorHudPlanner、HudLayoutPreset 与 altPeek 测试已落地；灵气雷达于 2026-09-05 按 R7 范围裁剪退役。
 - file: finished_plans/plan-anqi-v1.md
   group: combat-vfx
   title: 器修·暗器流

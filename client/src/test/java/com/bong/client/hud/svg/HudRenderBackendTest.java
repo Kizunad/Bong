@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** R7 P4 SVG 长期 fixture：锁住后端边界、资源登记和真实资产。 */
+/** SVG 基础设施契约：后端边界与资源重载不依赖具体 HUD 组件。 */
 class HudRenderBackendTest {
     private static final Path CLIENT_ROOT = Path.of("").toAbsolutePath().normalize();
 
@@ -31,29 +31,9 @@ class HudRenderBackendTest {
             assertTrue(Files.isDirectory(owner), "SVG owner 目录不存在: " + owner);
             assertTrue(Files.exists(owner.resolve(fields[0] + ".java")),
                 "SVG contract 类型不存在: " + owner.resolve(fields[0] + ".java"));
-            assertEquals("IMPLEMENTED", fields[3], "P4 vertical slice 类型必须有实现状态");
+            assertEquals("IMPLEMENTED", fields[3], "已登记的 SVG 基础设施必须有实现状态");
             assertTrue(testClassExists(fields[4]), "SVG contract test owner 不存在: " + fields[4]);
         }
-    }
-
-    @Test
-    void inventoryPointsAtTheShippedQiRadarAndExplicitBinding() throws IOException {
-        List<String> rows = fixture("/bong/ui/ui-svg-hud-inventory.tsv");
-        assertEquals(66, rows.size(), "HUD inventory 必须登记 62 个 layer 与 4 个无 layer 的直绘 overlay");
-        String[] fields = rows.stream()
-            .map(row -> row.split("\\t", -1))
-            .filter(values -> values.length == 9 && "QI_RADAR".equals(values[0]))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("SVG inventory 未登记 QI_RADAR"));
-        assertEquals("QI_RADAR", fields[0]);
-        assertEquals("QI_RADAR", fields[1]);
-        assertEquals("SVG_FRAME", fields[2]);
-        assertEquals("SVG_MESH", fields[3]);
-        assertEquals("SvgHudFramePlanner", fields[4]);
-        assertEquals("radar=bong-client:svg/hud/qi-radar.svg", fields[5]);
-        assertEquals("realm_gate+negative_qi_tint", fields[6]);
-        assertTrue(Files.exists(assetPath("bong-client:svg/hud/qi-radar.svg")), "SVG inventory 资产不存在");
-        assertTrue(testClassExists(fields[8]), "SVG inventory test owner 不存在: " + fields[8]);
     }
 
     @Test
@@ -62,16 +42,12 @@ class HudRenderBackendTest {
         String bongHud = Files.readString(sourcePath("src/main/java/com/bong/client/BongHud.java"));
         String bongClient = Files.readString(sourcePath("src/main/java/com/bong/client/BongClient.java"));
         assertTrue(backend.contains("implements HudRenderBackend"));
-        assertTrue(backend.contains("SvgHudFrame frame"),
-            "SVG 后端必须消费应用层传入的不可变 frame");
         assertTrue(backend.contains("visibility != ScreenHudVisibility.FULL"),
             "SVG layer 必须遵守 FULL HUD 可见性门");
-        assertTrue(bongHud.contains("SvgHudFramePlanner.plan("),
-            "生产 HUD 必须在捕获 frame 时调用语义 planner");
         assertTrue(bongHud.contains("HudRenderBackend backend"),
             "BongHud 必须只依赖表现后端接口");
-        assertTrue(bongHud.contains("backend.render(context, client, visibility, svgHudFrame)"),
-            "生产 HUD 必须把 ScreenHudVisibility 和语义 frame 交给注入的后端");
+        assertTrue(bongHud.contains("backend.render(context, client, visibility)"),
+            "生产 HUD 必须把 ScreenHudVisibility 交给注入的后端");
         assertFalse(bongHud.contains("SvgHudBackend"),
             "BongHud 不得直接依赖具体 SVG 后端");
         assertTrue(bongClient.contains("new BongHudRenderer(SvgHudBackend.production())"),
@@ -83,10 +59,6 @@ class HudRenderBackendTest {
         assertFalse(backend.contains("HudRealmGate"),
             "SVG 后端不得直接执行境界门控");
         assertTrue(backend.contains("MinecraftGuiMeshEmitter"));
-        assertTrue(backend.contains("HudRenderRegistry.requireSvgAsset(HudRenderLayer.QI_RADAR, \"radar\")"),
-            "SVG 后端必须从 HUD registry 查询 QI_RADAR 资产");
-        assertFalse(backend.contains("svg/hud/qi-radar.svg"),
-            "SVG 后端不得重新硬编码 registry 已拥有的 QI_RADAR 资源路径");
         assertFalse(backend.contains("RenderSystem"), "SVG 后端不得直接触碰 OpenGL 提交 API");
     }
 
@@ -116,12 +88,6 @@ class HudRenderBackendTest {
     private static boolean testClassExists(String simpleName) {
         return Files.exists(sourcePath("src/test/java/com/bong/client/hud/svg/" + simpleName + ".java"))
             || Files.exists(sourcePath("src/test/java/com/bong/client/hud/" + simpleName + ".java"));
-    }
-
-    private static Path assetPath(String identifier) {
-        String[] parts = identifier.split(":", 2);
-        assertEquals(2, parts.length, "SVG asset 必须带 namespace: " + identifier);
-        return sourcePath("src/main/resources/assets/" + parts[0] + "/" + parts[1]);
     }
 
     private static Path sourcePath(String relative) {

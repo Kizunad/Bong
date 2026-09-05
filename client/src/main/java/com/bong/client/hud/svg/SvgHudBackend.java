@@ -1,9 +1,6 @@
 package com.bong.client.hud.svg;
 
 import com.bong.client.hud.ScreenHudVisibility;
-import com.bong.client.hud.HudRenderRegistry;
-import com.bong.client.hud.HudRenderLayer;
-import com.bong.client.hud.SvgHudFrame;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.resource.ResourceManager;
@@ -13,7 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 
-/** R7 P4 首个真实 SVG layer：QI_RADAR。 */
+/** SVG GUI 提交基础设施；当前仅在显式测试预览中绘制示例。 */
 public final class SvgHudBackend implements HudRenderBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-svg-hud");
     private static final Identifier EXAMPLE = Identifier.of("bong-client", "svg/hud/example.svg");
@@ -36,19 +33,10 @@ public final class SvgHudBackend implements HudRenderBackend {
     public void render(
         DrawContext context,
         MinecraftClient client,
-        ScreenHudVisibility visibility,
-        SvgHudFrame frame
+        ScreenHudVisibility visibility
     ) {
-        renderLayers(context, client, visibility, frame);
-    }
-
-    private void renderLayers(
-        DrawContext context,
-        MinecraftClient client,
-        ScreenHudVisibility visibility,
-        SvgHudFrame frame
-    ) {
-        if (context == null || client == null || visibility != ScreenHudVisibility.FULL) {
+        // 没有生产 SVG surface 时直接退出，正常游戏不读取示例资源或构造 mesh。
+        if (!previewExampleEnabled || context == null || client == null || visibility != ScreenHudVisibility.FULL) {
             return;
         }
         int width = client.getWindow().getScaledWidth();
@@ -56,24 +44,7 @@ public final class SvgHudBackend implements HudRenderBackend {
         if (width <= 0 || height <= 0) {
             return;
         }
-        // 示例是独立的预览 fixture，不应被服务器 player_state 覆盖本地境界而隐藏。
-        if (previewExampleEnabled) {
-            renderPreviewExample(context, client, width, height);
-        }
-        SvgHudFrame safeFrame = frame == null ? SvgHudFrame.hidden() : frame;
-        if (!safeFrame.visible()) {
-            return;
-        }
-        // 生产 layer 只消费应用层已经规划好的 frame，不在这里反查业务 Store。
-        emit(
-            context,
-            client,
-            HudRenderRegistry.requireSvgAsset(HudRenderLayer.QI_RADAR, "radar"),
-            safeFrame.x(),
-            safeFrame.y(),
-            safeFrame.scale(),
-            safeFrame.tint()
-        );
+        renderPreviewExample(context, client, width, height);
     }
 
     /** 预览专用示例，放在右上方以避开左下角既有 HUD。 */
