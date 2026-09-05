@@ -6,7 +6,7 @@
 use super::*;
 
 use crate::cultivation::components::{MeridianId, MeridianSystem};
-use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRequiredMeridian};
+use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
@@ -217,6 +217,9 @@ fn inventory_instance_id_by_template_finds_worn_equipped_item() {
         Some(44)
     );
 }
+
+#[path = "client_request_handler_migrated_tests.rs"]
+mod migrated_tests;
 
 #[test]
 fn inventory_instance_id_by_template_uses_stable_equipped_slot_order() {

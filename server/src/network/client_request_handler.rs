@@ -35,8 +35,6 @@ use crate::combat::components::{
     CastSource, Casting, Lifecycle, LifecycleState, QuickSlotBindings, SkillBarBindings, SkillSlot,
     Stamina, Wounds,
 };
-#[cfg(test)]
-use crate::combat::events::RevivalActionIntent;
 use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent, StatusEffectKind};
 use crate::combat::foreign_qi_resistance::foreign_qi_resistance_for_use;
 use crate::combat::needle::IntentSource;
@@ -67,16 +65,12 @@ use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuReques
 use crate::cultivation::void::actions::VoidActionIntent;
 use crate::fauna::dying_elder::DyingElderState;
 use crate::forge::blueprint::BlueprintRegistry;
-#[cfg(test)]
-use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{
     ConsecrationInject, InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
 use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
-#[cfg(test)]
-use crate::inventory::add_item_to_player_inventory;
 use crate::inventory::{
     add_item_to_player_inventory_with_alchemy, apply_inventory_move_with_race,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
@@ -132,8 +126,6 @@ use crate::network::{
 use crate::npc::faction::FactionMembership;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
-#[cfg(test)]
-use crate::npc::trade::NpcPlayerReputation;
 use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
@@ -186,11 +178,6 @@ use crate::world::tsy_container_search::{
 };
 use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
-#[cfg(test)]
-use crate::zhenfa::{
-    ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
-};
-
 #[path = "client_request/session.rs"]
 mod session;
 
