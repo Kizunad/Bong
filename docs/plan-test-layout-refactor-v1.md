@@ -353,6 +353,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **seam 审计**：全仓逐项记录 18 个 `#[doc(hidden)] pub` 声明，其中 11 个有生产消费者而保留，7 个仅测试消费者并标记待撤回/替换；`server_readiness::publish`、伪脉生命周期/VFX/舍入 helper 与 `tsy_container_search` 的四个安全/库存 helper 均以生产引用为据，不批量删除。未新增 public 或 `#[doc(hidden)]` seam。
 - **对拍与边界**：每个首批测试记录 locked `cargo test` 过滤器与目标路径对拍命令；本批次仅分类/审计和 plan evidence，不搬迁、删除测试，不修改生产代码、Cargo、CI 或其它 plan。后续迁移必须以本清单为前置，并按当前 Kody-only 调度约束进行审查。
 
+### P4 persistence/mod.rs 私有契约测试迁移（✅ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 已登记的 172 条逐条复核结果，将 `server/src/persistence/mod.rs` 的单一 `persistence_tests` 测试体原样移入 `server/src/persistence/tests.rs`，由 `#[cfg(test)] mod tests;` 作为 persistence 子模块编译；保留测试名称、fixture、断言、迁移/事务/WAL/并发/NPC/zone/player/social/qi durable 契约，不删除受保护测试，也不新增独立 integration target。
+- **生产边界**：`mod.rs` 从实际 20,819 行降至 9,755 行，`tests.rs` 实际 10,996 行并保留 172 个 `#[test]`；生产实现、迁移链、SQL、表结构、事务边界和 R3 P0 接入点未改动。三条 inventory seam 记录经生产引用核验：`apply_migrations`、`CURRENT_USER_VERSION`、`CURRENT_SCHEMA_VERSION` 仍被生产 bootstrap/持久化路径使用，因此撤回的是测试专用访问路径，生产私有符号按硬边界保留。
+- **私有契约理由**：约 86 个私有生产符号多数同时服务生产路径；同级 `tests.rs` 子模块可直接验证这些登记的私有契约，不需要新增 `pub`、`pub(crate)` 或 `#[doc(hidden)]` seam，不复制生产逻辑。公开可观察行为不足以覆盖迁移/schema/原子性/失败回滚边界的测试继续留在登记的 `server/src/persistence/tests.rs`。
+- **验证**：迁移后定向命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test persistence::tests --lib'` 通过，目标 persistence 测试 172 条全部通过（同过滤器同时命中既有 `mineral::persistence::tests` 17 条与 `spiritwood::persistence::tests` 19 条，合计 `208 passed / 0 failed / 0 ignored`）。完整 server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit `0`：library `12626 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed / 0 ignored`，全部 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。迁移前后测试名称集合 `172/172` 对拍一致；本 evidence 对应当前迁移提交，主线合并后将按流程复验受影响栈。
+
 ## 验收抓手（T0）
 
 - `docs/plan-test-layout-refactor-v1.md` 为当前 active plan，`scripts/test-all.sh`、`scripts/test-all-owners.tsv` 与 `scripts/tests/test_all_contract_test.sh` 已按 P1 交付。
