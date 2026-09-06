@@ -40,7 +40,7 @@ public final class MinecraftGuiMeshEmitter {
                 emitVertex(buffer, matrix, guiQuadVertex(triangle, index), x, y, scaleX, scaleY, tint);
             }
         }
-        // DrawContext 由整帧 HUD 统一提交；SVG layer 中途 flush 会打断后续层的顺序。
+        // 调用方在 SVG 与 GUI 命令切换时统一提交，连续 SVG 几何仍可共用缓冲。
     }
 
     static SvgMesh.Vertex guiQuadVertex(SvgMesh.Triangle triangle, int index) {

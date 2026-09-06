@@ -47,6 +47,8 @@ import org.lwjgl.glfw.GLFW;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 public class BongHud {
@@ -158,67 +160,13 @@ public class BongHud {
         HudRenderBackend backend
     ) {
 
-        for (HudRenderCommand command : commands) {
-            if (backend.handles(command)) {
-                backend.renderCommand(context, client, visibility, command);
-                continue;
-            }
-            if (command.isText()) {
-                context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
-                continue;
-            }
-            if (command.isScaledText()) {
-                var matrices = context.getMatrices();
-                matrices.push();
-                matrices.translate(command.x(), command.y(), 0);
-                float scale = (float) command.textScale();
-                matrices.scale(scale, scale, 1.0f);
-                context.drawTextWithShadow(client.textRenderer, command.text(), 0, 0, command.color());
-                matrices.pop();
-                continue;
-            }
-            if (command.isRect()) {
-                context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
-                continue;
-            }
-            if (command.isTexturedRect()) {
-                Identifier tex = parseIdentifier(command.texturePath());
-                if (tex != null) {
-                    context.drawTexture(
-                        tex,
-                        command.x(), command.y(),
-                        0.0f, 0.0f,
-                        command.width(), command.height(),
-                        command.width(), command.height()
-                    );
-                }
-                continue;
-            }
-            if (command.isItemTexture()) {
-                drawItemTexture(context, command.text(), command.x(), command.y(), command.width());
-                continue;
-            }
-            if (command.isToast()) {
-                BongToast.render(
-                    context,
-                    client.textRenderer,
-                    client.getWindow().getScaledWidth(),
-                    client.getWindow().getScaledHeight(),
-                    command
-                );
-                continue;
-            }
-            if (command.isEdgeIndicator()) {
-                int size = Math.max(4, (int) Math.round(4.0 + command.intensity() * 6.0));
-                context.fill(
-                    command.x() - size,
-                    command.y() - size,
-                    command.x() + size,
-                    command.y() + size,
-                    command.color()
-                );
-            }
-        }
+        renderOrderedCommands(
+            commands,
+            backend::handles,
+            command -> backend.renderCommand(context, client, visibility, command),
+            command -> renderGuiCommand(context, client, command),
+            context::draw
+        );
 
         renderBaomaiV3HudForProduction(
             new DrawContextHudSurface(context, client),
@@ -259,8 +207,91 @@ public class BongHud {
         // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
         backend.render(context, client, visibility);
 
-        // HUD 回调结束时一次性提交所有 GUI layer，避免 SVG 与其他 overlay 交错 flush。
+        // 提交全屏反馈之后的预览几何，再把 DrawContext 交还给后续 HUD 回调。
         context.draw();
+    }
+
+    /** 在表现后端切换处提交缓冲，保留命令的遮挡顺序和连续 SVG 几何的批处理。 */
+    static void renderOrderedCommands(
+        List<HudRenderCommand> commands,
+        Predicate<HudRenderCommand> backendHandles,
+        Consumer<HudRenderCommand> backendRenderer,
+        Consumer<HudRenderCommand> guiRenderer,
+        Runnable flush
+    ) {
+        boolean backendBatch = false;
+        for (HudRenderCommand command : commands) {
+            boolean handledByBackend = backendHandles.test(command);
+            if (handledByBackend != backendBatch) {
+                flush.run();
+                backendBatch = handledByBackend;
+            }
+            if (handledByBackend) {
+                backendRenderer.accept(command);
+            } else {
+                guiRenderer.accept(command);
+            }
+        }
+        // 最后一批也必须在后续 overlay 之前完成，不能拖到整帧末尾。
+        flush.run();
+    }
+
+    private static void renderGuiCommand(DrawContext context, MinecraftClient client, HudRenderCommand command) {
+        if (command.isText()) {
+            context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
+            return;
+        }
+        if (command.isScaledText()) {
+            var matrices = context.getMatrices();
+            matrices.push();
+            matrices.translate(command.x(), command.y(), 0);
+            float scale = (float) command.textScale();
+            matrices.scale(scale, scale, 1.0f);
+            context.drawTextWithShadow(client.textRenderer, command.text(), 0, 0, command.color());
+            matrices.pop();
+            return;
+        }
+        if (command.isRect()) {
+            context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+            return;
+        }
+        if (command.isTexturedRect()) {
+            Identifier tex = parseIdentifier(command.texturePath());
+            if (tex != null) {
+                context.drawTexture(
+                    tex,
+                    command.x(), command.y(),
+                    0.0f, 0.0f,
+                    command.width(), command.height(),
+                    command.width(), command.height()
+                );
+            }
+            return;
+        }
+        if (command.isItemTexture()) {
+            drawItemTexture(context, command.text(), command.x(), command.y(), command.width());
+            return;
+        }
+        if (command.isToast()) {
+            BongToast.render(
+                context,
+                client.textRenderer,
+                client.getWindow().getScaledWidth(),
+                client.getWindow().getScaledHeight(),
+                command
+            );
+            return;
+        }
+        if (command.isEdgeIndicator()) {
+            int size = Math.max(4, (int) Math.round(4.0 + command.intensity() * 6.0));
+            context.fill(
+                command.x() - size,
+                command.y() - size,
+                command.x() + size,
+                command.y() + size,
+                command.color()
+            );
+        }
     }
 
     @FunctionalInterface
