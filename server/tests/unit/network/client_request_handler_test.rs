@@ -2733,6 +2733,14 @@ mod tests {
                 .is_none(),
             "a missing plot must not dispatch StartTillRequest"
         );
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<StartTillRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "a rejected missing-plot request must not leave a pending StartTillRequest"
+        );
     }
 
     #[test]
@@ -2787,6 +2795,10 @@ mod tests {
                 source: None,
             }],
             "a loaded authoritative world block must admit till ingress even before a LingtianPlot exists"
+        );
+        assert!(
+            drain_lingtian_request_captures(&mut app).is_empty(),
+            "an admitted till request must be consumed exactly once by the validator"
         );
     }
 
@@ -2856,6 +2868,10 @@ mod tests {
             }],
             "first wire request dispatches first"
         );
+        assert!(
+            drain_lingtian_request_captures(&mut app).is_empty(),
+            "the first validator pass must dispatch only the first wire request"
+        );
 
         app.update();
         assert_eq!(
@@ -2866,6 +2882,10 @@ mod tests {
             vec!["harvest"],
             "second wire request dispatches second"
         );
+        assert!(
+            drain_lingtian_request_captures(&mut app).is_empty(),
+            "the second validator pass must dispatch only the second wire request"
+        );
 
         app.update();
         assert_eq!(
@@ -2875,6 +2895,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["planting"],
             "third wire request dispatches last"
+        );
+        assert!(
+            drain_lingtian_request_captures(&mut app).is_empty(),
+            "the third validator pass must drain the final wire request exactly once"
         );
     }
 
@@ -2946,6 +2970,10 @@ mod tests {
                 source: None,
             }],
             "production ingress wiring must dispatch the wire request in the same tick"
+        );
+        assert!(
+            drain_lingtian_request_captures(&mut app).is_empty(),
+            "production ingress wiring must not leave a duplicate pending dispatch"
         );
     }
 
@@ -3770,6 +3798,11 @@ mod tests {
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut faction_reputation = FactionReputation::default();
         faction_reputation.apply_delta(NamedFactionId::QingyunHunters, -51);
+        assert_eq!(
+            faction_reputation.score(NamedFactionId::QingyunHunters),
+            -51,
+            "wanted-player fixture must carry the intended Qingyun faction score before ingress"
+        );
         let mut npc_membership = neutral_faction_membership();
         npc_membership.reputation = Reputation { loyalty: 0.8 };
         let player = app
@@ -5901,6 +5934,14 @@ mod tests {
             32,
             "the 33rd same-tick payload must not dispatch a handler event"
         );
+        assert_eq!(
+            app.world()
+                .resource::<CapturedBreakthroughRequests>()
+                .0
+                .len(),
+            32,
+            "the pre-decode ingress budget must reject payload #33 before it can enter dispatch"
+        );
     }
 
     #[test]
@@ -5937,6 +5978,14 @@ mod tests {
         app.update();
 
         let budget = app.world().resource::<ClientRequestBudget>();
+        assert_eq!(
+            app.world()
+                .get::<Lifecycle>(client)
+                .expect("switched client must retain lifecycle")
+                .character_id,
+            "character-b",
+            "role switch must be applied before the next ingress bucket is admitted"
+        );
         assert_eq!(
             budget.store.tokens_for(&client),
             None,
@@ -5985,6 +6034,11 @@ mod tests {
 
         let budget = app.world().resource::<ClientRequestBudget>();
         assert!(!budget.store.contains_client(&client));
+        assert_eq!(
+            budget.store.tokens_for(&client),
+            None,
+            "disconnect must release the client ingress token bucket"
+        );
     }
 
     #[test]
@@ -6017,6 +6071,14 @@ mod tests {
         assert_eq!(session.started_at_tick, 0);
         assert_eq!(session.last_progress, 0.0);
         assert_eq!(session.phase, BotanyPhase::InProgress);
+        assert_eq!(
+            session.client_entity, entity,
+            "valid botany mode updates must preserve the existing session owner"
+        );
+        assert!(
+            session.target_entity.is_some(),
+            "valid botany mode updates must preserve the existing target reservation"
+        );
     }
 
     #[test]
@@ -6038,6 +6100,13 @@ mod tests {
                 .session_for("expired-session-token")
                 .is_none(),
             "invalid botany session_id must not create a harvest session"
+        );
+        assert!(
+            app.world()
+                .resource::<HarvestSessionStore>()
+                .session_for("expired-session-token")
+                .is_none(),
+            "invalid botany session_id must remain absent after the rejection path"
         );
     }
 
@@ -6077,6 +6146,10 @@ mod tests {
             "manual harvest contract is a 40-tick session and a rejected request must preserve it"
         );
         assert_eq!(session.last_progress, 0.5);
+        assert!(
+            session.client_entity == azure,
+            "rejected cross-client request must preserve the original session owner"
+        );
     }
 
     #[test]
