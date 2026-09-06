@@ -36,11 +36,6 @@ import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
 import com.bong.client.visual.InkWashVignetteRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
-import com.bong.client.visual.realm_vision.EdgeIndicatorCmd;
-import com.bong.client.visual.realm_vision.PerceptionEdgeProjector;
-import com.bong.client.visual.realm_vision.PerceptionEdgeRenderer;
-import com.bong.client.visual.realm_vision.PerceptionEdgeState;
-import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -120,16 +115,10 @@ public class BongHud {
             frame.botanyAnchor(),
             frame.runtimeContext()
         );
-        List<EdgeIndicatorCmd> spiritualSenseIndicators = frame.spiritualSenseIndicators().get();
         List<HudRenderCommand> supplementalCommands = frame.supplementalCommands().get();
-        if (!spiritualSenseIndicators.isEmpty() || !supplementalCommands.isEmpty()) {
+        if (!supplementalCommands.isEmpty()) {
             commands = new ArrayList<>(commands);
-            if (!spiritualSenseIndicators.isEmpty()) {
-                PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
-            }
-            if (!supplementalCommands.isEmpty()) {
-                commands.addAll(supplementalCommands);
-            }
+            commands.addAll(supplementalCommands);
         }
 
         renderer.render(
@@ -139,6 +128,7 @@ public class BongHud {
     }
 
     private static HudFrameInput captureHudFrameInput(MinecraftClient client, long nowMillis) {
+        com.bong.client.hud.svg.SvgHudPreviewHarness.prepareForRender(client);
         int screenWidth = client.getWindow().getScaledWidth();
         int screenHeight = client.getWindow().getScaledHeight();
         return new HudFrameInput(
@@ -150,7 +140,6 @@ public class BongHud {
             screenHeight,
             computeBotanyAnchor(client),
             captureRuntimeContext(client),
-            () -> computeSpiritualSenseIndicators(client),
             () -> TiandaoPresenceHudPlanner.buildCommands(
                     TiandaoPresenceStore.snapshot(),
                     nowMillis,
@@ -170,6 +159,10 @@ public class BongHud {
     ) {
 
         for (HudRenderCommand command : commands) {
+            if (backend.handles(command)) {
+                backend.renderCommand(context, client, visibility, command);
+                continue;
+            }
             if (command.isText()) {
                 context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
                 continue;
@@ -287,7 +280,6 @@ public class BongHud {
         int screenHeight,
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext,
-        Supplier<List<EdgeIndicatorCmd>> spiritualSenseIndicators,
         Supplier<List<HudRenderCommand>> supplementalCommands
     ) {
         HudFrameInput {
@@ -300,7 +292,6 @@ public class BongHud {
             screenWidth = Math.max(0, screenWidth);
             screenHeight = Math.max(0, screenHeight);
             runtimeContext = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
-            spiritualSenseIndicators = safeListSupplier(spiritualSenseIndicators);
             supplementalCommands = safeListSupplier(supplementalCommands);
         }
     }
@@ -325,34 +316,6 @@ public class BongHud {
         }
     }
 
-    private static List<EdgeIndicatorCmd> computeSpiritualSenseIndicators(MinecraftClient client) {
-        PerceptionEdgeState state = PerceptionEdgeStateStore.snapshot();
-        if (state.isEmpty() || client.gameRenderer == null) {
-            return List.of();
-        }
-        Camera camera = client.gameRenderer.getCamera();
-        if (camera == null) {
-            return List.of();
-        }
-        Vec3d camPos = camera.getPos();
-        double fov = client.options.getFov().getValue().doubleValue();
-        int scaledWidth = client.getWindow().getScaledWidth();
-        int scaledHeight = client.getWindow().getScaledHeight();
-        List<EdgeIndicatorCmd> indicators = new ArrayList<>();
-        for (PerceptionEdgeState.SenseEntry entry : state.entries()) {
-            indicators.add(PerceptionEdgeProjector.project(
-                entry.x(), entry.y(), entry.z(),
-                camPos.x, camPos.y, camPos.z,
-                camera.getYaw(), camera.getPitch(),
-                fov,
-                scaledWidth,
-                scaledHeight,
-                entry.kind(),
-                entry.intensity()
-            ));
-        }
-        return indicators;
-    }
 
     private static Identifier parseIdentifier(String path) {
         if (path == null || path.isBlank()) {

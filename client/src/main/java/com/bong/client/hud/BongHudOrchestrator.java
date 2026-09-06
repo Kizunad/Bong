@@ -1,7 +1,6 @@
 package com.bong.client.hud;
 
 import com.bong.client.BongClientFeatures;
-import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
@@ -244,18 +243,6 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
-        if (HudRealmGate.atLeastCondense(playerState.realm())) {
-            commands.addAll(DirectionalCompassHudPlanner.buildCommands(
-                safeSnapshot.zoneState(),
-                extractState,
-                mode,
-                runtime,
-                widthMeasurer,
-                screenWidth,
-                screenHeight,
-                nowMillis
-            ));
-        }
         commands.addAll(ThreatIndicatorHudPlanner.buildCommands(
             playerState,
             perceptionState,
@@ -351,17 +338,6 @@ public final class BongHudOrchestrator {
             commands.addAll(ZhenmaiHudPlanner.buildCommands(
                 ZhenmaiHudStateStore.snapshot(nowMillis),
                 nowMillis,
-                screenWidth,
-                screenHeight
-            ));
-            FalseSkinHudStateStore.State falseSkinSnapshot = FalseSkinHudStateStore.snapshot();
-            commands.addAll(FalseSkinStackHud.buildCommands(
-                falseSkinSnapshot,
-                screenWidth,
-                screenHeight
-            ));
-            commands.addAll(ContamLoadHud.buildCommands(
-                falseSkinSnapshot,
                 screenWidth,
                 screenHeight
             ));
