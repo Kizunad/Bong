@@ -58,41 +58,59 @@ pub(crate) fn load_runtime_qi_account_balances(
     settings: &PersistenceSettings,
 ) -> io::Result<Vec<(QiAccountId, f64)>> {
     let connection = open_persistence_connection(settings)?;
-    let mut balances = Vec::new();
-    for account in persistent_runtime_qi_accounts() {
-        let balance = connection
-            .query_row(
-                "
-            SELECT balance
-            FROM qi_runtime_accounts
-            WHERE account_id = ?1
-            ",
-                params![account.id.as_str()],
-                |row| row.get::<_, f64>(0),
-            )
-            .optional()
-            .map_err(io::Error::other)?;
-        match balance {
-            Some(value) if value.is_finite() && value >= 0.0 => balances.push((account, value)),
-            Some(value) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "invalid persisted runtime qi balance account={} balance={value}",
-                        account.id
-                    ),
-                ));
-            }
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "runtime qi balance account={} is unknown; refusing to invent zero",
-                        account.id
-                    ),
-                ));
-            }
+    let expected_accounts = persistent_runtime_qi_accounts();
+    let expected_ids = expected_accounts
+        .iter()
+        .map(|account| account.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut persisted = HashMap::new();
+    let mut statement = connection
+        .prepare("SELECT account_id, balance FROM qi_runtime_accounts")
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })
+        .map_err(io::Error::other)?;
+    for row in rows {
+        let (account_id, value) = row.map_err(io::Error::other)?;
+        if !expected_ids.contains(account_id.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unknown persisted runtime qi account={account_id}; refusing to ignore durable balance"
+                ),
+            ));
         }
+        if persisted.insert(account_id.clone(), value).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("duplicate persisted runtime qi account={account_id}"),
+            ));
+        }
+    }
+
+    let mut balances = Vec::with_capacity(expected_accounts.len());
+    for account in expected_accounts {
+        let Some(value) = persisted.remove(account.id.as_str()) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "runtime qi balance account={} is unknown; refusing to invent zero",
+                    account.id
+                ),
+            ));
+        };
+        if !value.is_finite() || value < 0.0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid persisted runtime qi balance account={} balance={value}",
+                    account.id
+                ),
+            ));
+        }
+        balances.push((account, value));
     }
     Ok(balances)
 }

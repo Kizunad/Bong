@@ -176,9 +176,17 @@ fn known_techniques_retry_cleanup_removes_only_subjects_no_longer_pending() {
         "offline:pending-retry",
         0
     ));
+    assert!(begin_known_techniques_retry(
+        &mut state,
+        "offline:failed-disconnect-save",
+        0
+    ));
 
-    let pending_subjects = std::collections::HashSet::from(["offline:pending-retry".to_string()]);
-    clear_stale_known_techniques_retries(&mut state, &pending_subjects);
+    let active_retry_subjects = std::collections::HashSet::from([
+        "offline:pending-retry".to_string(),
+        "offline:failed-disconnect-save".to_string(),
+    ]);
+    clear_stale_known_techniques_retries(&mut state, &active_retry_subjects);
 
     assert!(
         !state.retries.contains_key("offline:stale-retry"),
@@ -187,6 +195,10 @@ fn known_techniques_retry_cleanup_removes_only_subjects_no_longer_pending() {
     assert!(
         state.retries.contains_key("offline:pending-retry"),
         "retry state for a still-pending subject must remain available for the handoff"
+    );
+    assert!(
+        state.retries.contains_key("offline:failed-disconnect-save"),
+        "retry state for a disconnected save failure must remain available without a handoff"
     );
 }
 
@@ -588,6 +600,56 @@ fn production_known_techniques_reconnect_retries_after_save_failure() {
         "successful retry must replace the old activation exactly once"
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn production_known_techniques_disconnect_save_failure_preserves_retry_without_handoff() {
+    let (mut app, _persistence, settings, root) =
+        known_techniques_app("known-techniques-production-disconnect-retry");
+    let (client_bundle, _helper) = create_mock_client("Azure");
+    let player = app.world_mut().spawn(client_bundle).id();
+    app.update();
+
+    app.world_mut()
+        .entity_mut(player)
+        .insert(known_techniques_fixture("movement.dash", 0.85));
+    app.world_mut().entity_mut(player).remove::<Client>();
+
+    let backup_path = root.join("disconnect-retry-backup.db");
+    fs::rename(settings.db_path(), &backup_path)
+        .expect("fixture database should move out of the production path");
+    fs::create_dir(settings.db_path())
+        .expect("directory placeholder should force the disconnect save to fail");
+
+    app.update();
+
+    let subject = canonical_player_id("Azure");
+    let retry = app
+        .world()
+        .resource::<KnownTechniquesReconnectState>()
+        .retries
+        .get(&subject)
+        .expect("a failed disconnected save must retain a retry entry without a reconnect handoff");
+    assert_eq!(
+        retry.attempts, 1,
+        "the first disconnected save failure must be counted for later retry"
+    );
+    assert_eq!(
+        retry.next_attempt_frame, 3,
+        "the first disconnected save failure must retain its bounded backoff schedule"
+    );
+    assert!(
+        app.world()
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .is_empty(),
+        "this regression must exercise the no-handoff cleanup path"
+    );
+
+    fs::remove_dir(settings.db_path()).expect("database outage placeholder should be removable");
+    fs::rename(&backup_path, settings.db_path())
+        .expect("the durable database should return to the production path");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -7179,8 +7241,6 @@ fn rollback_file_surfaces_write_and_remove_errors() {
 #[test]
 fn npc_archive_reports_primary_and_rollback_failures_together() {
     let (settings, root) = persistence_settings("npc-archive-composite-diagnostic");
-    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-        .expect("bootstrap should succeed");
     let capture = sample_npc_capture("npc_archive_composite_diagnostic");
     let archive = NpcDeceasedArchiveRecord {
         char_id: capture.state.char_id.clone(),
@@ -7193,21 +7253,20 @@ fn npc_archive_reports_primary_and_rollback_failures_together() {
         digest: Some(capture.digest.clone()),
         life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
     };
-    persist_npc_deceased_archive(&settings, &archive)
-        .expect("baseline archive should establish previous bytes");
     let error = persist_npc_deceased_archive_with_hooks(
         &settings,
         &archive,
         |_| Err(io::Error::other("primary database failure")),
-        |path, _| {
+        |path, payload| {
+            write_zstd_bundle(path, payload)?;
             fs::remove_file(path)?;
             fs::create_dir(path)?;
-            Err(io::Error::other("primary write failure"))
+            Ok(())
         },
     )
-    .expect_err("primary failure with failed rollback must retain both diagnostics");
+    .expect_err("database failure with failed rollback must retain both diagnostics");
     let message = error.to_string();
-    assert!(message.contains("primary write failure"));
+    assert!(message.contains("primary database failure"));
     assert!(message.contains("rollback failed"));
     assert!(message.contains("Is a directory") || message.contains("directory"));
     let composite = error
@@ -7224,6 +7283,68 @@ fn npc_archive_reports_primary_and_rollback_failures_together() {
         io::ErrorKind::IsADirectory,
         "the rollback failure must remain available in the composite diagnostic"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_archive_failed_no_replace_publish_preserves_competing_target() {
+    let (settings, root) = persistence_settings("npc-archive-competing-publish");
+    let capture = sample_npc_capture("npc_archive_competing_publish");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 723,
+        archived_at_wall: 1_704_067_273,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 1,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+    )
+    .expect("archive path should be valid");
+    let archive_relative_path =
+        npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)
+            .expect("archive relative path should be valid");
+    let competing_payload = br#"{"owner":"competing-publisher"}"#;
+
+    let error = persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        |_| {
+            Err(io::Error::other(
+                "database hook must not run after competing publish",
+            ))
+        },
+        |path, payload| {
+            // Publish a competing target while our temporary file is still open. The outer
+            // no-replace hard_link must fail without granting this caller ownership of target.
+            write_zstd_bundle_with_writer(path, payload, |_temp_file, _compressed| {
+                write_zstd_bundle(path, competing_payload)
+            })
+        },
+    )
+    .expect_err("a competing no-replace publisher must abort without deleting its target");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "competing publication should fail at the no-replace boundary, actual={error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(settings.db_path(), archive_relative_path.as_str())
+            .expect("competing archive should remain readable"),
+        competing_payload,
+        "failed publication must not remove the competing owner's archive"
+    );
+    assert!(
+        archive_path.exists(),
+        "the competing archive target must still exist after the losing publish fails"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 
@@ -10986,6 +11107,34 @@ fn runtime_qi_accounts_missing_or_invalid_row_fail_closed_without_partial_hydrat
             let _ = fs::remove_dir_all(root);
         }
     }
+}
+
+#[test]
+fn runtime_qi_accounts_unknown_row_fails_closed_instead_of_being_ignored() {
+    let (settings, root) = persistence_settings("runtime-qi-unknown-account");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute(
+            "INSERT INTO qi_runtime_accounts (account_id, balance, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+            params!["unexpected_runtime_owner", 17.0_f64, CURRENT_SCHEMA_VERSION, 0_i64],
+        )
+        .expect("fixture should be able to add an unknown durable owner");
+    drop(connection);
+
+    let mut hydrated = WorldQiAccount::default();
+    let error = hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+        .expect_err("unknown durable qi owner must fail closed rather than disappear");
+    assert!(
+        error.to_string().contains("unexpected_runtime_owner"),
+        "unknown-owner error should identify the ignored value, actual={error}"
+    );
+    assert!(
+        hydrated.iter_balances().next().is_none(),
+        "unknown-owner rejection must not partially hydrate the fixed ledger owners"
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

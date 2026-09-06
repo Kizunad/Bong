@@ -190,14 +190,12 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     if let Err(error) = write_bundle(&archive_path, &archive_json) {
-        return match rollback_file(&archive_path, previous_archive.as_deref()) {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(combine_persistence_failure(
-                "npc archive replacement",
-                error,
-                rollback_error,
-            )),
-        };
+        // `write_zstd_bundle` 的发布契约是失败时不改变最终路径：临时文件只会在
+        // hard_link 成功后成为目标，目标已存在时 hard_link 只返回 AlreadyExists。
+        // 这里不能再对 None 做无条件 remove，否则目标不存在的观察与并发发布之间的
+        // 窗口会让失败方删掉并发拥有者刚发布的归档。失败写入只清理自己的临时文件，
+        // 保留已有/并发目标及其所有权。
+        return Err(error);
     }
 
     let persisted = (|| -> io::Result<()> {
