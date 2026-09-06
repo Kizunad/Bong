@@ -367,6 +367,17 @@ pub(super) fn write_zstd_bundle_with_writer(
     payload: &[u8],
     write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
 ) -> io::Result<()> {
+    write_zstd_bundle_with_cleanup(path, payload, write_temp, |candidate| {
+        fs::remove_file(candidate)
+    })
+}
+
+pub(super) fn write_zstd_bundle_with_cleanup(
+    path: &Path,
+    payload: &[u8],
+    write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
+    remove_file: impl Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -392,16 +403,23 @@ pub(super) fn write_zstd_bundle_with_writer(
         // hard_link 在目标已存在时原子地返回 AlreadyExists，不替换既有归档。
         // 临时文件与目标位于同一目录，因此链接操作不会跨文件系统。
         fs::hard_link(&temp_path, path)?;
-        if let Err(error) = fs::remove_file(&temp_path) {
+        if let Err(error) = remove_file(&temp_path) {
             // hard_link 已成功创建且目标此前不存在；清理失败时尽力撤销本次发布，
-            // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。
-            let _ = fs::remove_file(path);
-            return Err(error);
+            // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。回滚也
+            // 失败时必须同时报告两个错误，不能让孤立的最终文件变成静默残留。
+            return match remove_file(path) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(combine_persistence_failure(
+                    "write_zstd_bundle",
+                    error,
+                    rollback_error,
+                )),
+            };
         }
         Ok(())
     })();
     if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+        let _ = remove_file(&temp_path);
     }
     result
 }

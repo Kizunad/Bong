@@ -6870,6 +6870,69 @@ fn npc_archive_pipeline_writes_index_and_zstd_bundle() {
 }
 
 #[test]
+fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
+    let (settings, root) = persistence_settings("npc-archive-orphan-reconcile");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let capture = sample_npc_capture("npc_archive_orphan_reconcile");
+    persist_npc_capture(&settings, &capture).expect("hot NPC rows should persist first");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 778,
+        archived_at_wall: 1_704_067_201,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 2,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+    )
+    .expect("archive path should be valid");
+    let archive_json = serde_json::to_vec_pretty(&archive).expect("archive should serialize");
+    write_zstd_bundle(&archive_path, &archive_json)
+        .expect("fixture should leave a valid orphan bundle before DB reconciliation");
+    let orphan_bytes = fs::read(&archive_path).expect("orphan bundle should be readable");
+
+    persist_npc_deceased_archive(&settings, &archive)
+        .expect("matching crash orphan should be reused to finish DB reconciliation");
+
+    assert_eq!(
+        fs::read(&archive_path).expect("reconciled archive should remain readable"),
+        orphan_bytes,
+        "recovery must reuse the matching orphan without replacing its bytes"
+    );
+    let loaded = load_npc_deceased_archive(&settings, archive.char_id.as_str())
+        .expect("reconciled archive should load")
+        .expect("reconciled archive should now be indexed");
+    assert_eq!(
+        serde_json::to_value(&loaded).expect("reconciled archive should serialize"),
+        serde_json::from_slice::<serde_json::Value>(&archive_json)
+            .expect("fixture archive JSON should decode"),
+        "reconciliation must index the same orphan payload rather than a different archive"
+    );
+    assert!(
+        load_npc_state(&settings, archive.char_id.as_str())
+            .expect("NPC state query should succeed")
+            .is_none(),
+        "crash recovery must remove the stale hot NPC state row"
+    );
+    assert!(
+        load_npc_digest(&settings, archive.char_id.as_str())
+            .expect("NPC digest query should succeed")
+            .is_none(),
+        "crash recovery must remove the stale hot NPC digest row"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn npc_archive_db_open_failure_restores_previous_bundle() {
     let (settings, root) = persistence_settings("npc-archive-db-open-rollback");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -7210,6 +7273,53 @@ fn zstd_bundle_publication_does_not_overwrite_existing_target() {
         temp_files, 0,
         "failed publication must clean its temporary file"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zstd_bundle_reports_final_cleanup_rollback_failure() {
+    let (_, root) = persistence_settings("zstd-bundle-cleanup-rollback-diagnostic");
+    let path = root.join("archive.json.zst");
+    let final_path = path.clone();
+    let error = write_zstd_bundle_with_cleanup(
+        &path,
+        br#"{"version":1}"#,
+        |file, compressed| file.write_all(compressed),
+        move |candidate| {
+            if candidate == final_path.as_path() {
+                Err(io::Error::other("injected final rollback failure"))
+            } else {
+                Err(io::Error::other("injected temporary cleanup failure"))
+            }
+        },
+    )
+    .expect_err("failed temp cleanup must report a failed final-file rollback");
+    let message = error.to_string();
+    assert!(
+        message.contains("injected temporary cleanup failure"),
+        "the primary cleanup failure must remain observable: {message}"
+    );
+    assert!(
+        message.contains("injected final rollback failure"),
+        "the final-file rollback failure must remain observable: {message}"
+    );
+    let composite = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<PersistenceRollbackFailure>())
+        .expect("both cleanup failures must be retained in the structured diagnostic");
+    assert_eq!(
+        composite.primary.to_string(),
+        "injected temporary cleanup failure"
+    );
+    assert_eq!(
+        composite.rollback.to_string(),
+        "injected final rollback failure"
+    );
+    assert!(
+        path.exists(),
+        "when rollback fails the final file must remain observable for recovery"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 

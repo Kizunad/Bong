@@ -191,10 +191,28 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     // `write_zstd_bundle` 的发布契约是失败时不改变最终路径：临时文件只会在
     // hard_link 成功后成为目标，目标已存在时 hard_link 只返回 AlreadyExists。
-    // 这里不能再对 None 做无条件 remove，否则目标不存在的观察与并发发布之间的
-    // 窗口会让失败方删掉并发拥有者刚发布的归档。失败写入只清理自己的临时文件，
-    // 保留已有/并发目标及其所有权。
-    write_bundle(&archive_path, &archive_json)?;
+    // 若目标正是本次进程在 DB 提交前发布后崩溃留下的有效 bundle，可以复用它完成
+    // index/hot-row reconciliation；不同内容或无法解码的目标仍然 fail-closed，不能
+    // 通过覆盖文件来掩盖 ownership 冲突。
+    match write_bundle(&archive_path, &archive_json) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let existing_archive = match read_optional_file(&archive_path)? {
+                Some(existing) => existing,
+                None => return Err(error),
+            };
+            let existing_payload = zstd::stream::decode_all(existing_archive.as_slice())
+                .map_err(|decode_error| io::Error::new(io::ErrorKind::InvalidData, decode_error))?;
+            let existing_value: serde_json::Value = serde_json::from_slice(&existing_payload)
+                .map_err(|decode_error| io::Error::new(io::ErrorKind::InvalidData, decode_error))?;
+            let expected_value: serde_json::Value = serde_json::from_slice(&archive_json)
+                .map_err(|decode_error| io::Error::new(io::ErrorKind::InvalidData, decode_error))?;
+            if existing_value != expected_value {
+                return Err(error);
+            }
+        }
+        Err(error) => return Err(error),
+    }
 
     let persisted = (|| -> io::Result<()> {
         let mut connection = open_connection(settings)?;
