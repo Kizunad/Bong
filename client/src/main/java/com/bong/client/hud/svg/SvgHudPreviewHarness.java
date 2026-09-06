@@ -7,6 +7,7 @@ import com.bong.client.combat.DerivedAttrFlags;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 
 import java.util.List;
@@ -26,6 +27,8 @@ public final class SvgHudPreviewHarness {
         }
         // 预览开关只在显式 fixture 环境中打开，生产联机不会加载示例面板。
         SvgHudBackend.enablePreviewExample();
+        // 由组合根先于生产 HUD 注册；同一渲染线程内不会被网络任务插入覆盖。
+        HudRenderCallback.EVENT.register((context, tickDelta) -> apply(MinecraftClient.getInstance()));
     }
 
     /**
@@ -42,13 +45,6 @@ public final class SvgHudPreviewHarness {
             SvgHudBackend.enablePreviewExample();
         } else {
             SvgHudBackend.disablePreviewExample();
-        }
-    }
-
-    /** 在 HUD 取帧前应用夹具，避免网络帧在 tick 与渲染之间覆盖预览状态。 */
-    public static void prepareForRender(MinecraftClient client) {
-        if ("1".equals(System.getenv(ENV_ENABLED))) {
-            apply(client);
         }
     }
 

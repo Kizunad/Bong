@@ -130,7 +130,6 @@ public class BongHud {
     }
 
     private static HudFrameInput captureHudFrameInput(MinecraftClient client, long nowMillis) {
-        com.bong.client.hud.svg.SvgHudPreviewHarness.prepareForRender(client);
         int screenWidth = client.getWindow().getScaledWidth();
         int screenHeight = client.getWindow().getScaledHeight();
         return new HudFrameInput(

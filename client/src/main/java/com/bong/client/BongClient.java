@@ -89,6 +89,8 @@ public class BongClient implements ClientModInitializer {
         BreakthroughBillboardWorldRenderer.register();
         NpcDialogueBubbleRenderer.register();
         NpcMoodIcon.register();
+        // 预览夹具必须先于生产 HUD 取帧；普通联机不会注册这个回调。
+        SvgHudPreviewHarness.install();
         HudRenderCallback.EVENT.register(new BongHudRenderer(SvgHudBackend.production())::render);
         SvgHudResourceReloadListener.register();
         ClientUiBootstrap.registerScreenTransition();
@@ -163,7 +165,6 @@ public class BongClient implements ClientModInitializer {
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
         UiPreviewHarnessClient.install();
-        SvgHudPreviewHarness.install();
         IrisBootstrap.register();
         SodiumChunkReload.register();
         // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板本地超时 tick 驱动
