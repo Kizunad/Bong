@@ -310,6 +310,20 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **最终收口证据**：最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，确认最新 `origin/main=1cfec210df91357eb16329ca8ce6ae71a651ebdf` 已由 `404151a82` 合入且无待合并变更；随后同一 slot 的提升权限 locked server gate exit 0，library 为 `12632 passed / 0 failed / 2 ignored`，main binary 为 `18 passed / 0 failed`，`client_payload_unit` 为 `9 passed / 0 failed`，全部既有独立 Cargo targets 与 doc-tests 均通过。
 - **最新主线收口证据**：本次最终提交前在 slot-1 执行 `git fetch origin --prune && git merge origin/main`，将最新 `origin/main=dd7c63107496050f1e9bb937a624477525b64022` 合入并形成合并提交 `a6e96851c8fae239098606a1706e698755055504`；合并带入 P2-15 的 `forge_history_unit` target、外置测试及 plan evidence，同时保留 P2-01～P2-16（含 P2-12 shader）证据和全部既有 Cargo test targets。因触及 `server/Cargo.toml`、server 测试和 active plan，随后同一 slot 执行提升权限 locked server gate，exit 0：library `12627 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed`，`client_payload_unit` `9 passed / 0 failed`，`recipe_fragment_unit` `3 passed / 0 failed`，`shader_state_unit` `7 passed / 0 failed`，`skin_packet_unit` `2 passed / 0 failed`，`forge_history_unit` `2 passed / 0 failed`，其余 integration targets 与 doc-tests（`3 passed / 0 failed / 5 ignored`）均通过。
 
+### P2-17 inventory inline tests（✅ 2026-09-05）
+
+- **分类与处置范围**：按 P2 准入策略逐条复核 `server/src/inventory/mod.rs` 原有 386 个 `#[test]`（P0 诊断为 14,102 个测试行、文件 20,699 行），并将 386 条记录写入 `docs/inline-test-inventory.tsv`。40 个可由既有公开 API 驱动的 allocator/free-slot/grant/merge/move 契约测试外置到 `server/tests/unit/inventory/inventory_test.rs`，新增显式 `inventory_unit` target；其余 346 个依赖私有解析、ECS 装配或仍需契约收缩的测试保留在独立的 `server/src/inventory/tests.rs`，不新增测试 seam。`mod.rs` 现为 6,710 行，仅保留 `#[cfg(test)] mod tests;` 声明，生产实现、库存事务、容量/权限、ItemCategory、模板加载与 qi 语义未改动。
+- **迁移对拍与完整性**：迁移前基线为 inventory 386 条测试通过；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test inventory::tests --lib'` 为 `374 passed / 0 failed / 0 ignored`（inventory 私有测试 346 条，另含既有 `schema::inventory` 28 条），外置 `inventory_unit` 定向测试为 40 条通过；原 386 个测试名在 `tests.rs` 与 `inventory_unit` 的并集中逐一对拍，无测试名丢失。原测试断言、边界/错误语义和涉及真元的守恒断言均保留；仅移除已无调用的测试辅助函数 `assert_container_has_no_overlaps`。
+- **公开 API 与 seam**：外置测试仅使用已有 `bong_server::inventory` 公开类型/函数、`bong_server::world::dimension::DimensionKind` 与测试 fixture；未复制生产实现，未新增或扩大 `pub`/`#[doc(hidden)]` seam。私有测试继续在模块测试上下文中验证私有解析和 ECS 装配，不为外置而改变生产可见性。
+- **提交证据**：逐条分类清单对应 `476a98576`（2026-09-05），40 条外置与 `inventory_unit` target 对应 `8c69a171f`，fixture/清单收口对应 `562d0b702`；每个提交均带 `Model: gpt-5.6-luna`。本条仅记录 P2-17 本批次；后续 inventory 契约收缩与其它模块仍属 P4 范围。
+### P2-17 schema proto_gen 协议 pin（✅ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 当前 HEAD 的 382 条 `schema/proto_gen.rs` 逐条分类，将生产文件收缩为 11 行 `pub mod bong { include!(...) }` 入口；测试外置到 `server/tests/unit/schema/proto_gen_test.rs`，并新增显式 `proto_gen_unit` Cargo target。未改 `proto/*.proto`、`build.rs`、生成链、schema/wire、client、agent 或玩法。
+- **契约处置**：382 条中 54 条保留协议枚举、错误字节、兼容演进和外部 payload 结构 pin；328 条同构 roundtrip 由一个表驱动 `merged_protocol_pin_cases` runner 调用并以测试名报告失败；删除 0 条。每个减少项均对应 TSV 的“合并”处置，未新增 `pub`、`#[doc(hidden)]` 或其它测试 seam，也未复制生产实现。
+- **迁移对拍**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test schema::proto_gen::tests --lib'` 为 `381 passed / 0 failed / 1 ignored`；迁移后 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test proto_gen_unit'` 为 `55 passed / 0 failed / 0 ignored`。原 ignored benchmark 已作为 TSV 合并 case 纳入 runner，未再静默跳过。
+- **完整门禁**：当前 HEAD 执行任务卡指定的提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library、main binary、全部独立 Cargo targets、integration targets 与 doc-tests 均无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交证据**：代码与 target 对应 `461646f15`（2026-09-05），runner 格式修正对应 `74323058f`（2026-09-05）；本条仅记录 P2-17 进度，P2 总体、P3、P4 仍未完成。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
@@ -360,6 +374,12 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **文件行数核对**：迁移后 `client_request_handler.rs` 实际为 7,653 行。任务卡对约 2,500 行 / master §8 `<3000` 的估算与当前基线不符：删除 inline tests 后仍有被 `handle_client_request_payloads` 及 typed domain route 调用的既有生产 helper；本批次硬边界禁止移动/删除生产逻辑，因此不在证据中宣称已达到 `<3000`，后续若要继续收缩须另立生产重构范围。
 - **逐条对拍**：私有测试名 72、外置测试名 198，集合并集 270；与 TSV 的 270 个 `network/client_request_handler.rs::...` 逐条记录相比无缺失、无新增。`alchemy_explode_take_back_applies_damage_and_meridian_crack` 的目标路径和私有理由已在 inventory 单行修正，其余目标/处置保留原逐条记录。
 - **当前提交与验证状态**：代码/target 对应本分支后续中文原子提交；锁内私有/公开定向测试、validator、server 完整 fmt/clippy/test 及紧邻最新主线合并复验在本批次收口后补入；本条 evidence 独立于并保留既有 P2 条目。
+### P4 persistence/mod.rs 私有契约测试迁移（✅ 2026-09-05）
+
+- **范围与落点**：按 `docs/inline-test-inventory.tsv` 已登记的 172 条逐条复核结果，将 `server/src/persistence/mod.rs` 的单一 `persistence_tests` 测试体原样移入 `server/src/persistence/tests.rs`，由 `#[cfg(test)] mod tests;` 作为 persistence 子模块编译；保留测试名称、fixture、断言、迁移/事务/WAL/并发/NPC/zone/player/social/qi durable 契约，不删除受保护测试，也不新增独立 integration target。
+- **生产边界**：`mod.rs` 从实际 20,819 行降至 9,755 行，`tests.rs` 实际 10,996 行并保留 172 个 `#[test]`；生产实现、迁移链、SQL、表结构、事务边界和 R3 P0 接入点未改动。三条 inventory seam 记录经生产引用核验：`apply_migrations`、`CURRENT_USER_VERSION`、`CURRENT_SCHEMA_VERSION` 仍被生产 bootstrap/持久化路径使用，因此撤回的是测试专用访问路径，生产私有符号按硬边界保留。
+- **私有契约理由**：约 86 个私有生产符号多数同时服务生产路径；同级 `tests.rs` 子模块可直接验证这些登记的私有契约，不需要新增 `pub`、`pub(crate)` 或 `#[doc(hidden)]` seam，不复制生产逻辑。公开可观察行为不足以覆盖迁移/schema/原子性/失败回滚边界的测试继续留在登记的 `server/src/persistence/tests.rs`。
+- **验证**：迁移后定向命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test persistence::tests --lib'` 通过，目标 persistence 测试 172 条全部通过（同过滤器同时命中既有 `mineral::persistence::tests` 17 条与 `spiritwood::persistence::tests` 19 条，合计 `208 passed / 0 failed / 0 ignored`）。完整 server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit `0`：library `12626 passed / 0 failed / 2 ignored`，main binary `18 passed / 0 failed / 0 ignored`，全部 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。迁移前后测试名称集合 `172/172` 对拍一致；本 evidence 对应当前迁移提交，主线合并后将按流程复验受影响栈。
 
 ## 验收抓手（T0）
 

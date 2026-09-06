@@ -33,7 +33,6 @@ public final class HudImmersionMode {
     private static final EnumSet<HudRenderLayer> VISIBLE_CULTIVATION = EnumSet.of(
         HudRenderLayer.BASELINE,
         HudRenderLayer.ZONE,
-        HudRenderLayer.QI_RADAR,
         HudRenderLayer.THREAT_INDICATOR,
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.MINI_BODY,
@@ -54,7 +53,6 @@ public final class HudImmersionMode {
         HudRenderLayer.BASELINE,
         HudRenderLayer.ZONE,
         HudRenderLayer.COMPASS,
-        HudRenderLayer.QI_RADAR,
         HudRenderLayer.HUD_VARIANT,
         HudRenderLayer.TARGET_INFO,
         HudRenderLayer.MINI_BODY,

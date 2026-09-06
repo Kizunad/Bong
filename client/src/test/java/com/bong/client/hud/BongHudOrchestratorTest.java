@@ -398,34 +398,6 @@ public class BongHudOrchestratorTest {
         );
     }
 
-    @Test
-    void productionHudDoesNotRenderQiRadarArrayDisk() {
-        PlayerStateStore.replace(PlayerStateViewModel.create(
-            "Condense",
-            "offline:Azure",
-            80.0,
-            100.0,
-            0.0,
-            0.5,
-            PlayerStateViewModel.PowerBreakdown.empty(),
-            PlayerStateViewModel.SocialSnapshot.empty(),
-            "jade_valley",
-            "青谷",
-            0.75
-        ));
-
-        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
-            BongHudStateSnapshot.empty(),
-            1_000L,
-            FIXED_WIDTH,
-            220,
-            320,
-            180
-        );
-
-        assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.QI_RADAR));
-    }
-
     private static List<HudRenderCommand> buildCombatFrame(
         HudRuntimeContext runtimeContext,
         long nowNanos

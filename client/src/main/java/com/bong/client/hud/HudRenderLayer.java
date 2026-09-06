@@ -4,7 +4,6 @@ public enum HudRenderLayer {
     BASELINE,
     ZONE,
     COMPASS,
-    QI_RADAR,
     THREAT_INDICATOR,
     HUD_VARIANT,
     TARGET_INFO,

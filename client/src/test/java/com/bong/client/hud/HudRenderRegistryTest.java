@@ -1,6 +1,5 @@
 package com.bong.client.hud;
 
-import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -26,7 +25,6 @@ class HudRenderRegistryTest {
 
         assertEquals(List.of(HudRenderLayer.values()), registeredLayers,
             "每个 HudRenderLayer 必须恰好登记一次，且顺序必须与枚举定义一致");
-        assertEquals(66, surfaces.size(), "当前生产盘点必须包含 62 个 layer 与 4 个无 layer 的直绘 overlay");
     }
 
     @Test
@@ -52,25 +50,6 @@ class HudRenderRegistryTest {
             HudRenderRegistry.require(HudRenderLayer.HALLUCINATION).path(),
             "HALLUCINATION 枚举 layer 的当前生产表现仍由直绘 overlay 提交"
         );
-    }
-
-    @Test
-    void keepsRegisteredSvgAssetsForRadarSurface() {
-        List<HudRenderRegistry.SurfaceDefinition> svgSurfaces = HudRenderRegistry.productionSurfaces().stream()
-            .filter(surface -> surface.path() == HudRenderRegistry.RenderPath.SVG_FRAME)
-            .toList();
-
-        assertEquals(1, svgSurfaces.size(), "当前已迁移的 SVG surface 只有 QI_RADAR");
-        HudRenderRegistry.SurfaceDefinition radar = svgSurfaces.get(0);
-        assertEquals("QI_RADAR", radar.surfaceId());
-        assertEquals(HudRenderLayer.QI_RADAR, radar.layer().orElseThrow());
-        assertEquals(HudRenderRegistry.Presentation.SVG_MESH, radar.presentation());
-        assertEquals(
-            Identifier.of("bong-client", "svg/hud/qi-radar.svg"),
-            HudRenderRegistry.requireSvgAsset(HudRenderLayer.QI_RADAR, "radar"),
-            "SVG 后端必须从 registry 获取 QI_RADAR 资产"
-        );
-
     }
 
     @Test

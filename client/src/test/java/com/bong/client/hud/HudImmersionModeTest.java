@@ -110,7 +110,7 @@ class HudImmersionModeTest {
     void altPeekTemporary() {
         HudImmersionMode.setManualImmersive(true, 1_000L);
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.MINI_BODY, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
         List<HudRenderCommand> peeked = HudImmersionMode.applyImmersiveAlpha(
@@ -129,7 +129,7 @@ class HudImmersionModeTest {
     void altPeekThreeSecondsExit() {
         HudImmersionMode.setManualImmersive(true, 1_000L);
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.MINI_BODY, 0, 0, 10, 2, 0xFFFFFFFF)
         );
         HudRuntimeContext altDown = new HudRuntimeContext(0.0, 0.0, 0.0, 0.0, true, List.of());
 
@@ -143,7 +143,7 @@ class HudImmersionModeTest {
     void combatTemporaryRestoreKeepsHudOpaque() {
         HudImmersionMode.setManualImmersive(true, 1_000L);
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.MINI_BODY, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
         List<HudRenderCommand> restored = HudImmersionMode.applyImmersiveAlpha(
@@ -161,7 +161,7 @@ class HudImmersionModeTest {
     void immersiveAlphaKeepsTransparentColorsTransparent() {
         HudImmersionMode.setManualImmersive(true, 1_000L);
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0x00FFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.MINI_BODY, 0, 0, 10, 2, 0x00FFFFFF)
         );
 
         List<HudRenderCommand> faded = HudImmersionMode.applyImmersiveAlpha(
@@ -179,7 +179,7 @@ class HudImmersionModeTest {
     void meditateAutoImmersive() {
         VisualEffectState meditation = VisualEffectState.create("meditation_calm", 1.0, 10_000L, 1_000L);
         List<HudRenderCommand> commands = List.of(
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.MINI_BODY, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
         HudImmersionMode.applyImmersiveAlpha(commands, HudImmersionMode.Mode.CULTIVATION, meditation, HudRuntimeContext.empty(), 1_000L);

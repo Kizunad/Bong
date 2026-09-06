@@ -30,24 +30,14 @@ class SvgHudAssetRegistryTest {
     }
 
     @Test
-    void loadsAndCachesTheShippedQiRadarFromTheProductionResourcePath() {
+    void loadsAndCachesThePreviewExampleFromTheShippedResourcePath() {
         SvgHudAssetRegistry registry = new SvgHudAssetRegistry(mainResourceManager());
 
-        SvgMesh first = registry.get("bong-client:svg/hud/qi-radar.svg");
-        SvgMesh second = registry.get(new Identifier("bong-client", "svg/hud/qi-radar.svg"));
+        SvgMesh first = registry.get("bong-client:svg/hud/example.svg");
+        SvgMesh second = registry.get(Identifier.of("bong-client", "svg/hud/example.svg"));
 
-        assertTrue(first.triangleCount() > 0, "真实 QI_RADAR SVG 必须生成非空 mesh");
-        assertEquals(60, first.triangleCount(), "QI_RADAR 资产的图元 tessellation 数量漂移");
+        assertTrue(first.triangleCount() > 0, "SVG 预览示例必须生成非空 mesh");
         assertSame(first, second, "重复读取同一资源必须命中 registry 的 immutable mesh 缓存");
-    }
-
-    @Test
-    void loadsTheHighContrastPreviewExample() {
-        SvgHudAssetRegistry registry = new SvgHudAssetRegistry(mainResourceManager());
-
-        SvgMesh example = registry.get("bong-client:svg/hud/example.svg");
-
-        assertTrue(example.triangleCount() > 0, "SVG 预览示例必须生成非空 mesh");
     }
 
     @Test
@@ -56,7 +46,7 @@ class SvgHudAssetRegistryTest {
 
         assertThrows(IllegalArgumentException.class, () -> registry.get("bong-client:textures/gui/not-svg.png"));
         assertThrows(IllegalArgumentException.class, () -> registry.get("bong-client:svg/hud/../other.svg"));
-        assertThrows(IllegalArgumentException.class, () -> registry.get("other:svg/hud/qi-radar.svg"));
+        assertThrows(IllegalArgumentException.class, () -> registry.get("other:svg/hud/example.svg"));
     }
 
     @Test

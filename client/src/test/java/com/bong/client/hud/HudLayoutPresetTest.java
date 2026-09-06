@@ -19,7 +19,7 @@ class HudLayoutPresetTest {
     void presetSwitchesOnCombatState() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.THREAT_INDICATOR, 0, 0, 10, 2, 0xFFFF0000),
-            HudRenderCommand.rect(HudRenderLayer.QI_RADAR, 0, 0, 10, 2, 0xFFFFFFFF)
+            HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF)
         );
 
         List<HudRenderCommand> peace = HudLayoutPreset.filter(
