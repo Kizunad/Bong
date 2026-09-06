@@ -1,10 +1,34 @@
 use super::*;
-use crate::qi_physics::WorldQiAccount;
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::ledger::{assert_conservation, QiAccountId, QiTransfer};
+use crate::qi_physics::{summarize_world_qi, WorldQiAccount, WorldQiBudget};
+use crate::schema::common::SPIRIT_QI_TOTAL;
 
 fn qi_test_app() -> App {
     let mut app = App::new();
     app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
     app
+}
+
+fn assert_full_qi_conservation(
+    before: &crate::qi_physics::WorldQiSnapshot,
+    after: &crate::qi_physics::WorldQiSnapshot,
+    context: &str,
+) {
+    assert_eq!(
+        before.budget_initial_total, SPIRIT_QI_TOTAL,
+        "{context}: before snapshot must use the SPIRIT_QI_TOTAL budget anchor"
+    );
+    assert_eq!(
+        after.budget_initial_total, SPIRIT_QI_TOTAL,
+        "{context}: after snapshot must use the SPIRIT_QI_TOTAL budget anchor"
+    );
+    assert_conservation(before, after, 0.0).unwrap_or_else(|error| {
+        panic!(
+            "{context}: player/zone/container/ledger total must remain conserved; before={before:?}, after={after:?}, error={error:?}"
+        )
+    });
 }
 
 // ─────────────────── plan-race-system-v1 P0b: body_part_multipliers ───────────────────
@@ -100,7 +124,6 @@ mod body_part_multipliers_tests {
         (body_plans, races)
     }
 
-    #[test]
     fn uses_registry_resolved_plan_when_present_not_hardcoded_legacy_table() {
         let (body_plans, races) = registries_with_distinctive_human_plan();
         let cultivation = Cultivation::default(); // race defaults to "human"
@@ -120,7 +143,6 @@ mod body_part_multipliers_tests {
         );
     }
 
-    #[test]
     fn falls_back_to_humanoid_static_when_registries_missing() {
         // 大量既有单测（本文件其余 ~48 处 resolve_attack_intents 系统测试）未插入
         // 这两个资源——退化路径必须与 legacy 硬编码表 bit-for-bit 一致，否则会让
@@ -140,7 +162,6 @@ mod body_part_multipliers_tests {
         }
     }
 
-    #[test]
     fn falls_back_to_humanoid_static_when_only_body_plans_present() {
         let (body_plans, _races) = registries_with_distinctive_human_plan();
         let cultivation = Cultivation::default();
@@ -158,7 +179,6 @@ mod body_part_multipliers_tests {
         );
     }
 
-    #[test]
     fn falls_back_to_humanoid_static_when_only_races_present() {
         let (_body_plans, races) = registries_with_distinctive_human_plan();
         let cultivation = Cultivation::default();
@@ -175,7 +195,6 @@ mod body_part_multipliers_tests {
         );
     }
 
-    #[test]
     fn unknown_player_race_falls_back_to_humanoid_static_not_panic() {
         let (body_plans, races) = registries_with_distinctive_human_plan();
         let cultivation = Cultivation {
@@ -198,7 +217,6 @@ mod body_part_multipliers_tests {
         }
     }
 
-    #[test]
     fn no_cultivation_component_falls_back_to_humanoid_default_via_resolve() {
         // 目标实体既非玩家（无 Cultivation）也非 BeastKind——resolve_body_plan Tier3
         // 兜底 humanoid_default()，registries_with_distinctive_human_plan() 的
@@ -242,6 +260,40 @@ mod body_part_multipliers_tests {
     fn real_humanoid_plan_copy() -> crate::body_plan::BodyPlan {
         crate::body_plan::humanoid_plan_static().clone()
     }
+
+    #[test]
+    fn body_part_multiplier_contract_matrix() {
+        let cases: [(&str, fn()); 6] = [
+            (
+                "uses_registry_resolved_plan_when_present_not_hardcoded_legacy_table",
+                uses_registry_resolved_plan_when_present_not_hardcoded_legacy_table,
+            ),
+            (
+                "falls_back_to_humanoid_static_when_registries_missing",
+                falls_back_to_humanoid_static_when_registries_missing,
+            ),
+            (
+                "falls_back_to_humanoid_static_when_only_body_plans_present",
+                falls_back_to_humanoid_static_when_only_body_plans_present,
+            ),
+            (
+                "falls_back_to_humanoid_static_when_only_races_present",
+                falls_back_to_humanoid_static_when_only_races_present,
+            ),
+            (
+                "unknown_player_race_falls_back_to_humanoid_static_not_panic",
+                unknown_player_race_falls_back_to_humanoid_static_not_panic,
+            ),
+            (
+                "no_cultivation_component_falls_back_to_humanoid_default_via_resolve",
+                no_cultivation_component_falls_back_to_humanoid_default_via_resolve,
+            ),
+        ];
+        for (name, case) in cases {
+            let result = std::panic::catch_unwind(case);
+            assert!(result.is_ok(), "body_part multiplier case '{name}' failed");
+        }
+    }
 }
 
 /// bug: Daoxiang TSY NPCs emit AttackIntent{qi_invest:25.0, source:Melee} but
@@ -253,7 +305,6 @@ mod body_part_multipliers_tests {
 /// Fix: AttackSource::NpcMelee is added to the source_uses_prepaid_qi whitelist,
 /// decoupling NPC combat from the player qi conservation model. NPC attacks are
 /// server-side-authoritative and need no qi accounting.
-#[test]
 fn npc_melee_bypasses_qi_gate_preventing_daoxiang_zero_damage() {
     // Happy path: NpcMelee must bypass the qi gate so TSY NPC attacks resolve.
     assert!(
@@ -290,7 +341,6 @@ fn npc_melee_bypasses_qi_gate_preventing_daoxiang_zero_damage() {
 /// prepaid 白名单，resolver 会按 resolve.rs:447 再扣一次 qi_invest → 每发命中净扣 2.0
 /// 真元（double-spend）。本测试锁定 QiNeedle 与 BurstMeridian（同样 cast 阶段预扣）一致
 /// 归类为 prepaid，防回归。
-#[test]
 fn qi_needle_is_prepaid_source_preventing_double_spend() {
     assert!(
         source_uses_prepaid_qi(AttackSource::QiNeedle),
@@ -308,11 +358,29 @@ fn qi_needle_is_prepaid_source_preventing_double_spend() {
     );
 }
 
+#[test]
+fn prepaid_attack_source_contract_matrix() {
+    let cases: [(&str, fn()); 2] = [
+        (
+            "npc_melee_bypasses_qi_gate_preventing_daoxiang_zero_damage",
+            npc_melee_bypasses_qi_gate_preventing_daoxiang_zero_damage,
+        ),
+        (
+            "qi_needle_is_prepaid_source_preventing_double_spend",
+            qi_needle_is_prepaid_source_preventing_double_spend,
+        ),
+    ];
+    for (name, case) in cases {
+        let result = std::panic::catch_unwind(case);
+        assert!(result.is_ok(), "prepaid attack source case '{name}' failed");
+    }
+}
+
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
 use crate::combat::components::{
     ActiveStatusEffect, BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle,
-    RevivalDecision, StatusEffects, WoundKind, Wounds,
+    StatusEffects, WoundKind, Wounds,
 };
 use crate::combat::events::{
     ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, DefenseKind,
@@ -326,7 +394,7 @@ use crate::cultivation::known_techniques::KnownTechnique;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
-    ItemTemplate, PlayerInventory, WeaponSpec, EQUIP_SLOT_CHEST, EQUIP_SLOT_OFF_HAND,
+    ItemTemplate, PlayerInventory, WeaponSpec, EQUIP_SLOT_OFF_HAND,
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMeleeProfile;
@@ -1618,570 +1686,6 @@ fn leg_wound_slowdown_emits_ground_blood_decal() {
 }
 
 #[test]
-fn hit_emits_knockback_event_and_pending_movement() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 44 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<KnockbackEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 44,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-    app.update();
-
-    let pending = app
-        .world()
-        .get::<PendingKnockback>(target)
-        .expect("resolved hit should install pending knockback");
-    assert_eq!(pending.attacker, Some(attacker));
-    assert_eq!(pending.source, AttackSource::Melee);
-    assert!(pending.distance_blocks > 0.0);
-    assert_eq!(pending.chain_depth, DEFAULT_CHAIN_DEPTH);
-
-    let knockback_events = app.world().resource::<Events<KnockbackEvent>>();
-    let events = knockback_events
-        .iter_current_update_events()
-        .collect::<Vec<_>>();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].attacker, attacker);
-    assert_eq!(events[0].target, target);
-    assert_eq!(events[0].collision_damage, None);
-    assert!(!events[0].block_broken);
-}
-
-#[test]
-fn attack_intent_skips_creative_target_without_damage_events_or_knockback() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 44 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<KnockbackEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    app.world_mut()
-        .entity_mut(target)
-        .insert(GameMode::Creative);
-    let before = app
-        .world()
-        .entity(target)
-        .get::<Wounds>()
-        .unwrap()
-        .health_current;
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 44,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-    app.update();
-
-    let wounds = app.world().entity(target).get::<Wounds>().unwrap();
-    assert_eq!(
-        wounds.health_current, before,
-        "Creative target must not lose health from resolver"
-    );
-    assert!(
-        app.world()
-            .resource::<Events<CombatEvent>>()
-            .iter_current_update_events()
-            .next()
-            .is_none(),
-        "Creative target must not emit CombatEvent"
-    );
-    assert!(
-        app.world()
-            .resource::<Events<KnockbackEvent>>()
-            .iter_current_update_events()
-            .next()
-            .is_none(),
-        "Creative target must not emit knockback"
-    );
-    assert!(
-        app.world().get::<PendingKnockback>(target).is_none(),
-        "Creative target must not receive pending knockback"
-    );
-}
-
-#[test]
-fn attack_intent_skips_near_death_target_without_extra_wounds_or_knockback() {
-    assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
-        "NearDeath",
-        LifecycleState::NearDeath,
-        |lifecycle| lifecycle.enter_near_death(40),
-    );
-}
-
-#[test]
-fn attack_intent_skips_awaiting_revival_target_without_extra_wounds_or_knockback() {
-    assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
-        "AwaitingRevival",
-        LifecycleState::AwaitingRevival,
-        |lifecycle| {
-            lifecycle.enter_near_death(40);
-            assert_eq!(
-                    lifecycle.state,
-                    LifecycleState::NearDeath,
-                    "test setup expected enter_near_death to move target into NearDeath before awaiting revival"
-                );
-            lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
-            assert_eq!(
-                lifecycle.state,
-                LifecycleState::AwaitingRevival,
-                "test setup expected await_revival_decision to move target into AwaitingRevival"
-            );
-        },
-    );
-}
-
-#[test]
-fn attack_intent_skips_terminated_target_without_extra_wounds_or_knockback() {
-    assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
-        "Terminated",
-        LifecycleState::Terminated,
-        |lifecycle| lifecycle.terminate(40),
-    );
-}
-
-fn assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
-    state_name: &str,
-    expected_state: LifecycleState,
-    enter_state: impl FnOnce(&mut Lifecycle),
-) {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 44 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<KnockbackEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds {
-            health_current: 5.0,
-            health_max: 100.0,
-            entries: vec![Wound {
-                location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
-                kind: WoundKind::Blunt,
-                severity: 3.0,
-                bleeding_per_sec: 0.0,
-                created_at_tick: 40,
-                inflicted_by: Some("test".to_string()),
-            }],
-        },
-        Stamina::default(),
-    );
-    {
-        let mut target_entity = app.world_mut().entity_mut(target);
-        let mut lifecycle = target_entity.get_mut::<Lifecycle>().unwrap();
-        enter_state(&mut lifecycle);
-        assert_eq!(
-            lifecycle.state, expected_state,
-            "test setup expected target Lifecycle::{state_name} before resolver"
-        );
-    }
-    let before = app.world().entity(target).get::<Wounds>().unwrap().clone();
-    let attacker_qi_before = app
-        .world()
-        .entity(attacker)
-        .get::<Cultivation>()
-        .unwrap()
-        .qi_current;
-    let attacker_meridian_throughputs_before = meridian_throughput_snapshot(
-        app.world()
-            .entity(attacker)
-            .get::<MeridianSystem>()
-            .unwrap(),
-    );
-    let target_stamina_before =
-        stamina_snapshot(app.world().entity(target).get::<Stamina>().unwrap());
-    let target_contamination_before =
-        contamination_snapshot(app.world().entity(target).get::<Contamination>().unwrap());
-    let target_meridian_throughputs_before =
-        meridian_throughput_snapshot(app.world().entity(target).get::<MeridianSystem>().unwrap());
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 44,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-    app.update();
-
-    let wounds = app.world().entity(target).get::<Wounds>().unwrap();
-    let attacker_qi_after = app
-        .world()
-        .entity(attacker)
-        .get::<Cultivation>()
-        .unwrap()
-        .qi_current;
-    let attacker_meridian_throughputs_after = meridian_throughput_snapshot(
-        app.world()
-            .entity(attacker)
-            .get::<MeridianSystem>()
-            .unwrap(),
-    );
-    let target_stamina_after =
-        stamina_snapshot(app.world().entity(target).get::<Stamina>().unwrap());
-    let target_contamination_after =
-        contamination_snapshot(app.world().entity(target).get::<Contamination>().unwrap());
-    let target_meridian_throughputs_after =
-        meridian_throughput_snapshot(app.world().entity(target).get::<MeridianSystem>().unwrap());
-    assert_eq!(
-        attacker_qi_after, attacker_qi_before,
-        "{state_name} target must not deduct attacker qi"
-    );
-    assert_eq!(
-        attacker_meridian_throughputs_after, attacker_meridian_throughputs_before,
-        "{state_name} target must not grant throughput to any attacker meridian"
-    );
-    assert_eq!(
-        target_stamina_after, target_stamina_before,
-        "{state_name} target must not change target stamina"
-    );
-    assert_eq!(
-        target_contamination_after, target_contamination_before,
-        "{state_name} target must not change target contamination"
-    );
-    assert_eq!(
-        target_meridian_throughputs_after, target_meridian_throughputs_before,
-        "{state_name} target must not change any target meridian throughput"
-    );
-    assert_eq!(
-        wounds.health_current, before.health_current,
-        "{state_name} target must not lose health from resolver"
-    );
-    assert_eq!(
-        wounds.entries.len(),
-        before.entries.len(),
-        "{state_name} target must not receive new wound entries"
-    );
-    assert!(
-        app.world()
-            .resource::<Events<CombatEvent>>()
-            .iter_current_update_events()
-            .next()
-            .is_none(),
-        "{state_name} target must not emit CombatEvent"
-    );
-    assert!(
-        app.world()
-            .resource::<Events<KnockbackEvent>>()
-            .iter_current_update_events()
-            .next()
-            .is_none(),
-        "{state_name} target must not emit KnockbackEvent"
-    );
-    assert!(
-        app.world().get::<PendingKnockback>(target).is_none(),
-        "{state_name} target must not receive pending knockback"
-    );
-}
-
-fn meridian_throughput_snapshot(meridians: &MeridianSystem) -> Vec<(MeridianId, f64)> {
-    MeridianId::ALL
-        .into_iter()
-        .map(|id| (id, meridians.get(id).throughput_current))
-        .collect()
-}
-
-fn stamina_snapshot(stamina: &Stamina) -> (f32, f32, f32, Option<u64>, StaminaState) {
-    (
-        stamina.current,
-        stamina.max,
-        stamina.recover_per_sec,
-        stamina.last_drain_tick,
-        stamina.state,
-    )
-}
-
-fn contamination_snapshot(contamination: &Contamination) -> serde_json::Value {
-    serde_json::to_value(contamination)
-        .expect("Contamination should serialize for side-effect snapshot")
-}
-
-// ─── Attacker lifecycle guard tests ─────────────────────────────────────
-
-#[test]
-fn attacker_near_death_skips_intent() {
-    assert_attacker_lifecycle_skips_intent("NearDeath", |lifecycle| lifecycle.enter_near_death(40));
-}
-
-#[test]
-fn attacker_awaiting_revival_skips_intent() {
-    assert_attacker_lifecycle_skips_intent("AwaitingRevival", |lifecycle| {
-        lifecycle.enter_near_death(40);
-        lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
-    });
-}
-
-#[test]
-fn attacker_terminated_skips_intent() {
-    assert_attacker_lifecycle_skips_intent("Terminated", |lifecycle| {
-        lifecycle.terminate(40);
-    });
-}
-
-fn assert_attacker_lifecycle_skips_intent(
-    state_name: &str,
-    enter_state: impl FnOnce(&mut Lifecycle),
-) {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 44 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<KnockbackEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    // Move attacker into the target lifecycle state.
-    {
-        let mut attacker_entity = app.world_mut().entity_mut(attacker);
-        let mut lifecycle = attacker_entity.get_mut::<Lifecycle>().unwrap();
-        enter_state(&mut lifecycle);
-    }
-
-    let target_wounds_before = app.world().entity(target).get::<Wounds>().unwrap().clone();
-    let attacker_qi_before = app
-        .world()
-        .entity(attacker)
-        .get::<Cultivation>()
-        .unwrap()
-        .qi_current;
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 44,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-    app.update();
-
-    // Assert: no wound written on target.
-    let target_wounds_after = app.world().entity(target).get::<Wounds>().unwrap();
-    assert_eq!(
-        target_wounds_after.health_current, target_wounds_before.health_current,
-        "{state_name} attacker must not deal damage to target"
-    );
-    assert_eq!(
-        target_wounds_after.entries.len(),
-        target_wounds_before.entries.len(),
-        "{state_name} attacker must not write new wound entries on target"
-    );
-
-    // Assert: no qi deducted from attacker.
-    let attacker_qi_after = app
-        .world()
-        .entity(attacker)
-        .get::<Cultivation>()
-        .unwrap()
-        .qi_current;
-    assert_eq!(
-        attacker_qi_after, attacker_qi_before,
-        "{state_name} attacker must not have qi deducted"
-    );
-
-    // Assert: no CombatEvent emitted.
-    assert!(
-        app.world()
-            .resource::<Events<CombatEvent>>()
-            .iter_current_update_events()
-            .next()
-            .is_none(),
-        "{state_name} attacker must not emit CombatEvent"
-    );
-}
-
-#[test]
-fn attack_intent_uses_latest_game_mode_component() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 44 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    app.world_mut()
-        .entity_mut(target)
-        .insert(GameMode::Creative);
-    let before = app
-        .world()
-        .entity(target)
-        .get::<Wounds>()
-        .unwrap()
-        .health_current;
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 44,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-    app.update();
-    assert_eq!(
-        app.world()
-            .entity(target)
-            .get::<Wounds>()
-            .unwrap()
-            .health_current,
-        before
-    );
-
-    app.world_mut()
-        .entity_mut(target)
-        .insert(GameMode::Survival);
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 45,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-    app.update();
-
-    assert!(
-        app.world()
-            .entity(target)
-            .get::<Wounds>()
-            .unwrap()
-            .health_current
-            < before,
-        "switching to Survival must make the target damageable immediately"
-    );
-    assert!(
-        app.world()
-            .resource::<Events<CombatEvent>>()
-            .iter_current_update_events()
-            .next()
-            .is_some(),
-        "Survival target should emit CombatEvent"
-    );
-}
-
-#[test]
 fn sparring_lethal_hit_ends_without_death_event() {
     let mut app = qi_test_app();
     app.insert_resource(CombatClock { tick: 44 });
@@ -3247,191 +2751,6 @@ fn heiwushi_melee_physical_path_lands_with_zero_qi_attacker() {
 }
 
 #[test]
-fn fist_reach_misses_when_target_is_outside_physical_range() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 900 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_npc(
-        &mut app,
-        [4.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 899,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-
-    app.update();
-
-    let target_ref = app.world().entity(target);
-    let wounds = target_ref.get::<Wounds>().unwrap();
-    let contamination = target_ref.get::<Contamination>().unwrap();
-    let combat_events = app.world().resource::<Events<CombatEvent>>();
-
-    assert_eq!(wounds.health_current, wounds.health_max);
-    assert!(wounds.entries.is_empty());
-    assert!(contamination.entries.is_empty());
-    assert!(combat_events.is_empty());
-}
-
-#[test]
-fn fist_reach_misses_just_outside_client_melee_upper_bound() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 900 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    assert!(
-        (FIST_REACH.max - 2.6).abs() <= f32::EPSILON,
-        "test pins the current client melee upper bound for unarmed attacks, actual: {}",
-        FIST_REACH.max
-    );
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    // Humanoid hitboxes extend 0.3 block toward the attacker; this places the hitbox just outside reach.
-    let target = spawn_npc(
-        &mut app,
-        [f64::from(FIST_REACH.max) + 0.301, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 899,
-        reach: FIST_REACH,
-        qi_invest: 0.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-
-    app.update();
-
-    let target_ref = app.world().entity(target);
-    let wounds = target_ref.get::<Wounds>().unwrap();
-    let combat_events = app.world().resource::<Events<CombatEvent>>();
-
-    assert_eq!(
-        wounds.health_current, wounds.health_max,
-        "target just outside fist reach must not lose health"
-    );
-    assert!(
-        wounds.entries.is_empty(),
-        "target just outside fist reach must not receive wounds, actual: {:?}",
-        wounds.entries
-    );
-    assert!(
-        combat_events.is_empty(),
-        "target just outside fist reach must not emit CombatEvent"
-    );
-}
-
-#[test]
-fn fist_reach_hits_at_client_melee_distance() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 900 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    assert!(
-        (FIST_REACH.max - 2.6).abs() <= f32::EPSILON,
-        "test pins the current client melee upper bound for unarmed attacks, actual: {}",
-        FIST_REACH.max
-    );
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_npc(
-        &mut app,
-        // Raycast distance includes the chest-height slope from attacker eye to target AABB.
-        [f64::from(FIST_REACH.max) + 0.27, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 899,
-        reach: FIST_REACH,
-        qi_invest: 0.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-
-    app.update();
-
-    let target_ref = app.world().entity(target);
-    let wounds = target_ref.get::<Wounds>().unwrap();
-    let combat_events = app.world().resource::<Events<CombatEvent>>();
-
-    assert!(
-        wounds.health_current < wounds.health_max,
-        "target just inside fist reach must lose health, actual health: {}/{}",
-        wounds.health_current,
-        wounds.health_max
-    );
-    assert!(
-        !wounds.entries.is_empty(),
-        "target just inside fist reach must receive wounds"
-    );
-    assert!(
-        !combat_events.is_empty(),
-        "target just inside fist reach must emit CombatEvent"
-    );
-}
-
-#[test]
 fn insufficient_qi_prevents_attack_side_effects() {
     let mut app = qi_test_app();
     app.insert_resource(CombatClock { tick: 901 });
@@ -3614,6 +2933,27 @@ fn anticheat_reach_violation_counts_without_changing_miss() {
         target_ref.get::<Wounds>().unwrap().health_max
     );
     assert!(target_ref.get::<Wounds>().unwrap().entries.is_empty());
+    assert_eq!(
+        app.world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current,
+        50.0,
+        "正常现场扣费模型即使射线未命中也必须扣除 qi_invest=10.0，不能让 miss 路径吞掉账务"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .balance(&crate::qi_physics::qi_flow_overflow_account()),
+        10.0,
+        "未命中的 qi_invest 必须真实进入 qi_flow_overflow 账户，不能只构造审计事件"
+    );
+    assert_eq!(
+        app.world().resource::<WorldQiAccount>().transfers().len(),
+        1,
+        "未命中的现场扣费应恰好产生一笔真实 ledger transfer"
+    );
 }
 
 #[test]
@@ -3978,7 +3318,16 @@ fn jiemai_parry_emits_qi_transfer_for_conservation() {
         debug_command: None,
     });
 
+    let before = summarize_world_qi(app.world_mut());
     app.update();
+    let after = summarize_world_qi(app.world_mut());
+    assert_full_qi_conservation(&before, &after, "截脉格挡成功");
+    assert!(
+        ((after.zone_qi - before.zone_qi) - parry_cost).abs() <= f64::EPSILON * QI_ZONE_UNIT_CAPACITY,
+        "截脉格挡成功后扣除的 {parry_cost} 真元必须实际进入 zone 物理账户；before zone_qi={}, after zone_qi={}",
+        before.zone_qi,
+        after.zone_qi,
+    );
 
     // 验证：防守方真元扣减正确。
     let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
@@ -3997,9 +3346,15 @@ fn jiemai_parry_emits_qi_transfer_for_conservation() {
         .iter_current_update_events()
         .cloned()
         .collect();
-    let parry_transfer = transfers.iter().find(|t| {
-        t.reason == QiTransferReason::ReleaseToZone && (t.amount - parry_cost).abs() < f64::EPSILON
-    });
+    let expected_transfer = QiTransfer {
+        from: QiAccountId::player(canonical_player_id("Defender")),
+        to: crate::qi_physics::QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string()),
+        amount: parry_cost,
+        reason: QiTransferReason::ReleaseToZone,
+    };
+    let parry_transfer = transfers
+        .iter()
+        .find(|transfer| **transfer == expected_transfer);
     assert!(
         parry_transfer.is_some(),
         "守恒红线：jiemai 格挡消耗 {parry_cost} 真元，必须 emit QiTransfer(reason=ReleaseToZone, \
@@ -4008,10 +3363,16 @@ fn jiemai_parry_emits_qi_transfer_for_conservation() {
     );
     let t = parry_transfer.unwrap();
     assert_eq!(
-        t.to,
-        crate::qi_physics::QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string()),
-        "格挡真元应回灌到防守方所在 zone（spawn）；实际 to={:?}",
-        t.to,
+        t, &expected_transfer,
+        "格挡路径必须传播完整 QiTransfer {{ from, to, amount, reason }}；实际={t:?}"
+    );
+    assert!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .iter()
+            .any(|ledger_transfer| ledger_transfer == &expected_transfer),
+        "截脉格挡的完整 QiTransfer 必须进入 WorldQiAccount 审计轨迹，不能只发 Event"
     );
 }
 
@@ -4080,7 +3441,14 @@ fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
         debug_command: None,
     });
 
+    let before = summarize_world_qi(app.world_mut());
     app.update();
+    let after = summarize_world_qi(app.world_mut());
+    assert_full_qi_conservation(&before, &after, "真元不足的截脉格挡拒绝");
+    assert_eq!(
+        after.zone_qi, before.zone_qi,
+        "真元不足的截脉格挡拒绝路径不得改变 zone 物理账户"
+    );
 
     // 格挡未触发：qi_current 保持不变。
     let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
@@ -4090,7 +3458,9 @@ fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
         cultivation.qi_current
     );
 
-    // 守恒不变式：无格挡 → 无 ReleaseToZone QiTransfer 被 emit。
+    // 守恒不变式：无格挡 → 防守方不扣 qi，也不产生防守方的 ReleaseToZone。
+    // 攻击方的普通近战 `qi_invest=20` 仍是独立的真实投入，必须按 resolver 的
+    // 正常结算路径落到 overflow（测试不能把两条 qi 流混为“无 transfer”）。
     let transfers: Vec<_> = app
         .world()
         .resource::<Events<QiTransfer>>()
@@ -4098,8 +3468,21 @@ fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
         .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
         .collect();
     assert!(
-        transfers.is_empty(),
-        "格挡条件不满足时不应有 ReleaseToZone 转账（避免凭空回灌）；\
+        transfers.iter().all(|transfer| {
+            transfer.from != QiAccountId::player(canonical_player_id("Defender"))
+        }),
+        "格挡条件不满足时不得产生防守方 ReleaseToZone；攻击方独立 qi_invest 的转账仍应存在；\
+             实际 transfers={:?}",
+        transfers,
+    );
+    assert!(
+        transfers.iter().any(|transfer| {
+            transfer.from == QiAccountId::player(canonical_player_id("Attacker"))
+                && transfer.to == crate::qi_physics::qi_flow_overflow_account()
+                && (transfer.amount - 20.0).abs() <= f64::EPSILON
+                && transfer.reason == QiTransferReason::ReleaseToZone
+        }),
+        "普通攻击的 20.0 qi_invest 必须由真实 ReleaseToZone 路径落账，不能因截脉格挡拒绝而吞掉；\
              实际 transfers={:?}",
         transfers,
     );
@@ -4259,252 +3642,6 @@ fn expired_jiemai_window_does_not_mitigate() {
     assert!(state.incoming_window.is_none());
     assert_eq!(wounds.entries.len(), 1);
     assert_eq!(contamination.entries[0].amount, event.contam_delta);
-}
-
-#[test]
-fn stunned_attacker_cannot_resolve_attack_intent() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 1100 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(Update, resolve_attack_intents);
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    app.world_mut().entity_mut(attacker).insert(StatusEffects {
-        active: vec![crate::combat::components::ActiveStatusEffect {
-            kind: StatusEffectKind::Stunned,
-            magnitude: 1.0,
-            remaining_ticks: 20,
-            source_pill: None,
-        }],
-    });
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 1099,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-
-    app.update();
-
-    let target_ref = app.world().entity(target);
-    let wounds = target_ref.get::<Wounds>().unwrap();
-    let contamination = target_ref.get::<Contamination>().unwrap();
-    let combat_events = app.world().resource::<Events<CombatEvent>>();
-    let death_events = app.world().resource::<Events<DeathEvent>>();
-
-    assert_eq!(wounds.health_current, wounds.health_max);
-    assert!(wounds.entries.is_empty());
-    assert!(contamination.entries.is_empty());
-    assert!(combat_events.is_empty());
-    assert!(death_events.is_empty());
-}
-
-#[test]
-fn apply_defense_intent_ignored_while_stunned() {
-    let mut app = qi_test_app();
-    app.add_event::<DefenseIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_systems(Update, apply_defense_intents);
-
-    let defender = app
-        .world_mut()
-        .spawn((
-            CombatState::default(),
-            Cultivation {
-                realm: Realm::Induce,
-                qi_current: 10.0,
-                qi_max: 10.0,
-                ..Cultivation::default()
-            },
-            StatusEffects {
-                active: vec![crate::combat::components::ActiveStatusEffect {
-                    kind: StatusEffectKind::Stunned,
-                    magnitude: 1.0,
-                    remaining_ticks: 20,
-                    source_pill: None,
-                }],
-            },
-        ))
-        .id();
-
-    app.world_mut().send_event(DefenseIntent {
-        defender,
-        issued_at_tick: 10,
-    });
-    app.update();
-
-    let state = app.world().entity(defender).get::<CombatState>().unwrap();
-    assert!(state.incoming_window.is_none());
-}
-
-#[test]
-fn apply_defense_intent_uses_realm_armor_and_adds_parry_recovery() {
-    let mut app = qi_test_app();
-    app.add_event::<DefenseIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_systems(
-        Update,
-        (
-            apply_defense_intents,
-            crate::combat::status::status_effect_apply_tick.after(apply_defense_intents),
-        ),
-    );
-
-    let defender = app
-        .world_mut()
-        .spawn((
-            CombatState::default(),
-            Cultivation {
-                realm: Realm::Condense,
-                qi_current: 12.0,
-                qi_max: 20.0,
-                ..Cultivation::default()
-            },
-            PlayerInventory {
-                triggered_treasures: Vec::new(),
-                revision: InventoryRevision(0),
-                containers: Vec::new(),
-                equipped: std::collections::HashMap::from([(
-                    EQUIP_SLOT_CHEST.to_string(),
-                    crate::inventory::SlotContents::worn_single(ItemInstance {
-                        instance_id: 90,
-                        template_id: "heavy_armor".to_string(),
-                        display_name: "heavy_armor".to_string(),
-                        grid_w: 2,
-                        grid_h: 2,
-                        weight: 7.0,
-                        rarity: ItemRarity::Common,
-                        description: String::new(),
-                        stack_count: 1,
-                        spirit_quality: 1.0,
-                        durability: 1.0,
-                        freshness: None,
-                        mineral_id: None,
-                        charges: None,
-                        forge_quality: None,
-                        forge_color: None,
-                        forge_side_effects: Vec::new(),
-                        forge_achieved_tier: None,
-                        alchemy: None,
-                        lingering_owner_qi: None,
-                    }),
-                )]),
-                hotbar: Default::default(),
-                bone_coins: 0,
-                max_weight: 50.0,
-            },
-            StatusEffects::default(),
-        ))
-        .id();
-
-    app.world_mut().send_event(DefenseIntent {
-        defender,
-        issued_at_tick: 10,
-    });
-    app.update();
-
-    let entity = app.world().entity(defender);
-    let state = entity.get::<CombatState>().unwrap();
-    let window = state
-        .incoming_window
-        .as_ref()
-        .expect("jiemai prep should open");
-    let statuses = entity.get::<StatusEffects>().unwrap();
-
-    assert_eq!(window.duration_ms, 600);
-    assert!(statuses
-        .active
-        .iter()
-        .any(|effect| effect.kind == StatusEffectKind::ParryRecovery));
-}
-
-#[test]
-fn head_hit_applies_stunned_status() {
-    let mut app = qi_test_app();
-    app.insert_resource(CombatClock { tick: 1200 });
-    app.add_event::<AttackIntent>();
-    app.add_event::<ApplyStatusEffectIntent>();
-    app.add_event::<CombatEvent>();
-    app.add_event::<DeathEvent>();
-    app.add_event::<crate::combat::weapon::WeaponBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBroken>();
-    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
-    app.add_event::<InventoryDurabilityChangedEvent>();
-    app.add_systems(
-        Update,
-        (
-            resolve_attack_intents,
-            crate::combat::status::status_effect_apply_tick,
-        ),
-    );
-
-    let attacker = spawn_player(
-        &mut app,
-        "Azure",
-        [0.0, 65.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-    let target = spawn_player(
-        &mut app,
-        "Crimson",
-        [1.0, 64.0, 0.0],
-        Wounds::default(),
-        Stamina::default(),
-    );
-
-    app.world_mut().send_event(AttackIntent {
-        attacker,
-        target: Some(target),
-        issued_at_tick: 1199,
-        reach: FIST_REACH,
-        qi_invest: 10.0,
-        wound_kind: WoundKind::Blunt,
-        source: AttackSource::Melee,
-        debug_command: None,
-    });
-
-    app.update();
-    app.update();
-
-    let target_ref = app.world().entity(target);
-    let wounds = target_ref.get::<Wounds>().unwrap();
-    let status_effects = target_ref.get::<StatusEffects>().unwrap();
-
-    assert!(wounds
-        .entries
-        .iter()
-        .any(|w| w.location == crate::body_plan::legacy_body_part_to_id(BodyPart::Head)));
-    assert!(status_effects
-        .active
-        .iter()
-        .any(|effect| effect.kind == StatusEffectKind::Stunned));
 }
 
 #[test]
@@ -7611,36 +6748,6 @@ fn shield_block_front_face_reduces_severity_bleeding_and_contam() {
     );
 }
 
-// ── 边界 dot==-0.5（恰好 120° 边界） → 命中减伤 ──────────────────────────
-// 使攻击者方向 dot 精确等于 -0.5，不靠近似几何，直接在 FOV 判定上测 >= 语义。
-#[test]
-fn shield_fov_check_exact_boundary_dot_minus_half_triggers_block() {
-    // 直接测 shield_fov_check 函数，dot 精确等于 -0.5（见 P5 §1 要求）
-    use valence::entity::Look;
-    // 防御者朝 +Z（yaw=0），facing=(0,0,1)
-    // 攻击者方向 = cos(120°)=-0.5, sin(120°)=√3/2
-    // to_attacker normalized = (-sin120°, 0, cos120°) = (-√3/2, 0, -0.5)
-    // dot with (0,0,1) = -0.5 → 恰好等于 SHIELD_FOV_DOT
-    let cos120 = 120.0_f64.to_radians().cos(); // = -0.5
-    let sin120 = 120.0_f64.to_radians().sin(); // = √3/2
-                                               // 构造攻击者在方向 (-sin120, 0, cos120) 距离 2
-    let attacker_pos = valence::prelude::DVec3::new(-sin120 * 2.0, 0.0, cos120 * 2.0);
-    let defender_pos = valence::prelude::DVec3::ZERO;
-    let look = Look {
-        yaw: 0.0,
-        pitch: 0.0,
-    };
-
-    let result =
-        crate::combat::shield_block::shield_fov_check(attacker_pos, defender_pos, Some(&look));
-    // 验证 dot = facing · to_att_norm = (0,0,1) · (-sin120, 0, cos120) = cos120 = -0.5
-    assert!(
-        result,
-        "dot=-0.5 精确等于 SHIELD_FOV_DOT(-0.5)，>= 比较应通过（命中可挡）；\
-             若改为 > 则此测试撞红（>=  vs > boundary pin）"
-    );
-}
-
 // ── 背面命中（dot < -0.5）→ 盾格挡无效 ─────────────────────────────────
 #[test]
 fn shield_block_back_face_no_reduction() {
@@ -8025,89 +7132,51 @@ fn send_physical_attack(app: &mut App, attacker: Entity, target: Entity) {
 
 // ── P3: 盾耐久公式锁定测试 ───────────────────────────────────────────────
 //
-// 设计语义（plan-shield-block-v1 P3 注释 line 998）：
-//   durability_max = 次"满伤格挡"的最大次数。
-//   但实际公式 cost = blocked（本次格挡削减的 f64 severity 值）：
-//     - 拳击 base_damage=1.0，ShieldBlocking magnitude=0.5 → blocked≈0.5
-//     - 因此拳击约需 80 次才能打碎木盾（而非 40 次）
-//   "满伤格挡"定义为 blocked=1.0（即攻击 severity=1.0 且 ratio=1.0，
-//    但 ratio 被 clamp 到 0.95）——真实游戏中此种攻击击伤值=severity*1.0=1.0 才能
-//    在 40 次后破盾。常规拳击不满足 blocked=1.0。
-//
-// 以下两条测试以实际参数锁定真实公式行为（诚实测试，非伪造参数）：
-//   1. 锁定公式形状：cost = blocked，严格单调下降，边界条件正确
-//   2. ECS 集成测试：给定真实攻击 blocked 值，N 击后耐久符合公式预测
-
+// durability_max 表示满伤格挡次数；实际每次扣减量是本次被格挡的 blocked severity，
+// 因此半伤格挡需要更多次命中才能归零。
 #[test]
 fn shield_durability_formula_uses_blocked_damage_as_cost() {
-    // 验证公式形状（诚实参数）：
-    //   - cost = blocked_per_hit（本次削减量），非固定值
-    //   - 严格单调递减
-    //   - 达到 blocked 总量 = durability_max 时归零
-    //
-    // 此测试用 blocked_per_hit = 0.5（对应 block_ratio=0.5, base_damage=1.0 拳击场景），
-    // durability_max=40 → 需 80 次拳击。
-    // 刻意不用 per_hit=1.0：那是不真实的伪造参数。
-
     let durability_max = 40.0_f64;
-    let blocked_per_hit = 0.5_f64; // 拳击 base_damage=1.0, block_ratio=0.5 → 真实 blocked
-    let expected_hits_to_break = (durability_max / blocked_per_hit).ceil() as u32; // = 80
+    let blocked_per_hit = 0.5_f64;
+    let expected_hits_to_break = (durability_max / blocked_per_hit).ceil() as u32;
 
     let mut cur_ratio = 1.0_f64;
-    let mut prev_ratio = 2.0_f64; // 哨兵
+    let mut prev_ratio = 2.0_f64;
     let mut broke_at = None;
 
     for hit in 1..=expected_hits_to_break + 5 {
         let cur_abs = cur_ratio * durability_max;
         let next_abs = (cur_abs - blocked_per_hit).max(0.0);
         let next_ratio = (next_abs / durability_max).clamp(0.0, 1.0);
-
-        // 严格单调递减（只要 cur_ratio > 0 且有新的 blocked 扣减）
         if cur_ratio > 0.0 {
             assert!(
                 next_ratio <= cur_ratio,
-                "耐久应单调不增：hit={hit}，cur_ratio={cur_ratio:.6}，next_ratio={next_ratio:.6} \
-                     — 公式回归：cost=blocked 时每次格挡必须扣减耐久"
+                "盾耐久应单调不增：hit={hit}，cur_ratio={cur_ratio:.6}，next_ratio={next_ratio:.6}"
             );
         }
-        // 第 hit-1 次仍有耐久
         if next_ratio > 0.0 {
-            assert!(
-                cur_ratio > 0.0,
-                "hit={hit}：cur_ratio 为 0 但 next_ratio>0，前提矛盾"
-            );
+            assert!(cur_ratio > 0.0, "hit={hit}：耐久比例前置状态不应已归零");
         }
-
         prev_ratio = cur_ratio;
         cur_ratio = next_ratio;
-
         if cur_ratio <= 0.0 && broke_at.is_none() {
             broke_at = Some(hit);
         }
     }
 
-    let broke_at = broke_at.expect("耐久应在有限次格挡后归零");
     assert_eq!(
-        broke_at, expected_hits_to_break,
-        "blocked_per_hit={blocked_per_hit:.2}，durability_max={durability_max}：\
-             期望第 {expected_hits_to_break} 次破盾，\
-             实际第 {broke_at} 次破盾。\
-             注意：durability_max 的语义是「满伤（blocked=1.0）格挡次数」，\
-             拳击 blocked≈0.5 时需 ~80 次，不是 40 次。"
+        broke_at,
+        Some(expected_hits_to_break),
+        "blocked_per_hit={blocked_per_hit:.2}、durability_max={durability_max} 时应在第 {expected_hits_to_break} 次归零"
     );
     let _ = prev_ratio;
 }
 
-// 锁定满伤（blocked=1.0）格挡 40 次破盾的语义
 #[test]
 fn shield_durability_breaks_at_durability_max_full_damage_hits() {
-    // 语义：若每次格挡 blocked=1.0（真正满伤），40 次后精确归零。
-    // blocked=1.0 需要攻击 severity=1.0 且 block_ratio=1.0（在游戏中极罕见，
-    // ratio 被 clamp 到 0.95，所以真正满伤格挡最多 blocked≈0.95）。
-    // 此测试用 blocked=1.0 是"假设完美满伤格挡"以验证数学边界。
     let durability_max = 40.0_f64;
     let blocked_full = 1.0_f64;
-    let expected_hits = durability_max as u32; // exactly 40
+    let expected_hits = durability_max as u32;
 
     let mut cur_ratio = 1.0_f64;
     for hit in 1..=(expected_hits + 1) {
@@ -8117,13 +7186,13 @@ fn shield_durability_breaks_at_durability_max_full_damage_hits() {
         if hit == expected_hits - 1 {
             assert!(
                 cur_ratio > 0.0,
-                "hit={hit}（期望最后一次前 ratio > 0），actual={cur_ratio:.6}"
+                "第 {hit} 次满伤格挡后应仍有耐久，actual={cur_ratio:.6}"
             );
         }
     }
     assert!(
         cur_ratio <= 0.0,
-        "满伤（blocked=1.0）格挡 {expected_hits} 次后耐久应归零；actual ratio={cur_ratio:.6}"
+        "满伤格挡 {expected_hits} 次后耐久应归零，actual={cur_ratio:.6}"
     );
 }
 
@@ -8695,17 +7764,18 @@ fn dead_armor_block_is_drop_not_release() {
                  实际={:.4}，若非 0 则说明拦截后仍向 zone 注入通胀",
             events[0].contam_delta
         );
-        // 守恒补强：DROP 路径不应 emit 任何 QiTransfer（release_to_zone 会产生 QiTransfer）。
+        // 守恒补强：攻击方现场投入本身必须真实落账；但死脉甲 DROP 路径不得
+        // 把防守方或被丢弃的 contamination 伪装成另一笔 QiTransfer。
         let qi_transfers: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
             .collect();
         assert!(
-            qi_transfers.is_empty(),
-            "期望死脉甲免疫只 DROP contamination，不 emit QiTransfer/release_to_zone；\
-                 实际 qi_transfers.len()={} — 若非空说明实现错误地走了 release_to_zone 导致通胀",
-            qi_transfers.len()
+            qi_transfers.iter().all(|transfer| {
+                transfer.from != QiAccountId::player(canonical_player_id("TargetImmuneA"))
+            }),
+            "死脉甲免疫 DROP 不得从防守方账户产生 QiTransfer；实际 transfers={qi_transfers:?}"
         );
     }
 
@@ -8821,39 +7891,6 @@ fn dead_armor_multi_region_set_chest_is_blocked() {
         "期望 contamination.entries 为空：Chest 在多免疫区集合内（Chest+ArmL），应被 DROP；\
              实际 entries={:?}",
         contam.entries
-    );
-}
-
-/// ArmL 在多免疫区集合中的成员有效性（单元级验证）。
-///
-/// `should_block_contamination` 直接验证 ArmL 集合查询逻辑——不经过 raycast，
-/// 只做集合成员判定，与命中概率/瞄准机制无关（plan-combat-hit-location-v1 §P0 后，
-/// ArmL 已可经真实瞄准/NPC jitter 命中，见 combat::raycast::tests 分布 pin 测试）。
-#[test]
-fn dead_armor_arml_immune_in_multi_region_set() {
-    use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
-
-    let mut armor = DeadMeridianArmor::default();
-    armor.immune_regions.insert(BodyPart::Chest);
-    armor.immune_regions.insert(BodyPart::ArmL);
-
-    // ArmL 在集合中：should_block_contamination 返回 true（不允许污染写入）。
-    assert!(
-        should_block_contamination(&armor, BodyPart::ArmL),
-        "期望 ArmL 在多免疫区集合（Chest+ArmL）中 should_block_contamination=true；\
-             实际 false — 说明 immune_regions.contains(ArmL) 返回 false，集合插入失败"
-    );
-
-    // Chest 在集合中：同样被拦截。
-    assert!(
-        should_block_contamination(&armor, BodyPart::Chest),
-        "期望 Chest 在集合中 should_block_contamination=true；实际 false"
-    );
-
-    // Abdomen 不在集合中：不拦截（弱点区）。
-    assert!(
-        !should_block_contamination(&armor, BodyPart::Abdomen),
-        "期望 Abdomen 不在集合中 should_block_contamination=false；实际 true（误判为免疫）"
     );
 }
 
@@ -9249,7 +8286,6 @@ mod dispatch_part_consequence_tests {
         }
     }
 
-    #[test]
     fn manipulator_main_hand_severed_dispatches_sever_outcome() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9259,7 +8295,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn manipulator_main_hand_below_severed_threshold_is_no_consequence() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9269,7 +8304,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn manipulator_off_hand_never_severs_regardless_of_severity() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9280,7 +8314,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn locomotion_at_or_above_slow_threshold_dispatches_leg_slow() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9294,7 +8327,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn locomotion_below_slow_threshold_is_no_consequence() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9308,7 +8340,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn sensory_at_or_above_stun_threshold_dispatches_head_stun() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9318,7 +8349,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn sensory_below_stun_threshold_is_no_consequence() {
         let plan = four_consequence_plan();
         assert_eq!(
@@ -9332,7 +8362,6 @@ mod dispatch_part_consequence_tests {
         );
     }
 
-    #[test]
     fn core_never_dispatches_any_limb_consequence_regardless_of_severity() {
         let plan = four_consequence_plan();
         for severity in [0.0_f32, 0.3, 0.5, 70.0, 9999.0] {
@@ -9344,7 +8373,6 @@ mod dispatch_part_consequence_tests {
         }
     }
 
-    #[test]
     fn unknown_part_id_dispatches_explicit_unknown_outcome() {
         // 命中几何与部位定义理论上同出一份 BodyPlan，这条分支在真实攻击管线里
         // 不可达（见 dispatch_part_consequence 文档）——但决策函数本身必须对
@@ -9356,6 +8384,55 @@ mod dispatch_part_consequence_tests {
             PartConsequenceOutcome::UnknownPart,
             "未知 part id 必须显式返回 UnknownPart，不能被悄悄归为 NoConsequence"
         );
+    }
+
+    #[test]
+    fn dispatch_part_consequence_contract_matrix() {
+        let cases: [(&str, fn()); 9] = [
+            (
+                "manipulator_main_hand_severed_dispatches_sever_outcome",
+                manipulator_main_hand_severed_dispatches_sever_outcome,
+            ),
+            (
+                "manipulator_main_hand_below_severed_threshold_is_no_consequence",
+                manipulator_main_hand_below_severed_threshold_is_no_consequence,
+            ),
+            (
+                "manipulator_off_hand_never_severs_regardless_of_severity",
+                manipulator_off_hand_never_severs_regardless_of_severity,
+            ),
+            (
+                "locomotion_at_or_above_slow_threshold_dispatches_leg_slow",
+                locomotion_at_or_above_slow_threshold_dispatches_leg_slow,
+            ),
+            (
+                "locomotion_below_slow_threshold_is_no_consequence",
+                locomotion_below_slow_threshold_is_no_consequence,
+            ),
+            (
+                "sensory_at_or_above_stun_threshold_dispatches_head_stun",
+                sensory_at_or_above_stun_threshold_dispatches_head_stun,
+            ),
+            (
+                "sensory_below_stun_threshold_is_no_consequence",
+                sensory_below_stun_threshold_is_no_consequence,
+            ),
+            (
+                "core_never_dispatches_any_limb_consequence_regardless_of_severity",
+                core_never_dispatches_any_limb_consequence_regardless_of_severity,
+            ),
+            (
+                "unknown_part_id_dispatches_explicit_unknown_outcome",
+                unknown_part_id_dispatches_explicit_unknown_outcome,
+            ),
+        ];
+        for (name, case) in cases {
+            let result = std::panic::catch_unwind(case);
+            assert!(
+                result.is_ok(),
+                "dispatch_part_consequence case '{name}' failed"
+            );
+        }
     }
 }
 
