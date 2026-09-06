@@ -7544,6 +7544,68 @@ fn npc_digest_retention_sweeps_180_day_stale_rows() {
 }
 
 #[test]
+fn npc_digest_failed_no_replace_publish_preserves_competing_target() {
+    let (settings, root) = persistence_settings("npc-digest-competing-publish");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let now_wall = 1_725_000_000;
+    let stale_wall = now_wall - NPC_DIGEST_RETENTION_SECS - 1;
+    let stale = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_competing_publish").digest
+        },
+        ..sample_npc_capture("npc_digest_competing_publish")
+    };
+    persist_npc_capture(&settings, &stale).expect("stale digest should persist");
+
+    let archive_path = npc_digest_archive_absolute_path(
+        &settings,
+        stale.state.char_id.as_str(),
+        now_wall,
+    )
+    .expect("digest archive path should be valid");
+    let archive_relative_path =
+        npc_digest_archive_relative_path(stale.state.char_id.as_str())
+            .expect("digest archive relative path should be valid");
+    let competing_payload = br#"{"owner":"competing-digest-publisher"}"#;
+
+    let error = sweep_stale_npc_digests_with_writer(&settings, now_wall, |path, payload| {
+        // Publish a competing target while the losing temporary file is still open. The
+        // outer no-replace hard_link must fail without granting this caller target ownership.
+        write_zstd_bundle_with_writer(path, payload, |_temp_file, _compressed| {
+            write_zstd_bundle(path, competing_payload)
+        })
+    })
+    .expect_err("a competing digest publisher must abort without deleting its target");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "competing digest publication should fail at the no-replace boundary, actual={error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(settings.db_path(), archive_relative_path.as_str())
+            .expect("competing digest archive should remain readable"),
+        competing_payload,
+        "failed digest publication must not remove the competing owner's archive"
+    );
+    assert!(
+        archive_path.exists(),
+        "the competing digest archive target must still exist after the losing publish fails"
+    );
+    assert!(
+        load_npc_digest(&settings, stale.state.char_id.as_str())
+            .expect("failed sweep should leave the hot digest readable")
+            .is_some(),
+        "failed digest publication must not delete the hot row"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn faction_social_state_defaults_to_empty_roundtrip() {
     let (settings, root) = persistence_settings("faction-social-empty");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())

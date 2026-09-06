@@ -256,6 +256,14 @@ pub fn sweep_stale_npc_digests(
     settings: &PersistenceSettings,
     now_wall: i64,
 ) -> io::Result<Vec<NpcDigestRecord>> {
+    sweep_stale_npc_digests_with_writer(settings, now_wall, write_zstd_bundle)
+}
+
+pub(super) fn sweep_stale_npc_digests_with_writer(
+    settings: &PersistenceSettings,
+    now_wall: i64,
+    mut write_bundle: impl FnMut(&Path, &[u8]) -> io::Result<()>,
+) -> io::Result<Vec<NpcDigestRecord>> {
     let threshold = now_wall - NPC_DIGEST_RETENTION_SECS;
     let mut connection = open_persistence_connection(settings)?;
     let stale_digests = load_stale_npc_digests(&connection, threshold)?;
@@ -285,17 +293,14 @@ pub fn sweep_stale_npc_digests(
                     ))
                 }
             }
-            None => write_zstd_bundle(&archive_path, &archive_json),
+            None => write_bundle(&archive_path, &archive_json),
         };
         if let Err(error) = publish_result {
-            return match rollback_file(&archive_path, previous_archive.as_deref()) {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(combine_persistence_failure(
-                    "npc digest archive replacement",
-                    error,
-                    rollback_error,
-                )),
-            };
+            // `write_zstd_bundle` 只会发布自己的临时文件，且以 hard_link 做 no-replace
+            // 发布；失败时调用方没有最终目标的 ownership。特别是读取到 None 后，
+            // 另一个 publisher 可能已在写入期间建立目标，不能用 rollback_file(None)
+            // 把并发 publisher 的归档删除。
+            return Err(error);
         }
     }
 
