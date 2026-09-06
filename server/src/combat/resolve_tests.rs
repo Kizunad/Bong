@@ -2939,20 +2939,20 @@ fn anticheat_reach_violation_counts_without_changing_miss() {
             .get::<Cultivation>()
             .unwrap()
             .qi_current,
-        50.0,
-        "正常现场扣费模型即使射线未命中也必须扣除 qi_invest=10.0，不能让 miss 路径吞掉账务"
+        60.0,
+        "超距请求在合法性校验前必须零 qi mutation；被拒后 qi_current 应保持初始值"
     );
     assert_eq!(
         app.world()
             .resource::<WorldQiAccount>()
             .balance(&crate::qi_physics::qi_flow_overflow_account()),
-        10.0,
-        "未命中的 qi_invest 必须真实进入 qi_flow_overflow 账户，不能只构造审计事件"
+        0.0,
+        "超距请求被拒后不得向 qi_flow_overflow 账户写入 qi_invest"
     );
     assert_eq!(
         app.world().resource::<WorldQiAccount>().transfers().len(),
-        1,
-        "未命中的现场扣费应恰好产生一笔真实 ledger transfer"
+        0,
+        "超距请求被拒后不得产生任何 ledger transfer"
     );
 }
 
