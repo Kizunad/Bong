@@ -201,7 +201,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 ## R3 P1 本 PR 证据（2026-09-06，拆分 + review 修复）
 
 - 本 PR **已不再是纯机械移动**：先完成 persistence 生产码按域拆分，再在当前 PR 内修复 Kody 18 条 inline 记录归并出的 9 个既有缺陷，并为每条真实缺陷补最小回归锁定。`server/src/persistence/mod.rs` 仍只保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring。
-- 拆分落点与最终行数为 `mod.rs` 214 行、`models.rs` 533 行、`known_techniques.rs` 986 行、`bootstrap.rs` 407 行、`migrations.rs` 1914 行、`void_actions.rs` 131 行、`agent.rs` 442 行、`tribulation.rs` 461 行、`world.rs` 1183 行、`world_qi.rs` 141 行、`player.rs` 373 行、`npc.rs` 1335 行、`life.rs` 1058 行、`social.rs` 301 行、`helpers.rs` 517 行、`epitaph.rs` 80 行，全部小于 3000 行。
+- 拆分落点与最终行数为 `mod.rs` 214 行、`models.rs` 533 行、`known_techniques.rs` 986 行、`bootstrap.rs` 407 行、`migrations.rs` 1914 行、`void_actions.rs` 131 行、`agent.rs` 442 行、`tribulation.rs` 461 行、`world.rs` 1183 行、`world_qi.rs` 141 行、`player.rs` 373 行、`npc.rs` 1331 行、`life.rs` 1058 行、`social.rs` 301 行、`helpers.rs` 517 行、`epitaph.rs` 80 行，全部小于 3000 行。
 - 初始拆分的机械等价性核验：以原 `mod.rs` 与拆分后全部 persistence 源文件分别提取顶层函数名和类型/常量名对拍，均为 251/251 与 118/118 完全一致；初始阶段除模块导入、`pub(super)` 父模块可见性及必要测试字段可见性外，没有生产逻辑改写。下列行为变更均是本 PR 明确纳入的 review 修复，不能再宣称本 PR 行为不变：
   - `helpers.rs`：归档发布由可覆盖的 `fs::rename` 改为同目录 `fs::hard_link` + 临时文件清理，目标已存在时 `AlreadyExists` 且不覆盖；归档 deceased/digest 的 `char_id` 统一经过拒绝空值、`.`、`..`、分隔符、NUL 与绝对路径的组件校验；回归覆盖 no-replace、路径遍历与临时文件清理。
   - `known_techniques.rs`：重试清理改为比较 retry 键与当前仍有工作的 subject 集合，仅清除不再 pending 且没有断线保存失败待重试的 subject；回归覆盖 stale retry 被清除、pending retry 保留，以及无 reconnect handoff 的断线保存失败仍保留 retry 并使用首个退避帧。
