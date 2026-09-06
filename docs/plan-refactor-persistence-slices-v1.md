@@ -198,10 +198,19 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 
 用户发起一次 `/consume-plan plan-refactor-persistence-slices-v1` 后，consumer 依次完成当前未完成阶段的实现、locked gate、Bot E2E、精确 HEAD validator、push、PR、独立 `/review`、返工复审和 merge；每个阶段 merge 后从最新 `origin/main` 继续下一 PR。只有真实用户决策、#1259 等外部依赖未满足或基础设施持续不可用时才暂停；P5 全绿后自动补 Finish Evidence、归档 plan 并提交最终 PR。
 
-## R3 P1 本 PR 证据（2026-09-05）
+## R3 P1 本 PR 证据（2026-09-06，拆分 + review 修复）
 
-- 本切片只完成 persistence 生产码的按域机械拆分：`server/src/persistence/mod.rs` 保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring；迁移链、SQL、表结构、事务边界、连接 ownership 和调用方均未改动。
+- 本 PR **已不再是纯机械移动**：先完成 persistence 生产码按域拆分，再在当前 PR 内修复 Kody 18 条 inline 记录归并出的 9 个既有缺陷，并为每条真实缺陷补最小回归锁定。`server/src/persistence/mod.rs` 仍只保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring。
 - 拆分落点与最终行数为 `mod.rs` 214 行、`models.rs` 533 行、`known_techniques.rs` 973 行、`bootstrap.rs` 407 行、`migrations.rs` 1908 行、`void_actions.rs` 121 行、`agent.rs` 442 行、`tribulation.rs` 461 行、`world.rs` 1180 行、`world_qi.rs` 125 行、`player.rs` 306 行、`npc.rs` 1307 行、`life.rs` 1058 行、`social.rs` 301 行、`helpers.rs` 444 行、`epitaph.rs` 80 行，全部小于 3000 行。
-- 机械等价性核验：以原 `mod.rs` 与拆分后全部 persistence 源文件分别提取顶层函数名和类型/常量名对拍，均为 251/251 与 118/118 完全一致；除模块导入、`pub(super)` 父模块可见性及必要测试字段可见性外，没有生产逻辑、常量值、SQL 字符串或错误行为改写。
+- 初始拆分的机械等价性核验：以原 `mod.rs` 与拆分后全部 persistence 源文件分别提取顶层函数名和类型/常量名对拍，均为 251/251 与 118/118 完全一致；初始阶段除模块导入、`pub(super)` 父模块可见性及必要测试字段可见性外，没有生产逻辑改写。下列行为变更均是本 PR 明确纳入的 review 修复，不能再宣称本 PR 行为不变：
+  - `helpers.rs`：归档发布由可覆盖的 `fs::rename` 改为同目录 `fs::hard_link` + 临时文件清理，目标已存在时 `AlreadyExists` 且不覆盖；归档 deceased/digest 的 `char_id` 统一经过拒绝空值、`.`、`..`、分隔符、NUL 与绝对路径的组件校验；回归覆盖 no-replace、路径遍历与临时文件清理。
+  - `known_techniques.rs`：重试清理改为比较 retry 键与当前 pending subject 集合，仅清除不再 pending 的 subject；回归覆盖 stale retry 被清除、pending retry 保留。
+  - `npc.rs`：deceased/digest 归档入口复用安全组件校验；归档写入/DB 失败且 rollback 再失败时以结构化聚合错误保留 primary source 与 rollback 诊断；回归覆盖路径边界和双失败 source。
+  - `world.rs`：`persist_zone_influence_snapshot` 在既有事务内先清除旧 `zone_influence` 行，再写入当前全量快照；回归覆盖移除 zone/player 后 hydrate 不复活陈旧行。
+  - `world_qi.rs` + `qi_physics/ledger.rs`：runtime qi hydrate 改走 ledger 的固定持久 owner 集合恢复接口，完整校验缺失、重复、未知、非法值与总量可表示性，不伪造 `QiTransfer`；回归覆盖 restart 守恒、无审计伪造和失败无部分 hydrate。
+  - `player.rs` + `player/state.rs`：删除 durable dropped-loot row 前读取并校验 durable payload，要求接收 `PlayerInventory` 持有同一 instance（仅允许既有 Pickup attrition 降低 `spirit_quality`）；无 ownership proof 时保留 row、整笔 checkpoint 失败。拾取是同一 item 的 ground→inventory 所有权迁移，不重复释放 qi；回归覆盖无 proof 拒绝及成功拾取。
+  - `void_actions.rs`：`ready_at_tick` 从 SQLite `i64` 到 runtime `u64` 改为受检转换，负值映射 `InvalidData` 并 fail-closed；回归覆盖负 tick 不被解释为 `u64::MAX`。
+  - `migrations.rs`：legacy `player_core.spirit_qi` 改用 `qi_physics::finite_non_negative`；负值/非有限值拒绝，不再 clamp 或静默跳过；该字段继续恢复到玩家 ECS cultivation，不创建伪造 ledger account/transfer；回归覆盖负值迁移事务回滚。
+- 以上修复未改变迁移版本链、表结构、既有跨表事务边界或连接 ownership；保留 R3 P0 已安装的 canonical registry、`AppExit → Last`、zone-runtime shutdown descriptor、KnownTechniques reconnect/load guard/dirty snapshot/durable fence adapter。zone influence 的清除发生在原有全量快照事务内，dropped-loot ownership proof 发生在原有 inventory+drop+zone checkpoint 事务内。
 - 本 PR **不含 M-04/M-12 guard/checkpoint 持久化**（`ReconnectGuard`、Suspended checkpoint、`CraftRestoreGuard` control frame）；因此 R3 P1 总体仍保持未完成，不将本证据写成阶段完成或 production 接入扩展。
-- 验证：定向 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test persistence::tests --lib'` 通过，`208 passed; 0 failed; 0 ignored; 12422 filtered out`；完整 server gate 将以本 PR 最终 HEAD 再执行。本条目只登记拆分范围与等价性证据。
+- 定向与完整 server gate、最终 merge 后复验、fresh-context validator、CI/e2e 与当前 HEAD Kody 复审结果将在本 PR 最终 HEAD 确认后补记；本条目诚实记录为“拆分 + review 修复”，不粉饰为行为不变。

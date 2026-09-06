@@ -539,6 +539,58 @@ impl WorldQiAccount {
         Ok(())
     }
 
+    /// Restore the fixed durable runtime-owner set without manufacturing transfers.
+    ///
+    /// A restart reconstructs the same physical owners from SQLite; it is not a qi movement and
+    /// therefore must not append synthetic `QiTransfer` audit entries. The restore boundary still
+    /// belongs to the ledger: it validates the complete fixed owner set, rejects duplicates and
+    /// non-finite/negative values before changing any balance, and rejects a non-finite aggregate.
+    pub(crate) fn restore_persistent_runtime_balances(
+        &mut self,
+        balances: &[(QiAccountId, f64)],
+    ) -> Result<(), QiPhysicsError> {
+        let expected_accounts = persistent_runtime_qi_accounts();
+        let mut restored = BTreeMap::new();
+        for (account, amount) in balances {
+            if !expected_accounts.iter().any(|expected| expected == account) {
+                return Err(QiPhysicsError::InvalidAmount {
+                    field: "persistent_runtime_qi_account",
+                    value: *amount,
+                });
+            }
+            let amount = finite_non_negative(*amount, "persistent_runtime_qi_balance")?;
+            if restored.insert(account.clone(), amount).is_some() {
+                return Err(QiPhysicsError::InvalidAmount {
+                    field: "duplicate_persistent_runtime_qi_account",
+                    value: amount,
+                });
+            }
+        }
+        for account in &expected_accounts {
+            if !restored.contains_key(account) {
+                return Err(QiPhysicsError::InvalidAmount {
+                    field: "missing_persistent_runtime_qi_account",
+                    value: 0.0,
+                });
+            }
+        }
+        let total = restored.values().sum::<f64>();
+        if !total.is_finite() {
+            return Err(QiPhysicsError::InvalidAmount {
+                field: "persistent_runtime_qi_total",
+                value: total,
+            });
+        }
+
+        for account in expected_accounts {
+            let amount = restored
+                .remove(&account)
+                .expect("validated persistent runtime account set is complete");
+            self.balances.insert(account, amount);
+        }
+        Ok(())
+    }
+
     pub fn remove_balance(&mut self, account: &QiAccountId) -> Option<f64> {
         self.balances.remove(account)
     }
@@ -1114,6 +1166,61 @@ mod tests {
     use crate::world::zone::ZoneRegistry;
 
     use super::*;
+
+    #[test]
+    fn persistent_runtime_restore_validates_as_one_atomic_ledger_boundary() {
+        let accounts = persistent_runtime_qi_accounts();
+        let valid = accounts
+            .iter()
+            .enumerate()
+            .map(|(index, account)| (account.clone(), (index + 1) as f64))
+            .collect::<Vec<_>>();
+        let mut ledger = WorldQiAccount::default();
+        let sentinel = QiAccountId::zone("restore-sentinel");
+        ledger
+            .set_balance(sentinel.clone(), 7.0)
+            .expect("sentinel fixture balance should be valid");
+
+        let mut invalid = valid.clone();
+        invalid[0].1 = -1.0;
+        let error = ledger
+            .restore_persistent_runtime_balances(&invalid)
+            .expect_err("negative persistent runtime balance must fail closed");
+        assert!(matches!(
+            error,
+            QiPhysicsError::InvalidAmount {
+                field: "persistent_runtime_qi_balance",
+                ..
+            }
+        ));
+        assert_eq!(
+            ledger.balance(&sentinel),
+            7.0,
+            "failed restore must not partially mutate the existing ledger"
+        );
+        assert!(
+            ledger
+                .iter_balances()
+                .all(|(account, _)| account == &sentinel),
+            "failed restore must not install a prefix of persistent runtime accounts"
+        );
+
+        ledger
+            .restore_persistent_runtime_balances(&valid)
+            .expect("validated persistent runtime balances should restore");
+        for (account, balance) in valid {
+            assert_eq!(ledger.balance(&account), balance, "account={account}");
+        }
+        assert_eq!(
+            ledger.balance(&sentinel),
+            7.0,
+            "restore should not remove unrelated runtime owners"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "restart restore must not manufacture QiTransfer audit entries"
+        );
+    }
 
     #[test]
     fn ledger_to_zone_credits_external_owner_without_zone_shadow() {

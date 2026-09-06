@@ -77,10 +77,20 @@ pub(super) fn load_void_action_cooldown_records(
                 )
             })?;
             let ready_at_tick: i64 = row.get(2)?;
+            let ready_at_tick = u64::try_from(ready_at_tick).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    Type::Integer,
+                    Box::new(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("negative void-action cooldown tick in persistence: {error}"),
+                    )),
+                )
+            })?;
             Ok(VoidActionCooldownRecord {
                 character_id,
                 kind,
-                ready_at_tick: ready_at_tick as u64,
+                ready_at_tick,
             })
         })
         .map_err(io::Error::other)?;

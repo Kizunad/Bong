@@ -127,6 +127,21 @@ pub(super) fn clear_known_techniques_retry(
     state.retries.remove(subject);
 }
 
+pub(super) fn clear_stale_known_techniques_retries(
+    state: &mut KnownTechniquesReconnectState,
+    pending_subjects: &HashSet<String>,
+) {
+    let stale_subjects = state
+        .retries
+        .keys()
+        .filter(|subject| !pending_subjects.contains(subject.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in stale_subjects {
+        clear_known_techniques_retry(state, subject.as_str());
+    }
+}
+
 pub(super) fn known_techniques_live_activation(world: &World, subject: &str) -> Option<Entity> {
     world
         .resource::<KnownTechniquesActivations>()
@@ -770,18 +785,11 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
 
     // A subject that is still pending reconnect is saved by the handoff dispatcher below;
     // keeping its retry entry here would double-count attempts and alter the handoff gate.
-    for subject in &pending_subjects {
-        if !world
-            .resource::<PendingKnownTechniquesHandoffs>()
-            .0
-            .contains_key(subject)
-        {
-            clear_known_techniques_retry(
-                &mut world.resource_mut::<KnownTechniquesReconnectState>(),
-                subject,
-            );
-        }
-    }
+    let pending_subject_set = pending_subjects.iter().cloned().collect::<HashSet<_>>();
+    clear_stale_known_techniques_retries(
+        &mut world.resource_mut::<KnownTechniquesReconnectState>(),
+        &pending_subject_set,
+    );
 
     for subject in pending_subjects {
         if !world

@@ -102,11 +102,9 @@ pub(crate) fn hydrate_runtime_qi_accounts(
     qi_ledger: &mut WorldQiAccount,
 ) -> io::Result<usize> {
     let balances = load_runtime_qi_account_balances(settings)?;
-    for (account, balance) in &balances {
-        qi_ledger
-            .set_balance(account.clone(), *balance)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    }
+    qi_ledger
+        .restore_persistent_runtime_balances(&balances)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(balances.len())
 }
 

@@ -164,6 +164,33 @@ fn known_techniques_retry_uses_bounded_backoff_capped_attempts_and_log_coalescin
 }
 
 #[test]
+fn known_techniques_retry_cleanup_removes_only_subjects_no_longer_pending() {
+    let mut state = KnownTechniquesReconnectState::default();
+    assert!(begin_known_techniques_retry(
+        &mut state,
+        "offline:stale-retry",
+        0
+    ));
+    assert!(begin_known_techniques_retry(
+        &mut state,
+        "offline:pending-retry",
+        0
+    ));
+
+    let pending_subjects = std::collections::HashSet::from(["offline:pending-retry".to_string()]);
+    clear_stale_known_techniques_retries(&mut state, &pending_subjects);
+
+    assert!(
+        !state.retries.contains_key("offline:stale-retry"),
+        "retry state for a subject no longer pending must be cleared"
+    );
+    assert!(
+        state.retries.contains_key("offline:pending-retry"),
+        "retry state for a still-pending subject must remain available for the handoff"
+    );
+}
+
+#[test]
 fn known_techniques_descriptor_pins_canonical_slice_contract() {
     let descriptor = &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR;
     assert_eq!(descriptor.id, KNOWN_TECHNIQUES_SLICE_ID);
@@ -1607,6 +1634,43 @@ fn void_action_cooldowns_roundtrip_hydrates_resource() {
 }
 
 #[test]
+fn void_action_cooldown_negative_tick_fails_closed_during_hydrate() {
+    let (settings, root) = persistence_settings("void-action-negative-tick");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+    persist_void_action_cooldown(&settings, "offline:Void", VoidActionKind::Barrier, 12_345)
+        .expect("valid cooldown should persist before corruption");
+
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute_batch("PRAGMA ignore_check_constraints = ON;")
+        .expect("fixture should allow deliberate negative-value corruption");
+    connection
+        .execute(
+            "UPDATE void_action_cooldowns SET ready_at_tick = -1 WHERE character_id = ?1",
+            params!["offline:Void"],
+        )
+        .expect("negative cooldown fixture should be writable");
+    drop(connection);
+
+    let mut cooldowns = VoidActionCooldowns::default();
+    let error = hydrate_void_action_cooldowns(&settings, &mut cooldowns)
+        .expect_err("negative persisted cooldown must fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("negative void-action cooldown tick"),
+        "hydrate error should explain the rejected signed tick, actual={error}"
+    );
+    assert_eq!(
+        cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
+        0,
+        "failed cooldown hydrate must not install a reinterpreted u64::MAX deadline"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn task13_migration_backfills_legacy_player_cultivation() {
     let db_path = database_path("task13-legacy-cultivation-backfill");
     fs::create_dir_all(db_path.parent().expect("db path should have parent"))
@@ -1710,6 +1774,90 @@ fn task13_migration_backfills_legacy_player_cultivation() {
         Some(canonical_player_id("Azure").as_str())
     );
 
+    let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+}
+
+#[test]
+fn legacy_player_negative_qi_migration_fails_closed_without_partial_backfill() {
+    let db_path = database_path("legacy-negative-qi-backfill");
+    fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+        .expect("temp db parent should be created");
+
+    let mut connection = Connection::open(&db_path).expect("db should open");
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE player_core (
+                username TEXT PRIMARY KEY,
+                current_char_id TEXT NOT NULL,
+                realm TEXT NOT NULL,
+                spirit_qi REAL NOT NULL,
+                spirit_qi_max REAL NOT NULL,
+                karma REAL NOT NULL,
+                experience INTEGER NOT NULL,
+                inventory_score REAL NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE TABLE player_slow (
+                username TEXT PRIMARY KEY,
+                pos_x REAL NOT NULL,
+                pos_y REAL NOT NULL,
+                pos_z REAL NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 12;
+            ",
+        )
+        .expect("legacy schema should be created");
+    connection
+        .execute(
+            "
+            INSERT INTO player_core (
+                username, current_char_id, realm, spirit_qi, spirit_qi_max,
+                karma, experience, inventory_score, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ",
+            params![
+                "Azure",
+                canonical_player_id("Azure"),
+                "qi_refining_3",
+                -0.5_f64,
+                123.0_f64,
+                0.25_f64,
+                900_i64,
+                0.5_f64,
+                CURRENT_SCHEMA_VERSION,
+                1_i64,
+            ],
+        )
+        .expect("negative legacy player should be insertable into the old schema");
+
+    let error = apply_migrations(&mut connection)
+        .expect_err("negative legacy player qi must not be clamped into a new snapshot");
+    assert!(
+        error.to_string().contains("legacy_player.spirit_qi"),
+        "migration error should identify the rejected qi field, actual={error}"
+    );
+    let user_version: i32 = connection
+        .query_row("PRAGMA user_version;", [], |row| row.get(0))
+        .expect("user_version should remain queryable after rollback");
+    assert_eq!(
+        user_version, 12,
+        "failed legacy qi validation must roll back the v13 migration"
+    );
+    let cultivation_table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'player_cultivation'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("sqlite_master should remain queryable after rollback");
+    assert_eq!(
+        cultivation_table_count, 0,
+        "failed legacy qi migration must not leave a partial cultivation table"
+    );
     let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
 }
 
@@ -6682,7 +6830,8 @@ fn npc_archive_db_open_failure_restores_previous_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
 
     fs::remove_file(settings.db_path()).expect("fixture database should be removable");
@@ -6727,7 +6876,8 @@ fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
 
     archive.death_count = 2;
@@ -6778,7 +6928,8 @@ fn npc_archive_replacement_write_failure_preserves_bundle_and_index() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("baseline bundle should exist");
     let previous_index: (String, i64, String) = {
         let connection = Connection::open(settings.db_path()).expect("db should open");
@@ -6878,7 +7029,8 @@ fn npc_first_archive_failure_removes_new_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     assert!(
         !archive_path.exists(),
         "first archive fixture must begin without previous bytes"
@@ -6919,7 +7071,8 @@ fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     fs::create_dir_all(&archive_path).expect("directory fixture should be creatable");
     let open_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let open_called_for_hook = open_called.clone();
@@ -6937,6 +7090,63 @@ fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
     assert!(
         !open_called.load(std::sync::atomic::Ordering::SeqCst),
         "prior-file read errors must not open the database or run hooks"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_path_helpers_reject_unsafe_components() {
+    let (_, root) = persistence_settings("archive-path-component-validation");
+    for unsafe_id in ["", ".", "..", "../escape", r"..\escape", "/tmp/escape"] {
+        assert!(
+            validate_archive_component(unsafe_id).is_err(),
+            "archive component `{unsafe_id}` must fail closed"
+        );
+        assert!(
+            npc_deceased_archive_relative_path(unsafe_id, 0).is_err(),
+            "deceased archive path must reject `{unsafe_id}`"
+        );
+        assert!(
+            npc_digest_archive_relative_path(unsafe_id).is_err(),
+            "digest archive path must reject `{unsafe_id}`"
+        );
+    }
+
+    assert_eq!(
+        npc_deceased_archive_relative_path("npc:valid", 0)
+            .expect("a single safe component should be accepted"),
+        "data/archive/npc_deceased/1970/npc:valid.json.zst"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zstd_bundle_publication_does_not_overwrite_existing_target() {
+    let (_, root) = persistence_settings("zstd-bundle-no-replace");
+    let path = root.join("archive.json.zst");
+    write_zstd_bundle(&path, br#"{"version":1}"#).expect("initial bundle should publish");
+    let previous = fs::read(&path).expect("initial bundle should be readable");
+
+    let error = write_zstd_bundle(&path, br#"{"version":2}"#)
+        .expect_err("publishing over an existing bundle must fail atomically");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "existing target must reject replacement rather than overwrite it"
+    );
+    assert_eq!(
+        fs::read(&path).expect("existing bundle should remain readable"),
+        previous,
+        "failed no-replace publication must preserve the previous bytes"
+    );
+    let temp_files = fs::read_dir(&root)
+        .expect("bundle parent should remain readable")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+        .count();
+    assert_eq!(
+        temp_files, 0,
+        "failed publication must clean its temporary file"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -7000,6 +7210,20 @@ fn npc_archive_reports_primary_and_rollback_failures_together() {
     assert!(message.contains("primary write failure"));
     assert!(message.contains("rollback failed"));
     assert!(message.contains("Is a directory") || message.contains("directory"));
+    let composite = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<PersistenceRollbackFailure>())
+        .expect("combined failure must retain its structured primary/rollback errors");
+    assert_eq!(
+        composite.primary.kind(),
+        io::ErrorKind::Other,
+        "the primary failure must remain the composite source"
+    );
+    assert_eq!(
+        composite.rollback.kind(),
+        io::ErrorKind::IsADirectory,
+        "the rollback failure must remain available in the composite diagnostic"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -7037,7 +7261,8 @@ fn load_npc_deceased_archive_rejects_corrupted_zstd_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     fs::write(&archive_path, b"not a zstd bundle")
         .expect("corrupted archive fixture should overwrite bundle");
 
@@ -7113,12 +7338,14 @@ fn find_orphaned_npc_archive_paths_reports_unindexed_archives() {
         &settings,
         orphan_archive.char_id.as_str(),
         orphan_archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let indexed_path = npc_deceased_archive_absolute_path(
         &settings,
         indexed_archive.char_id.as_str(),
         indexed_archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let connection = Connection::open(settings.db_path()).expect("db should open");
     connection
         .execute(
@@ -7187,6 +7414,7 @@ fn npc_digest_retention_sweeps_180_day_stale_rows() {
     );
     assert!(
         npc_digest_archive_absolute_path(&settings, stale.state.char_id.as_str(), now_wall,)
+            .expect("digest archive path should be valid")
             .exists(),
         "stale digest should be written to cold archive"
     );
@@ -8254,6 +8482,29 @@ fn zone_influence_persistence_round_trip() {
         .find(|r| r.zone_id == "wilderness" && r.char_id == "offline:Wanderer")
         .expect("应有 Wanderer 记录");
     assert!(!wanderer_record.dominant, "Wanderer 不是霸主");
+
+    // 全量快照必须替换旧集合，而不是仅 upsert 当前键；删除 wilderness 与 RivalB
+    // 后，下一次 hydrate 不得复活这两条陈旧行。
+    influence_map
+        .zones
+        .get_mut("spawn")
+        .expect("spawn fixture should remain present")
+        .players
+        .remove("offline:RivalB");
+    influence_map.zones.remove("wilderness");
+    persist_zone_influence_snapshot(&settings, &influence_map)
+        .expect("replacement zone influence snapshot should persist");
+    let replacement_records =
+        load_zone_influence_snapshot(&settings).expect("replacement snapshot should load");
+    assert_eq!(
+        replacement_records.len(),
+        1,
+        "removed influence rows must not survive a full snapshot replacement"
+    );
+    assert_eq!(
+        replacement_records[0].char_id, "offline:HeroA",
+        "the surviving snapshot row must be the current HeroA entry"
+    );
 
     let _ = fs::remove_dir_all(root);
 }

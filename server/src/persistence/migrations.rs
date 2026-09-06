@@ -1424,9 +1424,15 @@ pub(super) fn backfill_legacy_player_cultivation(
         if let Some(restored_realm) = legacy_player_realm_to_cultivation(realm.as_str()) {
             cultivation.realm = restored_realm;
         }
-        if spirit_qi.is_finite() {
-            cultivation.qi_current = spirit_qi.max(0.0);
-        }
+        cultivation.qi_current =
+            crate::qi_physics::finite_non_negative(spirit_qi, "legacy_player.spirit_qi").map_err(
+                |error| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        error,
+                    )))
+                },
+            )?;
         if spirit_qi_max.is_finite() && spirit_qi_max > 0.0 {
             cultivation.qi_max = spirit_qi_max;
         }

@@ -484,6 +484,9 @@ pub fn persist_zone_influence_snapshot(
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
+    transaction
+        .execute("DELETE FROM zone_influence", [])
+        .map_err(io::Error::other)?;
     for (zone_id, entry) in &influence_map.zones {
         for (char_id, player_inf) in &entry.players {
             let is_dominant = entry

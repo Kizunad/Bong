@@ -102,12 +102,79 @@ pub(crate) fn upsert_dropped_loot_entries(
 
 pub(crate) fn delete_dropped_loot_entry(
     transaction: &rusqlite::Transaction<'_>,
+    inventory: &crate::inventory::PlayerInventory,
     instance_id: u64,
 ) -> io::Result<()> {
+    let instance_id_sql = i64::try_from(instance_id).map_err(io::Error::other)?;
+    let entry_json: Option<String> = transaction
+        .query_row(
+            "SELECT entry_json FROM dropped_loot WHERE instance_id = ?1",
+            params![instance_id_sql],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let Some(entry_json) = entry_json else {
+        // 没有 durable row 时没有发生删除；保留原有幂等语义，让同一进程内刚生成但
+        // 尚未落盘的掉落仍可完成正常 inventory checkpoint。
+        return Ok(());
+    };
+
+    let entry: DroppedLootEntry = serde_json::from_str(&entry_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if entry.instance_id != instance_id
+        || entry.instance_id != entry.item.instance_id
+        || entry.instance_id > JS_SAFE_INTEGER_MAX
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "durable dropped loot id mismatch row={instance_id} entry={} item={}",
+                entry.instance_id, entry.item.instance_id
+            ),
+        ));
+    }
+
+    let carried = crate::inventory::inventory_item_by_instance_borrow(inventory, instance_id)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "refusing to delete dropped loot instance {instance_id} without inventory ownership proof"
+                ),
+            )
+        })?;
+    if !carried.spirit_quality.is_finite()
+        || carried.spirit_quality < 0.0
+        || carried.spirit_quality > entry.item.spirit_quality
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "dropped loot instance {instance_id} has invalid carried spirit_quality={} for durable value {}",
+                carried.spirit_quality, entry.item.spirit_quality
+            ),
+        ));
+    }
+    // Pickup attrition is the only legal mutation between attaching the durable item and this
+    // checkpoint: it lowers `spirit_quality` and records the released qi against the zone. All
+    // other fields must remain byte-for-byte equivalent, otherwise a caller could delete one
+    // durable item while persisting a different instance under the same id.
+    let mut expected_item = entry.item;
+    expected_item.spirit_quality = carried.spirit_quality;
+    if carried != &expected_item {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "refusing to delete dropped loot instance {instance_id}: carried item does not match durable payload"
+            ),
+        ));
+    }
+
     transaction
         .execute(
-            "DELETE FROM dropped_loot WHERE instance_id = ?1",
-            params![i64::try_from(instance_id).map_err(io::Error::other)?],
+            "DELETE FROM dropped_loot WHERE instance_id = ?1 AND entry_json = ?2",
+            params![instance_id_sql, entry_json],
         )
         .map_err(io::Error::other)?;
     Ok(())

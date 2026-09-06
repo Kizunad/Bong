@@ -48,6 +48,43 @@ pub(super) fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<
     }
 }
 
+#[derive(Debug)]
+pub(super) struct PersistenceRollbackFailure {
+    pub(super) operation: &'static str,
+    pub(super) primary: io::Error,
+    pub(super) rollback: io::Error,
+}
+
+impl std::fmt::Display for PersistenceRollbackFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} failed: {}; rollback failed: {}",
+            self.operation, self.primary, self.rollback
+        )
+    }
+}
+
+impl std::error::Error for PersistenceRollbackFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // 保留 primary 作为 source 链的根；rollback 的完整诊断同时固定在 Display 中，
+        // 因为 std::error::Error 只有一个 source 槽位。
+        Some(&self.primary)
+    }
+}
+
+pub(super) fn combine_persistence_failure(
+    operation: &'static str,
+    primary: io::Error,
+    rollback: io::Error,
+) -> io::Error {
+    io::Error::other(PersistenceRollbackFailure {
+        operation,
+        primary,
+        rollback,
+    })
+}
+
 pub(super) fn default_termination_category() -> String {
     "横死".to_string()
 }
@@ -241,35 +278,62 @@ pub(super) fn sql_usize(value: usize) -> io::Result<i64> {
     i64::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-pub(super) fn npc_deceased_archive_relative_path(char_id: &str, archived_at_wall: i64) -> String {
-    format!(
+pub(super) fn validate_archive_component(value: &str) -> io::Result<()> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains('\0')
+        || Path::new(value).is_absolute()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unsafe archive path component `{value}`"),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn npc_deceased_archive_relative_path(
+    char_id: &str,
+    archived_at_wall: i64,
+) -> io::Result<String> {
+    validate_archive_component(char_id)?;
+    Ok(format!(
         "data/archive/npc_deceased/{}/{}.json.zst",
         utc_year_from_unix_seconds(archived_at_wall),
         char_id
-    )
+    ))
 }
 
 pub(super) fn npc_deceased_archive_absolute_path(
     settings: &PersistenceSettings,
     char_id: &str,
     archived_at_wall: i64,
-) -> PathBuf {
-    resolve_persistence_relative_path(
+) -> io::Result<PathBuf> {
+    let relative_path = npc_deceased_archive_relative_path(char_id, archived_at_wall)?;
+    Ok(resolve_persistence_relative_path(
         settings,
-        npc_deceased_archive_relative_path(char_id, archived_at_wall).as_str(),
-    )
+        relative_path.as_str(),
+    ))
 }
 
-pub(super) fn npc_digest_archive_relative_path(char_id: &str) -> String {
-    format!("data/archive/npc_digests/{char_id}.json.zst")
+pub(super) fn npc_digest_archive_relative_path(char_id: &str) -> io::Result<String> {
+    validate_archive_component(char_id)?;
+    Ok(format!("data/archive/npc_digests/{char_id}.json.zst"))
 }
 
 pub(super) fn npc_digest_archive_absolute_path(
     settings: &PersistenceSettings,
     char_id: &str,
     _archived_at_wall: i64,
-) -> PathBuf {
-    resolve_persistence_relative_path(settings, npc_digest_archive_relative_path(char_id).as_str())
+) -> io::Result<PathBuf> {
+    let relative_path = npc_digest_archive_relative_path(char_id)?;
+    Ok(resolve_persistence_relative_path(
+        settings,
+        relative_path.as_str(),
+    ))
 }
 
 pub(super) fn resolve_persistence_relative_path(
@@ -325,7 +389,16 @@ pub(super) fn write_zstd_bundle_with_writer(
         write_temp(&mut temp_file, &compressed)?;
         temp_file.sync_all()?;
         drop(temp_file);
-        fs::rename(&temp_path, path)
+        // hard_link 在目标已存在时原子地返回 AlreadyExists，不替换既有归档。
+        // 临时文件与目标位于同一目录，因此链接操作不会跨文件系统。
+        fs::hard_link(&temp_path, path)?;
+        if let Err(error) = fs::remove_file(&temp_path) {
+            // hard_link 已成功创建且目标此前不存在；清理失败时尽力撤销本次发布，
+            // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。
+            let _ = fs::remove_file(path);
+            return Err(error);
+        }
+        Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);

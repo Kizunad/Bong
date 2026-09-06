@@ -183,18 +183,20 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
         settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )?;
     let relative_path =
-        npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall);
+        npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)?;
     let previous_archive = read_optional_file(&archive_path)?;
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     if let Err(error) = write_bundle(&archive_path, &archive_json) {
         return match rollback_file(&archive_path, previous_archive.as_deref()) {
             Ok(()) => Err(error),
-            Err(rollback_error) => Err(io::Error::other(format!(
-                "npc archive replacement failed: {error}; rollback failed: {rollback_error}"
-            ))),
+            Err(rollback_error) => Err(combine_persistence_failure(
+                "npc archive replacement",
+                error,
+                rollback_error,
+            )),
         };
     }
 
@@ -219,9 +221,11 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
         Ok(()) => Ok(()),
         Err(error) => match rollback_file(&archive_path, previous_archive.as_deref()) {
             Ok(()) => Err(error),
-            Err(rollback_error) => Err(io::Error::other(format!(
-                "npc archive persistence failed: {error}; rollback failed: {rollback_error}"
-            ))),
+            Err(rollback_error) => Err(combine_persistence_failure(
+                "npc archive persistence",
+                error,
+                rollback_error,
+            )),
         },
     }
 }
@@ -231,6 +235,7 @@ pub fn load_npc_deceased_archive(
     settings: &PersistenceSettings,
     char_id: &str,
 ) -> io::Result<Option<NpcDeceasedArchiveRecord>> {
+    validate_archive_component(char_id)?;
     let connection = open_persistence_connection(settings)?;
     let path: Option<String> = connection
         .query_row(
@@ -262,16 +267,36 @@ pub fn sweep_stale_npc_digests(
 
     for digest in &stale_digests {
         let archive_path =
-            npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall);
+            npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall)?;
         let previous_archive = read_optional_file(&archive_path)?;
         let archive_json = serde_json::to_vec_pretty(digest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if let Err(error) = write_zstd_bundle(&archive_path, &archive_json) {
+        let publish_result = match previous_archive.as_deref() {
+            Some(existing) => {
+                let decoded = zstd::stream::decode_all(existing)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                if decoded == archive_json {
+                    Ok(())
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!(
+                            "npc digest archive already contains different bytes for `{}`",
+                            digest.char_id
+                        ),
+                    ))
+                }
+            }
+            None => write_zstd_bundle(&archive_path, &archive_json),
+        };
+        if let Err(error) = publish_result {
             return match rollback_file(&archive_path, previous_archive.as_deref()) {
                 Ok(()) => Err(error),
-                Err(rollback_error) => Err(io::Error::other(format!(
-                    "npc digest archive replacement failed: {error}; rollback failed: {rollback_error}"
-                ))),
+                Err(rollback_error) => Err(combine_persistence_failure(
+                    "npc digest archive replacement",
+                    error,
+                    rollback_error,
+                )),
             };
         }
     }
