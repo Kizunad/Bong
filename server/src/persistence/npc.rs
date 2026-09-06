@@ -189,14 +189,12 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
     let previous_archive = read_optional_file(&archive_path)?;
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if let Err(error) = write_bundle(&archive_path, &archive_json) {
-        // `write_zstd_bundle` 的发布契约是失败时不改变最终路径：临时文件只会在
-        // hard_link 成功后成为目标，目标已存在时 hard_link 只返回 AlreadyExists。
-        // 这里不能再对 None 做无条件 remove，否则目标不存在的观察与并发发布之间的
-        // 窗口会让失败方删掉并发拥有者刚发布的归档。失败写入只清理自己的临时文件，
-        // 保留已有/并发目标及其所有权。
-        return Err(error);
-    }
+    // `write_zstd_bundle` 的发布契约是失败时不改变最终路径：临时文件只会在
+    // hard_link 成功后成为目标，目标已存在时 hard_link 只返回 AlreadyExists。
+    // 这里不能再对 None 做无条件 remove，否则目标不存在的观察与并发发布之间的
+    // 窗口会让失败方删掉并发拥有者刚发布的归档。失败写入只清理自己的临时文件，
+    // 保留已有/并发目标及其所有权。
+    write_bundle(&archive_path, &archive_json)?;
 
     let persisted = (|| -> io::Result<()> {
         let mut connection = open_connection(settings)?;
@@ -295,13 +293,11 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
             }
             None => write_bundle(&archive_path, &archive_json),
         };
-        if let Err(error) = publish_result {
-            // `write_zstd_bundle` 只会发布自己的临时文件，且以 hard_link 做 no-replace
-            // 发布；失败时调用方没有最终目标的 ownership。特别是读取到 None 后，
-            // 另一个 publisher 可能已在写入期间建立目标，不能用 rollback_file(None)
-            // 把并发 publisher 的归档删除。
-            return Err(error);
-        }
+        // `write_zstd_bundle` 只会发布自己的临时文件，且以 hard_link 做 no-replace
+        // 发布；失败时调用方没有最终目标的 ownership。特别是读取到 None 后，
+        // 另一个 publisher 可能已在写入期间建立目标，不能用 rollback_file(None)
+        // 把并发 publisher 的归档删除。
+        publish_result?;
     }
 
     let transaction = connection.transaction().map_err(io::Error::other)?;
