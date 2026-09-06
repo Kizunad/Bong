@@ -1,6 +1,6 @@
-# plan-bot-e2e-timing-flaky-v1（骨架）
+# plan-bot-e2e-timing-flaky-v1
 
-> **骨架（草案）**。一句话主题：治理 `bot-e2e(1)` 中
+> **Active（实施中）**。一句话主题：治理 `bot-e2e(1)` 中
 > `cultivation_qi_color_inspect` 与 `network_request_unknown_type` 的时序抖动，
 > 以真实事件/状态锚点替代无依据的 wall-clock 等待，同时保持原有断言语义。
 
@@ -8,9 +8,9 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 在同一 HEAD 重现并定位等待窗口、锚点或服务端时序根因 | bughunt | ⬜ |
-| P1 | 以最小 Bot harness 修复确定性等待；若根因在服务端则停下转交 | fix_pr | ⬜ |
-| P2 | 连续稳定性证据、完整受影响门禁、fresh validator 与 PR review | coverage | ⬜ |
+| P0 | 在同一 HEAD 重现并定位等待窗口、锚点或服务端时序根因 | bughunt | ✅ 2026-09-06 |
+| P1 | 以最小 Bot harness 修复确定性等待；若根因在服务端则停下转交 | fix_pr | ✅ 2026-09-06 |
+| P2 | 连续稳定性证据、完整受影响门禁、fresh validator 与 PR review | coverage | ⏳ |
 
 ## 接入面 Checklist
 
@@ -32,38 +32,43 @@
 
 ## P0 — 第一性定位
 
-- 在 `origin/main` 固定 HEAD 上分别复跑两个场景，记录每次的事件时间、状态快照、
-  wall-clock 等待与 server 日志锚点；不能把一次通过当作根因证据。
-- 区分三类原因：窗口确实低于正常耗时分布、等待锚点选错/命中旧快照、或服务端
-  异步事件与状态落地存在真实竞态。
-- 对 `cultivation_qi_color_inspect` 锁定“空挥崩拳应收到
-  `burst_meridian_event`”的原断言及其真实生产事件来源；对
-  `network_request_unknown_type` 锁定心跳观察期后的无玩法副作用窗口及现有
-  状态/事件来源。
-- 若证据指向服务端生产时序或协议语义缺陷，停止改动并回报，不以 Bot 等待逻辑
-  迁就 gameplay；若是测试观察锚点问题，进入 P1。
+- 在基线 `origin/main=4dd7bc17e` 的真实 server 上复现：低 TPS（约 4.4 TPS）下，
+  崩拳/吸灵口的固定 wall-clock 间隔会先越过 `skillbar_config.cooldown_until_ms`
+  的预测时间，但服务端实际 tick 冷却尚未清除，后续 cast 被静默丢弃；实际接受的
+  崩拳 tick 为 `53/123/193/263`，吸灵口为 `272/433`。
+- 同一链路的空间复现确认 `/tpzone` chat 是命令确认，不是 Position 提交；同坐标
+  no-op 不发新的 `pos_look`。`/tpdim` 的 `Respawn` 后还会依次发 0.001 格 pulse
+  与 restore 位置帧，若只等第一帧就发远端 `/tpzone`，restore 会覆盖新位置。
+- `network_request_unknown_type` 的窗口副作用来自独立 heartbeat 的五类已知
+  `world_omen` VFX，而非未知请求被处理；未知同前缀 event 仍必须视为副作用。
+- 结论：根因是 Bot 观察锚点/状态等待错误，不是 server gameplay 或协议语义缺陷；
+  server 生产事件与位置状态均按既有契约发出，进入 P1 保持服务端不变。
 
 ## P1 — 确定性 Bot 等待修复
 
-- 优先使用已存在的事件/状态等待或新增最小、可复用且只读的 Bot harness 原语，
-  poll 到明确锚点/状态达成，不以放大 timeout 数值掩盖竞态。
-- 保留两个场景的成功、失败、负向副作用与边界断言；禁止删除断言、降低断言
-  强度、扩大未知 type 的允许副作用范围，或改 server/gameplay 迁就测试。
-- 若确需调整阈值，必须由多次正常耗时分布和明确余量证明，并在 evidence 中
-  记录依据；不得使用后台进程、tail 或忽略失败制造假绿。
-- 补充针对等待锚点的 contract/regression 覆盖，确保旧快照、缺失事件、状态未达成
-  时仍然失败并保留诊断信息。
+- `cultivation_qi_color_inspect` 每次 cast 只发送一次 `skill_bar_cast`，等待本次
+  请求后的真实接受反馈与新的 `skillbar_config`；cooldown 的 Unix deadline 只作
+  休眠提示，最终通过同值 `skill_bar_bind` 刷新到服务端实际下发的 `cooldown=0`。
+  不重复 cast、不把拒绝伪装成成功，原有 Heavy/Intricate、全量/脱敏/静默、维度与
+  距离断言均保留。
+- 空间等待使用 `server/zones.json` 推导目标坐标：已有权威坐标与目标相同的 no-op
+  只接受新 chat，否则必须等待命中目标坐标的 `pos_look`；跨维必须等 Respawn 后
+  的 pulse 与 restore 两个位置帧，避免旧帧满足等待。未知 `world_omen` 只加入
+  heartbeat 已登记的五个精确 VFX ID，未知同前缀仍判红。
+- 使用现有 `Bot.wait_for`、`Bot.position`、typed `server_data` 和现有同值绑定接口，
+  未新增 server seam，未改 server/gameplay、client、agent、schema 或其它 plan。
+- `scripts/bot/test_protocol.py` 新增 7 条回归覆盖：单次 cast、cooldown 新状态、
+  resolver skill、冷却刷新、no-op 坐标、陈旧位置帧过滤、Respawn 后双位置帧。
 
 ## P2 — 稳定性验收与收口
 
-- 修改后的两个场景连续多次在同一真实入口运行并全绿，记录精确次数、每次
-  `passed/failed/ignored` 与目标场景结果，以及事件/状态锚点证据；稳定性结论
-  必须由等待机制的确定性解释支撑，不接受碰运气重跑。
-- 运行 `bash -n`、相关 `scripts/bot/test_protocol.py` / scripts contract tests，
-  以及受影响栈门禁；合并最新 `origin/main` 后对受影响内容复验。
-- 对最终 HEAD 启动无上下文 read-only validator，等待当前 HEAD 的 Kody 主动
-  “未发现问题”结论；PR 中文标题/body 均带完整 plan basename，body 末尾注明
-  执行模型与 validator 模型。
+- 已完成两轮真实双场景连续验证：FZ2 轮中两场景均 PASS（178.3s/23.5s），
+  FZ3 轮中两场景均 PASS（179.7s/23.6s）；每轮 runner 均输出
+  `total=2 pass=2 skip=0 fail=0` 且返回码为 0。最小真实序列还核验了两次跨维的
+  `Respawn → pulse pos_look → restore pos_look → 目标 zone pos_look` 顺序。
+- 已通过 7 条场景回归单测、`python3 -m py_compile scripts/bot/scenarios/*.py`、
+  `bash -n scripts/bot-e2e.sh` 与 `git diff --check`；完整协议测试、最新主线合并
+  后复验、fresh validator、PR review 与 CI 仍待完成。
 
 ## 非目标
 
@@ -73,13 +78,21 @@
   或只观察聊天文本的假阳性测试。
 - 不修改其他 plan、`R7`、生产配置或不相关 Bot 场景。
 
-## §8 开放问题（P0 决策门前需收口）
+## §8.1 决议
 
-1. 两个场景当前等待的完成/观察锚点分别是什么，是否是生产路径真正的完成信号？
-2. 稳定失败是否来自 wall-clock 窗口不足，还是旧快照/事件落地顺序竞态？
-3. 现有 Bot API 是否已有足够的事件/状态轮询能力，最小修复是否能完全留在
-   `scripts/bot/` 场景/harness？
-4. 如何用连续运行记录、锚点时间线和负向断言结果证明修复不是偶然变绿？
+1. 完成锚点是本次请求后的 typed 接受反馈与权威 `skillbar_config`，以及实际目标
+   坐标/跨维 pulse-restore `pos_look`；固定 sleep 与仅 chat/仅 Respawn 均不是完成
+   信号。未知请求的观察锚是排空 join 突发后的静默窗口，已知 heartbeat VFX 才可
+   按精确白名单豁免。
+2. 失败来自两类 Bot 时序问题：低 TPS 下固定冷却间隔误判 server 状态，以及
+   `/tpzone`/`/tpdim` 的旧位置帧与 no-op 位置没有按目标状态过滤；不是靠增大窗口
+   或修改 server 玩法解决。
+3. 现有 Bot API 已足够：`wait_for` 可按事件时间水位、typed payload 和坐标过滤，
+   `Bot.position` 可复用既有权威镜像，同值 bind 是公开请求接口；无需新增 seam。
+4. 稳定性证据由 FZ2/FZ3 两轮真实 runner 全绿、每轮精确
+   `total=2 pass=2 skip=0 fail=0`、最小 transfer 事件序列，以及回归 fake 覆盖旧
+   帧/no-op/缺失状态仍失败共同构成，非一次偶然重跑。
 
-上述问题须在 promotion 后以代码、日志和可重复实验收口；在 §8.1 决议前不得
-扩大到 server 修复或仅增加超时。
+## Finish Evidence
+
+> 本章节在 P2 完成后补齐，随后将 active plan 归档至 `docs/finished_plans/`。
