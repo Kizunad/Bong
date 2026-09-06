@@ -80,6 +80,10 @@ _AMBIENT_SERVER_DATA_TYPES = AMBIENT_SERVER_DATA_TYPES
 # 在 Added<FaunaVisualKind> 上触发、fauna/mundane.rs mundane_fauna_negative_zone_wither_system
 # 在世界 qi 驱动下触发——均为 ambient 调度器/世界状态驱动，与任何 client_request
 # 无关）。其余 vfx（combat/forge/alchemy/breakthrough 等）均为请求驱动。
+# `bong:world_omen_*` 是 `world::heartbeat` 独立调度器发出的五类环境征兆 VFX：
+# 它们不由任何 client_request 触发，不能把心跳观察期恰好跨过 omen 发射边界误判为
+# 未知 type 的玩法副作用。具体 ID 与 server/src/world/heartbeat.rs 的 OmenKind::vfx_id
+# 一一对应；只豁免这五个已知 ID，未知的同前缀 event 仍然判红。
 # bong:rat_bite_nip 是 plan-ambient-threat-v1 的环境威胁咬击 AV
 # （server/src/combat/rat_bite.rs::emit_rat_bite_nip_av，由噬元鼠 AI 自发触发、
 # 跟任何 client_request 无关）。一次咬击会同时产生**三件**东西：
@@ -88,7 +92,16 @@ _AMBIENT_SERVER_DATA_TYPES = AMBIENT_SERVER_DATA_TYPES
 #   ③ vfx_event(spawn_particle, bong:rat_bite_nip) —— 就是这里
 # 三件缺一个漏网，拒绝路径场景就会在 CI 上随机变红（①② 修完后 ③ 又挂了一次）。
 _AMBIENT_VFX_EVENT_IDS = frozenset(
-    {"bong:cultivation_absorb", "bong:fauna_spawn_dust", "bong:rat_bite_nip"}
+    {
+        "bong:cultivation_absorb",
+        "bong:fauna_spawn_dust",
+        "bong:rat_bite_nip",
+        "bong:world_omen_pseudo_vein",
+        "bong:world_omen_beast_tide",
+        "bong:world_omen_tide_sky",
+        "bong:world_omen_realm_collapse",
+        "bong:world_omen_karma_backlash",
+    }
 )
 _AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage__",)
 
