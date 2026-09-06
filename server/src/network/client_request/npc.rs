@@ -42,7 +42,7 @@ type NpcEngagementItem = (
 );
 
 #[derive(SystemParam)]
-pub(crate) struct NpcEngagementRequestParams<'w, 's> {
+pub struct NpcEngagementRequestParams<'w, 's> {
     pub(crate) npcs: Query<'w, 's, NpcEngagementItem, With<NpcMarker>>,
     pub(crate) trade_inventories: Query<'w, 's, &'static NpcTradeInventory, With<NpcMarker>>,
     pub(crate) lifecycles: Query<'w, 's, &'static Lifecycle>,

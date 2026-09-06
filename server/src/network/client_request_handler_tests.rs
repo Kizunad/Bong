@@ -5,6 +5,8 @@
 
 use super::*;
 
+use crate::combat::components::{WoundKind, Wounds};
+use crate::combat::events::RevivalActionIntent;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
 use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
@@ -12,7 +14,11 @@ use crate::inventory::{
     ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
 };
 use crate::world::dimension::{DimensionKind, DimensionLayers};
-use valence::prelude::{App, BlockPos, DVec3, Entity, EntityLayerId, Update};
+use valence::custom_payload::CustomPayloadEvent;
+use valence::prelude::{
+    ident, App, BlockPos, DVec3, Entity, EntityLayerId, IntoSystemConfigs, Update,
+};
+use valence::testing::create_mock_client;
 
 #[test]
 fn combat_pill_buff_status_payload_preserves_hud_fields() {
@@ -181,6 +187,217 @@ fn lookup_inventory() -> PlayerInventory {
     }
 }
 
+fn explosion_inventory_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+    ItemInstance {
+        instance_id,
+        template_id: template_id.to_string(),
+        display_name: template_id.to_string(),
+        grid_w: 1,
+        grid_h: 1,
+        weight: 0.1,
+        rarity: crate::inventory::ItemRarity::Common,
+        description: String::new(),
+        stack_count,
+        spirit_quality: 1.0,
+        durability: 1.0,
+        freshness: None,
+        mineral_id: None,
+        charges: None,
+        forge_quality: None,
+        forge_color: None,
+        forge_side_effects: Vec::new(),
+        forge_achieved_tier: None,
+        alchemy: None,
+        lingering_owner_qi: None,
+    }
+}
+
+fn explosion_inventory_with_stack(template_id: &str, count: u32) -> PlayerInventory {
+    PlayerInventory {
+        triggered_treasures: Vec::new(),
+        revision: crate::inventory::InventoryRevision(0),
+        containers: vec![crate::inventory::ContainerState {
+            quick_access: false,
+            id: "main_pack".into(),
+            name: "main_pack".into(),
+            rows: 5,
+            cols: 7,
+            items: vec![crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: explosion_inventory_item(9001, template_id, count),
+            }],
+            owner_instance_id: None,
+        }],
+        equipped: Default::default(),
+        hotbar: Default::default(),
+        bone_coins: 0,
+        max_weight: 50.0,
+    }
+}
+
+fn load_test_technique_registry() -> TechniqueRegistry {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/cultivation/techniques.toml");
+    TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::default())
+        .expect("checked-in technique catalog must load")
+}
+
+fn register_explosion_test_resources(app: &mut App) {
+    app.insert_resource(CombatClock::default());
+    app.init_resource::<ClientRequestBudget>();
+    app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+    app.insert_resource(crate::cultivation::skill_registry::init_registry());
+    app.insert_resource(load_test_technique_registry());
+    app.insert_resource(SkillMeridianDependencies::default());
+    app.insert_resource(GameplayActionQueue::default());
+    app.insert_resource(AlchemyMockState::default());
+    app.insert_resource(DroppedLootRegistry::default());
+    app.add_event::<crate::inventory::RemainsLootIntent>();
+    app.insert_resource(ItemRegistry::default());
+    app.insert_resource(RecipeRegistry::default());
+    app.insert_resource(ZoneRegistry::fallback());
+    app.init_resource::<SkillConfigStore>();
+    app.insert_resource(SkillConfigSchemas::default());
+    app.add_event::<CustomPayloadEvent>();
+    app.add_event::<crate::combat::events::AttackIntent>();
+    app.add_event::<crate::cultivation::burst_meridian::BurstMeridianEvent>();
+    app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+    app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+    app.add_event::<BreakthroughRequest>();
+    app.add_event::<ForgeRequest>();
+    app.add_event::<InsightChosen>();
+    app.add_event::<DefenseIntent>();
+    app.add_event::<RevivalActionIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<FalseSkinForgeRequest>();
+    app.add_event::<PlaceFurnaceRequest>();
+    app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
+    app.add_event::<SpiritNichePlaceRequest>();
+    app.add_event::<SpiritNicheRepairRequest>();
+    app.add_event::<SpiritNicheCoordinateRevealRequest>();
+    app.add_event::<CoffinOpenRequest>();
+    app.add_event::<crate::coffin::CoffinBreakRequest>();
+    app.add_event::<crate::coffin::CoffinMenuReclaimRequest>();
+    app.add_event::<crate::craft::CraftStartIntent>();
+    app.add_event::<crate::fauna::dying_elder::GiveDanToElderIntent>();
+    app.add_event::<crate::craft::WorkbenchOpenRequest>();
+    app.add_event::<crate::world::container_open::ContainerOpenRequest>();
+    app.add_event::<crate::lingtian::events::StartTillRequest>();
+    app.add_event::<crate::lingtian::events::StartRenewRequest>();
+    app.add_event::<crate::lingtian::events::StartPlantingRequest>();
+    app.add_event::<crate::lingtian::events::StartHarvestRequest>();
+    app.add_event::<crate::lingtian::events::StartReplenishRequest>();
+    app.add_event::<crate::lingtian::events::StartDrainQiRequest>();
+    app.add_event::<StartExtractRequestEvent>();
+    app.add_event::<CancelExtractRequestEvent>();
+    app.add_event::<QiColorInspectRequest>();
+    app.add_event::<MineralProbeIntent>();
+    app.add_event::<FreshnessProbeIntent>();
+    app.add_event::<SkillXpGain>();
+    app.add_event::<SkillScrollUsed>();
+    app.add_event::<BlockPlaceRequest>();
+    app.add_event::<crate::zhenfa::ZhenfaPlaceRequest>();
+    app.add_event::<crate::zhenfa::ZhenfaTriggerRequest>();
+    app.add_event::<crate::zhenfa::ZhenfaDisarmRequest>();
+    app.add_event::<crate::zhenfa::ScatterBeadUseRequest>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+    app.add_event::<crate::combat::events::CombatEvent>();
+    app.add_event::<crate::combat::events::DeathEvent>();
+    app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
+    app.add_event::<crate::combat::zhenmai_v2::MultiPointBackfireEvent>();
+    app.add_event::<crate::combat::zhenmai_v2::MeridianHardenEvent>();
+    app.add_event::<crate::combat::zhenmai_v2::MeridianSeveredVoluntaryEvent>();
+    app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
+    app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
+    app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+    app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+    app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
+    app.add_event::<crate::cmd::dev::block_picker::BlockPickerGiveIntent>();
+}
+
+fn register_explosion_test_systems(app: &mut App) {
+    crate::network::register_lingtian_ingress_wiring(app);
+    app.add_systems(
+        Update,
+        crate::network::inventory_event_emit::emit_durability_changed_inventory_events
+            .after(crate::lingtian::LingtianRequestIngressSet),
+    );
+    app.add_systems(
+        Update,
+        crate::lingtian::systems::validate_and_dispatch_lingtian_requests
+            .after(crate::lingtian::LingtianRequestIngressSet),
+    );
+    app.add_systems(
+        Update,
+        crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+    );
+}
+
+#[test]
+fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
+    let mut app = App::new();
+    register_explosion_test_resources(&mut app);
+    register_explosion_test_systems(&mut app);
+    app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+    app.insert_resource(crate::inventory::load_item_registry().unwrap());
+    app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+
+    let (client_bundle, _helper) = create_mock_client("Azure");
+    let entity = app.world_mut().spawn(client_bundle).id();
+    let mut meridians = crate::cultivation::components::MeridianSystem::default();
+    meridians
+        .get_mut(crate::cultivation::components::MeridianId::Lung)
+        .opened = true;
+    app.world_mut().entity_mut(entity).insert((
+        Wounds {
+            health_current: 100.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        },
+        meridians,
+        crate::cultivation::components::Cultivation::default(),
+        PlayerState::default(),
+        explosion_inventory_with_stack("ci_she_hao", 3),
+    ));
+
+    let mut furnace = crate::alchemy::AlchemyFurnace::placed(BlockPos::new(2, 64, 3), 1);
+    furnace.owner = Some("offline:Azure".into());
+    app.world_mut().spawn(furnace);
+    for data in [
+        br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[2,64,3],"recipe_id":"kai_mai_pill_v0"}"#.as_slice(),
+        br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[2,64,3],"slot_idx":0,"material":"ci_she_hao","count":3}"#.as_slice(),
+        br#"{"type":"alchemy_intervention","v":1,"furnace_pos":[2,64,3],"intervention":{"kind":"adjust_temp","temp":1.0}}"#.as_slice(),
+        br#"{"type":"alchemy_take_back","v":1,"furnace_pos":[2,64,3],"slot_idx":0}"#.as_slice(),
+    ] {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: data.to_vec().into_boxed_slice(),
+            });
+    }
+
+    app.update();
+
+    let wounds = app.world().get::<Wounds>(entity).unwrap();
+    assert_eq!(wounds.health_current, 80.0);
+    assert!(wounds.entries.iter().any(|wound| {
+        wound.kind == WoundKind::Burn && (wound.severity - 20.0).abs() < f32::EPSILON
+    }));
+    let overload_events = app
+        .world()
+        .resource::<valence::prelude::Events<crate::cultivation::overload::MeridianOverloadEvent>>(
+        );
+    let mut reader = overload_events.get_reader();
+    let events: Vec<_> = reader.read(overload_events).collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].entity, entity);
+    assert!((events[0].severity - 0.15).abs() < 1e-9);
+}
+
 #[test]
 fn inventory_instance_id_by_template_prefers_containers_hotbar_then_equipped() {
     let mut inventory = lookup_inventory();
@@ -217,9 +434,6 @@ fn inventory_instance_id_by_template_finds_worn_equipped_item() {
         Some(44)
     );
 }
-
-#[path = "client_request_handler_migrated_tests.rs"]
-mod migrated_tests;
 
 #[test]
 fn inventory_instance_id_by_template_uses_stable_equipped_slot_order() {
