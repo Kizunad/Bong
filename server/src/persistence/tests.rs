@@ -7561,15 +7561,11 @@ fn npc_digest_failed_no_replace_publish_preserves_competing_target() {
     };
     persist_npc_capture(&settings, &stale).expect("stale digest should persist");
 
-    let archive_path = npc_digest_archive_absolute_path(
-        &settings,
-        stale.state.char_id.as_str(),
-        now_wall,
-    )
-    .expect("digest archive path should be valid");
-    let archive_relative_path =
-        npc_digest_archive_relative_path(stale.state.char_id.as_str())
-            .expect("digest archive relative path should be valid");
+    let archive_path =
+        npc_digest_archive_absolute_path(&settings, stale.state.char_id.as_str(), now_wall)
+            .expect("digest archive path should be valid");
+    let archive_relative_path = npc_digest_archive_relative_path(stale.state.char_id.as_str())
+        .expect("digest archive relative path should be valid");
     let competing_payload = br#"{"owner":"competing-digest-publisher"}"#;
 
     let error = sweep_stale_npc_digests_with_writer(&settings, now_wall, |path, payload| {
