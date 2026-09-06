@@ -1,5 +1,7 @@
 package com.bong.client.hud.svg;
 
+import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.hud.ScreenHudVisibility;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.util.Identifier;
@@ -74,6 +76,55 @@ class HudRenderBackendTest {
         assertFalse(beforeReload == afterReload,
             "资源重载必须丢弃旧 registry，避免 F3+T 后继续使用旧资源包的 mesh");
         SvgHudBackend.resetForTests();
+    }
+
+    @Test
+    void remainingSvgBatchTransfersOnlyItsRectangles() {
+        HudRenderBackend backend = SvgHudBackend.production();
+        List<HudRenderLayer> firstBatch = List.of(
+            HudRenderLayer.JIEMAI_RING,
+            HudRenderLayer.STATUS_EFFECTS,
+            HudRenderLayer.MOVEMENT_HUD
+        );
+
+        for (HudRenderLayer layer : firstBatch) {
+            assertTrue(backend.handles(HudRenderCommand.rect(layer, 4, 8, 12, 16, 0xFFFFFFFF)),
+                "首批 layer 的矩形几何必须交由 SVG 后端提交: " + layer);
+            assertFalse(backend.handles(HudRenderCommand.text(layer, "动态文字", 4, 8, 0xFFFFFFFF)),
+                "动态文字必须保留 Minecraft GUI 路径: " + layer);
+            assertFalse(backend.handles(HudRenderCommand.edgeIndicator(
+                layer, "edge", 4, 8, 0xFFFFFFFF, 1.0
+            )), "SVG 后端只接管矩形，不再绘制边缘指示器: " + layer);
+        }
+        assertFalse(backend.handles(HudRenderCommand.rect(
+            HudRenderLayer.COMPASS, 4, 8, 12, 16, 0xFFFFFFFF
+        )), "已下线的罗盘不得交由 SVG 后端提交");
+        assertFalse(backend.handles(HudRenderCommand.edgeIndicator(
+            HudRenderLayer.SPIRITUAL_SENSE,
+            "LIVING_QI",
+            4,
+            8,
+            0xFFFFFFFF,
+            1.0
+        )), "已下线的灵觉边缘指示器不得交由 SVG 后端提交");
+        assertFalse(backend.handles(HudRenderCommand.edgeIndicator(
+            HudRenderLayer.THREAT_INDICATOR,
+            "threat",
+            4,
+            8,
+            0xFFFFFFFF,
+            1.0
+        )), "未迁移 layer 的边缘指示器不得改变表现路径");
+        assertFalse(backend.handles(HudRenderCommand.texture(
+            HudRenderLayer.STATUS_EFFECTS,
+            "bong-client:textures/hud/effects/bleeding.png",
+            4,
+            8,
+            12,
+            16,
+            0xFFFFFFFF
+        )), "状态效果图标必须保留 Minecraft GUI 贴图路径");
+        assertFalse(backend.handles(null), "空命令不得被 SVG 后端接管");
     }
 
     private static List<String> fixture(String resource) throws IOException {

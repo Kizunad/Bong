@@ -348,7 +348,6 @@ public class BongHudTest {
             screenHeight,
             null,
             HudRuntimeContext.empty(),
-            List::of,
             List::of
         );
     }
