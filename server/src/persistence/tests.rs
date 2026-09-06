@@ -6933,6 +6933,61 @@ fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
 }
 
 #[test]
+fn npc_archive_matching_orphan_db_failure_preserves_archive() {
+    let (settings, root) = persistence_settings("npc-archive-orphan-db-failure");
+    let capture = sample_npc_capture("npc_archive_orphan_db_failure");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 779,
+        archived_at_wall: 1_704_067_202,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 2,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_json = serde_json::to_vec_pretty(&archive).expect("archive should serialize");
+
+    let error = persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        |_| {
+            Err(io::Error::other(
+                "injected orphan reconciliation database failure",
+            ))
+        },
+        |path, payload| {
+            write_zstd_bundle_with_writer(path, payload, |_temp_file, _compressed| {
+                // Simulate another publisher winning the no-replace race after our initial
+                // absence check, leaving the exact bundle that this retry should reconcile.
+                write_zstd_bundle(path, payload)
+            })
+        },
+    )
+    .expect_err("a database failure must abort orphan reconciliation");
+    assert!(
+        error
+            .to_string()
+            .contains("injected orphan reconciliation database failure"),
+        "the database failure must remain observable: {error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(
+            settings.db_path(),
+            npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall,)
+                .expect("archive relative path should be valid")
+                .as_str(),
+        )
+        .expect("matching orphan must remain readable after reconciliation failure"),
+        archive_json,
+        "a retry that did not publish the orphan must not remove another publisher's archive"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn npc_archive_db_open_failure_restores_previous_bundle() {
     let (settings, root) = persistence_settings("npc-archive-db-open-rollback");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())

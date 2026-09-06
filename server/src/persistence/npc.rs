@@ -194,8 +194,8 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
     // 若目标正是本次进程在 DB 提交前发布后崩溃留下的有效 bundle，可以复用它完成
     // index/hot-row reconciliation；不同内容或无法解码的目标仍然 fail-closed，不能
     // 通过覆盖文件来掩盖 ownership 冲突。
-    match write_bundle(&archive_path, &archive_json) {
-        Ok(()) => {}
+    let archive_published_by_call = match write_bundle(&archive_path, &archive_json) {
+        Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             let existing_archive = match read_optional_file(&archive_path)? {
                 Some(existing) => existing,
@@ -210,9 +210,10 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
             if existing_value != expected_value {
                 return Err(error);
             }
+            false
         }
         Err(error) => return Err(error),
-    }
+    };
 
     let persisted = (|| -> io::Result<()> {
         let mut connection = open_connection(settings)?;
@@ -233,6 +234,7 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
 
     match persisted {
         Ok(()) => Ok(()),
+        Err(error) if !archive_published_by_call => Err(error),
         Err(error) => match rollback_file(&archive_path, previous_archive.as_deref()) {
             Ok(()) => Err(error),
             Err(rollback_error) => Err(combine_persistence_failure(
