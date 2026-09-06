@@ -181,10 +181,6 @@ use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 #[path = "client_request/session.rs"]
 mod session;
 
-#[cfg(test)]
-#[path = "client_request_handler_tests.rs"]
-mod tests;
-
 // NPC 请求域实现位于编译期 typed route；保留参数类型作为顶层 system seam。
 pub(crate) use crate::network::client_request::npc::NpcEngagementRequestParams;
 
@@ -7651,3 +7647,7 @@ fn handle_give_dan_to_elder(
         "[bong][dying_elder] give_dan preflight accepted: player {player_entity:?} → elder {elder_entity:?} pill={pill_instance_id}"
     );
 }
+
+#[cfg(test)]
+#[path = "client_request_handler_tests.rs"]
+mod tests;
