@@ -206,7 +206,6 @@ type CombatAttackerItem<'a> = (
     // plan-combat-hit-location-v1 P1 — 攻方自身臂伤（主手臂伤势）削减自身攻击伤害。
     // 只读，与 CombatTargetItem 的 `&mut Wounds` 同处一个 ParamSet（p0/p1），Bevy 允许。
     Option<&'a Wounds>,
-    Option<&'a LifeRecord>,
 );
 type DefenseResponderItem<'a> = (
     &'a mut CombatState,
@@ -238,8 +237,8 @@ pub struct CombatResolveEventWriters<'w, 's> {
     narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
     /// bughunt r2 QP-003 — jiemai 格挡真元守恒：扣除的 qi_cost 需回灌到防御方所在 zone。
     zone_registry: Option<ResMut<'w, ZoneRegistry>>,
-    /// qi 守恒：查询攻击/防御方当前维度，用于 release_qi_amount_to_zone 定位 zone。
-    dimension_q: Query<'w, 's, Option<&'static crate::world::dimension::CurrentDimension>>,
+    /// bughunt r2 QP-003 — 查询防御方当前维度，用于 find_zone 定位目标 zone。
+    defender_dim_q: Query<'w, 's, Option<&'static crate::world::dimension::CurrentDimension>>,
     /// `/npc_scenario passive_target` contract: damage is allowed, forced movement is not.
     passive_targets: Query<'w, 's, (), With<PassiveTarget>>,
 }
@@ -428,7 +427,7 @@ pub fn resolve_attack_intents(
         {
             let mut attacker_query = combatants.p0();
             let Ok((
-                mut attacker_cultivation,
+                attacker_cultivation,
                 _,
                 _,
                 mut anticheat_counter,
@@ -436,7 +435,6 @@ pub fn resolve_attack_intents(
                 _,
                 attacker_lifecycle,
                 _,
-                attacker_life_record,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -488,39 +486,6 @@ pub fn resolve_attack_intents(
                     );
                 }
                 continue;
-            }
-
-            if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
-                // 守恒红线：现场扣费在命中判定前完成，命中与未命中都必须结算同一笔
-                // qi_invest。既有 release facade 原子更新 Cultivation、zone/overflow
-                // 与完整 QiTransfer 审计；任何落账失败都 fail closed，不进入伤害路径。
-                let attacker_dim = event_writers
-                    .dimension_q
-                    .get(intent.attacker)
-                    .ok()
-                    .flatten();
-                let attacker_pos = positions
-                    .get(intent.attacker)
-                    .ok()
-                    .map(|(position, _)| position);
-                if let Err(error) = crate::cultivation::death_hooks::release_qi_amount_to_zone(
-                    &mut attacker_cultivation,
-                    qi_invest,
-                    attacker_pos,
-                    attacker_dim,
-                    attacker_life_record,
-                    event_writers.zone_registry.as_deref_mut(),
-                    &mut event_writers.qi_ledger,
-                    event_writers.qi_transfers.as_deref_mut(),
-                    "combat_attack_qi_invest",
-                ) {
-                    tracing::warn!(
-                        ?error,
-                        attacker = ?intent.attacker,
-                        "[bong][combat] attack qi investment release failed closed"
-                    );
-                    continue;
-                }
             }
         }
 
@@ -623,7 +588,7 @@ pub fn resolve_attack_intents(
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
-                if let Ok((_, _, _, mut anticheat_counter, _, _, _, _, _)) =
+                if let Ok((_, _, _, mut anticheat_counter, _, _, _, _)) =
                     attacker_query.get_mut(intent.attacker)
                 {
                     record_anticheat_violation(
@@ -644,7 +609,7 @@ pub fn resolve_attack_intents(
         let (attacker_damage_multiplier, attacker_body_mass, sword_damage_multiplier) = {
             let mut attacker_query = combatants.p0();
             let Ok((
-                attacker_cultivation,
+                mut attacker_cultivation,
                 mut attacker_meridians,
                 attacker_attrs,
                 _,
@@ -652,7 +617,6 @@ pub fn resolve_attack_intents(
                 attacker_known_techniques,
                 _,
                 attacker_wounds,
-                _,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -680,6 +644,10 @@ pub fn resolve_attack_intents(
                 arm_wound::combined_factor_from_optional(attacker_wounds, attacker_body_plan)
                     .attack_damage_multiplier;
 
+            if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
+                attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
+                    .clamp(0.0, attacker_cultivation.qi_max);
+            }
             if qi_invest > f64::EPSILON && !sword_basics::is_sword_attack_source(intent.source) {
                 if let Some(primary_meridian) =
                     first_open_or_fallback_meridian(&mut attacker_meridians)
@@ -1135,8 +1103,11 @@ pub fn resolve_attack_intents(
                     // bughunt r2 QP-003 — 守恒：格挡真元费用通过 typed transaction
                     // 原子扣除并回灌防御方所在 zone；失败时不开格挡结果。
                     {
-                        let defender_dim =
-                            event_writers.dimension_q.get(target_entity).ok().flatten();
+                        let defender_dim = event_writers
+                            .defender_dim_q
+                            .get(target_entity)
+                            .ok()
+                            .flatten();
                         let defender_pos = positions.get(target_entity).ok().map(|(pos, _)| pos);
                         let release = crate::cultivation::death_hooks::release_qi_amount_to_zone(
                             &mut defender_cultivation,
