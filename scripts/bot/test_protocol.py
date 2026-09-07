@@ -4830,6 +4830,81 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
             "必须读取本次施放请求后的新 skillbar_config，不能把已过 wall-clock deadline 当成无冷却",
         )
 
+    def test_skillbar_cooldown_wait_refreshes_until_cast_state_is_active(self):
+        skill_id = "burst_meridian.beng_quan"
+        zero_payload = {
+            "slots": [{"kind": "skill", "skill_id": skill_id}],
+            "cooldown_until_ms": [0],
+        }
+        active_payload = {
+            "slots": [{"kind": "skill", "skill_id": skill_id}],
+            # Casting 完成后才由 server 权威状态写入非零冷却；首个零值不能放行。
+            "cooldown_until_ms": [12_345],
+        }
+
+        class DelayedConfigBot:
+            username = "DelayedConfig"
+
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.events = []
+                self.intents = []
+                self.responses = [
+                    _FakeEvent(
+                        1.0,
+                        "server_data",
+                        {
+                            "payload_type": "skillbar_config",
+                            "payload": zero_payload,
+                        },
+                    ),
+                    _FakeEvent(
+                        2.0,
+                        "server_data",
+                        {
+                            "payload_type": "skillbar_config",
+                            "payload": active_payload,
+                        },
+                    ),
+                ]
+
+            def intent(self, request):
+                self.intents.append(request)
+
+            def wait_for(self, _predicate, timeout, description):
+                del timeout, description
+                return self.responses.pop(0)
+
+        bot = DelayedConfigBot()
+        clock = [0.0]
+        sleeps = []
+
+        def monotonic():
+            return clock[0]
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        with mock.patch.object(
+            qi_color_inspect_scenario.time, "monotonic", monotonic
+        ), mock.patch.object(qi_color_inspect_scenario.time, "sleep", sleep):
+            cooldown_until_ms = qi_color_inspect_scenario._wait_for_skillbar_cooldown(
+                bot, 0.5, 0, skill_id, "崩拳"
+            )
+
+        self.assertEqual(cooldown_until_ms, 12_345)
+        self.assertEqual(
+            len(bot.intents),
+            2,
+            "首个 skillbar_config=0 只能继续轮询，不能把未完成的 cast 当成成功",
+        )
+        self.assertEqual(
+            sleeps,
+            [0.25],
+            "权威状态未落账时轮询必须固定退避，不能连续洪泛同值 bind",
+        )
+
     def test_skillbar_cooldown_wait_does_not_require_cast_sync_for_resolver_skill(self):
         skill_id = "woliu.mouth"
         cooldown_until_ms = time.time_ns() // 1_000_000 + 8_000
@@ -4914,144 +4989,265 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
             "冷却轮询只能重发同值绑定以刷新现有权威状态，不得重复 skill_bar_cast",
         )
 
-    def test_tpzone_noop_accepts_existing_authoritative_target_position(self):
-        target = qi_color_inspect_scenario._zone_teleport_position("jiuzong_taichu_ruin")
+    def test_cooldown_wait_backs_off_after_expired_hint(self):
+        skill_id = "burst_meridian.beng_quan"
+        active_payload = {
+            "slots": [{"kind": "skill", "skill_id": skill_id}],
+            # 过期的 Unix hint 不能取消 server 仍为 active 的权威状态。
+            "cooldown_until_ms": [1],
+        }
+        ready_payload = {
+            "slots": [{"kind": "skill", "skill_id": skill_id}],
+            "cooldown_until_ms": [0],
+        }
 
-        class NoopTeleportBot:
+        class RefreshBot:
+            username = "Refresh"
+
             def __init__(self):
                 self._lock = threading.RLock()
-                self.position = target
-                self.events = [_FakeEvent(1.0, "pos_look", {})]
-                self.commands = []
-                self.wait_descriptions = []
-
-            def cmd(self, command):
-                self.commands.append(command)
-                self.events.append(
+                self.events = []
+                self.intents = []
+                self.timeouts = []
+                self.responses = [
+                    _FakeEvent(
+                        1.0,
+                        "server_data",
+                        {"payload_type": "skillbar_config", "payload": active_payload},
+                    ),
                     _FakeEvent(
                         2.0,
-                        "chat",
-                        {"text": "Teleported to zone `jiuzong_taichu_ruin`."},
-                    )
-                )
+                        "server_data",
+                        {"payload_type": "skillbar_config", "payload": active_payload},
+                    ),
+                    _FakeEvent(
+                        3.0,
+                        "server_data",
+                        {"payload_type": "skillbar_config", "payload": ready_payload},
+                    ),
+                ]
 
-            def wait_for(self, predicate, timeout, description):
-                self.wait_descriptions.append(description)
-                for event in self.events:
-                    if predicate(event):
-                        return event
-                raise AssertionError(f"测试 fake 未匹配 {description}")
+            def assert_alive(self, _description):
+                return None
 
-        bot = NoopTeleportBot()
-        qi_color_inspect_scenario._tpzone_and_settle(bot, "jiuzong_taichu_ruin")
+            def intent(self, request):
+                self.intents.append(request)
 
-        self.assertEqual(bot.commands, ["tpzone jiuzong_taichu_ruin"])
+            def wait_for(self, _predicate, timeout, description):
+                self.timeouts.append(timeout)
+                return self.responses.pop(0)
+
+        bot = RefreshBot()
+        clock = [0.0]
+        sleeps = []
+
+        def monotonic():
+            return clock[0]
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        with mock.patch.object(
+            qi_color_inspect_scenario.time, "monotonic", monotonic
+        ), mock.patch.object(qi_color_inspect_scenario.time, "sleep", sleep):
+            qi_color_inspect_scenario._wait_until_cooldown_due(
+                bot, 1, 0, skill_id, "崩拳"
+            )
+
+        self.assertEqual(len(bot.intents), 3, "每次状态刷新只能发送一次同值 bind")
+        self.assertEqual(sleeps, [0.25, 0.25], "过期 hint 也必须按 poll interval 退避")
         self.assertEqual(
-            len(bot.wait_descriptions),
-            1,
-            "同坐标 no-op 只需命令确认；不能等待永远不会产生的第二个 pos_look",
+            bot.timeouts,
+            [10.0, 10.0, 10.0],
+            "每次刷新使用单次反馈等待预算；完成条件仍由 server 权威 cooldown=0 决定",
         )
 
-    def test_tpzone_wait_ignores_stale_position_look_until_target_coordinates(self):
-        target = qi_color_inspect_scenario._zone_teleport_position("wangyintai")
-        stale = qi_color_inspect_scenario._zone_teleport_position("jiuzong_taichu_ruin")
+    def test_cooldown_wait_follows_authoritative_state_past_expired_hint(self):
+        skill_id = "burst_meridian.beng_quan"
+        active_payload = {
+            "slots": [{"kind": "skill", "skill_id": skill_id}],
+            "cooldown_until_ms": [1],
+        }
+        ready_payload = {
+            "slots": [{"kind": "skill", "skill_id": skill_id}],
+            "cooldown_until_ms": [0],
+        }
 
-        class MovingTeleportBot:
+        class SlowRefreshBot:
+            username = "SlowRefresh"
+
             def __init__(self):
                 self._lock = threading.RLock()
-                self.position = stale
-                self.events = [_FakeEvent(1.0, "pos_look", {})]
-                self.wait_descriptions = []
+                self.events = []
+                self.refresh_count = 0
 
-            def cmd(self, command):
-                self.events.extend(
-                    [
-                        _FakeEvent(
-                            2.0,
-                            "chat",
-                            {"text": "Teleported to zone `wangyintai`."},
-                        ),
-                        # A delayed transfer frame must not satisfy the target wait.
-                        _FakeEvent(
-                            3.0,
-                            "pos_look",
-                            {"x": stale[0], "y": stale[1], "z": stale[2]},
-                        ),
-                        _FakeEvent(
-                            4.0,
-                            "pos_look",
-                            {"x": target[0], "y": target[1], "z": target[2]},
-                        ),
-                    ]
+            def assert_alive(self, _description):
+                return None
+
+            def intent(self, _request):
+                self.refresh_count += 1
+
+            def wait_for(self, _predicate, timeout, description):
+                del timeout, description
+                payload = ready_payload if self.refresh_count > 124 else active_payload
+                return _FakeEvent(
+                    float(self.refresh_count),
+                    "server_data",
+                    {"payload_type": "skillbar_config", "payload": payload},
                 )
 
-            def wait_for(self, predicate, timeout, description):
-                self.wait_descriptions.append(description)
-                for event in self.events:
-                    if predicate(event):
-                        return event
-                raise AssertionError(f"测试 fake 未匹配 {description}")
+        bot = SlowRefreshBot()
+        clock = [0.0]
 
-        bot = MovingTeleportBot()
-        qi_color_inspect_scenario._tpzone_and_settle(bot, "wangyintai")
+        def monotonic():
+            return clock[0]
 
-        self.assertEqual(len(bot.wait_descriptions), 2)
-        self.assertIn("目标坐标", bot.wait_descriptions[1])
+        def sleep(seconds):
+            clock[0] += seconds
 
-    def test_dimension_transfer_waits_for_position_after_respawn(self):
-        class DimensionBot:
-            def __init__(self):
+        with mock.patch.object(
+            qi_color_inspect_scenario.time, "monotonic", monotonic
+        ), mock.patch.object(qi_color_inspect_scenario.time, "sleep", sleep):
+            qi_color_inspect_scenario._wait_until_cooldown_due(
+                bot, 1, 0, skill_id, "崩拳"
+            )
+
+        self.assertEqual(
+            bot.refresh_count,
+            125,
+            "即使 wall-clock hint 过期超过 30s，也必须持续等待权威 cooldown=0",
+        )
+        self.assertEqual(clock[0], 31.0, "每次非零刷新都必须经过 0.25s 退避")
+
+    def test_tpzone_reuses_canonical_zone_helper_and_preserves_noop(self):
+        zone = "jiuzong_taichu_ruin"
+
+        class ZoneBot:
+            def __init__(self, current_zone):
                 self._lock = threading.RLock()
-                self.events = [_FakeEvent(1.0, "keepalive", {})]
-                self.wait_descriptions = []
+                self.events = [
+                    _FakeEvent(
+                        1.0,
+                        "server_data",
+                        {
+                            "payload_type": "zone_info",
+                            "payload": {"zone": current_zone},
+                        },
+                    )
+                ]
 
-            def cmd(self, command):
-                self.events.extend(
-                    [
-                        _FakeEvent(
-                            2.0,
-                            "chat",
-                            {"text": "Queued /tpdim tsy within current XYZ gate."},
-                        ),
-                        _FakeEvent(
-                            3.0,
-                            "pos_look",
-                            {"x": 0.25, "y": 109.0, "z": -10000.0},
-                        ),
-                        _FakeEvent(
-                            4.0,
-                            "respawn",
-                            {
-                                "dimension_type_name": "bong:tsy",
-                                "dimension_name": "bong:tsy",
-                            },
-                        ),
-                        _FakeEvent(
-                            5.0,
-                            "pos_look",
-                            {"x": 0.251, "y": 109.0, "z": -10000.0},
-                        ),
-                        _FakeEvent(
-                            6.0,
-                            "pos_look",
-                            {"x": 0.25, "y": 109.0, "z": -10000.0},
-                        ),
-                    ]
-                )
+        for current_zone in (zone, "spawn"):
+            with self.subTest(current_zone=current_zone):
+                bot = ZoneBot(current_zone)
+                with mock.patch.object(
+                    qi_color_inspect_scenario,
+                    "teleport_to_zone",
+                    return_value=7.0,
+                ) as teleport, mock.patch.object(
+                    qi_color_inspect_scenario, "wait_zone_info"
+                ) as wait_zone:
+                    qi_color_inspect_scenario._tpzone_and_settle(bot, zone)
 
-            def wait_for(self, predicate, timeout, description):
-                self.wait_descriptions.append(description)
-                for event in self.events:
-                    if predicate(event):
-                        return event
-                raise AssertionError(f"测试 fake 未匹配 {description}")
+                teleport.assert_called_once_with(bot, zone)
+                if current_zone == zone:
+                    wait_zone.assert_not_called()
+                else:
+                    wait_zone.assert_called_once_with(bot, zone, after=7.0)
 
-        bot = DimensionBot()
-        qi_color_inspect_scenario._transfer_dimension(bot, "tsy", after=1.0)
+    def test_dimension_transfer_waits_for_exact_pulse_and_restore_geometry(self):
+        for target, old_x in (("tsy", 0.0), ("overworld", 0.25)):
+            with self.subTest(target=target):
+                final_x = old_x + (0.25 if target == "tsy" else -0.25)
+                pulse_x = final_x + 0.001
 
-        self.assertEqual(len(bot.wait_descriptions), 4)
-        self.assertIn("Position pulse", bot.wait_descriptions[2])
-        self.assertIn("Position restore", bot.wait_descriptions[3])
+                class DimensionBot:
+                    username = "Dimension"
+
+                    def __init__(self):
+                        self._lock = threading.RLock()
+                        self.position = (old_x, 109.0, -10000.0)
+                        self.events = [_FakeEvent(1.0, "keepalive", {})]
+                        self.wait_descriptions = []
+                        self.matches = []
+
+                    def cmd(self, command):
+                        self.events.extend(
+                            [
+                                _FakeEvent(
+                                    2.0,
+                                    "chat",
+                                    {
+                                        "text": f"Queued /tpdim {target} within current XYZ gate."
+                                    },
+                                ),
+                                _FakeEvent(
+                                    3.0,
+                                    "respawn",
+                                    {
+                                        "dimension_type_name": (
+                                            "bong:tsy"
+                                            if target == "tsy"
+                                            else "minecraft:overworld"
+                                        ),
+                                        "dimension_name": (
+                                            "bong:tsy"
+                                            if target == "tsy"
+                                            else "minecraft:overworld"
+                                        ),
+                                    },
+                                ),
+                                # An unrelated position frame must not satisfy either
+                                # pulse or restore.
+                                _FakeEvent(
+                                    4.0,
+                                    "pos_look",
+                                    {"x": old_x, "y": 109.0, "z": -10000.0},
+                                ),
+                                _FakeEvent(
+                                    5.0,
+                                    "pos_look",
+                                    {"x": pulse_x, "y": 109.0, "z": -10000.0},
+                                ),
+                                _FakeEvent(
+                                    6.0,
+                                    "pos_look",
+                                    {"x": final_x, "y": 109.0, "z": -10000.0},
+                                ),
+                            ]
+                        )
+
+                    def wait_for(self, predicate, timeout, description):
+                        self.wait_descriptions.append(description)
+                        for event in self.events:
+                            if predicate(event):
+                                self.matches.append(event)
+                                return event
+                        raise AssertionError(f"测试 fake 未匹配 {description}")
+
+                bot = DimensionBot()
+                qi_color_inspect_scenario._transfer_dimension(bot, target, after=1.0)
+
+                self.assertEqual(len(bot.wait_descriptions), 4)
+                self.assertAlmostEqual(bot.matches[2].data["x"], pulse_x)
+                self.assertAlmostEqual(bot.matches[2].data["y"], 109.0)
+                self.assertAlmostEqual(bot.matches[2].data["z"], -10000.0)
+                self.assertAlmostEqual(bot.matches[3].data["x"], final_x)
+                self.assertAlmostEqual(bot.matches[3].data["y"], 109.0)
+                self.assertAlmostEqual(bot.matches[3].data["z"], -10000.0)
+
+    def test_dimension_transfer_requires_position_before_command(self):
+        class MissingPositionBot:
+            username = "MissingPosition"
+            position = None
+
+            def cmd(self, _command):
+                raise AssertionError("缺少 server 坐标时不应发送 /tpdim")
+
+        with self.assertRaisesRegex(BotAssertionError, "必须已有 server 权威 PositionLook"):
+            qi_color_inspect_scenario._transfer_dimension(
+                MissingPositionBot(), "tsy", after=1.0
+            )
 
 
 class _ObservableLock:
