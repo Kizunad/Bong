@@ -7097,6 +7097,73 @@ fn npc_archive_db_open_failure_restores_previous_bundle() {
 }
 
 #[test]
+fn npc_archive_post_publish_identity_failure_surfaces_cleanup_context() {
+    let (settings, root) = persistence_settings("npc-archive-post-publish-identity-failure");
+    let capture = sample_npc_capture("npc_archive_post_publish_identity_failure");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 720,
+        archived_at_wall: 1_704_067_270,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 1,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
+    )
+    .expect("archive path should be valid");
+    let open_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let open_called_for_hook = open_called.clone();
+    let error = persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        move |_| {
+            open_called_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(io::Error::other("database hook must not run"))
+        },
+        |path, payload| {
+            write_zstd_bundle(path, payload)?;
+            // Simulate a successful no-replace publication whose final target
+            // disappears before metadata can establish the caller's identity.
+            fs::remove_file(path)?;
+            Ok(())
+        },
+    )
+    .expect_err("post-publication identity failure must remain observable");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::Other,
+        "identity failure plus ownership/cleanup context must be structured: {error}"
+    );
+    let error_message = error.to_string();
+    assert!(
+        error_message.contains("npc archive publication rollback"),
+        "identity failure must retain cleanup context: {error}"
+    );
+    assert!(
+        error_message.contains("No such file") || error_message.contains("not found"),
+        "identity failure must retain the missing-target diagnostic: {error}"
+    );
+    assert!(
+        !open_called.load(std::sync::atomic::Ordering::SeqCst),
+        "metadata failure must abort before opening the database"
+    );
+    assert!(
+        !archive_path.exists(),
+        "a publication that cannot establish ownership must not leave an orphan target"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
     let (settings, root) = persistence_settings("npc-archive-transaction-begin-rollback");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())

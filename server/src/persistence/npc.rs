@@ -27,6 +27,40 @@ fn ensure_archive_snapshot_matches(
     Ok(())
 }
 
+fn rollback_published_archive_after_failure(
+    path: &Path,
+    expected_identity: Option<ArchiveFileIdentity>,
+    expected_value: &serde_json::Value,
+    primary: io::Error,
+) -> io::Error {
+    let ownership_check = match expected_identity {
+        Some(identity) => ensure_archive_snapshot_matches(path, identity, expected_value),
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "archive publication ownership could not be established: {}",
+                path.display()
+            ),
+        )),
+    };
+
+    match ownership_check {
+        Err(ownership_error) => combine_persistence_failure(
+            "npc archive publication rollback",
+            primary,
+            ownership_error,
+        ),
+        Ok(()) => match rollback_file(path, None) {
+            Ok(()) => primary,
+            Err(rollback_error) => combine_persistence_failure(
+                "npc archive publication rollback",
+                primary,
+                rollback_error,
+            ),
+        },
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct NpcSnapshotTracker {
     last_snapshot_tick: u32,
@@ -244,7 +278,18 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
                         ),
                     ));
                 }
-                (true, archive_file_identity(&archive_path)?)
+                let archive_identity = match archive_file_identity(&archive_path) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        return Err(rollback_published_archive_after_failure(
+                            &archive_path,
+                            None,
+                            &expected_value,
+                            error,
+                        ));
+                    }
+                };
+                (true, archive_identity)
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 let Some((_, previous_identity)) = previous_archive.as_ref() else {
@@ -281,7 +326,20 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
 
     // 继续持有同一生命周期锁，直到 DB transaction 完成或回滚结束；identity
     // 让非合作的路径替换也只能 fail-closed，不能把 successor 误认成 orphan。
-    ensure_archive_snapshot_matches(&archive_path, archive_identity, &expected_value)?;
+    if let Err(error) =
+        ensure_archive_snapshot_matches(&archive_path, archive_identity, &expected_value)
+    {
+        return if archive_published_by_call {
+            Err(rollback_published_archive_after_failure(
+                &archive_path,
+                Some(archive_identity),
+                &expected_value,
+                error,
+            ))
+        } else {
+            Err(error)
+        };
+    }
 
     let persisted = (|| -> io::Result<()> {
         let mut connection = open_connection(settings)?;
