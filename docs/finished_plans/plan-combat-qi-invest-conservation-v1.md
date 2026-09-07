@@ -93,6 +93,6 @@
 
 ### 返工补充：错误路径与跨维行为边界
 
-- `QiFlowError::UnrepresentableFlow` 发生在释放事务的 source/zone 可表示性预检阶段，事务保证尚未修改 `qi_current`、zone 或 ledger。对这种低于当前 `f64` 表示精度的释放，本 PR 选择 no-op release 并继续攻击：不写 overflow，避免 source 未扣减时凭空铸造 ledger credit；其它释放错误仍 fail-closed 并拒绝整次攻击。回归测试为 `qi_invest_unrepresentable_release_is_noop_but_attack_resolves`；无效 zone 触发的通用错误分支由 `qi_invest_release_error_fails_closed_without_resolving_attack` 覆盖。
+- `QiFlowError::UnrepresentableFlow` 在 `server/src/combat/resolve.rs:720-736` 的释放事务 source/zone 可表示性预检阶段发生，事务保证尚未修改 `qi_current`、zone 或 ledger。对这种低于当前 `f64` 表示精度的释放，本 PR 选择 no-op release 并继续攻击：不写 overflow，避免 source 未扣减时凭空铸造 ledger credit；其它释放错误仍 fail-closed 并拒绝整次攻击。该决策属于 **P2：饱和回归**，由 `server/src/combat/resolve_tests.rs:3144-3148` 的 `qi_invest_unrepresentable_release_is_noop_but_attack_resolves` 同时用快照严格相等检查 no-op，并调用 `assert_full_qi_conservation` 走 canonical `assert_conservation`；无效 zone 触发的通用错误分支由 `qi_invest_release_error_fails_closed_without_resolving_attack` 覆盖。
 - `target_has_complete_query` 是 raycast 命中之后、普通 qi release 之前的最后一道完整目标组件合法性校验；它确保不完整/异常目标不会先扣真元，属于本 plan 的“先验证合法性再扣费”正当范围，不是额外 gameplay 平衡调整。
 - 跨维拒绝是本 PR 明确引入的 gameplay 行为变更，不是单纯账本修复：此前 `resolve_attack_intents` 没有 attacker/target `CurrentDimension` 相等性门，几何命中即可继续结算；现在在任何 qi/world mutation 前拒绝跨维攻击。动机是 zone 归属必须绑定单一维度，避免跨维攻击无法定义真元归还目标，同时满足拒绝路径零 mutation；回归测试为 `qi_invest_cross_dimension_rejection_does_not_mutate_qi`。

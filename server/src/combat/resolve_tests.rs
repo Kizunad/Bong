@@ -3145,6 +3145,7 @@ fn qi_invest_unrepresentable_release_is_noop_but_attack_resolves() {
         before, after,
         "unrepresentable no-op release must not change qi state"
     );
+    assert_full_qi_conservation(&before, &after, "不可表示的释放保持 qi 守恒");
     assert_eq!(
         app.world()
             .entity(attacker)
