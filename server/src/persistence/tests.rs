@@ -164,6 +164,45 @@ fn known_techniques_retry_uses_bounded_backoff_capped_attempts_and_log_coalescin
 }
 
 #[test]
+fn known_techniques_retry_cleanup_removes_only_subjects_no_longer_pending() {
+    let mut state = KnownTechniquesReconnectState::default();
+    assert!(begin_known_techniques_retry(
+        &mut state,
+        "offline:stale-retry",
+        0
+    ));
+    assert!(begin_known_techniques_retry(
+        &mut state,
+        "offline:pending-retry",
+        0
+    ));
+    assert!(begin_known_techniques_retry(
+        &mut state,
+        "offline:failed-disconnect-save",
+        0
+    ));
+
+    let active_retry_subjects = std::collections::HashSet::from([
+        "offline:pending-retry".to_string(),
+        "offline:failed-disconnect-save".to_string(),
+    ]);
+    clear_stale_known_techniques_retries(&mut state, &active_retry_subjects);
+
+    assert!(
+        !state.retries.contains_key("offline:stale-retry"),
+        "retry state for a subject no longer pending must be cleared"
+    );
+    assert!(
+        state.retries.contains_key("offline:pending-retry"),
+        "retry state for a still-pending subject must remain available for the handoff"
+    );
+    assert!(
+        state.retries.contains_key("offline:failed-disconnect-save"),
+        "retry state for a disconnected save failure must remain available without a handoff"
+    );
+}
+
+#[test]
 fn known_techniques_descriptor_pins_canonical_slice_contract() {
     let descriptor = &KNOWN_TECHNIQUES_SLICE_DESCRIPTOR;
     assert_eq!(descriptor.id, KNOWN_TECHNIQUES_SLICE_ID);
@@ -561,6 +600,56 @@ fn production_known_techniques_reconnect_retries_after_save_failure() {
         "successful retry must replace the old activation exactly once"
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn production_known_techniques_disconnect_save_failure_preserves_retry_without_handoff() {
+    let (mut app, _persistence, settings, root) =
+        known_techniques_app("known-techniques-production-disconnect-retry");
+    let (client_bundle, _helper) = create_mock_client("Azure");
+    let player = app.world_mut().spawn(client_bundle).id();
+    app.update();
+
+    app.world_mut()
+        .entity_mut(player)
+        .insert(known_techniques_fixture("movement.dash", 0.85));
+    app.world_mut().entity_mut(player).remove::<Client>();
+
+    let backup_path = root.join("disconnect-retry-backup.db");
+    fs::rename(settings.db_path(), &backup_path)
+        .expect("fixture database should move out of the production path");
+    fs::create_dir(settings.db_path())
+        .expect("directory placeholder should force the disconnect save to fail");
+
+    app.update();
+
+    let subject = canonical_player_id("Azure");
+    let retry = app
+        .world()
+        .resource::<KnownTechniquesReconnectState>()
+        .retries
+        .get(&subject)
+        .expect("a failed disconnected save must retain a retry entry without a reconnect handoff");
+    assert_eq!(
+        retry.attempts, 1,
+        "the first disconnected save failure must be counted for later retry"
+    );
+    assert_eq!(
+        retry.next_attempt_frame, 3,
+        "the first disconnected save failure must retain its bounded backoff schedule"
+    );
+    assert!(
+        app.world()
+            .resource::<PendingKnownTechniquesHandoffs>()
+            .0
+            .is_empty(),
+        "this regression must exercise the no-handoff cleanup path"
+    );
+
+    fs::remove_dir(settings.db_path()).expect("database outage placeholder should be removable");
+    fs::rename(&backup_path, settings.db_path())
+        .expect("the durable database should return to the production path");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1607,6 +1696,43 @@ fn void_action_cooldowns_roundtrip_hydrates_resource() {
 }
 
 #[test]
+fn void_action_cooldown_negative_tick_fails_closed_during_hydrate() {
+    let (settings, root) = persistence_settings("void-action-negative-tick");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+    persist_void_action_cooldown(&settings, "offline:Void", VoidActionKind::Barrier, 12_345)
+        .expect("valid cooldown should persist before corruption");
+
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute_batch("PRAGMA ignore_check_constraints = ON;")
+        .expect("fixture should allow deliberate negative-value corruption");
+    connection
+        .execute(
+            "UPDATE void_action_cooldowns SET ready_at_tick = -1 WHERE character_id = ?1",
+            params!["offline:Void"],
+        )
+        .expect("negative cooldown fixture should be writable");
+    drop(connection);
+
+    let mut cooldowns = VoidActionCooldowns::default();
+    let error = hydrate_void_action_cooldowns(&settings, &mut cooldowns)
+        .expect_err("negative persisted cooldown must fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("negative void-action cooldown tick"),
+        "hydrate error should explain the rejected signed tick, actual={error}"
+    );
+    assert_eq!(
+        cooldowns.ready_at("offline:Void", VoidActionKind::Barrier),
+        0,
+        "failed cooldown hydrate must not install a reinterpreted u64::MAX deadline"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn task13_migration_backfills_legacy_player_cultivation() {
     let db_path = database_path("task13-legacy-cultivation-backfill");
     fs::create_dir_all(db_path.parent().expect("db path should have parent"))
@@ -1710,6 +1836,90 @@ fn task13_migration_backfills_legacy_player_cultivation() {
         Some(canonical_player_id("Azure").as_str())
     );
 
+    let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+}
+
+#[test]
+fn legacy_player_negative_qi_migration_fails_closed_without_partial_backfill() {
+    let db_path = database_path("legacy-negative-qi-backfill");
+    fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+        .expect("temp db parent should be created");
+
+    let mut connection = Connection::open(&db_path).expect("db should open");
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE player_core (
+                username TEXT PRIMARY KEY,
+                current_char_id TEXT NOT NULL,
+                realm TEXT NOT NULL,
+                spirit_qi REAL NOT NULL,
+                spirit_qi_max REAL NOT NULL,
+                karma REAL NOT NULL,
+                experience INTEGER NOT NULL,
+                inventory_score REAL NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE TABLE player_slow (
+                username TEXT PRIMARY KEY,
+                pos_x REAL NOT NULL,
+                pos_y REAL NOT NULL,
+                pos_z REAL NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 12;
+            ",
+        )
+        .expect("legacy schema should be created");
+    connection
+        .execute(
+            "
+            INSERT INTO player_core (
+                username, current_char_id, realm, spirit_qi, spirit_qi_max,
+                karma, experience, inventory_score, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ",
+            params![
+                "Azure",
+                canonical_player_id("Azure"),
+                "qi_refining_3",
+                -0.5_f64,
+                123.0_f64,
+                0.25_f64,
+                900_i64,
+                0.5_f64,
+                CURRENT_SCHEMA_VERSION,
+                1_i64,
+            ],
+        )
+        .expect("negative legacy player should be insertable into the old schema");
+
+    let error = apply_migrations(&mut connection)
+        .expect_err("negative legacy player qi must not be clamped into a new snapshot");
+    assert!(
+        error.to_string().contains("legacy_player.spirit_qi"),
+        "migration error should identify the rejected qi field, actual={error}"
+    );
+    let user_version: i32 = connection
+        .query_row("PRAGMA user_version;", [], |row| row.get(0))
+        .expect("user_version should remain queryable after rollback");
+    assert_eq!(
+        user_version, 12,
+        "failed legacy qi validation must roll back the v13 migration"
+    );
+    let cultivation_table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'player_cultivation'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("sqlite_master should remain queryable after rollback");
+    assert_eq!(
+        cultivation_table_count, 0,
+        "failed legacy qi migration must not leave a partial cultivation table"
+    );
     let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
 }
 
@@ -6660,6 +6870,124 @@ fn npc_archive_pipeline_writes_index_and_zstd_bundle() {
 }
 
 #[test]
+fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
+    let (settings, root) = persistence_settings("npc-archive-orphan-reconcile");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let capture = sample_npc_capture("npc_archive_orphan_reconcile");
+    persist_npc_capture(&settings, &capture).expect("hot NPC rows should persist first");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 778,
+        archived_at_wall: 1_704_067_201,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 2,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+    )
+    .expect("archive path should be valid");
+    let archive_json = serde_json::to_vec_pretty(&archive).expect("archive should serialize");
+    write_zstd_bundle(&archive_path, &archive_json)
+        .expect("fixture should leave a valid orphan bundle before DB reconciliation");
+    let orphan_bytes = fs::read(&archive_path).expect("orphan bundle should be readable");
+
+    persist_npc_deceased_archive(&settings, &archive)
+        .expect("matching crash orphan should be reused to finish DB reconciliation");
+
+    assert_eq!(
+        fs::read(&archive_path).expect("reconciled archive should remain readable"),
+        orphan_bytes,
+        "recovery must reuse the matching orphan without replacing its bytes"
+    );
+    let loaded = load_npc_deceased_archive(&settings, archive.char_id.as_str())
+        .expect("reconciled archive should load")
+        .expect("reconciled archive should now be indexed");
+    assert_eq!(
+        serde_json::to_value(&loaded).expect("reconciled archive should serialize"),
+        serde_json::from_slice::<serde_json::Value>(&archive_json)
+            .expect("fixture archive JSON should decode"),
+        "reconciliation must index the same orphan payload rather than a different archive"
+    );
+    assert!(
+        load_npc_state(&settings, archive.char_id.as_str())
+            .expect("NPC state query should succeed")
+            .is_none(),
+        "crash recovery must remove the stale hot NPC state row"
+    );
+    assert!(
+        load_npc_digest(&settings, archive.char_id.as_str())
+            .expect("NPC digest query should succeed")
+            .is_none(),
+        "crash recovery must remove the stale hot NPC digest row"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_archive_matching_orphan_db_failure_preserves_archive() {
+    let (settings, root) = persistence_settings("npc-archive-orphan-db-failure");
+    let capture = sample_npc_capture("npc_archive_orphan_db_failure");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 779,
+        archived_at_wall: 1_704_067_202,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 2,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_json = serde_json::to_vec_pretty(&archive).expect("archive should serialize");
+
+    let error = persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        |_| {
+            Err(io::Error::other(
+                "injected orphan reconciliation database failure",
+            ))
+        },
+        |path, payload| {
+            write_zstd_bundle_with_writer(path, payload, |_temp_file, _compressed| {
+                // Simulate another publisher winning the no-replace race after our initial
+                // absence check, leaving the exact bundle that this retry should reconcile.
+                write_zstd_bundle(path, payload)
+            })
+        },
+    )
+    .expect_err("a database failure must abort orphan reconciliation");
+    assert!(
+        error
+            .to_string()
+            .contains("injected orphan reconciliation database failure"),
+        "the database failure must remain observable: {error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(
+            settings.db_path(),
+            npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall,)
+                .expect("archive relative path should be valid")
+                .as_str(),
+        )
+        .expect("matching orphan must remain readable after reconciliation failure"),
+        archive_json,
+        "a retry that did not publish the orphan must not remove another publisher's archive"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn npc_archive_db_open_failure_restores_previous_bundle() {
     let (settings, root) = persistence_settings("npc-archive-db-open-rollback");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -6682,7 +7010,8 @@ fn npc_archive_db_open_failure_restores_previous_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
 
     fs::remove_file(settings.db_path()).expect("fixture database should be removable");
@@ -6727,7 +7056,8 @@ fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
 
     archive.death_count = 2;
@@ -6778,7 +7108,8 @@ fn npc_archive_replacement_write_failure_preserves_bundle_and_index() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("baseline bundle should exist");
     let previous_index: (String, i64, String) = {
         let connection = Connection::open(settings.db_path()).expect("db should open");
@@ -6878,7 +7209,8 @@ fn npc_first_archive_failure_removes_new_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     assert!(
         !archive_path.exists(),
         "first archive fixture must begin without previous bytes"
@@ -6919,7 +7251,8 @@ fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     fs::create_dir_all(&archive_path).expect("directory fixture should be creatable");
     let open_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let open_called_for_hook = open_called.clone();
@@ -6938,6 +7271,110 @@ fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
         !open_called.load(std::sync::atomic::Ordering::SeqCst),
         "prior-file read errors must not open the database or run hooks"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_path_helpers_reject_unsafe_components() {
+    let (_, root) = persistence_settings("archive-path-component-validation");
+    for unsafe_id in ["", ".", "..", "../escape", r"..\escape", "/tmp/escape"] {
+        assert!(
+            validate_archive_component(unsafe_id).is_err(),
+            "archive component `{unsafe_id}` must fail closed"
+        );
+        assert!(
+            npc_deceased_archive_relative_path(unsafe_id, 0).is_err(),
+            "deceased archive path must reject `{unsafe_id}`"
+        );
+        assert!(
+            npc_digest_archive_relative_path(unsafe_id).is_err(),
+            "digest archive path must reject `{unsafe_id}`"
+        );
+    }
+
+    assert_eq!(
+        npc_deceased_archive_relative_path("npc:valid", 0)
+            .expect("a single safe component should be accepted"),
+        "data/archive/npc_deceased/1970/npc:valid.json.zst"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zstd_bundle_publication_does_not_overwrite_existing_target() {
+    let (_, root) = persistence_settings("zstd-bundle-no-replace");
+    let path = root.join("archive.json.zst");
+    write_zstd_bundle(&path, br#"{"version":1}"#).expect("initial bundle should publish");
+    let previous = fs::read(&path).expect("initial bundle should be readable");
+
+    let error = write_zstd_bundle(&path, br#"{"version":2}"#)
+        .expect_err("publishing over an existing bundle must fail atomically");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "existing target must reject replacement rather than overwrite it"
+    );
+    assert_eq!(
+        fs::read(&path).expect("existing bundle should remain readable"),
+        previous,
+        "failed no-replace publication must preserve the previous bytes"
+    );
+    let temp_files = fs::read_dir(&root)
+        .expect("bundle parent should remain readable")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+        .count();
+    assert_eq!(
+        temp_files, 0,
+        "failed publication must clean its temporary file"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zstd_bundle_reports_final_cleanup_rollback_failure() {
+    let (_, root) = persistence_settings("zstd-bundle-cleanup-rollback-diagnostic");
+    let path = root.join("archive.json.zst");
+    let final_path = path.clone();
+    let error = write_zstd_bundle_with_cleanup(
+        &path,
+        br#"{"version":1}"#,
+        |file, compressed| file.write_all(compressed),
+        move |candidate| {
+            if candidate == final_path.as_path() {
+                Err(io::Error::other("injected final rollback failure"))
+            } else {
+                Err(io::Error::other("injected temporary cleanup failure"))
+            }
+        },
+    )
+    .expect_err("failed temp cleanup must report a failed final-file rollback");
+    let message = error.to_string();
+    assert!(
+        message.contains("injected temporary cleanup failure"),
+        "the primary cleanup failure must remain observable: {message}"
+    );
+    assert!(
+        message.contains("injected final rollback failure"),
+        "the final-file rollback failure must remain observable: {message}"
+    );
+    let composite = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<PersistenceRollbackFailure>())
+        .expect("both cleanup failures must be retained in the structured diagnostic");
+    assert_eq!(
+        composite.primary.to_string(),
+        "injected temporary cleanup failure"
+    );
+    assert_eq!(
+        composite.rollback.to_string(),
+        "injected final rollback failure"
+    );
+    assert!(
+        path.exists(),
+        "when rollback fails the final file must remain observable for recovery"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 
@@ -6969,8 +7406,6 @@ fn rollback_file_surfaces_write_and_remove_errors() {
 #[test]
 fn npc_archive_reports_primary_and_rollback_failures_together() {
     let (settings, root) = persistence_settings("npc-archive-composite-diagnostic");
-    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-        .expect("bootstrap should succeed");
     let capture = sample_npc_capture("npc_archive_composite_diagnostic");
     let archive = NpcDeceasedArchiveRecord {
         char_id: capture.state.char_id.clone(),
@@ -6983,23 +7418,98 @@ fn npc_archive_reports_primary_and_rollback_failures_together() {
         digest: Some(capture.digest.clone()),
         life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
     };
-    persist_npc_deceased_archive(&settings, &archive)
-        .expect("baseline archive should establish previous bytes");
     let error = persist_npc_deceased_archive_with_hooks(
         &settings,
         &archive,
         |_| Err(io::Error::other("primary database failure")),
-        |path, _| {
+        |path, payload| {
+            write_zstd_bundle(path, payload)?;
             fs::remove_file(path)?;
             fs::create_dir(path)?;
-            Err(io::Error::other("primary write failure"))
+            Ok(())
         },
     )
-    .expect_err("primary failure with failed rollback must retain both diagnostics");
+    .expect_err("database failure with failed rollback must retain both diagnostics");
     let message = error.to_string();
-    assert!(message.contains("primary write failure"));
+    assert!(message.contains("primary database failure"));
     assert!(message.contains("rollback failed"));
     assert!(message.contains("Is a directory") || message.contains("directory"));
+    let composite = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<PersistenceRollbackFailure>())
+        .expect("combined failure must retain its structured primary/rollback errors");
+    assert_eq!(
+        composite.primary.kind(),
+        io::ErrorKind::Other,
+        "the primary failure must remain the composite source"
+    );
+    assert_eq!(
+        composite.rollback.kind(),
+        io::ErrorKind::IsADirectory,
+        "the rollback failure must remain available in the composite diagnostic"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_archive_failed_no_replace_publish_preserves_competing_target() {
+    let (settings, root) = persistence_settings("npc-archive-competing-publish");
+    let capture = sample_npc_capture("npc_archive_competing_publish");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 723,
+        archived_at_wall: 1_704_067_273,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 1,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+    )
+    .expect("archive path should be valid");
+    let archive_relative_path =
+        npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)
+            .expect("archive relative path should be valid");
+    let competing_payload = br#"{"owner":"competing-publisher"}"#;
+
+    let error = persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        |_| {
+            Err(io::Error::other(
+                "database hook must not run after competing publish",
+            ))
+        },
+        |path, payload| {
+            // Publish a competing target while our temporary file is still open. The outer
+            // no-replace hard_link must fail without granting this caller ownership of target.
+            write_zstd_bundle_with_writer(path, payload, |_temp_file, _compressed| {
+                write_zstd_bundle(path, competing_payload)
+            })
+        },
+    )
+    .expect_err("a competing no-replace publisher must abort without deleting its target");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "competing publication should fail at the no-replace boundary, actual={error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(settings.db_path(), archive_relative_path.as_str())
+            .expect("competing archive should remain readable"),
+        competing_payload,
+        "failed publication must not remove the competing owner's archive"
+    );
+    assert!(
+        archive_path.exists(),
+        "the competing archive target must still exist after the losing publish fails"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 
@@ -7037,7 +7547,8 @@ fn load_npc_deceased_archive_rejects_corrupted_zstd_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     fs::write(&archive_path, b"not a zstd bundle")
         .expect("corrupted archive fixture should overwrite bundle");
 
@@ -7113,12 +7624,14 @@ fn find_orphaned_npc_archive_paths_reports_unindexed_archives() {
         &settings,
         orphan_archive.char_id.as_str(),
         orphan_archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let indexed_path = npc_deceased_archive_absolute_path(
         &settings,
         indexed_archive.char_id.as_str(),
         indexed_archive.archived_at_wall,
-    );
+    )
+    .expect("archive path should be valid");
     let connection = Connection::open(settings.db_path()).expect("db should open");
     connection
         .execute(
@@ -7187,8 +7700,67 @@ fn npc_digest_retention_sweeps_180_day_stale_rows() {
     );
     assert!(
         npc_digest_archive_absolute_path(&settings, stale.state.char_id.as_str(), now_wall,)
+            .expect("digest archive path should be valid")
             .exists(),
         "stale digest should be written to cold archive"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_digest_failed_no_replace_publish_preserves_competing_target() {
+    let (settings, root) = persistence_settings("npc-digest-competing-publish");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let now_wall = 1_725_000_000;
+    let stale_wall = now_wall - NPC_DIGEST_RETENTION_SECS - 1;
+    let stale = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_competing_publish").digest
+        },
+        ..sample_npc_capture("npc_digest_competing_publish")
+    };
+    persist_npc_capture(&settings, &stale).expect("stale digest should persist");
+
+    let archive_path =
+        npc_digest_archive_absolute_path(&settings, stale.state.char_id.as_str(), now_wall)
+            .expect("digest archive path should be valid");
+    let archive_relative_path = npc_digest_archive_relative_path(stale.state.char_id.as_str())
+        .expect("digest archive relative path should be valid");
+    let competing_payload = br#"{"owner":"competing-digest-publisher"}"#;
+
+    let error = sweep_stale_npc_digests_with_writer(&settings, now_wall, |path, payload| {
+        // Publish a competing target while the losing temporary file is still open. The
+        // outer no-replace hard_link must fail without granting this caller target ownership.
+        write_zstd_bundle_with_writer(path, payload, |_temp_file, _compressed| {
+            write_zstd_bundle(path, competing_payload)
+        })
+    })
+    .expect_err("a competing digest publisher must abort without deleting its target");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "competing digest publication should fail at the no-replace boundary, actual={error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(settings.db_path(), archive_relative_path.as_str())
+            .expect("competing digest archive should remain readable"),
+        competing_payload,
+        "failed digest publication must not remove the competing owner's archive"
+    );
+    assert!(
+        archive_path.exists(),
+        "the competing digest archive target must still exist after the losing publish fails"
+    );
+    assert!(
+        load_npc_digest(&settings, stale.state.char_id.as_str())
+            .expect("failed sweep should leave the hot digest readable")
+            .is_some(),
+        "failed digest publication must not delete the hot row"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -8254,6 +8826,29 @@ fn zone_influence_persistence_round_trip() {
         .find(|r| r.zone_id == "wilderness" && r.char_id == "offline:Wanderer")
         .expect("应有 Wanderer 记录");
     assert!(!wanderer_record.dominant, "Wanderer 不是霸主");
+
+    // 全量快照必须替换旧集合，而不是仅 upsert 当前键；删除 wilderness 与 RivalB
+    // 后，下一次 hydrate 不得复活这两条陈旧行。
+    influence_map
+        .zones
+        .get_mut("spawn")
+        .expect("spawn fixture should remain present")
+        .players
+        .remove("offline:RivalB");
+    influence_map.zones.remove("wilderness");
+    persist_zone_influence_snapshot(&settings, &influence_map)
+        .expect("replacement zone influence snapshot should persist");
+    let replacement_records =
+        load_zone_influence_snapshot(&settings).expect("replacement snapshot should load");
+    assert_eq!(
+        replacement_records.len(),
+        1,
+        "removed influence rows must not survive a full snapshot replacement"
+    );
+    assert_eq!(
+        replacement_records[0].char_id, "offline:HeroA",
+        "the surviving snapshot row must be the current HeroA entry"
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -10735,6 +11330,34 @@ fn runtime_qi_accounts_missing_or_invalid_row_fail_closed_without_partial_hydrat
             let _ = fs::remove_dir_all(root);
         }
     }
+}
+
+#[test]
+fn runtime_qi_accounts_unknown_row_fails_closed_instead_of_being_ignored() {
+    let (settings, root) = persistence_settings("runtime-qi-unknown-account");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("fixture sqlite should bootstrap");
+    let connection = Connection::open(settings.db_path()).expect("sqlite should open");
+    connection
+        .execute(
+            "INSERT INTO qi_runtime_accounts (account_id, balance, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4)",
+            params!["unexpected_runtime_owner", 17.0_f64, CURRENT_SCHEMA_VERSION, 0_i64],
+        )
+        .expect("fixture should be able to add an unknown durable owner");
+    drop(connection);
+
+    let mut hydrated = WorldQiAccount::default();
+    let error = hydrate_runtime_qi_accounts(&settings, &mut hydrated)
+        .expect_err("unknown durable qi owner must fail closed rather than disappear");
+    assert!(
+        error.to_string().contains("unexpected_runtime_owner"),
+        "unknown-owner error should identify the ignored value, actual={error}"
+    );
+    assert!(
+        hydrated.iter_balances().next().is_none(),
+        "unknown-owner rejection must not partially hydrate the fixed ledger owners"
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

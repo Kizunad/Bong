@@ -952,7 +952,7 @@ pub fn save_player_inventory_and_delete_dropped_loot(
         &inventory_json,
         last_updated_wall,
     )?;
-    crate::persistence::delete_dropped_loot_entry(&transaction, dropped_instance_id)?;
+    crate::persistence::delete_dropped_loot_entry(&transaction, inventory, dropped_instance_id)?;
     if let Some(zone_runtime) = zone_runtime {
         crate::persistence::upsert_zone_runtime(&transaction, zone_runtime, last_updated_wall)?;
     }
@@ -4090,7 +4090,38 @@ mod player_state_tests {
             "durable ground IDs must advance the post-restart allocator"
         );
 
+        // 删除 durable row 前必须证明拾取方确实持有同一 instance；仅提交 revision
+        // 的伪造 checkpoint 不能把带灵物真元的 ground row 清掉。
+        let mut unproved_inventory = inventory.clone();
+        unproved_inventory.revision = InventoryRevision(42);
+        let error = save_player_inventory_and_delete_dropped_loot(
+            &persistence,
+            "Azure",
+            &unproved_inventory,
+            9_100,
+            None,
+        )
+        .expect_err("durable drop deletion must require inventory ownership proof");
+        assert!(
+            error.to_string().contains("ownership proof"),
+            "missing ownership proof should be explicit, actual={error}"
+        );
+        assert_eq!(
+            load_player_slices(&persistence, "Azure")
+                .inventory
+                .map(|value| value.revision),
+            Some(InventoryRevision(41)),
+            "failed unproved pickup must not commit the receiving inventory"
+        );
+        assert!(
+            crate::persistence::load_durable_dropped_loot(&settings)
+                .expect("durable row should remain after rejected pickup")
+                .contains_key(&9_100),
+            "failed unproved pickup must retain the durable ground row"
+        );
+
         let mut picked_inventory = inventory.clone();
+        crate::inventory::force_attach_item_to_inventory(&mut picked_inventory, drop.item.clone());
         picked_inventory.revision = InventoryRevision(42);
         save_player_inventory_and_delete_dropped_loot(
             &persistence,
@@ -4155,6 +4186,7 @@ mod player_state_tests {
             .expect("failure trigger should install");
 
         let mut picked_inventory = baseline_inventory.clone();
+        crate::inventory::force_attach_item_to_inventory(&mut picked_inventory, drop.item.clone());
         picked_inventory.revision = InventoryRevision(42);
         let zone_runtime = ZoneRuntimeRecord {
             zone_id: "spawn".to_string(),
