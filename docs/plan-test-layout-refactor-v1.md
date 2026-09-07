@@ -324,6 +324,31 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **完整门禁**：当前 HEAD 执行任务卡指定的提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library、main binary、全部独立 Cargo targets、integration targets 与 doc-tests 均无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码与 target 对应 `461646f15`（2026-09-05），runner 格式修正对应 `74323058f`（2026-09-05）；本条仅记录 P2-17 进度，P2 总体、P3、P4 仍未完成。
 
+### P2-19 cultivation tribulation（✅ 2026-09-07）
+
+- **范围与落点**：仅处置 `server/src/cultivation/tribulation.rs` 原有 119 个 `#[test]`（测试体约 7,029 行；生产段约 4,173 行）。103 条能经既有公开 API 验证的 A 类测试外置到 `server/tests/unit/cultivation/tribulation_test.rs`，新增 `tribulation_unit` Cargo target；16 条 B 类测试保留在 `server/src/cultivation/tribulation_tests.rs`，由生产文件末尾的 `#[cfg(test)] #[path = "tribulation_tests.rs"] mod tests;` 挂载。渡劫运行时、schema、wire、Redis、qi 路径及其它模块未改动。
+- **迁移对拍与行为**：迁移前 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test cultivation::tribulation::tests --lib'` 为 `119 passed / 0 failed / 0 ignored`；迁移后同 crate B 类为 `16 passed / 0 failed / 0 ignored`，`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test --test tribulation_unit'` 的 A 类为 `103 passed / 0 failed / 0 ignored`，逐位守恒 `103 + 16 = 119`。119 个原测试名、断言、边界、fixture 语义和随机/时间输入均保持不变；仅按外置边界改写 crate 路径为 `bong_server::`，未复制生产实现。
+- **B 类逐条保留理由**：
+  - `long_full_progress_du_xu_request_adds_heart_demon_and_kaitian_waves`：直接锁定私有 `DUXU_FULL_PROGRESS_MIN_TICKS`，外置会把内部进度阈值变成生产 API。
+  - `recent_full_progress_du_xu_request_keeps_default_three_waves`：直接锁定同一私有完整进度阈值与内部波次选择，外置会暴露实现内部的时间窗口。
+  - `full_progress_boundary_35999_keeps_three_waves`：同时读取私有阈值、默认波次数和 `du_xu_full_progress_ticks`/`du_xu_waves_total`，外置会把边界算法及默认值固化成 API。
+  - `full_progress_boundary_36000_adds_five_waves`：验证私有阈值切换和内部波次计算，公开它会扭曲生产 API 的抽象边界。
+  - `resolved_heart_demon_after_soul_devouring_skips_original_heart_demon_slot`：断言私有 `DUXU_KAITIAN_WAVE` 的内部 slot 跳转，外置会要求公开波次调度细节。
+  - `heart_demon_obsession_timeout_penalizes_qi_and_boosts_kaitian_damage`：断言私有心魔后续波次倍率，外置会把平衡实现常数变成稳定 API。
+  - `heart_demon_resolution_advances_to_kaitian_without_republishing_fourth_wave`：读取私有心魔后续波次倍率来锁定内部结算，公开会泄露非生产契约的倍率细节。
+  - `obsession_resolution_increases_kaitian_damage`：同样直接锁定私有倍率而非外部结果接口，外置会迫使内部平衡表公开。
+  - `phase7_balance_three_wave_curve_fits_spirit_pool`：直接调用私有 `du_xu_wave_profile`，验证内部 profile 曲线；公开它会把算法 profile 变成生产 API。
+  - `aoe_uses_current_wave_strength_only_on_wave_start_tick`：读取私有链式雷击 strike 数，外置会暴露 AOE 内部实现计数而非稳定行为契约。
+  - `spectator_aoe_is_not_reduced_by_distance_within_danger_radius`：同样依赖私有 strike 数来验证内部 AOE 展开，公开会扭曲 AOE 实现边界。
+  - `third_wave_freezes_qi_max_as_soul_devouring_lightning`：断言私有 `DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO`，外置会将内部冻结比例作为公共 API。
+  - `juebi_terrain_generation_keeps_animation_order`：依赖私有地形操作入队函数，外置需公开内部队列生成算法而非地形结果契约。
+  - `juebi_terrain_tick_skips_unloaded_chunks_without_air_restore`：直接构造私有 `TerrainModOp`，外置会把内部地形操作结构公开，扭曲生产 API。
+  - `juebi_terrain_tick_records_original_once_for_overlapping_ops`：同样验证私有 `TerrainModOp` 队列去重/原始状态记录，公开会固化内部存储结构。
+  - `tribulation_omen_cloud_blocks_overlay_and_restore`：依赖仅在 `cfg(test)` 提供的 `mark_test_layer_as_overworld` 测试层装配钩子；外置需新增 test-only seam 才能重建相同 ChunkLayer fixture，故留同 crate。
+- **公开 API 与 seam**：A 类只使用既有 `bong_server::cultivation::tribulation` 及相关公开模块 API；B 类使用同 crate 访问现有私有项。没有新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，也没有改动生产实现。
+- **主线复验与完整门禁**：在初轮 gate 后紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=eedf9903d8f2d819847d4cf394e43ddf7bb2b0fa` 无 Cargo/plan 冲突，生成 merge HEAD `de21913542389e1e9a4f4a59a8c148c750450d95`；合入内容仅为 bot 场景脚本与已归档 bot plan，未触及本批 server、Cargo 或 tribulation 文件。合并后再次执行 locked server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0：library `12071 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、`tribulation_unit` `103 passed / 0 failed / 0 ignored`，其它既有 Cargo targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`；Cargo 其它 targets、P2/P3/P4 既有条目均保留。
+- **validator 与提交证据**：无上下文只读 validator 已绑定代码/分类 HEAD `9b71f1fb9d67b252c28573ddb175c0666b3d31e5` 并 PASS；合并 HEAD 上再次定向对拍同 crate B 类 `16 passed / 0 failed / 0 ignored`、外置 A 类 `103 passed / 0 failed / 0 ignored`，逐位守恒 `103 + 16 = 119`。代码、`tribulation_unit` target 与测试落点对应 `3cf9ef551`（2026-09-07），分类 evidence 对应 `9b71f1fb9`，本段为本批中文 docs evidence commit；每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-19 进度，P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
