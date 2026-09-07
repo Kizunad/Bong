@@ -716,7 +716,25 @@ pub fn resolve_attack_intents(
                     QiTransferReason::ReleaseToZone,
                 );
                 let release = match release {
-                    Ok(release) => release,
+                    Ok(release) => Some(release),
+                    Err(crate::cultivation::components::QiFlowError::UnrepresentableFlow {
+                        field,
+                        before,
+                        amount,
+                    }) => {
+                        // 该量级已经小于 source/zone 当前 f64 表示精度：释放事务在任何
+                        // source、zone 或 ledger mutation 前失败。把它当作 no-op 释放，
+                        // 让玩家可感知的攻击继续结算；若写入 overflow，会在 source 未
+                        // 扣减时凭空增加 ledger，反而破坏守恒。其它错误仍 fail-closed。
+                        tracing::debug!(
+                            attacker = ?intent.attacker,
+                            amount,
+                            field,
+                            before,
+                            "[bong][combat] qi_invest release is unrepresentable; treating release as no-op"
+                        );
+                        None
+                    }
                     Err(error) => {
                         tracing::warn!(
                             attacker = ?intent.attacker,
@@ -727,9 +745,11 @@ pub fn resolve_attack_intents(
                         continue;
                     }
                 };
-                if let Some(events) = event_writers.qi_transfers.as_deref_mut() {
-                    for transfer in release.transfers {
-                        events.send(transfer);
+                if let Some(release) = release {
+                    if let Some(events) = event_writers.qi_transfers.as_deref_mut() {
+                        for transfer in release.transfers {
+                            events.send(transfer);
+                        }
                     }
                 }
             }
