@@ -130,6 +130,15 @@ pub fn persist_npc_capture(
     settings: &PersistenceSettings,
     capture: &NpcPersistenceCapture,
 ) -> io::Result<()> {
+    // Digest retention uses the same per-character lifecycle lock. Keep the lock
+    // through the existing SQLite transaction so a cooperative capture cannot
+    // advance the row after the sweeper's stale-row snapshot.
+    let digest_archive_path = npc_digest_archive_absolute_path(
+        settings,
+        capture.digest.char_id.as_str(),
+        capture.captured_at_wall,
+    )?;
+    let _lifecycle_lock = acquire_archive_lifecycle_lock(&digest_archive_path)?;
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
     (|| -> io::Result<()> {
@@ -356,15 +365,15 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
 ) -> io::Result<Vec<NpcDigestRecord>> {
     let threshold = now_wall - NPC_DIGEST_RETENTION_SECS;
     let mut connection = open_persistence_connection(settings)?;
-    let stale_digests = load_stale_npc_digests(&connection, threshold)?;
-    if stale_digests.is_empty() {
+    let candidate_digests = load_stale_npc_digests(&connection, threshold)?;
+    if candidate_digests.is_empty() {
         return Ok(Vec::new());
     }
 
     // Acquire every target lock in a stable order and retain all guards through the
     // SQLite delete transaction. This prevents two sweepers from validating the same
     // archive independently and avoids lock-order deadlocks between overlapping sets.
-    let mut lock_targets = stale_digests
+    let mut lock_targets = candidate_digests
         .iter()
         .map(|digest| {
             npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall)
@@ -376,6 +385,22 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
         .iter()
         .map(|(_, path)| acquire_archive_lifecycle_lock(path))
         .collect::<io::Result<Vec<_>>>()?;
+
+    // The first query only discovers which sidecar locks to acquire. Re-read while
+    // holding them: a cooperative capture may have committed a newer row between
+    // candidate discovery and lock acquisition, and that successor must not enter
+    // this sweep.
+    let candidate_char_ids = candidate_digests
+        .iter()
+        .map(|digest| digest.char_id.as_str())
+        .collect::<HashSet<_>>();
+    let stale_digests = load_stale_npc_digests(&connection, threshold)?
+        .into_iter()
+        .filter(|digest| candidate_char_ids.contains(digest.char_id.as_str()))
+        .collect::<Vec<_>>();
+    if stale_digests.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let mut archive_identities = Vec::with_capacity(stale_digests.len());
 
@@ -423,10 +448,34 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
     for digest in &stale_digests {
         transaction
             .execute(
-                "DELETE FROM npc_digests WHERE char_id = ?1",
-                params![digest.char_id.as_str()],
+                "
+                DELETE FROM npc_digests
+                WHERE char_id = ?1
+                  AND archetype = ?2
+                  AND realm = ?3
+                  AND ((faction_id = ?4) OR (faction_id IS NULL AND ?4 IS NULL))
+                  AND recent_summary = ?5
+                  AND last_referenced_wall = ?6
+                ",
+                params![
+                    digest.char_id.as_str(),
+                    digest.archetype.as_str(),
+                    digest.realm.as_str(),
+                    digest.faction_id.as_deref(),
+                    digest.recent_summary.as_str(),
+                    digest.last_referenced_wall,
+                ],
             )
             .map_err(io::Error::other)?;
+        if transaction.changes() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!(
+                    "npc digest changed during retention sweep: {}",
+                    digest.char_id
+                ),
+            ));
+        }
     }
     for (archive_path, identity) in &archive_identities {
         ensure_archive_identity(archive_path, *identity)?;
