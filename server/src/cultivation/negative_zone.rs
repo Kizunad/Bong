@@ -117,10 +117,12 @@ pub fn negative_zone_siphon_tick(
                     }),
                 });
             }
-            Err(error @ QiFlowError::UnrepresentableFlow {
-                field: "zone.spirit_qi",
-                ..
-            }) => {
+            Err(
+                error @ QiFlowError::UnrepresentableFlow {
+                    field: "zone.spirit_qi",
+                    ..
+                },
+            ) => {
                 // signed zone 的增量若小于其 f64 ULP，原 release 会原子失败；把同一笔
                 // drained 真元转入稳定 overflow，完成真实入账后才允许发死亡触发。
                 tracing::warn!(
@@ -170,11 +172,11 @@ pub fn negative_zone_siphon_tick(
 mod tests {
     use super::*;
     use crate::player::state::canonical_player_id;
+    use crate::qi_physics::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_ZONE_UNIT_CAPACITY};
     use crate::qi_physics::{
         assert_conservation, qi_flow_overflow_account, summarize_world_qi, QiAccountId,
         WorldQiBudget,
     };
-    use crate::qi_physics::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_ZONE_UNIT_CAPACITY};
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, Events, Update};
 
@@ -363,9 +365,7 @@ mod tests {
             .transfers()
             .is_empty());
         assert_eq!(
-            app.world()
-                .resource::<Events<QiTransfer>>()
-                .len(),
+            app.world().resource::<Events<QiTransfer>>().len(),
             0,
             "unrepresentable epsilon siphon must not emit retry transfers"
         );
@@ -386,7 +386,11 @@ mod tests {
             app.update();
 
             assert_eq!(
-                app.world().entity(player).get::<Cultivation>().unwrap().qi_current,
+                app.world()
+                    .entity(player)
+                    .get::<Cultivation>()
+                    .unwrap()
+                    .qi_current,
                 1.0
             );
             assert!(app
@@ -394,12 +398,7 @@ mod tests {
                 .resource::<WorldQiAccount>()
                 .transfers()
                 .is_empty());
-            assert_eq!(
-                app.world()
-                    .resource::<Events<QiTransfer>>()
-                    .len(),
-                0
-            );
+            assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
             assert_eq!(
                 app.world()
                     .resource::<Events<CultivationDeathTrigger>>()
@@ -417,7 +416,11 @@ mod tests {
         app.update();
 
         assert_eq!(
-            app.world().entity(player).get::<Cultivation>().unwrap().qi_current,
+            app.world()
+                .entity(player)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
             0.0
         );
         let zone_after = app
@@ -449,7 +452,11 @@ mod tests {
 
         let after = summarize_world_qi(app.world_mut());
         assert_eq!(
-            app.world().entity(player).get::<Cultivation>().unwrap().qi_current,
+            app.world()
+                .entity(player)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
             0.0
         );
         let deaths: Vec<_> = app
@@ -475,7 +482,11 @@ mod tests {
 
         let after = summarize_world_qi(app.world_mut());
         assert_eq!(
-            app.world().entity(player).get::<Cultivation>().unwrap().qi_current,
+            app.world()
+                .entity(player)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
             0.0
         );
         assert_eq!(
@@ -530,7 +541,11 @@ mod tests {
         app.update();
 
         assert_eq!(
-            app.world().entity(player).get::<Cultivation>().unwrap().qi_current,
+            app.world()
+                .entity(player)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
             0.05
         );
         assert_eq!(
