@@ -4,11 +4,11 @@
 
 ## 阶段总览
 
-- P0 ⏳（2026-09-07）：第一性核验 qi_invest 的输入、扣除、经脉统计与 canonical ledger 出料路径。
-- P1 ⬜：在合法性校验完成后接入既有 `qi_physics` 释放事务，保持伤害/命中/倍率语义不变。
-- P2 ⬜：补齐命中、未命中、超距/跨维拒绝、真元不足、prepaid 源与守恒回归。
-- P3 ⬜：完成无上下文只读对抗验证、locked server gate、主线合并复验与 CI/Kody 审查。
-- P4 ⬜：补 Finish Evidence，独立归档本 plan 并开 PR；不在本任务内合并 PR。
+- P0 ✅ 2026-09-07：第一性核验 qi_invest 的输入、扣除、经脉统计与 canonical ledger 出料路径。
+- P1 ✅ 2026-09-07：在合法性校验完成后接入既有 `qi_physics` 释放事务，保持伤害/命中/倍率语义不变。
+- P2 ✅ 2026-09-07：补齐命中、未命中、超距/跨维拒绝、真元不足、prepaid 源与守恒回归。
+- P3 ✅ 2026-09-07：完成无上下文只读对抗验证、locked server gate 与主线合并复验。
+- P4 ✅ 2026-09-07：补 Finish Evidence，独立归档本 plan 并准备开 PR；不在本任务内合并 PR。
 
 ## P0：语义与接入面核验
 
@@ -48,4 +48,33 @@
 
 ## Finish Evidence
 
-待 P0–P4 完成后填写。
+### 落地清单
+
+- `server/src/combat/resolve.rs::resolve_attack_intents`：普通非 prepaid `qi_invest` 在攻击合法性校验完成后扣除，并经既有 `release_external_qi_to_zone` → `qi_release_to_zone` 释放；zone 饱和余量进入 `qi_flow_overflow`。
+- `server/src/combat/resolve_tests.rs`：覆盖命中释放、未命中、超距/跨维/无效目标/真元不足零 mutation、prepaid 与 `NpcMelee` 不重复结算、zone 饱和 overflow，以及 `SPIRIT_QI_TOTAL` + `assert_conservation` 守恒锚点。
+- `docs/finished_plans/plan-combat-qi-invest-conservation-v1.md`：本归档文件。
+
+### 关键 commit
+
+- `e58994f4e`（2026-09-07）：建立 bugfix plan skeleton。
+- `ce4f76152`（2026-09-07）：将 plan 晋级为 active。
+- `9051bfbc3`（2026-09-07）：接入 canonical qi release 并补齐守恒/拒绝路径回归。
+- `a7913c3f8`（2026-09-07）：修正既有测试对合法攻击者 `qi_invest` 释放的断言。
+- `6b5ce511f`（2026-09-07）：合入最新 `origin/main`（`0a7ece3a6`）后的 merge commit。
+
+### 测试结果
+
+- 定向回归：`cargo test --lib combat::resolve::tests::jiemai_parry_no_qi_transfer_when_insufficient_qi`（1 passed）；`cargo test --lib combat::resolve::tests::dead_armor_block_is_drop_not_release`（1 passed）。
+- 合并前与合并主线后的 locked server gate 均真实退出 0：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、全量 `cargo test`。
+- 全量 server 结果：lib `12178 passed; 0 failed; 1 ignored`，main `18 passed`，各独立 integration/unit targets 通过，doc-tests `3 passed; 0 failed; 5 ignored`。
+- validator：无上下文只读 validator 对 `9051bfbc3` 返回 PASS 并已关闭；之后仅修正测试断言，主线 merge 未触及 `server/src/combat/resolve.rs`，按流程未重复启动 validator。
+
+### 跨仓库核验
+
+- server ↔ `qi_physics`：生产路径使用既有 `release_external_qi_to_zone`、规范 `qi_release_to_zone`、`QiTransferReason::ReleaseToZone` 与 `qi_flow_overflow`，测试使用 `SPIRIT_QI_TOTAL` 和 `ledger::assert_conservation`；未新增物理常数或第二套 ledger。
+- agent/client/schema：未修改 agent、client、schema、Redis 或 wire 协议，故无跨仓库契约变更；`Meridian::throughput_current` 仍只是统计量。
+
+### 遗留 / 后续
+
+- PR 创建后的 CI/e2e 与当前 HEAD 的 Kody 审查属于 PR 流程后续门禁；本任务不自行 merge。
+- prepaid 攻击源与 `AttackSource::NpcMelee` 的既有权威扣费边界保持不变；其他 qi 物理缺陷不在本 plan 范围。
