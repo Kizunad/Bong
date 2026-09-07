@@ -74,9 +74,10 @@
   不重复 cast、不把拒绝伪装成成功，原有 Heavy/Intricate、全量/脱敏/静默、维度与
   距离断言均保留。
 - 空间等待复用 `_zone_loot_helpers.teleport_to_zone` 与 `wait_zone_info`；同 zone
-  no-op 只有在最新权威 `pos_look` 坐标有效且与已知目标完全匹配时才直接返回，若
-  目标尚未知晓则用该有效权威坐标作为本次实际落点，绝不把 chat 单独当作坐标确认；
-  其余情况等待本次真实 zone transition 或命令后的精确位置提交。跨维先记录
+  no-op 只有在最新权威 `pos_look` 坐标有效且与已知目标完全匹配时才直接返回；若
+  目标尚未知晓但已在目标 zone，则 fail closed，先经确定不同的 zone 建立真实位置
+  提交再学习目标，绝不把 chat 或未对拍的旧坐标当作 no-op 完成；其余情况等待本次
+  真实 zone transition 或命令后的精确位置提交。跨维先记录
   `/tpdim` 前的权威坐标，再分别校验目标 X（tsy 为旧 X `+0.25`、overworld 为旧 X
   `-0.25`）、pulse X（目标 X `+0.001`）及 Y/Z，最后精确校验 restore，避免无关
   位置帧满足等待。未知 `world_omen` 只加入 heartbeat 已登记的五个精确 VFX ID，
@@ -87,9 +88,10 @@
   等待持续到权威状态报告 `cooldown_until_ms == 0`，适配低 TPS 的真实 tick 进度。
 - 使用现有 `Bot.wait_for`、`Bot.position`、typed `server_data` 和现有同值绑定接口，
   未新增 server seam，未改 server/gameplay、client、agent、schema 或其它 plan。
-- `scripts/bot/test_protocol.py` 新增 9 条回归覆盖：单次 cast、cooldown 新状态、
+- `scripts/bot/test_protocol.py` 新增 10 条回归覆盖：单次 cast、cooldown 新状态、
   resolver skill、冷却刷新与过期 hint 后退避、低 TPS 下持续跟随权威状态、规范
-  zone helper/no-op、精确 Respawn 后 pulse/restore 几何及缺失初始坐标拒绝。
+  zone helper/no-op、未知目标同 zone fail-closed、精确 Respawn 后 pulse/restore
+  几何及缺失初始坐标拒绝。
 
 ## P2 — 稳定性验收与收口
 
@@ -127,18 +129,19 @@
    `/tpdim` 前权威坐标计算出的目标/pulse/restore `pos_look`；固定 sleep、仅 chat、仅
    Respawn 或任意位置帧均不是完成信号。未知请求必须以排空 join 突发后的静默窗口为
    锚，已知 heartbeat VFX 才能按精确白名单豁免。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #1`；落点 `§P1`）**：代码探索确认 cast 接受反馈与权威冷却在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:306-373`，Respawn 目标维度及 pulse/restore 几何在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:826-911`，join 排空、双 keepalive、quiescence 在 `scripts/bot/scenarios/_rejection_helpers.py:298-405`；这些是完成状态，不能由固定 sleep、chat、Respawn 或任意位置帧替代。
-2. **根因与修复边界**是 Bot 观察/状态等待错误，而非 server gameplay：低 TPS 使 wall-clock hint 脱离 server tick，旧 `/tpzone` 本地解析形成冻结契约分叉，旧 `/tpdim` 时间水位会接受无关位置帧；因此不增大业务断言窗口、不改 server 玩法。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #2`；根因 `§P0`、修复 `§P1`）**：冷却权威刷新、退避与 watchdog 在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:448-510`，`/tpzone` 只以 canonical helper + 精确权威坐标确认 no-op/提交在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-248`，`/tpdim` 几何过滤在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:826-911`；代码探索支持保持 server 不变。
-3. **现有 Bot API 已足够**：`wait_for` 可按事件水位和坐标过滤，`Bot.position` 是既有权威镜像，同值 bind 是公开请求接口，无需新增 seam。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #3`；接口与修复 `§P1`）**：原始 intent 入口在 `scripts/bot/bot.py:576-582`，事件谓词等待在 `scripts/bot/bot.py:673-692`，连接观察在 `scripts/bot/bot.py:784-797`，canonical zone helper 在 `scripts/bot/scenarios/_zone_loot_helpers.py:44-66`，目标坐标学习与精确 no-op 在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-248`；不需要 server seam。
+2. **根因与修复边界**是 Bot 观察/状态等待错误，而非 server gameplay：低 TPS 使 wall-clock hint 脱离 server tick，旧 `/tpzone` 本地解析形成冻结契约分叉，旧 `/tpdim` 时间水位会接受无关位置帧；因此不增大业务断言窗口、不改 server 玩法。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #2`；根因 `§P0`、修复 `§P1`）**：冷却权威刷新、退避与 watchdog 在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:448-510`，`/tpzone` 只以 canonical helper + 精确权威坐标确认 no-op/提交；未知目标同 zone 在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-251` fail closed，场景入口在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:600-606` 先建立可学习的真实提交；`/tpdim` 几何过滤在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:826-911`；代码探索支持保持 server 不变。
+3. **现有 Bot API 已足够**：`wait_for` 可按事件水位和坐标过滤，`Bot.position` 是既有权威镜像，同值 bind 是公开请求接口，无需新增 seam。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #3`；接口与修复 `§P1`）**：原始 intent 入口在 `scripts/bot/bot.py:576-582`，事件谓词等待在 `scripts/bot/bot.py:673-692`，连接观察在 `scripts/bot/bot.py:784-797`，canonical zone helper 在 `scripts/bot/scenarios/_zone_loot_helpers.py:44-66`，目标坐标学习、已知坐标精确 no-op 与未知目标 fail-closed 在 `scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-251`；不需要 server seam。
 4. `network_request_unknown_type` **没有放宽等待预算**：`settle_s=2.0` 与 `wait_keepalive_after` 默认 `25.0` 均未改；修复是 join 排空、发送水位、两个新 keepalive、quiescence 与五个精确 heartbeat `world_omen` ID 白名单。原失败约 22.1s 是已知 heartbeat VFX 被错误归因，不是把阈值放宽到 23.5s；23.5/23.6s 是同一等待链路的实际完成耗时。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #4`；证据 `§P0`、实现 `§P1`）**：六类坏请求与合法回路在 `scripts/bot/scenarios/network_request_unknown_type.py:19-55`，新 keepalive 判定在 `scripts/bot/scenarios/_rejection_helpers.py:255-277`，join 排空在 `scripts/bot/scenarios/_rejection_helpers.py:298-317`，固定预算/双心跳/quiescence/最终扫描在 `scripts/bot/scenarios/_rejection_helpers.py:320-405`，五个精确 ID 在 `scripts/bot/scenarios/_rejection_helpers.py:94-105`；结论是加强锚点，不是放宽预算。
-5. **稳定性证据**由 R5A/R5B/R5C/R5D 四轮真实 runner 全绿（另有 FZ2/FZ3 历史全绿）、每轮精确 `total=2 pass=2 skip=0 fail=0`、最小 transfer 序列与回归 fake 共同构成，非一次碰运气重跑。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #5`；验收 `§P2`、`## Finish Evidence`）**：过期 hint/低 TPS/退避回归在 `scripts/bot/test_protocol.py:4992-5121`，canonical zone/no-op 与精确 pulse/restore 回归在 `scripts/bot/test_protocol.py:5123-5339`，五项 omen 白名单边界在 `scripts/bot/test_protocol.py:5941-5994`；真实 runner 证据与这些回归共同锁定稳定性。
+5. **稳定性证据**由 R5A/R5B/R5C/R5D 四轮真实 runner 全绿（另有 FZ2/FZ3 历史全绿）、每轮精确 `total=2 pass=2 skip=0 fail=0`、最小 transfer 序列与回归 fake 共同构成，非一次碰运气重跑。**探索结论与双锚点（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #5`；验收 `§P2`、`## Finish Evidence`）**：过期 hint/低 TPS/退避回归在 `scripts/bot/test_protocol.py:4992-5121`，canonical zone/no-op（含未知目标 fail-closed）与精确 pulse/restore 回归在 `scripts/bot/test_protocol.py:5123-5339`，五项 omen 白名单边界在 `scripts/bot/test_protocol.py:5941-5994`；真实 runner 证据与这些回归共同锁定稳定性。
 
 ## Finish Evidence
 
 - **落地清单**：
   - `scripts/bot/scenarios/cultivation_qi_color_inspect.py`：以本次请求后的
     `skillbar_config` 权威冷却、规范 zone helper、由权威 `pos_look` 提供并精确复用的
-    `/tpzone` 目标坐标、按旧坐标计算的 `/tpdim` 目标/pulse/restore 几何状态替代固定
-    间隔、重复 zone 解析与任意位置水位；保留原有 6 次真实施放及
+    `/tpzone` 目标坐标（未知目标同 zone 先 fail closed 并经真实不同 zone 提交学习）、
+    按旧坐标计算的 `/tpdim` 目标/pulse/restore 几何状态替代固定间隔、重复 zone
+    解析与任意位置水位；保留原有 6 次真实施放及
     全部 qi-color 正/负向断言。
   - `scripts/bot/scenarios/_rejection_helpers.py`：仅登记 heartbeat 的五个精确
     `bong:world_omen_*` VFX 为 ambient，未知同前缀仍判定为玩法副作用。
@@ -155,6 +158,7 @@
   - `bc8fb1625`（2026-09-07）：合并最新 `origin/main=51fcda26e` 并复验受影响栈。
   - `3b2ccece9`（2026-09-07）：合并最新 `origin/main=94119a7a7` 并复验 Bot 受影响栈。
   - `05c316494`（2026-09-07）：补齐当前 HEAD 的返工结论与合并后证据。
+  - `6af95a6b7`（2026-09-07）：移除未知目标同 zone 的坐标猜测，补 fail-closed 回归。
 - **测试结果**：
   - 真实 runner R5A：`cultivation_qi_color_inspect` PASS 122.9s，
     `network_request_unknown_type` PASS 23.0s，`total=2 pass=2 skip=0 fail=0`，rc=0；
@@ -170,7 +174,8 @@
     evidence 位于 `.sisyphus/evidence/bot-e2e/session.wrdhCpJAIo/run.ALEmXT68dO/`。
   - 此前真实 runner FZ2/FZ3 均为双场景 PASS、`total=2 pass=2 skip=0 fail=0`、rc=0。
   - `python3 scripts/bot/test_protocol.py`：542 tests OK；场景等待契约回归已覆盖
-    非零状态退避、低 TPS 持续轮询、规范 zone helper 与精确 pulse/restore 几何。
+    非零状态退避、低 TPS 持续轮询、规范 zone helper、未知目标同 zone fail-closed
+    与精确 pulse/restore 几何。
   - `python3 -m py_compile scripts/bot/scenarios/*.py`、`bash -n scripts/bot-e2e.sh`、
     `git diff --check`：全部通过。
   - `bash scripts/tests/test_all_contract_test.sh`：95 passed / 0 failed；
