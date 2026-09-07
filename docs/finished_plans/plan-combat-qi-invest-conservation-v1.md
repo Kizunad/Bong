@@ -71,6 +71,7 @@
 - `ce4f76152`（2026-09-07）：将 plan 晋级为 active。
 - `9051bfbc3`（2026-09-07）：接入 canonical qi release 并补齐守恒/拒绝路径回归。
 - `a7913c3f8`（2026-09-07）：修正既有测试对合法攻击者 `qi_invest` 释放的断言。
+- `2e53f4192`（2026-09-07）：补齐 `UnrepresentableFlow` no-op 与其它释放错误 fail-closed 回归，接入 `SPIRIT_QI_TOTAL` 权威快照及计划契约说明。
 - `6b5ce511f`（2026-09-07）：合入最新 `origin/main`（`0a7ece3a6`）后的 merge commit。
 
 ### 测试结果
@@ -78,7 +79,7 @@
 - 定向回归：`cargo test --lib combat::resolve::tests::jiemai_parry_no_qi_transfer_when_insufficient_qi`（1 passed）；`cargo test --lib combat::resolve::tests::dead_armor_block_is_drop_not_release`（1 passed）；`cargo test --lib combat::resolve::tests::qi_invest_unrepresentable_release_is_noop_but_attack_resolves`（1 passed）；`cargo test --lib combat::resolve::tests::qi_invest_release_error_fails_closed_without_resolving_attack`（1 passed）。
 - 合并前与合并主线后的 locked server gate 均真实退出 0：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、全量 `cargo test`。
 - 全量 server 结果：lib `12178 passed; 0 failed; 1 ignored`，main `18 passed`，各独立 integration/unit targets 通过，doc-tests `3 passed; 0 failed; 5 ignored`。
-- validator：无上下文只读 validator 对 `9051bfbc3` 返回 PASS 并已关闭；之后仅修正测试断言，主线 merge 未触及 `server/src/combat/resolve.rs`，按流程未重复启动 validator。
+- validator：无上下文只读 validator 对 `9051bfbc3` 返回 PASS 并已关闭；本轮 review 后的 `2e53f4192` 通过两个新增定向回归及完整 locked server gate，按当前会话“validator 已 Closed、不要再查询/重开”的指示未重复启动 validator。
 
 ### 跨仓库核验
 
