@@ -12,6 +12,28 @@
 | P1 | 以最小 Bot harness 修复确定性等待；若根因在服务端则停下转交 | fix_pr | ✅ 2026-09-06 |
 | P2 | 连续稳定性证据、完整受影响门禁、fresh validator 与 PR review | coverage | ✅ 2026-09-06 |
 
+## Integration Preflight（返工补证据，2026-09-06）
+
+- **`docs/CLAUDE.md`**：已重读防孤岛调研的 §一至§四，按要求复查正典、归档
+  plan、active plan、skeleton 与 `reminder.md`；本次是已归档 plan 的 review 返工，
+  只原地补 Finish Evidence，不重复 promotion 或归档。
+- **`docs/worldview.md`**：对 `qi_color_inspect`、
+  `network_request_unknown_type`、`bot-e2e`、`cooldown_until_ms`、`tpdim`、
+  `tpzone` 执行全文检索，均无命中；本次仍是 Bot/CI 观察层修复，不新增玩法、
+  境界、区域或经济锚点。
+- **`docs/finished_plans/`**：当前 369 份归档；精确检索命中一个既有
+  `qi_color_inspect` 协议相关的 `plan-style-vector-integration-v1`，未发现
+  `network_request_unknown_type` 或本 plan 同名归属；其余相邻 Bot 覆盖 plan
+  不拥有这两个场景的时序锚点，因此不并入其它 plan。
+- **当前 active `docs/plan-*.md`**：当前 87 份；精确检索的
+  `qi_color_inspect` 命中 `plan-refactor-c2s-gate-v1` 与父 plan
+  `plan-test-layout-refactor-v1`，未命中另一个时序修复 plan；已检查
+  `plan-bot-e2e-coverage-v1`、`plan-ci-redis-pull-resilience-v1` 等相邻 owner，
+  均不拥有本次两个场景的等待实现。
+- **`docs/plans-skeleton/` 与 `reminder.md`**：当前 159 份 skeleton；对两个场景名
+  与本 plan basename 均无命中，`reminder.md` 亦无匹配待办。结论是本返工只更新
+  已归档 plan 的证据，不新立 skeleton、不改其它 plan。
+
 ## 接入面 Checklist
 
 - **进料**：`scripts/bot/scenarios/cultivation_qi_color_inspect.py`、
@@ -51,27 +73,37 @@
   休眠提示，最终通过同值 `skill_bar_bind` 刷新到服务端实际下发的 `cooldown=0`。
   不重复 cast、不把拒绝伪装成成功，原有 Heavy/Intricate、全量/脱敏/静默、维度与
   距离断言均保留。
-- 空间等待使用 `server/zones.json` 推导目标坐标：已有权威坐标与目标相同的 no-op
-  只接受新 chat，否则必须等待命中目标坐标的 `pos_look`；跨维必须等 Respawn 后
-  的 pulse 与 restore 两个位置帧，避免旧帧满足等待。未知 `world_omen` 只加入
-  heartbeat 已登记的五个精确 VFX ID，未知同前缀仍判红。
+- 空间等待复用 `_zone_loot_helpers.teleport_to_zone` 与 `wait_zone_info`；最新
+  `zone_info` 已表明同 zone 时保留 no-op 只等规范 chat，否则等待本次真实 zone
+  transition。跨维先记录 `/tpdim` 前的权威坐标，再分别校验目标 X（tsy 为旧 X
+  `+0.25`、overworld 为旧 X `-0.25`）、pulse X（目标 X `+0.001`）及 Y/Z，最后
+  精确校验 restore，避免无关位置帧满足等待。未知 `world_omen` 只加入 heartbeat
+  已登记的五个精确 VFX ID，未知同前缀仍判红。
+- cooldown 状态刷新仍以 server 下发的非零/零 `skillbar_config` 为完成依据；
+  非零返回在过期 Unix hint 后至少经过一个 `CAST_READY_POLL_INTERVAL` 退避，
+  不把 wall-clock hint 当成就绪，也不向 server 洪泛同值 bind；只要连接仍活着，
+  等待持续到权威状态报告 `cooldown_until_ms == 0`，适配低 TPS 的真实 tick 进度。
 - 使用现有 `Bot.wait_for`、`Bot.position`、typed `server_data` 和现有同值绑定接口，
   未新增 server seam，未改 server/gameplay、client、agent、schema 或其它 plan。
-- `scripts/bot/test_protocol.py` 新增 7 条回归覆盖：单次 cast、cooldown 新状态、
-  resolver skill、冷却刷新、no-op 坐标、陈旧位置帧过滤、Respawn 后双位置帧。
+- `scripts/bot/test_protocol.py` 新增 9 条回归覆盖：单次 cast、cooldown 新状态、
+  resolver skill、冷却刷新与过期 hint 后退避、低 TPS 下持续跟随权威状态、规范
+  zone helper/no-op、精确 Respawn 后 pulse/restore 几何及缺失初始坐标拒绝。
 
 ## P2 — 稳定性验收与收口
 
-- 已完成两轮真实双场景连续验证：FZ2 轮中两场景均 PASS（178.3s/23.5s），
-  FZ3 轮中两场景均 PASS（179.7s/23.6s）；每轮 runner 均输出
-  `total=2 pass=2 skip=0 fail=0` 且返回码为 0。最小真实序列还核验了两次跨维的
+- 已完成五轮真实双场景连续验证：R5A 轮中两场景均 PASS（122.9s/23.0s），
+  R5B 轮中两场景均 PASS（47.6s/22.3s），R5C 轮中两场景均 PASS（124.4s/23.3s）；
+  此前 FZ2/FZ3 也均输出 `total=2 pass=2 skip=0 fail=0`，每轮 runner 返回码均为 0。
+  R5A/R5B/R5C 的 runner 均输出 `total=2 pass=2 skip=0 fail=0` 且返回码均为 0；
+  最小真实序列还核验了两次跨维的
   `Respawn → pulse pos_look → restore pos_look → 目标 zone pos_look` 顺序。
-- 已通过 7 条场景回归单测、合并最新 `origin/main` 后的完整协议测试 539/539、
+- 已通过场景等待契约回归、完整协议测试 542/542、
   `python3 -m py_compile scripts/bot/scenarios/*.py`、`bash -n scripts/bot-e2e.sh`、
   `git diff --check`；scripts contract 为 `test_all_contract` 95/95、
   `e2e_redis_hang_guard_contract_test` 5/5、`smoke_owned_artifacts_test` PASS。
-- 最终 HEAD `4dfece34e9dc0937c19821f3c49338fc73d207f4` 已通过无上下文 read-only
-  validator（validator 模型 `gpt-5.6-luna`），结论绑定该 SHA；提交 push、PR 的
+- 返工代码 HEAD `ba2e5e03f` 已通过无上下文 read-only
+  validator（validator 模型 `gpt-5.6-luna`），结论绑定该 SHA；此前 `4dfece34e9dc0937c19821f3c49338fc73d207f4` 的
+  validator 证据属于返工前 HEAD，不作为本轮结论；提交 push、PR 的
   CI/e2e 与 Kody 主动 review 是 PR 阶段事项。
 
 ## 非目标
@@ -84,41 +116,58 @@
 
 ## §8.1 决议
 
-1. 完成锚点是本次请求后的 typed 接受反馈与权威 `skillbar_config`，以及实际目标
-   坐标/跨维 pulse-restore `pos_look`；固定 sleep 与仅 chat/仅 Respawn 均不是完成
-   信号。未知请求的观察锚是排空 join 突发后的静默窗口，已知 heartbeat VFX 才可
-   按精确白名单豁免。
-2. 失败来自两类 Bot 时序问题：低 TPS 下固定冷却间隔误判 server 状态，以及
-   `/tpzone`/`/tpdim` 的旧位置帧与 no-op 位置没有按目标状态过滤；不是靠增大窗口
-   或修改 server 玩法解决。
+1. 完成锚点是本次请求后的 typed 接受反馈与权威 `skillbar_config`，以及根据
+   `/tpdim` 前权威坐标计算出的目标/pulse/restore `pos_look`；固定 sleep 与仅
+   chat/仅 Respawn、任意 `pos_look` 均不是完成信号。未知请求的观察锚是排空 join
+   突发后的静默窗口，已知 heartbeat VFX 才可按精确白名单豁免。
+2. 失败来自三类 Bot 观察问题：低 TPS 下固定冷却间隔误判 server 状态并可能在
+   过期 hint 后洪泛刷新、`/tpzone` 自行解析配置造成契约分叉，以及
+   `/tpdim` 的无关位置帧没有按目标几何过滤；不是靠增大业务断言窗口或修改
+   server 玩法解决。
 3. 现有 Bot API 已足够：`wait_for` 可按事件时间水位、typed payload 和坐标过滤，
    `Bot.position` 可复用既有权威镜像，同值 bind 是公开请求接口；无需新增 seam。
-4. 稳定性证据由 FZ2/FZ3 两轮真实 runner 全绿、每轮精确
-   `total=2 pass=2 skip=0 fail=0`、最小 transfer 事件序列，以及回归 fake 覆盖旧
+4. `network_request_unknown_type` **没有放宽等待预算**：`settle_s=2.0` 与
+   `wait_keepalive_after` 默认 `25.0` 均未改；修复是 join 排空后取发送水位、等待
+   两个新 keepalive 并进入 quiescence，且只豁免 heartbeat 已登记的五个精确
+   `world_omen` ID，未知同前缀仍判副作用。原失败约 22.1s 是已知 heartbeat VFX
+   被错误归因，不是把阈值从 22.1s 放宽到 23.5s；23.5/23.6s 是同一等待链路的
+   实际完成耗时。
+5. 稳定性证据由 R5A/R5B/R5C 三轮真实 runner 全绿（并保留 FZ2/FZ3 历史全绿记录）、
+   每轮精确 `total=2 pass=2 skip=0 fail=0`、最小 transfer 事件序列，以及回归 fake 覆盖旧
    帧/no-op/缺失状态仍失败共同构成，非一次偶然重跑。
 
 ## Finish Evidence
 
 - **落地清单**：
   - `scripts/bot/scenarios/cultivation_qi_color_inspect.py`：以本次请求后的
-    `skillbar_config` 权威冷却、目标坐标 `pos_look`、跨维 pulse/restore 状态替代
-    固定间隔与错误位置水位；保留原有 6 次真实施放及全部 qi-color 正/负向断言。
+    `skillbar_config` 权威冷却、规范 zone helper、按旧坐标计算的目标/pulse/restore
+    几何状态替代固定间隔、重复 zone 解析与任意位置水位；保留原有 6 次真实施放及
+    全部 qi-color 正/负向断言。
   - `scripts/bot/scenarios/_rejection_helpers.py`：仅登记 heartbeat 的五个精确
     `bong:world_omen_*` VFX 为 ambient，未知同前缀仍判定为玩法副作用。
-  - `scripts/bot/test_protocol.py`：7 条等待锚点回归测试，覆盖单次 cast、冷却
-    状态、同坐标 no-op、陈旧位置帧、Respawn 后双位置帧与未知 omen 白名单边界。
+  - `scripts/bot/test_protocol.py`：新增等待契约回归测试，覆盖单次 cast、冷却状态、
+    同值刷新退避与低 TPS 持续等待、规范 zone helper/no-op、精确位置几何、缺失
+    坐标错误分支与未知 omen 白名单边界。
   - 未修改 server gameplay、client、agent、schema、Cargo、R7 或其它 plan。
 - **关键 commit**：
   - `fcc078226`（2026-09-06）：创建 `plan-bot-e2e-timing-flaky-v1` 骨架。
   - `c574b8426`（2026-09-06）：将骨架 promotion 为 active plan。
   - `0bc6effc1`（2026-09-06）：修复 Bot 场景冷却、位置与环境 VFX 等待锚点。
   - `4dfece34e`（2026-09-06）：记录 P0/P1 决议与 P2 稳定性证据。
+  - `ba2e5e03f`（2026-09-07）：按 review 补强权威冷却、zone 契约与跨维几何等待。
 - **测试结果**：
-  - 真实 runner FZ2：`cultivation_qi_color_inspect` PASS 178.3s，
-    `network_request_unknown_type` PASS 23.5s，`total=2 pass=2 skip=0 fail=0`，rc=0。
-  - 真实 runner FZ3：`cultivation_qi_color_inspect` PASS 179.7s，
-    `network_request_unknown_type` PASS 23.6s，`total=2 pass=2 skip=0 fail=0`，rc=0。
-  - `python3 scripts/bot/test_protocol.py`：539 tests OK；场景回归子集 7 tests OK。
+  - 真实 runner R5A：`cultivation_qi_color_inspect` PASS 122.9s，
+    `network_request_unknown_type` PASS 23.0s，`total=2 pass=2 skip=0 fail=0`，rc=0；
+    evidence 位于 `.sisyphus/evidence/bot-e2e/session.5oCEI5o0Nc/run.znaT7Jcits/`。
+  - 真实 runner R5B：`cultivation_qi_color_inspect` PASS 47.6s，
+    `network_request_unknown_type` PASS 22.3s，`total=2 pass=2 skip=0 fail=0`，rc=0；
+    evidence 位于 `.sisyphus/evidence/bot-e2e/session.Az9n7OwvQb/run.EMGu6HJwCe/`。
+  - 真实 runner R5C：`cultivation_qi_color_inspect` PASS 124.4s，
+    `network_request_unknown_type` PASS 23.3s，`total=2 pass=2 skip=0 fail=0`，rc=0；
+    evidence 位于 `.sisyphus/evidence/bot-e2e/session.frfd9pAAMb/run.GXPIm2dogz/`。
+  - 此前真实 runner FZ2/FZ3 均为双场景 PASS、`total=2 pass=2 skip=0 fail=0`、rc=0。
+  - `python3 scripts/bot/test_protocol.py`：542 tests OK；场景等待契约回归已覆盖
+    非零状态退避、低 TPS 持续轮询、规范 zone helper 与精确 pulse/restore 几何。
   - `python3 -m py_compile scripts/bot/scenarios/*.py`、`bash -n scripts/bot-e2e.sh`、
     `git diff --check`：全部通过。
   - `bash scripts/tests/test_all_contract_test.sh`：95 passed / 0 failed；
