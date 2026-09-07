@@ -1,7 +1,7 @@
 use super::*;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{assert_conservation, QiAccountId, QiTransfer};
-use crate::qi_physics::{summarize_world_qi, WorldQiAccount, WorldQiBudget};
+use crate::qi_physics::{summarize_world_qi, WorldQiAccount, WorldQiBudget, WorldQiSnapshot};
 use crate::schema::common::SPIRIT_QI_TOTAL;
 
 fn qi_test_app() -> App {
@@ -9,6 +9,15 @@ fn qi_test_app() -> App {
     app.insert_resource(WorldQiAccount::default());
     app.insert_resource(WorldQiBudget::from_total(SPIRIT_QI_TOTAL));
     app
+}
+
+fn authoritative_qi_snapshot(world: &mut World) -> WorldQiSnapshot {
+    let snapshot = summarize_world_qi(world);
+    assert_eq!(
+        snapshot.budget_initial_total, SPIRIT_QI_TOTAL,
+        "qi conservation snapshots must use the SPIRIT_QI_TOTAL authority"
+    );
+    snapshot
 }
 
 fn assert_full_qi_conservation(
@@ -402,7 +411,7 @@ use crate::npc::spawn::{spawn_test_npc_runtime_shape, NpcMarker};
 use crate::player::state::PlayerState;
 use crate::social::components::SparringState;
 use valence::prelude::{
-    bevy_ecs, App, Entity, Events, GameMode, IntoSystemConfigs, Position, Resource, Update,
+    bevy_ecs, App, Entity, Events, GameMode, IntoSystemConfigs, Position, Resource, Update, World,
 };
 use valence::testing::create_mock_client;
 
@@ -2817,6 +2826,7 @@ fn insufficient_qi_prevents_attack_side_effects() {
 fn anticheat_qi_invest_violation_counts_without_changing_rejection() {
     let mut app = qi_test_app();
     app.insert_resource(CombatClock { tick: 903 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
     app.add_event::<AttackIntent>();
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
@@ -2859,7 +2869,11 @@ fn anticheat_qi_invest_violation_counts_without_changing_rejection() {
         source: AttackSource::Melee,
         debug_command: None,
     });
+    let before = authoritative_qi_snapshot(app.world_mut());
     app.update();
+    let after = authoritative_qi_snapshot(app.world_mut());
+
+    assert_full_qi_conservation(&before, &after, "qi_invest 不足拒绝");
 
     let counter = app
         .world()
@@ -2953,6 +2967,538 @@ fn anticheat_reach_violation_counts_without_changing_miss() {
         app.world().resource::<WorldQiAccount>().transfers().len(),
         0,
         "超距请求被拒后不得产生任何 ledger transfer"
+    );
+}
+
+#[test]
+fn qi_invest_hit_releases_to_attacker_zone_and_preserves_total() {
+    let mut app = qi_test_app();
+    app.insert_resource(CombatClock { tick: 906 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+    app.add_event::<AttackIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, resolve_attack_intents);
+
+    let attacker = spawn_player(
+        &mut app,
+        "QiReleaseAttacker",
+        [0.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    let target = spawn_npc(
+        &mut app,
+        [1.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(crate::world::dimension::CurrentDimension::default());
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should contain spawn zone")
+        .spirit_qi = 0.0;
+
+    let before = authoritative_qi_snapshot(app.world_mut());
+    app.world_mut().send_event(AttackIntent {
+        attacker,
+        target: Some(target),
+        issued_at_tick: 905,
+        reach: FIST_REACH,
+        qi_invest: 10.0,
+        wound_kind: WoundKind::Blunt,
+        source: AttackSource::Melee,
+        debug_command: None,
+    });
+    app.update();
+    let after = authoritative_qi_snapshot(app.world_mut());
+
+    assert_full_qi_conservation(&before, &after, "普通 qi 攻击命中释放");
+    assert_eq!(
+        app.world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .expect("attacker should keep cultivation")
+            .qi_current,
+        50.0,
+        "普通 qi 命中应只扣实际 qi_invest，并由释放事务原子提交"
+    );
+    let zone = app
+        .world()
+        .resource::<crate::world::zone::ZoneRegistry>()
+        .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should retain spawn zone");
+    assert_eq!(
+        zone.spirit_qi,
+        10.0 / QI_ZONE_UNIT_CAPACITY,
+        "普通 qi 命中的支出应经 qi_release_to_zone 回到攻击者所在 zone"
+    );
+    let transfers: Vec<_> = app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+    assert_eq!(transfers.len(), 1, "命中应产生一条真实 ReleaseToZone audit");
+    assert_eq!(
+        transfers[0].from,
+        QiAccountId::player("offline:QiReleaseAttacker")
+    );
+    assert_eq!(
+        transfers[0].to,
+        QiAccountId::zone(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+    );
+    assert_eq!(
+        transfers[0].reason,
+        crate::qi_physics::ledger::QiTransferReason::ReleaseToZone
+    );
+    assert_eq!(transfers[0].amount, 10.0);
+}
+
+#[test]
+fn qi_invest_unrepresentable_release_is_noop_but_attack_resolves() {
+    let mut app = qi_test_app();
+    app.insert_resource(CombatClock { tick: 9061 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+    app.add_event::<AttackIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, resolve_attack_intents);
+
+    let attacker = spawn_player(
+        &mut app,
+        "QiUnrepresentableAttacker",
+        [0.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    let target = spawn_npc(
+        &mut app,
+        [1.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    app.world_mut().entity_mut(attacker).insert((
+        crate::world::dimension::CurrentDimension::default(),
+        Cultivation {
+            qi_current: 60.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        },
+    ));
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should contain spawn zone")
+        .spirit_qi = -4.7704;
+
+    // This survives the f32 AttackIntent conversion and passes the f64::EPSILON gate, but
+    // adding it to this negative zone cannot change the zone f64. The source subtraction is
+    // representable, so this specifically exercises the zone-side UnrepresentableFlow. The
+    // release transaction must therefore be a no-op, while the player-visible attack resolves.
+    let unrepresentable_qi_invest = 1.417e-14_f32;
+    let unrepresentable_qi_invest_f64 = f64::from(unrepresentable_qi_invest);
+    assert!(
+        unrepresentable_qi_invest_f64 > f64::EPSILON,
+        "fixture must enter the qi release branch"
+    );
+    assert_ne!(
+        60.0 - unrepresentable_qi_invest_f64,
+        60.0,
+        "fixture must make source debit representable so zone preflight is reached"
+    );
+    assert_eq!(
+        -4.7704 + unrepresentable_qi_invest_f64 / QI_ZONE_UNIT_CAPACITY,
+        -4.7704,
+        "fixture must make the normalized zone increment unrepresentable"
+    );
+    let before = authoritative_qi_snapshot(app.world_mut());
+    app.world_mut().send_event(AttackIntent {
+        attacker,
+        target: Some(target),
+        issued_at_tick: 9060,
+        reach: FIST_REACH,
+        qi_invest: unrepresentable_qi_invest,
+        wound_kind: WoundKind::Blunt,
+        source: AttackSource::Melee,
+        debug_command: None,
+    });
+    app.update();
+    let after = authoritative_qi_snapshot(app.world_mut());
+
+    assert_eq!(
+        before, after,
+        "unrepresentable no-op release must not change qi state"
+    );
+    assert_full_qi_conservation(&before, &after, "不可表示的释放保持 qi 守恒");
+    assert_eq!(
+        app.world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .expect("attacker should keep cultivation")
+            .qi_current,
+        60.0,
+        "unrepresentable release must not debit the source qi"
+    );
+    assert!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty(),
+        "unrepresentable no-op release must not write a ledger transfer"
+    );
+    assert!(
+        app.world().resource::<Events<QiTransfer>>().is_empty(),
+        "unrepresentable no-op release must not emit a QiTransfer audit"
+    );
+    let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+    assert!(
+        target_wounds.health_current < target_wounds.health_max
+            || !target_wounds.entries.is_empty(),
+        "an unrepresentable qi release must not silently discard the attack"
+    );
+}
+
+#[test]
+fn qi_invest_release_error_fails_closed_without_resolving_attack() {
+    let mut app = qi_test_app();
+    app.insert_resource(CombatClock { tick: 9062 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+    app.add_event::<AttackIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, resolve_attack_intents);
+
+    let attacker = spawn_player(
+        &mut app,
+        "QiReleaseErrorAttacker",
+        [0.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    let target = spawn_npc(
+        &mut app,
+        [1.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(crate::world::dimension::CurrentDimension::default());
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should contain spawn zone")
+        .spirit_qi = f64::NAN;
+
+    // An invalid zone is a reachable non-UnrepresentableFlow release error. The release
+    // transaction must fail before changing the source, zone, ledger, or audit; the resolver's
+    // fail-closed branch must then reject the whole attack rather than partially resolve it.
+    app.world_mut().send_event(AttackIntent {
+        attacker,
+        target: Some(target),
+        issued_at_tick: 9061,
+        reach: FIST_REACH,
+        qi_invest: 10.0,
+        wound_kind: WoundKind::Blunt,
+        source: AttackSource::Melee,
+        debug_command: None,
+    });
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .expect("attacker should keep cultivation")
+            .qi_current,
+        60.0,
+        "release error must leave the source qi untouched"
+    );
+    assert!(
+        app.world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry should retain spawn zone")
+            .spirit_qi
+            .is_nan(),
+        "release error must leave the invalid zone value untouched"
+    );
+    assert!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty(),
+        "release error must not write a ledger transfer"
+    );
+    assert!(
+        app.world().resource::<Events<QiTransfer>>().is_empty(),
+        "release error must not emit a QiTransfer audit"
+    );
+    let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+    assert_eq!(
+        target_wounds.health_current, target_wounds.health_max,
+        "non-UnrepresentableFlow release error must fail closed before damage resolves"
+    );
+    assert!(
+        target_wounds.entries.is_empty(),
+        "non-UnrepresentableFlow release error must not create a wound"
+    );
+}
+
+#[test]
+fn qi_invest_zone_saturation_routes_remainder_to_overflow() {
+    let mut app = qi_test_app();
+    app.insert_resource(CombatClock { tick: 907 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+    app.add_event::<AttackIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, resolve_attack_intents);
+
+    let attacker = spawn_player(
+        &mut app,
+        "QiSaturationAttacker",
+        [0.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    let target = spawn_npc(
+        &mut app,
+        [1.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(crate::world::dimension::CurrentDimension::default());
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should contain spawn zone")
+        .spirit_qi = 0.9;
+
+    let before = authoritative_qi_snapshot(app.world_mut());
+    app.world_mut().send_event(AttackIntent {
+        attacker,
+        target: Some(target),
+        issued_at_tick: 906,
+        reach: FIST_REACH,
+        qi_invest: 10.0,
+        wound_kind: WoundKind::Blunt,
+        source: AttackSource::Melee,
+        debug_command: None,
+    });
+    app.update();
+    let after = authoritative_qi_snapshot(app.world_mut());
+
+    assert_full_qi_conservation(&before, &after, "zone 饱和时普通 qi 攻击释放");
+    let zone = app
+        .world()
+        .resource::<crate::world::zone::ZoneRegistry>()
+        .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should retain spawn zone");
+    assert_eq!(
+        zone.spirit_qi, 1.0,
+        "zone 接近饱和时应只接收剩余容量，实际浓度={}",
+        zone.spirit_qi
+    );
+    assert_eq!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .balance(&crate::qi_physics::qi_flow_overflow_account()),
+        5.0,
+        "zone 无法表示的 qi_invest 余量必须进入稳定 qi_flow_overflow 账户"
+    );
+    let transfers = app.world().resource::<WorldQiAccount>().transfers();
+    assert_eq!(
+        transfers.len(),
+        2,
+        "饱和释放应记录 overflow 与 zone 两条审计"
+    );
+    assert_eq!(
+        transfers[0].to,
+        crate::qi_physics::qi_flow_overflow_account()
+    );
+    assert_eq!(transfers[0].amount, 5.0);
+    assert_eq!(transfers[1].to, QiAccountId::zone("spawn"));
+    assert_eq!(transfers[1].amount, 5.0);
+}
+
+#[test]
+fn qi_invest_miss_does_not_spend_or_release() {
+    let mut app = qi_test_app();
+    app.insert_resource(CombatClock { tick: 908 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+    app.add_event::<AttackIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, resolve_attack_intents);
+
+    let attacker = spawn_player(
+        &mut app,
+        "QiMissAttacker",
+        [0.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    let target = spawn_npc(
+        &mut app,
+        [4.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(crate::world::dimension::CurrentDimension::default());
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should contain spawn zone")
+        .spirit_qi = 0.0;
+
+    let before = authoritative_qi_snapshot(app.world_mut());
+    app.world_mut().send_event(AttackIntent {
+        attacker,
+        target: Some(target),
+        issued_at_tick: 907,
+        reach: FIST_REACH,
+        qi_invest: 10.0,
+        wound_kind: WoundKind::Blunt,
+        source: AttackSource::Melee,
+        debug_command: None,
+    });
+    app.update();
+    let after = authoritative_qi_snapshot(app.world_mut());
+
+    assert_eq!(before, after, "raycast 未命中必须保持完整 qi 快照不变");
+    assert_eq!(
+        app.world().resource::<WorldQiAccount>().transfers().len(),
+        0,
+        "raycast 未命中不得写入 ledger transfer"
+    );
+    assert!(
+        app.world().resource::<Events<QiTransfer>>().is_empty(),
+        "raycast 未命中不得发出 QiTransfer audit"
+    );
+    assert!(
+        app.world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .entries
+            .is_empty(),
+        "raycast 未命中不得写入目标伤口"
+    );
+}
+
+#[test]
+fn qi_invest_cross_dimension_rejection_does_not_mutate_qi() {
+    let mut app = qi_test_app();
+    app.insert_resource(CombatClock { tick: 909 });
+    app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+    app.add_event::<AttackIntent>();
+    app.add_event::<ApplyStatusEffectIntent>();
+    app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
+    app.add_event::<crate::combat::weapon::WeaponBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+    app.add_event::<InventoryDurabilityChangedEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, resolve_attack_intents);
+
+    let attacker = spawn_player(
+        &mut app,
+        "QiOverworldAttacker",
+        [0.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    let target = spawn_player(
+        &mut app,
+        "QiTsyTarget",
+        [1.0, 64.0, 0.0],
+        Wounds::default(),
+        Stamina::default(),
+    );
+    app.world_mut()
+        .entity_mut(attacker)
+        .insert(crate::world::dimension::CurrentDimension(
+            crate::world::dimension::DimensionKind::Overworld,
+        ));
+    app.world_mut()
+        .entity_mut(target)
+        .insert(crate::world::dimension::CurrentDimension(
+            crate::world::dimension::DimensionKind::Tsy,
+        ));
+    app.world_mut()
+        .resource_mut::<crate::world::zone::ZoneRegistry>()
+        .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        .expect("fallback registry should contain spawn zone")
+        .spirit_qi = 0.0;
+
+    let before = authoritative_qi_snapshot(app.world_mut());
+    app.world_mut().send_event(AttackIntent {
+        attacker,
+        target: Some(target),
+        issued_at_tick: 908,
+        reach: FIST_REACH,
+        qi_invest: 10.0,
+        wound_kind: WoundKind::Blunt,
+        source: AttackSource::Melee,
+        debug_command: None,
+    });
+    app.update();
+    let after = authoritative_qi_snapshot(app.world_mut());
+
+    assert_eq!(before, after, "跨维攻击拒绝必须保持完整 qi 快照不变");
+    assert_eq!(
+        app.world().resource::<WorldQiAccount>().transfers().len(),
+        0,
+        "跨维攻击拒绝不得写入 ledger transfer"
+    );
+    assert!(
+        app.world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .entries
+            .is_empty(),
+        "跨维攻击拒绝不得写入目标伤口"
     );
 }
 
@@ -3320,9 +3866,9 @@ fn jiemai_parry_emits_qi_transfer_for_conservation() {
         debug_command: None,
     });
 
-    let before = summarize_world_qi(app.world_mut());
+    let before = authoritative_qi_snapshot(app.world_mut());
     app.update();
-    let after = summarize_world_qi(app.world_mut());
+    let after = authoritative_qi_snapshot(app.world_mut());
     assert_full_qi_conservation(&before, &after, "截脉格挡成功");
     assert!(
         ((after.zone_qi - before.zone_qi) - parry_cost).abs() <= f64::EPSILON * QI_ZONE_UNIT_CAPACITY,
@@ -3378,9 +3924,11 @@ fn jiemai_parry_emits_qi_transfer_for_conservation() {
     );
 }
 
-/// 边界：防守方没有足够真元时格挡失败，不应 emit 任何 jiemai QiTransfer。
+/// 边界：防守方没有足够真元时格挡失败，不应 emit 防守方的 jiemai QiTransfer；
+/// 攻击者自己的 qi_invest 仍按普通命中语义结算。
 ///
-/// 守恒不变式：无格挡发生 → 无真元被扣 → 无 QiTransfer 回灌（不凭空创造转账）。
+/// 守恒不变式：无格挡发生 → 防守方无真元被扣；攻击者的合法 qi_invest 仍必须有
+/// 对应的 ReleaseToZone 转账。
 #[test]
 fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
     use crate::qi_physics::ledger::QiTransferReason;
@@ -3453,18 +4001,32 @@ fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
         cultivation.qi_current
     );
 
-    // 守恒不变式：无格挡 → 不产生 ReleaseToZone QiTransfer。
+    // 守恒不变式：无格挡 → 不产生防守方的 ReleaseToZone QiTransfer；攻击者的
+    // 普通 qi_invest 仍必须走自己的释放路径。
     let transfers: Vec<_> = app
         .world()
         .resource::<Events<QiTransfer>>()
         .iter_current_update_events()
         .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+        .cloned()
         .collect();
     assert!(
-        transfers.is_empty(),
-        "格挡条件不满足时不应有 ReleaseToZone 转账（避免凭空回灌）；\
-             实际 transfers={:?}",
+        transfers
+            .iter()
+            .all(|transfer| transfer.from != QiAccountId::player("offline:Defender")),
+        "格挡条件不满足时防守方不得产生 ReleaseToZone 转账；实际 transfers={:?}",
+        transfers
+    );
+    assert_eq!(
         transfers,
+        vec![QiTransfer::new(
+            QiAccountId::player("offline:Attacker"),
+            crate::qi_physics::qi_flow_overflow_account(),
+            20.0,
+            QiTransferReason::ReleaseToZone,
+        )
+        .expect("test transfer should be valid")],
+        "合法命中的攻击者 qi_invest 必须释放到 overflow；防守方 qi 不足不应额外回灌"
     );
 }
 
@@ -7744,17 +8306,24 @@ fn dead_armor_block_is_drop_not_release() {
                  实际={:.4}，若非 0 则说明拦截后仍向 zone 注入通胀",
             events[0].contam_delta
         );
-        // 守恒补强：DROP 路径不应 emit 任何 QiTransfer（release_to_zone 会产生 QiTransfer）。
+        // 守恒补强：DROP 路径不应额外释放被拦截的 contamination；攻击者自己的
+        // qi_invest 仍会按普通命中语义回到无 ZoneRegistry 时的 overflow 账户。
         let qi_transfers: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
+            .cloned()
             .collect();
-        assert!(
-            qi_transfers.is_empty(),
-            "期望死脉甲免疫只 DROP contamination，不 emit QiTransfer/release_to_zone；\
-                 实际 qi_transfers.len()={} — 若非空说明实现错误地走了 release_to_zone 导致通胀",
-            qi_transfers.len()
+        assert_eq!(
+            qi_transfers,
+            vec![QiTransfer::new(
+                QiAccountId::player("offline:AttackerDropA"),
+                crate::qi_physics::qi_flow_overflow_account(),
+                10.0,
+                crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+            )
+            .expect("test transfer should be valid")],
+            "死脉甲免疫只应 DROP contamination，不应额外产生污染释放；攻击者 qi_invest 仍须守恒回流"
         );
     }
 
