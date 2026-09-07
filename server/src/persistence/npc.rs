@@ -61,6 +61,15 @@ fn rollback_published_archive_after_failure(
     }
 }
 
+fn digest_preparation_empty_error(first_error: Option<io::Error>) -> io::Error {
+    first_error.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "digest preparation produced no archives and no error",
+        )
+    })
+}
+
 #[derive(Debug, Default)]
 pub(super) struct NpcSnapshotTracker {
     last_snapshot_tick: u32,
@@ -464,17 +473,23 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
             // 发布；失败时调用方没有最终目标的 ownership。特别是读取到 None 后，
             // 另一个 publisher 可能已在写入期间建立目标，不能用 rollback_file(None)
             // 把并发 publisher 的归档删除。
+            let published_by_sweep = previous_archive.is_none();
             publish_result?;
             let identity = match previous_archive {
                 Some((_, identity)) => identity,
                 None => archive_file_identity(&archive_path)?,
             };
             ensure_archive_snapshot_matches_bytes(&archive_path, identity, &archive_json)?;
-            Ok((archive_path, identity))
+            Ok((archive_path, identity, published_by_sweep))
         })();
         match prepared {
-            Ok((archive_path, identity)) => {
-                prepared_archives.push((digest.clone(), archive_path, identity));
+            Ok((archive_path, identity, published_by_sweep)) => {
+                prepared_archives.push((
+                    digest.clone(),
+                    archive_path,
+                    identity,
+                    published_by_sweep,
+                ));
             }
             Err(error) => {
                 if first_error.is_none() {
@@ -485,61 +500,87 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
     }
 
     if prepared_archives.is_empty() {
-        return Err(first_error.expect("a failed digest preparation must have an error"));
+        return Err(digest_preparation_empty_error(first_error));
     }
 
-    let transaction = connection.transaction().map_err(io::Error::other)?;
-    for (_, archive_path, identity) in &prepared_archives {
-        ensure_archive_identity(archive_path, *identity)?;
-    }
-    let mut deleted_digests = Vec::with_capacity(prepared_archives.len());
-    for (digest, _, _) in &prepared_archives {
-        transaction
-            .execute(
-                "
-                DELETE FROM npc_digests
-                WHERE char_id = ?1
-                  AND archetype = ?2
-                  AND realm = ?3
-                  AND ((faction_id = ?4) OR (faction_id IS NULL AND ?4 IS NULL))
-                  AND recent_summary = ?5
-                  AND last_referenced_wall = ?6
-                ",
-                params![
-                    digest.char_id.as_str(),
-                    digest.archetype.as_str(),
-                    digest.realm.as_str(),
-                    digest.faction_id.as_deref(),
-                    digest.recent_summary.as_str(),
-                    digest.last_referenced_wall,
-                ],
-            )
-            .map_err(io::Error::other)?;
-        if transaction.changes() == 1 {
-            deleted_digests.push(digest.clone());
-        } else {
-            // A CAS miss means that at least one candidate changed after the
-            // preparation phase. Roll back every deletion in this batch; otherwise
-            // a mixed batch would commit earlier rows while reporting failure for
-            // the changed row, making the sweep's retry boundary non-atomic.
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                format!(
-                    "npc digest changed during retention sweep: {}",
-                    digest.char_id
-                ),
-            ));
+    let result = (|| -> io::Result<Vec<NpcDigestRecord>> {
+        let transaction = connection.transaction().map_err(io::Error::other)?;
+        for (_, archive_path, identity, _) in &prepared_archives {
+            ensure_archive_identity(archive_path, *identity)?;
         }
-    }
-    for (_, archive_path, identity) in &prepared_archives {
-        ensure_archive_identity(archive_path, *identity)?;
-    }
-    transaction.commit().map_err(io::Error::other)?;
+        let mut deleted_digests = Vec::with_capacity(prepared_archives.len());
+        for (digest, _, _, _) in &prepared_archives {
+            transaction
+                .execute(
+                    "
+                    DELETE FROM npc_digests
+                    WHERE char_id = ?1
+                      AND archetype = ?2
+                      AND realm = ?3
+                      AND ((faction_id = ?4) OR (faction_id IS NULL AND ?4 IS NULL))
+                      AND recent_summary = ?5
+                      AND last_referenced_wall = ?6
+                    ",
+                    params![
+                        digest.char_id.as_str(),
+                        digest.archetype.as_str(),
+                        digest.realm.as_str(),
+                        digest.faction_id.as_deref(),
+                        digest.recent_summary.as_str(),
+                        digest.last_referenced_wall,
+                    ],
+                )
+                .map_err(io::Error::other)?;
+            if transaction.changes() == 1 {
+                deleted_digests.push(digest.clone());
+            } else {
+                // A CAS miss means that at least one candidate changed after the
+                // preparation phase. Roll back every deletion in this batch and
+                // every archive published by this sweep; otherwise a mixed batch
+                // would commit earlier rows or leave orphan files while reporting
+                // failure for the changed row.
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    format!(
+                        "npc digest changed during retention sweep: {}",
+                        digest.char_id
+                    ),
+                ));
+            }
+        }
+        for (_, archive_path, identity, _) in &prepared_archives {
+            ensure_archive_identity(archive_path, *identity)?;
+        }
+        transaction.commit().map_err(io::Error::other)?;
+        Ok(deleted_digests)
+    })();
 
+    let deleted_digests = match result {
+        Ok(deleted_digests) => deleted_digests,
+        Err(error) => {
+            let mut failure = error;
+            for (_, archive_path, identity, published_by_sweep) in &prepared_archives {
+                if !*published_by_sweep {
+                    continue;
+                }
+                let rollback_result = ensure_archive_identity(archive_path, *identity)
+                    .and_then(|()| rollback_file(archive_path, None));
+                if let Err(rollback_error) = rollback_result {
+                    failure = combine_persistence_failure(
+                        "npc digest archive batch rollback",
+                        failure,
+                        rollback_error,
+                    );
+                }
+            }
+            return Err(failure);
+        }
+    };
     if let Some(error) = first_error {
-        return Err(error);
+        Err(error)
+    } else {
+        Ok(deleted_digests)
     }
-    Ok(deleted_digests)
 }
 
 pub(super) type NpcPersistenceQueryItem<'a> = (

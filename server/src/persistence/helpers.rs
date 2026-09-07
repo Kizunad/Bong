@@ -546,12 +546,17 @@ pub(super) fn write_zstd_bundle_with_cleanup(
         // hard_link 在目标已存在时原子地返回 AlreadyExists，不替换既有归档。
         // 临时文件与目标位于同一目录，因此链接操作不会跨文件系统。
         fs::hard_link(&temp_path, path)?;
+        let published_identity = archive_file_identity(path)?;
         temp_cleanup_attempted = true;
         if let Err(error) = remove_file(&temp_path) {
             // hard_link 已成功创建且目标此前不存在；清理失败时尽力撤销本次发布，
-            // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。回滚也
-            // 失败时必须同时报告两个错误，不能让孤立的最终文件变成静默残留。
-            return match remove_file(path) {
+            // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。撤销前
+            // 重新核对 inode/metadata，不能把并发 publisher 的 successor 当成自己
+            // 的目标删除。回滚也失败时必须同时报告两个错误，不能让孤立的最终
+            // 文件变成静默残留。
+            let rollback_result =
+                ensure_archive_identity(path, published_identity).and_then(|()| remove_file(path));
+            return match rollback_result {
                 Ok(()) => Err(error),
                 Err(rollback_error) => Err(combine_persistence_failure(
                     "write_zstd_bundle",

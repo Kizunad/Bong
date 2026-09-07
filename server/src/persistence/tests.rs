@@ -7613,6 +7613,47 @@ fn zstd_bundle_reports_temporary_cleanup_failure_after_write_error() {
 }
 
 #[test]
+fn zstd_bundle_does_not_delete_successor_during_cleanup_rollback() {
+    let (settings, root) = persistence_settings("zstd-bundle-successor-cleanup-rollback");
+    let path = root.join("archive.json.zst");
+    let successor_payload = br#"{"owner":"successor"}"#;
+    let path_for_hook = path.clone();
+    let error = write_zstd_bundle_with_cleanup(
+        &path,
+        br#"{"owner":"original"}"#,
+        |file, compressed| file.write_all(compressed),
+        move |candidate| {
+            if candidate == path_for_hook.as_path() {
+                return fs::remove_file(candidate);
+            }
+            fs::remove_file(&path_for_hook)
+                .expect("the original target should be replaceable by the fixture");
+            write_zstd_bundle(&path_for_hook, successor_payload)
+                .expect("the successor should publish after the original is removed");
+            Err(io::Error::other("injected temporary cleanup failure"))
+        },
+    )
+    .expect_err("a cleanup failure after successor replacement must remain observable");
+    assert!(
+        error
+            .to_string()
+            .contains("archive target identity changed"),
+        "ownership mismatch must be reported instead of deleting the successor: {error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(
+            settings.db_path(),
+            path.to_str().expect("path should be UTF-8")
+        )
+        .expect("the successor archive should remain readable"),
+        successor_payload,
+        "cleanup rollback must not delete a successor published by another owner"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn rollback_file_treats_missing_cleanup_as_idempotent() {
     let (_, root) = persistence_settings("rollback-file-missing-cleanup");
     let path = root.join("missing.json");
@@ -8182,6 +8223,58 @@ fn npc_digest_sweep_continues_after_one_archive_failure() {
 }
 
 #[test]
+fn npc_digest_sweep_all_preparations_failed_returns_invalid_data() {
+    let (settings, root) = persistence_settings("npc-digest-sweep-all-preparations-failed");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let now_wall = current_unix_seconds();
+    let stale_wall = now_wall - NPC_DIGEST_RETENTION_SECS - 1;
+    let stale = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_sweep_all_failed").digest
+        },
+        ..sample_npc_capture("npc_digest_sweep_all_failed")
+    };
+    persist_npc_capture(&settings, &stale).expect("stale digest should persist");
+    let archive_path = npc_digest_archive_absolute_path(&settings, &stale.digest)
+        .expect("digest archive path should be valid");
+    fs::write(&archive_path, b"corrupt digest archive")
+        .expect("corrupt archive fixture should be writable");
+
+    let error = sweep_stale_npc_digests(&settings, now_wall)
+        .expect_err("an all-failed preparation must return an error instead of panicking");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::InvalidData,
+        "corrupt-only preparation should fail closed with InvalidData, actual={error}"
+    );
+    assert!(
+        error.to_string().contains("corrupt") || error.to_string().contains("frame"),
+        "the preparation failure should remain observable: {error}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_digest_empty_preparation_has_defensive_error_instead_of_panic() {
+    let error = super::npc::digest_preparation_empty_error(None);
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::InvalidData,
+        "an impossible empty preparation must fail closed with InvalidData"
+    );
+    assert_eq!(
+        error.to_string(),
+        "digest preparation produced no archives and no error",
+        "the defensive error should identify the broken preparation invariant"
+    );
+}
+
+#[test]
 fn npc_digest_failed_no_replace_publish_preserves_competing_target() {
     let (settings, root) = persistence_settings("npc-digest-competing-publish");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -8338,6 +8431,11 @@ fn npc_digest_sweep_cas_failure_rolls_back_other_deletions() {
     persist_npc_capture(&settings, &first).expect("first stale digest should persist");
     persist_npc_capture(&settings, &second).expect("second stale digest should persist");
 
+    let first_archive_path = npc_digest_archive_absolute_path(&settings, &first.digest)
+        .expect("first digest archive path should be valid");
+    let second_archive_path = npc_digest_archive_absolute_path(&settings, &second.digest)
+        .expect("second digest archive path should be valid");
+
     let successor = NpcDigestRecord {
         archetype: "successor-archetype".to_string(),
         realm: "凝脉".to_string(),
@@ -8395,6 +8493,10 @@ fn npc_digest_sweep_cas_failure_rolls_back_other_deletions() {
             .expect("successor digest query should succeed"),
         Some(successor),
         "the successor row must remain after the mixed batch rolls back"
+    );
+    assert!(
+        !first_archive_path.exists() && !second_archive_path.exists(),
+        "a CAS miss must roll back every archive published by this sweep batch"
     );
 
     let _ = fs::remove_dir_all(root);
