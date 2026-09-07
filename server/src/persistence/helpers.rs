@@ -124,6 +124,7 @@ pub(super) fn acquire_archive_lifecycle_lock(lock_path: &Path) -> io::Result<Arc
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .open(lock_path)?;
     lock_file.lock()?;
     Ok(ArchiveLifecycleLock { _file: lock_file })
