@@ -459,8 +459,12 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
             .map_err(io::Error::other)?;
         if transaction.changes() == 1 {
             deleted_digests.push(digest.clone());
-        } else if first_error.is_none() {
-            first_error = Some(io::Error::new(
+        } else {
+            // A CAS miss means that at least one candidate changed after the
+            // preparation phase. Roll back every deletion in this batch; otherwise
+            // a mixed batch would commit earlier rows while reporting failure for
+            // the changed row, making the sweep's retry boundary non-atomic.
+            return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 format!(
                     "npc digest changed during retention sweep: {}",

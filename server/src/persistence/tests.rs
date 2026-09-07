@@ -8245,6 +8245,95 @@ fn npc_digest_sweep_does_not_delete_successor_digest() {
 }
 
 #[test]
+fn npc_digest_sweep_cas_failure_rolls_back_other_deletions() {
+    let (settings, root) = persistence_settings("npc-digest-cas-rollback");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let now_wall = 1_725_000_000;
+    let stale_wall = now_wall - NPC_DIGEST_RETENTION_SECS - 1;
+    let first = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_cas_rollback_first").digest
+        },
+        ..sample_npc_capture("npc_digest_cas_rollback_first")
+    };
+    let second = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_cas_rollback_second").digest
+        },
+        ..sample_npc_capture("npc_digest_cas_rollback_second")
+    };
+    persist_npc_capture(&settings, &first).expect("first stale digest should persist");
+    persist_npc_capture(&settings, &second).expect("second stale digest should persist");
+
+    let successor = NpcDigestRecord {
+        archetype: "successor-archetype".to_string(),
+        realm: "凝脉".to_string(),
+        faction_id: Some("successor-faction".to_string()),
+        recent_summary: "successor must survive a mixed CAS failure".to_string(),
+        last_referenced_wall: now_wall,
+        ..second.digest.clone()
+    };
+    let error = sweep_stale_npc_digests_with_writer(&settings, now_wall, |path, payload| {
+        write_zstd_bundle(path, payload)?;
+        let digest: NpcDigestRecord = serde_json::from_slice(payload)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if digest.char_id == second.digest.char_id {
+            let connection = open_persistence_connection(&settings)?;
+            connection
+                .execute(
+                    "
+                    UPDATE npc_digests
+                    SET archetype = ?1,
+                        realm = ?2,
+                        faction_id = ?3,
+                        recent_summary = ?4,
+                        last_referenced_wall = ?5,
+                        last_updated_wall = ?6
+                    WHERE char_id = ?7
+                    ",
+                    params![
+                        successor.archetype.as_str(),
+                        successor.realm.as_str(),
+                        successor.faction_id.as_deref(),
+                        successor.recent_summary.as_str(),
+                        successor.last_referenced_wall,
+                        now_wall,
+                        successor.char_id.as_str(),
+                    ],
+                )
+                .map_err(io::Error::other)?;
+        }
+        Ok(())
+    })
+    .expect_err("a mixed CAS miss must abort the whole deletion batch");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::WouldBlock,
+        "a changed digest must fail closed with a retryable CAS error: {error}"
+    );
+    assert_eq!(
+        load_npc_digest(&settings, first.digest.char_id.as_str())
+            .expect("first digest query should succeed"),
+        Some(first.digest.clone()),
+        "a later CAS miss must roll back an earlier deletion in the same sweep"
+    );
+    assert_eq!(
+        load_npc_digest(&settings, second.digest.char_id.as_str())
+            .expect("successor digest query should succeed"),
+        Some(successor),
+        "the successor row must remain after the mixed batch rolls back"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn faction_social_state_defaults_to_empty_roundtrip() {
     let (settings, root) = persistence_settings("faction-social-empty");
     bootstrap_sqlite(settings.db_path(), settings.server_run_id())
