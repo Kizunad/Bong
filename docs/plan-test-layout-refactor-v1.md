@@ -349,6 +349,23 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **主线复验与完整门禁**：在初轮 gate 后紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=eedf9903d8f2d819847d4cf394e43ddf7bb2b0fa` 无 Cargo/plan 冲突，生成 merge HEAD `de21913542389e1e9a4f4a59a8c148c750450d95`；合入内容仅为 bot 场景脚本与已归档 bot plan，未触及本批 server、Cargo 或 tribulation 文件。合并后再次执行 locked server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0：library `12071 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、`tribulation_unit` `103 passed / 0 failed / 0 ignored`，其它既有 Cargo targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`；Cargo 其它 targets、P2/P3/P4 既有条目均保留。
 - **validator 与提交证据**：无上下文只读 validator 已绑定代码/分类 HEAD `9b71f1fb9d67b252c28573ddb175c0666b3d31e5` 并 PASS；合并 HEAD 上再次定向对拍同 crate B 类 `16 passed / 0 failed / 0 ignored`、外置 A 类 `103 passed / 0 failed / 0 ignored`，逐位守恒 `103 + 16 = 119`。代码、`tribulation_unit` target 与测试落点对应 `3cf9ef551`（2026-09-07），分类 evidence 对应 `9b71f1fb9`，本段为本批中文 docs evidence commit；每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-19 进度，P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
 
+### P2-20 schema proto_convert（⏳ 2026-09-08）
+
+- **范围与落点**：仅处置 `server/src/schema/proto_convert.rs` 原有两个 `#[cfg(test)]` 模块（`race_gate_wire_tests` 7 条、`tests` 79 条），合计 86 条；77 条可由既有公开 proto 转换/生成类型验证的 A 类测试外置到 `server/tests/unit/schema/proto_convert_test.rs`，新增显式 `proto_convert_unit` target；9 条依赖私有纯转换 helper 的 B 类测试原样留在 `server/src/schema/proto_convert_tests.rs`，由生产文件末尾的 `#[cfg(test)] #[path = "proto_convert_tests.rs"] mod tests;` 挂载。生产文件从 8,448 行收缩至实际 4,275 行；未改 proto3 schema、build.rs、生成链、wire、client、agent、Redis、qi 或转换运行时逻辑。
+- **迁移对拍与行为**：干净 `origin/main=ada8c48cd` 基线 `cd server && ../scripts/build-token.sh cargo test schema::proto_convert:: --lib` 为 `86 passed / 0 failed / 0 ignored`；迁移后无外层 flock 的 A 类 `cd server && ../scripts/build-token.sh cargo test --test proto_convert_unit` 为 `77 passed / 0 failed / 0 ignored`，B 类 `cd server && ../scripts/build-token.sh cargo test schema::proto_convert::tests --lib` 为 `9 passed / 0 failed / 0 ignored`，逐位守恒 `77 + 9 = 86`。所有原测试名、断言、fixture、proto encode/decode 字节与 uint64→字符串、enum→全名、坐标拍平、oneof/presence 语义保持不变。
+- **B 类逐条保留理由**：
+  - `cast_outcome_reject_race_mismatch_maps_to_dedicated_proto_variant`：直接锁定私有 `cast_outcome_to_proto` 的内部 enum→i32 映射；外置会迫使实现 helper 成为生产 API，而稳定契约应由外部 wire 结果承载。
+  - `inventory_item_view_freshness_survives_proto_roundtrip_for_all_tracks`：直接调用私有 `inventory_item_view_to_proto` 验证 freshness 字段装配；外置会公开内部字段组装入口，而非只承诺 InventoryItemView wire。
+  - `inventory_item_view_without_freshness_keeps_proto_field_absent`：锁定私有 converter 的 `Option` presence 组装；外置会把当前省略字段的内部实现固化成生产 API。
+  - `inventory_item_view_pill_alchemy_survives_proto_roundtrip`：依赖私有 converter 的丹药 alchemy 嵌套映射；外置会暴露内部炼丹 item 到 proto 的装配细节，而不是稳定 wire 契约。
+  - `inventory_item_view_recipe_fragment_alchemy_survives_proto_roundtrip`：依赖私有 converter 的 recipe-fragment 嵌套装配；公开它会固化内部残方结构与映射 helper 的 API 形状。
+  - `inventory_item_view_recipe_hint_alchemy_survives_proto_roundtrip`：依赖私有 converter 的 recipe-hint 字段装配；外置会把内部提示映射实现误变成生产可见接口。
+  - `inventory_item_view_pill_residue_alchemy_survives_proto_roundtrip`：依赖私有 residue 转换路径来锁定 wire presence 与 snake_case；外置会暴露内部炼丹 residue 类型映射，而非公开稳定转换契约。
+  - `inventory_item_view_no_alchemy_absent_in_proto_wire`：依赖私有 converter 的 `None` presence 行为；外置会为测试开放内部缺省字段实现，扭曲生产 API 抽象边界。
+  - `c2s_zhenfa_kind_proto_pins_include_trap_runtime_variants`：直接锁定私有 `zhenfa_kind_to_proto` 的内部 enum 映射；外置会公开实现 helper，而不是验证稳定的请求 wire 行为。
+- **公开 API 与 seam**：A 类仅使用既有 `bong_server::schema::proto_convert`、schema 数据类型与 prost 生成类型；B 类使用同 crate 访问既有私有项。没有新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，没有复制生产实现。
+- **验证与提交证据**：迁移后 A/B 定向对拍均通过；完整 server fmt/clippy/test、无上下文只读 validator、最新主线合并后的受影响门禁将在本批收口后补入本条。P2 总体、P3、P4 仍未完成，plan 不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
