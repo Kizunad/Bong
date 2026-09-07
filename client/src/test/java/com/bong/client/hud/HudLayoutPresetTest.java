@@ -65,6 +65,29 @@ class HudLayoutPresetTest {
     }
 
     @Test
+    void retiredCompassAndSpiritualSenseAreNeverRendered() {
+        List<HudRenderCommand> commands = List.of(
+            HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF),
+            HudRenderCommand.edgeIndicator(
+                HudRenderLayer.SPIRITUAL_SENSE, "LIVING_QI", 0, 0, 0xFFFFFFFF, 1.0
+            ),
+            HudRenderCommand.rect(HudRenderLayer.STATUS_EFFECTS, 0, 0, 10, 2, 0xFFFFFFFF)
+        );
+
+        List<HudRenderCommand> maximum = HudLayoutPreset.filter(
+            commands,
+            HudImmersionMode.Mode.COMBAT,
+            HudLayoutPreferenceStore.Density.MAXIMUM,
+            1_000L
+        );
+
+        assertTrue(maximum.stream().noneMatch(command ->
+            command.layer() == HudRenderLayer.COMPASS
+                || command.layer() == HudRenderLayer.SPIRITUAL_SENSE));
+        assertTrue(maximum.stream().anyMatch(command -> command.layer() == HudRenderLayer.STATUS_EFFECTS));
+    }
+
+    @Test
     void movementHudUsesBarsWidget() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, 0, 0, 10, 2, 0xFFFFFFFF)
