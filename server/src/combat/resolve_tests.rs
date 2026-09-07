@@ -3712,9 +3712,11 @@ fn jiemai_parry_emits_qi_transfer_for_conservation() {
     );
 }
 
-/// 边界：防守方没有足够真元时格挡失败，不应 emit 任何 jiemai QiTransfer。
+/// 边界：防守方没有足够真元时格挡失败，不应 emit 防守方的 jiemai QiTransfer；
+/// 攻击者自己的 qi_invest 仍按普通命中语义结算。
 ///
-/// 守恒不变式：无格挡发生 → 无真元被扣 → 无 QiTransfer 回灌（不凭空创造转账）。
+/// 守恒不变式：无格挡发生 → 防守方无真元被扣；攻击者的合法 qi_invest 仍必须有
+/// 对应的 ReleaseToZone 转账。
 #[test]
 fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
     use crate::qi_physics::ledger::QiTransferReason;
@@ -3787,18 +3789,32 @@ fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
         cultivation.qi_current
     );
 
-    // 守恒不变式：无格挡 → 不产生 ReleaseToZone QiTransfer。
+    // 守恒不变式：无格挡 → 不产生防守方的 ReleaseToZone QiTransfer；攻击者的
+    // 普通 qi_invest 仍必须走自己的释放路径。
     let transfers: Vec<_> = app
         .world()
         .resource::<Events<QiTransfer>>()
         .iter_current_update_events()
         .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+        .cloned()
         .collect();
     assert!(
-        transfers.is_empty(),
-        "格挡条件不满足时不应有 ReleaseToZone 转账（避免凭空回灌）；\
-             实际 transfers={:?}",
+        transfers
+            .iter()
+            .all(|transfer| transfer.from != QiAccountId::player("offline:Defender")),
+        "格挡条件不满足时防守方不得产生 ReleaseToZone 转账；实际 transfers={:?}",
+        transfers
+    );
+    assert_eq!(
         transfers,
+        vec![QiTransfer::new(
+            QiAccountId::player("offline:Attacker"),
+            crate::qi_physics::qi_flow_overflow_account(),
+            20.0,
+            QiTransferReason::ReleaseToZone,
+        )
+        .expect("test transfer should be valid")],
+        "合法命中的攻击者 qi_invest 必须释放到 overflow；防守方 qi 不足不应额外回灌"
     );
 }
 
@@ -8078,17 +8094,24 @@ fn dead_armor_block_is_drop_not_release() {
                  实际={:.4}，若非 0 则说明拦截后仍向 zone 注入通胀",
             events[0].contam_delta
         );
-        // 守恒补强：DROP 路径不应 emit 任何 QiTransfer（release_to_zone 会产生 QiTransfer）。
+        // 守恒补强：DROP 路径不应额外释放被拦截的 contamination；攻击者自己的
+        // qi_invest 仍会按普通命中语义回到无 ZoneRegistry 时的 overflow 账户。
         let qi_transfers: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
+            .cloned()
             .collect();
-        assert!(
-            qi_transfers.is_empty(),
-            "期望死脉甲免疫只 DROP contamination，不 emit QiTransfer/release_to_zone；\
-                 实际 qi_transfers.len()={} — 若非空说明实现错误地走了 release_to_zone 导致通胀",
-            qi_transfers.len()
+        assert_eq!(
+            qi_transfers,
+            vec![QiTransfer::new(
+                QiAccountId::player("offline:AttackerDropA"),
+                crate::qi_physics::qi_flow_overflow_account(),
+                10.0,
+                crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+            )
+            .expect("test transfer should be valid")],
+            "死脉甲免疫只应 DROP contamination，不应额外产生污染释放；攻击者 qi_invest 仍须守恒回流"
         );
     }
 
