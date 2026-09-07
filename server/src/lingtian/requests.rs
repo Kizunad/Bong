@@ -84,7 +84,7 @@ impl PendingLingtianRequest {
 /// `validator` 开始时 `std::mem::take(&mut inbox)` 取出当前快照：validator 运行
 /// 期间新 push 的请求留在下一批，不会在已完成的位置快照上被偷跑复用。
 #[derive(Debug, Default, Resource)]
-pub(crate) struct PendingLingtianRequests {
+pub struct PendingLingtianRequests {
     pub(crate) inbox: std::collections::VecDeque<PendingLingtianRequest>,
     /// 当前 `inbox` 内每个 actor 的占用数。准入时做 per-actor 配额检查（见
     /// `PER_ACTOR_CAP`）；`take_batch` 清空后置零，`prepend_batch` 重建，
@@ -165,7 +165,7 @@ impl PendingLingtianRequests {
 /// post-transfer validator 的 SystemParam 包（避开 Bevy 0.14 tuple-arity 上限，
 /// 与 `LingtianRequestParams` 同一风格）。六个 writer 只在 gate 成功后写事件。
 #[derive(SystemParam)]
-pub(crate) struct LingtianDispatchWriters<'w> {
+pub struct LingtianDispatchWriters<'w> {
     pub(crate) till: bevy_ecs::event::EventWriter<'w, super::events::StartTillRequest>,
     pub(crate) renew: bevy_ecs::event::EventWriter<'w, super::events::StartRenewRequest>,
     pub(crate) planting: bevy_ecs::event::EventWriter<'w, super::events::StartPlantingRequest>,
