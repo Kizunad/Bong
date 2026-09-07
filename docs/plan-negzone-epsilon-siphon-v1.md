@@ -35,7 +35,7 @@
 |---|---|---|---|
 | P0 | ✅ 2026-09-08 | 第一性复现微负 zone 的 `UnrepresentableFlow`，确认 no-op 判据与抽干失败分支可达性；锁定 `SIPHON_FACTOR` 不变 | 复现日志/数值对拍 + 代码行号证据 + 决策写入 §8.1 |
 | P1 | ✅ 2026-09-08 | `qi_physics` 可表示减法判据 + `negative_zone_siphon_tick` epsilon no-op；抽干分支对数值不可表示 release 走既有可追踪 overflow 兜底并继续 emit death | 饱和单测：微负 no-op、正常释放、正/零 zone、边界相等、抽干成功/失败；`QiTransfer` 与守恒断言通过 |
-| P2 | ⏳ | 完整 server 门禁、无上下文 validator、最新主线合并复验、Finish Evidence、PR | fmt/clippy/test 全绿，validator 绑定最终 HEAD PASS，CI/Kody 交调度会话 |
+| P2 | ✅ 2026-09-08 | 完整 server 门禁、无上下文 validator、最新主线合并复验、Finish Evidence、PR | fmt/clippy/test 全绿，validator 绑定最终 HEAD PASS，CI/Kody 交调度会话 |
 
 ## P0 第一性验真与决策门
 
@@ -116,3 +116,35 @@
 ## Finish Evidence
 
 > 归档前填写：落地清单、关键 commit、fmt/clippy/test 结果、validator 最终 HEAD、守恒/死亡契约核验与遗留范围。
+
+### 落地清单
+
+- `server/src/qi_physics/mod.rs:176-191` 新增通用 `subtraction_makes_progress`，以实际 `f64` 减法结果判断来源是否产生可表示进展；判据留在 `qi_physics`，未在 cultivation 自建 epsilon。
+- `server/src/cultivation/negative_zone.rs:48-169` 在 live-player siphon tick 中对来源不前进的正金额执行守恒中性 no-op；正常释放仍走 `release_qi_amount_to_zone`；zone 增量不可表示时复用 `qi_flow_overflow`，真实入账后才发 `CultivationDeathTrigger::NegativeZoneDrain`，其它错误继续 fail-closed。
+- `server/src/cultivation/negative_zone.rs:343-566` 饱和测试覆盖微负多 tick、正/零 zone、相等边界、正常抽干、zone 精度 fallback、守恒、死亡触发与非数值错误 fail-closed。
+
+### 关键 commit
+
+- `b53982e8b`（2026-09-07）：建立 `plan-negzone-epsilon-siphon-v1` skeleton。
+- `8b56c9f2d`（2026-09-07）：promotion 至 active plan 并进入 BugFix 实施。
+- `5efd6516a`（2026-09-08）：完成第一性验真，确认来源与 signed zone 的不可表示路径可达。
+- `2e6669025`（2026-09-08）：落地 qi_physics 判据、siphon no-op、overflow fallback 与回归测试。
+- `0917e2f79`（2026-09-08）：补充 P1 验收证据。
+- `152d447ad`（2026-09-08）：格式化并固定最终修复代码。
+- `bc0f4ba22`（2026-09-08）：紧邻 `git fetch origin && git merge origin/main` 合入最新主线（含 tribulation 测试外置变更）。
+
+### 测试结果
+
+- 基线：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test negative_zone --lib'`，34 passed、0 failed。
+- 修复后定向：`negative_zone --lib` 40 passed、0 failed；`subtraction_progress --lib` 1 passed、0 failed。
+- 合并主线后的完整门禁：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，fmt/clippy 通过；server lib 12078 passed、1 ignored，main 18 passed，外置 `tribulation_unit` 103 passed，所有测试 0 failed；doc-tests 3 passed、5 ignored。
+
+### Validator 与守恒/死亡契约核验
+
+- 无上下文只读 validator 首步对拍 `git rev-parse HEAD` 与 `152d447ad48d34be689ea99ca52981c3ca2aaf8c`，结论 PASS；合并主线后需绑定新最终 HEAD 重新核验。
+- `qi_physics::ledger::assert_conservation` 覆盖正常释放、overflow fallback 与 no-op；`CultivationDeathTrigger::NegativeZoneDrain` 仅在真实 release/overflow 入账成功后发送。
+- 本 plan 未修改 `SIPHON_FACTOR`、schema、client、agent、依赖版本或其它 gameplay 行为；不新增跨仓库契约，server / agent / client 接入面分别为既有 server 物理路径、无 agent 变更、无 client 变更。
+
+### 遗留 / 后续
+
+- 仅保留既有 `docs/plan-bughunt-qi-needle-negative-zone-release-v1` 等其它 plan 的范围；本 plan 不处理气针容器释放、dormant 死亡释放或浮点常数玩法调整。
