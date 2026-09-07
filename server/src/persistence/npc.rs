@@ -61,7 +61,7 @@ fn rollback_published_archive_after_failure(
     }
 }
 
-fn digest_preparation_empty_error(first_error: Option<io::Error>) -> io::Error {
+pub(super) fn digest_preparation_empty_error(first_error: Option<io::Error>) -> io::Error {
     first_error.unwrap_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
