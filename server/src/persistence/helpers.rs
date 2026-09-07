@@ -1,6 +1,7 @@
 //! Shared persistence conversion, connection, clock, and archive helpers.
 
 use super::*;
+use std::io::Read;
 
 pub(super) fn current_unix_seconds() -> i64 {
     SystemTime::now()
@@ -27,14 +28,6 @@ pub(crate) fn open_persistence_connection(
 
 pub(super) fn tick_to_sql(tick: u64) -> io::Result<i64> {
     i64::try_from(tick).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-}
-
-pub(super) fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(contents) => Ok(Some(contents)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
 }
 
 pub(super) fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
@@ -83,6 +76,132 @@ pub(super) fn combine_persistence_failure(
         primary,
         rollback,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ArchiveFileIdentity {
+    is_file: bool,
+    length: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+fn archive_file_identity_from_metadata(metadata: &fs::Metadata) -> ArchiveFileIdentity {
+    ArchiveFileIdentity {
+        is_file: metadata.is_file(),
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+    }
+}
+
+pub(super) fn archive_file_identity(path: &Path) -> io::Result<ArchiveFileIdentity> {
+    fs::metadata(path).map(|metadata| archive_file_identity_from_metadata(&metadata))
+}
+
+pub(super) fn archive_lifecycle_lock_path(path: &Path) -> PathBuf {
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "archive".to_string());
+    path.with_file_name(format!(".{filename}.lifecycle.lock"))
+}
+
+/// Serialize the complete archive target lifecycle across processes.
+///
+/// The sidecar is intentionally retained: deleting it while a holder is alive could
+/// create a second inode for the same logical target and split the lock domain.
+pub(super) struct ArchiveLifecycleLock {
+    _file: fs::File,
+}
+
+pub(super) fn acquire_archive_lifecycle_lock(path: &Path) -> io::Result<ArchiveLifecycleLock> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(archive_lifecycle_lock_path(path))?;
+    lock_file.lock()?;
+    Ok(ArchiveLifecycleLock { _file: lock_file })
+}
+
+fn read_archive_snapshot_from_file(
+    path: &Path,
+    mut file: fs::File,
+) -> io::Result<(Vec<u8>, ArchiveFileIdentity)> {
+    let identity = archive_file_identity_from_metadata(&file.metadata()?);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if archive_file_identity(path)? != identity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive target changed while reading: {}", path.display()),
+        ));
+    }
+    Ok((bytes, identity))
+}
+
+pub(super) fn read_archive_snapshot(path: &Path) -> io::Result<(Vec<u8>, ArchiveFileIdentity)> {
+    read_archive_snapshot_from_file(path, fs::File::open(path)?)
+}
+
+pub(super) fn read_optional_archive_snapshot(
+    path: &Path,
+) -> io::Result<Option<(Vec<u8>, ArchiveFileIdentity)>> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    read_archive_snapshot_from_file(path, file).map(Some)
+}
+
+pub(super) fn ensure_archive_identity(
+    path: &Path,
+    expected: ArchiveFileIdentity,
+) -> io::Result<()> {
+    if archive_file_identity(path)? != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive target identity changed: {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn ensure_archive_snapshot_matches_bytes(
+    path: &Path,
+    expected_identity: ArchiveFileIdentity,
+    expected_payload: &[u8],
+) -> io::Result<()> {
+    let (archive_bytes, actual_identity) = read_archive_snapshot(path)?;
+    if actual_identity != expected_identity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive target identity changed: {}", path.display()),
+        ));
+    }
+    let actual_payload = zstd::stream::decode_all(archive_bytes.as_slice())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if actual_payload != expected_payload {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive target content changed: {}", path.display()),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn default_termination_category() -> String {
@@ -396,6 +515,7 @@ pub(super) fn write_zstd_bundle_with_cleanup(
         .write(true)
         .create_new(true)
         .open(&temp_path)?;
+    let mut temp_cleanup_attempted = false;
     let result = (|| {
         write_temp(&mut temp_file, &compressed)?;
         temp_file.sync_all()?;
@@ -403,6 +523,7 @@ pub(super) fn write_zstd_bundle_with_cleanup(
         // hard_link 在目标已存在时原子地返回 AlreadyExists，不替换既有归档。
         // 临时文件与目标位于同一目录，因此链接操作不会跨文件系统。
         fs::hard_link(&temp_path, path)?;
+        temp_cleanup_attempted = true;
         if let Err(error) = remove_file(&temp_path) {
             // hard_link 已成功创建且目标此前不存在；清理失败时尽力撤销本次发布，
             // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。回滚也
@@ -418,10 +539,18 @@ pub(super) fn write_zstd_bundle_with_cleanup(
         }
         Ok(())
     })();
-    if result.is_err() {
-        let _ = remove_file(&temp_path);
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if temp_cleanup_attempted => Err(error),
+        Err(error) => match remove_file(&temp_path) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(combine_persistence_failure(
+                "write_zstd_bundle temporary cleanup",
+                error,
+                cleanup_error,
+            )),
+        },
     }
-    result
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

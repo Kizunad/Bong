@@ -6899,8 +6899,43 @@ fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
         .expect("fixture should leave a valid orphan bundle before DB reconciliation");
     let orphan_bytes = fs::read(&archive_path).expect("orphan bundle should be readable");
 
-    persist_npc_deceased_archive(&settings, &archive)
-        .expect("matching crash orphan should be reused to finish DB reconciliation");
+    let lock_held_during_reconciliation =
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let lock_held_for_hook = lock_held_during_reconciliation.clone();
+    let archive_path_for_hook = archive_path.clone();
+    persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        move |settings| {
+            let probe = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(archive_lifecycle_lock_path(&archive_path_for_hook))?;
+            match probe.try_lock() {
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    lock_held_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(error),
+                Ok(()) => {
+                    return Err(io::Error::other(
+                        "archive lifecycle lock was not held during DB reconciliation",
+                    ));
+                }
+            }
+            open_persistence_connection(settings)
+        },
+        |_, _| {
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "simulated no-replace publication for orphan reconciliation",
+            ))
+        },
+    )
+    .expect("matching crash orphan should be reused to finish DB reconciliation");
+    assert!(
+        lock_held_during_reconciliation.load(std::sync::atomic::Ordering::SeqCst),
+        "archive lifecycle lock must remain held through orphan validation and DB reconciliation"
+    );
 
     assert_eq!(
         fs::read(&archive_path).expect("reconciled archive should remain readable"),
@@ -6933,7 +6968,7 @@ fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
 }
 
 #[test]
-fn npc_archive_matching_orphan_db_failure_preserves_archive() {
+fn npc_archive_uncoordinated_competing_publish_is_not_reused() {
     let (settings, root) = persistence_settings("npc-archive-orphan-db-failure");
     let capture = sample_npc_capture("npc_archive_orphan_db_failure");
     let archive = NpcDeceasedArchiveRecord {
@@ -6949,12 +6984,15 @@ fn npc_archive_matching_orphan_db_failure_preserves_archive() {
     };
     let archive_json = serde_json::to_vec_pretty(&archive).expect("archive should serialize");
 
+    let db_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let db_called_for_hook = db_called.clone();
     let error = persist_npc_deceased_archive_with_hooks(
         &settings,
         &archive,
-        |_| {
+        move |_| {
+            db_called_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
             Err(io::Error::other(
-                "injected orphan reconciliation database failure",
+                "database hook must not run for an uncoordinated publisher",
             ))
         },
         |path, payload| {
@@ -6966,11 +7004,14 @@ fn npc_archive_matching_orphan_db_failure_preserves_archive() {
         },
     )
     .expect_err("a database failure must abort orphan reconciliation");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists,
+        "a publisher that appeared without the lifecycle lock must not be reused: {error}"
+    );
     assert!(
-        error
-            .to_string()
-            .contains("injected orphan reconciliation database failure"),
-        "the database failure must remain observable: {error}"
+        !db_called.load(std::sync::atomic::Ordering::SeqCst),
+        "an uncoordinated successor must be rejected before DB reconciliation"
     );
     assert_eq!(
         read_zstd_bundle(
@@ -7379,6 +7420,42 @@ fn zstd_bundle_reports_final_cleanup_rollback_failure() {
 }
 
 #[test]
+fn zstd_bundle_reports_temporary_cleanup_failure_after_write_error() {
+    let (_, root) = persistence_settings("zstd-bundle-temp-cleanup-diagnostic");
+    let path = root.join("archive.json.zst");
+    let error = write_zstd_bundle_with_cleanup(
+        &path,
+        br#"{"version":1}"#,
+        |_file, _compressed| Err(io::Error::other("injected primary write failure")),
+        |_candidate| Err(io::Error::other("injected temporary cleanup failure")),
+    )
+    .expect_err("temporary cleanup failure must not be silently discarded");
+    let message = error.to_string();
+    assert!(
+        message.contains("injected primary write failure"),
+        "the original write failure must remain observable: {message}"
+    );
+    assert!(
+        message.contains("injected temporary cleanup failure"),
+        "the temporary cleanup failure must be surfaced: {message}"
+    );
+    let composite = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<PersistenceRollbackFailure>())
+        .expect("write and cleanup failures must remain structured together");
+    assert_eq!(
+        composite.primary.to_string(),
+        "injected primary write failure"
+    );
+    assert_eq!(
+        composite.rollback.to_string(),
+        "injected temporary cleanup failure"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn rollback_file_treats_missing_cleanup_as_idempotent() {
     let (_, root) = persistence_settings("rollback-file-missing-cleanup");
     let path = root.join("missing.json");
@@ -7404,7 +7481,7 @@ fn rollback_file_surfaces_write_and_remove_errors() {
 }
 
 #[test]
-fn npc_archive_reports_primary_and_rollback_failures_together() {
+fn npc_archive_reports_primary_and_ownership_failures_together() {
     let (settings, root) = persistence_settings("npc-archive-composite-diagnostic");
     let capture = sample_npc_capture("npc_archive_composite_diagnostic");
     let archive = NpcDeceasedArchiveRecord {
@@ -7418,18 +7495,29 @@ fn npc_archive_reports_primary_and_rollback_failures_together() {
         digest: Some(capture.digest.clone()),
         life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
     };
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+    )
+    .expect("archive path should be valid");
+    let archive_path_for_hook = archive_path.clone();
     let error = persist_npc_deceased_archive_with_hooks(
         &settings,
         &archive,
-        |_| Err(io::Error::other("primary database failure")),
-        |path, payload| {
-            write_zstd_bundle(path, payload)?;
-            fs::remove_file(path)?;
-            fs::create_dir(path)?;
-            Ok(())
+        move |_| {
+            // Replace the target after the preflight but before the DB transaction returns.
+            // The primary failure and the ownership change must both remain observable, and
+            // the failed caller must not remove the successor.
+            fs::remove_file(&archive_path_for_hook)
+                .expect("successor fixture should remove the original archive");
+            fs::create_dir(&archive_path_for_hook)
+                .expect("successor fixture should replace the archive with a directory");
+            Err(io::Error::other("primary database failure"))
         },
+        write_zstd_bundle,
     )
-    .expect_err("database failure with failed rollback must retain both diagnostics");
+    .expect_err("database failure with changed ownership must retain both diagnostics");
     let message = error.to_string();
     assert!(message.contains("primary database failure"));
     assert!(message.contains("rollback failed"));
@@ -7446,7 +7534,7 @@ fn npc_archive_reports_primary_and_rollback_failures_together() {
     assert_eq!(
         composite.rollback.kind(),
         io::ErrorKind::IsADirectory,
-        "the rollback failure must remain available in the composite diagnostic"
+        "the ownership failure must remain available in the composite diagnostic"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -7508,6 +7596,72 @@ fn npc_archive_failed_no_replace_publish_preserves_competing_target() {
     assert!(
         archive_path.exists(),
         "the competing archive target must still exist after the losing publish fails"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_archive_rejects_successor_replacement_before_db_commit() {
+    let (settings, root) = persistence_settings("npc-archive-successor-replacement");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let capture = sample_npc_capture("npc_archive_successor_replacement");
+    let archive = NpcDeceasedArchiveRecord {
+        char_id: capture.state.char_id.clone(),
+        archetype: capture.state.archetype.clone(),
+        died_at_tick: 724,
+        archived_at_wall: 1_704_067_274,
+        lifecycle_state: "terminated".to_string(),
+        death_count: 1,
+        state: Some(capture.state.clone()),
+        digest: Some(capture.digest.clone()),
+        life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+    };
+    persist_npc_deceased_archive(&settings, &archive)
+        .expect("baseline archive should establish the original target identity");
+    let archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+    )
+    .expect("archive path should be valid");
+    let archive_path_for_hook = archive_path.clone();
+
+    let error = persist_npc_deceased_archive_with_hooks(
+        &settings,
+        &archive,
+        move |settings| {
+            fs::remove_file(&archive_path_for_hook)
+                .expect("successor fixture should remove the old inode");
+            write_zstd_bundle(&archive_path_for_hook, br#"{"owner":"successor"}"#)
+                .expect("successor fixture should publish a replacement inode");
+            open_persistence_connection(settings)
+        },
+        |_, _| {
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "simulated matching orphan publication boundary",
+            ))
+        },
+    )
+    .expect_err("a successor replacement must fail closed before committing its DB state");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::InvalidData,
+        "replacement of the observed archive identity must be rejected: {error}"
+    );
+    assert_eq!(
+        read_zstd_bundle(
+            settings.db_path(),
+            npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)
+                .expect("archive relative path should be valid")
+                .as_str(),
+        )
+        .expect("successor archive should remain readable"),
+        br#"{"owner":"successor"}"#,
+        "fail-closed validation must not delete the successor owned by another publisher"
     );
 
     let _ = fs::remove_dir_all(root);

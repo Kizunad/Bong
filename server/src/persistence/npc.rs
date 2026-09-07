@@ -2,6 +2,31 @@
 
 use super::*;
 
+fn ensure_archive_snapshot_matches(
+    path: &Path,
+    expected_identity: ArchiveFileIdentity,
+    expected_value: &serde_json::Value,
+) -> io::Result<()> {
+    let (archive_bytes, actual_identity) = read_archive_snapshot(path)?;
+    if actual_identity != expected_identity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive target identity changed: {}", path.display()),
+        ));
+    }
+    let payload = zstd::stream::decode_all(archive_bytes.as_slice())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let actual_value: serde_json::Value = serde_json::from_slice(&payload)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if &actual_value != expected_value {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive target content changed: {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 pub(super) struct NpcSnapshotTracker {
     last_snapshot_tick: u32,
@@ -186,34 +211,67 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
     )?;
     let relative_path =
         npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)?;
-    let previous_archive = read_optional_file(&archive_path)?;
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let expected_value: serde_json::Value = serde_json::from_slice(&archive_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let _lifecycle_lock = acquire_archive_lifecycle_lock(&archive_path)?;
+    let previous_archive = read_optional_archive_snapshot(&archive_path)?;
     // `write_zstd_bundle` 的发布契约是失败时不改变最终路径：临时文件只会在
     // hard_link 成功后成为目标，目标已存在时 hard_link 只返回 AlreadyExists。
     // 若目标正是本次进程在 DB 提交前发布后崩溃留下的有效 bundle，可以复用它完成
     // index/hot-row reconciliation；不同内容或无法解码的目标仍然 fail-closed，不能
     // 通过覆盖文件来掩盖 ownership 冲突。
-    let archive_published_by_call = match write_bundle(&archive_path, &archive_json) {
-        Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let existing_archive = match read_optional_file(&archive_path)? {
-                Some(existing) => existing,
-                None => return Err(error),
-            };
-            let existing_payload = zstd::stream::decode_all(existing_archive.as_slice())
-                .map_err(|decode_error| io::Error::new(io::ErrorKind::InvalidData, decode_error))?;
-            let existing_value: serde_json::Value = serde_json::from_slice(&existing_payload)
-                .map_err(|decode_error| io::Error::new(io::ErrorKind::InvalidData, decode_error))?;
-            let expected_value: serde_json::Value = serde_json::from_slice(&archive_json)
-                .map_err(|decode_error| io::Error::new(io::ErrorKind::InvalidData, decode_error))?;
-            if existing_value != expected_value {
-                return Err(error);
+    let (archive_published_by_call, archive_identity) =
+        match write_bundle(&archive_path, &archive_json) {
+            Ok(()) => {
+                if previous_archive.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!(
+                            "archive publisher reported replacement of existing target: {}",
+                            archive_path.display()
+                        ),
+                    ));
+                }
+                (true, archive_file_identity(&archive_path)?)
             }
-            false
-        }
-        Err(error) => return Err(error),
-    };
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let Some((_, previous_identity)) = previous_archive.as_ref() else {
+                    // 在本次生命周期锁覆盖的初始观察中目标不存在；这时出现
+                    // AlreadyExists 只能来自未遵守该锁的 publisher。即便内容相同，
+                    // 也没有可证明的 crash-orphan 身份，必须 fail-closed。
+                    return Err(error);
+                };
+                let (existing_archive, existing_identity) = read_archive_snapshot(&archive_path)?;
+                if existing_identity != *previous_identity {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "archive target identity changed during no-replace publication: {}",
+                            archive_path.display()
+                        ),
+                    ));
+                }
+                let existing_payload = zstd::stream::decode_all(existing_archive.as_slice())
+                    .map_err(|decode_error| {
+                        io::Error::new(io::ErrorKind::InvalidData, decode_error)
+                    })?;
+                let existing_value: serde_json::Value = serde_json::from_slice(&existing_payload)
+                    .map_err(|decode_error| {
+                    io::Error::new(io::ErrorKind::InvalidData, decode_error)
+                })?;
+                if existing_value != expected_value {
+                    return Err(error);
+                }
+                (false, existing_identity)
+            }
+            Err(error) => return Err(error),
+        };
+
+    // 继续持有同一生命周期锁，直到 DB transaction 完成或回滚结束；identity
+    // 让非合作的路径替换也只能 fail-closed，不能把 successor 误认成 orphan。
+    ensure_archive_snapshot_matches(&archive_path, archive_identity, &expected_value)?;
 
     let persisted = (|| -> io::Result<()> {
         let mut connection = open_connection(settings)?;
@@ -229,20 +287,34 @@ pub(super) fn persist_npc_deceased_archive_with_hooks(
             archive.archived_at_wall,
         )?;
         delete_npc_hot_rows(&transaction, archive.char_id.as_str())?;
+        ensure_archive_snapshot_matches(&archive_path, archive_identity, &expected_value)?;
         transaction.commit().map_err(io::Error::other)
     })();
 
     match persisted {
         Ok(()) => Ok(()),
         Err(error) if !archive_published_by_call => Err(error),
-        Err(error) => match rollback_file(&archive_path, previous_archive.as_deref()) {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(combine_persistence_failure(
-                "npc archive persistence",
-                error,
-                rollback_error,
-            )),
-        },
+        Err(error) => {
+            match ensure_archive_snapshot_matches(&archive_path, archive_identity, &expected_value)
+            {
+                Err(ownership_error) => Err(combine_persistence_failure(
+                    "npc archive persistence",
+                    error,
+                    ownership_error,
+                )),
+                Ok(()) => match rollback_file(
+                    &archive_path,
+                    previous_archive.as_ref().map(|(bytes, _)| bytes.as_slice()),
+                ) {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(combine_persistence_failure(
+                        "npc archive persistence",
+                        error,
+                        rollback_error,
+                    )),
+                },
+            }
+        }
     }
 }
 
@@ -289,15 +361,33 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
         return Ok(Vec::new());
     }
 
+    // Acquire every target lock in a stable order and retain all guards through the
+    // SQLite delete transaction. This prevents two sweepers from validating the same
+    // archive independently and avoids lock-order deadlocks between overlapping sets.
+    let mut lock_targets = stale_digests
+        .iter()
+        .map(|digest| {
+            npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall)
+                .map(|path| (digest.char_id.clone(), path))
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    lock_targets.sort_by(|left, right| left.0.cmp(&right.0));
+    let _lifecycle_locks = lock_targets
+        .iter()
+        .map(|(_, path)| acquire_archive_lifecycle_lock(path))
+        .collect::<io::Result<Vec<_>>>()?;
+
+    let mut archive_identities = Vec::with_capacity(stale_digests.len());
+
     for digest in &stale_digests {
         let archive_path =
             npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall)?;
-        let previous_archive = read_optional_file(&archive_path)?;
+        let previous_archive = read_optional_archive_snapshot(&archive_path)?;
         let archive_json = serde_json::to_vec_pretty(digest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let publish_result = match previous_archive.as_deref() {
-            Some(existing) => {
-                let decoded = zstd::stream::decode_all(existing)
+        let publish_result = match previous_archive.as_ref() {
+            Some((existing, _)) => {
+                let decoded = zstd::stream::decode_all(existing.as_slice())
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 if decoded == archive_json {
                     Ok(())
@@ -318,9 +408,18 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
         // 另一个 publisher 可能已在写入期间建立目标，不能用 rollback_file(None)
         // 把并发 publisher 的归档删除。
         publish_result?;
+        let identity = match previous_archive {
+            Some((_, identity)) => identity,
+            None => archive_file_identity(&archive_path)?,
+        };
+        ensure_archive_snapshot_matches_bytes(&archive_path, identity, &archive_json)?;
+        archive_identities.push((archive_path, identity));
     }
 
     let transaction = connection.transaction().map_err(io::Error::other)?;
+    for (archive_path, identity) in &archive_identities {
+        ensure_archive_identity(archive_path, *identity)?;
+    }
     for digest in &stale_digests {
         transaction
             .execute(
@@ -328,6 +427,9 @@ pub(super) fn sweep_stale_npc_digests_with_writer(
                 params![digest.char_id.as_str()],
             )
             .map_err(io::Error::other)?;
+    }
+    for (archive_path, identity) in &archive_identities {
+        ensure_archive_identity(archive_path, *identity)?;
     }
     transaction.commit().map_err(io::Error::other)?;
 
