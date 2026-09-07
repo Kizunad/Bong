@@ -346,7 +346,8 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
   - `juebi_terrain_tick_records_original_once_for_overlapping_ops`：同样验证私有 `TerrainModOp` 队列去重/原始状态记录，公开会固化内部存储结构。
   - `tribulation_omen_cloud_blocks_overlay_and_restore`：依赖仅在 `cfg(test)` 提供的 `mark_test_layer_as_overworld` 测试层装配钩子；外置需新增 test-only seam 才能重建相同 ChunkLayer fixture，故留同 crate。
 - **公开 API 与 seam**：A 类只使用既有 `bong_server::cultivation::tribulation` 及相关公开模块 API；B 类使用同 crate 访问现有私有项。没有新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，也没有改动生产实现。
-- **提交证据**：代码、`tribulation_unit` target 与测试落点对应 `3cf9ef551`（2026-09-07）；本条对应分支 `refactor/plan-test-layout-refactor-v1-p2-tribulation` 的中文提交，每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-19 进度，P2 总体、P3 后续阶段、P4 仍未完成。
+- **主线复验与完整门禁**：在初轮 gate 后紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=eedf9903d8f2d819847d4cf394e43ddf7bb2b0fa` 无 Cargo/plan 冲突，生成 merge HEAD `de21913542389e1e9a4f4a59a8c148c750450d95`；合入内容仅为 bot 场景脚本与已归档 bot plan，未触及本批 server、Cargo 或 tribulation 文件。合并后再次执行 locked server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0：library `12071 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、`tribulation_unit` `103 passed / 0 failed / 0 ignored`，其它既有 Cargo targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`；Cargo 其它 targets、P2/P3/P4 既有条目均保留。
+- **validator 与提交证据**：无上下文只读 validator 已绑定代码/分类 HEAD `9b71f1fb9d67b252c28573ddb175c0666b3d31e5` 并 PASS；合并 HEAD 上再次定向对拍同 crate B 类 `16 passed / 0 failed / 0 ignored`、外置 A 类 `103 passed / 0 failed / 0 ignored`，逐位守恒 `103 + 16 = 119`。代码、`tribulation_unit` target 与测试落点对应 `3cf9ef551`（2026-09-07），分类 evidence 对应 `9b71f1fb9`，本段为本批中文 docs evidence commit；每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-19 进度，P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
 
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
