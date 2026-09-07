@@ -36,13 +36,9 @@ import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.visual.EdgeDecalRenderer;
 import com.bong.client.visual.InkWashVignetteRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
-import com.bong.client.visual.realm_vision.EdgeIndicatorCmd;
-import com.bong.client.visual.realm_vision.PerceptionEdgeProjector;
-import com.bong.client.visual.realm_vision.PerceptionEdgeRenderer;
-import com.bong.client.visual.realm_vision.PerceptionEdgeState;
-import com.bong.client.visual.realm_vision.PerceptionEdgeStateStore;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.util.Identifier;
@@ -52,6 +48,8 @@ import org.lwjgl.glfw.GLFW;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 public class BongHud {
@@ -120,16 +118,10 @@ public class BongHud {
             frame.botanyAnchor(),
             frame.runtimeContext()
         );
-        List<EdgeIndicatorCmd> spiritualSenseIndicators = frame.spiritualSenseIndicators().get();
         List<HudRenderCommand> supplementalCommands = frame.supplementalCommands().get();
-        if (!spiritualSenseIndicators.isEmpty() || !supplementalCommands.isEmpty()) {
+        if (!supplementalCommands.isEmpty()) {
             commands = new ArrayList<>(commands);
-            if (!spiritualSenseIndicators.isEmpty()) {
-                PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
-            }
-            if (!supplementalCommands.isEmpty()) {
-                commands.addAll(supplementalCommands);
-            }
+            commands.addAll(supplementalCommands);
         }
 
         renderer.render(
@@ -150,7 +142,6 @@ public class BongHud {
             screenHeight,
             computeBotanyAnchor(client),
             captureRuntimeContext(client),
-            () -> computeSpiritualSenseIndicators(client),
             () -> TiandaoPresenceHudPlanner.buildCommands(
                     TiandaoPresenceStore.snapshot(),
                     nowMillis,
@@ -169,105 +160,159 @@ public class BongHud {
         HudRenderBackend backend
     ) {
 
-        for (HudRenderCommand command : commands) {
-            if (command.isText()) {
-                context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
-                continue;
-            }
-            if (command.isScaledText()) {
-                var matrices = context.getMatrices();
-                matrices.push();
-                matrices.translate(command.x(), command.y(), 0);
-                float scale = (float) command.textScale();
-                matrices.scale(scale, scale, 1.0f);
-                context.drawTextWithShadow(client.textRenderer, command.text(), 0, 0, command.color());
-                matrices.pop();
-                continue;
-            }
-            if (command.isRect()) {
-                context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
-                continue;
-            }
-            if (command.isTexturedRect()) {
-                Identifier tex = parseIdentifier(command.texturePath());
-                if (tex != null) {
-                    context.drawTexture(
-                        tex,
-                        command.x(), command.y(),
-                        0.0f, 0.0f,
-                        command.width(), command.height(),
-                        command.width(), command.height()
-                    );
-                }
-                continue;
-            }
-            if (command.isItemTexture()) {
-                drawItemTexture(context, command.text(), command.x(), command.y(), command.width());
-                continue;
-            }
-            if (command.isToast()) {
-                BongToast.render(
+        renderOrderedCommands(
+            commands,
+            backend::handles,
+            command -> backend.renderCommand(context, client, visibility, command),
+            command -> renderGuiCommand(context, client, command),
+            context::draw
+        );
+
+        renderWithCleanup(() -> {
+            renderBaomaiV3HudForProduction(
+                new DrawContextHudSurface(context, client),
+                nowMillis,
+                visibility
+            );
+
+            // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
+            // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
+            // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
+            if (visibility == ScreenHudVisibility.FULL) {
+                CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
+                VoidErosionHudOverlay.render(context, client.textRenderer);
+                com.bong.client.fauna.HallucinationHudOverlay.render(context);
+                long estimatedTick = nowMillis / 50L;
+                ResonanceLockMeterHud.render(
                     context,
                     client.textRenderer,
                     client.getWindow().getScaledWidth(),
                     client.getWindow().getScaledHeight(),
-                    command
-                );
-                continue;
-            }
-            if (command.isEdgeIndicator()) {
-                int size = Math.max(4, (int) Math.round(4.0 + command.intensity() * 6.0));
-                context.fill(
-                    command.x() - size,
-                    command.y() - size,
-                    command.x() + size,
-                    command.y() + size,
-                    command.color()
+                    estimatedTick,
+                    nowMillis
                 );
             }
+
+            int scaledWidth = client.getWindow().getScaledWidth();
+            int scaledHeight = client.getWindow().getScaledHeight();
+            for (HudRenderCommand command : commands) {
+                if (command.isScreenTint()) {
+                    OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
+                } else if (command.isEdgeVignette()) {
+                    EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
+                } else if (command.isEdgeInkWash()) {
+                    InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
+                }
+            }
+
+            // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
+            backend.render(context, client, visibility);
+        }, context::draw);
+    }
+
+    /** 在表现后端切换处提交缓冲，保留命令的遮挡顺序和连续 SVG 几何的批处理。 */
+    static void renderOrderedCommands(
+        List<HudRenderCommand> commands,
+        Predicate<HudRenderCommand> backendHandles,
+        Consumer<HudRenderCommand> backendRenderer,
+        Consumer<HudRenderCommand> guiRenderer,
+        Runnable flush
+    ) {
+        renderWithCleanup(() -> {
+            boolean backendBatch = false;
+            for (HudRenderCommand command : commands) {
+                boolean handledByBackend = backendHandles.test(command);
+                if (handledByBackend != backendBatch) {
+                    flush.run();
+                    backendBatch = handledByBackend;
+                }
+                if (handledByBackend) {
+                    backendRenderer.accept(command);
+                } else {
+                    guiRenderer.accept(command);
+                }
+            }
+        }, flush);
+    }
+
+    private static void renderGuiCommand(DrawContext context, MinecraftClient client, HudRenderCommand command) {
+        if (command.isText()) {
+            context.drawTextWithShadow(client.textRenderer, command.text(), command.x(), command.y(), command.color());
+            return;
         }
-
-        renderBaomaiV3HudForProduction(
-            new DrawContextHudSurface(context, client),
-            nowMillis,
-            visibility
-        );
-
-        // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
-        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
-        // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
-        if (visibility == ScreenHudVisibility.FULL) {
-            CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
-            VoidErosionHudOverlay.render(context, client.textRenderer);
-            com.bong.client.fauna.HallucinationHudOverlay.render(context);
-            long estimatedTick = nowMillis / 50L;
-            ResonanceLockMeterHud.render(
+        if (command.isScaledText()) {
+            renderScaledText(context, client.textRenderer, command);
+            return;
+        }
+        if (command.isRect()) {
+            context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+            return;
+        }
+        if (command.isTexturedRect()) {
+            Identifier tex = parseIdentifier(command.texturePath());
+            if (tex != null) {
+                context.drawTexture(
+                    tex,
+                    command.x(), command.y(),
+                    0.0f, 0.0f,
+                    command.width(), command.height(),
+                    command.width(), command.height()
+                );
+            }
+            return;
+        }
+        if (command.isItemTexture()) {
+            drawItemTexture(context, command.text(), command.x(), command.y(), command.width());
+            return;
+        }
+        if (command.isToast()) {
+            BongToast.render(
                 context,
                 client.textRenderer,
                 client.getWindow().getScaledWidth(),
                 client.getWindow().getScaledHeight(),
-                estimatedTick,
-                nowMillis
+                command
+            );
+            return;
+        }
+        if (command.isEdgeIndicator()) {
+            int size = Math.max(4, (int) Math.round(4.0 + command.intensity() * 6.0));
+            context.fill(
+                command.x() - size,
+                command.y() - size,
+                command.x() + size,
+                command.y() + size,
+                command.color()
             );
         }
+    }
 
-        int scaledWidth = client.getWindow().getScaledWidth();
-        int scaledHeight = client.getWindow().getScaledHeight();
-        for (HudRenderCommand command : commands) {
-            if (command.isScreenTint()) {
-                OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            } else if (command.isEdgeVignette()) {
-                EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            } else if (command.isEdgeInkWash()) {
-                InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
+    static void renderScaledText(DrawContext context, TextRenderer textRenderer, HudRenderCommand command) {
+        var matrices = context.getMatrices();
+        matrices.push();
+        renderWithCleanup(() -> {
+            matrices.translate(command.x(), command.y(), 0);
+            float scale = (float) command.textScale();
+            matrices.scale(scale, scale, 1.0f);
+            context.drawTextWithShadow(textRenderer, command.text(), 0, 0, command.color());
+        }, matrices::pop);
+    }
+
+    /** 正常和异常路径都收尾；收尾失败附加到原异常，避免掩盖最初的绘制故障。 */
+    private static void renderWithCleanup(Runnable render, Runnable cleanup) {
+        try {
+            render.run();
+        } catch (RuntimeException | Error failure) {
+            try {
+                cleanup.run();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
             }
+            throw failure;
         }
-
-        // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
-        backend.render(context, client, visibility);
-
-        // HUD 回调结束时一次性提交所有 GUI layer，避免 SVG 与其他 overlay 交错 flush。
-        context.draw();
+        cleanup.run();
     }
 
     @FunctionalInterface
@@ -287,7 +332,6 @@ public class BongHud {
         int screenHeight,
         BotanyProjection.Anchor botanyAnchor,
         HudRuntimeContext runtimeContext,
-        Supplier<List<EdgeIndicatorCmd>> spiritualSenseIndicators,
         Supplier<List<HudRenderCommand>> supplementalCommands
     ) {
         HudFrameInput {
@@ -300,7 +344,6 @@ public class BongHud {
             screenWidth = Math.max(0, screenWidth);
             screenHeight = Math.max(0, screenHeight);
             runtimeContext = runtimeContext == null ? HudRuntimeContext.empty() : runtimeContext;
-            spiritualSenseIndicators = safeListSupplier(spiritualSenseIndicators);
             supplementalCommands = safeListSupplier(supplementalCommands);
         }
     }
@@ -325,34 +368,6 @@ public class BongHud {
         }
     }
 
-    private static List<EdgeIndicatorCmd> computeSpiritualSenseIndicators(MinecraftClient client) {
-        PerceptionEdgeState state = PerceptionEdgeStateStore.snapshot();
-        if (state.isEmpty() || client.gameRenderer == null) {
-            return List.of();
-        }
-        Camera camera = client.gameRenderer.getCamera();
-        if (camera == null) {
-            return List.of();
-        }
-        Vec3d camPos = camera.getPos();
-        double fov = client.options.getFov().getValue().doubleValue();
-        int scaledWidth = client.getWindow().getScaledWidth();
-        int scaledHeight = client.getWindow().getScaledHeight();
-        List<EdgeIndicatorCmd> indicators = new ArrayList<>();
-        for (PerceptionEdgeState.SenseEntry entry : state.entries()) {
-            indicators.add(PerceptionEdgeProjector.project(
-                entry.x(), entry.y(), entry.z(),
-                camPos.x, camPos.y, camPos.z,
-                camera.getYaw(), camera.getPitch(),
-                fov,
-                scaledWidth,
-                scaledHeight,
-                entry.kind(),
-                entry.intensity()
-            ));
-        }
-        return indicators;
-    }
 
     private static Identifier parseIdentifier(String path) {
         if (path == null || path.isBlank()) {

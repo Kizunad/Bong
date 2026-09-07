@@ -41,14 +41,20 @@ Solidify=3/Spirit=4/Void=5，technique_scroll.rs:211）：
    （central-review 2029 #5）。
 """
 
+import math
 import time
 
-from bot.bot import BotAssertionError
+from bot.bot import BotAssertionError, Event
 from bot.mc_protocol import offline_uuid
 from bot import proto_min
-from bot.scenarios._combat_helpers import last_event_time, payload_text
+from bot.scenarios._combat_helpers import (
+    last_event_time,
+    payload_text,
+    wait_for_skill_binding,
+)
 from bot.scenarios._inventory_helpers import wait_join_and_inventory
 from bot.scenarios._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
+from bot.scenarios._zone_loot_helpers import teleport_to_zone, wait_zone_info
 
 DESCRIPTION = (
     "qi_color_inspect：跨境界全量 payload（victim 非默认真元色 main=Heavy/"
@@ -74,10 +80,19 @@ SLOT_BENG = 0
 SLOT_WOLIU = 1
 HEAVY_CASTS = 4
 INTRICATE_CASTS = 2
-# BENG_QUAN_COOLDOWN_TICKS=60（3s）；woliu mouth 引气境 cooldown 8s（8*TICKS_PER_SECOND）。
-# 每 20 ticks/s，留 margin。
-BENG_GAP = 3.5
-WOLIU_GAP = 8.5
+# 10s 沿用原单次接受反馈的 liveness 上限；冷却本身按 server 下发的权威绝对截止
+# 时间等待，不用固定 wall-clock 间隔猜测服务端 tick 进度。
+CAST_FEEDBACK_TIMEOUT = 10.0
+CAST_READY_POLL_INTERVAL = 0.25
+# 这是单次 accepted cast 等待权威状态落账的 liveness watchdog，不是完成条件。
+# 低 TPS 时必须允许 server 先完成 Casting，再由 skillbar_config 暴露冷却；任何
+# wall-clock 截止前都不能把 cooldown=0 当作已完成。超过 watchdog 只报告失败，
+# 不把缺失的权威状态伪装成成功。
+CAST_STATE_WAIT_TIMEOUT = 60.0
+# 冷却 hint 是 server 按名义 tick 计算的 wall-clock 参考。过期后继续按真实
+# skillbar_config 状态轮询，最多保留一段明确的 liveness 余量，避免旧的 30s
+# wall-clock deadline 在低 TPS 下把合法冷却误判为失败。
+COOLDOWN_WAIT_GRACE_SECONDS = 180.0
 
 
 def _practice_nondefault_qi_color(bot) -> None:
@@ -105,6 +120,7 @@ def _practice_nondefault_qi_color(bot) -> None:
     bot.cmd(f"technique give {WOLIU_MOUTH}")
     bot.expect_chat(f"[dev] technique give `{WOLIU_MOUTH}`", timeout=10.0)
 
+    binding_anchor = last_event_time(bot)
     bot.intent(
         {
             "type": "skill_bar_bind",
@@ -121,9 +137,11 @@ def _practice_nondefault_qi_color(bot) -> None:
             "binding": {"kind": "skill", "skill_id": WOLIU_MOUTH},
         }
     )
-    time.sleep(0.3)
+    wait_for_skill_binding(bot, binding_anchor, SLOT_BENG, BENG_QUAN)
+    wait_for_skill_binding(bot, binding_anchor, SLOT_WOLIU, WOLIU_MOUTH)
 
-    for _ in range(HEAVY_CASTS):
+    for index in range(HEAVY_CASTS):
+        cast_sent_at = last_event_time(bot)
         _cast_empty_and_confirm(
             bot,
             SLOT_BENG,
@@ -134,13 +152,24 @@ def _practice_nondefault_qi_color(bot) -> None:
             _burst_event_observed,
             "空挥崩拳应收到 burst_meridian_event（施放被接受，Heavy 修行落账）",
         )
-        time.sleep(BENG_GAP)
+        cooldown_until_ms = _wait_for_skillbar_cooldown(
+            bot,
+            cast_sent_at,
+            SLOT_BENG,
+            BENG_QUAN,
+            "崩拳",
+        )
+        if index + 1 < HEAVY_CASTS:
+            _wait_until_cooldown_due(
+                bot, cooldown_until_ms, SLOT_BENG, BENG_QUAN, "崩拳"
+            )
 
     # 崩拳按当前真元 40% 扣费，4 次后余量不足吸灵口 12+3*2=18 的启动费，补足。
     bot.cmd("qi set 100")
     bot.expect_chat("[dev] qi set", timeout=10.0)
 
-    for _ in range(INTRICATE_CASTS):
+    for index in range(INTRICATE_CASTS):
+        cast_sent_at = last_event_time(bot)
         _cast_empty_and_confirm(
             bot,
             SLOT_WOLIU,
@@ -148,20 +177,390 @@ def _practice_nondefault_qi_color(bot) -> None:
             and "bong:woliu_mouth_funnel" in payload_text(e),
             "空挥吸灵口应收到 bong:woliu_mouth_funnel vfx（施放被接受，Intricate 修行落账）",
         )
-        time.sleep(WOLIU_GAP)
+        cooldown_until_ms = _wait_for_skillbar_cooldown(
+            bot,
+            cast_sent_at,
+            SLOT_WOLIU,
+            WOLIU_MOUTH,
+            "吸灵口",
+        )
+        if index + 1 < INTRICATE_CASTS:
+            _wait_until_cooldown_due(
+                bot, cooldown_until_ms, SLOT_WOLIU, WOLIU_MOUTH, "吸灵口"
+            )
 
 
-def _cast_empty_and_confirm(bot, slot: int, confirm, description: str) -> None:
+def _tpzone_and_settle(
+    bot,
+    zone: str,
+    target_position: tuple[float, float, float] | None = None,
+) -> tuple[float, float, float]:
+    """复用规范 `/tpzone` 契约，并只在权威坐标已落定时保留 no-op。
+
+    `teleport_to_zone` 负责命令发送与 chat 回执，但 chat 不包含位置提交。目标坐标
+    由同一 server 运行中已经收到的权威 `pos_look` 提供，并由调用方显式传入已知
+    目标；首次进入目标 zone 时若尚未知晓目标，则本函数只等待本次命令后的权威
+    位置帧并返回它。若已经在目标 zone，调用方必须先提供已知目标坐标：只有已有
+    权威坐标与该目标完全匹配时才可走 no-op；仅有 zone 名和一个有效但未对拍目标的
+    坐标仍不足以确认 no-op，直接 fail closed，避免把同 zone 异坐标当成已落点。这样
+    不复制或解析 `server/zones.json`，也不会把仅有 zone 名的观察误当成目标位置。
+    """
+    was_in_target_zone = _latest_zone_name(bot) == zone
+    authoritative_position = _latest_authoritative_position(bot)
+    if target_position is None and was_in_target_zone:
+        raise BotAssertionError(
+            f"[{bot.username}] /tpzone {zone} 已在目标 zone，但缺少可对拍的"
+            "目标坐标；"
+            "同 zone no-op 必须以权威 PositionLook 与实际目标完全匹配为依据"
+        )
+    was_at_target = (
+        was_in_target_zone
+        and target_position is not None
+        and _position_matches(authoritative_position, target_position)
+    )
+    sent_at = teleport_to_zone(bot, zone)
+    if was_at_target:
+        return target_position
+
+    if not was_in_target_zone:
+        # canonical helper 的 zone_info 只负责 transition；位置提交仍须由下面的
+        # 精确 PositionLook 单独确认。同 zone 重写不发 zone_info，不能等待它代替位置。
+        wait_zone_info(bot, zone, after=sent_at)
+
+    if target_position is None:
+        position_event = bot.wait_for(
+            lambda e: e.kind == "pos_look" and e.t > sent_at,
+            timeout=10.0,
+            description=f"/tpzone {zone} 后新的权威 PositionLook 提交",
+        )
+        return _position_from_pos_look(
+            position_event, f"/tpzone {zone} 的权威位置提交"
+        )
+
+    bot.wait_for(
+        lambda e: (
+            e.kind == "pos_look"
+            and e.t > sent_at
+            and _position_matches(
+                (e.data.get("x"), e.data.get("y"), e.data.get("z")),
+                target_position,
+            )
+        ),
+        timeout=10.0,
+        description=f"/tpzone {zone} 后目标坐标提交对应的 PositionLook {target_position}",
+    )
+    return target_position
+
+
+def _latest_zone_name(bot) -> str | None:
+    """返回 Bot 已观察到的最新权威 zone；不自行推导坐标或 zone 边界。"""
+    with bot._lock:
+        for event in reversed(bot.events):
+            if event.kind != "server_data" or event.data.get("payload_type") != "zone_info":
+                continue
+            payload = event.data.get("payload")
+            if isinstance(payload, dict):
+                zone = payload.get("zone")
+                if isinstance(zone, str):
+                    return zone
+    return None
+
+
+def _latest_authoritative_position(bot) -> tuple[float, float, float] | None:
+    """读取最新 server `pos_look` 的 XYZ，不把本地发送镜像当作权威坐标。"""
+    with bot._lock:
+        for event in reversed(bot.events):
+            if event.kind != "pos_look":
+                continue
+            try:
+                position = tuple(
+                    float(event.data[axis]) for axis in ("x", "y", "z")
+                )
+            except (KeyError, TypeError, ValueError):
+                return None
+            return position if all(math.isfinite(value) for value in position) else None
+    return None
+
+
+def _position_matches(
+    actual: tuple[object, object, object] | None,
+    expected: tuple[float, float, float],
+) -> bool:
+    if actual is None or len(actual) != len(expected):
+        return False
+    try:
+        return all(
+            abs(float(observed) - target) <= 1e-6
+            for observed, target in zip(actual, expected)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _position_from_pos_look(event: Event, description: str) -> tuple[float, float, float]:
+    if event.kind != "pos_look":
+        raise BotAssertionError(
+            f"{description} 必须来自 pos_look，实际事件 kind={event.kind!r}"
+        )
+    try:
+        position = tuple(float(event.data[axis]) for axis in ("x", "y", "z"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise BotAssertionError(f"{description} 缺少有效 XYZ：{event.data!r}") from error
+    if not all(math.isfinite(value) for value in position):
+        raise BotAssertionError(f"{description} 必须是有限 XYZ：{position!r}")
+    return position
+
+
+def _cast_empty_and_confirm(bot, slot: int, confirm, description: str) -> Event:
     """空挥 skill_bar_cast（无 target = 空挥/空吸），等施放被接受的 server 反馈。
 
-    冷却/经脉/真元门被拒时不会有反馈 → wait_for 超时，场景正确失败而非静默空过。"""
+    冷却/经脉/真元门被拒时不会有反馈 → wait_for 超时，场景正确失败而非静默空过。
+    下一次施放由 `_wait_until_cooldown_due` 刷新权威状态到期后再发送；这里必须只
+    发送一次请求，不能用重复请求碰运气，也不能把拒绝伪装成成功。"""
     anchor = last_event_time(bot)
     bot.intent({"type": "skill_bar_cast", "v": 1, "slot": slot})
-    bot.wait_for(
+    return bot.wait_for(
         lambda e: e.t > anchor and confirm(e),
-        timeout=10.0,
+        timeout=CAST_FEEDBACK_TIMEOUT,
         description=description,
     )
+
+
+def _wait_for_skillbar_cooldown(
+    bot, cast_sent_at: float, slot: int, skill_id: str, label: str
+) -> int:
+    """轮询本次施放后的 `skillbar_config` 权威冷却状态。
+
+    resolver 的接受反馈与冷却状态不是同一个事件：崩拳的冷却在通用 `Casting` 完成
+    时写入，吸灵口则在 resolver 接受时直接写入；两者都由现有
+    `skillbar_config.cooldown_until_ms` 对外呈现。两条路径的反馈事件顺序也不同，
+    因此必须以本次请求发送时刻为下界；只用反馈事件作下界会漏掉已先到达的合法
+    `skillbar_config`。低 TPS 时一次 10s 的 wait 可能先结束而 cooldown 尚未落账，
+    所以每次只重发同值 bind 刷新现有公开状态，并持续到非零 cooldown 真正出现；
+    零值、超时或缺失状态均不能被当作施放完成。
+    """
+    deadline = time.monotonic() + CAST_STATE_WAIT_TIMEOUT
+    while True:
+        _assert_bot_alive_if_supported(bot, f"{label} 权威冷却状态等待")
+        config = _latest_active_skillbar_config(bot, cast_sent_at, slot, skill_id)
+        if config is not None:
+            return config.data["payload"]["cooldown_until_ms"][slot]
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BotAssertionError(
+                f"[{getattr(bot, 'username', 'bot')}] {label} 施放后 {CAST_STATE_WAIT_TIMEOUT:.1f}s"
+                " 内未观察到 skillbar_config 的权威非零冷却状态；不能把缺失状态当作完成"
+            )
+
+        # 同值 bind 是现有公开的只读刷新入口；若 Casting 尚未完成，返回 0，
+        # 场景不会前进。响应 timeout 仍是单次请求的 liveness 上限，下一轮再检查
+        # 历史事件并按固定间隔重试，避免低 TPS 时无界洪泛。
+        try:
+            current_until_ms = _refresh_skillbar_cooldown(
+                bot,
+                slot=slot,
+                skill_id=skill_id,
+                label=label,
+                timeout=min(CAST_FEEDBACK_TIMEOUT, remaining),
+            )
+        except BotAssertionError:
+            _assert_bot_alive_if_supported(bot, f"{label} 权威冷却状态轮询")
+            current_until_ms = 0
+        if current_until_ms > 0:
+            return current_until_ms
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            continue
+        _assert_bot_alive_if_supported(bot, f"{label} 权威冷却状态退避")
+        time.sleep(min(CAST_READY_POLL_INTERVAL, remaining))
+
+
+def _latest_active_skillbar_config(
+    bot, after: float, slot: int, skill_id: str
+) -> Event | None:
+    """从已收事件中找本次请求后的 active skillbar 状态，不消费新的请求。"""
+    lock = getattr(bot, "_lock", None)
+    if lock is None:
+        events = getattr(bot, "events", ())
+        return next(
+            (
+                event
+                for event in events
+                if event.t > after
+                and event.kind == "server_data"
+                and event.data.get("payload_type") == "skillbar_config"
+                and _skillbar_config_matches(event.data.get("payload"), slot, skill_id)
+                and _skillbar_config_has_active_cooldown(event.data["payload"], slot)
+            ),
+            None,
+        )
+    with lock:
+        return next(
+            (
+                event
+                for event in bot.events
+                if event.t > after
+                and event.kind == "server_data"
+                and event.data.get("payload_type") == "skillbar_config"
+                and _skillbar_config_matches(event.data.get("payload"), slot, skill_id)
+                and _skillbar_config_has_active_cooldown(event.data["payload"], slot)
+            ),
+            None,
+        )
+
+
+def _assert_bot_alive_if_supported(bot, description: str) -> None:
+    """在真实 Bot 上 fail-closed；轻量 fake 不必复制完整 Bot 生命周期 API。"""
+    assert_alive = getattr(bot, "assert_alive", None)
+    if assert_alive is not None:
+        assert_alive(description)
+
+
+def _skillbar_config_matches(payload, slot: int, skill_id: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    slots = payload.get("slots")
+    cooldowns = payload.get("cooldown_until_ms")
+    if not isinstance(slots, list) or not isinstance(cooldowns, list):
+        return False
+    if slot < 0 or len(slots) <= slot or len(cooldowns) <= slot:
+        return False
+    entry = slots[slot]
+    return (
+        isinstance(entry, dict)
+        and entry.get("kind") == "skill"
+        and entry.get("skill_id") == skill_id
+    )
+
+
+def _skillbar_config_has_active_cooldown(payload: dict, slot: int) -> bool:
+    cooldowns = payload.get("cooldown_until_ms")
+    return (
+        isinstance(cooldowns, list)
+        and len(cooldowns) > slot
+        and isinstance(cooldowns[slot], int)
+        # The emitter writes zero only after the authoritative server tick has
+        # reached the stored deadline.  A non-zero value can already be past in
+        # wall-clock time when TPS is low, so comparing it with local time here
+        # would discard the very state needed to diagnose that drift.
+        and cooldowns[slot] > 0
+    )
+
+
+def _wait_until_cooldown_due(
+    bot, cooldown_until_ms: int, slot: int, skill_id: str, label: str
+) -> None:
+    """等待 server 按实际 tick 清除冷却，再尝试下一次施放。
+
+    `cooldown_until_ms` 是 server 用名义 20TPS 折算出的时间提示，不是实际冷却
+    状态：低 TPS 时它可能先到。时间戳只用来减少不必要的查询，最终判定必须来自
+    server 在一次无语义变化的同值 `skill_bar_bind` 后重新发出的
+    `skillbar_config.cooldown_until_ms == 0`。绑定接口不会清理 SkillBarBindings 的
+    skill_id 冷却（server 的既有回归契约），因此这是现有协议的只读状态刷新，不会
+    重置冷却或重复施放；过期的 Unix hint 后以固定 poll interval 退避，避免低 TPS
+    时同值 bind 洪泛；每次查询仍检查连接，避免断线被伪装成等待。
+    """
+    hint_remaining = max(
+        0.0,
+        (cooldown_until_ms - time.time_ns() // 1_000_000) / 1000.0,
+    )
+    deadline = time.monotonic() + hint_remaining + COOLDOWN_WAIT_GRACE_SECONDS
+    _sleep_until_cooldown_hint(bot, cooldown_until_ms, label, deadline=deadline)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BotAssertionError(
+                f"[{getattr(bot, 'username', 'bot')}] {label} 冷却状态在 liveness watchdog"
+                f" {COOLDOWN_WAIT_GRACE_SECONDS:.1f}s 内未归零"
+            )
+        _assert_bot_alive_if_supported(bot, f"{label} 权威冷却轮询")
+        try:
+            current_until_ms = _refresh_skillbar_cooldown(
+                bot,
+                slot=slot,
+                skill_id=skill_id,
+                label=label,
+                timeout=min(CAST_FEEDBACK_TIMEOUT, remaining),
+            )
+        except BotAssertionError:
+            _assert_bot_alive_if_supported(bot, f"{label} 权威冷却响应")
+            current_until_ms = cooldown_until_ms
+        if current_until_ms == 0:
+            return
+        # server 返回非零状态后，即使 Unix hint 已过期，也必须留出一个完整
+        # poll interval 再发下一次同值 bind；否则低 TPS 下会向 server 洪泛刷新请求。
+        retry_not_before = time.monotonic() + CAST_READY_POLL_INTERVAL
+        _sleep_until_cooldown_hint(
+            bot,
+            current_until_ms,
+            label,
+            not_before=retry_not_before,
+            deadline=deadline,
+        )
+
+
+def _sleep_until_cooldown_hint(
+    bot,
+    cooldown_until_ms: int,
+    label: str,
+    *,
+    not_before: float | None = None,
+    deadline: float | None = None,
+) -> None:
+    """按协议提示或退避点休眠；过期提示也至少遵守一次 poll interval。"""
+    while True:
+        now = time.monotonic()
+        hint_remaining = (cooldown_until_ms - time.time_ns() // 1_000_000) / 1000.0
+        retry_remaining = (not_before - now) if not_before is not None else 0.0
+        wait_seconds = max(hint_remaining, retry_remaining)
+        if deadline is not None:
+            wait_seconds = min(wait_seconds, max(0.0, deadline - now))
+        if wait_seconds <= 0:
+            return
+        _assert_bot_alive_if_supported(bot, f"{label} 权威冷却等待")
+        sleep_for = min(wait_seconds, CAST_READY_POLL_INTERVAL)
+        time.sleep(sleep_for)
+
+
+def _refresh_skillbar_cooldown(
+    bot,
+    slot: int,
+    skill_id: str,
+    label: str,
+    *,
+    timeout: float = CAST_FEEDBACK_TIMEOUT,
+) -> int:
+    """用同值绑定请求触发一次既有 `skillbar_config` 权威状态刷新。
+
+    `SkillBarBindings::set` 只改槽内容、不触碰按 skill_id 记账的 cooldown；请求完成
+    后既有 `Changed<SkillBarBindings>` emitter 会按当前 CombatClock.tick 重新折算
+    配置。只有该配置明确报告槽位为 0，才允许下一次 cast，避免把低 TPS 下已经过期
+    的预测 Unix 时间当作实际 tick 冷却已到期。
+    """
+    anchor = last_event_time(bot)
+    bot.intent(
+        {
+            "type": "skill_bar_bind",
+            "v": 1,
+            "slot": slot,
+            "binding": {"kind": "skill", "skill_id": skill_id},
+        }
+    )
+    config = bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.t > anchor
+            and e.data.get("payload_type") == "skillbar_config"
+            and _skillbar_config_matches(e.data.get("payload"), slot, skill_id)
+        ),
+        timeout=timeout,
+        description=f"{label} 同值绑定后的 skillbar_config 权威冷却刷新",
+    )
+    payload = config.data["payload"]
+    cooldowns = payload["cooldown_until_ms"]
+    return cooldowns[slot]
 
 
 def _burst_event_observed(event) -> bool:
@@ -202,10 +601,12 @@ def run(env) -> None:
             # Spawn selector 为不同用户名分配的出生点可能相距很远，host 因视距
             # 不会收到 victim 的 PlayerSpawn。先把两端放到同一固定 zone，再等待
             # 真实 PlayerSpawn；后续跨维/远距步骤仍使用同一 protocol entity id。
-            host.cmd("tpzone jiuzong_taichu_ruin")
-            host.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
-            victim.cmd("tpzone jiuzong_taichu_ruin")
-            victim.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
+            # 若持久化状态让 host 已在目标 zone，未知 target_position 不能拿旧坐标
+            # 猜测 no-op；先走一个确定不同的 zone，再由本次真实位置提交学习目标。
+            if _latest_zone_name(host) == "jiuzong_taichu_ruin":
+                _tpzone_and_settle(host, "spawn")
+            target_position = _tpzone_and_settle(host, "jiuzong_taichu_ruin")
+            _tpzone_and_settle(victim, "jiuzong_taichu_ruin", target_position)
 
             spawn = host.wait_for(
                 lambda e: (
@@ -306,17 +707,15 @@ def run(env) -> None:
 
             # 5. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 凝脉再探真实
             #    victim → 静默（same_dimension 失败，唯一失败的空间前提是维度）。
-            #    空间门必须**可隔离**：把双 bot 精确共位到同一 zone 中心（tpzone 定点
-            #    落位，distance=0）再 tpdim 只移 victim（X+0.25）→ distance=0.25 ≤ 6m。
-            #    若直接依赖出生点相对距离，tpdim 的 +0.25 位移可能把近 6m 的一对推过
-            #    6m，distance 与 dimension 同时失败——漏 dimension 检查的坏实现照样
-            #    静默，隔离性破（central-review 2029 #5）。跨维 transfer 只改
+            #    空间门必须**可隔离**：初始 setup 已把双 bot 精确共位到同一 zone 中心
+            #    （tpzone 定点落位，distance=0），这里的 tpdim 只移 victim（X+0.25）
+            #    → distance=0.25 ≤ 6m。若直接依赖出生点相对距离，tpdim 的 +0.25 位移
+            #    可能把近 6m 的一对推过 6m，distance 与 dimension 同时失败——漏 dimension
+            #    检查的坏实现照样静默，隔离性破（central-review 2029 #5）。不重复发送
+            #    已落在同一坐标的 `/tpzone`：no-op teleport 不产生新的 `pos_look`，等待
+            #    它会把测试变成无依据的超时。跨维 transfer 只改
             #    EntityLayerId/Position，ECS Entity 与 protocol entity id 保持不变
             #    （dimension_transfer.rs），step 0 捕获的旧 id 仍解析到 victim。
-            host.cmd("tpzone jiuzong_taichu_ruin")
-            host.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
-            victim.cmd("tpzone jiuzong_taichu_ruin")
-            victim.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
             host.cmd("realm set condense")
             host.expect_chat("[dev] realm set ", timeout=10.0)
             _transfer_dimension(victim, "tsy", victim.events[-1].t if victim.events else 0.0)
@@ -331,8 +730,7 @@ def run(env) -> None:
             #    （jiuzong 中心 (0,109,-10000)）~9257m。若距离前提不满足（victim 仍近），
             #    漏 distance 检查的坏实现也能静默，隔离性破。
             _transfer_dimension(victim, "overworld", victim.events[-1].t if victim.events else 0.0)
-            victim.cmd("tpzone wangyintai")
-            victim.expect_chat("Teleported to zone `wangyintai`.", timeout=10.0)
+            _tpzone_and_settle(victim, "wangyintai")
             sent_at = host.events[-1].t if host.events else 0.0
             host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
             _assert_silent(host, sent_at, "远端 zone 的 qi_color_inspect 应静默（distance 失败）")
@@ -440,10 +838,37 @@ def _realm_set_and_settle(bot, realm: str) -> float:
 def _transfer_dimension(bot, target: str, after: float) -> None:
     """把 bot 经正式 transfer consumer 切到 target 维度（保持同 XYZ 邻域）。
 
-    等 server 权威 transfer 排队的聊天确认 + 真实跨维 Respawn，并断言 Respawn 携带
-    目标维度（dimension_type_name/dimension_name 双键任一命中即可）。维度未完成切换
-    前不 dispatch 探针——否则正确实现会因同维发 payload，静默断言在 setup 阶段就
-    假红。跨维 transfer 不换 ECS Entity，protocol entity id 保持有效。"""
+    等 server 权威 transfer 排队的聊天确认 + 真实跨维 Respawn 及其后的同 XYZ
+    Position pulse/restore 提交，并断言 Respawn 携带目标维度
+    （dimension_type_name/dimension_name 双键任一命中即可）。Respawn 先到不代表
+    transfer 的 Position 提交已经完成：`/tpdim` 的既有确认协议在后续 tick 先发
+    0.001 格 pulse、再恢复最终坐标；若此时立即发下一次 `/tpzone`，后到的旧位置帧
+    可能覆盖新传送。维度未完成切换前不 dispatch 探针——否则正确实现会因同维发
+    payload，静默断言在 setup 阶段就假红。跨维 transfer 不换 ECS Entity，protocol
+    entity id 保持有效。"""
+    old_position = bot.position
+    if old_position is None:
+        raise BotAssertionError(
+            f"[{bot.username}] /tpdim {target} 前必须已有 server 权威 PositionLook 坐标"
+        )
+    try:
+        old_x, old_y, old_z = (float(value) for value in old_position)
+    except (TypeError, ValueError) as error:
+        raise BotAssertionError(
+            f"[{bot.username}] /tpdim {target} 前的 server 坐标无效：{old_position!r}"
+        ) from error
+    if not all(math.isfinite(value) for value in (old_x, old_y, old_z)):
+        raise BotAssertionError(
+            f"[{bot.username}] /tpdim {target} 前的 server 坐标必须有限：{old_position!r}"
+        )
+    try:
+        x_offset = {"tsy": 0.25, "overworld": -0.25}[target]
+        expected = {"tsy": "bong:tsy", "overworld": "minecraft:overworld"}[target]
+    except KeyError as error:
+        raise BotAssertionError(f"不支持的 /tpdim 目标维度：{target!r}") from error
+    target_position = (old_x + x_offset, old_y, old_z)
+    pulse_position = (target_position[0] + 0.001, target_position[1], target_position[2])
+
     bot.cmd(f"tpdim {target}")
     bot.wait_for(
         lambda e: (
@@ -459,7 +884,6 @@ def _transfer_dimension(bot, target: str, after: float) -> None:
         timeout=10.0,
         description=f"/tpdim {target} 应触发真实跨维 Respawn",
     )
-    expected = {"tsy": "bong:tsy", "overworld": "minecraft:overworld"}[target]
     actual = {
         key: respawn.data.get(key)
         for key in ("dimension_type_name", "dimension_name")
@@ -473,6 +897,30 @@ def _transfer_dimension(bot, target: str, after: float) -> None:
             f"[{bot.username}] /tpdim {target} 的 Respawn 必须携带目标维度 {expected}，"
             f"实际 {actual}"
         )
+    pulse = bot.wait_for(
+        lambda e: (
+            e.kind == "pos_look"
+            and e.t > respawn.t
+            and _position_matches(
+                (e.data.get("x"), e.data.get("y"), e.data.get("z")),
+                pulse_position,
+            )
+        ),
+        timeout=10.0,
+        description=f"/tpdim {target} 的 Respawn 后精确 Position pulse {pulse_position}",
+    )
+    bot.wait_for(
+        lambda e: (
+            e.kind == "pos_look"
+            and e.t > pulse.t
+            and _position_matches(
+                (e.data.get("x"), e.data.get("y"), e.data.get("z")),
+                target_position,
+            )
+        ),
+        timeout=10.0,
+        description=f"/tpdim {target} 的 Position restore 精确回到 {target_position}",
+    )
 
 
 def _assert_silent(bot, sent_at: float, description: str) -> None:
