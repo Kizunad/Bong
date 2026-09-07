@@ -53,6 +53,30 @@ class HudRenderRegistryTest {
     }
 
     @Test
+    void declaresTheRemainingSvgBatchAsThreeGeometricSurfaces() {
+        List<HudRenderLayer> svgLayers = HudRenderRegistry.productionSurfaces().stream()
+            .filter(surface -> surface.path() == HudRenderRegistry.RenderPath.SVG_FRAME)
+            .flatMap(surface -> surface.layer().stream())
+            .toList();
+
+        assertEquals(
+            List.of(
+                HudRenderLayer.JIEMAI_RING,
+                HudRenderLayer.STATUS_EFFECTS,
+                HudRenderLayer.MOVEMENT_HUD
+            ),
+            svgLayers,
+            "下线罗盘和灵觉后，SVG 迁移必须只覆盖剩余三个 HUD layer"
+        );
+        for (HudRenderLayer layer : svgLayers) {
+            HudRenderRegistry.SurfaceDefinition surface = HudRenderRegistry.require(layer);
+            assertEquals(HudRenderRegistry.Presentation.SVG_MESH, surface.presentation());
+            assertEquals("rect", surface.svgAssets().get(0).key());
+            assertEquals("bong-client:svg/hud/primitive-rect.svg", surface.svgAssets().get(0).resource().toString());
+        }
+    }
+
+    @Test
     void longTermFixtureMatchesTheProductionRegistry() throws IOException {
         List<FixtureRow> actual = fixtureRows();
         List<FixtureRow> expected = HudRenderRegistry.productionSurfaces().stream()

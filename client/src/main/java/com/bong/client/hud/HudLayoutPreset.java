@@ -65,6 +65,9 @@ public enum HudLayoutPreset {
         if (baselineFiltered.isEmpty()) {
             return baselineFiltered;
         }
+        baselineFiltered = baselineFiltered.stream()
+            .filter(command -> !isRetired(command.layer()))
+            .toList();
         HudLayoutPreferenceStore.Density effectiveDensity =
             density == null ? HudLayoutPreferenceStore.Density.STANDARD : density;
         if (effectiveDensity == HudLayoutPreferenceStore.Density.MAXIMUM) {
@@ -81,6 +84,10 @@ public enum HudLayoutPreset {
             }
         }
         return List.copyOf(out);
+    }
+
+    private static boolean isRetired(HudRenderLayer layer) {
+        return layer == HudRenderLayer.COMPASS || layer == HudRenderLayer.SPIRITUAL_SENSE;
     }
 
     public static double alphaForWidget(boolean showing, long elapsedMillis) {
