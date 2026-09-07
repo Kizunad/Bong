@@ -33,7 +33,7 @@
 
 | 阶段 | 状态 | 交付物 | 验收 |
 |---|---|---|---|
-| P0 | ⏳ | 第一性复现微负 zone 的 `UnrepresentableFlow`，确认 no-op 判据与抽干失败分支可达性；锁定 `SIPHON_FACTOR` 不变 | 复现日志/数值对拍 + 代码行号证据 + 决策写入 §8.1 |
+| P0 | ✅ 2026-09-08 | 第一性复现微负 zone 的 `UnrepresentableFlow`，确认 no-op 判据与抽干失败分支可达性；锁定 `SIPHON_FACTOR` 不变 | 复现日志/数值对拍 + 代码行号证据 + 决策写入 §8.1 |
 | P1 | ⬜ | `qi_physics` 可表示减法判据（若复现确认需要）+ `negative_zone_siphon_tick` epsilon no-op；抽干分支对数值不可表示 release 走既有可追踪 overflow 兜底并继续 emit death | 饱和单测：微负 no-op、正常释放、正/零 zone、边界相等、抽干成功/失败；`QiTransfer` 与守恒断言通过 |
 | P2 | ⬜ | 完整 server 门禁、无上下文 validator、最新主线合并复验、Finish Evidence、PR | fmt/clippy/test 全绿，validator 绑定最终 HEAD PASS，CI/Kody 交调度会话 |
 
@@ -75,6 +75,37 @@
 3. 如何证明 no-op 是守恒中性：跳过前后两个物理权威字段与 ledger 审计均不变，且不产生 `QiTransfer`。
 
 全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
+## §8.1 决议（pre-P0 收口，2026-09-08）
+
+### #1 可表示性判据与 epsilon no-op
+
+**决议**：
+
+1. 初步定位成立：实测 `238.52849866722318 - 1.4174837940073883e-14` 仍为 `238.52849866722318`；这不是可忽略的玩法阈值，而是来源 `f64` 无法产生可观察扣减。
+2. 在 `qi_physics` 增加通用“正减法是否产生可表示进展”helper，直接判断 `before - amount != before`，并由 `negative_zone_siphon_tick`（`server/src/cultivation/negative_zone.rs:32-80`）在调用 release 前使用；不改变 `SIPHON_FACTOR`（`negative_zone.rs:20-28`），不在 cultivation 新造 epsilon。
+3. 判定为正金额但来源减法不前进时，本 tick 是守恒中性的 no-op：不触碰玩家、zone、ledger、`QiTransfer`，也不 warn；真正的无效输入/物理错误仍沿原 fail-closed + warn 路径。
+
+**落点**：`server/src/cultivation/negative_zone.rs:20-80`、`server/src/cultivation/components/qi_flow.rs:607-632`（现有错误语义）/ 本 plan §P1「修复边界」、§P1「饱和测试」#1/#4。
+
+### #2 抽干分支的可达性与失败收口
+
+**决议**：
+
+1. 数值失败可达：有限 fixture `zone.spirit_qi=-1.0`、`qi_max=100.0`、`qi_current=1e-16` 满足 `qi_current < siphon`，但 `zone.spirit_qi + qi_current / 50.0 == zone.spirit_qi`；对应现有 `qi_flow.rs:653-659` 的 `UnrepresentableFlow` 会吞掉 death trigger。
+2. 成功 release 仍先走既有 `release_qi_amount_to_zone`；仅当失败明确为 zone 字段不可表示时，使用同一实际 `drained` 重试到既有 `qi_flow_overflow` 持久 sink，确认真实入账后再发既有 `CultivationDeathTrigger::NegativeZoneDrain`。
+3. 缺失 `LifeRecord`、非法 Cultivation 状态、ledger 失败等非该数值错误继续 fail-closed + warn，不发伪造死亡事件；不裸写 `qi_current` 或 `zone.spirit_qi`，守恒验证用 `assert_conservation`。
+
+**落点**：`server/src/cultivation/negative_zone.rs:82-111`、`server/src/cultivation/components/qi_flow.rs:633-737`、`server/src/qi_physics/ledger.rs:1083-1100` / 本 plan §P0「抽干分支可达性」、§P1「修复边界」、§P1「饱和测试」#5-#7。
+
+### #3 no-op 的守恒证据
+
+**决议**：
+
+1. no-op 不移动任何物理量：前后 `Cultivation.qi_current` 与 `Zone.spirit_qi` 保持 bitwise 数值不变，`WorldQiAccount` balance/transfer history 与 `Events<QiTransfer>` 均为空；多次 tick 仍不产生重试副作用。
+2. 正常释放和 overflow fallback 逐笔检查玩家、signed zone、稳定 ledger sink 的总量，使用 `qi_physics::ledger::assert_conservation`，总量基准引用 `DEFAULT_SPIRIT_QI_TOTAL` 所属的预算 fixture而不写字面总量。
+
+**落点**：`server/src/qi_physics/ledger.rs:924-939,1013-1054,1083-1100`、`server/src/cultivation/negative_zone.rs:52-114` / 本 plan §P1「饱和测试」#1/#2/#6。
 
 ## Finish Evidence
 
