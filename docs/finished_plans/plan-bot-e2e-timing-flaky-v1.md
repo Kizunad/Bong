@@ -102,10 +102,10 @@
   `python3 -m py_compile scripts/bot/scenarios/*.py`、`bash -n scripts/bot-e2e.sh`、
   `git diff --check`；scripts contract 为 `test_all_contract` 95/95、
   `e2e_redis_hang_guard_contract_test` 5/5、`smoke_owned_artifacts_test` PASS。
-- 合并主线后的返工 HEAD `bc8fb1625` 已通过无上下文 read-only
-  validator（validator 模型 `gpt-5.6-luna`），结论绑定该 SHA；此前 `4dfece34e9dc0937c19821f3c49338fc73d207f4` 的
-  validator 证据属于返工前 HEAD，不作为本轮结论；`ba2e5e03f` 的返工 validator
-  结论也不替代合并后新 SHA 的复验；提交 push、PR 的
+- 合并主线后的返工 HEAD `bc8fb1625` 曾启动无上下文 read-only validator，但该次返回为空，
+  不能记作 PASS；此前 `4dfece34e9dc0937c19821f3c49338fc73d207f4` 的 validator 证据属于
+  返工前 HEAD，`ba2e5e03f` 的返工 validator 结论也不替代合并后新 SHA 的复验。本轮以当前
+  HEAD `254e3b9042d1e537371679f8333efa4cf5d559c9` 重新开绑定 SHA 的 validator；提交 push、PR 的
   CI/e2e 与 Kody 主动 review 是 PR 阶段事项。
 
 ## 非目标
