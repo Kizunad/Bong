@@ -200,8 +200,9 @@ def _tpzone_and_settle(
     `teleport_to_zone` 负责命令发送与 chat 回执，但 chat 不包含位置提交。目标坐标
     由同一 server 运行中已经收到的权威 `pos_look` 提供，并由调用方显式传入已知
     目标；首次进入目标 zone 时若尚未知晓目标，则本函数只等待本次命令后的权威
-    位置帧并返回它，绝不进入 no-op。这样不复制或解析 `server/zones.json`，也不会
-    把仅有 zone 名的观察误当成目标位置。
+    位置帧并返回它。若已经在目标 zone，只有已有有效权威坐标时才可将其作为同 zone
+    no-op 的实际落点；仅有 zone 名或无效坐标绝不提前返回。这样不复制或解析
+    `server/zones.json`，也不会把仅有 zone 名的观察误当成目标位置。
     """
     was_in_target_zone = _latest_zone_name(bot) == zone
     authoritative_position = _latest_authoritative_position(bot)
@@ -220,6 +221,10 @@ def _tpzone_and_settle(
         wait_zone_info(bot, zone, after=sent_at)
 
     if target_position is None:
+        if was_in_target_zone and authoritative_position is not None:
+            # 同 zone 的规范 no-op 不会再发 pos_look；既然最新权威坐标已有效，
+            # 它就是本次未知目标的实际落点。不能等待一个不会产生的提交事件。
+            return authoritative_position
         position_event = bot.wait_for(
             lambda e: e.kind == "pos_look" and e.t > sent_at,
             timeout=10.0,

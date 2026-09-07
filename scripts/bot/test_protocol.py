@@ -5193,9 +5193,17 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
                 True,
                 (0.0, 96.0, 0.0),
             ),
-            # 即使 zone 名与当前坐标碰巧一致，尚未从权威 transfer 学到目标时也不能
-            # 把 chat 当 no-op；必须等本次命令的权威位置提交。
-            ("same-zone-unproven-target", zone, target_position, None, True, False, target_position),
+            # target_position 未传入时，只有同 zone 且已有有效权威 PositionLook 才能
+            # 推断本次同 zone no-op 的实际落点；不能把 chat 单独当作坐标确认。
+            (
+                "same-zone-target-inferred-from-authority",
+                zone,
+                target_position,
+                None,
+                False,
+                False,
+                target_position,
+            ),
             # 本地 position mirror 偶尔可能被移动 API 提前改写；no-op 仍必须看历史
             # server pos_look，而不是相信这个本地字段。
             (
