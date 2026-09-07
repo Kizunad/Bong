@@ -190,19 +190,58 @@ def _practice_nondefault_qi_color(bot) -> None:
             )
 
 
-def _tpzone_and_settle(bot, zone: str) -> None:
-    """复用 zone 场景的规范传送契约，并保留同 zone/no-op 语义。
+def _tpzone_and_settle(
+    bot,
+    zone: str,
+    target_position: tuple[float, float, float] | None = None,
+) -> tuple[float, float, float]:
+    """复用规范 `/tpzone` 契约，并只在权威坐标已落定时保留 no-op。
 
-    `teleport_to_zone` 负责命令发送与权威 chat 回执，`wait_zone_info` 负责真实
-    zone transition 状态。当前已经观测到目标 zone 时，server 对同坐标写入不会再
-    发新的 `zone_info`，所以 no-op 只需接受规范 chat；不在本地复制或解析
-    `server/zones.json`。
+    `teleport_to_zone` 负责命令发送与 chat 回执，但 chat 不包含位置提交。目标坐标
+    由同一 server 运行中已经收到的权威 `pos_look` 提供，并由调用方显式传入已知
+    目标；首次进入目标 zone 时若尚未知晓目标，则本函数只等待本次命令后的权威
+    位置帧并返回它，绝不进入 no-op。这样不复制或解析 `server/zones.json`，也不会
+    把仅有 zone 名的观察误当成目标位置。
     """
-    was_at_target = _latest_zone_name(bot) == zone
+    was_in_target_zone = _latest_zone_name(bot) == zone
+    authoritative_position = _latest_authoritative_position(bot)
+    was_at_target = (
+        was_in_target_zone
+        and target_position is not None
+        and _position_matches(authoritative_position, target_position)
+    )
     sent_at = teleport_to_zone(bot, zone)
     if was_at_target:
-        return
-    wait_zone_info(bot, zone, after=sent_at)
+        return target_position
+
+    if not was_in_target_zone:
+        # canonical helper 的 zone_info 只负责 transition；位置提交仍须由下面的
+        # 精确 PositionLook 单独确认。同 zone 重写不发 zone_info，不能等待它代替位置。
+        wait_zone_info(bot, zone, after=sent_at)
+
+    if target_position is None:
+        position_event = bot.wait_for(
+            lambda e: e.kind == "pos_look" and e.t > sent_at,
+            timeout=10.0,
+            description=f"/tpzone {zone} 后新的权威 PositionLook 提交",
+        )
+        return _position_from_pos_look(
+            position_event, f"/tpzone {zone} 的权威位置提交"
+        )
+
+    bot.wait_for(
+        lambda e: (
+            e.kind == "pos_look"
+            and e.t > sent_at
+            and _position_matches(
+                (e.data.get("x"), e.data.get("y"), e.data.get("z")),
+                target_position,
+            )
+        ),
+        timeout=10.0,
+        description=f"/tpzone {zone} 后目标坐标提交对应的 PositionLook {target_position}",
+    )
+    return target_position
 
 
 def _latest_zone_name(bot) -> str | None:
@@ -219,6 +258,22 @@ def _latest_zone_name(bot) -> str | None:
     return None
 
 
+def _latest_authoritative_position(bot) -> tuple[float, float, float] | None:
+    """读取最新 server `pos_look` 的 XYZ，不把本地发送镜像当作权威坐标。"""
+    with bot._lock:
+        for event in reversed(bot.events):
+            if event.kind != "pos_look":
+                continue
+            try:
+                position = tuple(
+                    float(event.data[axis]) for axis in ("x", "y", "z")
+                )
+            except (KeyError, TypeError, ValueError):
+                return None
+            return position if all(math.isfinite(value) for value in position) else None
+    return None
+
+
 def _position_matches(
     actual: tuple[object, object, object] | None,
     expected: tuple[float, float, float],
@@ -232,6 +287,20 @@ def _position_matches(
         )
     except (TypeError, ValueError):
         return False
+
+
+def _position_from_pos_look(event: Event, description: str) -> tuple[float, float, float]:
+    if event.kind != "pos_look":
+        raise BotAssertionError(
+            f"{description} 必须来自 pos_look，实际事件 kind={event.kind!r}"
+        )
+    try:
+        position = tuple(float(event.data[axis]) for axis in ("x", "y", "z"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise BotAssertionError(f"{description} 缺少有效 XYZ：{event.data!r}") from error
+    if not all(math.isfinite(value) for value in position):
+        raise BotAssertionError(f"{description} 必须是有限 XYZ：{position!r}")
+    return position
 
 
 def _cast_empty_and_confirm(bot, slot: int, confirm, description: str) -> Event:
@@ -524,8 +593,8 @@ def run(env) -> None:
             # Spawn selector 为不同用户名分配的出生点可能相距很远，host 因视距
             # 不会收到 victim 的 PlayerSpawn。先把两端放到同一固定 zone，再等待
             # 真实 PlayerSpawn；后续跨维/远距步骤仍使用同一 protocol entity id。
-            _tpzone_and_settle(host, "jiuzong_taichu_ruin")
-            _tpzone_and_settle(victim, "jiuzong_taichu_ruin")
+            target_position = _tpzone_and_settle(host, "jiuzong_taichu_ruin")
+            _tpzone_and_settle(victim, "jiuzong_taichu_ruin", target_position)
 
             spawn = host.wait_for(
                 lambda e: (

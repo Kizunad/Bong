@@ -5122,11 +5122,23 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
 
     def test_tpzone_reuses_canonical_zone_helper_and_preserves_noop(self):
         zone = "jiuzong_taichu_ruin"
+        target_position = (0.0, 109.0, -10000.0)
 
         class ZoneBot:
-            def __init__(self, current_zone):
+            def __init__(self, current_zone, position, authoritative_position=None):
                 self._lock = threading.RLock()
+                self.position = position
+                authoritative_position = authoritative_position or position
                 self.events = [
+                    _FakeEvent(
+                        0.5,
+                        "pos_look",
+                        {
+                            "x": authoritative_position[0],
+                            "y": authoritative_position[1],
+                            "z": authoritative_position[2],
+                        },
+                    ),
                     _FakeEvent(
                         1.0,
                         "server_data",
@@ -5134,12 +5146,83 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
                             "payload_type": "zone_info",
                             "payload": {"zone": current_zone},
                         },
-                    )
+                    ),
                 ]
 
-        for current_zone in (zone, "spawn"):
-            with self.subTest(current_zone=current_zone):
-                bot = ZoneBot(current_zone)
+            def wait_for(self, predicate, timeout, description):
+                del timeout
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"测试 fake 未匹配 {description}")
+
+        cases = (
+            (
+                "same-zone-exact-position",
+                zone,
+                target_position,
+                target_position,
+                False,
+                False,
+                target_position,
+            ),
+            # zone 名相同但权威坐标错误时，绝不能走 no-op；必须等精确目标帧。
+            (
+                "same-zone-wrong-position",
+                zone,
+                (1.0, 109.0, -10000.0),
+                target_position,
+                True,
+                False,
+                (1.0, 109.0, -10000.0),
+            ),
+            (
+                "different-zone",
+                "spawn",
+                (0.0, 96.0, 0.0),
+                target_position,
+                True,
+                True,
+                (0.0, 96.0, 0.0),
+            ),
+            # 即使 zone 名与当前坐标碰巧一致，尚未从权威 transfer 学到目标时也不能
+            # 把 chat 当 no-op；必须等本次命令的权威位置提交。
+            ("same-zone-unproven-target", zone, target_position, None, True, False, target_position),
+            # 本地 position mirror 偶尔可能被移动 API 提前改写；no-op 仍必须看历史
+            # server pos_look，而不是相信这个本地字段。
+            (
+                "same-zone-local-mirror-only",
+                zone,
+                target_position,
+                target_position,
+                True,
+                False,
+                (1.0, 109.0, -10000.0),
+            ),
+        )
+        for (
+            name,
+            current_zone,
+            position,
+            supplied_target,
+            needs_position,
+            needs_zone_info,
+            authoritative_position,
+        ) in cases:
+            with self.subTest(case=name):
+                bot = ZoneBot(current_zone, position, authoritative_position)
+                if needs_position:
+                    bot.events.append(
+                        _FakeEvent(
+                            8.0,
+                            "pos_look",
+                            {
+                                "x": target_position[0],
+                                "y": target_position[1],
+                                "z": target_position[2],
+                            },
+                        )
+                    )
                 with mock.patch.object(
                     qi_color_inspect_scenario,
                     "teleport_to_zone",
@@ -5147,10 +5230,13 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
                 ) as teleport, mock.patch.object(
                     qi_color_inspect_scenario, "wait_zone_info"
                 ) as wait_zone:
-                    qi_color_inspect_scenario._tpzone_and_settle(bot, zone)
+                    returned = qi_color_inspect_scenario._tpzone_and_settle(
+                        bot, zone, supplied_target
+                    )
 
                 teleport.assert_called_once_with(bot, zone)
-                if current_zone == zone:
+                self.assertEqual(returned, target_position)
+                if not needs_zone_info:
                     wait_zone.assert_not_called()
                 else:
                     wait_zone.assert_called_once_with(bot, zone, after=7.0)
