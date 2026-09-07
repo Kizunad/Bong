@@ -1,6 +1,7 @@
 package com.bong.client.preview;
 
 import com.bong.client.ui.ScreenTransitionController;
+import com.bong.client.hud.svg.SvgHudPreviewHarness;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.util.ScreenshotRecorder;
@@ -140,6 +141,7 @@ public final class PreviewSession {
         if (client.getToastManager() != null) {
             client.getToastManager().clear();
         }
+        SvgHudPreviewHarness.selectShot(shot.name());
         // 走 server-side authoritative tp（/preview_tp 原生命令）—— 避免
         // multi-player anti-cheat 把 client.setPos 远距离 force-sync 回原位。
         // server 收到 brigadier 命令后 cmd::dev::preview_tp::handle_preview_tp

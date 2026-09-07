@@ -21,7 +21,7 @@ public final class HudRenderRegistry {
     private static final List<SurfaceDefinition> PRODUCTION_SURFACES = validate(List.of(
         command(HudRenderLayer.BASELINE, "BongHudOrchestrator", "client_connection", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.ZONE, "ZoneHudRenderer+BongHudOrchestrator", "zone_state+negative_pressure", "动态文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.COMPASS, "DirectionalCompassHudPlanner", "zone_state+runtime_context+clock", "方位动态文字仍走 Minecraft GUI"),
+        command(HudRenderLayer.COMPASS, "RetiredHud", "retired", "罗盘 HUD 已移除，不再生成命令"),
         command(HudRenderLayer.THREAT_INDICATOR, "ThreatIndicatorHudPlanner", "player_state+perception+tribulation", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.HUD_VARIANT, "HudEnvironmentVariantPlanner", "zone_state+extract_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.TARGET_INFO, "TargetInfoHudPlanner", "target_snapshot+clock", "目标名称仍走 Minecraft GUI"),
@@ -29,7 +29,7 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+cast_state", "物品与技能图标、文字仍走 Minecraft GUI"),
         command(HudRenderLayer.CAST_BAR, "QuickBarHudPlanner", "cast_state", "动态文字不适用"),
         command(HudRenderLayer.EVENT_STREAM, "EventStreamHudPlanner+CombatJuiceHudPlanner", "event_stream+combat_clock", "事件文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.JIEMAI_RING, "JiemaiRingHudPlanner", "defense_window+clock", "动态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.JIEMAI_RING, "JiemaiRingHudPlanner", "defense_window+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.SPELL_VOLUME, "SpellVolumeHudPlanner", "spell_volume_state", "数值文字仍走 Minecraft GUI"),
         command(HudRenderLayer.CARRIER, "CarrierHudPlanner+AnqiHudPlanner", "carrier_state+anqi_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.YIDAO, "YidaoHudPlanner", "yidao_state+clock", "动态文字仍走 Minecraft GUI"),
@@ -38,12 +38,12 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.DERIVED_ATTR, "StyleBadgeHudPlanner+DerivedAttrIconHudPlanner", "combat_attributes+loadout", "属性文字与图标仍走 Minecraft GUI"),
         command(HudRenderLayer.TOAST, "ToastHudRenderer+ForgeProgressHudPlanner", "toast_queue+forge_outcome", "通知文字仍走 Minecraft GUI"),
         command(HudRenderLayer.VISUAL, "VisualHudRenderer", "visual_effect_state+clock", "动态文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.SPIRITUAL_SENSE, "PerceptionEdgeRenderer", "perception_edge_projection", "动态文字不适用"),
+        command(HudRenderLayer.SPIRITUAL_SENSE, "RetiredHud", "retired", "灵觉 HUD 已移除，不再生成命令"),
         command(HudRenderLayer.EDGE_FEEDBACK, "EdgeFeedbackHudPlanner+TiandaoPresenceHudPlanner", "combat_feedback+tiandao_presence", "动态文字不适用"),
-        command(HudRenderLayer.STATUS_EFFECTS, "StatusEffectHudPlanner+ContaminationHudPlanner", "status_effects+contamination", "状态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.STATUS_EFFECTS, "StatusEffectHudPlanner", "status_effects", "状态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.PROCESSING_HUD, "ForgeProgressHudPlanner+AlchemyProgressHudPlanner", "forge_session+alchemy_session", "步骤文字仍走 Minecraft GUI"),
         command(HudRenderLayer.LINGTIAN_OVERLAY, "LingtianOverlayHudPlanner", "lingtian_session+season", "动态文字与物品图标仍走 Minecraft GUI"),
-        command(HudRenderLayer.MOVEMENT_HUD, "MovementHudPlanner", "movement_state+clock", "动态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.MOVEMENT_HUD, "MovementHudPlanner", "movement_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.SEARCH_PROGRESS, "SearchProgressHudPlanner", "search_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.DAMAGE_FLOATER, "DamageFloaterHudPlanner", "damage_events+clock", "飘字仍走 Minecraft GUI"),
         command(HudRenderLayer.FLIGHT_HUD, "FlightHudPlanner", "flight_state+clock", "动态文字仍走 Minecraft GUI"),
@@ -122,6 +122,25 @@ public final class HudRenderRegistry {
             RenderPath.COMMAND,
             Presentation.MINECRAFT_GUI,
             List.of(),
+            dynamicBinding,
+            guiException,
+            "HudRenderRegistryTest"
+        );
+    }
+
+    private static SurfaceDefinition svg(
+        HudRenderLayer layer,
+        String owner,
+        String dynamicBinding,
+        String guiException
+    ) {
+        return new SurfaceDefinition(
+            layer.name(),
+            Optional.of(layer),
+            owner,
+            RenderPath.SVG_FRAME,
+            Presentation.SVG_MESH,
+            List.of(new SvgAsset("rect", Identifier.of("bong-client", "svg/hud/primitive-rect.svg"))),
             dynamicBinding,
             guiException,
             "HudRenderRegistryTest"

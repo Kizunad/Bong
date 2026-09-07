@@ -12,9 +12,21 @@ public final class MinecraftGuiMeshEmitter {
     public static final int MAX_VERTICES = SvgTessellator.MAX_TRIANGLES * 3;
 
     public void emit(DrawContext context, SvgMesh mesh, int x, int y, float scale, int tint) {
+        emit(context, mesh, x, y, scale, scale, tint);
+    }
+
+    public void emit(
+        DrawContext context,
+        SvgMesh mesh,
+        int x,
+        int y,
+        float scaleX,
+        float scaleY,
+        int tint
+    ) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(mesh, "mesh");
-        if (!Float.isFinite(scale) || scale <= 0.0f) {
+        if (!Float.isFinite(scaleX) || scaleX <= 0.0f || !Float.isFinite(scaleY) || scaleY <= 0.0f) {
             throw new IllegalArgumentException("SVG scale 必须是有限正数");
         }
         if (mesh.vertexCount() > MAX_VERTICES) {
@@ -25,10 +37,10 @@ public final class MinecraftGuiMeshEmitter {
         for (SvgMesh.Triangle triangle : mesh.triangles()) {
             // GUI layer 开启背面剔除，绕序必须与 DrawContext.fill 一致；末点重复形成退化 quad。
             for (int index = 0; index < 4; index++) {
-                emitVertex(buffer, matrix, guiQuadVertex(triangle, index), x, y, scale, tint);
+                emitVertex(buffer, matrix, guiQuadVertex(triangle, index), x, y, scaleX, scaleY, tint);
             }
         }
-        // DrawContext 由整帧 HUD 统一提交；SVG layer 中途 flush 会打断后续层的顺序。
+        // 调用方在 SVG 与 GUI 命令切换时统一提交，连续 SVG 几何仍可共用缓冲。
     }
 
     static SvgMesh.Vertex guiQuadVertex(SvgMesh.Triangle triangle, int index) {
@@ -47,14 +59,15 @@ public final class MinecraftGuiMeshEmitter {
         SvgMesh.Vertex vertex,
         int x,
         int y,
-        float scale,
+        float scaleX,
+        float scaleY,
         int tint
     ) {
         int color = tint(vertex.color(), tint);
         buffer.vertex(
             matrix.getPositionMatrix(),
-            x + vertex.x() * scale,
-            y + vertex.y() * scale,
+            x + vertex.x() * scaleX,
+            y + vertex.y() * scaleY,
             0.0f
         ).color(
             (color >>> 16) & 0xFF,

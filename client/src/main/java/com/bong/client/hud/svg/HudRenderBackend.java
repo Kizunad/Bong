@@ -1,6 +1,7 @@
 package com.bong.client.hud.svg;
 
 import com.bong.client.hud.ScreenHudVisibility;
+import com.bong.client.hud.HudRenderCommand;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 
@@ -14,4 +15,18 @@ public interface HudRenderBackend {
         MinecraftClient client,
         ScreenHudVisibility visibility
     );
+
+    /** 返回 true 时，BongHud 会把该 command 的几何提交交给本后端。 */
+    default boolean handles(HudRenderCommand command) {
+        return false;
+    }
+
+    /** 按原 HUD command 顺序提交一个由本后端负责的几何命令。 */
+    default void renderCommand(
+        DrawContext context,
+        MinecraftClient client,
+        ScreenHudVisibility visibility,
+        HudRenderCommand command
+    ) {
+    }
 }
