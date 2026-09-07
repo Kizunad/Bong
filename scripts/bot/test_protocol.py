@@ -5125,10 +5125,13 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
         target_position = (0.0, 109.0, -10000.0)
 
         class ZoneBot:
-            def __init__(self, current_zone, position, authoritative_position=None):
+            def __init__(
+                self, current_zone, position, authoritative_position=None, pending=()
+            ):
                 self._lock = threading.RLock()
                 self.position = position
                 authoritative_position = authoritative_position or position
+                self.pending = list(pending)
                 self.events = [
                     _FakeEvent(
                         0.5,
@@ -5151,6 +5154,11 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
 
             def wait_for(self, predicate, timeout, description):
                 del timeout
+                # 目标帧必须在 teleport_to_zone 返回后才进入 fake 的事件流；只把
+                # 时间戳写成 sent_at 之后而提前放进历史，会把命令前的旧帧伪装成
+                # 本次权威位置提交，无法验证等待路径。
+                self.events.extend(self.pending)
+                self.pending.clear()
                 for event in self.events:
                     if predicate(event):
                         return event
@@ -5210,9 +5218,8 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
             authoritative_position,
         ) in cases:
             with self.subTest(case=name):
-                bot = ZoneBot(current_zone, position, authoritative_position)
-                if needs_position:
-                    bot.events.append(
+                pending = (
+                    [
                         _FakeEvent(
                             8.0,
                             "pos_look",
@@ -5222,7 +5229,16 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
                                 "z": target_position[2],
                             },
                         )
-                    )
+                    ]
+                    if needs_position
+                    else []
+                )
+                bot = ZoneBot(
+                    current_zone,
+                    position,
+                    authoritative_position,
+                    pending,
+                )
                 with mock.patch.object(
                     qi_color_inspect_scenario,
                     "teleport_to_zone",
