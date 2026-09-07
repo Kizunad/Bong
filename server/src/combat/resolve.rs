@@ -72,7 +72,7 @@ use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{
     QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC, QI_ZHENMAI_PARRY_RECOVERY_TICKS,
 };
-use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer};
+use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::{GameEventType, NarrationStyle};
 use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
@@ -237,8 +237,8 @@ pub struct CombatResolveEventWriters<'w, 's> {
     narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
     /// bughunt r2 QP-003 — jiemai 格挡真元守恒：扣除的 qi_cost 需回灌到防御方所在 zone。
     zone_registry: Option<ResMut<'w, ZoneRegistry>>,
-    /// bughunt r2 QP-003 — 查询防御方当前维度，用于 find_zone 定位目标 zone。
-    defender_dim_q: Query<'w, 's, Option<&'static crate::world::dimension::CurrentDimension>>,
+    /// 查询攻击/防御方当前维度，用于 find_zone 定位 qi 释放目标 zone。
+    dimension_q: Query<'w, 's, Option<&'static crate::world::dimension::CurrentDimension>>,
     /// `/npc_scenario passive_target` contract: damage is allowed, forced movement is not.
     passive_targets: Query<'w, 's, (), With<PassiveTarget>>,
 }
@@ -381,6 +381,27 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
+
+        // 攻击只允许在同一逻辑维度内结算。缺失 CurrentDimension 按既有 gameplay 约定
+        // 回退到 Overworld；跨维请求在任何 qi/world mutation 之前直接拒绝。
+        let attacker_dimension = event_writers
+            .dimension_q
+            .get(intent.attacker)
+            .ok()
+            .flatten()
+            .map(|dimension| dimension.0)
+            .unwrap_or_default();
+        let target_dimension = event_writers
+            .dimension_q
+            .get(target_entity)
+            .ok()
+            .flatten()
+            .map(|dimension| dimension.0)
+            .unwrap_or_default();
+        if attacker_dimension != target_dimension {
+            continue;
+        }
+
         let target_damageable = {
             let game_modes = combatants.p2();
             crate::combat::is_damageable(target_entity, &game_modes)
@@ -606,6 +627,16 @@ pub fn resolve_attack_intents(
         };
         let distance = hit_probe.distance as f32;
 
+        // 目标组件查询本身也是攻击合法性的最后一道前置条件。必须在普通 qi_invest
+        // 释放前成功，避免异常/不完整目标在 raycast 命中后仍先扣掉攻击者真元。
+        let target_has_complete_query = {
+            let mut target_query = combatants.p1();
+            target_query.get_mut(target_entity).is_ok()
+        };
+        if !target_has_complete_query {
+            continue;
+        }
+
         let (attacker_damage_multiplier, attacker_body_mass, sword_damage_multiplier) = {
             let mut attacker_query = combatants.p0();
             let Ok((
@@ -645,8 +676,62 @@ pub fn resolve_attack_intents(
                     .attack_damage_multiplier;
 
             if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
-                attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
-                    .clamp(0.0, attacker_cultivation.qi_max);
+                // 普通攻击的 qi_invest 是攻击者活体真元的真实支出：命中合法性已经在
+                // 上方完成，随后必须经 canonical qi_flow/qi_release_to_zone 归还当前
+                // zone（满载时由既有 helper 落入 qi_flow_overflow）。throughput_current
+                // 只是本 tick 的经脉过载统计量，不能成为真元终点。
+                let attacker_dimension = event_writers
+                    .dimension_q
+                    .get(intent.attacker)
+                    .ok()
+                    .flatten();
+                let attacker_position = positions
+                    .get(intent.attacker)
+                    .ok()
+                    .map(|(position, _)| position);
+                let zone = match (
+                    attacker_position,
+                    attacker_dimension,
+                    event_writers.zone_registry.as_deref_mut(),
+                ) {
+                    (Some(position), Some(dimension), Some(zones)) => {
+                        let zone_name = zones
+                            .find_zone(dimension.0, position.0)
+                            .map(|zone| zone.name.clone());
+                        zone_name.and_then(|zone_name| zones.find_zone_mut(zone_name.as_str()))
+                    }
+                    _ => None,
+                };
+                let source_account = if npc_markers.get(intent.attacker).is_ok() {
+                    QiAccountId::npc(attacker_id.clone())
+                } else {
+                    QiAccountId::player(attacker_id.clone())
+                };
+                let release = crate::cultivation::components::release_external_qi_to_zone(
+                    &mut attacker_cultivation.qi_current,
+                    source_account,
+                    zone,
+                    &mut event_writers.qi_ledger,
+                    qi_invest,
+                    QiTransferReason::ReleaseToZone,
+                );
+                let release = match release {
+                    Ok(release) => release,
+                    Err(error) => {
+                        tracing::warn!(
+                            attacker = ?intent.attacker,
+                            amount = qi_invest,
+                            ?error,
+                            "[bong][combat] qi_invest release failed closed"
+                        );
+                        continue;
+                    }
+                };
+                if let Some(events) = event_writers.qi_transfers.as_deref_mut() {
+                    for transfer in release.transfers {
+                        events.send(transfer);
+                    }
+                }
             }
             if qi_invest > f64::EPSILON && !sword_basics::is_sword_attack_source(intent.source) {
                 if let Some(primary_meridian) =
@@ -701,6 +786,7 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
+
         // plan-race-system-v1 P4 —— 提前克隆一份本体 race 快照（`defender_cultivation`
         // 在下方 `!is_physical_hit` 分支会被按值移动进临时 `if let` 元组，之后不再可借用）；
         // 护甲折算（`apply_armor_mitigation` / 耐久扣减分支）需要在移动点之后仍能读取
@@ -1103,11 +1189,8 @@ pub fn resolve_attack_intents(
                     // bughunt r2 QP-003 — 守恒：格挡真元费用通过 typed transaction
                     // 原子扣除并回灌防御方所在 zone；失败时不开格挡结果。
                     {
-                        let defender_dim = event_writers
-                            .defender_dim_q
-                            .get(target_entity)
-                            .ok()
-                            .flatten();
+                        let defender_dim =
+                            event_writers.dimension_q.get(target_entity).ok().flatten();
                         let defender_pos = positions.get(target_entity).ok().map(|(pos, _)| pos);
                         let release = crate::cultivation::death_hooks::release_qi_amount_to_zone(
                             &mut defender_cultivation,
