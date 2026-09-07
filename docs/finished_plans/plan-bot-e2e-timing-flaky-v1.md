@@ -123,26 +123,51 @@
    `/tpdim` 前权威坐标计算出的目标/pulse/restore `pos_look`；固定 sleep 与仅
    chat/仅 Respawn、任意 `pos_look` 均不是完成信号。未知请求的观察锚是排空 join
    突发后的静默窗口，已知 heartbeat VFX 才可按精确白名单豁免。
-   - **探索结论与落点（本 plan §8.1 #1；实施落点 §P1）**：`scripts/bot/scenarios/cultivation_qi_color_inspect.py:237-249` 以请求水位等待接受反馈，`:252-301` 以非零 `skillbar_config` 锁定施放状态，`:757-842` 以 Respawn 目标维度及目标/pulse/restore 坐标锁定跨维收敛；`scripts/bot/scenarios/_rejection_helpers.py:298-405` 则以 join 排空、双 keepalive 和 quiescence 收口未知请求窗口。
+   - **探索结论**（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #1`）：代码探索确认完成条件必须来自本次请求后的接受反馈、权威冷却状态、目标维度和三段位置状态；未知请求则必须等 join 突发排空后的静默窗口，不能用固定 sleep、仅 chat、仅 Respawn 或任意位置帧代替。
+   - **落点**（本 plan `§8.1 #1`；实施章节 `§P1`）：
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:237-249`：本次 cast 请求水位与 typed 接受反馈。
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:252-301`：非零 `skillbar_config` 权威施放状态。
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:757-842`：Respawn 目标维度及目标/pulse/restore 坐标。
+     - `scripts/bot/scenarios/_rejection_helpers.py:298-405`：join 排空、双 keepalive 与 quiescence。
 2. 失败来自三类 Bot 观察问题：低 TPS 下固定冷却间隔误判 server 状态并可能在
    过期 hint 后洪泛刷新、`/tpzone` 自行解析配置造成契约分叉，以及
    `/tpdim` 的无关位置帧没有按目标几何过滤；不是靠增大业务断言窗口或修改
    server 玩法解决。
-   - **探索结论与落点（本 plan §8.1 #2；根因 §P0、修复 §P1）**：`scripts/bot/scenarios/cultivation_qi_color_inspect.py:375-447` 展示冷却 hint 后的权威刷新、退避与 watchdog，`:193-205` 展示 `/tpzone` 的 canonical helper 路径，`:757-842` 展示 `/tpdim` 的几何过滤；这些代码探索支持“Bot 观察锚点错误、server gameplay 不需改”的结论。
+   - **探索结论**（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #2`）：代码探索把根因定位为 Bot 观察/状态等待错误：低 TPS 使 wall-clock hint 脱离 server tick，旧 `/tpzone` 本地解析形成冻结契约分叉，旧 `/tpdim` 时间水位会接受无关位置帧；server gameplay 的事件发射契约本身无需修改。
+   - **落点**（本 plan `§8.1 #2`；根因章节 `§P0`、修复章节 `§P1`）：
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:375-447`：冷却 hint 后的权威刷新、退避与 watchdog。
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-205`：`/tpzone` canonical helper 路径。
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:757-842`：`/tpdim` 目标维度、pulse 与 restore 几何过滤。
 3. 现有 Bot API 已足够：`wait_for` 可按事件时间水位、typed payload 和坐标过滤，
    `Bot.position` 可复用既有权威镜像，同值 bind 是公开请求接口；无需新增 seam。
-   - **探索结论与落点（本 plan §8.1 #3；接口清单 §P1）**：`scripts/bot/bot.py:576-582` 提供现有 intent 入口，`:673-692` 提供带时间水位谓词的 `wait_for`，`:784-797` 提供连接与事件观察；`scripts/bot/scenarios/_zone_loot_helpers.py:44-66` 已提供 canonical `teleport_to_zone`/`wait_zone_info`，`scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-219` 只复用这些接口并读取 `Bot.position`。
+   - **探索结论**（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #3`）：代码探索确认现有公开 Bot 接口已经暴露原始请求、带水位谓词的事件等待、连接存活检查、canonical zone helper 与权威位置镜像，因此没有新增 server seam 的必要。
+   - **落点**（本 plan `§8.1 #3`；接口章节 `§P1`）：
+     - `scripts/bot/bot.py:576-582`：现有 `intent` 入口。
+     - `scripts/bot/bot.py:673-692`：带事件时间水位谓词的 `wait_for`。
+     - `scripts/bot/bot.py:784-797`：连接存活与事件观察接口。
+     - `scripts/bot/scenarios/_zone_loot_helpers.py:44-66`：canonical `teleport_to_zone`/`wait_zone_info`。
+     - `scripts/bot/scenarios/cultivation_qi_color_inspect.py:193-219`：只复用 canonical helper 并读取 `Bot.position`。
 4. `network_request_unknown_type` **没有放宽等待预算**：`settle_s=2.0` 与
    `wait_keepalive_after` 默认 `25.0` 均未改；修复是 join 排空后取发送水位、等待
    两个新 keepalive 并进入 quiescence，且只豁免 heartbeat 已登记的五个精确
    `world_omen` ID，未知同前缀仍判副作用。原失败约 22.1s 是已知 heartbeat VFX
    被错误归因，不是把阈值从 22.1s 放宽到 23.5s；23.5/23.6s 是同一等待链路的
    实际完成耗时。
-   - **探索结论与落点（本 plan §8.1 #4；场景证据 §P0、实现 §P1）**：`scripts/bot/scenarios/network_request_unknown_type.py:19-55` 固定六类坏请求及合法请求回路；`scripts/bot/scenarios/_rejection_helpers.py:255-277` 以新 keepalive id 判活性，`:298-317` 排空事件流，`:320-405` 固定 `settle_s=2.0`、双心跳与最终 quiescence，`:94-105` 仅列五个精确 `world_omen` ID。因此结论是加强事件/状态锚点，而非放宽预算。
+   - **探索结论**（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #4`）：代码探索确认失败来自已知 heartbeat VFX 被旧静默窗口错误归因；修复改变的是事件/状态归因锚点，不是等待预算。`settle_s=2.0` 与 keepalive `25.0s` 保持原值，未知同前缀仍是副作用。
+   - **落点**（本 plan `§8.1 #4`；场景证据章节 `§P0`、实现章节 `§P1`）：
+     - `scripts/bot/scenarios/network_request_unknown_type.py:19-55`：六类坏请求与后续合法请求回路。
+     - `scripts/bot/scenarios/_rejection_helpers.py:255-277`：按新 keepalive id 判定连接活性。
+     - `scripts/bot/scenarios/_rejection_helpers.py:298-317`：排空 join/连接事件流。
+     - `scripts/bot/scenarios/_rejection_helpers.py:320-405`：固定 `settle_s=2.0`、双心跳、quiescence 与最终副作用扫描。
+     - `scripts/bot/scenarios/_rejection_helpers.py:94-105`：五个精确 `world_omen` 白名单 ID。
 5. 稳定性证据由 R5A/R5B/R5C/R5D 四轮真实 runner 全绿（并保留 FZ2/FZ3 历史全绿记录）、
    每轮精确 `total=2 pass=2 skip=0 fail=0`、最小 transfer 事件序列，以及回归 fake 覆盖旧
    帧/no-op/缺失状态仍失败共同构成，非一次偶然重跑。
-   - **探索结论与落点（本 plan §8.1 #5；验收证据 §P2、`## Finish Evidence`）**：`scripts/bot/test_protocol.py:4992-5121` 锁定过期 hint 后退避及低 TPS 权威状态，`:5123-5250` 锁定 canonical zone/no-op 与精确 pulse/restore，`:5858-5889` 锁定五项 omen 白名单边界；回归与真实 runner 证据均对应本 plan §P2，不以单次重跑替代稳定性证明。
+   - **探索结论**（`docs/CLAUDE.md §5.1`；本 plan `§8.1 #5`）：代码探索确认稳定性证据必须同时覆盖低 TPS/退避、canonical zone/no-op、精确跨维几何、五项 omen 白名单边界，并以多轮真实 runner 与回归测试共同证明，而非依赖单次碰运气重跑。
+   - **落点**（本 plan `§8.1 #5`；验收章节 `§P2`、`## Finish Evidence`）：
+     - `scripts/bot/test_protocol.py:4992-5121`：过期 hint 后退避与低 TPS 权威状态。
+     - `scripts/bot/test_protocol.py:5123-5250`：canonical zone/no-op 与精确 pulse/restore。
+     - `scripts/bot/test_protocol.py:5858-5889`：五项 omen 白名单及未知同前缀边界。
 
 ## Finish Evidence
 
