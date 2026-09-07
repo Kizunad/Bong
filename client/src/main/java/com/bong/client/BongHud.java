@@ -38,6 +38,7 @@ import com.bong.client.visual.InkWashVignetteRenderer;
 import com.bong.client.visual.OverlayQuadRenderer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.util.Identifier;
@@ -167,47 +168,46 @@ public class BongHud {
             context::draw
         );
 
-        renderBaomaiV3HudForProduction(
-            new DrawContextHudSurface(context, client),
-            nowMillis,
-            visibility
-        );
-
-        // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
-        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
-        // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
-        if (visibility == ScreenHudVisibility.FULL) {
-            CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
-            VoidErosionHudOverlay.render(context, client.textRenderer);
-            com.bong.client.fauna.HallucinationHudOverlay.render(context);
-            long estimatedTick = nowMillis / 50L;
-            ResonanceLockMeterHud.render(
-                context,
-                client.textRenderer,
-                client.getWindow().getScaledWidth(),
-                client.getWindow().getScaledHeight(),
-                estimatedTick,
-                nowMillis
+        renderWithCleanup(() -> {
+            renderBaomaiV3HudForProduction(
+                new DrawContextHudSurface(context, client),
+                nowMillis,
+                visibility
             );
-        }
 
-        int scaledWidth = client.getWindow().getScaledWidth();
-        int scaledHeight = client.getWindow().getScaledHeight();
-        for (HudRenderCommand command : commands) {
-            if (command.isScreenTint()) {
-                OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            } else if (command.isEdgeVignette()) {
-                EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
-            } else if (command.isEdgeInkWash()) {
-                InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
+            // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
+            // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
+            // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
+            if (visibility == ScreenHudVisibility.FULL) {
+                CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
+                VoidErosionHudOverlay.render(context, client.textRenderer);
+                com.bong.client.fauna.HallucinationHudOverlay.render(context);
+                long estimatedTick = nowMillis / 50L;
+                ResonanceLockMeterHud.render(
+                    context,
+                    client.textRenderer,
+                    client.getWindow().getScaledWidth(),
+                    client.getWindow().getScaledHeight(),
+                    estimatedTick,
+                    nowMillis
+                );
             }
-        }
 
-        // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
-        backend.render(context, client, visibility);
+            int scaledWidth = client.getWindow().getScaledWidth();
+            int scaledHeight = client.getWindow().getScaledHeight();
+            for (HudRenderCommand command : commands) {
+                if (command.isScreenTint()) {
+                    OverlayQuadRenderer.render(context, scaledWidth, scaledHeight, command.color());
+                } else if (command.isEdgeVignette()) {
+                    EdgeDecalRenderer.render(context, scaledWidth, scaledHeight, command.color());
+                } else if (command.isEdgeInkWash()) {
+                    InkWashVignetteRenderer.render(context, scaledWidth, scaledHeight, command.color());
+                }
+            }
 
-        // 提交全屏反馈之后的预览几何，再把 DrawContext 交还给后续 HUD 回调。
-        context.draw();
+            // SVG 提交仍在全屏反馈之后，显式预览时示例不会被 tint/vignette 覆盖。
+            backend.render(context, client, visibility);
+        }, context::draw);
     }
 
     /** 在表现后端切换处提交缓冲，保留命令的遮挡顺序和连续 SVG 几何的批处理。 */
@@ -218,21 +218,21 @@ public class BongHud {
         Consumer<HudRenderCommand> guiRenderer,
         Runnable flush
     ) {
-        boolean backendBatch = false;
-        for (HudRenderCommand command : commands) {
-            boolean handledByBackend = backendHandles.test(command);
-            if (handledByBackend != backendBatch) {
-                flush.run();
-                backendBatch = handledByBackend;
+        renderWithCleanup(() -> {
+            boolean backendBatch = false;
+            for (HudRenderCommand command : commands) {
+                boolean handledByBackend = backendHandles.test(command);
+                if (handledByBackend != backendBatch) {
+                    flush.run();
+                    backendBatch = handledByBackend;
+                }
+                if (handledByBackend) {
+                    backendRenderer.accept(command);
+                } else {
+                    guiRenderer.accept(command);
+                }
             }
-            if (handledByBackend) {
-                backendRenderer.accept(command);
-            } else {
-                guiRenderer.accept(command);
-            }
-        }
-        // 最后一批也必须在后续 overlay 之前完成，不能拖到整帧末尾。
-        flush.run();
+        }, flush);
     }
 
     private static void renderGuiCommand(DrawContext context, MinecraftClient client, HudRenderCommand command) {
@@ -241,13 +241,7 @@ public class BongHud {
             return;
         }
         if (command.isScaledText()) {
-            var matrices = context.getMatrices();
-            matrices.push();
-            matrices.translate(command.x(), command.y(), 0);
-            float scale = (float) command.textScale();
-            matrices.scale(scale, scale, 1.0f);
-            context.drawTextWithShadow(client.textRenderer, command.text(), 0, 0, command.color());
-            matrices.pop();
+            renderScaledText(context, client.textRenderer, command);
             return;
         }
         if (command.isRect()) {
@@ -291,6 +285,34 @@ public class BongHud {
                 command.color()
             );
         }
+    }
+
+    static void renderScaledText(DrawContext context, TextRenderer textRenderer, HudRenderCommand command) {
+        var matrices = context.getMatrices();
+        matrices.push();
+        renderWithCleanup(() -> {
+            matrices.translate(command.x(), command.y(), 0);
+            float scale = (float) command.textScale();
+            matrices.scale(scale, scale, 1.0f);
+            context.drawTextWithShadow(textRenderer, command.text(), 0, 0, command.color());
+        }, matrices::pop);
+    }
+
+    /** 正常和异常路径都收尾；收尾失败附加到原异常，避免掩盖最初的绘制故障。 */
+    private static void renderWithCleanup(Runnable render, Runnable cleanup) {
+        try {
+            render.run();
+        } catch (RuntimeException | Error failure) {
+            try {
+                cleanup.run();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+            throw failure;
+        }
+        cleanup.run();
     }
 
     @FunctionalInterface
