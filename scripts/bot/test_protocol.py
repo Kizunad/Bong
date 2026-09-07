@@ -5125,6 +5125,8 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
         target_position = (0.0, 109.0, -10000.0)
 
         class ZoneBot:
+            username = "ZoneTest"
+
             def __init__(
                 self, current_zone, position, authoritative_position=None, pending=()
             ):
@@ -5193,10 +5195,10 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
                 True,
                 (0.0, 96.0, 0.0),
             ),
-            # target_position 未传入时，只有同 zone 且已有有效权威 PositionLook 才能
-            # 推断本次同 zone no-op 的实际落点；不能把 chat 单独当作坐标确认。
+            # target_position 未传入且已经在目标 zone 时，实际目标坐标不可由 zone 名
+            # 或旧 PositionLook 唯一推出；必须 fail closed，由调用方先建立目标对拍。
             (
-                "same-zone-target-inferred-from-authority",
+                "same-zone-target-unknown-fails-closed",
                 zone,
                 target_position,
                 None,
@@ -5254,6 +5256,16 @@ class CultivationQiColorInspectScenarioTest(unittest.TestCase):
                 ) as teleport, mock.patch.object(
                     qi_color_inspect_scenario, "wait_zone_info"
                 ) as wait_zone:
+                    if name == "same-zone-target-unknown-fails-closed":
+                        with self.assertRaisesRegex(
+                            BotAssertionError, "缺少可对拍的目标坐标"
+                        ):
+                            qi_color_inspect_scenario._tpzone_and_settle(
+                                bot, zone, supplied_target
+                            )
+                        teleport.assert_not_called()
+                        wait_zone.assert_not_called()
+                        continue
                     returned = qi_color_inspect_scenario._tpzone_and_settle(
                         bot, zone, supplied_target
                     )

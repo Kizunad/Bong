@@ -200,12 +200,19 @@ def _tpzone_and_settle(
     `teleport_to_zone` 负责命令发送与 chat 回执，但 chat 不包含位置提交。目标坐标
     由同一 server 运行中已经收到的权威 `pos_look` 提供，并由调用方显式传入已知
     目标；首次进入目标 zone 时若尚未知晓目标，则本函数只等待本次命令后的权威
-    位置帧并返回它。若已经在目标 zone，只有已有有效权威坐标时才可将其作为同 zone
-    no-op 的实际落点；仅有 zone 名或无效坐标绝不提前返回。这样不复制或解析
-    `server/zones.json`，也不会把仅有 zone 名的观察误当成目标位置。
+    位置帧并返回它。若已经在目标 zone，调用方必须先提供已知目标坐标：只有已有
+    权威坐标与该目标完全匹配时才可走 no-op；仅有 zone 名和一个有效但未对拍目标的
+    坐标仍不足以确认 no-op，直接 fail closed，避免把同 zone 异坐标当成已落点。这样
+    不复制或解析 `server/zones.json`，也不会把仅有 zone 名的观察误当成目标位置。
     """
     was_in_target_zone = _latest_zone_name(bot) == zone
     authoritative_position = _latest_authoritative_position(bot)
+    if target_position is None and was_in_target_zone:
+        raise BotAssertionError(
+            f"[{bot.username}] /tpzone {zone} 已在目标 zone，但缺少可对拍的"
+            "目标坐标；"
+            "同 zone no-op 必须以权威 PositionLook 与实际目标完全匹配为依据"
+        )
     was_at_target = (
         was_in_target_zone
         and target_position is not None
@@ -221,10 +228,6 @@ def _tpzone_and_settle(
         wait_zone_info(bot, zone, after=sent_at)
 
     if target_position is None:
-        if was_in_target_zone and authoritative_position is not None:
-            # 同 zone 的规范 no-op 不会再发 pos_look；既然最新权威坐标已有效，
-            # 它就是本次未知目标的实际落点。不能等待一个不会产生的提交事件。
-            return authoritative_position
         position_event = bot.wait_for(
             lambda e: e.kind == "pos_look" and e.t > sent_at,
             timeout=10.0,
@@ -598,6 +601,10 @@ def run(env) -> None:
             # Spawn selector 为不同用户名分配的出生点可能相距很远，host 因视距
             # 不会收到 victim 的 PlayerSpawn。先把两端放到同一固定 zone，再等待
             # 真实 PlayerSpawn；后续跨维/远距步骤仍使用同一 protocol entity id。
+            # 若持久化状态让 host 已在目标 zone，未知 target_position 不能拿旧坐标
+            # 猜测 no-op；先走一个确定不同的 zone，再由本次真实位置提交学习目标。
+            if _latest_zone_name(host) == "jiuzong_taichu_ruin":
+                _tpzone_and_settle(host, "spawn")
             target_position = _tpzone_and_settle(host, "jiuzong_taichu_ruin")
             _tpzone_and_settle(victim, "jiuzong_taichu_ruin", target_position)
 
