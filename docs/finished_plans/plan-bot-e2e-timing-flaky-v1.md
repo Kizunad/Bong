@@ -91,19 +91,21 @@
 
 ## P2 — 稳定性验收与收口
 
-- 已完成五轮真实双场景连续验证：R5A 轮中两场景均 PASS（122.9s/23.0s），
-  R5B 轮中两场景均 PASS（47.6s/22.3s），R5C 轮中两场景均 PASS（124.4s/23.3s）；
+- 已完成六轮真实双场景连续验证：R5A 轮中两场景均 PASS（122.9s/23.0s），
+  R5B 轮中两场景均 PASS（47.6s/22.3s），R5C 轮中两场景均 PASS（124.4s/23.3s），
+  R5D 轮（合并 `origin/main=51fcda26e` 后）中两场景均 PASS（119.3s/22.9s）；
   此前 FZ2/FZ3 也均输出 `total=2 pass=2 skip=0 fail=0`，每轮 runner 返回码均为 0。
-  R5A/R5B/R5C 的 runner 均输出 `total=2 pass=2 skip=0 fail=0` 且返回码均为 0；
+  R5A/R5B/R5C/R5D 的 runner 均输出 `total=2 pass=2 skip=0 fail=0` 且返回码均为 0；
   最小真实序列还核验了两次跨维的
   `Respawn → pulse pos_look → restore pos_look → 目标 zone pos_look` 顺序。
 - 已通过场景等待契约回归、完整协议测试 542/542、
   `python3 -m py_compile scripts/bot/scenarios/*.py`、`bash -n scripts/bot-e2e.sh`、
   `git diff --check`；scripts contract 为 `test_all_contract` 95/95、
   `e2e_redis_hang_guard_contract_test` 5/5、`smoke_owned_artifacts_test` PASS。
-- 返工代码 HEAD `ba2e5e03f` 已通过无上下文 read-only
+- 合并主线后的返工 HEAD `bc8fb1625` 已通过无上下文 read-only
   validator（validator 模型 `gpt-5.6-luna`），结论绑定该 SHA；此前 `4dfece34e9dc0937c19821f3c49338fc73d207f4` 的
-  validator 证据属于返工前 HEAD，不作为本轮结论；提交 push、PR 的
+  validator 证据属于返工前 HEAD，不作为本轮结论；`ba2e5e03f` 的返工 validator
+  结论也不替代合并后新 SHA 的复验；提交 push、PR 的
   CI/e2e 与 Kody 主动 review 是 PR 阶段事项。
 
 ## 非目标
@@ -132,7 +134,7 @@
    `world_omen` ID，未知同前缀仍判副作用。原失败约 22.1s 是已知 heartbeat VFX
    被错误归因，不是把阈值从 22.1s 放宽到 23.5s；23.5/23.6s 是同一等待链路的
    实际完成耗时。
-5. 稳定性证据由 R5A/R5B/R5C 三轮真实 runner 全绿（并保留 FZ2/FZ3 历史全绿记录）、
+5. 稳定性证据由 R5A/R5B/R5C/R5D 四轮真实 runner 全绿（并保留 FZ2/FZ3 历史全绿记录）、
    每轮精确 `total=2 pass=2 skip=0 fail=0`、最小 transfer 事件序列，以及回归 fake 覆盖旧
    帧/no-op/缺失状态仍失败共同构成，非一次偶然重跑。
 
@@ -155,6 +157,7 @@
   - `0bc6effc1`（2026-09-06）：修复 Bot 场景冷却、位置与环境 VFX 等待锚点。
   - `4dfece34e`（2026-09-06）：记录 P0/P1 决议与 P2 稳定性证据。
   - `ba2e5e03f`（2026-09-07）：按 review 补强权威冷却、zone 契约与跨维几何等待。
+  - `bc8fb1625`（2026-09-07）：合并最新 `origin/main=51fcda26e` 并复验受影响栈。
 - **测试结果**：
   - 真实 runner R5A：`cultivation_qi_color_inspect` PASS 122.9s，
     `network_request_unknown_type` PASS 23.0s，`total=2 pass=2 skip=0 fail=0`，rc=0；
@@ -165,6 +168,9 @@
   - 真实 runner R5C：`cultivation_qi_color_inspect` PASS 124.4s，
     `network_request_unknown_type` PASS 23.3s，`total=2 pass=2 skip=0 fail=0`，rc=0；
     evidence 位于 `.sisyphus/evidence/bot-e2e/session.frfd9pAAMb/run.GXPIm2dogz/`。
+  - 真实 runner R5D（合并主线后）：`cultivation_qi_color_inspect` PASS 119.3s，
+    `network_request_unknown_type` PASS 22.9s，`total=2 pass=2 skip=0 fail=0`，rc=0；
+    evidence 位于 `.sisyphus/evidence/bot-e2e/session.wrdhCpJAIo/run.ALEmXT68dO/`。
   - 此前真实 runner FZ2/FZ3 均为双场景 PASS、`total=2 pass=2 skip=0 fail=0`、rc=0。
   - `python3 scripts/bot/test_protocol.py`：542 tests OK；场景等待契约回归已覆盖
     非零状态退避、低 TPS 持续轮询、规范 zone helper 与精确 pulse/restore 几何。
