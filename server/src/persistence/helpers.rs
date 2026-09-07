@@ -108,14 +108,6 @@ pub(super) fn archive_file_identity(path: &Path) -> io::Result<ArchiveFileIdenti
     fs::metadata(path).map(|metadata| archive_file_identity_from_metadata(&metadata))
 }
 
-pub(super) fn archive_lifecycle_lock_path(path: &Path) -> PathBuf {
-    let filename = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "archive".to_string());
-    path.with_file_name(format!(".{filename}.lifecycle.lock"))
-}
-
 /// Serialize the complete archive target lifecycle across processes.
 ///
 /// The sidecar is intentionally retained: deleting it while a holder is alive could
@@ -124,17 +116,27 @@ pub(super) struct ArchiveLifecycleLock {
     _file: fs::File,
 }
 
-pub(super) fn acquire_archive_lifecycle_lock(path: &Path) -> io::Result<ArchiveLifecycleLock> {
-    if let Some(parent) = path.parent() {
+pub(super) fn acquire_archive_lifecycle_lock(lock_path: &Path) -> io::Result<ArchiveLifecycleLock> {
+    if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let lock_file = fs::OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
-        .open(archive_lifecycle_lock_path(path))?;
+        .open(lock_path)?;
     lock_file.lock()?;
     Ok(ArchiveLifecycleLock { _file: lock_file })
+}
+
+pub(super) fn npc_archive_lifecycle_lock_path(settings: &PersistenceSettings) -> PathBuf {
+    resolve_persistence_relative_path(settings, "data/archive/.npc.lifecycle.lock")
+}
+
+pub(super) fn acquire_npc_archive_lifecycle_lock(
+    settings: &PersistenceSettings,
+) -> io::Result<ArchiveLifecycleLock> {
+    acquire_archive_lifecycle_lock(&npc_archive_lifecycle_lock_path(settings))
 }
 
 fn read_archive_snapshot_from_file(
@@ -417,10 +419,14 @@ pub(super) fn validate_archive_component(value: &str) -> io::Result<()> {
 pub(super) fn npc_deceased_archive_relative_path(
     char_id: &str,
     archived_at_wall: i64,
+    died_at_tick: u64,
+    death_count: u32,
 ) -> io::Result<String> {
     validate_archive_component(char_id)?;
+    let material = format!("{char_id}\0{archived_at_wall}\0{died_at_tick}\0{death_count}");
+    let discriminator = archive_discriminator("npc-deceased-v1", material.as_bytes());
     Ok(format!(
-        "data/archive/npc_deceased/{}/{}.json.zst",
+        "data/archive/npc_deceased/{}/{}-{discriminator}.json.zst",
         utc_year_from_unix_seconds(archived_at_wall),
         char_id
     ))
@@ -430,25 +436,41 @@ pub(super) fn npc_deceased_archive_absolute_path(
     settings: &PersistenceSettings,
     char_id: &str,
     archived_at_wall: i64,
+    died_at_tick: u64,
+    death_count: u32,
 ) -> io::Result<PathBuf> {
-    let relative_path = npc_deceased_archive_relative_path(char_id, archived_at_wall)?;
+    let relative_path =
+        npc_deceased_archive_relative_path(char_id, archived_at_wall, died_at_tick, death_count)?;
     Ok(resolve_persistence_relative_path(
         settings,
         relative_path.as_str(),
     ))
 }
 
-pub(super) fn npc_digest_archive_relative_path(char_id: &str) -> io::Result<String> {
-    validate_archive_component(char_id)?;
-    Ok(format!("data/archive/npc_digests/{char_id}.json.zst"))
+fn archive_discriminator(domain: &str, material: &[u8]) -> String {
+    let mut name = Vec::with_capacity(domain.len() + 1 + material.len());
+    name.extend_from_slice(domain.as_bytes());
+    name.push(0);
+    name.extend_from_slice(material);
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_slice()).to_string()
+}
+
+pub(super) fn npc_digest_archive_relative_path(digest: &NpcDigestRecord) -> io::Result<String> {
+    validate_archive_component(digest.char_id.as_str())?;
+    let material = serde_json::to_vec(digest)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let discriminator = archive_discriminator("npc-digest-v1", material.as_slice());
+    Ok(format!(
+        "data/archive/npc_digests/{}-{discriminator}.json.zst",
+        digest.char_id
+    ))
 }
 
 pub(super) fn npc_digest_archive_absolute_path(
     settings: &PersistenceSettings,
-    char_id: &str,
-    _archived_at_wall: i64,
+    digest: &NpcDigestRecord,
 ) -> io::Result<PathBuf> {
-    let relative_path = npc_digest_archive_relative_path(char_id)?;
+    let relative_path = npc_digest_archive_relative_path(digest)?;
     Ok(resolve_persistence_relative_path(
         settings,
         relative_path.as_str(),

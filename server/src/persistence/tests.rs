@@ -6836,11 +6836,13 @@ fn npc_archive_pipeline_writes_index_and_zstd_bundle() {
     assert_eq!(died_at_tick, 777);
     assert_eq!(
         path,
-        format!(
-            "data/archive/npc_deceased/{}/{}.json.zst",
-            utc_year_from_unix_seconds(archive.archived_at_wall),
-            archive.char_id
+        npc_deceased_archive_relative_path(
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+            archive.died_at_tick,
+            archive.death_count,
         )
+        .expect("archive relative path should be valid")
     );
     assert_eq!(loaded_archive.char_id, archive.char_id);
     assert_eq!(loaded_archive.archetype, archive.archetype);
@@ -6892,6 +6894,8 @@ fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     let archive_json = serde_json::to_vec_pretty(&archive).expect("archive should serialize");
@@ -6902,7 +6906,6 @@ fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
     let lock_held_during_reconciliation =
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let lock_held_for_hook = lock_held_during_reconciliation.clone();
-    let archive_path_for_hook = archive_path.clone();
     persist_npc_deceased_archive_with_hooks(
         &settings,
         &archive,
@@ -6910,7 +6913,7 @@ fn npc_archive_reconciles_matching_orphan_bundle_after_crash() {
             let probe = fs::OpenOptions::new()
                 .read(true)
                 .write(true)
-                .open(archive_lifecycle_lock_path(&archive_path_for_hook))?;
+                .open(npc_archive_lifecycle_lock_path(settings))?;
             match probe.try_lock() {
                 Err(std::fs::TryLockError::WouldBlock) => {
                     lock_held_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -7016,9 +7019,14 @@ fn npc_archive_uncoordinated_competing_publish_is_not_reused() {
     assert_eq!(
         read_zstd_bundle(
             settings.db_path(),
-            npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall,)
-                .expect("archive relative path should be valid")
-                .as_str(),
+            npc_deceased_archive_relative_path(
+                archive.char_id.as_str(),
+                archive.archived_at_wall,
+                archive.died_at_tick,
+                archive.death_count,
+            )
+            .expect("archive relative path should be valid")
+            .as_str(),
         )
         .expect("matching orphan must remain readable after reconciliation failure"),
         archive_json,
@@ -7051,6 +7059,8 @@ fn npc_archive_db_open_failure_restores_previous_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
@@ -7059,6 +7069,14 @@ fn npc_archive_db_open_failure_restores_previous_bundle() {
     fs::create_dir(settings.db_path()).expect("database path should become an invalid directory");
     archive.death_count = 2;
     archive.died_at_tick = 701;
+    let failed_archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
+    )
+    .expect("failed archive path should be valid");
     let error = persist_npc_deceased_archive(&settings, &archive)
         .expect_err("database open failure must abort archive persistence");
     assert!(
@@ -7069,6 +7087,10 @@ fn npc_archive_db_open_failure_restores_previous_bundle() {
         fs::read(&archive_path).expect("previous archive should be restored"),
         previous_bundle,
         "DB-open failure after bundle replacement must restore the previous archive bytes"
+    );
+    assert!(
+        !failed_archive_path.exists(),
+        "DB-open failure must remove the newly published, unindexed archive"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -7097,12 +7119,22 @@ fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
 
     archive.death_count = 2;
     archive.died_at_tick = 711;
+    let failed_archive_path = npc_deceased_archive_absolute_path(
+        &settings,
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
+    )
+    .expect("failed archive path should be valid");
     let error = persist_npc_deceased_archive_with_connection(&settings, &archive, |settings| {
         let connection = open_persistence_connection(settings)?;
         connection
@@ -7119,6 +7151,10 @@ fn npc_archive_transaction_begin_failure_restores_previous_bundle() {
         fs::read(&archive_path).expect("previous archive should be restored"),
         previous_bundle,
         "transaction-begin failure after bundle replacement must restore the previous archive bytes"
+    );
+    assert!(
+        !failed_archive_path.exists(),
+        "transaction-begin failure must remove the newly published, unindexed archive"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -7149,6 +7185,8 @@ fn npc_archive_replacement_write_failure_preserves_bundle_and_index() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     let previous_bundle = fs::read(&archive_path).expect("baseline bundle should exist");
@@ -7250,6 +7288,8 @@ fn npc_first_archive_failure_removes_new_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     assert!(
@@ -7292,6 +7332,8 @@ fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     fs::create_dir_all(&archive_path).expect("directory fixture should be creatable");
@@ -7317,27 +7359,75 @@ fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
 
 #[test]
 fn archive_path_helpers_reject_unsafe_components() {
-    let (_, root) = persistence_settings("archive-path-component-validation");
+    let (settings, root) = persistence_settings("archive-path-component-validation");
     for unsafe_id in ["", ".", "..", "../escape", r"..\escape", "/tmp/escape"] {
         assert!(
             validate_archive_component(unsafe_id).is_err(),
             "archive component `{unsafe_id}` must fail closed"
         );
         assert!(
-            npc_deceased_archive_relative_path(unsafe_id, 0).is_err(),
+            npc_deceased_archive_relative_path(unsafe_id, 0, 0, 0).is_err(),
             "deceased archive path must reject `{unsafe_id}`"
         );
         assert!(
-            npc_digest_archive_relative_path(unsafe_id).is_err(),
+            npc_digest_archive_relative_path(&NpcDigestRecord {
+                char_id: unsafe_id.to_string(),
+                archetype: "sword".to_string(),
+                realm: "unknown".to_string(),
+                faction_id: None,
+                recent_summary: "path validation".to_string(),
+                last_referenced_wall: 0,
+            })
+            .is_err(),
             "digest archive path must reject `{unsafe_id}`"
         );
     }
 
-    assert_eq!(
-        npc_deceased_archive_relative_path("npc:valid", 0)
-            .expect("a single safe component should be accepted"),
-        "data/archive/npc_deceased/1970/npc:valid.json.zst"
+    let valid_path = npc_deceased_archive_relative_path("npc:valid", 0, 0, 0)
+        .expect("a single safe component should be accepted");
+    assert!(
+        valid_path.starts_with("data/archive/npc_deceased/1970/npc:valid-")
+            && valid_path.ends_with(".json.zst"),
+        "deceased archive path should carry a stable event discriminator: {valid_path}"
     );
+    let next_death_path = npc_deceased_archive_relative_path("npc:valid", 0, 1, 1)
+        .expect("a second logical death should produce a valid archive path");
+    assert_ne!(
+        valid_path, next_death_path,
+        "reused char_id events must not share a no-replace archive target"
+    );
+
+    let digest = NpcDigestRecord {
+        char_id: "npc:valid".to_string(),
+        archetype: "sword".to_string(),
+        realm: "凝脉".to_string(),
+        faction_id: None,
+        recent_summary: "first digest".to_string(),
+        last_referenced_wall: 1,
+    };
+    let successor_digest = NpcDigestRecord {
+        recent_summary: "successor digest".to_string(),
+        last_referenced_wall: 2,
+        ..digest.clone()
+    };
+    assert_ne!(
+        npc_digest_archive_relative_path(&digest).expect("digest path should be valid"),
+        npc_digest_archive_relative_path(&successor_digest)
+            .expect("successor digest path should be valid"),
+        "reused char_id digest versions must not share a no-replace archive target"
+    );
+
+    {
+        let _lock = acquire_npc_archive_lifecycle_lock(&settings)
+            .expect("NPC archive lifecycle lock should be creatable");
+        let lock_files = collect_files_with_suffix(&root.join("data").join("archive"), ".lock")
+            .expect("NPC archive lock directory should be readable");
+        assert_eq!(
+            lock_files,
+            vec![npc_archive_lifecycle_lock_path(&settings)],
+            "all NPC archive lifecycles must use one stable lock instead of one file per event"
+        );
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -7499,6 +7589,8 @@ fn npc_archive_reports_primary_and_ownership_failures_together() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     let archive_path_for_hook = archive_path.clone();
@@ -7558,11 +7650,17 @@ fn npc_archive_failed_no_replace_publish_preserves_competing_target() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
-    let archive_relative_path =
-        npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)
-            .expect("archive relative path should be valid");
+    let archive_relative_path = npc_deceased_archive_relative_path(
+        archive.char_id.as_str(),
+        archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
+    )
+    .expect("archive relative path should be valid");
     let competing_payload = br#"{"owner":"competing-publisher"}"#;
 
     let error = persist_npc_deceased_archive_with_hooks(
@@ -7625,6 +7723,8 @@ fn npc_archive_rejects_successor_replacement_before_db_commit() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     let archive_path_for_hook = archive_path.clone();
@@ -7655,9 +7755,14 @@ fn npc_archive_rejects_successor_replacement_before_db_commit() {
     assert_eq!(
         read_zstd_bundle(
             settings.db_path(),
-            npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall)
-                .expect("archive relative path should be valid")
-                .as_str(),
+            npc_deceased_archive_relative_path(
+                archive.char_id.as_str(),
+                archive.archived_at_wall,
+                archive.died_at_tick,
+                archive.death_count,
+            )
+            .expect("archive relative path should be valid")
+            .as_str(),
         )
         .expect("successor archive should remain readable"),
         br#"{"owner":"successor"}"#,
@@ -7701,6 +7806,8 @@ fn load_npc_deceased_archive_rejects_corrupted_zstd_bundle() {
         &settings,
         archive.char_id.as_str(),
         archive.archived_at_wall,
+        archive.died_at_tick,
+        archive.death_count,
     )
     .expect("archive path should be valid");
     fs::write(&archive_path, b"not a zstd bundle")
@@ -7720,11 +7827,13 @@ fn load_npc_deceased_archive_rejects_corrupted_zstd_bundle() {
         .expect("npc_deceased_index row should still exist");
     assert_eq!(
         path,
-        format!(
-            "data/archive/npc_deceased/{}/{}.json.zst",
-            utc_year_from_unix_seconds(archive.archived_at_wall),
-            archive.char_id
+        npc_deceased_archive_relative_path(
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+            archive.died_at_tick,
+            archive.death_count,
         )
+        .expect("archive relative path should be valid")
     );
 
     let _ = fs::remove_dir_all(root);
@@ -7778,12 +7887,16 @@ fn find_orphaned_npc_archive_paths_reports_unindexed_archives() {
         &settings,
         orphan_archive.char_id.as_str(),
         orphan_archive.archived_at_wall,
+        orphan_archive.died_at_tick,
+        orphan_archive.death_count,
     )
     .expect("archive path should be valid");
     let indexed_path = npc_deceased_archive_absolute_path(
         &settings,
         indexed_archive.char_id.as_str(),
         indexed_archive.archived_at_wall,
+        indexed_archive.died_at_tick,
+        indexed_archive.death_count,
     )
     .expect("archive path should be valid");
     let connection = Connection::open(settings.db_path()).expect("db should open");
@@ -7853,10 +7966,149 @@ fn npc_digest_retention_sweeps_180_day_stale_rows() {
         "fresh digest should remain in hot table"
     );
     assert!(
-        npc_digest_archive_absolute_path(&settings, stale.state.char_id.as_str(), now_wall,)
+        npc_digest_archive_absolute_path(&settings, &stale.digest)
             .expect("digest archive path should be valid")
             .exists(),
         "stale digest should be written to cold archive"
+    );
+
+    let first_archive_path = npc_digest_archive_absolute_path(&settings, &stale.digest)
+        .expect("first digest archive path should be valid");
+    let successor_wall = stale_wall - 1;
+    let mut successor = stale.clone();
+    successor.captured_at_wall = successor_wall;
+    successor.digest.last_referenced_wall = successor_wall;
+    successor.digest.recent_summary = "same char_id, later digest version".to_string();
+    persist_npc_capture(&settings, &successor)
+        .expect("a reused char_id should accept a new digest version");
+    let second_archive_path = npc_digest_archive_absolute_path(&settings, &successor.digest)
+        .expect("successor digest archive path should be valid");
+    assert_ne!(
+        first_archive_path, second_archive_path,
+        "successive stale versions for one char_id must not collide at the archive target"
+    );
+    let archived_successor =
+        sweep_stale_npc_digests(&settings, now_wall).expect("successor digest sweep should work");
+    assert_eq!(archived_successor, vec![successor.digest.clone()]);
+    assert!(
+        first_archive_path.exists() && second_archive_path.exists(),
+        "retention must preserve both immutable digest archive versions"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_digest_sweep_failure_is_throttled() {
+    let (settings, root) = persistence_settings("npc-digest-sweep-error-throttle");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let now_wall = current_unix_seconds();
+    let stale_wall = now_wall - NPC_DIGEST_RETENTION_SECS - 1;
+    let stale = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_sweep_error_throttle").digest
+        },
+        ..sample_npc_capture("npc_digest_sweep_error_throttle")
+    };
+    persist_npc_capture(&settings, &stale).expect("stale digest should persist");
+    let archive_path = npc_digest_archive_absolute_path(&settings, &stale.digest)
+        .expect("digest archive path should be valid");
+    fs::create_dir_all(
+        archive_path
+            .parent()
+            .expect("digest archive should have a parent"),
+    )
+    .expect("digest archive parent should be creatable");
+    fs::write(&archive_path, b"corrupt digest archive")
+        .expect("corrupt archive fixture should be writable");
+
+    let mut app = App::new();
+    app.insert_resource(settings);
+    app.init_resource::<NpcDigestSweepState>();
+    app.add_systems(Update, sweep_npc_digest_retention_system);
+
+    app.update();
+    let after_first = app
+        .world()
+        .resource::<NpcDigestSweepState>()
+        .last_sweep_wall;
+    assert!(
+        after_first > 0,
+        "a failed retention attempt must stamp its wall time to avoid per-tick retries"
+    );
+    app.update();
+    let after_second = app
+        .world()
+        .resource::<NpcDigestSweepState>()
+        .last_sweep_wall;
+    assert_eq!(
+        after_first, after_second,
+        "a failed retention attempt must honor the normal throttle interval"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn npc_digest_sweep_continues_after_one_archive_failure() {
+    let (settings, root) = persistence_settings("npc-digest-sweep-partial-failure");
+    bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+        .expect("bootstrap should succeed");
+
+    let now_wall = current_unix_seconds();
+    let stale_wall = now_wall - NPC_DIGEST_RETENTION_SECS - 1;
+    let bad = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_sweep_bad").digest
+        },
+        ..sample_npc_capture("npc_digest_sweep_bad")
+    };
+    let good = NpcPersistenceCapture {
+        captured_at_wall: stale_wall,
+        digest: NpcDigestRecord {
+            last_referenced_wall: stale_wall,
+            ..sample_npc_capture("npc_digest_sweep_good").digest
+        },
+        ..sample_npc_capture("npc_digest_sweep_good")
+    };
+    persist_npc_capture(&settings, &bad).expect("bad digest should persist");
+    persist_npc_capture(&settings, &good).expect("good digest should persist");
+
+    let bad_archive_path = npc_digest_archive_absolute_path(&settings, &bad.digest)
+        .expect("bad digest archive path should be valid");
+    fs::create_dir_all(
+        bad_archive_path
+            .parent()
+            .expect("bad digest archive should have a parent"),
+    )
+    .expect("digest archive parent should be creatable");
+    fs::write(&bad_archive_path, b"corrupt digest archive")
+        .expect("bad archive fixture should be writable");
+
+    let error = sweep_stale_npc_digests(&settings, now_wall)
+        .expect_err("one corrupt digest archive should remain observable");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::InvalidData,
+        "the corrupt digest archive should report InvalidData, actual={error}"
+    );
+    assert!(
+        load_npc_digest(&settings, bad.digest.char_id.as_str())
+            .expect("bad digest query should succeed")
+            .is_some(),
+        "a failed digest archive must keep its hot row for a later retry"
+    );
+    assert!(
+        load_npc_digest(&settings, good.digest.char_id.as_str())
+            .expect("good digest query should succeed")
+            .is_none(),
+        "one bad digest archive must not block independent stale rows from being swept"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -7880,10 +8132,9 @@ fn npc_digest_failed_no_replace_publish_preserves_competing_target() {
     };
     persist_npc_capture(&settings, &stale).expect("stale digest should persist");
 
-    let archive_path =
-        npc_digest_archive_absolute_path(&settings, stale.state.char_id.as_str(), now_wall)
-            .expect("digest archive path should be valid");
-    let archive_relative_path = npc_digest_archive_relative_path(stale.state.char_id.as_str())
+    let archive_path = npc_digest_archive_absolute_path(&settings, &stale.digest)
+        .expect("digest archive path should be valid");
+    let archive_relative_path = npc_digest_archive_relative_path(&stale.digest)
         .expect("digest archive relative path should be valid");
     let competing_payload = br#"{"owner":"competing-digest-publisher"}"#;
 
