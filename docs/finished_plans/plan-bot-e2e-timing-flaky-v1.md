@@ -104,8 +104,8 @@
   `e2e_redis_hang_guard_contract_test` 5/5、`smoke_owned_artifacts_test` PASS。
 - 合并主线后的返工 HEAD `bc8fb1625` 曾启动无上下文 read-only validator，但该次返回为空，
   不能记作 PASS；此前 `4dfece34e9dc0937c19821f3c49338fc73d207f4` 的 validator 证据属于
-  返工前 HEAD，`ba2e5e03f` 的返工 validator 结论也不替代合并后新 SHA 的复验。本轮以当前
-  HEAD `254e3b9042d1e537371679f8333efa4cf5d559c9` 重新开绑定 SHA 的 validator；提交 push、PR 的
+  返工前 HEAD，`ba2e5e03f` 的返工 validator 结论也不替代合并后新 SHA 的复验。本轮已将
+  `origin/main=94119a7a7` 合入，最终 HEAD 的 validator 必须重新绑定其精确 SHA；提交 push、PR 的
   CI/e2e 与 Kody 主动 review 是 PR 阶段事项。
 
 ## 非目标
@@ -158,6 +158,7 @@
   - `4dfece34e`（2026-09-06）：记录 P0/P1 决议与 P2 稳定性证据。
   - `ba2e5e03f`（2026-09-07）：按 review 补强权威冷却、zone 契约与跨维几何等待。
   - `bc8fb1625`（2026-09-07）：合并最新 `origin/main=51fcda26e` 并复验受影响栈。
+  - `3b2ccece9`（2026-09-07）：合并最新 `origin/main=94119a7a7` 并复验 Bot 受影响栈。
 - **测试结果**：
   - 真实 runner R5A：`cultivation_qi_color_inspect` PASS 122.9s，
     `network_request_unknown_type` PASS 23.0s，`total=2 pass=2 skip=0 fail=0`，rc=0；
