@@ -8241,6 +8241,12 @@ fn npc_digest_sweep_all_preparations_failed_returns_invalid_data() {
     persist_npc_capture(&settings, &stale).expect("stale digest should persist");
     let archive_path = npc_digest_archive_absolute_path(&settings, &stale.digest)
         .expect("digest archive path should be valid");
+    fs::create_dir_all(
+        archive_path
+            .parent()
+            .expect("digest archive should have a parent directory"),
+    )
+    .expect("digest archive parent should be creatable");
     fs::write(&archive_path, b"corrupt digest archive")
         .expect("corrupt archive fixture should be writable");
 
