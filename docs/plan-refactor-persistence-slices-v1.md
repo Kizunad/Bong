@@ -198,10 +198,11 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 
 用户发起一次 `/consume-plan plan-refactor-persistence-slices-v1` 后，consumer 依次完成当前未完成阶段的实现、locked gate、Bot E2E、精确 HEAD validator、push、PR、独立 `/review`、返工复审和 merge；每个阶段 merge 后从最新 `origin/main` 继续下一 PR。只有真实用户决策、#1259 等外部依赖未满足或基础设施持续不可用时才暂停；P5 全绿后自动补 Finish Evidence、归档 plan 并提交最终 PR。
 
-## R3 P1 本 PR 证据（2026-09-05）
+## R3 P1 本 PR 证据（2026-09-08）
 
-- 本切片只完成 persistence 生产码的按域机械拆分：`server/src/persistence/mod.rs` 保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring；迁移链、SQL、表结构、事务边界、连接 ownership 和调用方均未改动。
+- 本 PR 最终净 diff 只完成 persistence 生产码的按域机械拆分：`server/src/persistence/mod.rs` 保留模块声明、跨域装配、canonical `PersistenceSliceRegistry`、`AppExit → Last` dispatcher、zone-runtime descriptor 与 KnownTechniques production wiring；迁移链、SQL、表结构、事务边界、连接 ownership 和调用方均未改动。以 `169a70872` 为纯搬迁边界，`7fb558e91` 起的原子发布加固提交已用 `git revert` 翻回，没有 force-push。
 - 拆分落点与最终行数为 `mod.rs` 214 行、`models.rs` 533 行、`known_techniques.rs` 973 行、`bootstrap.rs` 407 行、`migrations.rs` 1908 行、`void_actions.rs` 121 行、`agent.rs` 442 行、`tribulation.rs` 461 行、`world.rs` 1180 行、`world_qi.rs` 125 行、`player.rs` 306 行、`npc.rs` 1307 行、`life.rs` 1058 行、`social.rs` 301 行、`helpers.rs` 444 行、`epitaph.rs` 80 行，全部小于 3000 行。
-- 机械等价性核验：以原 `mod.rs` 与拆分后全部 persistence 源文件分别提取顶层函数名和类型/常量名对拍，均为 251/251 与 118/118 完全一致；除模块导入、`pub(super)` 父模块可见性及必要测试字段可见性外，没有生产逻辑、常量值、SQL 字符串或错误行为改写。
+- 机械等价性核验：以原 `mod.rs` 与拆分后全部 persistence 源文件分别提取顶层函数名和类型/常量名对拍，均为 251/251 与 118/118 完全一致；除模块导入、`pub(super)` 父模块可见性及必要测试字段可见性外，没有生产逻辑、常量值、SQL 字符串或错误行为改写。相对 `origin/main` 的净 diff 不含 `ensure_archive_identity`、`ArchiveFileIdentity`、`prepared_archives`、`combine_persistence_failure`、`published_by_sweep` 或 `archive_file_identity`。
 - 本 PR **不含 M-04/M-12 guard/checkpoint 持久化**（`ReconnectGuard`、Suspended checkpoint、`CraftRestoreGuard` control frame）；因此 R3 P1 总体仍保持未完成，不将本证据写成阶段完成或 production 接入扩展。
-- 验证：定向 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test persistence::tests --lib'` 通过，`208 passed; 0 failed; 0 ignored; 12422 filtered out`；完整 server gate 将以本 PR 最终 HEAD 再执行。本条目只登记拆分范围与等价性证据。
+- 验证目标为合并主线后的精确代码 HEAD `ded0899768f35b57ad7c9ff8e65e88967cc574c9`：直接执行 `cd server && ../scripts/build-token.sh cargo fmt --check`（退出码 0）、`cargo clippy --all-targets -- -D warnings`（退出码 0）和 `cargo test`（退出码 0）；全量 `src/lib.rs` 为 `12000 passed; 0 failed; 1 ignored`，其余 server targets 与 doc-tests 均通过，doc-tests 为 `3 passed; 0 failed; 5 ignored`。跨栈 Tiandao consumer 定向回归为 `1 passed; 0 failed`（slot-3 workspace 依赖已构建）。
+- 本节仅登记纯搬迁范围与真实门禁证据；原子发布加固已移交 `plan-persistence-atomic-publication-v1`，不在本 PR 创建 plan 或 PR。
