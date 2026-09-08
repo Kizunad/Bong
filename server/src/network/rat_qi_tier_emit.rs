@@ -289,23 +289,11 @@ mod tests {
 
     // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
 
-    /// 取源码的**生产半区**（砍掉 inline `#[cfg(test)] mod tests {` 之后的内容 + 剔纯注释行）。
-    /// 详见 `network::rat_av_trigger` 里同名 helper 的注释——不剔注释的话
-    /// `// rat_qi_tier_emit::register(app);` 这种注释掉的调用也能让 pin 通过。
+    /// 返回完整的非注释源码，不按 `#[cfg(test)]` 或外置测试挂载声明截断。
+    /// 详见 `network::rat_av_trigger` 里同类 helper 的说明：生产源码的 inline 与
+    /// 同 crate 外置布局都不应改变接线判据；只剔除注释以防伪调用让 pin 通过。
     fn production_source(src: &str) -> String {
-        let head = src
-            .split_once("#[cfg(test)]\nmod tests {")
-            .map(|(head, _)| head)
-            // 切分串对 rustfmt 输出形态敏感（属性与 mod 之间恰一个 \n、`{` 同行）。落空时
-            // 直接 panic 把失败点钉在真正的原因上，而不是退化成"返回全文 → pin 恒真"、
-            // 让同伴元测试以"生产半区出现多次"这种误导性信息撞红。
-            .unwrap_or_else(|| {
-                panic!(
-                    "production_source 未找到 inline 测试模块起点 `#[cfg(test)]\\nmod tests {{`；\
-                     被审文件的形态变了（属性与 mod 间多了空行/注释？），切分逻辑需同步更新"
-                )
-            });
-        head.lines()
+        src.lines()
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
@@ -339,6 +327,16 @@ mod tests {
             !mutated.contains("rat_qi_tier_emit::register(app)"),
             "生产半区里 rat_qi_tier_emit::register(app) 应当只出现一次；删掉后仍命中 = \
              接线 pin 恒真、挡不住孤岛"
+        );
+    }
+
+    #[test]
+    fn production_source_keeps_text_after_external_test_mount() {
+        let source = "pub fn register(app: &mut App) {}\n#[cfg(test)]\n#[path = \"mod_tests.rs\"]\nmod tests;\nfn production_tail() {}";
+        let source = production_source(source);
+        assert!(
+            source.contains("fn production_tail() {}"),
+            "完整源码判据不得在外置测试挂载声明处提前截断"
         );
     }
 
