@@ -456,6 +456,9 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **公开 API 与 seam**：A 类只使用既有 `bong_server::npc::dormant`、`qi_physics`、zone、serde 与 combat 公开行为；B 类使用同 crate 既有私有项。`ids_by_archetype` 与 `ids_by_zone` 仍保持原 `#[cfg(test)] pub fn`，没有放宽可见性、删除 `#[cfg(test)]` 或新增 `pub`/`pub(crate)`/`#[doc(hidden)]` seam，也没有复制生产实现。已在 `server`、`scripts`、`tests` 范围 grep `include_str!`、`production_source` 与 `npc/dormant/mod.rs`，确认没有测试消费者按源码文本读取该生产文件。
 - **主线与门禁证据**：本批提交前完成 A/B 对拍和 `git diff --check`；后续提交前紧邻执行 `git fetch origin && git merge origin/main`，若 Cargo/plan 冲突保留双方条目并重跑受影响栈。最终绑定合并后 HEAD 的无上下文只读 validator 必须 PASS；完整 server fmt、clippy、test 三条均直接经 `scripts/build-token.sh` 取得真实退出码。PR body 将逐条保留以上 75 条 B 类理由。每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-21 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
 
+- **合并主线后复验**：紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=187eeaf034de948a8c114a473f48129ad0261d88` 无冲突生成合并 HEAD `c45f2a6bb29752de379eafdfe1e5333409545cc0`；合并带入的 network/plan 变更未触及本批 dormant、Cargo target 或 P2-21 evidence。合并后直接经 `scripts/build-token.sh` 的完整 server gate 三条均为真实 `PIPESTATUS[0]=0`：fmt、clippy、test；library `11987 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、所有 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
+- **合并后逐位对拍**：`cargo test --test npc_dormant_unit` 为 A 类 `23 passed / 0 failed / 0 ignored`，`cargo test npc::dormant::tests:: --lib` 为 B 类 `75 passed / 0 failed / 0 ignored`，两条命令均直接经 `scripts/build-token.sh`，分别取得 `A_PIPESTATUS[0]=0`、`B_PIPESTATUS[0]=0`；`23 + 75 = 98`，测试名集合、断言、边界与 fixture 语义未变。后续 validator 绑定本批最终 HEAD 后必须 PASS；P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
