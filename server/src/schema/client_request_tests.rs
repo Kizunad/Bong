@@ -1,0 +1,2899 @@
+use super::*;
+
+#[test]
+fn gate_spec_registry_pins_the_five_live_request_paths() {
+    let cases = [
+        (
+            "give_dan_to_elder",
+            ClientRequestV1::GiveDanToElder {
+                v: 1,
+                pill_instance_id: 7,
+                elder_entity_id: 42,
+            },
+            GateSpec {
+                target: GateTarget::ProtocolEntityId,
+                distance: DistanceRule::NEARBY_INTERACT,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::Any,
+                state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
+            },
+        ),
+        (
+            "lingtian_start_till",
+            ClientRequestV1::LingtianStartTill {
+                v: 1,
+                x: -12,
+                y: 64,
+                z: 38,
+                hoe_instance_id: 9,
+                mode: "manual".to_owned(),
+            },
+            GateSpec {
+                target: GateTarget::RequestBlockPosition,
+                distance: DistanceRule::NEARBY_INTERACT,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::None,
+                state: &[StateGateId::PlayerAlive, StateGateId::TargetExists],
+            },
+        ),
+        (
+            "craft_start",
+            ClientRequestV1::CraftStart {
+                v: 1,
+                recipe_id: "craft.example.herb_knife.iron".to_owned(),
+                quantity: 1,
+            },
+            GateSpec {
+                target: GateTarget::None,
+                distance: DistanceRule::None,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::None,
+                state: &[StateGateId::PlayerAlive, StateGateId::InventoryOpen],
+            },
+        ),
+        (
+            "workbench_open",
+            ClientRequestV1::WorkbenchOpen {
+                v: 1,
+                entity_id: 42,
+            },
+            GateSpec {
+                target: GateTarget::ProtocolEntityId,
+                distance: DistanceRule::WORKBENCH,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::Any,
+                state: &[
+                    StateGateId::PlayerAlive,
+                    StateGateId::TargetExists,
+                    StateGateId::WorkbenchPresent,
+                ],
+            },
+        ),
+        (
+            "external_container_move",
+            ClientRequestV1::ExternalContainerMove {
+                v: 1,
+                session_id: 11,
+                instance_id: 12,
+                from: InventoryLocationV1::Hotbar { index: 0 },
+                to: InventoryLocationV1::Hotbar { index: 1 },
+            },
+            GateSpec {
+                target: GateTarget::SessionId,
+                distance: DistanceRule::EXTERNAL_SESSION,
+                dimension: DimensionRule::Same,
+                ownership: OwnershipRule::Owner,
+                state: &[
+                    StateGateId::PlayerAlive,
+                    StateGateId::TargetExists,
+                    StateGateId::SessionOpen,
+                    StateGateId::SessionOwner,
+                    StateGateId::ExternalSession,
+                ],
+            },
+        ),
+    ];
+
+    for (kind, request, expected) in cases {
+        assert_eq!(
+            request.gate_spec(),
+            RequestGate::Spec(expected),
+            "{kind} must use its frozen gate declaration"
+        );
+    }
+}
+
+#[test]
+fn gate_spec_registry_uses_an_explicit_fail_closed_reason_for_unwired_variants() {
+    let request = ClientRequestV1::SetMeridianTarget {
+        v: 1,
+        meridian: MeridianChannelId::new("lung"),
+    };
+
+    assert_eq!(
+        request.gate_spec(),
+        RequestGate::NoGate(NoGateReason::InvalidState),
+        "unwired registry entries must deny explicitly rather than defaulting to allow"
+    );
+}
+
+#[test]
+fn set_meridian_target_roundtrip() {
+    let json = r#"{"type":"set_meridian_target","v":1,"meridian":"lung"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SetMeridianTarget { v, meridian } => {
+            assert_eq!(v, 1);
+            assert_eq!(meridian, MeridianChannelId::new("lung"));
+        }
+        other => panic!("expected SetMeridianTarget, got {other:?}"),
+    }
+}
+
+#[test]
+fn set_meridian_target_accepts_non_humanoid_channel_id() {
+    // plan-race-system-v1 P1c — wire 开放化后任意 snake_case channel id 都应合法
+    // 解析（非 humanoid 构型如 P5 飞鲸的经脉不在 20 个 TCM 名字之列）。
+    let json = r#"{"type":"set_meridian_target","v":1,"meridian":"tail_fin_channel"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SetMeridianTarget { meridian, .. } => {
+            assert_eq!(meridian, MeridianChannelId::new("tail_fin_channel"));
+        }
+        other => panic!("expected SetMeridianTarget, got {other:?}"),
+    }
+}
+
+#[test]
+fn breakthrough_request_roundtrip() {
+    let json = r#"{"type":"breakthrough_request","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    assert!(matches!(req, ClientRequestV1::BreakthroughRequest { v: 1 }));
+}
+
+#[test]
+fn client_request_rejects_missing_version_at_serde_boundary() {
+    let json = r#"{"type":"breakthrough_request"}"#;
+    let error = serde_json::from_str::<ClientRequestV1>(json)
+        .expect_err("ClientRequestV1 缺少必填 v 必须在 serde 反序列化阶段失败");
+    assert!(
+        error.to_string().contains("missing field `v`"),
+        "缺 v 必须是 serde missing-field 错误，不能被默认为 v=0 后再由版本门忽略；实际 {error}"
+    );
+}
+
+#[test]
+fn client_request_rejects_unknown_field_at_serde_boundary() {
+    let json = r#"{"type":"breakthrough_request","v":1,"extra_field":true}"#;
+    let error = serde_json::from_str::<ClientRequestV1>(json)
+        .expect_err("ClientRequestV1 额外字段必须被 deny_unknown_fields 拒绝");
+    assert!(
+        error.to_string().contains("unknown field `extra_field`"),
+        "额外字段必须是 serde unknown-field 错误；实际 {error}"
+    );
+}
+
+// ─── plan-rotate-v1 — InventoryMoveIntent.rotated serde pin ────────────
+
+/// 旧客户端 payload 不带 rotated 字段必须照常解析且缺省为 false
+/// （`#[serde(default)]` 向后兼容 pin，防止未来误改成必填字段炸旧端）。
+#[test]
+fn inventory_move_intent_without_rotated_defaults_to_false() {
+    let json = r#"{"type":"inventory_move_intent","v":1,"instance_id":42,
+        "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+        "to":{"kind":"container","container_id":"main_pack","row":0,"col":1}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::InventoryMoveIntent {
+            v,
+            instance_id,
+            rotated,
+            ..
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 42);
+            assert!(
+                !rotated,
+                "缺省 rotated 应为 false（未旋转），旧 payload 兼容被破坏"
+            );
+        }
+        other => panic!("expected InventoryMoveIntent, got {other:?}"),
+    }
+}
+
+/// rotated=true 显式携带时必须解析为 true（新客户端旋转落位路径）。
+#[test]
+fn inventory_move_intent_with_rotated_true_parses() {
+    let json = r#"{"type":"inventory_move_intent","v":1,"instance_id":7,"rotated":true,
+        "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+        "to":{"kind":"container","container_id":"main_pack","row":2,"col":3}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::InventoryMoveIntent { rotated, .. } => {
+            assert!(rotated, "显式 rotated=true 应解析为 true");
+        }
+        other => panic!("expected InventoryMoveIntent, got {other:?}"),
+    }
+}
+
+/// rotated=false 显式携带时保持 false（新客户端未旋转落位路径）。
+#[test]
+fn inventory_move_intent_with_rotated_false_parses() {
+    let json = r#"{"type":"inventory_move_intent","v":1,"instance_id":7,"rotated":false,
+        "from":{"kind":"hotbar","index":0},
+        "to":{"kind":"container","container_id":"main_pack","row":2,"col":3}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::InventoryMoveIntent { rotated, .. } => {
+            assert!(!rotated, "显式 rotated=false 应解析为 false");
+        }
+        other => panic!("expected InventoryMoveIntent, got {other:?}"),
+    }
+}
+
+#[test]
+fn void_action_request_roundtrip() {
+    let json = r#"{"type":"void_action","v":1,"request":{"kind":"suppress_tsy","zone_id":"tsy"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::VoidAction { v, request } => {
+            assert_eq!(v, 1);
+            assert_eq!(request.target_label(), "tsy");
+        }
+        other => panic!("expected VoidAction, got {other:?}"),
+    }
+}
+
+#[test]
+fn movement_action_request_roundtrip() {
+    let json = r#"{"type":"movement_action","v":1,"action":"dash"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::MovementAction {
+            v,
+            action,
+            yaw_degrees,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(action, MovementActionRequestV1::Dash);
+            assert_eq!(yaw_degrees, None);
+        }
+        other => panic!("expected MovementAction, got {other:?}"),
+    }
+
+    let encoded = serde_json::to_string(&req).expect("movement action serializes");
+    let encoded_value: serde_json::Value =
+        serde_json::from_str(&encoded).expect("encoded movement action is valid JSON");
+    let expected_value: serde_json::Value =
+        serde_json::from_str(json).expect("expected movement action JSON is valid");
+    assert_eq!(
+        encoded_value, expected_value,
+        "movement_action roundtrip must preserve payload structure without depending on object key order"
+    );
+    assert!(
+        encoded_value.get("yaw_degrees").is_none(),
+        "movement_action without client yaw must omit yaw_degrees, actual: {encoded_value}"
+    );
+}
+
+#[test]
+fn movement_action_request_accepts_client_yaw() {
+    let json = r#"{"type":"movement_action","v":1,"action":"dash","yaw_degrees":90.5}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::MovementAction {
+            v,
+            action,
+            yaw_degrees,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(action, MovementActionRequestV1::Dash);
+            assert_eq!(yaw_degrees, Some(90.5));
+        }
+        other => panic!("expected MovementAction, got {other:?}"),
+    }
+
+    let encoded = serde_json::to_string(&req).expect("movement action serializes");
+    let encoded_value: serde_json::Value =
+        serde_json::from_str(&encoded).expect("encoded movement action yaw JSON is valid");
+    let expected_value: serde_json::Value =
+        serde_json::from_str(json).expect("expected movement action yaw JSON is valid");
+    assert_eq!(
+        encoded_value, expected_value,
+        "movement_action with yaw_degrees must preserve payload structure without depending on object key order"
+    );
+    assert_eq!(
+        encoded_value
+            .get("yaw_degrees")
+            .and_then(|value| value.as_f64()),
+        Some(90.5),
+        "movement_action with client yaw must include numeric yaw_degrees, actual: {encoded_value}"
+    );
+}
+
+#[test]
+fn movement_action_rejects_unknown_fields() {
+    let json = r#"{"type":"movement_action","v":1,"action":"dash","extra":true}"#;
+    let error = serde_json::from_str::<ClientRequestV1>(json).expect_err("extra field must fail");
+    assert!(
+        error.to_string().contains("unknown field"),
+        "expected unknown-field error, got {error}"
+    );
+}
+
+#[test]
+fn coffin_open_roundtrip() {
+    let json = r#"{"type":"coffin_open","v":1,"x":0,"y":69,"z":0}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::CoffinOpen { v, x, y, z } => {
+            assert_eq!(v, 1);
+            assert_eq!([x, y, z], [0, 69, 0]);
+        }
+        other => panic!("expected CoffinOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn coffin_lifecycle_requests_roundtrip() {
+    let place = r#"{"type":"coffin_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242}"#;
+    let req: ClientRequestV1 = serde_json::from_str(place).unwrap();
+    match req {
+        ClientRequestV1::CoffinPlace {
+            v,
+            x,
+            y,
+            z,
+            item_instance_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (8, 64, 8));
+            assert_eq!(item_instance_id, 4242);
+        }
+        other => panic!("expected CoffinPlace, got {other:?}"),
+    }
+
+    let enter = r#"{"type":"coffin_enter","v":1,"x":8,"y":64,"z":8}"#;
+    let req: ClientRequestV1 = serde_json::from_str(enter).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::CoffinEnter {
+            v: 1,
+            x: 8,
+            y: 64,
+            z: 8
+        }
+    ));
+
+    let leave = r#"{"type":"coffin_leave","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(leave).unwrap();
+    assert!(matches!(req, ClientRequestV1::CoffinLeave { v: 1 }));
+}
+
+// ─── plan-coffin-tiers-v1 P3：coffin_break / coffin_menu_reclaim C2S schema tests ───
+
+#[test]
+fn coffin_break_roundtrip() {
+    let json = r#"{"type":"coffin_break","v":1,"x":10,"y":64,"z":-5}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).unwrap_or_else(|e| panic!("coffin_break should parse: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::CoffinBreak {
+                v: 1,
+                x: 10,
+                y: 64,
+                z: -5
+            }
+        ),
+        "coffin_break did not deserialize to expected variant, got: {req:?}"
+    );
+}
+
+#[test]
+fn coffin_break_rejects_missing_coords() {
+    let json = r#"{"type":"coffin_break","v":1}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "coffin_break without coordinates should fail deserialization"
+    );
+}
+
+#[test]
+fn coffin_menu_reclaim_roundtrip() {
+    let json = r#"{"type":"coffin_menu_reclaim","v":1,"x":3,"y":65,"z":7}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("coffin_menu_reclaim should parse: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::CoffinMenuReclaim {
+                v: 1,
+                x: 3,
+                y: 65,
+                z: 7
+            }
+        ),
+        "coffin_menu_reclaim did not deserialize to expected variant, got: {req:?}"
+    );
+}
+
+#[test]
+fn coffin_menu_reclaim_rejects_missing_coords() {
+    let json = r#"{"type":"coffin_menu_reclaim","v":1}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "coffin_menu_reclaim without coordinates should fail deserialization"
+    );
+}
+
+#[test]
+fn coffin_break_negative_coords_accepted() {
+    // 负坐标合法（世界有负 XZ）。
+    let json = r#"{"type":"coffin_break","v":1,"x":-128,"y":0,"z":-256}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("coffin_break with negative coords should parse: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::CoffinBreak {
+                v: 1,
+                x: -128,
+                y: 0,
+                z: -256
+            }
+        ),
+        "negative coords should parse correctly, got: {req:?}"
+    );
+}
+
+/// CodeRabbit minor G: coffin_menu_reclaim 对称负坐标测试。
+#[test]
+fn coffin_menu_reclaim_negative_coords_accepted() {
+    // 负坐标合法（世界有负 XZ），与 coffin_break_negative_coords_accepted 对称。
+    let json = r#"{"type":"coffin_menu_reclaim","v":1,"x":-64,"y":0,"z":-128}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("coffin_menu_reclaim with negative coords should parse: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::CoffinMenuReclaim {
+                v: 1,
+                x: -64,
+                y: 0,
+                z: -128
+            }
+        ),
+        "coffin_menu_reclaim negative coords should parse correctly; \
+         期望 CoffinMenuReclaim{{x:-64,y:0,z:-128}}，实得 {req:?}"
+    );
+}
+
+#[test]
+fn agent_ui_response_roundtrip_with_button_click() {
+    let json = r#"{"type":"agent_ui_response","v":1,"request_id":"req_1","action":"button_click","params":{"button_id":"enter_realm"}}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("agent_ui_response button_click 应能反序列化");
+    match req {
+        ClientRequestV1::AgentUiResponse {
+            v,
+            request_id,
+            action,
+            params,
+        } => {
+            assert_eq!(v, 1, "wire version 期望=1，实为 {v}");
+            assert_eq!(
+                request_id, "req_1",
+                "request_id 应保持 req_1，实为 {request_id}"
+            );
+            assert_eq!(
+                action,
+                AgentUiActionType::ButtonClick,
+                "action 应为 button_click，实为 {action:?}"
+            );
+            assert_eq!(
+                params.get("button_id").map(String::as_str),
+                Some("enter_realm"),
+                "params.button_id 应为 enter_realm，实为 {params:?}"
+            );
+        }
+        other => panic!("expected AgentUiResponse, got {other:?}"),
+    }
+}
+
+#[test]
+fn agent_ui_response_defaults_missing_params_to_empty_map() {
+    let json = r#"{"type":"agent_ui_response","v":1,"request_id":"req_2","action":"dismissed"}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("agent_ui_response 缺 params 应默认空 map");
+    assert!(
+        matches!(req, ClientRequestV1::AgentUiResponse { ref params, .. } if params.is_empty()),
+        "缺 params 应反序列化为空 map，实为 {req:?}"
+    );
+}
+
+#[test]
+fn agent_ui_response_rejects_invalid_action_and_extra_fields() {
+    let bad_action = r#"{"type":"agent_ui_response","v":1,"request_id":"req_3","action":"teleport","params":{}}"#;
+    let bad_action_result: Result<ClientRequestV1, _> = serde_json::from_str(bad_action);
+    assert!(
+        bad_action_result.is_err(),
+        "未知 action=teleport 应被 serde 拒绝，实为 {bad_action_result:?}"
+    );
+
+    let extra = r#"{"type":"agent_ui_response","v":1,"request_id":"req_4","action":"dismissed","params":{},"surprise":true}"#;
+    let extra_result: Result<ClientRequestV1, _> = serde_json::from_str(extra);
+    assert!(
+        extra_result.is_err(),
+        "agent_ui_response 额外字段 surprise 应被 deny_unknown_fields 拒绝，实为 {extra_result:?}"
+    );
+}
+
+#[test]
+fn agent_ui_response_rejects_spoofed_target_player() {
+    let spoofed = r#"{"type":"agent_ui_response","v":1,"request_id":"req_spoof","action":"button_click","params":{"button_id":"enter_realm"},"target_player":"offline:Victim"}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(spoofed);
+    assert!(
+        result.is_err(),
+        "Fabric C2S agent_ui_response 不得伪造仅 server→agent 可写的 target_player，实为 {result:?}"
+    );
+}
+
+#[test]
+fn forge_request_roundtrip() {
+    let json = r#"{"type":"forge_request","v":1,"meridian":"ren","axis":"Rate"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ForgeRequest { meridian, axis, .. } => {
+            assert_eq!(meridian, MeridianChannelId::new("ren"));
+            assert!(matches!(axis, ForgeAxis::Rate));
+        }
+        other => panic!("expected ForgeRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn forge_request_capacity_axis_roundtrip() {
+    let v = ClientRequestV1::ForgeRequest {
+        v: 1,
+        meridian: MeridianChannelId::new("du"),
+        axis: ForgeAxis::Capacity,
+    };
+    let s = serde_json::to_string(&v).unwrap();
+    assert!(s.contains("\"axis\":\"Capacity\""));
+    let back: ClientRequestV1 = serde_json::from_str(&s).unwrap();
+    assert!(matches!(
+        back,
+        ClientRequestV1::ForgeRequest {
+            axis: ForgeAxis::Capacity,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn insight_decision_chosen_roundtrip() {
+    let json = r#"{"type":"insight_decision","v":1,"trigger_id":"awaken_first","choice_idx":2}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::InsightDecision {
+            v,
+            trigger_id,
+            choice_idx,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(trigger_id, "awaken_first");
+            assert_eq!(choice_idx, Some(2));
+        }
+        other => panic!("expected InsightDecision, got {other:?}"),
+    }
+}
+
+#[test]
+fn insight_decision_declined_roundtrip() {
+    let json = r#"{"type":"insight_decision","v":1,"trigger_id":"awaken_first","choice_idx":null}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::InsightDecision {
+            choice_idx: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn apply_pill_self_roundtrip() {
+    let json = r#"{"type":"apply_pill","v":1,"instance_id":1001,"target":{"kind":"self"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ApplyPill {
+            v,
+            instance_id,
+            target,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 1001);
+            assert_eq!(target, ApplyPillTargetV1::SelfTarget);
+        }
+        other => panic!("expected ApplyPill, got {other:?}"),
+    }
+}
+
+#[test]
+fn apply_pill_meridian_roundtrip() {
+    let json = r#"{"type":"apply_pill","v":1,"instance_id":2002,"target":{"kind":"meridian","meridian_id":"ren"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ApplyPill {
+            instance_id,
+            target,
+            ..
+        } => {
+            assert_eq!(instance_id, 2002);
+            assert_eq!(
+                target,
+                ApplyPillTargetV1::Meridian {
+                    meridian_id: MeridianChannelId::new("ren"),
+                }
+            );
+        }
+        other => panic!("expected ApplyPill, got {other:?}"),
+    }
+}
+
+#[test]
+fn self_antidote_roundtrip() {
+    let json = r#"{"type":"self_antidote","v":1,"instance_id":3003}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SelfAntidote { v, instance_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 3003);
+        }
+        other => panic!("expected SelfAntidote, got {other:?}"),
+    }
+}
+
+#[test]
+fn use_quick_slot_roundtrip() {
+    let json = r#"{"type":"use_quick_slot","v":1,"slot":3}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::UseQuickSlot { v: 1, slot: 3 }
+    ));
+}
+
+#[test]
+fn quick_slot_bind_roundtrip_and_clear() {
+    let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill","request_id":"bind-1"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(bind_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::QuickSlotBind {
+            v: 1,
+            slot: 1,
+            item_id: Some(ref item_id),
+            ref request_id,
+        } if item_id == "kai_mai_pill" && request_id == "bind-1"
+    ));
+
+    let clear_json =
+        r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null,"request_id":"clear-1"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::QuickSlotBind {
+            v: 1,
+            slot: 1,
+            item_id: None,
+            ref request_id,
+        } if request_id == "clear-1"
+    ));
+}
+
+#[test]
+fn skill_bar_cast_roundtrip_with_optional_target() {
+    let json = r#"{"type":"skill_bar_cast","v":1,"slot":0,"target":"entity:42"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SkillBarCast { v, slot, target } => {
+            assert_eq!(v, 1);
+            assert_eq!(slot, 0);
+            assert_eq!(target.as_deref(), Some("entity:42"));
+        }
+        other => panic!("expected SkillBarCast, got {other:?}"),
+    }
+
+    let no_target = ClientRequestV1::SkillBarCast {
+        v: 1,
+        slot: 2,
+        target: None,
+    };
+    let serialized = serde_json::to_string(&no_target).unwrap();
+    assert!(
+        !serialized.contains("target"),
+        "target None should be omitted: {serialized}"
+    );
+}
+
+#[test]
+fn anqi_container_switch_roundtrip() {
+    let cycle_json = r#"{"type":"anqi_container_switch","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(cycle_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::AnqiContainerSwitch { v: 1, to: None }
+    ));
+
+    let direct_json = r#"{"type":"anqi_container_switch","v":1,"to":"quiver"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(direct_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::AnqiContainerSwitch {
+            v: 1,
+            to: Some(AnqiContainerKindV1::Quiver),
+        }
+    ));
+}
+
+#[test]
+fn skill_bar_bind_roundtrip_for_null_item_and_skill() {
+    let clear_json = r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":null}"#;
+    let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::SkillBarBind {
+            v: 1,
+            slot: 0,
+            binding: None,
+        }
+    ));
+
+    let item_json = r#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"item","template_id":"iron_sword"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(item_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::SkillBarBind {
+            v: 1,
+            slot: 1,
+            binding: Some(SkillBarBindingV1::Item { ref template_id }),
+        } if template_id == "iron_sword"
+    ));
+
+    let skill_json = r#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(skill_json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::SkillBarBind {
+            v: 1,
+            slot: 2,
+            binding: Some(SkillBarBindingV1::Skill { ref skill_id }),
+        } if skill_id == "burst_meridian.beng_quan"
+    ));
+}
+
+#[test]
+fn skill_bar_binding_rejects_unknown_kind_and_extra_fields() {
+    let wrong_kind =
+        r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"unknown","skill_id":"x"}}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(wrong_kind).is_err());
+
+    let extra_field = r#"{"type":"skill_bar_cast","v":1,"slot":0,"extra":1}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(extra_field).is_err());
+}
+
+#[test]
+fn hotbar_slot_indices_reject_out_of_range_values() {
+    for json in [
+        r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
+        r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null,"request_id":"bad-slot"}"#,
+        r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
+        r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
+    ] {
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("slot 9 should be rejected by schema");
+        assert!(error.to_string().contains("slot must be between 0 and 8"));
+    }
+}
+
+#[test]
+fn skill_config_intent_roundtrip_preserves_json_object() {
+    let json = r#"{"type":"skill_config_intent","v":1,"skill_id":"zhenmai.sever_chain","config":{"meridian_id":"Pericardium","backfire_kind":"tainted_yuan"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SkillConfigIntent {
+            v,
+            skill_id,
+            config,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(skill_id, "zhenmai.sever_chain");
+            assert_eq!(
+                config.get("meridian_id"),
+                Some(&serde_json::json!("Pericardium"))
+            );
+        }
+        other => panic!("expected SkillConfigIntent, got {other:?}"),
+    }
+
+    assert!(serde_json::from_str::<ClientRequestV1>(
+        r#"{"type":"skill_config_intent","v":1,"skill_id":"x","config":{},"extra":1}"#
+    )
+    .is_err());
+}
+
+#[test]
+fn duo_she_request_roundtrip() {
+    let json = r#"{"type":"duo_she_request","v":1,"target_id":"npc_12v0"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::DuoSheRequest { v, target_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(target_id, "npc_12v0");
+        }
+        other => panic!("expected DuoSheRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn qi_color_inspect_roundtrip() {
+    let json = r#"{"type":"qi_color_inspect","v":1,"observed":"entity_bits:42"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::QiColorInspect { v, observed } => {
+            assert_eq!(v, 1);
+            assert_eq!(observed, "entity_bits:42");
+        }
+        other => panic!("expected QiColorInspect, got {other:?}"),
+    }
+}
+
+#[test]
+fn use_life_core_roundtrip() {
+    let json = r#"{"type":"use_life_core","v":1,"instance_id":4242}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::UseLifeCore { v, instance_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 4242);
+        }
+        other => panic!("expected UseLifeCore, got {other:?}"),
+    }
+}
+
+#[test]
+fn combat_reincarnate_roundtrip() {
+    let json = r#"{"type":"combat_reincarnate","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    assert!(matches!(req, ClientRequestV1::CombatReincarnate { v: 1 }));
+}
+
+#[test]
+fn combat_terminate_roundtrip() {
+    let json = r#"{"type":"combat_terminate","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    assert!(matches!(req, ClientRequestV1::CombatTerminate { v: 1 }));
+}
+
+#[test]
+fn combat_create_new_character_roundtrip() {
+    let json = r#"{"type":"combat_create_new_character","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::CombatCreateNewCharacter { v: 1 }
+    ));
+}
+
+#[test]
+fn pickup_dropped_item_roundtrip() {
+    let json = r#"{"type":"pickup_dropped_item","v":1,"instance_id":3003}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::PickupDroppedItem { v, instance_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 3003);
+        }
+        other => panic!("expected PickupDroppedItem, got {other:?}"),
+    }
+}
+
+/// plan-remains-suite P0 — remains_loot 双端 sample 对拍（与 TS 侧
+/// client-request.remains-loot.sample.json 同一份文件）。
+#[test]
+fn remains_loot_sample_deserializes() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.remains-loot.sample.json"
+    );
+    let req: ClientRequestV1 = serde_json::from_str(json).expect("sample should deserialize");
+    match req {
+        ClientRequestV1::RemainsLoot { v, remains_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
+        }
+        other => panic!("expected RemainsLoot, got {other:?}"),
+    }
+}
+
+#[test]
+fn remains_loot_roundtrip() {
+    let json =
+        r#"{"type":"remains_loot","v":1,"remains_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::RemainsLoot { v, remains_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
+        }
+        other => panic!("expected RemainsLoot, got {other:?}"),
+    }
+}
+
+#[test]
+fn remains_loot_rejects_missing_remains_id() {
+    let json = r#"{"type":"remains_loot","v":1}"#;
+
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "remains_loot 缺 remains_id 应反序列化失败，避免空目标进入 dispatch"
+    );
+}
+
+#[test]
+fn remains_loot_rejects_missing_version() {
+    let json = r#"{"type":"remains_loot","remains_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}"#;
+
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "remains_loot 缺 v 应反序列化失败，保持 ClientRequestV1 wire 版本字段必填"
+    );
+}
+
+#[test]
+fn remains_loot_rejects_unknown_field() {
+    let json = r#"{"type":"remains_loot","v":1,"remains_id":"x","unexpected":true}"#;
+
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "remains_loot 额外字段应被 deny_unknown_fields 拒绝"
+    );
+}
+
+#[test]
+fn mineral_probe_roundtrip() {
+    let json = r#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::MineralProbe { v, x, y, z } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (8, 32, 8));
+        }
+        other => panic!("expected MineralProbe, got {other:?}"),
+    }
+}
+
+/// plan-exploration-probe-return-v1 P1 — FreshnessProbe C2S serde round-trip。
+/// instance_id 字段：0 = 最小值，u64::MAX = 最大值，普通正整数 wire 对拍。
+#[test]
+fn freshness_probe_roundtrip() {
+    let json = r#"{"type":"freshness_probe","v":1,"instance_id":4096}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::FreshnessProbe { v, instance_id } => {
+            assert_eq!(v, 1, "version byte should be 1");
+            assert_eq!(instance_id, 4096, "instance_id should round-trip as 4096");
+        }
+        other => panic!("expected FreshnessProbe, got {other:?}"),
+    }
+    // 边界：instance_id=0 合法
+    let json_zero = r#"{"type":"freshness_probe","v":1,"instance_id":0}"#;
+    let req_zero: ClientRequestV1 = serde_json::from_str(json_zero).unwrap();
+    match req_zero {
+        ClientRequestV1::FreshnessProbe { instance_id: 0, .. } => {}
+        other => panic!("expected FreshnessProbe{{instance_id=0}}, got {other:?}"),
+    }
+    // 负例：缺少 instance_id 应反序列化失败
+    let bad_json = r#"{"type":"freshness_probe","v":1}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(bad_json).is_err(),
+        "FreshnessProbe without instance_id should be rejected"
+    );
+}
+
+#[test]
+fn inventory_discard_item_roundtrip() {
+    let json = r#"{"type":"inventory_discard_item","v":1,"instance_id":1001,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::InventoryDiscardItem {
+            v,
+            instance_id,
+            from,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 1001);
+            assert_eq!(
+                from,
+                InventoryLocationV1::Container {
+                    container_id: "main_pack".to_string(),
+                    row: 0,
+                    col: 0,
+                }
+            );
+        }
+        other => panic!("expected InventoryDiscardItem, got {other:?}"),
+    }
+}
+
+#[test]
+fn drop_weapon_intent_roundtrip() {
+    let json = r#"{"type":"drop_weapon_intent","v":1,"instance_id":1001,"from":{"kind":"equip","slot":"main_hand","state":"held"}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::DropWeaponIntent {
+            v,
+            instance_id,
+            from,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 1001);
+            assert_eq!(
+                from,
+                InventoryLocationV1::Equip {
+                    slot: crate::schema::inventory::EquipSlotV1::MainHand,
+                    state: crate::schema::inventory::EquipStateV1::Held,
+                }
+            );
+        }
+        other => panic!("expected DropWeaponIntent, got {other:?}"),
+    }
+}
+
+#[test]
+fn repair_weapon_intent_roundtrip() {
+    let json = r#"{"type":"repair_weapon_intent","v":1,"instance_id":4242,"station_pos":[1,64,2]}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::RepairWeaponIntent {
+            v,
+            instance_id,
+            station_pos,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(instance_id, 4242);
+            assert_eq!(station_pos, [1, 64, 2]);
+        }
+        other => panic!("expected RepairWeaponIntent, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_unknown_type() {
+    let json = r#"{"type":"nuke_world","v":1}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(json).is_err());
+}
+
+#[test]
+fn botany_harvest_request_roundtrip() {
+    let json = r#"{"type":"botany_harvest_request","v":1,"session_id":"session-botany-01","mode":"manual"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::BotanyHarvestRequest {
+            v,
+            session_id,
+            mode,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(session_id, "session-botany-01");
+            assert!(matches!(
+                mode,
+                crate::schema::botany::BotanyHarvestModeV1::Manual
+            ));
+        }
+        other => panic!("expected BotanyHarvestRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_open_furnace_roundtrip() {
+    let json = r#"{"type":"alchemy_open_furnace","v":1,"furnace_pos":[-12,64,38]}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyOpenFurnace { v, furnace_pos } => {
+            assert_eq!(v, 1);
+            assert_eq!(furnace_pos, (-12, 64, 38));
+        }
+        other => panic!("expected AlchemyOpenFurnace, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_feed_slot_roundtrip() {
+    let json = r#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[-12,64,38],"slot_idx":0,"material":"ci_she_hao","count":3}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyFeedSlot {
+            furnace_pos,
+            slot_idx,
+            material,
+            count,
+            ..
+        } => {
+            assert_eq!(furnace_pos, (-12, 64, 38));
+            assert_eq!(slot_idx, 0);
+            assert_eq!(material, "ci_she_hao");
+            assert_eq!(count, 3);
+        }
+        other => panic!("expected AlchemyFeedSlot, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_take_back_roundtrip() {
+    let json = r#"{"type":"alchemy_take_back","v":1,"furnace_pos":[-12,64,38],"slot_idx":2}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyTakeBack {
+            furnace_pos,
+            slot_idx,
+            ..
+        } => {
+            assert_eq!(furnace_pos, (-12, 64, 38));
+            assert_eq!(slot_idx, 2);
+        }
+        other => panic!("expected AlchemyTakeBack, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_intervention_inject_qi_roundtrip() {
+    let json = r#"{"type":"alchemy_intervention","v":1,"furnace_pos":[-12,64,38],"intervention":{"kind":"inject_qi","qi":1.0}}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyIntervention {
+            furnace_pos,
+            intervention,
+            ..
+        } => {
+            assert_eq!(furnace_pos, (-12, 64, 38));
+            match intervention {
+                super::AlchemyInterventionV1::InjectQi { qi } => {
+                    assert!((qi - 1.0).abs() < 1e-9)
+                }
+                other => panic!("expected InjectQi, got {other:?}"),
+            }
+        }
+        other => panic!("expected AlchemyIntervention, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_turn_page_roundtrip() {
+    let json = r#"{"type":"alchemy_turn_page","v":1,"delta":-1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyTurnPage { delta, .. } => assert_eq!(delta, -1),
+        other => panic!("expected AlchemyTurnPage, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_furnace_place_roundtrip() {
+    let json =
+        r#"{"type":"alchemy_furnace_place","v":1,"x":-12,"y":64,"z":38,"item_instance_id":4242}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyFurnacePlace {
+            v,
+            x,
+            y,
+            z,
+            item_instance_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (-12, 64, 38));
+            assert_eq!(item_instance_id, 4242);
+        }
+        other => panic!("expected AlchemyFurnacePlace, got {other:?}"),
+    }
+}
+
+#[test]
+fn spirit_niche_place_roundtrip() {
+    let json =
+        r#"{"type":"spirit_niche_place","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SpiritNichePlace {
+            v,
+            x,
+            y,
+            z,
+            item_instance_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (11, 64, 10));
+            assert_eq!(item_instance_id, 4242);
+        }
+        other => panic!("expected SpiritNichePlace, got {other:?}"),
+    }
+}
+
+#[test]
+fn spirit_niche_repair_roundtrip_and_rejects_extra_fields() {
+    let json =
+        r#"{"type":"spirit_niche_repair","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SpiritNicheRepair {
+            v,
+            x,
+            y,
+            z,
+            item_instance_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (11, 64, 10));
+            assert_eq!(item_instance_id, 4242);
+        }
+        other => panic!("expected SpiritNicheRepair, got {other:?}"),
+    }
+
+    let extra = r#"{"type":"spirit_niche_repair","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242,"extra":true}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(extra).is_err(),
+        "spirit_niche_repair must reject extra fields"
+    );
+}
+
+#[test]
+fn spirit_niche_gaze_roundtrip() {
+    let json = r#"{"type":"spirit_niche_gaze","v":1,"x":11,"y":64,"z":10}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SpiritNicheGaze { v, x, y, z } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (11, 64, 10));
+        }
+        other => panic!("expected SpiritNicheGaze, got {other:?}"),
+    }
+}
+
+#[test]
+fn spirit_niche_mark_coordinate_roundtrip() {
+    let json = r#"{"type":"spirit_niche_mark_coordinate","v":1,"x":11,"y":64,"z":10}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SpiritNicheMarkCoordinate { v, x, y, z } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (11, 64, 10));
+        }
+        other => panic!("expected SpiritNicheMarkCoordinate, got {other:?}"),
+    }
+}
+
+#[test]
+fn sparring_invite_response_roundtrip() {
+    let json = r#"{"type":"sparring_invite_response","v":1,"invite_id":"sparring:1:a:b","accepted":true,"timed_out":false}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SparringInviteResponse {
+            v,
+            invite_id,
+            accepted,
+            timed_out,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(invite_id, "sparring:1:a:b");
+            assert!(accepted);
+            assert!(!timed_out);
+        }
+        other => panic!("expected SparringInviteResponse, got {other:?}"),
+    }
+}
+
+#[test]
+fn trade_offer_requests_roundtrip() {
+    let request =
+        r#"{"type":"trade_offer_request","v":1,"target":"entity:42","offered_instance_id":1001}"#;
+    let req: ClientRequestV1 = serde_json::from_str(request).unwrap();
+    match req {
+        ClientRequestV1::TradeOfferRequest {
+            v,
+            target,
+            offered_instance_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(target, "entity:42");
+            assert_eq!(offered_instance_id, 1001);
+        }
+        other => panic!("expected TradeOfferRequest, got {other:?}"),
+    }
+
+    let response = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70","accepted":true,"requested_instance_id":2002}"#;
+    let req: ClientRequestV1 = serde_json::from_str(response).unwrap();
+    match req {
+        ClientRequestV1::TradeOfferResponse {
+            v,
+            offer_id,
+            accepted,
+            requested_instance_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(offer_id, "trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70");
+            assert!(accepted);
+            assert_eq!(requested_instance_id, Some(2002));
+        }
+        other => panic!("expected TradeOfferResponse, got {other:?}"),
+    }
+
+    let decline = r#"{"type":"trade_offer_response","v":1,"offer_id":"trade:018f5a2a-7c30-7cc5-a14a-0b3c4d5e6f70","accepted":false}"#;
+    let req: ClientRequestV1 = serde_json::from_str(decline).unwrap();
+    match req {
+        ClientRequestV1::TradeOfferResponse {
+            requested_instance_id,
+            ..
+        } => assert_eq!(requested_instance_id, None),
+        other => panic!("expected TradeOfferResponse, got {other:?}"),
+    }
+}
+
+#[test]
+fn npc_engagement_requests_roundtrip() {
+    let inspect = r#"{"type":"npc_inspect_request","v":1,"npc_entity_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(inspect).unwrap();
+    match req {
+        ClientRequestV1::NpcInspectRequest { v, npc_entity_id } => {
+            assert_eq!(v, 1);
+            assert_eq!(npc_entity_id, 42);
+        }
+        other => panic!("expected NpcInspectRequest, got {other:?}"),
+    }
+
+    let choice = r#"{"type":"npc_dialogue_choice","v":1,"npc_entity_id":42,"option_id":"trade"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(choice).unwrap();
+    match req {
+        ClientRequestV1::NpcDialogueChoice {
+            v,
+            npc_entity_id,
+            option_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(npc_entity_id, 42);
+            assert_eq!(option_id, "trade");
+        }
+        other => panic!("expected NpcDialogueChoice, got {other:?}"),
+    }
+
+    let trade = r#"{"type":"npc_trade_request","v":1,"npc_entity_id":42,"offered_items":[1001,1002],"requested_item_id":"spirit_grass"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(trade).unwrap();
+    match req {
+        ClientRequestV1::NpcTradeRequest {
+            v,
+            npc_entity_id,
+            offered_items,
+            requested_item_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(npc_entity_id, 42);
+            assert_eq!(offered_items, vec![1001, 1002]);
+            assert_eq!(requested_item_id, "spirit_grass");
+        }
+        other => panic!("expected NpcTradeRequest, got {other:?}"),
+    }
+
+    let trade_without_offers = r#"{"type":"npc_trade_request","v":1,"npc_entity_id":42,"requested_item_id":"spirit_grass"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(trade_without_offers).unwrap();
+    match req {
+        ClientRequestV1::NpcTradeRequest {
+            v,
+            npc_entity_id,
+            offered_items,
+            requested_item_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(npc_entity_id, 42);
+            assert!(offered_items.is_empty());
+            assert_eq!(requested_item_id, "spirit_grass");
+        }
+        other => panic!("expected NpcTradeRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn block_place_roundtrip() {
+    let json = r#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|error| panic!("block_place should parse: {error}"));
+    match req {
+        ClientRequestV1::BlockPlace {
+            v,
+            x,
+            y,
+            z,
+            item_instance_id,
+            target_face,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (8, 64, 8));
+            assert_eq!(item_instance_id, 4242);
+            assert_eq!(target_face, TrapTargetFace::North);
+        }
+        other => panic!("expected BlockPlace, got {other:?}"),
+    }
+
+    let encoded = serde_json::to_string(&req).expect("block_place serializes");
+    let encoded_value: serde_json::Value =
+        serde_json::from_str(&encoded).expect("encoded block_place JSON is valid");
+    let expected_value: serde_json::Value =
+        serde_json::from_str(json).expect("expected block_place JSON is valid");
+    assert_eq!(
+        encoded_value, expected_value,
+        "block_place must preserve wire fields across serde roundtrip"
+    );
+}
+
+#[test]
+fn block_place_rejects_unknown_fields() {
+    let json = r#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north","extra":true}"#;
+    let error = serde_json::from_str::<ClientRequestV1>(json)
+        .expect_err("block_place must reject unknown fields");
+    assert!(
+        error.to_string().contains("unknown field"),
+        "expected unknown-field error for block_place, got {error}"
+    );
+}
+
+#[test]
+fn zhenfa_requests_roundtrip() {
+    let place = r#"{"type":"zhenfa_place","v":1,"x":1,"y":64,"z":-2,"kind":"blast_trap","carrier":"night_withered_vine","qi_invest_ratio":0.3,"trigger":"proximity","item_instance_id":9001,"target_face":"north"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(place).unwrap();
+    match req {
+        ClientRequestV1::ZhenfaPlace {
+            v,
+            x,
+            y,
+            z,
+            kind,
+            carrier,
+            qi_invest_ratio,
+            trigger,
+            item_instance_id,
+            target_face,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (1, 64, -2));
+            assert_eq!(kind, ZhenfaKind::BlastTrap);
+            assert_eq!(carrier, Some(ZhenfaCarrierKind::NightWitheredVine));
+            assert_eq!(qi_invest_ratio, 0.3);
+            assert_eq!(trigger.as_deref(), Some("proximity"));
+            assert_eq!(item_instance_id, Some(9001));
+            assert_eq!(target_face, Some(TrapTargetFace::North));
+        }
+        other => panic!("expected ZhenfaPlace, got {other:?}"),
+    }
+
+    for (kind_wire, expected_kind, item_instance_id) in [
+        ("beast_trap", ZhenfaKind::BeastTrap, 9002),
+        ("trip_wire", ZhenfaKind::TripWire, 9003),
+        ("decoy_stake", ZhenfaKind::DecoyStake, 9004),
+    ] {
+        let json = format!(
+            r#"{{"type":"zhenfa_place","v":1,"x":1,"y":64,"z":-2,"kind":"{kind_wire}","carrier":"common_stone","qi_invest_ratio":0.0,"item_instance_id":{item_instance_id},"target_face":"top"}}"#
+        );
+        let req: ClientRequestV1 = serde_json::from_str(&json).unwrap();
+        match req {
+            ClientRequestV1::ZhenfaPlace {
+                kind,
+                trigger,
+                item_instance_id: actual_item_instance_id,
+                target_face,
+                ..
+            } => {
+                assert_eq!(kind, expected_kind);
+                assert!(
+                    trigger.is_none(),
+                    "runtime trap kind {kind_wire} omits trigger, so server contract must deserialize trigger=None"
+                );
+                assert_eq!(actual_item_instance_id, Some(item_instance_id));
+                assert_eq!(target_face, Some(TrapTargetFace::Top));
+            }
+            other => panic!("expected ZhenfaPlace for {kind_wire}, got {other:?}"),
+        }
+    }
+
+    let trigger = r#"{"type":"zhenfa_trigger","v":1,"instance_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(trigger).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::ZhenfaTrigger {
+            v: 1,
+            instance_id: Some(42)
+        }
+    ));
+
+    let nearest = r#"{"type":"zhenfa_trigger","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(nearest).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::ZhenfaTrigger {
+            v: 1,
+            instance_id: None
+        }
+    ));
+
+    let disarm = r#"{"type":"zhenfa_disarm","v":1,"x":1,"y":64,"z":-2,"mode":"force_break"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(disarm).unwrap();
+    match req {
+        ClientRequestV1::ZhenfaDisarm { mode, .. } => {
+            assert_eq!(mode, ZhenfaDisarmMode::ForceBreak);
+        }
+        other => panic!("expected ZhenfaDisarm, got {other:?}"),
+    }
+
+    let scatter = r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7001}"#;
+    let req: ClientRequestV1 = serde_json::from_str(scatter).unwrap();
+    match req {
+        ClientRequestV1::QiScatterBeadUse {
+            v,
+            item_instance_id,
+            x,
+            y,
+            z,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(item_instance_id, 7001);
+            assert_eq!((x, y, z), (None, None, None));
+        }
+        other => panic!("expected QiScatterBeadUse, got {other:?}"),
+    }
+
+    let scatter_bury =
+        r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7002,"x":1,"y":64,"z":-2}"#;
+    let req: ClientRequestV1 = serde_json::from_str(scatter_bury).unwrap();
+    match req {
+        ClientRequestV1::QiScatterBeadUse {
+            v,
+            item_instance_id,
+            x,
+            y,
+            z,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(item_instance_id, 7002);
+            assert_eq!((x, y, z), (Some(1), Some(64), Some(-2)));
+        }
+        other => panic!("expected buried QiScatterBeadUse, got {other:?}"),
+    }
+
+    let unknown = r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7001,"extra":true}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(unknown).is_err(),
+        "qi_scatter_bead_use must reject unknown fields"
+    );
+    let negative = r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":-1}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(negative).is_err(),
+        "qi_scatter_bead_use item_instance_id is u64 and must reject negative JSON"
+    );
+}
+
+#[test]
+fn forge_start_session_roundtrip() {
+    let json = r#"{"type":"forge_start_session","v":1,"station_pos":[-12,64,38],"blueprint_id":"qing_feng_v0","materials":[["fan_tie",4],["za_gang",1]]}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ForgeStartSession {
+            v,
+            station_pos,
+            blueprint_id,
+            materials,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(station_pos, (-12, 64, 38));
+            assert_eq!(blueprint_id, "qing_feng_v0");
+            assert_eq!(
+                materials,
+                vec![("fan_tie".to_string(), 4), ("za_gang".to_string(), 1)]
+            );
+        }
+        other => panic!("expected ForgeStartSession, got {other:?}"),
+    }
+}
+
+#[test]
+fn forge_start_session_accepts_empty_materials() {
+    let json = r#"{"type":"forge_start_session","v":1,"station_pos":[0,64,0],"blueprint_id":"iron_sword_v0","materials":[]}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ForgeStartSession { materials, .. } => {
+            assert!(materials.is_empty());
+        }
+        other => panic!("expected ForgeStartSession, got {other:?}"),
+    }
+}
+
+#[test]
+fn forge_start_session_rejects_unknown_fields() {
+    let json = r#"{"type":"forge_start_session","v":1,"station_id":"forge:1","blueprint_id":"iron_sword_v0","materials":[]}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "旧 station_id 字段已废弃，deny_unknown_fields 应拒绝"
+    );
+}
+
+#[test]
+fn forge_start_session_rejects_negative_material_count() {
+    let json = r#"{"type":"forge_start_session","v":1,"station_pos":[0,64,0],"blueprint_id":"iron_sword_v0","materials":[["fan_tie",-1]]}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "materials count 是 u32，负数 JSON 应被拒绝"
+    );
+}
+
+#[test]
+fn forge_blueprint_turn_page_roundtrip_positive_and_negative_delta() {
+    let forward = r#"{"type":"forge_blueprint_turn_page","v":1,"delta":1}"#;
+    match serde_json::from_str::<ClientRequestV1>(forward).unwrap() {
+        ClientRequestV1::ForgeBlueprintTurnPage { v, delta } => {
+            assert_eq!(v, 1);
+            assert_eq!(delta, 1);
+        }
+        other => panic!("expected ForgeBlueprintTurnPage, got {other:?}"),
+    }
+
+    let backward = r#"{"type":"forge_blueprint_turn_page","v":1,"delta":-1}"#;
+    match serde_json::from_str::<ClientRequestV1>(backward).unwrap() {
+        ClientRequestV1::ForgeBlueprintTurnPage { delta, .. } => {
+            assert_eq!(delta, -1, "负 delta（上一页）应正确解析为负数");
+        }
+        other => panic!("expected ForgeBlueprintTurnPage, got {other:?}"),
+    }
+}
+
+#[test]
+fn forge_blueprint_turn_page_rejects_unknown_fields() {
+    let json = r#"{"type":"forge_blueprint_turn_page","v":1,"delta":1,"bogus":true}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(json).is_err());
+}
+
+#[test]
+fn forge_station_place_roundtrip() {
+    let json = r#"{"type":"forge_station_place","v":1,"x":-12,"y":64,"z":38,"item_instance_id":4242,"station_tier":2}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ForgeStationPlace {
+            v,
+            x,
+            y,
+            z,
+            item_instance_id,
+            station_tier,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!((x, y, z), (-12, 64, 38));
+            assert_eq!(item_instance_id, 4242);
+            assert_eq!(station_tier, 2);
+        }
+        other => panic!("expected ForgeStationPlace, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_ignite_roundtrip() {
+    let json = r#"{"type":"alchemy_ignite","v":1,"furnace_pos":[-12,64,38],"recipe_id":"kai_mai_pill_v0"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::AlchemyIgnite {
+            furnace_pos,
+            recipe_id,
+            ..
+        } => {
+            assert_eq!(furnace_pos, (-12, 64, 38));
+            assert_eq!(recipe_id, "kai_mai_pill_v0");
+        }
+        other => panic!("expected AlchemyIgnite, got {other:?}"),
+    }
+}
+
+#[test]
+fn alchemy_furnace_payloads_reject_unknown_fields() {
+    let old_open = r#"{"type":"alchemy_open_furnace","v":1,"furnace_id":"block_-12_64_38","furnace_pos":[-12,64,38]}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(old_open).is_err());
+
+    let typo_feed = r#"{"type":"alchemy_feed_slot","v":1,"furnace_position":[-12,64,38],"slot_idx":0,"material":"ci_she_hao","count":3}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(typo_feed).is_err());
+}
+
+#[test]
+fn craft_start_accepts_quantity_and_defaults_to_one() {
+    let with_quantity =
+        r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":3}"#;
+    let req: ClientRequestV1 = serde_json::from_str(with_quantity).unwrap();
+    match req {
+        ClientRequestV1::CraftStart {
+            v,
+            recipe_id,
+            quantity,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(recipe_id, "craft.example.herb_knife.iron");
+            assert_eq!(quantity, 3);
+        }
+        other => panic!("expected CraftStart, got {other:?}"),
+    }
+
+    let legacy = r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron"}"#;
+    let req: ClientRequestV1 = serde_json::from_str(legacy).unwrap();
+    match req {
+        ClientRequestV1::CraftStart { quantity, .. } => assert_eq!(quantity, 1),
+        other => panic!("expected CraftStart, got {other:?}"),
+    }
+
+    let zero =
+        r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":0}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(zero).is_err());
+
+    let too_large =
+        r#"{"type":"craft_start","v":1,"recipe_id":"craft.example.herb_knife.iron","quantity":65}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(too_large).is_err());
+}
+
+#[test]
+fn extract_requests_roundtrip() {
+    let start = r#"{"type":"start_extract_request","v":1,"portal_entity_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(start).unwrap();
+    match req {
+        ClientRequestV1::StartExtractRequest {
+            v,
+            portal_entity_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(portal_entity_id, 42);
+        }
+        other => panic!("expected StartExtractRequest, got {other:?}"),
+    }
+
+    let cancel = r#"{"type":"cancel_extract_request","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(cancel).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::CancelExtractRequest { v: 1 }
+    ));
+}
+
+#[test]
+fn search_requests_roundtrip() {
+    let start = r#"{"type":"start_search","v":1,"container_entity_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(start).unwrap();
+    match req {
+        ClientRequestV1::StartSearch {
+            v,
+            container_entity_id,
+        } => {
+            assert_eq!(v, 1);
+            assert_eq!(container_entity_id, 42);
+        }
+        other => panic!("expected StartSearch, got {other:?}"),
+    }
+
+    let cancel = r#"{"type":"cancel_search","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(cancel).unwrap();
+    assert!(matches!(req, ClientRequestV1::CancelSearch { v: 1 }));
+}
+
+#[test]
+fn search_requests_reject_missing_type_and_negative_id() {
+    let missing_type = r#"{"v":1,"container_entity_id":42}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(missing_type).is_err());
+
+    let negative_id = r#"{"type":"start_search","v":1,"container_entity_id":-1}"#;
+    assert!(serde_json::from_str::<ClientRequestV1>(negative_id).is_err());
+}
+
+#[test]
+fn heart_demon_decision_roundtrip() {
+    let json = r#"{"type":"heart_demon_decision","v":1,"choice_idx":2}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::HeartDemonDecision { v, choice_idx } => {
+            assert_eq!(v, 1);
+            assert_eq!(choice_idx, Some(2));
+        }
+        other => panic!("expected HeartDemonDecision, got {other:?}"),
+    }
+
+    let timeout = r#"{"type":"heart_demon_decision","v":1,"choice_idx":null}"#;
+    let req: ClientRequestV1 = serde_json::from_str(timeout).unwrap();
+    assert!(matches!(
+        req,
+        ClientRequestV1::HeartDemonDecision {
+            v: 1,
+            choice_idx: None
+        }
+    ));
+}
+
+// ─── plan-supply-coffin-loot-ui P1：外部容器 C2S tests ──────────
+
+// ─── plan-supply-coffin-loot-ui P2：supply_coffin_open C2S tests ──
+
+#[test]
+fn supply_coffin_open_roundtrip() {
+    let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::SupplyCoffinOpen { v, entity_id } => {
+            assert_eq!(v, 1, "version should be 1");
+            assert_eq!(entity_id, 42, "entity_id should be 42");
+        }
+        other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn supply_coffin_open_negative_entity_id() {
+    let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":-1}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("negative entity_id is valid i32 at schema level");
+    match req {
+        ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+            assert_eq!(
+                entity_id, -1,
+                "negative entity_id should pass schema (rejected at runtime)"
+            );
+        }
+        other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn supply_coffin_open_rejects_missing_entity_id() {
+    let json = r#"{"type":"supply_coffin_open","v":1}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing entity_id should fail"
+    );
+}
+
+#[test]
+fn supply_coffin_open_rejects_extra_fields() {
+    let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":42,"extra":true}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "extra field should fail due to deny_unknown_fields"
+    );
+}
+
+#[test]
+fn supply_coffin_open_with_zero_entity_id() {
+    let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":0}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("zero entity_id should be valid at schema level");
+    match req {
+        ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+            assert_eq!(entity_id, 0, "entity_id should be 0");
+        }
+        other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn supply_coffin_open_with_max_entity_id() {
+    let json = format!(
+        r#"{{"type":"supply_coffin_open","v":1,"entity_id":{}}}"#,
+        i32::MAX
+    );
+    let req: ClientRequestV1 =
+        serde_json::from_str(&json).expect("i32::MAX entity_id should be valid");
+    match req {
+        ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+            assert_eq!(entity_id, i32::MAX, "entity_id should be i32::MAX");
+        }
+        other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn supply_coffin_open_with_min_entity_id() {
+    let json = format!(
+        r#"{{"type":"supply_coffin_open","v":1,"entity_id":{}}}"#,
+        i32::MIN
+    );
+    let req: ClientRequestV1 =
+        serde_json::from_str(&json).expect("i32::MIN entity_id should be valid at schema level");
+    match req {
+        ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+            assert_eq!(entity_id, i32::MIN, "entity_id should be i32::MIN");
+        }
+        other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_open_roundtrip() {
+    let json = r#"{"type":"container_open","v":1,"entity_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::ContainerOpen { v, entity_id } => {
+            assert_eq!(v, 1, "version should be 1");
+            assert_eq!(entity_id, 42, "entity_id should be 42");
+        }
+        other => panic!("expected ContainerOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_open_negative_entity_id() {
+    let json = r#"{"type":"container_open","v":1,"entity_id":-1}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("negative entity_id is valid i32 at schema level");
+    match req {
+        ClientRequestV1::ContainerOpen { entity_id, .. } => {
+            assert_eq!(
+                entity_id, -1,
+                "negative entity_id should pass schema (rejected at runtime)"
+            );
+        }
+        other => panic!("expected ContainerOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_open_with_zero_entity_id() {
+    let json = r#"{"type":"container_open","v":1,"entity_id":0}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("zero entity_id should be valid at schema level");
+    match req {
+        ClientRequestV1::ContainerOpen { entity_id, .. } => {
+            assert_eq!(entity_id, 0, "entity_id should be 0");
+        }
+        other => panic!("expected ContainerOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_open_with_max_entity_id() {
+    let json = format!(
+        r#"{{"type":"container_open","v":1,"entity_id":{}}}"#,
+        i32::MAX
+    );
+    let req: ClientRequestV1 =
+        serde_json::from_str(&json).expect("i32::MAX entity_id should be valid");
+    match req {
+        ClientRequestV1::ContainerOpen { entity_id, .. } => {
+            assert_eq!(entity_id, i32::MAX, "entity_id should be i32::MAX");
+        }
+        other => panic!("expected ContainerOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_open_with_min_entity_id() {
+    let json = format!(
+        r#"{{"type":"container_open","v":1,"entity_id":{}}}"#,
+        i32::MIN
+    );
+    let req: ClientRequestV1 =
+        serde_json::from_str(&json).expect("i32::MIN entity_id should be valid at schema level");
+    match req {
+        ClientRequestV1::ContainerOpen { entity_id, .. } => {
+            assert_eq!(entity_id, i32::MIN, "entity_id should be i32::MIN");
+        }
+        other => panic!("expected ContainerOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_open_rejects_missing_entity_id() {
+    let json = r#"{"type":"container_open","v":1}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing entity_id should fail"
+    );
+}
+
+#[test]
+fn container_open_rejects_extra_fields() {
+    let json = r#"{"type":"container_open","v":1,"entity_id":42,"extra":true}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "extra field should fail due to deny_unknown_fields"
+    );
+}
+
+#[test]
+fn workbench_open_roundtrip() {
+    let json = r#"{"type":"workbench_open","v":1,"entity_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+    match req {
+        ClientRequestV1::WorkbenchOpen { v, entity_id } => {
+            assert_eq!(v, 1, "version should be 1");
+            assert_eq!(entity_id, 42, "entity_id should be 42");
+        }
+        other => panic!("expected WorkbenchOpen, got {other:?}"),
+    }
+}
+
+#[test]
+fn workbench_open_rejects_missing_entity_id() {
+    let json = r#"{"type":"workbench_open","v":1}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing entity_id should fail"
+    );
+}
+
+#[test]
+fn workbench_open_rejects_extra_fields() {
+    let json = r#"{"type":"workbench_open","v":1,"entity_id":42,"extra":true}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "extra field should fail due to deny_unknown_fields"
+    );
+}
+
+#[test]
+fn external_container_move_roundtrip() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 42,
+        "instance_id": 100,
+        "from": {"kind": "container", "container_id": "ext_42", "row": 0, "col": 1},
+        "to": {"kind": "container", "container_id": "body_pocket", "row": 1, "col": 0}
+    }"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("external_container_move should deserialize");
+    match req {
+        ClientRequestV1::ExternalContainerMove {
+            v,
+            session_id,
+            instance_id,
+            from,
+            to,
+        } => {
+            assert_eq!(v, 1, "version should be 1");
+            assert_eq!(session_id, 42, "session_id should be 42");
+            assert_eq!(instance_id, 100, "instance_id should be 100");
+            match from {
+                InventoryLocationV1::Container {
+                    container_id,
+                    row,
+                    col,
+                } => {
+                    assert_eq!(container_id, "ext_42", "from container_id");
+                    assert_eq!(row, 0, "from row");
+                    assert_eq!(col, 1, "from col");
+                }
+                other => panic!("expected Container, got {other:?}"),
+            }
+            match to {
+                InventoryLocationV1::Container {
+                    container_id,
+                    row,
+                    col,
+                } => {
+                    assert_eq!(container_id, "body_pocket", "to container_id");
+                    assert_eq!(row, 1, "to row");
+                    assert_eq!(col, 0, "to col");
+                }
+                other => panic!("expected Container, got {other:?}"),
+            }
+        }
+        other => panic!("expected ExternalContainerMove, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_close_roundtrip() {
+    let json = r#"{"type": "external_container_close", "v": 1, "session_id": 99}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("external_container_close should deserialize");
+    match req {
+        ClientRequestV1::ExternalContainerClose { v, session_id } => {
+            assert_eq!(v, 1, "version should be 1");
+            assert_eq!(session_id, 99, "session_id should be 99");
+        }
+        other => panic!("expected ExternalContainerClose, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_move_rejects_missing_session_id() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "instance_id": 100,
+        "from": {"kind": "container", "container_id": "ext_1", "row": 0, "col": 0},
+        "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+    }"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing session_id should fail"
+    );
+}
+
+#[test]
+fn external_container_move_with_equip_slot() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 5,
+        "instance_id": 200,
+        "from": {"kind": "container", "container_id": "ext_5", "row": 2, "col": 3},
+        "to": {"kind": "equip", "slot": "main_hand", "state": "held"}
+    }"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("move to equip slot should deserialize");
+    match req {
+        ClientRequestV1::ExternalContainerMove { to, .. } => {
+            assert!(
+                matches!(to, InventoryLocationV1::Equip { .. }),
+                "to should be Equip, got {to:?}"
+            );
+        }
+        other => panic!("expected ExternalContainerMove, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_close_rejects_missing_session_id() {
+    let json = r#"{"type": "external_container_close", "v": 1}"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing session_id should fail"
+    );
+}
+
+#[test]
+fn external_container_move_rejects_missing_from() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 1,
+        "instance_id": 100,
+        "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+    }"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing from should fail"
+    );
+}
+
+#[test]
+fn external_container_move_rejects_missing_to() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 1,
+        "instance_id": 100,
+        "from": {"kind": "container", "container_id": "ext_1", "row": 0, "col": 0}
+    }"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "missing to should fail"
+    );
+}
+
+#[test]
+fn external_container_move_with_zero_session_id() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 0,
+        "instance_id": 0,
+        "from": {"kind": "container", "container_id": "ext_0", "row": 0, "col": 0},
+        "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+    }"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .expect("zero session_id/instance_id should be valid at the schema level");
+    match req {
+        ClientRequestV1::ExternalContainerMove {
+            session_id,
+            instance_id,
+            ..
+        } => {
+            assert_eq!(session_id, 0, "session_id should be 0");
+            assert_eq!(instance_id, 0, "instance_id should be 0");
+        }
+        other => panic!("expected ExternalContainerMove, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_move_with_max_ids() {
+    let json = format!(
+        r#"{{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": {max},
+            "instance_id": {max},
+            "from": {{"kind": "container", "container_id": "ext_1", "row": 0, "col": 0}},
+            "to": {{"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}}
+        }}"#,
+        max = u64::MAX
+    );
+    let req: ClientRequestV1 = serde_json::from_str(&json)
+        .expect("u64::MAX session_id/instance_id should be valid at schema level");
+    match req {
+        ClientRequestV1::ExternalContainerMove {
+            session_id,
+            instance_id,
+            ..
+        } => {
+            assert_eq!(session_id, u64::MAX, "session_id should be u64::MAX");
+            assert_eq!(instance_id, u64::MAX, "instance_id should be u64::MAX");
+        }
+        other => panic!("expected ExternalContainerMove, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_close_with_max_session_id() {
+    let json = format!(
+        r#"{{"type": "external_container_close", "v": 1, "session_id": {max}}}"#,
+        max = u64::MAX
+    );
+    let req: ClientRequestV1 =
+        serde_json::from_str(&json).expect("u64::MAX session_id should be valid at schema level");
+    match req {
+        ClientRequestV1::ExternalContainerClose { session_id, .. } => {
+            assert_eq!(session_id, u64::MAX, "session_id should be u64::MAX");
+        }
+        other => panic!("expected ExternalContainerClose, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_move_rejects_invalid_location_kind() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 1,
+        "instance_id": 1,
+        "from": {"kind": "wormhole", "container_id": "ext_1", "row": 0, "col": 0},
+        "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+    }"#;
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "invalid location kind 'wormhole' should fail deserialization"
+    );
+}
+
+#[test]
+fn external_container_move_equip_to_container() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 10,
+        "instance_id": 50,
+        "from": {"kind": "equip", "slot": "main_hand", "state": "held"},
+        "to": {"kind": "container", "container_id": "ext_10", "row": 1, "col": 2}
+    }"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).expect("equip→container should deserialize");
+    match req {
+        ClientRequestV1::ExternalContainerMove { from, to, .. } => {
+            assert!(
+                matches!(from, InventoryLocationV1::Equip { .. }),
+                "from should be Equip, got {from:?}"
+            );
+            match to {
+                InventoryLocationV1::Container {
+                    container_id,
+                    row,
+                    col,
+                } => {
+                    assert_eq!(container_id, "ext_10", "to container_id");
+                    assert_eq!(row, 1, "to row");
+                    assert_eq!(col, 2, "to col");
+                }
+                other => panic!("expected Container, got {other:?}"),
+            }
+        }
+        other => panic!("expected ExternalContainerMove, got {other:?}"),
+    }
+}
+
+// ── plan-dying-elder-v1 P1：GiveDanToElder C2S schema tests ─────────────
+
+#[test]
+fn give_dan_to_elder_roundtrip() {
+    // 期望：GiveDanToElder 序列化/反序列化往返，字段完全保留
+    let json = r#"{"type":"give_dan_to_elder","v":1,"pill_instance_id":4242,"elder_entity_id":99}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("give_dan_to_elder should deserialize: {e}"));
+    match req {
+        ClientRequestV1::GiveDanToElder {
+            v,
+            pill_instance_id,
+            elder_entity_id,
+        } => {
+            assert_eq!(v, 1, "version byte should be 1");
+            assert_eq!(pill_instance_id, 4242, "pill_instance_id should be 4242");
+            assert_eq!(elder_entity_id, 99, "elder_entity_id should be 99");
+        }
+        other => panic!("expected GiveDanToElder, got {other:?}"),
+    }
+}
+
+#[test]
+fn give_dan_to_elder_rejects_missing_pill_instance_id() {
+    // 期望：缺少 pill_instance_id 应反序列化失败
+    let json = r#"{"type":"give_dan_to_elder","v":1,"elder_entity_id":99}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "GiveDanToElder 缺少 pill_instance_id 应拒绝反序列化，\
+         但实际成功：{result:?}"
+    );
+}
+
+#[test]
+fn give_dan_to_elder_rejects_missing_elder_entity_id() {
+    // 期望：缺少 elder_entity_id 应反序列化失败
+    let json = r#"{"type":"give_dan_to_elder","v":1,"pill_instance_id":1001}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "GiveDanToElder 缺少 elder_entity_id 应拒绝反序列化，\
+         但实际成功：{result:?}"
+    );
+}
+
+#[test]
+fn give_dan_to_elder_accepts_negative_elder_entity_id() {
+    // 期望：elder_entity_id 为 i32，可以是负值（MC protocol entity_id 可负）
+    let json = r#"{"type":"give_dan_to_elder","v":1,"pill_instance_id":1,"elder_entity_id":-1}"#;
+    let req: ClientRequestV1 =
+        serde_json::from_str(json).unwrap_or_else(|e| panic!("负 elder_entity_id 应合法：{e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::GiveDanToElder {
+                elder_entity_id: -1,
+                ..
+            }
+        ),
+        "elder_entity_id=-1 应被接受（MC protocol i32 范围），实际：{req:?}"
+    );
+}
+
+#[test]
+fn give_dan_to_elder_max_pill_instance_id() {
+    // 期望：pill_instance_id = u64::MAX 是合法边界值
+    let max_id = u64::MAX;
+    let json = format!(
+        r#"{{"type":"give_dan_to_elder","v":1,"pill_instance_id":{max_id},"elder_entity_id":1}}"#
+    );
+    let req: ClientRequestV1 = serde_json::from_str(&json)
+        .unwrap_or_else(|e| panic!("pill_instance_id=u64::MAX 应合法：{e}"));
+    match req {
+        ClientRequestV1::GiveDanToElder {
+            pill_instance_id, ..
+        } => {
+            assert_eq!(pill_instance_id, max_id, "u64::MAX 应原样往返");
+        }
+        other => panic!("expected GiveDanToElder, got {other:?}"),
+    }
+}
+
+#[test]
+fn external_container_move_equip_to_equip() {
+    let json = r#"{
+        "type": "external_container_move",
+        "v": 1,
+        "session_id": 1,
+        "instance_id": 1,
+        "from": {"kind": "equip", "slot": "main_hand", "state": "held"},
+        "to": {"kind": "equip", "slot": "off_hand", "state": "held"}
+    }"#;
+    let req: ClientRequestV1 = serde_json::from_str(json).expect("equip→equip should deserialize");
+    match req {
+        ClientRequestV1::ExternalContainerMove { from, to, .. } => {
+            assert!(
+                matches!(from, InventoryLocationV1::Equip { .. }),
+                "from should be Equip"
+            );
+            assert!(
+                matches!(to, InventoryLocationV1::Equip { .. }),
+                "to should be Equip"
+            );
+        }
+        other => panic!("expected ExternalContainerMove, got {other:?}"),
+    }
+}
+
+// ─── plan-shield-block-v1 P1 CR#1：负向样例双端 serde 对拍（include_str! pin）───
+
+/// CR#1 — 正向样例 include_str! pin：确认 samples/ 里的 JSON 文件内容与 Rust serde 可双端对拍。
+#[test]
+fn raise_shield_positive_sample_deserializes() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.raise-shield.sample.json"
+    );
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("positive raise-shield sample should deserialize: {e}"));
+    assert!(
+        matches!(req, ClientRequestV1::RaiseShield { v: 1 }),
+        "positive sample must deserialize to RaiseShield{{v:1}}, got {req:?}"
+    );
+}
+
+#[test]
+fn lower_shield_positive_sample_deserializes() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.lower-shield.sample.json"
+    );
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("positive lower-shield sample should deserialize: {e}"));
+    assert!(
+        matches!(req, ClientRequestV1::LowerShield { v: 1 }),
+        "positive sample must deserialize to LowerShield{{v:1}}, got {req:?}"
+    );
+}
+
+/// CR#1 — 负向样例 include_str! pin：缺 v 字段被 serde 拒绝。
+#[test]
+fn raise_shield_invalid_missing_v_sample_is_rejected() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.raise-shield.invalid-missing-v.sample.json"
+    );
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "raise-shield invalid-missing-v sample must be rejected by serde; \
+         missing v field cannot satisfy ClientRequestV1::RaiseShield{{v:u8}}"
+    );
+}
+
+#[test]
+fn lower_shield_invalid_missing_v_sample_is_rejected() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.lower-shield.invalid-missing-v.sample.json"
+    );
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "lower-shield invalid-missing-v sample must be rejected by serde"
+    );
+}
+
+/// CR#1 — 负向样例 include_str! pin：额外字段被 deny_unknown_fields 拒绝。
+#[test]
+fn raise_shield_invalid_extra_field_sample_is_rejected() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.raise-shield.invalid-extra-field.sample.json"
+    );
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "raise-shield invalid-extra-field sample must be rejected (deny_unknown_fields)"
+    );
+}
+
+#[test]
+fn lower_shield_invalid_extra_field_sample_is_rejected() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.lower-shield.invalid-extra-field.sample.json"
+    );
+    assert!(
+        serde_json::from_str::<ClientRequestV1>(json).is_err(),
+        "lower-shield invalid-extra-field sample must be rejected (deny_unknown_fields)"
+    );
+}
+
+// ─── plan-shield-block-v1 P1 CR#7：RaiseShield / LowerShield serde pin tests ───
+
+/// CR#7 — RaiseShield happy-path round-trip：{"type":"raise_shield","v":1} 反序列化为 RaiseShield{v:1}。
+#[test]
+fn raise_shield_roundtrip() {
+    let json = r#"{"type":"raise_shield","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("raise_shield should deserialize: {e}"));
+    assert!(
+        matches!(req, ClientRequestV1::RaiseShield { v: 1 }),
+        "expected RaiseShield{{v:1}}, got {req:?}"
+    );
+    // round-trip：serialize 回去应与原 wire JSON 一致
+    let encoded = serde_json::to_string(&req).expect("RaiseShield serializes");
+    let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        encoded_val, expected_val,
+        "RaiseShield round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+    );
+}
+
+/// CR#7 — LowerShield happy-path round-trip：{"type":"lower_shield","v":1} 反序列化为 LowerShield{v:1}。
+#[test]
+fn lower_shield_roundtrip() {
+    let json = r#"{"type":"lower_shield","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("lower_shield should deserialize: {e}"));
+    assert!(
+        matches!(req, ClientRequestV1::LowerShield { v: 1 }),
+        "expected LowerShield{{v:1}}, got {req:?}"
+    );
+    let encoded = serde_json::to_string(&req).expect("LowerShield serializes");
+    let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        encoded_val, expected_val,
+        "LowerShield round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+    );
+}
+
+/// CR#7 — RaiseShield 缺失 v 字段应反序列化失败。
+#[test]
+fn raise_shield_rejects_missing_v() {
+    let json = r#"{"type":"raise_shield"}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "raise_shield without v field should fail deserialization; \
+         v is required by serde for enum variant discrimination"
+    );
+}
+
+/// CR#7 — LowerShield 缺失 v 字段应反序列化失败。
+#[test]
+fn lower_shield_rejects_missing_v() {
+    let json = r#"{"type":"lower_shield"}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "lower_shield without v field should fail deserialization"
+    );
+}
+
+/// CR#7 — RaiseShield 额外字段被拒绝（deny_unknown_fields）。
+#[test]
+fn raise_shield_rejects_extra_fields() {
+    let json = r#"{"type":"raise_shield","v":1,"extra":true}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "raise_shield with extra field should fail deserialization (deny_unknown_fields); \
+         got Ok variant instead"
+    );
+}
+
+/// CR#7 — LowerShield 额外字段被拒绝（deny_unknown_fields）。
+#[test]
+fn lower_shield_rejects_extra_fields() {
+    let json = r#"{"type":"lower_shield","v":1,"extra":true}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "lower_shield with extra field should fail deserialization (deny_unknown_fields)"
+    );
+}
+
+/// CR#7 — 边界：raise_shield 与 lower_shield 是独立变体，互不混用。
+#[test]
+fn raise_shield_and_lower_shield_are_distinct_variants() {
+    let raise: ClientRequestV1 = serde_json::from_str(r#"{"type":"raise_shield","v":1}"#).unwrap();
+    let lower: ClientRequestV1 = serde_json::from_str(r#"{"type":"lower_shield","v":1}"#).unwrap();
+    assert!(
+        matches!(raise, ClientRequestV1::RaiseShield { .. }),
+        "raise_shield must deserialize to RaiseShield variant, got {raise:?}"
+    );
+    assert!(
+        matches!(lower, ClientRequestV1::LowerShield { .. }),
+        "lower_shield must deserialize to LowerShield variant, got {lower:?}"
+    );
+    // They must serialize back to different JSON
+    let raise_json = serde_json::to_string(&raise).unwrap();
+    let lower_json = serde_json::to_string(&lower).unwrap();
+    assert_ne!(
+        raise_json, lower_json,
+        "RaiseShield and LowerShield must produce different wire JSON; \
+         raise={raise_json} lower={lower_json}"
+    );
+}
+
+// ─── plan-scroll-reading-v1 P0：ScrollReadRequest serde pin + TS↔Rust sample 对拍 ───
+
+/// 正样本对拍：TS 端 sample（TypeBox source of truth）必须反序列化为
+/// ScrollReadRequest{v:1, instance_id:42}。
+#[test]
+fn scroll_read_request_ts_sample_deserializes_in_rust() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.scroll-read-request.sample.json"
+    );
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("scroll-read-request sample should deserialize: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::ScrollReadRequest {
+                v: 1,
+                instance_id: 42
+            }
+        ),
+        "positive sample must deserialize to ScrollReadRequest{{v:1, instance_id:42}}, got {req:?}"
+    );
+}
+
+#[test]
+fn scroll_read_request_roundtrip() {
+    let json = r#"{"type":"scroll_read_request","v":1,"instance_id":42}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("scroll_read_request should deserialize: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::ScrollReadRequest {
+                v: 1,
+                instance_id: 42
+            }
+        ),
+        "expected ScrollReadRequest{{v:1, instance_id:42}}, got {req:?}"
+    );
+    let encoded = serde_json::to_string(&req).expect("ScrollReadRequest serializes");
+    let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        encoded_val, expected_val,
+        "ScrollReadRequest round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+    );
+}
+
+/// 缺失 v 字段应反序列化失败。
+#[test]
+fn scroll_read_request_rejects_missing_v() {
+    let json = r#"{"type":"scroll_read_request","instance_id":42}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "scroll_read_request without v field should fail deserialization"
+    );
+}
+
+/// 缺失 instance_id 字段应反序列化失败。
+#[test]
+fn scroll_read_request_rejects_missing_instance_id() {
+    let json = r#"{"type":"scroll_read_request","v":1}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "scroll_read_request without instance_id field should fail deserialization"
+    );
+}
+
+/// 额外字段被拒绝（deny_unknown_fields）。
+#[test]
+fn scroll_read_request_rejects_extra_fields() {
+    let json = r#"{"type":"scroll_read_request","v":1,"instance_id":42,"extra":true}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "scroll_read_request with extra field should fail deserialization (deny_unknown_fields)"
+    );
+}
+
+/// instance_id 为负数应反序列化失败（u64 边界）。
+#[test]
+fn scroll_read_request_rejects_negative_instance_id() {
+    let json = r#"{"type":"scroll_read_request","v":1,"instance_id":-1}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "scroll_read_request with negative instance_id should fail (u64 cannot hold negatives)"
+    );
+}
+
+/// instance_id 为 0（边界值）应能正常反序列化——0 是合法的最小 instance_id。
+#[test]
+fn scroll_read_request_accepts_zero_instance_id() {
+    let json = r#"{"type":"scroll_read_request","v":1,"instance_id":0}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("instance_id:0 should deserialize: {e}"));
+    assert!(
+        matches!(
+            req,
+            ClientRequestV1::ScrollReadRequest {
+                v: 1,
+                instance_id: 0
+            }
+        ),
+        "expected ScrollReadRequest{{v:1, instance_id:0}}, got {req:?}"
+    );
+}
+
+// ─── plan-scroll-reading-v1 P1 §8.1#4：ScrollReadClosed serde pin + TS↔Rust sample 对拍 ───
+
+/// 正样本对拍：TS 端 sample（TypeBox source of truth）必须反序列化为
+/// ScrollReadClosed{v:1}。
+#[test]
+fn scroll_read_closed_ts_sample_deserializes_in_rust() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.scroll-read-closed.sample.json"
+    );
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("scroll-read-closed sample should deserialize: {e}"));
+    assert!(
+        matches!(req, ClientRequestV1::ScrollReadClosed { v: 1 }),
+        "positive sample must deserialize to ScrollReadClosed{{v:1}}, got {req:?}"
+    );
+}
+
+/// happy-path round-trip：{"type":"scroll_read_closed","v":1} 反序列化为
+/// ScrollReadClosed{v:1}，再序列化回去应保持 wire 结构一致。
+#[test]
+fn scroll_read_closed_roundtrip() {
+    let json = r#"{"type":"scroll_read_closed","v":1}"#;
+    let req: ClientRequestV1 = serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("scroll_read_closed should deserialize: {e}"));
+    assert!(
+        matches!(req, ClientRequestV1::ScrollReadClosed { v: 1 }),
+        "expected ScrollReadClosed{{v:1}}, got {req:?}"
+    );
+    let encoded = serde_json::to_string(&req).expect("ScrollReadClosed serializes");
+    let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        encoded_val, expected_val,
+        "ScrollReadClosed round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+    );
+}
+
+/// 缺失 v 字段应反序列化失败。
+#[test]
+fn scroll_read_closed_rejects_missing_v() {
+    let json = r#"{"type":"scroll_read_closed"}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "scroll_read_closed without v field should fail deserialization; \
+         missing v field cannot satisfy ClientRequestV1::ScrollReadClosed{{v:u8}}"
+    );
+}
+
+/// 额外字段被拒绝（deny_unknown_fields）。
+#[test]
+fn scroll_read_closed_rejects_extra_fields() {
+    let json = r#"{"type":"scroll_read_closed","v":1,"extra":true}"#;
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "scroll_read_closed with extra field should fail deserialization (deny_unknown_fields)"
+    );
+}
+
+/// ScrollReadClosed 与 ScrollReadRequest 是独立变体，互不混用（边界：type 字面量隔离）。
+#[test]
+fn scroll_read_closed_and_scroll_read_request_are_distinct_variants() {
+    let closed: ClientRequestV1 =
+        serde_json::from_str(r#"{"type":"scroll_read_closed","v":1}"#).unwrap();
+    let request: ClientRequestV1 =
+        serde_json::from_str(r#"{"type":"scroll_read_request","v":1,"instance_id":1}"#).unwrap();
+    assert!(
+        matches!(closed, ClientRequestV1::ScrollReadClosed { .. }),
+        "scroll_read_closed must deserialize to ScrollReadClosed variant, got {closed:?}"
+    );
+    assert!(
+        matches!(request, ClientRequestV1::ScrollReadRequest { .. }),
+        "scroll_read_request must deserialize to ScrollReadRequest variant, got {request:?}"
+    );
+}
+
+// ─── plan-worldgen-v4 P5 §8.1#5 — BlockPickerGive C2S 双端 sample 对拍 ───
+
+/// 正样本对拍：直接 include_str! TS 端 sample（TypeBox source of truth），
+/// Rust serde 必须反序列化为 BlockPickerGive 且字段全等。这是 TS↔Rust 契约 pin：
+/// TypeBox schema 或 Rust enum 任一改动若破坏对齐，此测试立即撞红。
+#[test]
+fn block_picker_give_ts_sample_deserializes_in_rust() {
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/client-request.block-picker-give.sample.json"
+    );
+    let req: ClientRequestV1 = serde_json::from_str(json).unwrap_or_else(|e| {
+        panic!("TS block-picker-give 正样本必须能被 Rust serde 反序列化: {e}; body={json}")
+    });
+    match req {
+        ClientRequestV1::BlockPickerGive {
+            v,
+            ref block_id,
+            count,
+        } => {
+            assert_eq!(v, 1, "wire version 期望=1，实为 {v}");
+            assert_eq!(
+                block_id, "stone_bricks",
+                "block_id 应与 TS sample 一致（stone_bricks），实为 {block_id}"
+            );
+            assert_eq!(count, 16, "count 应与 TS sample 一致（16），实为 {count}");
+        }
+        other => panic!("expected BlockPickerGive, got {other:?}"),
+    }
+}
+
+/// 反样本：含未知字段 surprise 在 TS 端被 additionalProperties:false 拒绝，
+/// Rust 端 deny_unknown_fields 也必须拒，双端一致。count 边界（0/1/64/65）由
+/// block_picker_give_count_bounds_enforced_by_serde 单独锁。
+#[test]
+fn block_picker_give_extra_field_rejected_by_deny_unknown_fields() {
+    // ClientRequestV1 带 deny_unknown_fields：TS 反样本（含 surprise 多字段）
+    // 在 Rust 端也必须被拒，双端 additionalProperties:false / deny_unknown_fields 一致。
+    let json = include_str!(
+        "../../../agent/packages/schema/samples/\
+         client-request.block-picker-give.invalid-extra-field.sample.json"
+    );
+    let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "block_picker_give 含未知字段必须被 deny_unknown_fields 拒绝（与 TS additionalProperties:false 对齐），实为 {result:?}"
+    );
+}
+
+/// 边界：count 与 block_id 都按原样 round-trip，负坐标无关，单变体语义独立。
+#[test]
+fn block_picker_give_roundtrip_preserves_fields() {
+    let req = ClientRequestV1::BlockPickerGive {
+        v: 1,
+        block_id: "polished_blackstone".to_string(),
+        count: 64,
+    };
+    let encoded = serde_json::to_string(&req).expect("serialize");
+    let decoded: ClientRequestV1 = serde_json::from_str(&encoded).expect("deserialize");
+    assert!(
+        matches!(
+            decoded,
+            ClientRequestV1::BlockPickerGive { v: 1, ref block_id, count: 64 }
+                if block_id == "polished_blackstone"
+        ),
+        "block_picker_give round-trip 必须保字段，实为 {decoded:?}"
+    );
+    // tag 必须是 snake_case "block_picker_give"
+    assert!(
+        encoded.contains("\"type\":\"block_picker_give\""),
+        "wire tag 必须是 block_picker_give（snake_case），实为 {encoded}"
+    );
+}
+
+/// count 边界：serde 守门拒绝 0（下界）/ >64（上界），接受 1（最小合法）/ 64（最大合法）。
+/// serde 不强制 TypeBox 的 minimum/maximum，所以这一道是 wire 输入的纵深防御第一关，
+/// 与 TypeBox `Type.Integer({minimum:1, maximum:64})` 对齐。0/65 的 sample 对拍另在
+/// agent schema.test.ts。block_id 空串的拒绝由 TS minLength 守门（serde String 不强制），
+/// 故此处只锁 count 数值边界。
+#[test]
+fn block_picker_give_count_bounds_enforced_by_serde() {
+    // 合法边界：1（下界）与 64（上界）必须解析成功且值不漂移。
+    for ok_count in [1u32, 64u32] {
+        let json = format!(
+            r#"{{"type":"block_picker_give","v":1,"block_id":"stone","count":{ok_count}}}"#
+        );
+        let req: ClientRequestV1 = serde_json::from_str(&json).unwrap_or_else(|e| {
+            panic!("count={ok_count} 是合法边界（1..=64），serde 必须接受，实为错误 {e}")
+        });
+        assert!(
+            matches!(req, ClientRequestV1::BlockPickerGive { count, .. } if count == ok_count),
+            "count={ok_count} 解析后应保值，实为 {req:?}"
+        );
+    }
+
+    // 下界越界：count=0 必须被 serde 拒绝（与现有 invalid-count-zero TS sample 同语义）。
+    let zero_sample = include_str!(
+        "../../../agent/packages/schema/samples/\
+         client-request.block-picker-give.invalid-count-zero.sample.json"
+    );
+    let zero_result: Result<ClientRequestV1, _> = serde_json::from_str(zero_sample);
+    assert!(
+        zero_result.is_err(),
+        "count=0 必须被 serde 守门拒绝（下界 <1），与 TS minimum:1 对齐，实为 {zero_result:?}"
+    );
+
+    // 上界越界：count=65（一组 +1）必须被 serde 拒绝。
+    let over_json = r#"{"type":"block_picker_give","v":1,"block_id":"stone","count":65}"#;
+    let over_result: Result<ClientRequestV1, _> = serde_json::from_str(over_json);
+    let err =
+        over_result.expect_err("count=65 必须被 serde 守门拒绝（上界 >64），与 TS maximum:64 对齐");
+    assert!(
+        err.to_string().contains("block picker count must be <= 64"),
+        "count=65 的拒绝信息应说明上界 64，实为 {err}"
+    );
+}
