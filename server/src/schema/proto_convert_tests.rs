@@ -50,7 +50,6 @@ fn alchemy_view(
 }
 
 /// 把 InventoryItemViewV1 过真实 proto wire（encode→decode），返回 decode 后的 alchemy。
-
 fn roundtrip_alchemy(
     view: &crate::schema::inventory::InventoryItemViewV1,
 ) -> Option<bong::AlchemyItemDataProto> {
