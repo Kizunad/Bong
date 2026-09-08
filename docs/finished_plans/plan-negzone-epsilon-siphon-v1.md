@@ -147,7 +147,7 @@
 - 第一性结论确认用户初判成立：微负 signed zone 产生约 `1.417e-14` siphon，`238.52849866722318 - 1.4174837940073883e-14` 不改变来源表示，原 release 整笔 `UnrepresentableFlow` fail-closed 并在 tick 重试告警；现由 `subtraction_makes_progress` 将该路径收口为无副作用 no-op。
 - 抽干失败分支可达：有限 fixture `zone.spirit_qi=-1.0`、`qi_current=1e-16` 令 zone 增量不可表示；现用既有 `qi_flow_overflow` 稳定 sink 入账同一笔 drained 后才发送 `CultivationDeathTrigger::NegativeZoneDrain`，fallback 失败仍不伪造死亡。
 - `qi_physics` 没有新增数值常量；新增的唯一判据是 `subtraction_makes_progress`（`server/src/qi_physics/mod.rs:176-191`），直接基于 `before - amount != before`。
-- 此前无上下文只读 validator 对拍 `4d9bf825338c694dd56a2f163eb4a0f58c59598c` 的 PASS 不再作为最终证据；`ee6ad6aef` 修复了该 validator 发现的零额死亡触发缺陷。本条 Finish Evidence 随本次提交落地，并将该提交后的分支 HEAD 绑定为唯一最终候选：validator 首行以 `git rev-parse HEAD` 核对启动目标与工作树完整 SHA，完成后不再修改 plan/HEAD；最终 PASS、完整 SHA 与 validator 模型记录在 PR body 和收口回报。
+- 此前无上下文只读 validator 对拍 `4d9bf825338c694dd56a2f163eb4a0f58c59598c` 的 PASS 不再作为最终证据；`ee6ad6aef` 修复了该 validator 发现的零额死亡触发缺陷。Git 树内不嵌入本证据提交自身的 SHA，避免修正证据后形成不可满足的自引用；本 Finish Evidence 提交后的 exact HEAD、fresh validator 的首行 SHA 对拍与 PASS 结论、validator 模型及后续 CI 结果，统一在 PR body 与平台检查中外部精确绑定，且任一后续 HEAD 变化都必须重新核验。
 - `qi_physics::ledger::assert_conservation` 覆盖正常释放、overflow fallback 与 no-op；`CultivationDeathTrigger::NegativeZoneDrain` 仅在真实 release/overflow 入账成功后发送。
 - 本 plan 未修改 `SIPHON_FACTOR`、schema、client、agent、依赖版本或其它 gameplay 行为；不新增跨仓库契约，server / agent / client 接入面分别为既有 server 物理路径、无 agent 变更、无 client 变更。
 
