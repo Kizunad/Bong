@@ -96,6 +96,10 @@ pub fn negative_zone_siphon_tick(
         // qi 吸干，转抽血肉：本 plan 不持 Health Component，发事件由战斗 plan 消费。
         // 作为最低保障：qi_current 归零，并若尚无命脉收口，直接报死亡触发。
         let drained = cultivation.qi_current.max(0.0);
+        if drained == 0.0 {
+            // 零额 release 是物理 no-op；没有真实入账就不能伪造死亡触发。
+            continue;
+        }
         match release_qi_amount_to_zone(
             &mut cultivation,
             drained,
@@ -406,6 +410,34 @@ mod tests {
                 0
             );
         }
+    }
+
+    #[test]
+    fn zero_qi_siphon_does_not_emit_death_without_real_release() {
+        let (mut app, player) = app_with_player(-1.0, 0.0, 100.0);
+        let before = summarize_world_qi(app.world_mut());
+
+        app.update();
+
+        let after = summarize_world_qi(app.world_mut());
+        assert_eq!(
+            app.world()
+                .entity(player)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current,
+            0.0
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+        assert_eq!(
+            app.world()
+                .resource::<Events<CultivationDeathTrigger>>()
+                .len(),
+            0,
+            "zero-amount release must not emit a death trigger"
+        );
+        assert_conservation(&before, &after, 0.0)
+            .expect("zero-amount siphon must remain conservation-neutral");
     }
 
     #[test]
