@@ -76,7 +76,6 @@ fn unknown_kind_decode_fails_closed() {
 /// plan-race-system-v1 P3a —— 施放门 race gate 拒绝的 wire pin：
 /// `CastOutcomeV1::RejectRaceMismatch` 必须映射到新增 proto 变体
 /// `bong::CastOutcome::RejectRaceMismatch`（非默认 `Unspecified`/其余已存在变体）。
-
 fn s2c_encode_decode_roundtrip(payload: ServerDataPayloadV1) {
     let proto_payload = server_data_to_proto_payload(&payload);
     let envelope = bong::ServerDataEnvelope {
@@ -410,7 +409,6 @@ fn s2c_inventory_snapshot_container_owner_none_not_in_wire() {
 // 修复前 bong::InventoryItemView 无 alchemy 字段 → 构造 / 访问编译不过 → RED。
 
 /// 最小可用 InventoryItemViewV1（仅填必填字段 + 给定 alchemy），供 proto wire pin 测试。
-
 fn alchemy_view(
     alchemy: Option<bong_server::inventory::AlchemyItemData>,
 ) -> bong_server::schema::inventory::InventoryItemViewV1 {
@@ -949,7 +947,6 @@ fn s2c_to_proto_bytes_method_encodes_successfully() {
 }
 
 /// C2S: encode -> decode roundtrip.
-
 fn c2s_encode_decode_roundtrip(req: bong_server::schema::client_request::ClientRequestV1) {
     let proto_payload = bong::client_request_envelope::Payload::from(&req);
     let envelope = bong::ClientRequestEnvelope {
@@ -1752,7 +1749,6 @@ fn halfstep_rechallenge_panics_if_proto_path_is_used() {
 ///     `to_proto_bytes()` → the `From` impl hits the bypass `unreachable!()` arm → RED.
 ///   - Add a new variant without updating `is_json_bypass` → rustc E0004 → compile failure.
 ///   - Add a new variant without adding a fixture here → `s2c_fixture_count_matches_variant_count` → RED.
-
 fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
     use bong_server::cultivation::components::ColorKind;
     use bong_server::schema::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
@@ -3285,7 +3281,6 @@ fn s2c_all_proto_variants_encode_without_panic() {
 /// MUTATION GUARDS (see `c2s_all_proto_variants_encode_without_panic`):
 ///   - Delete a proto arm → fixture hits `unreachable!()` → test panics → RED.
 ///   - Add a new C2S variant without fixture → count assertion → RED.
-
 fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequestV1, bool)> {
     use bong_server::cultivation::components::MeridianId;
     use bong_server::cultivation::forging::ForgeAxis;
