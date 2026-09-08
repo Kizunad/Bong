@@ -48,9 +48,9 @@ class MiniBodyHudPlannerTest {
         List<HudRenderCommand> cmds = MiniBodyHudPlanner.buildCommands(hud, null, null, 0L, 1920, 1080);
 
         assertFalse(cmds.isEmpty());
-        // Every command must be a rect and live on the MINI_BODY layer.
+        // 状态条边框使用材质贴图，人体与动态余量仍使用 rect。
         for (HudRenderCommand c : cmds) {
-            assertTrue(c.isRect(), "expected all rect: " + c.kind());
+            assertTrue(c.isRect() || c.isTexturedRect(), "expected rect or meter texture: " + c.kind());
             assertEquals(HudRenderLayer.MINI_BODY, c.layer());
         }
     }

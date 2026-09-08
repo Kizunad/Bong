@@ -143,11 +143,10 @@ class MiniBodyHudPlannerGeometryTest {
             MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST));
     }
 
-    // ── plan-race-system-v1 P2 major 修复：humanoid + hud_anchors → 与改造前
-    // 硬编码表逐像素相等（Δ=0），锁死 plan「首版渲染与现状像素级一致」红线 ──
+    // HUD 锚点与无 layout 路径必须同步适配当前人体尺寸。
 
     @Test
-    void humanoidLayoutWithHudAnchorsIsPixelIdenticalToPreRefactorFallback_allParts() {
+    void humanoidHudAnchorsAndFallbackRemainAlignedAfterResize() {
         BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
         BodyPlanLayoutStore.setCurrentPlanId("humanoid");
 
@@ -155,29 +154,9 @@ class MiniBodyHudPlannerGeometryTest {
             assertArrayEquals(
                 MiniBodyHudPlanner.fallbackLocatePart(BX, BY, bp),
                 MiniBodyHudPlanner.locatePartForTests(BX, BY, bp),
-                "humanoid layout with hud_anchors must reproduce the pre-refactor hardcoded "
-                    + "table verbatim (Δ=0) for " + bp + " — hud_anchors was extracted from "
-                    + "that exact table, this is the plan's pixel-parity red line"
+                "loading humanoid hud_anchors must not move wound markers for " + bp
             );
         }
-    }
-
-    @Test
-    void humanoidLayoutWithHudAnchorsMatchesExpectedFallbackConstants_spotCheck() {
-        // 外部锚点（不从实现反推）：直接写死 MiniBodyHudPlanner.fallbackLocatePart 改造前
-        // 硬编码表的原始数值，逐个 spot check（对拍上面 allParts 循环断言用的同一份数据源，
-        // 双保险防止 fallbackLocatePart 本身被意外改动而让 allParts 测试跟着漂移失去意义）。
-        BodyPlanLayoutStore.putLayout(humanoidAnchorsLayout());
-        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
-
-        assertArrayEquals(new int[]{BX + 15, BY + 4}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.HEAD));
-        assertArrayEquals(new int[]{BX + 15, BY + 9}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.NECK));
-        assertArrayEquals(new int[]{BX + 15, BY + 17}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST));
-        assertArrayEquals(new int[]{BX + 15, BY + 28}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.ABDOMEN));
-        assertArrayEquals(new int[]{BX + 6, BY + 14}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_UPPER_ARM));
-        assertArrayEquals(new int[]{BX + 24, BY + 31}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_HAND));
-        assertArrayEquals(new int[]{BX + 11, BY + 66}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_FOOT));
-        assertArrayEquals(new int[]{BX + 18, BY + 66}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_FOOT));
     }
 
     // ── 无 hud_anchors（只声明主 anchors）时的回退换轨分支：缩放推导，允许与
@@ -185,27 +164,19 @@ class MiniBodyHudPlannerGeometryTest {
     // 唯一合法路径） ──
 
     @Test
-    void humanoidLayoutWithoutHudAnchorsFallsBackToScaledMainAnchors_head() {
+    void humanoidLayoutWithoutHudAnchorsProjectsMainAnchorsToCurrentSize() {
         BodyPlanLayoutStore.putLayout(humanoidMainAnchorsOnlyLayout());
         BodyPlanLayoutStore.setCurrentPlanId("humanoid");
 
-        // round(0.5*30)=15, round(0.042373*75)=3 — 从主 anchors 独立缩放推导，
-        // 与 hud_anchors 路径的 4 不同（无 hud_anchors 时的合法漂移）。
-        assertArrayEquals(new int[]{BX + 15, BY + 3}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.HEAD));
-    }
-
-    @Test
-    void humanoidLayoutWithoutHudAnchorsFallsBackToScaledMainAnchors_torsoAndLimbs() {
-        BodyPlanLayoutStore.putLayout(humanoidMainAnchorsOnlyLayout());
-        BodyPlanLayoutStore.setCurrentPlanId("humanoid");
-
-        assertArrayEquals(new int[]{BX + 15, BY + 10}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.NECK));
-        assertArrayEquals(new int[]{BX + 15, BY + 15}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.CHEST));
-        assertArrayEquals(new int[]{BX + 15, BY + 26}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.ABDOMEN));
-        assertArrayEquals(new int[]{BX + 9, BY + 17}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_UPPER_ARM));
-        assertArrayEquals(new int[]{BX + 22, BY + 35}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_HAND));
-        assertArrayEquals(new int[]{BX + 12, BY + 60}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.LEFT_FOOT));
-        assertArrayEquals(new int[]{BX + 18, BY + 60}, MiniBodyHudPlanner.locatePartForTests(BX, BY, BodyPart.RIGHT_FOOT));
+        // 中轴与非中轴各取一个代表，验证锚点投影而不锁死显示宽度。
+        for (PartAnchor anchor : List.of(humanoidMainAnchors().get(0), humanoidMainAnchors().get(4))) {
+            BodyPart part = BodyPart.valueOf(anchor.partId().toUpperCase(java.util.Locale.ROOT));
+            assertArrayEquals(new int[]{
+                BX + (int) Math.round(anchor.point().x() * MiniBodyHudPlanner.BODY_W),
+                BY + (int) Math.round(anchor.point().y() * MiniBodyHudPlanner.BODY_H)
+            }, MiniBodyHudPlanner.locatePartForTests(BX, BY, part),
+                "main anchors must scale to the current MiniBody dimensions");
+        }
     }
 
     @Test

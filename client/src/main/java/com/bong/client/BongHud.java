@@ -54,7 +54,7 @@ import java.util.function.Supplier;
 
 public class BongHud {
     private static final int HUD_TEXT_MAX_WIDTH = 220;
-    static final String BASELINE_STATUS_TEXT = BongHudOrchestrator.BASELINE_LABEL;
+    static final String BASELINE_STATUS_TEXT = "";
     static final int BASELINE_TEXT_COLOR = 0xFFFFFF;
     private static final int BASELINE_X = 10;
     private static final int BASELINE_Y = 10;
@@ -490,7 +490,9 @@ public class BongHud {
         Objects.requireNonNull(surface, "surface");
         Objects.requireNonNull(snapshot, "snapshot");
 
-        surface.drawTextWithShadow(snapshot.baselineText(), BASELINE_X, BASELINE_Y, BASELINE_TEXT_COLOR);
+        if (!snapshot.baselineText().isEmpty()) {
+            surface.drawTextWithShadow(snapshot.baselineText(), BASELINE_X, BASELINE_Y, BASELINE_TEXT_COLOR);
+        }
         BongZoneHud.render(surface, snapshot.zone(), snapshot.nowMs());
         BongEventAlertOverlay.render(surface, snapshot.eventAlert());
         renderToast(surface, snapshot.toast());

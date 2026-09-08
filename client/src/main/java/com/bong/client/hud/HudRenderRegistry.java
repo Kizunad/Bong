@@ -3,6 +3,7 @@ package com.bong.client.hud;
 import net.minecraft.util.Identifier;
 
 import java.util.EnumMap;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -24,11 +25,12 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.COMPASS, "RetiredHud", "retired", "罗盘 HUD 已移除，不再生成命令"),
         command(HudRenderLayer.THREAT_INDICATOR, "ThreatIndicatorHudPlanner", "player_state+perception+tribulation", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.HUD_VARIANT, "HudEnvironmentVariantPlanner", "zone_state+extract_state", "动态文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.TARGET_INFO, "TargetInfoHudPlanner", "target_snapshot+clock", "目标名称仍走 Minecraft GUI"),
+        command(HudRenderLayer.TARGET_INFO, "NpcInteractionLogHudPlanner+TsyBossHealthBar+TsyCorpseDeathVfx", "npc_interaction_log+tsy_boss_health+tsy_death_vfx", "目标总览已停用，保留交互记录及秘境专用反馈"),
         command(HudRenderLayer.MINI_BODY, "MiniBodyHudPlanner", "combat_snapshot+inventory+season", "数值文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+cast_state", "物品与技能图标、文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.CAST_BAR, "QuickBarHudPlanner", "cast_state", "动态文字不适用"),
-        command(HudRenderLayer.EVENT_STREAM, "EventStreamHudPlanner+CombatJuiceHudPlanner", "event_stream+combat_clock", "事件文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+cast_state", "物品与技能图标、冷却遮罩及武器侧槽仍走 Minecraft GUI",
+            List.of(asset("slot", "quick-slot"), asset("selected", "quick-slot-selected"))),
+        svg(HudRenderLayer.CAST_BAR, "CastRingHudPlanner+ChargingProgressBarHud+ExhaustedGreyOverlay+AnqiHudPlanner", "cast_state+charging_state+anqi_state", "专用蓄力条与动态文字仍走 Minecraft GUI", castAssets()),
+        command(HudRenderLayer.EVENT_STREAM, "CombatJuiceHudPlanner", "combat_clock", "滚动事件列表已移除，保留击杀反馈文字"),
         svg(HudRenderLayer.JIEMAI_RING, "JiemaiRingHudPlanner", "defense_window+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.SPELL_VOLUME, "SpellVolumeHudPlanner", "spell_volume_state", "数值文字仍走 Minecraft GUI"),
         command(HudRenderLayer.CARRIER, "CarrierHudPlanner+AnqiHudPlanner", "carrier_state+anqi_state", "动态文字仍走 Minecraft GUI"),
@@ -134,13 +136,37 @@ public final class HudRenderRegistry {
         String dynamicBinding,
         String guiException
     ) {
+        return svg(layer, owner, dynamicBinding, guiException, List.of(asset("rect", "primitive-rect")));
+    }
+
+    private static SvgAsset asset(String key, String filename) {
+        return new SvgAsset(key, Identifier.of("bong-client", "svg/hud/" + filename + ".svg"));
+    }
+
+    private static List<SvgAsset> castAssets() {
+        List<SvgAsset> assets = new ArrayList<>(List.of(
+            asset("track", "cast-track"), asset("complete", "cast-complete"), asset("interrupted", "cast-interrupted")
+        ));
+        for (String key : CastRingHudPlanner.SEGMENT_KEYS) {
+            assets.add(asset(key, "cast-" + key));
+        }
+        return List.copyOf(assets);
+    }
+
+    private static SurfaceDefinition svg(
+        HudRenderLayer layer,
+        String owner,
+        String dynamicBinding,
+        String guiException,
+        List<SvgAsset> assets
+    ) {
         return new SurfaceDefinition(
             layer.name(),
             Optional.of(layer),
             owner,
             RenderPath.SVG_FRAME,
             Presentation.SVG_MESH,
-            List.of(new SvgAsset("rect", Identifier.of("bong-client", "svg/hud/primitive-rect.svg"))),
+            assets,
             dynamicBinding,
             guiException,
             "HudRenderRegistryTest"
