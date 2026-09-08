@@ -349,6 +349,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **主线复验与完整门禁**：在初轮 gate 后紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=eedf9903d8f2d819847d4cf394e43ddf7bb2b0fa` 无 Cargo/plan 冲突，生成 merge HEAD `de21913542389e1e9a4f4a59a8c148c750450d95`；合入内容仅为 bot 场景脚本与已归档 bot plan，未触及本批 server、Cargo 或 tribulation 文件。合并后再次执行 locked server gate `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，exit 0：library `12071 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、`tribulation_unit` `103 passed / 0 failed / 0 ignored`，其它既有 Cargo targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`；Cargo 其它 targets、P2/P3/P4 既有条目均保留。
 - **validator 与提交证据**：无上下文只读 validator 已绑定代码/分类 HEAD `9b71f1fb9d67b252c28573ddb175c0666b3d31e5` 并 PASS；合并 HEAD 上再次定向对拍同 crate B 类 `16 passed / 0 failed / 0 ignored`、外置 A 类 `103 passed / 0 failed / 0 ignored`，逐位守恒 `103 + 16 = 119`。代码、`tribulation_unit` target 与测试落点对应 `3cf9ef551`（2026-09-07），分类 evidence 对应 `9b71f1fb9`，本段为本批中文 docs evidence commit；每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-19 进度，P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
 
+### P2-21 network/mod（✅ 2026-09-08）
+
+- **范围与落点**：仅将 `server/src/network/mod.rs` 原有单个 `#[cfg(test)] mod tests` 的全部 62 个 `#[test]` 及其测试 imports 外置到同 crate 文件 `server/src/network/mod_tests.rs`，由 `#[cfg(test)] #[path = "mod_tests.rs"] mod tests;` 挂载；生产文件由 7,548 行收缩至 3,559 行，未改 network 运行时、payload 构造、schema、wire、client、agent 或其它测试模块。
+- **迁移对拍与行为**：迁移前 `cd server && ../scripts/build-token.sh cargo test network::tests:: --lib` 为 `62 passed / 0 failed / 0 ignored`；迁移后同一命令为 `62 passed / 0 failed / 0 ignored`（真实 `POST_FIX_COMPARE_EXIT=0`）。62 个原测试名、fixture、断言、payload 期望、边界/错误语义与执行顺序保持不变；未新增 Cargo test target，沿用 network 已有同 crate 独立测试模块形态。
+- **测试可见性与生产残留**：未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，也未复制生产实现。`build_player_state_payload`、`collect_players_for_world_state` 两个既有 `#[cfg(test)] #[allow(dead_code)] pub(crate)` 辅助函数及 `anim_wiring_manifest_test`、`quickslot_config_emit_test`、`skill_vfx_wiring_test`、`skillbar_config_emit_test` 四个既有测试模块声明均未改动；它们不属于本批 62 条搬迁，保留原位置与可见性，后续按 P4 清单单独审计。
+- **提交证据**：代码与 `mod_tests.rs` 对应提交 `8ac457358`（2026-09-08），本条仅记录 P2-21 进度；P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
