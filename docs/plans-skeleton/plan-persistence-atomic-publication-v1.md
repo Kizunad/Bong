@@ -74,11 +74,11 @@
 
 - `persistent_runtime_qi_accounts() -> [QiAccountId; 5]`（`server/src/qi_physics/ledger.rs`）：无运行时参数，返回必须完整持久化/恢复的固定 durable owner 白名单；每个 `QiAccountId` 是余额的 owner identity，不能由持久化行名动态扩展。
 - `load_runtime_qi_account_balances(settings: &PersistenceSettings) -> io::Result<Vec<(QiAccountId, f64)>>`（`server/src/persistence/world_qi.rs`）：以 `&PersistenceSettings` 提供 SQLite 路径/连接上下文，按上述白名单读取 `qi_runtime_accounts`；当前已对每个 owner 检查行存在、余额 finite 且非负，缺行或非法值 fail-closed，返回带 owner 的已验证 `(QiAccountId, balance)` 集合。
-- `hydrate_runtime_qi_accounts(settings: &PersistenceSettings, qi_ledger: &mut WorldQiAccount) -> io::Result<usize>`（`server/src/persistence/world_qi.rs`）：由 `bootstrap_persistence_system` 在启动恢复时提供 `&PersistenceSettings` 与唯一可变 `&mut WorldQiAccount` owner；当前实现逐项调用 `WorldQiAccount::set_balance(account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError>` 写入恢复余额。`set_balance` 是当前通用写入原语，不是已经存在的专用 restore API；P0 必须明确其恢复边界/验证责任，禁止在 persistence 另建等价 setter、隐式 transfer 或 event-only 恢复。
+- `hydrate_runtime_qi_accounts(settings: &PersistenceSettings, qi_ledger: &mut WorldQiAccount) -> io::Result<usize>`（`server/src/persistence/world_qi.rs`）：由 `bootstrap_persistence_system(settings: Res<PersistenceSettings>, mut qi_ledger: ResMut<WorldQiAccount>)` 在启动恢复时提供 `&PersistenceSettings` 与唯一可变 `&mut WorldQiAccount` owner；当前实现逐项调用 `WorldQiAccount::set_balance(account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError>` 写入恢复余额。`set_balance` 是当前通用写入原语，不是已经存在的专用 restore API；P0 必须明确其恢复边界/验证责任，禁止在 persistence 另建等价 setter、隐式 transfer 或 event-only 恢复。
 - `upsert_runtime_qi_account_balances(transaction: &rusqlite::Transaction<'_>, qi_ledger: &WorldQiAccount, wall_clock: i64) -> io::Result<()>`（`server/src/persistence/world_qi.rs`）：以 `&Transaction` 作为 SQLite 写入 owner、以 `&WorldQiAccount` 作为余额读取 owner、以 `wall_clock` 作为持久化时间输入；当前对固定白名单逐项写回，底层 `upsert_runtime_qi_account_balance` 校验余额 finite 且非负。它是写回链，不得被当作恢复链或新 ledger。
 - `assert_conservation(before: &WorldQiSnapshot, after: &WorldQiSnapshot, era_decay: f64) -> Result<(), QiPhysicsError>`（`server/src/qi_physics/ledger.rs`）：以 before/after world snapshot 和 canonical `era_decay` 作为验证输入，验证观察总量与允许的时代衰减一致；P4 用它验证恢复/失败前后没有吞真元，不用字面常数代替。`WorldQiAccount::iter_balances(&self)` 只读暴露各 durable owner 的余额，可用于审计对拍，不提供 mutation capability。
 
-上述调用链是“当前事实”，不是本 plan 的实现承诺；尤其不能把当前 `WorldQiAccount::set_balance` 包装成未经 P0 决议的新 persistence restore helper。若 P0 判定需要受控恢复入口，必须在 `qi_physics` owner 边界内明确其输入、失败原子性与审计语义，并同步更新本节；本 skeleton 不预先拍板。
+上述调用链是“当前事实”，不是本 plan 的实现承诺；尤其不能把当前 `WorldQiAccount::set_balance` 包装成未经 P0 决议的新 persistence restore helper。若 P0 判定需要受控恢复入口，必须在 `qi_physics` owner 边界内明确其输入、失败原子性与审计语义，并同步更新本节；本 skeleton 不预先拍板。该判断是进入实现的阻塞项：没有带日期的 `pre-P0 决议` 写清选定入口、owner 输入、失败原子性和 audit 语义，就不得开始 P1–P4，也不得把当前 `set_balance` 的现状写成已收口契约。
 
 ## 3. 设计基础：三条归档发布不变式（原样承接）
 
@@ -178,7 +178,7 @@
 
 ## 8. 开放问题（P0 决策门前需收口）
 
-以下只提问，不在 skeleton 阶段拍板；所有问题必须在 P0 追加逐项决议后才能进入实现：
+以下只提问，不在 skeleton 阶段拍板；它们是 P0 的阻塞项。所有问题必须在 P0 追加带日期的 `## 8.1 决议（pre-P0 收口，YYYY-MM-DD）`，逐项记录选型、owner、失败原子性和可观察证据后，才能进入实现：
 
 1. 归档发布语义选择**原子重命名**还是**两阶段提交**？在跨平台文件系统与 no-replace 要求下，哪个操作是可验证的原子边界？
 2. 批次中途失败选择**全回滚**，还是允许**部分发布 + 幂等重放**？两种语义如何分别与 SQLite hot-row transaction、恢复扫描和重复执行相容？
