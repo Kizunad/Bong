@@ -324,6 +324,14 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **完整门禁**：当前 HEAD 执行任务卡指定的提升权限 locked 命令 `flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'` exit 0；library、main binary、全部独立 Cargo targets、integration targets 与 doc-tests 均无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
 - **提交证据**：代码与 target 对应 `461646f15`（2026-09-05），runner 格式修正对应 `74323058f`（2026-09-05）；本条仅记录 P2-17 进度，P2 总体、P3、P4 仍未完成。
 
+### P2-18 lingtian systems（✅ 2026-09-08）
+
+- **范围与落点**：仅将 `server/src/lingtian/systems.rs` 原 `#[cfg(test)] mod tests` 的全部 98 个测试外置到同 crate 文件 `server/src/lingtian/systems_tests.rs`，生产文件末尾仅保留 `#[cfg(test)] #[path = "systems_tests.rs"] mod tests;` 挂载；未新增 Cargo test target。
+- **迁移对拍与行为**：迁移前、后均使用 `cd server && ../scripts/build-token.sh cargo test --lib lingtian::systems::tests`，分别为 `98 passed / 0 failed / 0 ignored`；测试名序列 98/98 相同，fixture、断言、错误语义、事件形状与 system 注册顺序未改。
+- **同 crate 必要性与保留项**：本批只能使用同 crate 外置，因为测试依赖既有 `#[cfg(test)] pub(crate) struct StartHandlerPlotScanCount`、`#[cfg(test)] fn build_start_plot_index`，以及五处生产 system 形参上的 `#[cfg(test)] mut plot_scan_count: Option<ResMut<StartHandlerPlotScanCount>>`（约原 L567/L689/L748/L790/L856）和对应 cfg(test) 调用分支。上述 Resource、helper、形参与 cfg(test) 门均原样保留，未迁移、未去掉、未改可见性；这些既有设计不属于本 PR 的 seam 清理范围，后续如需整改另行立项。
+- **源码与可见性核验**：迁移前已核对 `systems.rs` 无 `include_str!` 源码文本消费者；迁移后生产文件无测试体，未复制生产实现，未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam；未改 qi_physics、玩法、事件或 system 注册顺序。
+- **提交证据**：代码迁移对应 `aa615d801`（2026-09-08），本条仅记录 P2-18 进度；P2 总体、P3、P4 仍未完成，plan 不归档。
+
 ### P2-19 cultivation tribulation（✅ 2026-09-07）
 
 - **范围与落点**：仅处置 `server/src/cultivation/tribulation.rs` 原有 119 个 `#[test]`（测试体约 7,029 行；生产段约 4,173 行）。103 条能经既有公开 API 验证的 A 类测试外置到 `server/tests/unit/cultivation/tribulation_test.rs`，新增 `tribulation_unit` Cargo target；16 条 B 类测试保留在 `server/src/cultivation/tribulation_tests.rs`，由生产文件末尾的 `#[cfg(test)] #[path = "tribulation_tests.rs"] mod tests;` 挂载。渡劫运行时、schema、wire、Redis、qi 路径及其它模块未改动。
