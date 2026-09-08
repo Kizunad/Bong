@@ -78,7 +78,7 @@
 
 1. `qi_physics` 判据采用“实际 f64 减法是否产生不同结果”还是复用已有 helper？实施前以代码探索确认唯一落点，禁止在 `cultivation` 自建 epsilon。
 2. 抽干分支的 zone 不可表示错误是否在当前有限参数域可达？若可达，仅允许用既有 overflow sink 保持守恒后继续死亡触发；若不可达，保留验证证据并不扩大行为。
-3. 如何证明 no-op 是守恒中性：跳过前后两个物理权威字段与 ledger 审计均不变，且不产生 `QiTransfer`。
+3. no-op 的守恒验收标准必须可逐位复核：同一 fixture 的 `Cultivation.qi_current` 与命中的 `Zone.spirit_qi` 前后均以 `to_bits()` 逐位相等；`WorldQiAccount` 的相关 ledger balance 与 transfer history 前后完全相同（该 fresh fixture 的 history 应为空）；`Events<QiTransfer>` 的事件数必须为 0。对应本 plan §P1「饱和测试」#1 的 `micro_negative_zone_siphon_is_a_repeated_noop_when_source_cannot_progress`（`server/src/cultivation/negative_zone.rs:347-384`）及零额边界 `zero_qi_siphon_does_not_emit_death_without_real_release`（`:416-441`）共同锁定 no-op 不改物理字段、不改 ledger、不发转账/死亡副作用。
 
 全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
 
