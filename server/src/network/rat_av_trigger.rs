@@ -132,29 +132,15 @@ mod tests {
 
     // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
 
-    /// 取源码的**生产半区**：优先砍掉同 crate 外置测试的挂载声明，
-    /// 兼容旧的 inline `#[cfg(test)] mod tests {`，再剔除纯注释行。
+    /// 返回完整的非注释源码；这里**不按测试模块形态截断**。
     ///
-    /// 必要性（这条 helper 本身就是一次返工的产物）：needle
-    /// `add_event::<RatAttackAvEvent>()` 在 `brain_rat.rs` 里出现 9 次——生产 `register()`
-    /// 1 次 + 8 个单测各自建 app 时 1 次。对全文件裸 `contains` 是**恒真**的：把生产那行删掉
-    /// 照样绿，正好放过它声称要挡的失败。剔注释行则另外挡住「把调用注释掉但 pin 仍过」的绕法。
-    ///
-    /// 外置形态按 `#[path = "mod_tests.rs"] mod tests;` 截断，避免把后续测试文件内容
-    /// 当作生产代码；旧 inline 形态仍作为兼容分支，供尚未迁移的模块继续使用。
+    /// `include_str!("mod.rs")` 的调用方只需要核对 network 生产源码中的注册接线。
+    /// 先前按 `#[cfg(test)] mod tests {` 截取，外置测试后会找不到 marker；改成按
+    /// `#[path = "mod_tests.rs"] mod tests;` 截取又会在挂载声明处提前截断，反而丢掉
+    /// 声明之后的完整源码。保留完整源码使 inline 与同 crate 外置两种布局都不再影响
+    /// 判据；去掉注释行仍防止注释中的伪调用让 pin 通过。
     fn production_source(src: &str) -> String {
-        let head = src
-            .split_once("#[path = \"mod_tests.rs\"]\nmod tests;")
-            .or_else(|| src.split_once("#[cfg(test)]\nmod tests {"))
-            .map(|(head, _)| head)
-            // 两种已知形态都落空时直接 panic，避免退化成"返回全文 → pin 恒真"。
-            .unwrap_or_else(|| {
-                panic!(
-                    "production_source 未找到外置挂载或 inline 测试模块起点；\
-                     被审文件的测试布局变了，切分逻辑需同步更新"
-                )
-            });
-        head.lines()
+        src.lines()
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
@@ -176,34 +162,38 @@ mod tests {
             "rat_av_trigger 必须在 network 下声明为模块"
         );
 
-        let brain_rat = production_source(include_str!("../npc/brain_rat.rs"));
+        let mut brain_rat_app = App::new();
+        crate::npc::brain_rat::register(&mut brain_rat_app);
         assert!(
-            brain_rat.contains("add_event::<RatAttackAvEvent>()"),
+            brain_rat_app
+                .world()
+                .contains_resource::<Events<RatAttackAvEvent>>(),
             "brain_rat::register 必须注册 RatAttackAvEvent 事件类型，否则 action system 的 \
              EventWriter<RatAttackAvEvent> 取不到 Events 资源"
         );
     }
 
-    /// 元测试：证明上面那条 pin **不是恒真的**。
+    /// 元测试：证明 network 注册 pin **不是恒真的**。
     ///
-    /// 直接锁住 `production_source` 的判别力——若它退化成"返回全文"（或有人把生产半区的
-    /// 切分逻辑改坏），删掉生产注册行后 needle 仍能命中，这条会撞红。
+    /// `production_source` 只去掉注释，不再猜测测试模块边界；删掉唯一的生产注册行
+    /// 后，完整 `mod.rs` 源码应失去该接线。
     #[test]
     fn wiring_pin_actually_fails_when_production_registration_is_removed() {
-        let brain_rat = production_source(include_str!("../npc/brain_rat.rs"));
-        let mutated = brain_rat.replacen("    app.add_event::<RatAttackAvEvent>();\n", "", 1);
-        assert!(
-            !mutated.contains("add_event::<RatAttackAvEvent>()"),
-            "生产半区里 add_event::<RatAttackAvEvent>() 应当只出现一次（brain_rat::register 内）；\
-             删掉后仍能命中 = 上面的接线 pin 是恒真的、挡不住孤岛。\
-             （测试模块里的 8 次同名调用必须已被 production_source 切掉。）"
-        );
-
         let network_mod = production_source(include_str!("mod.rs"));
         let mutated_net = network_mod.replacen("    rat_av_trigger::register(app);\n", "", 1);
         assert!(
             !mutated_net.contains("rat_av_trigger::register(app)"),
             "生产半区里 rat_av_trigger::register(app) 应当只出现一次"
+        );
+    }
+
+    #[test]
+    fn production_source_keeps_text_after_external_test_mount() {
+        let source = "pub fn register(app: &mut App) {}\n#[cfg(test)]\n#[path = \"mod_tests.rs\"]\nmod tests;\nfn production_tail() {}";
+        let source = production_source(source);
+        assert!(
+            source.contains("fn production_tail() {}"),
+            "完整源码判据不得在外置测试挂载声明处提前截断"
         );
     }
 
