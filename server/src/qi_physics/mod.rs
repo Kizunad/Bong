@@ -173,6 +173,23 @@ pub(crate) fn finite_non_negative(value: f64, field: &'static str) -> Result<f64
     }
 }
 
+/// 判断有限非负真元值的正向扣减是否会让 IEEE-754 `f64` 产生可观察进展。
+///
+/// 该 helper 只负责数值可表示性，不替调用方判断 `amount` 是否不超过余额；调用方仍须
+/// 先执行自己的业务边界校验。把判据放在 `qi_physics`，避免各 gameplay 路径各自拍 epsilon。
+pub(crate) fn subtraction_makes_progress(before: f64, amount: f64) -> Result<bool, QiPhysicsError> {
+    let before = finite_non_negative(before, "subtraction.before")?;
+    let amount = finite_non_negative(amount, "subtraction.amount")?;
+    let after = before - amount;
+    if !after.is_finite() {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "subtraction.after",
+            value: after,
+        });
+    }
+    Ok(amount > 0.0 && after != before)
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][qi_physics] registering qi physics resources");
     app.insert_resource(WorldQiBudget::from_env())
@@ -222,5 +239,19 @@ mod tests {
              BONG_SPIRIT_QI_TOTAL overrides it — no carry-over from a prior run"
         );
         assert_eq!(budget.era_decay_accum, 0.0);
+    }
+
+    #[test]
+    fn subtraction_progress_uses_f64_result_without_a_gameplay_epsilon() {
+        assert!(!subtraction_makes_progress(1.0, 1e-17).unwrap());
+        assert!(subtraction_makes_progress(1.0, f64::EPSILON).unwrap());
+        assert!(!subtraction_makes_progress(1.0, 0.0).unwrap());
+        assert!(matches!(
+            subtraction_makes_progress(f64::NAN, 1.0),
+            Err(QiPhysicsError::InvalidAmount {
+                field: "subtraction.before",
+                ..
+            })
+        ));
     }
 }
