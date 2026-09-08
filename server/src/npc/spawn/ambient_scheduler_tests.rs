@@ -515,11 +515,7 @@ fn ambient_ground_position_loaded_runtime_surface_beats_raster() {
     };
 
     assert_eq!(
-        resolve_ambient_ground_position(
-            DVec3::new(2.5, 80.0, 3.25),
-            Some(layer),
-            Some(&terrain),
-        ),
+        resolve_ambient_ground_position(DVec3::new(2.5, 80.0, 3.25), Some(layer), Some(&terrain),),
         Some(DVec3::new(2.5, 67.0, 3.25)),
         "loaded runtime support must override stale raster height"
     );
@@ -589,11 +585,7 @@ fn ambient_ground_position_unloaded_chunk_uses_passable_raster() {
     };
 
     assert_eq!(
-        resolve_ambient_ground_position(
-            DVec3::new(33.5, 200.0, 33.5),
-            Some(layer),
-            Some(&terrain),
-        ),
+        resolve_ambient_ground_position(DVec3::new(33.5, 200.0, 33.5), Some(layer), Some(&terrain),),
         Some(DVec3::new(33.5, 67.0, 33.5)),
         "an unloaded runtime chunk may use a passable raster fallback"
     );
@@ -663,8 +655,7 @@ fn ambient_ground_position_standard_window_boundaries_are_inclusive() {
 }
 
 #[test]
-fn ambient_ground_position_loaded_scan_miss_accepts_exact_raster_landing_with_higher_neighbor()
-{
+fn ambient_ground_position_loaded_scan_miss_accepts_exact_raster_landing_with_higher_neighbor() {
     let (app, layer_entity) = make_runtime_layer(
         &[(0, 0)],
         &[(1, 70, 2, BlockState::STONE), (1, 73, 2, BlockState::STONE)],
@@ -916,11 +907,7 @@ fn ambient_ground_position_loaded_scan_miss_rejects_air_support() {
     };
 
     assert_eq!(
-        resolve_ambient_ground_position(
-            DVec3::new(1.5, 200.0, 2.5),
-            Some(layer),
-            Some(&terrain),
-        ),
+        resolve_ambient_ground_position(DVec3::new(1.5, 200.0, 2.5), Some(layer), Some(&terrain),),
         None,
         "loaded runtime data must reject a stale raster surface whose support is air"
     );
@@ -1252,8 +1239,7 @@ fn ambient_ground_position_multi_layer_column_chooses_highest_safe_support() {
 
 #[test]
 fn ambient_ground_position_negative_fractional_xz_routes_runtime_chunk_euclidean() {
-    let (app, layer_entity) =
-        make_runtime_layer(&[(-1, -1)], &[(-3, 66, -4, BlockState::STONE)]);
+    let (app, layer_entity) = make_runtime_layer(&[(-1, -1)], &[(-3, 66, -4, BlockState::STONE)]);
     let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
     let terrain = FixtureSurface {
         y: 10,
@@ -1469,11 +1455,7 @@ fn ambient_ground_position_liquid_runtime_and_impassable_raster_reject() {
     };
 
     assert_eq!(
-        resolve_ambient_ground_position(
-            DVec3::new(1.5, 80.0, 2.5),
-            Some(layer),
-            Some(&terrain),
-        ),
+        resolve_ambient_ground_position(DVec3::new(1.5, 80.0, 2.5), Some(layer), Some(&terrain),),
         None,
         "water is not runtime support and an impassable raster must remain fail closed"
     );
@@ -2602,8 +2584,7 @@ fn dead_zone_threat_budget_never_zeroes_interval() {
 }
 
 #[test]
-fn dead_zone_threat_budget_scaled_interval_stays_multiple_of_stride_across_all_dangers_and_kinds(
-) {
+fn dead_zone_threat_budget_scaled_interval_stays_multiple_of_stride_across_all_dangers_and_kinds() {
     // §Verify blocker①(stride 混叠)：死域/负灵域乘区缩放产出的 spawn_interval_ticks
     // 必须仍是 AMBIENT_SCHEDULER_STRIDE_TICKS(50) 的整数倍——否则粗节流会漏检
     // should_run_interval 恰好命中的 tick，有效间隔暴涨到 lcm(50, interval)（几千 tick，
@@ -2739,8 +2720,7 @@ fn wide_open_bounds() -> (DVec3, DVec3) {
 fn ring_sample_always_within_ring_radius_bounds() {
     let anchor = DVec3::new(0.0, 64.0, 0.0);
     for seed in 0..200u64 {
-        let Some(pos) = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], seed)
-        else {
+        let Some(pos) = sample_ambient_ring_position(wide_open_bounds(), anchor, &[], seed) else {
             panic!("seed={seed} 在无穷大 bounds + 无既有点时不应返回 None");
         };
         let dx = pos.x - anchor.x;
@@ -2868,8 +2848,7 @@ fn make_app() -> App {
 fn install_layers(app: &mut App) -> Entity {
     let overworld = {
         let world = app.world_mut();
-        let mut query =
-            world.query_filtered::<Entity, (With<ChunkLayer>, Without<Despawned>)>();
+        let mut query = world.query_filtered::<Entity, (With<ChunkLayer>, Without<Despawned>)>();
         query
             .iter(world)
             .next()
@@ -3040,8 +3019,7 @@ fn ambient_scheduler_invalid_layer_rejects_spawn_but_preserves_recycle_and_qi_re
                         blackboard,
                         bundle,
                     ));
-                    let expected =
-                        0.5 + 5.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+                    let expected = 0.5 + 5.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
                     (stray, None, expected)
                 }
             };
@@ -3107,9 +3085,7 @@ fn ambient_scheduler_invalid_layer_rejects_spawn_but_preserves_recycle_and_qi_re
 
 #[test]
 fn ambient_scheduler_system_snaps_mundane_real_pool_on_loaded_chunk_without_raster() {
-    use crate::fauna::mundane::{
-        mundane_passive_budget_fn, mundane_pool_fn, MundaneFaunaMarker,
-    };
+    use crate::fauna::mundane::{mundane_passive_budget_fn, mundane_pool_fn, MundaneFaunaMarker};
 
     let mut app = make_runtime_scheduler_app::<MundaneFaunaMarker>(
         mundane_passive_budget_fn,
@@ -3573,8 +3549,7 @@ fn recycle_barrier_hides_terminal_rat_and_spider_from_same_tick_qi_producers() {
         .unwrap()
         .spirit_qi;
     assert!(
-        (zone_qi - (0.5 + 9.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)).abs()
-            < 1e-12,
+        (zone_qi - (0.5 + 9.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)).abs() < 1e-12,
         "zone qi must contain exactly the three settled owners within floating-point tolerance"
     );
 }
@@ -3801,8 +3776,7 @@ fn recycle_returns_spider_cultivation_qi_to_zone_instead_of_evaporating() {
     app.world_mut()
         .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
 
-    let mut spider_blackboard =
-        MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+    let mut spider_blackboard = MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
     spider_blackboard.drained_qi = 5.0;
     let stray = app.world_mut().spawn_empty().id();
     let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(
@@ -3916,8 +3890,7 @@ fn recycle_spider_failure_preserves_actor_zone_ledger_and_entity_for_retry() {
         crate::cultivation::components::Realm::Awaken,
     );
     bundle.cultivation.qi_current = 5.0;
-    let mut spider_blackboard =
-        MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+    let mut spider_blackboard = MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
     spider_blackboard.drained_qi = 5.0;
     app.world_mut().entity_mut(stray).insert((
         Position::new([0.0, 64.0, 0.0]),
