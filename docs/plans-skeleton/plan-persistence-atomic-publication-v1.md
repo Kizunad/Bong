@@ -68,6 +68,18 @@
 - `world_qi.rs` 的恢复须验证固定 durable owner 集合、非法/缺失记录和守恒边界；不新增 `*_DECAY`、`*_DRAIN`、`*_ATTEN` 或任何本 plan 私有物理常数。
 - 验收测试引用 `qi_physics` 的 canonical constants/API，不写死 `SPIRIT_QI_TOTAL` 的历史字面值；若发现既有入口不足，先停在依赖/决策记录，不在本 plan 偷建旁路 ledger。
 
+#### 2.6.1 当前 `world_qi.rs` 恢复与验证调用链（基线核验）
+
+以下是当前 `origin/main=e52a991fd` 已存在的真实符号与 owner 输入；实施时必须以这条链为边界，不能把抽象描述误当成 API，也不能再造一条旁路恢复链：
+
+- `persistent_runtime_qi_accounts() -> [QiAccountId; 5]`（`server/src/qi_physics/ledger.rs`）：无运行时参数，返回必须完整持久化/恢复的固定 durable owner 白名单；每个 `QiAccountId` 是余额的 owner identity，不能由持久化行名动态扩展。
+- `load_runtime_qi_account_balances(settings: &PersistenceSettings) -> io::Result<Vec<(QiAccountId, f64)>>`（`server/src/persistence/world_qi.rs`）：以 `&PersistenceSettings` 提供 SQLite 路径/连接上下文，按上述白名单读取 `qi_runtime_accounts`；当前已对每个 owner 检查行存在、余额 finite 且非负，缺行或非法值 fail-closed，返回带 owner 的已验证 `(QiAccountId, balance)` 集合。
+- `hydrate_runtime_qi_accounts(settings: &PersistenceSettings, qi_ledger: &mut WorldQiAccount) -> io::Result<usize>`（`server/src/persistence/world_qi.rs`）：由 `bootstrap_persistence_system` 在启动恢复时提供 `&PersistenceSettings` 与唯一可变 `&mut WorldQiAccount` owner；当前实现逐项调用 `WorldQiAccount::set_balance(account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError>` 写入恢复余额。`set_balance` 是当前通用写入原语，不是已经存在的专用 restore API；P0 必须明确其恢复边界/验证责任，禁止在 persistence 另建等价 setter、隐式 transfer 或 event-only 恢复。
+- `upsert_runtime_qi_account_balances(transaction: &rusqlite::Transaction<'_>, qi_ledger: &WorldQiAccount, wall_clock: i64) -> io::Result<()>`（`server/src/persistence/world_qi.rs`）：以 `&Transaction` 作为 SQLite 写入 owner、以 `&WorldQiAccount` 作为余额读取 owner、以 `wall_clock` 作为持久化时间输入；当前对固定白名单逐项写回，底层 `upsert_runtime_qi_account_balance` 校验余额 finite 且非负。它是写回链，不得被当作恢复链或新 ledger。
+- `assert_conservation(before: &WorldQiSnapshot, after: &WorldQiSnapshot, era_decay: f64) -> Result<(), QiPhysicsError>`（`server/src/qi_physics/ledger.rs`）：以 before/after world snapshot 和 canonical `era_decay` 作为验证输入，验证观察总量与允许的时代衰减一致；P4 用它验证恢复/失败前后没有吞真元，不用字面常数代替。`WorldQiAccount::iter_balances(&self)` 只读暴露各 durable owner 的余额，可用于审计对拍，不提供 mutation capability。
+
+上述调用链是“当前事实”，不是本 plan 的实现承诺；尤其不能把当前 `WorldQiAccount::set_balance` 包装成未经 P0 决议的新 persistence restore helper。若 P0 判定需要受控恢复入口，必须在 `qi_physics` owner 边界内明确其输入、失败原子性与审计语义，并同步更新本节；本 skeleton 不预先拍板。
+
 ## 3. 设计基础：三条归档发布不变式（原样承接）
 
 以下三条文字原样承接自被 revert 的 `bb1d3b6f1` / `3611a07f7` 设计证据，是本 plan 的 P0 决策基础。实施前只能在 P0 的正式决议中澄清边界，不能用代码行为反推未写下的契约。
