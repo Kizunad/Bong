@@ -1,0 +1,3767 @@
+use super::*;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+fn dormant_hash_outbound(
+    entries: Vec<(String, String)>,
+) -> (RedisOutbound, Receiver<RedisDeliveryReceipt>) {
+    let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+    (
+        RedisOutbound::NpcDormantHash {
+            entries,
+            revision: 7,
+            receipt_tx,
+        },
+        receipt_rx,
+    )
+}
+
+/// bug-hunt-1: war_outcome / dying_elder_* 是 agent 端生产 narration kind
+/// （war-outcome-narration.ts / elder-encounter-narration.ts）。此前 server 白名单
+/// 漏列导致 validate_narration_entry 拒收 → 整 batch 在 redis_bridge.rs:2224
+/// tracing::warn! 丢弃，玩家收不到大战结局 / 濒死老者剧情。锁定 6 个新 kind 均通过校验。
+#[test]
+fn validate_narration_entry_accepts_new_agent_narration_kinds() {
+    for kind in [
+        "war_outcome",
+        "dying_elder_appeared",
+        "dying_elder_dan_received",
+        "dying_elder_betrayal",
+        "dying_elder_dead_natural",
+        "dying_elder_dead_player_kill",
+    ] {
+        let entry = serde_json::json!({
+            "scope": "broadcast",
+            "text": "测试播报",
+            "style": "narration",
+            "kind": kind,
+        });
+        assert!(
+            validate_narration_entry(&entry, 0).is_ok(),
+            "kind `{kind}` 应被 validate_narration_entry 接受（agent 端有效 narration kind，否则整 batch 被丢弃）"
+        );
+    }
+}
+
+/// 负锚点：未知 kind 仍应被拒，确保白名单非恒真。
+#[test]
+fn validate_narration_entry_rejects_unknown_kind() {
+    let entry = serde_json::json!({
+        "scope": "broadcast",
+        "text": "x",
+        "style": "narration",
+        "kind": "totally_bogus_kind",
+    });
+    assert!(
+        validate_narration_entry(&entry, 0).is_err(),
+        "未知 kind 必须被拒，否则白名单形同虚设"
+    );
+}
+
+use crate::cultivation::components::MeridianId;
+use crate::fauna::rat_phase::RatPhase;
+use crate::schema::anticheat::{AntiCheatReportV1, ViolationKindV1};
+use crate::schema::combat_event::{
+    CombatAttackSourceV1, CombatRealtimeEventV1, CombatRealtimeKindV1, CombatSummaryV1,
+};
+use crate::schema::common::CommandType;
+use crate::schema::death_insight::{
+    DeathInsightCategoryV1, DeathInsightRequestV1, DeathInsightZoneKindV1,
+};
+use crate::schema::death_lifecycle::{AgingEventKindV1, LifespanEventKindV1};
+use crate::schema::economy::PriceSampleV1;
+use crate::schema::forge::ForgeOutcomeBucketV1;
+use crate::schema::social::{
+    ExposureKindV1, HighRenownMilestoneEventTag, HighRenownMilestoneEventV1, RenownTagV1,
+};
+use crate::schema::spirit_eye::{
+    SpiritEyeMigrateReasonV1, SpiritEyeMigrateV1, SpiritEyePositionV1,
+};
+use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeSkillIdV1, TuikeSkillVisualContractV1};
+use crate::schema::zhenmai_v2::{ZhenmaiAttackKindV1, ZhenmaiSkillIdV1};
+use serde_json::json;
+use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+use tokio::task;
+
+fn sample_world_state() -> WorldStateV1 {
+    serde_json::from_str(include_str!(
+        "../../../agent/packages/schema/samples/world-state.sample.json"
+    ))
+    .expect("world-state sample should deserialize")
+}
+
+fn sample_chat_message() -> ChatMessageV1 {
+    serde_json::from_str(include_str!(
+        "../../../agent/packages/schema/samples/chat-message.sample.json"
+    ))
+    .expect("chat-message sample should deserialize")
+}
+
+fn sample_durable_elder_event(event_id: &str) -> ElderEncounterEventV1 {
+    ElderEncounterEventV1 {
+        event_id: Some(event_id.to_string()),
+        zone_name: "tsy_deep".to_string(),
+        elder_entity_id: 42,
+        event_kind: crate::schema::elder_encounter::ElderEncounterEventKindV1::DeadNatural,
+        betray_probability: 0.0,
+        dan_count: 0,
+        offered_skill_id: String::new(),
+        qi_fraction: 0.0,
+        server_tick: 91,
+    }
+}
+
+#[test]
+fn durable_elder_terminal_encodes_correlated_inline_list_push() {
+    let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+    let event_id = "terminal:npc:42:91";
+    let command = prepare_outbound_command(RedisOutbound::ElderEncounterTerminal {
+        delivery_id: event_id.to_string(),
+        event: sample_durable_elder_event(event_id),
+        receipt_tx,
+    })
+    .expect("durable terminal event should encode");
+
+    assert!(
+        !runs_on_background_redis_connection(&command),
+        "durable terminal publish must stay inline so reconnect retains it as pending_command"
+    );
+    match command {
+        RedisIoCommand::ListPushWithReceipt {
+            key,
+            payload,
+            delivery_id,
+            receipt_tx: encoded_tx,
+        } => {
+            assert_eq!(key, ELDER_ENCOUNTER_DURABLE_REDIS_KEY);
+            assert_eq!(delivery_id, event_id);
+            let decoded: ElderEncounterEventV1 =
+                serde_json::from_str(&payload).expect("durable payload should be valid JSON");
+            assert_eq!(decoded, sample_durable_elder_event(event_id));
+            assert!(
+                receipt_rx.try_recv().is_err(),
+                "encoding must not forge delivery receipt"
+            );
+            encoded_tx
+                .send(RedisDeliveryReceipt {
+                    delivery_id,
+                    outcome: Ok(()),
+                })
+                .expect("encoded receipt channel should remain correlated");
+            assert_eq!(
+                receipt_rx.recv().expect("receipt should arrive"),
+                RedisDeliveryReceipt {
+                    delivery_id: event_id.to_string(),
+                    outcome: Ok(()),
+                }
+            );
+        }
+        other => panic!("expected ListPushWithReceipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_world_state() {
+    let command = prepare_outbound_command(RedisOutbound::WorldState(sample_world_state()))
+        .expect("world state should produce a publish command");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_WORLD_STATE);
+
+            let payload: Value =
+                serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+            assert_eq!(payload["v"], 1);
+            assert_eq!(payload["tick"], 84000);
+        }
+        other => panic!("expected PUBLISH command, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_economy_telemetry_channels() {
+    let bone_tick = prepare_outbound_command(RedisOutbound::BoneCoinTick(BoneCoinTickV1 {
+        v: 1,
+        tick: 720_000,
+        season: crate::schema::world_state::SeasonV1::SummerToWinter,
+        total_spirit_qi: 27.5,
+        total_face_value: 60.0,
+        active_coin_count: 3,
+        rotten_coin_count: 1,
+        legacy_scalar_count: 7,
+        rhythm_multiplier: 1.1,
+        market_factor: 0.9,
+    }))
+    .expect("bone coin tick should publish");
+    match bone_tick {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_BONE_COIN_TICK);
+            let payload: Value =
+                serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+            assert_eq!(payload["season"], "summer_to_winter");
+        }
+        other => panic!("expected PUBLISH command, got {other:?}"),
+    }
+
+    let price_index = prepare_outbound_command(RedisOutbound::PriceIndex(PriceIndexV1 {
+        v: 1,
+        tick: 720_000,
+        season: crate::schema::world_state::SeasonV1::SummerToWinter,
+        supply_spirit_qi: 27.5,
+        demand_spirit_qi: 50.0,
+        rhythm_multiplier: 1.1,
+        market_factor: 0.9,
+        price_multiplier: 0.99,
+        sample_prices: vec![PriceSampleV1 {
+            item_id: "common_good".to_string(),
+            base_price: 4,
+            final_price: 4,
+        }],
+    }))
+    .expect("price index should publish");
+    match price_index {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_PRICE_INDEX);
+            let payload: Value =
+                serde_json::from_str(&payload).expect("publish payload should be valid JSON");
+            assert_eq!(payload["sample_prices"][0]["item_id"], "common_good");
+        }
+        other => panic!("expected PUBLISH command, got {other:?}"),
+    }
+}
+
+#[test]
+fn pushes_chat_messages() {
+    let command = prepare_outbound_command(RedisOutbound::PlayerChat(sample_chat_message()))
+        .expect("chat payload should produce an RPUSH command");
+
+    match command {
+        RedisIoCommand::ListPush { key, payload } => {
+            assert_eq!(key, CH_PLAYER_CHAT);
+
+            let payload: Value =
+                serde_json::from_str(&payload).expect("chat payload should be valid JSON");
+            assert_eq!(payload["v"], 1);
+            assert_eq!(payload["player"], "offline:Steve");
+        }
+        other => panic!("expected RPUSH command, got {other:?}"),
+    }
+}
+
+#[test]
+fn replaces_dormant_npc_hash() {
+    let entries = vec![(
+        "npc_a".to_string(),
+        serde_json::json!({"char_id": "npc_a"}).to_string(),
+    )];
+    let command = prepare_outbound_command(dormant_hash_outbound(entries.clone()).0)
+        .expect("dormant hash payload should produce a hash replace command");
+
+    match command {
+        RedisIoCommand::HashReplaceWithReceipt {
+            key,
+            entries: got,
+            delivery_id,
+            ..
+        } => {
+            assert_eq!(key, NPC_DORMANT_REDIS_KEY);
+            assert_eq!(got, entries);
+            assert_eq!(delivery_id, "7");
+        }
+        other => panic!("expected hash replace command with receipt, got {other:?}"),
+    }
+}
+
+/// Build `field_count` owned `(field, value)` pairs for chunking tests.
+fn dormant_field_pairs(field_count: usize) -> Vec<(String, String)> {
+    (0..field_count)
+        .map(|i| (format!("field{i}"), format!("value{i}")))
+        .collect()
+}
+
+/// Borrow owned `(String, String)` pairs as `(&str, &str)` for
+/// [`chunk_hash_fields`].
+fn borrow_field_pairs(owned: &[(String, String)]) -> Vec<(&str, &str)> {
+    owned
+        .iter()
+        .map(|(f, v)| (f.as_str(), v.as_str()))
+        .collect()
+}
+
+#[test]
+fn hash_replace_chunks_large_payload() {
+    // Contract (named by the plan): `chunk_hash_fields` must guarantee
+    //   1. batch count == ceil(N / chunk)
+    //   2. concatenating the batches in order reproduces the input exactly
+    //      (no dropped, reordered, or duplicated fields)
+    // Saturated boundaries: N = 0, 1, chunk-1, chunk, chunk+1, 1000@256.
+    let chunk = 256usize;
+
+    // (N, expected batch count). Expected counts are hand-computed
+    // ceil(N/256) and cross-checked below, so the case table cannot silently
+    // agree with a buggy implementation.
+    let cases: &[(usize, usize)] = &[
+        (0, 0),         // empty -> 0 batches
+        (1, 1),         // single element -> 1 batch
+        (chunk - 1, 1), // 255 -> still 1 batch
+        (chunk, 1),     // 256 -> exactly 1 full batch
+        (chunk + 1, 2), // 257 -> remainder spills into a 2nd batch
+        (1000, 4),      // 1000 / 256 = 3.9 -> ceil = 4 batches
+    ];
+
+    for &(n, expected_batches) in cases {
+        // Independently recompute ceil to catch a typo in the case table.
+        let ceil_div = n.div_ceil(chunk);
+        assert_eq!(
+            expected_batches, ceil_div,
+            "case table self-check failed: for N={n} chunk={chunk} the \
+             expected batch count should be ceil={ceil_div}, but the table \
+             says {expected_batches}"
+        );
+
+        let owned = dormant_field_pairs(n);
+        let borrowed = borrow_field_pairs(&owned);
+        let batches = chunk_hash_fields(&borrowed, chunk);
+
+        // 1. batch count == ceil(N/chunk)
+        assert_eq!(
+            batches.len(),
+            expected_batches,
+            "wrong batch count: expected ceil(N/chunk)={expected_batches} \
+             (N={n} chunk={chunk}) because that many HSETs are needed, got \
+             {}",
+            batches.len(),
+        );
+
+        // Every non-final batch must be exactly `chunk`; the final batch is
+        // 1..=chunk (when N>0). Pins the split granularity so an off-by-one
+        // in chunking is caught.
+        for (i, batch) in batches.iter().enumerate() {
+            if i + 1 < batches.len() {
+                assert_eq!(
+                    batch.len(),
+                    chunk,
+                    "batch {i} is not the last, so it should be full \
+                     (chunk={chunk}) but had {} (N={n})",
+                    batch.len(),
+                );
+            } else {
+                assert!(
+                    (1..=chunk).contains(&batch.len()),
+                    "the final batch size should be in 1..={chunk}, got {} \
+                     (N={n})",
+                    batch.len(),
+                );
+            }
+        }
+
+        // 2. concatenation == input (order-preserving, lossless).
+        let flattened: Vec<(&str, &str)> = batches.iter().flat_map(|b| b.iter().copied()).collect();
+        assert_eq!(
+            flattened.len(),
+            n,
+            "concatenated element count should equal the input N={n} \
+             because no field may be dropped or duplicated, got {}",
+            flattened.len(),
+        );
+        assert_eq!(
+            flattened, borrowed,
+            "concatenated batches should equal the input element-for-element \
+             (N={n} chunk={chunk}); a mismatch means chunking reordered or \
+             corrupted the field sequence"
+        );
+    }
+}
+
+#[test]
+fn chunk_hash_fields_zero_chunk_no_panic() {
+    // Contract: chunk==0 must not hit the `slice::chunks(0)` panic; it is
+    // treated as one pair per batch.
+    let owned = dormant_field_pairs(3);
+    let borrowed = borrow_field_pairs(&owned);
+    let batches = chunk_hash_fields(&borrowed, 0);
+    assert_eq!(
+        batches.len(),
+        3,
+        "chunk==0 should degrade to one pair per batch -> N=3 yields 3 \
+         batches, got {} (chunks(0) guard likely missing)",
+        batches.len(),
+    );
+    for (i, batch) in batches.iter().enumerate() {
+        assert_eq!(
+            batch.len(),
+            1,
+            "with chunk==0, batch {i} should hold exactly 1 element, got {}",
+            batch.len(),
+        );
+    }
+    // Still must reproduce the input in order.
+    let flattened: Vec<(&str, &str)> = batches.iter().flat_map(|b| b.iter().copied()).collect();
+    assert_eq!(
+        flattened, borrowed,
+        "chunk==0 batches should still concatenate back to the input"
+    );
+}
+
+/// P0 bug① contract: a dormant `HashReplace` (which may be arbitrarily slow
+/// or time out) must NEVER be able to starve other outbound IPC. The
+/// starvation mechanism was `dispatch_outbound_command` returning `Err` on
+/// an inline command, which `drain_outbound_messages` stored into the
+/// cross-reconnect `pending_command` and retried first forever. The fix
+/// routes `HashReplace` onto the background (fire-and-forget) connection, so
+/// it is structurally impossible for it to occupy `pending_command`. A
+/// regular Publish queued after it still routes inline and is unaffected.
+#[test]
+fn dormant_hash_replace_failure_does_not_starve_other_outbound() {
+    // The would-be slow / failing dormant write.
+    let dormant = prepare_outbound_command(
+        dormant_hash_outbound(vec![(
+            "npc_slow".to_string(),
+            serde_json::json!({"char_id": "npc_slow"}).to_string(),
+        )])
+        .0,
+    )
+    .expect("dormant payload should produce a HashReplace command");
+    assert!(
+        runs_on_background_redis_connection(&dormant),
+        "expected dormant HashReplace to be fire-and-forget on the background connection so a slow write cannot pin pending_command; got inline routing which is exactly the starvation bug"
+    );
+
+    // A subsequently-queued non-world-state Publish still routes inline and
+    // is therefore drained / dispatched independently of the dormant write.
+    let other = RedisIoCommand::Publish {
+        channel: CH_AGENT_COMMAND,
+        payload: "{}".to_string(),
+    };
+    assert!(
+        !runs_on_background_redis_connection(&other),
+        "expected a non-world_state Publish to stay on the primary inline path (it does not depend on dormant write completion); got background routing"
+    );
+}
+
+/// Per-variant pin of the inline-vs-background routing decision, the single
+/// switch that determines whether a command can ever occupy
+/// `pending_command`. Every `RedisIoCommand` variant is exercised so a new
+/// variant or a routing regression flips a red test instead of silently
+/// re-introducing head-of-line blocking.
+#[test]
+fn outbound_routing_background_vs_inline_per_variant() {
+    // world_state Publish -> background (must not block other channels).
+    assert!(
+        runs_on_background_redis_connection(&RedisIoCommand::Publish {
+            channel: CH_WORLD_STATE,
+            payload: "{}".to_string(),
+        }),
+        "expected world_state Publish on background connection because a large snapshot must not stall other IPC"
+    );
+    // dormant HashReplace (only HashReplace producer) -> background.
+    assert!(
+        runs_on_background_redis_connection(&RedisIoCommand::HashReplace {
+            key: NPC_DORMANT_REDIS_KEY,
+            entries: vec![("a".to_string(), "b".to_string())],
+        }),
+        "expected dormant HashReplace on background connection so a slow / failing write cannot pin pending_command"
+    );
+    // Non-world_state Publish -> inline (small, latency-sensitive narration/cmd channels).
+    assert!(
+        !runs_on_background_redis_connection(&RedisIoCommand::Publish {
+            channel: CH_AGENT_COMMAND,
+            payload: "{}".to_string(),
+        }),
+        "expected non-world_state Publish to stay inline; only world_state is large enough to warrant the background connection"
+    );
+    // Correlated durable ListPushWithReceipt -> inline. It must be eligible for
+    // pending_command retry and may emit a receipt only after Redis stores the list entry.
+    let (receipt_tx, _receipt_rx) = crossbeam_channel::unbounded();
+    assert!(
+        !runs_on_background_redis_connection(&RedisIoCommand::ListPushWithReceipt {
+            key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
+            payload: "{}".to_string(),
+            delivery_id: "terminal:npc:42:91".to_string(),
+            receipt_tx,
+        }),
+        "expected durable terminal list push to stay inline so failures retain the exact command for reconnect retry"
+    );
+    // ListPush (e.g. player_chat) -> inline.
+    assert!(
+        !runs_on_background_redis_connection(&RedisIoCommand::ListPush {
+            key: CH_PLAYER_CHAT,
+            payload: "{}".to_string(),
+        }),
+        "expected ListPush to stay inline; chat pushes are small and ordered"
+    );
+    // PublishFanout -> inline.
+    assert!(
+        !runs_on_background_redis_connection(&RedisIoCommand::PublishFanout {
+            channels: vec![CH_AGENT_COMMAND],
+            payload: "{}".to_string(),
+        }),
+        "expected PublishFanout to stay inline; it is not a bulk dormant/world_state write"
+    );
+}
+
+/// P0 bug② contract: a timed-out hash replace must not leak its temp key.
+///
+/// The leak only matters because `tokio::timeout` *drops* the in-flight
+/// `execute_hash_replace_atomic` future (skipping its inline `DEL temp`
+/// cleanup), so the cleanup the timeout branch issues and the leading `DEL`
+/// of the next attempt can only ever clear the leak if every attempt targets
+/// the *same* deterministic temp key. The previous nanosecond-nonce scheme
+/// minted a fresh `{key}:tmp:<nonce>` per call, so no later DEL could name a
+/// dropped key and they accumulated without bound. This pins the contract
+/// that makes cleanup possible: one stable `{key}:tmp` name, identical
+/// across calls, never carrying the old `:tmp:<nonce>` suffix.
+#[test]
+fn hash_replace_timeout_cleans_temp_key() {
+    let temp = dormant_temp_key(NPC_DORMANT_REDIS_KEY);
+    assert_eq!(
+        temp, "bong:npc/dormant:tmp",
+        "expected the dormant temp key to be the deterministic `{{key}}:tmp` so a timed-out write's best-effort DEL targets the exact leaked key; got `{temp}`"
+    );
+    assert!(
+        !temp.contains(":tmp:"),
+        "expected NO `:tmp:` nonce segment because a per-call nonce makes every retry mint a brand-new key that later DELs can never name (the exact temp-key leak this fix removes); got `{temp}`"
+    );
+    // Idempotent across calls: two replaces of the same logical key reuse
+    // the one temp key, so a retry's leading DEL overwrites rather than
+    // accumulates.
+    assert_eq!(
+        dormant_temp_key(NPC_DORMANT_REDIS_KEY),
+        dormant_temp_key(NPC_DORMANT_REDIS_KEY),
+        "expected dormant_temp_key to be deterministic for a given key so retries overwrite the same temp key; got differing names which would re-introduce leakage"
+    );
+    // Distinct logical keys still get distinct temp keys (no cross-key clobber).
+    assert_ne!(
+        dormant_temp_key("bong:npc/dormant"),
+        dormant_temp_key("bong:other/store"),
+        "expected distinct logical keys to map to distinct temp keys so unrelated replaces never collide; got identical temp keys"
+    );
+}
+
+async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> std::io::Result<Vec<u8>> {
+    let mut line = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        server.read_exact(&mut byte).await?;
+        line.push(byte[0]);
+        if line.ends_with(b"\r\n") {
+            return Ok(line);
+        }
+    }
+}
+
+async fn read_resp_request(server: &mut tokio::io::DuplexStream) {
+    let _ = read_resp_request_arguments(server)
+        .await
+        .expect("mock Redis must read the complete RESP request");
+}
+
+async fn read_resp_request_arguments(
+    server: &mut tokio::io::DuplexStream,
+) -> std::io::Result<Vec<Vec<u8>>> {
+    let line = read_resp_line(server).await?;
+    assert_eq!(
+        line.first().copied(),
+        Some(b'*'),
+        "request must be RESP array"
+    );
+    let argument_count = std::str::from_utf8(&line[1..line.len() - 2])
+        .expect("RESP array count must be UTF-8")
+        .parse::<usize>()
+        .expect("RESP array count must be numeric");
+    let mut arguments = Vec::with_capacity(argument_count);
+    for _ in 0..argument_count {
+        let line = read_resp_line(server).await?;
+        assert_eq!(
+            line.first().copied(),
+            Some(b'$'),
+            "argument must be bulk string"
+        );
+        let length = std::str::from_utf8(&line[1..line.len() - 2])
+            .expect("RESP bulk length must be UTF-8")
+            .parse::<usize>()
+            .expect("RESP bulk length must be numeric");
+        let mut payload = vec![0_u8; length + 2];
+        server.read_exact(&mut payload).await?;
+        assert_eq!(
+            &payload[length..],
+            b"\r\n",
+            "RESP bulk string must end with CRLF"
+        );
+        arguments.push(payload[..length].to_vec());
+    }
+    Ok(arguments)
+}
+
+async fn mock_multiplexed_connection(
+    responses: Vec<&'static [u8]>,
+) -> redis::aio::MultiplexedConnection {
+    let (client, mut server) = duplex(16 * 1024);
+    task::spawn(async move {
+        for _ in 0..2 {
+            read_resp_request(&mut server).await;
+        }
+        server
+            .write_all(b"+OK\r\n+OK\r\n")
+            .await
+            .expect("mock Redis must send both setup responses");
+
+        for response in responses {
+            read_resp_request(&mut server).await;
+            server
+                .write_all(response)
+                .await
+                .expect("mock Redis must send its configured response");
+        }
+    });
+    let (connection, driver) =
+        redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
+            .await
+            .expect("test duplex must construct a multiplexed Redis connection");
+    task::spawn(driver);
+    connection
+}
+
+#[derive(Clone, Copy)]
+enum MockRedisMode {
+    Normal,
+    FailOnCommand(usize),
+    HangOnCommand(usize),
+}
+
+#[derive(Default)]
+struct MockRedisState {
+    commands: Vec<Vec<String>>,
+    lists: HashMap<String, Vec<String>>,
+}
+
+fn mock_ltrim(list: &mut Vec<String>, start: isize, stop: isize) {
+    let length = list.len() as isize;
+    if length == 0 {
+        return;
+    }
+
+    let start = if start < 0 { length + start } else { start };
+    let stop = if stop < 0 { length + stop } else { stop };
+    // Redis clamps a negative start that precedes the list to zero.  Without
+    // that clamp, the mock would erase every queue shorter than the cap and
+    // could not model `LTRIM key -N -1` faithfully.
+    let start = start.max(0);
+    if start >= length || stop < start || stop < 0 {
+        list.clear();
+        return;
+    }
+
+    let stop = stop.min(length - 1) as usize;
+    let start = start as usize;
+    *list = list[start..=stop].to_vec();
+}
+
+async fn mock_redis_list_connection(
+    mode: MockRedisMode,
+) -> (
+    redis::aio::MultiplexedConnection,
+    Arc<Mutex<MockRedisState>>,
+) {
+    let (client, mut server) = duplex(16 * 1024);
+    let state = Arc::new(Mutex::new(MockRedisState::default()));
+    let server_state = Arc::clone(&state);
+    task::spawn(async move {
+        for _ in 0..2 {
+            read_resp_request(&mut server).await;
+        }
+        server
+            .write_all(b"+OK\r\n+OK\r\n")
+            .await
+            .expect("mock Redis must send both setup responses");
+
+        let mut command_index = 0;
+        loop {
+            let arguments = match read_resp_request_arguments(&mut server).await {
+                Ok(arguments) => arguments,
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(error) => panic!("mock Redis failed to read a command: {error}"),
+            };
+            let command = String::from_utf8_lossy(
+                arguments
+                    .first()
+                    .expect("mock Redis command must have a command name"),
+            )
+            .to_string();
+            let command_for_state = arguments
+                .iter()
+                .map(|argument| String::from_utf8_lossy(argument).into_owned())
+                .collect::<Vec<_>>();
+            server_state
+                .lock()
+                .expect("mock Redis state mutex should not be poisoned")
+                .commands
+                .push(command_for_state);
+
+            if matches!(mode, MockRedisMode::HangOnCommand(index) if index == command_index) {
+                std::future::pending::<()>().await;
+            }
+
+            if matches!(mode, MockRedisMode::FailOnCommand(index) if index == command_index) {
+                server
+                    .write_all(b"-ERR injected Redis failure\r\n")
+                    .await
+                    .expect("mock Redis must send the injected failure");
+                command_index += 1;
+                continue;
+            }
+
+            let response = match command.as_str() {
+                "RPUSH" => {
+                    assert_eq!(
+                        arguments.len(),
+                        3,
+                        "mock RPUSH must contain key and one payload"
+                    );
+                    let key = String::from_utf8_lossy(&arguments[1]).into_owned();
+                    let payload = String::from_utf8_lossy(&arguments[2]).into_owned();
+                    let mut state = server_state
+                        .lock()
+                        .expect("mock Redis state mutex should not be poisoned");
+                    let list = state.lists.entry(key).or_default();
+                    list.push(payload);
+                    format!(":{}\r\n", list.len())
+                }
+                "LTRIM" => {
+                    assert_eq!(
+                        arguments.len(),
+                        4,
+                        "mock LTRIM must contain key, start, and stop"
+                    );
+                    let key = String::from_utf8_lossy(&arguments[1]).into_owned();
+                    let start = String::from_utf8_lossy(&arguments[2])
+                        .parse::<isize>()
+                        .expect("mock LTRIM start must be an integer");
+                    let stop = String::from_utf8_lossy(&arguments[3])
+                        .parse::<isize>()
+                        .expect("mock LTRIM stop must be an integer");
+                    let mut state = server_state
+                        .lock()
+                        .expect("mock Redis state mutex should not be poisoned");
+                    if let Some(list) = state.lists.get_mut(&key) {
+                        mock_ltrim(list, start, stop);
+                    }
+                    "+OK\r\n".to_string()
+                }
+                other => format!("-ERR unsupported mock command {other}\r\n"),
+            };
+            server
+                .write_all(response.as_bytes())
+                .await
+                .expect("mock Redis must send its command response");
+            command_index += 1;
+        }
+    });
+    let (connection, driver) =
+        redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
+            .await
+            .expect("test duplex must construct a multiplexed Redis connection");
+    task::spawn(driver);
+    (connection, state)
+}
+
+fn mock_list_snapshot(state: &Arc<Mutex<MockRedisState>>, key: &str) -> Vec<String> {
+    state
+        .lock()
+        .expect("mock Redis state mutex should not be poisoned")
+        .lists
+        .get(key)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn mock_commands_snapshot(state: &Arc<Mutex<MockRedisState>>) -> Vec<Vec<String>> {
+    state
+        .lock()
+        .expect("mock Redis state mutex should not be poisoned")
+        .commands
+        .clone()
+}
+
+async fn execute_mock_chat_push(
+    connection: &mut redis::aio::MultiplexedConnection,
+    payload: &str,
+) -> Result<(), String> {
+    let command = RedisIoCommand::ListPush {
+        key: CH_PLAYER_CHAT,
+        payload: payload.to_string(),
+    };
+    execute_outbound_command(connection, &command).await
+}
+
+#[tokio::test]
+async fn player_chat_queue_keeps_below_cap_and_drops_oldest_at_boundary() {
+    let (mut connection, state) = mock_redis_list_connection(MockRedisMode::Normal).await;
+    let max_len = PLAYER_CHAT_QUEUE_MAX_LEN as usize;
+
+    for index in 0..3 {
+        execute_mock_chat_push(&mut connection, &format!("message-{index}"))
+            .await
+            .expect("chat push below the cap should succeed without dropping entries");
+    }
+    assert_eq!(
+        mock_list_snapshot(&state, CH_PLAYER_CHAT),
+        vec!["message-0", "message-1", "message-2"],
+        "a queue below the cap must retain every chat in arrival order"
+    );
+
+    for index in 3..max_len {
+        execute_mock_chat_push(&mut connection, &format!("message-{index}"))
+            .await
+            .expect("chat push at the cap should succeed");
+    }
+    let at_cap = mock_list_snapshot(&state, CH_PLAYER_CHAT);
+    let expected_at_cap_last = format!("message-{}", max_len - 1);
+    assert_eq!(
+        at_cap.len(),
+        max_len,
+        "the queue must be exactly capped before the boundary push"
+    );
+    assert_eq!(
+        at_cap.first().map(String::as_str),
+        Some("message-0"),
+        "filling to the cap must not discard the oldest entry prematurely"
+    );
+    assert_eq!(
+        at_cap.last(),
+        Some(&expected_at_cap_last),
+        "filling to the cap must retain the newest entry"
+    );
+
+    let boundary_payload = format!("message-{max_len}");
+    execute_mock_chat_push(&mut connection, &boundary_payload)
+        .await
+        .expect("the first overflowing chat must still be acknowledged");
+    let after_boundary = mock_list_snapshot(&state, CH_PLAYER_CHAT);
+    assert_eq!(
+        after_boundary.len(),
+        max_len,
+        "one chat over the cap must leave exactly the configured queue length"
+    );
+    assert_eq!(
+        after_boundary.first().map(String::as_str),
+        Some("message-1"),
+        "the boundary overflow must drop exactly the oldest chat"
+    );
+    assert_eq!(
+        after_boundary.last(),
+        Some(&boundary_payload),
+        "the boundary overflow must retain the newest chat"
+    );
+
+    let commands = mock_commands_snapshot(&state);
+    assert_eq!(
+        commands.len(),
+        (max_len + 1) * 2,
+        "every chat write must issue exactly one RPUSH followed by one LTRIM"
+    );
+    assert_eq!(
+        commands[0],
+        vec![
+            "RPUSH".to_string(),
+            CH_PLAYER_CHAT.to_string(),
+            "message-0".to_string()
+        ],
+        "the first RESP command must be RPUSH with the chat key and payload"
+    );
+    let trim_start = (-PLAYER_CHAT_QUEUE_MAX_LEN).to_string();
+    assert_eq!(
+        commands[1],
+        vec![
+            "LTRIM".to_string(),
+            CH_PLAYER_CHAT.to_string(),
+            trim_start.clone(),
+            "-1".to_string()
+        ],
+        "the second RESP command must retain the newest configured number of chats"
+    );
+    let boundary_commands = &commands[max_len * 2..];
+    assert_eq!(
+        boundary_commands[0].get(2).map(String::as_str),
+        Some(boundary_payload.as_str()),
+        "the boundary RPUSH must carry the overflowing newest chat"
+    );
+    assert_eq!(
+        boundary_commands[1].get(2).map(String::as_str),
+        Some(trim_start.as_str()),
+        "the boundary LTRIM must use the negative configured cap"
+    );
+}
+
+#[tokio::test]
+async fn player_chat_queue_stays_bounded_and_keeps_newest_when_far_over_cap() {
+    let (mut connection, state) = mock_redis_list_connection(MockRedisMode::Normal).await;
+    let max_len = PLAYER_CHAT_QUEUE_MAX_LEN as usize;
+    let total = max_len * 2 + 17;
+
+    for index in 0..total {
+        execute_mock_chat_push(&mut connection, &format!("message-{index}"))
+            .await
+            .expect("far-over-cap chat writes must continue succeeding");
+    }
+
+    let list = mock_list_snapshot(&state, CH_PLAYER_CHAT);
+    let expected_first = format!("message-{}", total - max_len);
+    let expected_last = format!("message-{}", total - 1);
+    assert_eq!(
+        list.len(),
+        max_len,
+        "a queue far beyond the cap must remain bounded after every RPUSH/LTRIM pair"
+    );
+    assert_eq!(
+        list.first(),
+        Some(&expected_first),
+        "far-over-cap trimming must discard the entire oldest prefix"
+    );
+    assert_eq!(
+        list.last(),
+        Some(&expected_last),
+        "far-over-cap trimming must retain the newest queue entry"
+    );
+
+    let commands = mock_commands_snapshot(&state);
+    let trim_start = (-PLAYER_CHAT_QUEUE_MAX_LEN).to_string();
+    assert_eq!(
+        commands.len(),
+        total * 2,
+        "far-over-cap traffic must never bypass the bounding LTRIM"
+    );
+    assert!(
+        commands.chunks_exact(2).all(|pair| {
+            pair[0].first().map(String::as_str) == Some("RPUSH")
+                && pair[0].get(1).map(String::as_str) == Some(CH_PLAYER_CHAT)
+                && pair[1].first().map(String::as_str) == Some("LTRIM")
+                && pair[1].get(1).map(String::as_str) == Some(CH_PLAYER_CHAT)
+                && pair[1].get(2).map(String::as_str) == Some(trim_start.as_str())
+                && pair[1].get(3).map(String::as_str) == Some("-1")
+        }),
+        "every far-over-cap RESP pair must be RPUSH then LTRIM with the chat cap"
+    );
+}
+
+#[test]
+fn player_chat_queue_warning_threshold_is_strictly_over_cap() {
+    assert!(
+        !should_warn_player_chat_queue(0),
+        "an empty queue cannot indicate truncation"
+    );
+    assert!(
+        !should_warn_player_chat_queue(PLAYER_CHAT_QUEUE_MAX_LEN),
+        "a RPUSH length exactly at the cap must not emit a truncation warning"
+    );
+    assert!(
+        should_warn_player_chat_queue(PLAYER_CHAT_QUEUE_MAX_LEN + 1),
+        "only a RPUSH length above the cap indicates that LTRIM will drop the oldest chat"
+    );
+}
+
+#[tokio::test]
+async fn player_chat_queue_failure_preserves_rpush_error_for_rpush_and_ltrim_failures() {
+    for failed_command in [0, 1] {
+        let (mut connection, state) =
+            mock_redis_list_connection(MockRedisMode::FailOnCommand(failed_command)).await;
+        let failure = execute_mock_chat_push(&mut connection, "message-failure")
+            .await
+            .expect_err("an injected RPUSH/LTRIM Redis error must not be acknowledged");
+        assert!(
+            failure.starts_with(&format!("failed to RPUSH {CH_PLAYER_CHAT}:")),
+            "RPUSH/LTRIM command failure must retain the existing RPUSH error prefix; got `{failure}`"
+        );
+        assert!(
+            failure.contains("injected Redis failure"),
+            "RPUSH/LTRIM command failure must preserve the Redis failure detail; got `{failure}`"
+        );
+        let commands = mock_commands_snapshot(&state);
+        assert_eq!(
+            commands
+                .first()
+                .and_then(|command| command.first())
+                .map(String::as_str),
+            Some("RPUSH"),
+            "the failing chat path must issue RPUSH before reporting the Redis error"
+        );
+        assert_eq!(
+            commands
+                .get(1)
+                .and_then(|command| command.first())
+                .map(String::as_str),
+            Some("LTRIM"),
+            "the chat pipeline must include LTRIM even when either command response fails"
+        );
+        if failed_command == 0 {
+            assert!(
+                mock_list_snapshot(&state, CH_PLAYER_CHAT).is_empty(),
+                "a failed RPUSH must not make a chat appear in the mock Redis list"
+            );
+        } else {
+            assert_eq!(
+                mock_list_snapshot(&state, CH_PLAYER_CHAT),
+                vec!["message-failure"],
+                "a failed LTRIM must report failure rather than falsely acknowledge an untrimmed write"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn player_chat_queue_timeout_preserves_rpush_timeout_for_each_pipeline_stage() {
+    for hung_command in [0, 1] {
+        let (mut connection, state) =
+            mock_redis_list_connection(MockRedisMode::HangOnCommand(hung_command)).await;
+        let failure = tokio::time::timeout(
+            Duration::from_millis(500),
+            execute_mock_chat_push(&mut connection, "message-timeout"),
+        )
+        .await
+        .expect("the executor's 100ms timeout must finish before the test watchdog");
+        assert_eq!(
+            failure,
+            Err(format!(
+                "timed out RPUSH {CH_PLAYER_CHAT} after {:?}",
+                REDIS_IO_TIMEOUT
+            )),
+            "a timeout in either pipeline stage must retain the existing RPUSH timeout contract"
+        );
+        assert!(
+            !mock_commands_snapshot(&state).is_empty(),
+            "the timeout test must observe a real RESP command before timing out"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_chat_list_paths_remain_unbounded_rpush_only() {
+    let (mut connection, state) = mock_redis_list_connection(MockRedisMode::Normal).await;
+    let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+    let durable = RedisIoCommand::ListPushWithReceipt {
+        key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
+        payload: "elder-payload".to_string(),
+        delivery_id: "elder-1".to_string(),
+        receipt_tx,
+    };
+    assert_eq!(
+        execute_outbound_command(&mut connection, &durable).await,
+        Ok(()),
+        "durable non-chat list writes must retain their existing successful RPUSH path"
+    );
+    let receipt = receipt_rx
+        .try_recv()
+        .expect("durable non-chat RPUSH must still emit its success receipt");
+    assert_eq!(receipt.delivery_id, "elder-1");
+    assert_eq!(receipt.outcome, Ok(()));
+
+    let other = RedisIoCommand::ListPush {
+        key: "bong:other:list",
+        payload: "other-payload".to_string(),
+    };
+    assert_eq!(
+        execute_outbound_command(&mut connection, &other).await,
+        Ok(()),
+        "a future non-chat ListPush key must not inherit the player-chat cap"
+    );
+
+    let commands = mock_commands_snapshot(&state);
+    assert_eq!(
+        commands.len(),
+        2,
+        "non-chat list writes must issue one command each rather than RPUSH plus LTRIM"
+    );
+    assert!(
+        commands.iter().all(|command| {
+            command.len() == 3 && command.first().map(String::as_str) == Some("RPUSH")
+        }),
+        "non-chat list writes must remain bare RPUSH commands"
+    );
+    assert_eq!(
+        mock_list_snapshot(&state, ELDER_ENCOUNTER_DURABLE_REDIS_KEY),
+        vec!["elder-payload"],
+        "durable non-chat list content must be unchanged"
+    );
+    assert_eq!(
+        mock_list_snapshot(&state, "bong:other:list"),
+        vec!["other-payload"],
+        "future non-chat ListPush content must be unchanged"
+    );
+}
+
+#[tokio::test]
+async fn hash_replace_executor_reports_correlated_success_and_failure_receipts() {
+    let success_entries = vec![("npc_a".to_string(), "{}".to_string())];
+    let (success_tx, success_rx) = crossbeam_channel::unbounded();
+    let mut success_connection =
+        mock_multiplexed_connection(vec![b":0\r\n", b":1\r\n", b"+OK\r\n"]).await;
+    let success = execute_outbound_command(
+        &mut success_connection,
+        &RedisIoCommand::HashReplaceWithReceipt {
+            key: NPC_DORMANT_REDIS_KEY,
+            entries: success_entries,
+            delivery_id: "revision-success".to_string(),
+            receipt_tx: success_tx,
+        },
+    )
+    .await;
+    assert_eq!(success, Ok(()));
+    let receipt = success_rx
+        .try_recv()
+        .expect("successful executor path must always emit a receipt");
+    assert_eq!(receipt.delivery_id, "revision-success");
+    assert_eq!(receipt.outcome, Ok(()));
+
+    let (failure_tx, failure_rx) = crossbeam_channel::unbounded();
+    let mut failure_connection = mock_multiplexed_connection(vec![
+        b":0\r\n",
+        b"-ERR injected HSET failure\r\n",
+        b":0\r\n",
+    ])
+    .await;
+    let failure = execute_outbound_command(
+        &mut failure_connection,
+        &RedisIoCommand::HashReplaceWithReceipt {
+            key: NPC_DORMANT_REDIS_KEY,
+            entries: vec![("npc_b".to_string(), "{}".to_string())],
+            delivery_id: "revision-failure".to_string(),
+            receipt_tx: failure_tx,
+        },
+    )
+    .await;
+    assert!(failure.is_err());
+    let receipt = failure_rx
+        .try_recv()
+        .expect("failed executor path must emit a correlated negative receipt");
+    assert_eq!(receipt.delivery_id, "revision-failure");
+    assert_eq!(receipt.outcome, failure);
+    assert!(receipt
+        .outcome
+        .as_ref()
+        .is_err_and(|error| error.contains("injected HSET failure")));
+}
+
+#[test]
+fn replaces_qi_ledger_hash_on_dedicated_key() {
+    // plan-offscreen-war-v1 P0：守恒 telemetry 必须落到 bong:qi/ledger（非 dormant key）。
+    let entries = vec![
+        ("total_observed".to_string(), "100".to_string()),
+        ("account:zone:spawn".to_string(), "50".to_string()),
+    ];
+    let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(entries.clone()))
+        .expect("qi ledger payload should produce a hash replace command");
+
+    match command {
+        RedisIoCommand::HashReplace { key, entries: got } => {
+            assert_eq!(
+                key, QI_LEDGER_REDIS_KEY,
+                "守恒 telemetry 必须发到 bong:qi/ledger，不能错写到 dormant key"
+            );
+            assert_eq!(got, entries);
+        }
+        other => panic!("expected hash replace command, got {other:?}"),
+    }
+}
+
+#[test]
+fn replaces_qi_ledger_hash_with_empty_entries_deletes_key() {
+    // 边界：空 entries（全服无任何已落位真元 / 账户）必须仍产出 HashReplace（key 不变），
+    // 由下游 HASHSET-replace 语义对空 entries 退化为 DEL——即 bong:qi/ledger 被清空，
+    // 不会残留上一帧的 stale 行。绝不能因为空就 swallow 命令。
+    let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(vec![]))
+        .expect("空 entries 的 qi ledger payload 仍须产出 HashReplace（触发 DEL 语义），不能被吞");
+
+    match command {
+        RedisIoCommand::HashReplace { key, entries } => {
+            assert_eq!(
+                key, QI_LEDGER_REDIS_KEY,
+                "空账本 telemetry 也必须落到 bong:qi/ledger，键不能漂移"
+            );
+            assert!(
+                entries.is_empty(),
+                "空 entries 必须原样传给 HashReplace（触发 DEL 清键），实际 entries={entries:?}"
+            );
+        }
+        other => panic!("空 entries 期望 HashReplace（DEL 语义），实际得到 {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_zhenmai_skill_event_on_skill_channel() {
+    let mut event =
+        ZhenmaiSkillEventV1::new(ZhenmaiSkillIdV1::SeverChain, "entity:7".to_string(), 42);
+    event.meridian_id = Some("Heart".to_string());
+    event.attack_kind = Some(ZhenmaiAttackKindV1::TaintedYuan);
+    event.k_drain = Some(1.5);
+    event.self_damage_multiplier = Some(0.5);
+
+    let command = prepare_outbound_command(RedisOutbound::ZhenmaiSkillEvent(event))
+        .expect("zhenmai skill payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ZHENMAI_SKILL_EVENT);
+            let payload: Value =
+                serde_json::from_str(&payload).expect("zhenmai payload should be valid JSON");
+            assert_eq!(payload["type"], "zhenmai_skill_event");
+            assert_eq!(payload["skill_id"], "sever_chain");
+            assert_eq!(payload["meridian_id"], "Heart");
+            assert_eq!(payload["attack_kind"], "tainted_yuan");
+            assert_eq!(payload["k_drain"], 1.5);
+            assert_eq!(payload["self_damage_multiplier"], 0.5);
+        }
+        other => panic!("expected zhenmai PUBLISH command, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_baomai_skill_event_on_skill_channel() {
+    let mut event = crate::schema::baomai_v3::BaomaiSkillEventV1::new(
+        crate::schema::baomai_v3::BaomaiSkillIdV1::Disperse,
+        "entity:7".to_string(),
+        42,
+    );
+    event.flow_rate_multiplier = 10.0;
+    event.qi_invested = 5350.0;
+    event.meridian_ids = vec!["Ren".to_string(), "Du".to_string()];
+
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV3SkillEvent(event))
+        .expect("baomai skill payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_BAOMAI_V3_SKILL_EVENT);
+            let payload: Value =
+                serde_json::from_str(&payload).expect("baomai payload should be valid JSON");
+            assert_eq!(payload["type"], "baomai_skill_event");
+            assert_eq!(payload["skill_id"], "disperse");
+            assert_eq!(payload["flow_rate_multiplier"], 10.0);
+            assert_eq!(payload["meridian_ids"][0], "Ren");
+        }
+        other => panic!("expected baomai PUBLISH command, got {other:?}"),
+    }
+}
+
+// plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件桥 channel pin tests
+
+#[test]
+fn baomai_v3_mountain_shake_publishes_on_correct_channel() {
+    let mut evt = crate::schema::baomai_v3::BaomaiV3MountainShakeV1::new(
+        "offline:Player".to_string(),
+        3,
+        200,
+    );
+    evt.qi_spent = 1200.0;
+    evt.radius_blocks = 5.0;
+    evt.shock_damage = 420.0;
+
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV3MountainShake(evt))
+        .expect("mountain shake payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V3_MOUNTAIN_SHAKE,
+                "mountain_shake must publish to bong:baomai_v3/mountain_shake"
+            );
+            let json: Value =
+                serde_json::from_str(&payload).expect("mountain shake should be valid JSON");
+            assert_eq!(json["v"], 1);
+            assert_eq!(json["affected_count"], 3);
+            assert_eq!(json["qi_spent"], 1200.0);
+            assert_eq!(json["radius_blocks"], 5.0);
+            assert_eq!(json["shock_damage"], 420.0);
+        }
+        other => panic!("expected mountain_shake PUBLISH, got {other:?}"),
+    }
+}
+
+#[test]
+fn baomai_v3_blood_burn_publishes_near_death_on_correct_channel() {
+    let mut evt =
+        crate::schema::baomai_v3::BaomaiV3BloodBurnV1::new("offline:Player".to_string(), 300);
+    evt.hp_burned = 300.0;
+    evt.qi_multiplier = 5.0;
+    evt.active_until_tick = 300;
+    evt.ended_in_near_death = true;
+
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV3BloodBurn(evt))
+        .expect("blood burn payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V3_BLOOD_BURN,
+                "blood_burn must publish to bong:baomai_v3/blood_burn"
+            );
+            let json: Value =
+                serde_json::from_str(&payload).expect("blood burn should be valid JSON");
+            assert_eq!(json["ended_in_near_death"], true);
+            assert_eq!(json["qi_multiplier"], 5.0);
+        }
+        other => panic!("expected blood_burn PUBLISH, got {other:?}"),
+    }
+}
+
+#[test]
+fn baomai_v3_transcendence_expired_publishes_on_correct_channel() {
+    let evt = crate::schema::baomai_v3::BaomaiV3TranscendenceExpiredV1::new(
+        "offline:Player".to_string(),
+        700,
+    );
+
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV3TranscendenceExpired(evt))
+        .expect("transcendence expired payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED,
+                "transcendence_expired must publish to bong:baomai_v3/transcendence_expired"
+            );
+            let json: Value =
+                serde_json::from_str(&payload).expect("transcendence expired should be valid JSON");
+            assert_eq!(json["v"], 1);
+            assert_eq!(json["tick"], 700);
+        }
+        other => panic!("expected transcendence_expired PUBLISH, got {other:?}"),
+    }
+}
+
+#[test]
+fn baomai_v3_overload_ripple_publishes_on_correct_channel() {
+    let mut evt = crate::schema::baomai_v3::BaomaiV3OverloadRippleV1::new(
+        "offline:Player".to_string(),
+        150,
+        crate::schema::baomai_v3::BaomaiSkillIdV1::BengQuan,
+    );
+    evt.severity_delta = 0.05;
+    evt.total_severity = 0.35;
+    evt.meridian_ids = vec!["LargeIntestine".to_string()];
+
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV3OverloadRipple(evt))
+        .expect("overload ripple payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V3_OVERLOAD_RIPPLE,
+                "overload_ripple must publish to bong:baomai_v3/overload_ripple"
+            );
+            let json: Value =
+                serde_json::from_str(&payload).expect("overload ripple should be valid JSON");
+            assert_eq!(json["skill_id"], "beng_quan");
+            assert_eq!(json["severity_delta"], 0.05);
+            assert_eq!(json["meridian_ids"][0], "LargeIntestine");
+        }
+        other => panic!("expected overload_ripple PUBLISH, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_zhenfa_v2_event_on_dedicated_channel() {
+    let event = crate::schema::zhenfa_v2::ZhenfaV2EventV1::deploy(
+        7,
+        crate::schema::zhenfa_v2::ZhenfaArrayKindV2::DeceiveHeaven,
+        "offline:Azure",
+        [1, 64, -2],
+        20,
+    );
+
+    let command = prepare_outbound_command(RedisOutbound::ZhenfaV2Event(event))
+        .expect("zhenfa v2 payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ZHENFA_V2_EVENT);
+            let payload: Value =
+                serde_json::from_str(&payload).expect("zhenfa v2 payload should be valid JSON");
+            assert_eq!(payload["v"], 1);
+            assert_eq!(payload["event"], "deploy");
+            assert_eq!(payload["kind"], "deceive_heaven");
+        }
+        other => panic!("expected zhenfa v2 PUBLISH command, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_cultivation_events_on_correct_channels() {
+    let bt = prepare_outbound_command(RedisOutbound::BreakthroughEvent(BreakthroughEventV1 {
+        kind: "Succeeded".into(),
+        from_realm: "Awaken".into(),
+        to_realm: Some("Induce".into()),
+        success_rate: Some(0.9),
+        severity: None,
+    }))
+    .expect("breakthrough payload should serialize");
+    match bt {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_BREAKTHROUGH_EVENT);
+            let v: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(v["kind"], "Succeeded");
+            assert_eq!(v["to_realm"], "Induce");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let forge = prepare_outbound_command(RedisOutbound::ForgeEvent(ForgeEventV1 {
+        meridian: "Lung".into(),
+        axis: "Rate".into(),
+        from_tier: 2,
+        to_tier: 3,
+        success: true,
+    }))
+    .expect("forge payload should serialize");
+    match forge {
+        RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_FORGE_EVENT),
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let death = prepare_outbound_command(RedisOutbound::CultivationDeath(CultivationDeathV1 {
+        cause: "BreakthroughBackfire".into(),
+        context: serde_json::json!({"from":"Spirit"}),
+    }))
+    .expect("death payload should serialize");
+    match death {
+        RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+fn zong_core_activation_with_origin(origin_id: u8) -> ZongCoreActivationV1 {
+    ZongCoreActivationV1 {
+        v: 1,
+        zone_id: "jiuzong_bloodstream_ruin".into(),
+        core_id: "core:1".into(),
+        origin_id,
+        center_xz: [0.0, 0.0],
+        activated_until_tick: 100,
+        base_qi: 0.4,
+        active_qi: 0.6,
+        charge_required: vec!["bone_coin".into()],
+        narration_radius_blocks: 1000,
+        anomaly_kind: 5,
+    }
+}
+
+#[test]
+fn accepts_zong_core_activation_origin_boundaries() {
+    for origin_id in [1, 7] {
+        let command = prepare_outbound_command(RedisOutbound::ZongCoreActivated(
+            zong_core_activation_with_origin(origin_id),
+        ))
+        .expect("TypeScript ZongCoreActivationV1 origin_id 边界值应被 Rust outbound 接受");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ZONG_CORE_ACTIVATED);
+                let value: Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(value["origin_id"], origin_id);
+                assert_eq!(value["anomaly_kind"], 5);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn rejects_zong_core_activation_unknown_origin() {
+    let result = prepare_outbound_command(RedisOutbound::ZongCoreActivated(
+        zong_core_activation_with_origin(8),
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript ZongCoreActivationV1 origin_id 只允许 1..=7，origin_id=8 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_zong_core_activation_invalid_qi() {
+    let mut event = zong_core_activation_with_origin(1);
+    event.base_qi = 1.1;
+
+    let result = prepare_outbound_command(RedisOutbound::ZongCoreActivated(event));
+
+    assert!(
+        result.is_err(),
+        "TypeScript ZongCoreActivationV1 base_qi maximum=1，base_qi=1.1 应被 Rust outbound 校验拒绝"
+    );
+}
+
+fn forge_event_with(meridian: &str, axis: &str, from_tier: u8, to_tier: u8) -> ForgeEventV1 {
+    ForgeEventV1 {
+        meridian: meridian.into(),
+        axis: axis.into(),
+        from_tier,
+        to_tier,
+        success: true,
+    }
+}
+
+fn forge_event_meridian_wire(meridian: MeridianId) -> String {
+    serde_json::to_value(meridian)
+        .expect("MeridianId 应能序列化为 ForgeEventV1 wire 值")
+        .as_str()
+        .expect("MeridianId wire 值应为字符串")
+        .to_owned()
+}
+
+#[test]
+fn rejects_forge_event_tier_above_schema_max() {
+    let result = prepare_outbound_command(RedisOutbound::ForgeEvent(forge_event_with(
+        "Lung", "Rate", 16, 17,
+    )));
+
+    assert!(
+        result.is_err(),
+        "TypeScript ForgeEventV1 from_tier/to_tier maximum=16，to_tier=17 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_forge_event_from_tier_above_schema_max() {
+    let result = prepare_outbound_command(RedisOutbound::ForgeEvent(forge_event_with(
+        "Lung", "Rate", 17, 16,
+    )));
+
+    assert!(
+        result.is_err(),
+        "TypeScript ForgeEventV1 from_tier/to_tier maximum=16，from_tier=17 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_forge_event_invalid_meridian_or_axis() {
+    for event in [
+        forge_event_with("NotAMeridian", "Rate", 0, 1),
+        forge_event_with("Lung", "Speed", 0, 1),
+    ] {
+        let result = prepare_outbound_command(RedisOutbound::ForgeEvent(event));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ForgeEventV1 meridian/axis 枚举约束应被 Rust outbound 校验拒绝"
+        );
+    }
+}
+
+#[test]
+fn publishes_forge_event_schema_tier_bounds() {
+    for meridian in MeridianId::ALL {
+        let meridian = forge_event_meridian_wire(meridian);
+        for axis in ["Rate", "Capacity"] {
+            for (from_tier, to_tier) in [(0, 0), (16, 16)] {
+                let command = prepare_outbound_command(RedisOutbound::ForgeEvent(
+                    forge_event_with(&meridian, axis, from_tier, to_tier),
+                ))
+                .expect("TypeScript ForgeEventV1 合法 meridian/axis/tier 边界值应被接受");
+
+                match command {
+                    RedisIoCommand::Publish { channel, payload } => {
+                        assert_eq!(channel, CH_FORGE_EVENT);
+                        let v: Value = serde_json::from_str(&payload).unwrap();
+                        assert_eq!(v["meridian"], meridian);
+                        assert_eq!(v["axis"], axis);
+                        assert_eq!(v["from_tier"], from_tier);
+                        assert_eq!(v["to_tier"], to_tier);
+                    }
+                    other => panic!("expected publish, got {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn publishes_heart_demon_requests_on_dedicated_channel() {
+    let command = prepare_outbound_command(RedisOutbound::HeartDemonRequest(
+        HeartDemonPregenRequestV1 {
+            trigger_id: "heart_demon:1:1000".into(),
+            character_id: "offline:Azure".into(),
+            actor_name: "Azure".into(),
+            realm: "Spirit".into(),
+            qi_color_state: crate::schema::cultivation::QiColorStateV1 {
+                main: "Mellow".into(),
+                secondary: None,
+                is_chaotic: false,
+                is_hunyuan: false,
+            },
+            recent_biography: vec!["t240:reach:Spirit".into()],
+            composure: 0.7,
+            started_tick: 1000,
+            waves_total: 5,
+        },
+    ))
+    .expect("heart demon request should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_HEART_DEMON_REQUEST);
+            let v: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(v["trigger_id"], "heart_demon:1:1000");
+            assert_eq!(v["recent_biography"][0], "t240:reach:Spirit");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_tiandao_hunt_narration_request_on_dedicated_channel() {
+    let command = prepare_outbound_command(RedisOutbound::TiandaoHuntNarrationRequest(
+        TiandaoHuntNarrationRequestV1 {
+            v: 1,
+            character_id: "offline:Alice".into(),
+            realm: "Spirit".into(),
+            attention_level: 72.5,
+            response_level:
+                crate::schema::tiandao_hunt_narration::TiandaoHuntResponseLevelV1::Tribulation,
+            zone: "血谷".into(),
+            recent_actions: vec!["activity:meditating".into()],
+            narration_count: 2,
+        },
+    ))
+    .expect("tiandao hunt narration request should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_TIANDAO_HUNT_NARRATION_REQUEST);
+            let v: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(v["character_id"], "offline:Alice");
+            assert_eq!(v["response_level"], "tribulation");
+            assert_eq!(v["narration_count"], 2);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_spirit_treasure_dialogue_requests_on_dedicated_channel() {
+    let request: SpiritTreasureDialogueRequestV1 = serde_json::from_str(include_str!(
+        "../../../agent/packages/schema/samples/spirit-treasure-dialogue-request.sample.json"
+    ))
+    .expect("spirit treasure dialogue request sample should deserialize");
+
+    let command = prepare_outbound_command(RedisOutbound::SpiritTreasureDialogueRequest(request))
+        .expect("spirit treasure dialogue request should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SPIRIT_TREASURE_DIALOGUE_REQUEST);
+            let v: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(v["treasure_id"], "spirit_treasure_jizhaojing");
+            assert_eq!(v["trigger"], "player");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_npc_and_faction_events_on_dedicated_channels() {
+    let spawned = prepare_outbound_command(RedisOutbound::NpcSpawned(NpcSpawnedV1 {
+        v: 1,
+        kind: "npc_spawned".to_string(),
+        npc_id: "npc_1v1".to_string(),
+        archetype: "rogue".to_string(),
+        source: "agent_command".to_string(),
+        zone: "spawn".to_string(),
+        pos: [1.0, 66.0, 2.0],
+        initial_age_ticks: 0.0,
+        at_tick: 0,
+    }))
+    .expect("NPC spawn payload should serialize");
+    match spawned {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_NPC_SPAWN);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "npc_spawned");
+            assert_eq!(v["archetype"], "rogue");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let death = prepare_outbound_command(RedisOutbound::NpcDeath(NpcDeathV1 {
+        v: 1,
+        kind: "npc_death".to_string(),
+        npc_id: "npc_1v1".to_string(),
+        archetype: "commoner".to_string(),
+        cause: "natural_aging".to_string(),
+        faction_id: None,
+        life_record_snapshot: Some("生平摘要".to_string()),
+        age_ticks: 10.0,
+        max_age_ticks: 10.0,
+        at_tick: 0,
+        from_dormant_combat: false,
+        pos: None,
+    }))
+    .expect("NPC death payload should serialize");
+    match death {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_NPC_DEATH);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "npc_death");
+            assert_eq!(v["cause"], "natural_aging");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let faction = prepare_outbound_command(RedisOutbound::FactionEvent(FactionEventV1 {
+        v: 1,
+        kind: "faction_event".to_string(),
+        faction_id: "attack".to_string(),
+        event_kind: "adjust_loyalty_bias".to_string(),
+        leader_id: None,
+        loyalty_bias: 0.6,
+        mission_queue_size: 1,
+        at_tick: 0,
+    }))
+    .expect("faction payload should serialize");
+    match faction {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_FACTION_EVENT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "faction_event");
+            assert_eq!(v["event_kind"], "adjust_loyalty_bias");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let pressure =
+        prepare_outbound_command(RedisOutbound::ZonePressureCrossed(ZonePressureCrossedV1 {
+            v: 1,
+            kind: "zone_pressure_crossed".to_string(),
+            zone: "spawn".to_string(),
+            level: "high".to_string(),
+            raw_pressure: 1.25,
+            at_tick: 42,
+        }))
+        .expect("zone pressure payload should serialize");
+    match pressure {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ZONE_PRESSURE_CROSSED);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "zone_pressure_crossed");
+            assert_eq!(v["level"], "high");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_dormant_combat_outcome_on_npc_combat_channel() {
+    // plan-offscreen-war-v1 P2：离屏战果 telemetry 必须落在专属 CH_NPC_COMBAT
+    // （bong:npc/combat）频道，且 payload 无损 roundtrip——e2e 验收门靠它把
+    // outcome.loser 与 bong:npc/death.npc_id 对账，路由错频道或字段丢失都会让验收假过。
+    let outcome = prepare_outbound_command(RedisOutbound::DormantCombatOutcome(
+        DormantCombatOutcomeV1 {
+            v: 1,
+            kind: "dormant_combat_outcome".to_string(),
+            winner: "dormant:combat:atk".to_string(),
+            loser: "dormant:combat:def".to_string(),
+            zone: "spawn".to_string(),
+            qi_released: 4.5,
+            at_tick: 4321,
+        },
+    ))
+    .expect("DormantCombatOutcomeV1 payload should serialize");
+    match outcome {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_NPC_COMBAT,
+                "战果 telemetry 必须路由到 bong:npc/combat（CH_NPC_COMBAT），\
+                 否则 e2e 的 ⑤ outcome 对账订阅不到、验收假过"
+            );
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            // payload 必须无损 roundtrip：e2e 读 winner/loser/zone/qi_released 做守恒对账。
+            assert_eq!(
+                v["kind"], "dormant_combat_outcome",
+                "kind 标签丢失，下游解析器无法区分 payload 类型"
+            );
+            assert_eq!(
+                v["winner"], "dormant:combat:atk",
+                "winner 字段须原样上线，否则对账读到错值"
+            );
+            assert_eq!(
+                v["loser"], "dormant:combat:def",
+                "loser 字段须 == 对应 NpcDeathV1.npc_id，e2e ⑤ 据此对账"
+            );
+            assert_eq!(
+                v["zone"], "spawn",
+                "zone 字段须原样上线，e2e ③ 据此读 ledger 账户"
+            );
+            assert_eq!(
+                v["qi_released"], 4.5,
+                "qi_released 须原样上线，e2e ③ 用它对齐 zone 回灌增量"
+            );
+        }
+        other => panic!(
+            "DormantCombatOutcome 应产出 Publish 命令，实际得到 {other:?}——\
+             路由分支若改成 HashReplace/Fanout 会让战果观测断链"
+        ),
+    }
+}
+
+#[test]
+fn publishes_pending_dormant_relic_on_npc_relic_channel() {
+    // plan-offscreen-war-v1 P3（CodeRabbit）：克制式战场遗物 telemetry 必须落在专属
+    // CH_NPC_RELIC（bong:npc/relic）频道，且 payload 无损 roundtrip——e2e 验收门靠它把
+    // relic.char_id 与 bong:npc/death.npc_id 对账。频道名或 match 分支回退都会让 P3 观测静默
+    // 失守。loot_seed 取含 high-bit 的 u64 边界值，验证 u64 序列化不被截断/丢精度。
+    const HIGH_BIT_SEED: u64 = 0xFFFF_FFFF_0000_0001;
+    let relic =
+        prepare_outbound_command(RedisOutbound::PendingDormantRelic(PendingDormantRelicV1 {
+            v: 1,
+            kind: "pending_dormant_relic".to_string(),
+            char_id: "dormant:fallen:disciple".to_string(),
+            zone: "rift_valley".to_string(),
+            pos: [12.0, 64.0, -8.0],
+            archetype: "disciple".to_string(),
+            loot_seed: HIGH_BIT_SEED,
+            created_tick: 42,
+            at_tick: 4321,
+        }))
+        .expect("PendingDormantRelicV1 payload should serialize");
+    match relic {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_NPC_RELIC,
+                "battlefield relic telemetry must route to bong:npc/relic (CH_NPC_RELIC); a wrong channel would make the e2e P3① relic subscription silently miss every event"
+            );
+            let v: Value = serde_json::from_str(payload.as_str())
+                .expect("relic publish payload must be valid JSON");
+            assert_eq!(
+                v["kind"], "pending_dormant_relic",
+                "kind tag must survive so the downstream parser can discriminate payload type; got {}",
+                v["kind"]
+            );
+            assert_eq!(
+                v["char_id"], "dormant:fallen:disciple",
+                "char_id must round-trip unchanged (e2e ③ matches it against NpcDeathV1.npc_id); got {}",
+                v["char_id"]
+            );
+            assert_eq!(
+                v["zone"], "rift_valley",
+                "zone must round-trip (hydrate materialization reads it); got {}",
+                v["zone"]
+            );
+            assert_eq!(
+                v["pos"],
+                serde_json::json!([12.0, 64.0, -8.0]),
+                "pos must round-trip as a [f64;3] (hydrate spawns the decal/loot there); got {}",
+                v["pos"]
+            );
+            assert_eq!(
+                v["archetype"], "disciple",
+                "archetype must round-trip (e2e ② asserts disciple = relic-eligible); got {}",
+                v["archetype"]
+            );
+            // loot_seed 是 u64：serde_json 以数值输出，high-bit 值不得被截断成 i64 或丢精度。
+            assert_eq!(
+                v["loot_seed"].as_u64(),
+                Some(HIGH_BIT_SEED),
+                "loot_seed must round-trip losslessly as a u64 including the high bit (deterministic loot depends on it); got {}",
+                v["loot_seed"]
+            );
+            assert_eq!(
+                v["created_tick"].as_u64(),
+                Some(42),
+                "created_tick must round-trip as u64; got {}",
+                v["created_tick"]
+            );
+            assert_eq!(
+                v["at_tick"].as_u64(),
+                Some(4321),
+                "at_tick must round-trip as u64; got {}",
+                v["at_tick"]
+            );
+        }
+        other => panic!(
+            "PendingDormantRelic must produce a Publish command; got {other:?} — switching the route to HashReplace/Fanout would break P3 relic observation"
+        ),
+    }
+}
+
+#[test]
+fn publishes_faction_state_on_faction_state_channel() {
+    // plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry 必须落在专属 CH_FACTION_STATE
+    // （bong:faction_state）频道，且 payload 无损 roundtrip——观测脚本据此读 group_id /
+    // population / status / strongest_*。路由错频道或 status 序列化丢失都会让群体消长观测断链。
+    let state = prepare_outbound_command(RedisOutbound::FactionState(FactionStateV1 {
+        v: 1,
+        kind: "faction_state".to_string(),
+        group_id: 2,
+        region_descriptor: "rift_valley一带散修".to_string(),
+        population: 7,
+        status: crate::npc::faction::GroupStatus::Waning,
+        dominant_zone: "rift_valley".to_string(),
+        strongest_realm: "Solidify".to_string(),
+        strongest_char_id: "dormant:rogue:3".to_string(),
+        at_tick: 4321,
+    }))
+    .expect("FactionStateV1 payload should serialize");
+    match state {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_FACTION_STATE,
+                "群体消长盘面 telemetry 必须路由到 bong:faction_state（CH_FACTION_STATE），\
+                 否则观测脚本订阅不到散修群体消长"
+            );
+            let v: Value = serde_json::from_str(payload.as_str())
+                .expect("faction_state publish payload must be valid JSON");
+            assert_eq!(
+                v["kind"], "faction_state",
+                "kind tag must survive so downstream can discriminate payload type; got {}",
+                v["kind"]
+            );
+            assert_eq!(
+                v["group_id"].as_u64(),
+                Some(2),
+                "group_id must round-trip as a bare u16 number (anonymous group id, no named sect); got {}",
+                v["group_id"]
+            );
+            assert_eq!(
+                v["status"], "waning",
+                "status must serialize as the snake_case GroupStatus string (waning here); got {}",
+                v["status"]
+            );
+            assert_eq!(
+                v["region_descriptor"], "rift_valley一带散修",
+                "region_descriptor must round-trip as the anonymous \"{{zone}}一带散修\" descriptor; got {}",
+                v["region_descriptor"]
+            );
+            assert_eq!(
+                v["strongest_realm"], "Solidify",
+                "strongest_realm must round-trip as the emergent strongest's realm label; got {}",
+                v["strongest_realm"]
+            );
+            assert_eq!(
+                v["population"].as_u64(),
+                Some(7),
+                "population must round-trip as u32; got {}",
+                v["population"]
+            );
+        }
+        other => panic!(
+            "FactionState must produce a Publish command; got {other:?} — switching the route to HashReplace/Fanout would break P5 群体消长 observation"
+        ),
+    }
+}
+
+#[test]
+fn publishes_rat_phase_event_on_correct_channel() {
+    let command = prepare_outbound_command(RedisOutbound::RatPhaseEvent(RatPhaseChangeEvent {
+        chunk: [8, 8],
+        zone: "spawn".to_string(),
+        group_id: 7,
+        from: RatPhase::Solitary,
+        to: RatPhase::Transitioning { progress: 0 },
+        rat_count: 12,
+        local_qi: 0.42,
+        qi_gradient: 0.31,
+        tick: 12345,
+    }))
+    .expect("rat phase event should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_RAT_PHASE_EVENT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["zone"], "spawn");
+            assert_eq!(v["from"], "solitary");
+            assert_eq!(v["to"], json!({"transitioning":{"progress":0}}));
+            assert_eq!(v["rat_count"], 12);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_tribulation_events_to_main_and_phase_channels() {
+    let cases = [
+        (
+            TribulationEventV1::du_xu(
+                TribulationPhaseV1::Omen,
+                Some("offline:Azure".to_string()),
+                Some("Azure".to_string()),
+                Some([8.0, 66.0, 8.0]),
+                Some(0),
+                Some(5),
+                None,
+            ),
+            vec![CH_TRIBULATION_OMEN, CH_TRIBULATION],
+        ),
+        (
+            TribulationEventV1::du_xu(
+                TribulationPhaseV1::Lock,
+                Some("offline:Azure".to_string()),
+                Some("Azure".to_string()),
+                Some([8.0, 66.0, 8.0]),
+                Some(0),
+                Some(5),
+                None,
+            ),
+            vec![CH_TRIBULATION_LOCK, CH_TRIBULATION],
+        ),
+        (
+            TribulationEventV1::du_xu(
+                TribulationPhaseV1::HeartDemon,
+                Some("offline:Azure".to_string()),
+                Some("Azure".to_string()),
+                Some([8.0, 66.0, 8.0]),
+                Some(4),
+                Some(5),
+                None,
+            ),
+            vec![CH_TRIBULATION_WAVE, CH_TRIBULATION],
+        ),
+        (
+            TribulationEventV1::du_xu(
+                TribulationPhaseV1::Settle,
+                Some("offline:Azure".to_string()),
+                None,
+                None,
+                Some(5),
+                Some(5),
+                Some(crate::schema::tribulation::DuXuResultV1 {
+                    char_id: "offline:Azure".to_string(),
+                    outcome: crate::schema::tribulation::DuXuOutcomeV1::Ascended,
+                    killer: None,
+                    waves_survived: 5,
+                    reason: None,
+                }),
+            ),
+            vec![CH_TRIBULATION_SETTLE, CH_TRIBULATION],
+        ),
+    ];
+
+    for (event, expected_channels) in cases {
+        let command = prepare_outbound_command(RedisOutbound::TribulationEvent(event))
+            .expect("tribulation event should serialize");
+        match command {
+            RedisIoCommand::PublishFanout { channels, payload } => {
+                assert_eq!(channels, expected_channels);
+                let value: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(value["v"], 1);
+                assert_eq!(value["kind"], "du_xu");
+            }
+            other => panic!("expected fanout publish, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn publishes_zone_collapse_to_main_collapse_and_phase_channels() {
+    let event = TribulationEventV1::zone_collapse(
+        TribulationPhaseV1::Settle,
+        Some("spawn".to_string()),
+        Some([8.0, 66.0, 8.0]),
+    );
+    let command = prepare_outbound_command(RedisOutbound::TribulationEvent(event))
+        .expect("zone collapse event should serialize");
+
+    match command {
+        RedisIoCommand::PublishFanout { channels, payload } => {
+            assert_eq!(
+                channels,
+                vec![
+                    CH_TRIBULATION_COLLAPSE,
+                    CH_TRIBULATION_SETTLE,
+                    CH_TRIBULATION
+                ]
+            );
+            let value: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(value["kind"], "zone_collapse");
+            assert_eq!(value["phase"]["kind"], "settle");
+            assert_eq!(value["zone"], "spawn");
+        }
+        other => panic!("expected fanout publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_targeted_calamity_only_to_phase_and_main_channels() {
+    let event = TribulationEventV1::targeted(
+        TribulationPhaseV1::Omen,
+        Some("spawn".to_string()),
+        Some([8.0, 66.0, 8.0]),
+    );
+    let command = prepare_outbound_command(RedisOutbound::TribulationEvent(event))
+        .expect("targeted calamity event should serialize");
+
+    match command {
+        RedisIoCommand::PublishFanout { channels, payload } => {
+            assert_eq!(channels, vec![CH_TRIBULATION_OMEN, CH_TRIBULATION]);
+            let value: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(value["kind"], "targeted");
+            assert_eq!(value["phase"]["kind"], "omen");
+            assert_eq!(value["zone"], "spawn");
+        }
+        other => panic!("expected fanout publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_wanted_player_on_correct_channel() {
+    use crate::schema::identity::{RevealedTagKindV1, WantedPlayerEventTag, WantedPlayerEventV1};
+    let payload = WantedPlayerEventV1 {
+        event: WantedPlayerEventTag::WantedPlayer,
+        player_uuid: "11111111-1111-1111-1111-111111111111".to_string(),
+        char_id: "offline:kiz".to_string(),
+        identity_display_name: "毒蛊师小李".to_string(),
+        identity_id: 0,
+        reputation_score: -100,
+        primary_tag: RevealedTagKindV1::DuguRevealed,
+        tick: 24_000,
+    };
+
+    let command = prepare_outbound_command(RedisOutbound::WantedPlayer(payload))
+        .expect("wanted player payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_WANTED_PLAYER);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["event"], "wanted_player");
+            assert_eq!(v["primary_tag"], "dugu_revealed");
+            assert_eq!(v["identity_id"], 0);
+            assert_eq!(v["reputation_score"], -100);
+            assert_eq!(v["tick"], 24_000);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_forge_start_on_correct_channel() {
+    let payload = ForgeStartPayloadV1 {
+        v: 1,
+        session_id: 7,
+        blueprint_id: "qing_feng_v0".to_string(),
+        station_id: "forge_station_42".to_string(),
+        caster_id: "offline:Azure".to_string(),
+        materials: vec![crate::schema::forge_bridge::ForgeMaterialStackV1 {
+            material: "fan_tie".to_string(),
+            count: 3,
+        }],
+        ts: 84_000,
+    };
+
+    let command = prepare_outbound_command(RedisOutbound::ForgeStart(payload))
+        .expect("forge start payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_FORGE_START);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["session_id"], 7);
+            assert_eq!(v["blueprint_id"], "qing_feng_v0");
+            assert_eq!(v["materials"][0]["material"], "fan_tie");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_tuike_v2_skill_event_on_correct_channel() {
+    let event = TuikeSkillEventV1::new(
+        "offline:Azure".to_string(),
+        TuikeSkillIdV1::TransferTaint,
+        FalseSkinTierV1::Ancient,
+        2,
+        84_000,
+        TuikeSkillVisualContractV1::new(
+            "bong:tuike_taint_transfer",
+            "bong:ancient_skin_glow",
+            "contam_transfer_hum",
+            "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png",
+        ),
+    );
+
+    let command = prepare_outbound_command(RedisOutbound::TuikeV2SkillEvent(event.clone()))
+        .expect("tuike v2 skill event should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_TUIKE_V2_SKILL_EVENT);
+            let parsed: TuikeSkillEventV1 =
+                serde_json::from_str(&payload).expect("tuike event payload should be valid");
+            assert_eq!(parsed.caster_id, event.caster_id);
+            assert_eq!(parsed.skill_id, event.skill_id);
+            assert_eq!(parsed.tier, event.tier);
+            assert_eq!(parsed.animation_id, event.animation_id);
+            assert_eq!(parsed.particle_id, event.particle_id);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_forge_outcome_on_correct_channel() {
+    let cases = [
+        ForgeOutcomePayloadV1 {
+            v: 1,
+            session_id: 7,
+            blueprint_id: "qing_feng_v0".to_string(),
+            bucket: ForgeOutcomeBucketV1::Perfect,
+            weapon_item: Some("qing_feng_sword".to_string()),
+            quality: 0.98,
+            color: Some(crate::cultivation::components::ColorKind::Sharp),
+            side_effects: vec![],
+            achieved_tier: 2,
+            caster_id: "offline:Azure".to_string(),
+            ts: 84_020,
+        },
+        ForgeOutcomePayloadV1 {
+            v: 1,
+            session_id: 8,
+            blueprint_id: "qing_feng_v0".to_string(),
+            bucket: ForgeOutcomeBucketV1::Flawed,
+            weapon_item: Some("iron_sword".to_string()),
+            quality: 0.42,
+            color: None,
+            side_effects: vec!["brittle_edge".to_string()],
+            achieved_tier: 1,
+            caster_id: "offline:Azure".to_string(),
+            ts: 84_040,
+        },
+    ];
+
+    for case in cases {
+        let command = prepare_outbound_command(RedisOutbound::ForgeOutcome(case))
+            .expect("forge outcome payload should serialize");
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_FORGE_OUTCOME);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert!(matches!(
+                    v["bucket"].as_str(),
+                    Some("perfect") | Some("flawed")
+                ));
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn publishes_alchemy_bridge_payloads_on_correct_channels() {
+    let start =
+        prepare_outbound_command(RedisOutbound::AlchemySessionStart(AlchemySessionStartV1 {
+            v: 1,
+            session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+            recipe_id: "kai_mai_pill_v0".to_string(),
+            furnace_pos: (-12, 64, 38),
+            furnace_tier: 1,
+            caster_id: "offline:Azure".to_string(),
+            ts: 84_000,
+        }))
+        .expect("alchemy session start payload should serialize");
+    match start {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ALCHEMY_SESSION_START);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["recipe_id"], "kai_mai_pill_v0");
+            assert_eq!(v["furnace_pos"], serde_json::json!([-12, 64, 38]));
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let end = prepare_outbound_command(RedisOutbound::AlchemySessionEnd(AlchemySessionEndV1 {
+        v: 1,
+        session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+        recipe_id: Some("kai_mai_pill_v0".to_string()),
+        furnace_pos: (-12, 64, 38),
+        furnace_tier: 1,
+        caster_id: "offline:Azure".to_string(),
+        bucket: crate::schema::alchemy::AlchemyOutcomeBucketV1::Explode,
+        pill: None,
+        quality: None,
+        damage: Some(12.0),
+        meridian_crack: Some(0.2),
+        elapsed_ticks: 120,
+        ts: 84_120,
+    }))
+    .expect("alchemy session end payload should serialize");
+    match end {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ALCHEMY_SESSION_END);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["bucket"], "explode");
+            assert_eq!(v["damage"], 12.0);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let intervention = prepare_outbound_command(RedisOutbound::AlchemyInterventionResult(
+        AlchemyInterventionResultV1 {
+            v: 1,
+            session_id: "alchemy:-12:64:38:kai_mai_pill_v0".to_string(),
+            recipe_id: "kai_mai_pill_v0".to_string(),
+            furnace_pos: (-12, 64, 38),
+            caster_id: "offline:Azure".to_string(),
+            intervention: crate::schema::alchemy::AlchemyInterventionV1::InjectQi { qi: 3.0 },
+            temp_current: 0.6,
+            qi_injected: 3.0,
+            accepted: true,
+            message: None,
+            ts: 84_020,
+        },
+    ))
+    .expect("alchemy intervention payload should serialize");
+    match intervention {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ALCHEMY_INTERVENTION_RESULT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["intervention"]["kind"], "inject_qi");
+            assert_eq!(v["accepted"], true);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_death_insight_on_correct_channel() {
+    let command = prepare_outbound_command(RedisOutbound::DeathInsight(DeathInsightRequestV1 {
+        v: 1,
+        request_id: "death_insight:offline:Azure:84000:3".to_string(),
+        character_id: "offline:Azure".to_string(),
+        at_tick: 84_000,
+        cause: "cultivation:NaturalAging".to_string(),
+        category: DeathInsightCategoryV1::Natural,
+        realm: Some("Condense".to_string()),
+        player_realm: Some("qi_refining_6".to_string()),
+        zone_kind: DeathInsightZoneKindV1::Ordinary,
+        death_count: 3,
+        rebirth_chance: None,
+        lifespan_remaining_years: Some(0.0),
+        recent_biography: vec!["t83980:near_death:cultivation:NaturalAging".to_string()],
+        position: None,
+        known_spirit_eyes: Vec::new(),
+        context: serde_json::json!({"will_terminate": true}),
+    }))
+    .expect("death insight payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_DEATH_INSIGHT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["character_id"], "offline:Azure");
+            assert_eq!(v["category"], "natural");
+            assert_eq!(v["zone_kind"], "ordinary");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_death_cinematic_on_correct_channel() {
+    use crate::schema::death_cinematic::{
+        DeathCinematicPhaseV1, DeathCinematicRollV1, DeathCinematicS2cV1, DeathCinematicZoneKindV1,
+        DeathRollResultV1,
+    };
+
+    let command = prepare_outbound_command(RedisOutbound::DeathCinematic(DeathCinematicS2cV1 {
+        v: 1,
+        character_id: "offline:Azure".to_string(),
+        phase: DeathCinematicPhaseV1::Roll,
+        phase_tick: 0,
+        phase_duration_ticks: 80,
+        total_elapsed_ticks: 80,
+        total_duration_ticks: 380,
+        roll: DeathCinematicRollV1 {
+            probability: 0.65,
+            threshold: 0.65,
+            luck_value: 0.65,
+            result: DeathRollResultV1::Pending,
+        },
+        insight_text: vec!["尘归尘，劫未尽。".to_string()],
+        is_final: false,
+        death_number: 1,
+        zone_kind: DeathCinematicZoneKindV1::Ordinary,
+        tsy_death: false,
+        rebirth_weakened_ticks: 3600,
+        skip_predeath: false,
+    }))
+    .expect("death cinematic payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_DEATH_CINEMATIC);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["phase"], "roll");
+            assert_eq!(v["roll"]["result"], "pending");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_spirit_eye_migrate_on_correct_channel() {
+    let command = prepare_outbound_command(RedisOutbound::SpiritEyeMigrate(SpiritEyeMigrateV1 {
+        v: 1,
+        eye_id: "spirit_eye:spawn:0".to_string(),
+        from: SpiritEyePositionV1 {
+            x: 0.0,
+            y: 66.0,
+            z: 0.0,
+        },
+        to: SpiritEyePositionV1 {
+            x: 640.0,
+            y: 66.0,
+            z: 0.0,
+        },
+        reason: SpiritEyeMigrateReasonV1::UsagePressure,
+        usage_pressure: 0.0,
+        tick: 120,
+    }))
+    .expect("spirit eye migrate should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SPIRIT_EYE_MIGRATE);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["eye_id"], "spirit_eye:spawn:0");
+            assert_eq!(v["reason"], "usage_pressure");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_lifespan_and_aging_events_on_correct_channels() {
+    let lifespan = prepare_outbound_command(RedisOutbound::LifespanEvent(LifespanEventV1 {
+        v: 1,
+        character_id: "offline:Azure".to_string(),
+        at_tick: 84_000,
+        kind: LifespanEventKindV1::DeathPenalty,
+        delta_years: -4,
+        source: "bleed_out".to_string(),
+    }))
+    .expect("lifespan payload should serialize");
+
+    match lifespan {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_LIFESPAN_EVENT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["character_id"], "offline:Azure");
+            assert_eq!(v["kind"], "death_penalty");
+            assert_eq!(v["delta_years"], -4);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let aging = prepare_outbound_command(RedisOutbound::Aging(AgingEventV1 {
+        v: 1,
+        character_id: "offline:Azure".to_string(),
+        at_tick: 84_000,
+        kind: AgingEventKindV1::NaturalDeath,
+        years_lived: 80.0,
+        cap_by_realm: 80,
+        remaining_years: 0.0,
+        tick_rate_multiplier: 1.0,
+        source: "online".to_string(),
+    }))
+    .expect("aging payload should serialize");
+
+    match aging {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_AGING);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["character_id"], "offline:Azure");
+            assert_eq!(v["kind"], "natural_death");
+            assert_eq!(v["remaining_years"], 0.0);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let rebirth = prepare_outbound_command(RedisOutbound::Rebirth(RebirthEventV1 {
+        v: 1,
+        character_id: "offline:Azure".to_string(),
+        at_tick: 84_100,
+        prior_realm: "Induce".to_string(),
+        new_realm: "Awaken".to_string(),
+    }))
+    .expect("rebirth payload should serialize");
+
+    match rebirth {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_REBIRTH);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["character_id"], "offline:Azure");
+            assert_eq!(v["prior_realm"], "Induce");
+            assert_eq!(v["new_realm"], "Awaken");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_skill_events_on_skill_channels() {
+    let xp = prepare_outbound_command(RedisOutbound::SkillXpGain(SkillXpGainPayloadV1::new(
+        1001,
+        crate::schema::skill::SkillIdV1::Combat,
+        4,
+        crate::schema::skill::XpGainSourceV1::Action {
+            plan_id: "combat".to_string(),
+            action: "kill_npc".to_string(),
+        },
+    )))
+    .expect("skill xp payload should serialize");
+    match xp {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SKILL_XP_GAIN);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["skill"], "combat");
+            assert_eq!(v["amount"], 4);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let lv = prepare_outbound_command(RedisOutbound::SkillLvUp(SkillLvUpPayloadV1::new(
+        1001,
+        crate::schema::skill::SkillIdV1::Mineral,
+        2,
+    )))
+    .expect("skill level payload should serialize");
+    match lv {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SKILL_LV_UP);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["skill"], "mineral");
+            assert_eq!(v["new_lv"], 2);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let cap = prepare_outbound_command(RedisOutbound::SkillCapChanged(
+        SkillCapChangedPayloadV1::new(1001, crate::schema::skill::SkillIdV1::Cultivation, 7),
+    ))
+    .expect("skill cap payload should serialize");
+    match cap {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SKILL_CAP_CHANGED);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["skill"], "cultivation");
+            assert_eq!(v["new_cap"], 7);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let scroll = prepare_outbound_command(RedisOutbound::SkillScrollUsed(
+        SkillScrollUsedPayloadV1::new(
+            1001,
+            "scroll:mine_cave_scrap",
+            crate::schema::skill::SkillIdV1::Mineral,
+            100,
+            false,
+        ),
+    ))
+    .expect("skill scroll payload should serialize");
+    match scroll {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SKILL_SCROLL_USED);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["skill"], "mineral");
+            assert_eq!(v["scroll_id"], "scroll:mine_cave_scrap");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_combat_realtime_and_summary_on_correct_channels() {
+    let realtime =
+        prepare_outbound_command(RedisOutbound::CombatRealtime(CombatRealtimeEventV1 {
+            v: 1,
+            kind: CombatRealtimeKindV1::CombatEvent,
+            tick: 44,
+            target_id: "offline:Crimson".to_string(),
+            attacker_id: Some("offline:Azure".to_string()),
+            body_part: Some(crate::schema::combat_event::CombatBodyPartV1::chest()),
+            wound_kind: Some(crate::schema::combat_event::CombatWoundKindV1::Blunt),
+            source: Some(CombatAttackSourceV1::Melee),
+            damage: Some(20.0),
+            physical_damage: None,
+            contam_delta: None,
+            description: Some(
+                "attack_intent offline:Azure -> offline:Crimson hit Chest with Blunt for 20.0 damage at 0.90 reach decay"
+                    .to_string(),
+            ),
+            cause: None,
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        }))
+        .expect("combat realtime payload should serialize");
+    match realtime {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_COMBAT_REALTIME);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["kind"], "combat_event");
+            assert_eq!(v["tick"], 44);
+            assert_eq!(v["target_id"], "offline:Crimson");
+            assert_eq!(v["attacker_id"], "offline:Azure");
+            assert_eq!(v["body_part"], "chest");
+            assert_eq!(v["wound_kind"], "blunt");
+            assert_eq!(v["damage"], 20.0);
+            assert_eq!(
+                v["description"],
+                "attack_intent offline:Azure -> offline:Crimson hit Chest with Blunt for 20.0 damage at 0.90 reach decay"
+            );
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let summary = prepare_outbound_command(RedisOutbound::CombatSummary(CombatSummaryV1 {
+        v: 1,
+        window_start_tick: 201,
+        window_end_tick: 400,
+        combat_event_count: 9,
+        death_event_count: 2,
+        damage_total: 88.0,
+        contam_delta_total: 16.0,
+    }))
+    .expect("combat summary payload should serialize");
+    match summary {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_COMBAT_SUMMARY);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["window_start_tick"], 201);
+            assert_eq!(v["window_end_tick"], 400);
+            assert_eq!(v["combat_event_count"], 9);
+            assert_eq!(v["death_event_count"], 2);
+            assert_eq!(v["damage_total"], 88.0);
+            assert_eq!(v["contam_delta_total"], 16.0);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let style = prepare_outbound_command(RedisOutbound::StyleBalanceTelemetry(
+        crate::schema::style_balance::StyleBalanceTelemetryEventV1 {
+            v: 1,
+            attacker_player_id: "offline:Azure".to_string(),
+            defender_player_id: "offline:Crimson".to_string(),
+            attacker_color: Some(
+                crate::schema::style_balance::StyleTelemetryColorSnapshotV1 {
+                    main: crate::cultivation::components::ColorKind::Heavy,
+                    secondary: Some(crate::cultivation::components::ColorKind::Solid),
+                    is_chaotic: false,
+                    is_hunyuan: true,
+                },
+            ),
+            defender_color: None,
+            attacker_style: Some("baomai".to_string()),
+            defender_style: Some("jiemai".to_string()),
+            attacker_rejection_rate: Some(0.65),
+            defender_resistance: Some(0.95),
+            defender_drain_affinity: Some(0.2),
+            attacker_qi: Some(20.0),
+            distance_blocks: Some(3.0),
+            effective_hit: Some(11.8),
+            defender_lost: Some(0.59),
+            defender_absorbed: Some(0.12),
+            cause: "attack_intent:offline:Azure".to_string(),
+            resolved_at_tick: 404,
+        },
+    ))
+    .expect("style balance telemetry payload should serialize");
+    match style {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_STYLE_BALANCE_TELEMETRY);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["attacker_player_id"], "offline:Azure");
+            assert_eq!(v["defender_player_id"], "offline:Crimson");
+            assert_eq!(v["attacker_color"]["main"], "Heavy");
+            assert_eq!(v["attacker_color"]["is_hunyuan"], true);
+            assert_eq!(v["attacker_style"], "baomai");
+            assert_eq!(v["defender_style"], "jiemai");
+            assert_eq!(v["attacker_rejection_rate"], 0.65);
+            assert_eq!(v["defender_resistance"], 0.95);
+            assert_eq!(v["defender_lost"], 0.59);
+            assert!(v.get("defender_color").is_none());
+            assert_eq!(v["resolved_at_tick"], 404);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_style_balance_telemetry_rejection_rate_above_schema_max() {
+    let result = prepare_outbound_command(RedisOutbound::StyleBalanceTelemetry(
+        crate::schema::style_balance::StyleBalanceTelemetryEventV1 {
+            v: 1,
+            attacker_player_id: "offline:Azure".to_string(),
+            defender_player_id: "offline:Crimson".to_string(),
+            attacker_color: None,
+            defender_color: None,
+            attacker_style: Some("baomai".to_string()),
+            defender_style: Some("jiemai".to_string()),
+            attacker_rejection_rate: Some(1.1),
+            defender_resistance: Some(0.95),
+            defender_drain_affinity: Some(0.2),
+            attacker_qi: Some(20.0),
+            distance_blocks: Some(3.0),
+            effective_hit: Some(11.8),
+            defender_lost: Some(0.59),
+            defender_absorbed: Some(0.12),
+            cause: "attack_intent:offline:Azure".to_string(),
+            resolved_at_tick: 404,
+        },
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript StyleBalanceTelemetryEventV1 attacker_rejection_rate maximum=1，1.1 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn publishes_anticheat_report_on_correct_channel() {
+    let command = prepare_outbound_command(RedisOutbound::AntiCheatReport(AntiCheatReportV1::new(
+        "offline:Azure",
+        42,
+        1200,
+        ViolationKindV1::ReachExceeded,
+        10,
+        "reach: target_distance=6.200 server_max=4.000",
+    )))
+    .expect("anticheat payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ANTICHEAT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["type"], "anticheat_report");
+            assert_eq!(v["char_id"], "offline:Azure");
+            assert_eq!(v["entity_id"], 42);
+            assert_eq!(v["at_tick"], 1200);
+            assert_eq!(v["kind"], "reach_exceeded");
+            assert_eq!(v["count"], 10);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+fn armor_durability_changed_with(
+    cur: f64,
+    max: f64,
+    durability_ratio: f64,
+) -> ArmorDurabilityChangedV1 {
+    ArmorDurabilityChangedV1 {
+        v: 1,
+        entity_id: "offline:Crimson".to_string(),
+        slot: crate::schema::inventory::EquipSlotV1::Chest,
+        instance_id: 88,
+        template_id: "fake_spirit_hide".to_string(),
+        cur,
+        max,
+        durability_ratio,
+        broken: durability_ratio <= 0.0,
+    }
+}
+
+#[test]
+fn publishes_armor_durability_changed_on_correct_channel() {
+    let command = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+        armor_durability_changed_with(0.0, 100.0, 0.0),
+    ))
+    .expect("armor durability payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_ARMOR_DURABILITY_CHANGED);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["entity_id"], "offline:Crimson");
+            assert_eq!(v["slot"], "chest");
+            assert_eq!(v["instance_id"], 88);
+            assert_eq!(v["template_id"], "fake_spirit_hide");
+            assert_eq!(v["broken"], true);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_armor_durability_changed_with_ratio_above_one() {
+    let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+        armor_durability_changed_with(101.0, 100.0, 1.01),
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript ArmorDurabilityChangedV1 durability_ratio maximum=1，1.01 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_armor_durability_changed_with_ratio_below_zero() {
+    let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+        armor_durability_changed_with(0.0, 100.0, -0.01),
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript ArmorDurabilityChangedV1 durability_ratio minimum=0，-0.01 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn publishes_armor_durability_changed_with_ratio_bounds() {
+    for durability_ratio in [0.0, 1.0] {
+        let command = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+            armor_durability_changed_with(durability_ratio * 100.0, 100.0, durability_ratio),
+        ))
+        .expect("TypeScript ArmorDurabilityChangedV1 durability_ratio 边界值应被接受");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_ARMOR_DURABILITY_CHANGED);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["durability_ratio"], durability_ratio);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn rejects_armor_durability_changed_with_negative_cur_or_max() {
+    for event in [
+        armor_durability_changed_with(-0.01, 100.0, 0.0),
+        armor_durability_changed_with(0.0, -0.01, 0.0),
+    ] {
+        let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(event));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ArmorDurabilityChangedV1 cur/max minimum=0，负数应被 Rust outbound 校验拒绝"
+        );
+    }
+}
+
+#[test]
+fn rejects_armor_durability_changed_with_invalid_version_or_empty_text() {
+    let mut wrong_version = armor_durability_changed_with(0.0, 100.0, 0.0);
+    wrong_version.v = 2;
+    let mut empty_entity = armor_durability_changed_with(0.0, 100.0, 0.0);
+    empty_entity.entity_id.clear();
+    let mut empty_template = armor_durability_changed_with(0.0, 100.0, 0.0);
+    empty_template.template_id.clear();
+
+    for event in [wrong_version, empty_entity, empty_template] {
+        let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(event));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ArmorDurabilityChangedV1 v literal 和 minLength 字段应被 Rust outbound 校验拒绝"
+        );
+    }
+}
+
+#[test]
+fn publishes_pseudo_vein_events_on_dedicated_channels() {
+    let snapshot =
+        prepare_outbound_command(RedisOutbound::PseudoVeinSnapshot(PseudoVeinSnapshotV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            spirit_qi_current: 0.6,
+            occupants: vec!["offline:Azure".to_string()],
+            spawned_at_tick: 24000,
+            estimated_decay_at_tick: 60000,
+            season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::SummerToWinter,
+        }))
+        .expect("pseudo vein snapshot payload should serialize");
+    match snapshot {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_PSEUDO_VEIN_ACTIVE);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["id"], "pseudo_vein_42");
+            assert_eq!(v["season_at_spawn"], "summer_to_winter");
+            assert_eq!(v["spirit_qi_current"], 0.6);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let dissipate = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+        PseudoVeinDissipateEventV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            storm_anchors: vec![[1380.0, -650.0], [1160.0, -720.0]],
+            storm_duration_ticks: 9000,
+            qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                refill_to_hungry_ring: 0.7,
+                collected_by_tiandao: 0.3,
+            },
+        },
+    ))
+    .expect("pseudo vein dissipate payload should serialize");
+    match dissipate {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_PSEUDO_VEIN_DISSIPATE);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["id"], "pseudo_vein_42");
+            assert_eq!(v["storm_anchors"].as_array().unwrap().len(), 2);
+            assert_eq!(v["qi_redistribution"]["collected_by_tiandao"], 0.3);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_pseudo_vein_snapshot_spirit_qi_above_schema_max() {
+    let result =
+        prepare_outbound_command(RedisOutbound::PseudoVeinSnapshot(PseudoVeinSnapshotV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            spirit_qi_current: 1.1,
+            occupants: vec!["offline:Azure".to_string()],
+            spawned_at_tick: 24000,
+            estimated_decay_at_tick: 60000,
+            season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::SummerToWinter,
+        }));
+
+    assert!(
+        result.is_err(),
+        "TypeScript PseudoVeinSnapshotV1 spirit_qi_current maximum=1，1.1 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_pseudo_vein_dissipate_with_too_many_storm_anchors() {
+    let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+        PseudoVeinDissipateEventV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            storm_anchors: vec![
+                [1380.0, -650.0],
+                [1160.0, -720.0],
+                [1270.0, -600.0],
+                [1220.0, -690.0],
+            ],
+            storm_duration_ticks: 9000,
+            qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                refill_to_hungry_ring: 0.7,
+                collected_by_tiandao: 0.3,
+            },
+        },
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript PseudoVeinDissipateEventV1 storm_anchors maxItems=3，4 个锚点应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_pseudo_vein_dissipate_with_no_storm_anchors() {
+    let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+        PseudoVeinDissipateEventV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            storm_anchors: vec![],
+            storm_duration_ticks: 9000,
+            qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                refill_to_hungry_ring: 0.7,
+                collected_by_tiandao: 0.3,
+            },
+        },
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript PseudoVeinDissipateEventV1 storm_anchors minItems=1，0 个锚点应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn publishes_pseudo_vein_dissipate_with_max_storm_anchors() {
+    let dissipate = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+        PseudoVeinDissipateEventV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            storm_anchors: vec![[1380.0, -650.0], [1160.0, -720.0], [1270.0, -600.0]],
+            storm_duration_ticks: 9000,
+            qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                refill_to_hungry_ring: 0.7,
+                collected_by_tiandao: 0.3,
+            },
+        },
+    ))
+    .expect("TypeScript PseudoVeinDissipateEventV1 storm_anchors maxItems=3，应接受 3 个锚点");
+
+    match dissipate {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_PSEUDO_VEIN_DISSIPATE);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["storm_anchors"].as_array().unwrap().len(), 3);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_pseudo_vein_dissipate_with_too_short_storm_duration() {
+    let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+        PseudoVeinDissipateEventV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            storm_anchors: vec![[1380.0, -650.0]],
+            storm_duration_ticks: 5999,
+            qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                refill_to_hungry_ring: 0.7,
+                collected_by_tiandao: 0.3,
+            },
+        },
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript PseudoVeinDissipateEventV1 storm_duration_ticks minimum=6000，5999 ticks 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn rejects_pseudo_vein_dissipate_with_too_long_storm_duration() {
+    let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+        PseudoVeinDissipateEventV1 {
+            v: 1,
+            id: "pseudo_vein_42".to_string(),
+            center_xz: [1280.0, -640.0],
+            storm_anchors: vec![[1380.0, -650.0]],
+            storm_duration_ticks: 12001,
+            qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                refill_to_hungry_ring: 0.7,
+                collected_by_tiandao: 0.3,
+            },
+        },
+    ));
+
+    assert!(
+        result.is_err(),
+        "TypeScript PseudoVeinDissipateEventV1 storm_duration_ticks maximum=12000，12001 ticks 应被 Rust outbound 校验拒绝"
+    );
+}
+
+#[test]
+fn publishes_pseudo_vein_dissipate_with_storm_duration_bounds() {
+    for storm_duration_ticks in [6000, 12000] {
+        let dissipate = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+            PseudoVeinDissipateEventV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                storm_anchors: vec![[1380.0, -650.0]],
+                storm_duration_ticks,
+                qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                    refill_to_hungry_ring: 0.7,
+                    collected_by_tiandao: 0.3,
+                },
+            },
+        ))
+        .expect("TypeScript PseudoVeinDissipateEventV1 storm_duration_ticks 边界值应被接受");
+
+        match dissipate {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_PSEUDO_VEIN_DISSIPATE);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["storm_duration_ticks"], storm_duration_ticks);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn publishes_tsy_hostile_events_on_tsy_channel() {
+    let spawned = prepare_outbound_command(RedisOutbound::TsyNpcSpawned(TsyNpcSpawnedV1 {
+        v: 1,
+        kind: "tsy_npc_spawned".to_string(),
+        family_id: "tsy_zongmen_yiji_01".to_string(),
+        archetype: crate::schema::tsy_hostile::TsyHostileArchetypeV1::GuardianRelicSentinel,
+        count: 3,
+        at_tick: 12000,
+    }))
+    .expect("TSY NPC spawned payload should serialize");
+    match spawned {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_TSY_EVENT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "tsy_npc_spawned");
+            assert_eq!(v["archetype"], "guardian_relic_sentinel");
+            assert_eq!(v["count"], 3);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let phase = prepare_outbound_command(RedisOutbound::TsySentinelPhaseChanged(
+        TsySentinelPhaseChangedV1 {
+            v: 1,
+            kind: "tsy_sentinel_phase_changed".to_string(),
+            family_id: "tsy_zongmen_yiji_01".to_string(),
+            container_entity_id: 42,
+            phase: 1,
+            max_phase: 3,
+            at_tick: 12345,
+        },
+    ))
+    .expect("TSY sentinel phase payload should serialize");
+    match phase {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_TSY_EVENT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "tsy_sentinel_phase_changed");
+            assert_eq!(v["container_entity_id"], 42);
+            assert_eq!(v["phase"], 1);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn publishes_social_events_on_social_channels() {
+    let exposure = prepare_outbound_command(RedisOutbound::SocialExposure(SocialExposureEventV1 {
+        v: 1,
+        actor: "char:alice".to_string(),
+        kind: ExposureKindV1::Chat,
+        witnesses: vec!["char:bob".to_string()],
+        tick: 120,
+        zone: Some("spawn".to_string()),
+    }))
+    .expect("social exposure should serialize");
+    match exposure {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SOCIAL_EXPOSURE);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["kind"], "chat");
+            assert_eq!(v["witnesses"][0], "char:bob");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let pact = prepare_outbound_command(RedisOutbound::SocialPact(SocialPactEventV1 {
+        v: 1,
+        left: "char:alice".to_string(),
+        right: "char:bob".to_string(),
+        terms: "shared shelter".to_string(),
+        tick: 121,
+        broken: false,
+    }))
+    .expect("social pact should serialize");
+    match pact {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SOCIAL_PACT);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["left"], "char:alice");
+            assert_eq!(v["broken"], false);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let renown = prepare_outbound_command(RedisOutbound::SocialRenownDelta(SocialRenownDeltaV1 {
+        v: 1,
+        char_id: "char:alice".to_string(),
+        fame_delta: 0,
+        notoriety_delta: 10,
+        tags_added: vec![RenownTagV1 {
+            tag: "戮道者".to_string(),
+            weight: 10.0,
+            last_seen_tick: 120,
+            permanent: false,
+        }],
+        tick: 120,
+        reason: "pk".to_string(),
+    }))
+    .expect("social renown should serialize");
+    match renown {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_SOCIAL_RENOWN_DELTA);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["notoriety_delta"], 10);
+            assert_eq!(v["tags_added"][0]["tag"], "戮道者");
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+
+    let milestone = prepare_outbound_command(RedisOutbound::HighRenownMilestone(
+        HighRenownMilestoneEventV1 {
+            v: 1,
+            event: HighRenownMilestoneEventTag::HighRenownMilestone,
+            player_uuid: "11111111-1111-1111-1111-111111111111".to_string(),
+            char_id: "offline:kiz".to_string(),
+            identity_id: 0,
+            identity_display_name: "玄锋".to_string(),
+            fame: 1000,
+            milestone: 1000,
+            identity_exposed: true,
+            tick: 24_000,
+            zone: Some("spawn".to_string()),
+        },
+    ))
+    .expect("high renown milestone should serialize");
+    match milestone {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(channel, CH_HIGH_RENOWN_MILESTONE);
+            let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["event"], "high_renown_milestone");
+            assert_eq!(v["identity_display_name"], "玄锋");
+            assert_eq!(v["milestone"], 1000);
+        }
+        other => panic!("expected publish, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_invalid_inbound_payloads() {
+    let invalid_agent_command = r#"{
+        "v": 1,
+        "id": "cmd_bad",
+        "commands": [],
+        "unexpected": true
+    }"#;
+    let invalid_narration = format!(
+        r#"{{
+            "v": 1,
+            "narrations": [{{
+                "scope": "broadcast",
+                "text": "{}",
+                "style": "narration"
+            }}]
+        }}"#,
+        "x".repeat(MAX_NARRATION_LENGTH + 1)
+    );
+
+    assert!(parse_inbound_message(CH_AGENT_COMMAND, invalid_agent_command).is_err());
+    assert!(parse_inbound_message(CH_AGENT_NARRATE, &invalid_narration).is_err());
+
+    let valid_agent_command =
+        include_str!("../../../agent/packages/schema/samples/agent-command.sample.json");
+    assert!(matches!(
+        parse_inbound_message(CH_AGENT_COMMAND, valid_agent_command)
+            .expect("valid command payload should pass"),
+        Some(RedisInbound::AgentCommand(_))
+    ));
+
+    let arbiter_agent_command = r#"{
+        "v": 1,
+        "id": "cmd_arbiter",
+        "source": "arbiter",
+        "commands": []
+    }"#;
+    assert!(matches!(
+        parse_inbound_message(CH_AGENT_COMMAND, arbiter_agent_command)
+            .expect("arbiter command payload should pass"),
+        Some(RedisInbound::AgentCommand(_))
+    ));
+
+    let heartbeat_override_command = r#"{
+        "v": 1,
+        "id": "cmd_heartbeat_override",
+        "source": "arbiter",
+        "commands": [{
+            "type": "heartbeat_override",
+            "target": "spawn",
+            "params": {
+                "action": "suppress",
+                "event_type": "beast_tide",
+                "duration_ticks": 6000
+            }
+        }]
+    }"#;
+    match parse_inbound_message(CH_AGENT_COMMAND, heartbeat_override_command)
+        .expect("heartbeat_override command payload should pass")
+    {
+        Some(RedisInbound::AgentCommand(batch)) => {
+            assert_eq!(batch.commands.len(), 1);
+            assert_eq!(
+                batch.commands[0].command_type,
+                CommandType::HeartbeatOverride
+            );
+        }
+        other => panic!("expected heartbeat_override AgentCommand, got {other:?}"),
+    }
+
+    let political_narration = r#"{
+        "v": 1,
+        "narrations": [{
+            "scope": "zone",
+            "target": "spawn",
+            "text": "江湖有传，血谷旧怨又添一笔，闻者只把灯挑暗。",
+            "style": "political_jianghu",
+            "kind": "political_jianghu"
+        }]
+    }"#;
+    assert!(matches!(
+        parse_inbound_message(CH_AGENT_NARRATE, political_narration)
+            .expect("political jianghu narration payload should pass"),
+        Some(RedisInbound::AgentNarration(_))
+    ));
+
+    let heart_demon_offer = r#"{
+        "offer_id": "heart_demon:1:1000",
+        "trigger_id": "heart_demon:1:1000",
+        "trigger_label": "心魔照见",
+        "realm_label": "渡虚劫 · 心魔",
+        "composure": 0.7,
+        "quota_remaining": 1,
+        "quota_total": 1,
+        "expires_at_ms": 123,
+        "choices": [{
+            "choice_id": "heart_demon_choice_0",
+            "category": "Composure",
+            "title": "守本心",
+            "effect_summary": "稳住心神，回复少量当前真元",
+            "flavor": "旧事浮起，仍可守心。",
+            "style_hint": "稳妥"
+        }]
+    }"#;
+    assert!(matches!(
+        parse_inbound_message(CH_HEART_DEMON_OFFER, heart_demon_offer)
+            .expect("heart demon offer payload should pass"),
+        Some(RedisInbound::HeartDemonOffer(_))
+    ));
+
+    let spirit_treasure_dialogue =
+        include_str!("../../../agent/packages/schema/samples/spirit-treasure-dialogue.sample.json");
+    assert!(matches!(
+        parse_inbound_message(CH_SPIRIT_TREASURE_DIALOGUE, spirit_treasure_dialogue)
+            .expect("spirit treasure dialogue payload should pass"),
+        Some(RedisInbound::SpiritTreasureDialogue(_))
+    ));
+
+    let invalid_spawn_npc = r#"{
+        "v": 1,
+        "id": "cmd_spawn_bad",
+        "source": "arbiter",
+        "commands": [{
+            "type": "spawn_npc",
+            "target": "spawn",
+            "params": {}
+        }]
+    }"#;
+    assert!(parse_inbound_message(CH_AGENT_COMMAND, invalid_spawn_npc).is_err());
+}
+
+#[test]
+fn reconnect_backoff_grows_and_caps() {
+    let mut backoff = ReconnectBackoff::default();
+
+    let first = backoff.next();
+    let second = backoff.next();
+    let third = backoff.next();
+
+    assert_eq!(first.attempt, 1);
+    assert_eq!(first.delay, RECONNECT_BACKOFF_INITIAL);
+    assert_eq!(second.attempt, 2);
+    assert_eq!(second.delay, Duration::from_millis(500));
+    assert_eq!(third.attempt, 3);
+    assert_eq!(third.delay, Duration::from_secs(1));
+
+    let mut capped = third;
+    for _ in 0..8 {
+        capped = backoff.next();
+    }
+
+    assert_eq!(capped.delay, RECONNECT_BACKOFF_MAX);
+
+    backoff.reset();
+    let reset = backoff.next();
+    assert_eq!(reset.attempt, 1);
+    assert_eq!(reset.delay, RECONNECT_BACKOFF_INITIAL);
+}
+
+#[test]
+fn redact_redis_url_for_log_strips_credentials_in_bridge_logs() {
+    assert_eq!(
+        redact_redis_url_for_log("redis://:password@cache.internal:6380/4"),
+        "cache.internal:6380"
+    );
+    assert_eq!(
+        redact_redis_url_for_log("rediss://user:password@[::1]:6390/0?tls=true"),
+        "[::1]:6390"
+    );
+    assert_eq!(
+        redact_redis_url_for_log("not-a-redis-url"),
+        "[redacted redis endpoint]"
+    );
+}
+
+#[test]
+fn world_state_publish_uses_extended_timeout_without_slowing_other_channels() {
+    assert_eq!(
+        publish_timeout_for_channel(CH_WORLD_STATE),
+        REDIS_WORLD_STATE_PUBLISH_TIMEOUT
+    );
+    assert_eq!(
+        publish_timeout_for_channel(CH_AGENT_COMMAND),
+        REDIS_IO_TIMEOUT
+    );
+    assert!(runs_on_background_redis_connection(
+        &prepare_outbound_command(RedisOutbound::WorldState(sample_world_state())).unwrap()
+    ));
+}
+
+#[test]
+fn hash_replace_uses_batch_timeout_budget() {
+    assert!(
+        REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
+        "dormant HASH replace writes batches and should not share the tiny per-command timeout"
+    );
+    // P0: dormant HashReplace now runs on the background connection
+    // (fire-and-forget) so a slow / failing dormant write can never pin
+    // `pending_command` and starve world_state. Expected: background == true
+    // because NpcDormantHash -> HashReplace must NOT block the primary
+    // outbound connection (the old behaviour, asserting !background, was the
+    // exact bug this plan fixes).
+    assert!(
+        runs_on_background_redis_connection(
+            &prepare_outbound_command(dormant_hash_outbound(Vec::new()).0).unwrap()
+        ),
+        "expected dormant HashReplace to run on the background connection so it cannot starve other outbound IPC; got inline routing"
+    );
+}
+
+#[tokio::test]
+async fn finished_subscriber_stream_triggers_reconnect() {
+    let sub_task = task::spawn(async { SubscriberTaskExit::StreamEnded });
+
+    assert_eq!(
+        handle_finished_subscriber_task(sub_task).await,
+        BridgeLoopControl::Reconnect {
+            reason: "subscriber_ended:stream_ended".to_string(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn finished_subscriber_game_channel_close_triggers_reconnect() {
+    let sub_task = task::spawn(async { SubscriberTaskExit::GameChannelClosed });
+
+    assert_eq!(
+        handle_finished_subscriber_task(sub_task).await,
+        BridgeLoopControl::Reconnect {
+            reason: "subscriber_ended:game_channel_closed".to_string(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn cancelled_subscriber_maps_to_reconnect() {
+    let sub_task = task::spawn(async {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        SubscriberTaskExit::StreamEnded
+    });
+    sub_task.abort();
+
+    assert_eq!(
+        map_subscriber_join_result(sub_task.await),
+        BridgeLoopControl::Reconnect {
+            reason: "subscriber_cancelled".to_string(),
+        }
+    );
+}
+
+/// plan-combat-skill-feedback-bridges-v1 P0 — MeridianSevered arm channel pin。
+///
+/// `prepare_outbound_command(RedisOutbound::MeridianSevered(..))` 必须发到
+/// `CH_MERIDIAN_SEVERED`（"bong:meridian_severed"）而非其他频道。
+#[test]
+fn publishes_meridian_severed_on_correct_channel() {
+    use crate::cultivation::meridian::severed::SeveredSource;
+
+    let evt = MeridianSeveredEventV1::new(
+        "offline:TestPlayer",
+        "Lung",
+        SeveredSource::CombatWound,
+        9_999,
+    );
+
+    let command = prepare_outbound_command(RedisOutbound::MeridianSevered(evt))
+        .expect("meridian severed payload should serialize");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_MERIDIAN_SEVERED,
+                "MeridianSevered must publish to CH_MERIDIAN_SEVERED; got {channel:?} — \
+                 changing the channel would silently break agent narration subscription"
+            );
+            let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["type"], "meridian_severed");
+            assert_eq!(v["entity_id"], "offline:TestPlayer");
+            assert_eq!(v["meridian_id"], "Lung");
+            assert_eq!(v["source"], "CombatWound");
+            assert_eq!(v["at_tick"], 9_999);
+        }
+        other => panic!(
+            "expected Publish command for MeridianSevered, got {other:?} — \
+             MeridianSevered must not fan-out; single-channel publish only"
+        ),
+    }
+}
+
+// ── plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 arm channel pins ──
+
+/// BaomaiV4ScarCircuitFormed arm 发到正确 channel。
+#[test]
+fn publishes_baomai_v4_scar_circuit_formed_on_correct_channel() {
+    use crate::combat::baomai_v4::scar_circuit::ScarCircuitKind;
+
+    let evt = crate::schema::baomai_v4::BaomaiV4ScarCircuitFormedV1::new(
+        "offline:TestPlayer",
+        ScarCircuitKind::TigerMouth,
+        100,
+    );
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV4ScarCircuitFormed(evt))
+        .expect("scar_circuit_formed should serialize");
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED,
+                "BaomaiV4ScarCircuitFormed must publish to {CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED}"
+            );
+            let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["circuit"], "tiger_mouth");
+            assert_eq!(v["tick"], 100);
+        }
+        other => panic!("expected Publish for ScarCircuitFormed, got {other:?}"),
+    }
+}
+
+/// BaomaiV4ScarCircuitBroken arm 发到正确 channel。
+#[test]
+fn publishes_baomai_v4_scar_circuit_broken_on_correct_channel() {
+    use crate::combat::baomai_v4::events::CircuitBreakReason;
+    use crate::combat::baomai_v4::scar_circuit::ScarCircuitKind;
+
+    let evt = crate::schema::baomai_v4::BaomaiV4ScarCircuitBrokenV1::new(
+        "char:999",
+        ScarCircuitKind::HeartLung,
+        CircuitBreakReason::Healed,
+        200,
+    );
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV4ScarCircuitBroken(evt))
+        .expect("scar_circuit_broken should serialize");
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+                "BaomaiV4ScarCircuitBroken must publish to {CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN}"
+            );
+            let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["reason"], "healed");
+            assert_eq!(v["circuit"], "heart_lung");
+        }
+        other => panic!("expected Publish for ScarCircuitBroken, got {other:?}"),
+    }
+}
+
+/// BaomaiV4IronCocoonStageUp arm 发到正确 channel。
+#[test]
+fn publishes_baomai_v4_iron_cocoon_stage_up_on_correct_channel() {
+    use crate::combat::baomai_v4::iron_cocoon::IronCocoonStage;
+
+    let evt = crate::schema::baomai_v4::BaomaiV4IronCocoonStageUpV1::new(
+        "offline:TestPlayer",
+        IronCocoonStage::None,
+        IronCocoonStage::ToughSkin,
+        50,
+        300,
+    );
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV4IronCocoonStageUp(evt))
+        .expect("iron_cocoon_stage_up should serialize");
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V4_IRON_COCOON_STAGE_UP,
+                "BaomaiV4IronCocoonStageUp must publish to {CH_BAOMAI_V4_IRON_COCOON_STAGE_UP}"
+            );
+            let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["from"], "none");
+            assert_eq!(v["to"], "tough_skin");
+            assert_eq!(v["total_overloads"], 50);
+        }
+        other => panic!("expected Publish for IronCocoonStageUp, got {other:?}"),
+    }
+}
+
+/// BaomaiV4ResonanceLock arm 发到正确 channel。
+#[test]
+fn publishes_baomai_v4_resonance_lock_on_correct_channel() {
+    let evt = crate::schema::baomai_v4::BaomaiV4ResonanceLockV1::new(
+        "offline:PlayerA",
+        "offline:PlayerB",
+        1000,
+        1060,
+    );
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV4ResonanceLock(evt))
+        .expect("resonance_lock should serialize");
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V4_RESONANCE_LOCK,
+                "BaomaiV4ResonanceLock must publish to {CH_BAOMAI_V4_RESONANCE_LOCK}"
+            );
+            let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["started_at"], 1000);
+            assert_eq!(v["ends_at"], 1060);
+        }
+        other => panic!("expected Publish for ResonanceLock, got {other:?}"),
+    }
+}
+
+/// BaomaiV4ResonanceLockEnd arm 发到正确 channel，expired 原因 wire 形态。
+#[test]
+fn publishes_baomai_v4_resonance_lock_end_expired_on_correct_channel() {
+    use crate::schema::baomai_v4::LockEndReasonWire;
+
+    let evt = crate::schema::baomai_v4::BaomaiV4ResonanceLockEndV1::new(
+        "offline:PlayerA",
+        "offline:PlayerB",
+        LockEndReasonWire::Expired,
+        1060,
+    );
+    let command = prepare_outbound_command(RedisOutbound::BaomaiV4ResonanceLockEnd(evt))
+        .expect("resonance_lock_end should serialize");
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_BAOMAI_V4_RESONANCE_LOCK_END,
+                "BaomaiV4ResonanceLockEnd must publish to {CH_BAOMAI_V4_RESONANCE_LOCK_END}"
+            );
+            let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+            assert_eq!(v["v"], 1);
+            assert_eq!(v["reason"]["type"], "expired");
+            assert_eq!(v["tick"], 1060);
+        }
+        other => panic!("expected Publish for ResonanceLockEnd, got {other:?}"),
+    }
+}
+
+// ── plan-combat-skill-feedback-bridges-v1 P3 — VoidErosionEvent arm channel pin ──
+
+/// `prepare_outbound_command(RedisOutbound::VoidErosionEvent(..))` 必须发布到
+/// `CH_VOID_EROSION_EVENT`（`"bong:void_erosion_event"`）。
+///
+/// agent 天道层订阅 `bong:void_erosion_event` 以触发虚蚀叙事；若 arm 被误改为其他
+/// channel 或 arm 匹配顺序变化，agent 端将静默收不到事件。本测试锁住该契约。
+#[test]
+fn publishes_void_erosion_event_on_correct_channel() {
+    use crate::schema::woliu_erosion::{VoidErosionEventV1, VoidErosionStageV1};
+
+    let evt = VoidErosionEventV1 {
+        entity: "offline:Azure".to_string(),
+        from_stage: VoidErosionStageV1::LowPressure,
+        to_stage: VoidErosionStageV1::VoidShadow,
+        cumulative_erosion: 55.0,
+        server_tick: 1234,
+    };
+
+    let command = prepare_outbound_command(RedisOutbound::VoidErosionEvent(evt))
+        .expect("VoidErosionEvent payload should serialize without error");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_VOID_EROSION_EVENT,
+                "VoidErosionEvent must publish to CH_VOID_EROSION_EVENT \
+                 (\"bong:void_erosion_event\"); got {channel:?} — \
+                 changing the channel silently breaks agent narration subscription"
+            );
+            assert_eq!(
+                channel, "bong:void_erosion_event",
+                "channel literal must stay 'bong:void_erosion_event' for agent IPC contract"
+            );
+            let v: serde_json::Value =
+                serde_json::from_str(payload.as_str()).expect("payload must be valid JSON");
+            assert_eq!(
+                v["entity"], "offline:Azure",
+                "entity_id round-trips through payload serialization"
+            );
+            assert_eq!(
+                v["cumulative_erosion"], 55.0,
+                "cumulative_erosion round-trips"
+            );
+            assert_eq!(v["server_tick"], 1234, "server_tick round-trips");
+        }
+        other => panic!(
+            "expected RedisIoCommand::Publish for VoidErosionEvent, got {other:?} — \
+             VoidErosionEvent must not fan-out; single-channel publish only"
+        ),
+    }
+}
+
+/// `prepare_outbound_command(RedisOutbound::HalfStepRechallengeTrigger(..))` 必须发布到
+/// `CH_HALFSTEP_RECHALLENGE`（`"bong:tribulation/halfstep_rechallenge"`）。
+///
+/// agent 天道层订阅此 channel 以路由 player/zone scope narration；若 arm 被误改或
+/// channel 常量漂移，agent 静默收不到触发事件。本测试锁住该契约。
+#[test]
+fn publishes_halfstep_rechallenge_trigger_on_correct_channel() {
+    use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
+
+    let payload = HalfStepRechallengeTriggerPayloadV1 {
+        char_id: "offline:Azure".to_string(),
+        zone_name: "qingyun_peaks".to_string(),
+        zone_halfstep_count: 2,
+        at_tick: 99_000,
+    };
+
+    let command = prepare_outbound_command(RedisOutbound::HalfStepRechallengeTrigger(payload))
+        .expect("HalfStepRechallengeTrigger payload should serialize without error");
+
+    match command {
+        RedisIoCommand::Publish { channel, payload } => {
+            assert_eq!(
+                channel, CH_HALFSTEP_RECHALLENGE,
+                "HalfStepRechallengeTrigger must publish to CH_HALFSTEP_RECHALLENGE \
+                 (\"bong:tribulation/halfstep_rechallenge\"); got {channel:?} — \
+                 changing the channel silently breaks agent narration subscription"
+            );
+            assert_eq!(
+                channel, "bong:tribulation/halfstep_rechallenge",
+                "channel literal must stay 'bong:tribulation/halfstep_rechallenge' \
+                 for agent IPC contract (plan-halfstep-rechallenge-integration-v1 P1)"
+            );
+            let v: serde_json::Value =
+                serde_json::from_str(payload.as_str()).expect("payload must be valid JSON");
+            assert_eq!(
+                v["char_id"], "offline:Azure",
+                "char_id round-trips through payload serialization"
+            );
+            assert_eq!(v["zone_name"], "qingyun_peaks", "zone_name round-trips");
+            assert_eq!(
+                v["zone_halfstep_count"], 2,
+                "zone_halfstep_count round-trips; agent uses this for zone echo threshold"
+            );
+            assert_eq!(v["at_tick"], 99_000, "at_tick round-trips");
+        }
+        other => panic!(
+            "expected RedisIoCommand::Publish for HalfStepRechallengeTrigger, got {other:?} — \
+             HalfStepRechallengeTrigger must not fan-out; single-channel publish only"
+        ),
+    }
+}
