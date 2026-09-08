@@ -1,7 +1,6 @@
 //! Shared persistence conversion, connection, clock, and archive helpers.
 
 use super::*;
-use std::io::Read;
 
 pub(super) fn current_unix_seconds() -> i64 {
     SystemTime::now()
@@ -30,6 +29,14 @@ pub(super) fn tick_to_sql(tick: u64) -> io::Result<i64> {
     i64::try_from(tick).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+pub(super) fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
     match previous {
         Some(contents) => fs::write(path, contents),
@@ -39,172 +46,6 @@ pub(super) fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<
             Err(error) => Err(error),
         },
     }
-}
-
-#[derive(Debug)]
-pub(super) struct PersistenceRollbackFailure {
-    pub(super) operation: &'static str,
-    pub(super) primary: io::Error,
-    pub(super) rollback: io::Error,
-}
-
-impl std::fmt::Display for PersistenceRollbackFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{} failed: {}; rollback failed: {}",
-            self.operation, self.primary, self.rollback
-        )
-    }
-}
-
-impl std::error::Error for PersistenceRollbackFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        // 保留 primary 作为 source 链的根；rollback 的完整诊断同时固定在 Display 中，
-        // 因为 std::error::Error 只有一个 source 槽位。
-        Some(&self.primary)
-    }
-}
-
-pub(super) fn combine_persistence_failure(
-    operation: &'static str,
-    primary: io::Error,
-    rollback: io::Error,
-) -> io::Error {
-    io::Error::other(PersistenceRollbackFailure {
-        operation,
-        primary,
-        rollback,
-    })
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ArchiveFileIdentity {
-    is_file: bool,
-    length: u64,
-    modified: Option<SystemTime>,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-}
-
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-
-fn archive_file_identity_from_metadata(metadata: &fs::Metadata) -> ArchiveFileIdentity {
-    ArchiveFileIdentity {
-        is_file: metadata.is_file(),
-        length: metadata.len(),
-        modified: metadata.modified().ok(),
-        #[cfg(unix)]
-        device: metadata.dev(),
-        #[cfg(unix)]
-        inode: metadata.ino(),
-    }
-}
-
-pub(super) fn archive_file_identity(path: &Path) -> io::Result<ArchiveFileIdentity> {
-    fs::metadata(path).map(|metadata| archive_file_identity_from_metadata(&metadata))
-}
-
-/// Serialize the complete archive target lifecycle across processes.
-///
-/// The sidecar is intentionally retained: deleting it while a holder is alive could
-/// create a second inode for the same logical target and split the lock domain.
-pub(super) struct ArchiveLifecycleLock {
-    _file: fs::File,
-}
-
-pub(super) fn acquire_archive_lifecycle_lock(lock_path: &Path) -> io::Result<ArchiveLifecycleLock> {
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let lock_file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(lock_path)?;
-    lock_file.lock()?;
-    Ok(ArchiveLifecycleLock { _file: lock_file })
-}
-
-pub(super) fn npc_archive_lifecycle_lock_path(settings: &PersistenceSettings) -> PathBuf {
-    resolve_persistence_relative_path(settings, "data/archive/.npc.lifecycle.lock")
-}
-
-pub(super) fn acquire_npc_archive_lifecycle_lock(
-    settings: &PersistenceSettings,
-) -> io::Result<ArchiveLifecycleLock> {
-    acquire_archive_lifecycle_lock(&npc_archive_lifecycle_lock_path(settings))
-}
-
-fn read_archive_snapshot_from_file(
-    path: &Path,
-    mut file: fs::File,
-) -> io::Result<(Vec<u8>, ArchiveFileIdentity)> {
-    let identity = archive_file_identity_from_metadata(&file.metadata()?);
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    if archive_file_identity(path)? != identity {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("archive target changed while reading: {}", path.display()),
-        ));
-    }
-    Ok((bytes, identity))
-}
-
-pub(super) fn read_archive_snapshot(path: &Path) -> io::Result<(Vec<u8>, ArchiveFileIdentity)> {
-    read_archive_snapshot_from_file(path, fs::File::open(path)?)
-}
-
-pub(super) fn read_optional_archive_snapshot(
-    path: &Path,
-) -> io::Result<Option<(Vec<u8>, ArchiveFileIdentity)>> {
-    let file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    read_archive_snapshot_from_file(path, file).map(Some)
-}
-
-pub(super) fn ensure_archive_identity(
-    path: &Path,
-    expected: ArchiveFileIdentity,
-) -> io::Result<()> {
-    if archive_file_identity(path)? != expected {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("archive target identity changed: {}", path.display()),
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn ensure_archive_snapshot_matches_bytes(
-    path: &Path,
-    expected_identity: ArchiveFileIdentity,
-    expected_payload: &[u8],
-) -> io::Result<()> {
-    let (archive_bytes, actual_identity) = read_archive_snapshot(path)?;
-    if actual_identity != expected_identity {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("archive target identity changed: {}", path.display()),
-        ));
-    }
-    let actual_payload = zstd::stream::decode_all(archive_bytes.as_slice())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if actual_payload != expected_payload {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("archive target content changed: {}", path.display()),
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn default_termination_category() -> String {
@@ -400,82 +241,35 @@ pub(super) fn sql_usize(value: usize) -> io::Result<i64> {
     i64::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-pub(super) fn validate_archive_component(value: &str) -> io::Result<()> {
-    if value.is_empty()
-        || value == "."
-        || value == ".."
-        || value.contains('/')
-        || value.contains('\\')
-        || value.contains('\0')
-        || Path::new(value).is_absolute()
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("unsafe archive path component `{value}`"),
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn npc_deceased_archive_relative_path(
-    char_id: &str,
-    archived_at_wall: i64,
-    died_at_tick: u64,
-    death_count: u32,
-) -> io::Result<String> {
-    validate_archive_component(char_id)?;
-    let material = format!("{char_id}\0{archived_at_wall}\0{died_at_tick}\0{death_count}");
-    let discriminator = archive_discriminator("npc-deceased-v1", material.as_bytes());
-    Ok(format!(
-        "data/archive/npc_deceased/{}/{}-{discriminator}.json.zst",
+pub(super) fn npc_deceased_archive_relative_path(char_id: &str, archived_at_wall: i64) -> String {
+    format!(
+        "data/archive/npc_deceased/{}/{}.json.zst",
         utc_year_from_unix_seconds(archived_at_wall),
         char_id
-    ))
+    )
 }
 
 pub(super) fn npc_deceased_archive_absolute_path(
     settings: &PersistenceSettings,
     char_id: &str,
     archived_at_wall: i64,
-    died_at_tick: u64,
-    death_count: u32,
-) -> io::Result<PathBuf> {
-    let relative_path =
-        npc_deceased_archive_relative_path(char_id, archived_at_wall, died_at_tick, death_count)?;
-    Ok(resolve_persistence_relative_path(
+) -> PathBuf {
+    resolve_persistence_relative_path(
         settings,
-        relative_path.as_str(),
-    ))
+        npc_deceased_archive_relative_path(char_id, archived_at_wall).as_str(),
+    )
 }
 
-fn archive_discriminator(domain: &str, material: &[u8]) -> String {
-    let mut name = Vec::with_capacity(domain.len() + 1 + material.len());
-    name.extend_from_slice(domain.as_bytes());
-    name.push(0);
-    name.extend_from_slice(material);
-    Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_slice()).to_string()
-}
-
-pub(super) fn npc_digest_archive_relative_path(digest: &NpcDigestRecord) -> io::Result<String> {
-    validate_archive_component(digest.char_id.as_str())?;
-    let material = serde_json::to_vec(digest)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let discriminator = archive_discriminator("npc-digest-v1", material.as_slice());
-    Ok(format!(
-        "data/archive/npc_digests/{}-{discriminator}.json.zst",
-        digest.char_id
-    ))
+pub(super) fn npc_digest_archive_relative_path(char_id: &str) -> String {
+    format!("data/archive/npc_digests/{char_id}.json.zst")
 }
 
 pub(super) fn npc_digest_archive_absolute_path(
     settings: &PersistenceSettings,
-    digest: &NpcDigestRecord,
-) -> io::Result<PathBuf> {
-    let relative_path = npc_digest_archive_relative_path(digest)?;
-    Ok(resolve_persistence_relative_path(
-        settings,
-        relative_path.as_str(),
-    ))
+    char_id: &str,
+    _archived_at_wall: i64,
+) -> PathBuf {
+    resolve_persistence_relative_path(settings, npc_digest_archive_relative_path(char_id).as_str())
 }
 
 pub(super) fn resolve_persistence_relative_path(
@@ -509,17 +303,6 @@ pub(super) fn write_zstd_bundle_with_writer(
     payload: &[u8],
     write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
 ) -> io::Result<()> {
-    write_zstd_bundle_with_cleanup(path, payload, write_temp, |candidate| {
-        fs::remove_file(candidate)
-    })
-}
-
-pub(super) fn write_zstd_bundle_with_cleanup(
-    path: &Path,
-    payload: &[u8],
-    write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
-    remove_file: impl Fn(&Path) -> io::Result<()>,
-) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -538,47 +321,16 @@ pub(super) fn write_zstd_bundle_with_cleanup(
         .write(true)
         .create_new(true)
         .open(&temp_path)?;
-    let mut temp_cleanup_attempted = false;
     let result = (|| {
         write_temp(&mut temp_file, &compressed)?;
         temp_file.sync_all()?;
         drop(temp_file);
-        // hard_link 在目标已存在时原子地返回 AlreadyExists，不替换既有归档。
-        // 临时文件与目标位于同一目录，因此链接操作不会跨文件系统。
-        fs::hard_link(&temp_path, path)?;
-        let published_identity = archive_file_identity(path)?;
-        temp_cleanup_attempted = true;
-        if let Err(error) = remove_file(&temp_path) {
-            // hard_link 已成功创建且目标此前不存在；清理失败时尽力撤销本次发布，
-            // 避免返回错误却留下一个调用方无法确认 ownership 的最终文件。撤销前
-            // 重新核对 inode/metadata，不能把并发 publisher 的 successor 当成自己
-            // 的目标删除。回滚也失败时必须同时报告两个错误，不能让孤立的最终
-            // 文件变成静默残留。
-            let rollback_result =
-                ensure_archive_identity(path, published_identity).and_then(|()| remove_file(path));
-            return match rollback_result {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(combine_persistence_failure(
-                    "write_zstd_bundle",
-                    error,
-                    rollback_error,
-                )),
-            };
-        }
-        Ok(())
+        fs::rename(&temp_path, path)
     })();
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) if temp_cleanup_attempted => Err(error),
-        Err(error) => match remove_file(&temp_path) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) => Err(combine_persistence_failure(
-                "write_zstd_bundle temporary cleanup",
-                error,
-                cleanup_error,
-            )),
-        },
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
     }
+    result
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
