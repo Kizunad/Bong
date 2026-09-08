@@ -355,6 +355,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **迁移对拍与行为**：迁移前 `cd server && ../scripts/build-token.sh cargo test network::tests:: --lib` 为 `62 passed / 0 failed / 0 ignored`；迁移后同一命令为 `62 passed / 0 failed / 0 ignored`（真实 `POST_FIX_COMPARE_EXIT=0`）。62 个原测试名、fixture、断言、payload 期望、边界/错误语义与执行顺序保持不变；未新增 Cargo test target，沿用 network 已有同 crate 独立测试模块形态。
 - **测试可见性与生产残留**：未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，也未复制生产实现。`build_player_state_payload`、`collect_players_for_world_state` 两个既有 `#[cfg(test)] #[allow(dead_code)] pub(crate)` 辅助函数及 `anim_wiring_manifest_test`、`quickslot_config_emit_test`、`skill_vfx_wiring_test`、`skillbar_config_emit_test` 四个既有测试模块声明均未改动；它们不属于本批 62 条搬迁，保留原位置与可见性，后续按 P4 清单单独审计。
 - **提交证据**：代码与 `mod_tests.rs` 对应提交 `8ac457358`（2026-09-08），本条仅记录 P2-21 进度；P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
+- **源码接线自检兼容修复**：`server/src/network/rat_av_trigger.rs` 与 `server/src/network/rat_qi_tier_emit.rs` 内既有 `production_source` 自检 helper 原先只按字面 `#[cfg(test)]\nmod tests {` 截取，`network/mod.rs` 改成同 crate 外置挂载后会把测试文件内容误当生产半区，导致接线 pin 失效。两处现在优先按 `#[path = "mod_tests.rs"]\nmod tests;` 挂载声明截取，旧 inline marker 作为兼容 fallback；不改回 `mod.rs` 结构、不动四个既有外置模块、玩法或生产运行时。兼容 fallback 仅服务迁移过渡，待 `server/src` 下最后一个 module-level inline `mod tests` 外置完成后删除，并同步删除对应旧判据。
 
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
