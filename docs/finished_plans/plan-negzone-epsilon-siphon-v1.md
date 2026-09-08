@@ -100,7 +100,7 @@
 
 1. 数值失败可达：有限 fixture `zone.spirit_qi=-1.0`、`qi_max=100.0`、`qi_current=1e-16` 满足 `qi_current < siphon`，但 `zone.spirit_qi + qi_current / 50.0 == zone.spirit_qi`；对应现有 `qi_flow.rs:653-659` 的 `UnrepresentableFlow` 会吞掉 death trigger。
 2. 成功 release 仍先走既有 `release_qi_amount_to_zone`；仅当失败明确为 zone 字段不可表示时，使用同一实际 `drained` 重试到既有 `qi_flow_overflow` 持久 sink，确认真实入账后再发既有 `CultivationDeathTrigger::NegativeZoneDrain`。
-3. 缺失 `LifeRecord`、非法 Cultivation 状态、ledger 失败等非该数值错误继续 fail-closed + warn，不发伪造死亡事件；不裸写 `qi_current` 或 `zone.spirit_qi`，守恒验证用 `assert_conservation`。
+3. `qi_current == 0` 时没有真实 release，保持物理 no-op 且不发送死亡触发；缺失 `LifeRecord`、非法 Cultivation 状态、ledger 失败等其它错误继续 fail-closed + warn，不发伪造死亡事件；不裸写 `qi_current` 或 `zone.spirit_qi`，守恒验证用 `assert_conservation`。
 
 **落点**：`server/src/cultivation/negative_zone.rs:96-165`、`server/src/cultivation/components/qi_flow.rs:633-737`、`server/src/qi_physics/ledger.rs:1083-1100` / 本 plan §P0「抽干分支可达性」、§P1「修复边界」、§P1「饱和测试」#5-#7。
 
@@ -133,20 +133,21 @@
 - `152d447ad`（2026-09-08）：格式化并固定最终修复代码。
 - `bc0f4ba22`（2026-09-08）：紧邻 `git fetch origin && git merge origin/main` 合入主线 tribulation 测试外置变更。
 - `31c318f09`（2026-09-08）：再次紧邻 `git fetch origin && git merge origin/main` 合入最新主线 combat/resolve 变更，并完成受影响栈复验。
+- `ee6ad6aef`（2026-09-08）：补上零额 siphon 的物理 no-op，禁止无真实 release 时伪造 `CultivationDeathTrigger`。
 
 ### 测试结果
 
 - 基线：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo test negative_zone --lib'`，34 passed、0 failed。
-- 修复后定向：`negative_zone --lib` 40 passed、0 failed；`subtraction_progress --lib` 1 passed、0 failed。
+- 修复后定向：`negative_zone --lib` 41 passed、0 failed；`subtraction_progress --lib` 1 passed、0 failed。
 - 合并主线后的第一次完整门禁：`flock /tmp/bong-cargo.lock -c 'cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test'`，fmt/clippy 通过；server lib 12078 passed、1 ignored，main 18 passed，外置 `tribulation_unit` 103 passed，所有测试 0 failed；doc-tests 3 passed、5 ignored。
-- 最新主线合并后的受影响栈完整门禁：`cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test`，fmt/clippy 通过；server lib 12084 passed、1 ignored，main 18 passed，外置 `tribulation_unit` 103 passed，所有测试 0 failed；doc-tests 3 passed、5 ignored。
+- 最新主线合并后的受影响栈完整门禁：`cd server && ../scripts/build-token.sh cargo fmt --check && ../scripts/build-token.sh cargo clippy --all-targets -- -D warnings && ../scripts/build-token.sh cargo test`（不包外层 `flock`），fmt/clippy 通过；server lib 12086 passed、1 ignored，main 18 passed，外置 `tribulation_unit` 103 passed，所有测试 0 failed；doc-tests 3 passed、5 ignored；进程真实退出码 `0`。
 
 ### Validator 与守恒/死亡契约核验
 
 - 第一性结论确认用户初判成立：微负 signed zone 产生约 `1.417e-14` siphon，`238.52849866722318 - 1.4174837940073883e-14` 不改变来源表示，原 release 整笔 `UnrepresentableFlow` fail-closed 并在 tick 重试告警；现由 `subtraction_makes_progress` 将该路径收口为无副作用 no-op。
 - 抽干失败分支可达：有限 fixture `zone.spirit_qi=-1.0`、`qi_current=1e-16` 令 zone 增量不可表示；现用既有 `qi_flow_overflow` 稳定 sink 入账同一笔 drained 后才发送 `CultivationDeathTrigger::NegativeZoneDrain`，fallback 失败仍不伪造死亡。
 - `qi_physics` 没有新增数值常量；新增的唯一判据是 `subtraction_makes_progress`（`server/src/qi_physics/mod.rs:176-191`），直接基于 `before - amount != before`。
-- 无上下文只读 validator 对拍最终 HEAD `4d9bf825338c694dd56a2f163eb4a0f58c59598c`，确认工作树干净、`origin/main` 已包含，结论 PASS；此前旧 HEAD 因主线在长 gate 期间前进而失败的验证不作为最终证据。
+- 此前无上下文只读 validator 对拍 `4d9bf825338c694dd56a2f163eb4a0f58c59598c` 的 PASS 不再作为最终证据；`ee6ad6aef` 修复了该 validator 发现的零额死亡触发缺陷。本次 Finish Evidence 更新提交后的最终 HEAD 将重新由无上下文 validator 首行核对 `git rev-parse HEAD` 并给出结论。
 - `qi_physics::ledger::assert_conservation` 覆盖正常释放、overflow fallback 与 no-op；`CultivationDeathTrigger::NegativeZoneDrain` 仅在真实 release/overflow 入账成功后发送。
 - 本 plan 未修改 `SIPHON_FACTOR`、schema、client、agent、依赖版本或其它 gameplay 行为；不新增跨仓库契约，server / agent / client 接入面分别为既有 server 物理路径、无 agent 变更、无 client 变更。
 
