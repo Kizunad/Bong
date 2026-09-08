@@ -87,6 +87,10 @@ name = "recipe_fragment_unit"
 path = "tests/unit/alchemy/recipe_fragment_test.rs"
 
 [[test]]
+name = "tribulation_unit"
+path = "tests/unit/cultivation/tribulation_test.rs"
+
+[[test]]
 name = "inventory_unit"
 path = "tests/unit/inventory/inventory_test.rs"
 
