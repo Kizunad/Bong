@@ -258,8 +258,8 @@ fn process_redis_inbound_keeps_contextual_insight_offer_when_agent_overwrites_pe
 mod world_state_tests {
     use super::*;
     use crate::npc::faction::{
-        FactionId, FactionMembership, FactionRank, FactionStore, Lineage, MissionId,
-        MissionQueue, Reputation,
+        FactionId, FactionMembership, FactionRank, FactionStore, Lineage, MissionId, MissionQueue,
+        Reputation,
     };
     use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcLifespan};
     use crate::player::state::PlayerState;
@@ -312,10 +312,7 @@ mod world_state_tests {
         }
     }
 
-    fn dormant_snapshot(
-        char_id: &str,
-        pos: [f64; 3],
-    ) -> crate::npc::dormant::NpcDormantSnapshot {
+    fn dormant_snapshot(char_id: &str, pos: [f64; 3]) -> crate::npc::dormant::NpcDormantSnapshot {
         let cultivation = Cultivation::default();
         crate::npc::dormant::NpcDormantSnapshot {
             char_id: char_id.to_string(),
@@ -1377,8 +1374,7 @@ mod narration_tests {
 
         let (alice_payloads, alice_chat_packets) =
             collect_narration_and_chat_packets(&mut alice_helper);
-        let (bob_payloads, bob_chat_packets) =
-            collect_narration_and_chat_packets(&mut bob_helper);
+        let (bob_payloads, bob_chat_packets) = collect_narration_and_chat_packets(&mut bob_helper);
 
         assert!(
             alice_payloads.is_empty(),
@@ -1419,8 +1415,7 @@ mod narration_tests {
 
         let (steve_plain, steve_chat_packets) =
             collect_narration_and_chat_packets(&mut steve_helper);
-        let (alex_plain, alex_chat_packets) =
-            collect_narration_and_chat_packets(&mut alex_helper);
+        let (alex_plain, alex_chat_packets) = collect_narration_and_chat_packets(&mut alex_helper);
 
         assert_single_narration_payload(steve_plain.as_slice(), "第一段单人叙事。");
         assert!(
@@ -1480,8 +1475,7 @@ mod narration_tests {
             .parent()
             .expect("server crate should live directly below the repository root");
         let tsx = repo_root.join("agent/node_modules/.bin/tsx");
-        let runner =
-            repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
+        let runner = repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
         if !tsx.is_file() || !runner.is_file() {
             let message = format!(
                 "cross-stack Tiandao consumer unavailable (tsx={}, runner={})",
@@ -1625,8 +1619,7 @@ mod narration_tests {
         );
 
         // Stage 2: execute the production TypeScript UiResponseConsumer in a real process.
-        let Some(narration_envelope) = consume_agent_ui_response_through_tiandao(&response)
-        else {
+        let Some(narration_envelope) = consume_agent_ui_response_through_tiandao(&response) else {
             // 环境缺 tsx devDependency：跨栈阶段跳过（Stage 1 的 producer gate 已验）。
             return;
         };
@@ -1700,8 +1693,7 @@ mod narration_tests {
 
         let (azure_payloads, azure_chat_packets) =
             collect_narration_and_chat_packets(&mut azure_helper);
-        let (bob_payloads, bob_chat_packets) =
-            collect_narration_and_chat_packets(&mut bob_helper);
+        let (bob_payloads, bob_chat_packets) = collect_narration_and_chat_packets(&mut bob_helper);
 
         assert_single_narration_payload(azure_payloads.as_slice(), "第三段单人叙事。");
         assert!(
@@ -1789,8 +1781,7 @@ mod narration_tests {
 
         let (alice_payloads, alice_chat_packets) =
             collect_narration_and_chat_packets(&mut alice_helper);
-        let (bob_payloads, bob_chat_packets) =
-            collect_narration_and_chat_packets(&mut bob_helper);
+        let (bob_payloads, bob_chat_packets) = collect_narration_and_chat_packets(&mut bob_helper);
 
         assert!(
             alice_payloads.is_empty(),
@@ -2665,9 +2656,7 @@ mod player_state_payload_tests {
 
 mod event_payload_tests {
     use super::*;
-    use crate::world::events::{
-        ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_THUNDER_TRIBULATION,
-    };
+    use crate::world::events::{ActiveEventsResource, EVENT_BEAST_TIDE, EVENT_THUNDER_TRIBULATION};
     use crate::world::zone::ZoneRegistry;
     use std::collections::HashMap;
     use valence::prelude::Events;
@@ -2860,10 +2849,10 @@ mod gameplay_tests {
     use crate::cultivation::life_record::{LifeRecord, SkillMilestone};
     use crate::cultivation::tick::CultivationClock;
     use crate::persistence::{
-        load_agent_world_model_snapshot, persist_agent_world_model_snapshot,
-        PersistenceSettings, WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
-        WORLD_MODEL_STATE_FIELD_LAST_DECISIONS, WORLD_MODEL_STATE_FIELD_LAST_STATE_TS,
-        WORLD_MODEL_STATE_FIELD_LAST_TICK, WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS,
+        load_agent_world_model_snapshot, persist_agent_world_model_snapshot, PersistenceSettings,
+        WORLD_MODEL_STATE_FIELD_CURRENT_ERA, WORLD_MODEL_STATE_FIELD_LAST_DECISIONS,
+        WORLD_MODEL_STATE_FIELD_LAST_STATE_TS, WORLD_MODEL_STATE_FIELD_LAST_TICK,
+        WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS,
         WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_TELEMETRY,
         WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS,
         WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK, WORLD_MODEL_STATE_FIELD_ZONE_HISTORY,
@@ -2940,8 +2929,7 @@ mod gameplay_tests {
                 crate::combat::debug::tick_combat_clock,
                 crate::player::gameplay::apply_queued_gameplay_actions
                     .after(crate::combat::debug::tick_combat_clock),
-                breakthrough_system
-                    .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                breakthrough_system.after(crate::player::gameplay::apply_queued_gameplay_actions),
                 crate::combat::status::status_effect_apply_tick
                     .after(crate::player::gameplay::apply_queued_gameplay_actions),
                 crate::combat::status::attribute_aggregate_tick
@@ -2951,8 +2939,7 @@ mod gameplay_tests {
                 emit_gameplay_narrations.after(crate::combat::resolve::resolve_attack_intents),
                 emit_player_state_payloads
                     .after(crate::player::gameplay::apply_queued_gameplay_actions),
-                publish_world_state_to_redis
-                    .after(crate::combat::resolve::resolve_attack_intents),
+                publish_world_state_to_redis.after(crate::combat::resolve::resolve_attack_intents),
             ),
         );
 
@@ -3026,9 +3013,7 @@ mod gameplay_tests {
     fn extract_player_state_payloads(payloads: &[ServerDataV1]) -> Vec<&ServerDataV1> {
         payloads
             .iter()
-            .filter(|payload| {
-                matches!(payload.payload, ServerDataPayloadV1::PlayerState { .. })
-            })
+            .filter(|payload| matches!(payload.payload, ServerDataPayloadV1::PlayerState { .. }))
             .collect()
     }
 
@@ -3580,10 +3565,8 @@ mod gameplay_tests {
     fn reconcile_world_model_runtime_mirror_passes_none_when_sqlite_is_empty() {
         let root = unique_temp_dir("runtime-mirror-reconcile-empty-sqlite");
         let db_path = root.join("data").join("bong.db");
-        let settings = PersistenceSettings::with_db_path(
-            &db_path,
-            "runtime_mirror_reconcile_empty_sqlite",
-        );
+        let settings =
+            PersistenceSettings::with_db_path(&db_path, "runtime_mirror_reconcile_empty_sqlite");
 
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
