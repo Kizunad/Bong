@@ -132,27 +132,26 @@ mod tests {
 
     // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
 
-    /// 取源码的**生产半区**：砍掉 inline `#[cfg(test)] mod tests {` 之后的全部内容，
-    /// 再剔除纯注释行。
+    /// 取源码的**生产半区**：优先砍掉同 crate 外置测试的挂载声明，
+    /// 兼容旧的 inline `#[cfg(test)] mod tests {`，再剔除纯注释行。
     ///
     /// 必要性（这条 helper 本身就是一次返工的产物）：needle
     /// `add_event::<RatAttackAvEvent>()` 在 `brain_rat.rs` 里出现 9 次——生产 `register()`
     /// 1 次 + 8 个单测各自建 app 时 1 次。对全文件裸 `contains` 是**恒真**的：把生产那行删掉
     /// 照样绿，正好放过它声称要挡的失败。剔注释行则另外挡住「把调用注释掉但 pin 仍过」的绕法。
     ///
-    /// 只砍 `mod tests {`（inline 模块，带花括号），不砍 `#[cfg(test)] mod xxx_test;`
-    /// 这种文件级声明——`network/mod.rs` 顶部就有若干条，按前者切会把整个 `register` 函数
-    /// 一起切掉，断言反而恒假。
+    /// 外置形态按 `#[path = "mod_tests.rs"] mod tests;` 截断，避免把后续测试文件内容
+    /// 当作生产代码；旧 inline 形态仍作为兼容分支，供尚未迁移的模块继续使用。
     fn production_source(src: &str) -> String {
         let head = src
-            .split_once("#[cfg(test)]\nmod tests {")
+            .split_once("#[path = \"mod_tests.rs\"]\nmod tests;")
+            .or_else(|| src.split_once("#[cfg(test)]\nmod tests {"))
             .map(|(head, _)| head)
-            // 切分串对 rustfmt 输出形态敏感。落空时直接 panic 把失败点钉在真正原因上，
-            // 而不是退化成"返回全文 → pin 恒真"、让同伴元测试以误导性信息撞红。
+            // 两种已知形态都落空时直接 panic，避免退化成"返回全文 → pin 恒真"。
             .unwrap_or_else(|| {
                 panic!(
-                    "production_source 未找到 inline 测试模块起点 `#[cfg(test)]\\nmod tests {{`；\
-                     被审文件的形态变了（属性与 mod 间多了空行/注释？），切分逻辑需同步更新"
+                    "production_source 未找到外置挂载或 inline 测试模块起点；\
+                     被审文件的测试布局变了，切分逻辑需同步更新"
                 )
             });
         head.lines()

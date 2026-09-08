@@ -289,20 +289,20 @@ mod tests {
 
     // ── 接线核验（防功能孤岛）────────────────────────────────────────────────
 
-    /// 取源码的**生产半区**（砍掉 inline `#[cfg(test)] mod tests {` 之后的内容 + 剔纯注释行）。
+    /// 取源码的**生产半区**：优先砍掉同 crate 外置测试的挂载声明，
+    /// 兼容旧的 inline `#[cfg(test)] mod tests {`，再剔除纯注释行。
     /// 详见 `network::rat_av_trigger` 里同名 helper 的注释——不剔注释的话
     /// `// rat_qi_tier_emit::register(app);` 这种注释掉的调用也能让 pin 通过。
     fn production_source(src: &str) -> String {
         let head = src
-            .split_once("#[cfg(test)]\nmod tests {")
+            .split_once("#[path = \"mod_tests.rs\"]\nmod tests;")
+            .or_else(|| src.split_once("#[cfg(test)]\nmod tests {"))
             .map(|(head, _)| head)
-            // 切分串对 rustfmt 输出形态敏感（属性与 mod 之间恰一个 \n、`{` 同行）。落空时
-            // 直接 panic 把失败点钉在真正的原因上，而不是退化成"返回全文 → pin 恒真"、
-            // 让同伴元测试以"生产半区出现多次"这种误导性信息撞红。
+            // 两种已知形态都落空时直接 panic，避免退化成"返回全文 → pin 恒真"。
             .unwrap_or_else(|| {
                 panic!(
-                    "production_source 未找到 inline 测试模块起点 `#[cfg(test)]\\nmod tests {{`；\
-                     被审文件的形态变了（属性与 mod 间多了空行/注释？），切分逻辑需同步更新"
+                    "production_source 未找到外置挂载或 inline 测试模块起点；\
+                     被审文件的测试布局变了，切分逻辑需同步更新"
                 )
             });
         head.lines()
