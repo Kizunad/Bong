@@ -98,7 +98,7 @@ pub enum CastOutcomeV1 {
 #[serde(deny_unknown_fields)]
 pub struct CastSyncV1 {
     pub phase: CastPhaseV1,
-    /// 0..=8 表示 F1..F9；idle 时 client 忽略。
+    /// 从 0 开始的槽索引；idle 时 client 忽略。
     pub slot: u8,
     pub duration_ms: u32,
     pub started_at_ms: u64,
@@ -107,7 +107,7 @@ pub struct CastSyncV1 {
 
 /// plan-HUD-v1 §10.4 / §11.4 F1-F9 槽位完整配置 + 当前 cooldown。
 /// server 在 `QuickSlotBindings` 变化时推（绑定 / cast 完成 / 中断 → cooldown 写入）。
-/// `slots` / `cooldown_until_ms` 永远长度 9（client 用 idx 取）。
+/// `slots` / `cooldown_until_ms` 长度与 QuickSlotBindings::SLOT_COUNT 一致。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotConfigV1 {

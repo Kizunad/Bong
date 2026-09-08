@@ -17,14 +17,10 @@
       "cast_duration_ms": 0,
       "cooldown_ms": 0,
       "icon_texture": "bong:textures/item/iron_sword.png"
-    },
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null
+    }
   ],
-  "cooldown_until_ms": [1700000003000, 0, 0, 0, 0, 0, 0, 0, 0]
+  "cooldown_until_ms": [
+    1700000003000,
+    0
+  ]
 }

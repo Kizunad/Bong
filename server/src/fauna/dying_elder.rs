@@ -3554,14 +3554,36 @@ mod tests {
     }
 
     fn inventory_with_huiyuan_pills(pills: &[(u64, u32)]) -> PlayerInventory {
-        assert!(pills.len() <= 9, "测试 hotbar 最多容纳 9 个实例");
-        let mut hotbar = <[Option<ItemInstance>; 9]>::default();
-        for (slot, (instance_id, stack_count)) in pills.iter().copied().enumerate() {
+        let mut hotbar =
+            <[Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT]>::default();
+        for (slot, (instance_id, stack_count)) in
+            pills.iter().copied().take(hotbar.len()).enumerate()
+        {
             hotbar[slot] = Some(huiyuan_pill_instance(instance_id, stack_count));
         }
         PlayerInventory {
             revision: crate::inventory::InventoryRevision(0),
-            containers: Vec::new(),
+            containers: vec![crate::inventory::ContainerState {
+                quick_access: true,
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "测试背包".to_string(),
+                rows: 1,
+                cols: 8,
+                owner_instance_id: None,
+                items: pills
+                    .iter()
+                    .copied()
+                    .skip(hotbar.len())
+                    .enumerate()
+                    .map(
+                        |(col, (instance_id, stack_count))| crate::inventory::PlacedItemState {
+                            row: 0,
+                            col: col as u8,
+                            instance: huiyuan_pill_instance(instance_id, stack_count),
+                        },
+                    )
+                    .collect(),
+            }],
             equipped: Default::default(),
             hotbar,
             bone_coins: 0,

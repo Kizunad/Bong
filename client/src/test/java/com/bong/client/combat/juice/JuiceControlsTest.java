@@ -242,7 +242,7 @@ class JuiceControlsTest {
         // 走完整真实链路把一发 juice 打出去：技能栏预测 → 服务端权威 cast_sync{casting}
         // 武装 → cast_sync{complete} 触发。不能直接调 onAnimPlayed——那条路径现在要求
         // 一枚由权威 CASTING 武装的令牌（review finding A/B）。
-        int slot = 3;
+        int slot = 1;
         long startedAt = 1_700_000_000_000L;
         SkillBarStore.updateSlot(slot,
             SkillBarEntry.skill(WIRING_TEST_SKILL, "全力", 2000, 0, ""));

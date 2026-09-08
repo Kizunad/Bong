@@ -32,14 +32,14 @@ public class CastSyncHandlerTest {
     @Test
     void appliesCastingPhase() {
         ServerDataDispatch dispatch = new CastSyncHandler().handle(parseEnvelope("""
-            {"v":1,"type":"cast_sync","phase":"casting","slot":3,
+            {"v":1,"type":"cast_sync","phase":"casting","slot":1,
              "duration_ms":1500,"started_at_ms":1700000000000,"outcome":"none"}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
         CastState state = CastStateStore.snapshot();
         assertEquals(CastState.Phase.CASTING, state.phase());
-        assertEquals(3, state.slot());
+        assertEquals(1, state.slot());
         assertEquals(1500, state.durationMs());
     }
 
@@ -69,21 +69,24 @@ public class CastSyncHandlerTest {
 
     @Test
     void rejectsOutOfRangeSlot() {
+        CastStateStore.beginSkillBarCast(0, 1500, 1000L);
+        CastState active = CastStateStore.snapshot();
         ServerDataDispatch dispatch = new CastSyncHandler().handle(parseEnvelope("""
-            {"v":1,"type":"cast_sync","phase":"casting","slot":42,
+            {"v":1,"type":"cast_sync","phase":"casting","slot":2,
              "duration_ms":1500,"started_at_ms":1700000000000,"outcome":"none"}
             """));
 
         assertFalse(dispatch.handled());
+        assertEquals(active, CastStateStore.snapshot(), "越界回执不得覆盖当前施法");
     }
 
     @Test
     void completedSkillBarCastDoesNotRelabelNextQuickSlotCast() {
-        CastStateStore.beginSkillBarCast(2, 500, 1000L);
+        CastStateStore.beginSkillBarCast(1, 500, 1000L);
         CastStateStore.complete(1500L);
 
         ServerDataDispatch dispatch = new CastSyncHandler().handle(parseEnvelope("""
-            {"v":1,"type":"cast_sync","phase":"casting","slot":2,
+            {"v":1,"type":"cast_sync","phase":"casting","slot":1,
              "duration_ms":1500,"started_at_ms":1700000000000,"outcome":"none"}
             """));
 

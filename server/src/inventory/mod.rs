@@ -469,7 +469,7 @@ impl Resource for ItemRegistry {}
 pub struct LoadoutSpec {
     pub containers: Vec<ContainerState>,
     pub equipped: HashMap<String, SlotContents>,
-    pub hotbar: [Option<ItemInstance>; 9],
+    pub hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT],
     pub bone_coins: u64,
     pub max_weight: f64,
 }
@@ -777,7 +777,7 @@ pub struct PlayerInventory {
     pub revision: InventoryRevision,
     pub containers: Vec<ContainerState>,
     pub equipped: HashMap<String, SlotContents>,
-    pub hotbar: [Option<ItemInstance>; 9],
+    pub hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT],
     pub bone_coins: u64,
     pub max_weight: f64,
     /// plan-layered-equip-v1 P4 — 法宝激活「触发位」（决议 #8）。
@@ -1525,7 +1525,8 @@ pub fn instantiate_inventory_from_loadout(
         }
     }
 
-    let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
+    let mut hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+        Default::default();
     for (index, item) in loadout.hotbar.iter().enumerate() {
         hotbar[index] = item
             .as_ref()
@@ -3477,13 +3478,15 @@ impl LoadoutToml {
             }
         }
 
-        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
+        let mut hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+            Default::default();
         for raw_slot in self.hotbar {
-            if raw_slot.index >= 9 {
+            if raw_slot.index as usize >= hotbar.len() {
                 return Err(format!(
-                    "{} hotbar index {} out of bounds; expected 0..=8",
+                    "{} hotbar index {} out of bounds; expected 0..={}",
                     source_path.display(),
-                    raw_slot.index
+                    raw_slot.index,
+                    hotbar.len() - 1
                 ));
             }
             if hotbar[raw_slot.index as usize].is_some() {

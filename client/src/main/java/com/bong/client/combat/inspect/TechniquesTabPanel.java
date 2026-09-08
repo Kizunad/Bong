@@ -1,5 +1,6 @@
 package com.bong.client.combat.inspect;
 
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.SkillConfigStore;
@@ -94,7 +95,7 @@ public final class TechniquesTabPanel {
         bottom.gap(4);
         meridianMiniView = new MeridianMiniSilhouette();
         bottom.child(meridianMiniView);
-        statusLine = Components.label(Text.literal("拖功法到 1-9 槽绑定；绑定后可拖出槽外解绑，或右键清空。"));
+        statusLine = Components.label(Text.literal("未选择功法"));
         statusLine.color(Color.ofArgb(0xFFAAAAAA));
         FlowLayout statusBox = Containers.verticalFlow(Sizing.fixed(176), Sizing.fixed(58));
         statusBox.surface(Surface.flat(0xFF151412).and(Surface.outline(0xFF504838)));
@@ -203,7 +204,7 @@ public final class TechniquesTabPanel {
         String selectedText = selected == null ? "未选择功法" : "已选: " + selected.displayName();
         int boundSlot = selected == null ? -1 : SkillBarStore.findSkill(selected.id());
         String bindText = boundSlot >= 0 ? " · 槽 " + (boundSlot + 1) : " · 未绑定";
-        statusLine.text(Text.literal(selectedText + bindText + "\n拖到 1-9 绑定 / 拖出槽外解绑 / 右键清空。"));
+        statusLine.text(Text.literal(selectedText + bindText));
     }
 
     public boolean bindSelectedTechniqueToSlot(int slot) {
@@ -216,7 +217,7 @@ public final class TechniquesTabPanel {
      */
     public boolean bindTechniqueToSlot(String techniqueId, int slot) {
         TechniquesListPanel.Technique technique = findTechnique(techniqueId);
-        if (technique == null || slot < 0 || slot >= 9) return false;
+        if (technique == null || !SkillBarConfig.isAvailable(slot)) return false;
         String lockReason = lockReason(technique);
         if (!lockReason.isBlank()) {
             statusLine.text(Text.literal("不可绑定: " + lockReason));
@@ -271,7 +272,7 @@ public final class TechniquesTabPanel {
     }
 
     public boolean clearSkillSlot(int slot) {
-        if (slot < 0 || slot >= 9) return false;
+        if (!SkillBarConfig.isAvailable(slot)) return false;
         SkillBarStore.updateSlot(slot, null);
         ClientRequestSender.sendSkillBarBindClear(slot);
         refreshSelection();

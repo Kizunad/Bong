@@ -3,6 +3,8 @@ package com.bong.client.network;
 import com.bong.client.combat.CastOutcome;
 import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
+import com.bong.client.combat.QuickSlotConfig;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStore;
 import com.google.gson.JsonElement;
@@ -25,7 +27,8 @@ public final class CastSyncHandler implements ServerDataHandler {
         String outcomeStr = readString(payload, "outcome");
         if (phaseStr == null || slot == null || durationMs == null
             || startedAtMs == null || outcomeStr == null
-            || slot < 0 || slot > 8 || durationMs < 0) {
+            || slot < 0 || slot >= Math.max(QuickSlotConfig.SLOT_COUNT, SkillBarConfig.SLOT_COUNT)
+            || durationMs < 0) {
             return ServerDataDispatch.noOp(
                 envelope.type(),
                 "Ignoring cast_sync payload: required fields missing or invalid"

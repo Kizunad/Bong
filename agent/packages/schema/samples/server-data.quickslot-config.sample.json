@@ -9,16 +9,12 @@
       "cooldown_ms": 1500,
       "icon_texture": ""
     },
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
     null
   ],
-  "cooldown_until_ms": [1700000001500, 0, 0, 0, 0, 0, 0, 0, 0],
+  "cooldown_until_ms": [
+    1700000001500,
+    0
+  ],
   "ack_request_id": "bind-42",
   "bind_accepted": true
 }

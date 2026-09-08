@@ -24,7 +24,8 @@
 却错误拒绝了上边界合法请求。故反向补两组**恰好落在契约边界内**的正向探针：
 - slot 0 与 slot 8（`deserialize_slot_index` 契约 0..=8）：`quick_slot_bind` 清空
   该槽，server 回推 `quickslot_config` ack（`ack_request_id` 回显本次 request_id +
-  `bind_accepted=true`）—— 证明 serde 接受边界槽位；
+  槽 0 的 `bind_accepted=true`，未开放槽 8 的 `bind_accepted=false`）——
+  两者都有回执，证明 serde 接受边界槽位；
 - count 1 与 count 64（`deserialize_block_picker_count` 契约 1..=64）：
   `block_picker_give` 进入 handler 并给出 [dev] 回应（fixture 是 Survival，得到
   "requires Creative mode" 聊天；若 Creative 则 "gave ..." 聊天）—— 任一聊天都
@@ -72,26 +73,24 @@ OUT_OF_RANGE_PROBES = [
     # 单独在 run() 里建 session 后探。
 ]
 
-# 契约边界内**合法** slot 值（deserialize_slot_index 契约 0..=8）。用 quick_slot_bind
-# 清空槽位（item_id=None）作正向探针：其 ack（quickslot_config，回显 request_id +
-# bind_accepted）只有请求真正走完 handler 才出现。
+# v1 schema 仍接受 0..=8。第一格回成功，第九格因未开放回拒绝；两者都有回执，
+# 区别于 schema 越界直接丢弃，仍可证明反序列化的两端边界。
 _VALID_SLOTS = (0, 8)
 
 # review finding 2：use_quick_slot slot=9/-1 探针必须打在**已绑定可用物品**的槽位上，
 # 否则空槽 no-op 路径会让「错误接受越界 slot、clamp 到边界槽、再走空槽 no-op」的实现
-# 无任何可观测副作用地通过全部干净拒绝断言。先 give 回元丹并绑定到边界槽 0/8 —— 若
-# 实现错误 clamp 9→8 / -1→0，会命中已绑定且仍在背包的物品并启动施法 → cast_sync 被
-# 探针窗口标记（cast_sync 不在 ambient 集合，任何出现即视为副作用）。
+# 无任何可观测副作用地通过全部干净拒绝断言。先给回元丹并填满开放槽 0/1；
+# 错误回落到任一可用槽会启动施法，被探针窗口捕获。v1 上边界槽 8 的 schema
+# 接受情况由绑定回执另行证明，未开放槽的使用本身必须无副作用。
 _PILL_TEMPLATE = "huiyuan_pill"
 _PILL_GIVE_COUNT = 2
-_BOUND_SLOTS = (0, 8)
+_BOUND_SLOTS = (0, 1)
 # botany 进度基线下限：auto 收割时长 AUTO_DURATION_TICKS=120（6s@20t/s），sync 节拍
 # 10 tick（0.5s）→ 每拍进度 +0.083。基线必须 ≥0.25（上次 mode 翻转重置后已积累
 # ≥1.5s 进度），否则「默认成 resting_mode 并重置」的实现（progress 回落到 ~0 再
 # 续增）在首个后置样本就反超基线，单调比较失灵（central-review 1993 #3）。
 _PROGRESS_BASELINE_FLOOR = 0.25
-# 处理屏障的 sentinel 槽位：不在 _BOUND_SLOTS/_VALID_SLOTS 用到的 0/8 上，避免与
-# 背包绑定 / 边界探针的 quick_slot_bind 互踩。
+# 屏障在越界使用探针之后才清空第二格，不影响前面的非空槽探针。
 _BARRIER_SLOT = 1
 
 
@@ -128,7 +127,7 @@ def _bind_slot_with_item(bot, slot: int, label: str) -> None:
 
 
 def _bind_pill_to_slots(bot) -> None:
-    """give 回元丹并绑定到边界槽 0/8（review finding 2 的探测前提）。"""
+    """give 回元丹并填满当前开放的两格，捕获错误回落到可用槽的请求。"""
     bot.cmd(f"give {_PILL_TEMPLATE} {_PILL_GIVE_COUNT}")
     bot.expect_chat(f"[dev] gave {_PILL_TEMPLATE} x{_PILL_GIVE_COUNT}", timeout=10.0)
     wait_inventory_contains(bot, _PILL_TEMPLATE, timeout=10.0)
@@ -158,7 +157,7 @@ def _assert_slot_boundary_accepted(bot, slot: int, label: str) -> None:
         and e.data.get("payload_type") == "quickslot_config"
         and e.t > sent_at
         and e.data["payload"].get("ack_request_id") == request_id
-        and e.data["payload"].get("bind_accepted") is True,
+        and e.data["payload"].get("bind_accepted") is (slot < 2),
         timeout=10.0,
         description=(
             f"{label}：server 回推 quickslot_config ack"

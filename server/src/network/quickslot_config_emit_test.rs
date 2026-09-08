@@ -159,19 +159,19 @@ fn quickslot_bound_item_slot_pins_empty_icon_texture_and_template_fields() {
     assert_eq!(config.bind_accepted, None, "普通广播不携带 bind_accepted");
 }
 
-/// 全 9 槽满绑（背包 + hotbar 两条 lookup 路径混合）：每个下发条目的
+/// 两格分别来自背包和 hotbar：每个下发条目的
 /// icon_texture 都必须是空串——契约对槽位与物品来源不敏感。
 #[test]
 fn quickslot_every_bound_slot_emits_empty_icon_texture_across_container_and_hotbar() {
     let mut inventory = empty_inventory();
-    for i in 0..5u64 {
+    for i in 0..1u64 {
         inventory.containers[0].items.push(PlacedItemState {
             row: 0,
             col: i as u8,
             instance: item_instance(100 + i, "tea"),
         });
     }
-    for i in 5..9u64 {
+    for i in 1..QuickSlotBindings::SLOT_COUNT as u64 {
         inventory.hotbar[i as usize] = Some(item_instance(100 + i, "tea"));
     }
     let mut bindings = QuickSlotBindings::default();
@@ -200,7 +200,7 @@ fn quickslot_every_bound_slot_emits_empty_icon_texture_across_container_and_hotb
         assert!(
             entry.icon_texture.is_empty(),
             "槽 {slot}（来源 {}）icon_texture 必须恒为空串，实际 `{}`",
-            if slot < 5 { "背包容器" } else { "hotbar" },
+            if slot == 0 { "背包容器" } else { "hotbar" },
             entry.icon_texture
         );
     }
@@ -268,7 +268,7 @@ fn quickslot_missing_template_falls_back_to_defaults_icon_still_empty() {
     );
 }
 
-/// bindings 缺失（None）→ 9 槽全 None、9 冷却全 0（空配置仍保持定长契约）。
+/// bindings 缺失（None）→ 全槽 None、冷却全 0（空配置仍保持定长契约）。
 #[test]
 fn quickslot_missing_bindings_yield_empty_fixed_length_config() {
     let config = build_quickslot_config(
@@ -317,43 +317,29 @@ fn quickslot_missing_inventory_emits_none_for_bound_slot() {
 /// now_tick+1 折算一个 tick、过期与未设置均为 0。
 #[test]
 fn quickslot_cooldown_tick_to_ms_conversion_boundaries() {
-    let mut bindings = QuickSlotBindings::default();
-    bindings.set_cooldown(0, NOW_TICK); // 恰等于 now → 0（off-by-one 边界）
-    bindings.set_cooldown(1, NOW_TICK + 1); // 剩 1 tick → now_ms + 50
-    bindings.set_cooldown(2, NOW_TICK - 1); // 已过期 → 0
-    bindings.set_cooldown(3, NOW_TICK + 100); // 剩 100 tick → now_ms + 5000
-                                              // 槽 4..9 未设置 → 0
-
-    let config = build_quickslot_config(
-        Some(&bindings),
-        Some(&empty_inventory()),
-        &empty_registry(),
-        NOW_TICK,
-        NOW_MS,
-        None,
-        None,
-    );
-
-    assert_eq!(
-        config.cooldown_until_ms[0], 0,
-        "cd_tick == now_tick 不算冷却（严格大于才折算）"
-    );
-    assert_eq!(
-        config.cooldown_until_ms[1],
-        NOW_MS + 50,
-        "剩 1 tick 应折算 now_ms + 50ms"
-    );
-    assert_eq!(config.cooldown_until_ms[2], 0, "已过期的冷却应为 0");
-    assert_eq!(
-        config.cooldown_until_ms[3],
-        NOW_MS + 100 * 50,
-        "剩 100 tick 应折算 now_ms + 5000ms"
-    );
-    for slot in 4..QuickSlotBindings::SLOT_COUNT {
-        assert_eq!(
-            config.cooldown_until_ms[slot], 0,
-            "未设置冷却的槽 {slot} 应为 0"
+    for (until_tick, expected_ms) in [
+        (0, 0),
+        (NOW_TICK - 1, 0),
+        (NOW_TICK, 0),
+        (NOW_TICK + 1, NOW_MS + 50),
+        (NOW_TICK + 100, NOW_MS + 5000),
+    ] {
+        let mut bindings = QuickSlotBindings::default();
+        bindings.set_cooldown(0, until_tick);
+        let config = build_quickslot_config(
+            Some(&bindings),
+            Some(&empty_inventory()),
+            &empty_registry(),
+            NOW_TICK,
+            NOW_MS,
+            None,
+            None,
         );
+        assert_eq!(
+            config.cooldown_until_ms[0], expected_ms,
+            "仅未来 tick 折算为绝对毫秒时间，until_tick={until_tick}"
+        );
+        assert_eq!(config.cooldown_until_ms[1], 0, "其他槽的冷却不能受影响");
     }
 }
 

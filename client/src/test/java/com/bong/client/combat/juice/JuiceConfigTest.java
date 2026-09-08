@@ -170,7 +170,7 @@ class JuiceConfigTest {
      * （plan §P3 门控硬约束，review finding A/B）。
      */
     private void fireOneCast() {
-        int slot = 3;
+        int slot = 1;
         long startedAt = 1_700_000_000_000L;
         SkillBarStore.updateSlot(slot,
             SkillBarEntry.skill(WIRING_TEST_SKILL, "全力", 2000, 0, ""));

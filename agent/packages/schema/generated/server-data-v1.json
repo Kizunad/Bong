@@ -10880,8 +10880,8 @@
           }
         },
         "hotbar": {
-          "minItems": 9,
-          "maxItems": 9,
+          "minItems": 2,
+          "maxItems": 2,
           "type": "array",
           "items": {
             "anyOf": [
@@ -11640,7 +11640,7 @@
                     },
                     "index": {
                       "minimum": 0,
-                      "maximum": 8,
+                      "maximum": 1,
                       "type": "integer"
                     }
                   }
@@ -11756,7 +11756,7 @@
                     },
                     "index": {
                       "minimum": 0,
-                      "maximum": 8,
+                      "maximum": 1,
                       "type": "integer"
                     }
                   }
@@ -11909,7 +11909,7 @@
                     },
                     "index": {
                       "minimum": 0,
-                      "maximum": 8,
+                      "maximum": 1,
                       "type": "integer"
                     }
                   }
@@ -15978,8 +15978,8 @@
           "type": "string"
         },
         "slots": {
-          "minItems": 9,
-          "maxItems": 9,
+          "minItems": 2,
+          "maxItems": 2,
           "type": "array",
           "items": {
             "anyOf": [
@@ -16024,8 +16024,8 @@
           }
         },
         "cooldown_until_ms": {
-          "minItems": 9,
-          "maxItems": 9,
+          "minItems": 2,
+          "maxItems": 2,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -16061,8 +16061,8 @@
           "type": "string"
         },
         "slots": {
-          "minItems": 9,
-          "maxItems": 9,
+          "minItems": 2,
+          "maxItems": 2,
           "type": "array",
           "items": {
             "anyOf": [
@@ -16151,8 +16151,8 @@
           }
         },
         "cooldown_until_ms": {
-          "minItems": 9,
-          "maxItems": 9,
+          "minItems": 2,
+          "maxItems": 2,
           "type": "array",
           "items": {
             "minimum": 0,
@@ -20387,5 +20387,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "d2bbf69969305a9548a3a52d426babcaa490091b0c31e709bd9d234b51ee8838"
+  "x-bong-typebox-source-sha256": "25591c436d48d866b12f503ef609bec375feb1c590f688a83d3d80bcb3e96a1a"
 }

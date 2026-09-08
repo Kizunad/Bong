@@ -276,7 +276,7 @@ class R7InventoryContractTest {
             "alchemy/AlchemyScreen.java:634",
             "combat/inspect/SkillConfigPanelManager.java:76",
             "combat/inspect/SkillConfigPanelManager.java:84",
-            "combat/inspect/TechniquesTabPanel.java:149",
+            "combat/inspect/TechniquesTabPanel.java:150",
             "craft/CraftMaterialGrid.java:52",
             "craft/CraftMaterialGrid.java:53",
             "craft/CraftOutputPreview.java:32",

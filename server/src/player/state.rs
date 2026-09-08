@@ -61,9 +61,9 @@ impl Default for PlayerState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct PlayerUiPrefs {
     #[serde(default)]
-    pub quick_slots: [Option<String>; 9],
+    pub quick_slots: [Option<String>; QuickSlotBindings::SLOT_COUNT],
     #[serde(default)]
-    pub skill_bar: [SkillSlotPersist; 9],
+    pub skill_bar: [SkillSlotPersist; SkillBarBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_configs: BTreeMap<String, SkillConfig>,
 }
@@ -3006,7 +3006,7 @@ mod player_state_tests {
             "revision": 1,
             "containers": [],
             "equipped": equipped,
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 0,
             "max_weight": 50.0
         })
@@ -3182,7 +3182,7 @@ mod player_state_tests {
             "equipped": {
                 "back_pack": v1_equip_item(42, "worn_grass_pouch"),
             },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 7,
             "max_weight": 23.0
         });
@@ -3289,7 +3289,7 @@ mod player_state_tests {
                 }
             ],
             "equipped": {},
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 7,
             "max_weight": 23.0,
             "triggered_treasures": []
@@ -3322,7 +3322,7 @@ mod player_state_tests {
             "equipped": {
                 "chest": { "worn": [ v1_equip_item(11, "worn_grass_pouch") ], "held": null }
             },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 7,
             "max_weight": 23.0,
             "triggered_treasures": []
@@ -3356,7 +3356,7 @@ mod player_state_tests {
                 { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] }
             ],
             "equipped": {},
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 0,
             "max_weight": 23.0,
             "triggered_treasures": []
@@ -3392,7 +3392,7 @@ mod player_state_tests {
             "equipped": {
                 "chest": { "worn": [ v1_equip_item(11, "worn_grass_pouch") ], "held": null }
             },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 7,
             "max_weight": 23.0,
             "triggered_treasures": []
@@ -3496,7 +3496,7 @@ mod player_state_tests {
     fn orphan_test_inventory(
         containers: Vec<crate::inventory::ContainerState>,
         equipped: std::collections::HashMap<String, crate::inventory::SlotContents>,
-        hotbar: [Option<ItemInstance>; 9],
+        hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT],
     ) -> PlayerInventory {
         PlayerInventory {
             triggered_treasures: Vec::new(),
@@ -3550,8 +3550,9 @@ mod player_state_tests {
 
     #[test]
     fn orphan_detection_false_for_pack_in_hotbar() {
-        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
-        hotbar[2] = Some(iron_sword_instance(66, 1.0));
+        let mut hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+            Default::default();
+        hotbar[1] = Some(iron_sword_instance(66, 1.0));
         let inventory = orphan_test_inventory(
             vec![pack_container(66)],
             std::collections::HashMap::new(),
@@ -3661,7 +3662,7 @@ mod player_state_tests {
                 "main_hand": v1_equip_item(12, "iron_sword"),
                 "back_pack": v1_equip_item(13, "worn_grass_pouch")
             },
-            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "hotbar": [null, null],
             "bone_coins": 7,
             "max_weight": 23.0
         });
@@ -5747,7 +5748,7 @@ mod player_state_tests {
     #[test]
     fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
         let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "quick_slots": ["tea", null, null, null, null, null, null, null, null]
+            "quick_slots": ["tea", null]
         }))
         .expect("legacy prefs should decode with default skill_bar");
 
@@ -5762,15 +5763,8 @@ mod player_state_tests {
     #[test]
     fn ui_prefs_accepts_legacy_payload_without_skill_configs() {
         let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "quick_slots": [null, null, null, null, null, null, null, null, null],
+            "quick_slots": [null, null],
             "skill_bar": [
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
                 {"kind":"empty"},
                 {"kind":"empty"}
             ]
@@ -5782,59 +5776,45 @@ mod player_state_tests {
 
     #[test]
     fn ui_prefs_sanitizes_legacy_dedicated_input_bindings() {
-        let mut prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "skill_bar": [
-                {"kind":"skill","skill_id":"movement.dash"},
-                {"kind":"skill","skill_id":"shield_block"},
-                {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
-                {"kind":"skill","skill_id":"legacy.removed"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"}
-            ]
-        }))
-        .expect("legacy skill-bar prefs should decode");
         let registry = TechniqueRegistry::load_for_tests();
+        for invalid_id in ["movement.dash", "shield_block", "legacy.removed"] {
+            let mut prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+                "skill_bar": [
+                    {"kind":"skill","skill_id":invalid_id},
+                    {"kind":"skill","skill_id":"burst_meridian.beng_quan"}
+                ]
+            }))
+            .expect("legacy skill-bar prefs should decode");
 
-        assert!(
-            prefs.sanitize_skill_bar_bindings(&registry),
-            "known dedicated-input and unknown legacy bindings must be repaired"
-        );
-        assert!(
-            !prefs.sanitize_skill_bar_bindings(&registry),
-            "sanitizing an already repaired skill bar must be idempotent"
-        );
+            assert!(
+                prefs.sanitize_skill_bar_bindings(&registry),
+                "known dedicated-input and unknown legacy bindings must be repaired: {invalid_id}"
+            );
+            assert!(
+                !prefs.sanitize_skill_bar_bindings(&registry),
+                "sanitizing an already repaired skill bar must be idempotent"
+            );
 
-        let bindings = prefs.skill_bar_bindings(None, Some(&registry));
-        assert!(matches!(bindings.slots[0], SkillSlot::Empty));
-        assert!(matches!(bindings.slots[1], SkillSlot::Empty));
-        assert!(matches!(
-            &bindings.slots[2],
-            SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
-        ));
-        assert!(matches!(bindings.slots[3], SkillSlot::Empty));
+            let bindings = prefs.skill_bar_bindings(None, Some(&registry));
+            assert!(matches!(bindings.slots[0], SkillSlot::Empty));
+            assert!(matches!(
+                &bindings.slots[1],
+                SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+            ));
+        }
     }
 
     #[test]
     fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
         let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-            "quick_slots": ["tea", null, null, null, null, null, null, null, null],
+            "quick_slots": ["tea", null],
             "skill_bar": [
                 {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
-                {"kind":"item","template_id":"tea"},
-                {"kind":"item","template_id":"missing"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"},
-                {"kind":"empty"}
+                {"kind":"item","template_id":"tea"}
             ]
         }))
         .expect("prefs should decode");
-        let inventory = PlayerInventory {
+        let mut inventory = PlayerInventory {
             triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![crate::inventory::ContainerState {
@@ -5887,7 +5867,14 @@ mod player_state_tests {
             SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
         ));
         assert_eq!(skill_bar.slots[1], SkillSlot::Item { instance_id: 42 });
-        assert_eq!(skill_bar.slots[2], SkillSlot::Empty);
+
+        inventory.containers[0].items.clear();
+        assert_eq!(prefs.quick_slot_bindings(Some(&inventory)).slots[0], None);
+        assert_eq!(
+            prefs.skill_bar_bindings(Some(&inventory), None).slots[1],
+            SkillSlot::Empty,
+            "重连时已不存在的物品必须恢复为空槽"
+        );
     }
 
     #[test]
@@ -5907,7 +5894,7 @@ mod player_state_tests {
             skill_set: SkillSet::default(),
             known_techniques: KnownTechniques::default(),
             ui_prefs: serde_json::json!({
-                "quick_slots": [null, null, null, null, null, null, null, null, null]
+                "quick_slots": [null, null]
             }),
         };
 

@@ -104,7 +104,7 @@ class MovementHudPlannerTest {
     void dashPanelUsesLeftSideBeforeRightWeaponReservedSlotWhenFullReservedSideFails() {
         MovementState state = state(MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL, false, 1_000L, 0L);
 
-        int screenWidth = 350;
+        int screenWidth = 196;
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, screenWidth, 121, 1_100L);
 
         HudRenderCommand panel = movementPanel(commands);
@@ -121,7 +121,7 @@ class MovementHudPlannerTest {
     void dashPanelMovesAboveHotbarWhenNoSideSlotFits() {
         MovementState state = state(MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL, false, 1_000L, 0L);
 
-        int screenWidth = 320;
+        int screenWidth = 166;
         int screenHeight = 121;
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, screenWidth, screenHeight, 1_100L);
 

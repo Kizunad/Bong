@@ -10,7 +10,7 @@ import java.util.Objects;
 public final class InventoryModel {
     public static final int GRID_ROWS = 5;
     public static final int GRID_COLS = 7;
-    public static final int HOTBAR_SIZE = 9;
+    public static final int HOTBAR_SIZE = com.bong.client.combat.SkillBarConfig.SLOT_COUNT;
     /** Legacy container ids — retained for backward compatibility with existing tests and fixture data. */
     public static final String PRIMARY_CONTAINER_ID = "main_pack";
     public static final String SMALL_POUCH_CONTAINER_ID = "small_pouch";

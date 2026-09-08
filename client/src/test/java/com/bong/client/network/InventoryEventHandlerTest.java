@@ -306,35 +306,35 @@ public class InventoryEventHandlerTest {
         ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
             {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
              "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
-             "to":{"kind":"hotbar","index":3}}
+             "to":{"kind":"hotbar","index":1}}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
         InventoryModel after = InventoryStateStore.snapshot();
         assertTrue(after.gridItems().isEmpty(), "grid should be empty after move out");
-        InventoryItem hotbarItem = after.hotbar().get(3);
+        InventoryItem hotbarItem = after.hotbar().get(1);
         assertEquals(1001L, hotbarItem.instanceId());
     }
 
     @Test
     void movedTrustsServerToEvenIfFromOutOfSync() {
         // 复现真实场景：client 已乐观把 1001 从 grid 搬到 hotbar(0)，server 然后回推
-        // moved with from=container（server's view），to=hotbar(3)。client 应当信任
-        // server 的 to，把 instance 重定位到 hotbar(3)，而不是因 from 不匹配而拒绝。
+        // moved with from=container（server's view），to=hotbar(1)。client 应当信任
+        // server 的 to，把 instance 重定位到 hotbar(1)，而不是因 from 不匹配而拒绝。
         InventoryModel baseline = baselineWithStarterTalisman();
         InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
 
         ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
             {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
              "from":{"kind":"hotbar","index":0},
-             "to":{"kind":"hotbar","index":3}}
+             "to":{"kind":"hotbar","index":1}}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
         InventoryModel after = InventoryStateStore.snapshot();
         assertEquals(6L, after.gridItems().size() == 0 ? 6L : 6L);
         assertTrue(after.gridItems().isEmpty(), "item should leave grid");
-        InventoryItem hotbarItem = after.hotbar().get(3);
+        InventoryItem hotbarItem = after.hotbar().get(1);
         assertEquals(1001L, hotbarItem.instanceId());
     }
 
