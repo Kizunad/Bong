@@ -77,7 +77,10 @@
 
 ### 2.1 调研范围与防孤岛结论
 
-已复核 `docs/finished_plans/`、`docs/plans-skeleton/`、`docs/plan-*.md` 和当前 client/server/modelScript 接线：
+已复核 `docs/worldview.md`、`docs/finished_plans/`、`docs/plans-skeleton/`、`docs/plans-skeleton/reminder.md`、`docs/plan-*.md` 和当前 client/server/modelScript 接线：
+
+- **`docs/worldview.md`**：grep 了命名、装备/手持、防具、阵法、经济和灵气相关锚点。`worldview.md §三 L63-L72` 规定不得回用上古境界称谓；`worldview.md §四 L256-L260` 规定装备/护甲作用于既有部位状态；`worldview.md §五 L413-L421` 区分凡器手持与地师将真元封入环境陷阱；`worldview.md §五 L552-L558` 明确护甲可分层穿戴而武器/工具是“持”而非“穿”；`worldview.md §九 L846-L850` 与 `§十 L872-L878` 是经济/灵气总量锚点。本 plan 不修改 worldview、不新增命名或经济语义；未来只沿用已有 `template_id`，若实施需新增显示名，必须遵守 `worldview.md §三 L63` 的命名约束，并不得把视觉注册改成物品/真元经济变更。
+- **`docs/plans-skeleton/reminder.md`**：以 `client|render|渲染|手持|防具|护甲|模型|weapon|armor|视觉|装备` 检索后，没有与本 plan 的客户端手持注册、vanilla 宿主解耦或防具 ModelPart/3D 模型直接匹配的待办，结论是**无匹配待办**。检索到的放置类容器渲染约束、`niche_guardian` SFX 和转移税等条目分别属于既有放置/音频/qi plan owner，不并入本 plan，也不在本 PR 改动 reminder。
 
 - `docs/finished_plans/plan-armor-visual-v1.md` 已交付凡物甲的 server/craft、tint、icon 和 vanilla leather fallback；它不等于真实 3D 上身模型。
 - `docs/finished_plans/plan-armor-model-render-v1.md` 已交付 `ArmorFeatureRenderer`/`ArmorPartModel` 的运行时链，并完成铁甲/骨甲各四件的 cube 表；本 plan 不重复改这 8 件的已完成几何。
