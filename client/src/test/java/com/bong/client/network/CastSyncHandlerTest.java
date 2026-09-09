@@ -3,8 +3,10 @@ package com.bong.client.network;
 import com.bong.client.combat.CastOutcome;
 import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
-import com.bong.client.combat.UnifiedEvent;
-import com.bong.client.combat.UnifiedEventStore;
+import com.bong.client.hud.BongHudOrchestrator;
+import com.bong.client.hud.BongHudStateSnapshot;
+import com.bong.client.hud.BongToast;
+import com.bong.client.hud.HudRenderCommand;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,12 +23,12 @@ public class CastSyncHandlerTest {
     @BeforeEach
     void setUp() {
         CastStateStore.resetForTests();
-        UnifiedEventStore.resetForTests();
+        BongToast.resetForTests();
     }
     @AfterEach
     void tearDown() {
         CastStateStore.resetForTests();
-        UnifiedEventStore.resetForTests();
+        BongToast.resetForTests();
     }
 
     @Test
@@ -124,8 +126,8 @@ public class CastSyncHandlerTest {
     }
 
     @Test
-    void everyRejectOutcomePublishesFriendlyWarningText() {
-        // 通用性：所有拒绝原因都弹一条 SYSTEM 频道警示，文案非空 = CastOutcome.warningText()。
+    void everyRejectOutcomeRendersFriendlyWarningText() {
+        // 经过真实 HUD 组装验证可见文案，避免只写入无人绘制的事件缓冲也通过。
         record Case(String wire, String expectedText) {}
         List<Case> cases = List.of(
             new Case("meridian_gated", "经脉受损"),
@@ -138,19 +140,15 @@ public class CastSyncHandlerTest {
             new Case("reject_technique_inactive", "招式未激活")
         );
         for (Case c : cases) {
-            UnifiedEventStore.resetForTests();
+            BongToast.resetForTests();
             new CastSyncHandler().handle(parseEnvelope("""
                 {"v":1,"type":"cast_sync","phase":"idle","slot":0,
                  "duration_ms":0,"started_at_ms":1700000000000,"outcome":"%s"}
                 """.formatted(c.wire())));
-            List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
-            assertEquals(1, events.size(),
-                "拒绝 '" + c.wire() + "' 应弹恰好一条警示；实际 " + events.size() + " 条");
-            UnifiedEvent e = events.get(0);
-            assertEquals(UnifiedEvent.Channel.SYSTEM, e.channel(),
-                "技能警示走 SYSTEM 频道（瞬态，非战斗刷屏）");
-            assertEquals(c.expectedText(), e.text(),
-                "拒绝 '" + c.wire() + "' 文案应为「" + c.expectedText() + "」，实际「" + e.text() + "」");
+            List<HudRenderCommand> warnings = renderedWarnings(System.currentTimeMillis());
+            assertEquals(1, warnings.size(), "拒绝 '" + c.wire() + "' 必须显示一条警示");
+            assertEquals(c.expectedText(), warnings.get(0).text(),
+                "拒绝 '" + c.wire() + "' 必须显示具体原因");
         }
     }
 
@@ -160,31 +158,30 @@ public class CastSyncHandlerTest {
         for (String wire : List.of("none", "completed", "interrupt_movement",
                                    "interrupt_contam", "interrupt_control",
                                    "user_cancel", "death")) {
-            UnifiedEventStore.resetForTests();
+            BongToast.resetForTests();
             new CastSyncHandler().handle(parseEnvelope("""
                 {"v":1,"type":"cast_sync","phase":"complete","slot":0,
                  "duration_ms":500,"started_at_ms":1700000000000,"outcome":"%s"}
                 """.formatted(wire)));
-            assertEquals(0, UnifiedEventStore.stream().snapshot().size(),
+            assertTrue(renderedWarnings(System.currentTimeMillis()).isEmpty(),
                 "outcome '" + wire + "' 非拒绝，不应弹技能警示");
         }
     }
 
     @Test
-    void repeatedSameRejectionFoldsInsteadOfSpamming() {
-        // 连点同一被拒技能：1.5s 折叠窗口内同 source_tag+text 折叠为一条，避免刷屏。
+    void repeatedSameRejectionRendersSingleWarningUntilExpiry() {
         for (int i = 0; i < 5; i++) {
             new CastSyncHandler().handle(parseEnvelope("""
                 {"v":1,"type":"cast_sync","phase":"idle","slot":0,
                  "duration_ms":0,"started_at_ms":1700000000000,"outcome":"reject_no_weapon"}
                 """));
         }
-        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
-        assertEquals(1, events.size(),
-            "连按 5 次缺武器应折叠成 1 条（按住不放也不刷屏）；实际 " + events.size() + " 条");
-        assertEquals("缺少武器", events.get(0).text());
-        assertTrue(events.get(0).foldCount() >= 2,
-            "折叠计数应记录重复次数（×N）；实际 foldCount=" + events.get(0).foldCount());
+        long now = System.currentTimeMillis();
+        long expiresAt = BongToast.current(now).expiresAtMillis();
+        List<HudRenderCommand> warnings = renderedWarnings(now);
+        assertEquals(1, warnings.size(), "连续拒绝只能显示一条提示，不能堆叠刷屏");
+        assertEquals("缺少武器", warnings.get(0).text());
+        assertTrue(renderedWarnings(expiresAt).isEmpty(), "拒绝提示到期后必须从 HUD 消失");
     }
 
     @Test
@@ -201,6 +198,12 @@ public class CastSyncHandlerTest {
                     o + " 非拒绝 outcome，warningText 应为 null（调用方据此跳过弹提示）");
             }
         }
+    }
+
+    private static List<HudRenderCommand> renderedWarnings(long nowMillis) {
+        return BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(), nowMillis, text -> text.length() * 6, 220
+        ).stream().filter(HudRenderCommand::isToast).toList();
     }
 
     private static ServerDataEnvelope parseEnvelope(String json) {

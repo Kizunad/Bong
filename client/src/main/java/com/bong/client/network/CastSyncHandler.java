@@ -5,8 +5,7 @@ import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.QuickSlotConfig;
 import com.bong.client.combat.SkillBarConfig;
-import com.bong.client.combat.UnifiedEvent;
-import com.bong.client.combat.UnifiedEventStore;
+import com.bong.client.hud.BongToast;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -61,9 +60,7 @@ public final class CastSyncHandler implements ServerDataHandler {
             );
         }
         CastStateStore.replace(next);
-        // 通用技能警示 HUD：施放前被拒（经脉门控 + 所有 resolver Reject*）时，
-        // 把映射好的中文文案推进右侧统一事件流——瞬态（P2，~4s 自动过期），
-        // 复用既有事件流渲染，不新增常驻 HUD。对所有技能的所有拒绝原因生效。
+        // 事件列表退出 HUD 后，拒绝原因通过现有瞬态提示显示。
         publishWarningIfRejected(outcome);
         return ServerDataDispatch.handled(
             envelope.type(),
@@ -85,16 +82,7 @@ public final class CastSyncHandler implements ServerDataHandler {
         if (text == null || text.isEmpty()) {
             return;
         }
-        UnifiedEventStore.stream().publish(
-            UnifiedEvent.Channel.SYSTEM,
-            UnifiedEvent.Priority.P2_NORMAL,
-            // 同 source_tag 让 1.5s 内重复按键折叠成 "×N"，避免连点刷屏。
-            "skill_warn",
-            text,
-            // 琥珀/橙色——拒绝警示需区别于 SYSTEM 频道默认绿色(绿=正向反馈，与"被拒"语义相悖)。
-            0xFFFFAA40,
-            System.currentTimeMillis()
-        );
+        BongToast.show(text, 0xFFFFAA40, System.currentTimeMillis(), 4000L);
     }
 
     private static CastState.Source sourceFor(int slot) {
