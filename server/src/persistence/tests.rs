@@ -6897,8 +6897,6 @@ fn npc_first_archive_failure_removes_new_bundle() {
 #[cfg(unix)]
 #[test]
 fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
-    use std::os::unix::fs::PermissionsExt;
-
     let (_, root) = persistence_settings("zstd-bundle-cleanup-diagnostic");
     let archive_path = root.join("archive").join("bundle.json.zst");
     let archive_parent = archive_path
@@ -6908,13 +6906,21 @@ fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
 
     let error = write_zstd_bundle_with_writer(&archive_path, b"payload", |file, compressed| {
         file.write_all(compressed)?;
-        fs::set_permissions(&archive_parent, fs::Permissions::from_mode(0o555))?;
+        let temp_path = fs::read_dir(&archive_parent)
+            .expect("write hook should read its archive parent")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy().starts_with(".bundle.json.zst.tmp-")
+                })
+            })
+            .expect("write hook should observe the temporary archive");
+        fs::remove_file(temp_path)
+            .expect("write hook should deterministically force cleanup to report NotFound");
         Err(io::Error::other("injected primary write failure"))
     })
     .expect_err("a failed write with failed cleanup must remain observable");
-
-    fs::set_permissions(&archive_parent, fs::Permissions::from_mode(0o700))
-        .expect("test directory permissions should be restorable");
 
     let temporary_files: Vec<PathBuf> = fs::read_dir(&archive_parent)
         .expect("archive parent should remain readable")
@@ -6927,8 +6933,8 @@ fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
         .collect();
     assert_eq!(
         temporary_files.len(),
-        1,
-        "failed cleanup must leave a recoverable temp file"
+        0,
+        "the injected unlink makes cleanup fail deterministically without relying on directory permissions"
     );
 
     let message = error.to_string();
@@ -6946,10 +6952,17 @@ fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
         "aggregating cleanup diagnostics must preserve the primary error kind"
     );
 
-    for temporary_file in temporary_files {
-        fs::remove_file(temporary_file)
-            .expect("test should remove its intentionally retained temp file");
-    }
+    let aggregate = error
+        .get_ref()
+        .expect("io error should retain aggregate");
+    let primary =
+        std::error::Error::source(aggregate).expect("aggregate should retain primary");
+    assert_eq!(
+        primary.to_string(),
+        "injected primary write failure",
+        "the aggregate source chain must retain the concrete primary error"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 

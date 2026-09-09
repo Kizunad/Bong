@@ -297,6 +297,31 @@ pub(super) fn write_zstd_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
     write_zstd_bundle_with_writer(path, payload, |file, compressed| file.write_all(compressed))
 }
 
+#[derive(Debug)]
+struct ArchiveCleanupError {
+    primary: io::Error,
+    cleanup: io::Error,
+    temp_path: PathBuf,
+}
+
+impl std::fmt::Display for ArchiveCleanupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}; temporary archive cleanup failed for {}: {}",
+            self.primary,
+            self.temp_path.display(),
+            self.cleanup
+        )
+    }
+}
+
+impl std::error::Error for ArchiveCleanupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.primary)
+    }
+}
+
 pub(super) fn write_zstd_bundle_with_writer(
     path: &Path,
     payload: &[u8],
@@ -333,10 +358,11 @@ pub(super) fn write_zstd_bundle_with_writer(
                 let primary_kind = primary_error.kind();
                 Err(io::Error::new(
                     primary_kind,
-                    format!(
-                        "{primary_error}; temporary archive cleanup failed for {}: {cleanup_error}",
-                        temp_path.display()
-                    ),
+                    ArchiveCleanupError {
+                        primary: primary_error,
+                        cleanup: cleanup_error,
+                        temp_path,
+                    },
                 ))
             }
         };
