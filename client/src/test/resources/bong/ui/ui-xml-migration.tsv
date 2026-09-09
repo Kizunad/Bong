@@ -27,3 +27,4 @@ social/TradeOfferScreen.java	TradeOfferScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLA
 spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 ui/CultivationScreen.java	CultivationScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
 ui/DynamicXmlScreen.java	DynamicXmlScreen	OWO	XML_MODEL	OWO	OWO_XML_TEMPLATE	NORMALIZE_XML_TEMPLATE
+menu/MainMenuScreen.java	MainMenuScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
