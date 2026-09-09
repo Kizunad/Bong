@@ -1787,14 +1787,44 @@ fn huiyuan_pill_instance(instance_id: u64, stack_count: u32) -> ItemInstance {
 }
 
 fn inventory_with_huiyuan_pills(pills: &[(u64, u32)]) -> PlayerInventory {
-    assert!(pills.len() <= 9, "测试 hotbar 最多容纳 9 个实例");
-    let mut hotbar = <[Option<ItemInstance>; 9]>::default();
+    const MAIN_PACK_ROWS: usize = 5;
+    const MAIN_PACK_COLS: usize = 7;
+    let hotbar_capacity = crate::schema::inventory::HOTBAR_SLOT_COUNT;
+    assert!(
+        pills.len() <= hotbar_capacity + MAIN_PACK_ROWS * MAIN_PACK_COLS,
+        "测试 inventory 超出 hotbar 与 main_pack 的容量"
+    );
+    let mut hotbar =
+        <[Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT]>::default();
+    let mut main_pack_items = Vec::new();
     for (slot, (instance_id, stack_count)) in pills.iter().copied().enumerate() {
-        hotbar[slot] = Some(huiyuan_pill_instance(instance_id, stack_count));
+        let instance = huiyuan_pill_instance(instance_id, stack_count);
+        if slot < hotbar.len() {
+            hotbar[slot] = Some(instance);
+        } else {
+            let pack_slot = slot - hotbar.len();
+            main_pack_items.push(crate::inventory::PlacedItemState {
+                row: (pack_slot / MAIN_PACK_COLS) as u8,
+                col: (pack_slot % MAIN_PACK_COLS) as u8,
+                instance,
+            });
+        }
     }
     PlayerInventory {
         revision: crate::inventory::InventoryRevision(0),
-        containers: Vec::new(),
+        containers: if main_pack_items.is_empty() {
+            Vec::new()
+        } else {
+            vec![crate::inventory::ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: MAIN_PACK_ROWS as u8,
+                cols: MAIN_PACK_COLS as u8,
+                items: main_pack_items,
+                owner_instance_id: None,
+                quick_access: false,
+            }]
+        },
         equipped: Default::default(),
         hotbar,
         bone_coins: 0,
