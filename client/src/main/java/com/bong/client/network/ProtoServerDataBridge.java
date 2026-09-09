@@ -915,7 +915,7 @@ public final class ProtoServerDataBridge {
     //   - DeathScreen.zoneLabel  期望 "death"/"negative"（zone_kind）
     //   - DeathCinematicState.Phase.fromWire 期望 "roll"/"insight_overlay"/… (phase)
     //   - DeathCinematicState.RollResult.fromWire 期望 "survive"/"fall"/… (roll.result)
-    // 不剥则死亡界面阶段标签永远 default、cinematic 永远卡 PREDEATH。
+    // 不剥则死亡界面阶段标签永远 default、cinematic 阶段名无法识别。
     // cinematic.zone_kind 当前无消费方，一并归一化保持桥输出统一。
 
     private static BridgeResult bridgeDeathScreen(

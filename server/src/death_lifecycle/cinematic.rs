@@ -8,8 +8,6 @@ use crate::schema::death_cinematic::{
     DeathRollResultV1,
 };
 
-const PREDEATH_TICKS: u64 = 60;
-const DEATH_MOMENT_TICKS: u64 = 20;
 const FULL_ROLL_TICKS: u64 = 80;
 const SHORT_ROLL_TICKS: u64 = 40;
 const FULL_INSIGHT_TICKS: u64 = 120;
@@ -28,8 +26,7 @@ pub struct DeathCinematic {
     pub zone_kind: DeathCinematicZoneKindV1,
     pub tsy_death: bool,
     pub rebirth_weakened_ticks: u64,
-    pub skip_predeath: bool,
-    phase_durations: [u64; 6],
+    phase_durations: [u64; 4],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,11 +43,8 @@ pub struct DeathCinematicInit {
 
 impl DeathCinematic {
     pub fn new(init: DeathCinematicInit) -> Self {
-        let skip_predeath = init.death_number >= 5 && !init.is_final;
         let shortened = init.death_number >= 2 && !init.is_final;
         let phase_durations = [
-            if skip_predeath { 0 } else { PREDEATH_TICKS },
-            if skip_predeath { 0 } else { DEATH_MOMENT_TICKS },
             if shortened {
                 SHORT_ROLL_TICKS
             } else {
@@ -75,7 +69,6 @@ impl DeathCinematic {
             zone_kind: init.zone_kind,
             tsy_death: init.tsy_death,
             rebirth_weakened_ticks: REVIVE_WEAKENED_TICKS,
-            skip_predeath,
             phase_durations,
         }
     }
@@ -87,8 +80,6 @@ impl DeathCinematic {
     pub fn phase_at(&self, now_tick: u64) -> (DeathCinematicPhaseV1, u64, u64) {
         let mut elapsed = now_tick.saturating_sub(self.started_at_tick);
         let phases = [
-            DeathCinematicPhaseV1::Predeath,
-            DeathCinematicPhaseV1::DeathMoment,
             DeathCinematicPhaseV1::Roll,
             DeathCinematicPhaseV1::InsightOverlay,
             DeathCinematicPhaseV1::Darkness,
@@ -128,7 +119,6 @@ impl DeathCinematic {
             zone_kind: self.zone_kind,
             tsy_death: self.tsy_death,
             rebirth_weakened_ticks: self.rebirth_weakened_ticks,
-            skip_predeath: self.skip_predeath,
         }
     }
 }
@@ -226,26 +216,18 @@ mod tests {
 
         assert_eq!(
             cinematic.phase_at(100),
-            (DeathCinematicPhaseV1::Predeath, 0, PREDEATH_TICKS)
-        );
-        assert_eq!(
-            cinematic.phase_at(160),
-            (DeathCinematicPhaseV1::DeathMoment, 0, DEATH_MOMENT_TICKS)
-        );
-        assert_eq!(
-            cinematic.phase_at(180),
             (DeathCinematicPhaseV1::Roll, 0, FULL_ROLL_TICKS)
         );
         assert_eq!(
-            cinematic.phase_at(260),
+            cinematic.phase_at(180),
             (DeathCinematicPhaseV1::InsightOverlay, 0, FULL_INSIGHT_TICKS)
         );
         assert_eq!(
-            cinematic.phase_at(380),
+            cinematic.phase_at(300),
             (DeathCinematicPhaseV1::Darkness, 0, DARKNESS_TICKS)
         );
         assert_eq!(
-            cinematic.phase_at(420),
+            cinematic.phase_at(340),
             (DeathCinematicPhaseV1::Rebirth, 0, REBIRTH_TICKS)
         );
         let end_tick = 100 + cinematic.total_duration_ticks();
@@ -268,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn fifth_non_final_death_skips_predeath_and_death_moment() {
+    fn repeated_non_final_death_shortens_adjudication() {
         let cinematic = build_death_cinematic(
             &Lifecycle {
                 character_id: "offline:Azure".to_string(),
@@ -283,7 +265,6 @@ mod tests {
             10,
         );
 
-        assert!(cinematic.skip_predeath);
         assert_eq!(
             cinematic.phase_at(10),
             (DeathCinematicPhaseV1::Roll, 0, SHORT_ROLL_TICKS)

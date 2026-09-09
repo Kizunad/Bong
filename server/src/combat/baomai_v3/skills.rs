@@ -1,6 +1,6 @@
 use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, UniqueId};
 
-use crate::combat::components::{BodyPart, Lifecycle, SkillBarBindings, Wound, WoundKind, Wounds};
+use crate::combat::components::{BodyPart, SkillBarBindings, Wound, WoundKind, Wounds};
 use crate::combat::events::{
     ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind, FIST_REACH,
 };
@@ -473,10 +473,14 @@ pub fn cast_blood_burn(
             inflicted_by: Some("baomai:blood_burn".to_string()),
         });
     }
-    if outcome.ends_in_near_death {
-        if let Some(mut lifecycle) = world.get_mut::<Lifecycle>(caster) {
-            lifecycle.enter_near_death(now_tick);
-        }
+    if outcome.ends_in_death {
+        world.send_event(crate::combat::events::DeathEvent {
+            target: caster,
+            cause: "baomai:blood_burn".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: now_tick,
+        });
         apply_blood_burn_contamination(world, caster, now_tick);
     } else {
         world.entity_mut(caster).insert(BloodBurnActive {
@@ -499,7 +503,7 @@ pub fn cast_blood_burn(
         hp_burned: outcome.hp_burned,
         qi_multiplier: outcome.qi_multiplier,
         active_until_tick: now_tick.saturating_add(outcome.duration_ticks),
-        ended_in_near_death: outcome.ends_in_near_death,
+        ended_in_death: outcome.ends_in_death,
     });
     emit_skill_event(
         world,

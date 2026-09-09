@@ -66,7 +66,7 @@ export const BaomaiV3BloodBurnV1 = Type.Object(
     hp_burned: Type.Number({ minimum: 0 }),
     qi_multiplier: Type.Number({ minimum: 1 }),
     active_until_tick: Type.Integer({ minimum: 0 }),
-    ended_in_near_death: Type.Boolean(),
+    ended_in_death: Type.Boolean(),
   },
   { additionalProperties: false },
 );

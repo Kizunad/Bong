@@ -234,7 +234,7 @@ const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
 /// 体系（无 qi/duration 语义），且需要在死亡时区分"死前是否在读卷"——照抄
 /// `combat::shield_block::ShieldBlock` 用独立 component 做真相源的模式（而非
 /// `has_active_status` 判定，理由同 `cleanup_shield_on_death` 顶部注释：death_arbiter_tick
-/// 的 `enter_near_death` 会无条件清空 status_effects，专属 component 不受影响）。
+/// 的 `clear_death_combat_state` 会无条件清空 status_effects，专属 component 不受影响）。
 ///
 /// 存储循环动画 id 快照（而非重新查 `readable_scroll_spec`），因为关屏 / 死亡两条清理
 /// 路径都只需要"当时播的是哪个动画"这一件事，不需要重新解析物品模板。

@@ -312,7 +312,7 @@ public class BongNetworkHandlerTest {
         BongHudStateStore.replace(BongHudStateSnapshot.create(
             ZoneState.create("negative_qi_zone", "负灵域", 0.08, 6, 1_000L),
             NarrationState.create("broadcast", null, "旧服残留旁白", "narration"),
-            VisualEffectState.create("near_death_vignette", 0.9, 30_000L, 0L)
+            VisualEffectState.create("poison_tint", 0.9, 30_000L, 0L)
         ));
 
         assertFalse(
@@ -333,7 +333,7 @@ public class BongNetworkHandlerTest {
         );
         assertTrue(
             afterDisconnect.visualEffectState().isEmpty(),
-            "断线必须清空 visualEffectState，避免旧 near_death_vignette 在剩余 TTL 内继续污染新 session 的 HUD tint/相机/FOV"
+            "断线必须清空 visualEffectState，避免旧 poison_tint 在剩余 TTL 内继续污染新 session 的 HUD tint/相机/FOV"
         );
     }
 

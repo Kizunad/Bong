@@ -551,10 +551,10 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "NearDeath"
+        "Death"
       ],
       "properties": {
-        "NearDeath": {
+        "Death": {
           "type": "object",
           "required": [
             "cause",
@@ -1102,5 +1102,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "74c38d04ada8f000269ff1250c5056afaa86e2a0f1a10a9ab3fcd8f9ea49add0"
+  "x-bong-typebox-source-sha256": "b548ecb2cec84d8733d13b09429cff5087659cabb0b2ed95506cf1ca1afbc9c4"
 }

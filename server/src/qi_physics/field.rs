@@ -57,7 +57,7 @@ pub struct BloodBurnConversionOutcome {
     pub hp_burned: f32,
     pub qi_multiplier: f32,
     pub duration_ticks: u64,
-    pub ends_in_near_death: bool,
+    pub ends_in_death: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -254,7 +254,7 @@ pub fn blood_burn_conversion(
         hp_burned,
         qi_multiplier: multiplier.max(1.0),
         duration_ticks,
-        ends_in_near_death: hp_current - hp_burned <= hp_current.max(1.0) * 0.10,
+        ends_in_death: hp_current - hp_burned <= 0.0,
     })
 }
 
@@ -409,9 +409,11 @@ mod tests {
     }
 
     #[test]
-    fn blood_burn_conversion_marks_near_death_boundary() {
-        let out = blood_burn_conversion(100.0, 91.0, 2.5, 500).unwrap();
-        assert!(out.ends_in_near_death);
+    fn blood_burn_conversion_marks_only_exhausted_health_as_death() {
+        let surviving = blood_burn_conversion(100.0, 91.0, 2.5, 500).unwrap();
+        assert!(!surviving.ends_in_death);
+        let out = blood_burn_conversion(100.0, 100.0, 2.5, 500).unwrap();
+        assert!(out.ends_in_death);
         assert_eq!(out.qi_multiplier, 2.5);
     }
 

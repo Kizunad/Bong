@@ -374,7 +374,6 @@ fn resolve_public_game_mode_gate_respects_current_target_state() {
 fn resolve_public_lifecycle_and_game_mode_matrix() {
     let cases = [
         ("creative", None, true),
-        ("near_death", Some(LifecycleState::NearDeath), false),
         (
             "awaiting_revival",
             Some(LifecycleState::AwaitingRevival),
@@ -396,13 +395,8 @@ fn resolve_public_lifecycle_and_game_mode_matrix() {
             let mut target_entity = app.world_mut().entity_mut(target);
             let mut lifecycle = target_entity.get_mut::<Lifecycle>().unwrap();
             match state {
-                LifecycleState::NearDeath => lifecycle.enter_near_death(40),
                 LifecycleState::AwaitingRevival => {
-                    lifecycle.enter_near_death(40);
-                    lifecycle.await_revival_decision(
-                        bong_server::combat::components::RevivalDecision::Fortune { chance: 1.0 },
-                        120,
-                    );
+                    lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 40)
                 }
                 LifecycleState::Terminated => lifecycle.terminate(40),
                 other => panic!("unexpected lifecycle case {other:?}"),
@@ -441,7 +435,6 @@ fn resolve_public_lifecycle_and_game_mode_matrix() {
 #[test]
 fn resolve_public_attacker_lifecycle_matrix() {
     let cases = [
-        ("near_death", LifecycleState::NearDeath),
         ("awaiting_revival", LifecycleState::AwaitingRevival),
         ("terminated", LifecycleState::Terminated),
     ];
@@ -454,10 +447,8 @@ fn resolve_public_attacker_lifecycle_matrix() {
             let mut attacker_entity = app.world_mut().entity_mut(attacker);
             let mut lifecycle = attacker_entity.get_mut::<Lifecycle>().unwrap();
             match state {
-                LifecycleState::NearDeath => lifecycle.enter_near_death(40),
                 LifecycleState::AwaitingRevival => {
-                    lifecycle.enter_near_death(40);
-                    lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
+                    lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 40)
                 }
                 LifecycleState::Terminated => lifecycle.terminate(40),
                 other => panic!("unexpected lifecycle case {other:?}"),

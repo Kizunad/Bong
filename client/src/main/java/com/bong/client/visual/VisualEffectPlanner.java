@@ -115,11 +115,6 @@ public final class VisualEffectPlanner {
                     HudTextHelper.withAlpha(profile.baseColor(), alpha)
                 )
             );
-            // 濒死：只画黑色 vignette，不做 tint 以免误读为"视野变黑"全屏
-            case NEAR_DEATH_VIGNETTE -> List.of(HudRenderCommand.edgeVignette(
-                HudRenderLayer.VISUAL,
-                HudTextHelper.withAlpha(profile.baseColor(), alpha)
-            ));
             // 灵压晃动：纯相机抖动（低幅低频），走 MixinCamera+CameraShakeOffsets 同一管线
             case PRESSURE_JITTER -> List.of();
             // 受创后退：纯相机位移，走 MixinCamera TAIL 注入的 moveBy，HUD 层无输出

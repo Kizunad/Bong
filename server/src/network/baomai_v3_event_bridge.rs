@@ -92,7 +92,7 @@ pub fn publish_mountain_shake_event(
 }
 
 /// 血燃事件桥：`BloodBurnEvent` → `RedisOutbound::BaomaiV3BloodBurn`
-/// 携 ended_in_near_death 分支标志供 agent 差异化叙事。
+/// 携 ended_in_death 分支标志供 agent 差异化叙事。
 pub fn publish_blood_burn_event(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<BloodBurnEvent>,
@@ -106,7 +106,7 @@ pub fn publish_blood_burn_event(
         payload.hp_burned = event.hp_burned;
         payload.qi_multiplier = event.qi_multiplier;
         payload.active_until_tick = event.active_until_tick;
-        payload.ended_in_near_death = event.ended_in_near_death;
+        payload.ended_in_death = event.ended_in_death;
 
         if let Err(error) = redis
             .tx_outbound
@@ -300,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn blood_burn_event_publishes_near_death_true() {
+    fn blood_burn_event_publishes_death_true() {
         let (mut app, rx_outbound) = app_with_bridge_p2();
         let caster = app.world_mut().spawn_empty().id();
         app.world_mut()
@@ -311,7 +311,7 @@ mod tests {
                 hp_burned: 300.0,
                 qi_multiplier: 5.0,
                 active_until_tick: 300,
-                ended_in_near_death: true,
+                ended_in_death: true,
             });
 
         app.update();
@@ -323,8 +323,8 @@ mod tests {
         {
             RedisOutbound::BaomaiV3BloodBurn(payload) => {
                 assert!(
-                    payload.ended_in_near_death,
-                    "ended_in_near_death must be forwarded as true"
+                    payload.ended_in_death,
+                    "ended_in_death must be forwarded as true"
                 );
                 assert_eq!(payload.hp_burned, 300.0);
                 assert_eq!(payload.qi_multiplier, 5.0);
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn blood_burn_event_publishes_near_death_false() {
+    fn blood_burn_event_publishes_death_false() {
         let (mut app, rx_outbound) = app_with_bridge_p2();
         let caster = app.world_mut().spawn_empty().id();
         app.world_mut()
@@ -345,7 +345,7 @@ mod tests {
                 hp_burned: 150.0,
                 qi_multiplier: 3.5,
                 active_until_tick: 360,
-                ended_in_near_death: false,
+                ended_in_death: false,
             });
 
         app.update();
@@ -356,8 +356,8 @@ mod tests {
         {
             RedisOutbound::BaomaiV3BloodBurn(payload) => {
                 assert!(
-                    !payload.ended_in_near_death,
-                    "normal blood_burn ended_in_near_death must be false"
+                    !payload.ended_in_death,
+                    "normal blood_burn ended_in_death must be false"
                 );
                 assert_eq!(payload.hp_burned, 150.0);
             }

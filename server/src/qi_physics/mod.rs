@@ -51,8 +51,7 @@ pub use field::{
     InverseDiffusionOutcome, ShedToCarrierOutcome, TiandaoSignalDistortionOutcome,
 };
 pub use healing::{
-    contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
-    yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,
+    contam_purge, mass_meridian_repair, meridian_repair, yidao_cast_ticks, ContamPurgeOutcome,
     MassMeridianRepairOutcome, MeridianRepairOutcome,
 };
 pub use knockback::{

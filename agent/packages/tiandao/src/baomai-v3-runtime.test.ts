@@ -6,7 +6,7 @@
  *   - 无效 JSON / schema 不符 → rejectedContract++，不 publish
  *   - 未知 channel → ignored++，不 publish
  *   - disperse flow_rate_multiplier=1.0（凡躯失败） → 走 else 分支文案
- *   - blood_burn ended_in_near_death=true → 特化文案
+ *   - blood_burn ended_in_death=true → 特化文案
  *   - overload_ripple total_severity 3 档叙事
  */
 
@@ -102,7 +102,7 @@ function makeMountainShakePayload(affectedCount = 3): string {
   });
 }
 
-function makeBloodBurnPayload(endedInNearDeath = false): string {
+function makeBloodBurnPayload(endedInDeath = false): string {
   return JSON.stringify({
     v: 1,
     caster_id: "offline:TestPlayer",
@@ -110,7 +110,7 @@ function makeBloodBurnPayload(endedInNearDeath = false): string {
     hp_burned: 150.0,
     qi_multiplier: 3.5,
     active_until_tick: 360,
-    ended_in_near_death: endedInNearDeath,
+    ended_in_death: endedInDeath,
   });
 }
 
@@ -497,10 +497,10 @@ describe("renderBaomaiV3Narration — disperse flow_rate_multiplier pin", () => 
   });
 });
 
-// ──── blood_burn near_death branch ───────────────────────────────────────────
+// ──── blood_burn lethal branch ───────────────────────────────────────────
 
-describe("renderBloodBurnNarration — near death branch", () => {
-  it("ended_in_near_death=true → 特化濒死文案", () => {
+describe("renderBloodBurnNarration — lethal branch", () => {
+  it("ended_in_death=true → 致死文案", () => {
     const result = renderBloodBurnNarration({
       v: 1,
       caster_id: "offline:TestPlayer",
@@ -508,13 +508,13 @@ describe("renderBloodBurnNarration — near death branch", () => {
       hp_burned: 300.0,
       qi_multiplier: 5.0,
       active_until_tick: 300,
-      ended_in_near_death: true,
+      ended_in_death: true,
     });
-    expect(result, "near death blood_burn 必须产叙事").not.toBeNull();
-    expect(result?.text, "near death 文案应含「濒死」").toContain("濒死");
+    expect(result, "lethal blood_burn 必须产叙事").not.toBeNull();
+    expect(result?.text).toContain("燃尽了最后一点生命");
   });
 
-  it("ended_in_near_death=false → 普通血燃文案（含 qi_multiplier）", () => {
+  it("ended_in_death=false → 普通血燃文案（含 qi_multiplier）", () => {
     const result = renderBloodBurnNarration({
       v: 1,
       caster_id: "offline:TestPlayer",
@@ -522,7 +522,7 @@ describe("renderBloodBurnNarration — near death branch", () => {
       hp_burned: 150.0,
       qi_multiplier: 3.5,
       active_until_tick: 360,
-      ended_in_near_death: false,
+      ended_in_death: false,
     });
     expect(result, "normal blood_burn 必须产叙事").not.toBeNull();
     expect(result?.text, "normal 文案应含 qi_multiplier 值").toContain("3.5");

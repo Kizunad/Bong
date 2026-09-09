@@ -1,7 +1,7 @@
 //! plan-skill-anim-fidelity-v1 P0 —— technique cast_ticks 快照单向同步测试（动画时长对拍链）。
 //!
 //! 快照文件 `client/src/test/resources/bong/technique_cast_ticks_snapshot.json` 是
-//! `TechniqueRegistry` + yidao 5 招 spec（P4 增补，见 `definitions_cast_map`）
+//! `TechniqueRegistry` + yidao spec（见 `definitions_cast_map`）
 //! 的 `skill_id → cast_ticks` 单向导出（BTreeMap 排序 + pretty-print，稳定 diff），
 //! 双端消费：
 //! - server（本文件）：经 `CARGO_MANIFEST_DIR/../client` 路径读盘，断言快照与定义表
@@ -34,7 +34,7 @@ fn definitions_cast_map() -> BTreeMap<String, u32> {
         .iter()
         .map(|def| (def.id.to_string(), def.cast_ticks))
         .collect();
-    // plan-skill-anim-fidelity-v1 P4：yidao 5 招不在 TechniqueRegistry（功法
+    // yidao 招式不在 TechniqueRegistry（功法
     // 定义表），其 cast 窗由 `yidao_skill_spec().cast_ticks_base` 声明（运行时经
     // `yidao_cast_ticks` 按 mastery/平和色缩放——快照 pin 基准值即可，对拍分类
     // 只依赖 cast ≥ 40 长引导域）。单向生成纪律不变：server 代码 → 快照。

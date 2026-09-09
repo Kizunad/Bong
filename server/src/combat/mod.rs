@@ -132,12 +132,11 @@ pub(crate) fn attach_combat_bundle_to_joined_clients(
 
         // bughunt player-lifecycle-relog-death-consequence-wipe：断线重连必须复用上次落盘
         // 的死亡/复活状态机（state / fortune_remaining / awaiting_decision / 各 deadline
-        // tick），不能盲插 Lifecycle::default()——否则濒死 (NearDeath) / 待复活
+        // tick），不能盲插 Lifecycle::default()——否则待复活
         // (AwaitingRevival) 玩家断线重连即可白嫖满状态"新角色"，完全绕过渡劫概率判定
         // 与每角色仅 3 次的运气消耗（fortune_remaining）。deadline 均为绝对 tick 值，
         // `load_player_lifecycle_slice` 已经按 `current_combat_clock_tick` 把它们折算到
-        // 当前 tick 空间（跨重启也不例外），near_death_tick /
-        // auto_confirm_revival_decisions 会在下一 tick 自然按折算后的 deadline 继续结算，
+        // 当前 tick 空间（跨重启也不例外），auto_confirm_revival_decisions 会在下一 tick 自然按折算后的 deadline 继续结算，
         // 无需在这里重放决策逻辑。character_id 不匹配（老档 / 已转生到新角色）时视为
         // "无可复用的存档"，回退默认值。
         let persisted_lifecycle = persistence.and_then(|persistence| {
@@ -150,7 +149,7 @@ pub(crate) fn attach_combat_bundle_to_joined_clients(
                 Err(error) => {
                     // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求
                     // 4）：反序列化失败（坏行/损坏 JSON）不能静默吞掉——那样会悄悄回退到
-                    // Lifecycle::default() 满状态，与本 bug 同一失效类（濒死/待复活状态被
+                    // Lifecycle::default() 满状态，与本 bug 同一失效类（待复活状态被
                     // 无声抹除）。这里必须 warn! 留痕，再回退默认值（回退本身是唯一可行的
                     // 兜底：拒绝加入服务器同样不可接受）。
                     tracing::warn!(
@@ -341,17 +340,14 @@ pub fn register(app: &mut App) {
                 // kill.rs 测试里必须显式 .after(handle_kill) 才能跑通——生产注册缺这一条，
                 // handle_kill 无序时与仲裁器同 tick 交错，DeathEvent 写在读之后、
                 // 随 buffer swap 被吞（实测：/kill self 队列了 DeathEvent 却永远不处理，
-                // 无 NearDeath、无死亡屏）。Bevy 0.13+ 事件只在写入当 tick 对"写之后的
+                // 无死亡裁决、无死亡屏）。Bevy 0.13+ 事件只在写入当 tick 对"写之后的
                 // 读者"可见，跨 tick 由双缓冲交换丢弃。
-                .after(crate::cmd::dev::kill::handle_kill),
-            lifecycle::near_death_tick
-                .in_set(CombatSystemSet::Resolve)
-                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage)
-                .after(lifecycle::death_arbiter_tick)
+                .after(crate::cmd::dev::kill::handle_kill)
                 .after(rat_bite::apply_rat_bite_qi_drain),
+            lifecycle::clear_expired_revival_weakness.in_set(CombatSystemSet::Resolve),
             lifecycle::handle_revival_action_intents
                 .in_set(CombatSystemSet::Resolve)
-                .after(lifecycle::near_death_tick)
+                .after(lifecycle::death_arbiter_tick)
                 // fix-spec-1901-v2 §4.2 — 复活/新建角色直接写玩家 `Position`，
                 // 纳入统一移动 commit set（与 CombatSystemSet::Resolve 并存，
                 // 不改变本链内顺序）。

@@ -386,9 +386,6 @@ public final class BongHudOrchestrator {
             // plan-race-system-v1 PR-5b — 易形形态图标 + 施法期 vignette。
             commands.addAll(MorphHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
-            commands.addAll(NearDeathOverlayPlanner.buildCommands(
-                combatSnapshot.combatHudState(), screenWidth, screenHeight
-            ));
             // plan-alchemy-v1 §2.1 — 丹毒 mini bar(mellow/violent > 0 常驻, !ok 时红框警戒)
             // 暂时停用主 HUD 丹毒 mini bar,保留 planner 代码以便后续恢复。
             // commands.addAll(ContaminationHudPlanner.buildCommands(screenWidth, screenHeight));

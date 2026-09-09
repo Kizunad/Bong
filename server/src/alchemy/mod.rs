@@ -416,7 +416,7 @@ pub(crate) fn apply_alchemy_explode_outcomes(
             && !lifecycle.is_some_and(|lifecycle| {
                 matches!(
                     lifecycle.state,
-                    LifecycleState::NearDeath | LifecycleState::Terminated
+                    LifecycleState::AwaitingRevival | LifecycleState::Terminated
                 )
             })
         {

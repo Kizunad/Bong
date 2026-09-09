@@ -12,14 +12,12 @@ const DEFAULT_FORTUNE_REMAINING: u8 = 3;
 pub const TICKS_PER_SECOND: u64 = 20;
 pub const ATTACK_STAMINA_COST: f32 = 3.0;
 pub const IN_COMBAT_WINDOW_TICKS: u64 = 15 * TICKS_PER_SECOND;
-pub const NEAR_DEATH_WINDOW_TICKS: u64 = 30 * TICKS_PER_SECOND;
 pub const REVIVAL_CONFIRM_WINDOW_TICKS: u64 = 60 * TICKS_PER_SECOND;
 pub const REVIVE_WEAKENED_TICKS: u64 = 180 * TICKS_PER_SECOND;
 pub const BLEED_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
 pub const HEALTH_REGEN_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
 pub const STAMINA_TICK_INTERVAL_TICKS: u64 = 4;
 pub const COMBAT_STATE_TICK_INTERVAL_TICKS: u64 = TICKS_PER_SECOND;
-pub const NEAR_DEATH_HEALTH_FRACTION: f32 = 0.05;
 pub const REVIVE_HEALTH_FRACTION: f32 = 0.20;
 pub const STATUS_EFFECT_TICK_INTERVAL_TICKS: u64 = 4;
 pub const LEG_SLOWED_SEVERITY_THRESHOLD: f32 = 0.3;
@@ -198,7 +196,6 @@ impl CombatState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LifecycleState {
     Alive,
-    NearDeath,
     AwaitingRevival,
     Terminated,
 }
@@ -240,8 +237,6 @@ pub struct Lifecycle {
     #[serde(default)]
     pub spawn_anchor_damaged: bool,
     #[serde(default)]
-    pub near_death_deadline_tick: Option<u64>,
-    #[serde(default)]
     pub awaiting_decision: Option<RevivalDecision>,
     #[serde(default)]
     pub revival_decision_deadline_tick: Option<u64>,
@@ -259,7 +254,6 @@ impl Default for Lifecycle {
             last_revive_tick: None,
             spawn_anchor: None,
             spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
             weakened_until_tick: None,
@@ -269,24 +263,12 @@ impl Default for Lifecycle {
 }
 
 impl Lifecycle {
-    pub fn enter_near_death(&mut self, now_tick: u64) {
-        if self.state == LifecycleState::NearDeath {
-            return;
-        }
-
-        self.death_count = self.death_count.saturating_add(1);
-        self.last_death_tick = Some(now_tick);
-        self.near_death_deadline_tick = Some(now_tick.saturating_add(NEAR_DEATH_WINDOW_TICKS));
-        self.state = LifecycleState::NearDeath;
-    }
-
     pub fn revive(&mut self, now_tick: u64) {
         self.revive_with_weakened_multiplier(now_tick, 1);
     }
 
     pub fn revive_with_weakened_multiplier(&mut self, now_tick: u64, weakened_multiplier: u64) {
         self.last_revive_tick = Some(now_tick);
-        self.near_death_deadline_tick = None;
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;
         self.weakened_until_tick = Some(
@@ -295,16 +277,20 @@ impl Lifecycle {
         self.state = LifecycleState::Alive;
     }
 
-    pub fn await_revival_decision(&mut self, decision: RevivalDecision, deadline_tick: u64) {
-        self.near_death_deadline_tick = None;
+    pub fn await_revival_decision(&mut self, decision: RevivalDecision, now_tick: u64) {
+        if self.state != LifecycleState::Alive {
+            return;
+        }
+        self.death_count = self.death_count.saturating_add(1);
+        self.last_death_tick = Some(now_tick);
         self.awaiting_decision = Some(decision);
-        self.revival_decision_deadline_tick = Some(deadline_tick);
+        self.revival_decision_deadline_tick =
+            Some(now_tick.saturating_add(REVIVAL_CONFIRM_WINDOW_TICKS));
         self.state = LifecycleState::AwaitingRevival;
     }
 
     pub fn terminate(&mut self, now_tick: u64) {
         self.last_death_tick = Some(now_tick);
-        self.near_death_deadline_tick = None;
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;
         self.state = LifecycleState::Terminated;

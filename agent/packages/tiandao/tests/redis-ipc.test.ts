@@ -1308,7 +1308,6 @@ describe("redis-ipc", () => {
         zone_kind: "negative",
         tsy_death: true,
         rebirth_weakened_ticks: 3600,
-        skip_predeath: false,
       }),
     );
     await sub.publish(SOCIAL_FEUD, JSON.stringify({ v: 1, left: "char:a", right: "char:b", tick: 86 }));

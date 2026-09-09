@@ -146,7 +146,7 @@ describe("BaomaiV3BloodBurnV1", () => {
     }
   });
 
-  it("ended_in_near_death=true validates", () => {
+  it("ended_in_death=true validates", () => {
     const result = validateBaomaiV3BloodBurnV1({
       v: 1,
       caster_id: "offline:VoidMaster",
@@ -154,12 +154,12 @@ describe("BaomaiV3BloodBurnV1", () => {
       hp_burned: 300.0,
       qi_multiplier: 5.0,
       active_until_tick: 500,
-      ended_in_near_death: true,
+      ended_in_death: true,
     });
     expect(result.ok).toBe(true);
   });
 
-  it("ended_in_near_death=false validates", () => {
+  it("ended_in_death=false validates", () => {
     const result = validateBaomaiV3BloodBurnV1({
       v: 1,
       caster_id: "offline:TestPlayer",
@@ -167,12 +167,12 @@ describe("BaomaiV3BloodBurnV1", () => {
       hp_burned: 150.0,
       qi_multiplier: 3.5,
       active_until_tick: 360,
-      ended_in_near_death: false,
+      ended_in_death: false,
     });
     expect(result.ok).toBe(true);
   });
 
-  it("missing ended_in_near_death rejects", () => {
+  it("missing ended_in_death rejects", () => {
     const result = validateBaomaiV3BloodBurnV1({
       v: 1,
       caster_id: "offline:TestPlayer",
@@ -181,7 +181,7 @@ describe("BaomaiV3BloodBurnV1", () => {
       qi_multiplier: 3.5,
       active_until_tick: 360,
     });
-    expect(result.ok, "missing ended_in_near_death must fail").toBe(false);
+    expect(result.ok, "missing ended_in_death must fail").toBe(false);
   });
 
   it("qi_multiplier < 1 rejects", () => {
@@ -192,7 +192,7 @@ describe("BaomaiV3BloodBurnV1", () => {
       hp_burned: 150.0,
       qi_multiplier: 0.5, // below minimum:1
       active_until_tick: 360,
-      ended_in_near_death: false,
+      ended_in_death: false,
     });
     expect(result.ok, "qi_multiplier < 1 must fail — minimum is 1").toBe(false);
   });
@@ -205,7 +205,7 @@ describe("BaomaiV3BloodBurnV1", () => {
       hp_burned: 150.0,
       qi_multiplier: 1.0,
       active_until_tick: 360,
-      ended_in_near_death: false,
+      ended_in_death: false,
       extra_field: "bad",
     });
     expect(result.ok).toBe(false);

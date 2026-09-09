@@ -483,7 +483,7 @@ fn lifecycle_allows_charge(lifecycle: Option<&Lifecycle>) -> bool {
     !lifecycle.is_some_and(|lifecycle| {
         matches!(
             lifecycle.state,
-            LifecycleState::NearDeath | LifecycleState::Terminated
+            LifecycleState::AwaitingRevival | LifecycleState::Terminated
         )
     })
 }

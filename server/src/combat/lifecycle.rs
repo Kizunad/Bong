@@ -40,7 +40,7 @@ use crate::network::send_server_data_payload;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::persistence::{
-    persist_near_death_transition, persist_revival_qi_transaction, persist_termination_transition,
+    persist_death_transition, persist_revival_qi_transaction, persist_termination_transition,
     persist_termination_transition_with_death_context, LifespanEventRecord, PersistenceSettings,
 };
 use crate::player::state::{save_player_slices, PlayerState, PlayerStatePersistence};
@@ -64,9 +64,8 @@ use super::components::{
     ActiveCombatWindow, CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings,
     RevivalDecision, ShieldDrainOverride, SkillBarBindings, Stamina, StaminaState, StatusEffects,
     UnlockedStyles, Wounds, ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS,
-    COMBAT_STATE_TICK_INTERVAL_TICKS, HEALTH_REGEN_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION,
-    REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS,
-    TICKS_PER_SECOND,
+    COMBAT_STATE_TICK_INTERVAL_TICKS, HEALTH_REGEN_TICK_INTERVAL_TICKS, REVIVE_HEALTH_FRACTION,
+    STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
 };
 use super::events::{
     CombatEvent, DeathCinematicPublished, DeathEvent, DeathInsightRequested, RevivalActionIntent,
@@ -84,7 +83,7 @@ const EXHAUSTED_EXIT_FRACTION: f32 = 0.3;
 const DEATH_INSIGHT_RECENT_BIO_N: usize = 16;
 pub const BASE_HEALTH_REGEN_PER_SEC: f32 = 0.5;
 
-type NearDeathQueryItem<'a> = (
+type RevivalQueryItem<'a> = (
     Entity,
     &'a mut Lifecycle,
     Option<&'a mut Wounds>,
@@ -115,8 +114,8 @@ type DeathArbiterQueryItem<'a> = (
     Option<&'a crate::npc::patrol::NpcPatrol>,
 );
 
-type NearDeathPersistenceQueryItem<'a> = (
-    NearDeathQueryItem<'a>,
+type RevivalPersistenceQueryItem<'a> = (
+    RevivalQueryItem<'a>,
     Option<&'a mut Cultivation>,
     Option<&'a mut MeridianSystem>,
     Option<&'a mut Contamination>,
@@ -196,7 +195,7 @@ pub fn wound_bleed_tick(
         if lifecycle.is_some_and(|lifecycle| {
             matches!(
                 lifecycle.state,
-                LifecycleState::NearDeath | LifecycleState::Terminated
+                LifecycleState::AwaitingRevival | LifecycleState::Terminated
             )
         }) {
             continue;
@@ -263,9 +262,7 @@ fn can_health_regen(lifecycle: Option<&Lifecycle>, wounds: &Wounds) -> bool {
     !lifecycle.is_some_and(|lifecycle| {
         matches!(
             lifecycle.state,
-            LifecycleState::NearDeath
-                | LifecycleState::AwaitingRevival
-                | LifecycleState::Terminated
+            LifecycleState::AwaitingRevival | LifecycleState::Terminated
         )
     })
 }
@@ -387,6 +384,8 @@ pub fn death_arbiter_tick(
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut lifespan_events: Option<ResMut<Events<LifespanEventEmitted>>>,
     mut lifecycle_q: Query<DeathArbiterQueryItem<'_>>,
+    mut clients: Query<&mut Client>,
+    mut death_cinematics: Option<ResMut<Events<DeathCinematicPublished>>>,
 ) {
     for event in death_events.read() {
         let Ok((
@@ -512,14 +511,10 @@ pub fn death_arbiter_tick(
                 pos: [p.x, p.y, p.z],
             });
         }
-        // 已经在死亡屏（AwaitingRevival）等待玩家决策的实体不接受新死亡事件重入——
-        // 否则濒死窗口每 tick 被新死亡事件拍回 NearDeath，AwaitingRevival 窗口实际只活 1 tick，
-        // 玩家永远点不中重生按钮（bughunt 实证：污染溢出持续触发死亡导致死循环）。
+        // 等待裁决或已终结时拒绝重入，避免重复计数、扣寿或重置选择窗口。
         if matches!(
             lifecycle.state,
-            LifecycleState::NearDeath
-                | LifecycleState::AwaitingRevival
-                | LifecycleState::Terminated
+            LifecycleState::AwaitingRevival | LifecycleState::Terminated
         ) {
             continue;
         }
@@ -561,7 +556,7 @@ pub fn death_arbiter_tick(
             category,
             zone_kind: death_zone,
             rebirth_chance,
-            will_terminate: lifespan_exhausted,
+            will_terminate: revival_decision.is_none(),
             known_spirit_eyes: known_spirit_eyes_for_death_insight(
                 life_record.as_deref(),
                 &lifecycle,
@@ -569,7 +564,7 @@ pub fn death_arbiter_tick(
             ),
         });
 
-        if lifespan_exhausted {
+        if revival_decision.is_none() {
             let lifespan_event =
                 death_penalty_lifespan_event(cultivation, now_tick, event.cause.as_str());
             let lifespan_event_char_id = lifespan_event
@@ -610,14 +605,15 @@ pub fn death_arbiter_tick(
         let lifespan_event_char_id = lifespan_event
             .as_ref()
             .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
+        let decision = revival_decision.expect("terminal deaths handled above");
+        let mut staged_lifecycle = lifecycle.clone();
+        staged_lifecycle.await_revival_decision(decision, now_tick);
         if let Some(mut life_record) = life_record {
-            life_record.push(BiographyEntry::NearDeath {
+            life_record.push(BiographyEntry::Death {
                 cause: event.cause.clone(),
                 tick: now_tick,
             });
-            let mut staged_lifecycle = lifecycle.clone();
-            staged_lifecycle.enter_near_death(now_tick);
-            if let Err(error) = persist_near_death_transition(
+            if let Err(error) = persist_death_transition(
                 &persistence,
                 &staged_lifecycle,
                 &life_record,
@@ -625,7 +621,7 @@ pub fn death_arbiter_tick(
                 lifespan_event.as_ref(),
             ) {
                 tracing::warn!(
-                    "[bong][persistence] failed to persist near-death transition for {}: {error}",
+                    "[bong][persistence] failed to persist death transition for {}: {error}",
                     life_record.character_id
                 );
                 let _ = life_record.biography.pop();
@@ -637,7 +633,26 @@ pub fn death_arbiter_tick(
             lifespan_event_char_id,
             lifespan_event.as_ref(),
         );
-        enter_near_death(&mut lifecycle, wounds, status_effects, now_tick);
+        *lifecycle = staged_lifecycle;
+        clear_death_combat_state(wounds, status_effects);
+        publish_revival_decision(
+            &mut commands,
+            &mut clients,
+            death_cinematics.as_deref_mut(),
+            event.target,
+            event.cause.as_str(),
+            decision,
+            DeathScreenContext {
+                lifecycle: &lifecycle,
+                death_registry: death_registry.as_deref(),
+                lifespan: lifespan.as_deref(),
+                position,
+                zones: zones.as_deref(),
+                final_words: Vec::new(),
+                cinematic: None,
+            },
+            now_tick,
+        );
         if let Some(death_insights) = death_insights.as_deref_mut() {
             death_insights.send(DeathInsightRequested {
                 payload: insight_payload,
@@ -772,9 +787,7 @@ pub fn death_arbiter_tick(
         // 同上：AwaitingRevival 期间不接受新的 cultivation 死亡事件重入。
         if matches!(
             lifecycle.state,
-            LifecycleState::NearDeath
-                | LifecycleState::AwaitingRevival
-                | LifecycleState::Terminated
+            LifecycleState::AwaitingRevival | LifecycleState::Terminated
         ) {
             continue;
         }
@@ -832,7 +845,7 @@ pub fn death_arbiter_tick(
             category,
             zone_kind: death_zone,
             rebirth_chance,
-            will_terminate: lifespan_exhausted,
+            will_terminate: revival_decision.is_none(),
             known_spirit_eyes: known_spirit_eyes_for_death_insight(
                 life_record.as_deref(),
                 &lifecycle,
@@ -840,7 +853,7 @@ pub fn death_arbiter_tick(
             ),
         });
 
-        if lifespan_exhausted {
+        if revival_decision.is_none() {
             let lifespan_event = if event.cause == CultivationDeathCause::NaturalAging
                 || void_quota_exceeded
                 || void_action_backlash
@@ -892,14 +905,15 @@ pub fn death_arbiter_tick(
         let lifespan_event_char_id = lifespan_event
             .as_ref()
             .map(|_| lifespan_event_character_id(life_record.as_deref(), &lifecycle));
+        let decision = revival_decision.expect("terminal deaths handled above");
+        let mut staged_lifecycle = lifecycle.clone();
+        staged_lifecycle.await_revival_decision(decision, clock.tick);
         if let Some(mut life_record) = life_record {
-            life_record.push(BiographyEntry::NearDeath {
+            life_record.push(BiographyEntry::Death {
                 cause: cause.clone(),
                 tick: clock.tick,
             });
-            let mut staged_lifecycle = lifecycle.clone();
-            staged_lifecycle.enter_near_death(clock.tick);
-            if let Err(error) = persist_near_death_transition(
+            if let Err(error) = persist_death_transition(
                 &persistence,
                 &staged_lifecycle,
                 &life_record,
@@ -907,7 +921,7 @@ pub fn death_arbiter_tick(
                 lifespan_event.as_ref(),
             ) {
                 tracing::warn!(
-                    "[bong][persistence] failed to persist cultivation near-death transition for {}: {error}",
+                    "[bong][persistence] failed to persist cultivation death transition for {}: {error}",
                     life_record.character_id
                 );
                 let _ = life_record.biography.pop();
@@ -919,7 +933,26 @@ pub fn death_arbiter_tick(
             lifespan_event_char_id,
             lifespan_event.as_ref(),
         );
-        enter_near_death(&mut lifecycle, wounds, status_effects, clock.tick);
+        *lifecycle = staged_lifecycle;
+        clear_death_combat_state(wounds, status_effects);
+        publish_revival_decision(
+            &mut commands,
+            &mut clients,
+            death_cinematics.as_deref_mut(),
+            event.entity,
+            cause.as_str(),
+            decision,
+            DeathScreenContext {
+                lifecycle: &lifecycle,
+                death_registry: death_registry.as_deref(),
+                lifespan: lifespan.as_deref(),
+                position,
+                zones: zones.as_deref(),
+                final_words: Vec::new(),
+                cinematic: None,
+            },
+            clock.tick,
+        );
         if let Some(death_insights) = death_insights.as_deref_mut() {
             death_insights.send(DeathInsightRequested {
                 payload: insight_payload,
@@ -928,206 +961,55 @@ pub fn death_arbiter_tick(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn near_death_tick(
-    clock: Res<CombatClock>,
-    persistence: Res<PersistenceSettings>,
-    zones: Option<Res<ZoneRegistry>>,
-    _revived: EventWriter<PlayerRevived>,
-    mut commands: Commands,
-    mut terminated: EventWriter<PlayerTerminated>,
-    mut death_cinematics: ResMut<Events<DeathCinematicPublished>>,
-    mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
-    mut clients: Query<&mut valence::prelude::Client>,
-    mut vfx_events: EventWriter<VfxEventRequest>,
-) {
-    for (
-        (entity, mut lifecycle, wounds, stamina, combat_state),
-        cultivation,
-        meridians,
-        contam,
-        life_record,
-        death_registry,
-        lifespan,
-        player_state,
-        position,
-        _current_dimension,
-        _username,
-        npc_marker,
-        npc_visual_profile,
-        _inventory,
-        _skill_set,
-    ) in &mut lifecycle_q
-    {
+pub fn clear_expired_revival_weakness(clock: Res<CombatClock>, mut actors: Query<&mut Lifecycle>) {
+    for mut lifecycle in &mut actors {
         if lifecycle
             .weakened_until_tick
-            .is_some_and(|until_tick| clock.tick >= until_tick)
+            .is_some_and(|until| clock.tick >= until)
         {
             lifecycle.weakened_until_tick = None;
         }
-
-        if lifecycle.state != LifecycleState::NearDeath {
-            continue;
-        }
-
-        let stabilized = wounds.as_ref().is_some_and(|wounds| {
-            wounds.health_current > wounds.health_max.max(1.0) * NEAR_DEATH_HEALTH_FRACTION
-        });
-        if stabilized {
-            lifecycle.near_death_deadline_tick = None;
-            lifecycle.state = LifecycleState::Alive;
-            continue;
-        }
-
-        let immediate_npc_termination = should_terminate_npc_without_near_death_wait(npc_marker);
-        if !immediate_npc_termination {
-            let Some(deadline_tick) = lifecycle.near_death_deadline_tick else {
-                continue;
-            };
-            if clock.tick < deadline_tick {
-                continue;
-            }
-        }
-
-        if npc_marker.is_some() {
-            let Some(life_record) = life_record.as_deref() else {
-                tracing::warn!(
-                    target = ?entity,
-                    "[bong][combat] retained near-death NPC without canonical LifeRecord"
-                );
-                continue;
-            };
-            let Some(death_registry) = death_registry.as_deref() else {
-                tracing::warn!(
-                    target = ?entity,
-                    "[bong][combat] retained near-death NPC without DeathRegistry"
-                );
-                continue;
-            };
-            let Ok(actor_qi_identity) =
-                ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
-            else {
-                tracing::warn!(
-                    target = ?entity,
-                    "[bong][combat] retained near-death NPC after identity mismatch"
-                );
-                continue;
-            };
-            if lifecycle.character_id != life_record.character_id
-                || death_registry.char_id != life_record.character_id
-            {
-                tracing::warn!(
-                    target = ?entity,
-                    "[bong][combat] retained near-death NPC after identity mismatch"
-                );
-                continue;
-            }
-            let cause = eventual_cause(Some(life_record));
-            let death_zone =
-                death_zone_from_context(cause.as_str(), position.as_deref(), zones.as_deref());
-            commands
-                .entity(entity)
-                .insert(crate::npc::lifecycle::PendingNpcTermination {
-                    cause,
-                    at_tick: clock.tick,
-                    death_zone,
-                    lifespan_event: None,
-                    death_insight: None,
-                    reason: crate::npc::lifecycle::NpcDeathReason::Combat,
-                    attacker: None,
-                    attacker_player_id: None,
-                    authorize_loot: true,
-                    actor_qi_identity,
-                    reproduction: None,
-                });
-            hide_death_screen(&mut clients, entity);
-            continue;
-        }
-
-        let Some(decision) = determine_revival_decision(
-            &lifecycle,
-            death_registry.as_deref(),
-            eventual_cause(life_record.as_deref()).as_str(),
-            lifespan.as_deref(),
-            player_state.as_deref(),
-            position.as_deref(),
-            zones.as_deref(),
-            clock.tick,
-        ) else {
-            if terminate_lifecycle(
-                entity,
-                &mut lifecycle,
-                life_record,
-                &persistence,
-                clock.tick,
-                &mut terminated,
-                position.as_deref(),
-                npc_marker.is_some(),
-                npc_visual_profile,
-                &mut vfx_events,
-                "natural_end",
-            ) {
-                hide_death_screen(&mut clients, entity);
-            }
-            continue;
-        };
-
-        let decision_deadline_tick = clock.tick.saturating_add(REVIVAL_CONFIRM_WINDOW_TICKS);
-        lifecycle.await_revival_decision(decision, decision_deadline_tick);
-        let cause = eventual_cause(life_record.as_deref());
-        let death_zone =
-            death_zone_from_context(cause.as_str(), position.as_deref(), zones.as_deref());
-        let final_words = vec![default_final_words(cause.as_str(), death_zone)];
-        let cinematic = crate::death_lifecycle::cinematic::build_death_cinematic(
-            &lifecycle,
-            death_registry.as_deref(),
-            Some(decision),
-            death_zone,
-            cause.as_str(),
-            final_words.clone(),
-            clock.tick,
-        );
-        commands.entity(entity).insert(cinematic.clone());
-        let cinematic_payload = cinematic.snapshot(clock.tick);
-        death_cinematics.send(DeathCinematicPublished {
-            payload: cinematic_payload.clone(),
-        });
-        emit_death_screen(
-            &mut clients,
-            entity,
-            cause.as_str(),
-            decision,
-            DeathScreenContext {
-                lifecycle: &lifecycle,
-                death_registry: death_registry.as_deref(),
-                lifespan: lifespan.as_deref(),
-                position: position.as_deref(),
-                zones: zones.as_deref(),
-                final_words,
-                cinematic: Some(cinematic_payload),
-            },
-            clock.tick,
-            decision_deadline_tick,
-        );
-        hide_terminate_screen(&mut clients, entity);
-
-        let _ = (
-            cultivation,
-            meridians,
-            contam,
-            death_registry,
-            stamina,
-            combat_state,
-            lifespan,
-            wounds,
-        );
     }
 }
 
-fn should_terminate_npc_without_near_death_wait(npc_marker: Option<&NpcMarker>) -> bool {
-    // All NPCs skip the NearDeath wait window and go straight to Terminated.
-    // NearDeath is only meaningful for players who need a revival decision window.
-    npc_marker.is_some()
+#[allow(clippy::too_many_arguments)]
+fn publish_revival_decision(
+    commands: &mut Commands,
+    clients: &mut Query<&mut Client>,
+    death_cinematics: Option<&mut Events<DeathCinematicPublished>>,
+    entity: Entity,
+    cause: &str,
+    decision: RevivalDecision,
+    mut context: DeathScreenContext<'_>,
+    now_tick: u64,
+) {
+    let death_zone = death_zone_from_context(cause, context.position, context.zones);
+    context.final_words = vec![default_final_words(cause, death_zone)];
+    let cinematic = crate::death_lifecycle::cinematic::build_death_cinematic(
+        context.lifecycle,
+        context.death_registry,
+        Some(decision),
+        death_zone,
+        cause,
+        context.final_words.clone(),
+        now_tick,
+    );
+    let payload = cinematic.snapshot(now_tick);
+    commands.entity(entity).insert(cinematic);
+    if let Some(events) = death_cinematics {
+        events.send(DeathCinematicPublished {
+            payload: payload.clone(),
+        });
+    }
+    context.cinematic = Some(payload);
+    let deadline = context
+        .lifecycle
+        .revival_decision_deadline_tick
+        .expect("revival decision must have a deadline");
+    emit_death_screen(
+        clients, entity, cause, decision, context, now_tick, deadline,
+    );
+    hide_terminate_screen(clients, entity);
 }
 
 type ReconnectedAwaitingRevivalQueryItem<'a> = (
@@ -1140,21 +1022,8 @@ type ReconnectedAwaitingRevivalQueryItem<'a> = (
     Option<&'a Position>,
 );
 
-/// bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 2）：断线时正处于
-/// `AwaitingRevival`（濒死已判定出渡劫/大限决策、等待玩家确认）的角色，重连后必须重新
-/// 收到死亡屏与 `DeathCinematic`——不能让玩家在满血、无任何 UI 解释的情况下静默"裸奔"
-/// 在这个会阻断攻防（见 `resolve.rs` 对 `LifecycleState::AwaitingRevival` 的双向 gate）、
-/// 又会在 deadline 到期后被 `auto_confirm_revival_decisions` 强制结算（可能永久终结角色，
-/// 见 `RevivalDecision::Tribulation`）的状态里。
-///
-/// 只处理 `AwaitingRevival`：`NearDeath` 本身没有独立的"死亡屏"（濒死靠 `Wounds.
-/// health_current` 走低血量 HUD 呈现），重连时 `Wounds::default()` 会让血量满血复位，
-/// `near_death_tick` 下一 tick 就会判定"已稳定"并静默清回 `Alive`——这属于
-/// `Wounds`/`NearDeath` 秒退漏洞（另案跟踪，不在本次返工范围内），这里不重复处理。
-///
-/// 直接在查询数据元组里拿 `&mut Client`（而不是像 `emit_death_screen` 那样另开一个
-/// `Query<&mut Client>`），是为了避免同一系统里 `Added<Client>` 过滤器（要求对 `Client`
-/// 的读访问）与另一个 `Query<&mut Client>`（要求写访问）产生 Bevy 查询访问冲突 panic。
+/// 重连时补发尚未完成的复活裁决及演出，保留原有选择窗口。
+/// Client 访问放在同一查询内，避免 Added<Client> 与另一个可变查询冲突。
 #[allow(clippy::too_many_arguments)]
 pub fn reemit_death_screen_for_reconnected_awaiting_revival_clients(
     clock: Res<CombatClock>,
@@ -1177,7 +1046,7 @@ pub fn reemit_death_screen_for_reconnected_awaiting_revival_clients(
         }
         let Some(decision) = lifecycle.awaiting_decision else {
             // 状态机内部不一致（AwaitingRevival 却没有待决策项）——没有决策可展示，跳过而不
-            // panic，交由 near_death_tick/auto_confirm 之类的常规 tick 逻辑去纠偏。
+            // panic；缺少裁决的异常存档不在此处猜测恢复。
             continue;
         };
 
@@ -1259,7 +1128,7 @@ pub fn handle_revival_action_intents(
     mut qi: RevivalQiResources,
     mut events: RevivalEventWriters,
     mut commands: valence::prelude::Commands,
-    mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
+    mut lifecycle_q: Query<RevivalPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
     // P0 fix: coffin 清除参数（复活/新建时彻底清除 coffin 状态）
     mut coffin_registry: Option<ResMut<crate::coffin::CoffinRegistry>>,
@@ -1757,7 +1626,7 @@ fn determine_revival_decision(
 fn lifecycle_includes_current_death(lifecycle: &Lifecycle) -> bool {
     matches!(
         lifecycle.state,
-        LifecycleState::NearDeath | LifecycleState::AwaitingRevival | LifecycleState::Terminated
+        LifecycleState::AwaitingRevival | LifecycleState::Terminated
     )
 }
 
@@ -2123,10 +1992,7 @@ fn terminate_lifecycle_with_death_context(
 ) -> bool {
     let Some(mut life_record) = life_record else {
         if death_registry_cause.is_some()
-            && !matches!(
-                lifecycle.state,
-                LifecycleState::NearDeath | LifecycleState::AwaitingRevival
-            )
+            && !matches!(lifecycle.state, LifecycleState::AwaitingRevival)
         {
             lifecycle.death_count = lifecycle.death_count.saturating_add(1);
         }
@@ -2140,10 +2006,7 @@ fn terminate_lifecycle_with_death_context(
     });
     let mut staged_lifecycle = lifecycle.clone();
     let should_record_direct_death = death_registry_cause.is_some()
-        && !matches!(
-            lifecycle.state,
-            LifecycleState::NearDeath | LifecycleState::AwaitingRevival
-        );
+        && !matches!(lifecycle.state, LifecycleState::AwaitingRevival);
     if should_record_direct_death {
         staged_lifecycle.death_count = staged_lifecycle.death_count.saturating_add(1);
     }
@@ -2239,7 +2102,6 @@ fn reset_for_new_character(
     lifecycle.last_revive_tick = Some(now_tick);
     // 新角色与前角色无机制关联；灵龛归属同样不继承。
     lifecycle.spawn_anchor = None;
-    lifecycle.near_death_deadline_tick = None;
     lifecycle.awaiting_decision = None;
     lifecycle.revival_decision_deadline_tick = None;
     lifecycle.weakened_until_tick = None;
@@ -2422,7 +2284,7 @@ fn roll_rebirth(now_tick: u64, entity: Entity, chance: f64) -> bool {
 
 fn eventual_cause(life_record: Option<&LifeRecord>) -> String {
     match life_record.and_then(|record| record.biography.last()) {
-        Some(BiographyEntry::NearDeath { cause, .. }) => cause.clone(),
+        Some(BiographyEntry::Death { cause, .. }) => cause.clone(),
         _ => "unknown".to_string(),
     }
 }
@@ -2615,25 +2477,15 @@ fn death_penalty_years(realm: Realm) -> i32 {
     }
 }
 
-fn enter_near_death(
-    lifecycle: &mut Lifecycle,
-    mut wounds: Option<valence::prelude::Mut<'_, Wounds>>,
+fn clear_death_combat_state(
+    wounds: Option<valence::prelude::Mut<'_, Wounds>>,
     status_effects: Option<valence::prelude::Mut<'_, StatusEffects>>,
-    now_tick: u64,
 ) {
-    if lifecycle.state == LifecycleState::Terminated {
-        return;
+    if let Some(mut wounds) = wounds {
+        wounds.health_current = 0.0;
     }
-
-    lifecycle.enter_near_death(now_tick);
-    if let Some(wounds) = wounds.as_mut() {
-        let floor = wounds.health_max.max(1.0) * NEAR_DEATH_HEALTH_FRACTION;
-        wounds.health_current = wounds.health_current.min(floor);
-    }
-    if let Some(mut status_effects) = status_effects {
-        if !status_effects.active.is_empty() {
-            status_effects.active.clear();
-        }
+    if let Some(mut effects) = status_effects {
+        effects.active.clear();
     }
 }
 
@@ -3105,19 +2957,6 @@ mod tests {
         });
         app.add_systems(Update, health_regen_tick);
 
-        let near_death = spawn_actor(
-            &mut app,
-            Wounds {
-                health_current: 1.0,
-                health_max: 30.0,
-                entries: Vec::new(),
-            },
-            Stamina::default(),
-            Lifecycle {
-                state: LifecycleState::NearDeath,
-                ..Lifecycle::default()
-            },
-        );
         let awaiting_revival = spawn_actor(
             &mut app,
             Wounds {
@@ -3147,14 +2986,6 @@ mod tests {
 
         app.update();
 
-        assert_eq!(
-            app.world()
-                .entity(near_death)
-                .get::<Wounds>()
-                .unwrap()
-                .health_current,
-            1.0
-        );
         assert_eq!(
             app.world()
                 .entity(awaiting_revival)
@@ -3433,7 +3264,7 @@ mod tests {
     }
 
     #[test]
-    fn death_arbiter_timeout_enters_awaiting_revival_when_fortune_remains() {
+    fn death_arbiter_immediately_publishes_fortune_decision() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("revive-existing");
         app.insert_resource(settings);
@@ -3454,8 +3285,7 @@ mod tests {
             Update,
             (
                 death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-                handle_revival_action_intents.after(near_death_tick),
+                handle_revival_action_intents.after(death_arbiter_tick),
             ),
         );
 
@@ -3485,7 +3315,7 @@ mod tests {
 
         {
             let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-            assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+            assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
             assert_eq!(lifecycle.death_count, 1);
             let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
             let mut insight_reader = insight_events.get_reader();
@@ -3496,8 +3326,6 @@ mod tests {
             assert_eq!(insights[0].payload.category, DeathInsightCategoryV1::Combat);
         }
 
-        app.world_mut().resource_mut::<CombatClock>().tick = 701;
-        app.update();
         flush_client_packets(&mut app);
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
@@ -3517,6 +3345,10 @@ mod tests {
                 can_reincarnate: true,
                 can_terminate: false,
                 stage: Some(DeathScreenStageV1::Fortune),
+                cinematic: Some(DeathCinematicS2cV1 {
+                    phase: crate::schema::death_cinematic::DeathCinematicPhaseV1::Roll,
+                    ..
+                }),
                 ..
             }
         )));
@@ -3530,7 +3362,10 @@ mod tests {
             fortune_remaining: 1,
             ..Default::default()
         };
-        lifecycle.enter_near_death(100);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            100,
+        );
 
         let decision = determine_revival_decision(
             &lifecycle,
@@ -3550,7 +3385,7 @@ mod tests {
     }
 
     #[test]
-    fn cultivation_death_without_fortune_enters_awaiting_revival_after_deadline() {
+    fn cultivation_death_immediately_enters_tribulation_decision() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("terminate-existing");
         app.insert_resource(settings);
@@ -3563,13 +3398,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_event::<QiTransfer>();
-        app.add_systems(
-            Update,
-            (
-                death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-            ),
-        );
+        app.add_systems(Update, (death_arbiter_tick,));
 
         let entity = spawn_actor(
             &mut app,
@@ -3588,9 +3417,6 @@ mod tests {
         });
         app.update();
 
-        app.world_mut().resource_mut::<CombatClock>().tick = 641;
-        app.update();
-
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
         let terminated_events = app.world().resource::<Events<PlayerTerminated>>();
         assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
@@ -3606,7 +3432,6 @@ mod tests {
     #[test]
     fn death_arbiter_skips_death_event_reentry_while_awaiting_revival() {
         // bughunt 实证：污染溢出持续触发 DeathEvent，AwaitingRevival（死亡屏，60s 确认窗口）
-        // 期间如果被新死亡事件拍回 NearDeath，窗口实际只活 1 tick，玩家永远点不中重生。
         // pin 住：死亡屏等待决策期间的死亡事件必须被 continue 跳过，不触碰任何状态。
         let mut app = App::new();
         let (settings, root) = persistence_settings("awaiting-revival-skip-death-event");
@@ -3621,7 +3446,7 @@ mod tests {
         app.add_systems(Update, death_arbiter_tick);
 
         let mut life_record = LifeRecord::default();
-        life_record.push(BiographyEntry::NearDeath {
+        life_record.push(BiographyEntry::Death {
             cause: "prior".to_string(),
             tick: 100,
         });
@@ -3641,7 +3466,6 @@ mod tests {
                 Lifecycle {
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
-                    near_death_deadline_tick: None,
                     revival_decision_deadline_tick: Some(999),
                     death_count: 1,
                     ..Default::default()
@@ -3662,13 +3486,8 @@ mod tests {
         assert_eq!(
             lifecycle.state,
             LifecycleState::AwaitingRevival,
-            "期望仍是 AwaitingRevival 因为死亡屏等待决策期间不应接受新死亡事件重入把状态拍回 NearDeath；实际 {:?}",
+            "期望仍是 AwaitingRevival 因为死亡屏等待决策期间不应接受新死亡事件重入把状态拍回 AwaitingRevival；实际 {:?}",
             lifecycle.state
-        );
-        assert_eq!(
-            lifecycle.near_death_deadline_tick, None,
-            "期望 near_death_deadline_tick 保持 None 因为守卫应在触碰任何字段前 continue，不应被 enter_near_death 重新设置；实际 {:?}",
-            lifecycle.near_death_deadline_tick
         );
         assert_eq!(
             lifecycle.revival_decision_deadline_tick,
@@ -3686,7 +3505,7 @@ mod tests {
         assert_eq!(
             life_record.biography.len(),
             biography_len_before,
-            "期望 biography 不新增 NearDeath 条目因为守卫应在 push 之前 continue；实际长度 {}",
+            "期望 biography 不新增 Death 条目因为守卫应在 push 之前 continue；实际长度 {}",
             life_record.biography.len()
         );
 
@@ -3772,7 +3591,7 @@ mod tests {
         app.add_systems(Update, death_arbiter_tick);
 
         let mut life_record = LifeRecord::default();
-        life_record.push(BiographyEntry::NearDeath {
+        life_record.push(BiographyEntry::Death {
             cause: "prior".to_string(),
             tick: 100,
         });
@@ -3792,7 +3611,6 @@ mod tests {
                 Lifecycle {
                     state: LifecycleState::AwaitingRevival,
                     awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.5 }),
-                    near_death_deadline_tick: None,
                     revival_decision_deadline_tick: Some(1500),
                     death_count: 2,
                     ..Default::default()
@@ -3815,11 +3633,6 @@ mod tests {
             lifecycle.state
         );
         assert_eq!(
-            lifecycle.near_death_deadline_tick, None,
-            "期望 near_death_deadline_tick 保持 None，守卫应在 enter_near_death 之前 continue；实际 {:?}",
-            lifecycle.near_death_deadline_tick
-        );
-        assert_eq!(
             lifecycle.revival_decision_deadline_tick,
             Some(1500),
             "期望死亡屏确认窗口 deadline 不被新 cultivation 死亡事件重置；实际 {:?}",
@@ -3835,7 +3648,7 @@ mod tests {
         assert_eq!(
             life_record.biography.len(),
             biography_len_before,
-            "期望 biography 不新增 NearDeath 条目因为守卫应在 push 之前 continue；实际长度 {}",
+            "期望 biography 不新增 Death 条目因为守卫应在 push 之前 continue；实际长度 {}",
             life_record.biography.len()
         );
 
@@ -3844,11 +3657,7 @@ mod tests {
 
     #[test]
     fn death_loop_full_cycle_reentrant_death_event_does_not_block_reincarnate() {
-        // 回归场景：进入 NearDeath → 快进过 deadline 让 near_death_tick 判定出 AwaitingRevival →
-        // 再灌一条同 cause 死亡事件（模拟污染溢出持续触发）→ 状态不应被拍回 NearDeath →
-        // 玩家送 Reincarnate 决策 → 必须能正常复活（state == Alive）。
-        // 这是 Bug 1 的整链路回归：修复前，重入死亡事件会把状态踢回 NearDeath，
-        // Reincarnate intent 因 `lifecycle.state != AwaitingRevival` 被静默丢弃，玩家永远点不中重生。
+        // 死亡后下一 tick 重复触发，仍须保留原裁决并允许复活。
         let mut app = App::new();
         let (settings, root) = persistence_settings("death-loop-full-cycle");
         app.insert_resource(settings.clone());
@@ -3869,8 +3678,7 @@ mod tests {
             Update,
             (
                 death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-                handle_revival_action_intents.after(near_death_tick),
+                handle_revival_action_intents.after(death_arbiter_tick),
             ),
         );
 
@@ -3896,7 +3704,7 @@ mod tests {
         ));
         seed_revival_entity_bundle(&mut app, &settings, entity, "Loopy");
 
-        // 首次死亡事件：Alive → NearDeath。
+        // 首次死亡事件：Alive → AwaitingRevival。
         app.world_mut().send_event(DeathEvent {
             target: entity,
             cause: "contamination_overflow".to_string(),
@@ -3909,21 +3717,8 @@ mod tests {
             let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
             assert_eq!(
                 lifecycle.state,
-                LifecycleState::NearDeath,
-                "期望首次死亡事件后进入 NearDeath；实际 {:?}",
-                lifecycle.state
-            );
-        }
-
-        // 快进过 NEAR_DEATH_WINDOW（600 ticks）→ near_death_tick 应判定出 AwaitingRevival。
-        app.world_mut().resource_mut::<CombatClock>().tick = 701;
-        app.update();
-        {
-            let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-            assert_eq!(
-                lifecycle.state,
                 LifecycleState::AwaitingRevival,
-                "期望濒死窗口期满后进入 AwaitingRevival（死亡屏）；实际 {:?}",
+                "期望首次死亡事件后进入 AwaitingRevival；实际 {:?}",
                 lifecycle.state
             );
         }
@@ -3934,7 +3729,7 @@ mod tests {
             cause: "contamination_overflow".to_string(),
             attacker: None,
             attacker_player_id: None,
-            at_tick: 702,
+            at_tick: 101,
         });
         app.update();
         {
@@ -3942,7 +3737,7 @@ mod tests {
             assert_eq!(
                 lifecycle.state,
                 LifecycleState::AwaitingRevival,
-                "期望重入死亡事件后状态仍是 AwaitingRevival（未被拍回 NearDeath）——这是 Bug 1 的核心断言；实际 {:?}",
+                "期望重入死亡事件后状态仍是 AwaitingRevival——这是 Bug 1 的核心断言；实际 {:?}",
                 lifecycle.state
             );
         }
@@ -3952,7 +3747,7 @@ mod tests {
         app.world_mut().send_event(RevivalActionIntent {
             entity,
             action: RevivalActionKind::Reincarnate,
-            issued_at_tick: 703,
+            issued_at_tick: 102,
         });
         app.update();
 
@@ -3984,14 +3779,16 @@ mod tests {
         crate::npc::lifecycle::register(&mut app);
         app.add_event::<PlayerRevived>();
         app.add_event::<DeathCinematicPublished>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
         app.add_systems(
             Update,
-            near_death_tick.in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage),
+            death_arbiter_tick.in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage),
         );
         (app, root)
     }
 
-    fn spawn_near_death_npc(
+    fn spawn_dying_npc(
         app: &mut App,
         archetype: crate::npc::lifecycle::NpcArchetype,
         realm: Realm,
@@ -4007,11 +3804,16 @@ mod tests {
         let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(entity, archetype, realm);
         bundle.wounds.health_current = 0.0;
         bundle.wounds.health_max = 100.0;
-        bundle.lifecycle.state = LifecycleState::NearDeath;
-        bundle.lifecycle.near_death_deadline_tick = Some(200 + 600);
         bundle.cultivation.qi_current = bundle.cultivation.qi_max * 0.5;
         let initial_qi = bundle.cultivation.qi_current;
         app.world_mut().entity_mut(entity).insert(bundle);
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "combat".to_string(),
+            at_tick: 200,
+            attacker: None,
+            attacker_player_id: None,
+        });
         (entity, initial_qi)
     }
 
@@ -4067,10 +3869,10 @@ mod tests {
     }
 
     #[test]
-    fn near_death_npc_termination_keeps_high_realm_qi_burst_profile() {
+    fn npc_death_termination_keeps_high_realm_qi_burst_profile() {
         let (mut app, root) = npc_terminal_test_app("npc-near-death-vfx");
         let entity = {
-            let (entity, initial_qi) = spawn_near_death_npc(
+            let (entity, initial_qi) = spawn_dying_npc(
                 &mut app,
                 crate::npc::lifecycle::NpcArchetype::Rogue,
                 Realm::Spirit,
@@ -4104,9 +3906,9 @@ mod tests {
     }
 
     #[test]
-    fn near_death_rat_terminates_without_waiting_for_player_revival_window() {
+    fn dying_rat_terminates_without_waiting_for_player_revival_window() {
         let (mut app, root) = npc_terminal_test_app("rat-near-death-immediate");
-        let (entity, initial_qi) = spawn_near_death_npc(
+        let (entity, initial_qi) = spawn_dying_npc(
             &mut app,
             crate::npc::lifecycle::NpcArchetype::Beast,
             Realm::Awaken,
@@ -4122,9 +3924,9 @@ mod tests {
     }
 
     #[test]
-    fn near_death_non_rat_npc_terminates_immediately() {
+    fn dying_non_rat_npc_terminates_immediately() {
         let (mut app, root) = npc_terminal_test_app("spider-near-death-immediate");
-        let (entity, initial_qi) = spawn_near_death_npc(
+        let (entity, initial_qi) = spawn_dying_npc(
             &mut app,
             crate::npc::lifecycle::NpcArchetype::Beast,
             Realm::Awaken,
@@ -4140,54 +3942,7 @@ mod tests {
     }
 
     #[test]
-    fn near_death_rat_without_npc_marker_waits_for_deadline() {
-        let mut app = App::new();
-        let (settings, root) = persistence_settings("rat-without-npc-marker-waits");
-        app.insert_resource(settings);
-        app.insert_resource(CombatClock { tick: 200 });
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<DeathCinematicPublished>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(Update, near_death_tick);
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Lifecycle {
-                    character_id: "rat-without-npc-marker".to_string(),
-                    state: LifecycleState::NearDeath,
-                    near_death_deadline_tick: Some(
-                        200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
-                    ),
-                    ..Default::default()
-                },
-                Wounds {
-                    health_current: 0.0,
-                    health_max: 100.0,
-                    entries: Vec::new(),
-                },
-                Position::new([0.0, 66.0, 0.0]),
-                crate::fauna::components::FaunaTag::new(crate::fauna::components::BeastKind::Rat),
-            ))
-            .id();
-
-        app.update();
-
-        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
-        assert_eq!(
-            app.world().resource::<Events<PlayerTerminated>>().len(),
-            0,
-            "rat tag without NpcMarker should not use NPC immediate termination path"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn repeated_death_events_do_not_extend_near_death_deadline() {
+    fn repeated_death_events_do_not_extend_revival_deadline() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 10 });
         let (settings, root) = persistence_settings("repeated-death");
@@ -4222,7 +3977,7 @@ mod tests {
             .entity(entity)
             .get::<Lifecycle>()
             .unwrap()
-            .near_death_deadline_tick;
+            .revival_decision_deadline_tick;
 
         app.world_mut().resource_mut::<CombatClock>().tick = 200;
         app.world_mut().send_event(DeathEvent {
@@ -4235,8 +3990,8 @@ mod tests {
         app.update();
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
-        assert_eq!(lifecycle.near_death_deadline_tick, first_deadline);
+        assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
+        assert_eq!(lifecycle.revival_decision_deadline_tick, first_deadline);
         assert_eq!(lifecycle.death_count, 1);
         let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
         let mut insight_reader = insight_events.get_reader();
@@ -4260,7 +4015,7 @@ mod tests {
     }
 
     #[test]
-    fn death_arbiter_clears_status_effects_on_near_death() {
+    fn death_arbiter_clears_status_effects_on_death() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 10 });
         let (settings, root) = persistence_settings("death-clears-status-effects");
@@ -4298,7 +4053,7 @@ mod tests {
         app.update();
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
         let statuses = app.world().entity(entity).get::<StatusEffects>().unwrap();
         assert!(statuses.active.is_empty());
 
@@ -4347,7 +4102,7 @@ mod tests {
         app.update();
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
         assert_eq!(lifecycle.death_count, 4);
 
         let insight_events = app.world().resource::<Events<DeathInsightRequested>>();
@@ -4682,7 +4437,7 @@ mod tests {
         assert_eq!(payload.rebirth_chance, Some(0.80));
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
         assert_eq!(lifecycle.death_count, 1);
 
         let _ = fs::remove_dir_all(root);
@@ -4814,9 +4569,8 @@ mod tests {
             Update,
             (
                 death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-                handle_revival_action_intents.after(near_death_tick),
-                crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
+                handle_revival_action_intents.after(death_arbiter_tick),
+                crate::cultivation::death_hooks::on_player_terminated.after(death_arbiter_tick),
             ),
         );
 
@@ -4858,13 +4612,13 @@ mod tests {
         app.update();
 
         let connection = Connection::open(settings.db_path()).expect("db should open");
-        let near_death_count: i64 = connection
+        let death_count: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1 AND event_type = 'near_death'",
+                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1 AND event_type = 'death'",
                 params!["offline:Ancestor"],
                 |row| row.get(0),
             )
-            .expect("near death count query should succeed");
+            .expect("death count query should succeed");
         let lifespan_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM lifespan_events WHERE char_id = ?1 AND event_type = 'death_penalty'",
@@ -4880,12 +4634,12 @@ mod tests {
             )
             .expect("death registry should exist");
 
-        assert_eq!(near_death_count, 1);
+        assert_eq!(death_count, 1);
         assert_eq!(lifespan_count, 1);
         assert_eq!(death_registry, (1, 90, "bleed_out".to_string()));
         assert_eq!(
             app.world().entity(entity).get::<Lifecycle>().unwrap().state,
-            LifecycleState::NearDeath
+            LifecycleState::AwaitingRevival
         );
 
         app.world_mut().resource_mut::<CombatClock>().tick = 691;
@@ -4918,7 +4672,7 @@ mod tests {
 
         assert_eq!(
             life_event_types,
-            vec!["near_death".to_string(), "rebirth".to_string()]
+            vec!["death".to_string(), "rebirth".to_string()]
         );
         assert_eq!(lifespan_payload.delta_years, -10);
         assert_eq!(lifespan_payload.kind, "death_penalty");
@@ -5120,8 +4874,7 @@ mod tests {
             Update,
             (
                 death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-                handle_revival_action_intents.after(near_death_tick),
+                handle_revival_action_intents.after(death_arbiter_tick),
             ),
         );
 
@@ -5172,7 +4925,7 @@ mod tests {
     // 断线时正处于 AwaitingRevival 的角色重连后必须重新收到死亡屏 + DeathCinematic，不能
     // 让玩家满血、无 UI 地"裸奔"在这个阻断攻防、又会被 auto_confirm_revival_decisions
     // 强制结算（可能永久终结角色）的状态里。下面的用例覆盖：两个 RevivalDecision 变体各一条
-    // 专属 case（happy path）、NearDeath/Alive 两个不该触发的状态（负分支）、
+    // 专属 case（happy path）、Alive 不该触发的状态（负分支）、
     // awaiting_decision=None 的内部不一致状态（错误分支，不panic）、以及
     // Without<DeathCinematic> 过滤器的防重复触发保护。
 
@@ -5295,48 +5048,6 @@ mod tests {
                 .get::<crate::death_lifecycle::cinematic::DeathCinematic>()
                 .is_some(),
             "Fortune 分支重连同样必须重新插入 DeathCinematic"
-        );
-    }
-
-    #[test]
-    fn reconnect_while_near_death_does_not_reemit_death_screen() {
-        // NearDeath 没有独立的死亡屏（濒死靠 Wounds.health_current 走低血量 HUD 呈现）；
-        // 重连时 Wounds::default() 满血复位属于另案跟踪的秒退漏洞（out of scope），这里只
-        // 锁住"NearDeath 不会触发本系统发送 DeathScreen/DeathCinematic"这个边界。
-        let mut app = App::new();
-        app.insert_resource(CombatClock { tick: 500 });
-        app.add_event::<DeathCinematicPublished>();
-        app.add_systems(
-            Update,
-            reemit_death_screen_for_reconnected_awaiting_revival_clients,
-        );
-
-        let (entity, mut helper) = spawn_reconnected_client_actor(
-            &mut app,
-            "ReconnectNearDeath",
-            Lifecycle {
-                state: LifecycleState::NearDeath,
-                near_death_deadline_tick: Some(560),
-                ..Default::default()
-            },
-        );
-
-        app.update();
-        flush_client_packets(&mut app);
-
-        let payloads = collect_server_data_payloads(&mut helper);
-        assert!(
-            payloads.is_empty(),
-            "NearDeath 状态不应该触发死亡屏重发（本系统只处理 AwaitingRevival）；\
-             实际收到 {} 个 payload：{payloads:?}",
-            payloads.len()
-        );
-        assert!(
-            app.world()
-                .entity(entity)
-                .get::<crate::death_lifecycle::cinematic::DeathCinematic>()
-                .is_none(),
-            "NearDeath 状态不应该被插入 DeathCinematic"
         );
     }
 
@@ -5843,13 +5554,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_event::<QiTransfer>();
-        app.add_systems(
-            Update,
-            (
-                death_arbiter_tick,
-                near_death_tick.after(death_arbiter_tick),
-            ),
-        );
+        app.add_systems(Update, (death_arbiter_tick,));
 
         let player_state = PlayerState {
             karma: 0.9,

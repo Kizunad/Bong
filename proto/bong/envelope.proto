@@ -2497,8 +2497,7 @@ enum DeathScreenZoneKind {
 // 与 Rust DeathCinematicPhaseV1 精确对应。
 enum DeathCinematicPhase {
   DEATH_CINEMATIC_PHASE_UNSPECIFIED     = 0;
-  DEATH_CINEMATIC_PHASE_PREDEATH        = 1;
-  DEATH_CINEMATIC_PHASE_DEATH_MOMENT    = 2;
+  reserved 1, 2;
   DEATH_CINEMATIC_PHASE_ROLL            = 3;
   DEATH_CINEMATIC_PHASE_INSIGHT_OVERLAY = 4;
   DEATH_CINEMATIC_PHASE_DARKNESS        = 5;
@@ -2546,7 +2545,7 @@ message DeathCinematicData {
   DeathCinematicZoneKind   zone_kind             = 12;
   bool                     tsy_death             = 13;
   uint64                   rebirth_weakened_ticks = 14;
-  bool                     skip_predeath         = 15;
+  reserved 15;
 }
 
 message DeathScreen {

@@ -7298,7 +7298,6 @@ mod tests {
                 zone_kind: DeathCinematicZoneKind::Death as i32,
                 tsy_death: false,
                 rebirth_weakened_ticks: 600,
-                skip_predeath: false,
             }),
         };
         let envelope = ServerDataEnvelope {
@@ -7413,8 +7412,6 @@ mod tests {
     #[test]
     fn death_cinematic_phase_enum_pin() {
         assert_eq!(DeathCinematicPhase::Unspecified as i32, 0);
-        assert_eq!(DeathCinematicPhase::Predeath as i32, 1);
-        assert_eq!(DeathCinematicPhase::DeathMoment as i32, 2);
         assert_eq!(DeathCinematicPhase::Roll as i32, 3);
         assert_eq!(DeathCinematicPhase::InsightOverlay as i32, 4);
         assert_eq!(DeathCinematicPhase::Darkness as i32, 5);
@@ -7458,8 +7455,6 @@ mod tests {
     #[test]
     fn death_cinematic_all_phases_roundtrip() {
         let phases = [
-            DeathCinematicPhase::Predeath,
-            DeathCinematicPhase::DeathMoment,
             DeathCinematicPhase::Roll,
             DeathCinematicPhase::InsightOverlay,
             DeathCinematicPhase::Darkness,
@@ -7486,7 +7481,6 @@ mod tests {
                 zone_kind: DeathCinematicZoneKind::Ordinary as i32,
                 tsy_death: false,
                 rebirth_weakened_ticks: 0,
-                skip_predeath: false,
             };
             let ds = DeathScreen {
                 visible: true,
@@ -7553,7 +7547,6 @@ mod tests {
                 zone_kind: DeathCinematicZoneKind::Ordinary as i32,
                 tsy_death: false,
                 rebirth_weakened_ticks: 0,
-                skip_predeath: false,
             };
             let ds = DeathScreen {
                 visible: true,

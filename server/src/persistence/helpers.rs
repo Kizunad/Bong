@@ -119,7 +119,6 @@ pub(super) fn state_label(state: &NpcStateKind) -> &'static str {
 pub(super) fn lifecycle_state_label(state: &LifecycleState) -> &'static str {
     match state {
         LifecycleState::Alive => "alive",
-        LifecycleState::NearDeath => "near_death",
         LifecycleState::AwaitingRevival => "awaiting_revival",
         LifecycleState::Terminated => "terminated",
     }

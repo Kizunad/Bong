@@ -5,8 +5,7 @@ use valence::prelude::{Client, Entity, Local, Query, Username};
 use crate::combat::components::Casting;
 use crate::combat::yidao::{
     entity_wire_id, healer_npc_decision, HealerNpcAction, HealerProfile, HealingMastery,
-    KarmaCounter, CONTAM_PURGE_SKILL_ID, EMERGENCY_RESUSCITATE_SKILL_ID, LIFE_EXTENSION_SKILL_ID,
-    MASS_MERIDIAN_REPAIR_SKILL_ID, MERIDIAN_REPAIR_SKILL_ID,
+    KarmaCounter, CONTAM_PURGE_SKILL_ID, MASS_MERIDIAN_REPAIR_SKILL_ID, MERIDIAN_REPAIR_SKILL_ID,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -200,7 +199,7 @@ fn build_healer_npc_ai_state(
 ) -> HealerNpcAiStateV1 {
     let action = active_skill_from_casting(casting)
         .map(healer_action_from_skill)
-        .unwrap_or_else(|| healer_npc_decision(1.0, 0, 0.0, false, false, false).action);
+        .unwrap_or_else(|| healer_npc_decision(0, 0.0, false).action);
     HealerNpcAiStateV1 {
         healer_id: entity_wire_id(healer),
         active_action: healer_action_label(action).to_string(),
@@ -214,8 +213,6 @@ fn peace_mastery_score(mastery: &HealingMastery) -> f32 {
     mastery
         .meridian_repair
         .max(mastery.contam_purge)
-        .max(mastery.emergency_resuscitate)
-        .max(mastery.life_extension)
         .max(mastery.mass_meridian_repair)
         .clamp(0.0, 100.0) as f32
 }
@@ -224,8 +221,6 @@ fn active_skill_from_casting(casting: Option<&Casting>) -> Option<YidaoSkillIdV1
     match casting.and_then(|casting| casting.skill_id.as_deref()) {
         Some(MERIDIAN_REPAIR_SKILL_ID) => Some(YidaoSkillIdV1::MeridianRepair),
         Some(CONTAM_PURGE_SKILL_ID) => Some(YidaoSkillIdV1::ContamPurge),
-        Some(EMERGENCY_RESUSCITATE_SKILL_ID) => Some(YidaoSkillIdV1::EmergencyResuscitate),
-        Some(LIFE_EXTENSION_SKILL_ID) => Some(YidaoSkillIdV1::LifeExtension),
         Some(MASS_MERIDIAN_REPAIR_SKILL_ID) => Some(YidaoSkillIdV1::MassMeridianRepair),
         _ => None,
     }
@@ -237,15 +232,13 @@ fn healer_action_from_skill(skill: YidaoSkillIdV1) -> HealerNpcAction {
             HealerNpcAction::MeridianRepair
         }
         YidaoSkillIdV1::ContamPurge => HealerNpcAction::ContamPurge,
-        YidaoSkillIdV1::EmergencyResuscitate => HealerNpcAction::EmergencyResuscitate,
-        YidaoSkillIdV1::LifeExtension => HealerNpcAction::LifeExtension,
+        YidaoSkillIdV1::EmergencyResuscitate => HealerNpcAction::Idle,
+        YidaoSkillIdV1::LifeExtension => HealerNpcAction::Idle,
     }
 }
 
 fn healer_action_label(action: HealerNpcAction) -> &'static str {
     match action {
-        HealerNpcAction::EmergencyResuscitate => "emergency_resuscitate",
-        HealerNpcAction::LifeExtension => "life_extension",
         HealerNpcAction::ContamPurge => "contam_purge",
         HealerNpcAction::MeridianRepair => "meridian_repair",
         HealerNpcAction::Retreat => "retreat",
@@ -294,8 +287,6 @@ mod tests {
         let mastery = HealingMastery {
             meridian_repair: 48.0,
             contam_purge: 8.0,
-            emergency_resuscitate: 4.0,
-            life_extension: 1.0,
             mass_meridian_repair: 0.0,
         };
         let karma = KarmaCounter {
@@ -350,14 +341,14 @@ mod tests {
             bound_instance_id: None,
             start_position: DVec3::ZERO,
             complete_cooldown_ticks: 40,
-            skill_id: Some(LIFE_EXTENSION_SKILL_ID.to_string()),
+            skill_id: Some(MERIDIAN_REPAIR_SKILL_ID.to_string()),
             skill_config: None,
         };
 
         let state = build_healer_npc_ai_state(healer, &profile, Some(&casting));
 
         assert_eq!(state.reputation, 5);
-        assert_eq!(state.active_action, "life_extension");
+        assert_eq!(state.active_action, "meridian_repair");
         assert!(!state.retreating);
     }
 

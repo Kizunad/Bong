@@ -112,7 +112,6 @@ export type TerminationCategoryV1 = Static<typeof TerminationCategoryV1>;
 
 export const LifecycleStateV1 = Type.Union([
   Type.Literal("Alive"),
-  Type.Literal("NearDeath"),
   Type.Literal("AwaitingRevival"),
   Type.Literal("Terminated"),
 ]);
@@ -132,7 +131,6 @@ export const LifecycleV1 = Type.Object(
     last_death_tick: Type.Optional(Type.Integer({ minimum: 0 })),
     last_revive_tick: Type.Optional(Type.Integer({ minimum: 0 })),
     spawn_anchor: Type.Optional(Type.Tuple([Type.Number(), Type.Number(), Type.Number()])),
-    near_death_deadline_tick: Type.Optional(Type.Integer({ minimum: 0 })),
     awaiting_decision: Type.Optional(RevivalDecisionV1),
     revival_decision_deadline_tick: Type.Optional(Type.Integer({ minimum: 0 })),
     weakened_until_tick: Type.Optional(Type.Integer({ minimum: 0 })),

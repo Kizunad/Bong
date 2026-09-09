@@ -36,8 +36,8 @@ pub fn register(app: &mut App) {
 
 /// `/kill self` 用途是「触发玩家死亡/复活事件链路」（见 CLAUDE.md dev test commands 表），
 /// 因此必须走标准死亡管线：打空血量 + 发标准 DeathEvent，让 death_arbiter_tick 自然接手
-/// 进 NearDeath → AwaitingRevival（死亡屏）。不再旁路直发 PlayerTerminated / 手动移除
-/// cultivation 组件——那样会跳过整条 NearDeath/死亡屏链路，导致这条 dev 命令测不了真实链路
+/// 进 AwaitingRevival（死亡屏）。不再旁路直发 PlayerTerminated / 手动移除
+/// cultivation 组件——那样会跳过整条 AwaitingRevival/死亡屏链路，导致这条 dev 命令测不了真实链路
 /// （修复前的 bug：见 plan/bughunt 记录）。
 pub fn handle_kill(
     mut events: EventReader<CommandResultEvent<KillCmd>>,
@@ -122,7 +122,7 @@ mod tests {
         (app, root)
     }
 
-    /// 接上 death_arbiter_tick，跑完整链路：dev kill → DeathEvent → NearDeath。
+    /// 接上 death_arbiter_tick，跑完整链路：dev kill → DeathEvent → AwaitingRevival。
     fn setup_full_pipeline_app(test_name: &str) -> (App, PathBuf) {
         let (settings, root) = persistence_settings(test_name);
         let mut app = App::new();
@@ -170,7 +170,7 @@ mod tests {
         let wounds = app.world().get::<Wounds>(player).unwrap();
         assert_eq!(
             wounds.health_current, 0.0,
-            "期望 health_current 被打到 0 因为 dev kill 要触发标准濒死路径的血量判定；实际 {}",
+            "期望 health_current 被打到 0 因为 dev kill 要触发标准死亡路径的血量判定；实际 {}",
             wounds.health_current
         );
 
@@ -208,10 +208,13 @@ mod tests {
     }
 
     #[test]
-    fn kill_self_is_noop_when_already_near_death() {
+    fn kill_self_is_noop_when_already_awaiting_revival() {
         let (mut app, root) = setup_app("noop-near-death");
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(10);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            10,
+        );
         let player = spawn_player(&mut app, lifecycle);
 
         send(&mut app, player);
@@ -220,7 +223,7 @@ mod tests {
         assert_eq!(
             app.world().resource::<Events<DeathEvent>>().len(),
             0,
-            "期望 NearDeath 状态下 kill self 不再发新的 DeathEvent（避免和 Bug 1 一样的重入问题）"
+            "期望 AwaitingRevival 状态下 kill self 不再发新的 DeathEvent（避免和 Bug 1 一样的重入问题）"
         );
         let wounds = app.world().get::<Wounds>(player).unwrap();
         assert_eq!(
@@ -279,11 +282,11 @@ mod tests {
     }
 
     #[test]
-    fn kill_self_reaches_near_death_through_standard_pipeline_keeping_cultivation() {
-        // 回归契约：dev kill 必须走标准死亡管线进 NearDeath（死亡屏前置状态），
+    fn kill_self_reaches_awaiting_revival_through_standard_pipeline_keeping_cultivation() {
+        // 回归契约：dev kill 必须走标准死亡管线进 AwaitingRevival（死亡裁决），
         // 而不是旧 bug 里直接跳到 Terminated；cultivation 组件必须还在（旧 bug 会移除它）；
-        // biography 必须留下一条 cause="dev_kill" 的 NearDeath 记录，这样这条 dev 命令才真的
-        // 测得到 NearDeath → 死亡屏 → 复活/终结的完整链路。
+        // biography 必须留下一条 cause="dev_kill" 的 Death 记录，这样这条 dev 命令才真的
+        // 测得到 AwaitingRevival → 死亡屏 → 复活/终结的完整链路。
         let (mut app, root) = setup_full_pipeline_app("reaches-near-death");
         let player = spawn_player(&mut app, Lifecycle::default());
 
@@ -293,24 +296,24 @@ mod tests {
         let lifecycle = app.world().get::<Lifecycle>(player).unwrap();
         assert_eq!(
             lifecycle.state,
-            LifecycleState::NearDeath,
-            "期望 dev kill 落在 NearDeath（死亡屏前置状态）因为 CLAUDE.md 声明 /kill self 要触发死亡/复活链路；实际 {:?}",
+            LifecycleState::AwaitingRevival,
+            "期望 dev kill 落在 AwaitingRevival（死亡裁决）因为 CLAUDE.md 声明 /kill self 要触发死亡/复活链路；实际 {:?}",
             lifecycle.state
         );
 
         assert!(
             app.world().get::<Cultivation>(player).is_some(),
             "期望 cultivation 组件仍在——标准死亡管线只在 AwaitingRevival 决策失败/主动终结时才会真正终结角色，\
-             不应在刚进 NearDeath 时就被移除"
+             不应在刚进 AwaitingRevival 时就被移除"
         );
 
         let life_record = app.world().get::<LifeRecord>(player).unwrap();
         assert!(
             matches!(
                 life_record.biography.last(),
-                Some(BiographyEntry::NearDeath { cause, .. }) if cause == DEV_KILL_CAUSE
+                Some(BiographyEntry::Death { cause, .. }) if cause == DEV_KILL_CAUSE
             ),
-            "期望 biography 尾条是 cause=\"dev_kill\" 的 NearDeath 记录；实际 {:?}",
+            "期望 biography 尾条是 cause=\"dev_kill\" 的 AwaitingRevival 记录；实际 {:?}",
             life_record.biography.last()
         );
 

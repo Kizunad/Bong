@@ -2,3 +2,6 @@
 # reason 用于审计，不会扩大匹配范围；其他 breaking finding 仍然 fail-closed。
 MESSAGE_NO_DELETE	bong/envelope.proto	64fe7f8c77cd20d72a07e2dab9a439f9137b9ca252ee26ed9c5eca0039eafd68	删除已退役的化虚传承 action 消息，运行时与协议均不再提供兼容入口。
 FIELD_NO_DELETE	bong/envelope.proto	828eb6a32be00e92bb1baf6fed7a24d5466f41cff8298a53d1c1aa76dd2c919b	删除 VoidAction.oneof 中已退役的传承分支，字段编号不再复用。
+ENUM_VALUE_NO_DELETE	bong/envelope.proto	4f3e8684933f68425823db4ea5bce5571ac0b44e5fa4f5cea5c5958f802bbcba	按用户要求移除濒死阶段及倒地演出，DeathCinematicPhase 编号 1 保留，不提供旧协议兼容。
+ENUM_VALUE_NO_DELETE	bong/envelope.proto	7ee6173e788d06ac30ff0543f9cd2268f457b18da72eec9c90f2847573cf4664	按用户要求移除濒死阶段及碎屏演出，DeathCinematicPhase 编号 2 保留，不提供旧协议兼容。
+FIELD_NO_DELETE	bong/envelope.proto	db1fac29d080cffaf9b5ed2d490ea4a9001ede748df0b39fb90ca73d742ebaac	死亡直接进入复活裁决，删除 skip_predeath 开关并保留字段编号 15，不提供旧协议兼容。

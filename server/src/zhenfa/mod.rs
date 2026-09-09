@@ -3581,7 +3581,7 @@ fn apply_shrine_ward_pressure(
             && !lifecycle.is_some_and(|lifecycle| {
                 matches!(
                     lifecycle.state,
-                    LifecycleState::NearDeath | LifecycleState::Terminated
+                    LifecycleState::AwaitingRevival | LifecycleState::Terminated
                 )
             })
         {
@@ -3808,7 +3808,7 @@ fn apply_trigger_snapshots(
                 && !lifecycle.is_some_and(|lifecycle| {
                     matches!(
                         lifecycle.state,
-                        LifecycleState::NearDeath | LifecycleState::Terminated
+                        LifecycleState::AwaitingRevival | LifecycleState::Terminated
                     )
                 })
             {
