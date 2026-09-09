@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
-import struct
 import json
+import re
+import struct
 from dataclasses import dataclass
 from typing import Any
 
@@ -64,9 +65,13 @@ class ProtoDecodeError(ValueError):
     pass
 
 
-# Authoritative oneof names live in proto/bong/envelope.proto. This table is the
-# Bot harness's supported shallow observation surface; deep decoders below are a
-# strict subset keyed by the same field numbers.
+# `SERVER_DATA_PAYLOAD_NAMES` is the checked-in Bot-side projection of the
+# authoritative `ServerDataEnvelope.payload` oneof.  Keep the proto spelling
+# here, including the underscores in quick_slot_config / skill_bar_config and
+# the `_floater` suffix on combat_event_floater.  The three historical names
+# used by existing scenario assertions are kept in the compatibility table
+# below; changing those observable names would make old scenarios lose their
+# event identity even though the wire tag stayed the same.
 SERVER_DATA_PAYLOAD_NAMES = {
     1: "welcome",
     2: "heartbeat",
@@ -77,66 +82,268 @@ SERVER_DATA_PAYLOAD_NAMES = {
     7: "skill_xp_gain",
     8: "inventory_snapshot",
     9: "combat_hud_state",
-    32: "wounds_snapshot",
-    104: "movement_state",
+    10: "knockback_sync",
     11: "alchemy_furnace",
     12: "alchemy_session",
+    13: "alchemy_outcome_forecast",
     14: "alchemy_outcome_resolved",
     15: "alchemy_recipe_book",
+    16: "alchemy_contamination",
     17: "forge_station",
     18: "forge_session",
     19: "forge_outcome",
     20: "forge_blueprint_book",
+    21: "craft_recipe_list",
     22: "craft_session_state",
     23: "craft_outcome",
+    24: "recipe_unlocked",
     25: "botany_harvest_progress",
+    26: "botany_plant_v2_render_profiles",
+    27: "botany_skill",
+    28: "mining_progress",
     29: "lumber_progress",
     30: "gathering_session",
     31: "lingtian_session",
+    32: "wounds_snapshot",
+    33: "defense_window",
     34: "cast_sync",
-    35: "quickslot_config",
-    36: "skillbar_config",
+    35: "quick_slot_config",
+    36: "skill_bar_config",
     37: "techniques_snapshot",
     38: "unlocks_sync",
     39: "derived_attrs_sync",
+    40: "event_stream_push",
+    41: "weapon_equipped",
+    42: "weapon_broken",
     43: "treasure_equipped",
     44: "vortex_state",
     45: "dugu_poison_state",
+    46: "poison_dose_event",
+    47: "poison_overdose_event",
     48: "poison_trait_state",
     49: "carrier_state",
     50: "false_skin_state",
-    51: "combat_event",
+    51: "combat_event_floater",
+    52: "technique_proficiency_update",
+    53: "pill_buff_status",
     54: "skill_config_snapshot",
+    55: "social_anonymity",
+    56: "social_exposure",
+    57: "social_pact",
+    58: "social_feud",
+    59: "social_renown_delta",
+    60: "identity_panel_state",
+    61: "niche_intrusion",
+    62: "niche_guardian_fatigue",
+    63: "niche_guardian_broken",
     64: "sparring_invite",
     65: "trade_offer",
     66: "tribulation_state",
+    67: "tribulation_broadcast",
+    68: "ascension_quota",
     69: "heart_demon_offer",
     70: "burst_meridian_event",
     71: "breakthrough_cinematic",
     72: "death_screen",
     73: "terminate_screen",
+    74: "qi_color_observed",
+    75: "realm_vision_params",
+    76: "spiritual_sense_targets",
+    77: "event_alert",
     78: "coffin_state",
+    79: "ui_open",
     80: "inventory_event",
     81: "dropped_loot_sync",
+    82: "rift_portal_state",
+    83: "rift_portal_removed",
+    84: "extract_started",
+    85: "extract_progress",
+    86: "extract_completed",
+    87: "extract_aborted",
+    88: "extract_failed",
+    89: "tsy_collapse_started",
     90: "container_state",
+    91: "search_started",
+    92: "search_progress",
+    93: "search_completed",
+    94: "search_aborted",
+    95: "skill_lv_up",
+    96: "skill_cap_changed",
     97: "skill_scroll_used",
     98: "skill_snapshot",
+    99: "full_power_charging",
+    100: "full_power_release",
+    101: "full_power_exhausted",
+    102: "healer_npc_ai_state",
+    103: "yidao_hud_state",
+    104: "movement_state",
+    105: "spirit_treasure_state",
+    106: "spirit_treasure_dialogue",
+    107: "vfx_event",
+    108: "audio_play_event",
+    109: "audio_stop_event",
+    110: "ambient_zone_event",
+    111: "zone_environment_state",
+    112: "mutation_state",
+    113: "mutation_event",
+    114: "dandao_style",
+    115: "tsy_enter_event",
+    116: "tsy_exit_event",
+    117: "tsy_npc_spawned",
+    118: "tsy_sentinel_phase_changed",
     119: "loot_container_open",
     120: "loot_container_update",
     121: "loot_container_close",
+    122: "faction_war_state",
+    123: "anqi_hud",
+    124: "dugu_v2_skill_cast",
+    125: "dugu_v2_self_cure",
+    126: "dugu_v2_shroud_active",
+    127: "permanent_qi_max_decay_applied",
     128: "sword_bond_hud_state",
-    131: "insight_offer",
-    137: "inventory_move_rejected",
-    49: "carrier_state",
-    74: "qi_color_observed",
-    76: "spiritual_sense_targets",
-    139: "remains_sync",
-    77: "event_alert",
     129: "mineral_probe_result",
     130: "freshness_update",
+    131: "insight_offer",
     132: "workbench_open",
+    133: "shield_broken",
+    134: "shield_block_hit",
+    135: "zhenmai_hud",
+    136: "tutorial_coffin_pos",
+    137: "inventory_move_rejected",
+    138: "scroll_open",
+    139: "remains_sync",
+    140: "body_plan_layout",
+    141: "race_gate_meta",
     142: "morph_state",
 }
+
+# These are deliberate compatibility labels, not a second wire registry.  The
+# protocol identity is always the field number plus SERVER_DATA_PAYLOAD_NAMES;
+# existing Bot scenarios historically assert these three public event labels.
+SERVER_DATA_PAYLOAD_RUNTIME_NAMES = {
+    35: "quickslot_config",
+    36: "skillbar_config",
+    51: "combat_event",
+}
+
+
+def server_data_payload_runtime_name(field: int) -> str | None:
+    """Return the scenario-facing name while retaining canonical proto names."""
+
+    name = SERVER_DATA_PAYLOAD_NAMES.get(field)
+    if name is None:
+        return None
+    return SERVER_DATA_PAYLOAD_RUNTIME_NAMES.get(field, name)
+
+
+def _strip_proto_comments(source: str) -> str:
+    """Remove comments without changing line positions or string contents."""
+
+    output: list[str] = []
+    index = 0
+    in_string = False
+    escaped = False
+    while index < len(source):
+        char = source[index]
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            output.append(char)
+            index += 1
+            continue
+        if char == "/" and index + 1 < len(source) and source[index + 1] == "/":
+            output.extend((" ", " "))
+            index += 2
+            while index < len(source) and source[index] != "\n":
+                output.append(" ")
+                index += 1
+            continue
+        if char == "/" and index + 1 < len(source) and source[index + 1] == "*":
+            output.extend((" ", " "))
+            index += 2
+            while index < len(source):
+                if source[index : index + 2] == "*/":
+                    output.extend((" ", " "))
+                    index += 2
+                    break
+                output.append("\n" if source[index] == "\n" else " ")
+                index += 1
+            continue
+        output.append(char)
+        index += 1
+    return "".join(output)
+
+
+def _proto_braced_block(source: str, opening_brace: int) -> str:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(opening_brace, len(source)):
+        char = source[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening_brace + 1 : index]
+    raise ValueError("protobuf block has no matching closing brace")
+
+
+def extract_server_data_payload_fields(source: str) -> dict[int, str]:
+    """Extract ``tag -> proto field name`` from the authoritative payload oneof.
+
+    This is intentionally a small stdlib parser rather than a generated binding:
+    the test harness needs the oneof's identity and tags, not message decoding.
+    It scopes parsing to ``ServerDataEnvelope.oneof payload`` so a similarly
+    shaped field in another message cannot silently join the acceptance matrix.
+    """
+
+    source_without_comments = _strip_proto_comments(source)
+    message_match = re.search(
+        r"\bmessage\s+ServerDataEnvelope\s*\{", source_without_comments
+    )
+    if message_match is None:
+        raise ValueError("authoritative proto missing message ServerDataEnvelope")
+    message = _proto_braced_block(source_without_comments, message_match.end() - 1)
+    oneof_match = re.search(r"\boneof\s+payload\s*\{", message)
+    if oneof_match is None:
+        raise ValueError("ServerDataEnvelope missing oneof payload")
+    oneof = _proto_braced_block(message, oneof_match.end() - 1)
+    fields: dict[int, str] = {}
+    for match in re.finditer(
+        r"^\s*[A-Za-z_][\w.]*\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;",
+        oneof,
+        flags=re.MULTILINE,
+    ):
+        name = match.group(1)
+        field = int(match.group(2))
+        if field in fields:
+            raise ValueError(f"duplicate ServerDataPayload tag {field}")
+        if name in fields.values():
+            raise ValueError(f"duplicate ServerDataPayload name {name}")
+        fields[field] = name
+    if not fields:
+        raise ValueError("ServerDataEnvelope.oneof payload has no fields")
+    return fields
 
 
 def _narration_batch(data: bytes) -> dict[str, Any]:
@@ -1868,62 +2075,91 @@ def _heart_demon_offer(data: bytes) -> dict[str, Any]:
     }
 
 
+def _identity_payload_decoder(field: int):
+    """Build a shallow decoder that preserves a payload's wire identity.
+
+    Not every declared oneof message has a bot scenario that needs field-level
+    decoding yet.  It must still be routed instead of returning ``None``: a
+    future payload must remain observable while its deep decoder is added.  The
+    raw message bytes are retained for diagnostics and the three compatibility
+    labels continue to be used by existing scenario consumers.
+    """
+
+    def decode(data: bytes) -> dict[str, Any]:
+        return {
+            "v": 1,
+            "type": server_data_payload_runtime_name(field) or f"field_{field}",
+            "field": field,
+            "raw": data,
+        }
+
+    return decode
+
+
+# Every authoritative oneof tag gets at least an identity decoder.  Typed
+# decoders below replace the generic entry for payloads whose fields are
+# asserted by an existing bot scenario.
 SERVER_DATA_PAYLOAD_DECODERS = {
-    3: _narration_batch,
-    SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
-    SERVER_DATA_PLAYER_STATE_FIELD: _player_state,
-    7: _skill_xp_gain,
-    8: _inventory_snapshot,
-    9: _combat_hud_state,
-    11: _alchemy_furnace,
-    12: _alchemy_session,
-    14: _alchemy_outcome_resolved,
-    17: _forge_station,
-    18: _forge_session,
-    19: _forge_outcome,
-    20: _forge_blueprint_book,
-    22: _craft_session_state,
-    23: _craft_outcome,
-    25: _botany_harvest_progress,
-    29: _lumber_progress,
-    30: _gathering_session,
-    31: _lingtian_session,
-    34: _cast_sync,
-    SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
-    36: _skill_bar_config,
-    37: _techniques_snapshot,
-    43: _treasure_equipped,
-    44: lambda data: {"v": 1, "type": "vortex_state"},
-    49: _carrier_state,
-    50: _false_skin_state,
-    51: _combat_event_floater,
-    70: _burst_meridian_event,
-    54: _skill_config_snapshot,
-    SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
-    SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
-    66: _tribulation_state,
-    69: _heart_demon_offer,
-    SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
-    72: _death_screen,
-    73: _terminate_screen,
-    80: _inventory_event,
-    81: _dropped_loot_sync,
-    90: _container_state,
-    97: _skill_scroll_used,
-    98: _skill_snapshot,
-    119: _loot_container_open,
-    120: _loot_container_update,
-    121: _loot_container_close,
-    131: _insight_offer,
-    137: _inventory_move_rejected,
-    74: _qi_color_observed,
-    77: _event_alert,
-    129: _mineral_probe_result,
-    130: _freshness_update,
-    132: _workbench_open,
-    142: _morph_state,
-    78: _coffin_state,
+    field: _identity_payload_decoder(field) for field in SERVER_DATA_PAYLOAD_NAMES
 }
+SERVER_DATA_PAYLOAD_DECODERS.update(
+    {
+        3: _narration_batch,
+        SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
+        SERVER_DATA_PLAYER_STATE_FIELD: _player_state,
+        7: _skill_xp_gain,
+        8: _inventory_snapshot,
+        9: _combat_hud_state,
+        11: _alchemy_furnace,
+        12: _alchemy_session,
+        14: _alchemy_outcome_resolved,
+        17: _forge_station,
+        18: _forge_session,
+        19: _forge_outcome,
+        20: _forge_blueprint_book,
+        22: _craft_session_state,
+        23: _craft_outcome,
+        25: _botany_harvest_progress,
+        29: _lumber_progress,
+        30: _gathering_session,
+        31: _lingtian_session,
+        34: _cast_sync,
+        SERVER_DATA_QUICKSLOT_CONFIG_FIELD: _quick_slot_config,
+        36: _skill_bar_config,
+        37: _techniques_snapshot,
+        43: _treasure_equipped,
+        44: lambda data: {"v": 1, "type": "vortex_state"},
+        49: _carrier_state,
+        50: _false_skin_state,
+        51: _combat_event_floater,
+        70: _burst_meridian_event,
+        54: _skill_config_snapshot,
+        SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
+        SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
+        66: _tribulation_state,
+        69: _heart_demon_offer,
+        SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
+        72: _death_screen,
+        73: _terminate_screen,
+        80: _inventory_event,
+        81: _dropped_loot_sync,
+        90: _container_state,
+        97: _skill_scroll_used,
+        98: _skill_snapshot,
+        119: _loot_container_open,
+        120: _loot_container_update,
+        121: _loot_container_close,
+        131: _insight_offer,
+        137: _inventory_move_rejected,
+        74: _qi_color_observed,
+        77: _event_alert,
+        129: _mineral_probe_result,
+        130: _freshness_update,
+        132: _workbench_open,
+        142: _morph_state,
+        78: _coffin_state,
+    }
+)
 
 
 if not set(SERVER_DATA_PAYLOAD_DECODERS) <= set(SERVER_DATA_PAYLOAD_NAMES):
@@ -1931,13 +2167,29 @@ if not set(SERVER_DATA_PAYLOAD_DECODERS) <= set(SERVER_DATA_PAYLOAD_NAMES):
 
 
 def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
+    unknown_identity: dict[str, Any] | None = None
     for field, wire, value in _fields(data):
-        if wire != 2:
-            continue
         decoder = SERVER_DATA_PAYLOAD_DECODERS.get(field)
-        if decoder is not None:
-            return decoder(value)
-    return None
+        if wire == 2 and decoder is not None:
+            decoded = decoder(value)
+            # A typed decoder may intentionally return None for an empty or
+            # unrecognised nested payload (inventory_event is one example),
+            # but a declared envelope tag must never become invisible to the
+            # Bot.  Fall back to the same tag-preserving identity shape.
+            return decoded if decoded is not None else _identity_payload_decoder(field)(value)
+        if decoder is None:
+            # A forward-compatible envelope may carry a tag this checkout does
+            # not know.  Keep the tag and wire value visible instead of
+            # collapsing it to a default payload or silently dropping it.
+            if unknown_identity is None:
+                unknown_identity = {
+                    "v": 1,
+                    "type": f"field_{field}",
+                    "field": field,
+                    "wire_type": wire,
+                    "raw": value,
+                }
+    return unknown_identity
 
 
 def _equip_slot(value: int) -> str:
@@ -2078,7 +2330,7 @@ def server_data_payload_name(data: bytes) -> str | None:
     field = server_data_payload_field(data)
     if field is None:
         return None
-    known = SERVER_DATA_PAYLOAD_NAMES.get(field)
+    known = server_data_payload_runtime_name(field)
     if known is not None:
         return known
     # dispatch 分支与 name 注册表独立：注册表漏登记但 decoder 认识的 oneof 字段，

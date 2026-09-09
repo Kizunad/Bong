@@ -207,6 +207,20 @@ from bot.run_scenarios import (  # noqa: E402
 )
 
 
+# Protocol identity coverage is deliberately a checked-in matrix, not a copy
+# derived from the proto at import time.  That makes a newly added oneof fail
+# the four-way contract test until its identity row, name registration and
+# decoder dispatch are reviewed.  The rows are field tags because three
+# historical scenario labels intentionally differ from proto spelling.
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX = {
+    field: ("protocol_identity",) for field in range(1, 143)
+}
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
+    "protocol_identity",
+    "combat_attack_hit",
+)
+
+
 class VarIntTest(unittest.TestCase):
     def test_roundtrip_boundaries(self):
         for value in [0, 1, 127, 128, 255, 300, 25565, 2**21, 2**28, 2**31 - 1, -1, -(2**31)]:
@@ -8352,6 +8366,113 @@ def _pb_len_field(number: int, value: bytes) -> bytes:
 
 
 class ProtoMinTest(unittest.TestCase):
+    def test_server_data_oneof_matches_four_way_identity_contract(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        authoritative = proto_min.extract_server_data_payload_fields(source)
+        registries = {
+            "SERVER_DATA_PAYLOAD_NAMES": set(proto_min.SERVER_DATA_PAYLOAD_NAMES),
+            "SERVER_DATA_PAYLOAD_DECODERS": set(proto_min.SERVER_DATA_PAYLOAD_DECODERS),
+            "场景覆盖矩阵": set(SERVER_DATA_PAYLOAD_SCENARIO_MATRIX),
+        }
+
+        mismatches = []
+        for label, actual in registries.items():
+            missing = sorted(set(authoritative) - actual)
+            extra = sorted(actual - set(authoritative))
+            if missing or extra:
+                mismatches.append(f"{label}: missing tags={missing}, extra tags={extra}")
+        self.assertEqual(
+            mismatches,
+            [],
+            "ServerDataPayload 四方 tag 集合必须等价；新增 oneof 必须同步登记、分派和场景矩阵：\n"
+            + "\n".join(mismatches),
+        )
+
+        name_mismatches = [
+            f"tag {field}: proto={proto_name!r}, names={proto_min.SERVER_DATA_PAYLOAD_NAMES.get(field)!r}"
+            for field, proto_name in sorted(authoritative.items())
+            if proto_min.SERVER_DATA_PAYLOAD_NAMES.get(field) != proto_name
+        ]
+        self.assertEqual(
+            name_mismatches,
+            [],
+            "SERVER_DATA_PAYLOAD_NAMES 必须逐 tag 保留 envelope.proto 的 canonical field name：\n"
+            + "\n".join(name_mismatches),
+        )
+
+    def test_server_data_oneof_parser_is_scoped_and_comment_safe(self):
+        source = """
+        message OtherEnvelope {
+          oneof payload { Other other = 1; }
+        }
+        message ServerDataEnvelope {
+          oneof payload {
+            // A comment containing Fake fake = 99; must not become a row.
+            Alpha alpha = 1;
+            /* nested-looking text: Beta beta = 88; */
+            Beta beta = 2;
+          }
+        }
+        """
+        self.assertEqual(
+            proto_min.extract_server_data_payload_fields(source),
+            {1: "alpha", 2: "beta"},
+            "oneof 提取必须只读取 ServerDataEnvelope.payload，并忽略注释中的伪字段",
+        )
+
+    def test_server_data_identity_dispatch_covers_every_oneof_tag(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        authoritative = proto_min.extract_server_data_payload_fields(
+            proto_path.read_text(encoding="utf-8")
+        )
+        failures = []
+        for field, proto_name in sorted(authoritative.items()):
+            envelope = _pb_len_field(field, b"")
+            decoded = proto_min.decode_server_data_envelope(envelope)
+            expected_name = proto_min.server_data_payload_runtime_name(field)
+            if decoded is None:
+                failures.append(f"tag {field} ({proto_name}) decoder returned None")
+                continue
+            if decoded.get("type") != expected_name:
+                failures.append(
+                    f"tag {field} ({proto_name}) decoder type={decoded.get('type')!r}, "
+                    f"expected runtime identity={expected_name!r}"
+                )
+            if proto_min.server_data_payload_name(envelope) != expected_name:
+                failures.append(
+                    f"tag {field} ({proto_name}) name bridge returned "
+                    f"{proto_min.server_data_payload_name(envelope)!r}, expected {expected_name!r}"
+                )
+        self.assertEqual(
+            failures,
+            [],
+            "每个已声明 oneof tag 都必须可分派且保持可观察 identity：\n"
+            + "\n".join(failures),
+        )
+
+    def test_unknown_server_data_tag_keeps_diagnostic_identity(self):
+        unknown_tag = 999
+        payload = b"\x08\x01"
+        envelope = _pb_len_field(unknown_tag, payload)
+        decoded = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "field_999",
+                "field": unknown_tag,
+                "wire_type": 2,
+                "raw": payload,
+            },
+            "未知 oneof tag 必须保留原始 tag/wire/payload，不能静默返回 None 或伪造缺省类型",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(envelope),
+            "field_999",
+            "未知 oneof tag 的 name bridge 必须保留 field_N 诊断 identity",
+        )
+
     def test_server_data_payload_name_reads_oneof_field(self):
         envelope = _pb_len_field(31, b"\x08\x01")
         self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
@@ -9175,6 +9296,11 @@ class RunnerLogicTest(unittest.TestCase):
     def test_decoder_acceptance_matrix_covers_every_default_server_data_assertion_type(self):
         scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
         asserted_types: set[str] = set()
+        runtime_names = {
+            proto_min.server_data_payload_runtime_name(field)
+            for field in proto_min.SERVER_DATA_PAYLOAD_NAMES
+        }
+        known_names = set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()) | runtime_names
 
         for path in scenarios_dir.glob("*.py"):
             if path.name.startswith("_"):
@@ -9190,13 +9316,18 @@ class RunnerLogicTest(unittest.TestCase):
                 expressions = [node.left, *node.comparators]
                 for expression in expressions:
                     if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
-                        if expression.value in set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()):
+                        if expression.value in known_names:
                             asserted_types.add(expression.value)
 
         deep_decoded_fields = set(proto_min.SERVER_DATA_PAYLOAD_DECODERS)
 
         field_for_name = {
-            name: field for field, name in proto_min.SERVER_DATA_PAYLOAD_NAMES.items()
+            name: field
+            for field in proto_min.SERVER_DATA_PAYLOAD_NAMES
+            for name in (
+                proto_min.SERVER_DATA_PAYLOAD_NAMES[field],
+                proto_min.server_data_payload_runtime_name(field),
+            )
         }
         missing = sorted(
             payload_type
@@ -12458,10 +12589,13 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
                     f"envelope tag {field} 必须有深度解码器，实际返回 None",
                 )
                 self.assertEqual(decoded["type"], expected_type)
-        self.assertIsNone(
-            proto_min.decode_server_data_envelope(_pb_message(6, b"")),
-            "无深度解码器的 known oneof tag（cultivation_detail）应返回 None，不得误分发",
+        generic = proto_min.decode_server_data_envelope(_pb_message(6, b""))
+        self.assertEqual(
+            generic["type"],
+            "cultivation_detail",
+            "已声明但尚无字段级 decoder 的 oneof 也必须保留可诊断 identity",
         )
+        self.assertEqual(generic["field"], 6)
 
 
 class PlayerPacketContractTest(unittest.TestCase):
