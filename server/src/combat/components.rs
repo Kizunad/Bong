@@ -550,7 +550,7 @@ pub struct SkillBarBindings {
 
 impl SkillBarBindings {
     /// 当前默认两格；后续由身体条件（如手部数量）和功法扩展。
-    pub const SLOT_COUNT: usize = 2;
+    pub const SLOT_COUNT: usize = crate::schema::inventory::HOTBAR_SLOT_COUNT;
 
     pub fn get(&self, slot: u8) -> Option<&SkillSlot> {
         if slot as usize >= Self::SLOT_COUNT {
