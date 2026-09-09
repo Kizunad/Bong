@@ -85,6 +85,7 @@ from bot.scenarios import network_session_token_stale as stale_session_scenario 
 from bot.scenarios import fauna_give_dan_to_elder_reject as fauna_reject_scenario  # noqa: E402
 from bot.scenarios import freshness_probe_paths as freshness_probe_scenario  # noqa: E402
 from bot.scenarios import cultivation_qi_color_inspect as qi_color_inspect_scenario  # noqa: E402
+from bot.scenarios import _rejection_helpers as rejection_helpers  # noqa: E402
 from bot.scenarios._rejection_helpers import (  # noqa: E402
     assert_no_gameplay_side_effect_since,
     assert_valid_request_still_works,
@@ -5748,103 +5749,64 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
-    def test_scenario_rejection_scans_ignore_only_verified_setup_sync(self):
-        freshness_setup_sync = _RejectionFakeBot(
-            [
-                _FakeEvent(
-                    2.0,
-                    "server_data",
-                    {"payload_type": "spirit_treasure_state"},
-                ),
-                _FakeEvent(
-                    3.0,
-                    "server_data",
-                    {"payload_type": "weapon_equipped"},
-                ),
-            ]
+    def test_server_data_barrier_waits_for_late_setup_event(self):
+        bot = _RejectionFakeBot([])
+        clock = 0.0
+        late_setup = _FakeEvent(
+            0.5,
+            "server_data",
+            {"payload_type": "tribulation_broadcast"},
         )
-        freshness_probe_scenario._scan_silent_violations(
-            freshness_setup_sync,
-            sent_at=1.0,
-            description="探针拒绝",
-            allowed_payload_ts=(),
-        )
+        delivered = False
 
-        fauna_setup_sync = _RejectionFakeBot(
-            [
-                _FakeEvent(
-                    2.0,
-                    "server_data",
-                    {"payload_type": "spirit_treasure_state"},
-                ),
-                _FakeEvent(
-                    3.0,
-                    "server_data",
-                    {"payload_type": "tribulation_broadcast"},
-                ),
-            ]
-        )
-        fauna_reject_scenario._scan_chat_only_violations(
-            fauna_setup_sync,
-            sent_at=1.0,
-            description="give 拒收",
-            allowed_chat_ts=(),
-        )
+        def monotonic() -> float:
+            return clock
 
-        request_response = _RejectionFakeBot(
-            [
-                _FakeEvent(
-                    2.0,
-                    "server_data",
-                    {"payload_type": "freshness_update"},
-                )
-            ]
-        )
-        with self.assertRaises(BotAssertionError):
-            freshness_probe_scenario._scan_silent_violations(
-                request_response,
-                sent_at=1.0,
-                description="探针拒绝",
-                allowed_payload_ts=(),
-            )
+        def sleep(duration: float) -> None:
+            nonlocal clock, delivered
+            clock += duration
+            if not delivered and clock >= late_setup.t:
+                bot._advance_clock_to(late_setup.t)
+                bot.events.append(late_setup)
+                delivered = True
 
-        with self.assertRaises(BotAssertionError):
-            fauna_reject_scenario._scan_chat_only_violations(
-                request_response,
-                sent_at=1.0,
-                description="give 拒收",
-                allowed_chat_ts=(),
-            )
-
-        # The exemptions are scenario-local. A setup type verified for one scenario must
-        # not become a blanket exemption in the other scenario's response oracle.
-        for payload_type, scenario_scan, kwargs in (
-            (
-                "weapon_equipped",
-                fauna_reject_scenario._scan_chat_only_violations,
-                {"allowed_chat_ts": ()},
-            ),
-            (
-                "tribulation_broadcast",
-                freshness_probe_scenario._scan_silent_violations,
-                {"allowed_payload_ts": ()},
-            ),
+        with (
+            mock.patch.object(rejection_helpers.time, "monotonic", side_effect=monotonic),
+            mock.patch.object(rejection_helpers.time, "sleep", side_effect=sleep),
         ):
-            with self.subTest(payload_type=payload_type):
+            anchor = rejection_helpers.drain_server_data_stream(
+                bot, quiet_s=1.0, max_s=3.0
+            )
+
+        self.assertTrue(delivered, "屏障必须先观察到迟到的前置 server_data")
+        self.assertGreaterEqual(anchor, late_setup.t, "请求锚点必须晚于迟到前置同步")
+
+    def test_rejection_scans_are_fail_closed_for_every_server_data_type(self):
+        for payload_type in (
+            "spirit_treasure_state",
+            "weapon_equipped",
+            "tribulation_broadcast",
+            "freshness_update",
+        ):
+            with self.subTest(scenario="freshness", payload_type=payload_type):
                 with self.assertRaises(BotAssertionError):
-                    scenario_scan(
+                    freshness_probe_scenario._scan_silent_violations(
                         _RejectionFakeBot(
-                            [
-                                _FakeEvent(
-                                    2.0,
-                                    "server_data",
-                                    {"payload_type": payload_type},
-                                )
-                            ]
+                            [_FakeEvent(2.0, "server_data", {"payload_type": payload_type})]
                         ),
                         sent_at=1.0,
-                        description="场景本地 setup-sync 排除集",
-                        **kwargs,
+                        description="探针请求窗口",
+                        allowed_payload_ts=(),
+                    )
+            with self.subTest(scenario="fauna", payload_type=payload_type):
+                with self.assertRaises(BotAssertionError):
+                    fauna_reject_scenario._scan_chat_only_violations(
+                        _RejectionFakeBot(
+                            [_FakeEvent(2.0, "server_data", {"payload_type": payload_type})]
+                        ),
+                        sent_at=1.0,
+                        description="give 拒收请求窗口",
+                        allowed_chat_ts=(),
                     )
 
     def test_freshness_realm_settle_excludes_late_sync_but_keeps_probe_oracle_strict(self):

@@ -36,11 +36,7 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
-from ._rejection_helpers import (
-    AMBIENT_SERVER_DATA_TYPES,
-    _relative_now,
-    drain_event_stream,
-)
+from ._rejection_helpers import drain_server_data_stream
 
 DESCRIPTION = "freshness_probe：Awaken→神识未及告警、凝脉→FreshnessUpdate、无保鲜/坏实例→静默"
 MODULES = ["shelflife", "network"]
@@ -53,24 +49,8 @@ SILENT_WINDOW = 4.0
 REALM_SYNC_DRAIN_MAX = SILENT_WINDOW * 3.0
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
 # （network/carrier_state_emit.rs，ticks % TICKS_PER_SECOND==0 周期）。
-# player_state / inventory_snapshot 在本场景只随 Changed 组件发射（gap9 无
-# 周期性无变化 flush），窗口内无合法非白名单 payload——白名单外一律判红
-# （central-review 2029 #2）。carrier_state 不在 proto_min 白名单，通常不
-# 解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的周期流。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
-# spirit_treasure_state 由 spirit_treasure_emit 的
-# Added/Changed<ActiveSpiritTreasures> 触发，源头是 join/前置 give 或 clearinv 的
-# Changed<PlayerInventory> 同步，不是 freshness_probe 的响应。probe handler 只读检查
-# ownership 后发 intent，拒绝路径不会改 inventory；reader 可能把前置同步在请求窗口
-# 内才解码。
-#
-# weapon_equipped 同样不是 freshness_probe 的响应：weapon_equipped_emit 对
-# Changed<PlayerInventory> 发装备槽快照；本场景前置 give 改包后，该快照可能晚于
-# inventory_snapshot 到达而落入探针窗口。只在本场景排除这两个已核实的 setup-sync
-# 类型，其他 server_data 继续判红，不扩大共享 ambient 白名单。
-UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset(
-    {"spirit_treasure_state", "weapon_equipped"}
-)
+# player_state / inventory_snapshot 等前置同步必须在请求前排空；请求窗口内不维护
+# payload type 排除集，所有 server_data 一律判红（central-review 2029 #2）。
 # 探针路径 freshness = current_qi/initial_qi（shelflife/probe.rs，Linear：
 # current = initial - decay_per_tick × storage×season × (now_tick-created_at_tick)）。
 # 服务器主循环是 `app.update() + 5ms sleep`（main.rs:186），tick 率无上限也低于
@@ -123,7 +103,7 @@ def run(env) -> None:
         # 之前截取——若在拒信（event_alert）消费后才锚定，先于拒信到达的
         # freshness_update 会被排除在静默窗口外，「先发精确保鲜、再发神识未及」的坏
         # 实现就撞不红（review finding 3/5）。
-        sent_at = _relative_now(bot)
+        sent_at = drain_server_data_stream(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         alert = bot.expect_server_data("event_alert", timeout=10.0)
         message = alert.data["payload"].get("message", "")
@@ -242,7 +222,7 @@ def run(env) -> None:
         bot.expect_chat(f"[dev] gave {PLAIN_ITEM} x1", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
         plain = require_item(snapshot, PLAIN_ITEM)
-        sent_at = _relative_now(bot)
+        sent_at = drain_server_data_stream(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": plain["item"]["instance_id"]})
         _assert_no_freshness_update(bot, sent_at, "无保鲜 item 的探针应静默（NoFreshness 不发 S2C）")
         bot.assert_alive("无保鲜 freshness_probe 后")
@@ -252,7 +232,7 @@ def run(env) -> None:
         #    此前全部请求都用当前背包快照拿到的实例，从不在生产路径送非法实例——
         #    跳过 belongs_to_player、去探他人/任意 item 的坏实现能通过全部旧断言
         #    （central-review 2029 #6）。999999 是合法 wire 值但不在任何背包。
-        sent_at = _relative_now(bot)
+        sent_at = drain_server_data_stream(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": 999999})
         _assert_no_freshness_update(
             bot,
@@ -264,12 +244,11 @@ def run(env) -> None:
 
 def _settle_realm_change(bot) -> float:
     """排干 realm set 的异步同步流，并返回与 ``event.t`` 同钟的请求锚点。"""
-    drain_event_stream(
+    return drain_server_data_stream(
         bot,
         quiet_s=SILENT_WINDOW,
         max_s=REALM_SYNC_DRAIN_MAX,
     )
-    return _relative_now(bot)
 
 
 def _assert_no_freshness_update(
@@ -291,16 +270,11 @@ def _assert_no_freshness_update(
 
 
 def _scan_silent_violations(bot, sent_at: float, description: str, allowed_payload_ts: tuple) -> None:
-    # central-review 2029 #2：静默契约 = 「无任何非周期 S2C 响应 + 无聊天」。只盯
-    # freshness_update 会放走拒收却发 event_alert / mineral_probe_result / 库存
-    # 更新等任何其他 payload 的坏实现；白名单外 payload 一律判红。
+    # central-review 2029 #2：静默契约 = 「无任何 server_data 响应 + 无聊天」。
+    # freshness_update 会放走拒收却发 event_alert / mineral_probe_result / 库存更新
+    # 等任何其他 payload 的坏实现；屏障之后所有 server_data 一律判红。
     for e in bot.events_of("server_data"):
-        if (
-            e.t > sent_at
-            and e.t not in allowed_payload_ts
-            and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES
-            and e.data["payload_type"] not in UNRELATED_SETUP_SYNC_PAYLOAD_TYPES
-        ):
+        if e.t > sent_at and e.t not in allowed_payload_ts:
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"
                 f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"

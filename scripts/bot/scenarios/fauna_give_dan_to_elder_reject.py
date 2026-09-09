@@ -18,10 +18,8 @@ protocol entity id 上分别验证距离与维度门。每条拒收都断言聊�
 
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。chat-only 契约由
 _assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何针对本请求的 S2C
-响应（central-review 2029 #5）。`spirit_treasure_state` 是 join/前置背包变动触发的
-异步状态同步，`tribulation_broadcast` 是前一场渡劫留下的 active 广播在新 bot 加入
-时回放；二者都可能在拒收窗口内迟到，不是本请求响应，单独列入本场景的无关同步排除
-集，其他 server_data 仍一律判红。
+响应（central-review 2029 #5）。拒收窗口必须在前置 join/背包/装备/渡劫同步排空
+后开启；屏障之后所有 server_data 一律视为本请求窗口内的响应，任何类型都判红。
 """
 
 import json
@@ -36,7 +34,7 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
-from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
+from ._rejection_helpers import drain_server_data_stream
 
 DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→有效 pill 的目标门禁，逐条拒绝"
 MODULES = ["fauna", "network"]
@@ -60,25 +58,6 @@ TSY_ZONE_CENTERS = {
     "tsy_gaoshou_01_deep": (1050.0, -20.0, 550.0),
 }
 TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
-# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
-# 本场景无 cultivation/meridian/zone 变化，窗口内除 carrier_state 无合法非白名单
-# payload；白名单外一律判红（chat-only 契约的 S2C 半）。carrier_state 不在 proto_min
-# 白名单，通常不解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的
-# 周期流。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
-# spirit_treasure_state 不是固定周期流：spirit_treasure_emit 只在
-# Added/Changed<ActiveSpiritTreasures> 时发送，而该组件由前置 join/背包变动同步产生。
-# 两个拒收 handler 都在只读校验后直接 return，不会触发它；reader 若在请求窗口内才
-# 解码到前置同步，不能把它误归因于当前请求。
-#
-# tribulation_broadcast 也不是 give_dan_to_elder 的响应：它由渡劫事件建立，或由
-# tribulation_broadcast_emit 在新客户端加入时把既有 active 广播回放给该客户端。前一
-# 个 cultivation_start_du_xu 场景会留下 active 渡劫，故本场景首个 bot 可能在拒收窗口
-# 收到这条迟到的 join replay。只在本场景排除这两个已核实的 setup-sync 类型，不把它们
-# 加入共享 AMBIENT_SERVER_DATA_TYPES，避免掩盖其他场景的真实副作用。
-UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset(
-    {"spirit_treasure_state", "tribulation_broadcast"}
-)
 
 
 def run(env) -> None:
@@ -87,7 +66,7 @@ def run(env) -> None:
         revision = snapshot["revision"]
 
         # 1. instance_id 不在背包 → 背包中未找到该回元丹。
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = drain_server_data_stream(bot)
         bot.intent(
             {**DAN_REQUEST, "pill_instance_id": 999999999999, "elder_entity_id": NO_SUCH_ELDER_ID}
         )
@@ -102,7 +81,7 @@ def run(env) -> None:
         bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
         snapshot = wait_inventory_contains(bot, MEAT_ITEM, timeout=10.0)
         meat = require_item(snapshot, MEAT_ITEM)
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = drain_server_data_stream(bot)
         bot.intent(
             {**DAN_REQUEST, "pill_instance_id": meat["item"]["instance_id"], "elder_entity_id": NO_SUCH_ELDER_ID}
         )
@@ -126,7 +105,7 @@ def run(env) -> None:
                 f"[{bot.username}] 拒收「只接受回元丹」后 cooked_meat 应保留原实例 "
                 f"{meat['item']['instance_id']}，实际丢失或替换"
             )
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = drain_server_data_stream(bot)
         bot.intent(
             {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": NO_SUCH_ELDER_ID}
         )
@@ -155,7 +134,7 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"[{bot.username}] passive_target entity_id 应为正整数，实际 {target_id!r}"
             )
-        sent_at = last_event_time(bot)
+        sent_at = drain_server_data_stream(bot)
         bot.intent(
             {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": target_id}
         )
@@ -174,7 +153,7 @@ def run(env) -> None:
         # 5. Spawn a real production DyingElder, then exercise the resolved-target
         # range gate and the cross-dimension gate with the same valid pill instance.
         elder_id = _spawn_real_elder(bot)
-        sent_at = last_event_time(bot)
+        sent_at = drain_server_data_stream(bot)
         bot.intent(
             {
                 **DAN_REQUEST,
@@ -201,7 +180,7 @@ def run(env) -> None:
             )
 
         _transfer_dimension(bot, "overworld")
-        sent_at = last_event_time(bot)
+        sent_at = drain_server_data_stream(bot)
         bot.intent(
             {
                 **DAN_REQUEST,
@@ -332,11 +311,11 @@ def _transfer_dimension(bot, target: str) -> None:
 def _assert_chat_only_response(
     bot, sent_at: float, description: str, allowed_chat_ts: tuple = ()
 ) -> None:
-    """断言拒收分支只回聊天：窗口内无任何非白名单 server_data、无预期拒信外的聊天。
+    """断言拒收分支只回聊天：屏障后无任何 server_data、无预期拒信外的聊天。
 
     只等预期 chat 会放走「照发拒收文案 + 额外发 event_alert / 库存更新 / 拒绝型
     server_data」的坏实现（central-review 2029 #5）——chat-only 契约的 S2C 半必须
-    由窗口扫描锁死，白名单外一律判红。已消费的拒信 chat 按事件时刻豁免
+    由窗口扫描锁死，所有 server_data 一律判红。已消费的拒信 chat 按事件时刻豁免
     （allowed_chat_ts）。截止时刻用单调钟（time.monotonic），不用事件时间戳
     bot.events[-1].t：静默断言正是"之后无事件到达"，事件时间不会推进，以事件时间
     做 deadline 会永远等不到 now >= end_at 而死循环（review finding 1/5）。"""
@@ -357,11 +336,7 @@ def _scan_chat_only_violations(
     bot, sent_at: float, description: str, allowed_chat_ts: tuple
 ) -> None:
     for e in bot.events_of("server_data"):
-        if (
-            e.t > sent_at
-            and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES
-            and e.data["payload_type"] not in UNRELATED_SETUP_SYNC_PAYLOAD_TYPES
-        ):
+        if e.t > sent_at:
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"
                 f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"

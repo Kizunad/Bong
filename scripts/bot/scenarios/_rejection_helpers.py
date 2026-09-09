@@ -317,6 +317,36 @@ def drain_event_stream(bot, *, quiet_s: float = 2.0, max_s: float = 6.0) -> None
             last_change_at = time.monotonic()
 
 
+def drain_server_data_stream(
+    bot, *, quiet_s: float = 2.0, max_s: float = 10.0
+) -> float:
+    """建立严格的 server_data 前置同步屏障并返回请求锚点。
+
+    拒绝场景不能靠 payload type 排除集猜测哪些消息是 ambient：identity decoder
+    会把所有已声明 oneof 成员暴露出来，任何遗漏都会把断言变成半开门。这里不看
+    类型，只等待 server_data 事件流连续 ``quiet_s`` 秒；若在 ``max_s`` 内无法
+    建立静默（例如前置同步持续到达），直接失败而不带着未知在途消息继续发请求。
+    屏障后的 ``_relative_now`` 与事件 ``t`` 使用同一时钟，调用方可继续使用全类型
+    fail-closed 扫描。
+    """
+    start = time.monotonic()
+    last_change_at = start
+    last_count = sum(event.kind == "server_data" for event in bot.events)
+    while True:
+        now = time.monotonic()
+        if now - last_change_at >= quiet_s:
+            return _relative_now(bot)
+        if now - start >= max_s:
+            raise BotAssertionError(
+                "无法建立 server_data 前置同步屏障：在最大等待时间内没有连续静默"
+            )
+        time.sleep(min(0.25, max_s - (now - start), quiet_s - (now - last_change_at)))
+        count = sum(event.kind == "server_data" for event in bot.events)
+        if count != last_count:
+            last_count = count
+            last_change_at = time.monotonic()
+
+
 def fire_probes_and_keep_connection(
     bot,
     label: str,
