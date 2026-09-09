@@ -4,7 +4,9 @@
 >
 > **状态**：Active（P0 进行中）。本文件只登记事实、边界、阶段和决策门；本 PR 不实施任何 Java、Python、Rust、TOML、模型或贴图改动。
 >
-> **当前复核基线**：`origin/main` / `e2fb914123b533e43bfea07d42cfccab24584b70`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
+> **当前复核基线**：`origin/main` / `da88b629b3287096d015e0cf56dae16e3efc54fa`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
+
+> 首次 P0 盘点基于 `e2fb914123b533e43bfea07d42cfccab24584b70`；随后按流程 fetch/merge 到 `da88b629b3287096d015e0cf56dae16e3efc54fa`。逐项对比确认该次主线变更未触及本节引用的手持 registry、防具 registry/cube、server item 与 modelScript 事实文件，因此清单结论不变；后续复核命令仍以当时的 `origin/main` 为准。
 
 ## 阶段总览
 
@@ -282,7 +284,7 @@ git ls-tree -r --name-only origin/main -- client/src/main/resources \
 
 ## 4. P1 — 纯注册/接线缺口（不造模型）
 
-**P1 入选：0 项。** 基于 `origin/main=e2fb914123...` 的 A 类逐项复核，没有一项同时满足「运行时模型已经存在、只缺 registry/入口接线」：作者生成器、`modelScript/models/*.bbmodel`、离线 OBJ/概念图或 GUI icon 都不是已经接入 `ArmorFeatureRenderer`/held-item runtime 的模型。因此本阶段宁可为空，不把资产成熟度夸大成接线缺口。
+**P1 入选：0 项。** 基于 `origin/main=da88b629b3287096d015e0cf56dae16e3efc54fa` 的 A 类逐项复核，没有一项同时满足「运行时模型已经存在、只缺 registry/入口接线」：作者生成器、`modelScript/models/*.bbmodel`、离线 OBJ/概念图或 GUI icon 都不是已经接入 `ArmorFeatureRenderer`/held-item runtime 的模型。因此本阶段宁可为空，不把资产成熟度夸大成接线缺口。
 
 | A 类 `template_id` | 不能进入 P1 的逐项理由 | 证据 |
 |---|---|---|
