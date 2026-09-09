@@ -238,6 +238,64 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 5. **client-only 注册可行性**：render-only Fabric Item 在当前 Fabric 1.20.1/Valence 服务器连接、静态 registry、创造栏/REI、掉落物和登录同步上的行为是否都可接受？若不可接受，应采用哪条不新增 server wire 的 fallback？
 6. **掉落与显示名边界**：Bong 的掉落/地面显示是否走 vanilla `ItemRenderer`，未注册 lang 是否可能泄露到玩家界面？这些路径是否属于本 plan，还是留作独立 follow-up？
 
+全部六条开放问题已在 §9.1 收口。原表保留以备追溯，**实施时以 §9.1 决议为准**。
+
+## §9.1 决议（pre-P0 收口，2026-09-09）
+
+### #1 P2 宿主策略与唯一 owner
+
+**决议**：
+1. 选用 **render-only Fabric Item** 作为手持物的宿主策略：每个进入手持渲染范围的 `template_id` 都注册自己的 client-only `bong:<template_id>` Item，由 `BongHeldItemRegistry`/等价单一注册表供 `HeldItemStackResolver` 生成 fake `ItemStack`，再接入现有 FPV/TPV 与 SML 模型加载链。
+2. 显式单向 OBJ 借用只作为注册数据中的关系字段（例如 `borrowsFrom`），不能替代 Item 注册；有意借用必须能从注册数据和 pin 测试查到被借者，不能再用两个模板恰好共用一个 vanilla host 表达。通用手持注册、宿主迁移和旧 host override 清理由**本 plan 唯一负责**，不以另一个 owner 文档作为前置依赖。
+3. 拒绝继续使用 vanilla host 作为长期方案：当前 `Entry` 直接保存 `hostItemSupplier`/`vanillaModelPath`，`WeaponVanillaIconMap` 据此合成 stack，且 SML 按 host path 劫持；这正是 19 个模板挤在 7 个宿主上、模型改动会无声串改的耦合。拒绝把 OBJ 借用单独当作方案，因为它只描述资源关系，不能消除 host 冲突；拒绝自绘链，因为现有 `MixinHeldItemRenderer` 与 `MixinPlayerEntityHeldItem` 已把 fake stack 送入 vanilla FPV/TPV 渲染，重写自绘会重复 display 变换、GUI 和资源加载链。
+
+**落点**：`client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java:20-24,146-173,243-248`、`client/src/main/java/com/bong/client/weapon/WeaponVanillaIconMap.java:30-36`、`client/src/main/java/com/bong/client/weapon/WeaponRenderBootstrap.java:24-39`、`client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java:20-29,47-63`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityHeldItem.java:20-38,46-80`（依据代码）/ 本 plan `§4 P1`、`§5 P2`、`§3.2`（实施入口与验收）。
+
+### #2 五套防具的实施批次
+
+**决议**：
+1. 选择**分批实施**，第一批固定为 `hide` + `scroll_wrap`。两套作者生成器都已经有 `helmet/chestplate/leggings/boots` 四个部件函数，能最快形成完整四槽，并以各自的材质轮廓做远距可辨识回归；第一批的完成条件仍是四槽运行时链全通，而不是只有离线源文件存在。
+2. 第二批固定为 `straw`：当前实际只有 `leggings` 与 `boots`，必须先补齐 `helmet`/`chestplate`，不能把两槽作者输出报作完整套装。最后处理 `copper` + `spirit_cloth`：当前只核到 GUI icon，没有可供 `ArmorFeatureRenderer` 直接消费的运行时几何。五套仍全部属于本 plan 范围，不因分批而移出。
+3. 每一批都必须逐槽接入 `ArmorModelRegistry`、`ArmorPartModel` cube/ModelPart、纹理和 `ArmorFeatureRenderer`/`ArmorRenderBootstrap`，并验收错槽、破损、卸下和远距轮廓；GUI icon、生成器和 `.bbmodel` 只能算输入证据，不能替代运行时完成证据。
+
+**落点**：`modelScript/generators/gen_hide_armor.py:171-181,351-361,460-465,539-548`、`modelScript/generators/gen_scroll_wrap_armor.py:146-154,240-247,284-289,321-330`、`modelScript/generators/gen_straw_armor.py:220-225,350-359`、`client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:29-63`、`client/src/main/java/com/bong/client/armor/ArmorFeatureRenderer.java:75-124`、`client/src/main/java/com/bong/client/armor/ArmorRenderBootstrap.java:21-31`（依据代码）/ 本 plan `§6.2`、`§7`（批次与验收）。
+
+### #3 阵旗、普通陷阱与 niche/灵龛物的形态
+
+**决议**：
+1. `array_flag` 定性为**手持的布阵控制工具**，进入手持注册范围，但它本身不是放置后的阵眼实体：服务端定义为 `tool`，客户端装备规则明确要求它能落入手槽，服务端 `has_zhenfa_flag` 从装备/背包查它作为布阵门。P1 只为它提供手持阶段的模型入口，不把手持 Item 当作阵眼的地面模型。
+2. `warning_trap`、`blast_trap`、`slow_trap` 定性为**先手持、后放置**的消耗型阵法工具：客户端从主手识别后打开布阵 UI，服务端通过 `ZhenfaPlaceRequest` 校验 target face、物品实例和成本，成功后写入 zhenfa anchor block/registry。因此三件都需要手持显示，但落地后的视觉归独立放置物/阵眼渲染链；不得以普通手持模型冒充已放置陷阱。
+3. `niche_house_puppet`、`niche_zhenfa_trap_basic`、`niche_zhenfa_trap_middle`、`niche_zhenfa_trap_advanced` 实际位于 `server/assets/items/niche/*.toml`，虽声明 `category = "tool"`，当前 `server/src` 与 client 主生产代码没有对应消费、制作/掉落或放置请求入口。它们现在定性为**不在本 plan 范围**；未来一旦出现真实 use/placement owner，再由该 owner 同时提出手持与放置渲染接线，不能只因 category 是 tool 就提前注册或假定为灵龛实体。
+
+**落点**：`server/assets/items/zhenfa.toml:1-10,45-76`、`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:64-72`、`server/src/zhenfa/mod.rs:1573-1686,4112-4143,4504-4529`、`client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java:106-116`、`server/src/zhenfa/trap_content.rs:121-136`、`server/assets/items/niche/house_puppet.toml:1-10`、`server/assets/items/niche/zhenfa_trap_basic.toml:1-10`、`server/assets/items/niche/zhenfa_trap_middle.toml:1-10`、`server/assets/items/niche/zhenfa_trap_advanced.toml:1-10`（依据代码/资产；对 niche 的无消费结论由 `grep -RIn` 复核）/ 本 plan `§4 P1`、`§6.1`、`§7`（手持、放置和范围边界）。
+
+### #4 `bone_spike` 与 `bone_spike_crude` 的外观关系
+
+**决议**：
+1. 两者采用**各自独立模型**，不共享外观，也不把一个现有 vanilla host 作为隐式共宿主。`bone_spike` 是 1×2、uncommon、带真元封存语义的完整暗器；`bone_spike_crude` 是 1×1、common、低攻击的粗削投掷物，尺寸、品阶、用途和玩家预期均不同，共用同一轮廓会掩盖可观察的物品差异。
+2. `bone_spike` 直接接入现有 `gen_knife_trio.py` 的专属模型输出；`bone_spike_crude` 在 P3 单独补一个粗坯轮廓与资源。注册数据必须以两个 `template_id` 分别指向两个 model key/资源路径，验收 pin 既检查两项都可渲染，也检查其 model key/资源 digest 不相同。
+3. 若未来有别的近似物品确实要复用模型，只能写显式单向 `borrowsFrom` 并在测试中区分「有意借用」与「多个模板共享 host」；本决议的两项不走该例外，不能以相同 `item/bone` 宿主或相同路径默示共享。
+
+**落点**：`server/assets/items/materials.toml:142-154`、`server/assets/items/workbench_materials.toml:670-682`、`server/assets/craft/recipes/workbench/weapon.toml:1-19`、`modelScript/generators/gen_knife_trio.py:318-361`、`client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java:190-195`（依据代码/资产）/ 本 plan `§5 P2`、`§6.1 P3`、`§7`（独立模型与显式借用验收）。
+
+### #5 render-only Fabric Item 在 Fabric 1.20.1/Valence 下的可行性
+
+**决议**：
+1. 结论为**架构上可行，但必须以 P0 spike 的四项实证作为放行门**：登录不掉线、模型能加载、合成的 client-only stack 能在 FPV/TPV 手持渲染、GUI 入口不报错。依据是客户端模组声明为 `environment = "client"`，现有 server→client 装备消息只读取 `template_id` 并写入 store，`WeaponVanillaIconMap` 已证明渲染 stack 是客户端惰性合成，不是 server inventory/wire 数据；因此不会把 `bong:<id>` 作为 server 物品或新字段下发。
+2. 静态 Item registry、创造栏/REI、掉落物和登录同步分别按以下口径验收：`Registries.ITEM` 只在 client init 注册；不加入 `ItemGroup`，且当前 `client/build.gradle` 没有 REI 依赖，P0 仍要在无/有外部 REI 的实际客户端分别确认不泄露内部 Item；登录只验证现有 Valence 连接和 `template_id` 装备事件；掉落不依赖 Item registry，因为当前地面链是 `DroppedItemStore` 的自绘 billboard。任一实际 spike 失败都不得升 active。
+3. fallback 固定为保留当前 fake vanilla host + SML 链：继续由 `WeaponVanillaIconMap` 生成已知 vanilla stack，并由 `WeaponRenderBootstrap`/两个 held-item mixin 驱动渲染；fallback 不新增 server wire，不改 `template_id`、装备状态或掉落协议，也不转向本 plan 之外的第二套自绘实现。
+
+**落点**：`client/src/main/resources/fabric.mod.json:12-27`、`client/src/main/java/com/bong/client/BongClient.java:157-158`、`client/src/main/java/com/bong/client/network/WeaponEquippedHandler.java:35-68`、`client/src/main/java/com/bong/client/weapon/WeaponVanillaIconMap.java:23-36`、`client/build.gradle:45-87`、`client/src/main/java/com/bong/client/inventory/render/DroppedItemWorldRenderer.java:27-38,55-68`（依据代码/构建配置）/ 本 plan `§3.2`、`§4 P1`、`§7`（P0 spike、fallback 与 client gate）。
+
+### #6 掉落、地面显示与显示名边界
+
+**决议**：
+1. Bong 的 ground/drop rendering **留在既有 inventory/drop owner，不纳入本 plan 的 ItemRenderer 迁移**：`DroppedItemWorldRenderer` 从 `DroppedItemStore` 读取坐标和 `InventoryItem`，直接画 client-only billboard；它不 spawn `ItemEntity`，也不调用 vanilla `ItemRenderer`。玩家死亡时 vanilla `dropInventory` 还会被取消，掉落由 server-authoritative 的 `inventory_event`/`dropped_loot_sync` 链进入 store。
+2. 显示名的权威来源继续是 server 下发的 `InventoryItem.displayName()`，HUD 以该字段组装地面 marker；不因 render-only Item 新增 server lang、schema 或 drop wire。与此同时，未注册 lang 的风险是真实存在的：如果 client-only/fake stack 被送入 vanilla tooltip/name 路径，当前 mixin 文档已明确会显示宿主 Item 名称，新的 `bong:<id>` 还可能显示原始 translation key；所以「held-item 注册不得泄露 vanilla tooltip/创造栏/掉落实体」是本 plan 的 P0/P1 接入门，而不是把风险推给 ground follow-up。
+3. 本 plan 只负责上述 held-item 隔离门，以及在 P4 验证 FPV/TPV/GUI 不会把 server display name 替换成 vanilla/raw lang；实际掉落位置、pickup、marker 文案和 proto 字段继续由 inventory/drop owner 维护。未来若要改掉落形态或让掉落走 `ItemRenderer`，另开 follow-up，不在本骨架决议中扩大范围。
+
+**落点**：`client/src/main/java/com/bong/client/inventory/render/DroppedItemWorldRenderer.java:27-38,55-60,99-125`、`client/src/main/java/com/bong/client/network/InventoryEventHandler.java:103-145`、`client/src/main/java/com/bong/client/network/DroppedLootSyncHandler.java:12-55,58-85`、`client/src/main/java/com/bong/client/hud/DroppedItemHudPlanner.java:293-296`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityDrop.java:21-33`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityHeldItem.java:27-33`（依据代码）/ 本 plan `§4 P1`、`§7`、`§10`（边界、隔离门与后续 owner）。
+
 ## 10. Finish Evidence
 
 > 当前仍是 skeleton，尚无已完成阶段、实现 commit 或 gate 结果；进入 active/完成归档时按根 `CLAUDE.md` 模板补写，不得把本次文档预检冒充实施证据。
