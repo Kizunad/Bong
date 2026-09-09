@@ -2,7 +2,7 @@
 
 > **一句话主题**：在不改 server gameplay、schema、wire 或物品语义的前提下，收口 Bong 手持物的注册/宿主耦合与防具的运行时 3D 外观缺口，让 `template_id` 能稳定落到可辨识的客户端模型。
 >
-> **状态**：Active（P0 进行中）。本文件只登记事实、边界、阶段和决策门；本 PR 不实施任何 Java、Python、Rust、TOML、模型或贴图改动。
+> **状态**：Active（P0 进行中；P3 hide 首批实施中）。本文件继续登记事实、边界、阶段和决策门；本批只实施 hide 的客户端运行时模型与必要资源包校验接线。
 >
 > **当前复核基线**：`origin/main` / `da88b629b3287096d015e0cf56dae16e3efc54fa`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
 
@@ -15,7 +15,7 @@
 | P0 | 盘点、证据固化、所有权与宿主策略决策门 | ⏳ | 进行中 |
 | P1 | 已有运行时模型的纯注册/接线缺口 | ⬜ | 待验收 |
 | P2 | 共宿主解耦与显式借用关系 | ⬜ | 待验收 |
-| P3 | 缺失运行时 3D 几何与防具模型资产 | ⬜ | 待验收 |
+| P3 | 缺失运行时 3D 几何与防具模型资产 | ⏳ | 2026-09-09 |
 | P4 | 视觉回归、资源完整性与 client gate | ⬜ | 待验收 |
 
 ## 0. 范围、硬边界与防重
@@ -331,7 +331,21 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 - 运行时真相继续落在既有 `ArmorPartModel` cube 表/ModelPart 约定；`.bbmodel` 只作为离线资产，必须经预览、转写和测试 pin 后才算接入。
 - 防具 icon 与 3D 模型分开验收：GUI icon 只能证明 icon 存在，不能替代穿戴/上身几何。
 
+#### P3 首批：hide 四槽（2026-09-09）
+
+- `modelScript/generators/gen_hide_armor.py:171,351,460,539` 已有 `part_helmet()`、`part_chestplate()`、`part_leggings()`、`part_boots()`；本批将其生成的运行时几何逐件转写到 `client/src/main/java/com/bong/client/armor/ArmorPartModel.java:168-171,394-590`，四槽分别为 25 / 53 / 52 / 48 cubes，并由 `ArmorPartModelTest.everyCubeFieldIsPinnedByStableDigest` 锁定 digest。
+- `client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:47-50` 将 `armor_hide_{helmet,chestplate,leggings,boots}` 映射到对应 model key；`ArmorFeatureRenderer.collectRenderable()` 的现有 slot、durability、worn 过滤链消费这些 entry，四张运行时贴图位于 `client/src/main/resources/assets/bong/textures/armor/hide_{helmet,chestplate,leggings,boots}/0.png`。
+- `copper` 的实现 owner 是 `plan-copper-armor-v1`（已随 #2205 进入主线）；本 plan §6.2 仅保留其范围引用，不复制或重新实现铜甲模型、cube 表或行为。`scroll_wrap`、`straw`、`spirit_cloth` 仍留待后续批次。
+
 ## 7. P4 — 视觉回归与门禁
+
+### P3 首批 hide 验收证据（2026-09-09）
+
+- **四槽接线**：`ArmorModelRegistry.java:47-50` 的四个 `template_id` → `modelKey` entry，`ArmorPartModel.java:168-171,394-590` 的四张 cube 表，`ArmorFeatureRenderer.java:104-121` 的注册表/槽位/耐久消费链，以及四张 `assets/bong/textures/armor/hide_*/0.png` 逐一命中；`ArmorModelRegistryTest.everyRegistryEntryBakesThroughModelPartWithoutExternalMeshLoader` 验证每个 entry 可烘焙且贴图文件存在。
+- **错槽、穿戴、破损、卸下**：`ArmorFeatureRendererTest.collectRenderableCoversFourMaterialsAcrossAllFourSlotsAndWearRemoveBrokenStates` 覆盖 hide 四槽的穿戴/空槽/耐久归零；`collectRenderableRejectsHideArmorInEveryWrongSlot` 覆盖 hide 四件放入其余三个错误槽均为空结果；`ArmorModelRegistryTest.registeredMaterialsStillHaveSlotMatchedEmergencyFallbackData` 保留 fallback 槽位对拍。
+- **几何与远距差异**：hide 四槽 cube digest 为 `hide_helmet=4e8c7027c6b36712`、`hide_chestplate=847b3c40bfa77688`、`hide_leggings=47546b41e4b1db2b`、`hide_boots=e71ff51d9c459d8c`；`ArmorModelRegistryTest.registeredAndFallbackMaterialsUseDistinctVisualRoutes` 对铁/骨/铜/兽皮 cube 轮廓及材质色相做差异断言。四槽分别使用 `bbmodel-armor-preview gen_hide_armor --part <part> --coverage`，整套使用 `bbmodel-armor-preview gen_hide_armor --set --full-body --coverage`；实际玩家骨架预览输出为 `modelScript/out/hide_{helmet,chestplate,leggings,boots}_on_player_full.png` 与 `hide_set_on_player_full.png`，覆盖检查通过，旧 `scripts/models/render_bbmodel.py` 不存在，故以该依赖包预览替代平涂图。
+- **生成器与资源包**：本批未新增 generator，未改 golden fixture；`modelScript/tests/test_golden_bytes.py` 全 7 tests（含 `test_generator_set_matches_fixture`、`test_exit_codes_match`、`test_outputs_match`）通过。`bash scripts/build-resourcepack.sh` 产出 `client/resourcepack/manifest.json` 的 `sha1=b25bdd305e887a67fdd5391954c146e93125e9ee`、`size=72,635,671`、`entity-model file_count=314`，并与 `server/src/network/resourcepack.rs:20-26` 的默认 manifest 对拍；`scripts/test_build_resourcepack.py` 4 tests 通过。
+- **边界**：改动不触碰 server gameplay、schema、wire、装备/耐久语义；server 仅更新 `DEFAULT_RESOURCE_PACK_MANIFEST` 的 sha1/size，铁/骨/铜既有 cube 表由 digest pin 对拍未变，未新增 `pub` / `pub(crate)` / `#[doc(hidden)]` seam。
 
 - **注册/资源 pin**：扩展 `BongWeaponModelRegistryTest`、`ArmorModelRegistryTest` 或最终 owner 的等价测试，核对 server 清单、`template_id` 集合、model/texture 路径、host/borrow 关系、四槽映射和 unknown ID 行为。
 - **渲染回归**：FPV、TPV/F5、GUI、ground（若 P0 判定使用 ItemRenderer）分别检查；穿戴全套/单槽/错槽/破损/卸下，确保玩家能从远处区分不同手持物和五套防具，不出现 vanilla host 串形、missing model 或 leather 双层。
