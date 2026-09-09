@@ -3,11 +3,11 @@ package com.bong.client.combat;
 import java.util.Arrays;
 
 /**
- * Immutable snapshot of the 9 F-key quick-use slot bindings (§11.1
- * {@code QuickUseSlotStore}). Slot 0 ↔ F1, slot 8 ↔ F9.
+ * Immutable snapshot of the F-key quick-use slot bindings.
  */
 public final class QuickSlotConfig {
-    public static final int SLOT_COUNT = 9;
+    /** 默认两格；后续由背包/装备扩展，最多 10 格。 */
+    public static final int SLOT_COUNT = 2;
     private static final QuickSlotConfig EMPTY = new QuickSlotConfig(new QuickSlotEntry[SLOT_COUNT], new long[SLOT_COUNT]);
 
     private final QuickSlotEntry[] slots;
@@ -16,6 +16,10 @@ public final class QuickSlotConfig {
     private QuickSlotConfig(QuickSlotEntry[] slots, long[] cooldownUntilMs) {
         this.slots = slots;
         this.cooldownUntilMs = cooldownUntilMs;
+    }
+
+    public static boolean isAvailable(int slot) {
+        return slot >= 0 && slot < SLOT_COUNT;
     }
 
     public static QuickSlotConfig empty() {

@@ -14,6 +14,7 @@ import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.hud.SearchHudState;
 import com.bong.client.hud.SearchProgressHudPlanner;
+import com.bong.client.lingtian.state.LingtianSessionStore;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +37,7 @@ public class BongHudTest {
         NarrationState.clear();
         ZoneState.clear();
         EventAlertState.clear();
+        LingtianSessionStore.clearOnDisconnect();
         BaomaiV3HudStateStore.clear();
         AgentUiVfxStore.clear();
         HudImmersionMode.resetForTests();
@@ -47,6 +49,7 @@ public class BongHudTest {
         NarrationState.clear();
         ZoneState.clear();
         EventAlertState.clear();
+        LingtianSessionStore.clearOnDisconnect();
         BaomaiV3HudStateStore.clear();
         AgentUiVfxStore.clear();
         HudImmersionMode.resetForTests();
@@ -54,18 +57,15 @@ public class BongHudTest {
     }
 
     @Test
-    public void emptyStateStillRendersBaselineWithoutToast() {
+    public void emptyStateOmitsDevelopmentMarkerWithoutToast() {
         BongHud.HudSnapshot snapshot = BongHud.snapshot(1_000L);
         RecordingHudSurface surface = new RecordingHudSurface(320, 180);
 
-        assertEquals("Bong Client Connected", snapshot.baselineText());
+        assertEquals("", snapshot.baselineText());
         assertNull(snapshot.toast());
         assertDoesNotThrow(() -> BongHud.renderSurface(surface, snapshot));
 
-        assertEquals(1, surface.shadowTexts.size());
-        assertEquals("Bong Client Connected", surface.shadowTexts.get(0).text());
-        assertEquals(10, surface.shadowTexts.get(0).x());
-        assertEquals(10, surface.shadowTexts.get(0).y());
+        assertTrue(surface.shadowTexts.isEmpty(), "空 HUD 不应绘制文字: " + surface.shadowTexts);
         assertTrue(surface.fillRects.isEmpty());
         assertTrue(surface.drawTexts.isEmpty());
     }
@@ -84,7 +84,7 @@ public class BongHudTest {
 
         assertDoesNotThrow(() -> BongHud.renderSurface(surface, snapshot));
 
-        assertEquals(1, surface.shadowTexts.size());
+        assertTrue(surface.shadowTexts.isEmpty(), "仅 toast 激活时不应绘制额外文字: " + surface.shadowTexts);
         assertEquals(1, surface.fillRects.size());
         assertEquals(1, surface.drawTexts.size());
         assertEquals(snapshot.toast().text(), surface.drawTexts.get(0).text());

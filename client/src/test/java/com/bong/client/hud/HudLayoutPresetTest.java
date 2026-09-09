@@ -47,6 +47,20 @@ class HudLayoutPresetTest {
     }
 
     @Test
+    void svgFrameFadesWithItsContentsWithoutLosingTheAssetSelection() {
+        List<HudRenderCommand> input = List.of(
+            HudRenderCommand.svg(HudRenderLayer.QUICK_BAR, "selected", 10, 20, 22, 24, 0xFFFFFFFF),
+            HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, 13, 23, 14, 14, 0xFFFFFFFF)
+        );
+        List<HudRenderCommand> output = HudLayoutPreset.filter(
+            input, HudImmersionMode.Mode.PEACE, HudLayoutPreferenceStore.Density.STANDARD, 250L);
+        assertEquals(2, output.size());
+        assertEquals(output.get(1).color(), output.get(0).color(), "SVG 槽框必须与内容使用相同淡出系数");
+        assertTrue((output.get(0).color() >>> 24) < 255);
+        assertEquals("selected", output.get(0).svgAssetKey());
+    }
+
+    @Test
     void densityOverridesPreset() {
         List<HudRenderCommand> commands = List.of(
             HudRenderCommand.rect(HudRenderLayer.COMPASS, 0, 0, 10, 2, 0xFFFFFFFF),

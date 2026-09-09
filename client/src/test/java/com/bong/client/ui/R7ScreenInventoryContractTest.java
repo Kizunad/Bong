@@ -27,8 +27,8 @@ class R7ScreenInventoryContractTest {
 
         assertEquals(expected, actual,
             "R7 Screen adapter inventory drifted; update the fixture only after reviewing the new production declaration");
-        assertEquals(28, actual.size(), "R7 inventory must enumerate every current direct Screen");
-        assertEquals(22, actual.stream().filter(row -> row.host().equals("OWO")).count(),
+        assertEquals(29, actual.size(), "R7 inventory must enumerate every current direct Screen");
+        assertEquals(23, actual.stream().filter(row -> row.host().equals("OWO")).count(),
             "owo host count changed without an explicit migration decision");
         assertEquals(6, actual.stream().filter(row -> row.host().equals("VANILLA")).count(),
             "vanilla host count changed without an explicit migration decision");

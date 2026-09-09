@@ -3,7 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { ColorKind } from "./cultivation.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
-const HOTBAR_SLOT_COUNT = 9;
+const HOTBAR_SLOT_COUNT = 2;
 
 const SafeIntegerV1 = Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX });
 const RevisionV1 = Type.Integer({ minimum: 0 });

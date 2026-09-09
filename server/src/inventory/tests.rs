@@ -415,7 +415,7 @@ fn clear_inventory_fixture() -> (ItemRegistry, PlayerInventory, u64) {
             col: 0,
             instance: make_test_item_instance(90_001, "body_sentinel"),
         });
-    inventory.hotbar[8] = Some(make_test_item_instance(90_002, "hotbar_sentinel"));
+    inventory.hotbar[1] = Some(make_test_item_instance(90_002, "hotbar_sentinel"));
     inventory.containers.push(ContainerState {
         id: MAIN_PACK_CONTAINER_ID.to_string(),
         name: "legacy main pack".to_string(),
@@ -468,7 +468,7 @@ fn clear_player_inventory_pack_only_clears_dynamic_pack_and_legacy_main_pack() {
         "pack-only clear must preserve body pocket sentinel instance=90001"
     );
     assert_eq!(
-        inventory.hotbar[8].as_ref().map(|item| item.instance_id),
+        inventory.hotbar[1].as_ref().map(|item| item.instance_id),
         Some(90_002),
         "pack-only clear must preserve hotbar"
     );
@@ -1693,6 +1693,36 @@ cols = 4
         .expect_err("unknown template id in loadout should fail");
 
     assert!(error.contains("unknown template id `missing_template`"));
+}
+
+#[test]
+fn loadout_rejects_hotbar_index_past_capacity() {
+    let registry = test_registry_from_strs(&[("starter_talisman", "启程护符")])
+        .expect("registry fixture should construct");
+    let capacity = crate::schema::inventory::HOTBAR_SLOT_COUNT;
+    for index in [capacity - 1, capacity] {
+        let loadout_toml = format!(
+            r#"
+[[containers]]
+id = "body_pocket"
+name = "贴身暗袋"
+rows = 2
+cols = 2
+
+[[hotbar]]
+index = {index}
+template_id = "starter_talisman"
+"#
+        );
+        let parsed: LoadoutToml = toml::from_str(&loadout_toml).expect("valid loadout TOML");
+        let result = parsed.try_into_loadout(Path::new("<inline-loadout.toml>"), &registry);
+        if index < capacity {
+            assert!(result.expect("最后一格应可用").hotbar[index].is_some());
+        } else {
+            let error = result.expect_err("首个越界格必须返回错误，不能索引数组导致崩溃");
+            assert!(error.contains("hotbar index") && error.contains("out of bounds"));
+        }
+    }
 }
 
 #[test]
@@ -5811,7 +5841,7 @@ fn transfer_all_contents_moves_containers_equipped_hotbar_and_bone_coins() {
         EQUIP_SLOT_MAIN_HAND.to_string(),
         SlotContents::held_single(make_test_item_instance(2, "iron_sword")),
     );
-    from.hotbar[4] = Some(make_test_item_instance(3, "guyuan_pill"));
+    from.hotbar[1] = Some(make_test_item_instance(3, "guyuan_pill"));
 
     let mut to = make_empty_inventory();
     to.revision = InventoryRevision(20);
@@ -6284,7 +6314,7 @@ fn find_pack_instances_anywhere_finds_all_positions() {
         },
     );
     // hotbar
-    inv.hotbar[3] = Some(make_container_item(3, "field_pack"));
+    inv.hotbar[1] = Some(make_container_item(3, "field_pack"));
     // body_pocket（携带面）
     inv.containers.push(ContainerState {
         quick_access: false,

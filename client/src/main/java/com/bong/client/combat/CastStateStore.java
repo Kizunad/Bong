@@ -57,6 +57,11 @@ public final class CastStateStore {
         setSnapshot(next == null ? CastState.idle() : next, Origin.SERVER_AUTHORITATIVE);
     }
 
+    /** 本地预览/预测快照，不具备服务端 accepted 语义，也不调用断线清理入口。 */
+    public static void replacePrediction(CastState next) {
+        setSnapshot(next == null ? CastState.idle() : next, Origin.LOCAL_PREDICTION);
+    }
+
     public static void addListener(Consumer<CastState> listener) {
         if (listener != null) listeners.add(listener);
     }

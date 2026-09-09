@@ -127,6 +127,23 @@ class HudRenderBackendTest {
         assertFalse(backend.handles(null), "空命令不得被 SVG 后端接管");
     }
 
+    @Test
+    void namedAssetsUseTheirRegisteredResourceAndRespectPartialHudVisibility() {
+        HudRenderBackend backend = SvgHudBackend.production();
+        HudRenderCommand selected = HudRenderCommand.svg(HudRenderLayer.QUICK_BAR, "selected", 10, 20, 22, 24, -1);
+        assertTrue(backend.handles(selected));
+        assertEquals("bong-client:svg/hud/quick-slot-selected.svg", SvgHudBackend.resourceFor(selected).orElseThrow().toString());
+        assertTrue(SvgHudBackend.resourceFor(HudRenderCommand.svg(
+            HudRenderLayer.QUICK_BAR, "complete", 10, 20, 22, 24, -1)).isEmpty(),
+            "资产只能在所属 layer 内解析，不能取其他 HUD 的资源");
+        assertFalse(backend.handles(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, 10, 20, 14, 14, -1)),
+            "冷却遮罩和武器侧槽仍应由 GUI 绘制");
+        assertTrue(SvgHudBackend.visible(HudRenderLayer.QUICK_BAR, ScreenHudVisibility.INVENTORY_DIMMED));
+        assertTrue(SvgHudBackend.visible(HudRenderLayer.CAST_BAR, ScreenHudVisibility.CAST_BAR_ONLY));
+        assertFalse(SvgHudBackend.visible(HudRenderLayer.QUICK_BAR, ScreenHudVisibility.CAST_BAR_ONLY));
+        assertFalse(SvgHudBackend.visible(HudRenderLayer.CAST_BAR, ScreenHudVisibility.HIDDEN));
+    }
+
     private static List<String> fixture(String resource) throws IOException {
         try (var input = HudRenderBackendTest.class.getResourceAsStream(resource)) {
             assertNotNull(input, "缺少 SVG fixture: " + resource);

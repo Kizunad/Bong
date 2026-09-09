@@ -1070,7 +1070,7 @@ fn apply_move_grid_to_hotbar_succeeds_and_bumps_revision() {
             row: 0,
             col: 0,
         },
-        &InventoryLocationV1::Hotbar { index: 3 },
+        &InventoryLocationV1::Hotbar { index: 1 },
         false,
     )
     .expect("move should succeed");
@@ -1082,7 +1082,7 @@ fn apply_move_grid_to_hotbar_succeeds_and_bumps_revision() {
         }
     );
     assert!(inv.containers[0].items.is_empty());
-    assert_eq!(inv.hotbar[3].as_ref().unwrap().instance_id, 42);
+    assert_eq!(inv.hotbar[1].as_ref().unwrap().instance_id, 42);
 }
 
 #[test]
@@ -1100,7 +1100,7 @@ fn apply_move_rejects_when_from_does_not_match() {
             row: 1,
             col: 1,
         },
-        &InventoryLocationV1::Hotbar { index: 3 },
+        &InventoryLocationV1::Hotbar { index: 1 },
         false,
     );
 
@@ -1108,7 +1108,7 @@ fn apply_move_rejects_when_from_does_not_match() {
     // Inventory unchanged.
     assert_eq!(inv.revision, InventoryRevision(7));
     assert_eq!(inv.containers[0].items.len(), 1);
-    assert!(inv.hotbar[3].is_none());
+    assert!(inv.hotbar[1].is_none());
 }
 
 #[test]
@@ -1116,8 +1116,8 @@ fn apply_move_swaps_when_target_occupied_with_same_footprint() {
     use bong_server::schema::inventory::InventoryLocationV1;
     let registry = load_item_registry().expect("item registry should load");
     let mut inv = make_test_inventory_with_one_item();
-    // Pre-populate hotbar slot 3 with a 1×1 item.
-    inv.hotbar[3] = Some(ItemInstance {
+    // Pre-populate hotbar slot 1 with a 1×1 item.
+    inv.hotbar[1] = Some(ItemInstance {
         instance_id: 99,
         template_id: "blocker".to_string(),
         display_name: "占位物".to_string(),
@@ -1149,7 +1149,7 @@ fn apply_move_swaps_when_target_occupied_with_same_footprint() {
             row: 0,
             col: 0,
         },
-        &InventoryLocationV1::Hotbar { index: 3 },
+        &InventoryLocationV1::Hotbar { index: 1 },
         false,
     )
     .expect("swap should succeed");
@@ -1162,7 +1162,7 @@ fn apply_move_swaps_when_target_occupied_with_same_footprint() {
         }
     );
     // Dragged is now at hotbar(3); displaced is at container(0,0).
-    assert_eq!(inv.hotbar[3].as_ref().unwrap().instance_id, 42);
+    assert_eq!(inv.hotbar[1].as_ref().unwrap().instance_id, 42);
     assert_eq!(inv.containers[0].items.len(), 1);
     assert_eq!(inv.containers[0].items[0].instance.instance_id, 99);
     assert_eq!(inv.containers[0].items[0].row, 0);
@@ -1614,11 +1614,11 @@ fn apply_move_rotated_ignored_for_hotbar_target() {
         &registry,
         42,
         &main_pack_loc(0, 0),
-        &InventoryLocationV1::Hotbar { index: 3 },
+        &InventoryLocationV1::Hotbar { index: 1 },
         true,
     )
     .expect("hotbar move with rotated flag should succeed");
-    let item = inv.hotbar[3].as_ref().expect("#42 in hotbar");
+    let item = inv.hotbar[1].as_ref().expect("#42 in hotbar");
     assert_eq!(
         (item.grid_w, item.grid_h),
         (2, 1),

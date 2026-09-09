@@ -68,10 +68,24 @@ class CombatHudBootstrapTest {
 
     @Test
     void emptyQuickSlotSendsNothingAndKeepsCastIdle() {
-        CombatHudBootstrap.onQuickSlotPressed(4);
+        CombatHudBootstrap.onQuickSlotPressed(0);
 
         assertTrue(sentPayloads.isEmpty(), "空快捷槽不得发送 use_quick_slot C2S");
         assertTrue(CastStateStore.snapshot().isIdle(), "空快捷槽不得启动本地施放状态");
+    }
+
+    @Test
+    void unavailableBoundSlotDoesNotSendOrInterruptCurrentCast() {
+        int lockedSlot = QuickSlotConfig.SLOT_COUNT;
+        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(lockedSlot,
+            new QuickSlotEntry("earth_crumb", "土块", 1000, 0, "")));
+        CastStateStore.beginSkillBarCast(0, 5000, System.currentTimeMillis());
+        CastState current = CastStateStore.snapshot();
+
+        CombatHudBootstrap.onQuickSlotPressed(lockedSlot);
+
+        assertTrue(sentPayloads.isEmpty(), "未开放槽即使保留旧绑定也不得发包");
+        assertEquals(current, CastStateStore.snapshot(), "未开放槽不得打断正在进行的技能施法");
     }
 
     @Test

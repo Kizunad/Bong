@@ -728,7 +728,8 @@ mod tests {
             )),
         );
 
-        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
+        let mut hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+            Default::default();
         hotbar[0] = Some(make_item(2005, "healing_draught", "疗伤药剂", 0.3, 2));
 
         PlayerInventory {
@@ -1052,7 +1053,10 @@ mod tests {
             "starter_talisman"
         );
 
-        assert_eq!(target_snapshot.hotbar.len(), 9);
+        assert_eq!(
+            target_snapshot.hotbar.len(),
+            crate::schema::inventory::HOTBAR_SLOT_COUNT
+        );
         assert_eq!(target_snapshot.bone_coins, 57);
         approx_eq(target_snapshot.weight.current, 3.6);
         approx_eq(target_snapshot.weight.max, 45.0);

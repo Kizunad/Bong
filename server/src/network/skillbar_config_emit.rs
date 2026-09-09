@@ -202,7 +202,7 @@ mod tests {
             });
         let mut bindings = SkillBarBindings::default();
         assert!(bindings.set(
-            2,
+            1,
             SkillSlot::Skill {
                 skill_id: "sword.cleave".to_string(),
             },
@@ -219,15 +219,14 @@ mod tests {
         );
 
         assert_eq!(config.slots.len(), SkillBarBindings::SLOT_COUNT);
-        assert!(config.slots[..2].iter().all(Option::is_none));
-        assert!(config.slots[3..].iter().all(Option::is_none));
-        assert_eq!(config.cooldown_until_ms[2], 11_000);
+        assert!(config.slots[..1].iter().all(Option::is_none));
+        assert_eq!(config.cooldown_until_ms[1], 11_000);
         assert!(config
             .cooldown_until_ms
             .iter()
             .enumerate()
-            .all(|(index, value)| index == 2 || *value == 0));
-        match config.slots[2]
+            .all(|(index, value)| index == 1 || *value == 0));
+        match config.slots[1]
             .as_ref()
             .expect("skill slot must be emitted")
         {

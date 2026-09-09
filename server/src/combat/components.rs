@@ -476,13 +476,14 @@ impl Default for UnlockedStyles {
 /// 同时跟踪每个 slot 的 cooldown（plan §4.4）。
 #[derive(Debug, Clone, Component, Default)]
 pub struct QuickSlotBindings {
-    pub slots: [Option<u64>; 9],
+    pub slots: [Option<u64>; Self::SLOT_COUNT],
     /// 每个 slot 下次可用的 server tick；0 表示无冷却。
-    pub cooldown_until_tick: [u64; 9],
+    pub cooldown_until_tick: [u64; Self::SLOT_COUNT],
 }
 
 impl QuickSlotBindings {
-    pub const SLOT_COUNT: usize = 9;
+    /// 默认两格；后续由背包/装备扩展，最多十格。
+    pub const SLOT_COUNT: usize = 2;
 
     pub fn get(&self, slot: u8) -> Option<u64> {
         if slot as usize >= Self::SLOT_COUNT {
@@ -541,14 +542,15 @@ pub enum SkillSlot {
 /// 与该 skill 当前绑在哪个槽、绑了几个槽都无关，天然消除上述两条攻击面。
 #[derive(Debug, Clone, Component, Default)]
 pub struct SkillBarBindings {
-    pub slots: [SkillSlot; 9],
+    pub slots: [SkillSlot; Self::SLOT_COUNT],
     /// key = skill_id（如 `"dugu.eclipse"`），value = cooldown_until_tick。
     /// 没有 entry 视为无冷却（就绪）。
     pub cooldowns: HashMap<String, u64>,
 }
 
 impl SkillBarBindings {
-    pub const SLOT_COUNT: usize = 9;
+    /// 当前默认两格；后续由身体条件（如手部数量）和功法扩展。
+    pub const SLOT_COUNT: usize = crate::schema::inventory::HOTBAR_SLOT_COUNT;
 
     pub fn get(&self, slot: u8) -> Option<&SkillSlot> {
         if slot as usize >= Self::SLOT_COUNT {
@@ -782,13 +784,7 @@ mod tests {
             }
         ));
         assert!(bindings.set(
-            3,
-            SkillSlot::Skill {
-                skill_id: BENG_QUAN.to_string()
-            }
-        ));
-        assert!(bindings.set(
-            8,
+            1,
             SkillSlot::Skill {
                 skill_id: BENG_QUAN.to_string()
             }
@@ -801,8 +797,6 @@ mod tests {
             bindings.is_on_cooldown(BENG_QUAN, 0),
             "施放后 beng_quan 应进入冷却，且与从哪个槽施放无关"
         );
-        // 旧实现下这里会是 3 个独立的 [u64;9] 槽位，只有 slot 0 会显示冷却；
-        // 新实现下 is_on_cooldown 压根不接收 slot，槽位数量对判定结果零影响。
         assert_eq!(
             bindings.cooldowns.len(),
             1,

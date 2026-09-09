@@ -2586,13 +2586,13 @@ fn handle_use_quick_slot(
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     inventories: &Query<&mut PlayerInventory>,
 ) {
-    if slot >= 9 {
+    if slot as usize >= QuickSlotBindings::SLOT_COUNT {
         tracing::warn!(
-            "[bong][network] use_quick_slot entity={entity:?} ignored: slot {slot} out of range"
+            "[bong][network] use_quick_slot entity={entity:?} ignored: slot {slot} unavailable"
         );
         return;
     }
-    // 契约顺序（network_quickslot_config.py docstring：slot>=9 / 无绑定 / 冷却 /
+    // 契约顺序（未开放 / 无绑定 / 冷却 /
     // 同槽 cast 中 → 静默忽略）：与「异槽 cast 中 UserCancel + 启新」互斥的忽略
     // 条件必须**先行**判定。旧顺序先做 cast 闸门——未绑定/冷却中的请求会先打断
     // 进行中的异槽 cast 再被忽略（central-review 2012 #1 根因：use_quick_slot
@@ -2797,10 +2797,8 @@ fn handle_quick_slot_bind(
         );
         return;
     }
-    if slot >= QuickSlotBindings::SLOT_COUNT as u8 {
-        tracing::warn!(
-            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
-        );
+    if slot as usize >= QuickSlotBindings::SLOT_COUNT {
+        tracing::warn!("[bong][network] quick_slot_bind entity={entity:?} slot={slot} unavailable");
         send_quick_slot_bind_response(
             entity,
             request_id,

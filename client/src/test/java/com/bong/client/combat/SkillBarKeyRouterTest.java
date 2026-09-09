@@ -55,6 +55,21 @@ class SkillBarKeyRouterTest {
     }
 
     @Test
+    void unavailableSlotCannotSelectOrInterruptCasting() {
+        int locked = SkillBarConfig.SLOT_COUNT;
+        CastStateStore.beginSkillBarCast(0, 1000, 0);
+        CastState casting = CastStateStore.snapshot();
+
+        assertEquals(SkillBarKeyRouter.RouteResult.SLOT_UNAVAILABLE,
+            SkillBarKeyRouter.route(locked, 100, sent::add));
+        assertTrue(SkillBarKeyRouter.shouldCancelHotbarKey(locked), "未开放数字键不能落到原版隐藏栏");
+        assertSame(casting, CastStateStore.snapshot(), "未开放槽不能打断正在进行的施法");
+        assertTrue(sent.isEmpty());
+        SkillBarStore.setSelectedSlot(locked);
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot());
+    }
+
+    @Test
     void emptySlotPassesThroughNativeHotbar() {
         assertEquals(SkillBarKeyRouter.RouteResult.PASS_THROUGH,
             SkillBarKeyRouter.route(0, 1000L, sent::add));

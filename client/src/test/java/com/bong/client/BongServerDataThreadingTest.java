@@ -189,7 +189,7 @@ class BongServerDataThreadingTest {
             listenerThreads.add(state.phase().name() + "@" + Thread.currentThread().getName()));
 
         dispatchDefaultOnNetworkThread("""
-            {"v":1,"type":"cast_sync","phase":"casting","slot":2,
+            {"v":1,"type":"cast_sync","phase":"casting","slot":1,
              "duration_ms":800,"started_at_ms":1700000000000,"outcome":"none"}
             """);
 

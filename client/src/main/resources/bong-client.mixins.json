@@ -5,6 +5,13 @@
   "compatibilityLevel": "JAVA_17",
   "mixins": [],
   "client": [
+    "MixinTitleMenu",
+    "MixinMenuBackground",
+    "MixinMenuConnect",
+    "MixinMenuDisconnected",
+    "MixinMenuTerrain",
+    "MixinMenuMusic",
+    "MenuScreenAccessor",
     "MixinBackgroundRendererRealmVision",
     "MixinCamera",
     "MixinClientPlayerInteractionManagerAlchemy",
