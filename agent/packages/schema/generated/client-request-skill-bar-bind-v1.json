@@ -18,7 +18,7 @@
     },
     "slot": {
       "minimum": 0,
-      "maximum": 8,
+      "maximum": 1,
       "type": "integer"
     },
     "binding": {
@@ -65,5 +65,5 @@
       ]
     }
   },
-  "x-bong-typebox-source-sha256": "f7532730c80752082de68c480cad8d45c525a159c1b2ced9d4711c6ec10e6e5d"
+  "x-bong-typebox-source-sha256": "8745e2e94bb1a3897884bb30fec0e34dded1c4964dafd8d03204dde8e0b81dce"
 }

@@ -167,6 +167,7 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
     ));
     assert!(bindings.set(1, SkillSlot::Item { instance_id: 42 }));
     bindings.set_cooldown("burst_meridian.beng_quan", 70);
+    bindings.set_cooldown("tea", 70);
 
     let skillbar = emit_and_collect_skillbar_config(
         ItemRegistry::from_map(HashMap::from([(
@@ -184,7 +185,7 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
         .expect("burst_meridian.beng_quan must be registered")
         .icon_texture
         .as_str();
-    assert_eq!(skillbar.slots.len(), 9);
+    assert_eq!(skillbar.slots.len(), SkillBarBindings::SLOT_COUNT);
     assert!(matches!(
         &skillbar.slots[0],
         Some(SkillBarEntryV1::Skill { skill_id, display_name, cast_duration_ms, cooldown_ms, icon_texture })
@@ -204,13 +205,16 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
                 && icon_texture.is_empty()
     ));
     assert!(skillbar.cooldown_until_ms[0] > 0);
+    assert_eq!(
+        skillbar.cooldown_until_ms[1], 0,
+        "Item 槽不继承与模板同名的技能冷却"
+    );
 }
 
 /// bughunt skillbar-rebind-cooldown-reset —— 冷却按 skill_id 记账后，同一招式绑在
 /// 两个槽位必须在 wire payload 里显示**相同**的非零冷却（旧的按槽位数组实现下，
 /// 只有真正 cast 过的那个槽会显示冷却，另一个槽恒 0——那正是"绑多槽绕过冷却"的
-/// 可利用信号）。同时验证 Item 槽即便与某个恰好同名的 skill_id 冷却 entry 共存，
-/// 也恒报 0（Item 槽从不查 cooldowns map）。
+/// 可利用信号）。
 #[test]
 fn skillbar_config_emit_same_skill_bound_to_two_slots_reports_identical_cooldown() {
     let mut bindings = SkillBarBindings::default();
@@ -221,29 +225,18 @@ fn skillbar_config_emit_same_skill_bound_to_two_slots_reports_identical_cooldown
         },
     ));
     assert!(bindings.set(
-        4,
+        1,
         SkillSlot::Skill {
             skill_id: "burst_meridian.beng_quan".to_string(),
         },
     ));
-    assert!(bindings.set(8, SkillSlot::Item { instance_id: 42 }));
     bindings.set_cooldown("burst_meridian.beng_quan", 70);
 
-    let mut inventory = empty_inventory();
-    inventory.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: item_instance(42, "tea"),
-    });
-
     let skillbar = emit_and_collect_skillbar_config(
-        ItemRegistry::from_map(HashMap::from([(
-            "tea".to_string(),
-            template("tea", "清茶"),
-        )])),
+        ItemRegistry::from_map(HashMap::new()),
         10,
         bindings,
-        Some(inventory),
+        Some(empty_inventory()),
     );
 
     assert!(
@@ -251,19 +244,15 @@ fn skillbar_config_emit_same_skill_bound_to_two_slots_reports_identical_cooldown
         "槽 0（beng_quan）应显示冷却"
     );
     assert_eq!(
-        skillbar.cooldown_until_ms[0], skillbar.cooldown_until_ms[4],
-        "同一 skill_id 绑在槽 0 和槽 4，两槽下发的 cooldown_until_ms 必须完全一致——\
+        skillbar.cooldown_until_ms[0], skillbar.cooldown_until_ms[1],
+        "同一 skill_id 绑在槽 0 和槽 1，两槽下发的 cooldown_until_ms 必须完全一致——\
          按 slot 记账的旧实现下这里会是 0（漏了另一槽的冷却），恰是「绑多槽绕过冷却」的信号"
-    );
-    assert_eq!(
-        skillbar.cooldown_until_ms[8], 0,
-        "Item 槽恒报 0，不查 cooldowns map（即便有同名 skill_id 冷却 entry 存在）"
     );
 }
 
 /// plan-skill-av-relink-v1 P3 —— 全部 technique 逐条对拍：Skill 槽下发的
 /// icon_texture 必须严格等于 `TechniqueRegistry` 对应定义且非空。
-/// SkillBar 只有 9 槽，按 9 条一批分批绑定跑 emit，保证 49 条全覆盖。
+/// 按当前槽位容量分批绑定，覆盖全部招式定义。
 #[test]
 fn skillbar_skill_slots_emit_definition_icon_texture_for_every_technique() {
     let technique_registry = TechniqueRegistry::load_for_tests();

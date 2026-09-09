@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.EnumSet;
 import java.util.Set;
 
-/** SVG HUD 矩形提交后端；示例资源只在显式预览中绘制。 */
+/** SVG HUD 资产与矩形提交后端；示例资源只在显式预览中绘制。 */
 public final class SvgHudBackend implements HudRenderBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-svg-hud");
     private static final Identifier EXAMPLE = Identifier.of("bong-client", "svg/hud/example.svg");
@@ -62,8 +62,7 @@ public final class SvgHudBackend implements HudRenderBackend {
     @Override
     public boolean handles(HudRenderCommand command) {
         return command != null
-            && SVG_LAYERS.contains(command.layer())
-            && command.isRect();
+            && (command.isSvgRect() || (SVG_LAYERS.contains(command.layer()) && command.isRect()));
     }
 
     @Override
@@ -73,10 +72,27 @@ public final class SvgHudBackend implements HudRenderBackend {
         ScreenHudVisibility visibility,
         HudRenderCommand command
     ) {
-        if (context == null || client == null || visibility != ScreenHudVisibility.FULL || !handles(command)) {
+        if (context == null || client == null || !handles(command) || !visible(command.layer(), visibility)) {
             return;
         }
         renderCommand(context, client, command);
+    }
+
+    static boolean visible(HudRenderLayer layer, ScreenHudVisibility visibility) {
+        return switch (visibility) {
+            case FULL -> true;
+            case CAST_BAR_ONLY -> layer == HudRenderLayer.CAST_BAR;
+            case INVENTORY_DIMMED -> layer == HudRenderLayer.QUICK_BAR || layer == HudRenderLayer.CAST_BAR;
+            case HIDDEN, AGENT_UI_ONLY -> false;
+        };
+    }
+
+    static Optional<Identifier> resourceFor(HudRenderCommand command) {
+        String key = command.isSvgRect() ? command.svgAssetKey() : "rect";
+        return HudRenderRegistry.require(command.layer()).svgAssets().stream()
+            .filter(asset -> asset.key().equals(key))
+            .map(HudRenderRegistry.SvgAsset::resource)
+            .findFirst();
     }
 
     private static void renderCommand(DrawContext context, MinecraftClient client, HudRenderCommand command) {
@@ -92,15 +108,15 @@ public final class SvgHudBackend implements HudRenderBackend {
         if (width <= 0 || height <= 0) {
             return;
         }
-        HudRenderRegistry.SurfaceDefinition surface = HudRenderRegistry.require(command.layer());
-        if (surface.svgAssets().isEmpty()) {
+        Optional<Identifier> resource = resourceFor(command);
+        if (resource.isEmpty()) {
             return;
         }
-        Identifier resource = surface.svgAssets().get(0).resource();
         try {
-            Optional<SvgMesh> mesh = registry(client.getResourceManager()).find(resource);
+            Optional<SvgMesh> mesh = registry(client.getResourceManager()).find(resource.get());
             if (mesh.isPresent()) {
-                EMITTER.emit(context, mesh.get(), x, y, width, height, command.color());
+                SvgMesh fitted = mesh.get();
+                EMITTER.emit(context, fitted, x, y, width / fitted.width(), height / fitted.height(), command.color());
             }
         } catch (RuntimeException failure) {
             LOGGER.error("[svg] HUD command 提交失败，layer={}", command.layer(), failure);

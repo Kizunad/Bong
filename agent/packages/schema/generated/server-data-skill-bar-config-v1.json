@@ -17,8 +17,8 @@
       "type": "string"
     },
     "slots": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "anyOf": [
@@ -107,8 +107,8 @@
       }
     },
     "cooldown_until_ms": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "minimum": 0,
@@ -116,5 +116,5 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "eae701e5fe346f3a6de326891e44e42469b8cd4f805352501d26deb0e3eb13e4"
+  "x-bong-typebox-source-sha256": "afc5a405e75352661061364aed48f8cb062d03999d89986fe65ce3dd55264de2"
 }

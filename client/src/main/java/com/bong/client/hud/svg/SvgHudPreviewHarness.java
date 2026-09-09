@@ -4,6 +4,15 @@ import com.bong.client.combat.DefenseWindowStore;
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DerivedAttrFlags;
+import com.bong.client.combat.CastOutcome;
+import com.bong.client.combat.CastState;
+import com.bong.client.combat.CastStateStore;
+import com.bong.client.combat.QuickSlotConfig;
+import com.bong.client.combat.QuickSlotEntry;
+import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarConfig;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
@@ -79,8 +88,40 @@ public final class SvgHudPreviewHarness {
                 1.25, true, MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL,
                 18L, 1.8, 36.0, 60.0, false, 1L, "", 0L, 0L, 0L
             ), nowMs);
+            case QUICKBAR, CAST_GATHER, CAST_FORM, CAST_COMPLETE, CAST_INTERRUPTED ->
+                installQuickbarFixture(current, nowMs);
             case NONE -> {
             }
+        }
+    }
+
+    private static void installQuickbarFixture(Scenario current, long nowMs) {
+        CombatHudStateStore.replaceAuthoritative(
+            CombatHudState.createAuthoritative(.92f, .64f, .82f, DerivedAttrFlags.none(), true)
+        );
+        QuickUseSlotStore.replaceLocal(QuickSlotConfig.empty()
+            .withSlot(0, new QuickSlotEntry("tie_bi_san", "铁壁散", 4000, 5000, ""))
+            .withSlot(1, new QuickSlotEntry("leg_splint", "夹板", 4000, 5000, ""))
+            .withCooldownUntil(1, nowMs + 5000));
+        SkillBarStore.replace(SkillBarConfig.of(new SkillBarEntry[]{
+            SkillBarEntry.item("stone_pickaxe", "石镐", 0, 0, ""),
+            SkillBarEntry.skill("zhenmai_harden", "硬化", 4000, 5000,
+                "bong-client:textures/gui/skill/zhenmai_harden.png")
+        }, new long[]{0, 0}));
+        SkillBarStore.setSelectedSlot(0);
+        if (current == Scenario.QUICKBAR) {
+            return;
+        }
+        // 使用本地预测入口，不能让截图状态成为服务端 accepted 的凭据。
+        if (current == Scenario.CAST_GATHER) {
+            CastStateStore.beginCast(0, 4000, nowMs - 1000);
+        } else {
+            CastStateStore.beginSkillBarCast(1, 4000, nowMs - 3000);
+        }
+        if (current == Scenario.CAST_COMPLETE) {
+            CastStateStore.complete(nowMs);
+        } else if (current == Scenario.CAST_INTERRUPTED) {
+            CastStateStore.interrupt(CastOutcome.USER_CANCEL, nowMs);
         }
     }
 
@@ -91,13 +132,22 @@ public final class SvgHudPreviewHarness {
         StatusEffectStore.replace(List.of());
         StatusEffectStore.setCultivationAcceleration(1.0);
         MovementStateStore.replace(MovementState.empty(), nowMs);
+        CastStateStore.replacePrediction(CastState.idle());
+        QuickUseSlotStore.replaceLocal(QuickSlotConfig.empty());
+        SkillBarStore.replace(SkillBarConfig.empty());
+        SkillBarStore.clearSelectedSlot();
     }
 
     private enum Scenario {
         NONE,
         JIEMAI,
         STATUS_EFFECTS,
-        MOVEMENT;
+        MOVEMENT,
+        QUICKBAR,
+        CAST_GATHER,
+        CAST_FORM,
+        CAST_COMPLETE,
+        CAST_INTERRUPTED;
 
         static Scenario fromShotName(String shotName) {
             String name = shotName == null ? "" : shotName.trim().toLowerCase(java.util.Locale.ROOT);
@@ -108,6 +158,11 @@ public final class SvgHudPreviewHarness {
                 case "jiemai" -> JIEMAI;
                 case "status-effects" -> STATUS_EFFECTS;
                 case "movement" -> MOVEMENT;
+                case "quickbar" -> QUICKBAR;
+                case "cast-gather" -> CAST_GATHER;
+                case "cast-form" -> CAST_FORM;
+                case "cast-complete" -> CAST_COMPLETE;
+                case "cast-interrupted" -> CAST_INTERRUPTED;
                 default -> NONE;
             };
         }

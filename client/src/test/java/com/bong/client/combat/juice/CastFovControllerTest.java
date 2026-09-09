@@ -56,8 +56,8 @@ import org.junit.jupiter.api.Test;
  * 证明，不能靠直调假设。
  */
 class CastFovControllerTest {
-    private static final int HEAVY_SLOT = 3;
-    private static final int LIGHT_SLOT = 5;    // 非重型招（无 profile）
+    private static final int HEAVY_SLOT = 0;
+    private static final int LIGHT_SLOT = 1;    // 非重型招（无 profile）
     /**
      * CastState 驱动路径的**测试合成技能** id——PR #1249 三轮返工摘掉 baomai/woliu/anqi 三条
      * 生产不可达的死注册项后（见 {@link CastJuiceProfiles} 类文档「服务端权威 CASTING 缺口」
@@ -89,7 +89,7 @@ class CastFovControllerTest {
     private static final UUID OTHER_PLAYER = new UUID(0x3333L, 0x4444L);
 
     /** 动画事件驱动的招（heaven_gate）：令牌必须由它的权威 CASTING 武装。 */
-    private static final int GATE_SLOT = 7;
+    private static final int GATE_SLOT = 1;
     private static final String GATE_SKILL = CastFovController.HEAVEN_GATE_SKILL_ID;
     /** heaven_gate release FOV punch：peak +12°、时长 8 tick = 400ms。 */
     private static final double GATE_FOV_PEAK = 12.0;
@@ -112,7 +112,6 @@ class CastFovControllerTest {
             HEAVY_SKILL, new CastJuiceProfile(HEAVY_SKILL, CastJuiceProfiles.STRONG, 20, 9.0f, 7));
         SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "全力", DURATION_MS, 0, ""));
         SkillBarStore.updateSlot(LIGHT_SLOT, SkillBarEntry.skill(LIGHT_SKILL, "竖劈", 1000, 0, ""));
-        SkillBarStore.updateSlot(GATE_SLOT, SkillBarEntry.skill(GATE_SKILL, "天门开阖", 4000, 0, ""));
         // 注册真实 cast 转换监听（生产由 bootstrap 挂；单测无 Fabric 事件环境，仅挂 listener）。
         // 必须是**带来源**的 transition listener——Consumer 版拿不到 Origin。
         CastStateStore.addTransitionListener(CastFovController::onCastState);
@@ -142,6 +141,11 @@ class CastFovControllerTest {
         CastStateStore.beginSkillBarCast(slot, DURATION_MS, startedAt);
     }
 
+    private void predictGate(long startedAt) {
+        SkillBarStore.updateSlot(GATE_SLOT, SkillBarEntry.skill(GATE_SKILL, "天门开阖", 4000, 0, ""));
+        predict(GATE_SLOT, startedAt);
+    }
+
     /** 服务端权威 {@code cast_sync{phase:casting}}（真实 wire 入口）——这才武装 pending。 */
     private void accept(int slot, long startedAt) {
         serverSync("casting", slot, startedAt, "none");
@@ -166,7 +170,7 @@ class CastFovControllerTest {
 
     /** 预测 + 权威确认一次 heaven_gate 施法 → 武装动画事件 juice 令牌。 */
     private void acceptGateCast(long startedAt) {
-        predict(GATE_SLOT, startedAt);
+        predictGate(startedAt);
         accept(GATE_SLOT, startedAt);
     }
 
@@ -1137,7 +1141,7 @@ class CastFovControllerTest {
     @Test
     void localPredictionAloneDoesNotArmAnimToken() {
         // 与 CastState 路径同一条硬约束：按键预测不是 accepted，不发令牌。
-        predict(GATE_SLOT, START);
+        predictGate(START);
         releaseAnim();
         advanceMs(GATE_FOV_DURATION_MS / 2);
         assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(), "仅预测 → 无令牌 → 零震动");
@@ -1148,7 +1152,7 @@ class CastFovControllerTest {
     void rejectedGateCastNeverArmsAnimToken() {
         // 施放前被拒（服务端 cast_sync{idle, reject_*} → CastSyncHandler 合成 INTERRUPT）：
         // 从未 accepted → 无令牌；之后哪怕来一条 release 动画也不许触发。
-        predict(GATE_SLOT, START);
+        predictGate(START);
         serverSync("idle", GATE_SLOT, START, "reject_qi_insufficient");
         releaseAnim();
         advanceMs(GATE_FOV_DURATION_MS / 2);

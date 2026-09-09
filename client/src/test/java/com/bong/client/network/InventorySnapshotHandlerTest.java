@@ -188,7 +188,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 57,
               "weight": {"current": 0.2, "max": 50.0},
               "realm": "Awaken",
@@ -258,7 +258,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 57,
               "weight": {"current": 0.2, "max": 50.0},
               "realm": "Awaken",
@@ -367,7 +367,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 0.23, "max": 50.0},
               "realm": "Awaken",
@@ -457,7 +457,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 2.5, "max": 50.0},
               "realm": "Awaken",
@@ -547,7 +547,7 @@ public class InventorySnapshotHandlerTest {
                 "treasure_belt_2": null,
                 "treasure_belt_3": null
               },
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 5.0, "max": 50.0},
               "realm": "Awaken",
@@ -593,7 +593,7 @@ public class InventorySnapshotHandlerTest {
               ],
               "placed_items": [],
               "equipped": {},
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 0, "max": 50},
               "realm": "Awaken",
@@ -638,7 +638,7 @@ public class InventorySnapshotHandlerTest {
               ],
               "placed_items": [],
               "equipped": {},
-              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "hotbar": [null, null],
               "bone_coins": 0,
               "weight": {"current": 0, "max": 50},
               "realm": "Awaken",

@@ -658,9 +658,9 @@ mod take_pill_tests {
     #[test]
     fn consume_hotbar_decrements_stack() {
         let mut inv = fresh_inventory();
-        inv.hotbar[2] = Some(make_pill(1, "guyuan_pill", 3));
+        inv.hotbar[1] = Some(make_pill(1, "guyuan_pill", 3));
         assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
-        assert_eq!(inv.hotbar[2].as_ref().unwrap().stack_count, 2);
+        assert_eq!(inv.hotbar[1].as_ref().unwrap().stack_count, 2);
         assert_eq!(inv.revision.0, 1);
     }
 
@@ -8072,7 +8072,7 @@ mod external_ingress_tests {
         fn use_quick_slot_unbound_slot_preserves_active_cross_slot_cast() {
             // central-review 2012 #1 回归：未绑定槽 use 必须静默忽略且**不得打断**
             // 进行中的异槽 cast。旧实现先走 cast 闸门（异槽 → cancel_previous_cast 发
-            // cast_sync{Interrupt, UserCancel} 并 remove Casting），再发现槽 5 无绑定
+            // cast_sync{Interrupt, UserCancel} 并 remove Casting），再发现槽 1 无绑定
             // 才返回——活动 cast 被无谓取消。契约（network_quickslot_config.py docstring：
             // 无绑定 → 静默忽略）下无绑定请求是无副作用的 no-op。
             let mut app = App::new();
@@ -8141,13 +8141,13 @@ mod external_ingress_tests {
                 "前置：slot 0 应处于 casting 状态"
             );
 
-            // 请求 2：slot 0 仍在 cast 时使用未绑定槽 5。
+            // 请求 2：slot 0 仍在 cast 时使用未绑定槽 1。
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
                     client: entity,
                     channel: ident!("bong:client_request").into(),
-                    data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    data: br#"{"type":"use_quick_slot","v":1,"slot":1}"#
                         .to_vec()
                         .into_boxed_slice(),
                 });
@@ -8169,12 +8169,74 @@ mod external_ingress_tests {
         }
 
         #[test]
+        fn unavailable_quick_slot_rejects_use_and_bind_without_disturbing_existing_state() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(
+                crate::inventory::load_item_registry().expect("item registry loads"),
+            );
+            let locked_slot = QuickSlotBindings::SLOT_COUNT as u8;
+            let mut quick = QuickSlotBindings::default();
+            quick.set(0, Some(88));
+            let mut inventory = empty_inventory();
+            inventory.equipped.insert(
+                crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                crate::inventory::SlotContents::held_single(inventory_test_item(
+                    88,
+                    "guyuan_pill",
+                    1,
+                )),
+            );
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((client_bundle, quick, SkillBarBindings::default(), inventory))
+                .id();
+            for slot in [0, locked_slot] {
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: serde_json::to_vec(&serde_json::json!({
+                            "type": "use_quick_slot", "v": 1, "slot": slot
+                        }))
+                        .unwrap()
+                        .into_boxed_slice(),
+                    });
+                app.update();
+                assert_eq!(
+                    app.world()
+                        .get::<Casting>(entity)
+                        .expect("开放槽可开始施法")
+                        .slot,
+                    0,
+                    "未开放槽不得替换或取消当前施法"
+                );
+            }
+            send_quick_slot_bind_request(&mut app, entity, locked_slot, None, "locked-slot");
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert_eq!(
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(0),
+                Some(88),
+                "越界请求不能改写开放槽的绑定"
+            );
+            assert!(
+                !collect_quickslot_configs(&mut helper)
+                    .iter()
+                    .any(|config| config.ack_request_id.as_deref() == Some("locked-slot")),
+                "schema 拒绝越界请求，不应产生绑定回执"
+            );
+        }
+
+        #[test]
         fn use_quick_slot_on_cooldown_slot_preserves_active_cross_slot_cast() {
             // central-review 2012 #4 回归：handler 把「冷却未到期」早返回移到 cast 闸门
             // 之前——旧顺序下用冷却中的异槽会先 cancel_previous_cast（发
             // cast_sync{Interrupt, UserCancel} 并 remove Casting）再返回，活动 cast 被
             // 无谓打断。此前只有未绑定分支有测试，冷却分支完全没保护。本测试在 slot 0
-            // 进行 cast 时 use 冷却中的 slot 5，断言 slot 0 cast 原样保留、无 interrupt。
+            // 进行 cast 时 use 冷却中的 slot 1，断言 slot 0 cast 原样保留、无 interrupt。
             let mut app = App::new();
             register_request_app(&mut app);
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
@@ -8219,9 +8281,9 @@ mod external_ingress_tests {
             );
             let mut quick_slots = QuickSlotBindings::default();
             assert!(quick_slots.set(0, Some(77)));
-            // slot 5 绑定同实例但处于冷却中（until_tick 设到远离默认 tick 0 的 u64::MAX）。
-            assert!(quick_slots.set(5, Some(77)));
-            quick_slots.set_cooldown(5, u64::MAX);
+            // slot 1 绑定同实例但处于冷却中（until_tick 设到远离默认 tick 0 的 u64::MAX）。
+            assert!(quick_slots.set(1, Some(77)));
+            quick_slots.set_cooldown(1, u64::MAX);
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
@@ -8244,13 +8306,13 @@ mod external_ingress_tests {
                 "前置：slot 0 应处于 casting 状态"
             );
 
-            // 请求 2：slot 0 仍在 cast 时使用冷却中的 slot 5。
+            // 请求 2：slot 0 仍在 cast 时使用冷却中的 slot 1。
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
                     client: entity,
                     channel: ident!("bong:client_request").into(),
-                    data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    data: br#"{"type":"use_quick_slot","v":1,"slot":1}"#
                         .to_vec()
                         .into_boxed_slice(),
                 });
@@ -8275,7 +8337,7 @@ mod external_ingress_tests {
             // 必须静默忽略且不得打断进行中的异槽 cast。此前没有任何测试构造陈旧绑定
             // 覆盖 missing-instance 早返回分支——旧顺序把它放回 cast 闸门之后，用失效
             // 绑定的异槽会在活动 cast 期间先 cancel_previous_cast 再返回。本测试在
-            // slot 0 进行 cast 时 use 绑定已失效实例（999，不在背包）的 slot 5，断言
+            // slot 0 进行 cast 时 use 绑定已失效实例（999，不在背包）的 slot 1，断言
             // slot 0 cast 原样保留、无 interrupt。
             let mut app = App::new();
             register_request_app(&mut app);
@@ -8321,9 +8383,9 @@ mod external_ingress_tests {
             );
             let mut quick_slots = QuickSlotBindings::default();
             assert!(quick_slots.set(0, Some(77)));
-            // slot 5 绑定陈旧实例 999（不在背包），且不在冷却——恰好命中 missing-instance
+            // slot 1 绑定陈旧实例 999（不在背包），且不在冷却——恰好命中 missing-instance
             // 早返回分支（越过 cooldown 与 unbound 两个更靠前的检查）。
-            assert!(quick_slots.set(5, Some(999)));
+            assert!(quick_slots.set(1, Some(999)));
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
@@ -8346,13 +8408,13 @@ mod external_ingress_tests {
                 "前置：slot 0 应处于 casting 状态"
             );
 
-            // 请求 2：slot 0 仍在 cast 时使用绑定失效实例的 slot 5。
+            // 请求 2：slot 0 仍在 cast 时使用绑定失效实例的 slot 1。
             app.world_mut()
                 .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
                 .send(CustomPayloadEvent {
                     client: entity,
                     channel: ident!("bong:client_request").into(),
-                    data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    data: br#"{"type":"use_quick_slot","v":1,"slot":1}"#
                         .to_vec()
                         .into_boxed_slice(),
                 });
@@ -8446,7 +8508,7 @@ mod external_ingress_tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"earth_crumb","request_id":"bind-block"}"#
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"earth_crumb","request_id":"bind-block"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -8458,17 +8520,17 @@ mod external_ingress_tests {
                 .get::<QuickSlotBindings>(entity)
                 .expect("player should keep quick slot bindings");
             assert_eq!(
-                quick.get(3),
+                quick.get(1),
                 Some(88),
                 "expected block quick-slot intent to bind instance 88, actual {:?}",
-                quick.get(3)
+                quick.get(1)
             );
             let skillbar = app
                 .world()
                 .get::<SkillBarBindings>(entity)
                 .expect("player should keep skill bar bindings");
             assert_eq!(
-                skillbar.get(3),
+                skillbar.get(1),
                 Some(&SkillSlot::Item { instance_id: 88 }),
                 "expected the same server intent to atomically mirror the block into skill bar"
             );
@@ -8482,25 +8544,25 @@ mod external_ingress_tests {
                 crate::inventory::load_item_registry().expect("item registry loads"),
             );
             let mut quick = QuickSlotBindings::default();
-            let _ = quick.set(3, Some(77));
+            let _ = quick.set(1, Some(77));
             let mut skillbar = SkillBarBindings::default();
-            let _ = skillbar.set(3, SkillSlot::Item { instance_id: 77 });
+            let _ = skillbar.set(1, SkillSlot::Item { instance_id: 77 });
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
                 .spawn((client_bundle, quick, skillbar, empty_inventory()))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), "reject-unheld");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "reject-unheld");
             app.update();
             flush_all_client_packets(&mut app);
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 Some(77)
             );
             assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
                 Some(&SkillSlot::Item { instance_id: 77 })
             );
             let configs = collect_quickslot_configs(&mut helper);
@@ -8527,7 +8589,7 @@ mod external_ingress_tests {
             send_quick_slot_bind_request(
                 &mut app,
                 entity,
-                3,
+                1,
                 Some("earth_crumb"),
                 "reject-missing-skillbar",
             );
@@ -8535,7 +8597,7 @@ mod external_ingress_tests {
             flush_all_client_packets(&mut app);
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 None
             );
             let configs = collect_quickslot_configs(&mut helper);
@@ -8555,24 +8617,24 @@ mod external_ingress_tests {
             let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
             inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
             let mut quick = QuickSlotBindings::default();
-            let _ = quick.set(3, Some(88));
+            let _ = quick.set(1, Some(88));
             let mut skillbar = SkillBarBindings::default();
-            let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+            let _ = skillbar.set(1, SkillSlot::Item { instance_id: 88 });
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
                 .spawn((client_bundle, quick, skillbar, inventory))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 3, Some("guyuan_pill"), "block-to-pill");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some("guyuan_pill"), "block-to-pill");
             app.update();
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 Some(89)
             );
             assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
                 Some(&SkillSlot::Empty),
                 "expected block→non-block to clear only the stale automatic item mirror"
             );
@@ -8582,20 +8644,20 @@ mod external_ingress_tests {
                     .world_mut()
                     .get_mut::<QuickSlotBindings>(entity)
                     .unwrap();
-                let _ = quick.set(3, Some(88));
+                let _ = quick.set(1, Some(88));
             }
             {
                 let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-                let _ = skillbar.set(3, SkillSlot::Item { instance_id: 88 });
+                let _ = skillbar.set(1, SkillSlot::Item { instance_id: 88 });
             }
-            send_quick_slot_bind_request(&mut app, entity, 3, None, "block-to-clear");
+            send_quick_slot_bind_request(&mut app, entity, 1, None, "block-to-clear");
             app.update();
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 None
             );
             assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
                 Some(&SkillSlot::Empty),
                 "expected block→clear to remove the matching automatic item mirror"
             );
@@ -8605,26 +8667,26 @@ mod external_ingress_tests {
                     .world_mut()
                     .get_mut::<QuickSlotBindings>(entity)
                     .unwrap();
-                let _ = quick.set(3, Some(88));
+                let _ = quick.set(1, Some(88));
             }
             {
                 let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
                 let _ = skillbar.set(
-                    3,
+                    1,
                     SkillSlot::Skill {
                         skill_id: "sword.cleave".to_string(),
                     },
                 );
             }
-            send_quick_slot_bind_request(&mut app, entity, 3, None, "protect-independent-skill");
+            send_quick_slot_bind_request(&mut app, entity, 1, None, "protect-independent-skill");
             app.update();
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 None
             );
             assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
                 Some(&SkillSlot::Skill {
                     skill_id: "sword.cleave".to_string()
                 }),
@@ -8659,7 +8721,7 @@ mod external_ingress_tests {
             send_quick_slot_bind_request(
                 &mut app,
                 entity,
-                3,
+                1,
                 Some("earth_crumb"),
                 "reject-persistence",
             );
@@ -8667,11 +8729,11 @@ mod external_ingress_tests {
             flush_all_client_packets(&mut app);
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 None
             );
             assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(3),
+                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
                 Some(&SkillSlot::Empty)
             );
             assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
@@ -8708,7 +8770,7 @@ mod external_ingress_tests {
                 ))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), "persist-block");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "persist-block");
             app.update();
 
             let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
@@ -8721,9 +8783,9 @@ mod external_ingress_tests {
                 .expect("accepted bind should persist UI prefs");
             let prefs: serde_json::Value =
                 serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
-            assert_eq!(prefs["quick_slots"][3], "earth_crumb");
-            assert_eq!(prefs["skill_bar"][3]["kind"], "item");
-            assert_eq!(prefs["skill_bar"][3]["template_id"], "earth_crumb");
+            assert_eq!(prefs["quick_slots"][1], "earth_crumb");
+            assert_eq!(prefs["skill_bar"][1]["kind"], "item");
+            assert_eq!(prefs["skill_bar"][1]["template_id"], "earth_crumb");
             let _ = std::fs::remove_dir_all(root);
         }
 
@@ -8749,12 +8811,12 @@ mod external_ingress_tests {
 
             // 128 个 '界' 字符（每个 3 字节，共 384 字节）必须被视为合法长度并接受
             let rid128 = "界".repeat(128);
-            send_quick_slot_bind_request(&mut app, entity, 3, Some("earth_crumb"), &rid128);
+            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), &rid128);
             app.update();
             flush_all_client_packets(&mut app);
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 Some(88)
             );
             let configs = collect_quickslot_configs(&mut helper);
@@ -8764,12 +8826,12 @@ mod external_ingress_tests {
 
             // 129 个 '界' 字符必须被静默拒绝且不产生状态变异
             let rid129 = "界".repeat(129);
-            send_quick_slot_bind_request(&mut app, entity, 4, Some("earth_crumb"), &rid129);
+            send_quick_slot_bind_request(&mut app, entity, 0, Some("earth_crumb"), &rid129);
             app.update();
             flush_all_client_packets(&mut app);
 
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(4),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(0),
                 None
             );
         }
@@ -8784,7 +8846,7 @@ mod external_ingress_tests {
 
             let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
             let mut quick_slots = QuickSlotBindings::default();
-            assert!(quick_slots.set(3, Some(88)));
+            assert!(quick_slots.set(1, Some(88)));
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
@@ -8802,16 +8864,16 @@ mod external_ingress_tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"","request_id":"empty-item-id"}"#
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"","request_id":"empty-item-id"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
             app.update();
             flush_all_client_packets(&mut app);
 
-            // 槽 3 上的已有绑定 88 必须保持，不得被清空
+            // 槽 1 上的已有绑定 88 必须保持，不得被清空
             assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(3),
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 Some(88),
                 "item_id=\"\" 畸形请求不得清空既有绑定"
             );
@@ -11917,11 +11979,11 @@ dispatch = "direct_generic"
             registry
         }
 
-        /// 槽位 3 绑定崩拳——「主动切槽取消」用例里那条**通过全部门禁**的新 cast
+        /// 槽位 1 绑定崩拳——「主动切槽取消」用例里那条**通过全部门禁**的新 cast
         /// （空槽位/未学会都会在 cancel 判定之前早退，测不到取消路径）。
-        fn slot3_bound_to_beng_quan() -> SkillBarBindings {
+        fn slot1_bound_to_beng_quan() -> SkillBarBindings {
             let mut bindings = SkillBarBindings::default();
-            bindings.slots[3] = SkillSlot::Skill {
+            bindings.slots[1] = SkillSlot::Skill {
                 skill_id: "burst_meridian.beng_quan".to_string(),
             };
             bindings
@@ -11983,7 +12045,7 @@ dispatch = "direct_generic"
                     ..Default::default()
                 },
                 beng_quan_ready_meridians(),
-                slot3_bound_to_beng_quan(),
+                slot1_bound_to_beng_quan(),
                 QuickSlotBindings::default(),
                 empty_inventory(),
                 known(&["burst_meridian.beng_quan"]),
@@ -11999,7 +12061,7 @@ dispatch = "direct_generic"
                     channel: ident!("bong:client_request").into(),
                     data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
                         v: 1,
-                        slot: 3,
+                        slot: 1,
                         target: None,
                     })
                     .unwrap()
@@ -12056,7 +12118,7 @@ dispatch = "direct_generic"
                     ..Default::default()
                 },
                 beng_quan_ready_meridians(),
-                slot3_bound_to_beng_quan(),
+                slot1_bound_to_beng_quan(),
                 QuickSlotBindings::default(),
                 empty_inventory(),
                 known(&["burst_meridian.beng_quan"]),
@@ -12071,7 +12133,7 @@ dispatch = "direct_generic"
                     channel: ident!("bong:client_request").into(),
                     data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
                         v: 1,
-                        slot: 3,
+                        slot: 1,
                         target: None,
                     })
                     .unwrap()
@@ -13478,50 +13540,25 @@ dispatch = "direct_generic"
 
         #[test]
         fn skill_bar_cast_empty_item_or_cooldown_does_not_start_cast() {
-            let mut app = App::new();
-            register_request_app(&mut app);
-
-            let (client_bundle, _helper) = create_mock_client("Azure");
-            let mut skill_bar = SkillBarBindings::default();
-            assert!(skill_bar.set(1, SkillSlot::Item { instance_id: 7 }));
-            assert!(skill_bar.set(
-                2,
+            for binding in [
+                SkillSlot::Empty,
+                SkillSlot::Item { instance_id: 7 },
                 SkillSlot::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
                 },
-            ));
-            skill_bar.set_cooldown("burst_meridian.beng_quan", 100);
-            let entity = app
-                .world_mut()
-                .spawn((
-                    client_bundle,
-                    skill_bar,
-                    QuickSlotBindings::default(),
-                    empty_inventory(),
-                    // Grant ownership for slot 2's technique so the cooldown gate (not the ownership
-                    // gate) is what blocks the cast, keeping the test non-vacuous.
-                    known(&["burst_meridian.beng_quan"]),
-                ))
-                .id();
-            for slot in [0_u8, 1, 2] {
-                app.world_mut()
-                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
-                    .send(CustomPayloadEvent {
-                        client: entity,
-                        channel: ident!("bong:client_request").into(),
-                        data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
-                            v: 1,
-                            slot,
-                            target: None,
-                        })
-                        .unwrap()
-                        .into_boxed_slice(),
-                    });
+            ] {
+                let mut app = App::new();
+                register_request_app(&mut app);
+                let mut skill_bar = SkillBarBindings::default();
+                assert!(skill_bar.set(0, binding));
+                skill_bar.set_cooldown("burst_meridian.beng_quan", 100);
+                let entity = spawn_beng_quan_capable_entity(&mut app, skill_bar);
+                send_skill_bar_cast(&mut app, entity);
+                assert!(
+                    app.world().get::<Casting>(entity).is_none(),
+                    "空槽、物品绑定或冷却中的技能均不能启动施法"
+                );
             }
-
-            app.update();
-
-            assert!(app.world().get::<Casting>(entity).is_none());
         }
 
         #[test]
@@ -13602,7 +13639,7 @@ dispatch = "direct_generic"
 
             let mut skill_bar = SkillBarBindings::default();
             assert!(skill_bar.set(
-                2,
+                1,
                 SkillSlot::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
                 },
@@ -13617,7 +13654,7 @@ dispatch = "direct_generic"
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -13626,7 +13663,7 @@ dispatch = "direct_generic"
 
             let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
             assert!(matches!(
-                &bindings.slots[2],
+                &bindings.slots[1],
                 SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
             ));
             assert_eq!(
@@ -13648,7 +13685,7 @@ dispatch = "direct_generic"
                     channel: ident!("bong:client_request").into(),
                     data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
                         v: 1,
-                        slot: 2,
+                        slot: 1,
                         target: None,
                     })
                     .unwrap()
@@ -13672,7 +13709,7 @@ dispatch = "direct_generic"
 
             let mut skill_bar = SkillBarBindings::default();
             assert!(skill_bar.set(
-                2,
+                1,
                 SkillSlot::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
                 },
@@ -13686,7 +13723,7 @@ dispatch = "direct_generic"
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -13706,7 +13743,7 @@ dispatch = "direct_generic"
                     channel: ident!("bong:client_request").into(),
                     data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
                         v: 1,
-                        slot: 2,
+                        slot: 1,
                         target: None,
                     })
                     .unwrap()
@@ -13732,7 +13769,7 @@ dispatch = "direct_generic"
 
             let mut skill_bar = SkillBarBindings::default();
             assert!(skill_bar.set(
-                2,
+                1,
                 SkillSlot::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
                 },
@@ -13746,7 +13783,7 @@ dispatch = "direct_generic"
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.tie_shan_kao"}}"#
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"skill","skill_id":"burst_meridian.tie_shan_kao"}}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -13755,7 +13792,7 @@ dispatch = "direct_generic"
             {
                 let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
                 assert!(matches!(
-                    &bindings.slots[2],
+                    &bindings.slots[1],
                     SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.tie_shan_kao"
                 ));
                 assert!(
@@ -13775,7 +13812,7 @@ dispatch = "direct_generic"
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -13783,7 +13820,7 @@ dispatch = "direct_generic"
 
             let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
             assert!(matches!(
-                &bindings.slots[2],
+                &bindings.slots[1],
                 SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
             ));
             assert!(
@@ -13803,7 +13840,7 @@ dispatch = "direct_generic"
 
             let mut skill_bar = SkillBarBindings::default();
             assert!(skill_bar.set(
-                2,
+                1,
                 SkillSlot::Skill {
                     skill_id: "burst_meridian.beng_quan".to_string(),
                 },
@@ -13817,14 +13854,14 @@ dispatch = "direct_generic"
                 .send(CustomPayloadEvent {
                     client: entity,
                     channel: ident!("bong:client_request").into(),
-                    data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":null}"#
+                    data: br#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":null}"#
                         .to_vec()
                         .into_boxed_slice(),
                 });
             app.update();
             {
                 let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
-                assert!(matches!(bindings.slots[2], SkillSlot::Empty));
+                assert!(matches!(bindings.slots[1], SkillSlot::Empty));
                 assert!(
                     bindings.is_on_cooldown("burst_meridian.beng_quan", 0),
                     "清空槽位不得清零 beng_quan 的冷却——否则「清空→重绑」两次点击即可绕过冷却"
@@ -13837,7 +13874,7 @@ dispatch = "direct_generic"
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":1,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -13857,7 +13894,7 @@ dispatch = "direct_generic"
                     channel: ident!("bong:client_request").into(),
                     data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
                         v: 1,
-                        slot: 2,
+                        slot: 1,
                         target: None,
                     })
                     .unwrap()
@@ -14618,9 +14655,9 @@ dispatch = "direct_generic"
                 alchemy: None,
                 lingering_owner_qi: None,
             };
-            // 放进 hotbar slot 3（容器为空）
+            // 放进 hotbar slot 1（容器为空）
             let mut inv = empty_inventory();
-            inv.hotbar[3] = Some(item);
+            inv.hotbar[1] = Some(item);
             app.world_mut().entity_mut(entity).insert(inv);
 
             app.world_mut()

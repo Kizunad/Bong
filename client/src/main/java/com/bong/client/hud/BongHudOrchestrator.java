@@ -22,10 +22,8 @@ import java.util.List;
 import java.util.Locale;
 
 public final class BongHudOrchestrator {
-    public static final String BASELINE_LABEL = "Bong Client Connected";
-
-    private static final int BASELINE_X = 10;
-    private static final int BASELINE_Y = 10;
+    private static final int HUD_TEXT_X = 10;
+    private static final int HUD_TEXT_Y = 10;
     private static final int LINE_HEIGHT = 12;
     private static final int DEFAULT_TEXT_WIDTH = 220;
 
@@ -146,16 +144,14 @@ public final class BongHudOrchestrator {
         HudEnvironmentVariant environmentVariant = HudEnvironmentVariant.from(safeSnapshot.zoneState(), extractState);
         int normalizedWidth = normalizeWidth(maxTextWidth);
         List<HudRenderCommand> commands = new ArrayList<>();
-        commands.add(HudRenderCommand.text(HudRenderLayer.BASELINE, BASELINE_LABEL, BASELINE_X, BASELINE_Y, 0xFFFFFF));
-
-        int nextY = BASELINE_Y + LINE_HEIGHT;
+        int nextY = HUD_TEXT_Y;
         if (ZoneHudRenderer.append(
             commands,
             safeSnapshot.zoneState(),
             nowMillis,
             widthMeasurer,
             normalizedWidth,
-            BASELINE_X,
+            HUD_TEXT_X,
             nextY,
             screenWidth,
             screenHeight
@@ -167,14 +163,14 @@ public final class BongHudOrchestrator {
             PlayerStateStore.snapshot(),
             widthMeasurer,
             normalizedWidth,
-            BASELINE_X,
+            HUD_TEXT_X,
             nextY
         )) {
             nextY += LINE_HEIGHT;
         }
 
         if (BongClientFeatures.ENABLE_TOASTS
-            && ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, BASELINE_X, nextY)) {
+            && ToastHudRenderer.append(commands, nowMillis, widthMeasurer, normalizedWidth, HUD_TEXT_X, nextY)) {
             nextY += LINE_HEIGHT;
         }
 
@@ -287,13 +283,8 @@ public final class BongHudOrchestrator {
             ));
             // plan-weapon-v1 §4.3：武器槽贴 hotbar 左右两端。
             commands.addAll(WeaponHotbarHudPlanner.buildCommands(screenWidth, screenHeight));
-            commands.addAll(EventStreamHudPlanner.buildCommands(
-                combatSnapshot.eventStream(),
-                nowMillis,
-                widthMeasurer,
-                screenWidth,
-                screenHeight
-            ));
+            // 滚动事件列表已退出 HUD；共享事件缓冲仍按原生命周期过期。
+            combatSnapshot.eventStream().expire(nowMillis);
             commands.addAll(JiemaiRingHudPlanner.buildCommands(
                 combatSnapshot.defenseWindowState(),
                 nowMillis,
@@ -370,13 +361,7 @@ public final class BongHudOrchestrator {
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD（右上角）。
             commands.addAll(HalfStepRechallengeHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-            commands.addAll(TargetInfoHudPlanner.buildCommands(
-                TargetInfoStateStore.snapshot(),
-                nowMillis,
-                widthMeasurer,
-                screenWidth,
-                screenHeight
-            ));
+            // 目标总览暂不显示；生命、名称、境界、真元感知需分别由能力解锁后接入。
             commands.addAll(com.bong.client.tsy.TsyBossHealthBar.buildCommands(
                 com.bong.client.tsy.TsyBossHealthStore.snapshot(),
                 nowMillis,

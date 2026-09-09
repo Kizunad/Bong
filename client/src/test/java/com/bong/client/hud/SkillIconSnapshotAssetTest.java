@@ -232,9 +232,8 @@ class SkillIconSnapshotAssetTest {
         String json = """
             {"v":1,"type":"skillbar_config","slots":[
               {"kind":"skill","skill_id":"%s","display_name":"劈斩","cast_duration_ms":400,"cooldown_ms":3000,"icon_texture":"%s"},
-              {"kind":"item","template_id":"%s","display_name":"开脉丹","cast_duration_ms":1500,"cooldown_ms":500,"icon_texture":""},
-              null,null,null,null,null,null,null
-            ],"cooldown_until_ms":[0,0,0,0,0,0,0,0,0]}"""
+              {"kind":"item","template_id":"%s","display_name":"开脉丹","cast_duration_ms":1500,"cooldown_ms":500,"icon_texture":""}
+            ],"cooldown_until_ms":[0,0]}"""
             .formatted(skillId, skillIcon, itemTemplateId);
 
         SkillBarStore.resetForTests();

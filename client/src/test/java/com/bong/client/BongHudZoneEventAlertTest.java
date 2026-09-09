@@ -26,7 +26,7 @@ public class BongHudZoneEventAlertTest {
     }
 
     @Test
-    public void hudCanComposeBaselineZoneBannerAndNarrationToast() {
+    public void hudCanComposeZoneBannerAndNarrationToast() {
         ZoneState.recordZoneInfo(new BongServerPayload.ZoneInfo("blood_valley", 0.42d, 3, null), 1_000L);
         EventAlertState.recordAlert(
                 new BongServerPayload.EventAlert(
@@ -49,7 +49,8 @@ public class BongHudZoneEventAlertTest {
         RecordingHudSurface surface = new RecordingHudSurface(320, 180);
 
         assertDoesNotThrow(() -> BongHud.renderSurface(surface, snapshot));
-        assertTrue(surface.shadowTexts.size() >= 2, "baseline and zone title should render");
+        assertTrue(surface.drawTexts.stream().anyMatch(call -> call.text().contains("Blood Valley")),
+                "zone title should still render after removing the connection marker");
         assertTrue(surface.fillRects.size() >= 5, "zone panel, qi bar, banner, toast backgrounds should render");
         assertTrue(surface.drawTexts.size() >= 6, "zone panel text, event banner, and toast should render");
     }

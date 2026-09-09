@@ -39,8 +39,8 @@ combat/inspect/SkillConfigFloatingWindow.java	1	99	LEGAL	NONE	FlowLayout header 
 combat/inspect/SkillConfigFloatingWindow.java	2	118	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
 combat/inspect/SkillConfigFloatingWindow.java	3	139	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
 combat/inspect/TechniqueRowComponent.java	1	36	LEGAL	NONE	root = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-combat/inspect/TechniquesTabPanel.java	1	54	LEGAL	NONE	root = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-combat/inspect/TechniquesTabPanel.java	2	70	LEGAL	NONE	techniqueList = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+combat/inspect/TechniquesTabPanel.java	1	55	LEGAL	NONE	root = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+combat/inspect/TechniquesTabPanel.java	2	71	LEGAL	NONE	techniqueList = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
 craft/CraftActionBar.java	1	38	LEGAL	NONE	root = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(CraftScreenLayout.ACTION_BAR_H));
 craft/CraftActionBar.java	2	66	COMMENT	NONE	// Sizing.fill(100) = 占父容器整宽（非「剩余空间」，见 Sizing.inflate），
 craft/CraftActionBar.java	3	79	LEGAL	TERMINAL_INTENTIONAL	statusLabel.horizontalSizing(Sizing.fill(100));

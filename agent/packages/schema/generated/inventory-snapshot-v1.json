@@ -9745,8 +9745,8 @@
       }
     },
     "hotbar": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "anyOf": [
@@ -10359,5 +10359,5 @@
       "type": "number"
     }
   },
-  "x-bong-typebox-source-sha256": "d075ed55915c0b42089726b6996f2de6722ca4e60b5201d61cd533b712dc30c4"
+  "x-bong-typebox-source-sha256": "0aaef55ce7136680a930c39f00a1bad88ee522d82fa64b1556f8131e08f28f47"
 }

@@ -5787,7 +5787,13 @@ mod tests {
     fn network_array_inventory(items: &[(u64, &str)]) -> PlayerInventory {
         let mut inventory = zhenfa_flag_inventory();
         for (slot, (instance_id, template_id)) in items.iter().enumerate() {
-            inventory.hotbar[slot] = Some(network_array_item(*instance_id, template_id));
+            inventory.containers[0]
+                .items
+                .push(crate::inventory::PlacedItemState {
+                    row: 0,
+                    col: slot as u8,
+                    instance: network_array_item(*instance_id, template_id),
+                });
         }
         inventory
     }

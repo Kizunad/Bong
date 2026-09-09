@@ -960,10 +960,10 @@ where
     D: serde::Deserializer<'de>,
 {
     let slot = u8::deserialize(deserializer)?;
-    if slot < 9 {
+    if usize::from(slot) < crate::schema::inventory::HOTBAR_SLOT_COUNT {
         Ok(slot)
     } else {
-        Err(serde::de::Error::custom("slot must be between 0 and 8"))
+        Err(serde::de::Error::custom("slot out of range"))
     }
 }
 

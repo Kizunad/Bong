@@ -4,6 +4,7 @@ import bong.Common;
 import bong.Envelope;
 import com.bong.client.combat.DefenseWindowState;
 import com.bong.client.combat.DefenseWindowStore;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
@@ -65,6 +66,7 @@ class ProtoServerDataBridgeTest {
         com.bong.client.gathering.GatheringSessionStore.resetForTests();
         com.bong.client.insight.InsightOfferStore.resetForTests();
         com.bong.client.scroll.ScrollReadStore.resetForTests();
+        com.bong.client.lingtian.state.LingtianSessionStore.clearOnDisconnect();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -590,7 +592,7 @@ class ProtoServerDataBridgeTest {
     private static Object nonDefaultScalarOrMessage(Descriptors.FieldDescriptor field, int depth) {
         switch (field.getJavaType()) {
             case INT:
-                return 7;
+                return "bong.CastSync.slot".equals(field.getFullName()) ? 1 : 7;
             case LONG:
                 return 7L;
             case FLOAT:
@@ -1120,11 +1122,11 @@ class ProtoServerDataBridgeTest {
                         .setItemId("healing_pill")
                         .setDisplayName("灵息丸")
                         .setCastDurationMs(500)));
-        // slots 1-8: empty
-        for (int i = 1; i < 9; i++) {
+        // 首格有绑定，其余槽为空。
+        for (int i = 1; i < com.bong.client.combat.QuickSlotConfig.SLOT_COUNT; i++) {
             qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder());
         }
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < com.bong.client.combat.QuickSlotConfig.SLOT_COUNT; i++) {
             qsc.addCooldownUntilMs(0);
         }
         qsc.setAckRequestId("bind-1");
@@ -1139,7 +1141,7 @@ class ProtoServerDataBridgeTest {
         assertTrue(json.get("bind_accepted").getAsBoolean());
 
         JsonArray slots = json.getAsJsonArray("slots");
-        assertEquals(9, slots.size(), "should have 9 slots");
+        assertEquals(com.bong.client.combat.QuickSlotConfig.SLOT_COUNT, slots.size());
 
         // slot 0: unwrapped from wrapper — should have item_id directly
         assertTrue(slots.get(0).isJsonObject(), "filled slot should be an object");
@@ -1149,8 +1151,8 @@ class ProtoServerDataBridgeTest {
         assertFalse(slot0.has("entry"),
                 "wrapper 'entry' field should be removed after unwrapping");
 
-        // slots 1-8: empty wrapper {} → JsonNull
-        for (int i = 1; i < 9; i++) {
+        // 空 wrapper {} → JsonNull
+        for (int i = 1; i < slots.size(); i++) {
             assertTrue(slots.get(i).isJsonNull(),
                     "empty slot " + i + " should be null (not empty object {})");
         }
@@ -1179,11 +1181,7 @@ class ProtoServerDataBridgeTest {
                                 .setDisplayName("火球术")
                                 .setCastDurationMs(2000)
                                 .setCooldownMs(5000))));
-        // slots 2-8: empty
-        for (int i = 2; i < 9; i++) {
-            sbc.addSlots(Envelope.OptionalSkillBarEntry.newBuilder());
-        }
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < SkillBarConfig.SLOT_COUNT; i++) {
             sbc.addCooldownUntilMs(0);
         }
 
@@ -1209,11 +1207,6 @@ class ProtoServerDataBridgeTest {
         assertEquals("skill", slot1.get("kind").getAsString());
         assertEquals("fireball", slot1.get("skill_id").getAsString());
 
-        // slots 2-8: null
-        for (int i = 2; i < 9; i++) {
-            assertTrue(slots.get(i).isJsonNull(),
-                    "empty slot " + i + " should be null");
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1392,7 +1385,7 @@ class ProtoServerDataBridgeTest {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setCastSync(Envelope.CastSync.newBuilder()
                         .setPhase(Envelope.CastPhase.CAST_PHASE_CASTING)
-                        .setSlot(3)
+                        .setSlot(1)
                         .setDurationMs(1500)
                         .setStartedAtMs(1_700_000_000_000L)
                         .setOutcome(Envelope.CastOutcome.CAST_OUTCOME_NONE))

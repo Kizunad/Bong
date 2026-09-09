@@ -7,8 +7,8 @@
   ],
   "properties": {
     "slots": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "anyOf": [
@@ -97,8 +97,8 @@
       }
     },
     "cooldown_until_ms": {
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 2,
+      "maxItems": 2,
       "type": "array",
       "items": {
         "minimum": 0,
@@ -106,5 +106,5 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "b822297ed9de66fefdf16134e970ba0771fb15314832b9a34ff7e7d4c79db6fc"
+  "x-bong-typebox-source-sha256": "d5357e179738a20a35307301576bc2d3b3a668aceb14b887bb26896020ee2e3c"
 }

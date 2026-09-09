@@ -4543,14 +4543,17 @@ mod tests {
                 outcome: CastOutcomeV1::None,
             }),
             ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
-                slots: vec![None; 9],
-                cooldown_until_ms: vec![0; 9],
+                slots: vec![None; crate::combat::components::QuickSlotBindings::SLOT_COUNT],
+                cooldown_until_ms: vec![
+                    0;
+                    crate::combat::components::QuickSlotBindings::SLOT_COUNT
+                ],
                 ack_request_id: None,
                 bind_accepted: None,
             }),
             ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
-                slots: vec![None; 9],
-                cooldown_until_ms: vec![0; 9],
+                slots: vec![None; crate::combat::components::SkillBarBindings::SLOT_COUNT],
+                cooldown_until_ms: vec![0; crate::combat::components::SkillBarBindings::SLOT_COUNT],
             }),
             ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 { entries: vec![] }),
             ServerDataPayloadV1::SkillConfigSnapshot(SkillConfigSnapshot {
