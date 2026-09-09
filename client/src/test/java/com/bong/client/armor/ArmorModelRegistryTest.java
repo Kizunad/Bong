@@ -23,9 +23,9 @@ class ArmorModelRegistryTest {
     private static final Path RESOURCES = Path.of("src", "main", "resources");
 
     @Test
-    void registryContainsExactlyTwoMaterialsAcrossAllFourSlots() {
-        assertEquals(8, ArmorModelRegistry.size(), "2 材质 × 4 槽必须恰好注册 8 件");
-        for (String material : new String[]{"iron", "bone"}) {
+    void registryContainsMaterialsAcrossAllFourSlots() {
+        assertEquals(12, ArmorModelRegistry.size(), "3 材质 × 4 槽必须恰好注册 12 件");
+        for (String material : new String[]{"iron", "bone", "copper"}) {
             assertSpec(material, "helmet", EquipSlotType.HEAD);
             assertSpec(material, "chestplate", EquipSlotType.CHEST);
             assertSpec(material, "leggings", EquipSlotType.LEGS);
@@ -47,10 +47,10 @@ class ArmorModelRegistryTest {
     @Test
     void allReturnsUnmodifiableSnapshotWithoutRegistryMutationBackdoor() {
         List<ArmorModelRegistry.ArmorModelSpec> snapshot = ArmorModelRegistry.all();
-        assertEquals(8, snapshot.size(), "快照必须保留全部 8 个注册项");
+        assertEquals(12, snapshot.size(), "快照必须保留全部 12 个注册项");
         assertThrows(UnsupportedOperationException.class, snapshot::clear,
             "all() 必须返回不可修改快照，调用方不得通过 clear/remove 篡改全局注册表");
-        assertEquals(8, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
+        assertEquals(12, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
     }
 
     @Test
@@ -95,9 +95,9 @@ class ArmorModelRegistryTest {
 
     @Test
     void unregisteredMaterialsKeepLeatherFallback() {
-        assertTrue(ArmorModelRegistry.get("armor_copper_helmet").isEmpty(),
-            "铜甲尚无专属 ModelPart，必须保持未注册以继续走染色皮甲兜底");
-        assertNotNull(ArmorTintRegistry.item("armor_copper_helmet"));
+        assertTrue(ArmorModelRegistry.get("armor_hide_helmet").isEmpty(),
+            "兽皮甲尚无专属 ModelPart，必须保持未注册以继续走染色皮甲兜底");
+        assertNotNull(ArmorTintRegistry.item("armor_hide_helmet"));
     }
 
     @Test
@@ -110,28 +110,38 @@ class ArmorModelRegistryTest {
     }
 
     @Test
-    void ironBoneAndDyedLeatherFallbackUseThreeDistinctVisualRoutes() throws Exception {
+    void ironBoneCopperAndDyedLeatherFallbackUseDistinctVisualRoutes() throws Exception {
         for (String piece : new String[]{"helmet", "chestplate", "leggings", "boots"}) {
             ArmorModelRegistry.ArmorModelSpec iron =
                 ArmorModelRegistry.get("armor_iron_" + piece).orElseThrow();
             ArmorModelRegistry.ArmorModelSpec bone =
                 ArmorModelRegistry.get("armor_bone_" + piece).orElseThrow();
+            ArmorModelRegistry.ArmorModelSpec copper =
+                ArmorModelRegistry.get("armor_copper_" + piece).orElseThrow();
 
             assertNotEquals(ArmorPartModel.cubes(iron.modelKey()), ArmorPartModel.cubes(bone.modelKey()),
                 piece + " 的铁/骨 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(copper.modelKey()), ArmorPartModel.cubes(iron.modelKey()),
+                piece + " 的铜/铁 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(copper.modelKey()), ArmorPartModel.cubes(bone.modelKey()),
+                piece + " 的铜/骨 cube 轮廓必须不同");
+
             assertTrue(Files.mismatch(texturePath(iron), texturePath(bone)) >= 0,
                 piece + " 的铁/骨贴图不得字节相同");
+            assertTrue(Files.mismatch(texturePath(copper), texturePath(iron)) >= 0,
+                piece + " 的铜/铁贴图不得字节相同");
 
-            String copperId = "armor_copper_" + piece;
-            assertTrue(ArmorModelRegistry.get(copperId).isEmpty(), copperId + " 应继续走染色皮甲兜底");
-            assertNotNull(ArmorTintRegistry.item(copperId), copperId + " 缺 leather fallback 规格");
+            String hideId = "armor_hide_" + piece;
+            assertTrue(ArmorModelRegistry.get(hideId).isEmpty(), hideId + " 应继续走染色皮甲兜底");
+            assertNotNull(ArmorTintRegistry.item(hideId), hideId + " 缺 leather fallback 规格");
         }
 
-        assertEquals(3, Set.of(
+        assertEquals(4, Set.of(
             ArmorTintRegistry.tintForItemId("armor_iron_chestplate"),
             ArmorTintRegistry.tintForItemId("armor_bone_chestplate"),
-            ArmorTintRegistry.tintForItemId("armor_copper_chestplate")
-        ).size(), "铁、骨、染色皮甲兜底必须保留三种不同色相");
+            ArmorTintRegistry.tintForItemId("armor_copper_chestplate"),
+            ArmorTintRegistry.tintForItemId("armor_hide_chestplate")
+        ).size(), "铁、骨、铜、皮染色兜底必须保留不同色相");
     }
 
     private static void assertSpec(String material, String piece, EquipSlotType expectedSlot) {
