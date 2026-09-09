@@ -3,8 +3,8 @@
 resolve_one_probe（shelflife/probe.rs:101）检查顺序：
 1. 修为 < 凝脉（MIN_PROBE_REALM_RANK=2）→ Denied(RealmTooLow) → EventAlert
    「神识未及，凝脉方可感知保鲜」；
-2. item 无 freshness → Denied(NoFreshness) → 静默（freshness_probe_emit 对
-   NoFreshness 一律 continue 不发 S2C）；
+2. item 无 freshness → Denied(NoFreshness) → 不发探针响应（freshness_probe_emit 对
+   NoFreshness 一律 continue 不发 S2C）；前置背包同步可能在窗口内迟到，但不属于本请求；
 3. 通过 → Precise → `FreshnessUpdateV1 { item_uuid, freshness, profile_name }`
    （freshness = current_qi/initial_qi；**创建瞬间**为 1.0，但探针响应反映的是
    give→probe 已衰减后的比值，本场景断言其严格 < 1.0）。
@@ -58,6 +58,13 @@ REALM_SYNC_DRAIN_MAX = SILENT_WINDOW * 3.0
 # （central-review 2029 #2）。carrier_state 不在 proto_min 白名单，通常不
 # 解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的周期流。
 AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
+# spirit_treasure_state 由 spirit_treasure_emit 的
+# Added/Changed<ActiveSpiritTreasures> 触发，源头是 join/前置 give 或 clearinv 的
+# Changed<PlayerInventory> 同步，不是 freshness_probe 的响应。probe handler 只读检查
+# ownership 后发 intent，拒绝路径不会改 inventory；reader 可能把前置同步在请求窗口
+# 内才解码。只在本场景排除这个已核实的无关类型，其他 server_data 继续判红，不扩大
+# 共享 ambient 白名单。
+UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset({"spirit_treasure_state"})
 # 探针路径 freshness = current_qi/initial_qi（shelflife/probe.rs，Linear：
 # current = initial - decay_per_tick × storage×season × (now_tick-created_at_tick)）。
 # 服务器主循环是 `app.update() + 5ms sleep`（main.rs:186），tick 率无上限也低于
@@ -286,6 +293,7 @@ def _scan_silent_violations(bot, sent_at: float, description: str, allowed_paylo
             e.t > sent_at
             and e.t not in allowed_payload_ts
             and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES
+            and e.data["payload_type"] not in UNRELATED_SETUP_SYNC_PAYLOAD_TYPES
         ):
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"

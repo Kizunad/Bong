@@ -17,8 +17,10 @@ protocol entity id 上分别验证距离与维度门。每条拒收都断言聊�
 单边损耗实现。
 
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。chat-only 契约由
-_assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何非周期 S2C 响应
-（central-review 2029 #5）。
+_assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何针对本请求的 S2C
+响应（central-review 2029 #5）。`spirit_treasure_state` 是 join/前置背包变动触发的
+异步状态同步，可能在拒收窗口内迟到；它不是本请求响应，单独列入本场景的无关同步
+排除集，其他 server_data 仍一律判红。
 """
 
 import json
@@ -63,6 +65,12 @@ TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
 # 白名单，通常不解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的
 # 周期流。
 AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
+# spirit_treasure_state 不是固定周期流：spirit_treasure_emit 只在
+# Added/Changed<ActiveSpiritTreasures> 时发送，而该组件由前置 join/背包变动同步产生。
+# 两个拒收 handler 都在只读校验后直接 return，不会触发它；reader 若在请求窗口内才
+# 解码到前置同步，不能把它误归因于当前请求。只在本场景排除这个已核实的无关类型，
+# 不把它加入共享 AMBIENT_SERVER_DATA_TYPES，避免掩盖其他场景的真实副作用。
+UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset({"spirit_treasure_state"})
 
 
 def run(env) -> None:
@@ -341,7 +349,11 @@ def _scan_chat_only_violations(
     bot, sent_at: float, description: str, allowed_chat_ts: tuple
 ) -> None:
     for e in bot.events_of("server_data"):
-        if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
+        if (
+            e.t > sent_at
+            and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES
+            and e.data["payload_type"] not in UNRELATED_SETUP_SYNC_PAYLOAD_TYPES
+        ):
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"
                 f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"

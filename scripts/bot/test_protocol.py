@@ -82,6 +82,7 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
+from bot.scenarios import fauna_give_dan_to_elder_reject as fauna_reject_scenario  # noqa: E402
 from bot.scenarios import freshness_probe_paths as freshness_probe_scenario  # noqa: E402
 from bot.scenarios import cultivation_qi_color_inspect as qi_color_inspect_scenario  # noqa: E402
 from bot.scenarios._rejection_helpers import (  # noqa: E402
@@ -5747,6 +5748,54 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
+    def test_scenario_rejection_scans_ignore_unrelated_spirit_treasure_sync(self):
+        ambient = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    2.0,
+                    "server_data",
+                    {"payload_type": "spirit_treasure_state"},
+                )
+            ]
+        )
+        freshness_probe_scenario._scan_silent_violations(
+            ambient,
+            sent_at=1.0,
+            description="探针拒绝",
+            allowed_payload_ts=(),
+        )
+        fauna_reject_scenario._scan_chat_only_violations(
+            ambient,
+            sent_at=1.0,
+            description="give 拒收",
+            allowed_chat_ts=(),
+        )
+
+        request_response = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    2.0,
+                    "server_data",
+                    {"payload_type": "freshness_update"},
+                )
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                request_response,
+                sent_at=1.0,
+                description="探针拒绝",
+                allowed_payload_ts=(),
+            )
+
+        with self.assertRaises(BotAssertionError):
+            fauna_reject_scenario._scan_chat_only_violations(
+                request_response,
+                sent_at=1.0,
+                description="give 拒收",
+                allowed_chat_ts=(),
+            )
+
     def test_freshness_realm_settle_excludes_late_sync_but_keeps_probe_oracle_strict(self):
         bot = _RejectionFakeBot([])
         clock = 0.0
