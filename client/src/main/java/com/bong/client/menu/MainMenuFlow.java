@@ -111,9 +111,10 @@ public final class MainMenuFlow {
         MainMenuBackdrop.renderConnectionText(context, screen, status, mouseX, mouseY);
     }
 
-    public static void renderDisconnected(DrawContext context, Screen screen, Text reason, int mouseX, int mouseY) {
+    public static void renderDisconnected(DrawContext context, Screen screen, MainMenuReasonWidget reason,
+                                          int mouseX, int mouseY, float delta) {
         BACKDROP.returnToMenu();
         BACKDROP.render(context, screen.width, screen.height, mouseX, mouseY);
-        MainMenuBackdrop.renderDisconnectedText(context, screen, reason, mouseX, mouseY);
+        MainMenuBackdrop.renderDisconnectedText(context, screen, reason, mouseX, mouseY, delta);
     }
 }

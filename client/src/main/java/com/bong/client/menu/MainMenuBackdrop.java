@@ -141,23 +141,13 @@ final class MainMenuBackdrop {
         drawNativeButtons(context, screen, mouseX, mouseY);
     }
 
-    static void renderDisconnectedText(DrawContext context, Screen screen, Text reason, int mouseX, int mouseY) {
+    static void renderDisconnectedText(DrawContext context, Screen screen, MainMenuReasonWidget reason,
+                                       int mouseX, int mouseY, float delta) {
         context.fill(0, 0, screen.width, screen.height, 0xBB0E1712);
         var font = MinecraftClient.getInstance().textRenderer;
-        var lines = font.wrapLines(reason, Math.max(160, Math.min(360, screen.width - 50)));
-        int firstButtonY = screen.height - 35;
-        for (Element child : screen.children()) {
-            if (child instanceof ButtonWidget widget) {
-                firstButtonY = Math.min(firstButtonY, widget.getY());
-            }
-        }
-        int y = Math.max(34, firstButtonY - 18 - lines.size() * (font.fontHeight + 2));
-        context.drawCenteredTextWithShadow(font, Text.translatable("bong.menu.disconnected"), screen.width / 2, Math.max(12, y - 28), PAPER);
-        for (OrderedText line : lines) {
-            if (y + font.fontHeight >= firstButtonY - 6) break;
-            context.drawCenteredTextWithShadow(font, line, screen.width / 2, y, MUTED);
-            y += font.fontHeight + 2;
-        }
+        context.drawCenteredTextWithShadow(font, Text.translatable("bong.menu.disconnected"), screen.width / 2,
+            Math.max(12, reason.getY() - 22), PAPER);
+        reason.render(context, mouseX, mouseY, delta);
         drawNativeButtons(context, screen, mouseX, mouseY);
     }
 
