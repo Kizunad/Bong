@@ -488,7 +488,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **范围与落点**：仅处置 `server/src/fauna/dying_elder.rs` 原 `#[cfg(test)] mod tests`（基线源文件 5,192 行、测试模块从 L1761 起）的 85 条测试；全部为 B 类，原样外置到同 crate 同目录 `server/src/fauna/dying_elder_tests.rs`，生产文件只保留 `#[cfg(test)] #[path = "dying_elder_tests.rs"] mod tests;` 挂载。不新增 `server/Cargo.toml` 的 `[[test]]` target。
 - **迁移对拍与筛选**：先执行 `cd server && ../scripts/build-token.sh cargo test --lib fauna::dying_elder::tests:: -- --list`，真实过滤器命中 `85 tests / 0 benchmarks`；迁移后 `cd server && ../scripts/build-token.sh cargo test --lib 'fauna::dying_elder::tests::'` 为 `85 passed / 0 failed / 0 ignored`。85 条普通 `#[test]` 均保留，测试名、函数顺序、断言、fixture、错误/边界行为逐位保持；未发现异步测试属性遗漏。
 - **源码消费者与生产边界**：已复核 `server/src`、`server/tests`、`scripts` 与 `docs`，没有 `include_str!` 读取 `dying_elder.rs`，也没有其它源码文本消费者；未改生产逻辑、事件、掉落/交互契约、qi_physics、schema、client、agent 或其它 plan。生产文件无测试体残留，仅保留挂载；无新增/扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam。
-- **提交与验证证据**：迁移与最终主线合流、无上下文 validator、完整 server gate 证据待本批完成；本条仅记录 P2-27，P2 其它模块、P3、P4 仍未完成，plan 不归档。
+- **提交与验证证据**：迁移提交 `b5b985569`、Rustfmt 收口提交 `cce4bf0e9`（均带 `Model: gpt-5.6-luna`）；在代码输入 HEAD `cce4bf0e91824b895508ff05983b63a304b3f163` 上，无上下文只读 validator PASS。随后执行 `git fetch origin && git merge origin/main`，当前 `origin/main=154705a3251eb3ebb396f29fc27787a905405524` 已是最新，Already up to date，无冲突。该代码输入 HEAD 的完整 server gate（直接经 `scripts/build-token.sh`，无外层 flock）三条均 exit 0：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；library `11987 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 integration targets 通过，doc-tests `3 passed / 0 failed / 5 ignored`。本条仅记录 P2-27，P2 其它模块、P3、P4 仍未完成，plan 不归档。
 
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
