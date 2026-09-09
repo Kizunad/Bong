@@ -1,53 +1,14 @@
-[manifest]
-asset = "CopperArmor"
-category = "armor"
+# 古铜札甲 (CopperArmor) 人写特征清单
+facing = "-z"
+size = 320
 
-[features.copper_helmet]
-must_have = [
-    "helm_dome_crown",
-    "helm_crest_ridge",
-    "helm_crest_spike",
-    "helm_brow_band",
-    "helm_ear_flap_left",
-    "helm_ear_flap_right",
-    "helm_neck_curtain_top",
-    "helm_neck_curtain_mid",
-    "helm_neck_curtain_low"
-]
-
-[features.copper_chestplate]
-must_have = [
-    "chest_heart_mirror_frame",
-    "chest_heart_mirror_disc",
-    "chest_front_scales_top",
-    "chest_front_scales_mid",
-    "chest_front_scales_low",
-    "shoulder_left_tier1",
-    "shoulder_left_tier2",
-    "shoulder_right_tier1",
-    "shoulder_right_tier2",
-    "waist_cord_belt",
-    "waist_cord_knot"
-]
-
-[features.copper_leggings]
-must_have = [
-    "left_leg_skirt_front",
-    "left_leg_skirt_side",
-    "right_leg_skirt_front",
-    "right_leg_skirt_side",
-    "left_leg_knee_guard",
-    "right_leg_knee_guard",
-    "left_leg_thigh_straps",
-    "right_leg_thigh_straps"
-]
-
-[features.copper_boots]
-must_have = [
-    "left_foot_shin_greave",
-    "right_foot_shin_greave",
-    "left_foot_toe_cap",
-    "right_foot_toe_cap",
-    "left_foot_ankle_wrap",
-    "right_foot_heel_plate"
-]
+[features]
+helm_crest    = { elements = ["helm_crest_ridge", "helm_crest_spike"], must_show_in = ["FRONT", "3/4"], min_px = 30 }
+helm_curtain  = { elements = ["helm_neck_curtain_"], must_show_in = ["BACK", "3/4"], min_px = 50 }
+helm_ear_flap = { elements = ["helm_ear_flap_"], must_show_in = ["FRONT", "SIDE_R"], min_px = 30 }
+chest_mirror  = { elements = ["chest_heart_mirror_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }
+shoulder_tier = { elements = ["shoulder_left_tier", "shoulder_right_tier"], must_show_in = ["FRONT", "SIDE_R"], min_px = 60 }
+waist_cord    = { elements = ["waist_cord_"], must_show_in = ["FRONT", "3/4"], min_px = 40 }
+leg_skirt     = { elements = ["left_leg_skirt", "right_leg_skirt"], must_show_in = ["FRONT", "SIDE_R"], min_px = 60 }
+leg_knee      = { elements = ["left_leg_knee_guard", "right_leg_knee_guard", "left_leg_knee_boss", "right_leg_knee_boss"], must_show_in = ["FRONT", "3/4"], min_px = 30 }
+boot_toe      = { elements = ["left_foot_toe_cap", "right_foot_toe_cap", "left_foot_shin_greave", "right_foot_shin_greave"], must_show_in = ["FRONT", "3/4"], min_px = 40 }

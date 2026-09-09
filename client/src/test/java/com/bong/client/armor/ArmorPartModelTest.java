@@ -66,19 +66,31 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_LEG, -1.7f, 3.5f);
         assertPinnedTable("bone_boots", 28, ArmorPartModel.Mount.LEFT_FOOT, -0.55f, 1.8f,
             ArmorPartModel.Mount.RIGHT_FOOT, 1.75f, 2.75f);
+        assertPinnedTable("copper_helmet", 19, ArmorPartModel.Mount.HEAD, -4.30f, 31.80f,
+            ArmorPartModel.Mount.HEAD, 4.70f, 27.80f);
+        assertPinnedTable("copper_chestplate", 25, ArmorPartModel.Mount.BODY, -4.30f, 18.20f,
+            ArmorPartModel.Mount.BODY, 2.40f, 13.80f);
+        assertPinnedTable("copper_leggings", 18, ArmorPartModel.Mount.LEFT_LEG, -2.20f, 9.40f,
+            ArmorPartModel.Mount.RIGHT_LEG, -0.30f, 10.40f);
+        assertPinnedTable("copper_boots", 16, ArmorPartModel.Mount.LEFT_FOOT, -2.05f, 2.00f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -2.30f, -0.20f);
     }
 
     @Test
     void everyCubeFieldIsPinnedByStableDigest() {
-        Map<String, String> expected = Map.of(
-            "iron_helmet", "3760e3b372a70fda",
-            "iron_chestplate", "4393068e1f6bcc11",
-            "iron_leggings", "4262b62a438d1088",
-            "iron_boots", "0983cc85e5167381",
-            "bone_helmet", "2f9d83e49d2b8dbb",
-            "bone_chestplate", "a6d39dc53ace5bf3",
-            "bone_leggings", "be2b47132fae568a",
-            "bone_boots", "77b698ba4541e7fd"
+        Map<String, String> expected = Map.ofEntries(
+            Map.entry("iron_helmet", "3760e3b372a70fda"),
+            Map.entry("iron_chestplate", "4393068e1f6bcc11"),
+            Map.entry("iron_leggings", "4262b62a438d1088"),
+            Map.entry("iron_boots", "0983cc85e5167381"),
+            Map.entry("bone_helmet", "2f9d83e49d2b8dbb"),
+            Map.entry("bone_chestplate", "a6d39dc53ace5bf3"),
+            Map.entry("bone_leggings", "be2b47132fae568a"),
+            Map.entry("bone_boots", "77b698ba4541e7fd"),
+            Map.entry("copper_helmet", "130fc9a1de9663be"),
+            Map.entry("copper_chestplate", "22827c28ac549009"),
+            Map.entry("copper_leggings", "864160c987218800"),
+            Map.entry("copper_boots", "5274a36bd8c59b1e")
         );
 
         assertEquals(expected.keySet(), ArmorPartModel.modelKeys(), "digest 表必须覆盖全部运行时模型");
