@@ -10,16 +10,26 @@ import net.minecraft.text.Text;
 
 /** 复用原版滚动和焦点行为，完整保留断线说明。 */
 public final class MainMenuReasonWidget extends ScrollableWidget {
-    private final MultilineText lines;
+    private final TextRenderer font;
+    private MultilineText lines;
     private final int lineHeight;
 
     public MainMenuReasonWidget(Text reason, TextRenderer font, int screenWidth, int screenHeight) {
-        super(0, 0, Math.max(1, Math.min(360, screenWidth - 50)), Math.max(1, screenHeight - 100), reason);
+        super(0, 0, 1, 1, reason);
+        this.font = font;
         lineHeight = font.fontHeight + 2;
-        lines = MultilineText.create(font, reason, Math.max(1, width - getPaddingDoubled()));
-        height = Math.min(height, getContentsHeight() + getPaddingDoubled());
+        relayout(screenWidth, screenHeight);
+    }
+
+    public void relayout(int screenWidth, int screenHeight) {
+        int nextWidth = Math.max(1, Math.min(360, screenWidth - 50));
+        MultilineText nextLines = MultilineText.create(font, getMessage(), Math.max(1, nextWidth - getPaddingDoubled()));
+        width = nextWidth;
+        lines = nextLines;
+        height = Math.min(Math.max(1, screenHeight - 100), getContentsHeight() + getPaddingDoubled());
         setX((screenWidth - width) / 2);
         setY((screenHeight - height - 48) / 2);
+        setScrollY(getScrollY());
     }
 
     @Override

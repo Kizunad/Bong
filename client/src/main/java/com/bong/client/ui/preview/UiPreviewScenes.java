@@ -2,6 +2,7 @@ package com.bong.client.ui.preview;
 
 import com.bong.client.craft.CraftCategory;
 import com.bong.client.menu.MainMenuScreen;
+import com.bong.client.menu.MainMenuReasonWidget;
 import com.bong.client.craft.CraftRecipe;
 import com.bong.client.craft.CraftScreen;
 import com.bong.client.craft.CraftStore;
@@ -28,6 +29,11 @@ import com.bong.client.skill.SkillSetStore;
 import com.bong.client.ui.adapter.owo.OwoXmlScreenHost.ComponentBounds;
 import com.bong.client.ui.contract.UiViewport;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.DisconnectedScreen;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
+import net.minecraft.text.Text;
 
 import java.util.List;
 import java.util.Map;
@@ -81,6 +87,33 @@ final class UiPreviewScenes {
             }
             if (!menu.focusOrderForPreview().equals(List.of("menu-enter", "menu-settings", "menu-exit"))) {
                 throw new IllegalStateException("主菜单键盘顺序必须为入世、设置、退出");
+            }
+            validateDisconnectedResize(menu);
+        }
+
+        private static void validateDisconnectedResize(MainMenuScreen parent) {
+            Screen disconnected = new DisconnectedScreen(parent, Text.empty(),
+                Text.literal("连接已断开，请检查客户端资源版本。".repeat(80)));
+            disconnected.init(MinecraftClient.getInstance(), 640, 360);
+            // 原版断线页 resize 只调用 initTabNavigation，不能用重新 init 代替这一回归。
+            for (int[] viewport : new int[][] {{320, 240}, {640, 360}}) {
+                disconnected.resize(MinecraftClient.getInstance(), viewport[0], viewport[1]);
+                MainMenuReasonWidget reason = disconnected.children().stream()
+                    .filter(MainMenuReasonWidget.class::isInstance).map(MainMenuReasonWidget.class::cast)
+                    .findFirst().orElseThrow(() -> new IllegalStateException("断线说明缺少滚动控件"));
+                if (Math.abs(reason.getX() * 2 + reason.getWidth() - viewport[0]) > 1) {
+                    throw new IllegalStateException("断线说明未随窗口缩放重新居中");
+                }
+                for (var child : disconnected.children()) {
+                    if (!(child instanceof ClickableWidget widget) || !widget.visible) continue;
+                    ComponentBounds bounds = new ComponentBounds(widget.getX(), widget.getY(), widget.getWidth(), widget.getHeight());
+                    if (!bounds.fitsInside(viewport[0], viewport[1])) {
+                        throw new IllegalStateException("断线控件在缩放后超出窗口: " + bounds);
+                    }
+                    if (widget instanceof ButtonWidget && widget.getY() < reason.getY() + reason.getHeight()) {
+                        throw new IllegalStateException("断线按钮在缩放后覆盖了说明正文");
+                    }
+                }
             }
         }
         @Override public void cleanup() {}
