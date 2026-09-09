@@ -62,9 +62,15 @@ AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 # Added/Changed<ActiveSpiritTreasures> 触发，源头是 join/前置 give 或 clearinv 的
 # Changed<PlayerInventory> 同步，不是 freshness_probe 的响应。probe handler 只读检查
 # ownership 后发 intent，拒绝路径不会改 inventory；reader 可能把前置同步在请求窗口
-# 内才解码。只在本场景排除这个已核实的无关类型，其他 server_data 继续判红，不扩大
-# 共享 ambient 白名单。
-UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset({"spirit_treasure_state"})
+# 内才解码。
+#
+# weapon_equipped 同样不是 freshness_probe 的响应：weapon_equipped_emit 对
+# Changed<PlayerInventory> 发装备槽快照；本场景前置 give 改包后，该快照可能晚于
+# inventory_snapshot 到达而落入探针窗口。只在本场景排除这两个已核实的 setup-sync
+# 类型，其他 server_data 继续判红，不扩大共享 ambient 白名单。
+UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset(
+    {"spirit_treasure_state", "weapon_equipped"}
+)
 # 探针路径 freshness = current_qi/initial_qi（shelflife/probe.rs，Linear：
 # current = initial - decay_per_tick × storage×season × (now_tick-created_at_tick)）。
 # 服务器主循环是 `app.update() + 5ms sleep`（main.rs:186），tick 率无上限也低于

@@ -5748,24 +5748,44 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
-    def test_scenario_rejection_scans_ignore_unrelated_spirit_treasure_sync(self):
-        ambient = _RejectionFakeBot(
+    def test_scenario_rejection_scans_ignore_only_verified_setup_sync(self):
+        freshness_setup_sync = _RejectionFakeBot(
             [
                 _FakeEvent(
                     2.0,
                     "server_data",
                     {"payload_type": "spirit_treasure_state"},
-                )
+                ),
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "weapon_equipped"},
+                ),
             ]
         )
         freshness_probe_scenario._scan_silent_violations(
-            ambient,
+            freshness_setup_sync,
             sent_at=1.0,
             description="探针拒绝",
             allowed_payload_ts=(),
         )
+
+        fauna_setup_sync = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    2.0,
+                    "server_data",
+                    {"payload_type": "spirit_treasure_state"},
+                ),
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "tribulation_broadcast"},
+                ),
+            ]
+        )
         fauna_reject_scenario._scan_chat_only_violations(
-            ambient,
+            fauna_setup_sync,
             sent_at=1.0,
             description="give 拒收",
             allowed_chat_ts=(),
@@ -5795,6 +5815,37 @@ class RejectionHelperTest(unittest.TestCase):
                 description="give 拒收",
                 allowed_chat_ts=(),
             )
+
+        # The exemptions are scenario-local. A setup type verified for one scenario must
+        # not become a blanket exemption in the other scenario's response oracle.
+        for payload_type, scenario_scan, kwargs in (
+            (
+                "weapon_equipped",
+                fauna_reject_scenario._scan_chat_only_violations,
+                {"allowed_chat_ts": ()},
+            ),
+            (
+                "tribulation_broadcast",
+                freshness_probe_scenario._scan_silent_violations,
+                {"allowed_payload_ts": ()},
+            ),
+        ):
+            with self.subTest(payload_type=payload_type):
+                with self.assertRaises(BotAssertionError):
+                    scenario_scan(
+                        _RejectionFakeBot(
+                            [
+                                _FakeEvent(
+                                    2.0,
+                                    "server_data",
+                                    {"payload_type": payload_type},
+                                )
+                            ]
+                        ),
+                        sent_at=1.0,
+                        description="场景本地 setup-sync 排除集",
+                        **kwargs,
+                    )
 
     def test_freshness_realm_settle_excludes_late_sync_but_keeps_probe_oracle_strict(self):
         bot = _RejectionFakeBot([])

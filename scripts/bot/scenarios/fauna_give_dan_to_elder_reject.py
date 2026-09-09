@@ -19,8 +19,9 @@ protocol entity id 上分别验证距离与维度门。每条拒收都断言聊�
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。chat-only 契约由
 _assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何针对本请求的 S2C
 响应（central-review 2029 #5）。`spirit_treasure_state` 是 join/前置背包变动触发的
-异步状态同步，可能在拒收窗口内迟到；它不是本请求响应，单独列入本场景的无关同步
-排除集，其他 server_data 仍一律判红。
+异步状态同步，`tribulation_broadcast` 是前一场渡劫留下的 active 广播在新 bot 加入
+时回放；二者都可能在拒收窗口内迟到，不是本请求响应，单独列入本场景的无关同步排除
+集，其他 server_data 仍一律判红。
 """
 
 import json
@@ -68,9 +69,16 @@ AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 # spirit_treasure_state 不是固定周期流：spirit_treasure_emit 只在
 # Added/Changed<ActiveSpiritTreasures> 时发送，而该组件由前置 join/背包变动同步产生。
 # 两个拒收 handler 都在只读校验后直接 return，不会触发它；reader 若在请求窗口内才
-# 解码到前置同步，不能把它误归因于当前请求。只在本场景排除这个已核实的无关类型，
-# 不把它加入共享 AMBIENT_SERVER_DATA_TYPES，避免掩盖其他场景的真实副作用。
-UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset({"spirit_treasure_state"})
+# 解码到前置同步，不能把它误归因于当前请求。
+#
+# tribulation_broadcast 也不是 give_dan_to_elder 的响应：它由渡劫事件建立，或由
+# tribulation_broadcast_emit 在新客户端加入时把既有 active 广播回放给该客户端。前一
+# 个 cultivation_start_du_xu 场景会留下 active 渡劫，故本场景首个 bot 可能在拒收窗口
+# 收到这条迟到的 join replay。只在本场景排除这两个已核实的 setup-sync 类型，不把它们
+# 加入共享 AMBIENT_SERVER_DATA_TYPES，避免掩盖其他场景的真实副作用。
+UNRELATED_SETUP_SYNC_PAYLOAD_TYPES = frozenset(
+    {"spirit_treasure_state", "tribulation_broadcast"}
+)
 
 
 def run(env) -> None:
