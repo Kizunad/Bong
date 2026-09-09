@@ -1,15 +1,15 @@
 # plan-persistence-atomic-publication-v1 — persistence 归档原子发布与并发恢复加固
 
-> 一句话主题：在 R3 P1 persistence 按域拆分之后，单独定义并实现归档文件发布、批次回滚与生命周期并发的可证明契约；本骨架只承接设计与实施边界，不宣称任何生产接入已经完成。
+> 一句话主题：在 R3 P1 persistence 按域拆分之后，单独定义并实现归档文件发布、批次回滚与生命周期并发的可证明契约；本 plan 按阶段承接设计与实施边界，不宣称尚未完成的生产接入已经安全。
 >
-> 来源：#2180（`plan-refactor-persistence-slices-v1`）出口 D。当前基线 `origin/main=e52a991fd`；拆分后的生产落点是 `server/src/persistence/{helpers,npc,player,social,tribulation,void_actions,world,world_qi}.rs`，不再以旧的巨型 `persistence/mod.rs` 行号作为落点。
+> 来源：#2180（`plan-refactor-persistence-slices-v1`）出口 D。当前基线 `origin/main=60f21e6ab36bd78fdfd2606dd766b09939d3fac5`；拆分后的生产落点是 `server/src/persistence/{helpers,npc,player,social,tribulation,void_actions,world,world_qi}.rs`，不再以旧的巨型 `persistence/mod.rs` 行号作为落点。
 
 ## 阶段总览
 
 | 阶段 | 交付物 | 状态 | 验收日期 |
 |---|---|---|---|
 | P0 | 归档发布三条不变式、owner 模型与决策门定稿；每条都有可撞红的验证方式 | ⬜ | 待验收 |
-| P1 | `first_error.expect` 的安全错误返回、回滚错误可观察的最小安全网 | ⬜ | 待验收 |
+| P1 | `helpers.rs:330` 临时清理失败可观察、两处生产不变式 `expect` 评估 | ⬜ | 待验收 |
 | P2 | 归档身份证明、no-replace 发布与 CAS 批次回滚按 P0 契约落地 | ⬜ | 待验收 |
 | P3 | `published_by_sweep` 发布后替换竞态收口，不误删 successor | ⬜ | 待验收 |
 | P4 | 饱和回归、并发/失败矩阵、完整 persistence 与 server 验收证据 | ⬜ | 待验收 |
@@ -24,7 +24,7 @@
 
 ### 1.2 硬边界
 
-- 本骨架阶段只写文档；不修改 `server/src/persistence/**`、测试、迁移链、表结构、生产事务边界或其他 plan，不 promotion 为 active，不归档。
+- pre-P0 决策阶段只写文档；进入 P1 后仅按阶段交付物修改 `server/src/persistence/**` 及其回归测试，不改迁移链、表结构、生产事务边界或其他 plan；P1 不归档本 plan。
 - 实施阶段只允许在本 plan 明确的 persistence 归档/恢复范围内工作；不得借机修改 TypeBox、protobuf、proto conversion、client router、schema、wire、R7、dropped-loot、craft production 或 inventory receipt。
 - 必须原样保留 R3 P0 已安装的生产接入点：canonical persistence registry、`AppExit → Last` dispatcher、zone-runtime shutdown descriptor，以及 KnownTechniques 的 reconnect、load guard、dirty snapshot、durable fence adapter。
 - `world_qi.rs` 属于 persistence 切片，但任何真元恢复仍必须遵循 `qi_physics` 受控接口；本 plan 不新增真元物理公式、不创建第二套 ledger、不把 event/audit 当作余额状态消费者。
@@ -78,7 +78,7 @@
 - `upsert_runtime_qi_account_balances(transaction: &rusqlite::Transaction<'_>, qi_ledger: &WorldQiAccount, wall_clock: i64) -> io::Result<()>`（`server/src/persistence/world_qi.rs`）：以 `&Transaction` 作为 SQLite 写入 owner、以 `&WorldQiAccount` 作为余额读取 owner、以 `wall_clock` 作为持久化时间输入；当前对固定白名单逐项写回，底层 `upsert_runtime_qi_account_balance` 校验余额 finite 且非负。它是写回链，不得被当作恢复链或新 ledger。
 - `assert_conservation(before: &WorldQiSnapshot, after: &WorldQiSnapshot, era_decay: f64) -> Result<(), QiPhysicsError>`（`server/src/qi_physics/ledger.rs`）：以 before/after world snapshot 和 canonical `era_decay` 作为验证输入，验证观察总量与允许的时代衰减一致；P4 用它验证恢复/失败前后没有吞真元，不用字面常数代替。`WorldQiAccount::iter_balances(&self)` 只读暴露各 durable owner 的余额，可用于审计对拍，不提供 mutation capability。
 
-上述调用链是“当前事实”，不是本 plan 的实现承诺；尤其不能把当前 `WorldQiAccount::set_balance` 包装成未经 P0 决议的新 persistence restore helper。若 P0 判定需要受控恢复入口，必须在 `qi_physics` owner 边界内明确其输入、失败原子性与审计语义，并同步更新本节；本 skeleton 不预先拍板。该判断是进入实现的阻塞项：没有带日期的 `pre-P0 决议` 写清选定入口、owner 输入、失败原子性和 audit 语义，就不得开始 P1–P4，也不得把当前 `set_balance` 的现状写成已收口契约。
+上述调用链是“当前事实”，不是本 plan 的实现承诺；尤其不能把当前 `WorldQiAccount::set_balance` 包装成未经 P0 决议的新 persistence restore helper。若某个阶段触及受控恢复入口，必须先在 `qi_physics` owner 边界内明确其输入、失败原子性与审计语义，并同步更新本节；P1 不触及该依赖。没有带日期的 `pre-P0 决议` 写清选定入口、owner 输入、失败原子性和 audit 语义，就不得开始涉及该恢复链的阶段，也不得把当前 `set_balance` 的现状写成已收口契约。
 
 ## 3. 设计基础：三条归档发布不变式（原样承接）
 
@@ -110,7 +110,7 @@
 
 ### 3.1 当前主线 API 事实
 
-以下名称是出口 D 移交的拟议实现面，不是当前 `origin/main=e52a991fd` 已存在的 API；骨架不得把它们写成现状：
+以下名称是出口 D 移交的拟议实现面，不是当前 `origin/main=60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 已存在的 API；本 plan 不得把它们写成现状：
 
 `ensure_archive_identity`、`ArchiveFileIdentity`、`prepared_archives`、`combine_persistence_failure`、`published_by_sweep`、`archive_file_identity` 均在当前主线核验为零命中。P0 需先确定是否保留这些概念、各自的最小职责和测试可观察面；在开放问题未收口前不能通过便利性继续扩张 helper/type/public visibility。
 
@@ -125,9 +125,10 @@
 
 ### P1 — 最小安全网
 
-- 在 `server/src/persistence/npc.rs` 将 `first_error.expect` 路径改为 `unwrap_or_else`，缺失错误对象时构造 `io::ErrorKind::InvalidData`，不得让恢复路径 panic。
-- 在 `server/src/persistence/helpers.rs` 与相关回滚调用方保留原始失败，同时使临时文件/最终文件清理失败可观察；按 P0 决议使用既定聚合错误边界，不能静默 `let _ =` 丢错。
-- 为上述两条错误路径各补能撞红的回归测试：缺失 `first_error` 返回 `InvalidData`；写入/回滚同时失败时结果包含主错误和清理错误。
+- `server/src/persistence/helpers.rs:330` 的 `write_zstd_bundle_with_writer` 在临时文件写入失败后保留主错误；若 `fs::remove_file(&temp_path)` 也失败，则在不引入 P2 身份/CAS 抽象的前提下返回同时包含主错误与清理错误的诊断，禁止静默丢弃清理结果。
+- 已评估并故意保留 `server/src/persistence/helpers.rs:8` 与 `server/src/persistence/mod.rs:172` 的 `expect`：前者断言受支持运行时的系统时钟不早于 Unix epoch，后者断言静态 persistence slice descriptor 注册不变量成立；两者都不是恢复路径的可恢复输入错误，改成静默降级会掩盖无法安全继续的启动/时间前提。
+- 为 `helpers.rs:330` 补能撞红的回归测试：写入主错误与临时文件清理错误同时发生时，返回错误保留两者诊断且故障临时文件仍可被后续恢复处理；实现退回 `let _ =` 时测试必须失败。
+- `npc.rs` 的 `first_error.expect` 不属于当前 P1 的真实落点：在 `origin/main@60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 上执行 `git grep -n 'first_error' origin/main -- server/src` 为 0 命中，且 `git grep -nE '\\.expect\\(|let _ =' origin/main -- server/src/persistence/npc.rs` 也为 0 命中。该项是 #2180 未合入加固分支的条件性后续：只有 P2 真正引入 CAS 批次错误聚合路径时，才在该新落点采用 `unwrap_or_else` + `io::ErrorKind::InvalidData` 并配回归测试；P1 不伪造不存在的代码落点。
 
 ### P2 — 归档身份与 CAS 批次回滚
 
@@ -160,9 +161,9 @@
 | `prepared_archives` + `combine_persistence_failure` CAS 批次回滚 | CAS 失败只回滚数据库或吞掉文件回滚错误，留下孤立文件/丢诊断 | 只登记本批次、自有且可验证的发布；聚合 primary 与 rollback/ownership 错误 |
 | NPC 生命周期锁文件写入语义 | 锁粒度不足导致观察、发布、校验、DB transaction 之间出现 TOCTOU | 明确固定 `.npc.lifecycle.lock` 的持有范围、失败释放与跨 writer 行为 |
 | `published_by_sweep` sweep 归属判定 | 发布前状态被用作删除权；后继 writer 可在 identity 采样前替换目标 | 以 P0 ownership 证明收口，禁止仅凭“本轮曾发布”删除 |
-| `helpers.rs` 回滚错误被静默吞掉 | `let _ = fs::remove_file(path)` 丢失清理失败上下文 | 保留原始错误并 surface 清理/回滚失败 |
+| `helpers.rs` 回滚错误被静默吞掉 | `let _ = fs::remove_file(&temp_path)` 丢失清理失败上下文 | 保留原始错误并 surface 清理/回滚失败 |
 | `npc.rs` TOCTOU 竞态 | 读取/校验/发布/回滚不在同一生命周期语义下，successor 可被误复用或误删 | 在既定抽象面内覆盖锁、身份、payload 和 no-replace 交互 |
-| `npc.rs` `first_error.expect` panic | 崩溃/恢复边界缺失错误对象时直接终止进程 | `unwrap_or_else` 构造 `InvalidData`，并锁定回归 |
+| `npc.rs`（P2 条件项）`first_error.expect` panic | #2180 未合入加固分支的历史落点；`git grep -n 'first_error' origin/main -- server/src` 当前为 0 命中 | 若 P2 引入该 CAS 错误路径，再用 `unwrap_or_else` 构造 `InvalidData` 并锁定回归；P1 不伪造主线落点 |
 | 发布后至 `archive_file_identity` 采样前的同 payload 替换 | 未协调 writer 替换目标后，旧 `published_by_sweep` 删除权会误删 successor；截至本骨架建立时尚未修复 | P3 必须在身份采样与回滚窗口建立可证明的 ownership 判据，并用 successor 饱和测试锁住 |
 
 ## 6. 非目标与生产接入保留清单
@@ -175,11 +176,11 @@
 
 - 每次 validator、定向测试、完整 server gate 和主线 merge 复验都记录精确 commit SHA；测试/validator 在文档提交后若 SHA 改变，必须重跑或明确证据过期。
 - 失败证据不能用“疑似既有问题”代替第一性结论；应写出复现输入、实际文件/数据库/error 结果、预期契约以及 owner 判断。
-- 本骨架本身为 docs-only，不提供 cargo gate 证据，也不宣称原子发布已 production reachable。
+- pre-P0 决议阶段为 docs-only；P1 及以后必须按精确 SHA 记录真实代码、测试和 gate 证据，且在对应阶段完成前不宣称原子发布已 production reachable。
 
 ## 8. 开放问题（P0 决策门前需收口）
 
-以下只提问，不在 skeleton 阶段拍板；它们是 P0 的阻塞项。所有问题必须在 P0 追加带日期的 `## 8.1 决议（pre-P0 收口，YYYY-MM-DD）`，逐项记录选型、owner、失败原子性和可观察证据后，才能进入实现：
+以下原为只提问、不在骨架阶段拍板的 P0 阻塞项；所有问题均须在 P0 追加带日期的 `## 8.1 决议（pre-P0 收口，YYYY-MM-DD）`，逐项记录选型、owner、失败原子性和可观察证据后，才能进入实现：
 
 1. 归档发布语义选择**原子重命名**还是**两阶段提交**？在跨平台文件系统与 no-replace 要求下，哪个操作是可验证的原子边界？
 2. 批次中途失败选择**全回滚**，还是允许**部分发布 + 幂等重放**？两种语义如何分别与 SQLite hot-row transaction、恢复扫描和重复执行相容？
@@ -238,4 +239,4 @@
 
 ## Finish Evidence
 
-> 本骨架尚未实施。后续完成 P0–P4 后，按根 `CLAUDE.md` 要求填写真实落地文件、关键 commit/日期、定向与完整测试结果、server/agent/client 跨仓库核验（若无跨仓库变更须明确写明）及遗留/后续，再由独立流程 promotion/归档。
+> 本 plan 尚未完成。后续完成 P0–P4 后，按根 `CLAUDE.md` 要求填写真实落地文件、关键 commit/日期、定向与完整测试结果、server/agent/client 跨仓库核验（若无跨仓库变更须明确写明）及遗留/后续，再由独立流程归档。
