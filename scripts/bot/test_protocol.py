@@ -5661,6 +5661,8 @@ class _RejectionFakeBot(_FakeBot):
     - ``assert_alive`` 按 disconnect_reason / reader 存活判连接状态；
     - ``wait_for`` 在 events 里找不到时按顺序补充 ``pending`` 事件（模拟 server
       后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测；
+    - ``ping_batches`` 为每次 /ping 注入按 wire 顺序到达的事件，测试 fence 不依赖
+      事件流静默；
     - ``t0`` 是模拟相对时钟（``time.monotonic() - t0 == self._now``），随事件
       append 推进 —— 让 ``time.monotonic() - bot.t0`` 锚与 ``event.t`` 同帧可测。
     """
@@ -5670,6 +5672,7 @@ class _RejectionFakeBot(_FakeBot):
         events: list[_FakeEvent],
         *,
         pending: list[_FakeEvent] | None = None,
+        ping_batches: list[list[_FakeEvent]] | None = None,
         disconnected: bool = False,
         reader_alive: bool = True,
     ):
@@ -5679,6 +5682,7 @@ class _RejectionFakeBot(_FakeBot):
         self.events = _ClockAdvancingList(self)
         self.events.extend(events)
         self.pending = list(pending or [])
+        self.ping_batches = [list(batch) for batch in (ping_batches or [])]
         self.disconnect_reason = "服务器主动断开" if disconnected else None
         self._reader_thread = _ReaderAlive(reader_alive)
         self.intents: list[dict] = []
@@ -5720,6 +5724,8 @@ class _RejectionFakeBot(_FakeBot):
 
     def cmd(self, command: str) -> None:
         self.commands.append(command)
+        if command == "ping" and self.ping_batches:
+            self.events.extend(self.ping_batches.pop(0))
 
     def expect_chat(self, substring: str, timeout: float = 5.0) -> _FakeEvent:
         return self.wait_for(
@@ -5749,37 +5755,42 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
-    def test_server_data_barrier_waits_for_late_setup_event(self):
-        bot = _RejectionFakeBot([])
-        clock = 0.0
+    def test_server_data_protocol_fence_uses_ordered_ping_watermark(self):
         late_setup = _FakeEvent(
             0.5,
             "server_data",
             {"payload_type": "tribulation_broadcast"},
         )
-        delivered = False
+        periodic = _FakeEvent(
+            0.75,
+            "server_data",
+            {"payload_type": "carrier_state"},
+        )
+        pong = _FakeEvent(1.0, "chat", {"text": "pong"})
+        bot = _RejectionFakeBot(
+            [],
+            ping_batches=[[late_setup, periodic, pong]],
+        )
 
-        def monotonic() -> float:
-            return clock
+        fence = rejection_helpers.server_data_protocol_fence(bot)
 
-        def sleep(duration: float) -> None:
-            nonlocal clock, delivered
-            clock += duration
-            if not delivered and clock >= late_setup.t:
-                bot._advance_clock_to(late_setup.t)
-                bot.events.append(late_setup)
-                delivered = True
+        self.assertEqual(bot.commands, ["ping"])
+        self.assertEqual(fence.cursor, 3, "fence 游标必须落在 pong 之后")
+        self.assertEqual(fence.markers, (pong,))
+        self.assertEqual(
+            list(bot.events[: fence.cursor]),
+            [late_setup, periodic, pong],
+            "连续 server_data 不应让有序 ping fence 依赖静默期",
+        )
 
-        with (
-            mock.patch.object(rejection_helpers.time, "monotonic", side_effect=monotonic),
-            mock.patch.object(rejection_helpers.time, "sleep", side_effect=sleep),
-        ):
-            anchor = rejection_helpers.drain_server_data_stream(
-                bot, quiet_s=1.0, max_s=3.0
+    def test_server_data_protocol_fence_fails_closed_without_pong(self):
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.server_data_protocol_fence(_RejectionFakeBot([]))
+
+        with self.assertRaises(ValueError):
+            rejection_helpers.server_data_protocol_fence(
+                _RejectionFakeBot([]), round_trips=0
             )
-
-        self.assertTrue(delivered, "屏障必须先观察到迟到的前置 server_data")
-        self.assertGreaterEqual(anchor, late_setup.t, "请求锚点必须晚于迟到前置同步")
 
     def test_rejection_scans_are_fail_closed_for_every_server_data_type(self):
         for payload_type in (
@@ -5794,9 +5805,11 @@ class RejectionHelperTest(unittest.TestCase):
                         _RejectionFakeBot(
                             [_FakeEvent(2.0, "server_data", {"payload_type": payload_type})]
                         ),
-                        sent_at=1.0,
+                        start_cursor=0,
+                        end_cursor=1,
                         description="探针请求窗口",
-                        allowed_payload_ts=(),
+                        allowed_server_data_events=(),
+                        allowed_chat_events=(),
                     )
             with self.subTest(scenario="fauna", payload_type=payload_type):
                 with self.assertRaises(BotAssertionError):
@@ -5804,57 +5817,84 @@ class RejectionHelperTest(unittest.TestCase):
                         _RejectionFakeBot(
                             [_FakeEvent(2.0, "server_data", {"payload_type": payload_type})]
                         ),
-                        sent_at=1.0,
+                        start_cursor=0,
+                        end_cursor=1,
                         description="give 拒收请求窗口",
-                        allowed_chat_ts=(),
+                        allowed_chat_events=(),
                     )
 
-    def test_freshness_realm_settle_excludes_late_sync_but_keeps_probe_oracle_strict(self):
-        bot = _RejectionFakeBot([])
-        clock = 0.0
+    def test_freshness_realm_settle_uses_ping_fence_before_probe_window(self):
         narration = _FakeEvent(
             1.5,
             "server_data",
             {"payload_type": "narration", "payload": {"text": "境界同步旁白"}},
         )
-        narration_injected = False
+        pong = _FakeEvent(2.0, "chat", {"text": "pong"})
+        bot = _RejectionFakeBot([], ping_batches=[[narration, pong]])
 
-        def monotonic() -> float:
-            return clock
+        fence = freshness_probe_scenario._settle_realm_change(bot)
 
-        def sleep(duration: float) -> None:
-            nonlocal clock, narration_injected
-            clock += duration
-            if not narration_injected and clock >= narration.t:
-                bot.events.append(narration)
-                narration_injected = True
+        self.assertEqual(fence.cursor, 2, "realm 同步 fence 必须落在 pong 之后")
+        self.assertEqual(fence.markers, (pong,))
 
-        with (
-            mock.patch.object(freshness_probe_scenario.time, "monotonic", side_effect=monotonic),
-            mock.patch.object(freshness_probe_scenario.time, "sleep", side_effect=sleep),
-        ):
-            anchor = freshness_probe_scenario._settle_realm_change(bot)
-
-        self.assertTrue(narration_injected, "测试必须让迟到 narration 落入 realm 同步排空期")
-        self.assertGreaterEqual(
-            clock,
-            narration.t + freshness_probe_scenario.SILENT_WINDOW,
-            "请求锚点前必须观察完整静默窗，不能在 0.5s 假静默后提前发送",
+        late_probe_side_effect = _FakeEvent(
+            2.1,
+            "server_data",
+            {"payload_type": "narration", "payload": {"text": "探针后旁白"}},
         )
-        self.assertGreaterEqual(anchor, narration.t, "realm set 的迟到 narration 必须早于请求锚点")
-
-        bot.events.append(
-            _FakeEvent(
-                anchor + 0.1,
-                "server_data",
-                {"payload_type": "narration", "payload": {"text": "探针后旁白"}},
+        bot.events.append(late_probe_side_effect)
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                bot,
+                fence.cursor,
+                len(bot.events),
+                "成功探针不得产生额外 narration",
+                (),
+                (),
             )
+
+    def test_fenced_window_allows_only_explicit_events(self):
+        expected = _FakeEvent(1.0, "server_data", {"payload_type": "event_alert"})
+        pong = _FakeEvent(2.0, "chat", {"text": "pong"})
+        bot = _RejectionFakeBot([expected, pong])
+
+        freshness_probe_scenario._scan_silent_violations(
+            bot,
+            0,
+            len(bot.events),
+            "只允许显式预期事件",
+            (expected,),
+            (pong,),
         )
         with self.assertRaises(BotAssertionError):
             freshness_probe_scenario._scan_silent_violations(
                 bot,
-                anchor,
-                "成功探针不得产生额外 narration",
+                0,
+                len(bot.events),
+                "缺少允许的 event_alert",
+                (),
+                (pong,),
+            )
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                _RejectionFakeBot(
+                    [_FakeEvent(1.0, "server_data_decode_error", {"error": "unknown"})]
+                ),
+                0,
+                1,
+                "无法解码的 server_data",
+                (),
+                (),
+            )
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                _RejectionFakeBot(
+                    [_FakeEvent(1.0, "server_data_raw", {"data": b"unknown"})]
+                ),
+                0,
+                1,
+                "未解码的 server_data",
+                (),
                 (),
             )
 

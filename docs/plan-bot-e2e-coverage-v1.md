@@ -108,6 +108,38 @@
 - 若未来改用生成式 Python bindings，需单独决定依赖与构建产物策略；本阶段保持零依赖
   decoder，不虚报“已生成 bindings”。
 
+### P6 拒收窗口返工证据（2026-09-10）
+
+identity decoder 接入后的同 SHA e2e 先后在两个场景暴露了
+`server_data/spirit_treasure_state`、`server_data/tribulation_broadcast` 与
+`server_data/weapon_equipped`。它们分别来自 join/背包/装备/渡劫同步，并非请求
+响应；事实核验见 `server/src/network/spirit_treasure_emit.rs`、
+`server/src/network/tribulation_broadcast_emit.rs` 与
+`server/src/network/weapon_equipped_emit.rs` 的 Added/Changed 或周期发送条件。
+因此按 payload 类型逐项维护场景排除集的路线被否决，不能继续扩充
+`UNRELATED_SETUP_SYNC_PAYLOAD_TYPES`。wire 的 `bong:client_request` 与相关响应也没有
+可用的 request_id/correlation 字段，未伪造请求关联。
+
+原先的静默等待也不能作为屏障：`carrier_state_emit.rs` 会按 client 周期发送
+`carrier_state`，事件流没有可依赖的静默期，等待静默会在上限处超时或把在途事件
+误归因。最终采用同一连接已有的 `/ping`→`pong` 有序 protocol fence：
+
+- `scripts/bot/scenarios/_rejection_helpers.py::server_data_protocol_fence` 在请求前
+  建立 lower watermark，在预期响应后建立 upper watermark；只按事件游标扫描两者
+  之间的完整窗口，不按 payload 类型豁免。`server_data_raw` 未跟随可解码事件或出现
+  `server_data_decode_error` 时同样 fail-closed。
+- `fauna_give_dan_to_elder_reject.py` 的拒收窗口只允许本次预期 chat 与 fence 自身
+  `pong`；所有 server_data 都判红。`freshness_probe_paths.py` 的 RealmTooLow 只
+  允许预期 `event_alert`，成功探针各自只允许自己的 `freshness_update`；NoFreshness
+  与不存在实例的无响应路径各用两次 ping 往返确认处理已越过 ingress/flush，再扫描
+  窗口内所有 server_data 与 chat。
+- `scripts/bot/test_protocol.py` 覆盖连续 server_data 下 fence 仍建立、缺失 pong
+  fail-closed、显式允许事件、未解码 server_data 及四种已暴露 payload 类型的全类型
+  拒收断言；`python3 scripts/bot/test_protocol.py` 实际 `554 tests` 全部通过。
+
+本返工只改 Bot harness、两个场景与协议单测；未改 `proto/bong/envelope.proto`、
+server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
+
 ## 问题记录（开发中实际踩到，后续阶段留意）
 
 1. **共享 target 的旧二进制不可直接跑**：`server/target/debug/bong-server` 可能来自其他或已删 worktree，`CARGO_MANIFEST_DIR` 编译期烙死后会指向错误资产路径。结论：bot-e2e.sh 必须从当前 checkout 经 build-token 完成 `cargo build`，在令牌保护的成功构建后复制本轮 immutable binary，再在令牌外运行该副本；禁止直接执行共享 target 里的旧二进制。

@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import time
 
@@ -317,34 +318,80 @@ def drain_event_stream(bot, *, quiet_s: float = 2.0, max_s: float = 6.0) -> None
             last_change_at = time.monotonic()
 
 
-def drain_server_data_stream(
-    bot, *, quiet_s: float = 2.0, max_s: float = 10.0
-) -> float:
-    """建立严格的 server_data 前置同步屏障并返回请求锚点。
+@dataclass(frozen=True)
+class ProtocolFence:
+    """同一 Bot 连接上的有序事件水位。
 
-    拒绝场景不能靠 payload type 排除集猜测哪些消息是 ambient：identity decoder
-    会把所有已声明 oneof 成员暴露出来，任何遗漏都会把断言变成半开门。这里不看
-    类型，只等待 server_data 事件流连续 ``quiet_s`` 秒；若在 ``max_s`` 内无法
-    建立静默（例如前置同步持续到达），直接失败而不带着未知在途消息继续发请求。
-    屏障后的 ``_relative_now`` 与事件 ``t`` 使用同一时钟，调用方可继续使用全类型
-    fail-closed 扫描。
+    ``cursor`` 是 fence 标记（/ping 的 pong）之后的 exclusive 游标；窗口断言按
+    ``bot.events[start:cursor]`` 取事件，而不是按 payload 类型猜 ambient。``markers``
+    只记录本次 fence 自己产生的 pong，调用方可把它们从 chat-only 断言中排除。
     """
-    start = time.monotonic()
-    last_change_at = start
-    last_count = sum(event.kind == "server_data" for event in bot.events)
-    while True:
-        now = time.monotonic()
-        if now - last_change_at >= quiet_s:
-            return _relative_now(bot)
-        if now - start >= max_s:
-            raise BotAssertionError(
-                "无法建立 server_data 前置同步屏障：在最大等待时间内没有连续静默"
-            )
-        time.sleep(min(0.25, max_s - (now - start), quiet_s - (now - last_change_at)))
-        count = sum(event.kind == "server_data" for event in bot.events)
-        if count != last_count:
-            last_count = count
-            last_change_at = time.monotonic()
+
+    cursor: int
+    markers: tuple[object, ...]
+
+
+def _event_cursor(bot) -> int:
+    """返回当前连接事件流末端；事件对象只追加、不重排，适合作为水位。"""
+    return len(bot.events)
+
+
+def _cursor_after_event(bot, target) -> int:
+    for cursor, event in enumerate(bot.events):
+        if event is target:
+            return cursor + 1
+    raise BotAssertionError("协议 fence 的 pong 已返回，但无法在 Bot 事件流定位该标记")
+
+
+def wait_for_event_after_cursor(
+    bot, cursor: int, predicate, *, timeout: float, description: str
+):
+    """只接受水位之后新追加的事件，避免历史同文案/同类型事件假满足。"""
+    before_ids = {id(event) for event in bot.events[:cursor]}
+    return bot.wait_for(
+        lambda event: id(event) not in before_ids and predicate(event),
+        timeout=timeout,
+        description=description,
+    )
+
+
+def server_data_protocol_fence(
+    bot, *, timeout: float = 10.0, round_trips: int = 1
+) -> ProtocolFence:
+    """用现有 ``/ping`` 回显建立同连接的出站水位，不等待永远不会安静的流。
+
+    Valence 在每个 tick 的 ``PostUpdate`` flush 同一 Client 的 packet buffer；服务器
+    先写入的 server_data 会先于随后写入的 ``/ping`` 的 ``pong`` 到达同一 TCP 流。
+    因而 pong 是可观察的有序屏障：屏障前的连接同步已排到 Bot 事件流，屏障后的
+    请求窗口可以对**所有** server_data 做 fail-closed 检查。无响应请求使用两次
+    往返：第一次可能和 client-request ingress 在同一个 Update，第二次确保 ingress
+    已运行并 flush；有明确响应的调用方在收到该响应后可使用一次往返收口。
+
+    周期 ``carrier_state`` 等 ambient 流不会再被伪装成“必须静默”；它们若在请求
+    与 fence 之间出现，仍会按事件序列被报告，说明窗口边界需要重新校准，而不是
+    添加类型排除集。fence 本身超时直接失败，禁止带着未确认的在途事件发送/接受
+    拒绝断言。
+    """
+    if round_trips < 1:
+        raise ValueError(f"round_trips 必须 >= 1，实际 {round_trips}")
+
+    cursor = _event_cursor(bot)
+    markers = []
+    for _ in range(round_trips):
+        before_ids = {id(event) for event in bot.events[:cursor]}
+        bot.cmd("ping")
+        pong = bot.wait_for(
+            lambda event: (
+                id(event) not in before_ids
+                and event.kind == "chat"
+                and event.data.get("text") == "pong"
+            ),
+            timeout=timeout,
+            description="同一连接 /ping 的 pong 出站水位",
+        )
+        markers.append(pong)
+        cursor = _cursor_after_event(bot, pong)
+    return ProtocolFence(cursor=cursor, markers=tuple(markers))
 
 
 def fire_probes_and_keep_connection(
