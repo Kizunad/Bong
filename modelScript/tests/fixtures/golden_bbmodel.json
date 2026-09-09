@@ -87,6 +87,19 @@
    "ClubPlayerAnim.bbmodel": "03c55214b5af95dc6817d518e8fa1de51aee9c0fb7c4487819576a0c252fe04a"
   }
  },
+ "gen_copper_armor.py": {
+  "exit": 0,
+  "outputs": {
+   "armor/copper/CopperBoots.bbmodel": "08aeb61bd56a0f2005b24b877edd5957ab907694d4eec1f1305cabf271cf0abe",
+   "armor/copper/CopperChestplate.bbmodel": "bceb09bb32fa706b33b229b1773583faca5b995b0d72bda641875fd60fa778c1",
+   "armor/copper/CopperHelmet.bbmodel": "6a528484965074c5dd461266fc49a8b0d53c8b79318bf0607180dad4b79fec35",
+   "armor/copper/CopperLeggings.bbmodel": "025f27e75b266be11af5b2a63cfaf47a9ee52ecb9fbde92b0c30459401af63e2",
+   "armor/copper/textures/copper_boots/0.png": "3b8370b4e05c8b2fba33afa9607a4fdafb3376ec859e0707a87c95eca0be8f37",
+   "armor/copper/textures/copper_chestplate/0.png": "3b8370b4e05c8b2fba33afa9607a4fdafb3376ec859e0707a87c95eca0be8f37",
+   "armor/copper/textures/copper_helmet/0.png": "3b8370b4e05c8b2fba33afa9607a4fdafb3376ec859e0707a87c95eca0be8f37",
+   "armor/copper/textures/copper_leggings/0.png": "3b8370b4e05c8b2fba33afa9607a4fdafb3376ec859e0707a87c95eca0be8f37"
+  }
+ },
  "gen_dead_drop_box.py": {
   "exit": 0,
   "outputs": {

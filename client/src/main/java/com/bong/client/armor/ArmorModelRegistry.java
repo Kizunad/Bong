@@ -38,6 +38,11 @@ public final class ArmorModelRegistry {
         register("armor_bone_chestplate", EquipSlotType.CHEST, "bone_chestplate");
         register("armor_bone_leggings", EquipSlotType.LEGS, "bone_leggings");
         register("armor_bone_boots", EquipSlotType.FEET, "bone_boots");
+
+        register("armor_copper_helmet", EquipSlotType.HEAD, "copper_helmet");
+        register("armor_copper_chestplate", EquipSlotType.CHEST, "copper_chestplate");
+        register("armor_copper_leggings", EquipSlotType.LEGS, "copper_leggings");
+        register("armor_copper_boots", EquipSlotType.FEET, "copper_boots");
     }
 
     private static void register(String templateId, EquipSlotType slot, String modelKey) {
