@@ -2,15 +2,17 @@
 
 > **一句话主题**：在不改 server gameplay、schema、wire 或物品语义的前提下，收口 Bong 手持物的注册/宿主耦合与防具的运行时 3D 外观缺口，让 `template_id` 能稳定落到可辨识的客户端模型。
 >
-> **状态**：骨架（skeleton）。本文件只登记事实、边界、阶段和决策门；未 promotion 为 active，不在本 PR 实施任何 Java、Python、Rust、TOML、模型或贴图改动。
+> **状态**：Active（P0 进行中）。本文件只登记事实、边界、阶段和决策门；本 PR 不实施任何 Java、Python、Rust、TOML、模型或贴图改动。
 >
-> **当前复核基线**：`origin/main` / `c6f978a47efa0c401aef6d9a5b609aa7a99f4860`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
+> **当前复核基线**：`origin/main` / `da88b629b3287096d015e0cf56dae16e3efc54fa`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
+
+> 首次 P0 盘点基于 `e2fb914123b533e43bfea07d42cfccab24584b70`；随后按流程 fetch/merge 到 `da88b629b3287096d015e0cf56dae16e3efc54fa`。逐项对比确认该次主线变更未触及本节引用的手持 registry、防具 registry/cube、server item 与 modelScript 事实文件，因此清单结论不变；后续复核命令仍以当时的 `origin/main` 为准。
 
 ## 阶段总览
 
 | 阶段 | 工作性质 | 状态 | 验收日期 |
 |---|---|---|---|
-| P0 | 盘点、证据固化、所有权与宿主策略决策门 | ⬜ | 待验收 |
+| P0 | 盘点、证据固化、所有权与宿主策略决策门 | ⏳ | 进行中 |
 | P1 | 已有运行时模型的纯注册/接线缺口 | ⬜ | 待验收 |
 | P2 | 共宿主解耦与显式借用关系 | ⬜ | 待验收 |
 | P3 | 缺失运行时 3D 几何与防具模型资产 | ⬜ | 待验收 |
@@ -18,17 +20,17 @@
 
 ## 0. 范围、硬边界与防重
 
-### 0.1 本骨架负责什么
+### 0.1 本 plan 负责什么
 
 - 盘点 server 已存在的手持物/工具模板与防具模板，建立「已注册」「共宿主」「只有作者资产」「只有 GUI icon」「没有可用 3D 运行时资源」的可复核分类。
 - 规划 client 的手持模型注册、vanilla 宿主解耦、模型资源和 `ArmorModelRegistry`/`ArmorFeatureRenderer` 接线的缺口收口。
-- 以玩家可观察的 FPV/TPV/GUI/ground 表现和装备槽表现为验收对象；未决设计在本骨架的开放问题中保留，不由自动消费阶段替用户拍板。
+- 以玩家可观察的 FPV/TPV/GUI/ground 表现和装备槽表现为验收对象；已收口的设计决议记录在 §9.1，后续实施不得绕过这些决议替用户重新拍板。
 
 ### 0.2 不做什么
 
 - 不改 `server/assets/items/*.toml`、server 物品注册、伤害/护甲/装备规则、玩法数值或持久化。
 - 不改 `template_id` 的 schema、Redis、CustomPayload、`weapon_spec`/装备状态 wire，也不新造跨端事件。
-- 不改 `docs/worldview.md`、`docs/CLAUDE.md`、既有 plan 或本骨架以外的文档；不把本文件 promotion 为 active，不在本任务归档。
+- 不改 `docs/worldview.md`、`docs/CLAUDE.md`、既有 plan 或本 plan 以外的文档；本任务不归档。
 - 不把 `qi_physics`、真元流动或任何 gameplay ledger 接入渲染层；本主题只消费已有物品身份和装备快照。
 - 不因模型缺口临时新增 `pub`、`pub(crate)`、`#[doc(hidden)]` 或测试专用 seam；若某路线需要可见性变化，必须回到 P0 重新决策。
 
@@ -36,7 +38,7 @@
 
 当前主线**实际存在** `docs/plans-skeleton/plan-held-item-registration-v1.md`，其中已经规划了 `BongHeldItemRegistry`、render-only Fabric Item、39 个现有注册项、9 个顶层 weapon/tool 漏项、宿主 override 清理和显式 `borrowsFrom`。因此本 plan 不得再造第二个通用手持注册表，也不得并行删除同一批 vanilla host override。
 
-本 plan 额外收口的是「渲染缺口」总体验收，尤其是防具的运行时 ModelPart/几何缺口和未注册物品的视觉分类；P1/P2 中涉及通用手持注册或宿主迁移的实现，升 active 前必须明确是并入 `plan-held-item-registration-v1`、由本 plan 接手，还是拆成依赖关系。若所有权没有单一答案，不得进入实施。
+本 plan 额外收口的是「渲染缺口」总体验收，尤其是防具的运行时 ModelPart/几何缺口和未注册物品的视觉分类；P1/P2 中涉及通用手持注册或宿主迁移的实现，进入实施前必须明确是并入 `plan-held-item-registration-v1`、由本 plan 接手，还是拆成依赖关系。若所有权没有单一答案，不得进入实施。
 
 既有 `plan-held-item-registration-v1` 不因本文件创建而修改；本文件只记录防重结论和未来接线契约。
 
@@ -142,7 +144,7 @@ herb_knife_iron  iron_dagger  slow_trap  warning_trap  wooden_club
 
 `niche_house_puppet`、`niche_zhenfa_trap_basic`、`niche_zhenfa_trap_middle`、`niche_zhenfa_trap_advanced` 实际位于 `server/assets/items/niche/*.toml`，四项均声明 `category = "tool"`；它们不在顶层 43 的统计口径内。当前 `server/src` 未找到这四个 ID 的生产消费，既有 plan 记录它们是无 craft/loot、只由 dev `/give` 可得的内容。
 
-这证明它们「存在且是 TOML tool」，但还不能证明它们是手持物：是放置物、灵龛/阵法实体，还是未来应进入手持渲染注册，须留到开放问题决议，不能在本骨架中擅自纳入或排除。
+这证明它们「存在且是 TOML tool」，但还不能证明它们是手持物：是放置物、灵龛/阵法实体，还是未来应进入手持渲染注册，须以 §9.1 的决议为准，不能在本 plan 的 P0 清单之外擅自纳入或排除。
 
 #### 与任务卡旧事实的五处纠偏
 
@@ -158,27 +160,145 @@ P0 是所有实施的硬门。先补齐逐模板、逐槽位和逐资源证据�
 
 ### 3.1 权威清单
 
-- 由 `server/assets/items/*.toml` 的真实 `[[item]]` section 解析顶层 weapon/tool 集合，输出 43 个 ID；用 `server/assets/items/niche/*.toml` 单列 4 个 niche tool；用 `armor.toml` 输出 28 个 armor ID。
-- 从 `BongWeaponModelRegistry` 解析 39 个 entry，并报告三组集合：顶层交集 34、顶层缺失 9、注册表外的 misc/shield 5；禁止仅以 Java entry 数量宣称覆盖完成。
-- 对每个手持候选标记：`own OBJ/JSON`、有意 `borrow`、vanilla plain fallback、共宿主、无运行时资源、仅 GUI icon、是否需要先解决 niche 形态。
-- 对每个 armor `material × slot` 标记：server item、GUI icon、作者 `.bbmodel`、运行时 texture、`ArmorModelRegistry` entry、`ArmorPartModel` key、实际 renderer path，任一缺项都要有处置理由。
+- 本节的权威基线是 `origin/main=e2fb914123b533e43bfea07d42cfccab24584b70`。顶层 `server/assets/items/*.toml`（排除嵌套 `niche/`）实际解析出 43 个 `weapon|tool`；`server/assets/items/niche/*.toml` 的 4 个 tool 单列，不静默混入 43；`armor.toml` 有 28 个 armor item（7 材质 × 4 槽）。
+- `BongWeaponModelRegistry` 有 39 个 entry，但与顶层 43 项的交集是 34；其余 5 项是 registry 自有的 misc/shield/lingtian 条目，不能用「39 个 entry」宣称覆盖 43 项。
+- 手持表把每个候选明确标为：`template_id` 是否命中 registry、vanilla host、是否有意 `borrow`、是否有 client runtime model/OBJ、是否只有作者输入或 GUI icon，以及是否还受阵法手持/放置形态决议约束。
+- 防具表按每个材质的四槽核对 server item、GUI icon、作者生成器/`.bbmodel`、运行时 texture、`ArmorModelRegistry` entry、`ArmorPartModel` key 和 `ArmorFeatureRenderer` 路径；作者输入或 GUI icon 单独存在不计作运行时几何。
+
+#### A 类：未注册的 9 个顶层 weapon/tool
+
+| `template_id` | server 证据 | 当前 client / 作者资产证据 | P0 结论 |
+|---|---|---|---|
+| `iron_dagger` | `server/assets/items/workbench_materials.toml:635-649` | `modelScript/generators/gen_iron_dagger.py:2,41`、`modelScript/models/IronDagger.bbmodel`、`client/src/main/resources/assets/bong-client/textures/gui/items/iron_dagger.png`；无 `BongWeaponModelRegistry` entry 或 `assets/bong/models/item/iron_dagger/*` | 未注册；有作者输入与 GUI icon，但没有 client runtime model 接线，不进 P1 |
+| `wooden_club` | `server/assets/items/workbench_materials.toml:686-700` | `modelScript/generators/gen_wooden_club.py:2,7-10`、`modelScript/models/WoodenClub.bbmodel`、`client/src/main/resources/assets/bong-client/textures/gui/items/wooden_club.png`；无 registry entry 或 client runtime model | 未注册；作者生成器/`.bbmodel` 不是运行时模型，不进 P1 |
+| `herb_knife_iron` | `server/assets/items/craft_legacy_items.toml:51-57` | `modelScript/generators/gen_herb_knife_iron.py:2,45`、`modelScript/models/HerbKnifeIron.bbmodel`、`client/src/main/resources/assets/bong-client/textures/gui/items/herb_knife_iron.png`；无 registry entry 或 client runtime model | 未注册；只有离线作者资产与 icon，不进 P1 |
+| `bone_spike_crude` | `server/assets/items/workbench_materials.toml:669-683`、`server/assets/craft/recipes/workbench/weapon.toml:19` | `client/src/main/resources/assets/bong-client/textures/gui/items/bone_spike_crude.png`；未找到生成器、`.bbmodel`、client runtime model 或 registry entry | 未注册；仅 GUI icon，需 P3 独立模型 |
+| `eclipse_needle_iron` | `server/assets/items/materials.toml:175-189` | `client/src/main/resources/assets/bong-client/textures/gui/items/eclipse_needle_iron.png`；未找到生成器、`.bbmodel`、client runtime model 或 registry entry | 未注册；仅 GUI icon，需 P3 资产与接线 |
+| `array_flag` | `server/assets/items/zhenfa.toml:1-10` | `modelScript/generators/gen_array_flag.py:2-13` 产出的是 `array_flag_basic` 作者模型，另有 `modelScript/models/ArrayFlagBasic.bbmodel` 与 `client/src/main/resources/assets/bong-client/textures/gui/items/array_flag.png`；`array_flag` 本身无 registry entry | 未注册；按 §9.1 是手持布阵控制工具，但作者输入不能冒充运行时模型 |
+| `blast_trap` | `server/assets/items/zhenfa.toml:56-65` | `client/src/main/java/com/bong/client/interaction/ClientInteractionItemResolver.java:18`、`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:69`、`client/src/main/resources/assets/bong-client/textures/gui/items/blast_trap.png`；无 registry/runtime model | 未注册；按 §9.1 先手持后放置，手持与落地渲染要分链路处理 |
+| `slow_trap` | `server/assets/items/zhenfa.toml:67-76` | `client/src/main/java/com/bong/client/interaction/ClientInteractionItemResolver.java:19`、`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:70`、`client/src/main/resources/assets/bong-client/textures/gui/items/slow_trap.png`；无 registry/runtime model | 未注册；按 §9.1 先手持后放置，不能用普通手持模型冒充放置实体 |
+| `warning_trap` | `server/assets/items/zhenfa.toml:45-54` | `client/src/main/java/com/bong/client/interaction/ClientInteractionItemResolver.java:17`、`client/src/main/java/com/bong/client/inventory/InventoryEquipRules.java:68`、`client/src/main/resources/assets/bong-client/textures/gui/items/warning_trap.png`；无 registry/runtime model | 未注册；按 §9.1 先手持后放置，需分别验收两种表现 |
+
+**A 类复核命令（均以 `origin/main` 为对象）**：
+
+```bash
+git ls-tree -r --name-only origin/main -- server/assets/items modelScript client/src/main/resources/assets/bong-client/textures/gui/items
+git grep -n -E 'id = "(iron_dagger|wooden_club|herb_knife_iron|bone_spike_crude|eclipse_needle_iron|array_flag|blast_trap|slow_trap|warning_trap)"' origin/main -- server/assets/items
+for id in iron_dagger wooden_club herb_knife_iron bone_spike_crude eclipse_needle_iron array_flag blast_trap slow_trap warning_trap; do
+  git grep -n "entries.put(\"$id\"" origin/main -- client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java || true
+done
+git ls-tree -r --name-only origin/main -- modelScript client/src/main/resources/assets/bong client/src/main/resources/assets/bong-client/textures/gui/items
+```
+
+第一条清单命令与逐 ID registry 查询共同证明「作者/GUI 文件存在」和「运行时 registry entry 存在」是两件事；上表的 9 项均未命中 registry。`array_flag` 生成器的输出键是 `array_flag_basic`，不能用相近命名掩盖 `template_id` 不一致。
+
+#### B 类：19 个模板共用 7 个 vanilla host
+
+这里的「有意共享」只承认代码中可审计的单向借用说明，不承认「恰好写了相同 `vanillaModelPath`」本身就是设计声明。当前表中「否」表示尚未有可数据化的 `borrowsFrom` 关系；「基准 host」表示该条目提供被借用的既有 OBJ，而不是宣称物理上没有和别的条目共用 host。
+
+| `template_id` | 当前 host model | 是否有意共享 / 审计结论 | registry 证据 |
+|---|---|---|---|
+| `bone_sword` | `item/stone_sword` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:92-96` |
+| `gua_dao` | `item/stone_sword` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:183-184` |
+| `iron_sword_flawed` | `item/stone_sword` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:203-204` |
+| `qing_feng_sword_flawed` | `item/stone_sword` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:207-208` |
+| `ling_feng_sword_flawed` | `item/stone_sword` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:211-212` |
+| `stone_knife` | `item/stone_sword` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:216-217` |
+| `iron_sword` | `item/iron_sword` | 基准 host（自身提供 `iron_sword.obj`） | `BongWeaponModelRegistry.java:62-66` |
+| `qing_feng_sword` | `item/iron_sword` | 是（注释明确借 `iron_sword.obj`） | `BongWeaponModelRegistry.java:205-206` |
+| `ling_feng_sword` | `item/iron_sword` | 是（注释明确借 `iron_sword.obj`） | `BongWeaponModelRegistry.java:209-210` |
+| `bone_dagger` | `item/bone` | 基准 host（自身提供 `bone_dagger.obj`） | `BongWeaponModelRegistry.java:80-84` |
+| `bone_spike` | `item/bone` | 是（注释明确借 `bone_dagger.obj`） | `BongWeaponModelRegistry.java:194-195` |
+| `hand_wrap` | `item/leather` | 基准 host（自身提供 `hand_wrap.obj`） | `BongWeaponModelRegistry.java:86-90` |
+| `bing_jia_shou_tao` | `item/leather` | 是（注释明确借 `hand_wrap.obj`） | `BongWeaponModelRegistry.java:187-189` |
+| `stone_pickaxe` | `item/stone_pickaxe` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:150-151` |
+| `pickaxe_copper` | `item/stone_pickaxe` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:154-155` |
+| `stone_axe` | `item/stone_axe` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:152-153` |
+| `axe_copper` | `item/stone_axe` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:156-157` |
+| `dun_qi_jia` | `item/flint_and_steel` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:181-182` |
+| `gu_hai_qian` | `item/flint_and_steel` | 否（plain host，未声明 borrow） | `BongWeaponModelRegistry.java:185-186` |
+
+**B 类复核命令（均以 `origin/main` 为对象）**：
+
+```bash
+git show origin/main:client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java \
+  | nl -ba \
+  | grep -E 'entries\.put\("(bone_sword|gua_dao|iron_sword_flawed|qing_feng_sword_flawed|ling_feng_sword_flawed|stone_knife|iron_sword|qing_feng_sword|ling_feng_sword|bone_dagger|bone_spike|hand_wrap|bing_jia_shou_tao|stone_pickaxe|pickaxe_copper|stone_axe|axe_copper|dun_qi_jia|gu_hai_qian)"'
+git show origin/main:client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java \
+  | nl -ba \
+  | sed -n '166,217p'
+git show origin/main:client/src/test/java/com/bong/client/weapon/BongWeaponModelRegistryTest.java \
+  | nl -ba \
+  | sed -n '120,186p'
+```
+
+这三条命令分别复核 19 个 entry、策略①/②的注释和已有 SML/plain host 约束。P2 的落地验收必须把当前表中的「是」关系改成可查询的显式单向借用数据；未标「是」的条目不能因碰巧共用 host 而被当作有意共享。
+
+#### C 类：缺运行时几何的五套防具
+
+| 材质套装 | server / icon 证据 | 作者输入到了哪一步 | 当前运行时缺口与 P0 分档 |
+|---|---|---|---|
+| `hide` | `server/assets/items/armor.toml:213-256`；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_hide.png` | `modelScript/generators/gen_hide_armor.py:171,351,460,539,547-548` 有 helmet/chestplate/leggings/boots 四个函数 | 无 `ArmorModelRegistry`/cube table 接线；完整四部件作者输入但仍只是离线来源，P3 第一批 |
+| `scroll_wrap` | `server/assets/items/armor.toml:389-433`；GUI icon `.../armor_scroll_wrap.png`；四张 runtime texture `client/src/main/resources/assets/bong/textures/armor/scroll_wrap_{helmet,chestplate,leggings,boots}/0.png` | `modelScript/generators/gen_scroll_wrap_armor.py:146,240,284,321,329-330` 有四个部件函数 | 有部分纹理但没有 `ArmorModelRegistry`/`ArmorPartModel` key，纹理不等于可渲染几何，P3 第一批 |
+| `straw` | `server/assets/items/armor.toml:125-168`；未在当前 GUI icon 清单中找到 `armor_straw.png` | `modelScript/generators/gen_straw_armor.py:220-225,350-359` 只有 leggings/boots | helmet/chestplate 输入与运行时四槽链均缺，P3 第二批；不能报作完整套装 |
+| `copper` | `server/assets/items/armor.toml:301-344`；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_copper.png` | 未找到对应作者生成器/`.bbmodel` 或运行时几何 | 只有 GUI icon；`ArmorModelRegistry`、cube table、运行时纹理/renderer 接线均缺，P3 最后一批 |
+| `spirit_cloth` | `server/assets/items/armor.toml:345-388`；`client/src/main/resources/assets/bong-client/textures/gui/items/armor/armor_spirit_cloth.png` | 未找到对应作者生成器/`.bbmodel` 或运行时几何 | 只有 GUI icon；`ArmorModelRegistry`、cube table、运行时纹理/renderer 接线均缺，P3 最后一批 |
+
+当前运行时对照锚点是 `client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:31-40` 的 iron/bone 八项、`ArmorPartModel.java:68,151-162` 的八个 cube key、`ArmorFeatureRenderer.java:75-121` 的实际消费路径；C 类五套均未命中这条完整链路。
+
+**C 类复核命令（均以 `origin/main` 为对象）**：
+
+```bash
+git show origin/main:server/assets/items/armor.toml \
+  | nl -ba \
+  | grep -E 'id = "armor_(straw|hide|copper|spirit_cloth|scroll_wrap)_(helmet|chestplate|leggings|boots)"'
+for f in gen_hide_armor.py gen_scroll_wrap_armor.py gen_straw_armor.py; do
+  git show "origin/main:modelScript/generators/$f" | nl -ba \
+    | grep -E 'def (part_|all_cubes|helmet|chestplate|leggings|boots)'
+done
+git show origin/main:client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java \
+  | nl -ba | sed -n '29,63p'
+git show origin/main:client/src/main/java/com/bong/client/armor/ArmorPartModel.java \
+  | nl -ba | sed -n '68,78p;151,162p'
+git ls-tree -r --name-only origin/main -- client/src/main/resources \
+  | grep -E 'textures/(armor|gui/items/armor)/' \
+  | sort
+```
+
+最后一条命令必须和 registry/cube key 交叉比对：`scroll_wrap` 的四张纹理只能证明资源文件存在，不能证明运行时几何已接通；`straw` 的生成器输出只能证明两槽作者输入存在；`copper`/`spirit_cloth` 的 icon 只能证明 GUI 素材存在。
 
 ### 3.2 完成判据
 
-- **注册完成**：正常装备/手持状态中的 `template_id` 能命中唯一、可诊断的 client entry；FPV/TPV 解析链不因未知项静默显示另一件物品；目标资源和所需 SML/ModelPart 接线均存在。
-- **独立外观完成**：运行时拥有该模板自己的模型资源或明确记录的单向借用关系；共享 vanilla host 不得被误报为独立外观。故意借用必须可在数据/测试中查到，不能靠两个 entry 恰好指向同一 host 来表达。
-- **防具完成**：四槽的 server `template_id`、client material/slot、`ArmorModelRegistry`、`ArmorPartModel` cube 表、纹理和 `ArmorFeatureRenderer` 挂载逐一相符；没有双层 leather fallback、错槽或破损甲仍渲染的回归。
-- **资源完成**：model JSON/OBJ/MTL/贴图或 ModelPart 运行时输入可由测试检查；资源包 manifest 发生变化时同步 sha1/size 证据。
+- **注册链完成**：对每个纳入范围的模板逐一证明 `template_id → registry entry → model/stack` 三段全通：server ID 有明确范围归属，client registry 恰好有一个 entry，entry 能解析到实际模型与 stack；若是显式借用，借用目标和方向可查询。任何「registry 命中但 model missing」或「有模型但没有 stack」都算未完成。
+- **双视角一致**：FPV 和 TPV 两个入口都从同一 `template_id` entry 解析到同一外观来源；验收要覆盖主手/副手、`HeldItemStackResolver`、`WeaponRenderBootstrap`/现有 mixin 路径，不以只看 GUI 或单一视角通过。
+- **未知 ID 兜底可 pin**：未知 `template_id` 必须走显式、可诊断的空手/占位 fallback，不得静默显示另一件 Bong 物品；pin 要断言「未知 ID 不等于任一已注册 ID」，并覆盖主手、副手和登录后首帧。
+- **防具四槽完整**：每套进入实施的材质必须为 `helmet/chestplate/leggings/boots` 四个 server ID 分别配对 client material/slot、`ArmorModelRegistry` entry、`ArmorPartModel` cube key、纹理和 `ArmorFeatureRenderer` mount；四槽缺一即未完成。
+- **防具状态边界**：错槽不渲染、破损/耐久为零不渲染、卸下立即消失；单槽和整套都要通过，并且远距轮廓能与 iron/bone 以及其它已交付套装区分。回归要同时覆盖 FPV/TPV/F5、GUI（icon 不冒充上身）和实际 renderer path。
+- **资源与回归证据完整**：模型/OBJ/MTL/ModelPart、纹理、stack、host/borrow 关系和 manifest（如有变化）都有可重跑命令或 pin；仅生成器、`.bbmodel`、GUI icon、smoke 或单张截图不能单独宣称完成。
 
 ### 3.3 P0 交付物
 
-- 一份可重复生成的手持 43 + niche 4 + armor 28 分类表/验收输出（实现时再决定落在既有测试/manifest 的哪个 owner 中，不在本 skeleton 新增脚本）。
-- 与 `plan-held-item-registration-v1` 的单一 owner 决议：通用 render-only Item、宿主迁移、host override 清理各由哪一份 plan 负责。
-- P2 宿主策略、P3 五套防具范围和四项 niche 形态问题全部得到人工决议；未决不得升 active。
+- 本节的 A/B/C 三张可复核表及其 `origin/main` 命令输出：顶层手持 43 + niche 4 + armor 28 的统计口径、逐模板证据和缺口处置均可重跑。
+- 与 `plan-held-item-registration-v1` 的单一 owner 决议：通用 render-only Item、宿主迁移、host override 清理均由本 plan 负责，不另造第二套 registry。
+- P2 宿主策略、P3 五套防具批次和四项 niche 形态已在 §9.1 收口；后续实现必须先满足本节注册/几何/视角/边界判据，不得把开放问题带进 P1。
 
 ## 4. P1 — 纯注册/接线缺口（不造模型）
 
-P1 只处理 P0 认定「运行时模型已经存在、缺的只是 registry/入口接线」的条目；生成器、GUI icon 或离线 `.bbmodel` 单独存在时，不得放入 P1 冒充已具备模型。
+**P1 入选：0 项。** 基于 `origin/main=da88b629b3287096d015e0cf56dae16e3efc54fa` 的 A 类逐项复核，没有一项同时满足「运行时模型已经存在、只缺 registry/入口接线」：作者生成器、`modelScript/models/*.bbmodel`、离线 OBJ/概念图或 GUI icon 都不是已经接入 `ArmorFeatureRenderer`/held-item runtime 的模型。因此本阶段宁可为空，不把资产成熟度夸大成接线缺口。
+
+| A 类 `template_id` | 不能进入 P1 的逐项理由 | 证据 |
+|---|---|---|
+| `iron_dagger` | 有生成器、`.bbmodel` 和 GUI icon，但无 client runtime model/OBJ 及 registry entry | `modelScript/generators/gen_iron_dagger.py:2,41`；`modelScript/models/IronDagger.bbmodel`；`.../textures/gui/items/iron_dagger.png` |
+| `wooden_club` | 有生成器、`.bbmodel` 和 GUI icon，但无 runtime 接线；生成器文档反而明确指出 registry 缺 entry | `modelScript/generators/gen_wooden_club.py:2,7-10`；`modelScript/models/WoodenClub.bbmodel`；`.../textures/gui/items/wooden_club.png` |
+| `herb_knife_iron` | 有离线生成器/`.bbmodel` 和 GUI icon，没有已安装的 held-item runtime model/registry entry | `modelScript/generators/gen_herb_knife_iron.py:2,45`；`modelScript/models/HerbKnifeIron.bbmodel`；`.../textures/gui/items/herb_knife_iron.png` |
+| `bone_spike_crude` | 只有 GUI icon，未找到作者或 runtime 3D 资源，也无 registry entry | `.../textures/gui/items/bone_spike_crude.png`；A 类 registry 查询无命中 |
+| `eclipse_needle_iron` | 只有 GUI icon，未找到作者或 runtime 3D 资源，也无 registry entry | `.../textures/gui/items/eclipse_needle_iron.png`；A 类 registry 查询无命中 |
+| `array_flag` | 生成器/`.bbmodel` 对应的是 `array_flag_basic`，不是该 `template_id`；`array_flag` 只有 GUI/交互入口，没有 runtime registry model | `modelScript/generators/gen_array_flag.py:2-13`；`modelScript/models/ArrayFlagBasic.bbmodel`；`.../textures/gui/items/array_flag.png` |
+| `blast_trap` | 只有 GUI/交互与放置协议入口；没有已接入的 held-item runtime model，且落地表现属于另一条链 | `ClientInteractionItemResolver.java:18`；`InventoryEquipRules.java:69`；`.../textures/gui/items/blast_trap.png` |
+| `slow_trap` | 只有 GUI/交互与放置协议入口；没有已接入的 held-item runtime model，且落地表现属于另一条链 | `ClientInteractionItemResolver.java:19`；`InventoryEquipRules.java:70`；`.../textures/gui/items/slow_trap.png` |
+| `warning_trap` | 只有 GUI/交互与放置协议入口；没有已接入的 held-item runtime model，且落地表现属于另一条链 | `ClientInteractionItemResolver.java:17`；`InventoryEquipRules.java:68`；`.../textures/gui/items/warning_trap.png` |
+
+所以 P1 当前不列入任何模板；下一阶段应先按 P3/§9.1 补齐运行时模型或完成明确的形态/owner 处置，再重新进行 P1 筛选。
 
 - 对明确的手持候选接入既有 `template_id → model/stack` 链，保持 `HeldItemStackResolver` 主/副手优先级和 `WeaponVanillaIconMap` 的 fallback 语义；不改 server `weapon_kind`、装备规则或攻击。
 - 对已经有完整 `ArmorPartModel`/texture 的防具只做 `ArmorModelRegistry` 与 renderer 接线；当前基线已完成的铁/骨 8 件必须保持行为和 cube digest 不变。
@@ -206,7 +326,7 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 
 ### 6.2 五套防具
 
-- `hide`、`scroll_wrap`、`straw`、`copper`、`spirit_cloth` 均当前缺少完整的 `ArmorModelRegistry` + `ArmorPartModel` 运行时链；是否一次全做由开放问题决定，不能在骨架阶段拍板。
+- `hide`、`scroll_wrap`、`straw`、`copper`、`spirit_cloth` 均当前缺少完整的 `ArmorModelRegistry` + `ArmorPartModel` 运行时链；实施批次已按 §9.1 决定，不能把作者输入或 GUI icon 冒充运行时几何。
 - 每套按 `helmet/chestplate/leggings/boots` 四槽分别核对几何、纹理、挂点、遮挡、破损过滤、与铁/骨的远距轮廓差异；部分作者模型（例如 straw 当前只有部分部件）不能假装四槽完成。
 - 运行时真相继续落在既有 `ArmorPartModel` cube 表/ModelPart 约定；`.bbmodel` 只作为离线资产，必须经预览、转写和测试 pin 后才算接入。
 - 防具 icon 与 3D 模型分开验收：GUI icon 只能证明 icon 存在，不能替代穿戴/上身几何。
@@ -217,19 +337,19 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 - **渲染回归**：FPV、TPV/F5、GUI、ground（若 P0 判定使用 ItemRenderer）分别检查；穿戴全套/单槽/错槽/破损/卸下，确保玩家能从远处区分不同手持物和五套防具，不出现 vanilla host 串形、missing model 或 leather 双层。
 - **协议回归**：沿既有 server → 装备快照/`weapon_spec` → client resolver 链验证，证明只改变视觉接线；不得新增或修改 schema/wire。niche 若仍未决，只记录不纳入协议验收。
 - **资源包回归**：若模型路径/资源文件变化，运行资源包构建与 manifest/sha1 检查；严禁留下未注册的孤儿 override。
-- **client gate**：实施期按 client 所触范围运行 `cd client && ../scripts/build-token.sh gradle test build`（Java 17）；跨栈变更才增加对应栈 gate。本骨架 PR 不运行 cargo/gradle，不以 docs-only PR 声称 gameplay 或 client gate 已通过。
+- **client gate**：实施期按 client 所触范围运行 `cd client && ../scripts/build-token.sh gradle test build`（Java 17）；跨栈变更才增加对应栈 gate。本 promotion/P0 PR 只改 docs，不运行 cargo/gradle，不以 docs-only PR 声称 gameplay 或 client gate 已通过。
 - **完成口径**：所有进入实施的阶段均有可重跑命令、实际数量和截图/预览证据；只跑 smoke 或只证明 GUI icon 存在不算 P4 通过。
 
-## 8. 视觉资产纪律（升 active 后强制执行）
+## 8. 视觉资产纪律（进入实施阶段后强制执行）
 
 - 模型类工作必须至少三轮：Round 1 first cut；Round 2 以三视图/玩家预览自评并修正；Round 3 最终检查。终轮 commit message 必须写入正确拼写的 `<PROMISE>` 担保块，说明已完成 3 轮打磨及仍有限制。
 - 复杂模型按部件制作和验收：使用 `part_base()`/`part_body()` 等部件函数，逐件预览后再用 `all_cubes()`/等价组合；不要一把生成一个不可解释的大盒子。Blockbench 外观以当前依赖提供的 `bbmodel-render <模型>`（或其等价渲染工具）实证，不以平涂示意图代替。
 - item icon 必须走 `/gen-image item` 和仓库规定的资源路径；当前 harness 若跑不了，保留接线并在对应 TODO 标 `[BLOCKED: 需 /gen-image 生成 <清单>]`，不手绘模糊占位、不跳过 icon 接线。
 - 每个材质/模板的模型、贴图、icon、资源包路径和视觉差异必须可追溯到 `template_id`；作者文件、运行时文件和 GUI icon 不得混为一谈。
 
-## §9 开放问题（P0 决策门前需收口）
+## §9 开放问题（历史记录；决议见 §9.1）
 
-以下只提出问题，不在本骨架中拍板；进入 P0 实施前要按 `docs/CLAUDE.md §五` 逐条形成带「文件:行号 + plan 章节」双锚点的决议。
+以下六条是 promotion 前提出的问题，保留用于追溯；已按 `docs/CLAUDE.md §五` 逐条形成带「文件:行号 + plan 章节」双锚点的决议，P0 及后续实施以 §9.1 为准。
 
 1. **P2 宿主策略**：19 个共宿主模板应采用 render-only Fabric Item、显式单向 OBJ 借用、继续使用 vanilla host，还是走绕开 ItemRenderer 的自绘链？在 `plan-held-item-registration-v1` 与本 plan 之间，最终 owner 应如何唯一化？
 2. **五套防具范围**：`hide`、`scroll_wrap`、`straw`、`copper`、`spirit_cloth` 是一次全部补齐，还是按材质/部件分批？若分批，哪一批先满足完整四槽和远距可辨识验收？
@@ -282,7 +402,7 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 
 **决议**：
 1. 结论为**架构上可行，但必须以 P0 spike 的四项实证作为放行门**：登录不掉线、模型能加载、合成的 client-only stack 能在 FPV/TPV 手持渲染、GUI 入口不报错。依据是客户端模组声明为 `environment = "client"`，现有 server→client 装备消息只读取 `template_id` 并写入 store，`WeaponVanillaIconMap` 已证明渲染 stack 是客户端惰性合成，不是 server inventory/wire 数据；因此不会把 `bong:<id>` 作为 server 物品或新字段下发。
-2. 静态 Item registry、创造栏/REI、掉落物和登录同步分别按以下口径验收：`Registries.ITEM` 只在 client init 注册；不加入 `ItemGroup`，且当前 `client/build.gradle` 没有 REI 依赖，P0 仍要在无/有外部 REI 的实际客户端分别确认不泄露内部 Item；登录只验证现有 Valence 连接和 `template_id` 装备事件；掉落不依赖 Item registry，因为当前地面链是 `DroppedItemStore` 的自绘 billboard。任一实际 spike 失败都不得升 active。
+2. 静态 Item registry、创造栏/REI、掉落物和登录同步分别按以下口径验收：`Registries.ITEM` 只在 client init 注册；不加入 `ItemGroup`，且当前 `client/build.gradle` 没有 REI 依赖，P0 仍要在无/有外部 REI 的实际客户端分别确认不泄露内部 Item；登录只验证现有 Valence 连接和 `template_id` 装备事件；掉落不依赖 Item registry，因为当前地面链是 `DroppedItemStore` 的自绘 billboard。任一实际 spike 失败都不得进入后续实现阶段。
 3. fallback 固定为保留当前 fake vanilla host + SML 链：继续由 `WeaponVanillaIconMap` 生成已知 vanilla stack，并由 `WeaponRenderBootstrap`/两个 held-item mixin 驱动渲染；fallback 不新增 server wire，不改 `template_id`、装备状态或掉落协议，也不转向本 plan 之外的第二套自绘实现。
 
 **落点**：`client/src/main/resources/fabric.mod.json:12-27`、`client/src/main/java/com/bong/client/BongClient.java:157-158`、`client/src/main/java/com/bong/client/network/WeaponEquippedHandler.java:35-68`、`client/src/main/java/com/bong/client/weapon/WeaponVanillaIconMap.java:23-36`、`client/build.gradle:45-87`、`client/src/main/java/com/bong/client/inventory/render/DroppedItemWorldRenderer.java:27-38,55-68`（依据代码/构建配置）/ 本 plan `§3.2`、`§4 P1`、`§7`（P0 spike、fallback 与 client gate）。
@@ -292,16 +412,16 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 **决议**：
 1. Bong 的 ground/drop rendering **留在既有 inventory/drop owner，不纳入本 plan 的 ItemRenderer 迁移**：`DroppedItemWorldRenderer` 从 `DroppedItemStore` 读取坐标和 `InventoryItem`，直接画 client-only billboard；它不 spawn `ItemEntity`，也不调用 vanilla `ItemRenderer`。玩家死亡时 vanilla `dropInventory` 还会被取消，掉落由 server-authoritative 的 `inventory_event`/`dropped_loot_sync` 链进入 store。
 2. 显示名的权威来源继续是 server 下发的 `InventoryItem.displayName()`，HUD 以该字段组装地面 marker；不因 render-only Item 新增 server lang、schema 或 drop wire。与此同时，未注册 lang 的风险是真实存在的：如果 client-only/fake stack 被送入 vanilla tooltip/name 路径，当前 mixin 文档已明确会显示宿主 Item 名称，新的 `bong:<id>` 还可能显示原始 translation key；所以「held-item 注册不得泄露 vanilla tooltip/创造栏/掉落实体」是本 plan 的 P0/P1 接入门，而不是把风险推给 ground follow-up。
-3. 本 plan 只负责上述 held-item 隔离门，以及在 P4 验证 FPV/TPV/GUI 不会把 server display name 替换成 vanilla/raw lang；实际掉落位置、pickup、marker 文案和 proto 字段继续由 inventory/drop owner 维护。未来若要改掉落形态或让掉落走 `ItemRenderer`，另开 follow-up，不在本骨架决议中扩大范围。
+3. 本 plan 只负责上述 held-item 隔离门，以及在 P4 验证 FPV/TPV/GUI 不会把 server display name 替换成 vanilla/raw lang；实际掉落位置、pickup、marker 文案和 proto 字段继续由 inventory/drop owner 维护。未来若要改掉落形态或让掉落走 `ItemRenderer`，另开 follow-up，不在本 plan 决议中扩大范围。
 
 **落点**：`client/src/main/java/com/bong/client/inventory/render/DroppedItemWorldRenderer.java:27-38,55-60,99-125`、`client/src/main/java/com/bong/client/network/InventoryEventHandler.java:103-145`、`client/src/main/java/com/bong/client/network/DroppedLootSyncHandler.java:12-55,58-85`、`client/src/main/java/com/bong/client/hud/DroppedItemHudPlanner.java:293-296`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityDrop.java:21-33`、`client/src/main/java/com/bong/client/mixin/MixinPlayerEntityHeldItem.java:27-33`（依据代码）/ 本 plan `§4 P1`、`§7`、`§10`（边界、隔离门与后续 owner）。
 
 ## 10. Finish Evidence
 
-> 当前仍是 skeleton，尚无已完成阶段、实现 commit 或 gate 结果；进入 active/完成归档时按根 `CLAUDE.md` 模板补写，不得把本次文档预检冒充实施证据。
+> 当前为 active，P0 尚在进行，尚无已完成阶段、实现 commit 或 gate 结果；完成各阶段并归档时按根 `CLAUDE.md` 模板补写，不得把本次文档盘点冒充实现证据。
 
 - **落地清单**：待 P0–P4 实施后填写真实文件路径与 `template_id`/slot 清单。
 - **关键 commit**：待实施 commit、日期和一句话摘要。
 - **测试结果**：待填写实际 client gate、资源检查、渲染回归和数量证据。
 - **跨仓库核验**：当前仅确认既有 `template_id` 接线；待实施后再次核 server/client，agent 如无接触面则明确写「不涉及」。
-- **遗留 / 后续**：待开放问题决议与实施验收后填写；本骨架当前不替未来阶段声明完成。
+- **遗留 / 后续**：五套防具、A 类手持与 B 类宿主解耦仍待实施验收；本 active plan 不替未来阶段声明完成。
