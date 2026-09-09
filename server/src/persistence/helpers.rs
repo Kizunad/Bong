@@ -326,10 +326,23 @@ pub(super) fn write_zstd_bundle_with_writer(
         drop(temp_file);
         fs::rename(&temp_path, path)
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+    if let Err(primary_error) = result {
+        return match fs::remove_file(&temp_path) {
+            Ok(()) => Err(primary_error),
+            Err(cleanup_error) => {
+                let primary_kind = primary_error.kind();
+                Err(io::Error::new(
+                    primary_kind,
+                    format!(
+                        "{primary_error}; temporary archive cleanup failed for {}: {cleanup_error}",
+                        temp_path.display()
+                    ),
+                ))
+            }
+        };
     }
-    result
+
+    Ok(())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

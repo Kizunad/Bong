@@ -6894,6 +6894,65 @@ fn npc_first_archive_failure_removes_new_bundle() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_, root) = persistence_settings("zstd-bundle-cleanup-diagnostic");
+    let archive_path = root.join("archive").join("bundle.json.zst");
+    let archive_parent = archive_path
+        .parent()
+        .expect("archive path should have a parent")
+        .to_path_buf();
+
+    let error = write_zstd_bundle_with_writer(&archive_path, b"payload", |file, compressed| {
+        file.write_all(compressed)?;
+        fs::set_permissions(&archive_parent, fs::Permissions::from_mode(0o555))?;
+        Err(io::Error::other("injected primary write failure"))
+    })
+    .expect_err("a failed write with failed cleanup must remain observable");
+
+    fs::set_permissions(&archive_parent, fs::Permissions::from_mode(0o700))
+        .expect("test directory permissions should be restorable");
+
+    let temporary_files: Vec<PathBuf> = fs::read_dir(&archive_parent)
+        .expect("archive parent should remain readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().contains(".bundle.json.zst.tmp-"))
+        })
+        .collect();
+    assert_eq!(
+        temporary_files.len(),
+        1,
+        "failed cleanup must leave a recoverable temp file"
+    );
+
+    let message = error.to_string();
+    assert!(
+        message.contains("injected primary write failure"),
+        "the original write failure must remain observable: {message}"
+    );
+    assert!(
+        message.contains("temporary archive cleanup failed"),
+        "the cleanup failure must be aggregated into the returned diagnostic: {message}"
+    );
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::Other,
+        "aggregating cleanup diagnostics must preserve the primary error kind"
+    );
+
+    for temporary_file in temporary_files {
+        fs::remove_file(temporary_file)
+            .expect("test should remove its intentionally retained temp file");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
     let (settings, root) = persistence_settings("npc-archive-prior-read-error");
