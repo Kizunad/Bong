@@ -126,11 +126,11 @@
 ### P1 — 最小安全网
 
 - `server/src/persistence/helpers.rs:330` 的 `write_zstd_bundle_with_writer` 在临时文件写入失败后保留主错误；若 `fs::remove_file(&temp_path)` 也失败，则在不引入 P2 身份/CAS 抽象的前提下返回同时包含主错误与清理错误的诊断，禁止静默丢弃清理结果。
-- 已评估并故意保留 `server/src/persistence/helpers.rs:8` 与 `server/src/persistence/mod.rs:172` 的 `expect`：前者断言受支持运行时的系统时钟不早于 Unix epoch，后者断言静态 persistence slice descriptor 注册不变量成立；两者都不是恢复路径的可恢复输入错误，改成静默降级会掩盖无法安全继续的启动/时间前提。
-- 为 `helpers.rs:330` 补能撞红的回归测试：写入主错误与临时文件清理错误同时发生时，返回错误保留两者诊断且故障临时文件仍可被后续恢复处理；实现退回 `let _ =` 时测试必须失败。
+- 按 §8.1 #5（2026-09-09）决议评估并故意保留 `server/src/persistence/helpers.rs:8` 与 `server/src/persistence/mod.rs:172` 的 `expect`；P1 不改动这两处系统不变量断言。
+- 为 `helpers.rs:330` 补能撞红的回归测试：测试注入在返回主错误前删除临时路径，使生产清理稳定得到 `NotFound`，并断言主错误、cleanup 诊断与 source 链均可观察；该用例明确不覆盖“清理失败留下可恢复临时文件”的另一性质，避免把互斥前提混在同一测试中。
 - `npc.rs` 的 `first_error.expect` 不属于当前 P1 的真实落点：在 `origin/main@60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 上执行 `git grep -n 'first_error' origin/main -- server/src` 为 0 命中，且 `git grep -nE '\.expect\(|let _ =' origin/main -- server/src/persistence/npc.rs` 也为 0 命中。该项是 #2180 未合入加固分支的条件性后续：只有 P2 真正引入 CAS 批次错误聚合路径时，才在该新落点采用 `unwrap_or_else` + `io::ErrorKind::InvalidData` 并配回归测试；P1 不伪造不存在的代码落点。
 
-**P1 证据（2026-09-09）**：实现代码提交 `f4281676f294d7fba6396257519955078b61d73f`。定向命令 `../scripts/build-token.sh cargo test write_zstd_bundle_surfaces_primary_and_cleanup_failures -- --nocapture` 实际执行 `persistence::tests::write_zstd_bundle_surfaces_primary_and_cleanup_failures`，结果 `1 passed; 0 failed; 11977 filtered out`；在合并主线后的代码 HEAD `2d4c6027e5858de0317f007119e95ff682b63a0a` 上依次执行 `../scripts/build-token.sh cargo fmt --check`、`../scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`../scripts/build-token.sh cargo test`，三条退出码均为 `0`。完整测试主库为 `11977 passed; 0 failed; 1 ignored`，main 为 `18 passed; 0 failed`，doctest 为 `3 passed; 0 failed; 5 ignored`，各登记 unit/integration target 均无失败。合并前 validator 在 `d479bfdc31e90483fc3f37fb7b8939a394d905bc` 给出 `PASS`；文档校准后必须再以新 HEAD 重新 validator。本切片未修改迁移链、schema、R3 P0 生产接入点或跨仓库契约，也未引入任何 P2/P3 身份、CAS、no-replace 发布抽象。
+**P1 证据（2026-09-09）**：实现修复提交 `e8609830c2f8bef8c970e0f54f632a507149c919`，格式化收尾提交 `d6b27ab9242d45bd55fd081bfe00ab2bf24c2fe1`。后者为当前证据 HEAD；其定向命令 `../scripts/build-token.sh cargo test write_zstd_bundle_surfaces_primary_and_cleanup_failures -- --nocapture` 实际执行 `persistence::tests::write_zstd_bundle_surfaces_primary_and_cleanup_failures`，结果 `1 passed; 0 failed; 11977 filtered out`。在精确代码 HEAD `d6b27ab9242d45bd55fd081bfe00ab2bf24c2fe1` 上依次执行 `../scripts/build-token.sh cargo fmt --check`、`../scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`../scripts/build-token.sh cargo test`，三条退出码均为 `0`；完整测试主库为 `11977 passed; 0 failed; 1 ignored`，main 为 `18 passed; 0 failed`，doctest 为 `3 passed; 0 failed; 5 ignored`，各登记 unit/integration target 均无失败。`write_zstd_bundle_with_writer` 现在用私有 `ArchiveCleanupError` 保留原有两段 Display 文案并经 `Error::source` 暴露 primary error；回归注入在返回 primary error 前删除临时路径，确定性触发 cleanup `NotFound`，明确不覆盖“清理失败留下可恢复临时文件”的另一性质。本轮仍未修改迁移链、schema、R3 P0 生产接入点或跨仓库契约，也未引入任何 P2/P3 身份、CAS、no-replace 发布抽象；最终 HEAD 的无上下文 validator 尚待本轮重新验证。
 
 ### P2 — 归档身份与 CAS 批次回滚
 
@@ -239,6 +239,16 @@
 3. `player.rs`、`social.rs`、`tribulation.rs`、`void_actions.rs`、`world.rs`、`world_qi.rs` 不因“看起来可复用”接入该 helper；只有出现同一归档发布契约且另有 plan/P0 明确 owner 时才扩展。当前模块拆分与内部导出边界以 `mod.rs` 的七切片声明和现有 re-export 为准，迁移链、schema、事务边界与 R3 P0 接入点保持不变。
 
 **落点**：代码锚点为 `server/src/persistence/mod.rs:132-162`（七切片与现有内部 re-export）、`server/src/persistence/helpers.rs:297-334`（可共享文件发布边界）及 `server/src/persistence/npc.rs:12-15,176-226,252-290,413-431,1250-1281`（两个消费者、当前 sweep 状态、无界查询和事务/重试边界）；plan 锚点为 §2.1/§2.3、§3「不变式三」、§4 P2/P4、§5 移交清单和本节 #4。
+
+### #5 P1 系统不变量 `expect` 评估：故意保留（2026-09-09）
+
+**决议**：
+
+1. `server/src/persistence/helpers.rs:8` 的 `current_unix_seconds` 对 `SystemTime::duration_since(UNIX_EPOCH)` 使用 `expect`。依据是 `origin/main@60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 的实读代码：运行时系统时钟早于 Unix epoch 时无法得到合法的持久化墙钟值；这是基础运行时前提失败，不是恢复路径可降级的输入。故意保留 fail-fast，不以静默零值或伪造时间继续写入。
+2. `server/src/persistence/mod.rs:172` 的生产 `PersistenceSliceRegistry` 注册链对 descriptor 校验使用 `expect`。同一 `origin/main@60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 的实读代码表明该错误意味着生产 persistence 接入描述符违反静态注册不变量；没有安全的部分注册或恢复回退路径。故意保留 fail-fast，阻止带坏 descriptor 的生产启动。
+3. 这两处都不属于归档发布、临时文件 cleanup 或 P2/P3 身份/CAS/no-replace 机制；P1 只记录判断，不改变它们的行为。
+
+**双锚点**：代码锚点为 `server/src/persistence/helpers.rs:8` 与 `server/src/persistence/mod.rs:172`，依据为上述 `origin/main` 精确 SHA 的 `git show ... | nl -ba` 实读；plan 锚点为本节 §8.1 #5、§3 不变式与 §4 P1 最小安全网。
 
 ## Finish Evidence
 
