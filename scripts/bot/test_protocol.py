@@ -2268,14 +2268,14 @@ class ServerDataDecodeTest(unittest.TestCase):
 
     def test_proto_carrier_state_decodes_every_charge_phase(self):
         # CARRIER_CHARGE_PHASE_NAMES 是本次引入的完整 wire→domain 契约：每个 phase
-        # 值都必须解出正确名称，未知值回退 unspecified（findings：原测试只覆盖 phase=2，
-        # idle/charging 映射错或未知值不回退都测不出来）。
+        # 值都必须解出正确名称，未知值保留 unknown_N（findings：原测试只覆盖 phase=2，
+        # idle/charging 映射错或未知值身份丢失都测不出来）。
         cases = {
             0: "unspecified",
             1: "idle",
             2: "charging",
             3: "charged",
-            9: "unspecified",
+            9: "unknown_9",
         }
         for phase, expected in cases.items():
             with self.subTest(phase=phase):
@@ -2300,6 +2300,24 @@ class ServerDataDecodeTest(unittest.TestCase):
                     decoded["item_instance_id"],
                     f"phase={phase} 时 field 7 缺省应解出 None，实际 {decoded['item_instance_id']!r}",
                 )
+
+    def test_proto_carrier_state_preserves_unknown_charge_phase_identity(self):
+        decoded = decode_server_data_payload(
+            _server_data_carrier_state_bytes(
+                carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                phase=9,
+                progress=0.0,
+                sealed_qi=0.0,
+                sealed_qi_initial=0.0,
+                half_life_remaining_ticks=0,
+                item_instance_id=None,
+            )
+        )
+        self.assertEqual(
+            decoded["phase"],
+            "unknown_9",
+            "未知 CarrierState.charge_phase 必须保留 unknown_N 身份，不能伪装成 unspecified",
+        )
 
 
 class CombatServerDataGateTest(unittest.TestCase):
@@ -10859,6 +10877,16 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "CastOutcome=8 → meridian_gated（场景负分支断言依赖此命名）",
         )
 
+    def test_cast_sync_preserves_unknown_phase_and_outcome_identity(self):
+        msg = _pb_varint_field(1, 99) + _pb_varint_field(5, 98)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(34, msg))
+        self.assertEqual(decoded["phase"], "unknown_99")
+        self.assertEqual(
+            decoded["outcome"],
+            "unknown_98",
+            "未知 CastOutcome 必须保留 unknown_N 身份，不能伪装成 unspecified",
+        )
+
     def test_inventory_move_rejected_tag137_race_mismatch_reason_no_extra_fields(self):
         # plan-race-system-v1 P3b —— field 137 此前未接入 decode_server_data_envelope
         # 白名单，任何 bot 场景断言 inventory_move_rejected（含新增的 race_mismatch）
@@ -11006,6 +11034,16 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "无 billet/tempering/inscription/consecration 分支时应兜底 kind=none",
         )
 
+    def test_forge_session_preserves_unknown_step_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(18, _pb_varint_field(5, 98))
+        )
+        self.assertEqual(
+            decoded["current_step"],
+            "unknown_98",
+            "未知 ForgeStep 必须保留 unknown_N 身份，不能伪装成 unspecified",
+        )
+
     def test_forge_outcome_tag19_perfect_bucket(self):
         outcome = (
             _pb_varint_field(1, 9)
@@ -11049,6 +11087,16 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertTrue(decoded["flawed_path"], "field 9=1 → flawed_path=True")
         self.assertEqual(
             decoded["side_effects"], [], "无 repeated 条目时应兜底空列表，不得 crash"
+        )
+
+    def test_forge_outcome_preserves_unknown_bucket_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(19, _pb_varint_field(3, 98))
+        )
+        self.assertEqual(
+            decoded["bucket"],
+            "unknown_98",
+            "未知 ForgeOutcomeBucket 必须保留 unknown_N 身份，不能伪装成 unspecified",
         )
 
     def test_forge_blueprint_book_tag20(self):

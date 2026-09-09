@@ -670,7 +670,7 @@ def _carrier_state(data: bytes) -> dict[str, Any]:
         "v": 1,
         "type": "carrier_state",
         "carrier": _string(fields, 1),
-        "phase": CARRIER_CHARGE_PHASE_NAMES.get(_varint(fields, 2), "unspecified"),
+        "phase": _enum_name(CARRIER_CHARGE_PHASE_NAMES, _varint(fields, 2)),
         "progress": _float32(fields, 3),
         "sealed_qi": _float32(fields, 4),
         "sealed_qi_initial": _float32(fields, 5),
@@ -1610,10 +1610,10 @@ def _cast_sync(data: bytes) -> dict[str, Any]:
     return {
         "v": 1,
         "type": "cast_sync",
-        "phase": CAST_PHASE_NAMES.get(_varint(fields, 1), "unspecified"),
+        "phase": _enum_name(CAST_PHASE_NAMES, _varint(fields, 1)),
         "slot": _varint(fields, 2),
         "duration_ms": _varint(fields, 3),
-        "outcome": CAST_OUTCOME_NAMES.get(_varint(fields, 5), "unspecified"),
+        "outcome": _enum_name(CAST_OUTCOME_NAMES, _varint(fields, 5)),
     }
 
 
@@ -1905,7 +1905,7 @@ def _forge_session(data: bytes) -> dict[str, Any]:
         "blueprint_id": _string(fields, 2),
         "blueprint_name": _string(fields, 3),
         "active": bool(_varint(fields, 4)),
-        "current_step": FORGE_STEP_NAMES.get(_varint(fields, 5), "unspecified"),
+        "current_step": _enum_name(FORGE_STEP_NAMES, _varint(fields, 5)),
         "step_index": _varint(fields, 6),
         "achieved_tier": _varint(fields, 7),
         "step_state": _forge_step_state(_message(fields, 8)),
@@ -1919,7 +1919,7 @@ def _forge_outcome(data: bytes) -> dict[str, Any]:
         "type": "forge_outcome",
         "session_id": _varint(fields, 1),
         "blueprint_id": _string(fields, 2),
-        "bucket": FORGE_OUTCOME_BUCKET_NAMES.get(_varint(fields, 3), "unspecified"),
+        "bucket": _enum_name(FORGE_OUTCOME_BUCKET_NAMES, _varint(fields, 3)),
         "weapon_item": _string(fields, 4) if _has(fields, 4) else None,
         "quality": _float32(fields, 5),
         "side_effects": [
