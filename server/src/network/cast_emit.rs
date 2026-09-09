@@ -1285,12 +1285,12 @@ mod tests {
     #[test]
     fn cooldown_set_get_round_trip() {
         let mut bindings = QuickSlotBindings::default();
-        assert!(!bindings.is_on_cooldown(3, 100));
-        bindings.set_cooldown(3, 130);
-        assert!(bindings.is_on_cooldown(3, 100));
-        assert!(bindings.is_on_cooldown(3, 129));
-        assert!(!bindings.is_on_cooldown(3, 130));
-        assert!(!bindings.is_on_cooldown(3, 131));
+        assert!(!bindings.is_on_cooldown(1, 100));
+        bindings.set_cooldown(1, 130);
+        assert!(bindings.is_on_cooldown(1, 100));
+        assert!(bindings.is_on_cooldown(1, 129));
+        assert!(!bindings.is_on_cooldown(1, 130));
+        assert!(!bindings.is_on_cooldown(1, 131));
         // out-of-range slot is silently no-op
         assert!(!bindings.is_on_cooldown(99, 0));
         bindings.set_cooldown(99, 100);
@@ -1322,7 +1322,7 @@ mod tests {
 
     #[test]
     fn set_cast_cooldown_skillbar_branch_keys_by_skill_id_not_slot() {
-        let casting = minimal_skillbar_casting(CastSource::SkillBar, 5, Some("dugu.eclipse"));
+        let casting = minimal_skillbar_casting(CastSource::SkillBar, 1, Some("dugu.eclipse"));
         let mut quick_bindings = QuickSlotBindings::default();
         let mut skillbar_bindings = SkillBarBindings::default();
 
@@ -1330,7 +1330,7 @@ mod tests {
             &casting,
             &mut quick_bindings,
             &mut skillbar_bindings,
-            5,
+            1,
             200,
         );
 
@@ -1339,7 +1339,7 @@ mod tests {
             "SkillBar 分支必须按 Casting.skill_id（而非 slot）写入 SkillBarBindings 冷却"
         );
         assert!(
-            !quick_bindings.is_on_cooldown(5, 100),
+            !quick_bindings.is_on_cooldown(1, 100),
             "SkillBar 来源不应误写 QuickSlotBindings（两套 bindings 必须互不干扰）"
         );
     }
@@ -1347,7 +1347,7 @@ mod tests {
     #[test]
     fn set_cast_cooldown_quickslot_branch_still_keys_by_slot() {
         // 对照：QuickSlotBindings 是 bug 修复范围之外的既有设计，仍按 slot 记账，不受影响。
-        let casting = minimal_skillbar_casting(CastSource::QuickSlot, 7, None);
+        let casting = minimal_skillbar_casting(CastSource::QuickSlot, 1, None);
         let mut quick_bindings = QuickSlotBindings::default();
         let mut skillbar_bindings = SkillBarBindings::default();
 
@@ -1355,11 +1355,11 @@ mod tests {
             &casting,
             &mut quick_bindings,
             &mut skillbar_bindings,
-            7,
+            1,
             200,
         );
 
-        assert!(quick_bindings.is_on_cooldown(7, 100));
+        assert!(quick_bindings.is_on_cooldown(1, 100));
         assert!(
             skillbar_bindings.cooldowns.is_empty(),
             "QuickSlot 来源不应写入 SkillBarBindings 的 cooldowns map"
@@ -1370,7 +1370,7 @@ mod tests {
     fn set_cast_cooldown_skillbar_branch_missing_skill_id_is_defensive_noop() {
         // 理论不可达的防御性分支：所有生产 SkillBar Casting 构造点都填了 skill_id，
         // 这里锁住"万一没填"时不 panic、也不产生任何 cooldowns entry。
-        let casting = minimal_skillbar_casting(CastSource::SkillBar, 2, None);
+        let casting = minimal_skillbar_casting(CastSource::SkillBar, 1, None);
         let mut quick_bindings = QuickSlotBindings::default();
         let mut skillbar_bindings = SkillBarBindings::default();
 
@@ -1378,7 +1378,7 @@ mod tests {
             &casting,
             &mut quick_bindings,
             &mut skillbar_bindings,
-            2,
+            1,
             200,
         );
 
@@ -1873,7 +1873,7 @@ mod tests {
     #[test]
     fn consume_one_stack_finds_in_hotbar() {
         let mut inv = make_inventory_with_stack(99, 10); // unrelated container item
-        inv.hotbar[3] = Some(ItemInstance {
+        inv.hotbar[1] = Some(ItemInstance {
             instance_id: 7,
             template_id: "pill".to_string(),
             display_name: "丹".to_string(),
@@ -1896,9 +1896,9 @@ mod tests {
             lingering_owner_qi: None,
         });
         assert!(consume_one_stack(&mut inv, 7));
-        assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);
+        assert_eq!(inv.hotbar[1].as_ref().unwrap().stack_count, 1);
         assert!(consume_one_stack(&mut inv, 7));
-        assert!(inv.hotbar[3].is_none());
+        assert!(inv.hotbar[1].is_none());
     }
 
     // ── plan-food-v1 P2 BLOCKER 2：FoodRegen freshness 门控端到端测试 ──

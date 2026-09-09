@@ -43,6 +43,11 @@ final class HudCommandAlpha {
                 command.layer(), command.texturePath(), command.x(), command.y(), command.width(), command.height(), color
             );
         }
+        if (command.isSvgRect()) {
+            return HudRenderCommand.svg(
+                command.layer(), command.svgAssetKey(), command.x(), command.y(), command.width(), command.height(), color
+            );
+        }
         if (command.isItemTexture()) {
             return command;
         }

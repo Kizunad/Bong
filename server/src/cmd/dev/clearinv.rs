@@ -139,7 +139,7 @@ mod tests {
                 col: 0,
                 instance: item(9_001, "body_sentinel"),
             });
-        inventory.hotbar[8] = Some(item(9_002, "hotbar_sentinel"));
+        inventory.hotbar[1] = Some(item(9_002, "hotbar_sentinel"));
         inventory.containers.push(ContainerState {
             id: MAIN_PACK_CONTAINER_ID.to_string(),
             name: "legacy main pack".to_string(),
@@ -247,7 +247,7 @@ mod tests {
             "clearinv pack must preserve body_pocket sentinel instance=9001"
         );
         assert_eq!(
-            inventory.hotbar[8].as_ref().map(|item| item.instance_id),
+            inventory.hotbar[1].as_ref().map(|item| item.instance_id),
             Some(9_002),
             "clearinv pack must preserve hotbar"
         );

@@ -53,7 +53,7 @@ class HudRenderRegistryTest {
     }
 
     @Test
-    void declaresTheRemainingSvgBatchAsThreeGeometricSurfaces() {
+    void declaresTheMigratedSvgSurfaces() {
         List<HudRenderLayer> svgLayers = HudRenderRegistry.productionSurfaces().stream()
             .filter(surface -> surface.path() == HudRenderRegistry.RenderPath.SVG_FRAME)
             .flatMap(surface -> surface.layer().stream())
@@ -61,18 +61,19 @@ class HudRenderRegistryTest {
 
         assertEquals(
             List.of(
+                HudRenderLayer.QUICK_BAR,
+                HudRenderLayer.CAST_BAR,
                 HudRenderLayer.JIEMAI_RING,
                 HudRenderLayer.STATUS_EFFECTS,
                 HudRenderLayer.MOVEMENT_HUD
             ),
             svgLayers,
-            "下线罗盘和灵觉后，SVG 迁移必须只覆盖剩余三个 HUD layer"
+            "SVG 盘点需包含快捷栏与施法残环，不能带回已下线的 HUD"
         );
         for (HudRenderLayer layer : svgLayers) {
             HudRenderRegistry.SurfaceDefinition surface = HudRenderRegistry.require(layer);
             assertEquals(HudRenderRegistry.Presentation.SVG_MESH, surface.presentation());
-            assertEquals("rect", surface.svgAssets().get(0).key());
-            assertEquals("bong-client:svg/hud/primitive-rect.svg", surface.svgAssets().get(0).resource().toString());
+            assertTrue(!surface.svgAssets().isEmpty(), "迁移后的 SVG surface 必须登记实际资源");
         }
     }
 

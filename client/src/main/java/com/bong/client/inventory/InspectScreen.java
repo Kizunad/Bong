@@ -57,7 +57,7 @@ import java.util.function.Consumer;
 public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final Text TITLE = Text.literal("检视");
     private static final int ICON_SIZE = 128;
-    private static final int HOTBAR_SLOTS = 9;
+    private static final int HOTBAR_SLOTS = SkillBarConfig.SLOT_COUNT;
 
     private static final int TAB_ACTIVE_COLOR = 0xFFCCCCCC;
     private static final int TAB_INACTIVE_COLOR = 0xFF555555;
@@ -144,9 +144,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final InventoryItem[] hotbarItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout hotbarStrip;
 
-    // Quick-use bar (F1-F9, plan-HUD-v1 §2.2 上层)
-    private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
-    private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
+    // 物品快捷栏当前开放 F1/F2，与下方技能栏容量独立。
+    private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[QuickSlotConfig.SLOT_COUNT];
+    private final InventoryItem[] quickUseItems = new InventoryItem[QuickSlotConfig.SLOT_COUNT];
     private FlowLayout quickUseStrip;
     private Consumer<QuickUseSlotStore.Update> quickUseStoreListener;
     private Consumer<SkillBarConfig> skillBarStoreListener;
@@ -761,7 +761,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return strip;
     }
 
-    /** plan-HUD-v1 §2.2 上层：F1-F9 快捷使用栏（绿色背景 + 顶部 F 头标区分）。 */
+    /** 物品快捷栏先开放两格；以后由背包/装备扩展，最多十格。 */
     private FlowLayout buildQuickUseStrip() {
         int cs = GridSlotComponent.CELL_SIZE;
         FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
@@ -770,7 +770,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         strip.gap(1);
         strip.horizontalAlignment(HorizontalAlignment.CENTER);
 
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+        for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
             GridSlotComponent slot = new GridSlotComponent(i, 0);
             quickUseSlots[i] = slot;
             strip.child(slot);
@@ -839,7 +839,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void hydrateQuickUseFromConfig(QuickSlotConfig config) {
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+        for (int i = 0; i < quickUseItems.length; i++) {
             QuickSlotEntry entry = config.slot(i);
             if (entry == null) {
                 quickUseItems[i] = null;
@@ -985,7 +985,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         Runnable onAccepted,
         Runnable onRejected
     ) {
-        if (pendingQuickUseIntent != null) {
+        if (!QuickSlotConfig.isAvailable(index) || pendingQuickUseIntent != null) {
             return false;
         }
         String itemId = item == null ? null : item.itemId();
@@ -2161,7 +2161,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private int quickUseSlotAtScreen(double sx, double sy) {
         int cs = GridSlotComponent.CELL_SIZE;
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+        for (int i = 0; i < quickUseSlots.length; i++) {
             GridSlotComponent s = quickUseSlots[i];
             if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
                 return i;
@@ -2780,7 +2780,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     /** QUICK_USE 只有在解绑请求被本地传输接受后才清视觉并进入拖拽态。 */
     private boolean beginQuickUseDrag(int index) {
-        if (index < 0 || index >= HOTBAR_SLOTS) {
+        if (!QuickSlotConfig.isAvailable(index)) {
             return false;
         }
         InventoryItem item = quickUseItems[index];
@@ -3428,6 +3428,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 from, to, item.itemId());
             return false;
         }
+        if (to instanceof com.bong.client.network.ClientRequestProtocol.HotbarLoc hotbar
+                && !SkillBarConfig.isAvailable(hotbar.index())) {
+            return false;
+        }
         if (item.instanceId() == 0L) {
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] dispatchMoveIntent skipped: item {} has instanceId=0 "
@@ -3484,7 +3488,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             InventoryItem item = dragState.originalDraggedItem() != null
                 ? dragState.originalDraggedItem()
                 : dragState.draggedItem();
-            if (index >= 0 && index < HOTBAR_SLOTS && item != null) {
+            if (QuickSlotConfig.isAvailable(index) && item != null) {
                 if (!requestQuickUseSlot(
                         index,
                         item,
@@ -3697,7 +3701,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         equipPanel.clearHighlights();
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
-            if (quickUseSlots[i] != null) quickUseSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+        }
+        for (GridSlotComponent slot : quickUseSlots) {
+            if (slot != null) slot.setHighlightState(GridSlotComponent.HighlightState.NONE);
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         if (lootPanel != null && lootPanel.lootGrid() != null) lootPanel.lootGrid().clearHighlights();

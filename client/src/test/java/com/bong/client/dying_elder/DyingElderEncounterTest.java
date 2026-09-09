@@ -1181,10 +1181,10 @@ public class DyingElderEncounterTest {
 
     @Test
     void findHuiYuanPillInHotbar() {
-        // 回元丹在 hotbar slot 2
+        // 回元丹在 hotbar slot 1
         InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
         InventoryModel model = InventoryModel.builder()
-            .hotbar(2, pill)
+            .hotbar(1, pill)
             .build();
         InventoryStateStore.replace(model);
 
@@ -1192,7 +1192,7 @@ public class DyingElderEncounterTest {
         assertEquals(
             pill.instanceId(),
             found,
-            "expected findHuiYuanPillInstanceId() to return pill's instanceId when hui_yuan_pill is in hotbar slot 2, actual: " + found
+            "expected findHuiYuanPillInstanceId() to return pill's instanceId when hui_yuan_pill is in hotbar slot 1, actual: " + found
         );
     }
 

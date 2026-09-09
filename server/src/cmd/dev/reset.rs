@@ -511,7 +511,8 @@ mod tests {
     }
 
     fn dirty_inventory() -> PlayerInventory {
-        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
+        let mut hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+            Default::default();
         hotbar[0] = Some(item(2, "hotbar_item"));
         let mut equipped = HashMap::new();
         equipped.insert(

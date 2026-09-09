@@ -50,14 +50,14 @@ class InspectScreenSkillBarHydrateTest {
 
     @Test
     void consumedSoleInstanceClearsBoundSlot() {
-        SkillBarStore.updateSlot(2, SkillBarEntry.item("earth_crumb", "土块", 0, 0, null));
-        SkillBarStore.setSelectedSlot(2);
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("earth_crumb", "土块", 0, 0, null));
+        SkillBarStore.setSelectedSlot(1);
 
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
         screen.reconcileSkillBarForTests(authoritativeWithoutBlock());
 
-        assertNull(SkillBarStore.snapshot().slot(2),
-            "绑定方块被放置耗尽最后一个实例后，SkillBarStore.slot(2) 应被清为 null，"
+        assertNull(SkillBarStore.snapshot().slot(1),
+            "绑定方块被放置耗尽最后一个实例后，SkillBarStore.slot(1) 应被清为 null，"
                 + "不得用占位名硬撑残留图标");
         assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot(),
             "清槽后选中槽应随 clearInvalidSelectedSlot 复位为 NO_SELECTED_SLOT，避免热键指向空槽");
@@ -92,7 +92,7 @@ class InspectScreenSkillBarHydrateTest {
 
     @Test
     void stackDepletedToZeroClearsSlotOnNextSnapshot() {
-        SkillBarStore.updateSlot(3, SkillBarEntry.item("earth_crumb", "土块", 0, 0, null));
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("earth_crumb", "土块", 0, 0, null));
 
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
 
@@ -103,12 +103,12 @@ class InspectScreenSkillBarHydrateTest {
             .cultivation("引气", 10.0, 100.0, 1.0)
             .gridItem(lastOne, 0, 0)
             .build());
-        assertNotNull(SkillBarStore.snapshot().slot(3),
+        assertNotNull(SkillBarStore.snapshot().slot(1),
             "count=1 时实例仍在，绑定应保留");
 
         // 第二次：放置后实例被删，库存仅余境界 → 清槽。
         screen.reconcileSkillBarForTests(authoritativeWithoutBlock());
-        assertNull(SkillBarStore.snapshot().slot(3),
+        assertNull(SkillBarStore.snapshot().slot(1),
             "最后一个被消耗、实例删除后，下一次 snapshot 应清槽");
     }
 
@@ -146,12 +146,12 @@ class InspectScreenSkillBarHydrateTest {
 
     @Test
     void skillSlotSurvivesInventoryReconcile() {
-        SkillBarStore.updateSlot(5, SkillBarEntry.skill("fireball", "火球术", 1000, 2000, "icon.png"));
+        SkillBarStore.updateSlot(1, SkillBarEntry.skill("fireball", "火球术", 1000, 2000, "icon.png"));
 
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
         screen.reconcileSkillBarForTests(authoritativeWithoutBlock());
 
-        SkillBarEntry entry = SkillBarStore.snapshot().slot(5);
+        SkillBarEntry entry = SkillBarStore.snapshot().slot(1);
         assertNotNull(entry, "SKILL 槽与库存物品无关，不应被 inventory 校验清掉");
         assertEquals(SkillBarEntry.Kind.SKILL, entry.kind());
         assertEquals("fireball", entry.id());
@@ -170,13 +170,12 @@ class InspectScreenSkillBarHydrateTest {
         }
     }
 
-    // ── 多槽混合：一槽消耗清空、一槽仍在保留、一槽 SKILL 不动 ──
+    // 两个物品槽独立校准；功法槽不受库存影响由前面的用例覆盖。
 
     @Test
     void mixedSlotsReconcileIndependently() {
         SkillBarStore.updateSlot(0, SkillBarEntry.item("earth_crumb", "土块", 0, 0, null));   // 将被消耗
         SkillBarStore.updateSlot(1, SkillBarEntry.item("barren_sand", "沙", 0, 0, null));    // 仍在
-        SkillBarStore.updateSlot(2, SkillBarEntry.skill("fireball", "火球", 0, 0, null));     // SKILL
 
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
 
@@ -192,8 +191,5 @@ class InspectScreenSkillBarHydrateTest {
         assertNotNull(SkillBarStore.snapshot().slot(1),
             "barren_sand 仍在库存 → 槽 1 保留");
         assertEquals("barren_sand", SkillBarStore.snapshot().slot(1).id());
-        assertNotNull(SkillBarStore.snapshot().slot(2),
-            "SKILL 槽 2 不受库存影响 → 保留");
-        assertEquals(SkillBarEntry.Kind.SKILL, SkillBarStore.snapshot().slot(2).kind());
     }
 }

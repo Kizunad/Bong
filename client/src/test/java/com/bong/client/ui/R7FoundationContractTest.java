@@ -329,13 +329,13 @@ class R7FoundationContractTest {
         assertEquals(resourceLines("/bong/ui/keybind-production-sites.tsv"),
             keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
             "every production keybinding declaration must parse as one exact typed manifest row");
-        assertEquals(34, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
-            "all 26 registry sites must expand to exactly 34 runtime bindings");
+        assertEquals(25 + com.bong.client.combat.QuickSlotConfig.SLOT_COUNT, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "all 26 registry sites must expand to the auxiliary bindings and available quick slots");
         Set<String> expandedTranslationKeys = new TreeSet<>();
         for (KeybindingSourceSite site : actualSites) {
             expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        assertEquals(34, expandedTranslationKeys.size(),
+        assertEquals(25 + com.bong.client.combat.QuickSlotConfig.SLOT_COUNT, expandedTranslationKeys.size(),
             "every registry-backed runtime binding must have a unique effective translation key");
         for (KeybindProductionSiteRow row : expectedSites) {
             KeybindingSourceSite actual = actualSites.stream()
@@ -359,7 +359,7 @@ class R7FoundationContractTest {
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
             expectedSites, actualSites, keybindRows()
         );
-        assertEquals(34, expandedDefaults.size(),
+        assertEquals(25 + com.bong.client.combat.QuickSlotConfig.SLOT_COUNT, expandedDefaults.size(),
             "the registry-site collision audit must inspect every expanded default");
         Set<DefaultCollision> collisions = new TreeSet<>();
         for (int first = 0; first < expandedDefaults.size(); first++) {
@@ -446,10 +446,10 @@ class R7FoundationContractTest {
     }
 
     private static List<String> expandedDefaultCodes(String defaultContract, int runtimeCardinality) {
-        if (defaultContract.equals("F1..F9")) {
-            assertEquals(9, runtimeCardinality,
-                "quick-slot default expansion must retain its nine runtime bindings");
-            return java.util.stream.IntStream.rangeClosed(1, 9)
+        if (defaultContract.equals("F1..F2")) {
+            assertEquals(2, runtimeCardinality,
+                "quick-slot default expansion must match its available runtime bindings");
+            return java.util.stream.IntStream.rangeClosed(1, runtimeCardinality)
                 .mapToObj(index -> "F" + index)
                 .toList();
         }
@@ -700,7 +700,7 @@ class R7FoundationContractTest {
                         return super.visitVariable(variable, unused);
                     }
                 }.scan(parsed.unit(), null);
-                assertEquals(9, count[0], "QuickSlotConfig.SLOT_COUNT is the keybinding cardinality source");
+                assertEquals(2, count[0], "QuickSlotConfig.SLOT_COUNT is the keybinding cardinality source");
                 return count[0];
             }
         } catch (IOException exception) {
@@ -735,8 +735,8 @@ class R7FoundationContractTest {
         if (expression instanceof BinaryTree binary && binary.getKind() == Tree.Kind.PLUS) {
             assertEquals("GLFW.GLFW_KEY_F1", binary.getLeftOperand().toString());
             assertEquals("i", binary.getRightOperand().toString());
-            assertEquals(9, quickSlotCount());
-            return "F1..F9";
+            assertEquals(2, quickSlotCount());
+            return "F1..F2";
         }
         if (expression instanceof MethodInvocationTree invocation
             && invocation.getMethodSelect().toString().equals("InputUtil.UNKNOWN_KEY.getCode")) {
@@ -785,7 +785,7 @@ class R7FoundationContractTest {
         assertEquals(java.util.stream.IntStream.rangeClosed(1, translations.size())
             .mapToObj(index -> "key.bong-client.quick_slot_" + index).toList(), translations,
             "the only runtime-expanded translations are quick slots 1 through SLOT_COUNT");
-        return "key.bong-client.quick_slot_{1..9}";
+        return "key.bong-client.quick_slot_{1..2}";
     }
 
     private static OpenPolicyRow findPolicy(List<OpenPolicyRow> rows, String scenario) {
@@ -1026,7 +1026,7 @@ class R7FoundationContractTest {
         }
 
         int runtimeCardinalityCount() {
-            return runtimeCardinality.startsWith("9 ") ? 9 : Integer.parseInt(runtimeCardinality);
+            return Integer.parseInt(runtimeCardinality.split(" ", 2)[0]);
         }
 
         String translationSourceContract() {
@@ -1062,7 +1062,7 @@ class R7FoundationContractTest {
                 case "UNKNOWN" -> ownerId.startsWith("dying_elder.")
                     ? "InputUtil.UNKNOWN_KEY.getCode()"
                     : "GLFW.GLFW_KEY_UNKNOWN";
-                case "F1..F9" -> "GLFW.GLFW_KEY_F1 + i";
+                case "F1..F2" -> "GLFW.GLFW_KEY_F1 + i";
                 case "G" -> "DEFAULT_KEY_CODE";
                 default -> "GLFW.GLFW_KEY_" + defaultContract;
             };
@@ -1073,10 +1073,10 @@ class R7FoundationContractTest {
         }
 
         List<String> expandedTranslationKeys() {
-            if (!translationContract.equals("key.bong-client.quick_slot_{1..9}")) {
+            if (!translationContract.equals("key.bong-client.quick_slot_{1..2}")) {
                 return List.of(translationContract);
             }
-            return java.util.stream.IntStream.rangeClosed(1, 9)
+            return java.util.stream.IntStream.rangeClosed(1, quickSlotCount())
                 .mapToObj(index -> "key.bong-client.quick_slot_" + index)
                 .toList();
         }

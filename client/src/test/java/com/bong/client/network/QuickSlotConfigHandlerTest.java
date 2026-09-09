@@ -23,8 +23,8 @@ class QuickSlotConfigHandlerTest {
         ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route("""
             {"v":1,"type":"quickslot_config",
              "slots":[{"item_id":"earth_crumb","display_name":"土块","cast_duration_ms":1500,
-                       "cooldown_ms":500,"icon_texture":""},null,null,null,null,null,null,null,null],
-             "cooldown_until_ms":[0,0,0,0,0,0,0,0,0],
+                       "cooldown_ms":500,"icon_texture":""},null],
+             "cooldown_until_ms":[0,0],
              "ack_request_id":"bind-42","bind_accepted":true}
             """, 0);
 

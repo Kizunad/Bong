@@ -30,7 +30,7 @@ class CombatKeybindingsTest {
     }
 
     @Test
-    void onlyNineQuickSlotDefinitionsOwnF1ThroughF9() {
+    void onlyAvailableQuickSlotsRegisterFunctionKeys() {
         List<KeyBinding> definitions = new ArrayList<>();
         CombatKeybindings.installBindings(new BongKeybindRegistry(binding -> {
             definitions.add(binding);
@@ -47,7 +47,7 @@ class CombatKeybindingsTest {
             .map(KeyBinding::getTranslationKey)
             .collect(Collectors.toSet());
         assertEquals(expectedQuickSlotTranslations(), reservedOwners,
-            "Combat 内只有 quick_slot_1..9 可以默认占用 F1-F9");
+            "只为当前开放的物品快捷槽注册默认按键");
 
         assertDefaultKey(definitions, "key.bong-client.jiemai_react", GLFW.GLFW_KEY_UNKNOWN);
         assertDefaultKey(definitions, "key.bong-client.spell_volume_hold", GLFW.GLFW_KEY_R);
@@ -72,13 +72,13 @@ class CombatKeybindingsTest {
         List<Integer> dispatchedSlots = new ArrayList<>();
         CombatKeybindings.setQuickSlotHandler(dispatchedSlots::add);
         KeyBinding installedBoundarySlot = installedByDefinition.get(
-            "key.bong-client.quick_slot_9"
+            "key.bong-client.quick_slot_" + QuickSlotConfig.SLOT_COUNT
         );
         KeyBinding.onKeyPressed(installedBoundarySlot.getDefaultKey());
 
         assertEquals(1, CombatKeybindings.consumeQuickSlotPresses());
         assertEquals(List.of(QuickSlotConfig.SLOT_COUNT - 1), dispatchedSlots,
-            "tick consumer 必须读取 registrar 返回并安装的同一 F9 绑定");
+            "tick consumer 必须读取 registrar 返回并安装的末格绑定");
     }
 
 
@@ -129,14 +129,7 @@ class CombatKeybindingsTest {
     private static Set<String> expectedQuickSlotTranslations() {
         return Set.of(
             "key.bong-client.quick_slot_1",
-            "key.bong-client.quick_slot_2",
-            "key.bong-client.quick_slot_3",
-            "key.bong-client.quick_slot_4",
-            "key.bong-client.quick_slot_5",
-            "key.bong-client.quick_slot_6",
-            "key.bong-client.quick_slot_7",
-            "key.bong-client.quick_slot_8",
-            "key.bong-client.quick_slot_9"
+            "key.bong-client.quick_slot_2"
         );
     }
 

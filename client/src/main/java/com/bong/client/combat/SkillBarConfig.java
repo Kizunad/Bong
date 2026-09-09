@@ -2,9 +2,10 @@ package com.bong.client.combat;
 
 import java.util.Arrays;
 
-/** Immutable snapshot of the 1-9 combat skill bar bindings. */
+/** Immutable snapshot of the combat skill bar bindings. */
 public final class SkillBarConfig {
-    public static final int SLOT_COUNT = 9;
+    /** 当前默认两格；后续由身体条件（如手部数量）和功法扩展。 */
+    public static final int SLOT_COUNT = 2;
     private static final SkillBarConfig EMPTY = new SkillBarConfig(new SkillBarEntry[SLOT_COUNT], new long[SLOT_COUNT]);
 
     private final SkillBarEntry[] slots;
@@ -17,6 +18,10 @@ public final class SkillBarConfig {
 
     public static SkillBarConfig empty() {
         return EMPTY;
+    }
+
+    public static boolean isAvailable(int slot) {
+        return slot >= 0 && slot < SLOT_COUNT;
     }
 
     public static SkillBarConfig of(SkillBarEntry[] slots, long[] cooldownUntilMs) {

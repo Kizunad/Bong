@@ -21,9 +21,8 @@ class SkillBarConfigHandlerTest {
         ServerDataDispatch dispatch = new SkillBarConfigHandler().handle(parseEnvelope("""
             {"v":1,"type":"skillbar_config","slots":[
               {"kind":"skill","skill_id":"burst_meridian.beng_quan","display_name":"崩拳","cast_duration_ms":400,"cooldown_ms":3000,"icon_texture":""},
-              {"kind":"item","template_id":"kai_mai_pill_v0","display_name":"开脉丹","cast_duration_ms":1500,"cooldown_ms":500,"icon_texture":""},
-              null,null,null,null,null,null,null
-            ],"cooldown_until_ms":[1700000000000,0,0,0,0,0,0,0,0]}"""));
+              {"kind":"item","template_id":"kai_mai_pill_v0","display_name":"开脉丹","cast_duration_ms":1500,"cooldown_ms":500,"icon_texture":""}
+            ],"cooldown_until_ms":[1700000000000,0]}"""));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
         assertEquals(SkillBarEntry.Kind.SKILL, SkillBarStore.snapshot().slot(0).kind());

@@ -25,6 +25,8 @@ public final class CombatHudBootstrap {
     }
 
     static void onQuickSlotPressed(int slot) {
+        // 未开放槽不得发包或打断当前施法，即使旧配置中仍保留绑定。
+        if (!QuickSlotConfig.isAvailable(slot)) return;
         long now = System.currentTimeMillis();
         CastState current = CastStateStore.snapshot();
         if (current.isCasting()) {

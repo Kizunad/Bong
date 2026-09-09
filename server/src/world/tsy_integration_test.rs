@@ -90,7 +90,8 @@ mod tests {
     }
 
     fn make_player_inventory_with_qi_item() -> PlayerInventory {
-        let mut hb: [Option<ItemInstance>; 9] = Default::default();
+        let mut hb: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT] =
+            Default::default();
         hb[0] = Some(ItemInstance {
             instance_id: 7,
             template_id: "bone_coin".to_string(),

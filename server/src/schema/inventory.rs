@@ -3,7 +3,7 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use crate::cultivation::components::ColorKind;
 
 const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
-const HOTBAR_SLOT_COUNT: usize = 9;
+pub const HOTBAR_SLOT_COUNT: usize = 2;
 /// plan-backpack-equip-v1 P1 — 容器数量上限（原固定 3 改为开放上限，最多 16 个容器）。
 const INVENTORY_CONTAINER_MAX: usize = 16;
 

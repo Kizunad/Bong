@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-const HOTBAR_SLOT_COUNT = 9;
+const HOTBAR_SLOT_COUNT = 2;
 
 /** 服务端计算的 HUD 派生状态，供客户端只读展示。 */
 export const DerivedAttrFlagsV1 = Type.Object(

@@ -133,7 +133,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -249,7 +249,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -392,7 +392,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -1040,5 +1040,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "f0c814fed6427e7bef8ea10e178ecfd303745018e17fdf986f80b7180a34be87"
+  "x-bong-typebox-source-sha256": "7187c1885397a97b09282599050586a579d76229a8d750679771ba89abd26b2f"
 }
