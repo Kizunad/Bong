@@ -5830,12 +5830,16 @@ class RejectionHelperTest(unittest.TestCase):
             {"payload_type": "narration", "payload": {"text": "境界同步旁白"}},
         )
         pong = _FakeEvent(2.0, "chat", {"text": "pong"})
-        bot = _RejectionFakeBot([], ping_batches=[[narration, pong]])
+        second_pong = _FakeEvent(3.0, "chat", {"text": "pong"})
+        bot = _RejectionFakeBot(
+            [],
+            ping_batches=[[narration, pong], [second_pong]],
+        )
 
         fence = freshness_probe_scenario._settle_realm_change(bot)
 
-        self.assertEqual(fence.cursor, 2, "realm 同步 fence 必须落在 pong 之后")
-        self.assertEqual(fence.markers, (pong,))
+        self.assertEqual(fence.cursor, 3, "realm 同步 fence 必须落在第二个 pong 之后")
+        self.assertEqual(fence.markers, (pong, second_pong))
 
         late_probe_side_effect = _FakeEvent(
             2.1,

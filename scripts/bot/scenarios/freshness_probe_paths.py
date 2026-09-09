@@ -49,6 +49,9 @@ PROBE_REQUEST = {"type": "freshness_probe", "v": 1}
 MEAT_ITEM = "food.mundane.cooked_meat"
 MEAT_PROFILE = "food_spoil_mundane_meat_v1"
 PLAIN_ITEM = "trade_crate"
+# 一条 fence 只排出已经入队的帧；第二次同连接往返跨过下一次 server update，
+# 收口请求前可能迟到的 join/zone 前置同步。
+PRE_REQUEST_FENCE_ROUND_TRIPS = 2
 # 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
 # （network/carrier_state_emit.rs，ticks % TICKS_PER_SECOND==0 周期）。请求前用同连接
 # /ping fence 确认已到达的前置同步已经排到 Bot；请求窗口内不维护 payload type
@@ -104,7 +107,9 @@ def run(env) -> None:
         # Denied(RealmTooLow) 契约：同请求不得同时产出精确保鲜结果。请求前 fence
         # 先建立 lower watermark，避免把前置同步误归因于本次请求；收到预期告警后
         # 再用 upper fence 收口，两个水位之间的所有 server_data 都必须逐条核验。
-        start_fence = server_data_protocol_fence(bot)
+        start_fence = server_data_protocol_fence(
+            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+        )
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         alert = wait_for_event_after_cursor(
             bot,
@@ -153,7 +158,9 @@ def run(env) -> None:
         # realm set 的同步流先由 upper fence 收口；成功探针从独立的 lower fence
         # 开始，避免把 realm set 的滞后回推带入本次响应窗口。
         _settle_realm_change(bot)
-        probe1_start = server_data_protocol_fence(bot)
+        probe1_start = server_data_protocol_fence(
+            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+        )
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update1 = wait_for_event_after_cursor(
             bot,
@@ -183,7 +190,9 @@ def run(env) -> None:
         time.sleep(PROBE_INTERVAL_S)
         # 两次探针之间的 ambient 流属于两次请求之外；第二次请求前再建 lower fence
         # 把它们排到窗口之外，而不是在断言侧维护类型排除集。
-        probe2_start = server_data_protocol_fence(bot)
+        probe2_start = server_data_protocol_fence(
+            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+        )
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update2 = wait_for_event_after_cursor(
             bot,
@@ -252,7 +261,9 @@ def run(env) -> None:
         bot.expect_chat(f"[dev] gave {PLAIN_ITEM} x1", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
         plain = require_item(snapshot, PLAIN_ITEM)
-        start_fence = server_data_protocol_fence(bot)
+        start_fence = server_data_protocol_fence(
+            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+        )
         bot.intent({**PROBE_REQUEST, "instance_id": plain["item"]["instance_id"]})
         # 无响应请求用两次 ping 往返：第一条可能与 client-request ingress 落在同一
         # Update，第二条确保请求已被处理并 flush；两条 pong 都只是 fence 自身的允许
@@ -272,7 +283,9 @@ def run(env) -> None:
         #    此前全部请求都用当前背包快照拿到的实例，从不在生产路径送非法实例——
         #    跳过 belongs_to_player、去探他人/任意 item 的坏实现能通过全部旧断言
         #    （central-review 2029 #6）。999999 是合法 wire 值但不在任何背包。
-        start_fence = server_data_protocol_fence(bot)
+        start_fence = server_data_protocol_fence(
+            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+        )
         bot.intent({**PROBE_REQUEST, "instance_id": 999999})
         end_fence = server_data_protocol_fence(bot, round_trips=2)
         _assert_no_freshness_update(
@@ -287,7 +300,9 @@ def run(env) -> None:
 
 def _settle_realm_change(bot) -> ProtocolFence:
     """用同连接 ping fence 收口 realm set 的异步同步流。"""
-    return server_data_protocol_fence(bot)
+    return server_data_protocol_fence(
+        bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+    )
 
 
 def _assert_no_freshness_update(

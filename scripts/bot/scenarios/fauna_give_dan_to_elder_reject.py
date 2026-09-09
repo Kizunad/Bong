@@ -282,7 +282,9 @@ def _assert_rejected_request(
     description: str,
 ) -> None:
     """以同连接 ping fence 限定一次拒收的完整 S2C 观察窗口。"""
-    start_fence: ProtocolFence = server_data_protocol_fence(bot)
+    # 一条 lower fence 只排出已入队帧；第二条跨过下一次 server update，收口可能
+    # 在上一条 fence 后才由 join/zone 同步系统生成的前置 payload。
+    start_fence: ProtocolFence = server_data_protocol_fence(bot, round_trips=2)
     bot.intent(request)
     reject = wait_for_event_after_cursor(
         bot,
