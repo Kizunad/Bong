@@ -4,7 +4,9 @@
   "visible": true,
   "cause": "negative_zone",
   "luck_remaining": 0.65,
-  "final_words": ["尘归尘，劫未尽。"],
+  "final_words": [
+    "尘归尘，劫未尽。"
+  ],
   "countdown_until_ms": 1712999999999,
   "can_reincarnate": true,
   "can_terminate": true,
@@ -25,13 +27,15 @@
       "luck_value": 0.65,
       "result": "pending"
     },
-    "insight_text": ["尘归尘，劫未尽。", "秘境所得悉数散落。"],
+    "insight_text": [
+      "尘归尘，劫未尽。",
+      "秘境所得悉数散落。"
+    ],
     "is_final": false,
     "death_number": 4,
     "zone_kind": "negative",
     "tsy_death": true,
-    "rebirth_weakened_ticks": 3600,
-    "skip_predeath": false
+    "rebirth_weakened_ticks": 3600
   },
   "lifespan": {
     "years_lived": 78.5,

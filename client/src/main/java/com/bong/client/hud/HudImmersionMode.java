@@ -237,7 +237,6 @@ public final class HudImmersionMode {
     private static boolean criticalLayer(HudRenderLayer layer) {
         return layer == HudRenderLayer.THREAT_INDICATOR
             || layer == HudRenderLayer.EDGE_FEEDBACK
-            || layer == HudRenderLayer.NEAR_DEATH
             || layer == HudRenderLayer.TSY_EXTRACT
             || layer == HudRenderLayer.REALM_COLLAPSE
             || layer == HudRenderLayer.HUD_VARIANT

@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 三套断言的机械化）+ 现状不达标 allowlist 棘轮 + spec manifest 断言框架。
  *
  * <p>快照 {@code bong/technique_cast_ticks_snapshot.json} 由 server
- * {@code TECHNIQUE_DEFINITIONS} + yidao 5 招 spec（P4 增补，
+ * {@code TECHNIQUE_DEFINITIONS} + yidao spec（
  * {@code yidao_skill_spec().cast_ticks_base}）单向生成（重生成唯一入口
  * {@code cd server && BONG_REGEN_CAST_TICKS_SNAPSHOT=1 cargo test technique_cast_ticks_snapshot}），
  * 本测试只消费不维护——错误时长必须改动画对齐定义表，禁止「同步改快照混过关」
@@ -148,9 +148,8 @@ class AnimCastTicksAlignmentTest {
         m.put("sword_path.manifest", "sword_manifest_cast");
         m.put("sword_path.heaven_gate", "sword_heaven_gate_charge");
         m.put("morph.yixing", "morph_cast");
-        // P4（2026-07-19）：yidao 5 招补齐（plan-yidao-v1 §5 欠账，矩阵外增补）。
-        // 5 招全走 resolve_yidao_skill → insert_casting 真实长引导窗
-        // （cast_ticks_base 100-1200t ≥ 40 长引导域，运行时经 yidao_cast_ticks
+        // yidao 招式走 resolve_yidao_skill → insert_casting 真实长引导窗
+        // （cast_ticks_base 600-1200t ≥ 40 长引导域，运行时经 yidao_cast_ticks
         // 按 mastery/平和色缩放——isLoop 蓄力段覆盖任意窗长），两段式映射蓄力段；
         // release 段（yidao_*_release）由 server complete_yidao_casts 有效结算
         // 分支接力，结构由各自三段式 spec manifest 锁定。快照来源同步扩展：
@@ -158,8 +157,6 @@ class AnimCastTicksAlignmentTest {
         // technique_cast_ticks_snapshot_test.rs P4 注记）。
         m.put("yidao.meridian_repair", "yidao_meridian_repair_loop");
         m.put("yidao.contam_purge", "yidao_contam_purge_loop");
-        m.put("yidao.emergency_resuscitate", "yidao_emergency_resuscitate_loop");
-        m.put("yidao.life_extension", "yidao_life_extension_loop");
         m.put("yidao.mass_meridian_repair", "yidao_mass_meridian_repair_loop");
         return m;
     }
@@ -264,7 +261,7 @@ class AnimCastTicksAlignmentTest {
      * 蓄力段**（引导时长随 mastery/平和色浮动，结束相位任意）；heaven_gate 是
      * **定长相位充能段**（见 {@link #FIXED_PHASE_CHARGE_SKILLS}），无相位歧义，
      * 在相位覆盖用例里作为确定性退化档单独断言（要求接缝**逐轴精确相等**，比
-     * 变长档的预算断言更严）。yidao 5 招各自成对，合计 8 对。
+     * 变长档的预算断言更严）。yidao 招式也各自登记一对动画。
      */
     private static final Map<String, String[]> TWO_STAGE_PAIRS = buildTwoStagePairs();
 
@@ -279,11 +276,6 @@ class AnimCastTicksAlignmentTest {
             new String[] {"yidao_meridian_repair_loop", "yidao_meridian_repair_release"});
         m.put("yidao.contam_purge",
             new String[] {"yidao_contam_purge_loop", "yidao_contam_purge_release"});
-        m.put("yidao.emergency_resuscitate",
-            new String[] {"yidao_emergency_resuscitate_loop",
-                "yidao_emergency_resuscitate_release"});
-        m.put("yidao.life_extension",
-            new String[] {"yidao_life_extension_loop", "yidao_life_extension_release"});
         m.put("yidao.mass_meridian_repair",
             new String[] {"yidao_mass_meridian_repair_loop",
                 "yidao_mass_meridian_repair_release"});

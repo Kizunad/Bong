@@ -3,8 +3,6 @@ import { Type, type Static } from "@sinclair/typebox";
 import { validate, type ValidationResult } from "./validate.js";
 
 export const DeathCinematicPhaseV1 = Type.Union([
-  Type.Literal("predeath"),
-  Type.Literal("death_moment"),
   Type.Literal("roll"),
   Type.Literal("insight_overlay"),
   Type.Literal("darkness"),
@@ -54,7 +52,6 @@ export const DeathCinematicS2cV1 = Type.Object(
     zone_kind: DeathCinematicZoneKindV1,
     tsy_death: Type.Boolean(),
     rebirth_weakened_ticks: Type.Integer({ minimum: 0 }),
-    skip_predeath: Type.Boolean(),
   },
   { additionalProperties: false },
 );

@@ -2651,14 +2651,6 @@ mod tests {
                 crate::combat::yidao::ANIM_YIDAO_CONTAM_PURGE_LOOP,
             ),
             (
-                crate::combat::yidao::EMERGENCY_RESUSCITATE_SKILL_ID,
-                crate::combat::yidao::ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
-            ),
-            (
-                crate::combat::yidao::LIFE_EXTENSION_SKILL_ID,
-                crate::combat::yidao::ANIM_YIDAO_LIFE_EXTENSION_LOOP,
-            ),
-            (
                 crate::combat::yidao::MASS_MERIDIAN_REPAIR_SKILL_ID,
                 crate::combat::yidao::ANIM_YIDAO_MASS_MERIDIAN_REPAIR_LOOP,
             ),
@@ -3009,14 +3001,6 @@ mod tests {
             (
                 crate::combat::yidao::CONTAM_PURGE_SKILL_ID,
                 crate::combat::yidao::ANIM_YIDAO_CONTAM_PURGE_LOOP,
-            ),
-            (
-                crate::combat::yidao::EMERGENCY_RESUSCITATE_SKILL_ID,
-                crate::combat::yidao::ANIM_YIDAO_EMERGENCY_RESUSCITATE_LOOP,
-            ),
-            (
-                crate::combat::yidao::LIFE_EXTENSION_SKILL_ID,
-                crate::combat::yidao::ANIM_YIDAO_LIFE_EXTENSION_LOOP,
             ),
             (
                 crate::combat::yidao::MASS_MERIDIAN_REPAIR_SKILL_ID,

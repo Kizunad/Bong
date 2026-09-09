@@ -220,7 +220,6 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         last_revive_tick: None,
         spawn_anchor: Some([1.0, 2.0, 3.0]),
         spawn_anchor_damaged: false,
-        near_death_deadline_tick: None,
         awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.15 }),
         revival_decision_deadline_tick: Some(9_999),
         weakened_until_tick: None,
@@ -307,7 +306,7 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
 #[test]
 fn joined_client_ignores_persisted_lifecycle_from_previous_life_after_character_id_rotates() {
     // 转生 / 老档场景：player_lifecycle 里遗留的 character_id 对不上刚计算出的"当前
-    // 角色" id 时不能被复用——否则上一世的濒死/复活状态会错误地套到新角色身上。
+    // 角色" id 时不能被复用——否则上一世的复活状态会错误地套到新角色身上。
     let root = unique_temp_dir("ignores-stale-lifecycle-character-id");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).expect("data dir should create");
@@ -445,7 +444,7 @@ fn joined_client_defaults_lifecycle_when_no_lifecycle_row_ever_persisted() {
 fn joined_client_falls_back_to_default_lifecycle_when_persisted_row_is_corrupt() {
     // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 4）：反序列化
     // 失败（损坏的 lifecycle_json）之前会被 `.ok().flatten()` 静默吞掉——与本 bug 同一失效
-    // 类（濒死/待复活状态被无声抹除）。修复后必须 warn! 留痕（见
+    // 类（待复活状态被无声抹除）。修复后必须 warn! 留痕（见
     // attach_combat_bundle_to_joined_clients 实现），但 join 流程本身绝不能 panic 或卡死，
     // 必须优雅回退到 Lifecycle::default()。
     let root = unique_temp_dir("corrupt-lifecycle-row");

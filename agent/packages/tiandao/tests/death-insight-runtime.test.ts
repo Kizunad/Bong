@@ -54,7 +54,7 @@ function sampleRequest(overrides: Partial<DeathInsightRequestV1> = {}): DeathIns
     zone_kind: "ordinary",
     death_count: 3,
     rebirth_chance: 1,
-    recent_biography: ["t83100:reach:Condense", "t83980:near_death:combat"],
+    recent_biography: ["t83100:reach:Condense", "t83980:death:combat"],
     position: { x: 8, y: 150, z: 8 },
     context: { will_terminate: false, fortune_remaining: 0 },
     ...overrides,
@@ -138,7 +138,7 @@ describe("DeathInsightRuntime", () => {
             "t100:open:Lung",
             "t900:reach:Induce",
             "t83100:reach:Condense",
-            "t83980:near_death:cultivation:NaturalAging",
+            "t83980:death:cultivation:NaturalAging",
           ],
         }),
       ),
@@ -148,7 +148,7 @@ describe("DeathInsightRuntime", () => {
     const text = String(payload.narrations[0]?.text ?? "");
     expect(text).toContain("寿火已尽");
     expect(text).toContain("生平残页");
-    expect(text).toContain("t83980:near_death:cultivation:NaturalAging");
+    expect(text).toContain("t83980:death:cultivation:NaturalAging");
     expect(payload.narrations[0]?.target).toBe("offline:Azure");
   });
 

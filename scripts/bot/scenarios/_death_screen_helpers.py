@@ -28,35 +28,22 @@ def kill_self(bot: Bot, timeout: float = 15.0) -> None:
 
 
 def wait_death_screen_event(
-    bot: Bot, after: float = 0.0, timeout: float = 240.0
+    bot: Bot, after: float = 0.0, timeout: float = 15.0
 ) -> tuple[float, dict]:
-    """等待 visible=true 的死亡屏，返回 ``(event.t, payload)``。
-
-    ``event.t`` 与场景时钟（``time.monotonic() - bot.t0``）同一刻度，供调用方把屏事件
-    钉到具体时刻（如"距 kill 超过濒死宽限窗"的时序断言，见
-    ``combat_reincarnate_fortune_revives``）。
-
-    timeout 必须覆盖生产侧的濒死宽限窗：death_arbiter 只把角色推入 NearDeath，
-    决策（并附死亡屏）要等 near_death_deadline_tick（NEAR_DEATH_WINDOW_TICKS=600 ticks）
-    走完才由 near_death_tick 给出——过早断言会稳定超时（实测 15s 全灭）。宽限窗以
-    combat tick 计量，wall 时长随服务端实际 TPS 伸缩：20 TPS 下约 30s，而本盒在
-    高负载（NPC sim 超预算）下实测坍缩到 3.4-5.5 TPS（600 ticks ≈ 110-176s，观测于
-    L10/L12 两次运行）——因此默认 240s（覆盖 2.5 TPS 留余量），健康路径在决策到达
-    即提前返回，不受上限拖慢。
-    """
+    """等待立即下发的复活裁决，返回 ``(event.t, payload)``。"""
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.t > after
         and e.data["payload_type"] == "death_screen"
         and e.data["payload"].get("visible") is True,
         timeout,
-        "death_screen(visible=true) payload（濒死决策已出、决策窗口开启）",
+        "death_screen(visible=true) payload（死亡裁决已出、决策窗口开启）",
     )
     return event.t, event.data["payload"]
 
 
-def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 240.0) -> dict:
-    """等待 visible=true 的死亡屏 payload（濒死决策已出，AwaitingRevival 决策窗口开启）。"""
+def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 15.0) -> dict:
+    """等待 visible=true 的死亡屏 payload（死亡裁决已出，AwaitingRevival 决策窗口开启）。"""
     return wait_death_screen_event(bot, after, timeout)[1]
 
 

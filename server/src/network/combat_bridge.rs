@@ -363,7 +363,7 @@ mod tests {
                 death_count: 3,
                 rebirth_chance: Some(0.8),
                 lifespan_remaining_years: Some(70.0),
-                recent_biography: vec!["t84000:near_death:bleed_out".to_string()],
+                recent_biography: vec!["t84000:death:bleed_out".to_string()],
                 position: None,
                 known_spirit_eyes: Vec::new(),
                 context: serde_json::json!({"will_terminate": false}),
@@ -414,7 +414,6 @@ mod tests {
             zone_kind: DeathCinematicZoneKindV1::Negative,
             tsy_death: true,
             rebirth_weakened_ticks: 3_600,
-            skip_predeath: false,
         };
 
         app.world_mut().send_event(DeathCinematicPublished {

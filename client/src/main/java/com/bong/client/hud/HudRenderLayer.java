@@ -31,7 +31,6 @@ public enum HudRenderLayer {
     FLIGHT_HUD,
     COFFIN,
     TRIBULATION,
-    NEAR_DEATH,
     TSY_EXTRACT,
     /** plan-sou-da-che-v1 P3：回到灵龛后的整理呼吸层。 */
     HOME_SEQUENCE,

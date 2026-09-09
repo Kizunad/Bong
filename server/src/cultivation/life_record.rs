@@ -104,7 +104,7 @@ pub enum BiographyEntry {
         effectiveness: f32,
         tick: u64,
     },
-    NearDeath {
+    Death {
         cause: String,
         tick: u64,
     },
@@ -394,7 +394,7 @@ impl LifeRecord {
 
     fn latest_death_tick(&self) -> Option<u64> {
         self.biography.iter().rev().find_map(|entry| match entry {
-            BiographyEntry::NearDeath { tick, .. } | BiographyEntry::Terminated { tick, .. } => {
+            BiographyEntry::Death { tick, .. } | BiographyEntry::Terminated { tick, .. } => {
                 Some(*tick)
             }
             _ => None,
@@ -493,7 +493,7 @@ fn format_entry(entry: &BiographyEntry) -> String {
             effectiveness,
             tick,
         } => format!("t{tick}:jiemai_parry:{attacker_id}:{effectiveness:.2}"),
-        BiographyEntry::NearDeath { cause, tick } => format!("t{tick}:near_death:{cause}"),
+        BiographyEntry::Death { cause, tick } => format!("t{tick}:death:{cause}"),
         BiographyEntry::Terminated { cause, tick } => format!("t{tick}:terminated:{cause}"),
         BiographyEntry::LifespanExtended {
             source,
@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn death_insight_records_latest_death_tick_and_dedupes_same_text() {
         let mut lr = LifeRecord::new(canonical_player_id("Alice"));
-        lr.push(BiographyEntry::NearDeath {
+        lr.push(BiographyEntry::Death {
             cause: "combat:test".to_string(),
             tick: 77,
         });

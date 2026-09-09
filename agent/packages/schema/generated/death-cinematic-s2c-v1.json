@@ -15,8 +15,7 @@
     "death_number",
     "zone_kind",
     "tsy_death",
-    "rebirth_weakened_ticks",
-    "skip_predeath"
+    "rebirth_weakened_ticks"
   ],
   "properties": {
     "v": {
@@ -30,14 +29,6 @@
     },
     "phase": {
       "anyOf": [
-        {
-          "const": "predeath",
-          "type": "string"
-        },
-        {
-          "const": "death_moment",
-          "type": "string"
-        },
         {
           "const": "roll",
           "type": "string"
@@ -156,10 +147,7 @@
     "rebirth_weakened_ticks": {
       "minimum": 0,
       "type": "integer"
-    },
-    "skip_predeath": {
-      "type": "boolean"
     }
   },
-  "x-bong-typebox-source-sha256": "d5c0c17fff0eb3a2a16bafae46abaaa81e305ed61b42dd20665cedd48c93b6ce"
+  "x-bong-typebox-source-sha256": "3f0929e70981d71bc59cdde5484f784cd9a3f171cf1405de3e280d768a6365a8"
 }

@@ -205,7 +205,7 @@ class CombatHandlersTest {
                           "roll":{"probability":0.65,"threshold":0.65,"luck_value":0.42,"result":"pending"},
                           "insight_text":["坍缩渊，概不赊欠。"],"is_final":false,
                           "death_number":4,"zone_kind":"negative","tsy_death":true,
-                          "rebirth_weakened_ticks":3600,"skip_predeath":false}}
+                          "rebirth_weakened_ticks":3600}}
             """;
 
         new DeathScreenHandler().handle(parse(json));

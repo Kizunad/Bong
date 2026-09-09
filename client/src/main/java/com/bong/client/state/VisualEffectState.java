@@ -96,7 +96,6 @@ public final class VisualEffectState {
         MEDITATION_CALM("meditation_calm"),
         POISON_TINT("poison_tint"),
         FROSTBITE("frostbite"),
-        NEAR_DEATH_VIGNETTE("near_death_vignette"),
         PRESSURE_JITTER("pressure_jitter"),
         HIT_PUSHBACK("hit_pushback"),
         WEAPON_BREAK_FLASH("weapon_break_flash"),
@@ -128,7 +127,6 @@ public final class VisualEffectState {
                 case "meditation_calm", "meditation", "calm" -> MEDITATION_CALM;
                 case "poison_tint", "poison" -> POISON_TINT;
                 case "frostbite", "ice_poison", "freeze" -> FROSTBITE;
-                case "near_death_vignette", "near_death", "low_hp" -> NEAR_DEATH_VIGNETTE;
                 case "pressure_jitter", "pressure", "qi_pressure" -> PRESSURE_JITTER;
                 case "hit_pushback", "pushback", "recoil", "knockback_cam" -> HIT_PUSHBACK;
                 case "weapon_break_flash", "weapon_break", "break_flash" -> WEAPON_BREAK_FLASH;

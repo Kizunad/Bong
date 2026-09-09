@@ -51,7 +51,6 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.FLIGHT_HUD, "FlightHudPlanner", "flight_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.COFFIN, "CoffinHudPlanner", "coffin_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.TRIBULATION, "TribulationBroadcastHudPlanner", "tribulation_state+clock", "广播文字仍走 Minecraft GUI"),
-        command(HudRenderLayer.NEAR_DEATH, "NearDeathOverlayPlanner+NearDeathCollapsePlanner", "combat_state+death_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.TSY_EXTRACT, "ExtractProgressHudPlanner", "extract_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.HOME_SEQUENCE, "HomeSequence", "home_sequence+inventory+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.REALM_COLLAPSE, "RealmCollapseHudPlanner", "realm_collapse_state+clock", "动态文字仍走 Minecraft GUI"),

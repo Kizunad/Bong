@@ -177,16 +177,19 @@ mod tests {
     }
 
     #[test]
-    fn wounds_to_wire_clears_entries_for_near_death_lifecycle() {
+    fn wounds_to_wire_clears_entries_for_awaiting_revival_lifecycle() {
         let wounds = sample_wounds();
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(20);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            20,
+        );
 
         let wire = wounds_to_wire(&wounds, Some(&lifecycle), 123);
 
         assert!(
             wire.is_empty(),
-            "death/near-death clients should receive an empty wounds snapshot"
+            "dead clients should receive an empty wounds snapshot"
         );
     }
 
@@ -266,29 +269,14 @@ mod tests {
     }
 
     #[test]
-    fn emits_empty_snapshot_when_lifecycle_changes_to_near_death() {
-        assert_lifecycle_change_emits_empty_snapshot(
-            "NearDeath",
-            LifecycleState::NearDeath,
-            |lifecycle| lifecycle.enter_near_death(20),
-        );
-    }
-
-    #[test]
     fn emits_empty_snapshot_when_lifecycle_changes_to_awaiting_revival() {
         assert_lifecycle_change_emits_empty_snapshot(
             "AwaitingRevival",
             LifecycleState::AwaitingRevival,
             |lifecycle| {
-                lifecycle.enter_near_death(20);
-                assert_eq!(
-                    lifecycle.state,
-                    LifecycleState::NearDeath,
-                    "test setup expected enter_near_death to move lifecycle into NearDeath"
-                );
                 lifecycle.await_revival_decision(
                     crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
-                    40,
+                    20,
                 );
             },
         );
@@ -310,7 +298,10 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut lifecycle = Lifecycle::default();
-        lifecycle.enter_near_death(20);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            20,
+        );
         let entity = app
             .world_mut()
             .spawn((client_bundle, sample_wounds(), lifecycle))

@@ -5325,7 +5325,7 @@ fn sample_npc_life_record(char_id: &str) -> LifeRecord {
                 damage: 12.5,
                 tick: 41,
             },
-            BiographyEntry::NearDeath {
+            BiographyEntry::Death {
                 cause: "duel".to_string(),
                 tick: 77,
             },
@@ -5378,7 +5378,6 @@ fn sample_npc_capture(char_id: &str) -> NpcPersistenceCapture {
             last_revive_tick: Some(66),
             spawn_anchor: None,
             spawn_anchor_damaged: false,
-            near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
             weakened_until_tick: None,
@@ -5581,7 +5580,7 @@ fn semantic_event_writers_serialize_under_wal_busy_timeout() {
                 let life_record = LifeRecord {
                     character_id: char_id.clone(),
                     created_at: tick.saturating_sub(10),
-                    biography: vec![BiographyEntry::NearDeath {
+                    biography: vec![BiographyEntry::Death {
                         cause: format!("duel-{index}"),
                         tick,
                     }],
@@ -5599,21 +5598,20 @@ fn semantic_event_writers_serialize_under_wal_busy_timeout() {
                     last_revive_tick: Some(tick.saturating_sub(1)),
                     spawn_anchor: None,
                     spawn_anchor_damaged: false,
-                    near_death_deadline_tick: Some(tick + 30),
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
-                    state: LifecycleState::NearDeath,
+                    state: LifecycleState::AwaitingRevival,
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
-                    kind: "near_death".to_string(),
+                    kind: "death".to_string(),
                     delta_years: -1,
                     source: format!("duel-{index}"),
                 };
 
                 barrier.wait();
-                persist_near_death_transition(
+                persist_death_transition(
                     settings.as_ref(),
                     &lifecycle,
                     &life_record,
@@ -5718,7 +5716,7 @@ fn mixed_player_core_and_semantic_event_writers_share_sqlite_without_lock_failur
                 let life_record = LifeRecord {
                     character_id: char_id.clone(),
                     created_at: tick.saturating_sub(20),
-                    biography: vec![BiographyEntry::NearDeath {
+                    biography: vec![BiographyEntry::Death {
                         cause: format!("mixed-duel-{index}"),
                         tick,
                     }],
@@ -5736,21 +5734,20 @@ fn mixed_player_core_and_semantic_event_writers_share_sqlite_without_lock_failur
                     last_revive_tick: Some(tick.saturating_sub(1)),
                     spawn_anchor: None,
                     spawn_anchor_damaged: false,
-                    near_death_deadline_tick: Some(tick + 30),
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
-                    state: LifecycleState::NearDeath,
+                    state: LifecycleState::AwaitingRevival,
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
-                    kind: "near_death".to_string(),
+                    kind: "death".to_string(),
                     delta_years: -1,
                     source: format!("mixed-duel-{index}"),
                 };
 
                 barrier.wait();
-                persist_near_death_transition(
+                persist_death_transition(
                     settings.as_ref(),
                     &lifecycle,
                     &life_record,
@@ -5880,7 +5877,7 @@ fn mixed_player_semantic_and_npc_writers_share_sqlite_without_lock_failures() {
                 let life_record = LifeRecord {
                     character_id: char_id.clone(),
                     created_at: tick.saturating_sub(20),
-                    biography: vec![BiographyEntry::NearDeath {
+                    biography: vec![BiographyEntry::Death {
                         cause: format!("mixed-npc-duel-{index}"),
                         tick,
                     }],
@@ -5898,21 +5895,20 @@ fn mixed_player_semantic_and_npc_writers_share_sqlite_without_lock_failures() {
                     last_revive_tick: Some(tick.saturating_sub(1)),
                     spawn_anchor: None,
                     spawn_anchor_damaged: false,
-                    near_death_deadline_tick: Some(tick + 30),
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
-                    state: LifecycleState::NearDeath,
+                    state: LifecycleState::AwaitingRevival,
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
-                    kind: "near_death".to_string(),
+                    kind: "death".to_string(),
                     delta_years: -1,
                     source: format!("mixed-npc-duel-{index}"),
                 };
 
                 barrier.wait();
-                persist_near_death_transition(
+                persist_death_transition(
                     settings.as_ref(),
                     &lifecycle,
                     &life_record,
@@ -6069,7 +6065,7 @@ fn mixed_player_semantic_npc_and_zone_runtime_writers_share_sqlite_without_lock_
                 let life_record = LifeRecord {
                     character_id: char_id.clone(),
                     created_at: tick.saturating_sub(20),
-                    biography: vec![BiographyEntry::NearDeath {
+                    biography: vec![BiographyEntry::Death {
                         cause: format!("mixed-zone-duel-{index}"),
                         tick,
                     }],
@@ -6087,21 +6083,20 @@ fn mixed_player_semantic_npc_and_zone_runtime_writers_share_sqlite_without_lock_
                     last_revive_tick: Some(tick.saturating_sub(1)),
                     spawn_anchor: None,
                     spawn_anchor_damaged: false,
-                    near_death_deadline_tick: Some(tick + 30),
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
-                    state: LifecycleState::NearDeath,
+                    state: LifecycleState::AwaitingRevival,
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
-                    kind: "near_death".to_string(),
+                    kind: "death".to_string(),
                     delta_years: -1,
                     source: format!("mixed-zone-duel-{index}"),
                 };
 
                 barrier.wait();
-                persist_near_death_transition(
+                persist_death_transition(
                     settings.as_ref(),
                     &lifecycle,
                     &life_record,
@@ -6307,7 +6302,7 @@ fn mixed_sqlite_writers_remain_correct_across_multiple_contention_batches() {
                     let life_record = LifeRecord {
                         character_id: char_id.clone(),
                         created_at: tick.saturating_sub(20),
-                        biography: vec![BiographyEntry::NearDeath {
+                        biography: vec![BiographyEntry::Death {
                             cause: format!("batch-duel-{batch}-{index}"),
                             tick,
                         }],
@@ -6325,21 +6320,20 @@ fn mixed_sqlite_writers_remain_correct_across_multiple_contention_batches() {
                         last_revive_tick: Some(tick.saturating_sub(1)),
                         spawn_anchor: None,
                         spawn_anchor_damaged: false,
-                        near_death_deadline_tick: Some(tick + 30),
                         awaiting_decision: None,
                         revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
-                        state: LifecycleState::NearDeath,
+                        state: LifecycleState::AwaitingRevival,
                     };
                     let lifespan_event = LifespanEventRecord {
                         at_tick: tick,
-                        kind: "near_death".to_string(),
+                        kind: "death".to_string(),
                         delta_years: -1,
                         source: format!("batch-duel-{batch}-{index}"),
                     };
 
                     barrier.wait();
-                    persist_near_death_transition(
+                    persist_death_transition(
                         settings.as_ref(),
                         &lifecycle,
                         &life_record,
@@ -6536,7 +6530,7 @@ fn npc_state_roundtrip_preserves_runtime_capture_fields() {
     assert_eq!(digest.archetype, "sword");
     assert_eq!(digest.realm, "spirit");
     assert_eq!(digest.faction_id, None);
-    assert!(digest.recent_summary.contains("near_death:duel"));
+    assert!(digest.recent_summary.contains("death:duel"));
     assert_eq!(registry.len(), 1);
     assert_eq!(registry[0].char_id, capture.state.char_id);
     assert_eq!(registry[0].archetype, "sword");
@@ -9888,7 +9882,7 @@ fn revival_qi_transaction_rolls_back_every_durable_owner_on_late_quota_failure()
     let baseline_life = LifeRecord {
         character_id: char_id.to_string(),
         created_at: 1,
-        biography: vec![BiographyEntry::NearDeath {
+        biography: vec![BiographyEntry::Death {
             cause: "fixture".to_string(),
             tick: 40,
         }],
@@ -9896,7 +9890,7 @@ fn revival_qi_transaction_rolls_back_every_durable_owner_on_late_quota_failure()
     };
     let staged_life = LifeRecord {
         biography: vec![
-            BiographyEntry::NearDeath {
+            BiographyEntry::Death {
                 cause: "fixture".to_string(),
                 tick: 40,
             },
@@ -10172,7 +10166,7 @@ fn revival_qi_transaction_replaces_owner_slices_and_preserves_bundle_siblings_fo
     let baseline_life = LifeRecord {
         character_id: "offline:RevivalRoundtrip".to_string(),
         created_at: 7,
-        biography: vec![BiographyEntry::NearDeath {
+        biography: vec![BiographyEntry::Death {
             cause: "fixture".to_string(),
             tick: 70,
         }],
@@ -10180,7 +10174,7 @@ fn revival_qi_transaction_replaces_owner_slices_and_preserves_bundle_siblings_fo
     };
     let staged_life = LifeRecord {
         biography: vec![
-            BiographyEntry::NearDeath {
+            BiographyEntry::Death {
                 cause: "fixture".to_string(),
                 tick: 70,
             },
@@ -10378,7 +10372,7 @@ fn revival_qi_transaction_rejects_missing_or_corrupt_bundle_without_durable_pref
         let baseline_life = LifeRecord {
             character_id: char_id.clone(),
             created_at: 9,
-            biography: vec![BiographyEntry::NearDeath {
+            biography: vec![BiographyEntry::Death {
                 cause: "fixture".to_string(),
                 tick: 90,
             }],
@@ -10386,7 +10380,7 @@ fn revival_qi_transaction_rejects_missing_or_corrupt_bundle_without_durable_pref
         };
         let staged_life = LifeRecord {
             biography: vec![
-                BiographyEntry::NearDeath {
+                BiographyEntry::Death {
                     cause: "fixture".to_string(),
                     tick: 90,
                 },

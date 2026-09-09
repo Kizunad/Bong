@@ -2560,8 +2560,6 @@ fn lingtian_session_to_proto(
 fn death_cinematic_phase_to_proto(p: &super::death_cinematic::DeathCinematicPhaseV1) -> i32 {
     use super::death_cinematic::DeathCinematicPhaseV1;
     match p {
-        DeathCinematicPhaseV1::Predeath => bong::DeathCinematicPhase::Predeath as i32,
-        DeathCinematicPhaseV1::DeathMoment => bong::DeathCinematicPhase::DeathMoment as i32,
         DeathCinematicPhaseV1::Roll => bong::DeathCinematicPhase::Roll as i32,
         DeathCinematicPhaseV1::InsightOverlay => bong::DeathCinematicPhase::InsightOverlay as i32,
         DeathCinematicPhaseV1::Darkness => bong::DeathCinematicPhase::Darkness as i32,
@@ -2611,7 +2609,6 @@ fn death_cinematic_to_proto(
         zone_kind: death_cinematic_zone_kind_to_proto(&c.zone_kind),
         tsy_death: c.tsy_death,
         rebirth_weakened_ticks: c.rebirth_weakened_ticks,
-        skip_predeath: c.skip_predeath,
     }
 }
 

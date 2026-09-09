@@ -1003,54 +1003,6 @@ mod tests {
     }
 
     #[test]
-    fn npc_defense_scorer_near_death_lifecycle_scores_zero() {
-        use crate::cultivation::components::Cultivation;
-        let mut app = App::new();
-        app.add_systems(
-            PreUpdate,
-            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
-        );
-
-        let player = app.world_mut().spawn_empty().id();
-
-        let mut lifecycle = Lifecycle {
-            character_id: "npc_near_death".to_string(),
-            ..Default::default()
-        };
-        lifecycle.enter_near_death(10);
-
-        let npc = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                NpcBlackboard {
-                    nearest_player: Some(player),
-                    player_distance: 3.0,
-                    ..Default::default()
-                },
-                Cultivation {
-                    realm: Realm::Condense,
-                    ..Default::default()
-                },
-                lifecycle,
-            ))
-            .id();
-
-        let scorer = app
-            .world_mut()
-            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
-            .id();
-
-        app.update();
-
-        assert_eq!(
-            app.world().get::<Score>(scorer).unwrap().get(),
-            0.0,
-            "NearDeath NPC should have defense score suppressed to 0.0 — dead NPCs must not defend"
-        );
-    }
-
-    #[test]
     fn npc_defense_scorer_terminated_lifecycle_scores_zero() {
         use crate::cultivation::components::Cultivation;
         let mut app = App::new();
@@ -1230,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn chase_target_scorer_near_death_npc_scores_zero() {
+    fn chase_target_scorer_awaiting_revival_npc_scores_zero() {
         let mut app = App::new();
         app.add_systems(
             PreUpdate,
@@ -1238,10 +1190,13 @@ mod tests {
         );
 
         let mut lifecycle = Lifecycle {
-            character_id: "npc_near_death".to_string(),
+            character_id: "npc_awaiting_revival".to_string(),
             ..Default::default()
         };
-        lifecycle.enter_near_death(10);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            10,
+        );
 
         let npc = app
             .world_mut()
@@ -1265,7 +1220,7 @@ mod tests {
         assert_eq!(
             app.world().get::<Score>(scorer).unwrap().get(),
             0.0,
-            "NearDeath NPC should have chase score suppressed to 0.0"
+            "AwaitingRevival NPC should have chase score suppressed to 0.0"
         );
     }
 
@@ -1341,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn melee_range_scorer_near_death_npc_scores_zero() {
+    fn melee_range_scorer_awaiting_revival_npc_scores_zero() {
         let mut app = App::new();
         app.add_systems(
             PreUpdate,
@@ -1349,10 +1304,13 @@ mod tests {
         );
 
         let mut lifecycle = Lifecycle {
-            character_id: "npc_near_death".to_string(),
+            character_id: "npc_awaiting_revival".to_string(),
             ..Default::default()
         };
-        lifecycle.enter_near_death(10);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            10,
+        );
 
         let npc = app
             .world_mut()
@@ -1376,7 +1334,7 @@ mod tests {
         assert_eq!(
             app.world().get::<Score>(scorer).unwrap().get(),
             0.0,
-            "NearDeath NPC should have melee score suppressed to 0.0"
+            "AwaitingRevival NPC should have melee score suppressed to 0.0"
         );
     }
 
@@ -1455,16 +1413,19 @@ mod tests {
     }
 
     #[test]
-    fn dash_scorer_near_death_npc_scores_zero() {
+    fn dash_scorer_awaiting_revival_npc_scores_zero() {
         let mut app = App::new();
         app.insert_resource(crate::npc::movement::GameTick(0));
         app.add_systems(PreUpdate, dash_scorer_system.in_set(BigBrainSet::Scorers));
 
         let mut lifecycle = Lifecycle {
-            character_id: "npc_near_death".to_string(),
+            character_id: "npc_awaiting_revival".to_string(),
             ..Default::default()
         };
-        lifecycle.enter_near_death(10);
+        lifecycle.await_revival_decision(
+            crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+            10,
+        );
 
         let npc = app
             .world_mut()
@@ -1493,7 +1454,7 @@ mod tests {
         assert_eq!(
             app.world().get::<Score>(scorer).unwrap().get(),
             0.0,
-            "NearDeath NPC should have dash score suppressed to 0.0"
+            "AwaitingRevival NPC should have dash score suppressed to 0.0"
         );
     }
 

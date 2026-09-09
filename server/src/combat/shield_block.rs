@@ -397,10 +397,10 @@ pub fn lower_shield_handler(
 /// # 判据说明
 /// StopAnim 的 emit 判据使用 `ShieldBlock` component 是否在场，**而非**
 /// `has_active_status(ShieldBlocking)`。原因：此系统注册在
-/// `death_arbiter_tick` 之后运行，而 `death_arbiter_tick` 内的 `enter_near_death`
+/// `death_arbiter_tick` 之后运行，而 `death_arbiter_tick` 内的 `clear_death_combat_state`
 /// 会无条件 `status_effects.active.clear()`，先于本系统清掉 ShieldBlocking status。
 /// 若依赖 `has_active_status` 判断，死亡时举盾的 StopAnim 永远不会发出（生产孤岛）。
-/// `ShieldBlock` component 是盾牌模块专属的持续标记，`enter_near_death` 不会触碰它，
+/// `ShieldBlock` component 是盾牌模块专属的持续标记，`clear_death_combat_state` 不会触碰它，
 /// 因此它在本系统运行时仍准确反映"玩家死前是否在举盾"。
 pub fn cleanup_shield_on_death(
     mut death_events: EventReader<DeathEvent>,
@@ -417,7 +417,7 @@ pub fn cleanup_shield_on_death(
         } else {
             false
         };
-        // Defensive：若 ShieldBlocking status 仍在（如非 NearDeath 路径）也一并清理。
+        // 盾挡状态可能仍然残留，在死亡时一并清理。
         if let Ok((mut status_effects, _)) = status_q.get_mut(entity) {
             if has_active_status(&status_effects, StatusEffectKind::ShieldBlocking) {
                 remove_status_effect(&mut status_effects, StatusEffectKind::ShieldBlocking);
@@ -1204,7 +1204,7 @@ mod tests {
     //
     // 这是锁定「生产执行序」的真 e2e 测试。
     // 背景：mod.rs 注册 cleanup_shield_on_death .after(death_arbiter_tick)。
-    // death_arbiter_tick 内的 enter_near_death 会无条件 status_effects.active.clear()，
+    // death_arbiter_tick 内的 clear_death_combat_state 会无条件 status_effects.active.clear()，
     // 在 cleanup_shield_on_death 运行前已清空 ShieldBlocking status。
     // 若 cleanup_shield_on_death 以 has_active_status(ShieldBlocking) 判 emit，
     // 生产环境下 StopAnim 永远不发出（isLoop:true 的 bong:shield_raise 在死亡后永久卡住）。
@@ -1282,7 +1282,7 @@ mod tests {
                         source_pill: None,
                     }],
                 },
-                // ShieldBlock component — enter_near_death 不会碰它，是可靠真相源
+                // ShieldBlock component — clear_death_combat_state 不会碰它，是可靠真相源
                 ShieldBlock {
                     template_id: "wooden_shield".to_string(),
                 },
@@ -1312,7 +1312,7 @@ mod tests {
         if let Some(status) = status_after {
             assert!(
                 !has_active_status(status, StatusEffectKind::ShieldBlocking),
-                "death_arbiter_tick must have cleared ShieldBlocking status via enter_near_death.active.clear()"
+                "death_arbiter_tick must have cleared ShieldBlocking status via clear_death_combat_state.active.clear()"
             );
         }
         // ShieldBlock component 也必须被 cleanup_shield_on_death 移除
@@ -1329,7 +1329,7 @@ mod tests {
         assert!(
             stop.is_some(),
             "cleanup_shield_on_death MUST emit StopAnim{{anim_id==\"bong:shield_raise\"}} even after \
-             death_arbiter_tick clears ShieldBlocking via enter_near_death.active.clear(). \
+             death_arbiter_tick clears ShieldBlocking via clear_death_combat_state.active.clear(). \
              If this fails, the emit gate has regressed to has_active_status() which is always false \
              at this point in the execution order — the isLoop:true shield_raise animation would be \
              permanently stuck on connected-but-dead players. \

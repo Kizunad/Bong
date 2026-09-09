@@ -1578,7 +1578,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         BongHudStateStore.replace(BongHudStateSnapshot.create(
             ZoneState.create("old_zone", "旧域", 0.08, 6, 1_000L),
             NarrationState.create("broadcast", null, "旧旁白", "narration"),
-            VisualEffectState.create("near_death_vignette", 0.9, 30_000L, 0L)
+            VisualEffectState.create("poison_tint", 0.9, 30_000L, 0L)
         ));
         SearchHudStateStore.markStarted("旧石匣", 100);
         AgentUiScreen oldScreen = screen("old-active");

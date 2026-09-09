@@ -34,6 +34,7 @@ fn app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 100 });
     app.add_event::<AttackIntent>();
+    app.add_event::<crate::combat::events::DeathEvent>();
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<VfxEventRequest>();
     app.add_event::<QiTransfer>();
@@ -324,7 +325,7 @@ fn blood_burn_rejects_when_hp_is_insufficient() {
 }
 
 #[test]
-fn blood_burn_near_death_does_not_keep_active_multiplier() {
+fn lethal_blood_burn_emits_standard_death_without_active_multiplier() {
     let mut app = app();
     let caster = spawn_actor(&mut app, Realm::Induce, 100.0, 100.0, DVec3::ZERO);
     app.world_mut()
@@ -333,7 +334,7 @@ fn blood_burn_near_death_does_not_keep_active_multiplier() {
     app.world_mut()
         .get_mut::<Wounds>(caster)
         .unwrap()
-        .health_current = 21.0;
+        .health_current = 20.0;
     cast_blood_burn(app.world_mut(), caster, 0, None);
     assert!(app.world().get::<BloodBurnActive>(caster).is_none());
     assert!(
@@ -342,7 +343,17 @@ fn blood_burn_near_death_does_not_keep_active_multiplier() {
             .iter_current_update_events()
             .next()
             .unwrap()
-            .ended_in_near_death
+            .ended_in_death
+    );
+    let deaths = app
+        .world()
+        .resource::<Events<crate::combat::events::DeathEvent>>();
+    assert!(deaths
+        .iter_current_update_events()
+        .any(|event| event.target == caster));
+    assert_eq!(
+        app.world().get::<Wounds>(caster).unwrap().health_current,
+        0.0
     );
     let contamination = app.world().get::<Contamination>(caster).unwrap();
     assert_eq!(contamination.entries.len(), 1);

@@ -197,6 +197,6 @@ class DisconnectClearStoreTest {
         return new DeathCinematicState(
             true, "old-character", DeathCinematicState.Phase.DARKNESS, 10L, 40L, 100L, 400L,
             new DeathCinematicState.Roll(0.5, 0.4, 0.6, DeathCinematicState.RollResult.FALL),
-            List.of("旧幻境"), true, 4, "negative", true, 80L, false, 5_000L);
+            List.of("旧幻境"), true, 4, "negative", true, 80L, 5_000L);
     }
 }

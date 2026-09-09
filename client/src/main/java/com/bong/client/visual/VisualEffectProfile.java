@@ -130,16 +130,6 @@ enum VisualEffectProfile {
         110,
         null
     ),
-    // 濒死视界：黑色 vignette 压缩视野，满强度起步随 duration 线性衰减（简化版，暂不做收紧动画）
-    NEAR_DEATH_VIGNETTE(
-        VisualEffectState.EffectType.NEAR_DEATH_VIGNETTE,
-        0x000000,
-        1.0,
-        30_000L,
-        1_000L,
-        220,
-        null
-    ),
     // 灵压晃动：低幅低频相机抖动，营造"某种庞大东西正接近"的心跳/压迫感
     PRESSURE_JITTER(
         VisualEffectState.EffectType.PRESSURE_JITTER,
@@ -262,7 +252,6 @@ enum VisualEffectProfile {
             case MEDITATION_CALM -> MEDITATION_CALM;
             case POISON_TINT -> POISON_TINT;
             case FROSTBITE -> FROSTBITE;
-            case NEAR_DEATH_VIGNETTE -> NEAR_DEATH_VIGNETTE;
             case PRESSURE_JITTER -> PRESSURE_JITTER;
             case HIT_PUSHBACK -> HIT_PUSHBACK;
             case WEAPON_BREAK_FLASH -> WEAPON_BREAK_FLASH;

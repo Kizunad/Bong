@@ -12,7 +12,7 @@ import java.util.Objects;
  * {@link com.bong.client.combat.handler.CombatEventHandler} and the wounds
  * segment of {@code combat_event}-family payloads (plan §U1).
  *
- * <p>Consumed by inspect 伤口层 bindings and by HUD near-death visual logic.
+ * <p>Consumed by inspect 伤口层 bindings and the MiniBody HUD.
  */
 public final class WoundsStore {
     /** One entry per body part. Immutable. */

@@ -225,8 +225,6 @@ const CALAMITY_EVENT_KIND_WIRES = [
 ] as const;
 
 const DEATH_CINEMATIC_PHASE_WIRES = [
-  "predeath",
-  "death_moment",
   "roll",
   "insight_overlay",
   "darkness",
@@ -337,7 +335,6 @@ describe("sample files pass schema validation", () => {
       zone_kind: "negative",
       tsy_death: true,
       rebirth_weakened_ticks: 3600,
-      skip_predeath: false,
     };
 
     expectContractAccepts("DeathCinematicS2cV1", validateDeathCinematicS2cV1Contract, base);

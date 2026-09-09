@@ -48,7 +48,6 @@ public final class DeathCinematicPayloadParser {
             readString(obj, "zone_kind"),
             readBoolean(obj, "tsy_death", false),
             readLong(obj, "rebirth_weakened_ticks", 0L),
-            readBoolean(obj, "skip_predeath", false),
             receivedAtMillis
         );
     }

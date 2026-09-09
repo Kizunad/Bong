@@ -1277,13 +1277,13 @@ fn baomai_v3_mountain_shake_publishes_on_correct_channel() {
 }
 
 #[test]
-fn baomai_v3_blood_burn_publishes_near_death_on_correct_channel() {
+fn baomai_v3_blood_burn_publishes_death_on_correct_channel() {
     let mut evt =
         crate::schema::baomai_v3::BaomaiV3BloodBurnV1::new("offline:Player".to_string(), 300);
     evt.hp_burned = 300.0;
     evt.qi_multiplier = 5.0;
     evt.active_until_tick = 300;
-    evt.ended_in_near_death = true;
+    evt.ended_in_death = true;
 
     let command = prepare_outbound_command(RedisOutbound::BaomaiV3BloodBurn(evt))
         .expect("blood burn payload should serialize");
@@ -1296,7 +1296,7 @@ fn baomai_v3_blood_burn_publishes_near_death_on_correct_channel() {
             );
             let json: Value =
                 serde_json::from_str(&payload).expect("blood burn should be valid JSON");
-            assert_eq!(json["ended_in_near_death"], true);
+            assert_eq!(json["ended_in_death"], true);
             assert_eq!(json["qi_multiplier"], 5.0);
         }
         other => panic!("expected blood_burn PUBLISH, got {other:?}"),
@@ -2337,7 +2337,7 @@ fn publishes_death_insight_on_correct_channel() {
         death_count: 3,
         rebirth_chance: None,
         lifespan_remaining_years: Some(0.0),
-        recent_biography: vec!["t83980:near_death:cultivation:NaturalAging".to_string()],
+        recent_biography: vec!["t83980:death:cultivation:NaturalAging".to_string()],
         position: None,
         known_spirit_eyes: Vec::new(),
         context: serde_json::json!({"will_terminate": true}),
@@ -2384,7 +2384,6 @@ fn publishes_death_cinematic_on_correct_channel() {
         zone_kind: DeathCinematicZoneKindV1::Ordinary,
         tsy_death: false,
         rebirth_weakened_ticks: 3600,
-        skip_predeath: false,
     }))
     .expect("death cinematic payload should serialize");
 

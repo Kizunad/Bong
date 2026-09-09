@@ -662,7 +662,7 @@ pub fn save_player_shrine_anchor_slice(
 /// `Lifecycle::default()` 而非当作"读取失败"处理。
 ///
 /// `current_combat_clock_tick` 是读档当刻（重连那一瞬）的 `CombatClock.tick`——用于把
-/// 落盘时刻记录的"绝对 tick" deadline（`near_death_deadline_tick`/
+/// 落盘时刻记录的"绝对 tick" deadline（
 /// `revival_decision_deadline_tick`/`weakened_until_tick`）折算到当前 tick 空间，
 /// 详见 `translate_lifecycle_deadline_tick_across_restart` 的文档注释。
 pub fn load_player_lifecycle_slice(
@@ -675,7 +675,7 @@ pub fn load_player_lifecycle_slice(
 }
 
 /// bughunt player-lifecycle-relog-death-consequence-wipe：断线/关服 flush 时把当前
-/// `Lifecycle` 组件整份落盘，让重连不再盲插 `Lifecycle::default()`（否则濒死/待复活玩家
+/// `Lifecycle` 组件整份落盘，让重连不再盲插 `Lifecycle::default()`（否则待复活玩家
 /// 会被静默重置成满运气次数的"新角色"，绕过渡劫概率判定与永久终结风险）。
 ///
 /// `combat_clock_tick` 是落盘那一刻的 `CombatClock.tick`，作为跨重启折算 deadline 的锚点
@@ -2021,7 +2021,7 @@ fn load_player_known_techniques_from_sqlite(
 /// 首次登录），调用方要能区分"从未持久化"和"反序列化失败"（后者仍走 `Err` fail-loud，
 /// 不静默吞成 `None` 掩盖坏数据）。
 ///
-/// 读回后会把三个"绝对 tick" deadline 字段（`near_death_deadline_tick`/
+/// 读回后会把两个"绝对 tick" deadline 字段（
 /// `revival_decision_deadline_tick`/`weakened_until_tick`）折算到 `current_combat_clock_tick`
 /// 所在的 tick 空间——见 `translate_lifecycle_deadline_tick_across_restart`。
 fn load_player_lifecycle_from_sqlite(
@@ -2051,13 +2051,6 @@ fn load_player_lifecycle_from_sqlite(
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
     let now_wall = current_unix_seconds();
-    lifecycle.near_death_deadline_tick = translate_lifecycle_deadline_tick_across_restart(
-        lifecycle.near_death_deadline_tick,
-        combat_clock_tick_at_save,
-        last_updated_wall,
-        now_wall,
-        current_combat_clock_tick,
-    );
     lifecycle.revival_decision_deadline_tick = translate_lifecycle_deadline_tick_across_restart(
         lifecycle.revival_decision_deadline_tick,
         combat_clock_tick_at_save,
@@ -2081,9 +2074,9 @@ fn load_player_lifecycle_from_sqlite(
 ///
 /// `CombatClock` 每次进程重启都从 0 重新计数（`combat::mod::register` 里
 /// `insert_resource(CombatClock::default())`），全仓没有任何从持久化恢复 tick 的代码。
-/// `near_death_deadline_tick`/`revival_decision_deadline_tick`/`weakened_until_tick` 都是
+/// `revival_decision_deadline_tick`/`weakened_until_tick` 都是
 /// 落盘那一刻算出的"绝对 tick"值——若跨重启直接复用，新进程 tick=0 时，旧 deadline 动辄
-/// 百万级，等价于几十小时后才会被 `near_death_tick`/`auto_confirm_revival_decisions`
+/// 百万级，等价于几十小时后才会被 `auto_confirm_revival_decisions`
 /// 结算，期间玩家会卡在 AwaitingRevival（`resolve.rs` 同时禁止攻击与被攻击）却没有任何
 /// UI 解释为什么，然后在数小时后的随机时刻被强制渡劫、可能永久终结角色。
 ///
@@ -4437,10 +4430,10 @@ mod player_state_tests {
     //
     // `Lifecycle`（死亡/复活状态机）此前从未落盘：断线重连时
     // `attach_combat_bundle_to_joined_clients` 只能盲插 `Lifecycle::default()`，把
-    // NearDeath/AwaitingRevival 玩家的 fortune_remaining（每角色仅 3 次）与
+    // AwaitingRevival 玩家的 fortune_remaining（每角色仅 3 次）与
     // awaiting_decision（含永久终结风险的 Tribulation 判定）全部抹回满状态"新角色"。
     // 下面几个测试锁住 `save_player_lifecycle_slice`/`load_player_lifecycle_slice` 的
-    // round-trip 保真度，覆盖状态机全部 4 个变体 + RevivalDecision 两个变体 +
+    // round-trip 保真度，覆盖生命周期状态与 RevivalDecision 两个变体 +
     // fortune_remaining=0 边界 + "从未落盘" 与 "覆盖旧行" 两个存在性分支。
     use crate::combat::components::{Lifecycle, LifecycleState, RevivalDecision};
 
@@ -4453,7 +4446,6 @@ mod player_state_tests {
             last_revive_tick: Some(500),
             spawn_anchor: Some([9.0, 64.0, -3.0]),
             spawn_anchor_damaged: true,
-            near_death_deadline_tick: None,
             awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
             revival_decision_deadline_tick: Some(1_600),
             weakened_until_tick: None,
@@ -4519,10 +4511,6 @@ mod player_state_tests {
         assert_eq!(loaded.spawn_anchor, lifecycle.spawn_anchor);
         assert_eq!(loaded.spawn_anchor_damaged, lifecycle.spawn_anchor_damaged);
         assert_eq!(
-            loaded.near_death_deadline_tick,
-            lifecycle.near_death_deadline_tick
-        );
-        assert_eq!(
             loaded.awaiting_decision,
             Some(RevivalDecision::Tribulation { chance: 0.2 }),
             "待决策的渡劫结果（含永久终结风险）必须原样往返"
@@ -4547,7 +4535,7 @@ mod player_state_tests {
     #[test]
     fn player_lifecycle_slice_roundtrips_alive_default_fortune() {
         // A→A 状态转换 pin：健康在线玩家的常规 Lifecycle（Alive + 满运气次数）也要能
-        // round-trip，不只是濒死分支。
+        // round-trip，保留不同裁决分支。
         let (persistence, data_dir) = sqlite_persistence("lifecycle-roundtrip-alive");
         let lifecycle = Lifecycle::default();
         assert_eq!(lifecycle.state, LifecycleState::Alive);
@@ -4568,10 +4556,9 @@ mod player_state_tests {
 
     #[test]
     fn player_lifecycle_slice_roundtrips_all_state_variants() {
-        // enum 变体 pin：LifecycleState 的全部 4 个变体各至少一条专属往返用例。
+        // 不同生命周期状态均需正确持久化。
         for state in [
             LifecycleState::Alive,
-            LifecycleState::NearDeath,
             LifecycleState::AwaitingRevival,
             LifecycleState::Terminated,
         ] {
@@ -4640,9 +4627,8 @@ mod player_state_tests {
         let (persistence, data_dir) = sqlite_persistence("lifecycle-overwrite");
 
         let first = Lifecycle {
-            state: LifecycleState::NearDeath,
+            state: LifecycleState::AwaitingRevival,
             fortune_remaining: 2,
-            near_death_deadline_tick: Some(100),
             ..Lifecycle::default()
         };
         save_player_lifecycle_slice(&persistence, "Azure", &first, 0)
@@ -4659,7 +4645,7 @@ mod player_state_tests {
         assert_eq!(
             loaded.state,
             LifecycleState::AwaitingRevival,
-            "第二次 save 必须覆盖第一次的 NearDeath，不能残留旧状态"
+            "第二次 save 必须覆盖旧裁决与运数"
         );
         assert_eq!(loaded.fortune_remaining, 0);
 
@@ -4678,7 +4664,7 @@ mod player_state_tests {
 
     // ── bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）──
     //
-    // CombatClock 每次进程重启都从 0 重新计数，而 near_death_deadline_tick /
+    // CombatClock 每次进程重启都从 0 重新计数，而
     // revival_decision_deadline_tick / weakened_until_tick 都是落盘时刻算出的"绝对 tick"。
     // 跨重启直接复用会把早已过期的 deadline 错当成几十小时后的未来事件，玩家会无限期卡在
     // AwaitingRevival（无敌但无 UI）。下面的纯函数用例锁住

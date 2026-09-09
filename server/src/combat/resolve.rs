@@ -428,9 +428,7 @@ pub fn resolve_attack_intents(
             lifecycle.is_some_and(|lifecycle| {
                 matches!(
                     lifecycle.state,
-                    LifecycleState::NearDeath
-                        | LifecycleState::AwaitingRevival
-                        | LifecycleState::Terminated
+                    LifecycleState::AwaitingRevival | LifecycleState::Terminated
                 )
             })
         };
@@ -465,9 +463,7 @@ pub fn resolve_attack_intents(
             if attacker_lifecycle.is_some_and(|lc| {
                 matches!(
                     lc.state,
-                    LifecycleState::NearDeath
-                        | LifecycleState::AwaitingRevival
-                        | LifecycleState::Terminated
+                    LifecycleState::AwaitingRevival | LifecycleState::Terminated
                 )
             }) {
                 continue;
@@ -2209,7 +2205,7 @@ pub fn resolve_attack_intents(
             && !lifecycle.is_some_and(|lifecycle| {
                 matches!(
                     lifecycle.state,
-                    LifecycleState::NearDeath | LifecycleState::Terminated
+                    LifecycleState::AwaitingRevival | LifecycleState::Terminated
                 )
             })
         {

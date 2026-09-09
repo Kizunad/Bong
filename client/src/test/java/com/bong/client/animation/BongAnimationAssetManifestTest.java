@@ -65,7 +65,6 @@ public class BongAnimationAssetManifestTest {
         "breakthrough_ningmai",
         "breakthrough_guyuan",
         "breakthrough_tongling",
-        "death_collapse",
         "death_disintegrate",
         "rebirth_wake"
     );

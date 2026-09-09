@@ -91,7 +91,7 @@ pub struct BaomaiV3BloodBurnV1 {
     pub hp_burned: f32,
     pub qi_multiplier: f32,
     pub active_until_tick: u64,
-    pub ended_in_near_death: bool,
+    pub ended_in_death: bool,
 }
 
 impl BaomaiV3BloodBurnV1 {
@@ -103,7 +103,7 @@ impl BaomaiV3BloodBurnV1 {
             hp_burned: 0.0,
             qi_multiplier: 1.0,
             active_until_tick: 0,
-            ended_in_near_death: false,
+            ended_in_death: false,
         }
     }
 }
@@ -202,26 +202,26 @@ mod tests {
     }
 
     #[test]
-    fn blood_burn_v1_serializes_near_death_field() {
+    fn blood_burn_v1_serializes_death_field() {
         let mut evt = BaomaiV3BloodBurnV1::new("offline:Player".to_string(), 300);
         evt.hp_burned = 300.0;
         evt.qi_multiplier = 5.0;
         evt.active_until_tick = 300;
-        evt.ended_in_near_death = true;
+        evt.ended_in_death = true;
         let json = serde_json::to_value(&evt).expect("serialize BaomaiV3BloodBurnV1");
-        assert_eq!(json["ended_in_near_death"], true);
+        assert_eq!(json["ended_in_death"], true);
         assert_eq!(json["qi_multiplier"], 5.0);
     }
 
     #[test]
-    fn blood_burn_v1_normal_path_not_near_death() {
+    fn blood_burn_v1_normal_path_not_death() {
         let mut evt = BaomaiV3BloodBurnV1::new("offline:Player".to_string(), 300);
         evt.hp_burned = 150.0;
         evt.qi_multiplier = 3.5;
         evt.active_until_tick = 360;
-        evt.ended_in_near_death = false;
+        evt.ended_in_death = false;
         let json = serde_json::to_value(&evt).expect("serialize BaomaiV3BloodBurnV1 normal");
-        assert_eq!(json["ended_in_near_death"], false);
+        assert_eq!(json["ended_in_death"], false);
     }
 
     #[test]
@@ -318,19 +318,19 @@ mod tests {
 
         assert_eq!(samples.len(), 2, "sample file should have 2 entries");
 
-        // entry 0: normal path, not near death
+        // entry 0: nonlethal blood burn
         let s0 = &samples[0];
         assert_eq!(s0.v, 1);
         assert_eq!(s0.caster_id, "offline:TestPlayer");
-        assert!(!s0.ended_in_near_death, "entry 0 should not be near-death");
+        assert!(!s0.ended_in_death, "entry 0 should survive blood burn");
         assert!(
             (s0.qi_multiplier - 3.5).abs() < 1e-3,
             "qi_multiplier mismatch"
         );
 
-        // entry 1: near-death path
+        // entry 1: lethal blood burn
         let s1 = &samples[1];
-        assert!(s1.ended_in_near_death, "entry 1 should be near-death");
+        assert!(s1.ended_in_death, "entry 1 should die from blood burn");
         assert!(
             (s1.qi_multiplier - 5.0).abs() < 1e-3,
             "qi_multiplier mismatch"

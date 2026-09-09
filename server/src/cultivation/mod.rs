@@ -1087,7 +1087,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         } else if persisted_bundle.is_none() && !cultivation_bundle_load_failed {
             // 全新角色（无持久化 bundle）首次 join：立即落盘默认 bundle。否则在首笔
             // 周期 qi 持久化写回之前死亡并复活（combat_reincarnate）会因
-            // `player_cultivation` 无行而 fail closed——新玩家在 30s 濒死窗内死亡即
+            // `player_cultivation` 无行而 fail closed——新玩家首次周期写回前死亡即
             // 卡死死亡屏（实测）。`cultivation_bundle_load_failed` 时是拒写回会话，
             // 保持严格不落盘。
             if let Err(error) = crate::persistence::persist_player_cultivation_bundle(
@@ -2095,7 +2095,7 @@ mod tests {
 
     fn terminated_life_record(character_id: &str) -> LifeRecord {
         let mut record = LifeRecord::new(character_id.to_string());
-        record.push(BiographyEntry::NearDeath {
+        record.push(BiographyEntry::Death {
             cause: "old_test_wound".to_string(),
             tick: 40,
         });
@@ -2379,8 +2379,8 @@ mod tests {
         let canonical_id = crate::player::state::player_character_id("Azure", &raw_id);
 
         let mut life_record = LifeRecord::new(canonical_id.clone());
-        // 关键：只有 NearDeath，没有 Terminated —— 角色仍然"活着"。
-        life_record.push(BiographyEntry::NearDeath {
+        // 只有死亡记录而未终结，重连不能创建新角色。
+        life_record.push(BiographyEntry::Death {
             cause: "close_call".to_string(),
             tick: 10,
         });
@@ -2853,7 +2853,6 @@ mod tests {
                     last_revive_tick: None,
                     spawn_anchor: None,
                     spawn_anchor_damaged: false,
-                    near_death_deadline_tick: None,
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: None,

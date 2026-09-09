@@ -73,7 +73,6 @@ public final class BongAnimations {
     public static final Identifier BREAKTHROUGH_TONGLING = new Identifier(MOD_ID, "breakthrough_tongling");
     public static final Identifier TRIBULATION_BRACE = new Identifier(MOD_ID, "tribulation_brace");
     public static final Identifier ENLIGHTENMENT_POSE = new Identifier(MOD_ID, "enlightenment_pose");
-    public static final Identifier DEATH_COLLAPSE = new Identifier(MOD_ID, "death_collapse");
     public static final Identifier DEATH_DISINTEGRATE = new Identifier(MOD_ID, "death_disintegrate");
     public static final Identifier REBIRTH_WAKE = new Identifier(MOD_ID, "rebirth_wake");
     public static final Identifier BOW_SALUTE = new Identifier(MOD_ID, "bow_salute");
@@ -188,7 +187,6 @@ public final class BongAnimations {
         BREAKTHROUGH_NINGMAI,
         BREAKTHROUGH_GUYUAN,
         BREAKTHROUGH_TONGLING,
-        DEATH_COLLAPSE,
         DEATH_DISINTEGRATE,
         REBIRTH_WAKE
     );

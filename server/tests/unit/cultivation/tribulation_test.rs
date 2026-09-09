@@ -3830,14 +3830,14 @@ fn spectator_death_by_tribulation_aoe_is_written_to_life_record() {
         .world()
         .get::<Lifecycle>(spectator)
         .expect("spectator lifecycle should remain attached");
-    assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+    assert_eq!(lifecycle.state, LifecycleState::AwaitingRevival);
     let life = app
         .world()
         .get::<LifeRecord>(spectator)
         .expect("spectator life record should remain attached");
     assert!(matches!(
         life.biography.last(),
-        Some(BiographyEntry::NearDeath { cause, tick }) if cause == "观劫而亡" && *tick == 300
+        Some(BiographyEntry::Death { cause, tick }) if cause == "观劫而亡" && *tick == 300
     ));
     assert_eq!(app.world().resource::<Events<TribulationFailed>>().len(), 0);
 

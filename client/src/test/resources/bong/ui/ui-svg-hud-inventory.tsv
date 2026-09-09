@@ -30,7 +30,6 @@ DAMAGE_FLOATER	DAMAGE_FLOATER	COMMAND	MINECRAFT_GUI	DamageFloaterHudPlanner		dam
 FLIGHT_HUD	FLIGHT_HUD	COMMAND	MINECRAFT_GUI	FlightHudPlanner		flight_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 COFFIN	COFFIN	COMMAND	MINECRAFT_GUI	CoffinHudPlanner		coffin_state	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 TRIBULATION	TRIBULATION	COMMAND	MINECRAFT_GUI	TribulationBroadcastHudPlanner		tribulation_state+clock	广播文字仍走 Minecraft GUI	HudRenderRegistryTest
-NEAR_DEATH	NEAR_DEATH	COMMAND	MINECRAFT_GUI	NearDeathOverlayPlanner+NearDeathCollapsePlanner		combat_state+death_state	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 TSY_EXTRACT	TSY_EXTRACT	COMMAND	MINECRAFT_GUI	ExtractProgressHudPlanner		extract_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 HOME_SEQUENCE	HOME_SEQUENCE	COMMAND	MINECRAFT_GUI	HomeSequence		home_sequence+inventory+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 REALM_COLLAPSE	REALM_COLLAPSE	COMMAND	MINECRAFT_GUI	RealmCollapseHudPlanner		realm_collapse_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest

@@ -502,7 +502,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     app.add_systems(
         Update,
         combat_bridge::publish_death_cinematic_events
-            .after(crate::combat::lifecycle::near_death_tick),
+            .after(crate::combat::lifecycle::death_arbiter_tick),
     );
     app.add_systems(
         Update,

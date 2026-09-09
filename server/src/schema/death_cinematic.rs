@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeathCinematicPhaseV1 {
-    Predeath,
-    DeathMoment,
     Roll,
     InsightOverlay,
     Darkness,
@@ -54,5 +52,4 @@ pub struct DeathCinematicS2cV1 {
     pub zone_kind: DeathCinematicZoneKindV1,
     pub tsy_death: bool,
     pub rebirth_weakened_ticks: u64,
-    pub skip_predeath: bool,
 }

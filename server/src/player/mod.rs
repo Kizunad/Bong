@@ -545,7 +545,7 @@ pub(crate) fn despawn_disconnected_clients(
             }
             // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须落盘死亡/
             // 复活状态机，否则重连时 attach_combat_bundle_to_joined_clients 只能盲插
-            // Lifecycle::default()，把 NearDeath/AwaitingRevival 玩家重置成满状态新角色。
+            // Lifecycle::default()，把 AwaitingRevival 玩家重置成满状态新角色。
             if let Some(lifecycle) = lifecycle {
                 if let Err(error) = save_player_lifecycle_slice(
                     &persistence,
@@ -706,7 +706,7 @@ fn flush_connected_players_on_shutdown(
         }
         // bughunt player-lifecycle-relog-death-consequence-wipe：关服时同样要落盘死亡/
         // 复活状态机（同 despawn_disconnected_clients 的写路径），否则重启后重连会命中
-        // 老档缺失行、回退到 Lifecycle::default() 抹掉关服前的濒死/待复活状态。
+        // 老档缺失行、回退到 Lifecycle::default() 抹掉关服前的待复活状态。
         if let Some(lifecycle) = lifecycle {
             if let Err(error) = save_player_lifecycle_slice(
                 &persistence,
@@ -1311,9 +1311,9 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert(Lifecycle {
-            state: LifecycleState::NearDeath,
+            state: LifecycleState::AwaitingRevival,
             fortune_remaining: 2,
-            near_death_deadline_tick: Some(1_020),
+            revival_decision_deadline_tick: Some(1_020),
             ..Lifecycle::default()
         });
 
@@ -1327,7 +1327,7 @@ mod tests {
             serde_json::from_str(&lifecycle_json).expect("persisted lifecycle_json should decode");
         assert_eq!(
             persisted.state,
-            LifecycleState::NearDeath,
+            LifecycleState::AwaitingRevival,
             "60s autosave 边界 tick 必须落盘当前 Lifecycle 状态"
         );
         assert_eq!(persisted.fortune_remaining, 2);
@@ -1368,7 +1368,7 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().entity_mut(entity).insert(Lifecycle {
-            state: LifecycleState::NearDeath,
+            state: LifecycleState::AwaitingRevival,
             ..Lifecycle::default()
         });
 
@@ -1584,7 +1584,7 @@ mod tests {
         // 状态机落盘（同 disconnect_auto_releases_morph_state_before_persist_snapshot 的
         // RemovedComponents<Client> 触发模式），否则重连时
         // attach_combat_bundle_to_joined_clients 只能盲插 Lifecycle::default()，把
-        // AwaitingRevival + fortune_remaining=0 的濒死玩家重置成满状态新角色，完全绕过
+        // AwaitingRevival + fortune_remaining=0 的待复活玩家重置成满状态新角色，完全绕过
         // 渡劫概率判定与永久终结风险。
         use crate::combat::components::{LifecycleState, RevivalDecision};
 
@@ -1616,7 +1616,6 @@ mod tests {
             last_revive_tick: Some(500),
             spawn_anchor: Some([9.0, 64.0, -3.0]),
             spawn_anchor_damaged: true,
-            near_death_deadline_tick: None,
             awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
             revival_decision_deadline_tick: Some(1_600),
             weakened_until_tick: None,
@@ -1729,8 +1728,8 @@ mod tests {
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
         app.world_mut().entity_mut(entity).insert(Lifecycle {
-            state: LifecycleState::NearDeath,
-            near_death_deadline_tick: Some(777_600),
+            state: LifecycleState::AwaitingRevival,
+            revival_decision_deadline_tick: Some(777_600),
             ..Lifecycle::default()
         });
 
@@ -1797,11 +1796,8 @@ mod tests {
         // bughunt player-lifecycle-relog-death-consequence-wipe：关服时的 flush 路径
         // （flush_connected_players_on_shutdown）与断线路径共享同一个漏洞面，必须同样
         // 落盘 Lifecycle，否则重启后重连会命中老档缺失行、回退到 Lifecycle::default()
-        // 抹掉关服前的濒死/待复活状态。这里专注 NearDeath 分支（AwaitingRevival +
-        // RevivalDecision 已由 disconnect_flush_persists_lifecycle_state_before_cleanup
-        // 覆盖，避免重复断言）。
-        use crate::combat::components::LifecycleState;
-
+        // 关服必须保存待复活状态、裁决和剩余窗口。
+        use crate::combat::components::{LifecycleState, RevivalDecision};
         let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-shutdown-flush");
         crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
             .expect("baseline player state should persist");
@@ -1823,10 +1819,10 @@ mod tests {
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
         app.world_mut().entity_mut(entity).insert(Lifecycle {
-            state: LifecycleState::NearDeath,
+            state: LifecycleState::AwaitingRevival,
             fortune_remaining: 1,
-            near_death_deadline_tick: Some(2_000),
-            awaiting_decision: None,
+            revival_decision_deadline_tick: Some(2_000),
+            awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
             ..Lifecycle::default()
         });
 
@@ -1839,12 +1835,15 @@ mod tests {
 
         assert_eq!(
             persisted.state,
-            LifecycleState::NearDeath,
-            "关服前的 NearDeath 濒死状态必须落盘"
+            LifecycleState::AwaitingRevival,
+            "关服前的 AwaitingRevival 待复活状态必须落盘"
         );
         assert_eq!(persisted.fortune_remaining, 1);
-        assert_eq!(persisted.near_death_deadline_tick, Some(2_000));
-        assert_eq!(persisted.awaiting_decision, None);
+        assert_eq!(persisted.revival_decision_deadline_tick, Some(2_000));
+        assert_eq!(
+            persisted.awaiting_decision,
+            Some(RevivalDecision::Fortune { chance: 1.0 })
+        );
 
         let _ = fs::remove_dir_all(&data_dir);
     }

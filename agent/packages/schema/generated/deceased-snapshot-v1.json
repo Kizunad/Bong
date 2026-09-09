@@ -85,10 +85,6 @@
           "minItems": 3,
           "maxItems": 3
         },
-        "near_death_deadline_tick": {
-          "minimum": 0,
-          "type": "integer"
-        },
         "awaiting_decision": {
           "anyOf": [
             {
@@ -147,10 +143,6 @@
           "anyOf": [
             {
               "const": "Alive",
-              "type": "string"
-            },
-            {
-              "const": "NearDeath",
               "type": "string"
             },
             {
@@ -740,10 +732,10 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
-                  "NearDeath"
+                  "Death"
                 ],
                 "properties": {
-                  "NearDeath": {
+                  "Death": {
                     "type": "object",
                     "required": [
                       "cause",
@@ -1516,5 +1508,5 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "fe1d4cc4263e9500410ed1ab98df8b7588b5e450bbbb91c1b2599db33270262e"
+  "x-bong-typebox-source-sha256": "6d8495fb61b9ba319d184075c655ef41172b792daf347abfff14191fea6c7038"
 }

@@ -267,7 +267,7 @@ class ProtoServerDataBridgeTest {
                 "顶层 zone_kind 剥成 'negative'（DeathScreen.zoneLabel）");
         JsonObject cinematic = json.getAsJsonObject("cinematic");
         assertEquals("roll", cinematic.get("phase").getAsString(),
-                "cinematic.phase 剥成 'roll'（DeathCinematicState.Phase.fromWire），否则过场永远卡 PREDEATH");
+                "cinematic.phase 剥成 'roll'（DeathCinematicState.Phase.fromWire），否则过场阶段名无法识别");
         assertEquals("death", cinematic.get("zone_kind").getAsString(),
                 "cinematic.zone_kind 一并归一化为 'death' 保持桥输出统一");
         assertEquals("survive", cinematic.getAsJsonObject("roll").get("result").getAsString(),

@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub fn persist_near_death_transition(
+pub fn persist_death_transition(
     settings: &PersistenceSettings,
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
@@ -508,7 +508,7 @@ pub(super) fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::CombatHit { .. } => "combat_hit",
         BiographyEntry::DuguPoisonInflicted { .. } => "dugu_poison_inflicted",
         BiographyEntry::JiemaiParry { .. } => "jiemai_parry",
-        BiographyEntry::NearDeath { .. } => "near_death",
+        BiographyEntry::Death { .. } => "death",
         BiographyEntry::Terminated { .. } => "terminated",
         BiographyEntry::LifespanExtended { .. } => "lifespan_extended",
         BiographyEntry::DuoShePerformed { .. } => "duoshe_performed",
@@ -599,7 +599,7 @@ pub(super) fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::CombatHit { tick, .. }
         | BiographyEntry::DuguPoisonInflicted { tick, .. }
         | BiographyEntry::JiemaiParry { tick, .. }
-        | BiographyEntry::NearDeath { tick, .. }
+        | BiographyEntry::Death { tick, .. }
         | BiographyEntry::Terminated { tick, .. }
         | BiographyEntry::LifespanExtended { tick, .. }
         | BiographyEntry::DuoShePerformed { tick, .. }
