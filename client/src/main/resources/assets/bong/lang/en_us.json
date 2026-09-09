@@ -1,0 +1,10 @@
+{
+  "bong.menu.enter": "Enter",
+  "bong.menu.entering": "Entering",
+  "bong.menu.config_missing": "No server configured",
+  "bong.menu.config_invalid": "Invalid server configuration",
+  "bong.menu.connection_failed": "Unable to connect",
+  "bong.menu.disconnected": "Disconnected",
+  "bong.menu.retry": "Retry",
+  "bong.menu.back": "Back"
+}
