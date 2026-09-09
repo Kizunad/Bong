@@ -1788,13 +1788,42 @@ fn huiyuan_pill_instance(instance_id: u64, stack_count: u32) -> ItemInstance {
 
 fn inventory_with_huiyuan_pills(pills: &[(u64, u32)]) -> PlayerInventory {
     assert!(pills.len() <= 9, "测试 hotbar 最多容纳 9 个实例");
-    let mut hotbar = <[Option<ItemInstance>; 9]>::default();
-    for (slot, (instance_id, stack_count)) in pills.iter().copied().enumerate() {
+    let hotbar_capacity = crate::schema::inventory::HOTBAR_SLOT_COUNT;
+    let mut hotbar =
+        <[Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT]>::default();
+    for (slot, (instance_id, stack_count)) in
+        pills.iter().copied().take(hotbar_capacity).enumerate()
+    {
         hotbar[slot] = Some(huiyuan_pill_instance(instance_id, stack_count));
     }
+    let containers = if pills.len() > hotbar_capacity {
+        vec![crate::inventory::ContainerState {
+            id: "body_pocket".to_string(),
+            name: "贴身暗袋".to_string(),
+            rows: 1,
+            cols: (pills.len() - hotbar_capacity) as u8,
+            items: pills
+                .iter()
+                .copied()
+                .skip(hotbar_capacity)
+                .enumerate()
+                .map(
+                    |(col, (instance_id, stack_count))| crate::inventory::PlacedItemState {
+                        row: 0,
+                        col: col as u8,
+                        instance: huiyuan_pill_instance(instance_id, stack_count),
+                    },
+                )
+                .collect(),
+            owner_instance_id: None,
+            quick_access: false,
+        }]
+    } else {
+        Vec::new()
+    };
     PlayerInventory {
         revision: crate::inventory::InventoryRevision(0),
-        containers: Vec::new(),
+        containers,
         equipped: Default::default(),
         hotbar,
         bone_coins: 0,
