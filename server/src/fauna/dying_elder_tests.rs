@@ -1142,9 +1142,7 @@ fn give_dan_rejection_paths_leave_inventory_ledger_and_elder_unchanged() {
         app.insert_resource(WorldQiAccount::default());
         match registry_case {
             RegistryCase::Real => {
-                app.insert_resource(
-                    crate::inventory::load_item_registry().expect("真实 registry"),
-                );
+                app.insert_resource(crate::inventory::load_item_registry().expect("真实 registry"));
             }
             RegistryCase::Missing => {}
             RegistryCase::Empty => {
@@ -1154,9 +1152,9 @@ fn give_dan_rejection_paths_leave_inventory_ledger_and_elder_unchanged() {
                 app.insert_resource(registry_with_effect(None));
             }
             RegistryCase::WrongEffect => {
-                app.insert_resource(registry_with_effect(Some(
-                    ItemEffect::BreakthroughBonus { magnitude: 1.0 },
-                )));
+                app.insert_resource(registry_with_effect(Some(ItemEffect::BreakthroughBonus {
+                    magnitude: 1.0,
+                })));
             }
             RegistryCase::QiRecovery(amount) => {
                 app.insert_resource(registry_with_effect(Some(ItemEffect::QiRecovery {
@@ -1462,9 +1460,7 @@ fn give_dan_precedes_last_breath_drain_in_same_tick() {
         "同 tick 必须先给丹续命，再执行 drain"
     );
     let expected_qi = 1.0 + qi_gain - expected_drain;
-    assert!(
-        (elder_ref.get::<Cultivation>().unwrap().qi_current - expected_qi).abs() <= QI_EPSILON
-    );
+    assert!((elder_ref.get::<Cultivation>().unwrap().qi_current - expected_qi).abs() <= QI_EPSILON);
     assert!(
         (elder_ref.get::<DyingElderBlackboard>().unwrap().qi_current - expected_qi).abs()
             <= QI_EPSILON
@@ -1639,8 +1635,7 @@ fn drain_system_without_ledger_keeps_both_components_unchanged() {
 
     let elder_ref = app.world().entity(elder);
     assert!(
-        (elder_ref.get::<DyingElderBlackboard>().unwrap().qi_current - 100.0).abs()
-            <= QI_EPSILON
+        (elder_ref.get::<DyingElderBlackboard>().unwrap().qi_current - 100.0).abs() <= QI_EPSILON
     );
     assert!((elder_ref.get::<Cultivation>().unwrap().qi_current - 100.0).abs() <= QI_EPSILON);
     assert_eq!(
@@ -2748,9 +2743,7 @@ fn death_broadcasts_once_while_release_retries_until_single_success() {
         !first.contains::<DyingElderDeathProcessed>(),
         "首次释放失败后结算必须保持可重试"
     );
-    assert!(
-        (first.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON
-    );
+    assert!((first.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON);
     assert!(
         (first.get::<Cultivation>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON,
         "首次失败不得扣 Cultivation 物理权威"
@@ -2763,9 +2756,7 @@ fn death_broadcasts_once_while_release_retries_until_single_success() {
         !second.contains::<DyingElderDeathProcessed>(),
         "连续第二次失败仍不得封死结算重试"
     );
-    assert!(
-        (second.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON
-    );
+    assert!((second.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON);
     assert!(
         (second.get::<Cultivation>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON,
         "连续失败不得扣 Cultivation 物理权威"
@@ -2985,8 +2976,8 @@ fn death_system_soul_seize_qi_max_not_exceed_original() {
 #[test]
 fn loot_pools_honor_betrayal_pool_exists_in_json() {
     // 期望：dying_elder_secondary_honorable 和 dying_elder_secondary_betrayal 在 loot_pools.json 中定义
-    let registry = crate::world::loot_pool::load_loot_pool_registry()
-        .expect("loot_pools.json 必须能成功加载");
+    let registry =
+        crate::world::loot_pool::load_loot_pool_registry().expect("loot_pools.json 必须能成功加载");
     assert!(
         registry.get("dying_elder_secondary_honorable").is_some(),
         "loot_pools.json 应包含 dying_elder_secondary_honorable pool（守信结局掉落池）"
@@ -3000,17 +2991,17 @@ fn loot_pools_honor_betrayal_pool_exists_in_json() {
 #[test]
 fn loot_pools_reference_only_known_templates() {
     // 期望：两个 dying_elder loot pool 中的 template_id 均在 ItemRegistry 中
-    let pools = crate::world::loot_pool::load_loot_pool_registry()
-        .expect("loot_pools.json 必须能成功加载");
+    let pools =
+        crate::world::loot_pool::load_loot_pool_registry().expect("loot_pools.json 必须能成功加载");
     let items = crate::inventory::load_item_registry().expect("ItemRegistry 必须能成功加载");
 
     for pool_id in &[
         "dying_elder_secondary_honorable",
         "dying_elder_secondary_betrayal",
     ] {
-        let pool = pools.get(pool_id).unwrap_or_else(|| {
-            panic!("pool '{pool_id}' 应在 loot_pools.json 中（见上一个测试）")
-        });
+        let pool = pools
+            .get(pool_id)
+            .unwrap_or_else(|| panic!("pool '{pool_id}' 应在 loot_pools.json 中（见上一个测试）"));
         for entry in &pool.entries {
             assert!(
                 items.get(&entry.template_id).is_some(),
