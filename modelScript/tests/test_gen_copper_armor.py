@@ -24,7 +24,7 @@ class CopperArmorGeneratorTest(unittest.TestCase):
             ["copper_helmet", "copper_chestplate", "copper_leggings", "copper_boots"],
             [part.key for part in parts],
         )
-        self.assertEqual([19, 25, 18, 16], [len(part.cubes) for part in parts])
+        self.assertEqual([25, 34, 30, 20], [len(part.cubes) for part in parts])
         for part in parts:
             validate_part(part)
 
