@@ -6911,9 +6911,8 @@ fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .find(|path| {
-                path.file_name().is_some_and(|name| {
-                    name.to_string_lossy().starts_with(".bundle.json.zst.tmp-")
-                })
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(".bundle.json.zst.tmp-"))
             })
             .expect("write hook should observe the temporary archive");
         fs::remove_file(temp_path)
@@ -6952,11 +6951,8 @@ fn write_zstd_bundle_surfaces_primary_and_cleanup_failures() {
         "aggregating cleanup diagnostics must preserve the primary error kind"
     );
 
-    let aggregate = error
-        .get_ref()
-        .expect("io error should retain aggregate");
-    let primary =
-        std::error::Error::source(aggregate).expect("aggregate should retain primary");
+    let aggregate = error.get_ref().expect("io error should retain aggregate");
+    let primary = std::error::Error::source(aggregate).expect("aggregate should retain primary");
     assert_eq!(
         primary.to_string(),
         "injected primary write failure",
