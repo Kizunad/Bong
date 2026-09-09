@@ -74,6 +74,14 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_LEG, -2.05f, 4.20f);
         assertPinnedTable("copper_boots", 20, ArmorPartModel.Mount.LEFT_FOOT, -2.10f, 3.80f,
             ArmorPartModel.Mount.RIGHT_FOOT, -2.30f, -0.25f);
+        assertPinnedTable("hide_helmet", 25, ArmorPartModel.Mount.HEAD, -4.5f, 32.0f,
+            ArmorPartModel.Mount.HEAD, 5.3f, 29.5f);
+        assertPinnedTable("hide_chestplate", 53, ArmorPartModel.Mount.BODY, -4.35f, 12.7f,
+            ArmorPartModel.Mount.BODY, -0.7f, 12.25f);
+        assertPinnedTable("hide_leggings", 52, ArmorPartModel.Mount.LEFT_LEG, -1.9f, 10.35f,
+            ArmorPartModel.Mount.RIGHT_LEG, 0.95f, 6.98f);
+        assertPinnedTable("hide_boots", 48, ArmorPartModel.Mount.LEFT_FOOT, -1.88f, 2.35f,
+            ArmorPartModel.Mount.RIGHT_FOOT, 0.54f, 1.78f);
     }
 
     @Test
@@ -90,7 +98,11 @@ class ArmorPartModelTest {
             Map.entry("copper_helmet", "19012a4e9f97ffce"),
             Map.entry("copper_chestplate", "c1a051e55dd292f4"),
             Map.entry("copper_leggings", "1a007e03d9a0e0bc"),
-            Map.entry("copper_boots", "cf4d77f234feba7d")
+            Map.entry("copper_boots", "cf4d77f234feba7d"),
+            Map.entry("hide_helmet", "4e8c7027c6b36712"),
+            Map.entry("hide_chestplate", "847b3c40bfa77688"),
+            Map.entry("hide_leggings", "47546b41e4b1db2b"),
+            Map.entry("hide_boots", "e71ff51d9c459d8c")
         );
 
         assertEquals(expected.keySet(), ArmorPartModel.modelKeys(), "digest 表必须覆盖全部运行时模型");
