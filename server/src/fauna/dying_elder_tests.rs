@@ -1787,8 +1787,12 @@ fn huiyuan_pill_instance(instance_id: u64, stack_count: u32) -> ItemInstance {
 }
 
 fn inventory_with_huiyuan_pills(pills: &[(u64, u32)]) -> PlayerInventory {
-    assert!(pills.len() <= 9, "测试 hotbar 最多容纳 9 个实例");
+    const BODY_POCKET_CAPACITY: usize = 35;
     let hotbar_capacity = crate::schema::inventory::HOTBAR_SLOT_COUNT;
+    assert!(
+        pills.len() <= hotbar_capacity + BODY_POCKET_CAPACITY,
+        "测试 inventory 超出 hotbar 与 body_pocket 的容量"
+    );
     let mut hotbar =
         <[Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT]>::default();
     for (slot, (instance_id, stack_count)) in
