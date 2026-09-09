@@ -107,6 +107,24 @@ class ArmorFeatureRendererTest {
         }
     }
 
+    @Test
+    void collectRenderableRejectsHideArmorInEveryWrongSlot() {
+        for (String piece : new String[]{"helmet", "chestplate", "leggings", "boots"}) {
+            String templateId = "armor_hide_" + piece;
+            for (EquipSlotType wrongSlot : ArmorFeatureRenderer.ARMOR_SLOTS) {
+                EquipSlotType correctSlot = ArmorModelRegistry.get(templateId).orElseThrow().slot();
+                if (wrongSlot == correctSlot) {
+                    continue;
+                }
+
+                EnumMap<EquipSlotType, SlotContents> slots = new EnumMap<>(EquipSlotType.class);
+                slots.put(wrongSlot, SlotContents.ofWorn(item(templateId, 1.0)));
+                assertTrue(ArmorFeatureRenderer.collectRenderable(slots).isEmpty(),
+                    templateId + " 放入 " + wrongSlot + " 时必须拒绝错槽渲染");
+            }
+        }
+    }
+
     private static InventoryItem item(String itemId, double durability) {
         return InventoryItem.createFull(
             1L,
