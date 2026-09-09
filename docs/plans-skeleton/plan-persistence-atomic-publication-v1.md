@@ -131,14 +131,14 @@
 
 ### P2 — 归档身份与 CAS 批次回滚
 
-- 按 P0 决议在 `helpers.rs`/`npc.rs` 落最小的 `ArchiveFileIdentity` 与 `ensure_archive_identity` 责任（若决议保留这些命名），证明目标是本次发布者创建且 NPC payload 未被改换。
-- 发布采用 no-replace 语义；`prepared_archives` 只登记本批次实际发布且身份可证明的文件。
+- 按 P0 决议在 `helpers.rs`/`npc.rs` 落最小的 `ArchiveFileIdentity` 与 `ensure_archive_identity` 责任（若决议保留这些命名）：从已写入并同步的临时文件句柄在 `hard_link` 前捕获预期 identity，再证明最终目标与之匹配且 NPC payload 未被改换。
+- 发布采用 no-replace 语义；`prepared_archives` 只登记本批次已成功发布、且使用 `hard_link` 前捕获的预期 identity 可证明的文件，并保留临时文件句柄到该批次事务提交或回滚结束。批次大小由当前进程的文件描述符预算推导，不得用无界 stale-row 列表累积句柄。
 - CAS 失败时在 SQLite transaction 返回前回滚本批次已发布文件；每个 `rollback_file` 只在 identity 匹配时操作，回滚失败通过 `combine_persistence_failure` 与 primary error 聚合。
 - 不改变迁移链、表结构、事务边界或 R3 P0 生产接入点；为既有文件、目标消失、identity mismatch、混合批次和回滚失败分别补回归。
 
 ### P3 — 发布后替换竞态
 
-- 收口 `published_by_sweep` 仅依据发布前状态授予删除权的问题：若未协调 writer 在发布后至 `archive_file_identity` 采样前替换同 payload 目标，失败回滚不得误删后继文件。
+- 收口 `published_by_sweep` 仅依据发布前状态授予删除权的问题：预期 identity 必须在 `hard_link` 前从本次临时句柄捕获；若未协调 writer 在发布后至最终路径核验前替换同 payload 目标，核验与失败回滚不得误删后继文件。最终路径采样只是与预期 identity 的核验窗口。
 - 设计必须复用 P0 已决策的生命周期锁、no-replace 与身份/ownership 机制；不得通过“内容相同所以仍归本方”放宽删除条件。
 - 回归测试要在 identity 采样窗口注入 successor replacement，断言 successor 保留、数据库批次按契约回滚、ownership 错误可观察；并覆盖 deceased 与 digest 两条归档路径。
 
@@ -146,6 +146,7 @@
 
 - 为三条不变式建立完整矩阵：happy path、空/缺失 metadata、目标不存在、既有文件、锁竞争、同 payload successor、不同 payload successor、CAS 失败、主错误+回滚错误、单条准备失败和多条混合批次。
 - 断言外部可观察文件/SQLite/error/report 行为，不把测试绑定到 helper 调用次数或私有中间字段；并发测试必须说明调度控制、锁范围和失败方观测结果。
+- 另测文件描述符预算的 `B == 0`、`B == 1`、多批次提交、句柄保持到提交/回滚结束，以及失败后 attempt 闸门不在同一 tick 重复扫描；批次上限必须由 `RLIMIT_NOFILE`、实时 FD 占用和 helper 峰值推导，不能用固定条数冒充资源安全。
 - 运行 persistence 定向回归、完整 server fmt/clippy/test；每次修复或 merge 后证据必须绑定精确 HEAD，不得用早于文档/代码的 gate 或 validator 结果背书。
 - 对 `world_qi.rs` 做守恒与恢复核验：固定 durable owner、非法快照 fail-closed、失败无部分 hydrate、无伪造 transfer；必要的 bot/e2e 跨栈依赖另行登记，不将 server-only 测试冒充端到端链路。
 
@@ -184,6 +185,56 @@
 2. 批次中途失败选择**全回滚**，还是允许**部分发布 + 幂等重放**？两种语义如何分别与 SQLite hot-row transaction、恢复扫描和重复执行相容？
 3. 文件身份采用 **inode**、内容 **digest**，还是两者兼备？在 successor 使用同 payload 时，什么组合仍能证明 ownership 而不误删？
 4. 是否把这套机制抽成供 persistence 各切片共用的通用 helper？`npc.rs`、`helpers.rs` 与其他切片之间的共用边界是什么；若抽象会扩大 public/seam，如何冻结在最小可见性？
+
+全部已在 §8.1 收口。原表保留以备追溯，实施时以 §8.1 决议为准。
+
+## 8.1 决议（pre-P0 收口，2026-09-09）
+
+> 证据基线：以下代码行号由 `git show origin/main:<path> | nl -ba` 与 `git grep origin/main` 在 `origin/main@3748d52a77882f8352b408d2d83b3e70ed89a36c` 上实读得到。本文中的 `ArchiveFileIdentity`、`ensure_archive_identity`、`prepared_archives`、`combine_persistence_failure` 等名称仍是本 plan 的拟议实现面，不是当前主线 API；§3 三条不变式保持原样不动。
+
+### #1 发布语义：同目录 `link(2)` + `unlink(2)` 的 no-replace 发布
+
+**决议**：
+
+1. 选用“同一目标目录内创建临时文件 → 写入完整压缩 bytes 并 `sync_all` → 从仍打开的临时文件句柄取得 `(st_dev, st_ino)`，保存实际写入 bytes 的 digest 作为预期 identity → `std::fs::hard_link(temp, final)` → 仅将最终路径与预期 identity 比对核验”的序列；Linux 上 `std::fs::hard_link` 使用 `link(2)`，`link(2)` 是原子 no-replace 边界：目标已存在时返回 `AlreadyExists`，失败方不得覆盖或删除现有目标。临时文件继续用 `OpenOptions::create_new(true)`，因此临时名字也不会互相覆盖。
+2. `link(2)` 成功建立最终目录项且最终路径匹配预期 identity 后，最终文件视为已发布；临时文件句柄必须保持到 SQLite transaction 提交或回滚结束，之后才用 `unlink(2)` 清理临时名字。临时名字清理失败必须作为可观察的 cleanup/rollback 诊断返回并交给恢复扫描处理，但不能因此按路径删除已发布最终文件；必要的目录同步随该发布/收尾序列完成，以保留 Linux 崩溃后的目录项可恢复性。
+3. 拒绝普通 `fs::rename`/`rename(2)`：它虽在同一文件系统内原子，却会覆盖已有目标；“`O_EXCL` 临时文件后再 `rename`”仍然保留覆盖窗口。也不以没有现有实现/依赖的跨平台 rename fallback 掩盖 no-replace 约束；本 plan 的生产运行面限定为 Linux，同文件系统由临时文件与最终文件位于同一目标目录保证，其他平台应 fail-closed 并另行决策。
+
+**落点**：代码锚点为 `server/src/persistence/helpers.rs:297-334`（当前压缩、`create_new` 临时文件和会覆盖目标的 `fs::rename`）以及 `server/src/persistence/npc.rs:176-226,252-290`（deceased/digest 两条发布调用链）；plan 锚点为 §3「不变式三」、§4 P2「no-replace」、§4 P4「失败矩阵」和本节 #1。
+
+### #2 批次失败语义：数据库全回滚，文件按 ownership 全回滚，残留只能作为可诊断恢复状态
+
+**决议**：
+
+1. 选用“每个受文件描述符预算约束的批次全回滚”，不采用无界 sweep 的“部分发布 + 幂等重放”作为正常成功语义。每个批次在读取 bounded stale rows 之前开启一个 SQLite transaction，并将该批次的文件发布、最终路径核验、hot-row 删除和 index 变更纳入同一事务生命周期；transaction 未提交时 hot rows/index 不得留下本批次的删除或推进。已发布文件由 `prepared_archives` 逐项登记其路径、`hard_link` 前从临时句柄捕获的预期 identity 以及保持中的句柄；只有发布后最终路径与该预期 identity 匹配才进入登记，失败时仅按这份预期 identity 回滚本批次文件，并用 `combine_persistence_failure` 同时保留主错误与回滚/ownership 错误；单条预处理失败仍按既有逐条隔离语义跳过该条、继续健康条目，未发布条目不进入回滚清单。
+2. 正常错误路径的逻辑结果必须是“事务未提交 + 本批次自有归档已撤销”。进程崩溃、目录同步失败或清理失败造成的已发布但未索引文件/临时名字，是允许存在但不代表部分成功的恢复残留：启动恢复扫描必须把它识别为 orphan，只有能重新证明 ownership 才能清理，否则保留文件并报告，绝不按路径猜测删除。
+3. 重复执行只在恢复扫描已安全清理残留或已存在的 index/path 与保存的、来源于发布前临时句柄的归档身份能够明确对拍时幂等；没有 index 的 `AlreadyExists` 不得静默复用，必须 fail-closed 并保留诊断。多个成功批次可以各自提交，但每个批次内部仍是全回滚原子单位；某批次失败时不回滚此前已经提交的独立批次，下一次重试从仍存在的 stale rows 重新按确定性顺序取 bounded batch。
+4. 批次上限不使用固定条数魔数：每次批次开始在 Linux 读取当前进程的 `RLIMIT_NOFILE` soft limit `L`，在打开该批次 SQLite transaction 后统计当前已占用的进程 FD 数 `F`（`/proc/self/fd`），并由 helper 的固定 syscall 序列计算一次最多同时需要的非归档临时 FD 数 `T`（最终路径核验、目录同步等操作的峰值）。每个待发布归档保留一个临时文件句柄直到该批次 transaction 提交或回滚结束，因此安全批量上限是 `B = max(0, L - F - T)`；实现必须保持 `F + B + T ≤ L`，`B == 0` 时 fail-closed/延后本批次，不强行塞入一条记录。批次查询必须使用该 `B` 做 `LIMIT`（并沿现有 `last_referenced_wall, char_id` 顺序分页），不能让 `load_stale_npc_digests` 返回无界 Vec。每批申请句柄前重新核对预算；若其他同进程活动令预算变小或实际打开返回 `EMFILE`，立即按本批次契约回滚并进入 attempt 闸门，禁止临时扩大 `B` 或退回发布后采样。若 soft limit 或实时 FD 计数不可得，则 fail-closed，不猜一个条数上限。这样句柄仍覆盖整个批内事务，但数量由 OS 预算、实时 FD 占用和实际 helper 峰值推导。
+5. 当前 `NpcDigestSweepState::last_sweep_wall` 只在成功分支更新会导致失败后每个 tick 重做扫描；将 sweep 闸门改为记录每次尝试的墙钟时间（成功与失败均更新，或等价地使用私有 `last_attempt_wall`），失败批次的 rows 因 transaction/文件全回滚而保留，下一次只在既有 `NPC_DIGEST_SWEEP_INTERVAL_SECS` 间隔后重试。成功批次已删除的 rows 不会再次 I/O；进程重启后的首次尝试属于正常恢复，不通过 schema 偷加持久化游标。
+
+**落点**：代码锚点为 `server/src/persistence/npc.rs:12-15,252-290,413-431,1250-1281`（当前 sweep 状态、无界 stale-row 查询、文件发布后才开 transaction 及失败不推进 attempt 时间）、`server/src/persistence/mod.rs:112-113`（既有 sweep 间隔）和 `server/src/persistence/helpers.rs:372-422`（当前 orphan 枚举/扫描入口）；plan 锚点为 §3「不变式二」、§4 P1/P2/P4、§5 移交清单和本节 #2。
+
+### #3 文件身份：`st_dev + st_ino` 与精确 bytes digest 两者兼备
+
+**决议**：
+
+> 对原样保留的 §3 不变式中“identity 采样窗口”作明确解释：它是 `hard_link` 之后对最终路径进行采样并与发布前预期 identity 比对的窗口；该采样结果只能用于核验/拒绝，不能成为 ownership 的来源。ownership 永远来自 `hard_link` 前的临时文件句柄。
+
+1. `ArchiveFileIdentity`（拟引入）必须在 `hard_link` 前从本次 `create_new` 临时文件的仍打开句柄捕获 Linux 文件身份 `(st_dev, st_ino)`，并保存已成功写入、`sync_all` 完成的完整 compressed bytes 的固定 digest；NPC 归档额外解压并校验 payload 的 `char_id`、归档记录语义与预期输入。digest 必须覆盖实际发布的完整 compressed bytes，而不是仅覆盖路径或未经发布的对象表示；`NpcDeceasedArchiveRecord` 的字段边界以当前模型为准。
+2. `hard_link` 发布成功后立即用最终路径读取 metadata/bytes/payload 与这份发布前预期 identity 比对；最终路径采样只用于核验，绝不用于直接授予 ownership。每次撤销前在同一 `.npc.lifecycle.lock` 保护下再次执行该匹配，且临时文件句柄保持到 transaction 提交或回滚结束；只有 `(dev, ino)`、digest 和所需 payload 条件全部匹配才允许删除/恢复。目标不存在、读取失败、任一字段不匹配均 fail-closed，并通过拟议的 `combine_persistence_failure` 保留 ownership 诊断。
+3. 独立创建的 successor 即使使用完全相同 payload，也会是新的 `(st_dev, st_ino)`，所以不能因 digest 相同而复用或删除；若同一 inode 被原地改写，digest/payload 校验仍会拒绝；只有同一 inode 且 bytes 与 payload 均匹配时，才证明仍是同一个文件对象。所有遵守本协议的 writer 必须持同一生命周期锁，锁外 writer 只允许以 `link(2)` no-replace 竞争、不得替换/删除已有目标；因此最终校验与撤销在锁内不会被协议 writer 插入 successor。对任意绕过协议直接 unlink/recreate 的外部操作者不作不可能的 pathname 原子比较承诺，检测到身份变化一律不删并交恢复处理。
+
+**落点**：代码锚点为 `server/src/persistence/helpers.rs:32-49`（当前文件读取/回滚边界）、`server/src/persistence/helpers.rs:297-334`（发布 bytes 的临时文件生命周期）、`server/src/persistence/npc.rs:176-226,252-290`（两条归档 payload/transaction 路径）和 `server/src/persistence/models.rs:420-439`（NPC 归档模型字段）；plan 锚点为 §3「不变式一/二/三」、§4 P1/P2/P3 和本节 #3。
+
+### #4 通用 helper：只共享文件系统原语，保持 persistence 内部最小可见性
+
+**决议**：
+
+1. 采用窄边界共享 helper，但只覆盖 deceased 与 digest 两条确实相同的文件系统机制：临时文件写入/同步、从临时文件句柄在 `hard_link` 前捕获预期 identity、Linux no-replace 发布、发布后用最终路径做 `ensure_archive_identity` 校验、按预期 identity 回滚，以及 `combine_persistence_failure` 错误聚合。它们落在 `helpers.rs`，通过 persistence 父模块现有的内部 re-export 提供给切片；不再新增 helper 类型、ownership 概念或第二套发布抽象。
+2. helper 只返回/消费 persistence 内部所需的拟议身份与错误边界，保持 `pub(super)`（父模块 re-export 也不得扩大到 `pub`/`pub(crate)`）；不新增 `#[doc(hidden)]`、测试专用 seam 或跨 crate API。发布方必须持有临时文件句柄直到 transaction 提交或回滚结束；`npc.rs` 负责 `RLIMIT_NOFILE`/实时 FD 占用推导、bounded stale-row 分页、批次 transaction 与失败重试闸门，保留 char_id/归档 payload 解码、stale-row 选择、sweep 编排和 SQLite transaction 策略，helper 不携带批量调度或 NPC 业务决策。
+3. `player.rs`、`social.rs`、`tribulation.rs`、`void_actions.rs`、`world.rs`、`world_qi.rs` 不因“看起来可复用”接入该 helper；只有出现同一归档发布契约且另有 plan/P0 明确 owner 时才扩展。当前模块拆分与内部导出边界以 `mod.rs` 的七切片声明和现有 re-export 为准，迁移链、schema、事务边界与 R3 P0 接入点保持不变。
+
+**落点**：代码锚点为 `server/src/persistence/mod.rs:132-162`（七切片与现有内部 re-export）、`server/src/persistence/helpers.rs:297-334`（可共享文件发布边界）及 `server/src/persistence/npc.rs:12-15,176-226,252-290,413-431,1250-1281`（两个消费者、当前 sweep 状态、无界查询和事务/重试边界）；plan 锚点为 §2.1/§2.3、§3「不变式三」、§4 P2/P4、§5 移交清单和本节 #4。
 
 ## Finish Evidence
 
