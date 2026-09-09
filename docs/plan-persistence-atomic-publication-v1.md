@@ -9,7 +9,7 @@
 | 阶段 | 交付物 | 状态 | 验收日期 |
 |---|---|---|---|
 | P0 | 归档发布三条不变式、owner 模型与决策门定稿；每条都有可撞红的验证方式 | ⬜ | 待验收 |
-| P1 | `helpers.rs:330` 临时清理失败可观察、两处生产不变式 `expect` 评估 | ⬜ | 待验收 |
+| P1 | `helpers.rs:330` 临时清理失败可观察、两处生产不变式 `expect` 评估 | ✅ 2026-09-09 | 2026-09-09 |
 | P2 | 归档身份证明、no-replace 发布与 CAS 批次回滚按 P0 契约落地 | ⬜ | 待验收 |
 | P3 | `published_by_sweep` 发布后替换竞态收口，不误删 successor | ⬜ | 待验收 |
 | P4 | 饱和回归、并发/失败矩阵、完整 persistence 与 server 验收证据 | ⬜ | 待验收 |
@@ -128,13 +128,16 @@
 - `server/src/persistence/helpers.rs:330` 的 `write_zstd_bundle_with_writer` 在临时文件写入失败后保留主错误；若 `fs::remove_file(&temp_path)` 也失败，则在不引入 P2 身份/CAS 抽象的前提下返回同时包含主错误与清理错误的诊断，禁止静默丢弃清理结果。
 - 已评估并故意保留 `server/src/persistence/helpers.rs:8` 与 `server/src/persistence/mod.rs:172` 的 `expect`：前者断言受支持运行时的系统时钟不早于 Unix epoch，后者断言静态 persistence slice descriptor 注册不变量成立；两者都不是恢复路径的可恢复输入错误，改成静默降级会掩盖无法安全继续的启动/时间前提。
 - 为 `helpers.rs:330` 补能撞红的回归测试：写入主错误与临时文件清理错误同时发生时，返回错误保留两者诊断且故障临时文件仍可被后续恢复处理；实现退回 `let _ =` 时测试必须失败。
-- `npc.rs` 的 `first_error.expect` 不属于当前 P1 的真实落点：在 `origin/main@60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 上执行 `git grep -n 'first_error' origin/main -- server/src` 为 0 命中，且 `git grep -nE '\\.expect\\(|let _ =' origin/main -- server/src/persistence/npc.rs` 也为 0 命中。该项是 #2180 未合入加固分支的条件性后续：只有 P2 真正引入 CAS 批次错误聚合路径时，才在该新落点采用 `unwrap_or_else` + `io::ErrorKind::InvalidData` 并配回归测试；P1 不伪造不存在的代码落点。
+- `npc.rs` 的 `first_error.expect` 不属于当前 P1 的真实落点：在 `origin/main@60f21e6ab36bd78fdfd2606dd766b09939d3fac5` 上执行 `git grep -n 'first_error' origin/main -- server/src` 为 0 命中，且 `git grep -nE '\.expect\(|let _ =' origin/main -- server/src/persistence/npc.rs` 也为 0 命中。该项是 #2180 未合入加固分支的条件性后续：只有 P2 真正引入 CAS 批次错误聚合路径时，才在该新落点采用 `unwrap_or_else` + `io::ErrorKind::InvalidData` 并配回归测试；P1 不伪造不存在的代码落点。
+
+**P1 证据（2026-09-09）**：实现代码提交 `f4281676f294d7fba6396257519955078b61d73f`。定向命令 `../scripts/build-token.sh cargo test write_zstd_bundle_surfaces_primary_and_cleanup_failures -- --nocapture` 实际执行 `persistence::tests::write_zstd_bundle_surfaces_primary_and_cleanup_failures`，结果 `1 passed; 0 failed; 11977 filtered out`；完整 server gate 在同一 SHA 上依次执行 `../scripts/build-token.sh cargo fmt --check`、`../scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`../scripts/build-token.sh cargo test`，三条退出码均为 `0`。完整测试主库为 `11977 passed; 0 failed; 1 ignored`，main 为 `18 passed; 0 failed`，doctest 为 `3 passed; 0 failed; 5 ignored`，各登记 unit/integration target 均无失败。validator 已在该 SHA 给出 `PASS`；本切片未修改迁移链、schema、R3 P0 生产接入点或跨仓库契约，也未引入任何 P2/P3 身份、CAS、no-replace 发布抽象。后续文档提交只补充本证据与状态，不以本段替代对最终 SHA 的重新 validator。
 
 ### P2 — 归档身份与 CAS 批次回滚
 
 - 按 P0 决议在 `helpers.rs`/`npc.rs` 落最小的 `ArchiveFileIdentity` 与 `ensure_archive_identity` 责任（若决议保留这些命名）：从已写入并同步的临时文件句柄在 `hard_link` 前捕获预期 identity，再证明最终目标与之匹配且 NPC payload 未被改换。
 - 发布采用 no-replace 语义；`prepared_archives` 只登记本批次已成功发布、且使用 `hard_link` 前捕获的预期 identity 可证明的文件，并保留临时文件句柄到该批次事务提交或回滚结束。批次大小由当前进程的文件描述符预算推导，不得用无界 stale-row 列表累积句柄。
 - CAS 失败时在 SQLite transaction 返回前回滚本批次已发布文件；每个 `rollback_file` 只在 identity 匹配时操作，回滚失败通过 `combine_persistence_failure` 与 primary error 聚合。
+- 若 P2 实际引入 CAS 批次错误聚合并因此产生 `first_error` 路径，才在该真实新落点用 `unwrap_or_else` 构造 `io::ErrorKind::InvalidData` 并补回归；`origin/main` 当前没有该代码，P1 不提前添加。
 - 不改变迁移链、表结构、事务边界或 R3 P0 生产接入点；为既有文件、目标消失、identity mismatch、混合批次和回滚失败分别补回归。
 
 ### P3 — 发布后替换竞态
