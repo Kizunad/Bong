@@ -11,6 +11,15 @@
 | P2 | Round 2 人工闸门（接触表 + 特征清单点名 9/9 通过） | ✅ 2026-09-08 |
 | P3 | Round 3 终轮打磨 + PROMISE 担保 + 客户端接线与测试闭环 | ✅ 2026-09-08 |
 
+## Integration Preflight
+
+依据 `docs/CLAUDE.md` §一，于 2026-09-09 以当前任务分支 `HEAD=93c57eb64` 及已同步的 `origin/main=8380a5be8` 完成防孤岛检索；所有结论均来自实际 grep / 行号核对，不把作者资产或旧审计稿当作运行时事实。
+
+- **`docs/worldview.md`**：检索 `护甲|防具|装备|铜甲|古铜|札甲|轻装|穿戴|手持`。`worldview.md §四 L256-L260` 将护甲作用锚定为既有部位伤口状态的防护，`worldview.md §十 L872-L880` 是灵气总量约束；`worldview.md §十三` 的既有区域命名与本 plan 无关。铜甲只沿用既有 `armor_copper_*` 身份和装备语义，本 plan 不新增境界、货币、zone、真元流动或 worldview 名词。
+- **`docs/finished_plans/`**：`plan-armor-visual-v1:31-50,116-121` 已交付凡物甲的颜色、配方与 GUI icon，其中铜甲仍是古铜色视觉规格；`plan-armor-model-render-v1:76-81,87-91,141-145` 已将铜甲明确留在染色皮甲兜底，并要求后续材质另立资产 plan；`plan-model-asset-v1:120-129` 只有铜甲参考 prompt。未发现已归档 plan 已交付铜甲四槽 `ArmorModelRegistry`/`ArmorPartModel` 运行时链，因此本 plan 承接该明确后续，不重复铁/骨甲实现。
+- **active `docs/plan-*.md`**：当前任务分支尚未包含 promotion 后的 active 文件，但 `git show origin/main:docs/plan-client-render-gap-v1.md` 已核实其状态为 Active（`:5`），P3 §6.2（`:327-332`）仍把 `hide`、`scroll_wrap`、`straw`、`copper`、`spirit_cloth` 列为五套运行时防具缺口。两计划不合并：铜甲四槽模型、贴图、客户端接线与本 PR 的验证归 `plan-copper-armor-v1` 单一 owner；`plan-client-render-gap-v1` 的 P3 §6.2 仅保留范围/路线引用，后续不得重复实现同一铜甲交付物。本 PR 不修改该 active plan。
+- **`docs/plans-skeleton/` 与 `reminder.md`**：检索 `client|render|渲染|手持|防具|护甲|模型|weapon|armor|copper|铜甲`。`plan-held-item-registration-v1:18-30,74-92` 是手持物 render-only Item 与宿主解耦的另一条 owner，不覆盖防具四槽模型；未发现另一份铜甲专属骨架。仓库实际 reminder 为 `docs/plans-skeleton/reminder.md`，未命中铜甲或本 plan 的待办；`docs/reminder.md` 不存在。故不合并其它 skeleton、不回写 reminder。
+
 ## 接入面 Checklist
 
 - **进料**：`server/assets/items/armor.toml` 中的 `armor_copper_*` 4 件模板（已存在，此前走染色皮甲兜底 #B87333）。
