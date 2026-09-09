@@ -381,6 +381,94 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **公开 API 与 seam**：A 类仅使用既有 `bong_server::schema::proto_convert`、schema 数据类型与 prost 生成类型；B 类使用同 crate 访问既有私有项。没有新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，没有复制生产实现。
 - **验证与提交证据**：迁移前干净基线为 `86 passed / 0 failed / 0 ignored`；迁移后 A 类 `77 passed`、B 类 `9 passed`，逐位守恒 `77 + 9 = 86`；合并 HEAD `f0a0567bf` 上再次执行 A/B 定向对拍，仍分别为 `77 passed / 0 failed / 0 ignored` 与 `9 passed / 0 failed / 0 ignored`。合并前代码/分类提交为 `54c8c8e3f`，A 类 clippy 注释修正为 `c239956ee`，B 类 clippy 注释修正为 `37bc4bdd1`，紧邻 `git fetch origin && git merge origin/main` 合入 `origin/main=d9e1839e2`，无 Cargo/plan 冲突；合并后完整 server gate（无外层 flock，三条均由 `build-token.sh` 排队）fmt、clippy、test 均 exit 0，库测试 `12000 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`，全部 Cargo targets 与 doc-tests 通过（doc-tests `3 passed / 0 failed / 5 ignored`）。最终无上下文只读 validator 绑定本批最终 HEAD 并 PASS。每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-20，P2 总体、P3、P4 仍未完成，plan 不归档。
 
+### P2-23 npc dormant（✅ 2026-09-08）
+
+- **范围与落点**：仅处置 `server/src/npc/dormant/mod.rs` 原有单个 `#[cfg(test)] mod tests` 的 98 条测试（源文件 6,867 行，测试区约 4,344 行）。23 条能经既有公开 dormant/qi/zone/serde/combat API 验证的 A 类测试外置到 `server/tests/unit/npc/dormant_test.rs`，新增 `npc_dormant_unit` Cargo target；75 条依赖同 crate 私有系统、私有 seed/migration/parser、ECS/Redis/战斗装配或 test-only accessor 的 B 类测试原样留在 `server/src/npc/dormant/mod_tests.rs`，由生产文件末尾的 `#[cfg(test)] #[path = "mod_tests.rs"] mod tests;` 挂载。未改 dormant 运行时、schema、wire、Redis、qi_physics 常量或 `release_dormant_qi_to_zone` 守恒路径。
+- **迁移对拍与行为**：迁移前 `cd server && ../scripts/build-token.sh cargo test npc::dormant::tests:: --lib` 为 `98 passed / 0 failed / 0 ignored`；迁移后同 crate B 类为 `75 passed / 0 failed / 0 ignored`，`cd server && ../scripts/build-token.sh cargo test --test npc_dormant_unit` 的 A 类为 `23 passed / 0 failed / 0 ignored`，逐位守恒 `23 + 75 = 98`。98 个原测试名、断言、边界和 fixture 语义保持不变；A 类仅将测试 crate 路径改为 `bong_server::`，未复制生产实现。
+- **B 类逐条保留理由**：以下每条均依赖同 crate 私有实现细节或无法由 integration crate 重建的测试装配；外置会迫使这些非稳定细节成为生产 API，故保留在 `mod_tests.rs`。
+  - `startup_janitor_purges_leaked_tmp_keys`：依赖私有 Redis janitor 选择/分批 helper；外置会公开临时键清理算法，而非稳定的持久化结果契约。
+  - `dormant_scatter_stays_in_zone_bounds`：直接锁定私有散布算法；外置会把 seed 几何实现固化成生产 API。
+  - `dormant_scatter_spreads_across_zone_instead_of_clustering`：直接锁定私有散布覆盖率与间距算法；外置会暴露内部采样策略。
+  - `dormant_scatter_is_deterministic_and_distinct`：直接锁定私有 seed 散布函数；外置会把内部碰撞/采样细节变成 API。
+  - `store_indexes_by_archetype_and_zone`：依赖 `ids_by_archetype` 与 `ids_by_zone` 两个 `#[cfg(test)] pub fn`；它们没有 integration 生产契约，放宽可见性会新增 seam。
+  - `dormant_store_dirty_set_on_seed_age_death`：依赖 seed/aging/death 私有装配和 dirty bookkeeping；外置会固化内部 mutator 顺序。
+  - `dormant_receipt_cleanup_requires_current_success_and_keeps_tombstone_on_sqlite_failure`：依赖私有回执清理、tombstone 与 SQLite 失败时序；外置会公开内部提交编排。
+  - `dormant_persistence_receipts_are_revision_safe`：依赖同 crate 的 revision receipt orchestration；外置会把内部 revision 状态机形状当成生产 API。
+  - `dormant_store_dirty_per_mutator_and_clean_on_restore`：依赖私有 store mutator/restore bookkeeping；外置会固化内部 dirty 标志实现。
+  - `daozhan_terminal_release_settles_both_external_owners_atomically`：依赖私有 Daozhan terminal 多 owner 结算装配；外置会暴露事务内部阶段而非可观察结果。
+  - `dormant_global_tick_settles_expired_daozhan_cultivation_and_drain_owners`：依赖私有 global tick/ECS 装配；外置会把系统资源接线变成公共接口。
+  - `dormant_global_tick_retains_expired_snapshot_when_settlement_fails`：依赖 global tick 的私有失败回滚路径；外置会固化内部失败传播顺序。
+  - `dormant_global_tick_clears_indexes_when_all_snapshots_expire`：依赖私有 aging/expiration 与 index rebuild；外置会公开索引维护实现。
+  - `dormant_global_tick_refreshes_zone_index_after_movement`：依赖私有 tick movement/index 刷新装配；外置会把内部索引更新时机变成 API。
+  - `dormant_breakthrough_uses_cultivation_rules_below_duxu`：依赖私有 dormant breakthrough settlement wiring；外置会公开运行时内部转接层。
+  - `dormant_breakthrough_settlement_failure_rolls_back_all_state`：依赖私有突破失败回滚装配；外置会把事务内部步骤固化为 API。
+  - `loads_dormant_snapshots_from_redis_hash_entries`：依赖私有 Redis hash loader/批量 restore；外置会公开内部存储适配层。
+  - `terminal_tombstone_suppresses_even_corrupt_stale_row_before_batch_validation`：依赖私有 tombstone 优先级和批量校验顺序；外置会扭曲持久化实现边界。
+  - `redis_hash_restore_rejects_partial_corruption_without_mutating_live_store`：依赖私有 hash restore 事务装配；外置会把内部原子替换步骤变成生产 API。
+  - `failed_restore_blocks_tombstone_cleanup_hash_replacement`：依赖私有 restore-failure gate 与 tombstone 清理流程；外置会暴露内部恢复状态机。
+  - `redis_hash_restore_rejects_negative_daozhan_owner_atomically`：依赖私有嵌套 Daozhan owner 校验；外置会公开 Redis 反序列化内部校验器。
+  - `redis_hash_restore_rejects_hash_field_identity_mismatch_atomically`：依赖私有 hash field identity 校验；外置会固化存储字段与校验实现。
+  - `redis_hash_restore_rejects_every_nested_identity_mismatch_atomically`：依赖私有嵌套 identity validator；外置会公开内部快照结构细节。
+  - `redis_hash_restore_rejects_semantically_invalid_cultivation_atomically`：依赖私有 cultivation semantic validator；外置会把内部恢复约束误变成公共构造 API。
+  - `redis_hash_restore_fails_when_every_entry_is_invalid`：依赖私有批量 restore 的全失败聚合路径；外置会公开内部错误归并方式。
+  - `bong_dormant_tick_interval_env_overrides_default`：直接调用私有环境配置解析；外置会把运行时配置解析实现当成稳定 API。
+  - `bong_dormant_tick_interval_unset_keeps_default`：直接锁定私有 interval fallback；外置会固化内部默认值来源与解析层。
+  - `bong_dormant_tick_interval_zero_and_garbage_fall_back_gracefully`：直接锁定私有配置容错分支；外置会公开内部解析与降级实现。
+  - `bong_sim_seed_makes_combat_deterministic`：依赖私有 sim-seed 注入与 combat 装配；外置会把测试驱动的内部 seed 接口暴露为生产 API。
+  - `bong_sim_seed_unset_or_garbage_defaults_to_zero`：直接锁定私有环境 seed parser；外置会固化配置解析细节。
+  - `seed_rogue_faction_is_deterministic_per_char_id`：直接调用私有 rogue faction seed；外置会暴露 NPC 初始化算法。
+  - `seed_rogue_faction_distribution_yields_both_attack_and_defend`：直接锁定私有 faction 分布表；外置会把内部采样表变成 API。
+  - `seed_rogue_faction_pairs_are_hostile_across_factions`：依赖私有 faction seed 与 hostility 配对装配；外置会固化内部关系生成路径。
+  - `dormant_rogue_seed_snapshot_assigns_non_none_faction`：依赖私有 rogue snapshot builder；外置会公开 NPC 快照构造细节。
+  - `seed_emergent_group_is_deterministic_per_char_id`：直接调用私有 emergent-group seed；外置会暴露内部分组算法。
+  - `seed_emergent_group_distribution_covers_at_least_three_groups`：直接锁定私有 group 分布表；外置会固化非生产 API 的采样细节。
+  - `dormant_rogue_seed_snapshot_assigns_explicit_emergent_group`：依赖私有 snapshot 装配中的 group 注入；外置会把内部字段装配公开。
+  - `realm_distribution_tables_sum_to_exactly_1000_per_mille`：直接读取私有 realm distribution tables；外置会把内部平衡表变成稳定 API。
+  - `realm_distribution_tables_never_seed_void_naturally`：直接读取私有 realm 分布表的实现约束；外置会暴露 seed 平衡实现。
+  - `sample_rogue_seed_realm_is_deterministic_per_char_id_and_zone_kind`：直接调用私有 realm sampler；外置会固化内部 salt/采样函数。
+  - `sample_rogue_seed_realm_differs_by_zone_kind_salt_not_faction_or_group_salt`：验证私有 salt 选择算法；外置会把内部哈希布局误变成生产契约。
+  - `sample_rogue_seed_realm_background_distribution_matches_table_within_tolerance`：直接依赖私有 background 分布表与 sampler；外置会公开内部平衡参数。
+  - `sample_rogue_seed_realm_resource_distribution_matches_table_within_tolerance`：直接依赖私有 resource 分布表与 sampler；外置会固化内部平衡参数。
+  - `dormant_rogue_seed_snapshot_realm_distribution_not_always_awaken`：依赖私有 seed snapshot 与 realm sampler 组合；外置会公开初始化实现。
+  - `dormant_rogue_seed_snapshot_meridian_system_matches_sampled_realm_required_meridians`：依赖私有 realm-to-meridian 装配；外置会把初始化中间结构变成 API。
+  - `dormant_rogue_seed_snapshot_qi_current_stays_zero_regardless_of_sampled_realm`：依赖私有 seed snapshot 初始化路径；外置会固化未 hydrate 快照的内部字段约定。
+  - `dormant_rogue_seed_snapshot_same_seed_twice_produces_identical_realm`：依赖私有 sampler/snapshot 组合；外置会公开内部随机源接线。
+  - `dormant_rogue_seed_snapshot_resource_vs_background_flag_changes_distribution`：直接锁定私有 resource/background 采样分支；外置会把内部分布算法当成 API。
+  - `combat_terminal_events_wait_for_pending_hash_receipt`：依赖私有 combat terminal system 与 pending Redis receipt 装配；外置会公开异步结算内部时序。
+  - `failed_pending_combat_hash_receipt_preserves_all_terminal_state_until_retry_succeeds`：依赖私有 pending combat retry state machine；外置会固化内部持久化重试结构。
+  - `combat_terminal_settles_daozhan_cultivation_and_drain_owners_after_hash_receipt`：依赖私有 terminal receipt 后的 Daozhan/owner 结算编排；外置会暴露内部事务阶段。
+  - `legacy_pending_combat_without_winner_still_settles_and_terminates`：依赖私有 legacy pending normalization 与终止路径；外置会把兼容实现细节变成 API。
+  - `combat_death_releases_all_qi_to_zone`：依赖私有 combat settlement system 的事件、owner 与 zone 装配；外置会迫使 qi 结算内部入口公开。
+  - `combat_death_emits_notice_with_combat_reason_and_pos`：依赖私有 combat phase event emission；外置会固化内部 notice 生成时序。
+  - `combat_death_removes_loser_from_store`：依赖私有战斗结算对 store/index 的联动；外置会公开内部人口回写步骤。
+  - `winner_qi_unchanged`：依赖私有 combat winner/loser settlement 装配；外置会把内部 owner 更新顺序变成 API。
+  - `zone_full_settles_loser_into_fixed_overflow_without_shadow`：依赖私有 zone-full overflow settlement；外置会公开守恒实现的内部中转细节。
+  - `settlement_failure_retains_loser_and_marks_store_dirty`：依赖私有 settlement failure/pending store 状态机；外置会固化失败恢复实现。
+  - `sequential_release_no_overflow`：依赖私有连续 release orchestration；外置会把内部释放顺序误当公共接口。
+  - `offscreen_war_conserves_physical_owner_total_without_actor_or_zone_shadows`：依赖私有完整 ECS combat harness 与 owner accounting fixture；外置会要求暴露运行时系统装配而非仅验证公开结果。
+  - `combat_death_emits_pending_relic_for_named_disciple`：依赖私有 relic eligibility、pending event 与 combat settlement pipeline；外置会公开遗物内部生成阶段。
+  - `no_relic_emitted_for_factionless_rogue_through_full_combat_tick`：依赖私有完整 combat tick 与 relic eligibility 装配；外置会把内部判定链条变成 API。
+  - `settlement_failure_emits_no_relic_and_pending_loser_stays_frozen`：依赖私有失败结算与 pending relic 抑制状态机；外置会固化中间状态实现。
+  - `pending_release_retries_then_emits_one_relic_after_zone_recovers`：依赖私有 pending-release retry pipeline；外置会公开重试/事件去重内部结构。
+  - `pending_release_retry_freezes_per_char_state_and_preserves_owners_and_audit_each_tick`：依赖私有 per-character freeze、owner audit 与 tick 装配；外置会把内部审计步骤固化为 API。
+  - `failed_pending_release_roundtrips_without_duplicate_events_then_finalizes_once`：依赖私有 pending-release Redis roundtrip/retry state machine；外置会暴露持久化内部表示。
+  - `migration_marker_path_pinned_to_spec`：直接读取私有 migration marker path；外置会把部署内部路径常量变成生产 API。
+  - `no_marker_triggers_reroll_and_writes_marker_file`：依赖私有 migration marker I/O 与 reroll orchestration；外置会公开启动迁移内部流程。
+  - `migration_reroll_resyncs_meridian_system_to_new_realm_required_meridians`：依赖私有 migration reroll/meridian resync helper；外置会固化升级实现细节。
+  - `migration_reroll_respects_permanently_severed_meridians`：依赖私有 migration reroll 与 severed-meridian 装配；外置会公开内部迁移步骤。
+  - `marker_already_exists_skips_reroll_idempotently`：依赖私有 marker existence/idempotency flow；外置会把迁移控制面实现变成 API。
+  - `identity_archetypes_write_identity_realm_not_sampled`：依赖私有 migration identity-archetype branch；外置会固化内部初始化分支。
+  - `marker_write_failure_does_not_silently_swallow_error`：依赖私有 marker write error plumbing；外置会公开文件迁移适配层。
+  - `empty_store_writes_marker_without_touching_anything`：依赖私有空 store migration system；外置会把启动迁移顺序固化为生产 API。
+  - `migration_pushes_zone_perception_narration_for_upgraded_realms`：依赖私有 migration ECS/narration wiring；外置会暴露内部事件装配而不是稳定 narration 契约。
+- **公开 API 与 seam**：A 类只使用既有 `bong_server::npc::dormant`、`qi_physics`、zone、serde 与 combat 公开行为；B 类使用同 crate 既有私有项。`ids_by_archetype` 与 `ids_by_zone` 仍保持原 `#[cfg(test)] pub fn`，没有放宽可见性、删除 `#[cfg(test)]` 或新增 `pub`/`pub(crate)`/`#[doc(hidden)]` seam，也没有复制生产实现。已在 `server`、`scripts`、`tests` 范围 grep `include_str!`、`production_source` 与 `npc/dormant/mod.rs`，确认没有测试消费者按源码文本读取该生产文件。
+- **主线与门禁证据**：本批提交前完成 A/B 对拍和 `git diff --check`；后续提交前紧邻执行 `git fetch origin && git merge origin/main`，若 Cargo/plan 冲突保留双方条目并重跑受影响栈。最终绑定合并后 HEAD 的无上下文只读 validator 必须 PASS；完整 server fmt、clippy、test 三条均直接经 `scripts/build-token.sh` 取得真实退出码。PR body 将逐条保留以上 75 条 B 类理由。每个提交带 `Model: gpt-5.6-luna`。本条仅记录 P2-23 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
+
+- **合并主线后复验**：紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=187eeaf034de948a8c114a473f48129ad0261d88` 无冲突生成合并 HEAD `c45f2a6bb29752de379eafdfe1e5333409545cc0`；合并带入的 network/plan 变更未触及本批 dormant、Cargo target 或 P2-23 evidence。合并后直接经 `scripts/build-token.sh` 的完整 server gate 三条均为真实 `PIPESTATUS[0]=0`：fmt、clippy、test；library `11987 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、所有 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
+- **合并后逐位对拍**：`cargo test --test npc_dormant_unit` 为 A 类 `23 passed / 0 failed / 0 ignored`，`cargo test npc::dormant::tests:: --lib` 为 B 类 `75 passed / 0 failed / 0 ignored`，两条命令均直接经 `scripts/build-token.sh`，分别取得 `A_PIPESTATUS[0]=0`、`B_PIPESTATUS[0]=0`；`23 + 75 = 98`，测试名集合、断言、边界与 fixture 语义未变。后续 validator 绑定本批最终 HEAD 后必须 PASS；P2 总体、P3 后续阶段、P4 仍未完成，plan 不归档。
+- **最新主线冲突收口与复验**：基于 `origin/main=e52a991fdb26abe82e7fe66b68c31f42de9025ae` 紧邻执行 `git fetch origin && git merge origin/main`；仅 `docs/plan-test-layout-refactor-v1.md` 发生冲突，已保留 P2-18、P2-21、P2-22 等主线条目并将本批改为唯一空闲编号 P2-23。`server/Cargo.toml` 的全部既有 `[[test]]` targets（含 `tribulation_unit`、`proto_convert_unit`、`npc_dormant_unit`）均保留；合并 HEAD 为 `32bdaedec80ed09ec00af8f6d3d4adf5cd759134`。
+- **最新 HEAD 门禁证据**：在 `32bdaedec` 上直接经 `scripts/build-token.sh` 重跑完整 server gate，fmt、clippy、test 均取得真实 `PIPESTATUS[0]=0`；library `11987 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`、全部 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。本次只解决 Cargo/plan 合流与编号，不改 `death_qi_release_repays_negative_zone_without_clamping_signed_state` 或任何测试断言、fixture、生产守恒路径；P2 总体、P3、P4 仍未完成，plan 不归档。
+
 ### P2-22 network/redis_bridge（✅ 2026-09-08）
 
 - **范围与落点**：仅将 `server/src/network/redis_bridge.rs` 原 `#[cfg(test)] mod redis_bridge_tests` 主测试体外置到同目录 `server/src/network/redis_bridge_tests.rs`，由生产文件 `:2955-2957` 的 `#[cfg(test)] #[path = "redis_bridge_tests.rs"] mod tests;` 挂载。任务卡统计的 83 个字面 `#[test]` 全部迁移，另有同一模块中的 9 个 `#[tokio::test]` 也一并迁移，因此没有任何主测试体留在生产文件；生产文件仍保留 :442/:458 两个既有 test-only helper，未改其行为或可见性。B 类为 92，A 类为 0；不新增 Cargo test target。
@@ -397,6 +485,11 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **生产边界与 seam**：测试外置只依赖同 crate 既有父模块项，未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam；生产前缀逐字一致，生产文件不再含测试属性/测试体，未复制实现。
 - **完整 server gate**：不包外层 flock，直接执行 `../scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`，三条真实 `PIPESTATUS[0]` 均为 `0`。完整测试库 `12010 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
 - **提交与验证证据**：代码迁移提交为 `9627b9d55bcd346283d5bc97d6f67da2548a56b0`（带 `Model: gpt-5.6-luna`）；紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=e52a991fdb26abe82e7fe66b68c31f42de9025ae` up-to-date。无上下文只读 validator 绑定完整 HEAD `9627b9d55bcd346283d5bc97d6f67da2548a56b0` 并 PASS（模型：`gpt-5.6-luna`）。P2 总体、P3、P4 仍未完成，plan 不归档。
+### P2-25 npc ambient scheduler（⏳ 2026-09-09）
+
+- **范围与落点**：仅处置 `server/src/npc/spawn/ambient_scheduler.rs` 原 `#[cfg(test)] mod tests`（基线源文件 5,550 行、测试模块从 L1378 起）的 114 条测试；全部为 B 类，原样外置到同 crate 同目录 `server/src/npc/spawn/ambient_scheduler_tests.rs`，生产文件只保留 `#[cfg(test)] #[path = "ambient_scheduler_tests.rs"] mod tests;` 挂载。114 条均依赖 `ambient_scheduler` 的模块私有函数、枚举、结构体或同 crate ECS/qi 结算装配（如 `round_to_stride`、`resolve_ambient_ground_position`、`submit_ambient_spawn_candidate`、`settle_rat_recycle`、`settle_spider_recycle` 与私有测试所需的内部路径），外置为 integration test 会迫使非稳定实现细节进入生产 API，故不新增 A 类目标、不新增 Cargo `[[test]]` target。生产段无其它 `#[cfg(test)]` helper/形参项，本批无项可保留。
+- **迁移对拍与筛选**：先执行完整列表 `cd server && ../scripts/build-token.sh cargo test --lib -- --list`，真实过滤器为 `npc::spawn::ambient_scheduler::tests::`，命中 114；迁移前 `cd server && ../scripts/build-token.sh cargo test --lib 'npc::spawn::ambient_scheduler::tests::'` 为 `114 passed / 0 failed / 0 ignored`，迁移后同过滤器仍为 `114 passed / 0 failed / 0 ignored`，包含全部测试属性（本批扫描到 114 个 `#[test]`，无异步测试属性遗漏）。测试名、函数顺序、断言、fixture、错误/边界行为逐位保持；初始错误过滤器未匹配到列表输出时未计入基线。
+- **源码锚点与 seam**：已复核 `ambient_scheduler.rs` 与 `server/src`、`server/tests`、`scripts`、`.github`，无 `include_str!` 读取该源码，也无其它源码文本消费者；没有新增/扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，未改生产逻辑、spawn 规则、调度节奏、事件、qi_physics、Cargo 或跨栈文件。对应代码提交 `930950617e7ffc3bf4a3cd7a4ba51c574280cf92`、格式修正提交 `e515b0758760580be89574fe2c18f3770b6bdbf8`，均带 `Model: gpt-5.6-luna`。代码/服务器输入 HEAD `6e5170d9be2282aad14a59b8b274e8e39b3a7b09` 已通过无上下文只读 validator（`PASS @ 6e5170d9be2282aad14a59b8b274e8e39b3a7b09`，模型 `gpt-5.6-luna`）：三文件范围、生产挂载、114 过滤命中、无 Cargo `[[test]]` target、无 seam 与源码消费者均核验通过。随后紧邻执行 `git fetch origin && git merge origin/main`，`origin/main=bb4b21dc8bf3c97c2afaad3d4b7bce01aa0fd353` 已是最新，代码输入 HEAD 未变；基于该代码输入 HEAD 执行无外层 flock 的完整 server gate——`cd server && ../scripts/build-token.sh cargo fmt --check`、`clippy --all-targets -- -D warnings`、`cargo test`——三条均 exit `0`，library `11988` 个测试及全部 integration targets、doc-tests 全部通过。之后的提交 `60fcaad10c404b28c21949afb6be74072068cbb5` 与 `999968af2ff368709d2cc2a24d3637fc1b9c1c2c` 仅更新本计划 evidence，不改变 server 输入；最终分支输入 HEAD `999968af2ff368709d2cc2a24d3637fc1b9c1c2c` 已重新通过无上下文只读 validator（模型 `gpt-5.6-luna`）及无外层 flock 的完整 server gate（fmt/clippy/test 均 exit `0`，library `11988` 个测试及全部 integration targets、doc-tests 全部通过）。本条仅记录 P2-25，P2 总体、P3、P4 仍未完成，plan 不归档。
 
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
