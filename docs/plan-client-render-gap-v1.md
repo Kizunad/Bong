@@ -2,7 +2,7 @@
 
 > **一句话主题**：在不改 server gameplay、schema、wire 或物品语义的前提下，收口 Bong 手持物的注册/宿主耦合与防具的运行时 3D 外观缺口，让 `template_id` 能稳定落到可辨识的客户端模型。
 >
-> **状态**：骨架（skeleton）。本文件只登记事实、边界、阶段和决策门；未 promotion 为 active，不在本 PR 实施任何 Java、Python、Rust、TOML、模型或贴图改动。
+> **状态**：Active（P0 进行中）。本文件只登记事实、边界、阶段和决策门；本 PR 不实施任何 Java、Python、Rust、TOML、模型或贴图改动。
 >
 > **当前复核基线**：`origin/main` / `c6f978a47efa0c401aef6d9a5b609aa7a99f4860`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
 
@@ -18,7 +18,7 @@
 
 ## 0. 范围、硬边界与防重
 
-### 0.1 本骨架负责什么
+### 0.1 本 plan 负责什么
 
 - 盘点 server 已存在的手持物/工具模板与防具模板，建立「已注册」「共宿主」「只有作者资产」「只有 GUI icon」「没有可用 3D 运行时资源」的可复核分类。
 - 规划 client 的手持模型注册、vanilla 宿主解耦、模型资源和 `ArmorModelRegistry`/`ArmorFeatureRenderer` 接线的缺口收口。
@@ -28,7 +28,7 @@
 
 - 不改 `server/assets/items/*.toml`、server 物品注册、伤害/护甲/装备规则、玩法数值或持久化。
 - 不改 `template_id` 的 schema、Redis、CustomPayload、`weapon_spec`/装备状态 wire，也不新造跨端事件。
-- 不改 `docs/worldview.md`、`docs/CLAUDE.md`、既有 plan 或本骨架以外的文档；不把本文件 promotion 为 active，不在本任务归档。
+- 不改 `docs/worldview.md`、`docs/CLAUDE.md`、既有 plan 或本 plan 以外的文档；本任务不归档。
 - 不把 `qi_physics`、真元流动或任何 gameplay ledger 接入渲染层；本主题只消费已有物品身份和装备快照。
 - 不因模型缺口临时新增 `pub`、`pub(crate)`、`#[doc(hidden)]` 或测试专用 seam；若某路线需要可见性变化，必须回到 P0 重新决策。
 
