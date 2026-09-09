@@ -36,7 +36,7 @@ pub fn apply_entry_filter(inv: &mut PlayerInventory) -> Vec<FilteredItem> {
         try_strip(item, &mut filtered);
     }
 
-    // hotbar: [Option<ItemInstance>; 9]
+    // hotbar: [Option<ItemInstance>; crate::schema::inventory::HOTBAR_SLOT_COUNT]
     for slot in inv.hotbar.iter_mut() {
         if let Some(item) = slot.as_mut() {
             try_strip(item, &mut filtered);
@@ -216,10 +216,10 @@ mod tests {
     #[test]
     fn hotbar_slot_with_high_quality_gets_stripped() {
         let mut inv = empty_inv();
-        inv.hotbar[3] = Some(item(22, "spirit_herb_lingcao", "鲜采灵草", 0.6));
+        inv.hotbar[1] = Some(item(22, "spirit_herb_lingcao", "鲜采灵草", 0.6));
         let filtered = apply_entry_filter(&mut inv);
         assert_eq!(filtered.len(), 1);
-        let stripped = inv.hotbar[3].as_ref().unwrap();
+        let stripped = inv.hotbar[1].as_ref().unwrap();
         assert_eq!(stripped.spirit_quality, 0.0);
         assert_eq!(stripped.display_name, "鲜采灵草（枯）");
     }

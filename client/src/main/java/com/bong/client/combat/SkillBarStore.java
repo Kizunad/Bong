@@ -47,7 +47,7 @@ public final class SkillBarStore {
     }
 
     public static void setSelectedSlot(int slot) {
-        selectedSlot = slot >= 0 && slot < SkillBarConfig.SLOT_COUNT ? slot : NO_SELECTED_SLOT;
+        selectedSlot = SkillBarConfig.isAvailable(slot) ? slot : NO_SELECTED_SLOT;
     }
 
     public static void clearSelectedSlot() {

@@ -43,6 +43,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -330,6 +331,8 @@ def generate_cliproxy_images(
     background: str,
     n: int,
     moderation: str,
+    image_path: Path | None = None,
+    mask_path: Path | None = None,
 ) -> list[bytes]:
     payload = {
         "model": model,
@@ -341,12 +344,32 @@ def generate_cliproxy_images(
         "background": background,
         "moderation": moderation,
     }
+    content_type = "application/json"
+    endpoint = "generations"
     body = json.dumps(payload).encode("utf-8")
+    if image_path is not None:
+        # 编辑接口使用 multipart，直接传原始图片字节，避免把图片二次压缩。
+        boundary = "bong-image-" + uuid.uuid4().hex
+        parts: list[bytes] = []
+        for key, value in payload.items():
+            parts.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
+            )
+        for key, path in (("image", image_path), ("mask", mask_path)):
+            if path is not None:
+                parts.append(
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"; filename="{key}.png"\r\nContent-Type: image/png\r\n\r\n'.encode()
+                    + path.read_bytes() + b"\r\n"
+                )
+        parts.append(f"--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+        content_type = f"multipart/form-data; boundary={boundary}"
+        endpoint = "edits"
     req = urllib.request.Request(
-        f"{base_url}/v1/images/generations",
+        f"{base_url}/v1/images/{endpoint}",
         data=body,
         headers={
-            "Content-Type": "application/json",
+            "Content-Type": content_type,
             "Authorization": f"Bearer {api_key}",
             "User-Agent": CLIPROXY_FAKE_UA,
         },
@@ -407,6 +430,8 @@ def dispatch(
     n: int,
     moderation: str,
     verbose: bool,
+    image_path: Path | None = None,
+    mask_path: Path | None = None,
 ) -> list[bytes]:
     """auto → cliproxy（有 openai key 则允许 fallback）；强制用指定 backend。"""
     has_openai = bool(_env(env, "OPENAI_API_KEY"))
@@ -428,13 +453,18 @@ def dispatch(
             return generate_cliproxy_images(
                 prompt, key or "", base, model, size, quality,
                 output_format, background, n, moderation,
+                image_path, mask_path,
             )
+        if image_path is not None:
+            raise RuntimeError("图生图目前仅支持 cliproxy 的 gpt-image-2，不自动切换模型")
         return generate_cliproxy(
             prompt, key or "", base, model or "", size, quality,
             output_format, background, n, moderation, verbose,
         )
 
     def _try_openai() -> list[bytes]:
+        if image_path is not None:
+            raise RuntimeError("图生图目前仅支持 cliproxy 的 gpt-image-2，不自动切换模型")
         key = _env(env, "OPENAI_API_KEY")
         if not key:
             raise RuntimeError("OPENAI_API_KEY 未配置，无法走 openai backend")
@@ -497,6 +527,10 @@ def main() -> None:
     )
     ap.add_argument("prompt", nargs="?", help="prompt 文本（与 --prompt-file 二选一）")
     ap.add_argument("--prompt-file", type=Path, help="从 *_prompt.md 读取 prompt")
+    ap.add_argument("--image", type=Path, help="图生图参考 PNG（cliproxy / gpt-image-2）")
+    ap.add_argument("--mask", type=Path, help="局部编辑 PNG 蒙版，透明区域允许修改，须配合 --image")
+    ap.add_argument("--env-file", type=Path, default=SCRIPT_DIR / ".env", help="生图配置路径")
+    ap.add_argument("--model", help="仅本次覆盖 cliproxy 模型，不修改 .env")
     ap.add_argument("--name", help="输出文件名主干（默认从 --prompt-file 派生）")
     ap.add_argument(
         "--out",
@@ -551,6 +585,11 @@ def main() -> None:
 
     if not args.prompt and not args.prompt_file:
         ap.error("必须提供 prompt 或 --prompt-file")
+    if args.mask and not args.image:
+        ap.error("--mask 必须配合 --image")
+    for path in (args.image, args.mask):
+        if path is not None and (not path.is_file() or path.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n"):
+            ap.error(f"图片必须是存在的 PNG: {path}")
 
     style = args.style
     if args.prompt_file:
@@ -571,7 +610,11 @@ def main() -> None:
         print("警告: --transparent 在 jpeg 下无效，切 png", file=sys.stderr)
         args.output_format = "png"
 
-    env = load_env(SCRIPT_DIR / ".env")
+    env = load_env(args.env_file)
+    if args.model:
+        if args.backend != "cliproxy":
+            ap.error("显式 --model 必须配合 --backend cliproxy，禁止自动切换模型")
+        env["CLIPROXY_MODEL"] = args.model
 
     print(
         f"style={style} backend={args.backend} out={args.out} name={name}",
@@ -595,6 +638,8 @@ def main() -> None:
             n=args.n,
             moderation=args.moderation,
             verbose=args.verbose,
+            image_path=args.image,
+            mask_path=args.mask,
         )
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")

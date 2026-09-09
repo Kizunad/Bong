@@ -30,7 +30,7 @@ import {
 } from "./payloads/agent-ui.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
-const HOTBAR_SLOT_COUNT = 9;
+const HOTBAR_SLOT_COUNT = 2;
 
 export const SetMeridianTargetRequestV1 = Type.Object(
   {

@@ -17,7 +17,7 @@
     },
     "slot": {
       "minimum": 0,
-      "maximum": 8,
+      "maximum": 1,
       "type": "integer"
     },
     "target": {
@@ -25,5 +25,5 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "cadd64cf1b7eb258d702912ed016e2ed09c844c5f74541212be33a47c9f6b14a"
+  "x-bong-typebox-source-sha256": "ad06b94ee38e896236f3f7a27c89700cbf4c1343e7346f968f97ef2709acf4b8"
 }

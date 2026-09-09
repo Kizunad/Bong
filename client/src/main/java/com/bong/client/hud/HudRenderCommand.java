@@ -94,6 +94,22 @@ public final class HudRenderCommand {
         return new HudRenderCommand(layer, Kind.TEXTURED_RECT, "", x, y, width, height, color, 0.0, 1.0, texturePath);
     }
 
+    /** 按 layer 内登记的资产键提交 SVG，资源路径由 HudRenderRegistry 统一管理。 */
+    public static HudRenderCommand svg(
+        HudRenderLayer layer,
+        String assetKey,
+        int x,
+        int y,
+        int width,
+        int height,
+        int color
+    ) {
+        if (assetKey == null || assetKey.isBlank()) {
+            throw new IllegalArgumentException("SVG asset key 不能为空");
+        }
+        return new HudRenderCommand(layer, Kind.SVG_RECT, assetKey, x, y, width, height, color, 0.0, 1.0, null);
+    }
+
     /**
      * Draw an item PNG at {@code bong-client:textures/gui/items/{itemId}.png}
      * scaled into a {@code size×size} box with top-left at {@code (x, y)}.
@@ -185,6 +201,14 @@ public final class HudRenderCommand {
         return kind == Kind.TEXTURED_RECT;
     }
 
+    public boolean isSvgRect() {
+        return kind == Kind.SVG_RECT;
+    }
+
+    public String svgAssetKey() {
+        return text;
+    }
+
     public boolean isItemTexture() {
         return kind == Kind.ITEM_TEXTURE;
     }
@@ -206,6 +230,7 @@ public final class HudRenderCommand {
         TOAST,
         RECT,
         TEXTURED_RECT,
+        SVG_RECT,
         ITEM_TEXTURE,
         EDGE_INDICATOR
     }

@@ -105,8 +105,8 @@ class HeldItemStackResolverTest {
         // SKILL 类型快捷栏条目不应算作 block fallback——即使其 id 与真实已注册 block
         // 模板碰巧同名（"torch_item"），只要 kind!=ITEM 就不该去查 BlockVanillaIconMap。
         // 若 kind 判断有 bug（漏检查/写反），会误查到 torch_item 触发 Items 求值异常。
-        SkillBarStore.setSelectedSlot(3);
-        SkillBarStore.updateSlot(3, SkillBarEntry.skill("torch_item", "碰撞诱饵", 0, 0, ""));
+        SkillBarStore.setSelectedSlot(1);
+        SkillBarStore.updateSlot(1, SkillBarEntry.skill("torch_item", "碰撞诱饵", 0, 0, ""));
         // 装备槽未放锄头：hoe tier 也安全返回 empty（isHoe 对非锄头 id 只查 key，不触发注册表）。
 
         Optional<ItemStack> result = assertDoesNotThrow(

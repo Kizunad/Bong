@@ -96,7 +96,8 @@ fn forge_dispatch_app() -> App {
 }
 
 fn inscription_inventory() -> PlayerInventory {
-    let mut hotbar: [Option<ItemInstance>; 9] = std::array::from_fn(|_| None);
+    let mut hotbar: [Option<ItemInstance>; bong_server::schema::inventory::HOTBAR_SLOT_COUNT] =
+        std::array::from_fn(|_| None);
     hotbar[0] = Some(ItemInstance {
         instance_id: 7001,
         template_id: "inscription_scroll_sharp".to_owned(),

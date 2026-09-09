@@ -72,14 +72,14 @@ public class InspectScreenMoveIntentTest {
         screen.dispatchMoveIntent(
             item,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3),
+            new ClientRequestProtocol.HotbarLoc(1),
             false
         );
 
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":1}}",
             sent.get(0).body()
         );
     }
@@ -401,7 +401,7 @@ public class InspectScreenMoveIntentTest {
         EquipmentPanel panel = new EquipmentPanel();
         screen.configureEquipInteractionForTests(null, panel);
         screen.registerAuthoritativeBarListenersForTests();
-        assertTrue(screen.beginQuickUseEquipDragForTests(tool, 2));
+        assertTrue(screen.beginQuickUseEquipDragForTests(tool, 1));
         String clearRequestId = lastQuickBindRequestId();
         QuickUseSlotStore.replaceAuthoritative(
             QuickSlotConfig.empty(), clearRequestId, true);
@@ -413,7 +413,7 @@ public class InspectScreenMoveIntentTest {
         assertFalse(committed, "expected QUICK_USE source without InvLocation to be rejected, actual true");
         assertEquals(
             null,
-            screen.quickUseItemForTests(2),
+            screen.quickUseItemForTests(1),
             "expected local enqueue not to restore quick-use before server confirmation"
         );
         assertTrue(
@@ -421,7 +421,7 @@ public class InspectScreenMoveIntentTest {
             "expected rebind item/source to remain pending before authoritative config"
         );
         String rebindRequestId = lastQuickBindRequestId();
-        QuickSlotConfig rebound = QuickSlotConfig.empty().withSlot(2, new QuickSlotEntry(
+        QuickSlotConfig rebound = QuickSlotConfig.empty().withSlot(1, new QuickSlotEntry(
             tool.itemId(), tool.displayName(), 1500, 1500, ""));
         QuickUseSlotStore.replaceAuthoritative(rebound, null, null);
         assertTrue(
@@ -436,7 +436,7 @@ public class InspectScreenMoveIntentTest {
         QuickUseSlotStore.replaceAuthoritative(rebound, rebindRequestId, true);
         assertEquals(
             tool,
-            screen.quickUseItemForTests(2),
+            screen.quickUseItemForTests(1),
             "expected authoritative quickslot_config to restore the source slot item"
         );
         assertFalse(screen.isDraggingForTests(), "expected confirmed rebind to finish drag, actual pending");
@@ -459,12 +459,12 @@ public class InspectScreenMoveIntentTest {
         screen.registerAuthoritativeBarListenersForTests();
         ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
 
-        boolean beganDrag = screen.beginQuickUseEquipDragForTests(tool, 3);
+        boolean beganDrag = screen.beginQuickUseEquipDragForTests(tool, 1);
 
         assertFalse(beganDrag, "expected rejected quick-use unbind to skip drag, actual true");
         assertEquals(
             tool,
-            screen.quickUseItemForTests(3),
+            screen.quickUseItemForTests(1),
             "expected rejected unbind to preserve the local quick-use binding"
         );
         assertTrue(
@@ -482,7 +482,7 @@ public class InspectScreenMoveIntentTest {
         screen.configureEquipInteractionForTests(null, panel);
         screen.registerAuthoritativeBarListenersForTests();
         assertTrue(
-            screen.beginQuickUseEquipDragForTests(tool, 4),
+            screen.beginQuickUseEquipDragForTests(tool, 1),
             "expected quick-use clear request to enqueue, actual false"
         );
         QuickUseSlotStore.replaceAuthoritative(
@@ -496,7 +496,7 @@ public class InspectScreenMoveIntentTest {
         assertFalse(committed, "expected unsupported QUICK_USE move to fail, actual true");
         assertEquals(
             null,
-            screen.quickUseItemForTests(4),
+            screen.quickUseItemForTests(1),
             "expected failed rebind transport to keep the server-aligned local slot unbound"
         );
         assertTrue(
@@ -517,7 +517,7 @@ public class InspectScreenMoveIntentTest {
         );
         assertEquals(
             null,
-            screen.quickUseItemForTests(4),
+            screen.quickUseItemForTests(1),
             "expected slot to remain server-aligned and unbound before authoritative config"
         );
 
@@ -532,7 +532,7 @@ public class InspectScreenMoveIntentTest {
         screen.returnCurrentDragToSourceForTests();
         String acceptedRequestId = lastQuickBindRequestId();
         QuickUseSlotStore.replaceAuthoritative(
-            QuickSlotConfig.empty().withSlot(4, new QuickSlotEntry(
+            QuickSlotConfig.empty().withSlot(1, new QuickSlotEntry(
                 tool.itemId(), tool.displayName(), 1500, 1500, ""
             )),
             acceptedRequestId,
@@ -541,7 +541,7 @@ public class InspectScreenMoveIntentTest {
 
         assertEquals(
             tool,
-            screen.quickUseItemForTests(4),
+            screen.quickUseItemForTests(1),
             "expected recovered transport to restore the original QUICK_USE binding"
         );
         assertFalse(

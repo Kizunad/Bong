@@ -507,7 +507,7 @@ def run(env) -> None:
             bot,
             a_id,
             coffin_a["location"],
-            {"kind": "hotbar", "index": 8},
+            {"kind": "hotbar", "index": 0},
         )
         bot.wait_for(
             lambda e: e.kind == "server_data"
@@ -519,7 +519,7 @@ def run(env) -> None:
                 for item in e.data["payload"].get("hotbar", [])
             ),
             timeout=STAGE_TIMEOUT,
-            description=f"把第一口棺材实例 #{a_id} 移入 hotbar[8]，释放 pack 空间",
+            description=f"把第一口棺材实例 #{a_id} 移入 hotbar[0]，释放 pack 空间",
         )
 
         coffin_anchor2 = last_event_time(bot)

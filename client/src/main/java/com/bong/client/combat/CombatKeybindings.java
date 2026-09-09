@@ -12,7 +12,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.function.IntConsumer;
 
 /**
- * Combat-HUD key bindings (§7). Registers F1-F9 quick-use keys, the Jiemai
+ * Combat-HUD key bindings (§7). Registers currently available quick-use keys, the Jiemai
  * reaction key (default unbound — DefenseWindow only; interaction-intent-cleanup-v1
  * P3 dropped the old V default to avoid clashing with the movement dash key), and
  * the R spell-volume hold.
@@ -49,11 +49,11 @@ public final class CombatKeybindings {
         installBindings(BongKeybindRegistry.global());
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
-        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, jiemai [unbound], R, event stream toggle, shield hold).");
+        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F2, jiemai [unbound], R, event stream toggle, shield hold).");
     }
 
     static void installBindings(BongKeybindRegistry registry) {
-        for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
+        for (int i = 0; i < QUICK_SLOT_KEYS.length; i++) {
             QUICK_SLOT_KEYS[i] = registry.register(new BongKeybindRegistry.BindingSpec(
                 new BongKeybindRegistry.BindingOwner("combat.quick_slot_" + (i + 1)),
                 "key.bong-client.quick_slot_" + (i + 1),

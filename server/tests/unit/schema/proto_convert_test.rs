@@ -2165,14 +2165,20 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             outcome: CastOutcomeV1::None,
         })),
         fix!(ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
-            slots: vec![None; 9],
-            cooldown_until_ms: vec![0; 9],
+            slots: vec![None; bong_server::combat::components::QuickSlotBindings::SLOT_COUNT],
+            cooldown_until_ms: vec![
+                0;
+                bong_server::combat::components::QuickSlotBindings::SLOT_COUNT
+            ],
             ack_request_id: None,
             bind_accepted: None,
         })),
         fix!(ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
-            slots: vec![None; 9],
-            cooldown_until_ms: vec![0; 9],
+            slots: vec![None; bong_server::combat::components::SkillBarBindings::SLOT_COUNT],
+            cooldown_until_ms: vec![
+                0;
+                bong_server::combat::components::SkillBarBindings::SLOT_COUNT
+            ],
         })),
         fix!(ServerDataPayloadV1::TechniquesSnapshot(
             TechniquesSnapshotV1 { entries: vec![] }

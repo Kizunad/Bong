@@ -1400,7 +1400,7 @@ mod tests {
                 main_hand_held: Some(item.clone()),
                 ..Default::default()
             }),
-            hotbar: (0..9)
+            hotbar: (0..bong_server::schema::inventory::HOTBAR_SLOT_COUNT)
                 .map(|i| HotbarSlot {
                     item: if i == 0 { Some(item.clone()) } else { None },
                 })
@@ -1425,7 +1425,10 @@ mod tests {
             decoded.placed_items[0].item.as_ref().unwrap().item_id,
             "starter_talisman"
         );
-        assert_eq!(decoded.hotbar.len(), 9, "hotbar 应有 9 槽");
+        assert_eq!(
+            decoded.hotbar.len(),
+            bong_server::schema::inventory::HOTBAR_SLOT_COUNT
+        );
         assert!(decoded.hotbar[0].item.is_some(), "hotbar[0] 应有物品");
         assert!(decoded.hotbar[1].item.is_none(), "hotbar[1] 应为空");
         assert_eq!(decoded.bone_coins, 57);
@@ -11073,7 +11076,7 @@ mod tests {
                         }),
                         ..Default::default()
                     }),
-                    hotbar: (0..9)
+                    hotbar: (0..bong_server::schema::inventory::HOTBAR_SLOT_COUNT)
                         .map(|i| HotbarSlot {
                             item: if i < 3 {
                                 Some(InventoryItemView {

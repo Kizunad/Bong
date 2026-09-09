@@ -960,10 +960,10 @@ where
     D: serde::Deserializer<'de>,
 {
     let slot = u8::deserialize(deserializer)?;
-    if slot < 9 {
+    if usize::from(slot) < crate::schema::inventory::HOTBAR_SLOT_COUNT {
         Ok(slot)
     } else {
-        Err(serde::de::Error::custom("slot must be between 0 and 8"))
+        Err(serde::de::Error::custom("slot out of range"))
     }
 }
 
@@ -1635,11 +1635,11 @@ mod tests {
 
     #[test]
     fn use_quick_slot_roundtrip() {
-        let json = r#"{"type":"use_quick_slot","v":1,"slot":3}"#;
+        let json = r#"{"type":"use_quick_slot","v":1,"slot":1}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         assert!(matches!(
             req,
-            ClientRequestV1::UseQuickSlot { v: 1, slot: 3 }
+            ClientRequestV1::UseQuickSlot { v: 1, slot: 1 }
         ));
     }
 
@@ -1740,13 +1740,13 @@ mod tests {
             } if template_id == "iron_sword"
         ));
 
-        let skill_json = r#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#;
+        let skill_json = r#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"burst_meridian.beng_quan"}}"#;
         let req: ClientRequestV1 = serde_json::from_str(skill_json).unwrap();
         assert!(matches!(
             req,
             ClientRequestV1::SkillBarBind {
                 v: 1,
-                slot: 2,
+                slot: 0,
                 binding: Some(SkillBarBindingV1::Skill { ref skill_id }),
             } if skill_id == "burst_meridian.beng_quan"
         ));
@@ -1764,14 +1764,13 @@ mod tests {
     #[test]
     fn hotbar_slot_indices_reject_out_of_range_values() {
         for json in [
-            r#"{"type":"use_quick_slot","v":1,"slot":9}"#,
-            r#"{"type":"quick_slot_bind","v":1,"slot":9,"item_id":null,"request_id":"bad-slot"}"#,
-            r#"{"type":"skill_bar_cast","v":1,"slot":9}"#,
-            r#"{"type":"skill_bar_bind","v":1,"slot":9,"binding":null}"#,
+            r#"{"type":"use_quick_slot","v":1,"slot":2}"#,
+            r#"{"type":"quick_slot_bind","v":1,"slot":2,"item_id":null,"request_id":"bad-slot"}"#,
+            r#"{"type":"skill_bar_cast","v":1,"slot":2}"#,
+            r#"{"type":"skill_bar_bind","v":1,"slot":2,"binding":null}"#,
         ] {
-            let error = serde_json::from_str::<ClientRequestV1>(json)
-                .expect_err("slot 9 should be rejected by schema");
-            assert!(error.to_string().contains("slot must be between 0 and 8"));
+            serde_json::from_str::<ClientRequestV1>(json)
+                .expect_err("第三格请求必须在 schema 层拒绝");
         }
     }
 

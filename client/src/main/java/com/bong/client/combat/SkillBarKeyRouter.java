@@ -15,6 +15,7 @@ public final class SkillBarKeyRouter {
         CAST_SENT,
         CONTAINER_SWITCH_SENT,
         COOLDOWN_BLOCKED,
+        SLOT_UNAVAILABLE,
         SAME_CAST_IGNORED
     }
 
@@ -27,6 +28,7 @@ public final class SkillBarKeyRouter {
             || result == RouteResult.ITEM_SELECTED
             || result == RouteResult.ITEM_DESELECTED
             || result == RouteResult.COOLDOWN_BLOCKED
+            || result == RouteResult.SLOT_UNAVAILABLE
             || result == RouteResult.SAME_CAST_IGNORED;
     }
 
@@ -36,7 +38,8 @@ public final class SkillBarKeyRouter {
     }
 
     public static RouteResult route(int slot, long nowMs, java.util.function.IntConsumer castSender) {
-        if (slot < 0 || slot >= SkillBarConfig.SLOT_COUNT) return RouteResult.NOOP;
+        if (slot < 0 || slot >= 9) return RouteResult.NOOP;
+        if (!SkillBarConfig.isAvailable(slot)) return RouteResult.SLOT_UNAVAILABLE;
         SkillBarConfig config = SkillBarStore.snapshot();
         SkillBarEntry entry = config.slot(slot);
         if (entry == null) return RouteResult.PASS_THROUGH;

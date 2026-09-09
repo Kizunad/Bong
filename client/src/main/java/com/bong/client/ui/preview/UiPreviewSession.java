@@ -79,6 +79,7 @@ final class UiPreviewSession {
         boolean ready = client.getWindow() != null
             && client.getFramebuffer() != null
             && client.getWindow().getFramebufferWidth() > 0
+            && client.getOverlay() == null
             && templatesLoaded();
         if (ready && phaseTicks >= 5) {
             advance(Phase.CONFIGURE_VIEWPORT);

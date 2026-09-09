@@ -455,7 +455,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -571,7 +571,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -1032,7 +1032,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -1201,7 +1201,7 @@
                 },
                 "index": {
                   "minimum": 0,
-                  "maximum": 8,
+                  "maximum": 1,
                   "type": "integer"
                 }
               }
@@ -1361,7 +1361,7 @@
         },
         "slot": {
           "minimum": 0,
-          "maximum": 8,
+          "maximum": 1,
           "type": "integer"
         }
       }
@@ -1387,7 +1387,7 @@
         },
         "slot": {
           "minimum": 0,
-          "maximum": 8,
+          "maximum": 1,
           "type": "integer"
         },
         "item_id": {
@@ -1427,7 +1427,7 @@
         },
         "slot": {
           "minimum": 0,
-          "maximum": 8,
+          "maximum": 1,
           "type": "integer"
         },
         "target": {
@@ -1456,7 +1456,7 @@
         },
         "slot": {
           "minimum": 0,
-          "maximum": 8,
+          "maximum": 1,
           "type": "integer"
         },
         "binding": {
@@ -3434,5 +3434,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "f806a60410286d8a07ef0a4c299a21d75f782877852138b3196823ee638678d3"
+  "x-bong-typebox-source-sha256": "5b916a1739e70893421099d0ab6d5babf436337e652f52fed64f87caebb0d779"
 }
