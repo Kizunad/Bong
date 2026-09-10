@@ -506,6 +506,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **源码消费者与生产边界**：已复核 `server/src`、`server/tests`、`scripts` 与 `docs`，没有 `include_str!` 读取 `dying_elder.rs`，也没有其它源码文本消费者；未改生产逻辑、事件、掉落/交互契约、qi_physics、schema、client、agent 或其它 plan。生产文件无测试体残留，仅保留挂载；无新增/扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam。
 - **提交与验证证据**：迁移提交 `b5b985569`、Rustfmt 收口提交 `cce4bf0e9`（均带 `Model: gpt-5.6-luna`）；在代码输入 HEAD `cce4bf0e91824b895508ff05983b63a304b3f163` 上，无上下文只读 validator PASS。随后执行 `git fetch origin && git merge origin/main`，当前 `origin/main=154705a3251eb3ebb396f29fc27787a905405524` 已是最新，Already up to date，无冲突。该代码输入 HEAD 的完整 server gate（直接经 `scripts/build-token.sh`，无外层 flock）三条均 exit 0：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；library `11987 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 integration targets 通过，doc-tests `3 passed / 0 failed / 5 ignored`。本条仅记录 P2-27，P2 其它模块、P3、P4 仍未完成，plan 不归档。
 
+### P2-29 alchemy/pill（⏳ 2026-09-09）
+
+- **范围与落点**：仅处置 `server/src/alchemy/pill.rs` 原唯一 `#[cfg(test)] mod tests` 的 89 条测试；全部作为 B 类原样外置到同 crate 同目录 `server/src/alchemy/pill_tests.rs`，生产文件仅保留 `#[cfg(test)] #[path = "pill_tests.rs"] mod tests;` 挂载。不新增 `server/Cargo.toml` 的 `[[test]]` target，A 类为 0。
+- **`include_str!` 与源码消费者**：10 处既有 `include_str!` 全部留在同 crate 测试文件，宏参数逐字保留，因此相对生产源文件的路径深度不变；已复核 `server/src`、`server/tests`、`scripts`、`docs`，没有其它文件按 `pill.rs` 源码文本或挂载声明读取它。
+- **契约分类与边界**：89 条均依赖 `alchemy::pill` 同 crate 私有丹药规格、消费/毒性/伤口处理与内部 fixture 装配；外置为 integration test 会把实现私有项固化为生产 API，故全部留 B 类。测试名、断言、边界、错误语义和 fixture 不改；不碰丹药生产逻辑、事件/wire、schema、client、agent、`qi_physics` 或任何守恒路径。
+- **迁移对拍与 seam**：迁移前真实 `alchemy::pill::tests::` 列表命中 `89 tests`，迁移后定向运行 `89 passed / 0 failed / 0 ignored`，异步属性口径一并计入；生产前缀逐字一致，零新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` seam。本条仅记录 P2-29 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。

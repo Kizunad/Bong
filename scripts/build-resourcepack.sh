@@ -78,8 +78,15 @@ while IFS= read -r -d '' file; do
     rel="$file"
   fi
   should_include "$rel" || continue
+  executable=0
+  [[ -x "$file" ]] && executable=1
   mkdir -p "$TMP/assets/$(dirname "$rel")"
   cp "$file" "$TMP/assets/$rel"
+  if (( executable )); then
+    chmod 0755 "$TMP/assets/$rel"
+  else
+    chmod 0644 "$TMP/assets/$rel"
+  fi
 done < <(find "$ASSETS_ROOT" -type f -print0)
 
 cat >"$TMP/pack.mcmeta" <<JSON
@@ -91,6 +98,8 @@ cat >"$TMP/pack.mcmeta" <<JSON
 }
 JSON
 
+# pack.mcmeta 不是从资产树复制的，也要固定权限，避免 umask 进入 ZIP external_attr。
+chmod 0644 "$TMP/pack.mcmeta"
 find "$TMP" -exec touch -h -t "$BUILD_EPOCH" {} +
 rm -f "$OUT" "$SHA1_OUT" "$MANIFEST_OUT"
 (

@@ -297,6 +297,31 @@ pub(super) fn write_zstd_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
     write_zstd_bundle_with_writer(path, payload, |file, compressed| file.write_all(compressed))
 }
 
+#[derive(Debug)]
+struct ArchiveCleanupError {
+    primary: io::Error,
+    cleanup: io::Error,
+    temp_path: PathBuf,
+}
+
+impl std::fmt::Display for ArchiveCleanupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}; temporary archive cleanup failed for {}: {}",
+            self.primary,
+            self.temp_path.display(),
+            self.cleanup
+        )
+    }
+}
+
+impl std::error::Error for ArchiveCleanupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.primary)
+    }
+}
+
 pub(super) fn write_zstd_bundle_with_writer(
     path: &Path,
     payload: &[u8],
@@ -326,10 +351,24 @@ pub(super) fn write_zstd_bundle_with_writer(
         drop(temp_file);
         fs::rename(&temp_path, path)
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+    if let Err(primary_error) = result {
+        return match fs::remove_file(&temp_path) {
+            Ok(()) => Err(primary_error),
+            Err(cleanup_error) => {
+                let primary_kind = primary_error.kind();
+                Err(io::Error::new(
+                    primary_kind,
+                    ArchiveCleanupError {
+                        primary: primary_error,
+                        cleanup: cleanup_error,
+                        temp_path,
+                    },
+                ))
+            }
+        };
     }
-    result
+
+    Ok(())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
