@@ -25,6 +25,7 @@ pub mod realm;
 pub mod reset;
 pub mod revive;
 pub mod riskmap;
+pub mod scene;
 pub mod season;
 pub mod shader_push;
 pub mod shrine;
@@ -129,15 +130,20 @@ pub fn dev_mode_enabled() -> bool {
     truthy_env_var("BONG_DEV_MODE")
 }
 
-pub fn register(app: &mut App) {
-    register_for_dev_mode(app, dev_mode_enabled());
+pub fn test_env_enabled() -> bool {
+    truthy_env_var("BONG_TEST_ENV")
 }
 
-pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
+pub fn register(app: &mut App) {
+    register_for_environment(app, dev_mode_enabled(), test_env_enabled());
+}
+
+pub(crate) fn register_for_environment(app: &mut App, dev_mode_enabled: bool, test_env: bool) {
     if dev_mode_enabled {
         ambient_spawn::register_enabled(app);
         botany_spawn::register_enabled(app);
     }
+    scene::register(app, test_env);
     balance::register(app);
     baolongwang::register(app);
     block_picker::register(app);
