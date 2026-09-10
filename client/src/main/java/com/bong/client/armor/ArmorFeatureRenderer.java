@@ -34,7 +34,7 @@ import java.util.Map;
 public final class ArmorFeatureRenderer
     extends FeatureRenderer<AbstractClientPlayerEntity, PlayerEntityModel<AbstractClientPlayerEntity>> {
 
-    /** 铁甲/骨甲四槽资产及挂载链路均已定稿，可正式替代 leather-dye 兜底。 */
+    /** 铁/骨/铜/兽皮四槽资产及挂载链路均已定稿，可正式替代 leather-dye 兜底。 */
     public static final boolean MODEL_RENDER_READY = true;
     static final String DEV_RENDER_PROPERTY = "bong.armor_model_render";
 

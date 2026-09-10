@@ -513,6 +513,12 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **B 类理由与 seam**：79 条测试均直接使用 `daozhan` 模块私有类型、函数、常量或同 crate Bevy/ECS 装配；外置到 integration crate 将迫使这些实现细节成为生产 API，故统一保留同 crate 路径。已核对该源码无 `include_str!` 或其它源码文本消费者；未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，未复制生产实现。
 - **生产边界**：未改道伥状态、伪装/伏击、掉落、天道凝结、死亡真元释放、事件、system 注册顺序、schema、wire、Redis、client、agent、qi_physics 或其它测试迁移范围；生产文件从 3,101 行收缩至测试挂载与生产实现共 1,335 行，测试体完整落在独立同 crate 文件。
 - **提交与后续状态**：代码迁移对应 `ce96346d9`（2026-09-09，带 `Model: gpt-5.6-luna`）；本条仅记录 P2-28 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+### P2-29 alchemy/pill（⏳ 2026-09-09）
+
+- **范围与落点**：仅处置 `server/src/alchemy/pill.rs` 原唯一 `#[cfg(test)] mod tests` 的 89 条测试；全部作为 B 类原样外置到同 crate 同目录 `server/src/alchemy/pill_tests.rs`，生产文件仅保留 `#[cfg(test)] #[path = "pill_tests.rs"] mod tests;` 挂载。不新增 `server/Cargo.toml` 的 `[[test]]` target，A 类为 0。
+- **`include_str!` 与源码消费者**：10 处既有 `include_str!` 全部留在同 crate 测试文件，宏参数逐字保留，因此相对生产源文件的路径深度不变；已复核 `server/src`、`server/tests`、`scripts`、`docs`，没有其它文件按 `pill.rs` 源码文本或挂载声明读取它。
+- **契约分类与边界**：89 条均依赖 `alchemy::pill` 同 crate 私有丹药规格、消费/毒性/伤口处理与内部 fixture 装配；外置为 integration test 会把实现私有项固化为生产 API，故全部留 B 类。测试名、断言、边界、错误语义和 fixture 不改；不碰丹药生产逻辑、事件/wire、schema、client、agent、`qi_physics` 或任何守恒路径。
+- **迁移对拍与 seam**：迁移前真实 `alchemy::pill::tests::` 列表命中 `89 tests`，迁移后定向运行 `89 passed / 0 failed / 0 ignored`，异步属性口径一并计入；生产前缀逐字一致，零新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` seam。本条仅记录 P2-29 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
 
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
