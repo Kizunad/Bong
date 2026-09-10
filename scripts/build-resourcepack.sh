@@ -91,6 +91,15 @@ cat >"$TMP/pack.mcmeta" <<JSON
 }
 JSON
 
+# ZIP 条目会携带源文件权限；不同 checkout 的 umask 可能让同一内容得到不同
+# external_attr。保留 executable 位，并统一其余权限位，确保资源包字节可复现。
+while IFS= read -r -d '' file; do
+  if [[ -x "$file" ]]; then
+    chmod 0755 "$file"
+  else
+    chmod 0644 "$file"
+  fi
+done < <(find "$TMP" -type f -print0)
 find "$TMP" -exec touch -h -t "$BUILD_EPOCH" {} +
 rm -f "$OUT" "$SHA1_OUT" "$MANIFEST_OUT"
 (
