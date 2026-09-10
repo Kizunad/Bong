@@ -78,8 +78,15 @@ while IFS= read -r -d '' file; do
     rel="$file"
   fi
   should_include "$rel" || continue
+  executable=0
+  [[ -x "$file" ]] && executable=1
   mkdir -p "$TMP/assets/$(dirname "$rel")"
   cp "$file" "$TMP/assets/$rel"
+  if (( executable )); then
+    chmod 0755 "$TMP/assets/$rel"
+  else
+    chmod 0644 "$TMP/assets/$rel"
+  fi
 done < <(find "$ASSETS_ROOT" -type f -print0)
 
 cat >"$TMP/pack.mcmeta" <<JSON
@@ -91,15 +98,8 @@ cat >"$TMP/pack.mcmeta" <<JSON
 }
 JSON
 
-# ZIP 条目会携带源文件权限；不同 checkout 的 umask 可能让同一内容得到不同
-# external_attr。保留 executable 位，并统一其余权限位，确保资源包字节可复现。
-while IFS= read -r -d '' file; do
-  if [[ -x "$file" ]]; then
-    chmod 0755 "$file"
-  else
-    chmod 0644 "$file"
-  fi
-done < <(find "$TMP" -type f -print0)
+# pack.mcmeta 不是从资产树复制的，也要固定权限，避免 umask 进入 ZIP external_attr。
+chmod 0644 "$TMP/pack.mcmeta"
 find "$TMP" -exec touch -h -t "$BUILD_EPOCH" {} +
 rm -f "$OUT" "$SHA1_OUT" "$MANIFEST_OUT"
 (

@@ -145,10 +145,15 @@ class BuildResourcepackTest(unittest.TestCase):
 
             os.chmod(regular_fixture, 0o664)
             os.chmod(executable_fixture, 0o775)
-            subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=self._env(assets, out_a, version="mode"))
-            os.chmod(regular_fixture, 0o644)
-            os.chmod(executable_fixture, 0o755)
-            subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=self._env(assets, out_b, version="mode"))
+            original_umask = os.umask(0o002)
+            try:
+                subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=self._env(assets, out_a, version="mode"))
+                os.chmod(regular_fixture, 0o644)
+                os.chmod(executable_fixture, 0o755)
+                os.umask(0o022)
+                subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=self._env(assets, out_b, version="mode"))
+            finally:
+                os.umask(original_umask)
 
             pack_a = out_a / "bong-full-mode.zip"
             pack_b = out_b / "bong-full-mode.zip"
@@ -162,6 +167,12 @@ class BuildResourcepackTest(unittest.TestCase):
                 hashlib.sha1(pack_b.read_bytes(), usedforsecurity=False).hexdigest(),
                 "expected source checkout modes to produce the same SHA-1 because archive metadata is normalized",
             )
+            with zipfile.ZipFile(pack_a) as archive:
+                regular_info = archive.getinfo("assets/bong/textures/particle/mode-sensitive.png")
+                executable_info = archive.getinfo("assets/bong/geo/mode-sensitive.geo.json")
+                metadata_mode = lambda info: (info.external_attr >> 16) & 0o777
+                self.assertEqual(0o644, metadata_mode(regular_info), "expected regular staged assets to use stable 0644 ZIP metadata")
+                self.assertEqual(0o755, metadata_mode(executable_info), "expected executable staged assets to retain stable 0755 ZIP metadata")
 
     def test_filter_excludes_unsupported_suffix_and_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
