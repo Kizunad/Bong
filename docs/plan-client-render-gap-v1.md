@@ -335,7 +335,7 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 
 - `modelScript/generators/gen_hide_armor.py:171,351,460,539` 已有 `part_helmet()`、`part_chestplate()`、`part_leggings()`、`part_boots()`；本批将其生成的运行时几何逐件转写到 `client/src/main/java/com/bong/client/armor/ArmorPartModel.java:168-171,394-590`，四槽分别为 25 / 53 / 52 / 48 cubes，并由 `ArmorPartModelTest.everyCubeFieldIsPinnedByStableDigest` 锁定 digest。
 - `client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:47-50` 将 `armor_hide_{helmet,chestplate,leggings,boots}` 映射到对应 model key；`ArmorFeatureRenderer.collectRenderable()` 的现有 slot、durability、worn 过滤链消费这些 entry，四张运行时贴图位于 `client/src/main/resources/assets/bong/textures/armor/hide_{helmet,chestplate,leggings,boots}/0.png`。
-- `copper` 的实现 owner 是 `plan-copper-armor-v1`（已随 #2205 进入主线）；本 plan §6.2 仅保留其范围引用，不复制或重新实现铜甲模型、cube 表或行为。`scroll_wrap`、`straw`、`spirit_cloth` 仍留待后续批次。
+- `copper` 的实现 owner 是 `plan-copper-armor-v1`（已随 #2205 进入主线）；本 plan §6.2 仅保留其范围引用，不复制或重新实现铜甲模型、cube 表或行为。`straw`、`spirit_cloth` 仍留待后续批次。
 
 #### P3 第二批：scroll_wrap 四槽（2026-09-10）
 
