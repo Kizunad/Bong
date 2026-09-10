@@ -24,9 +24,8 @@ public final class StatusEffectHudPlanner {
         "extraordinarymeridianacceleration", "slowed", "damageamp", "humility",
         "insighthallucination", "frailty", "qicappermminus", "contaminationboost", "body_part_weaken",
         "staminacrash", "qidrainforstamina", "legstrain", "qi_regen_paused",
-        "mirror_exposed", "resonancelocked", "qiregenslowed", "damagevulnerability", "alchemy_buff"
+        "mirror_exposed", "resonancelocked", "qiregenslowed", "damagevulnerability", "alchemy_buff", "exhausted"
     );
-    // [BLOCKED: gimage2 provider HTTP 502] exhausted.png remains on the visible SVG fallback.
 
     private StatusEffectHudPlanner() {}
 

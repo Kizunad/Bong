@@ -71,7 +71,7 @@ class StatusEffectHudPlannerTest {
             }
         }
         for (String id : List.of("bleeding", "contaminationboost", "immobilized", "shieldblocking",
-                                "health_regen_boost")) {
+                                "health_regen_boost", "exhausted")) {
             String path = "/assets/" + iconPath(id).replace(':', '/');
             try (var input = getClass().getResourceAsStream(path)) {
                 assertNotNull(input, "状态必须包含自己的 PNG: " + id);
