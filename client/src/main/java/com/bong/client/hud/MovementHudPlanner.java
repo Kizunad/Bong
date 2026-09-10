@@ -110,15 +110,7 @@ public final class MovementHudPlanner {
         if (leftReservedX >= EDGE_MARGIN) {
             return clampPanelGeometry(leftReservedX, besideY, screenWidth, screenHeight);
         }
-        int leftX = hotbarLeftX - HOTBAR_GAP - PANEL_WIDTH;
-        if (leftX >= EDGE_MARGIN) {
-            return clampPanelGeometry(leftX, besideY, screenWidth, screenHeight);
-        }
-        int rightX = hotbarRightX + HOTBAR_GAP;
-        if (rightX + PANEL_WIDTH <= screenWidth - EDGE_MARGIN) {
-            return clampPanelGeometry(rightX, besideY, screenWidth, screenHeight);
-        }
-
+        // 两侧持械位始终预留，窄窗口转到快捷栏上方，避免装备后覆盖身法印记。
         int aboveX = Math.max(EDGE_MARGIN, Math.min(screenWidth - PANEL_WIDTH - EDGE_MARGIN, (screenWidth - PANEL_WIDTH) / 2));
         int aboveY = Math.max(EDGE_MARGIN, upperY - HOTBAR_GAP - PANEL_HEIGHT);
         return clampPanelGeometry(aboveX, aboveY, screenWidth, screenHeight);

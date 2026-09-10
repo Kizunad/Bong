@@ -13,6 +13,13 @@ import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.combat.EquippedWeapon;
+import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.combat.EquippedShield;
+import com.bong.client.combat.EquippedShieldStore;
+import com.bong.client.combat.EquippedTreasure;
+import com.bong.client.combat.TreasureEquippedStore;
+import com.bong.client.combat.TreasurePanelSync;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
@@ -31,7 +38,7 @@ public final class SvgHudPreviewHarness {
     private static volatile long statusFixtureStartedAt;
     private static volatile long statusFixtureOffsetMs = -1;
     private static boolean loopStatusFixture;
-    private static String movementShot = "";
+    private static String selectedShot = "";
 
     private SvgHudPreviewHarness() {
     }
@@ -58,7 +65,7 @@ public final class SvgHudPreviewHarness {
             return;
         }
         scenario = Scenario.fromShotName(shotName);
-        movementShot = shotName == null ? "" : shotName;
+        selectedShot = shotName == null ? "" : shotName;
         statusFixtureStartedAt = System.currentTimeMillis();
         statusFixtureOffsetMs = switch (shotName == null ? "" : shotName) {
             case "hud-status-effects-entry" -> 200;
@@ -111,6 +118,7 @@ public final class SvgHudPreviewHarness {
             case JIEMAI -> DefenseWindowStore.open(60_000, nowMs);
             case STATUS_EFFECTS -> installStatusEffectsFixture(nowMs);
             case MOVEMENT -> installMovementFixture(nowMs);
+            case HANDS -> installHandsFixture(nowMs);
             case QUICKBAR, CAST_GATHER, CAST_FORM, CAST_COMPLETE, CAST_INTERRUPTED ->
                 installQuickbarFixture(current, nowMs);
             case NONE -> {
@@ -120,13 +128,13 @@ public final class SvgHudPreviewHarness {
 
     private static void installMovementFixture(long nowMs) {
         installQuickbarFixture(Scenario.QUICKBAR, nowMs);
-        if (movementShot.equals("hud-movement-locked")) return;
+        if (selectedShot.equals("hud-movement-locked")) return;
         TechniquesListPanel.replace(List.of(new TechniquesListPanel.Technique(
             DashSkill.ID, "闪避", TechniquesListPanel.Grade.MORTAL, 0, true, "", "",
             "Awaken", List.of(), 0, 0, 40, 2.8f)));
-        boolean cooling = movementShot.equals("hud-movement-cooldown");
-        boolean dashing = movementShot.equals("hud-movement");
-        boolean rejected = movementShot.equals("hud-movement-rejected");
+        boolean cooling = selectedShot.equals("hud-movement-cooldown");
+        boolean dashing = selectedShot.equals("hud-movement");
+        boolean rejected = selectedShot.equals("hud-movement-rejected");
         long activity = nowMs - (dashing || rejected ? 100 : 2_000);
         MovementState fixture = new MovementState(
             1, dashing, dashing ? MovementState.Action.DASHING : MovementState.Action.NONE,
@@ -135,6 +143,23 @@ public final class SvgHudPreviewHarness {
         );
         MovementStateStore.replace(fixture, activity);
         MovementStateStore.replace(fixture, nowMs);
+    }
+
+    private static void installHandsFixture(long nowMs) {
+        installMovementFixture(nowMs);
+        if (selectedShot.equals("hud-hands-empty")) return;
+        boolean worn = selectedShot.equals("hud-hands-worn");
+        WeaponEquippedStore.putOrClear("main_hand",
+            new EquippedWeapon("main_hand", 801, "iron_sword", "sword", worn ? 12 : 86, 100, 0));
+        if (selectedShot.equals("hud-hands-dual")) {
+            WeaponEquippedStore.putOrClear("off_hand",
+                new EquippedWeapon("off_hand", 802, "bone_dagger", "dagger", 62, 100, 0));
+        } else if (selectedShot.equals("hud-hands-treasure")) {
+            TreasureEquippedStore.putOrClear("trigger_0",
+                new EquippedTreasure("trigger_0", 803, "spirit_treasure_jizhaojing", "寂照镜"));
+        } else if (!selectedShot.equals("hud-hands-single")) {
+            EquippedShieldStore.equip(new EquippedShield(804, "wooden_shield", worn ? 8 : 74, 100));
+        }
     }
 
     private static void installQuickbarFixture(Scenario current, long nowMs) {
@@ -182,6 +207,13 @@ public final class SvgHudPreviewHarness {
         QuickUseSlotStore.replaceLocal(QuickSlotConfig.empty());
         SkillBarStore.replace(SkillBarConfig.empty());
         SkillBarStore.clearSelectedSlot();
+        WeaponEquippedStore.putOrClear("main_hand", null);
+        WeaponEquippedStore.putOrClear("off_hand", null);
+        EquippedShieldStore.clear();
+        TreasureEquippedStore.putOrClear("off_hand", null);
+        for (int i = 0; i < TreasurePanelSync.TREASURE_TRIGGER_CAP; i++) {
+            TreasureEquippedStore.putOrClear(TreasurePanelSync.triggerSlotKey(i), null);
+        }
     }
 
     private enum Scenario {
@@ -189,6 +221,7 @@ public final class SvgHudPreviewHarness {
         JIEMAI,
         STATUS_EFFECTS,
         MOVEMENT,
+        HANDS,
         QUICKBAR,
         CAST_GATHER,
         CAST_FORM,
@@ -205,6 +238,7 @@ public final class SvgHudPreviewHarness {
                 case "status-effects", "status-effects-entry", "status-effects-travel", "status-effects-settled",
                     "status-effects-warning", "status-effects-exit" -> STATUS_EFFECTS;
                 case "movement", "movement-ready", "movement-cooldown", "movement-rejected", "movement-locked" -> MOVEMENT;
+                case "hands-empty", "hands-single", "hands-dual", "hands-shield", "hands-worn", "hands-treasure" -> HANDS;
                 case "quickbar" -> QUICKBAR;
                 case "cast-gather" -> CAST_GATHER;
                 case "cast-form" -> CAST_FORM;
