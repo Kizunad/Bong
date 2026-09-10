@@ -2,13 +2,13 @@
 
 > **一句话主题**：把三处最挡"横向扩内容"的硬编码注册表迁成扫盘数据文件——craft 手搓/制作台配方（pin 测试锁定 90 条 + 5 条 legacy 的 Rust 元组表）、功法元数据（49 条 const 数组）、terrain 方块名映射（`blocks.rs` + `raster.rs` 孪生双份 match）——**零新系统、零 wire 改动，有效数据的运行时语义零变化**（唯一有意变更：无效引用从运行时静默失败改为启动期 fail fast，错误契约见 P2），只搬装载来源不动消费方，让"加一条内容 = 加一个数据条目"的覆盖面从物品/丹方/锻造蓝图扩到配方/功法/地形材质。
 
-**状态**：Finished（P0-P3 全部于 2026-07-29 验收并归档；实施以 §8.1 决议为准）。
+**状态**：Finished（P0/P1/P2 已按各自最终主线合入提交验收；P3 为 2026-07-27 范围裁决；实施以 §8.1 决议为准）。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | craft 配方数据化——workbench 90 条（pin 锁定）+ legacy 5 条 → `assets/craft/recipes/*.toml` 扫盘 + 对拍回归门 | ✅ 2026-07-29 |
-| P1 | 功法元数据数据化——`TECHNIQUE_DEFINITIONS` 49 条 → TOML + 双向 wiring 启动校验 | ✅ 2026-07-29 |
-| P2 | 方块名映射查表化——`blocks.rs` + `raster.rs` 孪生表合一 + manifest 引用启动期 fail-fast（替代静默丢材质） | ✅ 2026-07-29 |
+| P0 | craft 配方数据化——workbench 90 条（pin 锁定）+ legacy 5 条 → `assets/craft/recipes/*.toml` 扫盘 + 对拍回归门 | ✅ 2026-08-06 |
+| P1 | 功法元数据数据化——`TECHNIQUE_DEFINITIONS` 49 条 → TOML + 双向 wiring 启动校验 | ✅ 2026-08-23 |
+| P2 | 方块名映射查表化——`blocks.rs` + `raster.rs` 孪生表合一 + manifest 引用启动期 fail-fast（替代静默丢材质） | ✅ 2026-08-08 |
 | P3 | 范围裁决项——矿物 registry / NPC 原型默认掉落 / 丹道 6 方包装（§8.1 #5 已裁决为本 plan 不实施） | ✅ 2026-07-27 |
 
 ---
@@ -34,7 +34,9 @@
 - **worldview 锚点**：纯基建无新玩法；数据条目 display_name 仍受 §三 L63 命名禁词约束（loader 可顺带 lint，§8 #6）。
 - **qi_physics 锚点**：qi_cost 数值只搬运不改，不新增常数不碰 ledger。
 
-## P0 craft 配方数据化 ✅ 2026-07-29
+## P0 craft 配方数据化 ✅ 2026-08-06
+
+- **主线落点**：`fa09f1406d7f967e03c2bd307632e594bbdb38af`（2026-08-06，PR #1906）；这是 PR-A 的最终主线提交，不只采用最初的迁移 commit。实际交付文件包括 `server/assets/craft/recipes/` 下 15 个 TOML、`server/src/craft/data.rs`、`server/src/craft/fixtures/legacy_p0_registrar.rs`、`server/src/craft/registry_datafication_p0_baseline.json`，以及 `craft/mod.rs` / `workbench_recipes.rs` 的生产接线。
 
 - 新 `server/assets/craft/recipes/` 目录，TOML 格式（文件粒度 §8 #1）：字段镜像 `CraftRecipe`（id / category / display_name / materials / qi_cost / time_sec / output / unlock_sources / station / requirements）。time 以秒存储、加载时 ×20 ticks（对齐 `workbench_recipes.rs:8` 现注释惯例）。
 - 新 loader `craft/data.rs`：`load_craft_recipes_from_dir` 启动扫盘 → 逐条 `registry.register()`。`deny_unknown_fields`；materials/output 引用的 item id 必须在 `ItemRegistry`（启动校验 fail fast）；重复 id 拒载（复用 `RegistryError::DuplicateId`）。
@@ -42,7 +44,9 @@
 - **对拍回归门（本 plan 核心测试策略）**：迁移 commit 前先落一个 test fixture——基线取 **P0 实施起点的实际 Rust 表**（脚本化 dump 当刻 register 结果；90 + 5 仅为 2026-07-18 参考值，防同批 plan-craft-chain-items-v1 先行加配方后字面数失效，一切数量断言取快照长度不写字面数）；迁移后断言 TOML 加载结果与快照**逐条相等** + 数量 pin 承接既有 `register_workbench_recipes_succeeds` / `workbench_recipe_count_by_group` 两 pin（随基线同步刷新），并顺带修正 `:78` 过期头注。既有 session / unlock / reclaim / UI 分组测试全绿不动（尤其 `session.rs:1744` 手搓无台可做 pin）。
 - 饱和测试：坏 TOML 拒载（未知字段 / 重复 id / 引用不存在 item / 负数 qi / 零产出 / malformed TOML）+ 加载边界（空目录 / 目录不存在 / 文件扫描顺序无关性）——这些直接决定启动期是否**静默得到空 registry**，必须 fail fast 不许空转；失败断言必须携带文件路径 + recipe id，对拍失败必须同时输出期望值与实际值；`CraftCategory` / `UnlockSource` / `CraftStationKind` 每 serde 变体正反 sample pin。
 
-## P1 功法元数据数据化 ✅ 2026-07-29
+## P1 功法元数据数据化 ✅ 2026-08-23
+
+- **主线落点**：`73014399b540557df345f5d3203fb3493bc151ae`（2026-08-23，PR #1336）；PR 内的审查修补随最终合入提交收口。实际交付文件包括 `server/assets/cultivation/techniques.toml`、`server/src/cultivation/known_techniques.rs`、`skill_registry.rs`、`technique_mentor.rs`、`technique_observe.rs`、`technique_scroll.rs`、`burst_meridian.rs` 与 `first_hit_dash.rs`。当前生产入口以 `TechniqueRegistry::load_default` 和 `validate_startup_wiring` 为准，49 条是迁移兼容基线而不是生产上限。
 
 - 新 `server/assets/cultivation/techniques.toml`：49 条全字段按现有 source order 迁移。resolver 函数指针**留 Rust**（`SkillRegistry` 注册模式不动——本 plan 只外置元数据，不外置行为）。
 - 新 owned `TechniqueRegistry` Resource（有序 `Vec<TechniqueDefinition>` + `id → index`），保持 NPC 同 seed 选招与命令展示的原顺序；系统消费方取 `Res<TechniqueRegistry>`，纯函数显式收 `&TechniqueRegistry`。玩家持久化 `KnownTechniques { id, proficiency, active }` 与 `KnownTechniquesLoadFailed` 写保护不动。详见 §8.1 #3。
@@ -50,12 +54,13 @@
 - 与 **plan-skill-av-relink-v1（active）** 协调：图标链防回归测试（#1220，skill_scroll 单一真相源）以 icon id 为锚——元数据外置**不得改任何 icon id 语义**，迁移后该测试族必须原样全绿。
 - 对拍回归门同 P0：旧 const 数组 canonical 快照 == TOML 加载结果逐条相等；数量从快照长度派生，不在迁移后测试中另写一份 49 条真源。realm / race gate / category 枚举字符串每变体正反 serde sample。
 
-## P2 方块名映射查表化（孪生表合一）✅ 2026-07-29
+## P2 方块名映射查表化（孪生表合一）✅ 2026-08-08
 
-- **范围必须同时收编两份 match**：`blocks.rs::block_from_name`（match 体 `blocks.rs:17-263`）与镜像实现 `raster.rs:1259` `block_state_from_name`——合一为单一真相源后各消费点（`flora.rs` / `raster.rs` / `structures.rs` / `nbt_io.rs` / `nbt_registry.rs` / `cmd/dev/gallery.rs`）统一走新查表。只迁一份 = 静默丢材质风险原样保留 + 两表进一步失去同步，视为不合格交付。
-- 方案 §8 #4 收口后定，倾向：valence `BlockKind::from_str` 兜底 + 极小特例映射（数据或常量表，覆盖带状态属性的非直映射条目），退路是脚本生成的静态查表。
-- **静默 `None` → 启动期 fail fast（有意的失败语义变更）**：`TerrainProvider::load` 时把 manifest 携带的 surface_palette / decoration blocks 全量预解析，未知方块名启动即报错。错误契约：报错信息列出**全部**未知名及各自来源（palette 项 / decoration id / NBT 文件），触发条件 = manifest 引用的任一方块名不可解析；有效数据的运行时行为不变。发布策略：对拍测试保证现两表覆盖名全数可解析 + 合并前 `scripts/dev-reload.sh` 对现网 raster 全链过一遍，故现存数据不会触发新的启动失败。
-- 饱和测试：两份现 match 覆盖的**全部名字新旧解析结果对拍**（一致性快照，含两表差集专项——若两表现状已有分歧条目，逐条裁决记录进 plan）；未知名报错路径；manifest 校验命中 / 漏配用例；`raster_check` 后验流程不受影响（`bash scripts/dev-reload.sh` 全绿）。
+- **主线落点**：`4691f972c0223037ffa9423eed6f28933d378add`（2026-08-08，PR #1890）。实际交付文件包括 `server/assets/worldgen/block_catalog.toml`、`world/terrain/blocks.rs`、`blocks_legacy_oracle.rs`、`raster_legacy_oracle.rs`、`raster.rs`、`flora.rs`、`structures.rs`、`nbt_io.rs`、`nbt_registry.rs` 与 `terrain/mod.rs`。
+- **两份 match 已同时收编**：当前 canonical 入口是 `world/terrain/blocks.rs::BlockCatalog::load` / `block_from_name`（当前约 `blocks.rs:21,293`）；catalog 有 213 个 logical key，其中 211 个 direct，显式 alias 为 `glowshroom → shroomlight`、`iron_nugget → air`。`raster.rs::block_state_from_name`（当前约 `raster.rs:2047`）只转调 canonical resolver，生产侧 39-arm 镜像已删除；`raster_legacy_oracle.rs` 仅保留 test-only 对拍。
+- **六个消费面逐一核验**：`flora.rs` 使用预解析的 `resolved_blocks`；`raster.rs` 负责 surface/decoration/placement lowering；`structures.rs` 消费已 lower 的 `BlockState` placement；`nbt_io.rs::PaletteEntry::block_state` 走统一 property lowerer；`nbt_registry.rs::DecorationNbtPreflight` / `palette_diagnostics` 参与启动预检；`cmd/dev/gallery.rs::structure_placements` 复用同一 NBT palette lowering。
+- **启动期 fail-fast 已真实接入**：`TerrainProvider::load` / `load_preflighted` 与 `terrain/mod.rs::prepare_raster_bootstrap_with_nbt_preflight` 在构造 provider 前汇总 surface、decoration、NBT、placement 的未知 block、property 和 template 诊断。`invalid_cross_source_manifest` 与 `load_preflighted_aggregates_surface_decoration_template_and_placement_errors` 负例确认一轮列出全部未知名；`block_state_from_placement_rejects_unknown_blocks_and_properties` 和 NBT palette diagnostics 覆盖属性/索引错误。
+- **现网数据核验**：合入后的 `scripts/dev-reload.sh` 全链与 raster 后验均通过；overworld 为 `306/306` tiles、TSY 为 `9/9`，随后 server 启动预检加载 `306` 个 overworld tiles、`9` 个 TSY tiles，无新的启动失败。原决议中的行号已漂移，本节以当前符号名和上述复核后的行号为准。
 
 ## P3 范围裁决项 ✅ 2026-07-27
 
@@ -119,6 +124,8 @@
 
 **落点**：`server/src/world/terrain/blocks.rs:17-263`、`server/src/world/terrain/raster.rs:850-994,1401-1453,1480-1573`、`server/src/world/terrain/nbt_io.rs:90-150`、`server/src/world/terrain/nbt_registry.rs:223-240`；plan P2。
 
+**实施后符号核对（2026-09-10）**：上述决议行号已漂移；当前应以 `BlockCatalog::load` / `block_from_name`、`TerrainProvider::load` / `load_preflighted`、`PaletteEntry::block_state`、`DecorationNbtPreflight` 和 `structure_placements` 为准，分别落在 `blocks.rs`、`raster.rs`、`nbt_io.rs`、`nbt_registry.rs` 与 `cmd/dev/gallery.rs`。`raster.rs::block_state_from_name` 仍存在但只是 canonical resolver 适配器，不是旧的 39-arm 镜像。
+
 ### #5 P3 三项去留
 
 **决议**：
@@ -166,21 +173,11 @@
 
 **关键 commit**：
 
-- `99dd9e7a5`（2026-07-28）：数据化 craft 旧配方注册表。
-- `d86f16276`（2026-07-28）：数据化功法元数据注册表。
-- `c9781d4f5`（2026-07-28）：数据化地形方块目录并收口启动预检。
-- `25169bea8`（2026-07-28）：补齐严格 `TechniqueRegistry` 下隔离测试 App 的显式资源契约。
-- `be2ba7c30`（2026-07-28）：接纳 production worldgen manifest 的已知元数据，同时保留未来字段 fail-closed。
-- `31997f20c`（2026-07-29）：首次发布收口合并 `origin/main`，并据此修正合并态生命周期测试契约。
-- `8d4bad052`（2026-07-29）：合并态生命周期测试按既有墙钟 deadline 折算契约断言，生产公式未放宽。
-- `f968aff0f`（2026-07-29）：最终发布前再次 fetch 并合并最新 `origin/main`；仅带入一份无关 bughunt skeleton，随后仍按协议重跑全部受影响门禁。
-- `5af4be29a`（2026-07-30）：根据 fresh validator 结论移除方块目录的 213/211/2、固定 alias 与完整 key-set fingerprint 生产门，将历史集合降为 test-only compatibility baseline。
-- `06f8fe650`（2026-07-30）：移除功法 wiring 的固定 direct-generic ID 与 68/49/46/22 数量门，改为当前 registry 间逐条动态关系校验。
-- `0f517547c`（2026-07-30）：修复 PR #1315 e2e 揭示的 Bot raster fixture 严格 schema 漂移，显式接纳 producer 的完整六字段证据，同时保持运行时 ready marker 只发布 `kind/token`。
-- `6e3e5ccb0`（2026-08-17）：按 VRFY 返工补齐 dedicated-input 正向/反向启动接线、resolver-backed full-app 扩展回归，并将 race-gate 投影测试改为当前 registry 派生。
-- `e88200146`（2026-07-30）：根据 final fresh validator 对 `b279791e` 的结论，移除完整 App 启动 smoke 对历史 49 条及首尾功法 ID 的固定断言，改为当前 TOML 非空且 ID 唯一的动态契约。
-- `e4da30aa2`（2026-07-30）：补充真实 `BONG_ASSETS_DIR` 覆盖下追加 `direct_generic` 功法的启动回归；该历史证据仅适用于当时的 generic-consumer 合约，最终边界已改为无消费者即拒绝。
-- `6e3e5ccb0`（2026-08-17）：最终边界返工：专属输入改为 code-owned consumer 正向/反向校验，完整启动新增 resolver-backed metadata 扩展正例，同时移除 race-gate 当前人口计数门。
+- `fa09f1406d7f967e03c2bd307632e594bbdb38af`（2026-08-06）：PR #1906 / P0 最终主线合入，配方 TOML、loader、迁移 oracle 与生产接线落地。
+- `4691f972c0223037ffa9423eed6f28933d378add`（2026-08-08）：PR #1890 / P2 最终主线合入，block catalog、canonical resolver、双表对拍与 terrain/NBT 启动预检落地。
+- `73014399b540557df345f5d3203fb3493bc151ae`（2026-08-23）：PR #1336 / P1 最终主线合入，TechniqueRegistry、TOML 元数据、调用方迁移与动态 wiring 校验落地。
+- `2263ae943bd69c4d1a66ac6a40c45d8a9679048b`（2026-07-29）：第一次正常归档本 plan；它是文档流转证据，不是三阶段实现提交。
+- `3caaf02b7cb40e48f59beda38d0d5e6ac91746ee`（2026-08-20）：PR #1315 分支基于旧归档状态重新创建 finished 副本；它解释了重复文件来源，不代表第二次 P1 实现。
 
 **测试结果**：
 
@@ -207,6 +204,7 @@
 
 **遗留 / 后续**：
 
+- **重复 plan 处置**：`2263ae943` 已将 active 正常归档；之后 `fa09f1406`（PR #1906）重新带回旧 active 文件，`3caaf02b7`（PR #1315）又带入另一份 finished 文件。两份内容和状态不同，且 active 只有 157 行旧 PR-A 计划、finished 才包含完整 Finish Evidence；本次只删除 `docs/plan-registry-datafication-v1.md`，保留并修正本文件，不覆盖任何代码或其它 plan。
 - 矿物 registry、NPC 原型默认掉落、丹道 6 方包装仍按 P3 裁决留待各自独立验真/立项。
 - `BONG_TSY_RASTER_PATH` 未配置时仍保持 overworld-only 合法；一旦配置，损坏或不完整 TSY 数据会按本 plan 的严格启动契约 fail fast。
 - §8.1 #3/#4 与 P1/P2 中的 49/68/46/22/3、213/211/2 数字保留为迁移时历史背景；生产 admission 以当前 TOML 和当前 runtime registry 的动态契约为准，不得重新把这些数字或历史 ID/alias 集合引入生产校验。
