@@ -9,7 +9,9 @@ use crate::inventory::spirit_treasure::{
     SpiritTreasureRegistry,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::player::state::canonical_player_id;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::spirit_treasure::{SpiritTreasureDialoguePayloadV1, SpiritTreasureDialogueV1};
@@ -17,7 +19,7 @@ use crate::world::dimension::DimensionKind;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 type SpiritTreasureStateClientFilter = (
-    With<Client>,
+    AmbientServerDataClientFilter,
     Or<(Added<ActiveSpiritTreasures>, Changed<ActiveSpiritTreasures>)>,
 );
 

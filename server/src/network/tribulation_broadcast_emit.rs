@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
-use valence::prelude::{Client, Entity, EventReader, Local, Position, Query, Res, With};
+use valence::prelude::{Client, Entity, EventReader, Local, Position, Query, Res};
 
 use crate::cultivation::tribulation::{
     JueBiTriggeredEvent, TribulationAnnounce, TribulationLocked, TribulationSettled,
     TribulationWaveCleared,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1, TribulationBroadcastV1};
 use crate::time::MILLIS_PER_TICK;
 use crate::world::event_rhythm::{
@@ -55,7 +57,7 @@ impl ActiveTribulationBroadcast {
 
 #[allow(clippy::too_many_arguments)]
 pub fn emit_tribulation_broadcast_payloads(
-    mut clients: Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
+    mut clients: Query<(Entity, &mut Client, Option<&Position>), AmbientServerDataClientFilter>,
     heartbeat: Option<Res<WorldHeartbeat>>,
     mut active_broadcasts: Local<HashMap<Entity, ActiveTribulationBroadcast>>,
     mut announce: EventReader<TribulationAnnounce>,
@@ -176,14 +178,14 @@ fn tribulation_broadcast_ttl_ms_from_config(
 }
 
 fn broadcast(
-    clients: &mut Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
+    clients: &mut Query<(Entity, &mut Client, Option<&Position>), AmbientServerDataClientFilter>,
     data: impl TribulationBroadcastClientView,
 ) {
     broadcast_filtered(clients, None, data);
 }
 
 fn broadcast_to_clients(
-    clients: &mut Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
+    clients: &mut Query<(Entity, &mut Client, Option<&Position>), AmbientServerDataClientFilter>,
     target_clients: &HashSet<Entity>,
     data: impl TribulationBroadcastClientView,
 ) {
@@ -191,7 +193,7 @@ fn broadcast_to_clients(
 }
 
 fn broadcast_filtered(
-    clients: &mut Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
+    clients: &mut Query<(Entity, &mut Client, Option<&Position>), AmbientServerDataClientFilter>,
     target_clients: Option<&HashSet<Entity>>,
     data: impl TribulationBroadcastClientView,
 ) {

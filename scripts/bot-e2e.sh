@@ -533,6 +533,9 @@ start_self_server_attempt() {
     # 自起模式必须把本轮选定的端口传给 server（BONG_SERVER_PORT），否则 server
     # 永远绑 valence 默认 25565，分配的端口将无人监听、readiness 假超时。
     export BONG_SERVER_PORT="$PORT"
+    # 负向 server_data 场景需要服务端按连接隔离 ambient producer；该 capability
+    # 只授予本轮 self-start 的 immutable server，REUSE 不进入这个子进程也不伪造能力。
+    export BONG_E2E_AMBIENT_ISOLATION=1
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
       # The owned server is the harness capability boundary; REUSE never enters this branch.
       export BONG_DEV_MODE=1

@@ -13,14 +13,16 @@
 //! 3. [`emit_shield_broken_payloads`]：消费 [`ShieldBroken`] 事件推送
 //!    `ShieldBrokenV1 { instance_id, template_id }`。（plan-shield-block-v1 P3）
 
-use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res, With};
+use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res};
 
 use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, WeaponBroken, WeaponKind};
 use crate::inventory::{ItemCategory, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::combat_hud::{
     ShieldBlockHitV1, ShieldBrokenV1, WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1,
 };
@@ -142,7 +144,7 @@ fn send_weapon_broken(client: &mut Client, instance_id: u64, template_id: &str) 
 pub fn emit_weapon_equipped_payloads(
     registry: Res<ItemRegistry>,
     changed_inventories: Query<(Entity, &PlayerInventory), Changed<PlayerInventory>>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
 ) {
     let updates: Vec<WeaponClientUpdate> = changed_inventories
         .iter()
@@ -198,7 +200,7 @@ pub fn emit_weapon_equipped_payloads(
 /// plan-weapon-v1 §6.3：消费 [`WeaponBroken`] 事件并推送到对应玩家 client。
 pub fn emit_weapon_broken_payloads(
     mut events: EventReader<WeaponBroken>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
 ) {
     let broken: Vec<WeaponBroken> = events.read().cloned().collect();
     for ev in broken {
@@ -232,7 +234,7 @@ fn send_shield_broken(client: &mut Client, instance_id: u64, template_id: &str) 
 /// plan-shield-block-v1 P3：消费 [`ShieldBroken`] 事件并推送到对应玩家 client。
 pub fn emit_shield_broken_payloads(
     mut events: EventReader<ShieldBroken>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
 ) {
     let broken: Vec<ShieldBroken> = events.read().cloned().collect();
     for ev in broken {
@@ -266,7 +268,7 @@ fn send_shield_block_hit(client: &mut Client, template_id: &str) {
 /// client ShieldBlockHitHandler 按 template_id 触发材质差异化粒子+音效。
 pub fn emit_shield_block_hit_payloads(
     mut events: EventReader<ShieldBlockHit>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
 ) {
     let hits: Vec<ShieldBlockHit> = events.read().cloned().collect();
     for ev in hits {

@@ -16,7 +16,9 @@ use crate::fauna::mimic_spider::SpiderDisguiseState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::realm_vision::{SenseEntryV1, SpiritualSenseTargetsV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -71,7 +73,7 @@ type SpiritualSenseObserverItem<'a> = (
     &'a Cultivation,
     &'a LifeRecord,
 );
-type SpiritualSenseObserverFilter = With<Client>;
+type SpiritualSenseObserverFilter = AmbientServerDataClientFilter;
 type SpiritualSenseNpcSpiderReadItem<'a> = (
     &'a Position,
     &'a SpiderDisguiseState,
@@ -122,7 +124,9 @@ pub fn send_spiritual_sense_targets(client: &mut Client, targets: SpiritualSense
     );
 }
 
-pub fn push_empty_spiritual_sense_targets(mut clients: Query<&mut Client, With<Client>>) {
+pub fn push_empty_spiritual_sense_targets(
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
+) {
     for mut client in &mut clients {
         send_spiritual_sense_targets(
             &mut client,

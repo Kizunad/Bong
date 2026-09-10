@@ -19,14 +19,16 @@ use std::collections::{HashMap, HashSet};
 use valence::entity::EntityId;
 use valence::prelude::{
     bevy_ecs, Added, Client, Commands, Component, Entity, Position, Query, RemovedComponents, Res,
-    ResMut, Resource, ViewDistance, With,
+    ResMut, Resource, ViewDistance,
 };
 
 use crate::body_plan::MorphState;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::disguise_sync::ids_visible_to_client;
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::server_data::{
     MorphStateEntryV1, MorphStateV1, ServerDataPayloadV1, ServerDataV1,
 };
@@ -72,7 +74,7 @@ pub fn emit_morph_state_payloads(
     clock: Res<CultivationClock>,
     mut state: ResMut<MorphStateEmitState>,
     morphed_q: Query<(&EntityId, &MorphState)>,
-    mut clients: Query<MorphStateEmitClientItem<'_>, With<Client>>,
+    mut clients: Query<MorphStateEmitClientItem<'_>, AmbientServerDataClientFilter>,
 ) {
     let due_for_periodic_resync =
         clock.tick.saturating_sub(state.last_emit_tick) >= MORPH_STATE_SYNC_INTERVAL_TICKS;
@@ -152,7 +154,7 @@ pub fn emit_morph_state_delta_payloads(
     morphed_q: Query<(Entity, &EntityId, &Position, &MorphState)>,
     added_q: Query<Entity, Added<MorphState>>,
     mut removed: RemovedComponents<MorphState>,
-    mut clients: Query<(&mut Client, &Position, &ViewDistance)>,
+    mut clients: Query<(&mut Client, &Position, &ViewDistance), AmbientServerDataClientFilter>,
 ) {
     // 每 tick 刷新一遍全部当前已易形实体的缓存坐标——保证一旦该实体在未来某 tick
     // 被移除（可能与其他组件同 tick 一起 despawn），移除分支仍能取到"移除前最后

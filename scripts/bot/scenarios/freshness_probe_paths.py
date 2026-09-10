@@ -4,7 +4,8 @@ resolve_one_probe（shelflife/probe.rs:101）检查顺序：
 1. 修为 < 凝脉（MIN_PROBE_REALM_RANK=2）→ Denied(RealmTooLow) → EventAlert
    「神识未及，凝脉方可感知保鲜」；
 2. item 无 freshness → Denied(NoFreshness) → 不发探针响应（freshness_probe_emit 对
-   NoFreshness 一律 continue 不发 S2C）；前置同步先经同连接 ping fence 排到请求窗口外；
+   NoFreshness 一律 continue 不发 S2C）；前置同步先经同连接 PlayerActionResponse ACK
+   fence 排到请求窗口外；
 3. 通过 → Precise → `FreshnessUpdateV1 { item_uuid, freshness, profile_name }`
    （freshness = current_qi/initial_qi；**创建瞬间**为 1.0，但探针响应反映的是
    give→probe 已衰减后的比值，本场景断言其严格 < 1.0）。
@@ -38,7 +39,9 @@ from ._inventory_helpers import (
 )
 from ._rejection_helpers import (
     ProtocolFence,
+    settled_server_data_protocol_fence,
     server_data_protocol_fence,
+    wait_for_join_sync,
     wait_for_event_after_cursor,
 )
 
@@ -49,13 +52,9 @@ PROBE_REQUEST = {"type": "freshness_probe", "v": 1}
 MEAT_ITEM = "food.mundane.cooked_meat"
 MEAT_PROFILE = "food_spoil_mundane_meat_v1"
 PLAIN_ITEM = "trade_crate"
-# 一条 fence 只排出已经入队的帧；第二次同连接往返跨过下一次 server update，
-# 收口请求前可能迟到的 join/zone 前置同步。
-PRE_REQUEST_FENCE_ROUND_TRIPS = 2
-# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
-# （network/carrier_state_emit.rs，ticks % TICKS_PER_SECOND==0 周期）。请求前用同连接
-# /ping fence 确认已到达的前置同步已经排到 Bot；请求窗口内不维护 payload type
-# 排除集，所有 server_data 一律判红（central-review 2029 #2）。
+# 请求前先等待 server_data 语义流连续静默，再用同连接 PlayerActionResponse ACK
+# 固化水位；请求窗口内不维护 payload type 排除集，所有 server_data 一律判红
+# （central-review 2029 #2）。
 # 探针路径 freshness = current_qi/initial_qi（shelflife/probe.rs，Linear：
 # current = initial - decay_per_tick × storage×season × (now_tick-created_at_tick)）。
 # 服务器主循环是 `app.update() + 5ms sleep`（main.rs:186），tick 率无上限也低于
@@ -94,8 +93,9 @@ def _probe_payload_freshness(bot, update, meat_instance: int) -> float:
 def run(env) -> None:
     with env.new_bot("FpH") as bot:
         snapshot = wait_join_and_inventory(bot)
+        wait_for_join_sync(bot)
+        bot.enable_ambient_server_data_isolation()
         revision = snapshot["revision"]
-
         bot.cmd(f"give {MEAT_ITEM} 1")
         bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
         give_anchor = time.monotonic()
@@ -107,9 +107,7 @@ def run(env) -> None:
         # Denied(RealmTooLow) 契约：同请求不得同时产出精确保鲜结果。请求前 fence
         # 先建立 lower watermark，避免把前置同步误归因于本次请求；收到预期告警后
         # 再用 upper fence 收口，两个水位之间的所有 server_data 都必须逐条核验。
-        start_fence = server_data_protocol_fence(
-            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
-        )
+        start_fence = settled_server_data_protocol_fence(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         alert = wait_for_event_after_cursor(
             bot,
@@ -140,27 +138,13 @@ def run(env) -> None:
         bot.assert_alive("Awaken 保鲜探针后")
 
         # 2. 凝脉 → FreshnessUpdate 精确结果
-        #    realm set 恒触发 Changed<Cultivation> → player_state 回推给自己（gap10
-        #    _realm_set_and_settle 同款）；必须先等它落定再取水位，否则回推会落入
-        #    成功路径的响应基数窗口、被判额外 payload 假红（central-review
-        #    31437496353 #5）。
+        #    ambient fixture 已在连接侧抑制 player_state；命令成功回执本身确认 realm
+        #    mutation，后续 ACK fence 只负责排出该命令 update 的出站队列。
         bot.cmd("realm set condense")
         confirm = bot.expect_chat("[dev] realm set ", timeout=10.0)
-        bot.wait_for(
-            lambda e: (
-                e.kind == "server_data"
-                and e.data["payload_type"] == "player_state"
-                and e.t >= confirm.t
-            ),
-            timeout=5.0,
-            description="realm set condense 的 player_state 回推应已到达",
-        )
-        # realm set 的同步流先由 upper fence 收口；成功探针从独立的 lower fence
-        # 开始，避免把 realm set 的滞后回推带入本次响应窗口。
-        _settle_realm_change(bot)
-        probe1_start = server_data_protocol_fence(
-            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
-        )
+        # realm set 的 chat 回执确认命令完成；再由独立的 lower fence 固化下一请求边界。
+        del confirm
+        probe1_start = settled_server_data_protocol_fence(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update1 = wait_for_event_after_cursor(
             bot,
@@ -190,9 +174,7 @@ def run(env) -> None:
         time.sleep(PROBE_INTERVAL_S)
         # 两次探针之间的 ambient 流属于两次请求之外；第二次请求前再建 lower fence
         # 把它们排到窗口之外，而不是在断言侧维护类型排除集。
-        probe2_start = server_data_protocol_fence(
-            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
-        )
+        probe2_start = settled_server_data_protocol_fence(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update2 = wait_for_event_after_cursor(
             bot,
@@ -261,13 +243,10 @@ def run(env) -> None:
         bot.expect_chat(f"[dev] gave {PLAIN_ITEM} x1", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
         plain = require_item(snapshot, PLAIN_ITEM)
-        start_fence = server_data_protocol_fence(
-            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
-        )
+        start_fence = settled_server_data_protocol_fence(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": plain["item"]["instance_id"]})
-        # 无响应请求用两次 ping 往返：第一条可能与 client-request ingress 落在同一
-        # Update，第二条确保请求已被处理并 flush；两条 pong 都只是 fence 自身的允许
-        # 标记，窗口内其它 server_data/chat 一律判红。
+        # 无响应请求用两次 action ACK：第一条可能与 client-request ingress 落在同一
+        # Update，第二条确保请求已被处理并 flush；窗口内其它 server_data/chat 一律判红。
         end_fence = server_data_protocol_fence(bot, round_trips=2)
         _assert_no_freshness_update(
             bot,
@@ -283,9 +262,7 @@ def run(env) -> None:
         #    此前全部请求都用当前背包快照拿到的实例，从不在生产路径送非法实例——
         #    跳过 belongs_to_player、去探他人/任意 item 的坏实现能通过全部旧断言
         #    （central-review 2029 #6）。999999 是合法 wire 值但不在任何背包。
-        start_fence = server_data_protocol_fence(
-            bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
-        )
+        start_fence = settled_server_data_protocol_fence(bot)
         bot.intent({**PROBE_REQUEST, "instance_id": 999999})
         end_fence = server_data_protocol_fence(bot, round_trips=2)
         _assert_no_freshness_update(
@@ -298,10 +275,16 @@ def run(env) -> None:
         bot.assert_alive("freshness_probe 拒绝面全程")
 
 
-def _settle_realm_change(bot) -> ProtocolFence:
-    """用同连接 ping fence 收口 realm set 的异步同步流。"""
-    return server_data_protocol_fence(
-        bot, round_trips=PRE_REQUEST_FENCE_ROUND_TRIPS
+def _settle_realm_change(
+    bot, *, quiet_s: float = 1.0, max_s: float = 10.0
+) -> ProtocolFence:
+    """用同连接 ACK 收口 realm set 的异步同步流。
+
+    ``quiet_s``/``max_s`` 保留为旧测试辅助 API 的兼容参数；实际边界由 action ACK
+    建立，不能把静默等待当成持续 ambient stream 的完成条件。
+    """
+    return settled_server_data_protocol_fence(
+        bot, quiet_s=quiet_s, max_s=max_s
     )
 
 
@@ -332,7 +315,8 @@ def _scan_silent_violations(
     allowed_chat_events: tuple,
 ) -> None:
     # central-review 2029 #2：fence 区间契约 = 「除明确预期 server_data 外无任何
-    # server_data 响应 + 除 fence pong 外无聊天」。不按 payload type 维护豁免集；无法
+    # server_data 响应 + 无额外聊天」。action ACK 不属于聊天，也不被用作 payload
+    # 豁免；不按 payload type 维护豁免集；无法
     # 解码的 server_data 也直接判红，避免未知类型再次静默消失。
     allowed_server_data_ids = {id(event) for event in allowed_server_data_events}
     allowed_chat_ids = {id(event) for event in allowed_chat_events}

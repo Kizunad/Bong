@@ -10,7 +10,9 @@ use crate::combat::tuike_v2::{FalseSkinTier, StackedFalseSkins};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
@@ -50,8 +52,8 @@ type AnyStackedClient<'a> = (
 #[allow(clippy::type_complexity)] // Bevy ParamSet keeps changed/removed client paths in one system.
 pub fn emit_false_skin_state_payloads(
     mut clients: ParamSet<(
-        Query<ChangedFalseSkinClient<'static>, (With<Client>, Changed<FalseSkin>)>,
-        Query<AnyClient<'static>, With<Client>>,
+        Query<ChangedFalseSkinClient<'static>, (AmbientServerDataClientFilter, Changed<FalseSkin>)>,
+        Query<AnyClient<'static>, AmbientServerDataClientFilter>,
     )>,
     npc_markers: Query<(), With<NpcMarker>>,
     mut removed: RemovedComponents<FalseSkin>,
@@ -90,8 +92,11 @@ pub fn emit_false_skin_state_payloads(
 #[allow(clippy::type_complexity)]
 pub fn emit_tuike_v2_false_skin_state_payloads(
     mut clients: ParamSet<(
-        Query<ChangedStackedFalseSkinClient<'static>, (With<Client>, Changed<StackedFalseSkins>)>,
-        Query<AnyStackedClient<'static>, With<Client>>,
+        Query<
+            ChangedStackedFalseSkinClient<'static>,
+            (AmbientServerDataClientFilter, Changed<StackedFalseSkins>),
+        >,
+        Query<AnyStackedClient<'static>, AmbientServerDataClientFilter>,
     )>,
     npc_markers: Query<(), With<NpcMarker>>,
     mut removed: RemovedComponents<StackedFalseSkins>,

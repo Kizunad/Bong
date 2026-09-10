@@ -19,8 +19,8 @@ protocol entity id 上分别验证距离与维度门。每条拒收都断言聊�
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。chat-only 契约由
 _assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何针对本请求的 S2C
 响应（central-review 2029 #5）。拒收窗口在前置 join/背包/装备/渡劫同步之后用同连接
-``/ping`` 建立水位；两个水位之间的所有 server_data 一律视为本请求窗口内的响应，
-任何类型都判红。
+vanilla ``ReleaseUseItem`` action ACK 建立水位；两个水位之间的所有 server_data 一律视为
+本请求窗口内的响应，任何类型都判红。
 """
 
 import json
@@ -29,14 +29,16 @@ from bot.bot import BotAssertionError
 
 from ._combat_helpers import last_event_time, queue_passive_target
 from ._inventory_helpers import (
+    give_inventory_revision_barrier,
     require_item,
-    wait_inventory_contains,
-    wait_inventory_revision_after,
     wait_join_and_inventory,
 )
 from ._rejection_helpers import (
     ProtocolFence,
+    advance_combat_clock_with_action_acks,
+    settled_server_data_protocol_fence,
     server_data_protocol_fence,
+    wait_for_join_sync,
     wait_for_event_after_cursor,
 )
 
@@ -45,6 +47,7 @@ MODULES = ["fauna", "network"]
 
 DAN_REQUEST = {"type": "give_dan_to_elder", "v": 1}
 MEAT_ITEM = "food.mundane.cooked_meat"
+BARRIER_ITEM = "spirit_grass"
 NO_SUCH_ELDER_ID = 987654321
 TSY_ZONE_CENTERS = {
     "tsy_lingxu_01_shallow": (50.0, 80.0, 50.0),
@@ -66,8 +69,8 @@ TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
 def run(env) -> None:
     with env.new_bot("DhH") as bot:
         snapshot = wait_join_and_inventory(bot)
-        revision = snapshot["revision"]
-
+        wait_for_join_sync(bot)
+        bot.enable_ambient_server_data_isolation()
         # 1. instance_id 不在背包 → 背包中未找到该回元丹。
         _assert_rejected_request(
             bot,
@@ -82,9 +85,7 @@ def run(env) -> None:
         bot.assert_alive("背包缺失拒收后")
 
         # 2. 背包内有非回元丹物品 → 只接受回元丹。
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_contains(bot, MEAT_ITEM, timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, MEAT_ITEM)
         meat = require_item(snapshot, MEAT_ITEM)
         _assert_rejected_request(
             bot,
@@ -99,10 +100,7 @@ def run(env) -> None:
         bot.assert_alive("非回元丹拒收后")
 
         # 3. 回元丹在背包、目标协议实体不存在 → 找不到目标大能。
-        revision = snapshot["revision"]
-        bot.cmd("give huiyuan_pill 1")
-        bot.expect_chat("[dev] gave huiyuan_pill x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, "huiyuan_pill")
         pill = require_item(snapshot, "huiyuan_pill")
         # 拒收契约：拒绝分支只回 chat、绝不消费被拒物品。上一拒（非回元丹）后，
         # cooked_meat 的**同实例**必须仍在背包——断在下一张快照（give 回元丹触发）；
@@ -122,12 +120,9 @@ def run(env) -> None:
             "找不到目标大能。",
             "找不到目标大能拒收应只回 chat（无 S2C 响应）",
         )
-        # 拒收分支不推新快照；用一次无害 give 触发 revision，验证上一拒（找不到
+        # 拒收分支不推新快照；用一次可堆叠的无害 give 触发 revision，验证上一拒（找不到
         # 目标大能）后 huiyuan_pill 的**同实例**仍在背包（未被吞掉再补发/替换）。
-        revision = snapshot["revision"]
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 拒收「找不到目标大能」后 huiyuan_pill 应保留原实例 "
@@ -153,9 +148,7 @@ def run(env) -> None:
             "目标不是可交互的大能。",
             "解析到非大能目标时应在消费前拒绝",
         )
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 解析到非大能目标后 huiyuan_pill 应保留原实例 "
@@ -174,9 +167,7 @@ def run(env) -> None:
             "目标不在当前位面或交互范围内。",
             "真实 Plea 大能超出 6 格时应在消费前拒绝",
         )
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 超距真实大能拒绝后 huiyuan_pill 应保留原实例 "
@@ -194,9 +185,7 @@ def run(env) -> None:
             "目标不在当前位面或交互范围内。",
             "跨维真实大能请求应在消费前拒绝",
         )
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 跨维真实大能拒绝后 huiyuan_pill 应保留原实例 "
@@ -281,10 +270,15 @@ def _assert_rejected_request(
     expected_chat: str,
     description: str,
 ) -> None:
-    """以同连接 ping fence 限定一次拒收的完整 S2C 观察窗口。"""
-    # 一条 lower fence 只排出已入队帧；第二条跨过下一次 server update，收口可能
-    # 在上一条 fence 后才由 join/zone 同步系统生成的前置 payload。
-    start_fence: ProtocolFence = server_data_protocol_fence(bot, round_trips=2)
+    """以同连接 action ACK fence 限定一次拒收的完整 S2C 观察窗口。"""
+    # `report_live_gate_denial` 的聊天反馈是 client 级 20 CombatClock tick 节流。
+    # 每次拒收前都用无玩法 ReleaseUseItem ACK 跨过它，避免相邻拒收把正确的第二条
+    # chat 压掉；这是真实 Update/ACK 屏障，不是断言侧的类型豁免或静默 sleep。
+    advance_combat_clock_with_action_acks(bot)
+    # ACK 是 PostUpdate 的真实出站水位：第一条 lower fence 排出已入队帧，且第二条
+    # upper fence 让没有响应的请求跨过下一次 server update；窗口仍不按 payload 类型
+    # 维护任何豁免集。
+    start_fence: ProtocolFence = settled_server_data_protocol_fence(bot)
     bot.intent(request)
     reject = wait_for_event_after_cursor(
         bot,
@@ -329,10 +323,10 @@ def _assert_chat_only_response(
     description: str,
     allowed_chat_events: tuple = (),
 ) -> None:
-    """断言 ping fence 之间只回预期聊天：无任何 server_data 或额外聊天。
+    """断言 action ACK fence 之间只回预期聊天：无任何 server_data 或额外聊天。
 
-    允许项只能是当前窗口产生的预期拒信和 fence 自己的 pong；不会按 payload type
-    豁免任何 server_data。"""
+    允许项只能是当前窗口产生的预期拒信；action ACK 不是聊天且由扫描器忽略，
+    不会按 payload type 豁免任何 server_data。"""
     _scan_chat_only_violations(
         bot,
         start_cursor,

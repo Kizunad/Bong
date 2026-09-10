@@ -319,6 +319,34 @@ class DiggingActionTest(unittest.TestCase):
         self.assertEqual(reader.varint(), 0x7FFFFFFF)
         self.assertEqual(reader.rest(), b"")
 
+    def test_release_use_item_action_encodes_no_gameplay_protocol_fence(self):
+        bot = _bare_bot()
+        sent = []
+        bot._send = lambda packet_id, body=b"": sent.append((packet_id, body))
+
+        bot.send_release_use_item_action(7)
+
+        self.assertEqual(len(sent), 1)
+        packet_id, body = sent[0]
+        self.assertEqual(packet_id, mc.C2S_PLAYER_ACTION)
+        reader = mc.Reader(body)
+        self.assertEqual(reader.varint(), 5, "action=5 才是无 gameplay event 的 Release Use Item")
+        self.assertEqual(
+            reader.data[reader.pos : reader.pos + 8], mc.block_position(0, 0, 0)
+        )
+        reader.pos += 8
+        self.assertEqual(reader.u8(), 1, "fence 使用合法 Direction::Up 编码")
+        self.assertEqual(reader.varint(), 7)
+        self.assertEqual(reader.rest(), b"")
+
+    def test_release_use_item_action_rejects_zero_or_out_of_range_sequence(self):
+        bot = _bare_bot()
+        bot._send = lambda *_args: self.fail("invalid fence sequence must not be sent")
+        for sequence in (0, -1, 0x80000000):
+            with self.subTest(sequence=sequence):
+                with self.assertRaises(ValueError):
+                    bot.send_release_use_item_action(sequence)
+
     def test_player_action_response_decodes_sequence(self):
         bot = _bare_bot()
         bot._dispatch(
@@ -5661,8 +5689,8 @@ class _RejectionFakeBot(_FakeBot):
     - ``assert_alive`` 按 disconnect_reason / reader 存活判连接状态；
     - ``wait_for`` 在 events 里找不到时按顺序补充 ``pending`` 事件（模拟 server
       后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测；
-    - ``ping_batches`` 为每次 /ping 注入按 wire 顺序到达的事件，测试 fence 不依赖
-      事件流静默；
+    - ``action_batches`` 为每次 DropItem action ACK 注入按 wire 顺序到达的事件，测试
+      fence 不依赖静默期；ACK 序号由 fake 方法记录。
     - ``t0`` 是模拟相对时钟（``time.monotonic() - t0 == self._now``），随事件
       append 推进 —— 让 ``time.monotonic() - bot.t0`` 锚与 ``event.t`` 同帧可测。
     """
@@ -5672,7 +5700,7 @@ class _RejectionFakeBot(_FakeBot):
         events: list[_FakeEvent],
         *,
         pending: list[_FakeEvent] | None = None,
-        ping_batches: list[list[_FakeEvent]] | None = None,
+        action_batches: list[list[_FakeEvent]] | None = None,
         disconnected: bool = False,
         reader_alive: bool = True,
     ):
@@ -5682,11 +5710,12 @@ class _RejectionFakeBot(_FakeBot):
         self.events = _ClockAdvancingList(self)
         self.events.extend(events)
         self.pending = list(pending or [])
-        self.ping_batches = [list(batch) for batch in (ping_batches or [])]
+        self.action_batches = [list(batch) for batch in (action_batches or [])]
         self.disconnect_reason = "服务器主动断开" if disconnected else None
         self._reader_thread = _ReaderAlive(reader_alive)
         self.intents: list[dict] = []
         self.commands: list[str] = []
+        self.player_action_sequences: list[int] = []
 
     @property
     def t0(self) -> float:
@@ -5724,8 +5753,11 @@ class _RejectionFakeBot(_FakeBot):
 
     def cmd(self, command: str) -> None:
         self.commands.append(command)
-        if command == "ping" and self.ping_batches:
-            self.events.extend(self.ping_batches.pop(0))
+
+    def send_release_use_item_action(self, sequence: int) -> None:
+        self.player_action_sequences.append(sequence)
+        if self.action_batches:
+            self.events.extend(self.action_batches.pop(0))
 
     def expect_chat(self, substring: str, timeout: float = 5.0) -> _FakeEvent:
         return self.wait_for(
@@ -5755,7 +5787,39 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
-    def test_server_data_protocol_fence_uses_ordered_ping_watermark(self):
+    def test_wait_for_join_sync_requires_explicit_deferred_state_marker(self):
+        inventory = _FakeEvent(
+            0.5,
+            "server_data",
+            {"payload_type": "inventory_snapshot"},
+        )
+        derived = _FakeEvent(
+            1.0,
+            "server_data",
+            {"payload_type": "derived_attrs_sync"},
+        )
+        bot = _RejectionFakeBot([inventory, derived])
+
+        marker = rejection_helpers.wait_for_join_sync(bot)
+
+        self.assertIs(marker, derived)
+
+    def test_wait_for_join_sync_fails_closed_when_marker_is_missing(self):
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.wait_for_join_sync(
+                _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            0.5,
+                            "server_data",
+                            {"payload_type": "inventory_snapshot"},
+                        )
+                    ]
+                ),
+                timeout=0.0,
+            )
+
+    def test_server_data_protocol_fence_uses_ordered_player_action_watermark(self):
         late_setup = _FakeEvent(
             0.5,
             "server_data",
@@ -5766,24 +5830,24 @@ class RejectionHelperTest(unittest.TestCase):
             "server_data",
             {"payload_type": "carrier_state"},
         )
-        pong = _FakeEvent(1.0, "chat", {"text": "pong"})
+        ack = _FakeEvent(1.0, "player_action_response", {"sequence": 1})
         bot = _RejectionFakeBot(
             [],
-            ping_batches=[[late_setup, periodic, pong]],
+            action_batches=[[late_setup, periodic, ack]],
         )
 
         fence = rejection_helpers.server_data_protocol_fence(bot)
 
-        self.assertEqual(bot.commands, ["ping"])
-        self.assertEqual(fence.cursor, 3, "fence 游标必须落在 pong 之后")
-        self.assertEqual(fence.markers, (pong,))
+        self.assertEqual(bot.player_action_sequences, [1])
+        self.assertEqual(fence.cursor, 3, "fence 游标必须落在 action ACK 之后")
+        self.assertEqual(fence.markers, (ack,))
         self.assertEqual(
             list(bot.events[: fence.cursor]),
-            [late_setup, periodic, pong],
-            "连续 server_data 不应让有序 ping fence 依赖静默期",
+            [late_setup, periodic, ack],
+            "连续 server_data 不应让 action ACK fence 依赖静默期",
         )
 
-    def test_server_data_protocol_fence_fails_closed_without_pong(self):
+    def test_server_data_protocol_fence_fails_closed_without_action_ack(self):
         with self.assertRaises(BotAssertionError):
             rejection_helpers.server_data_protocol_fence(_RejectionFakeBot([]))
 
@@ -5791,6 +5855,111 @@ class RejectionHelperTest(unittest.TestCase):
             rejection_helpers.server_data_protocol_fence(
                 _RejectionFakeBot([]), round_trips=0
             )
+
+    def test_server_data_protocol_fence_does_not_accept_stale_action_ack(self):
+        stale_ack = _FakeEvent(
+            1.0, "player_action_response", {"sequence": 2}
+        )
+        bot = _RejectionFakeBot([], action_batches=[[stale_ack]])
+
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.server_data_protocol_fence(bot)
+
+        self.assertEqual(
+            bot.player_action_sequences,
+            [1],
+            "fence 必须发送新的序号，不能用旧 ACK 冒充当前出站水位",
+        )
+
+    def test_combat_clock_feedback_barrier_uses_one_ack_per_requested_tick(self):
+        ticks = rejection_helpers.LIVE_GATE_FEEDBACK_WINDOW_TICKS
+        acks = [
+            [_FakeEvent(float(index), "player_action_response", {"sequence": index})]
+            for index in range(1, ticks + 1)
+        ]
+        bot = _RejectionFakeBot([], action_batches=acks)
+
+        fence = rejection_helpers.advance_combat_clock_with_action_acks(bot)
+
+        self.assertEqual(
+            bot.player_action_sequences,
+            list(range(1, ticks + 1)),
+            "CombatClock 节流屏障必须逐 tick 发送新的 ReleaseUseItem action，不能静默 sleep",
+        )
+        self.assertEqual(
+            fence.markers[-1].data["sequence"],
+            ticks,
+            "反馈窗口屏障的最后一个 ACK 必须覆盖请求的全部 tick",
+        )
+        with self.assertRaises(ValueError):
+            rejection_helpers.advance_combat_clock_with_action_acks(bot, ticks=0)
+
+    def test_wait_for_server_data_quiet_resets_after_late_setup_sync(self):
+        bot = _RejectionFakeBot([])
+
+        def append_late_setup_sync():
+            time.sleep(0.01)
+            bot.events.append(
+                _FakeEvent(1.0, "server_data", {"payload_type": "zone_info"})
+            )
+
+        thread = threading.Thread(target=append_late_setup_sync)
+        thread.start()
+        try:
+            rejection_helpers.wait_for_server_data_quiet(
+                bot, quiet_s=0.03, max_s=0.2
+            )
+        finally:
+            thread.join(timeout=1.0)
+
+        self.assertTrue(
+            any(
+                event.data.get("payload_type") == "zone_info"
+                for event in bot.events
+            ),
+            "静默屏障必须观察到静默期开始后迟到的前置 zone_info",
+        )
+
+    def test_wait_for_server_data_quiet_fails_closed_when_stream_never_quiets(self):
+        bot = _RejectionFakeBot([])
+        stop = threading.Event()
+
+        def append_periodic_sync():
+            while not stop.is_set():
+                bot.events.append(
+                    _FakeEvent(
+                        1.0, "server_data_raw", {"payload_type": "status_snapshot"}
+                    )
+                )
+                time.sleep(0.005)
+
+        thread = threading.Thread(target=append_periodic_sync)
+        thread.start()
+        try:
+            with self.assertRaises(BotAssertionError):
+                rejection_helpers.wait_for_server_data_quiet(
+                    bot, quiet_s=0.02, max_s=0.06
+                )
+        finally:
+            stop.set()
+            thread.join(timeout=1.0)
+
+    def test_settled_server_data_protocol_fence_adds_final_ack_after_quiet(self):
+        acks = [
+            _FakeEvent(index, "player_action_response", {"sequence": index})
+            for index in (1.0, 2.0, 3.0)
+        ]
+        bot = _RejectionFakeBot(
+            [], action_batches=[[acks[0]], [acks[1]], [acks[2]]]
+        )
+
+        fence = rejection_helpers.settled_server_data_protocol_fence(
+            bot, quiet_s=0.01, max_s=0.05
+        )
+
+        self.assertEqual(bot.player_action_sequences, [1, 2, 3])
+        self.assertEqual(fence.markers, (acks[2],))
+        self.assertEqual(fence.cursor, 3, "最终 ACK 后的游标才是请求窗口下界")
 
     def test_rejection_scans_are_fail_closed_for_every_server_data_type(self):
         for payload_type in (
@@ -5823,23 +5992,30 @@ class RejectionHelperTest(unittest.TestCase):
                         allowed_chat_events=(),
                     )
 
-    def test_freshness_realm_settle_uses_ping_fence_before_probe_window(self):
+    def test_freshness_realm_settle_uses_action_ack_fence_before_probe_window(self):
         narration = _FakeEvent(
             1.5,
             "server_data",
             {"payload_type": "narration", "payload": {"text": "境界同步旁白"}},
         )
-        pong = _FakeEvent(2.0, "chat", {"text": "pong"})
-        second_pong = _FakeEvent(3.0, "chat", {"text": "pong"})
+        ack = _FakeEvent(2.0, "player_action_response", {"sequence": 1})
+        second_ack = _FakeEvent(
+            3.0, "player_action_response", {"sequence": 2}
+        )
+        final_ack = _FakeEvent(
+            4.0, "player_action_response", {"sequence": 3}
+        )
         bot = _RejectionFakeBot(
             [],
-            ping_batches=[[narration, pong], [second_pong]],
+            action_batches=[[narration, ack], [second_ack], [final_ack]],
         )
 
-        fence = freshness_probe_scenario._settle_realm_change(bot)
+        fence = freshness_probe_scenario._settle_realm_change(
+            bot, quiet_s=0.01, max_s=0.05
+        )
 
-        self.assertEqual(fence.cursor, 3, "realm 同步 fence 必须落在第二个 pong 之后")
-        self.assertEqual(fence.markers, (pong, second_pong))
+        self.assertEqual(fence.cursor, 4, "realm 同步 fence 必须落在最终 action ACK 之后")
+        self.assertEqual(fence.markers, (final_ack,))
 
         late_probe_side_effect = _FakeEvent(
             2.1,
