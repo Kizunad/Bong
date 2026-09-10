@@ -322,8 +322,7 @@ fn next_fist_punch_anim(
 /// plan-skill-av-relink-v1 P1 — 「激活功法」时刻 → 流派架势动画。
 ///
 /// 事件源 = `TechniqueLearnedEvent`（`learn_technique_if_allowed` 习得即写
-/// `active:true` = 激活）。生产发射路仅两条：卷轴习得（`client_request_handler`）
-/// 与首击领悟（`first_hit_dash`，仅授 `movement.dash`、无架势映射）；
+/// `active:true` = 激活）。卷轴习得走 `client_request_handler`；
 /// `technique_mentor::mentor_teaches_technique` 为无生产调用方的休眠 helper。
 /// 现有内容卷轴仅授 `woliu.*` + `zhenmai.parry` → 映射仅收录生产可达的
 /// woliu / zhenmai 两族；dugu / dugu_poison / baomai / tuike 无生产可达习得

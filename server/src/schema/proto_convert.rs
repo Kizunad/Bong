@@ -3076,6 +3076,7 @@ fn movement_state_to_proto(s: &super::movement::MovementStateV1) -> bong::Moveme
         movement_action: movement_action_to_proto(&s.movement_action),
         zone_kind: movement_zone_kind_to_proto(&s.zone_kind),
         dash_cooldown_remaining_ticks: s.dash_cooldown_remaining_ticks,
+        dash_cooldown_total_ticks: s.dash_cooldown_total_ticks,
         hitbox_height_blocks: s.hitbox_height_blocks,
         stamina_current: s.stamina_current,
         stamina_max: s.stamina_max,

@@ -5361,8 +5361,10 @@ mod tests {
         #[cfg(feature = "dev-techniques")]
         assert_eq!(
             known_techniques.entries.len(),
-            app.world().resource::<TechniqueRegistry>().len(),
-            "dev-techniques new-character reset must preserve full catalog grants"
+            KnownTechniques::progression_reset(app.world().resource::<TechniqueRegistry>())
+                .entries
+                .len(),
+            "新角色应按出生配置获得功法，身法由卷轴学习"
         );
         #[cfg(not(feature = "dev-techniques"))]
         assert!(

@@ -2707,6 +2707,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             movement_action: MovementActionV1::None,
             zone_kind: MovementZoneKindV1::Normal,
             dash_cooldown_remaining_ticks: 0,
+            dash_cooldown_total_ticks: 0,
             hitbox_height_blocks: 1.8,
             stamina_current: 100.0,
             stamina_max: 100.0,

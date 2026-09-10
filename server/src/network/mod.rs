@@ -872,8 +872,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
         Update,
         (
             // 激活功法（TechniqueLearnedEvent）→ 流派架势动画（stance_*）。卷轴习得
-            // 路走 client_request_handler，after 保证同 tick 播出；导师传授 / 首击
-            // 领悟路事件跨 tick 仍被消费（events 双缓冲）。
+            // 路走 client_request_handler，after 保证同 tick 播出；跨 tick 事件仍被消费。
             vfx_animation_trigger::emit_technique_learned_stance_triggers
                 .after(client_request_handler::handle_client_request_payloads),
             // 淬炼按键（TemperingHit）→ forge_hammer 抡锤动画（与 forge 模块

@@ -117,7 +117,7 @@ pub fn shield_block_profile(template_id: &str, proficiency: f32) -> ShieldBlockP
 }
 
 /// plan-shield-block-v1 P4 — 确保 KnownTechniques 中有 `shield_block` 条目（auto-insert）。
-/// 仿 `ensure_dash_entry`（movement/dash_proficiency.rs:55）模式。
+/// 首次举盾时补入盾挡功法。
 pub fn ensure_shield_block_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
     if let Some(index) = known
         .entries
