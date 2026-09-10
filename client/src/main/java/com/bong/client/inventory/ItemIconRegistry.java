@@ -79,6 +79,9 @@ public final class ItemIconRegistry {
 
     public static String itemTexturePath(String itemId) {
         String normalized = normalize(itemId);
+        if (normalized.equals("scroll_technique_movement_dash")) {
+            return ITEM_TEXTURE_PREFIX + "skill_scroll_movement_dash.png";
+        }
         return GATHERING_TOOL_ICON_PATHS.getOrDefault(normalized, ITEM_TEXTURE_PREFIX + normalized + ".png");
     }
 

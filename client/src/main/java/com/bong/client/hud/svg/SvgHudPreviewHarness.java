@@ -16,6 +16,8 @@ import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
+import com.bong.client.combat.inspect.TechniquesListPanel;
+import com.bong.client.movement.DashSkill;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 
@@ -29,6 +31,7 @@ public final class SvgHudPreviewHarness {
     private static volatile long statusFixtureStartedAt;
     private static volatile long statusFixtureOffsetMs = -1;
     private static boolean loopStatusFixture;
+    private static String movementShot = "";
 
     private SvgHudPreviewHarness() {
     }
@@ -55,6 +58,7 @@ public final class SvgHudPreviewHarness {
             return;
         }
         scenario = Scenario.fromShotName(shotName);
+        movementShot = shotName == null ? "" : shotName;
         statusFixtureStartedAt = System.currentTimeMillis();
         statusFixtureOffsetMs = switch (shotName == null ? "" : shotName) {
             case "hud-status-effects-entry" -> 200;
@@ -106,15 +110,31 @@ public final class SvgHudPreviewHarness {
         switch (current) {
             case JIEMAI -> DefenseWindowStore.open(60_000, nowMs);
             case STATUS_EFFECTS -> installStatusEffectsFixture(nowMs);
-            case MOVEMENT -> MovementStateStore.replace(new MovementState(
-                1.25, true, MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL,
-                18L, 1.8, 36.0, 60.0, false, 1L, "", 0L, 0L, 0L
-            ), nowMs);
+            case MOVEMENT -> installMovementFixture(nowMs);
             case QUICKBAR, CAST_GATHER, CAST_FORM, CAST_COMPLETE, CAST_INTERRUPTED ->
                 installQuickbarFixture(current, nowMs);
             case NONE -> {
             }
         }
+    }
+
+    private static void installMovementFixture(long nowMs) {
+        installQuickbarFixture(Scenario.QUICKBAR, nowMs);
+        if (movementShot.equals("hud-movement-locked")) return;
+        TechniquesListPanel.replace(List.of(new TechniquesListPanel.Technique(
+            DashSkill.ID, "闪避", TechniquesListPanel.Grade.MORTAL, 0, true, "", "",
+            "Awaken", List.of(), 0, 0, 40, 2.8f)));
+        boolean cooling = movementShot.equals("hud-movement-cooldown");
+        boolean dashing = movementShot.equals("hud-movement");
+        boolean rejected = movementShot.equals("hud-movement-rejected");
+        long activity = nowMs - (dashing || rejected ? 100 : 2_000);
+        MovementState fixture = new MovementState(
+            1, dashing, dashing ? MovementState.Action.DASHING : MovementState.Action.NONE,
+            MovementState.ZoneKind.NORMAL, cooling ? 20 : dashing ? 38 : 0,
+            40, 1.8, 36, 60, false, 1L, rejected ? "dash" : "", 0, 0, 0
+        );
+        MovementStateStore.replace(fixture, activity);
+        MovementStateStore.replace(fixture, nowMs);
     }
 
     private static void installQuickbarFixture(Scenario current, long nowMs) {
@@ -157,6 +177,7 @@ public final class SvgHudPreviewHarness {
         DefenseWindowStore.replaceSnapshot(null);
         if (resetStatus) StatusEffectStore.clear();
         MovementStateStore.replace(MovementState.empty(), nowMs);
+        TechniquesListPanel.replace(List.of());
         CastStateStore.replacePrediction(CastState.idle());
         QuickUseSlotStore.replaceLocal(QuickSlotConfig.empty());
         SkillBarStore.replace(SkillBarConfig.empty());
@@ -183,7 +204,7 @@ public final class SvgHudPreviewHarness {
                 case "jiemai" -> JIEMAI;
                 case "status-effects", "status-effects-entry", "status-effects-travel", "status-effects-settled",
                     "status-effects-warning", "status-effects-exit" -> STATUS_EFFECTS;
-                case "movement" -> MOVEMENT;
+                case "movement", "movement-ready", "movement-cooldown", "movement-rejected", "movement-locked" -> MOVEMENT;
                 case "quickbar" -> QUICKBAR;
                 case "cast-gather" -> CAST_GATHER;
                 case "cast-form" -> CAST_FORM;

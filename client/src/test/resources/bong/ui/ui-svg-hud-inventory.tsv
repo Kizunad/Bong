@@ -24,7 +24,7 @@ EDGE_FEEDBACK	EDGE_FEEDBACK	COMMAND	MINECRAFT_GUI	EdgeFeedbackHudPlanner+Tiandao
 STATUS_EFFECTS	STATUS_EFFECTS	SVG_FRAME	SVG_MESH	StatusEffectHudPlanner	rect=bong-client:svg/hud/primitive-rect.svg;socket=bong-client:svg/hud/status-socket.svg;rim=bong-client:svg/hud/status-rim.svg;unknown=bong-client:svg/hud/status-unknown.svg;blood=bong-client:svg/hud/status-blood.svg;taint=bong-client:svg/hud/status-taint.svg	status_effects+clock	专属 PNG 图标与状态文字仍走 Minecraft GUI	HudRenderRegistryTest
 PROCESSING_HUD	PROCESSING_HUD	COMMAND	MINECRAFT_GUI	ForgeProgressHudPlanner+AlchemyProgressHudPlanner		forge_session+alchemy_session	步骤文字仍走 Minecraft GUI	HudRenderRegistryTest
 LINGTIAN_OVERLAY	LINGTIAN_OVERLAY	COMMAND	MINECRAFT_GUI	LingtianOverlayHudPlanner		lingtian_session+season	动态文字与物品图标仍走 Minecraft GUI	HudRenderRegistryTest
-MOVEMENT_HUD	MOVEMENT_HUD	SVG_FRAME	SVG_MESH	MovementHudPlanner	rect=bong-client:svg/hud/primitive-rect.svg	movement_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
+MOVEMENT_HUD	MOVEMENT_HUD	SVG_FRAME	SVG_MESH	MovementHudPlanner	rect=bong-client:svg/hud/primitive-rect.svg;track=bong-client:svg/hud/dash-track.svg;tick=bong-client:svg/hud/dash-tick.svg;flare=bong-client:svg/hud/dash-flare.svg	movement_state+techniques_snapshot+clock	身法 PNG 与区域反馈仍走 Minecraft GUI	HudRenderRegistryTest
 SEARCH_PROGRESS	SEARCH_PROGRESS	COMMAND	MINECRAFT_GUI	SearchProgressHudPlanner		search_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 DAMAGE_FLOATER	DAMAGE_FLOATER	COMMAND	MINECRAFT_GUI	DamageFloaterHudPlanner		damage_events+clock	飘字仍走 Minecraft GUI	HudRenderRegistryTest
 FLIGHT_HUD	FLIGHT_HUD	COMMAND	MINECRAFT_GUI	FlightHudPlanner		flight_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
