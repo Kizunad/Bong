@@ -30,5 +30,9 @@ Minecraft GUI 绘制。
 目标感知四件套、MiniBody 人体/伤势样本和状态条候选也未进入客户端运行时，已从本目录
 移除，待未来具备真实能力授权、部位投影和运行时接线后另行设计。
 
-`example.svg` 仍是 `SvgHudBackend` 的显式预览资源，`primitive-rect.svg` 仍由
-`HudRenderRegistry` 的既有 SVG frame surface 使用；它们不属于本次设计稿清理范围。
+高对比度测试面板 `example.svg` 及其预览绘制入口已移除。`primitive-rect.svg` 仍由
+`HudRenderRegistry` 的既有 SVG frame surface 使用。
+
+测试调整：资源加载与缓存测试改用生产资源 `quick-slot.svg`；删除绑定示例面板
+`FULL` 条件源码字符串的断言。生产 HUD 的部分可见性行为仍由
+`namedAssetsUseTheirRegisteredResourceAndRespectPartialHudVisibility` 覆盖，不新增同构测试。

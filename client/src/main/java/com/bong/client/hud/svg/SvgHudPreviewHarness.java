@@ -26,6 +26,9 @@ public final class SvgHudPreviewHarness {
     private static final String ENV_ENABLED = "BONG_SVG_HUD_PREVIEW";
     private static final String SCENARIO_PREFIX = "hud-";
     private static volatile Scenario scenario = Scenario.NONE;
+    private static volatile long statusFixtureStartedAt;
+    private static volatile long statusFixtureOffsetMs = -1;
+    private static boolean loopStatusFixture;
 
     private SvgHudPreviewHarness() {
     }
@@ -34,8 +37,11 @@ public final class SvgHudPreviewHarness {
         if (!"1".equals(System.getenv(ENV_ENABLED))) {
             return;
         }
-        // 预览开关只在显式 fixture 环境中打开，生产联机不会加载示例面板。
-        SvgHudBackend.enablePreviewExample();
+        String liveScene = System.getenv("BONG_SVG_HUD_PREVIEW_SCENE");
+        if (liveScene != null && !liveScene.isBlank()) {
+            selectShot(liveScene);
+            loopStatusFixture = scenario == Scenario.STATUS_EFFECTS;
+        }
         // 由组合根先于生产 HUD 注册；同一渲染线程内不会被网络任务插入覆盖。
         HudRenderCallback.EVENT.register((context, tickDelta) -> apply(MinecraftClient.getInstance()));
     }
@@ -49,27 +55,43 @@ public final class SvgHudPreviewHarness {
             return;
         }
         scenario = Scenario.fromShotName(shotName);
+        statusFixtureStartedAt = System.currentTimeMillis();
+        statusFixtureOffsetMs = switch (shotName == null ? "" : shotName) {
+            case "hud-status-effects-entry" -> 200;
+            case "hud-status-effects-travel" -> 2_450;
+            case "hud-status-effects-settled" -> 4_000;
+            case "hud-status-effects-warning" -> 8_000;
+            case "hud-status-effects-exit" -> 12_140;
+            default -> -1;
+        };
+        StatusEffectStore.clear();
         if (scenario == Scenario.NONE) {
             resetFixtures(System.currentTimeMillis());
-            SvgHudBackend.enablePreviewExample();
-        } else {
-            SvgHudBackend.disablePreviewExample();
         }
     }
 
-    private static void installStatusEffectsFixture() {
+    private static void installStatusEffectsFixture(long nowMs) {
             CombatHudStateStore.replaceAuthoritative(
                 CombatHudState.createAuthoritative(1.0f, 1.0f, 1.0f, DerivedAttrFlags.none(), true)
             );
+            long elapsed = statusFixtureOffsetMs >= 0 ? statusFixtureOffsetMs : Math.max(0, nowMs - statusFixtureStartedAt);
+            if (loopStatusFixture) elapsed %= 30_000;
+            long start = nowMs - elapsed;
+            // 重建同一条演出时间线，避免真实服务端快照在两帧之间清空截图夹具。
+            StatusEffectStore.clear();
             StatusEffectStore.replace(List.of(
                 new StatusEffectStore.Effect("bleeding", "出血", StatusEffectStore.Kind.DOT,
-                    3, 22_000L, 0xFFE04040, "预览", 2),
+                    3, 12_000L, 0xFFE04040, "预览", 2),
                 new StatusEffectStore.Effect("stunned", "眩晕", StatusEffectStore.Kind.CONTROL,
-                    1, 14_000L, 0xFFB060FF, "预览", 4),
+                    1, 7_000L, 0xFFB060FF, "预览", 4),
+                new StatusEffectStore.Effect("contaminationboost", "丹毒加重", StatusEffectStore.Kind.DEBUFF,
+                    1, 25_000L, 0xFFBBC774, "预览", 3),
                 new StatusEffectStore.Effect("speedboost", "疾行", StatusEffectStore.Kind.BUFF,
                     1, 28_000L, 0xFF60D060, "预览", 1)
-            ));
-            StatusEffectStore.setCultivationAcceleration(1.6);
+            ), start);
+            for (long age = 0; age <= Math.min(elapsed, 30_000); age += 50) {
+                StatusEffectStore.presentation(start + age, StatusEffectStore.TOP_BAR_LIMIT);
+            }
     }
 
     private static void apply(MinecraftClient client) {
@@ -78,12 +100,12 @@ public final class SvgHudPreviewHarness {
             return;
         }
         long nowMs = System.currentTimeMillis();
-        resetFixtures(nowMs);
+        resetFixtures(nowMs, current != Scenario.STATUS_EFFECTS);
         client.inGameHud.getChatHud().clear(false);
 
         switch (current) {
             case JIEMAI -> DefenseWindowStore.open(60_000, nowMs);
-            case STATUS_EFFECTS -> installStatusEffectsFixture();
+            case STATUS_EFFECTS -> installStatusEffectsFixture(nowMs);
             case MOVEMENT -> MovementStateStore.replace(new MovementState(
                 1.25, true, MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL,
                 18L, 1.8, 36.0, 60.0, false, 1L, "", 0L, 0L, 0L
@@ -127,10 +149,13 @@ public final class SvgHudPreviewHarness {
 
     /** 将本 preview fixture 覆盖过的值恢复为空快照，不触发断线生命周期。 */
     private static void resetFixtures(long nowMs) {
+        resetFixtures(nowMs, true);
+    }
+
+    private static void resetFixtures(long nowMs, boolean resetStatus) {
         CombatHudStateStore.clear();
         DefenseWindowStore.replaceSnapshot(null);
-        StatusEffectStore.replace(List.of());
-        StatusEffectStore.setCultivationAcceleration(1.0);
+        if (resetStatus) StatusEffectStore.clear();
         MovementStateStore.replace(MovementState.empty(), nowMs);
         CastStateStore.replacePrediction(CastState.idle());
         QuickUseSlotStore.replaceLocal(QuickSlotConfig.empty());
@@ -156,7 +181,8 @@ public final class SvgHudPreviewHarness {
             }
             return switch (name.substring(SCENARIO_PREFIX.length())) {
                 case "jiemai" -> JIEMAI;
-                case "status-effects" -> STATUS_EFFECTS;
+                case "status-effects", "status-effects-entry", "status-effects-travel", "status-effects-settled",
+                    "status-effects-warning", "status-effects-exit" -> STATUS_EFFECTS;
                 case "movement" -> MOVEMENT;
                 case "quickbar" -> QUICKBAR;
                 case "cast-gather" -> CAST_GATHER;

@@ -1,6 +1,8 @@
 package com.bong.client.hud;
 
 import com.bong.client.combat.store.StatusEffectStore;
+import com.bong.client.hud.svg.NanoSvgParser;
+import com.bong.client.hud.svg.SvgTessellator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -11,102 +13,99 @@ import static org.junit.jupiter.api.Assertions.*;
 class StatusEffectHudPlannerTest {
     @AfterEach void tearDown() { StatusEffectStore.resetForTests(); }
 
-    @Test void emptyWhenNoEffects() {
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-        assertTrue(cmds.isEmpty());
+    @Test void iconsArriveSeriallyAndRefreshDoesNotReplayOrReorderThem() {
+        StatusEffectStore.replace(List.of(effect("slowed", 30_000), effect("staminacrash", 30_000)), 0);
+        commands(320, 0);
+        assertEquals(List.of("slowed.png"), icons(commands(320, 200)).stream().map(c -> basename(c.texturePath())).toList());
+        commands(320, 900);
+        var arriving = icons(commands(320, 1_100));
+        assertEquals(2, arriving.size());
+        assertTrue(arriving.get(1).width() > arriving.get(0).width(), "第二项单独放大，第一项已落位");
+        StatusEffectStore.replace(List.of(effect("staminacrash", 60_000), effect("slowed", 25_000)), 1_200);
+        var settled = icons(commands(320, 2_000));
+        assertEquals(List.of("slowed.png", "staminacrash.png"), settled.stream().map(c -> basename(c.texturePath())).toList());
+        assertEquals(settled.get(0).width(), settled.get(1).width(), "续期不能重播入场");
+        assertCentered(settled, 320);
+        assertCentered(icons(commands(180, 2_100)), 180);
     }
 
-    @Test void drawsSlotsForEachEffect() {
-        StatusEffectStore.replace(List.of(
-            new StatusEffectStore.Effect("a", "A", StatusEffectStore.Kind.DOT, 1, 5_000, 0xFFFF0000, "", 0),
-            new StatusEffectStore.Effect("b", "B", StatusEffectStore.Kind.BUFF, 3, 8_000, 0xFF00FF00, "", 0)
-        ));
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-        assertFalse(cmds.isEmpty());
-        for (HudRenderCommand c : cmds) {
-            assertEquals(HudRenderLayer.STATUS_EFFECTS, c.layer());
+    @Test void clearedAndExpiredWaitingEffectsNeverFlashOnScreen() {
+        StatusEffectStore.replace(List.of(effect("slowed", 30_000), effect("frailty", 200), effect("staminacrash", 30_000)), 0);
+        commands(320, 0);
+        StatusEffectStore.replace(List.of(effect("slowed", 29_800), effect("frailty", 1)), 200);
+        commands(320, 900);
+        assertEquals(List.of("slowed.png"), icons(commands(320, 1_100)).stream().map(c -> basename(c.texturePath())).toList());
+        StatusEffectStore.clearOnDisconnect();
+        assertTrue(commands(320, 1_200).isEmpty(), "断线清除已入场、退场和排队状态");
+    }
+
+    @Test void lastFiveSecondsBlinkThenFadeOutWithoutNewPackets() {
+        StatusEffectStore.replace(List.of(effect("slowed", 10_000)), 0);
+        commands(320, 0);
+        assertEquals(255, icons(commands(320, 4_900)).get(0).color() >>> 24);
+        int first = icons(commands(320, 5_200)).get(0).color() >>> 24;
+        int second = icons(commands(320, 5_525)).get(0).color() >>> 24;
+        assertNotEquals(first, second, "最后 5 秒图标本身持续闪烁");
+        commands(320, 10_000);
+        assertFalse(icons(commands(320, 10_140)).isEmpty(), "到期保留短退场动画");
+        assertTrue(commands(320, 10_281).isEmpty(), "无新快照也必须结束过期效果");
+    }
+
+    @Test void parameterizedEffectUsesItsPngAndUnknownEffectStillHasAnEmblem() {
+        StatusEffectStore.replace(List.of(effect("body_part_resist:head", 30_000), effect("unrecognized", 30_000)), 0);
+        commands(320, 0);
+        commands(320, 900);
+        var out = commands(320, 1_800);
+        assertTrue(icons(out).stream().anyMatch(c -> c.texturePath().endsWith("body_part_resist.png")));
+        assertTrue(out.stream().anyMatch(c -> c.isSvgRect() && c.svgAssetKey().equals("unknown")),
+            "未识别状态必须有可见降级图案，不能请求不存在的 PNG");
+    }
+
+    @Test void statusArtworkLoadsThroughTheProductionParserAndPngDecoder() throws Exception {
+        for (var asset : HudRenderRegistry.require(HudRenderLayer.STATUS_EFFECTS).svgAssets()) {
+            String path = "/assets/" + asset.resource().getNamespace() + "/" + asset.resource().getPath();
+            try (var input = getClass().getResourceAsStream(path)) {
+                assertNotNull(input, "缺少已登记 SVG: " + path);
+                assertTrue(new SvgTessellator().tessellate(new NanoSvgParser().parse(input)).triangleCount() > 0,
+                    "SVG 必须由生产解析器生成可见几何: " + path);
+            }
         }
-        long stackText = cmds.stream().filter(HudRenderCommand::isText).count();
-        // Second effect has stacks=3 → one text entry for ×3
-        assertEquals(1L, stackText);
+        for (String id : List.of("bleeding", "contaminationboost", "immobilized", "shieldblocking",
+                                "health_regen_boost")) {
+            String path = "/assets/" + iconPath(id).replace(':', '/');
+            try (var input = getClass().getResourceAsStream(path)) {
+                assertNotNull(input, "状态必须包含自己的 PNG: " + id);
+                var image = javax.imageio.ImageIO.read(input);
+                assertNotNull(image, "PNG 必须可解码: " + id);
+                assertTrue(image.getColorModel().hasAlpha(), "状态图标必须保留透明背景: " + id);
+            }
+        }
     }
 
-    @Test void knownEffectRendersEmblemTextureNotTint() {
-        // "bleeding" ships an emblem → expect a TEXTURED_RECT pointing at it,
-        // and NO kind-tint fill rect occupying the inner icon area.
-        StatusEffectStore.replace(List.of(
-            new StatusEffectStore.Effect("bleeding", "流血", StatusEffectStore.Kind.DOT, 1, 5_000, 0xFFE05050, "", 0)
-        ));
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-
-        String want = StatusEffectHudPlanner.ICON_BASE + "bleeding.png";
-        assertTrue(cmds.stream().anyMatch(c -> c.isTexturedRect() && want.equals(c.texturePath())),
-            "iconned effect 'bleeding' should draw emblem texture " + want
-                + " but commands were " + cmds);
-        // The 14×14 inner fill must be the texture, not a tint rect of the same size.
-        assertFalse(cmds.stream().anyMatch(c ->
-                c.isRect() && c.width() == StatusEffectHudPlanner.SLOT_SIZE - 4
-                    && c.height() == StatusEffectHudPlanner.SLOT_SIZE - 4),
-            "iconned effect must not also paint a kind-tint inner fill");
+    private static String iconPath(String id) {
+        String path = StatusEffectHudPlanner.iconPathFor(id);
+        assertNotNull(path, "缺少状态图标映射: " + id);
+        return path;
     }
 
-    @Test void parameterizedIdResolvesToBaseEmblem() {
-        // body_part_resist:<part> shares one emblem keyed on the colon-stripped base.
-        StatusEffectStore.replace(List.of(
-            new StatusEffectStore.Effect("body_part_resist:head", "头部硬化", StatusEffectStore.Kind.BUFF, 1, 9_000, 0xFF55CC66, "", 0)
-        ));
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-
-        String want = StatusEffectHudPlanner.ICON_BASE + "body_part_resist.png";
-        assertTrue(cmds.stream().anyMatch(c -> c.isTexturedRect() && want.equals(c.texturePath())),
-            "parameterized id should map to base emblem " + want + " but commands were " + cmds);
+    private static StatusEffectStore.Effect effect(String id, long remaining) {
+        return new StatusEffectStore.Effect(id, id, StatusEffectStore.Kind.DEBUFF, 1, remaining, 0xFFE07060, "", 0);
     }
 
-    @Test void unknownIdFallsBackToKindTint() {
-        // An id with no shipped emblem must still fill the slot with a kind tint
-        // (never a missing-texture draw, never a blank slot).
-        StatusEffectStore.replace(List.of(
-            new StatusEffectStore.Effect("no_such_effect_zzz", "X", StatusEffectStore.Kind.DEBUFF, 1, 5_000, 0xFFFF8030, "", 0)
-        ));
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-
-        assertFalse(cmds.stream().anyMatch(HudRenderCommand::isTexturedRect),
-            "un-iconned effect must NOT emit a texture command (would show missing-texture)");
-        assertTrue(cmds.stream().anyMatch(c ->
-                c.isRect() && c.width() == StatusEffectHudPlanner.SLOT_SIZE - 4
-                    && c.height() == StatusEffectHudPlanner.SLOT_SIZE - 4),
-            "un-iconned effect must fall back to a kind-tint inner fill");
+    private static List<HudRenderCommand> commands(int width, long now) {
+        return StatusEffectHudPlanner.buildCommands(width, 300, now, text -> text.length() * 6);
     }
 
-    @Test void nullOrEmptyIdFallsBackGracefully() {
-        // StatusEffectStore.Effect coerces a null id to "" — buildCommands must
-        // not crash and must fall back to a kind tint (never a texture draw).
-        StatusEffectStore.replace(List.of(
-            new StatusEffectStore.Effect(null, "空ID", StatusEffectStore.Kind.UNKNOWN, 1, 5_000, 0xFF808080, "", 0),
-            new StatusEffectStore.Effect("", "空串", StatusEffectStore.Kind.BUFF, 1, 5_000, 0xFF55CC66, "", 0)
-        ));
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-
-        assertFalse(cmds.stream().anyMatch(HudRenderCommand::isTexturedRect),
-            "null/empty id must not emit a TEXTURED_RECT (no '' icon ships)");
-        long tintFills = cmds.stream().filter(c ->
-            c.isRect() && c.width() == StatusEffectHudPlanner.SLOT_SIZE - 4
-                && c.height() == StatusEffectHudPlanner.SLOT_SIZE - 4).count();
-        assertEquals(2L, tintFills, "both blank-id effects must fall back to a kind-tint inner fill");
+    private static List<HudRenderCommand> icons(List<HudRenderCommand> commands) {
+        return commands.stream().filter(HudRenderCommand::isTexturedRect).toList();
     }
 
-    @Test void debuffRemainingBarUsesRedCountdown() {
-        StatusEffectStore.replace(List.of(
-            new StatusEffectStore.Effect("stamina_crash", "体力虚脱", StatusEffectStore.Kind.DEBUFF, 1, 5_000, 0xFFFF8030, "", 0)
-        ));
+    private static String basename(String path) { return path.substring(path.lastIndexOf('/') + 1); }
 
-        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
-
-        assertTrue(cmds.stream().anyMatch(cmd ->
-            cmd.isRect()
-                && cmd.width() > 0
-                && cmd.height() == 1
-                && cmd.color() == StatusEffectHudPlanner.DEBUFF_REMAINING_BAR_COLOR
-        ), "debuff countdown bar should be red");
+    private static void assertCentered(List<HudRenderCommand> icons, int width) {
+        int left = icons.get(0).x();
+        var last = icons.get(icons.size() - 1);
+        assertEquals(width, left + last.x() + last.width(), 1, "整栏在不同逻辑宽度保持居中");
+        assertTrue(left >= 0 && last.x() + last.width() <= width, "图标不能超出视口");
     }
 }

@@ -15,10 +15,9 @@ import java.util.Optional;
 import java.util.EnumSet;
 import java.util.Set;
 
-/** SVG HUD 资产与矩形提交后端；示例资源只在显式预览中绘制。 */
+/** SVG HUD 资产与矩形提交后端。 */
 public final class SvgHudBackend implements HudRenderBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-svg-hud");
-    private static final Identifier EXAMPLE = Identifier.of("bong-client", "svg/hud/example.svg");
     private static final Set<HudRenderLayer> SVG_LAYERS = Set.copyOf(EnumSet.of(
         HudRenderLayer.JIEMAI_RING,
         HudRenderLayer.MOVEMENT_HUD,
@@ -27,7 +26,6 @@ public final class SvgHudBackend implements HudRenderBackend {
     private static final MinecraftGuiMeshEmitter EMITTER = new MinecraftGuiMeshEmitter();
     private static volatile ResourceManager lastResourceManager;
     private static volatile SvgHudAssetRegistry registry;
-    private static volatile boolean previewExampleEnabled;
 
     private SvgHudBackend() {
     }
@@ -36,10 +34,6 @@ public final class SvgHudBackend implements HudRenderBackend {
 
     /** 由客户端组合根注入 HUD 回调，表现层外不暴露具体实现细节。 */
     public static HudRenderBackend production() {
-        // 预览示例必须由显式环境变量打开；正常联机环境保持 fail closed。
-        if ("1".equals(System.getenv("BONG_SVG_HUD_PREVIEW"))) {
-            enablePreviewExample();
-        }
         return INSTANCE;
     }
 
@@ -49,14 +43,7 @@ public final class SvgHudBackend implements HudRenderBackend {
         MinecraftClient client,
         ScreenHudVisibility visibility
     ) {
-        if (!previewExampleEnabled || context == null || client == null || visibility != ScreenHudVisibility.FULL) {
-            return;
-        }
-        int width = client.getWindow().getScaledWidth();
-        int height = client.getWindow().getScaledHeight();
-        if (width > 0 && height > 0) {
-            renderPreviewExample(context, client, width, height);
-        }
+        // 所有几何均由 renderCommand 按 HUD 命令顺序提交。
     }
 
     @Override
@@ -123,44 +110,6 @@ public final class SvgHudBackend implements HudRenderBackend {
         }
     }
 
-    /** 预览专用示例，放在右上方以避开左下角既有 HUD。 */
-    private static void renderPreviewExample(DrawContext context, MinecraftClient client, int width, int height) {
-        int panelWidth = 180;
-        int panelHeight = 72;
-        int x = Math.max(8, width - panelWidth - 12);
-        int y = Math.max(40, Math.min(48, height - panelHeight - 8));
-        emit(context, client, EXAMPLE, x, y, 1.0f, 0xFFFFFFFF);
-    }
-
-    private static void emit(
-        DrawContext context,
-        MinecraftClient client,
-        Identifier resource,
-        int x,
-        int y,
-        float scale,
-        int tint
-    ) {
-        Optional<SvgMesh> mesh = registry(client.getResourceManager()).find(resource);
-        if (mesh.isEmpty()) {
-            return;
-        }
-        try {
-            EMITTER.emit(context, mesh.get(), x, y, scale, tint);
-        } catch (RuntimeException failure) {
-            // 几何提交失败不影响其余 HUD；资源失败已由 registry 缓存并仅记录一次。
-            LOGGER.error("[svg] HUD mesh 提交失败，资源={}", resource, failure);
-        }
-    }
-
-    static void enablePreviewExample() {
-        previewExampleEnabled = true;
-    }
-
-    static void disablePreviewExample() {
-        previewExampleEnabled = false;
-    }
-
     static SvgHudAssetRegistry registry(ResourceManager resourceManager) {
         SvgHudAssetRegistry current = registry;
         if (current == null || lastResourceManager != resourceManager) {
@@ -189,6 +138,5 @@ public final class SvgHudBackend implements HudRenderBackend {
 
     static void resetForTests() {
         invalidateAssets();
-        previewExampleEnabled = false;
     }
 }

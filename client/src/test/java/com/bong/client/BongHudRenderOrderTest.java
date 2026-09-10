@@ -36,10 +36,11 @@ class BongHudRenderOrderTest {
     @Test
     void statusIconRemainsAboveSvgBackgroundAndBelowItsForeground() {
         StatusEffectStore.replace(List.of(new StatusEffectStore.Effect(
-            "bleeding", "出血", StatusEffectStore.Kind.DOT,
+            "slowed", "迟缓", StatusEffectStore.Kind.DEBUFF,
             2, 30_000L, 0xFFE04040, "", 0
-        )));
-        List<HudRenderCommand> commands = StatusEffectHudPlanner.buildCommands(100, 80);
+        )), 0);
+        StatusEffectHudPlanner.buildCommands(100, 80, 0, text -> text.length() * 6);
+        List<HudRenderCommand> commands = StatusEffectHudPlanner.buildCommands(100, 80, 1_000, text -> text.length() * 6);
         BufferedCanvas canvas = new BufferedCanvas(100, 80);
 
         render(commands, canvas);
