@@ -82,6 +82,7 @@ class ItemSpec:
     category: str
     source_path: Path
     rarity: str
+    description: str = ""
 
 
 def load_items(items_root: Path) -> dict[str, ItemSpec]:
@@ -102,12 +103,13 @@ def load_items(items_root: Path) -> dict[str, ItemSpec]:
                 category=str(raw.get("category", "misc")).strip() or "misc",
                 source_path=path,
                 rarity=str(raw.get("rarity", "common")).strip() or "common",
+                description=str(raw.get("description", "")).strip(),
             )
     return items
 
 
 def prompt_for(item: ItemSpec) -> str:
-    return f"{item.name}，末法残土风格，暗色调水墨，透明背景，128×128 icon"
+    return f"物品名称：{item.name}。原有描述：{item.description}"
 
 
 def parse_ids(values: list[str]) -> list[str]:
