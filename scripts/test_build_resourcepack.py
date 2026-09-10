@@ -132,6 +132,48 @@ class BuildResourcepackTest(unittest.TestCase):
             self.assertEqual({"pack.mcmeta"}, names, f"expected only pack.mcmeta for empty assets tree, actual {sorted(names)}")
             self.assertTrue(all(entry["file_count"] == 0 for entry in manifest["packs"]), f"expected all file counts zero for empty assets tree, actual {manifest['packs']}")
 
+    def test_source_file_modes_do_not_change_archive_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            assets = root / "assets"
+            out_a = root / "out-a"
+            out_b = root / "out-b"
+            regular_fixture = assets / "bong" / "textures" / "particle" / "mode-sensitive.png"
+            executable_fixture = assets / "bong" / "geo" / "mode-sensitive.geo.json"
+            self._write(regular_fixture, b"same regular bytes regardless of checkout mode")
+            self._write(executable_fixture, b"same executable bytes regardless of checkout mode")
+
+            os.chmod(regular_fixture, 0o664)
+            os.chmod(executable_fixture, 0o775)
+            original_umask = os.umask(0o002)
+            try:
+                subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=self._env(assets, out_a, version="mode"))
+                os.chmod(regular_fixture, 0o644)
+                os.chmod(executable_fixture, 0o755)
+                os.umask(0o022)
+                subprocess.run([BASH, str(SCRIPT)], check=True, cwd=REPO_ROOT, env=self._env(assets, out_b, version="mode"))
+            finally:
+                os.umask(original_umask)
+
+            pack_a = out_a / "bong-full-mode.zip"
+            pack_b = out_b / "bong-full-mode.zip"
+            self.assertEqual(
+                pack_a.read_bytes(),
+                pack_b.read_bytes(),
+                "expected source checkout modes to produce identical ZIP bytes because staging normalizes file permissions",
+            )
+            self.assertEqual(
+                hashlib.sha1(pack_a.read_bytes(), usedforsecurity=False).hexdigest(),
+                hashlib.sha1(pack_b.read_bytes(), usedforsecurity=False).hexdigest(),
+                "expected source checkout modes to produce the same SHA-1 because archive metadata is normalized",
+            )
+            with zipfile.ZipFile(pack_a) as archive:
+                regular_info = archive.getinfo("assets/bong/textures/particle/mode-sensitive.png")
+                executable_info = archive.getinfo("assets/bong/geo/mode-sensitive.geo.json")
+                metadata_mode = lambda info: (info.external_attr >> 16) & 0o777
+                self.assertEqual(0o644, metadata_mode(regular_info), "expected regular staged assets to use stable 0644 ZIP metadata")
+                self.assertEqual(0o755, metadata_mode(executable_info), "expected executable staged assets to retain stable 0755 ZIP metadata")
+
     def test_filter_excludes_unsupported_suffix_and_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
