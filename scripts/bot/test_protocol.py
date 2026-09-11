@@ -2064,6 +2064,21 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
+
+    def test_proto_termination_summary_preserves_zero_and_missing_attributes(self):
+        summary = (
+            _pb_string(1, "LastName") + _pb_string(2, "Induce")
+            + _pb_varint(3, 4) + _pb_float32_field(6, 72.0) + _pb_varint(7, 0)
+        )
+        decoded = decode_server_data_payload(
+            _pb_message(73, _pb_varint(1, 1) + _pb_message(5, summary))
+        )
+        self.assertEqual(decoded["summary"], {
+            "character_name": "LastName", "realm": "Induce", "death_count": 4,
+            "years_lived": None, "qi_max": None, "health_max": 72.0,
+            "meridians_open": 0, "techniques_learned": None,
+        }, "缺失属性不能伪造为零，已记录的零值不能丢失")
+
     def test_proto_tribulation_state_payload_decodes(self):
         # 全部新增字段都用非默认值编码（failed=true、half_step_on_success=true、
         # world_x/z、三个 tick），逐个断言 wire 号：解码器缺席/串号/恒 false 都会被抓。
@@ -14256,6 +14271,40 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["item_uuid"], "59")
         self.assertAlmostEqual(decoded["freshness"], 0.75, places=4)
         self.assertEqual(decoded["profile_name"], "food_spoil_mundane_meat_v1")
+class DeathScreenEscalationTest(unittest.TestCase):
+    def test_previous_roll_update_cannot_replace_next_death_decision(self):
+        from bot.scenarios._death_screen_helpers import escalate_to_tribulation_death
+
+        class RollingBot(_FakeBot):
+            def __init__(self):
+                super().__init__([])
+                self._lock = threading.Lock()
+                self.deaths = 0
+
+            def screen(self, visible, can_terminate=False):
+                self.events.append(_FakeEvent(len(self.events) + 1, "server_data", {
+                    "payload_type": "death_screen",
+                    "payload": {"visible": visible, "can_terminate": can_terminate,
+                                "death_number": self.deaths},
+                }))
+
+            def cmd(self, command):
+                self.deaths += 1
+                self.screen(True, can_terminate=self.deaths >= 2)
+
+            def expect_chat(self, *args, **kwargs):
+                pass
+
+            def intent(self, request):
+                self.screen(True)  # 骰子开始后，仍可见的屏会禁用决策按钮。
+                self.screen(False)
+
+        decision = escalate_to_tribulation_death(RollingBot())
+        self.assertTrue(decision["can_terminate"])
+        self.assertEqual(decision["death_number"], 2,
+                         "每轮 kill 必须读取本轮决策，不能复用上一轮骰子更新")
+
+
 class TestCoffinAirProbe(unittest.TestCase):
     def test_delayed_consumption_stays_with_its_placement_coordinates(self):
         from bot.scenarios.production_coffin_place_destroy import _place_on_first_air_layer

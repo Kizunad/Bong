@@ -29,7 +29,48 @@
     },
     "archetype_suggestion": {
       "type": "string"
+    },
+    "summary": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "character_name",
+        "realm",
+        "death_count"
+      ],
+      "properties": {
+        "character_name": {
+          "type": "string"
+        },
+        "realm": {
+          "type": "string"
+        },
+        "death_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "years_lived": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "qi_max": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "health_max": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "meridians_open": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "techniques_learned": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
     }
   },
-  "x-bong-typebox-source-sha256": "1b4dad7d89f932fe65da9ffd1b908c2668f8a051260e0c2b2debacafaa94d269"
+  "x-bong-typebox-source-sha256": "8639983a760072a1b4460d9e1944367e385272910b36b4f435386da0fe8eacf3"
 }

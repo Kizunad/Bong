@@ -28,7 +28,9 @@ class GatheringProgressHudTest {
 
         List<HudRenderCommand> commands = GatheringProgressHud.buildCommands(session, measurer, 320, 240, 1100L);
 
-        assertTrue(commands.stream().anyMatch(HudRenderCommand::isRect));
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isSvgRect));
+        assertTrue(commands.stream().anyMatch(command -> command.isTexturedRect()
+            && command.texturePath().equals("bong-client:textures/hud/gathering/herb.png")));
         assertTrue(commands.stream().anyMatch(command -> command.isText() && command.text().contains("凝脉草")));
     }
 

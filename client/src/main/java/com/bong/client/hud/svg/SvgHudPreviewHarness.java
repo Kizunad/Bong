@@ -25,6 +25,8 @@ import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
 import com.bong.client.movement.DashSkill;
+import com.bong.client.gathering.GatheringSessionStore;
+import com.bong.client.gathering.GatheringSessionViewModel;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 
@@ -119,10 +121,39 @@ public final class SvgHudPreviewHarness {
             case STATUS_EFFECTS -> installStatusEffectsFixture(nowMs);
             case MOVEMENT -> installMovementFixture(nowMs);
             case HANDS -> installHandsFixture(nowMs);
+            case GATHERING -> installGatheringFixture(nowMs);
             case QUICKBAR, CAST_GATHER, CAST_FORM, CAST_COMPLETE, CAST_INTERRUPTED ->
                 installQuickbarFixture(current, nowMs);
             case NONE -> {
             }
+        }
+    }
+
+    private static void installGatheringFixture(long nowMs) {
+        installHandsFixture(nowMs);
+        String type = selectedShot.contains("ore") ? "ore" : selectedShot.contains("wood") ? "wood" : "herb";
+        String target = switch (type) {
+            case "ore" -> "铜矿";
+            case "wood" -> "枯木";
+            default -> "凝脉草";
+        };
+        boolean completed = selectedShot.endsWith("complete");
+        boolean interrupted = selectedShot.endsWith("interrupted");
+        String tool = switch (type) {
+            case "ore" -> "pickaxe_iron";
+            case "wood" -> "axe_iron";
+            default -> "hoe_iron";
+        };
+        WeaponEquippedStore.putOrClear("main_hand",
+            new EquippedWeapon("main_hand", 0, tool, "tool", 1, 1, 0));
+        long progress = selectedShot.endsWith("early") ? 20 : selectedShot.endsWith("late") ? 90 : 62;
+        GatheringSessionStore.replace(GatheringSessionViewModel.create(
+            "preview:gathering", progress, 100, target, type, "fine_likely", "",
+            false, false, nowMs - 700));
+        if (completed || interrupted) {
+            GatheringSessionStore.replace(GatheringSessionViewModel.create(
+                "preview:gathering", completed ? 100 : 0, 100, target, type, "fine", "",
+                interrupted, completed, nowMs - (interrupted ? 350 : 120)));
         }
     }
 
@@ -200,6 +231,7 @@ public final class SvgHudPreviewHarness {
     private static void resetFixtures(long nowMs, boolean resetStatus) {
         CombatHudStateStore.clear();
         DefenseWindowStore.replaceSnapshot(null);
+        GatheringSessionStore.replace(GatheringSessionViewModel.empty());
         if (resetStatus) StatusEffectStore.clear();
         MovementStateStore.replace(MovementState.empty(), nowMs);
         TechniquesListPanel.replace(List.of());
@@ -222,6 +254,7 @@ public final class SvgHudPreviewHarness {
         STATUS_EFFECTS,
         MOVEMENT,
         HANDS,
+        GATHERING,
         QUICKBAR,
         CAST_GATHER,
         CAST_FORM,
@@ -239,6 +272,8 @@ public final class SvgHudPreviewHarness {
                     "status-effects-warning", "status-effects-exit" -> STATUS_EFFECTS;
                 case "movement", "movement-ready", "movement-cooldown", "movement-rejected", "movement-locked" -> MOVEMENT;
                 case "hands-empty", "hands-single", "hands-dual", "hands-shield", "hands-worn", "hands-treasure" -> HANDS;
+                case "gathering-herb", "gathering-ore", "gathering-wood", "gathering-early", "gathering-late",
+                    "gathering-complete", "gathering-interrupted" -> GATHERING;
                 case "quickbar" -> QUICKBAR;
                 case "cast-gather" -> CAST_GATHER;
                 case "cast-form" -> CAST_FORM;

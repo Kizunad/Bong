@@ -1177,11 +1177,22 @@ impl From<&ServerDataPayloadV1> for Payload {
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             } => Payload::TerminateScreen(bong::TerminateScreen {
                 visible: *visible,
                 final_words: final_words.clone(),
                 epilogue: epilogue.clone(),
                 archetype_suggestion: archetype_suggestion.clone(),
+                summary: summary.as_ref().map(|summary| bong::TerminationSummary {
+                    character_name: summary.character_name.clone(),
+                    realm: summary.realm.clone(),
+                    death_count: summary.death_count,
+                    years_lived: summary.years_lived,
+                    qi_max: summary.qi_max,
+                    health_max: summary.health_max,
+                    meridians_open: summary.meridians_open,
+                    techniques_learned: summary.techniques_learned,
+                }),
             }),
             ServerDataPayloadV1::RiftPortalState(s) => {
                 Payload::RiftPortalState(bong::RiftPortalState {

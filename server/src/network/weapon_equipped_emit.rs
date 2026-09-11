@@ -94,7 +94,7 @@ fn weapon_kind_str(k: WeaponKind) -> &'static str {
     }
 }
 
-fn send_weapon_equipped(client: &mut Client, slot: &str, weapon: Option<WeaponViewV1>) {
+pub(crate) fn send_weapon_equipped(client: &mut Client, slot: &str, weapon: Option<WeaponViewV1>) {
     let payload = ServerDataV1::new(ServerDataPayloadV1::WeaponEquipped(WeaponEquippedV1 {
         slot: slot.to_string(),
         weapon,
@@ -136,6 +136,25 @@ fn send_weapon_broken(client: &mut Client, instance_id: u64, template_id: &str) 
     );
 }
 
+/// 从真实装备构造手持视图，也供测试场景退出时恢复当前装备外观。
+pub(crate) fn equipped_slot_view(
+    inventory: &PlayerInventory,
+    registry: &ItemRegistry,
+    key: &str,
+) -> Option<WeaponViewV1> {
+    let item = inventory.equipped.get(key)?.held.as_ref()?;
+    let template = registry.get(&item.template_id)?;
+    if let Some(spec) = template.weapon_spec.as_ref() {
+        Some(item_to_view(item, spec))
+    } else if let Some(spec) = template.shield_spec.as_ref() {
+        Some(shield_item_to_view(item, spec))
+    } else if matches!(template.category, ItemCategory::Tool) {
+        Some(tool_item_to_view(item))
+    } else {
+        None
+    }
+}
+
 /// plan-weapon-v1 §8.1：推送 `weapon_equipped` payload。
 ///
 /// 对 inventory 的每次 revision 变化，推三槽 snapshot。
@@ -155,30 +174,7 @@ pub fn emit_weapon_equipped_payloads(
             ]
             .into_iter()
             .map(|(slot, key)| {
-                let view = inventory
-                    .equipped
-                    .get(key)
-                    .and_then(|s| s.held.as_ref())
-                    .and_then(|item| {
-                        let tpl = registry.get(&item.template_id)?;
-                        if let Some(weapon_spec) = tpl.weapon_spec.as_ref() {
-                            // 普通武器路径
-                            Some(item_to_view(item, weapon_spec))
-                        } else if let Some(shield_spec) = tpl.shield_spec.as_ref() {
-                            // plan-shield-block-v1 P3：盾牌以 weapon_kind="shield" 下发
-                            // 客户端 WeaponEquippedHandler 检查 template_id._shield 后缀
-                            // 并路由到 EquippedShieldStore.equip()，不写 WeaponEquippedStore
-                            Some(shield_item_to_view(item, shield_spec))
-                        } else if matches!(tpl.category, ItemCategory::Tool) {
-                            // 工具手持 3D 模型：tool 既无 weapon_spec 也无 shield_spec，过去 view=None
-                            // 永不进 WeaponEquippedStore → 手持无模型。下发 weapon_kind="tool" view，
-                            // 客户端非盾默认写入 WeaponEquippedStore，渲染层据 template_id 查
-                            // BongWeaponModelRegistry 取宿主 vanilla item 渲染（镐/斧/锄直接白嫖原版模型）。
-                            Some(tool_item_to_view(item))
-                        } else {
-                            None
-                        }
-                    });
+                let view = equipped_slot_view(inventory, &registry, key);
                 (slot_wire_name(slot).to_string(), view)
             })
             .collect();

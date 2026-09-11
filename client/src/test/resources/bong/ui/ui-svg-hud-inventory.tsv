@@ -15,7 +15,7 @@ SPELL_VOLUME	SPELL_VOLUME	COMMAND	MINECRAFT_GUI	SpellVolumeHudPlanner		spell_vol
 CARRIER	CARRIER	COMMAND	MINECRAFT_GUI	CarrierHudPlanner+AnqiHudPlanner		carrier_state+anqi_state	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 YIDAO	YIDAO	COMMAND	MINECRAFT_GUI	YidaoHudPlanner		yidao_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 BOTANY	BOTANY	COMMAND	MINECRAFT_GUI	BotanyHudPlanner		botany_projection+clock	动态文字与物品图标仍走 Minecraft GUI	HudRenderRegistryTest
-GATHERING	GATHERING	COMMAND	MINECRAFT_GUI	GatheringProgressHud		gathering_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
+GATHERING	GATHERING	SVG_FRAME	SVG_MESH	GatheringProgressHud	track=bong-client:svg/hud/gathering-track.svg;segment-a=bong-client:svg/hud/gathering-segment-a.svg;segment-b=bong-client:svg/hud/gathering-segment-b.svg;segment-c=bong-client:svg/hud/gathering-segment-c.svg;segment-d=bong-client:svg/hud/gathering-segment-d.svg;segment-e=bong-client:svg/hud/gathering-segment-e.svg;segment-f=bong-client:svg/hud/gathering-segment-f.svg;segment-g=bong-client:svg/hud/gathering-segment-g.svg;segment-h=bong-client:svg/hud/gathering-segment-h.svg	gathering_state+clock	材质 PNG 与动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 DERIVED_ATTR	DERIVED_ATTR	COMMAND	MINECRAFT_GUI	StyleBadgeHudPlanner+DerivedAttrIconHudPlanner		combat_attributes+loadout	属性文字与图标仍走 Minecraft GUI	HudRenderRegistryTest
 TOAST	TOAST	COMMAND	MINECRAFT_GUI	ToastHudRenderer+ForgeProgressHudPlanner		toast_queue+forge_outcome	通知文字仍走 Minecraft GUI	HudRenderRegistryTest
 VISUAL	VISUAL	COMMAND	MINECRAFT_GUI	VisualHudRenderer		visual_effect_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest

@@ -7589,6 +7589,7 @@ mod tests {
             final_words: "归于虚无".to_string(),
             epilogue: "角色终结".to_string(),
             archetype_suggestion: "warrior".to_string(),
+            summary: None,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::TerminateScreen(ts)),
@@ -7613,6 +7614,7 @@ mod tests {
             final_words: String::new(),
             epilogue: String::new(),
             archetype_suggestion: String::new(),
+            summary: None,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::TerminateScreen(ts)),
@@ -8029,6 +8031,7 @@ mod tests {
                     final_words: "f".to_string(),
                     epilogue: "e".to_string(),
                     archetype_suggestion: "a".to_string(),
+                    summary: None,
                 }),
                 "TerminateScreen",
             ),

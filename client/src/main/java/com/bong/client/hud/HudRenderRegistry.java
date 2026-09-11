@@ -38,7 +38,7 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.CARRIER, "CarrierHudPlanner+AnqiHudPlanner", "carrier_state+anqi_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.YIDAO, "YidaoHudPlanner", "yidao_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.BOTANY, "BotanyHudPlanner", "botany_projection+clock", "动态文字与物品图标仍走 Minecraft GUI"),
-        command(HudRenderLayer.GATHERING, "GatheringProgressHud", "gathering_state+clock", "动态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.GATHERING, "GatheringProgressHud", "gathering_state+clock", "材质 PNG 与动态文字仍走 Minecraft GUI", gatheringAssets()),
         command(HudRenderLayer.DERIVED_ATTR, "StyleBadgeHudPlanner+DerivedAttrIconHudPlanner", "combat_attributes+loadout", "属性文字与图标仍走 Minecraft GUI"),
         command(HudRenderLayer.TOAST, "ToastHudRenderer+ForgeProgressHudPlanner", "toast_queue+forge_outcome", "通知文字仍走 Minecraft GUI"),
         command(HudRenderLayer.VISUAL, "VisualHudRenderer", "visual_effect_state+clock", "动态文字仍走 Minecraft GUI"),
@@ -145,6 +145,14 @@ public final class HudRenderRegistry {
 
     private static SvgAsset asset(String key, String filename) {
         return new SvgAsset(key, Identifier.of("bong-client", "svg/hud/" + filename + ".svg"));
+    }
+
+    private static List<SvgAsset> gatheringAssets() {
+        List<SvgAsset> assets = new ArrayList<>(List.of(asset("track", "gathering-track")));
+        for (String key : GatheringProgressHud.SEGMENT_KEYS) {
+            assets.add(asset(key, "gathering-" + key));
+        }
+        return List.copyOf(assets);
     }
 
     private static List<SvgAsset> castAssets() {

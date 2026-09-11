@@ -2331,10 +2331,20 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             cinematic: None,
         }),
         fix!(ServerDataPayloadV1::TerminateScreen {
-            visible: false,
+            visible: true,
             final_words: String::new(),
             epilogue: String::new(),
             archetype_suggestion: String::new(),
+            summary: Some(bong_server::schema::server_data::TerminationSummaryV1 {
+                character_name: "LastName".into(),
+                realm: "Condense".into(),
+                death_count: 4,
+                years_lived: Some(47.5),
+                qi_max: Some(88.0),
+                health_max: Some(72.0),
+                meridians_open: Some(3),
+                techniques_learned: None,
+            }),
         }),
         fix!(ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
             entity_id: 1,
