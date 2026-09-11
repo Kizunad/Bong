@@ -2,7 +2,7 @@
 
 > **一句话主题**：在不改 server gameplay、schema、wire 或物品语义的前提下，收口 Bong 手持物的注册/宿主耦合与防具的运行时 3D 外观缺口，让 `template_id` 能稳定落到可辨识的客户端模型。
 >
-> **状态**：Active（P0 进行中；P3 hide 首批实施中）。本文件继续登记事实、边界、阶段和决策门；本批只实施 hide 的客户端运行时模型与必要资源包校验接线。
+> **状态**：Active（P0 进行中；P3 hide 首批已落地、scroll_wrap 第二批实施中）。本文件继续登记事实、边界、阶段和决策门；本批实施 scroll_wrap 的客户端运行时模型与必要接线。
 >
 > **当前复核基线**：`origin/main` / `da88b629b3287096d015e0cf56dae16e3efc54fa`。所有清单以该基线的实际文件为准，不能把审计稿或旧快照当作现状。
 
@@ -15,7 +15,7 @@
 | P0 | 盘点、证据固化、所有权与宿主策略决策门 | ⏳ | 进行中 |
 | P1 | 已有运行时模型的纯注册/接线缺口 | ⬜ | 待验收 |
 | P2 | 共宿主解耦与显式借用关系 | ⬜ | 待验收 |
-| P3 | 缺失运行时 3D 几何与防具模型资产 | ⏳ | 2026-09-09 |
+| P3 | 缺失运行时 3D 几何与防具模型资产 | ⏳ | 2026-09-10 |
 | P4 | 视觉回归、资源完整性与 client gate | ⬜ | 待验收 |
 
 ## 0. 范围、硬边界与防重
@@ -335,7 +335,13 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 
 - `modelScript/generators/gen_hide_armor.py:171,351,460,539` 已有 `part_helmet()`、`part_chestplate()`、`part_leggings()`、`part_boots()`；本批将其生成的运行时几何逐件转写到 `client/src/main/java/com/bong/client/armor/ArmorPartModel.java:168-171,394-590`，四槽分别为 25 / 53 / 52 / 48 cubes，并由 `ArmorPartModelTest.everyCubeFieldIsPinnedByStableDigest` 锁定 digest。
 - `client/src/main/java/com/bong/client/armor/ArmorModelRegistry.java:47-50` 将 `armor_hide_{helmet,chestplate,leggings,boots}` 映射到对应 model key；`ArmorFeatureRenderer.collectRenderable()` 的现有 slot、durability、worn 过滤链消费这些 entry，四张运行时贴图位于 `client/src/main/resources/assets/bong/textures/armor/hide_{helmet,chestplate,leggings,boots}/0.png`。
-- `copper` 的实现 owner 是 `plan-copper-armor-v1`（已随 #2205 进入主线）；本 plan §6.2 仅保留其范围引用，不复制或重新实现铜甲模型、cube 表或行为。`scroll_wrap`、`straw`、`spirit_cloth` 仍留待后续批次。
+- `copper` 的实现 owner 是 `plan-copper-armor-v1`（已随 #2205 进入主线）；本 plan §6.2 仅保留其范围引用，不复制或重新实现铜甲模型、cube 表或行为。`straw`、`spirit_cloth` 仍留待后续批次。
+
+#### P3 第二批：scroll_wrap 四槽（2026-09-10）
+
+- `modelScript/generators/gen_scroll_wrap_armor.py:146,240,284,321` 已有 `part_helmet()`、`part_chestplate()`、`part_leggings()`、`part_boots()`；本批按 `emit_java(parts())` 的数值逐字转写到 `ArmorPartModel`，四槽分别为 33 / 39 / 22 / 18 cubes，digest 由 `ArmorPartModelTest.everyCubeFieldIsPinnedByStableDigest` 锁定。
+- `ArmorModelRegistry` 新增 `armor_scroll_wrap_{helmet,chestplate,leggings,boots}` → `scroll_wrap_*` 四条 entry；既有 `ArmorFeatureRenderer.collectRenderable()` / `render()` 槽位、耐久、worn 过滤与 `ArmorRenderBootstrap` 消费链不改。四张既存运行时贴图位于 `client/src/main/resources/assets/bong/textures/armor/scroll_wrap_{helmet,chestplate,leggings,boots}/0.png`。
+- 本批不新增或修改生成器、纹理、manifest、server 常量、schema、wire 或装备语义；不接入 `straw` / `spirit_cloth`，也不改铁/骨/铜/兽皮既有 cube 表。
 
 ## 7. P4 — 视觉回归与门禁
 
@@ -346,6 +352,14 @@ P3 是成本最高阶段。候选来源必须按 §2.3 复核，不把作者文�
 - **几何与远距差异**：hide 四槽 cube digest 为 `hide_helmet=4e8c7027c6b36712`、`hide_chestplate=847b3c40bfa77688`、`hide_leggings=47546b41e4b1db2b`、`hide_boots=e71ff51d9c459d8c`；`ArmorModelRegistryTest.registeredAndFallbackMaterialsUseDistinctVisualRoutes` 对铁/骨/铜/兽皮 cube 轮廓及材质色相做差异断言。四槽分别使用 `bbmodel-armor-preview gen_hide_armor --part <part> --full-body --coverage`，整套使用 `bbmodel-armor-preview gen_hide_armor --set --full-body --coverage`；实际玩家骨架预览输出为 `modelScript/out/hide_{helmet,chestplate,leggings,boots}_on_player_full.png` 与 `hide_set_on_player_full.png`，覆盖检查通过，旧 `scripts/models/render_bbmodel.py` 不存在，故以该依赖包预览替代平涂图。
 - **生成器与资源包**：本批未新增 generator，未改 golden fixture；`modelScript/tests/test_golden_bytes.py` 全 7 tests（含 `test_generator_set_matches_fixture`、`test_exit_codes_match`、`test_outputs_match`）通过。`modelScript/manifests/` 没有 hide 专属 manifest；本批使用的 `bbmodel-armor-preview` 直接从 `gen_hide_armor.py` 的 `parts()` 构建真玩家骨架预览，配套 `test_preview_armor_on_body.py` 7 tests 通过，因此该运行时链不要求新增 manifest。`bash scripts/build-resourcepack.sh` 产出 `client/resourcepack/manifest.json` 的 `sha1=b25bdd305e887a67fdd5391954c146e93125e9ee`、`size=72,635,671`、`entity-model file_count=314`，并与 `server/src/network/resourcepack.rs:20-26` 的默认 manifest 对拍；`scripts/test_build_resourcepack.py` 4 tests 通过。
 - **边界**：改动不触碰 server gameplay、schema、wire、装备/耐久语义；server 仅更新 `DEFAULT_RESOURCE_PACK_MANIFEST` 的 sha1/size，铁/骨/铜既有 cube 表由 digest pin 对拍未变，未新增 `pub` / `pub(crate)` / `#[doc(hidden)]` seam。
+
+### P3 第二批 scroll_wrap 验收证据（2026-09-10）
+
+- **四槽接线**：`ArmorModelRegistryTest.registryContainsMaterialsAcrossAllFourSlots` 对拍 20 件（5 材质 × 4 槽），`ArmorModelRegistryTest.everyRegistryEntryBakesThroughModelPartWithoutExternalMeshLoader` 验证四个 `scroll_wrap` entry 的 model key、贴图路径和无外部 mesh loader 烘焙；`ArmorFeatureRenderer` 沿既有 template → registry → model → texture 链消费，未增加新的 host 或 wire。
+- **错槽、穿戴、破损、卸下**：`ArmorFeatureRendererTest.collectRenderableCoversFiveMaterialsFourSlotsAndWearRemoveBrokenStates` 覆盖 scroll_wrap 四槽的正耐久、空槽和耐久归零；`collectRenderableRejectsScrollWrapArmorInEveryWrongSlot` 覆盖四件分别放入其余三个错误槽均拒绝。`ArmorTintRegistry` 原有 scroll_wrap leather fallback 规格保留。
+- **几何与既有 pin**：scroll_wrap digest 为 `scroll_wrap_helmet=8bb1eb593f99e202`、`scroll_wrap_chestplate=020a73b23fbe40c9`、`scroll_wrap_leggings=d67e7da5c2324e6d`、`scroll_wrap_boots=bd74bf7ae934dffb`；`ArmorPartModelTest` 同一 Map 仍锁住铁/骨/铜/兽皮 16 件原 digest，未发生漂移。`ArmorModelRegistryTest.registeredAndFallbackMaterialsUseDistinctVisualRoutes` 逐槽比较残卷与铁/骨/铜/兽皮 cube 轮廓。
+- **视觉验证手段**：实际运行 `bbmodel-armor-preview gen_scroll_wrap_armor --part scroll_wrap_{helmet,chestplate,leggings,boots} --full-body --coverage`，并运行 `bbmodel-armor-preview gen_scroll_wrap_armor --set --full-body --coverage`；输出 `modelScript/out/scroll_wrap_{helmet,chestplate,leggings,boots}_on_player_full.png` 与 `scroll_wrap_set_on_player_full.png`，以真 MC 玩家骨架逐件及整套查看挂点、四槽覆盖和远距轮廓。这一结论来自实际玩家骨架渲染图，同时以生成器四部件源和 digest pin 交叉核验，不是只读注释推断。
+- **资源与边界**：四张既有纹理未改动，sha256 均为 `27dbfe56ee51117f2a51b7e364a328ef87f7fd64d98e104d17d50e0e478622d6`；未新增被打包资产，因此未改 `client/resourcepack/manifest.json` 或 `server/src/network/resourcepack.rs`。本批只改 client Java 测试/运行时接线与本 plan，不触碰 server、schema、wire、straw 或 spirit_cloth。
 
 - **注册/资源 pin**：扩展 `BongWeaponModelRegistryTest`、`ArmorModelRegistryTest` 或最终 owner 的等价测试，核对 server 清单、`template_id` 集合、model/texture 路径、host/borrow 关系、四槽映射和 unknown ID 行为。
 - **渲染回归**：FPV、TPV/F5、GUI、ground（若 P0 判定使用 ItemRenderer）分别检查；穿戴全套/单槽/错槽/破损/卸下，确保玩家能从远处区分不同手持物和五套防具，不出现 vanilla host 串形、missing model 或 leather 双层。
