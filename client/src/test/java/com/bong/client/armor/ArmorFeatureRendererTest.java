@@ -63,8 +63,8 @@ class ArmorFeatureRendererTest {
     }
 
     @Test
-    void collectRenderableCoversFourMaterialsAcrossAllFourSlots() {
-        for (String material : new String[]{"iron", "bone", "copper", "hide"}) {
+    void collectRenderableCoversFiveMaterialsAcrossAllFourSlots() {
+        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap"}) {
             EnumMap<EquipSlotType, SlotContents> slots = new EnumMap<>(EquipSlotType.class);
             slots.put(EquipSlotType.HEAD, SlotContents.ofWorn(item("armor_" + material + "_helmet", 1.0)));
             slots.put(EquipSlotType.CHEST, SlotContents.ofWorn(item("armor_" + material + "_chestplate", 1.0)));
@@ -79,14 +79,14 @@ class ArmorFeatureRendererTest {
     }
 
     @Test
-    void collectRenderableCoversFourMaterialsFourSlotsAndWearRemoveBrokenStates() {
+    void collectRenderableCoversFiveMaterialsFourSlotsAndWearRemoveBrokenStates() {
         EnumMap<EquipSlotType, String> pieces = new EnumMap<>(EquipSlotType.class);
         pieces.put(EquipSlotType.HEAD, "helmet");
         pieces.put(EquipSlotType.CHEST, "chestplate");
         pieces.put(EquipSlotType.LEGS, "leggings");
         pieces.put(EquipSlotType.FEET, "boots");
 
-        for (String material : new String[]{"iron", "bone", "copper", "hide"}) {
+        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap"}) {
             for (Map.Entry<EquipSlotType, String> entry : pieces.entrySet()) {
                 String templateId = "armor_" + material + "_" + entry.getValue();
                 EnumMap<EquipSlotType, SlotContents> worn = new EnumMap<>(EquipSlotType.class);
@@ -111,6 +111,24 @@ class ArmorFeatureRendererTest {
     void collectRenderableRejectsHideArmorInEveryWrongSlot() {
         for (String piece : new String[]{"helmet", "chestplate", "leggings", "boots"}) {
             String templateId = "armor_hide_" + piece;
+            for (EquipSlotType wrongSlot : ArmorFeatureRenderer.ARMOR_SLOTS) {
+                EquipSlotType correctSlot = ArmorModelRegistry.get(templateId).orElseThrow().slot();
+                if (wrongSlot == correctSlot) {
+                    continue;
+                }
+
+                EnumMap<EquipSlotType, SlotContents> slots = new EnumMap<>(EquipSlotType.class);
+                slots.put(wrongSlot, SlotContents.ofWorn(item(templateId, 1.0)));
+                assertTrue(ArmorFeatureRenderer.collectRenderable(slots).isEmpty(),
+                    templateId + " 放入 " + wrongSlot + " 时必须拒绝错槽渲染");
+            }
+        }
+    }
+
+    @Test
+    void collectRenderableRejectsScrollWrapArmorInEveryWrongSlot() {
+        for (String piece : new String[]{"helmet", "chestplate", "leggings", "boots"}) {
+            String templateId = "armor_scroll_wrap_" + piece;
             for (EquipSlotType wrongSlot : ArmorFeatureRenderer.ARMOR_SLOTS) {
                 EquipSlotType correctSlot = ArmorModelRegistry.get(templateId).orElseThrow().slot();
                 if (wrongSlot == correctSlot) {
