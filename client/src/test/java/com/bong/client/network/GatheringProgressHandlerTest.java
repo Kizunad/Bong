@@ -54,7 +54,7 @@ class GatheringProgressHandlerTest {
     }
 
     @Test
-    void completedMiningProgressClearsOnlyMatchingSession() {
+    void terminalProgressAnimatesOnlyMatchingSession() {
         route("""
             {"v":1,"type":"mining_progress","session_id":"mine-1","ore_pos":[1,64,2],
              "progress":0.4,"interrupted":false,"completed":false}
@@ -75,8 +75,10 @@ class GatheringProgressHandlerTest {
              "progress":1.0,"interrupted":false,"completed":true,"detail":"青纹灵木"}
             """);
 
-        assertTrue(GatheringSessionStore.snapshot().isEmpty());
-        assertTrue(GatheringProgressHud.buildCommands(WIDTH, 320, 240, System.currentTimeMillis()).isEmpty());
+        assertTrue(GatheringSessionStore.snapshot().completed());
+        long completedAt = GatheringSessionStore.presentation().session().updatedAtMillis();
+        assertFalse(GatheringProgressHud.buildCommands(WIDTH, 320, 240, completedAt).isEmpty());
+        assertTrue(GatheringProgressHud.buildCommands(WIDTH, 320, 240, completedAt + 1000).isEmpty());
     }
 
     @Test

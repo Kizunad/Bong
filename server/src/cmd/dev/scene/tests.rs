@@ -260,3 +260,347 @@ fn test_env_gates_command_registration_and_scene_completions() {
         );
     }
 }
+
+fn setup_gathering(enabled: bool) -> (App, Entity, MockClientHelper) {
+    let (mut app, player, helper) = setup(enabled);
+    crate::gathering::register(&mut app);
+    crate::player::gameplay::register(&mut app);
+    app.add_event::<crate::combat::events::CombatEvent>();
+    app.add_event::<crate::combat::events::AttackIntent>();
+    app.add_event::<crate::cultivation::breakthrough::BreakthroughRequest>();
+    app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
+    app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+    app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+    (app, player, helper)
+}
+
+fn gathering_payloads(app: &mut App, helper: &mut MockClientHelper) -> Vec<serde_json::Value> {
+    scene_payloads(app, helper)
+        .into_iter()
+        .filter(|payload| payload["type"] == "gathering_session")
+        .collect()
+}
+
+fn scene_payloads(app: &mut App, helper: &mut MockClientHelper) -> Vec<serde_json::Value> {
+    flush(app);
+    helper
+        .collect_received()
+        .0
+        .into_iter()
+        .filter_map(|frame| {
+            let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+            if packet.channel.as_str() != crate::network::agent_bridge::SERVER_DATA_CHANNEL {
+                return None;
+            }
+            serde_json::from_slice(packet.data.0 .0).ok()
+        })
+        .collect()
+}
+
+#[test]
+fn gathering_tools_are_temporary_views_and_restore_current_equipment() {
+    use crate::inventory::{
+        instantiate_inventory_from_loadout, load_default_loadout, load_item_registry,
+        InventoryInstanceIdAllocator, PlayerInventory,
+    };
+    let (mut app, player, mut helper) = setup_gathering(true);
+    let registry = load_item_registry().unwrap();
+    let loadout = load_default_loadout(&registry).unwrap();
+    let inventory = instantiate_inventory_from_loadout(
+        &loadout,
+        &mut InventoryInstanceIdAllocator::default(),
+        &registry,
+    )
+    .unwrap();
+    let original = serde_json::to_value(&inventory).unwrap();
+    let original_hand = inventory.equipped["main_hand"]
+        .held
+        .as_ref()
+        .unwrap()
+        .template_id
+        .clone();
+    app.world_mut().insert_resource(registry);
+    app.world_mut().entity_mut(player).insert(inventory);
+    app.add_systems(
+        Update,
+        crate::network::weapon_equipped_emit::emit_weapon_equipped_payloads,
+    );
+    let hand = |payloads: Vec<serde_json::Value>| {
+        payloads
+            .into_iter()
+            .rfind(|payload| payload["type"] == "weapon_equipped" && payload["slot"] == "main_hand")
+            .unwrap()["weapon"]
+            .clone()
+    };
+    for (scene, tool) in [
+        ("scene test_gathering_ore_1", "pickaxe_iron"),
+        ("scene test_gathering_wood_1", "axe_iron"),
+        ("scene test_gathering_herb_1", "hoe_iron"),
+    ] {
+        execute(&mut app, &mut helper, scene);
+        assert_eq!(
+            hand(scene_payloads(&mut app, &mut helper))["template_id"],
+            tool,
+            "场景必须通过真实手持通道显示对应工具"
+        );
+        assert_eq!(
+            serde_json::to_value(app.world().get::<PlayerInventory>(player).unwrap()).unwrap(),
+            original,
+            "测试工具不能进入真实背包、扣耐久或替换持久装备"
+        );
+    }
+    execute(&mut app, &mut helper, "scene clear");
+    assert_eq!(
+        hand(scene_payloads(&mut app, &mut helper))["template_id"],
+        original_hand
+    );
+
+    execute(&mut app, &mut helper, "scene test_gathering_ore_1");
+    scene_payloads(&mut app, &mut helper);
+    app.world_mut()
+        .get_mut::<PlayerInventory>(player)
+        .unwrap()
+        .equipped
+        .get_mut("main_hand")
+        .unwrap()
+        .held = None;
+    app.update();
+    assert_eq!(
+        hand(scene_payloads(&mut app, &mut helper))["template_id"],
+        "pickaxe_iron",
+        "真实装备同步不能提前覆盖仍在演出的测试工具"
+    );
+    execute(&mut app, &mut helper, "scene clear");
+    assert!(
+        hand(scene_payloads(&mut app, &mut helper)).is_null(),
+        "退出场景应恢复当前空手，不能复活场景开始时的旧装备"
+    );
+}
+
+#[test]
+fn gathering_scenes_sync_target_switch_progress_and_completion() {
+    let (mut app, _player, mut helper) = setup_gathering(true);
+    let mut previous_id = None;
+    for (command, target) in [
+        ("scene test_gathering_herb_1", "herb"),
+        ("scene test_gathering_ore_1", "ore"),
+        ("scene test_gathering_wood_1", "wood"),
+    ] {
+        execute(&mut app, &mut helper, command);
+        let payloads = gathering_payloads(&mut app, &mut helper);
+        if let Some(id) = previous_id {
+            assert!(
+                payloads
+                    .iter()
+                    .any(|p| p["session_id"] == id && p["interrupted"] == true),
+                "切换目标前必须下发旧会话的终态，停止旧采集动画"
+            );
+        }
+        let started = payloads
+            .last()
+            .expect("场景必须通过正式 gathering_session 通道同步客户端");
+        assert_eq!(started["target_type"], target);
+        assert_eq!(started["completed"], false);
+        assert_eq!(started["interrupted"], false);
+        previous_id = Some(started["session_id"].clone());
+    }
+    for _ in 0..60 {
+        app.update();
+    }
+    let payloads = gathering_payloads(&mut app, &mut helper);
+    assert!(
+        payloads.iter().any(|p| {
+            let progress = p["progress_ticks"].as_u64().unwrap();
+            progress > 0 && progress < p["total_ticks"].as_u64().unwrap()
+        }),
+        "正式采集时钟必须持续驱动 HUD 进度"
+    );
+    for _ in 0..120 {
+        app.update();
+    }
+    let payloads = gathering_payloads(&mut app, &mut helper);
+    let complete = payloads
+        .iter()
+        .find(|p| p["completed"] == true)
+        .expect("站定应自然完成");
+    assert_eq!(complete["progress_ticks"], complete["total_ticks"]);
+    assert_eq!(complete["interrupted"], false);
+}
+
+#[test]
+fn gathering_scenes_interrupt_and_do_not_restart_after_cleanup() {
+    use crate::gathering::session::{GatheringProgressFrame, GatheringSessionStore};
+    for trigger in ["clear", "status_scene", "move", "death", "disconnect"] {
+        let (mut app, player, mut helper) = setup_gathering(true);
+        execute(&mut app, &mut helper, "scene test_gathering_herb_1");
+        let session_id = app
+            .world()
+            .resource::<GatheringSessionStore>()
+            .session_for(player)
+            .unwrap()
+            .session_id
+            .clone();
+        let mut frames = app
+            .world()
+            .resource::<Events<GatheringProgressFrame>>()
+            .get_reader_current();
+        match trigger {
+            "clear" => execute(&mut app, &mut helper, "scene clear"),
+            "status_scene" => execute(&mut app, &mut helper, "scene test_buff_effect_combo_1"),
+            "move" => {
+                app.world_mut()
+                    .get_mut::<Position>(player)
+                    .unwrap()
+                    .set([10.0, 0.0, 0.0]);
+                app.update();
+            }
+            "death" => {
+                app.world_mut().get_mut::<Lifecycle>(player).unwrap().state =
+                    LifecycleState::AwaitingRevival;
+                app.update();
+            }
+            "disconnect" => {
+                app.world_mut().entity_mut(player).remove::<Client>();
+                app.update();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            frames
+                .read(app.world().resource::<Events<GatheringProgressFrame>>())
+                .any(|frame| frame.session_id == session_id
+                    && frame.interrupted
+                    && !frame.completed),
+            "{trigger} 必须产生终态，供 HUD 和循环动画收尾"
+        );
+        for _ in 0..180 {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .resource::<GatheringSessionStore>()
+                .session_for(player)
+                .is_none(),
+            "{trigger} 后测试会话不得重新开始"
+        );
+    }
+}
+
+#[test]
+fn gathering_scenes_respect_access_and_normal_session_ownership() {
+    use crate::botany::components::{BotanyHarvestMode, HarvestSessionStore};
+    use crate::botany::harvest::start_or_resume_harvest;
+    use crate::botany::registry::BotanyPlantId;
+    use crate::gathering::session::GatheringSessionStore;
+    use crate::spiritwood::session::{WoodSession, WoodSessionStore};
+    use crate::world::dimension::DimensionKind;
+    use valence::prelude::BlockPos;
+    for (enabled, allowed, alive) in [
+        (false, true, true),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        let (mut app, player, mut helper) = setup_gathering(enabled);
+        if !allowed {
+            app.insert_resource(DevCommandPermissions::allow_user("AnotherOperator"));
+        }
+        if !alive {
+            app.world_mut().get_mut::<Lifecycle>(player).unwrap().state =
+                LifecycleState::AwaitingRevival;
+        }
+        execute(&mut app, &mut helper, "scene test_gathering_herb_1");
+        assert!(
+            app.world().resource::<GatheringSessionStore>().is_empty(),
+            "环境关闭、未授权或复活裁决中都不得启动采集夹具"
+        );
+    }
+
+    let (mut app, player, mut helper) = setup_gathering(true);
+    execute(&mut app, &mut helper, "scene test_gathering_herb_1");
+    let mut normal = app
+        .world_mut()
+        .resource_mut::<GatheringSessionStore>()
+        .remove(player)
+        .unwrap();
+    normal.session_id = "normal-gathering".to_string();
+    app.world_mut()
+        .resource_mut::<GatheringSessionStore>()
+        .upsert(normal.clone());
+    let other = app.world_mut().spawn_empty().id();
+    let mut other_session = normal.clone();
+    other_session.player = other;
+    app.world_mut()
+        .resource_mut::<GatheringSessionStore>()
+        .upsert(other_session.clone());
+    for command in ["scene test_gathering_ore_1", "scene clear"] {
+        execute(&mut app, &mut helper, command);
+        let store = app.world().resource::<GatheringSessionStore>();
+        assert_eq!(
+            store.session_for(player),
+            Some(&normal),
+            "不得覆盖或清理正常玩法接管的会话"
+        );
+        assert_eq!(
+            store.session_for(other),
+            Some(&other_session),
+            "不得修改其他玩家的会话"
+        );
+    }
+
+    for herb in [true, false] {
+        let (mut app, player, mut helper) = setup_gathering(true);
+        execute(&mut app, &mut helper, "scene test_gathering_ore_1");
+        let mut herbs = HarvestSessionStore::default();
+        let mut wood = WoodSessionStore::default();
+        if herb {
+            assert!(start_or_resume_harvest(
+                &mut herbs,
+                "Builder",
+                player,
+                None,
+                BotanyPlantId::NingMaiCao,
+                BotanyHarvestMode::Manual,
+                [0.0; 3],
+                0,
+            ));
+        } else {
+            wood.upsert(WoodSession::new(
+                player,
+                "offline:Builder".to_string(),
+                DimensionKind::Overworld,
+                BlockPos::new(1, 0, 0),
+                0,
+                [0.0; 3],
+                None,
+            ));
+        }
+        let expected_herbs: Vec<_> = herbs.iter().cloned().collect();
+        let expected_wood = wood.session_for(player).cloned();
+        app.insert_resource(herbs);
+        app.insert_resource(wood);
+        app.update();
+        for command in ["scene test_gathering_ore_1", "scene clear"] {
+            assert!(
+                app.world().resource::<GatheringSessionStore>().is_empty(),
+                "正式草药或伐木会话应终止测试采集，并阻止再次加载"
+            );
+            execute(&mut app, &mut helper, command);
+        }
+        assert_eq!(
+            app.world()
+                .resource::<HarvestSessionStore>()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_herbs,
+            "场景操作不得修改正式草药会话"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WoodSessionStore>()
+                .session_for(player),
+            expected_wood.as_ref(),
+            "场景操作不得修改正式伐木会话"
+        );
+    }
+}

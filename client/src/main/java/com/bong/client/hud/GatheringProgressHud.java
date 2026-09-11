@@ -1,119 +1,99 @@
 package com.bong.client.hud;
 
+import com.bong.client.gathering.GatheringPresentation;
 import com.bong.client.gathering.GatheringSessionStore;
 import com.bong.client.gathering.GatheringSessionViewModel;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/** 采集碎弧：中心留空，材质图标与文字位于环下，终态只由服务端触发。 */
 public final class GatheringProgressHud {
-    private static final long COMPLETE_FADE_MS = 1000L;
-    private static final int RADIUS = 14;
-    private static final int THICKNESS = 2;
-    private static final int SIDE = RADIUS * 2;
-    private static final int TRACK = 0xAA101820;
-    private static final int ACTIVE = 0xFFEAF4FF;
-    private static final int NEAR_DONE = 0xFF62E67A;
-    private static final int FINE = 0xFF62E67A;
-    private static final int PERFECT = 0xFFFFD35A;
-    private static final int MUTED = 0xCCB8C5D6;
+    static final List<String> SEGMENT_KEYS = List.of(
+        "segment-a", "segment-b", "segment-c", "segment-d",
+        "segment-e", "segment-f", "segment-g", "segment-h"
+    );
+    private static final int SIZE = 64;
+    private static final String TEXTURE_ROOT = "bong-client:textures/hud/gathering/";
 
-    private GatheringProgressHud() {
-    }
+    private GatheringProgressHud() {}
 
     public static List<HudRenderCommand> buildCommands(
-        HudTextHelper.WidthMeasurer widthMeasurer,
-        int screenWidth,
-        int screenHeight,
-        long nowMs
+        HudTextHelper.WidthMeasurer measurer, int width, int height, long nowMs
     ) {
-        return buildCommands(GatheringSessionStore.snapshot(), widthMeasurer, screenWidth, screenHeight, nowMs);
+        return buildCommands(GatheringSessionStore.presentation(), measurer, width, height, nowMs);
     }
 
     static List<HudRenderCommand> buildCommands(
-        GatheringSessionViewModel session,
-        HudTextHelper.WidthMeasurer widthMeasurer,
-        int screenWidth,
-        int screenHeight,
-        long nowMs
+        GatheringSessionViewModel session, HudTextHelper.WidthMeasurer measurer, int width, int height, long nowMs
     ) {
+        return session == null ? List.of() : buildCommands(GatheringPresentation.of(session), measurer, width, height, nowMs);
+    }
+
+    static List<HudRenderCommand> buildCommands(
+        GatheringPresentation frame, HudTextHelper.WidthMeasurer measurer, int width, int height, long nowMs
+    ) {
+        if (measurer == null || width <= 0 || height <= 0 || !frame.visible(nowMs)) return List.of();
+        GatheringSessionViewModel session = frame.session();
+        boolean interrupted = session.interrupted();
+        boolean completed = session.completed() && !interrupted;
+        double end = Math.min(1.0, (double) frame.age(nowMs) / GatheringPresentation.EXIT_MS);
+        double opacity = session.active() ? 1.0 : 1.0 - end * end;
+        double progress = frame.progress(nowMs);
+        String type = switch (session.targetType()) {
+            case "ore" -> "ore";
+            case "wood" -> "wood";
+            default -> "herb";
+        };
+        int tint = interrupted ? 0xC98E7C : switch (type) {
+            case "ore" -> 0xC3D3D9;
+            case "wood" -> 0xDDB580;
+            default -> 0xB9D4A7;
+        };
+        int cx = width / 2;
+        int cy = height / 2;
         List<HudRenderCommand> out = new ArrayList<>();
-        if (session == null || session.isEmpty() || widthMeasurer == null || screenWidth <= 0 || screenHeight <= 0) {
-            return out;
+        svg(out, "track", cx, cy, SIZE, argb(0xC7BDA3, .48 * opacity));
+        for (int i = 0; i < SEGMENT_KEYS.size(); i++) {
+            double lit = Math.max(0.0, Math.min(1.0, progress * SEGMENT_KEYS.size() - i));
+            double spread = interrupted ? end * 13.0 : (1.0 - lit) * 3.0;
+            double angle = Math.toRadians(-67.5 + i * 45.0);
+            int x = cx + (int) Math.round(Math.cos(angle) * spread);
+            int y = cy + (int) Math.round(Math.sin(angle) * spread);
+            // 深色细衬保证草地与天空上都能读出弧段，不铺背景面板。
+            svg(out, SEGMENT_KEYS.get(i), x, y + 1, SIZE, argb(0x111916, .7 * opacity));
+            svg(out, SEGMENT_KEYS.get(i), x, y, SIZE, argb(tint, (.15 + .85 * lit) * opacity));
+            if (completed && end < .3) {
+                svg(out, SEGMENT_KEYS.get(i), x, y, SIZE, argb(0xFFF1CE, (1.0 - end / .3) * .8));
+            }
         }
-        long age = Math.max(0L, nowMs - session.updatedAtMillis());
-        if ((session.completed() || session.interrupted()) && age > COMPLETE_FADE_MS) {
-            return out;
-        }
-
-        int cx = screenWidth / 2;
-        int cy = screenHeight / 2;
-        appendTrack(out, cx, cy);
-
-        double progress = session.completed() ? 1.0 : session.progressRatio();
-        int color = session.completed()
-            ? (session.hasPerfectQualityHint() ? PERFECT : NEAR_DONE)
-            : progress >= 0.85 ? NEAR_DONE : ACTIVE;
-        appendProgress(out, cx, cy, progress, color);
-
-        String label = HudTextHelper.clipToWidth(session.displayTargetName(), 96, widthMeasurer);
-        if (!label.isEmpty()) {
-            int x = cx - widthMeasurer.measure(label) / 2;
-            out.add(HudRenderCommand.text(HudRenderLayer.GATHERING, label, x, cy - RADIUS - 14, MUTED));
+        if (completed) {
+            svg(out, "track", cx, cy, SIZE + (int) Math.round(end * 22), argb(tint, (1.0 - end) * .6));
         }
 
+        String target = HudTextHelper.clipToWidth(session.displayTargetName(), Math.min(96, width - 34), measurer);
+        String detail = interrupted ? "已中断" : completed ? "采集完成" : "";
         String quality = session.qualityLabel();
-        if (!quality.isEmpty() && (session.completed() || progress >= 0.75)) {
-            int qColor = session.hasPerfectQualityHint() ? PERFECT : FINE;
-            int x = cx - widthMeasurer.measure(quality) / 2;
-            out.add(HudRenderCommand.text(HudRenderLayer.GATHERING, quality, x, cy + RADIUS + 6, qColor));
+        if (!interrupted && !quality.isEmpty() && (completed || progress >= .75)) {
+            detail = detail.isEmpty() ? quality : detail + " · " + quality;
+        }
+        int labelWidth = Math.max(measurer.measure(target), measurer.measure(detail));
+        int left = cx - (labelWidth + 28) / 2;
+        out.add(HudRenderCommand.texture(HudRenderLayer.GATHERING, TEXTURE_ROOT + type + ".png",
+            left, cy + 33, 24, 24, argb(0xFFFFFF, opacity)));
+        out.add(HudRenderCommand.text(HudRenderLayer.GATHERING, target, left + 28,
+            cy + (detail.isEmpty() ? 40 : 35), argb(0xEEE8D7, opacity)));
+        if (!detail.isEmpty()) {
+            out.add(HudRenderCommand.text(HudRenderLayer.GATHERING, detail, left + 28, cy + 47, argb(tint, .9 * opacity)));
         }
         return List.copyOf(out);
     }
 
-    private static void appendTrack(List<HudRenderCommand> out, int cx, int cy) {
-        int x = cx - RADIUS;
-        int y = cy - RADIUS;
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x, y, SIDE, THICKNESS, TRACK));
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x + SIDE - THICKNESS, y, THICKNESS, SIDE, TRACK));
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x, y + SIDE - THICKNESS, SIDE, THICKNESS, TRACK));
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x, y, THICKNESS, SIDE, TRACK));
+    private static void svg(List<HudRenderCommand> out, String key, int cx, int cy, int size, int color) {
+        out.add(HudRenderCommand.svg(HudRenderLayer.GATHERING, key, cx - size / 2, cy - size / 2, size, size, color));
     }
 
-    private static void appendProgress(List<HudRenderCommand> out, int cx, int cy, double progress, int color) {
-        int remaining = (int) Math.round(Math.max(0.0, Math.min(1.0, progress)) * SIDE * 4.0);
-        int x = cx - RADIUS;
-        int y = cy - RADIUS;
-        remaining = appendSegment(out, remaining, x, y, SIDE, THICKNESS, color);
-        remaining = appendSegment(out, remaining, x + SIDE - THICKNESS, y, THICKNESS, SIDE, color);
-        remaining = appendReverseHorizontal(out, remaining, x, y + SIDE - THICKNESS, SIDE, THICKNESS, color);
-        appendReverseVertical(out, remaining, x, y, THICKNESS, SIDE, color);
-    }
-
-    private static int appendSegment(List<HudRenderCommand> out, int remaining, int x, int y, int w, int h, int color) {
-        if (remaining <= 0) {
-            return 0;
-        }
-        int length = Math.min(remaining, Math.max(w, h));
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x, y, w >= h ? length : w, h > w ? length : h, color));
-        return remaining - length;
-    }
-
-    private static int appendReverseHorizontal(List<HudRenderCommand> out, int remaining, int x, int y, int w, int h, int color) {
-        if (remaining <= 0) {
-            return 0;
-        }
-        int length = Math.min(remaining, w);
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x + w - length, y, length, h, color));
-        return remaining - length;
-    }
-
-    private static int appendReverseVertical(List<HudRenderCommand> out, int remaining, int x, int y, int w, int h, int color) {
-        if (remaining <= 0) {
-            return 0;
-        }
-        int length = Math.min(remaining, h);
-        out.add(HudRenderCommand.rect(HudRenderLayer.GATHERING, x, y + h - length, w, length, color));
-        return remaining - length;
+    private static int argb(int rgb, double alpha) {
+        return (int) Math.round(Math.max(0.0, Math.min(1.0, alpha)) * 255) << 24 | rgb;
     }
 }
