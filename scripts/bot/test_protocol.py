@@ -14220,5 +14220,47 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["item_uuid"], "59")
         self.assertAlmostEqual(decoded["freshness"], 0.75, places=4)
         self.assertEqual(decoded["profile_name"], "food_spoil_mundane_meat_v1")
+class TestCoffinAirProbe(unittest.TestCase):
+    def test_delayed_consumption_stays_with_its_placement_coordinates(self):
+        from bot.scenarios.production_coffin_place_destroy import _place_on_first_air_layer
+
+        class DelayedBot:
+            def __init__(self):
+                self.events = []
+                self._lock = threading.Lock()
+                self.now = 0.0
+                self.requests = []
+                self.pending = []
+
+            def set_position(self, *args, **kwargs):
+                pass
+
+            def intent(self, request):
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    self.pending.append(types.SimpleNamespace(
+                        t=0.7, kind="server_data", data={
+                            "payload_type": "inventory_snapshot",
+                            "payload": {"placed_items": [], "equipped": {}, "hotbar": []},
+                        },
+                    ))
+
+            def wait_for(self, predicate, timeout, description):
+                deadline = self.now + timeout
+                while self.pending and self.pending[0].t <= deadline:
+                    event = self.pending.pop(0)
+                    self.now = event.t
+                    self.events.append(event)
+                    if predicate(event):
+                        return event
+                self.now = deadline
+                raise BotAssertionError(description)
+
+        bot = DelayedBot()
+        position, _, _ = _place_on_first_air_layer(bot, 10, 70, 10, 42)
+        self.assertEqual(position, (8, 71, 10), "迟到消费仍属于第一层，不能被归给第二层")
+        self.assertEqual(len(bot.requests), 1, "前一请求未结算前不能把同一棺材发往下一层")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
