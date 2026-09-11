@@ -163,7 +163,7 @@ def main() -> int:
         assert workflow.count("cargo build --release") == 1
         assert workflow.count(
             "BONG_E2E_PREBUILT_SERVER_MANIFEST: ${{ needs.build-release.outputs.manifest }}"
-        ) == 2
+        ) == 3
         assert workflow.count("id: server-release-artifact") == 1
         assert workflow.count("../scripts/lib/bong_server_provenance.py check") == 1
         assert workflow.count("bash scripts/bot-e2e.sh") == 2
