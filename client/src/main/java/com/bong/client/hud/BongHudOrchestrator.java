@@ -3,6 +3,7 @@ package com.bong.client.hud;
 import com.bong.client.BongClientFeatures;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
+import com.bong.client.gathering.GatheringSessionStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogHudPlanner;
@@ -399,6 +400,7 @@ public final class BongHudOrchestrator {
             ));
         }
         commands.addAll(GatheringProgressHud.buildCommands(
+            GatheringSessionStore.presentation(),
             widthMeasurer,
             screenWidth,
             screenHeight,

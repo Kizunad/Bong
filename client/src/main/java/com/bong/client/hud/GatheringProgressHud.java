@@ -1,7 +1,6 @@
 package com.bong.client.hud;
 
 import com.bong.client.gathering.GatheringPresentation;
-import com.bong.client.gathering.GatheringSessionStore;
 import com.bong.client.gathering.GatheringSessionViewModel;
 
 import java.util.ArrayList;
@@ -18,19 +17,13 @@ public final class GatheringProgressHud {
 
     private GatheringProgressHud() {}
 
-    public static List<HudRenderCommand> buildCommands(
-        HudTextHelper.WidthMeasurer measurer, int width, int height, long nowMs
-    ) {
-        return buildCommands(GatheringSessionStore.presentation(), measurer, width, height, nowMs);
-    }
-
     static List<HudRenderCommand> buildCommands(
         GatheringSessionViewModel session, HudTextHelper.WidthMeasurer measurer, int width, int height, long nowMs
     ) {
         return session == null ? List.of() : buildCommands(GatheringPresentation.of(session), measurer, width, height, nowMs);
     }
 
-    static List<HudRenderCommand> buildCommands(
+    public static List<HudRenderCommand> buildCommands(
         GatheringPresentation frame, HudTextHelper.WidthMeasurer measurer, int width, int height, long nowMs
     ) {
         if (measurer == null || width <= 0 || height <= 0 || !frame.visible(nowMs)) return List.of();
