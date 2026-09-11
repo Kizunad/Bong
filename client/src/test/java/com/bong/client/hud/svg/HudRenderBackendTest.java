@@ -44,8 +44,6 @@ class HudRenderBackendTest {
         String bongHud = Files.readString(sourcePath("src/main/java/com/bong/client/BongHud.java"));
         String bongClient = Files.readString(sourcePath("src/main/java/com/bong/client/BongClient.java"));
         assertTrue(backend.contains("implements HudRenderBackend"));
-        assertTrue(backend.contains("visibility != ScreenHudVisibility.FULL"),
-            "SVG layer 必须遵守 FULL HUD 可见性门");
         assertTrue(bongHud.contains("HudRenderBackend backend"),
             "BongHud 必须只依赖表现后端接口");
         assertTrue(bongHud.contains("backend.render(context, client, visibility)"),

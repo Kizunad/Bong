@@ -30,13 +30,13 @@ class SvgHudAssetRegistryTest {
     }
 
     @Test
-    void loadsAndCachesThePreviewExampleFromTheShippedResourcePath() {
+    void loadsAndCachesTheQuickSlotFromTheShippedResourcePath() {
         SvgHudAssetRegistry registry = new SvgHudAssetRegistry(mainResourceManager());
 
-        SvgMesh first = registry.get("bong-client:svg/hud/example.svg");
-        SvgMesh second = registry.get(Identifier.of("bong-client", "svg/hud/example.svg"));
+        SvgMesh first = registry.get("bong-client:svg/hud/quick-slot.svg");
+        SvgMesh second = registry.get(Identifier.of("bong-client", "svg/hud/quick-slot.svg"));
 
-        assertTrue(first.triangleCount() > 0, "SVG 预览示例必须生成非空 mesh");
+        assertTrue(first.triangleCount() > 0, "快捷槽 SVG 必须生成非空 mesh");
         assertSame(first, second, "重复读取同一资源必须命中 registry 的 immutable mesh 缓存");
     }
 
@@ -46,7 +46,7 @@ class SvgHudAssetRegistryTest {
 
         assertThrows(IllegalArgumentException.class, () -> registry.get("bong-client:textures/gui/not-svg.png"));
         assertThrows(IllegalArgumentException.class, () -> registry.get("bong-client:svg/hud/../other.svg"));
-        assertThrows(IllegalArgumentException.class, () -> registry.get("other:svg/hud/example.svg"));
+        assertThrows(IllegalArgumentException.class, () -> registry.get("other:svg/hud/quick-slot.svg"));
     }
 
     @Test

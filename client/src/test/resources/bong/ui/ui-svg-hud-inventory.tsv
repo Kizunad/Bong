@@ -21,7 +21,7 @@ TOAST	TOAST	COMMAND	MINECRAFT_GUI	ToastHudRenderer+ForgeProgressHudPlanner		toas
 VISUAL	VISUAL	COMMAND	MINECRAFT_GUI	VisualHudRenderer		visual_effect_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest
 SPIRITUAL_SENSE	SPIRITUAL_SENSE	COMMAND	MINECRAFT_GUI	RetiredHud		retired	灵觉 HUD 已移除，不再生成命令	HudRenderRegistryTest
 EDGE_FEEDBACK	EDGE_FEEDBACK	COMMAND	MINECRAFT_GUI	EdgeFeedbackHudPlanner+TiandaoPresenceHudPlanner		combat_feedback+tiandao_presence	动态文字不适用	HudRenderRegistryTest
-STATUS_EFFECTS	STATUS_EFFECTS	SVG_FRAME	SVG_MESH	StatusEffectHudPlanner	rect=bong-client:svg/hud/primitive-rect.svg	status_effects	状态文字仍走 Minecraft GUI	HudRenderRegistryTest
+STATUS_EFFECTS	STATUS_EFFECTS	SVG_FRAME	SVG_MESH	StatusEffectHudPlanner	rect=bong-client:svg/hud/primitive-rect.svg;socket=bong-client:svg/hud/status-socket.svg;rim=bong-client:svg/hud/status-rim.svg;unknown=bong-client:svg/hud/status-unknown.svg;blood=bong-client:svg/hud/status-blood.svg;taint=bong-client:svg/hud/status-taint.svg	status_effects+clock	专属 PNG 图标与状态文字仍走 Minecraft GUI	HudRenderRegistryTest
 PROCESSING_HUD	PROCESSING_HUD	COMMAND	MINECRAFT_GUI	ForgeProgressHudPlanner+AlchemyProgressHudPlanner		forge_session+alchemy_session	步骤文字仍走 Minecraft GUI	HudRenderRegistryTest
 LINGTIAN_OVERLAY	LINGTIAN_OVERLAY	COMMAND	MINECRAFT_GUI	LingtianOverlayHudPlanner		lingtian_session+season	动态文字与物品图标仍走 Minecraft GUI	HudRenderRegistryTest
 MOVEMENT_HUD	MOVEMENT_HUD	SVG_FRAME	SVG_MESH	MovementHudPlanner	rect=bong-client:svg/hud/primitive-rect.svg	movement_state+clock	动态文字仍走 Minecraft GUI	HudRenderRegistryTest

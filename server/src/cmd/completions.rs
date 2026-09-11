@@ -69,6 +69,8 @@ pub enum CompletionSource {
     Realms,
     /// `ZoneRegistry` zone name
     Zones,
+    /// 固定名称的 dev 实机测试场景。
+    Scenes,
 }
 
 /// 路由表：`(命令路径字面量, 参数在命令中的词序, 数据源)`。
@@ -93,6 +95,7 @@ pub const ROUTES: &[(&[&str], usize, CompletionSource)] = &[
     (&["meridian", "open"], 2, CompletionSource::Meridians),
     (&["realm", "set"], 2, CompletionSource::Realms),
     (&["zone_qi", "set"], 2, CompletionSource::Zones),
+    (&["scene"], 1, CompletionSource::Scenes),
 ];
 
 /// 20 经脉 canonical id — 与 `dev::meridian::parse_meridian_id` 的主拼写一致
@@ -218,6 +221,10 @@ fn candidates_for(
                     .collect()
             })
             .unwrap_or_default(),
+        CompletionSource::Scenes => super::dev::scene::SCENES
+            .iter()
+            .map(|scene| Candidate::with_tooltip(scene.name, scene.description))
+            .collect(),
     }
 }
 
@@ -235,13 +242,21 @@ pub fn filter_candidates(mut candidates: Vec<Candidate>, partial: &str) -> Vec<C
 /// 所有 `add_command` 在 App 构建期完成，PostStartup 时命令图已定型；改动触发
 /// `Res<CommandRegistry>` change detection，valence `update_command_tree` 自动
 /// 向全体在线客户端重发命令树（后进玩家走 `Added<Client>` 路径天然拿到）。
-pub fn mark_ask_server_arguments(mut registry: ResMut<CommandRegistry>) {
+pub fn mark_ask_server_arguments(
+    mut registry: ResMut<CommandRegistry>,
+    scene_access: Option<Res<super::dev::scene::TestSceneAccess>>,
+) {
     let marked = mark_routes_ask_server(&mut registry);
-    if marked < ROUTES.len() {
+    let expected = ROUTES
+        .iter()
+        .filter(|(_, _, source)| *source != CompletionSource::Scenes || scene_access.is_some())
+        .count();
+    if marked < expected {
         // 打出具体失败路径——只报数量没法定位是哪条 ROUTES 与哪个
         // assemble_graph 漂移（2026-07-06 排障实证：3/9 查无可查）。
         let unresolved: Vec<String> = ROUTES
             .iter()
+            .filter(|(_, _, source)| *source != CompletionSource::Scenes || scene_access.is_some())
             .filter(|(path, _, _)| {
                 argument_suggestion(&registry.graph, path) != Some(Some(Suggestion::AskServer))
             })
@@ -250,7 +265,7 @@ pub fn mark_ask_server_arguments(mut registry: ResMut<CommandRegistry>) {
         tracing::warn!(
             "[bong][cmd] tab completion: only {marked}/{} routes resolved in command graph — \
              unresolved: [{}] (ROUTES path out of sync with its assemble_graph literals)",
-            ROUTES.len(),
+            expected,
             unresolved.join(", ")
         );
     } else {
@@ -329,6 +344,7 @@ pub fn answer_command_completions(
     items: Res<ItemRegistry>,
     techniques: Res<TechniqueRegistry>,
     zones: Option<Res<ZoneRegistry>>,
+    scene_access: Option<Res<super::dev::scene::TestSceneAccess>>,
     mut clients: Query<&mut Client>,
 ) {
     for packet in packets.read() {
@@ -338,6 +354,9 @@ pub fn answer_command_completions(
         let Some(query) = parse_completion_query(request.text.0) else {
             continue;
         };
+        if query.source == CompletionSource::Scenes && scene_access.is_none() {
+            continue;
+        }
         let Ok(mut client) = clients.get_mut(packet.client) else {
             continue;
         };

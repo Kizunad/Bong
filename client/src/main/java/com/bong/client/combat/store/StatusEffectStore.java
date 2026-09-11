@@ -2,15 +2,13 @@ package com.bong.client.combat.store;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
 /**
  * Full snapshot of all active status effects (plan §U2, §2.5).
  *
  * <p>Populated by {@link com.bong.client.combat.handler.StatusSnapshotHandler}.
- * Sorted by {@link #rank} for the top-8 HUD status bar; inspect status panel
- * groups by {@link Effect#kind()}.
+ * The HUD timeline preserves arrival order; inspect groups by {@link Effect#kind()}.
  */
 public final class StatusEffectStore {
     public enum Kind {
@@ -60,8 +58,7 @@ public final class StatusEffectStore {
 
     private static final StatusEffectStore INSTANCE = new StatusEffectStore();
     private volatile List<Effect> snapshot = Collections.emptyList();
-    /** plan-cultivation-pacing-v1 P2.3: aggregated cultivation acceleration multiplier (1.0 = no buff). */
-    private volatile double cultivationAcceleration = 1.0;
+    private final StatusEffectTimeline timeline = new StatusEffectTimeline();
 
     private StatusEffectStore() {}
 
@@ -69,17 +66,8 @@ public final class StatusEffectStore {
 
     public static List<Effect> snapshot() { return INSTANCE.snapshot; }
 
-    public static List<Effect> topBar() {
-        List<Effect> all = INSTANCE.snapshot;
-        if (all.isEmpty()) return Collections.emptyList();
-        List<Effect> sorted = new ArrayList<>(all);
-        sorted.sort(Comparator
-            .comparingInt((Effect e) -> rank(e.kind()))
-            .thenComparing((Effect e) -> e.remainingMs()));
-        if (sorted.size() > TOP_BAR_LIMIT) {
-            return Collections.unmodifiableList(sorted.subList(0, TOP_BAR_LIMIT));
-        }
-        return Collections.unmodifiableList(sorted);
+    public static synchronized StatusEffectTimeline.Frame presentation(long nowMs, int capacity) {
+        return INSTANCE.timeline.frame(nowMs, capacity);
     }
 
     /** Priority ordering (lower = higher priority): DoT > Control > Debuff > Buff > Unknown. */
@@ -93,32 +81,23 @@ public final class StatusEffectStore {
         };
     }
 
-    /** plan-cultivation-pacing-v1 P2.3: get current cultivation acceleration multiplier. */
-    public static double cultivationAcceleration() {
-        return INSTANCE.cultivationAcceleration;
-    }
-
-    /** plan-cultivation-pacing-v1 P2.3: update the cultivation acceleration multiplier from server payload. */
-    public static void setCultivationAcceleration(double value) {
-        INSTANCE.cultivationAcceleration = value;
-    }
-
     public static void replace(List<Effect> effects) {
-        if (effects == null || effects.isEmpty()) {
-            INSTANCE.snapshot = Collections.emptyList();
-            return;
-        }
-        List<Effect> cleaned = new ArrayList<>(effects.size());
-        for (Effect e : effects) {
+        replace(effects, System.currentTimeMillis());
+    }
+
+    public static synchronized void replace(List<Effect> effects, long nowMs) {
+        List<Effect> cleaned = new ArrayList<>();
+        for (Effect e : effects == null ? List.<Effect>of() : effects) {
             if (e == null) continue;
             cleaned.add(e);
         }
         INSTANCE.snapshot = Collections.unmodifiableList(cleaned);
+        INSTANCE.timeline.replace(INSTANCE.snapshot, nowMs);
     }
 
-    public static void clear() {
+    public static synchronized void clear() {
         INSTANCE.snapshot = Collections.emptyList();
-        INSTANCE.cultivationAcceleration = 1.0;
+        INSTANCE.timeline.clear();
     }
 
     public static void clearOnDisconnect() {
