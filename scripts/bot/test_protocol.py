@@ -2063,6 +2063,21 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
+
+    def test_proto_termination_summary_preserves_zero_and_missing_attributes(self):
+        summary = (
+            _pb_string(1, "LastName") + _pb_string(2, "Induce")
+            + _pb_varint(3, 4) + _pb_float32_field(6, 72.0) + _pb_varint(7, 0)
+        )
+        decoded = decode_server_data_payload(
+            _pb_message(73, _pb_varint(1, 1) + _pb_message(5, summary))
+        )
+        self.assertEqual(decoded["summary"], {
+            "character_name": "LastName", "realm": "Induce", "death_count": 4,
+            "years_lived": None, "qi_max": None, "health_max": 72.0,
+            "meridians_open": 0, "techniques_learned": None,
+        }, "缺失属性不能伪造为零，已记录的零值不能丢失")
+
     def test_proto_tribulation_state_payload_decodes(self):
         # 全部新增字段都用非默认值编码（failed=true、half_step_on_success=true、
         # world_x/z、三个 tick），逐个断言 wire 号：解码器缺席/串号/恒 false 都会被抓。
