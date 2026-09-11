@@ -2,8 +2,8 @@
 
 四档画风（对齐 local_images/generation_guide.md）：
 
-- **item** —— 物品图标（药材、符牌、武器、法宝等），photorealistic 3D render 风，
-  默认透明背景，便于直接接入 icon 资源。
+- **item** —— 物品图标（药材、符牌、武器、法宝等），按物品原有描述决定造型和材质，
+  只约束图标构图；背景由调用参数与具体生产流程决定。
 - **particle** —— MC 粒子/VFX 贴图，纯黑 #000000 底，白色/近白形状 + 软羽化，
   生成后走 lum_to_alpha.py 转 alpha 通道。
 - **hud** —— HUD overlay 贴图（水墨边框、结霜角、符阵等），真正透明 RGBA，
@@ -18,10 +18,9 @@ prompt 开头三个词已匹配 prefix 则跳过拼接（允许手动叠写）�
 from __future__ import annotations
 
 STYLE_ITEM = (
-    "dark xianxia game item icon, shattered dark stone and crystal material, "
-    "glowing energy cracks as the only light source, high contrast, "
-    "dramatic self-illumination, photorealistic 3D render, "
-    "fully transparent background (alpha=0), no background fill, centered, no shadows, no gradients"
+    "game inventory item icon, faithfully depict the item's supplied name and description, "
+    "clear material details and readable silhouette, centered with the entire item visible, "
+    "no cropped parts, no icon frame, no caption, no watermark"
 )
 
 STYLE_PARTICLE = (
