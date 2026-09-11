@@ -406,7 +406,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 adapter(76, MovementStateStore.class,
                     () -> MovementStateStore.replace(new MovementState(
                         1d, true, MovementState.Action.DASHING, MovementState.ZoneKind.DEAD,
-                        1L, 1.8d, 1d, 2d, false, 1L, "old", 0L, 0L, 0L), 1_000L),
+                        1L, 20L, 1.8d, 1d, 2d, false, 1L, "old", 0L, 0L, 0L), 1_000L),
                     () -> MovementStateStore.snapshot().isEmpty()),
                 adapter(84, ScrollReadStore.class,
                     () -> ScrollReadStore.replace(new ScrollOpenViewModel("old", "old", List.of("old"))),

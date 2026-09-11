@@ -10,24 +10,6 @@ public final class TechniqueScrollReadScreen {
     private TechniqueScrollReadScreen() {
     }
 
-    public static boolean isWoliuTechniqueId(String techniqueId) {
-        if (techniqueId == null) return false;
-        return switch (techniqueId.trim()) {
-            case "woliu.vortex",
-                 "woliu.hold",
-                 "woliu.burst",
-                 "woliu.mouth",
-                 "woliu.pull",
-                 "woliu.vacuum_palm",
-                 "woliu.vortex_shield",
-                 "woliu.heart",
-                 "woliu.vacuum_lock",
-                 "woliu.vortex_resonance",
-                 "woliu.turbulence_burst" -> true;
-            default -> false;
-        };
-    }
-
     public static String learnedText(String techniqueDisplayName) {
         return "习得·" + displayNameOrFallback(techniqueDisplayName);
     }
@@ -42,6 +24,6 @@ public final class TechniqueScrollReadScreen {
 
     private static String displayNameOrFallback(String value) {
         String trimmed = value == null ? "" : value.trim();
-        return trimmed.isEmpty() ? "涡流之法" : trimmed;
+        return trimmed.isEmpty() ? "功法" : trimmed;
     }
 }

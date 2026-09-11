@@ -3176,6 +3176,7 @@ message MovementStateProto {
   bool                       low_stamina                      = 9;
   optional uint64            last_action_tick                 = 10;
   optional MovementActionRequestKind rejected_action          = 11;
+  uint64                     dash_cooldown_total_ticks        = 12;
 }
 
 // ─── SpiritTreasure ──────────────────────────────────────────────

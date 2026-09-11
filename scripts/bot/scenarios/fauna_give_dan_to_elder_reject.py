@@ -33,7 +33,7 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
-from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES
+from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES, drain_event_stream
 
 DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→有效 pill 的目标门禁，逐条拒绝"
 MODULES = ["fauna", "network"]
@@ -68,6 +68,12 @@ AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
 def run(env) -> None:
     with env.new_bot("DhH") as bot:
         snapshot = wait_join_and_inventory(bot)
+        # 起手物品会随玩法迭代增加；拒收测试自己腾出空间，避免 give 因满包失败。
+        bot.cmd("clearinv all")
+        bot.expect_chat("[dev] clearinv PackAndHotbar", timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        # inventory_snapshot 不是 JOIN 同步的末包，先排空迟到的 tribulation_state 等。
+        drain_event_stream(bot)
         revision = snapshot["revision"]
 
         # 1. instance_id 不在背包 → 背包中未找到该回元丹。

@@ -2,33 +2,33 @@ package com.bong.client.hud;
 
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
+import com.bong.client.movement.DashSkill;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public final class MovementHudPlanner {
-    public static final long HOVER_VISIBLE_MS = 3_000L;
-    public static final long HOVER_FADE_MS = 500L;
     public static final long REJECT_FLASH_MS = 300L;
-    public static final int PANEL_WIDTH = 60;
-    public static final int PANEL_HEIGHT = 14;
+    public static final int PANEL_WIDTH = 40;
+    public static final int PANEL_HEIGHT = 44;
+    public static final String ICON = "bong-client:textures/hud/dash/sidestep.png";
 
-    private static final long DASH_COOLDOWN_MAX_TICKS = 40L;
     private static final int HOTBAR_GAP = 6;
     private static final int EDGE_MARGIN = 4;
-    private static final int TRACK_COLOR = 0xA0182228;
-    private static final int DASH_COLOR = 0xFF9FD3FF;
-    private static final int REJECT_COLOR = 0xC0FF3030;
+    private static final int DASH_COLOR = 0xFFE8EDD8;
+    private static final int READY_COLOR = 0xFFAFD6BA;
+    private static final int REJECT_COLOR = 0xFFE68675;
 
     private MovementHudPlanner() {
     }
 
     public static List<HudRenderCommand> buildCommands(int screenWidth, int screenHeight, long nowMs) {
-        return buildCommands(MovementStateStore.snapshot(), screenWidth, screenHeight, nowMs);
+        return buildCommands(MovementStateStore.snapshot(), DashSkill.learned(), screenWidth, screenHeight, nowMs);
     }
 
     static List<HudRenderCommand> buildCommands(
         MovementState state,
+        boolean learned,
         int screenWidth,
         int screenHeight,
         long nowMs
@@ -40,10 +40,7 @@ public final class MovementHudPlanner {
 
         appendZoneFeedback(out, state.zoneKind());
 
-        double alpha = hudAlpha(state, nowMs);
-        if (alpha <= 0.0) {
-            return out;
-        }
+        if (!learned) return out;
 
         PanelGeometry geometry = panelGeometry(screenWidth, screenHeight);
         if (geometry == null) {
@@ -51,32 +48,42 @@ public final class MovementHudPlanner {
         }
         int x = geometry.x();
         int y = geometry.y();
-        out.add(HudRenderCommand.rect(
-            HudRenderLayer.MOVEMENT_HUD,
-            x,
-            y,
-            PANEL_WIDTH,
-            PANEL_HEIGHT,
-            withAlpha(TRACK_COLOR, alpha)
-        ));
-        out.add(HudRenderCommand.scaledText(HudRenderLayer.MOVEMENT_HUD, "DASH", x + 6, y + 1, withAlpha(DASH_COLOR, alpha), 0.6));
-        appendCooldown(out, x + 6, y + 10, 48, state.dashCooldownRemainingTicks(), DASH_COOLDOWN_MAX_TICKS, DASH_COLOR, alpha);
+        double progress = readyFraction(state, nowMs);
+        boolean ready = state.dashCooldownRemainingTicks() == 0;
+        boolean rejected = state.rejectedRecently(nowMs, REJECT_FLASH_MS);
+        long elapsed = Math.max(0, nowMs - state.hudActivityAtMs());
+        double flash = state.hudActivityAtMs() > 0 ? Math.max(0, 1 - elapsed / 420.0) : 0;
+        int color = rejected ? REJECT_COLOR : DASH_COLOR;
 
-        if (state.rejectedRecently(nowMs, REJECT_FLASH_MS)) {
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.MOVEMENT_HUD,
-                x,
-                y,
-                PANEL_WIDTH,
-                PANEL_HEIGHT,
-                withAlpha(REJECT_COLOR, 1.0)
-            ));
+        // 印记保持比例；残影仅在真实动作启动时偏移，冷却完成单独点亮脚下刻痕。
+        if (state.action() == MovementState.Action.DASHING && flash > 0) {
+            out.add(HudRenderCommand.texture(HudRenderLayer.MOVEMENT_HUD, ICON,
+                x, y + 3, 32, 32, withAlpha(READY_COLOR, flash * .4)));
+        }
+        out.add(HudRenderCommand.svg(HudRenderLayer.MOVEMENT_HUD, "track", x, y,
+            PANEL_WIDTH, PANEL_HEIGHT, withAlpha(rejected ? REJECT_COLOR : READY_COLOR, ready ? .65 : .3)));
+        out.add(HudRenderCommand.texture(HudRenderLayer.MOVEMENT_HUD, ICON,
+            x + 4, y + 2, 32, 32, withAlpha(color, ready ? .85 + .15 * flash : .3 + .35 * progress)));
+        for (int i = 0; i < 8; i++) {
+            double filled = Math.max(0, Math.min(1, progress * 8 - i));
+            out.add(HudRenderCommand.svg(HudRenderLayer.MOVEMENT_HUD, "tick",
+                x + 4 + i * 4, y + 35, 4, 5,
+                withAlpha(rejected ? REJECT_COLOR : READY_COLOR, .12 + .78 * filled)));
+        }
+        if ((ready || rejected) && flash > 0) {
+            out.add(HudRenderCommand.svg(HudRenderLayer.MOVEMENT_HUD, "flare", x, y,
+                PANEL_WIDTH, PANEL_HEIGHT, withAlpha(rejected ? REJECT_COLOR : DASH_COLOR, flash)));
         }
         return out;
     }
 
-    static double hudAlpha(MovementState state, long nowMs) {
-        return timedAlpha(state, nowMs);
+    static double readyFraction(MovementState state, long nowMs) {
+        if (state.dashCooldownRemainingTicks() == 0) return 1;
+        if (state.dashCooldownTotalTicks() == 0) return 0;
+        double remaining = state.dashCooldownRemainingTicks()
+            - Math.max(0, nowMs - state.receivedAtMs()) / 50.0;
+        // 可插值进度，但可用状态必须等服务端确认。
+        return Math.max(0, Math.min(.99, 1 - remaining / state.dashCooldownTotalTicks()));
     }
 
     private static PanelGeometry panelGeometry(int screenWidth, int screenHeight) {
@@ -123,20 +130,6 @@ public final class MovementHudPlanner {
         return new PanelGeometry(clampedX, clampedY);
     }
 
-    private static double timedAlpha(MovementState state, long nowMs) {
-        if (state.hudActivityAtMs() <= 0L || nowMs < state.hudActivityAtMs()) {
-            return state.action() == MovementState.Action.NONE ? 0.0 : 1.0;
-        }
-        long elapsed = nowMs - state.hudActivityAtMs();
-        if (state.action() != MovementState.Action.NONE || elapsed <= HOVER_VISIBLE_MS) {
-            return 1.0;
-        }
-        if (elapsed <= HOVER_VISIBLE_MS + HOVER_FADE_MS) {
-            return 1.0 - ((elapsed - HOVER_VISIBLE_MS) / (double) HOVER_FADE_MS);
-        }
-        return 0.0;
-    }
-
     private static void appendZoneFeedback(List<HudRenderCommand> out, MovementState.ZoneKind zoneKind) {
         switch (zoneKind) {
             case DEAD -> out.add(HudRenderCommand.edgeVignette(HudRenderLayer.MOVEMENT_HUD, 0x66000000));
@@ -144,24 +137,6 @@ public final class MovementHudPlanner {
             case RESIDUE_ASH -> out.add(HudRenderCommand.edgeVignette(HudRenderLayer.MOVEMENT_HUD, 0x554B3A2E));
             case NORMAL -> {
             }
-        }
-    }
-
-    private static void appendCooldown(
-        List<HudRenderCommand> out,
-        int x,
-        int y,
-        int width,
-        long remainingTicks,
-        long maxTicks,
-        int color,
-        double alpha
-    ) {
-        out.add(HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, x, y, width, 3, withAlpha(0x80303A42, alpha)));
-        double readyRatio = 1.0 - Math.max(0.0, Math.min(1.0, remainingTicks / (double) maxTicks));
-        int fill = Math.max(0, Math.min(width, (int) Math.round(width * readyRatio)));
-        if (fill > 0) {
-            out.add(HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, x, y, fill, 3, withAlpha(color, alpha)));
         }
     }
 

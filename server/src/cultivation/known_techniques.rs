@@ -76,13 +76,15 @@ impl KnownTechniques {
         }
     }
 
-    /// Construct the progression-reset value from the same runtime catalog that the server
-    /// injected at startup. Development builds preserve their historical full-catalog reset;
-    /// production builds keep the empty progression reset.
+    /// 出生与转世不直接获得身法；开发环境仍授予其他调试功法。
     pub fn progression_reset(registry: &TechniqueRegistry) -> Self {
         #[cfg(feature = "dev-techniques")]
         {
-            Self::dev_default(registry)
+            let mut known = Self::dev_default(registry);
+            known
+                .entries
+                .retain(|entry| entry.id != crate::movement::dash_proficiency::DASH_TECHNIQUE_ID);
+            known
         }
         #[cfg(not(feature = "dev-techniques"))]
         {
@@ -127,7 +129,7 @@ pub fn has_dedicated_input_consumer(skill_id: &str) -> bool {
 ///
 /// `DirectGeneric` 只有通用 skill-bar cast 生命周期；任意新 id 会被呈现为“可施放”却
 /// 没有 gameplay 消费者，等于把 data-only 占位符静默变成玩家可见的假招式。白名单内
-/// 三个 id 都有独立的真实消费者：`movement.dash` 由闪身/首击学习路径消费，
+/// 三个 id 都有独立的真实消费者：`movement.dash` 由身法按键路径消费，
 /// `shield_block` 由举盾与格挡结算消费，`body.guangbo_ticao` 由广播体操练习与
 /// 身体 conditioning 消费。新增直通招式必须先接入消费者，再进白名单，不能只加 TOML。
 pub const DIRECT_GENERIC_ALLOWLIST: &[&str] =

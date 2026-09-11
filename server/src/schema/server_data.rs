@@ -4922,6 +4922,7 @@ mod tests {
                 movement_action: MovementActionV1::Dashing,
                 zone_kind: MovementZoneKindV1::Normal,
                 dash_cooldown_remaining_ticks: 40,
+                dash_cooldown_total_ticks: 40,
                 hitbox_height_blocks: 1.8,
                 stamina_current: 85.0,
                 stamina_max: 100.0,

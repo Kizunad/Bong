@@ -9,6 +9,7 @@
     "movement_action",
     "zone_kind",
     "dash_cooldown_remaining_ticks",
+    "dash_cooldown_total_ticks",
     "hitbox_height_blocks",
     "stamina_current",
     "stamina_max",
@@ -66,6 +67,10 @@
       "minimum": 0,
       "type": "integer"
     },
+    "dash_cooldown_total_ticks": {
+      "minimum": 0,
+      "type": "integer"
+    },
     "hitbox_height_blocks": {
       "minimum": 0,
       "type": "number"
@@ -90,5 +95,5 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "820b26770149f91cab5ef00e75ad80202544145b906dc87c8ea75b4ef921aed0"
+  "x-bong-typebox-source-sha256": "ace87b3c6c7e2c03ba8f0673955408f208026ceea6614413d8cd4ef5fe8a4f27"
 }

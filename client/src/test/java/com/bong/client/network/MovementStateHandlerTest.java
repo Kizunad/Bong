@@ -29,6 +29,7 @@ class MovementStateHandlerTest {
               "movement_action": "dashing",
               "zone_kind": "negative",
               "dash_cooldown_remaining_ticks": 35,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 70,
               "stamina_max": 100,
@@ -44,6 +45,7 @@ class MovementStateHandlerTest {
         assertEquals(MovementState.Action.DASHING, state.action());
         assertEquals(MovementState.ZoneKind.NEGATIVE, state.zoneKind());
         assertEquals(35L, state.dashCooldownRemainingTicks());
+        assertEquals(40L, state.dashCooldownTotalTicks());
         assertEquals(2_000L, state.hudActivityAtMs());
     }
 
@@ -56,6 +58,7 @@ class MovementStateHandlerTest {
                 .setMovementAction(Envelope.MovementAction.MOVEMENT_ACTION_DASHING)
                 .setZoneKind(Envelope.MovementZoneKind.MOVEMENT_ZONE_KIND_NORMAL)
                 .setDashCooldownRemainingTicks(35L)
+                .setDashCooldownTotalTicks(40L)
                 .setHitboxHeightBlocks(1.8F)
                 .setStaminaCurrent(4.0F)
                 .setStaminaMax(100.0F)
@@ -77,6 +80,7 @@ class MovementStateHandlerTest {
             "expected bridged movement_state to reach MovementStateHandler, actual dispatch: " + dispatch
         );
         MovementState state = MovementStateStore.snapshot();
+        assertEquals(40L, state.dashCooldownTotalTicks(), "本次冷却总长必须穿过 protobuf 桥接");
         assertEquals(
             MovementState.Action.DASHING,
             state.action(),
@@ -107,6 +111,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 4,
               "stamina_max": 100,
@@ -133,6 +138,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 4,
               "stamina_max": 100,
@@ -149,6 +155,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 5,
               "stamina_max": 100,
@@ -207,6 +214,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 4,
               "stamina_max": 100,
@@ -223,6 +231,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 5,
               "stamina_max": 100,
@@ -283,6 +292,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 4,
               "stamina_max": 100,
@@ -308,6 +318,7 @@ class MovementStateHandlerTest {
               "movement_action": "none",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 0,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 4,
               "stamina_max": 100,
@@ -333,6 +344,7 @@ class MovementStateHandlerTest {
               "movement_action": "dashing",
               "zone_kind": "normal",
               "dash_cooldown_remaining_ticks": 9223372036854775808,
+              "dash_cooldown_total_ticks": 40,
               "hitbox_height_blocks": 1.8,
               "stamina_current": 70,
               "stamina_max": 100,

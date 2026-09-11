@@ -24,21 +24,11 @@ pub struct TechniqueLearnedEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LearnSource {
-    Scroll {
-        item_id: String,
-    },
-    Observe {
-        observed_entity: Entity,
-    },
-    Mentor {
-        npc_entity: Entity,
-    },
-    DyingMaster {
-        npc_entity: Entity,
-    },
+    Scroll { item_id: String },
+    Observe { observed_entity: Entity },
+    Mentor { npc_entity: Entity },
+    DyingMaster { npc_entity: Entity },
     DevCommand,
-    /// plan-onboarding-loop-v1 P1.2 — 战斗中本能领悟（首次受击自学闪避）。
-    CombatInsight,
 }
 
 #[derive(Debug, Clone, PartialEq)]
