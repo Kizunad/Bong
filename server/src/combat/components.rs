@@ -240,6 +240,9 @@ pub struct Lifecycle {
     pub awaiting_decision: Option<RevivalDecision>,
     #[serde(default)]
     pub revival_decision_deadline_tick: Option<u64>,
+    /// 掷骰开始时锁定的服务端结果；随生命周期存档，重连不能重新掷骰。
+    #[serde(default)]
+    pub revival_roll_survived: Option<bool>,
     pub weakened_until_tick: Option<u64>,
     pub state: LifecycleState,
 }
@@ -256,6 +259,7 @@ impl Default for Lifecycle {
             spawn_anchor_damaged: false,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
+            revival_roll_survived: None,
             weakened_until_tick: None,
             state: LifecycleState::Alive,
         }
@@ -268,6 +272,7 @@ impl Lifecycle {
     }
 
     pub fn revive_with_weakened_multiplier(&mut self, now_tick: u64, weakened_multiplier: u64) {
+        self.revival_roll_survived = None;
         self.last_revive_tick = Some(now_tick);
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;
@@ -281,6 +286,7 @@ impl Lifecycle {
         if self.state != LifecycleState::Alive {
             return;
         }
+        self.revival_roll_survived = None;
         self.death_count = self.death_count.saturating_add(1);
         self.last_death_tick = Some(now_tick);
         self.awaiting_decision = Some(decision);
@@ -290,6 +296,7 @@ impl Lifecycle {
     }
 
     pub fn terminate(&mut self, now_tick: u64) {
+        self.revival_roll_survived = None;
         self.last_death_tick = Some(now_tick);
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;

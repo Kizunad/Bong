@@ -5382,6 +5382,7 @@ fn sample_npc_capture(char_id: &str) -> NpcPersistenceCapture {
             revival_decision_deadline_tick: None,
             weakened_until_tick: None,
             state: LifecycleState::Alive,
+            ..Lifecycle::default()
         },
         Some(&Cultivation {
             realm: Realm::Spirit,
@@ -5602,6 +5603,7 @@ fn semantic_event_writers_serialize_under_wal_busy_timeout() {
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
                     state: LifecycleState::AwaitingRevival,
+                    ..Lifecycle::default()
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
@@ -5738,6 +5740,7 @@ fn mixed_player_core_and_semantic_event_writers_share_sqlite_without_lock_failur
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
                     state: LifecycleState::AwaitingRevival,
+                    ..Lifecycle::default()
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
@@ -5899,6 +5902,7 @@ fn mixed_player_semantic_and_npc_writers_share_sqlite_without_lock_failures() {
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
                     state: LifecycleState::AwaitingRevival,
+                    ..Lifecycle::default()
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
@@ -6087,6 +6091,7 @@ fn mixed_player_semantic_npc_and_zone_runtime_writers_share_sqlite_without_lock_
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: Some(tick + 5),
                     state: LifecycleState::AwaitingRevival,
+                    ..Lifecycle::default()
                 };
                 let lifespan_event = LifespanEventRecord {
                     at_tick: tick,
@@ -6324,6 +6329,7 @@ fn mixed_sqlite_writers_remain_correct_across_multiple_contention_batches() {
                         revival_decision_deadline_tick: None,
                         weakened_until_tick: Some(tick + 5),
                         state: LifecycleState::AwaitingRevival,
+                        ..Lifecycle::default()
                     };
                     let lifespan_event = LifespanEventRecord {
                         at_tick: tick,

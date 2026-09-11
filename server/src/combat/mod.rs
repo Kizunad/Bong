@@ -31,6 +31,7 @@ pub mod shield_block;
 pub mod status;
 pub mod style_telemetry;
 pub mod sword_basics;
+pub mod termination;
 pub mod tuike;
 pub mod tuike_v2;
 pub mod weapon;
@@ -367,6 +368,13 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    // 终结属性必须先截取，再由修炼侧移除组件；所有终结来源共用这一出口。
+    app.add_systems(
+        Update,
+        termination::publish_termination
+            .in_set(CombatSystemSet::Emit)
+            .before(crate::cultivation::death_hooks::on_player_terminated),
     );
     // 活跃战斗窗口逐 tick 精确到期；拆开注册避免超过 Bevy 0.14 系统元组上限。
     app.add_systems(

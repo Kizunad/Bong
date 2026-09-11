@@ -45,6 +45,24 @@ use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
 use super::yidao::{HealerNpcAiStateV1, YidaoHudStateV1};
 use crate::cultivation::components::ColorKind;
 use crate::skill::config::SkillConfigSnapshot;
+/// 角色终结时截取的属性；缺失字段表示没有可靠记录，不把缺失伪装成零。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TerminationSummaryV1 {
+    pub character_name: String,
+    pub realm: String,
+    pub death_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub years_lived: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qi_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_max: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meridians_open: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub techniques_learned: Option<u32>,
+}
+
 pub const SERVER_DATA_VERSION: u8 = 1;
 pub const WELCOME_MESSAGE: &str = "Bong server connected";
 pub const HEARTBEAT_MESSAGE: &str = "mock agent tick";
@@ -515,6 +533,7 @@ pub enum ServerDataPayloadV1 {
         final_words: String,
         epilogue: String,
         archetype_suggestion: String,
+        summary: Option<TerminationSummaryV1>,
     },
     RiftPortalState(RiftPortalStateV1),
     RiftPortalRemoved(RiftPortalRemovedV1),
@@ -1869,6 +1888,8 @@ enum ServerDataPayloadWireV1 {
         final_words: String,
         epilogue: String,
         archetype_suggestion: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<TerminationSummaryV1>,
     },
     RiftPortalState {
         #[serde(flatten)]
@@ -3092,11 +3113,13 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             } => Ok(Self::TerminateScreen {
                 visible,
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             }),
             ServerDataPayloadWireV1::RiftPortalState { state } => Ok(Self::RiftPortalState(state)),
             ServerDataPayloadWireV1::RiftPortalRemoved { removed } => {
@@ -3731,11 +3754,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             } => Self::TerminateScreen {
                 visible: *visible,
                 final_words: final_words.clone(),
                 epilogue: epilogue.clone(),
                 archetype_suggestion: archetype_suggestion.clone(),
+                summary: summary.clone(),
             },
             ServerDataPayloadV1::RiftPortalState(state) => Self::RiftPortalState {
                 state: state.clone(),

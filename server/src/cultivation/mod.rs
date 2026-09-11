@@ -2856,6 +2856,7 @@ mod tests {
                     revival_decision_deadline_tick: None,
                     weakened_until_tick: None,
                     state: crate::combat::components::LifecycleState::Alive,
+                    ..Lifecycle::default()
                 },
             ))
             .id();
