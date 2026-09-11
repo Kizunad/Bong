@@ -33,17 +33,9 @@ MODULES = ["inventory", "combat"]
 PILL = "guyuan_pill"
 BIND_SLOT = 1
 NEGATIVE_WINDOW = 2.0
-# use_quick_slot 的冷却契约（server DEFAULT_COOLDOWN_MS=1500，guyuan_pill 未覆写）。
-# 冷却从 cast 完成 tick 起算，bot 观测的 complete_t 比 server 冷却起点晚 transport
-# 延迟 δ<100ms（本地 e2e 实测）——bot 视角的冷却时长 ∈ (1500−100, 1500]ms，因此
-# 边界探针钉在 complete_t+1400ms（必须仍静默）与 complete_t+1500ms（必须新开 cast）
-# 两侧（见 6b 注释）：取代旧的 ±400ms 宽带——1101..1400ms 的错误实现会在 1400ms
-# 探针处开火被抓，1501..1600ms 的实现会在 1500ms 探针处静默被抓（central-review
-# 31442475206 finding [6]：旧 (1100, 1900]ms 带让 1200ms 实现也全过）。
+# 精确 tick 边界由 cast_emit::cooldown_set_get_round_trip 与
+# quickslot_config_emit_test 保护；E2E 验证冷却期拒用和权威到期后的恢复。
 COOLDOWN_MS = 1500
-COOLDOWN_TRANSPORT_SKEW_MS = 100
-COOLDOWN_TOLERANCE_MS = 400  # (a) 立刻重按探针的负窗口长度
-PROBE_TRAILING_WINDOW_MS = 75  # (b) 探针意图处理延迟的尾部覆盖
 
 
 def _expect_bind_response(
@@ -116,8 +108,7 @@ def _sleep_until_event_time(bot, target_t: float) -> None:
 def _assert_no_cast_sync_until(bot, anchor_t: float, until_t: float) -> None:
     """(anchor_t, until_t] 内不得出现任何新启动的 cast_sync（phase=casting）。
 
-    与 `_assert_no_cast_sync`（固定 NEGATIVE_WINDOW 窗口）同语义，但窗口终点由调用
-    方给出——冷却边界探针要观察 1500ms 边界两侧的**小段**窗口，而不是一次盖满 2s。"""
+    与 `_assert_no_cast_sync` 同语义，用于扫描权威完成/冷却状态之间的事件。"""
     _sleep_until_event_time(bot, until_t)
     stray = [
         e
@@ -215,14 +206,37 @@ def _give_fresh_pill_and_bind(
     return snapshot, fresh_instance_id
 
 
+def _wait_quickslot_cooldown_clear(bot) -> None:
+    """同值重绑获取权威冷却；到期提示是 wall-clock 估计，不能替代服务器 tick。"""
+    deadline = time.monotonic() + 10.0
+    attempt = 0
+    while time.monotonic() < deadline:
+        request_id = f"gap10-cooldown-{attempt}"
+        bot.intent({
+            "type": "quick_slot_bind", "v": 1, "slot": BIND_SLOT,
+            "item_id": PILL, "request_id": request_id,
+        })
+        config = _expect_bind_response(bot, request_id, True, BIND_SLOT)
+        if config["cooldown_until_ms"][BIND_SLOT] == 0:
+            return
+        attempt += 1
+        time.sleep(0.1)
+    raise BotAssertionError("快捷槽冷却未在 10s 内由服务器确认到期")
+
+
 def run(env) -> None:
     with env.new_bot("Quickslot") as bot:
         wait_for_ready(bot)
-        # 不清包：guyuan_pill 是起手包常驻（assets/inventory/loadouts/default.toml）；
-        # clearinv all 会把它清掉，bind 反被拒「not in inventory」。
-        snapshot = wait_inventory_contains(bot, PILL, timeout=10.0)
+        # 一份两枚的堆叠让首次消费后绑定仍有效，冷却探针不再夹杂补给/重绑耗时。
+        bot.cmd("clearinv all")
+        bot.expect_chat("[dev] clearinv PackAndHotbar", timeout=10.0)
+        give_anchor = last_event_time(bot)
+        bot.cmd(f"give {PILL} 2")
+        bot.expect_chat(f"[dev] gave {PILL} x2", timeout=10.0)
+        snapshot = wait_inventory_contains(bot, PILL, timeout=10.0, after_t=give_anchor)
         initial_pill = require_item(snapshot, PILL)
         initial_pill_instance = int(initial_pill["item"]["instance_id"])
+        assert initial_pill["item"]["stack_count"] == 2, "冷却测试需要同实例的两枚丹药"
 
         # ── 1. bind 正路径：回执 ack 回显 + accepted=true + 槽含物品 ──
         bot.intent(
@@ -412,11 +426,7 @@ def run(env) -> None:
         #     错误实现会通过（重启会再推一条 casting）。──
         active_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
-        _assert_no_cast_sync(bot, active_anchor)
-        # 等本条 cast 走完 complete：6a 的 2s 负窗口已覆盖 1500ms cast 全程，
-        # complete 已缓冲，wait_for 立即返回；同步 Casting→Idle 让 6b 的冷却拒绝
-        # 落在干净起点。complete_t 是冷却起点的 bot 侧观测（cast_emit 先
-        # set_cast_cooldown 再 push_cast_sync(Complete)，同一 tick）。
+        # 等完成后复扫活动阶段，避免固定 2s 等待吞掉随后的冷却测试窗口。
         complete_event = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
@@ -429,75 +439,37 @@ def run(env) -> None:
             description=f"slot={BIND_SLOT} 第一次 cast 的 cast_sync(complete)",
         )
         complete_t = complete_event.t
+        _assert_no_cast_sync_until(bot, active_anchor, complete_t)
         consumed_snapshot = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_snapshot"
                 and e.t > complete_t
-                and find_instance_by_id(e.data["payload"], initial_pill_instance) is None
+                and (remaining := find_instance_by_id(e.data["payload"], initial_pill_instance)) is not None
+                and remaining["item"]["stack_count"] == 1
             ),
             timeout=10.0,
             description=(
-                f"首枚 {PILL} 实例 {initial_pill_instance} 在 cast complete 后被消费"
+                f"{PILL} 实例 {initial_pill_instance} 在 cast complete 后剩余一枚"
             ),
         ).data["payload"]
-        assert find_instance_by_id(consumed_snapshot, initial_pill_instance) is None, (
-            f"首枚 {PILL} 实例 {initial_pill_instance} 应在首次 cast 完成后消失"
-        )
+        assert find_instance_by_id(consumed_snapshot, initial_pill_instance)["item"]["stack_count"] == 1
 
-        # 首枚实例已消费：立即补给并重绑新实例，随后 immediate/+1400ms 探针仍
-        # 使用原 slot 的原有 cooldown。若在探针前才补给，stale-instance early return
-        # 会让两个负探针失去对 cooldown 的覆盖。
-        _, cooldown_pill_instance = _give_fresh_pill_and_bind(
-            bot, initial_pill_instance, BIND_SLOT, "gap10-bind-6b-fresh"
-        )
-
-        # ── 6b. use 冷却分支 + 1500ms 边界钉死（review finding [5] + central-review
-        #     31438252846 finding [7] + 31442475206 finding [6]）。冷却从 cast 完成
-        #     tick 起算（set_cast_cooldown 先于 push_cast_sync(Complete)，
-        #     is_on_cooldown 判定 cooldown_until_tick > now_tick，
-        #     DEFAULT_COOLDOWN_MS=1500 → 30 tick），bot 观测的 complete_t 比 server
-        #     冷却起点晚 transport 延迟 δ<100ms（本地 e2e 实测）——bot 视角冷却时长
-        #     ∈ (1500−100, 1500]ms。旧测试（complete 后立刻按一次 + 2s 负窗口 +
-        #     窗口后按一次）等价断言「0 < 冷却 ≤ 2s」；上一版把探针移到 ±400ms 处
-        #     （(1100, 1900]ms 带），把 1500 误写成 1200ms 的实现仍全过。现在把两
-        #     探针钉到 claimed 边界本身（δ<100ms 是唯一剩余裕量）：
-        #       (b) complete_t+1400ms 处 use → 必须仍静默（server 冷却要到
-        #           complete_t+1500−δ ≥ 1400+100−δ > 1400 才过期；冷却 ≤1400ms 的
-        #           实现此时已过期、开火即被抓）；
-        #       (c) complete_t+1500ms 处 use → 必须新开 cast（server 冷却
-        #           complete_t+1500−δ ≤ 1500 已过期；冷却 >1500ms 的实现仍冷却、
-        #           无 casting 即被抓）。
-        #     两探针把冷却钉在 (1400, 1500]ms 观测值上（= 契约 1500ms ± 已文档化的
-        #     transport 偏差 <100ms），取代旧 (1100, 1900]ms 带。
-        # fresh rebind 本身耗时约 0.5s+，所以先定义真实 +1400ms 探针时刻；
-        # immediate 负窗口必须落在重绑之后、且在 +1400ms 之前，不能引用已经过去的
-        # complete_t+400ms 空区间。
-        before_probe_t = complete_t + (COOLDOWN_MS - COOLDOWN_TRANSPORT_SKEW_MS) / 1000.0
+        # ── 6b. 冷却期拒用，然后按服务器确认的到期状态重新施放。 ──
+        cooldown = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data.get("payload_type") == "quickslot_config"
+            and e.t > complete_t
+            and e.data["payload"]["cooldown_until_ms"][BIND_SLOT] > 0,
+            timeout=10.0,
+            description="首次消费后的非零快捷槽冷却",
+        ).data["payload"]
+        assert cooldown["slots"][BIND_SLOT]["cooldown_ms"] == COOLDOWN_MS
         cooldown_anchor = last_event_time(bot)
-        assert cooldown_anchor < before_probe_t, (
-            f"fresh rebind 后 cooldown anchor={cooldown_anchor:.3f} 必须早于 "
-            f"+1400ms probe={before_probe_t:.3f}，否则边界探针没有有效间隔"
-        )
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
-        # (a) fresh binding 的 immediate 重按必须静默（无冷却的实现会立即开火）。
-        immediate_until = min(cooldown_anchor + 0.2, before_probe_t - 0.1)
-        assert immediate_until > cooldown_anchor, (
-            f"immediate probe interval must be non-empty: {cooldown_anchor:.3f}..{immediate_until:.3f}"
-        )
-        _assert_no_cast_sync_until(bot, cooldown_anchor, immediate_until)
-        # (b) 边界前探针：仍须静默（冷却尚未过期）。窗口尾部只留探针意图的处理延迟
-        #     （PROBE_TRAILING_WINDOW_MS），必须在 (c) 的 +1500ms 探针之前收口。
-        _sleep_until_event_time(bot, before_probe_t)
-        before_anchor = last_event_time(bot)
-        bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
-        _assert_no_cast_sync_until(
-            bot, before_anchor, before_probe_t + PROBE_TRAILING_WINDOW_MS / 1000.0
-        )
-        # (c) 边界后探针：冷却已过期时使用上方已补给并重绑的新实例。
-        after_probe_t = complete_t + COOLDOWN_MS / 1000.0
-        _sleep_until_event_time(bot, after_probe_t)
+        _wait_quickslot_cooldown_clear(bot)
         after_anchor = last_event_time(bot)
+        _assert_no_cast_sync_until(bot, cooldown_anchor, after_anchor)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
         recovered = bot.wait_for(
             lambda e: (
@@ -509,7 +481,7 @@ def run(env) -> None:
             ),
             timeout=10.0,
             description=(
-                f"冷却边界（complete_t+{COOLDOWN_MS}ms）后 "
+                "服务器确认冷却到期后 "
                 f"slot={BIND_SLOT} 重新施放的 cast_sync(casting)"
             ),
         ).data["payload"]
@@ -533,7 +505,7 @@ def run(env) -> None:
         )
 
         # 补给并绑定第一格，再证明越界使用不会误用现有物品。
-        _give_fresh_pill_and_bind(bot, cooldown_pill_instance, 0, "gap10-bind-0")
+        _give_fresh_pill_and_bind(bot, initial_pill_instance, 0, "gap10-bind-0")
         anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 2})
         _assert_no_cast_sync(bot, anchor)

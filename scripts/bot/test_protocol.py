@@ -83,6 +83,7 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
 )
 from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
 from bot.scenarios import freshness_probe_paths as freshness_probe_scenario  # noqa: E402
+from bot.scenarios import fauna_give_dan_to_elder_reject as elder_reject_scenario  # noqa: E402
 from bot.scenarios import cultivation_qi_color_inspect as qi_color_inspect_scenario  # noqa: E402
 from bot.scenarios._rejection_helpers import (  # noqa: E402
     assert_no_gameplay_side_effect_since,
@@ -6006,6 +6007,41 @@ class RejectionHelperTest(unittest.TestCase):
                 label="未知 type",
             )
 
+
+    def test_pseudo_vein_narration_does_not_mask_request_feedback(self):
+        ambient = {
+            "scope": "zone", "style": "perception", "target": "spawn",
+            "text": "灵潮涌动，此地灵气一时丰沛，正是冲击固元的良机。",
+        }
+        for changes, should_reject in (
+            ({}, False),
+            ({"text": "灵潮渐渐消散，天地灵气归于平淡。"}, False),
+            ({"scope": "player"}, True),
+            ({"style": "normal"}, True),
+            ({"text": "请求已处理"}, True),
+        ):
+            with self.subTest(changes=changes):
+                bot = _RejectionFakeBot([_FakeEvent(3.0, "server_data", {
+                    "payload_type": "narration", "payload": {**ambient, **changes},
+                })])
+                if should_reject:
+                    with self.assertRaises(BotAssertionError):
+                        assert_no_gameplay_side_effect_since(bot, 1.0, "未知请求")
+                else:
+                    assert_no_gameplay_side_effect_since(bot, 1.0, "未知请求")
+
+    def test_elder_rejection_allows_incoming_damage_but_rejects_outgoing_damage(self):
+        for outgoing in (False, True):
+            with self.subTest(outgoing=outgoing):
+                bot = _RejectionFakeBot([_FakeEvent(3.0, "server_data", {
+                    "payload_type": "combat_event",
+                    "payload": {"events": [{"kind": "qi_damage", "outgoing": outgoing}]},
+                })])
+                if outgoing:
+                    with self.assertRaises(BotAssertionError):
+                        elder_reject_scenario._scan_chat_only_violations(bot, 1.0, "拒收", ())
+                else:
+                    elder_reject_scenario._scan_chat_only_violations(bot, 1.0, "拒收", ())
 
     def test_ambient_fauna_bite_in_probe_window_is_not_side_effect(self):
         # 回归锁：野生生物（实测噬元鼠）在探针窗口内咬 bot 会产生

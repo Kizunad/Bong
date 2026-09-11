@@ -33,7 +33,11 @@ from ._inventory_helpers import (
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
-from ._rejection_helpers import AMBIENT_SERVER_DATA_TYPES, drain_event_stream
+from ._rejection_helpers import (
+    AMBIENT_SERVER_DATA_TYPES,
+    drain_event_stream,
+    is_gameplay_side_effect,
+)
 
 DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→有效 pill 的目标门禁，逐条拒绝"
 MODULES = ["fauna", "network"]
@@ -57,13 +61,6 @@ TSY_ZONE_CENTERS = {
     "tsy_gaoshou_01_deep": (1050.0, -20.0, 550.0),
 }
 TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
-# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
-# 本场景无 cultivation/meridian/zone 变化，窗口内除 carrier_state 无合法非白名单
-# payload；白名单外一律判红（chat-only 契约的 S2C 半）。carrier_state 不在 proto_min
-# 白名单，通常不解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的
-# 周期流。
-AMBIENT_PERIODIC_PAYLOAD_TYPES = AMBIENT_SERVER_DATA_TYPES
-
 
 def run(env) -> None:
     with env.new_bot("DhH") as bot:
@@ -347,7 +344,7 @@ def _scan_chat_only_violations(
     bot, sent_at: float, description: str, allowed_chat_ts: tuple
 ) -> None:
     for e in bot.events_of("server_data"):
-        if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
+        if e.t > sent_at and is_gameplay_side_effect(e, AMBIENT_SERVER_DATA_TYPES):
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"
                 f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
