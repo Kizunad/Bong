@@ -1,0 +1,24 @@
+# 开脉丹 KaimaiDan —— 特征点名清单
+#
+# 特征来源：`kaimai_dan.png` 图标解析：
+# 1. paper_wrap: 紧裹丹腹并向外上方翻卷折起的花瓣油纸托
+# 2. grand_dan: 正中央饱满圆润的琥珀褐开脉大丹
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+paper_lit    = [232, 208, 166]
+paper_mid    = [196, 168, 126]
+paper_dark   = [156, 124, 88]
+paper_shadow = [116, 88, 58]
+pill_base    = [142, 80, 46]
+pill_lit     = [196, 126, 78]
+
+[features]
+# 折纸花托：底座 + 四面纸壁 + 四角尖峰
+paper_wrap = { elements = ["base_", "cup_", "petal_", "corner_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
+
+# 开脉大丹：正中央浑圆饱满的大丹药
+grand_dan = { elements = ["grand_dan"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 1500, "3/4" = 2000 } }
