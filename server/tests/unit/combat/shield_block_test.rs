@@ -1,9 +1,9 @@
-use bong_server::combat::shield_block::*;
 use bong_server::combat::components::{ActiveStatusEffect, ShieldDrainOverride, StatusEffects};
 use bong_server::combat::components::{CombatState, Lifecycle, Stamina, Wounds};
-use bong_server::combat::events::{DeathEvent, DeathInsightRequested};
 use bong_server::combat::events::StatusEffectKind;
+use bong_server::combat::events::{DeathEvent, DeathInsightRequested};
 use bong_server::combat::lifecycle::death_arbiter_tick;
+use bong_server::combat::shield_block::*;
 use bong_server::combat::status::has_active_status;
 use bong_server::cultivation::death_hooks::{CultivationDeathTrigger, PlayerTerminated};
 use bong_server::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
@@ -480,22 +480,16 @@ fn drain_vfx(app: &mut App) -> Vec<VfxEventRequest> {
         .collect()
 }
 
-fn find_play_anim<'a>(
-    reqs: &'a [VfxEventRequest],
-    anim_id: &str,
-) -> Option<&'a VfxEventRequest> {
-    reqs.iter().find(|r| {
-        matches!(&r.payload, VfxEventPayloadV1::PlayAnim { anim_id: id, .. } if id == anim_id)
-    })
+fn find_play_anim<'a>(reqs: &'a [VfxEventRequest], anim_id: &str) -> Option<&'a VfxEventRequest> {
+    reqs.iter().find(
+        |r| matches!(&r.payload, VfxEventPayloadV1::PlayAnim { anim_id: id, .. } if id == anim_id),
+    )
 }
 
-fn find_stop_anim<'a>(
-    reqs: &'a [VfxEventRequest],
-    anim_id: &str,
-) -> Option<&'a VfxEventRequest> {
-    reqs.iter().find(|r| {
-        matches!(&r.payload, VfxEventPayloadV1::StopAnim { anim_id: id, .. } if id == anim_id)
-    })
+fn find_stop_anim<'a>(reqs: &'a [VfxEventRequest], anim_id: &str) -> Option<&'a VfxEventRequest> {
+    reqs.iter().find(
+        |r| matches!(&r.payload, VfxEventPayloadV1::StopAnim { anim_id: id, .. } if id == anim_id),
+    )
 }
 
 // ── #2: raise_shield_handler 发 PlayAnim{bong:shield_raise} ────────────────
@@ -654,8 +648,7 @@ fn e2e_cleanup_on_death_emits_stop_anim_after_death_arbiter_clears_status() {
         std::process::id()
     ));
     let db_path = root.join("data").join("bong.db");
-    std::fs::create_dir_all(db_path.parent().unwrap())
-        .expect("temp dir creation should succeed");
+    std::fs::create_dir_all(db_path.parent().unwrap()).expect("temp dir creation should succeed");
     bootstrap_sqlite(&db_path, "shield-death-e2e").expect("sqlite bootstrap should succeed");
     let persistence = PersistenceSettings::with_db_path(&db_path, "shield-death-e2e");
 
@@ -1272,8 +1265,7 @@ fn force_lower_removes_shield_and_emits_parry_recovery_when_exhausted() {
         pr.duration_ticks, SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS,
         "force_lower: ParryRecovery duration_ticks 应为 SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS={} \
          （约 1s=20ticks），实际 {}",
-        SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS,
-        pr.duration_ticks
+        SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS, pr.duration_ticks
     );
     // 4. StopAnim 应发出（通知 client 收举盾姿态）——无 Position/UniqueId 时静默 skip，不 panic
     // 无需断言 VfxEventRequest 存在（无 Position/UniqueId 时 emit_shield_stop_for_entity 静默）
@@ -1351,7 +1343,9 @@ fn force_lower_does_not_lower_when_stamina_not_exhausted() {
 #[test]
 fn raise_shield_reads_block_ratio_from_item_registry() {
     use bong_server::combat::components::{Stamina, StaminaState};
-    use bong_server::inventory::{ItemCategory, ItemRarity, ItemRegistry, ItemTemplate, ShieldSpec};
+    use bong_server::inventory::{
+        ItemCategory, ItemRarity, ItemRegistry, ItemTemplate, ShieldSpec,
+    };
 
     let mut app = make_app(); // 使用已注册 raise_shield_handler 的 make_app
 
