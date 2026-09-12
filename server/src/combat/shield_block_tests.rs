@@ -1,5 +1,3 @@
-use super::*;
-
 // ── map_defense_kind 全变体覆盖（编译 + 语义）──────────────────────────
 // 锁住 combat_bridge.rs map_defense_kind 映射的三个变体全部正确。
 #[test]
