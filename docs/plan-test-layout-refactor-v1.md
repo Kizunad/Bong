@@ -678,3 +678,11 @@ Test Refactor 附录（plan-test-layout-refactor-v1）
 - 验证：运行受影响栈完整门禁，并附受保护契约、失败分支和外部报告证据；测试数量变化只需能由分类记录解释。
 - 大规模移动：拆成独立迁移 PR，不与业务行为变更混合。
 ```
+
+### P2-32 combat/shield_block（✅ 2026-09-13）
+
+- **范围与落点**：仅处置 `server/src/combat/shield_block.rs` 原内联测试；生产文件现仅保留 `#[cfg(test)] #[path = "shield_block_tests.rs"] mod tests;` 挂载。76 条 A 类测试原样外置到 `server/tests/unit/combat/shield_block_test.rs`，由 `server/Cargo.toml` 的 `shield_block_unit` target 发现；2 条 B 类保留在 `server/src/combat/shield_block_tests.rs`。未复制生产实现，未改变盾牌格挡、体力、动画、narration、combat payload 或系统注册运行时逻辑。
+- **A/B 分类与逐位守恒**：迁移前基线为 78 条，迁移后为 `A=76 + B=2 = 78`。A 类覆盖公开 API、ECS 状态转换、副作用、payload/动画反馈、边界与失败分支；B 类逐条保留：`map_defense_kind_all_variants_map_correctly` 依赖仅在 `#[cfg(test)]` 暴露的 `map_defense_kind_pub`，外置会迫使 test-only 映射 seam 进入生产 API；`known_techniques_registry_contains_shield_block` 依赖仅在 `#[cfg(test)]` 可用的 `TechniqueRegistry::load_for_tests`，外置会迫使测试 fixture loader 成为生产 API。两条均不新增或扩大 seam；若后续提供正式公开契约入口，再复审外置。迁移前后测试名、断言、fixture、错误/边界语义逐位保持。
+- **路径与生产边界**：外置测试的 3 处既有 `include_str!` 均按新目录深度指向同一 `server/src` 源文件，目标路径已用 `git cat-file -e` 核验；未发现 shield_block 生产侧手写真元扣减或裸 `QiTransfer` 路径，本批未触及 qi 账本、`qi_physics`、schema、wire、client、agent 或其它 gameplay 逻辑。
+- **验证与门禁**：无上下文只读 validator 绑定合并后的代码 HEAD `2a7ad6f4e2e1abf5d3853eb76952151f092ba8b4` 并 PASS，确认 76 条外置、2 条同 crate、生产逻辑未变且无新增 `pub`/`#[doc(hidden)]` seam。随后紧邻执行 `git fetch origin && git merge origin/main`，输入主线 `4dda89fc065548ef908731e9b09b26a238c119ac`，生成合并提交 `2a7ad6f4e2e1abf5d3853eb76952151f092ba8b4`；合并带入 plan 文档变更，故按规则重跑完整 server gate：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 真实退出码均为 `0`。全量 library `11862` 条无失败，`shield_block_unit=76 passed`，同 crate shield_block 定向 `78 passed`（含 2 条 B），运行时 `zhenfa_unit=53 passed`，doc-tests `3 passed / 0 failed / 5 ignored`，其余已注册 integration targets 无失败。
+- **提交与状态**：代码迁移及收口提交依次为 `351ca4e16275e84e09db79a9a0869da84f62a06f`、`828b3d665a28deffae471af7bc5eea7a5741f46f`、`bfccf095b2c86ad050b6c7def3d776ff0eff576e`、`a2563a31c8ec4647dcdcd7f1b418eb60da5230fc`，均带 `Model: gpt-5.6-luna`；主线合并提交为 `2a7ad6f4e2e1abf5d3853eb76952151f092ba8b4`。本条仅记录 P2-32 进度；P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
