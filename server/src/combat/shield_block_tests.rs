@@ -24,3 +24,22 @@ fn map_defense_kind_all_variants_map_correctly() {
         "ShieldBlock 应映射到 CombatDefenseKindV1::ShieldBlock"
     );
 }
+
+// ── KnownTechniques 含 "shield_block" 注册（cultivation registry 断言）────
+#[test]
+fn known_techniques_registry_contains_shield_block() {
+    use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
+    let registry = TechniqueRegistry::load_for_tests();
+    let default = KnownTechniques::dev_default(&registry);
+    let found = default.entries.iter().any(|e| e.id == "shield_block");
+    assert!(
+        found,
+        "KnownTechniques::dev_default(&registry) 应含 \"shield_block\" 条目（plan-shield-block-v1 P4 注册）；\
+         实际 entries: {:?}",
+        default
+            .entries
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect::<Vec<_>>()
+    );
+}

@@ -13,7 +13,9 @@ use bong_server::network::vfx_event_emit::VfxEventRequest;
 use bong_server::persistence::{bootstrap_sqlite, PersistenceSettings};
 use bong_server::schema::vfx_event::VfxEventPayloadV1;
 use uuid::Uuid;
-use valence::prelude::{App, DVec3, Entity, Events, IntoSystemConfigs, Position, UniqueId, Update};
+use valence::prelude::{
+    bevy_ecs, App, DVec3, Entity, Events, IntoSystemConfigs, Position, UniqueId, Update,
+};
 
 fn make_app() -> App {
     let mut app = App::new();
@@ -2255,24 +2257,5 @@ fn low_stamina_narration_text_matches_spec() {
         shield_block_src.contains(expected),
         "shield_block.rs 中应含体力低 narration 文本 \"{}\"（P4 spec）",
         expected
-    );
-}
-
-// ── KnownTechniques 含 "shield_block" 注册（cultivation registry 断言）────
-#[test]
-fn known_techniques_registry_contains_shield_block() {
-    use bong_server::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
-    let registry = TechniqueRegistry::load_for_tests();
-    let default = KnownTechniques::dev_default(&registry);
-    let found = default.entries.iter().any(|e| e.id == "shield_block");
-    assert!(
-        found,
-        "KnownTechniques::dev_default(&registry) 应含 \"shield_block\" 条目（plan-shield-block-v1 P4 注册）；\
-         实际 entries: {:?}",
-        default
-            .entries
-            .iter()
-            .map(|e| e.id.as_str())
-            .collect::<Vec<_>>()
     );
 }
