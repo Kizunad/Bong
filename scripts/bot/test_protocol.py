@@ -6368,9 +6368,9 @@ class RejectionHelperTest(unittest.TestCase):
                 })])
                 if outgoing:
                     with self.assertRaises(BotAssertionError):
-                        elder_reject_scenario._scan_chat_only_violations(bot, 1.0, "拒收", ())
+                        assert_no_gameplay_side_effect_since(bot, 1.0, "拒收")
                 else:
-                    elder_reject_scenario._scan_chat_only_violations(bot, 1.0, "拒收", ())
+                    assert_no_gameplay_side_effect_since(bot, 1.0, "拒收")
 
     def test_ambient_fauna_bite_in_probe_window_is_not_side_effect(self):
         # 回归锁：野生生物（实测噬元鼠）在探针窗口内咬 bot 会产生
