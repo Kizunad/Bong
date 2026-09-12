@@ -4,8 +4,7 @@ use crate::combat::events::{CombatEvent, DeathEvent};
 use crate::cultivation::components::{QiColor, Realm};
 use crate::inventory::{
     inventory_item_by_instance_borrow, ContainerState, InventoryRevision, ItemCategory,
-    ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, SlotContents, EQUIP_SLOT_CHEST,
-    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
+    ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, SlotContents, EQUIP_SLOT_MAIN_HAND,
 };
 use crate::lingtian::PLOT_QI_CAP_BASE;
 use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
@@ -994,15 +993,6 @@ fn drain_rune_draw_anims(app: &mut App) -> Vec<(String, u16)> {
         })
         .collect()
 }
-
-/// happy path：普通陷阱（无 deploy 事件覆盖的 kind——内联点存在的理由）落阵成功
-/// 恰发一条 rune_draw 画符动画，target = 落阵者本人 uuid。
-
-/// 重复触发语义：每次成功落阵各配一次画符动画（两阵两动画，1:1 无去重）。
-
-/// 错误分支：材料门拒绝（DeceiveHeaven 缺料）→ 落阵失败不发 rune_draw。
-
-/// 错误分支：目标 chunk 未加载 → 自定义方块写入失败、落阵回滚，不发 rune_draw。
 
 #[test]
 fn deceive_heaven_consumes_spiritwood_beast_bone_bone_coin_and_qi() {
