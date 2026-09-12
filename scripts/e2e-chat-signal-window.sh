@@ -118,12 +118,22 @@ elif [ "$PROFILE" != "debug" ]; then
   exit 2
 fi
 
+SERVER_BINARY=""
+if [ -n "${BONG_E2E_PREBUILT_SERVER_MANIFEST:-}" ]; then
+  SERVER_BINARY="$EVIDENCE_DIR/bong-server-release"
+  python3 "$ROOT/scripts/lib/bong_server_provenance.py" copy \
+    "$BONG_E2E_PREBUILT_SERVER_MANIFEST" "$ROOT" "$SERVER_BINARY"
+fi
+
 (
   cd "$ROOT/server"
   export REDIS_URL
   export BONG_SKIP_SKIN_PREFETCH=1
   export BONG_ROGUE_SEED_COUNT=0
   unset BONG_TERRAIN_RASTER_PATH
+  if [ -n "$SERVER_BINARY" ]; then
+    exec "$SERVER_BINARY"
+  fi
   exec "$ROOT/scripts/build-token.sh" cargo run --locked "${PROFILE_FLAG[@]}"
 ) >"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"

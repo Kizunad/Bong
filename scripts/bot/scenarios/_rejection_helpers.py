@@ -112,6 +112,12 @@ _AMBIENT_VFX_EVENT_IDS = frozenset(
 )
 _AMBIENT_VFX_EVENT_PREFIXES = ("bong:botany_plant_stage__",)
 
+# pseudo_vein_runtime::pseudo_vein_phase_narration 的区域阶段通知；协议尚无来源 ID，
+# 只能联合 scope/style/完整文案识别，不能豁免所有区域 narration。
+_PSEUDO_VEIN_NARRATIONS = frozenset({
+    "灵潮涌动，此地灵气一时丰沛，正是冲击固元的良机。",
+    "灵潮渐渐消散，天地灵气归于平淡。",
+})
 
 
 def _is_ambient_fauna_combat(payload) -> bool:
@@ -169,6 +175,15 @@ def is_gameplay_side_effect(
             return inventory_fingerprint(payload) != inventory_fingerprint(baseline_snapshot)
         if payload_type == "combat_event" and _is_ambient_fauna_combat(event.data.get("payload")):
             return False
+        if payload_type == "narration":
+            payload = event.data.get("payload")
+            if (
+                isinstance(payload, dict)
+                and payload.get("scope") == "zone"
+                and payload.get("style") == "perception"
+                and payload.get("text") in _PSEUDO_VEIN_NARRATIONS
+            ):
+                return False
         return payload_type not in ambient_data
     if event.kind == "vfx_event":
         # `play_entity_anim` 按 schema 定义就是**非玩家实体**（GeckoLib FaunaEntity）的

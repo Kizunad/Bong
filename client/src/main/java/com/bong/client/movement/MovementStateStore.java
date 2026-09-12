@@ -23,11 +23,13 @@ public final class MovementStateStore {
             && !Objects.equals(normalized.lastActionTick(), current.lastActionTick());
         boolean actionStarted = current.action() == MovementState.Action.NONE
             && normalized.action() != MovementState.Action.NONE;
+        boolean cooldownFinished = current.dashCooldownRemainingTicks() > 0
+            && normalized.dashCooldownRemainingTicks() == 0;
 
         if (rejected) {
             hudActivityAtMs = nowMs;
             rejectedAtMs = nowMs;
-        } else if (newActionTick || actionStarted) {
+        } else if (newActionTick || actionStarted || cooldownFinished) {
             hudActivityAtMs = nowMs;
         }
 

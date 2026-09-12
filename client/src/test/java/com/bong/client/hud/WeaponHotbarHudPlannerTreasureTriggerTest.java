@@ -1,10 +1,10 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.EquippedShield;
 import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedTreasure;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.TreasureEquippedStore;
-import com.bong.client.combat.TreasurePanelSync;
 import com.bong.client.combat.WeaponEquippedStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,176 +14,76 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * plan-layered-equip-v1 P4（决议 #8）：WeaponHotbarHudPlanner 从触发位（trigger_0..）拉激活态法宝展示。
- *
- * <p>覆盖：off_hand 无持械法宝时，HUD 退而展示首个占用的触发位法宝；off_hand 持械法宝优先于触发位。
- */
 class WeaponHotbarHudPlannerTreasureTriggerTest {
-
-    private static final int SCREEN_W = 800;
-    private static final int SCREEN_H = 600;
-
     @BeforeEach
-    void setUp() {
-        EquippedShieldStore.resetForTests();
-        WeaponEquippedStore.resetForTests();
-        TreasureEquippedStore.resetForTests();
-    }
-
     @AfterEach
-    void tearDown() {
+    void clear() {
         EquippedShieldStore.resetForTests();
         WeaponEquippedStore.resetForTests();
         TreasureEquippedStore.resetForTests();
     }
 
     @Test
-    void triggerSlotTreasure_rendersWhenNoOffHandTreasure() {
-        TreasureEquippedStore.putOrClear(
-            TreasurePanelSync.triggerSlotKey(0),
-            new EquippedTreasure(TreasurePanelSync.triggerSlotKey(0), 7L, "spirit_treasure_jizhaojing", "寂照镜")
-        );
-        List<HudRenderCommand> cmds = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-        boolean hasTreasureGlyph = cmds.stream().anyMatch(cmd -> cmd.isText() && "宝".equals(cmd.text()));
-        assertTrue(hasTreasureGlyph,
-            "触发位有激活法宝且 off_hand 无持械法宝时，HUD 应展示触发位法宝（宝字）");
+    void offHandSelectionPreservesEquipmentPriorityAndTriggerFallback() {
+        TreasureEquippedStore.putOrClear("trigger_2",
+            new EquippedTreasure("trigger_2", 2, "spirit_treasure_jizhaojing", "寂照镜"));
+        assertEquals(List.of("spirit_treasure_jizhaojing"), icons(), "触发位允许前面为空");
+        TreasureEquippedStore.putOrClear("trigger_0",
+            new EquippedTreasure("trigger_0", 1, "first_trigger", "法宝"));
+        assertEquals(List.of("first_trigger"), icons(), "选择首个占用的触发位");
+        TreasureEquippedStore.putOrClear("off_hand",
+            new EquippedTreasure("off_hand", 3, "held_treasure", "法宝"));
+        assertEquals(List.of("held_treasure"), icons(), "持械法宝优先于触发位");
+        EquippedShieldStore.equip(new EquippedShield(4, "wooden_shield", 80, 100));
+        assertEquals(List.of("wooden_shield"), icons(), "盾牌优先于法宝");
     }
 
     @Test
-    void firstOccupiedTriggerSlotChosen_whenSlotZeroEmpty() {
-        // trigger_0 空，trigger_2 占用 → 应取 trigger_2。
-        TreasureEquippedStore.putOrClear(
-            TreasurePanelSync.triggerSlotKey(2),
-            new EquippedTreasure(TreasurePanelSync.triggerSlotKey(2), 9L, "spirit_treasure_jizhaojing", "寂照镜")
-        );
-        List<HudRenderCommand> cmds = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-        boolean hasTreasureGlyph = cmds.stream().anyMatch(cmd -> cmd.isText() && "宝".equals(cmd.text()));
-        assertTrue(hasTreasureGlyph,
-            "trigger_0 空时应回退到首个占用的触发位（trigger_2）展示");
+    void toolNeverMasksTreasureAndEquipmentTransitionsClearOldIcon() {
+        WeaponEquippedStore.putOrClear("main_hand",
+            new EquippedWeapon("main_hand", 1, "iron_sword", "sword", 80, 100, 0));
+        assertEquals(List.of("iron_sword"), icons());
+        WeaponEquippedStore.putOrClear("main_hand",
+            new EquippedWeapon("main_hand", 2, "tool_mining_pickaxe", "tool", 80, 100, 0));
+        assertTrue(icons().isEmpty(), "工具只参与手持模型，不占用战斗装备 HUD");
+        WeaponEquippedStore.putOrClear("main_hand", null);
+        assertTrue(icons().isEmpty(), "卸下后不得复活旧武器");
+        WeaponEquippedStore.putOrClear("off_hand",
+            new EquippedWeapon("off_hand", 3, "tool_hoe", "tool", 80, 100, 0));
+        TreasureEquippedStore.putOrClear("trigger_0",
+            new EquippedTreasure("trigger_0", 4, "spirit_treasure_jizhaojing", "寂照镜"));
+        assertEquals(List.of("spirit_treasure_jizhaojing"), icons(), "副手工具不能遮住触发位法宝");
     }
 
     @Test
-    void offHandTreasureTakesPrecedenceOverTriggerSlot() {
-        TreasureEquippedStore.putOrClear(
-            "off_hand",
-            new EquippedTreasure("off_hand", 1L, "talisman_offhand", "护符")
-        );
-        TreasureEquippedStore.putOrClear(
-            TreasurePanelSync.triggerSlotKey(0),
-            new EquippedTreasure(TreasurePanelSync.triggerSlotKey(0), 2L, "spirit_treasure_jizhaojing", "寂照镜")
-        );
-        List<HudRenderCommand> cmds = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-        // off_hand 持械法宝优先：HUD 仍渲染单个法宝槽（宝字），但来源是 off_hand（id=1）。
-        boolean hasTreasureGlyph = cmds.stream().anyMatch(cmd -> cmd.isText() && "宝".equals(cmd.text()));
-        assertTrue(hasTreasureGlyph, "off_hand 持械法宝应被展示");
-    }
-
-    @Test
-    void noTreasureAnywhere_rendersNothing() {
-        List<HudRenderCommand> cmds = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-        boolean hasTreasureGlyph = cmds.stream().anyMatch(cmd -> cmd.isText() && "宝".equals(cmd.text()));
-        assertFalse(hasTreasureGlyph, "无任何法宝时不应渲染法宝槽");
-    }
-
-    @Test
-    void triggerSlotKeyFormatMatchesServerConvention() {
-        assertEquals("trigger_0", TreasurePanelSync.triggerSlotKey(0));
-        assertEquals("trigger_3", TreasurePanelSync.triggerSlotKey(3));
-    }
-
-    @Test
-    void mainHandToolDoesNotRenderCombatWeaponSlot() {
-        WeaponEquippedStore.putOrClear(
-            "main_hand",
-            new EquippedWeapon("main_hand", 11L, "tool_mining_pickaxe", "tool", 80.0f, 100.0f, 0)
-        );
-
-        List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-
-        assertTrue(commands.isEmpty(),
-            "凡器只服务手持模型；主手只有 tool 时战斗 HUD 不应生成紫框、? glyph 或耐久条");
-    }
-
-    @Test
-    void offHandToolDoesNotHideTriggerTreasure() {
-        WeaponEquippedStore.putOrClear(
-            "off_hand",
-            new EquippedWeapon("off_hand", 12L, "tool_hoe", "tool", 60.0f, 100.0f, 0)
-        );
-        TreasureEquippedStore.putOrClear(
-            TreasurePanelSync.triggerSlotKey(0),
-            new EquippedTreasure(TreasurePanelSync.triggerSlotKey(0), 7L, "spirit_treasure_jizhaojing", "寂照镜")
-        );
-
-        List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-
-        assertTrue(commands.stream().anyMatch(command -> command.isText() && "宝".equals(command.text())),
-            "副手 tool 不应占用战斗 HUD 槽，trigger 法宝必须继续显示");
-        assertFalse(commands.stream().anyMatch(command -> command.isText() && "?".equals(command.text())),
-            "副手 tool 不应被当成未知战斗武器渲染为 ? glyph");
-    }
-
-    @Test
-    void everyCombatWeaponKindStillRendersItsGlyph() {
-        String[][] kindsAndGlyphs = {
-            {"sword", "剑"}, {"saber", "刀"}, {"staff", "杖"}, {"fist", "拳"},
-            {"spear", "枪"}, {"dagger", "匕"}, {"bow", "弓"}
-        };
-
-        for (String[] kindAndGlyph : kindsAndGlyphs) {
-            WeaponEquippedStore.resetForTests();
-            WeaponEquippedStore.putOrClear(
-                "main_hand",
-                new EquippedWeapon("main_hand", 21L, "weapon_" + kindAndGlyph[0], kindAndGlyph[0], 100.0f, 100.0f, 0)
-            );
-
-            List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-
-            assertTrue(commands.stream().anyMatch(command -> command.isText() && kindAndGlyph[1].equals(command.text())),
-                "战斗 weapon_kind=" + kindAndGlyph[0] + " 必须继续渲染 glyph=" + kindAndGlyph[1]);
-        }
-    }
-
-    @Test
-    void representativeToolTemplatesStayHiddenInBothHands() {
-        String[] toolTemplates = {"tool_mining_pickaxe", "tool_woodcutting_axe", "tool_shovel", "tool_hoe"};
-
-        for (String templateId : toolTemplates) {
-            for (String slot : List.of("main_hand", "off_hand")) {
-                WeaponEquippedStore.resetForTests();
-                WeaponEquippedStore.putOrClear(
-                    slot,
-                    new EquippedWeapon(slot, 31L, templateId, "tool", 50.0f, 100.0f, 0)
-                );
-
-                List<HudRenderCommand> commands = WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H);
-
-                assertTrue(commands.isEmpty(),
-                    templateId + " 装入 " + slot + " 时只应保留手持模型，不得生成战斗 HUD 命令");
+    void handsAndDashStaySeparateAtNarrowWidths() {
+        WeaponEquippedStore.putOrClear("main_hand",
+            new EquippedWeapon("main_hand", 1, "iron_sword", "sword", 80, 100, 0));
+        EquippedShieldStore.equip(new EquippedShield(2, "wooden_shield", 80, 100));
+        for (int width : new int[]{640, 320, 166}) {
+            var hands = WeaponHotbarHudPlanner.buildCommands(width, 180);
+            var dash = MovementHudPlanner.buildCommands(
+                com.bong.client.movement.MovementState.empty(), true, width, 180, 1_000);
+            assertEquals(List.of("iron_sword", "wooden_shield"),
+                hands.stream().filter(HudRenderCommand::isItemTexture).map(HudRenderCommand::text).toList());
+            for (var hand : hands) {
+                assertTrue(hand.x() >= 0 && hand.y() >= 0
+                    && hand.x() + hand.width() <= width && hand.y() + hand.height() <= 180,
+                    "双手 HUD 必须留在窗口内");
+                if (hand.isItemTexture()) assertEquals(hand.width(), hand.height(), "装备图标保持比例");
+                for (var movement : dash) {
+                    assertTrue(hand.x() + hand.width() <= movement.x()
+                        || movement.x() + movement.width() <= hand.x()
+                        || hand.y() + hand.height() <= movement.y()
+                        || movement.y() + movement.height() <= hand.y(), "窄窗口下 Dash 不能占用持械位");
+                }
             }
         }
+        assertTrue(WeaponHotbarHudPlanner.buildCommands(80, 60).isEmpty(), "极小窗口不应输出越界槽位");
     }
 
-    @Test
-    void weaponToToolToUnequippedTransitionClearsCombatHudImmediately() {
-        WeaponEquippedStore.putOrClear(
-            "main_hand",
-            new EquippedWeapon("main_hand", 41L, "iron_sword", "sword", 100.0f, 100.0f, 0)
-        );
-        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).stream()
-                .anyMatch(command -> command.isText() && "剑".equals(command.text())),
-            "前置战斗武器必须可见，测试才覆盖真实切换状态");
-
-        WeaponEquippedStore.putOrClear(
-            "main_hand",
-            new EquippedWeapon("main_hand", 42L, "tool_mining_pickaxe", "tool", 100.0f, 100.0f, 0)
-        );
-        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).isEmpty(),
-            "切换到 tool 的首帧就必须移除旧武器 glyph、边框和耐久条");
-
-        WeaponEquippedStore.putOrClear("main_hand", null);
-        assertTrue(WeaponHotbarHudPlanner.buildCommands(SCREEN_W, SCREEN_H).isEmpty(),
-            "卸下 tool 后必须保持战斗 HUD 为空，不得复活更早的武器快照");
+    private static List<String> icons() {
+        return WeaponHotbarHudPlanner.buildCommands(800, 600).stream()
+            .filter(HudRenderCommand::isItemTexture).map(HudRenderCommand::text).toList();
     }
 }

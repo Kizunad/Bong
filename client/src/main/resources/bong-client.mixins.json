@@ -21,6 +21,7 @@
     "MixinHeldItemRenderer",
     "MixinInGameHudRealmVignette",
     "MixinKeyboardSkillKeys",
+    "MixinLabelComponent",
     "MixinInGameHud",
     "MixinMinecraftClient",
     "MixinMorphedPlayerRenderer",

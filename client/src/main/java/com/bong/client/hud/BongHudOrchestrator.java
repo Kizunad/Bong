@@ -3,6 +3,7 @@ package com.bong.client.hud;
 import com.bong.client.BongClientFeatures;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
+import com.bong.client.gathering.GatheringSessionStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogHudPlanner;
@@ -355,7 +356,7 @@ public final class BongHudOrchestrator {
                 screenHeight
             ));
             commands.addAll(MovementHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(StatusEffectHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis, widthMeasurer));
             commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
@@ -399,6 +400,7 @@ public final class BongHudOrchestrator {
             ));
         }
         commands.addAll(GatheringProgressHud.buildCommands(
+            GatheringSessionStore.presentation(),
             widthMeasurer,
             screenWidth,
             screenHeight,

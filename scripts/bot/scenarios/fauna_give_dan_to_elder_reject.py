@@ -31,11 +31,13 @@ from ._combat_helpers import last_event_time, queue_passive_target
 from ._inventory_helpers import (
     give_inventory_revision_barrier,
     require_item,
+    wait_inventory_revision_after,
     wait_join_and_inventory,
 )
 from ._rejection_helpers import (
     ProtocolFence,
     advance_combat_clock_with_action_acks,
+    drain_event_stream,
     settled_server_data_protocol_fence,
     server_data_protocol_fence,
     wait_for_join_sync,
@@ -65,11 +67,16 @@ TSY_ZONE_CENTERS = {
 }
 TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
 
-
 def run(env) -> None:
     with env.new_bot("DhH") as bot:
         snapshot = wait_join_and_inventory(bot)
         wait_for_join_sync(bot)
+        # 起手物品会随玩法迭代增加；拒收测试自己腾出空间，避免 give 因满包失败。
+        bot.cmd("clearinv all")
+        bot.expect_chat("[dev] clearinv PackAndHotbar", timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        # inventory_snapshot 不是 JOIN 同步的末包，先排空迟到的 tribulation_state 等。
+        drain_event_stream(bot)
         bot.enable_ambient_server_data_isolation()
         # 1. instance_id 不在背包 → 背包中未找到该回元丹。
         _assert_rejected_request(

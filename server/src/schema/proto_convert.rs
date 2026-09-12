@@ -1177,11 +1177,22 @@ impl From<&ServerDataPayloadV1> for Payload {
                 final_words,
                 epilogue,
                 archetype_suggestion,
+                summary,
             } => Payload::TerminateScreen(bong::TerminateScreen {
                 visible: *visible,
                 final_words: final_words.clone(),
                 epilogue: epilogue.clone(),
                 archetype_suggestion: archetype_suggestion.clone(),
+                summary: summary.as_ref().map(|summary| bong::TerminationSummary {
+                    character_name: summary.character_name.clone(),
+                    realm: summary.realm.clone(),
+                    death_count: summary.death_count,
+                    years_lived: summary.years_lived,
+                    qi_max: summary.qi_max,
+                    health_max: summary.health_max,
+                    meridians_open: summary.meridians_open,
+                    techniques_learned: summary.techniques_learned,
+                }),
             }),
             ServerDataPayloadV1::RiftPortalState(s) => {
                 Payload::RiftPortalState(bong::RiftPortalState {
@@ -3076,6 +3087,7 @@ fn movement_state_to_proto(s: &super::movement::MovementStateV1) -> bong::Moveme
         movement_action: movement_action_to_proto(&s.movement_action),
         zone_kind: movement_zone_kind_to_proto(&s.zone_kind),
         dash_cooldown_remaining_ticks: s.dash_cooldown_remaining_ticks,
+        dash_cooldown_total_ticks: s.dash_cooldown_total_ticks,
         hitbox_height_blocks: s.hitbox_height_blocks,
         stamina_current: s.stamina_current,
         stamina_max: s.stamina_max,

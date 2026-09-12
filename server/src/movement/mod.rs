@@ -115,6 +115,7 @@ pub struct MovementState {
     pub dash_drive_x: f32,
     pub dash_drive_z: f32,
     pub dash_ready_at_tick: u64,
+    pub dash_cooldown_total_ticks: u64,
     pub dash_attack_bonus_until_tick: u64,
     pub hitbox_height_blocks: f32,
     pub last_grounded: bool,
@@ -134,6 +135,7 @@ impl Default for MovementState {
             dash_drive_x: 0.0,
             dash_drive_z: 0.0,
             dash_ready_at_tick: 0,
+            dash_cooldown_total_ticks: 0,
             dash_attack_bonus_until_tick: 0,
             hitbox_height_blocks: 1.8,
             last_grounded: true,
@@ -373,8 +375,7 @@ fn handle_movement_action_intents(
         let mut velocity = velocity;
         let dash_proficiency = known_techniques
             .as_deref()
-            .map(dash_proficiency::known_dash_proficiency)
-            .unwrap_or_default();
+            .and_then(dash_proficiency::known_dash_proficiency);
 
         // plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 腿伤移动限速判定改为按
         // 本实体解析出的 BodyPlan 分发，不再固定读 `humanoid_plan_static()`；查询带
@@ -416,6 +417,8 @@ fn handle_movement_action_intents(
             continue;
         }
 
+        let dash_proficiency =
+            dash_proficiency.expect("accepted dash requires an active technique");
         movement.rejected_action = None;
         movement.stamina_cost_active = true;
         movement.last_action_tick = Some(now);
@@ -443,11 +446,10 @@ fn handle_movement_action_intents(
                 apply_dash_drive(&mut client, velocity.as_deref_mut(), vx, vz);
                 movement.action = MovementAction::Dashing;
                 movement.active_until_tick = now.saturating_add(DASH_DURATION_TICKS);
-                movement.dash_ready_at_tick = now.saturating_add(dash_cooldown_for_runtime(
-                    realm,
-                    dash_proficiency,
-                    &movement,
-                ));
+                movement.dash_cooldown_total_ticks =
+                    dash_cooldown_for_runtime(realm, dash_proficiency, &movement);
+                movement.dash_ready_at_tick =
+                    now.saturating_add(movement.dash_cooldown_total_ticks);
                 movement.dash_attack_bonus_until_tick =
                     now.saturating_add(DASH_ATTACK_BONUS_WINDOW_TICKS);
             }
@@ -605,6 +607,7 @@ impl MovementState {
             movement_action: self.action.into(),
             zone_kind: self.zone_kind.into(),
             dash_cooldown_remaining_ticks: self.dash_ready_at_tick.saturating_sub(now_tick),
+            dash_cooldown_total_ticks: self.dash_cooldown_total_ticks,
             hitbox_height_blocks: self.hitbox_height_blocks,
             stamina_current,
             stamina_max,
@@ -622,7 +625,7 @@ impl MovementState {
 struct MovementRejectContext<'a> {
     movement: &'a MovementState,
     stamina: &'a Stamina,
-    dash_proficiency: f32,
+    dash_proficiency: Option<f32>,
     now: u64,
     active_knockback: Option<&'a player_knockback::ActivePlayerKnockback>,
     leg_wound_factor: f32,
@@ -634,6 +637,9 @@ fn reject_reason(action: MovementAction, ctx: MovementRejectContext<'_>) -> Opti
     if action == MovementAction::None {
         return Some("none_action".to_string());
     }
+    let Some(dash_proficiency) = ctx.dash_proficiency else {
+        return Some("dash_not_learned_or_inactive".to_string());
+    };
     if ctx
         .active_knockback
         .is_some_and(player_knockback::ActivePlayerKnockback::is_displacing)
@@ -643,7 +649,7 @@ fn reject_reason(action: MovementAction, ctx: MovementRejectContext<'_>) -> Opti
     if ctx.stamina.current <= 0.0 {
         return Some("stamina_depleted".to_string());
     }
-    let cost = movement_action_cost_with_proficiency(action, ctx.dash_proficiency);
+    let cost = movement_action_cost_with_proficiency(action, dash_proficiency);
     if ctx.stamina.current < cost {
         return Some("stamina_insufficient".to_string());
     }
@@ -1107,6 +1113,118 @@ mod tests {
             (actual - expected).abs() < 1e-5,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn birth_scroll_unlocks_dash_without_input_granting_it() {
+        use crate::cultivation::components::MeridianSystem;
+        use crate::cultivation::known_techniques::TechniqueRegistry;
+        use crate::cultivation::technique_scroll::{
+            read_combat_technique_scroll, ScrollReadOutcome,
+        };
+
+        let registry = TechniqueRegistry::load_for_tests();
+        let items = crate::inventory::load_item_registry().unwrap();
+        let loadout = crate::inventory::load_default_loadout(&items).unwrap();
+        let scrolls: Vec<_> = loadout
+            .containers
+            .iter()
+            .flat_map(|container| &container.items)
+            .filter(|item| item.instance.template_id == "scroll_technique_movement_dash")
+            .collect();
+        assert_eq!(scrolls.len(), 1, "每次新角色出生只发一张身法卷轴");
+        let scroll = items.get(&scrolls[0].instance.template_id).unwrap();
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock::default());
+        app.add_event::<MovementActionIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, handle_movement_action_intents);
+        let (bundle, _helper) = create_mock_client("DashScroll");
+        let player = app
+            .world_mut()
+            .spawn((bundle, MovementState::default(), Stamina::default()))
+            .id();
+        let send_dash = |app: &mut App| {
+            app.world_mut().send_event(MovementActionIntent {
+                entity: player,
+                action: MovementAction::Dashing,
+                yaw_degrees: Some(0.0),
+            });
+            app.update();
+        };
+        let stamina_before = app.world().get::<Stamina>(player).unwrap().current;
+        send_dash(&mut app);
+        assert!(app.world().get::<KnownTechniques>(player).is_none());
+        let initial_known = KnownTechniques::progression_reset(&registry);
+        assert_eq!(
+            dash_proficiency::known_dash_proficiency(&initial_known),
+            None,
+            "开发和正常出生都必须先学身法"
+        );
+        app.world_mut().entity_mut(player).insert(initial_known);
+        send_dash(&mut app);
+        assert_eq!(
+            app.world().get::<MovementState>(player).unwrap().action,
+            MovementAction::None
+        );
+        assert_eq!(
+            app.world().get::<Stamina>(player).unwrap().current,
+            stamina_before,
+            "未学请求不能扣体力"
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementState>(player)
+                .unwrap()
+                .rejected_action,
+            Some(MovementActionRequestV1::Dash)
+        );
+
+        let outcome = read_combat_technique_scroll(
+            &registry,
+            &mut app.world_mut().get_mut::<KnownTechniques>(player).unwrap(),
+            &Cultivation::default(),
+            &MeridianSystem::default(),
+            None,
+            scroll,
+            true,
+            None,
+        );
+        assert_eq!(outcome, ScrollReadOutcome::Learned);
+        let known = app.world().get::<KnownTechniques>(player).unwrap().clone();
+        let dash_index = known
+            .entries
+            .iter()
+            .position(|entry| entry.id == dash_proficiency::DASH_TECHNIQUE_ID)
+            .unwrap();
+        app.world_mut()
+            .get_mut::<KnownTechniques>(player)
+            .unwrap()
+            .entries[dash_index]
+            .active = false;
+        send_dash(&mut app);
+        assert_eq!(
+            app.world().get::<Stamina>(player).unwrap().current,
+            stamina_before,
+            "停用身法也不能扣体力或执行位移"
+        );
+        app.world_mut().entity_mut(player).insert(known);
+        send_dash(&mut app);
+        let movement = app.world().get::<MovementState>(player).unwrap();
+        assert_eq!(
+            movement.action,
+            MovementAction::Dashing,
+            "学会后同一个请求应执行身法"
+        );
+        assert!(app.world().get::<Stamina>(player).unwrap().current < stamina_before);
+        let payload = movement.to_payload(0, None);
+        assert_eq!(
+            payload.dash_cooldown_total_ticks, payload.dash_cooldown_remaining_ticks,
+            "启动时同步本次完整冷却，客户端不再写死 40 tick"
+        );
+        assert!(payload.dash_cooldown_total_ticks > 0);
     }
 
     #[test]

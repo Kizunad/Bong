@@ -14953,6 +14953,47 @@
         },
         "archetype_suggestion": {
           "type": "string"
+        },
+        "summary": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "character_name",
+            "realm",
+            "death_count"
+          ],
+          "properties": {
+            "character_name": {
+              "type": "string"
+            },
+            "realm": {
+              "type": "string"
+            },
+            "death_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "years_lived": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "qi_max": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "health_max": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "meridians_open": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "techniques_learned": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -17105,6 +17146,7 @@
         "movement_action",
         "zone_kind",
         "dash_cooldown_remaining_ticks",
+        "dash_cooldown_total_ticks",
         "hitbox_height_blocks",
         "stamina_current",
         "stamina_max",
@@ -17159,6 +17201,10 @@
           ]
         },
         "dash_cooldown_remaining_ticks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dash_cooldown_total_ticks": {
           "minimum": 0,
           "type": "integer"
         },
@@ -20375,5 +20421,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "0f8e15b7e76e50fea090fb1a6d2a271c4572b338b1a75623fea6ecabce2216bb"
+  "x-bong-typebox-source-sha256": "4b9abd66ca289c4485c40d34d0fcf96607a598fecafab879e300c530b8e047b7"
 }

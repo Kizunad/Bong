@@ -5,7 +5,7 @@
   推进 death_count，越过保底线后出 Tribulation 决策（can_terminate=true）——
   循环-直到-观察到，不依赖运势/业力初值。
 - Tribulation 决策下 `combat_terminate` → terminate_lifecycle("voluntary_retire")：
-  terminate_screen visible=true（final_words/epilogue 非空）+ death_screen
+  terminate_screen visible=true（终结摘要与结语）+ death_screen
   visible=false 收屏，连接保持（Terminated 后仍可继续操作）。
 """
 
@@ -39,10 +39,15 @@ def run(env) -> None:
         anchor = last_event_time(bot)
         bot.intent({"type": "combat_terminate", "v": 1})
         terminal = wait_terminate_screen(bot, visible=True, after=anchor)
-        if not terminal.get("final_words") or not terminal.get("epilogue"):
+        if not terminal.get("epilogue"):
             raise AssertionError(
-                f"终结屏应带 final_words/epilogue，实际 payload={terminal}"
+                f"终结屏应带结语，实际 payload={terminal}"
             )
+        summary = terminal.get("summary") or {}
+        if (summary.get("character_name") != bot.username
+                or summary.get("death_count") != tribulation.get("death_number")
+                or summary.get("health_max") is None):
+            raise AssertionError(f"终结屏必须展示当前角色的终局属性，实际 {summary}")
         hidden = wait_death_screen_hidden(bot, anchor)
         if hidden.get("visible") is not False:
             raise AssertionError(f"期望死亡屏收屏 visible=false，实际 {hidden}")

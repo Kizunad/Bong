@@ -1,5 +1,5 @@
 use crate::cultivation::components::MeridianId;
-use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 
 pub const DASH_TECHNIQUE_ID: &str = "movement.dash";
@@ -16,21 +16,24 @@ pub fn dash_distance(proficiency: f32) -> f32 {
     2.8 + normalized(proficiency)
 }
 
-pub fn known_dash_proficiency(known: &KnownTechniques) -> f32 {
+pub fn known_dash_proficiency(known: &KnownTechniques) -> Option<f32> {
     known
         .entries
         .iter()
         .find(|entry| entry.id == DASH_TECHNIQUE_ID && entry.active)
-        .map(|entry| entry.proficiency)
-        .unwrap_or_default()
-        .clamp(0.0, 1.0)
+        .map(|entry| entry.proficiency.clamp(0.0, 1.0))
 }
 
-pub fn record_dash_use(known: &mut KnownTechniques, in_combat: bool, iframe_success: bool) -> f32 {
-    let entry = ensure_dash_entry(known);
+pub fn record_dash_use(known: &mut KnownTechniques, in_combat: bool, iframe_success: bool) {
+    let Some(entry) = known
+        .entries
+        .iter_mut()
+        .find(|entry| entry.id == DASH_TECHNIQUE_ID && entry.active)
+    else {
+        return;
+    };
     let gain = dash_proficiency_gain(entry.proficiency, in_combat, iframe_success);
     entry.proficiency = (entry.proficiency + gain).clamp(0.0, 1.0);
-    entry.proficiency
 }
 
 pub fn dash_proficiency_gain(current: f32, in_combat: bool, iframe_success: bool) -> f32 {
@@ -50,25 +53,6 @@ pub fn declare_dash_meridian_dependencies(dependencies: &mut SkillMeridianDepend
             MeridianId::Gallbladder,
         ],
     );
-}
-
-fn ensure_dash_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
-    if let Some(index) = known
-        .entries
-        .iter()
-        .position(|entry| entry.id == DASH_TECHNIQUE_ID)
-    {
-        return &mut known.entries[index];
-    }
-    known.entries.push(KnownTechnique {
-        id: DASH_TECHNIQUE_ID.to_string(),
-        proficiency: 0.0,
-        active: true,
-    });
-    known
-        .entries
-        .last_mut()
-        .expect("dash entry was just inserted")
 }
 
 fn normalized(proficiency: f32) -> f32 {
@@ -100,13 +84,22 @@ mod tests {
     }
 
     #[test]
-    fn record_dash_use_creates_birth_technique_entry() {
+    fn practice_never_grants_or_reactivates_dash() {
         let mut known = KnownTechniques::default();
-        let after = record_dash_use(&mut known, false, false);
-
-        assert_eq!(after, 0.005);
-        assert_eq!(known.entries.len(), 1);
-        assert_eq!(known.entries[0].id, DASH_TECHNIQUE_ID);
-        assert!(known.entries[0].active);
+        record_dash_use(&mut known, false, false);
+        assert!(known.entries.is_empty(), "使用不能绕过卷轴授予身法");
+        known
+            .entries
+            .push(crate::cultivation::known_techniques::KnownTechnique {
+                id: DASH_TECHNIQUE_ID.into(),
+                proficiency: 0.0,
+                active: false,
+            });
+        record_dash_use(&mut known, false, false);
+        assert_eq!(known_dash_proficiency(&known), None);
+        assert_eq!(known.entries[0].proficiency, 0.0);
+        known.entries[0].active = true;
+        record_dash_use(&mut known, false, false);
+        assert_eq!(known_dash_proficiency(&known), Some(0.005));
     }
 }

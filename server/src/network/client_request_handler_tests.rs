@@ -10062,6 +10062,53 @@ mod external_ingress_tests {
         }
 
         #[test]
+        fn starter_dash_scroll_can_be_identified_and_learned_from_inventory() {
+            let mut app = production_scroll_request_app();
+            let (client_bundle, _helper) = create_mock_client("DashReader");
+            let item = skill_scroll_item(42, "scroll_technique_movement_dash");
+            let view = crate::network::inventory_snapshot_emit::item_view_from_instance(&item);
+            assert_eq!(
+                view.scroll_kind.as_deref(),
+                Some("combat_technique"),
+                "背包必须标明功法卷轴，否则客户端不会显示研读入口"
+            );
+            assert_eq!(view.scroll_skill_id.as_deref(), Some("movement.dash"));
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory_with_skill_scroll(item),
+                    KnownTechniques::default(),
+                    Cultivation::default(),
+                    MeridianSystem::default(),
+                    PlayerState::default(),
+                    QuickSlotBindings::default(),
+                    UnlockedStyles::default(),
+                ))
+                .id();
+            send_technique_scroll_use(&mut app, entity, view.instance_id);
+            app.update();
+            assert!(
+                app.world()
+                    .get::<KnownTechniques>(entity)
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == "movement.dash"),
+                "初生玩家应能研读初始残页"
+            );
+            assert!(
+                app.world()
+                    .get::<PlayerInventory>(entity)
+                    .unwrap()
+                    .containers[0]
+                    .items
+                    .is_empty(),
+                "研读成功后残页应被消耗"
+            );
+        }
+
+        #[test]
         fn technique_scroll_realm_too_low_emits_structured_rejection() {
             // central-review 2012 #3 回归：fresh Awaken 用 sword.infuse（required
             // realm=Induce）→ RealmTooLow 拒绝，必须下发 InventoryMoveRejectedV1

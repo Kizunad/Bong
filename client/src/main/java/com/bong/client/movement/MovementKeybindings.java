@@ -49,7 +49,7 @@ public final class MovementKeybindings {
         ClientRequestProtocol.MovementAction action = ROUTER.route(
             dashTapped
         );
-        if (action != null) {
+        if (action != null && DashSkill.learned()) {
             ClientRequestSender.sendMovementAction(action, dashYawDegrees(client));
         }
     }

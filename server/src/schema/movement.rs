@@ -30,6 +30,7 @@ pub struct MovementStateV1 {
     pub movement_action: MovementActionV1,
     pub zone_kind: MovementZoneKindV1,
     pub dash_cooldown_remaining_ticks: u64,
+    pub dash_cooldown_total_ticks: u64,
     pub hitbox_height_blocks: f32,
     pub stamina_current: f32,
     pub stamina_max: f32,
