@@ -1798,7 +1798,7 @@ fn bait_stake_breaks_after_four_attacks_and_emits_break_vfx() {
 #[test]
 fn trap_runtime_audio_recipes_are_pinned() {
     let beast: serde_json::Value = serde_json::from_str(include_str!(
-        "../../assets/audio/recipes/beast_trap_snap.json"
+        "../../../assets/audio/recipes/beast_trap_snap.json"
     ))
     .expect("beast_trap_snap audio recipe must parse");
     assert_eq!(beast["id"], "beast_trap_snap");
@@ -1808,7 +1808,7 @@ fn trap_runtime_audio_recipes_are_pinned() {
     assert_eq!(beast["bus"], "COMBAT");
 
     let trip: serde_json::Value = serde_json::from_str(include_str!(
-        "../../assets/audio/recipes/trip_wire_trigger.json"
+        "../../../assets/audio/recipes/trip_wire_trigger.json"
     ))
     .expect("trip_wire_trigger audio recipe must parse");
     assert_eq!(trip["id"], "trip_wire_trigger");
@@ -1821,7 +1821,7 @@ fn trap_runtime_audio_recipes_are_pinned() {
     assert_eq!(trip["bus"], "ENVIRONMENT");
 
     let bait: serde_json::Value = serde_json::from_str(include_str!(
-        "../../assets/audio/recipes/bait_stake_break.json"
+        "../../../assets/audio/recipes/bait_stake_break.json"
     ))
     .expect("bait_stake_break audio recipe must parse");
     assert_eq!(bait["id"], "bait_stake_break");
