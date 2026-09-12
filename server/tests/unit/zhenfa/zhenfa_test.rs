@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use bong_server::combat::components::*;
 use bong_server::combat::events::*;
 use bong_server::combat::CombatClock;
-use bong_server::cultivation::color::{PracticeLog, STYLE_PRACTICE_AMOUNT};
+use bong_server::cultivation::color::PracticeLog;
 use bong_server::cultivation::components::*;
 use bong_server::cultivation::insight_apply::InsightModifiers;
 use bong_server::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -17,19 +17,19 @@ use bong_server::network::gameplay_vfx;
 use bong_server::network::vfx_event_emit::VfxEventRequest;
 use bong_server::npc::spawn::DecoyTarget;
 use bong_server::player::gameplay::PendingGameplayNarrations;
+use bong_server::player::state::canonical_player_id;
 use bong_server::qi_physics::constants::*;
 use bong_server::qi_physics::*;
-use bong_server::schema::common::{NarrationScope, NarrationStyle};
-use bong_server::schema::realm_vision::SenseKindV1;
+use bong_server::schema::common::NarrationStyle;
 use bong_server::schema::social::RelationshipKindV1;
-use bong_server::social::components::{Relationship, Relationships, Renown};
+use bong_server::social::components::{Relationships, Renown};
 use bong_server::world::dimension::OverworldLayer;
 use bong_server::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use bong_server::zhenfa::trap_content;
 use bong_server::zhenfa::*;
 use valence::prelude::{
-    App, BlockPos, BlockState, ChunkLayer, DVec3, Entity, Events, Position, PropName, PropValue,
-    UniqueId, UnloadedChunk, Username,
+    App, BlockPos, BlockState, ChunkLayer, Entity, Events, Position, PropName, PropValue, UniqueId,
+    UnloadedChunk, Username,
 };
 use valence::testing::ScenarioSingleClient;
 
@@ -46,11 +46,13 @@ const DECEIVE_HEAVEN_SPIRITWOOD_COST: u32 = 2;
 const DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID: &str = "yi_shou_gu";
 const DECEIVE_HEAVEN_BEAST_BONE_COST: u32 = 4;
 const DECEIVE_HEAVEN_BONE_COIN_COST: u64 = 10;
+const ANIM_RUNE_DRAW: &str = "bong:rune_draw";
+const COMBAT_PRIORITY: u16 = 1000;
 
 fn add_zhenfa_test_support(app: &mut App) {
     app.insert_resource(CombatClock::default());
     app.insert_resource(PendingGameplayNarrations::default());
-    register(app);
+    bong_server::zhenfa::register(app);
     // register() owns the zhenfa runtime events; these four are consumed by
     // optional combat/feedback branches exercised by the public test contract.
     app.add_event::<JueBiTriggerEvent>();
@@ -401,9 +403,7 @@ fn drain_rune_draw_anims(app: &mut App) -> Vec<(String, u16)> {
                 anim_id,
                 priority,
                 ..
-            } if anim_id == bong_server::network::vfx_animation_trigger::ANIM_RUNE_DRAW => {
-                Some((target_player, priority))
-            }
+            } if anim_id == ANIM_RUNE_DRAW => Some((target_player, priority)),
             _ => None,
         })
         .collect()
@@ -757,7 +757,7 @@ fn non_lingju_place_does_not_emit_lingju_feedback() {
         vfx.iter().any(|request| matches!(
             &request.payload,
             bong_server::schema::vfx_event::VfxEventPayloadV1::PlayAnim { anim_id, .. }
-                if anim_id == bong_server::network::vfx_animation_trigger::ANIM_RUNE_DRAW
+                    if anim_id == ANIM_RUNE_DRAW
         )),
         "expected rune_draw PlayAnim on successful non-Lingju place \
          (plan-skill-av-relink-v1 P1), got {vfx:?}"
@@ -960,8 +960,7 @@ fn trap_place_success_emits_rune_draw_animation_for_owner() {
         "rune_draw 应发给落阵者本人（target_player = owner uuid）"
     );
     assert_eq!(
-        anims[0].1,
-        bong_server::network::vfx_animation_trigger::COMBAT_PRIORITY,
+        anims[0].1, COMBAT_PRIORITY,
         "rune_draw 优先级应为战斗动作档"
     );
 }
