@@ -110,7 +110,11 @@ fn block_pos_from_array(pos: [i32; 3]) -> BlockPos {
 fn layer_block_state(app: &App, layer_entity: Entity, pos: [i32; 3]) -> Option<BlockState> {
     app.world()
         .get::<ChunkLayer>(layer_entity)
-        .and_then(|layer| layer.block(block_pos_from_array(pos)).map(|block| block.state))
+        .and_then(|layer| {
+            layer
+                .block(block_pos_from_array(pos))
+                .map(|block| block.state)
+        })
 }
 
 fn spawn_player(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
@@ -469,7 +473,6 @@ fn send_bait_attack(app: &mut App, attacker: Entity, target: Entity, tick: u64) 
     });
 }
 
-
 #[test]
 fn lingju_tick_applies_cap_bonus_inside_radius_only() {
     let mut app = app_with_loaded_zhenfa();
@@ -493,8 +496,7 @@ fn lingju_tick_applies_cap_bonus_inside_radius_only() {
     app.update();
 
     assert!(
-        (plot_cap(&mut app, [20, 64, 0]) - (PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS))
-            .abs()
+        (plot_cap(&mut app, [20, 64, 0]) - (PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS)).abs()
             < 1e-6,
         "恰好在 Lingju 半径边缘的 plot 应获得 +QI_LINGJU_ARRAY_CAP_BONUS cap"
     );
