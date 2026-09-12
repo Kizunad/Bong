@@ -1735,7 +1735,10 @@ where
 fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
-    mut clients: Query<(Entity, &mut Client, &Username, &Position), AmbientServerDataClientFilter>,
+    mut clients: ParamSet<(
+        AmbientServerDataClientQuery<'_, '_>,
+        AllClientPositionQuery<'_, '_>,
+    )>,
     audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
 ) {
     let Some(mut gameplay_narrations) = gameplay_narrations else {
@@ -3175,18 +3178,35 @@ fn write_world_model_runtime_mirror(
 }
 
 fn process_agent_narrations(
-    clients: &mut Query<(Entity, &mut Client, &Username, &Position), AmbientServerDataClientFilter>,
+    clients: &mut ParamSet<(
+        AmbientServerDataClientQuery<'_, '_>,
+        AllClientPositionQuery<'_, '_>,
+    )>,
     zone_registry: Option<&ZoneRegistry>,
     mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
-        process_single_narration(
-            clients,
-            zone_registry,
-            audio_events.as_deref_mut(),
-            narration,
-        );
+        match narration.scope {
+            NarrationScope::Broadcast => {
+                let mut clients = clients.p0();
+                process_single_narration(
+                    &mut clients,
+                    zone_registry,
+                    audio_events.as_deref_mut(),
+                    narration,
+                );
+            }
+            NarrationScope::Zone | NarrationScope::Player => {
+                let mut clients = clients.p1();
+                process_single_narration(
+                    &mut clients,
+                    zone_registry,
+                    audio_events.as_deref_mut(),
+                    narration,
+                );
+            }
+        }
     }
 }
 

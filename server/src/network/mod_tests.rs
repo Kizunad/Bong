@@ -2998,6 +2998,7 @@ mod gameplay_tests {
     use crate::schema::agent_world_model::{
         AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
     };
+    use crate::schema::common::NarrationStyle;
     use crate::skill::components::SkillId;
     use crate::world::events::ActiveEventsResource;
     use crossbeam_channel::{unbounded, Receiver};
@@ -3152,6 +3153,53 @@ mod gameplay_tests {
             .iter()
             .filter(|payload| matches!(payload.payload, ServerDataPayloadV1::Narration { .. }))
             .collect()
+    }
+
+    #[test]
+    fn gameplay_player_narration_reaches_isolated_target() {
+        let (mut app, _rx_outbound) = setup_gameplay_app();
+        let (target, mut target_helper) = spawn_test_client_with_state(
+            &mut app,
+            "Azure",
+            [8.0, 66.0, 8.0],
+            PlayerState::default(),
+            Cultivation::default(),
+        );
+        let (_bystander, mut bystander_helper) = spawn_test_client_with_state(
+            &mut app,
+            "Bystander",
+            [18.0, 66.0, 18.0],
+            PlayerState::default(),
+            Cultivation::default(),
+        );
+        app.world_mut()
+            .entity_mut(target)
+            .insert(AmbientServerDataIsolation);
+
+        app.world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .push_player(
+                "Azure",
+                "战斗流程定向叙事仍应抵达。",
+                NarrationStyle::SystemWarning,
+            );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let target_all_payloads = collect_server_data_payloads(&mut target_helper);
+        let bystander_all_payloads = collect_server_data_payloads(&mut bystander_helper);
+        let target_payloads = extract_narration_payloads(target_all_payloads.as_slice());
+        let bystander_payloads = extract_narration_payloads(bystander_all_payloads.as_slice());
+        assert_eq!(
+            target_payloads.len(),
+            1,
+            "gameplay Player narration must reach its ambient-isolated target"
+        );
+        assert!(
+            bystander_payloads.is_empty(),
+            "gameplay Player narration must not leak to a bystander"
+        );
     }
 
     fn dequeue_world_state(rx_outbound: &Receiver<RedisOutbound>) -> WorldStateV1 {
