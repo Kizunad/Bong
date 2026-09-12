@@ -520,6 +520,14 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **契约分类与边界**：89 条均依赖 `alchemy::pill` 同 crate 私有丹药规格、消费/毒性/伤口处理与内部 fixture 装配；外置为 integration test 会把实现私有项固化为生产 API，故全部留 B 类。测试名、断言、边界、错误语义和 fixture 不改；不碰丹药生产逻辑、事件/wire、schema、client、agent、`qi_physics` 或任何守恒路径。
 - **迁移对拍与 seam**：迁移前真实 `alchemy::pill::tests::` 列表命中 `89 tests`，迁移后定向运行 `89 passed / 0 failed / 0 ignored`，异步属性口径一并计入；生产前缀逐字一致，零新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` seam。本条仅记录 P2-29 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
 
+### P2-30 zhenfa（✅ 2026-09-12）
+
+- **范围与落点**：仅处置 `server/src/zhenfa/mod.rs` 原 9,023 行内联测试；生产文件删除测试体并保留 `#[cfg(test)] #[path = "mod_tests.rs"] mod tests;` 挂载。53 条 A 类外置到 `server/tests/unit/zhenfa/zhenfa_test.rs`，并由 `server/Cargo.toml` 的 `zhenfa_unit` target 发现；34 条 B 类保留在 `server/src/zhenfa/mod_tests.rs`，未复制生产实现、未改变 zhenfa 运行时、事件、物品、区块写入或真元路径。
+- **A/B 分类与逐位守恒**：A 类 53 条验证公开 API 驱动的 ECS/IO、副作用、物品消费、区块写入、事件/VFX/narration、音频 recipe 等外部可观察契约；B 类 34 条依赖 `zhenfa` 同 crate 私有纯逻辑、私有 fixture 装配或内部 system 链，外置会迫使实现细节进入生产 API，具体逐条理由列于 PR body。迁移前用 `#[(test|tokio::test)]` 口径核得 87 条，迁移后 `cargo test --lib zhenfa::tests::` 为 34 passed、`cargo test --test zhenfa_unit` 为 53 passed，守恒式为 `53 + 34 = 87`；测试名、断言、错误/边界语义保持不变。
+- **fixture 与 seam**：外置测试中的音频 fixture 统一使用 `../../../assets/audio/recipes/...`，相对 `server/tests/unit/zhenfa/` 可正确解析；除新增 Cargo test target 与模块挂载外，没有新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam。既有生产 API、schema、wire、Redis、client、agent、`qi_physics` 与跨模块行为均未改动。
+- **验证与门禁**：无上下文只读 validator 绑定最终 HEAD `4d904e16ff8500f113a9a4eae65a4b61a2cea977` 并 PASS。随后紧邻执行 `git fetch origin && git merge origin/main`，输入 `origin/main=9ea621a400c34c9807cd11afdf2cbd6f6dbe24de`，结果 `Already up to date`；因此无需合并后代码复验。server 完整 gate 的 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 真实退出码均为 `0`；全量结果为 library `11929 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`，所有 integration targets 及 doc-tests 无失败（doc-tests `3 passed / 0 failed / 5 ignored`），其中 `zhenfa_unit` `53 passed / 0 failed / 0 ignored`、同 crate zhenfa `34 passed / 0 failed / 0 ignored`。
+- **提交与状态**：迁移及收口提交依次为 `ea5782c00`、`a43010d76`、`3d781559f`、`23ff15d9c`、`4d904e16f`，均带 `Model: gpt-5.6-luna`。本条仅记录 P2-30 进度；P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
