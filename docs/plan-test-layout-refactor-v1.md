@@ -183,6 +183,7 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **目标路径**：默认使用 `server/tests/unit/<module>_test.rs`，由 `server/src/lib.rs` 暴露的公开 API 驱动；只有外置会扭曲生产 API 的私有纯逻辑，才可保留独立 `server/src/**/tests.rs`。
 - **私有访问**：不得为迁移新增仅供测试调用的 public seam。已有 `#[doc(hidden)] pub` seam 必须在复审中标注其生产消费者；没有生产消费者且无法改为公开行为测试时，测试应移入独立 `tests.rs` 或被删除。
 - **验收**：迁移前后定向 `cargo test <filter>` 只用于确认构建发现和回归；验收依据是受保护契约仍被覆盖、删除项有分类理由，以及 server 完整 fmt/clippy/test 门禁通过，而不是测试数量或断言字面完全一致。
+- **规模状态复核（2026-09-13，非 P2 完成判据）**：当前已有 30 个 P2 批次标为 ✅；逐文件核对 `server/src` 仍有 713 个文件包含 `#[cfg(test)]`，剩余工作仍是数百文件量级，因此 P2 总体继续保持 `⏳`。当前未挂载 `#[path]` 且测试属性计数靠前的代表模块为：`player/state.rs` 78、`combat/woliu_v2/erosion.rs` 78、`combat/shield_block.rs` 78、`schema/server_data.rs` 77、`qi_physics/ledger.rs` 77、`npc/technique.rs` 73、`fauna/hybrid_beast.rs` 71、`cultivation/burst_meridian.rs` 70。数量仅作规模诊断，不能替代受保护契约分类与 P4 收口标准。
 
 ### P2-01 pseudo-vein runtime（✅ 2026-08-30）
 
@@ -493,32 +494,40 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **完整 server gate**：不包外层 flock，直接执行 `../scripts/build-token.sh cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`，三条真实 `PIPESTATUS[0]` 均为 `0`。完整测试库 `12010 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
 - **最新主线合入后复验**：紧邻执行 `git fetch origin && git merge origin/main`，以 `origin/main=3748d52a7` 为合并输入；`server/src/schema/client_request.rs` 的生产容量校验采用主线 `HOTBAR_SLOT_COUNT`，外置测试同步主线快捷栏边界内容，P2-23、P2-24、P2-25、P2-27 条目并列保留。合并后对拍仍为生产原测试 154 → 外置 154（含异步属性口径），17 个 `include_str!` 路径字符串逐字一致；直接经 `scripts/build-token.sh` 的 fmt/clippy/test 真实退出码均为 `0`，library `11990 passed / 0 failed`、全部 integration targets 与 doc-tests 通过。因主线已将实体 hotbar 容量改为 2，合并树同步修正 `dying_elder_tests.rs` 的测试夹具以将超出 hotbar 的丹放入既有容器检索路径，不改变生产逻辑。
 - **提交与验证证据**：代码迁移提交为 `9627b9d55bcd346283d5bc97d6f67da2548a56b0`（带 `Model: gpt-5.6-luna`）；紧邻执行 `git fetch origin && git merge origin/main`，基于 `origin/main=e52a991fdb26abe82e7fe66b68c31f42de9025ae` up-to-date。无上下文只读 validator 绑定完整 HEAD `9627b9d55bcd346283d5bc97d6f67da2548a56b0` 并 PASS（模型：`gpt-5.6-luna`）。P2 总体、P3、P4 仍未完成，plan 不归档。
-### P2-25 npc ambient scheduler（⏳ 2026-09-09）
+### P2-25 npc ambient scheduler（✅ 2026-09-13）
 
 - **范围与落点**：仅处置 `server/src/npc/spawn/ambient_scheduler.rs` 原 `#[cfg(test)] mod tests`（基线源文件 5,550 行、测试模块从 L1378 起）的 114 条测试；全部为 B 类，原样外置到同 crate 同目录 `server/src/npc/spawn/ambient_scheduler_tests.rs`，生产文件只保留 `#[cfg(test)] #[path = "ambient_scheduler_tests.rs"] mod tests;` 挂载。114 条均依赖 `ambient_scheduler` 的模块私有函数、枚举、结构体或同 crate ECS/qi 结算装配（如 `round_to_stride`、`resolve_ambient_ground_position`、`submit_ambient_spawn_candidate`、`settle_rat_recycle`、`settle_spider_recycle` 与私有测试所需的内部路径），外置为 integration test 会迫使非稳定实现细节进入生产 API，故不新增 A 类目标、不新增 Cargo `[[test]]` target。生产段无其它 `#[cfg(test)]` helper/形参项，本批无项可保留。
 - **迁移对拍与筛选**：先执行完整列表 `cd server && ../scripts/build-token.sh cargo test --lib -- --list`，真实过滤器为 `npc::spawn::ambient_scheduler::tests::`，命中 114；迁移前 `cd server && ../scripts/build-token.sh cargo test --lib 'npc::spawn::ambient_scheduler::tests::'` 为 `114 passed / 0 failed / 0 ignored`，迁移后同过滤器仍为 `114 passed / 0 failed / 0 ignored`，包含全部测试属性（本批扫描到 114 个 `#[test]`，无异步测试属性遗漏）。测试名、函数顺序、断言、fixture、错误/边界行为逐位保持；初始错误过滤器未匹配到列表输出时未计入基线。
 - **源码锚点与 seam**：已复核 `ambient_scheduler.rs` 与 `server/src`、`server/tests`、`scripts`、`.github`，无 `include_str!` 读取该源码，也无其它源码文本消费者；没有新增/扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，未改生产逻辑、spawn 规则、调度节奏、事件、qi_physics、Cargo 或跨栈文件。对应代码提交 `930950617e7ffc3bf4a3cd7a4ba51c574280cf92`、格式修正提交 `e515b0758760580be89574fe2c18f3770b6bdbf8`，均带 `Model: gpt-5.6-luna`。代码/服务器输入 HEAD `6e5170d9be2282aad14a59b8b274e8e39b3a7b09` 已通过无上下文只读 validator（`PASS @ 6e5170d9be2282aad14a59b8b274e8e39b3a7b09`，模型 `gpt-5.6-luna`）：三文件范围、生产挂载、114 过滤命中、无 Cargo `[[test]]` target、无 seam 与源码消费者均核验通过。随后紧邻执行 `git fetch origin && git merge origin/main`，`origin/main=bb4b21dc8bf3c97c2afaad3d4b7bce01aa0fd353` 已是最新，代码输入 HEAD 未变；基于该代码输入 HEAD 执行无外层 flock 的完整 server gate——`cd server && ../scripts/build-token.sh cargo fmt --check`、`clippy --all-targets -- -D warnings`、`cargo test`——三条均 exit `0`，library `11988` 个测试及全部 integration targets、doc-tests 全部通过。之后的提交 `60fcaad10c404b28c21949afb6be74072068cbb5` 与 `999968af2ff368709d2cc2a24d3637fc1b9c1c2c` 仅更新本计划 evidence，不改变 server 输入；最终分支输入 HEAD `999968af2ff368709d2cc2a24d3637fc1b9c1c2c` 已重新通过无上下文只读 validator（模型 `gpt-5.6-luna`）及无外层 flock 的完整 server gate（fmt/clippy/test 均 exit `0`，library `11988` 个测试及全部 integration targets、doc-tests 全部通过）。本条仅记录 P2-25，P2 总体、P3、P4 仍未完成，plan 不归档。
 
-### P2-27 fauna dying_elder（⏳ 2026-09-09）
+- **2026-09-13 状态漂移复核**：当前生产文件 `server/src/npc/spawn/ambient_scheduler.rs:1378-1380` 只保留 `#[cfg(test)] #[path = "ambient_scheduler_tests.rs"] mod tests;`，落点 `server/src/npc/spawn/ambient_scheduler_tests.rs` 存在且有 114 个 `#[(test|tokio::test)]`；`git cat-file -e` 对两路径均成功。迁移提交 `930950617e7ffc3bf4a3cd7a4ba51c574280cf92` 的父版本基线同口径为 114，故 `A=0 + B=114 = 114`；`server/Cargo.toml` 无该批对应 `[[test]]` target，因无 A 类而非漏配，当前无状态 gap。
+
+### P2-27 fauna dying_elder（✅ 2026-09-13）
 
 - **范围与落点**：仅处置 `server/src/fauna/dying_elder.rs` 原 `#[cfg(test)] mod tests`（基线源文件 5,192 行、测试模块从 L1761 起）的 85 条测试；全部为 B 类，原样外置到同 crate 同目录 `server/src/fauna/dying_elder_tests.rs`，生产文件只保留 `#[cfg(test)] #[path = "dying_elder_tests.rs"] mod tests;` 挂载。不新增 `server/Cargo.toml` 的 `[[test]]` target。
 - **迁移对拍与筛选**：先执行 `cd server && ../scripts/build-token.sh cargo test --lib fauna::dying_elder::tests:: -- --list`，真实过滤器命中 `85 tests / 0 benchmarks`；迁移后 `cd server && ../scripts/build-token.sh cargo test --lib 'fauna::dying_elder::tests::'` 为 `85 passed / 0 failed / 0 ignored`。85 条普通 `#[test]` 均保留，测试名、函数顺序、断言、fixture、错误/边界行为逐位保持；未发现异步测试属性遗漏。
 - **源码消费者与生产边界**：已复核 `server/src`、`server/tests`、`scripts` 与 `docs`，没有 `include_str!` 读取 `dying_elder.rs`，也没有其它源码文本消费者；未改生产逻辑、事件、掉落/交互契约、qi_physics、schema、client、agent 或其它 plan。生产文件无测试体残留，仅保留挂载；无新增/扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam。
 - **提交与验证证据**：迁移提交 `b5b985569`、Rustfmt 收口提交 `cce4bf0e9`（均带 `Model: gpt-5.6-luna`）；在代码输入 HEAD `cce4bf0e91824b895508ff05983b63a304b3f163` 上，无上下文只读 validator PASS。随后执行 `git fetch origin && git merge origin/main`，当前 `origin/main=154705a3251eb3ebb396f29fc27787a905405524` 已是最新，Already up to date，无冲突。该代码输入 HEAD 的完整 server gate（直接经 `scripts/build-token.sh`，无外层 flock）三条均 exit 0：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；library `11987 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 integration targets 通过，doc-tests `3 passed / 0 failed / 5 ignored`。本条仅记录 P2-27，P2 其它模块、P3、P4 仍未完成，plan 不归档。
 
-### P2-28 fauna daozhan（⏳ 2026-09-09）
+- **2026-09-13 状态漂移复核**：当前生产文件 `server/src/fauna/dying_elder.rs:1759-1761` 只保留 `#[cfg(test)] #[path = "dying_elder_tests.rs"] mod tests;`，落点 `server/src/fauna/dying_elder_tests.rs` 存在且有 85 个 `#[(test|tokio::test)]`；`git cat-file -e` 对两路径均成功。迁移提交 `b5b985569c2acae63f5c8b10767051943aadf044` 的父版本基线同口径为 85，故 `A=0 + B=85 = 85`；`server/Cargo.toml` 无该批对应 `[[test]]` target，因无 A 类而非漏配，当前无状态 gap。
+
+### P2-28 fauna daozhan（✅ 2026-09-13）
 
 - **范围与落点**：仅将 `server/src/fauna/daozhan.rs` 原 `#[cfg(test)] mod tests` 的全部 79 个测试外置到同 crate 同目录 `server/src/fauna/daozhan_tests.rs`；生产文件现仅保留 `#[cfg(test)] #[path = "daozhan_tests.rs"] mod tests;` 挂载。全部测试均为 B 类，未新增 `server/Cargo.toml` 的 `[[test]]` target。
 - **迁移前后对拍与筛选**：迁移前先执行 `cd server && ../scripts/build-token.sh cargo test --lib -- --list`，从完整列表确认真实选择器为 `fauna::daozhan::tests::` 且命中 79 条；迁移前、迁移后均执行 `cd server && ../scripts/build-token.sh cargo test --lib 'fauna::daozhan::tests::'`，分别为 `79 passed / 0 failed / 0 ignored`。测试名序列差集为 0，原测试函数、断言、fixture、错误/边界语义与执行顺序保持不变；本批仅有普通 `#[test]`，无遗漏异步测试属性。
 - **B 类理由与 seam**：79 条测试均直接使用 `daozhan` 模块私有类型、函数、常量或同 crate Bevy/ECS 装配；外置到 integration crate 将迫使这些实现细节成为生产 API，故统一保留同 crate 路径。已核对该源码无 `include_str!` 或其它源码文本消费者；未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，未复制生产实现。
 - **生产边界**：未改道伥状态、伪装/伏击、掉落、天道凝结、死亡真元释放、事件、system 注册顺序、schema、wire、Redis、client、agent、qi_physics 或其它测试迁移范围；生产文件从 3,101 行收缩至测试挂载与生产实现共 1,335 行，测试体完整落在独立同 crate 文件。
 - **提交与后续状态**：代码迁移对应 `ce96346d9`（2026-09-09，带 `Model: gpt-5.6-luna`）；本条仅记录 P2-28 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
-### P2-29 alchemy/pill（⏳ 2026-09-09）
+- **2026-09-13 状态漂移复核**：当前生产文件 `server/src/fauna/daozhan.rs:1333-1335` 只保留 `#[cfg(test)] #[path = "daozhan_tests.rs"] mod tests;`，落点 `server/src/fauna/daozhan_tests.rs` 存在且有 79 个 `#[(test|tokio::test)]`；`git cat-file -e` 对两路径均成功。迁移提交 `ce96346d96469e3061af901f28dc673339d7083d` 的父版本基线同口径为 79，故 `A=0 + B=79 = 79`；`server/Cargo.toml` 无该批对应 `[[test]]` target，因无 A 类而非漏配，当前无状态 gap。
+
+### P2-29 alchemy/pill（✅ 2026-09-13）
 
 - **范围与落点**：仅处置 `server/src/alchemy/pill.rs` 原唯一 `#[cfg(test)] mod tests` 的 89 条测试；全部作为 B 类原样外置到同 crate 同目录 `server/src/alchemy/pill_tests.rs`，生产文件仅保留 `#[cfg(test)] #[path = "pill_tests.rs"] mod tests;` 挂载。不新增 `server/Cargo.toml` 的 `[[test]]` target，A 类为 0。
 - **`include_str!` 与源码消费者**：10 处既有 `include_str!` 全部留在同 crate 测试文件，宏参数逐字保留，因此相对生产源文件的路径深度不变；已复核 `server/src`、`server/tests`、`scripts`、`docs`，没有其它文件按 `pill.rs` 源码文本或挂载声明读取它。
 - **契约分类与边界**：89 条均依赖 `alchemy::pill` 同 crate 私有丹药规格、消费/毒性/伤口处理与内部 fixture 装配；外置为 integration test 会把实现私有项固化为生产 API，故全部留 B 类。测试名、断言、边界、错误语义和 fixture 不改；不碰丹药生产逻辑、事件/wire、schema、client、agent、`qi_physics` 或任何守恒路径。
 - **迁移对拍与 seam**：迁移前真实 `alchemy::pill::tests::` 列表命中 `89 tests`，迁移后定向运行 `89 passed / 0 failed / 0 ignored`，异步属性口径一并计入；生产前缀逐字一致，零新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` seam。本条仅记录 P2-29 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
+
+- **2026-09-13 状态漂移复核**：当前生产文件 `server/src/alchemy/pill.rs:1106-1108` 只保留 `#[cfg(test)] #[path = "pill_tests.rs"] mod tests;`，落点 `server/src/alchemy/pill_tests.rs` 存在且有 89 个 `#[(test|tokio::test)]`；`git cat-file -e` 对两路径均成功。迁移提交 `610d599893b398aeab6ae2e166fda93529d8be09` 的父版本基线同口径为 89，故 `A=0 + B=89 = 89`；`server/Cargo.toml` 无该批对应 `[[test]]` target，因无 A 类而非漏配，当前无状态 gap。
 
 ### P2-30 zhenfa（✅ 2026-09-12）
 
