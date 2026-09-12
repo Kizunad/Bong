@@ -3395,7 +3395,7 @@ fn normalize_life_record_target(value: &str) -> Option<String> {
 }
 
 fn process_single_narration<F: QueryFilter>(
-    clients: &mut Query<ClientPositionQueryItem, F>,
+    clients: &mut Query<(Entity, &mut Client, &Username, &Position), F>,
     zone_registry: Option<&ZoneRegistry>,
     mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narration: &crate::schema::narration::Narration,
@@ -3481,7 +3481,7 @@ fn narration_selector(
 }
 
 fn collect_routed_targets<F: QueryFilter>(
-    clients: &mut Query<ClientPositionQueryItem, F>,
+    clients: &mut Query<(Entity, &mut Client, &Username, &Position), F>,
     zone_registry: Option<&ZoneRegistry>,
     selector: &RecipientSelector,
 ) -> Vec<Entity> {
