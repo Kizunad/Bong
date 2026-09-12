@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use valence::prelude::{
-    Changed, Client, Entity, Or, ParamSet, Query, RemovedComponents, Username, With,
+    Changed, Client, Entity, Or, ParamSet, Query, RemovedComponents, Username, With, Without,
 };
 
 use crate::combat::components::DerivedAttrs;
@@ -15,7 +15,9 @@ use crate::cultivation::tribulation::TribulationState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::combat_hud::DerivedAttrsSyncV1;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
@@ -28,12 +30,13 @@ type DerivedAttrsEmitQueryItem<'a> = (
 );
 type DerivedAttrsEmitFilter = (
     With<Client>,
+    Without<crate::network::AmbientServerDataIsolation>,
     Or<(Changed<DerivedAttrs>, Changed<TribulationState>)>,
 );
 type DerivedAttrsEmitQuery<'w, 's> =
     Query<'w, 's, DerivedAttrsEmitQueryItem<'static>, DerivedAttrsEmitFilter>;
 type DerivedAttrsAnyClientQuery<'w, 's> =
-    Query<'w, 's, DerivedAttrsEmitQueryItem<'static>, With<Client>>;
+    Query<'w, 's, DerivedAttrsEmitQueryItem<'static>, AmbientServerDataClientFilter>;
 
 pub fn emit_derived_attrs_sync_payloads(
     mut clients: ParamSet<(

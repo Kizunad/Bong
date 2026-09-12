@@ -144,11 +144,12 @@ use big_brain::prelude::{ActionState, Actor};
 use chat_collector::{collect_player_chat, ChatCollectorRateLimit, ChatObservationClock};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
+use valence::prelude::bevy_ecs::query::QueryFilter;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
-    EventWriter, Events, IntoSystemConfigs, Or, Position, PostUpdate, Query, Res, ResMut, Resource,
-    Startup, Update, Username, With,
+    EventWriter, Events, IntoSystemConfigs, Or, ParamSet, Position, PostUpdate, Query, Res, ResMut,
+    Resource, Startup, Update, Username, With, Without,
 };
 
 use crate::combat::components::{Lifecycle, StatusEffects};
@@ -224,6 +225,29 @@ const NARRATION_DEDUPE_WINDOW_SECS: u64 = 15;
 const NARRATION_DEDUPE_CAPACITY: usize = 512;
 const WORLD_MODEL_RUNTIME_MIRROR_RECONCILE_INTERVAL_TICKS: u64 = 20 * 60 * 5;
 
+/// E2E-only per-connection capability: stop unsolicited `server_data` state broadcasts for
+/// this client while keeping request handlers free to emit their direct result.
+///
+/// The marker is installed only after the Bot has negotiated the explicitly opt-in
+/// `/ping ambient_isolation` command. It is deliberately a component rather than a global
+/// switch so the production `production_lingtian_gathering_intents` witness can keep its
+/// ordinary ambient stream on the same server.
+#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Default)]
+pub(crate) struct AmbientServerDataIsolation;
+
+/// Query filter shared by ambient/state producers. Request-specific emitters intentionally use
+/// their normal `With<Client>` filter so their direct result remains observable by the E2E Bot.
+pub(crate) type AmbientServerDataClientFilter = (With<Client>, Without<AmbientServerDataIsolation>);
+
+type ClientPositionQueryItem = (
+    Entity,
+    &'static mut Client,
+    &'static Username,
+    &'static Position,
+);
+type AmbientServerDataClientQuery<'w, 's> =
+    Query<'w, 's, ClientPositionQueryItem, AmbientServerDataClientFilter>;
+type AllClientPositionQuery<'w, 's> = Query<'w, 's, ClientPositionQueryItem, With<Client>>;
 type ClientLifeRecordQueryItem<'a> = (
     Option<&'a Username>,
     Option<&'a Lifecycle>,
@@ -1475,7 +1499,7 @@ fn publish_season_changed_events(
     zone_registry: Option<Res<ZoneRegistry>>,
     clock: Option<Res<CombatClock>>,
     terrain_providers: Option<Res<TerrainProviders>>,
-    mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
+    mut clients: Query<PlayerStateEmitQueryItem<'_>, AmbientServerDataClientFilter>,
 ) {
     let zone_registry = effective_zone_registry(zone_registry.as_deref());
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
@@ -1711,7 +1735,10 @@ where
 fn emit_gameplay_narrations(
     zone_registry: Option<Res<ZoneRegistry>>,
     gameplay_narrations: Option<valence::prelude::ResMut<PendingGameplayNarrations>>,
-    mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    mut clients: ParamSet<(
+        AmbientServerDataClientQuery<'_, '_>,
+        AllClientPositionQuery<'_, '_>,
+    )>,
     audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
 ) {
     let Some(mut gameplay_narrations) = gameplay_narrations else {
@@ -2255,6 +2282,7 @@ type PlayerStateEmitQueryItem<'a> = (
 
 type PlayerStateEmitQueryFilter = (
     With<Client>,
+    Without<AmbientServerDataIsolation>,
     Or<(
         Added<PlayerState>,
         Changed<PlayerState>,
@@ -2410,7 +2438,7 @@ type ZoneInfoClientItem<'a> = (
     Option<&'a Cultivation>,
     Option<&'a UnlockedPerceptions>,
 );
-type ZoneInfoClientFilter = With<Client>;
+type ZoneInfoClientFilter = AmbientServerDataClientFilter;
 
 fn emit_zone_info_on_zone_transition(
     zone_registry: Option<Res<ZoneRegistry>>,
@@ -2513,7 +2541,7 @@ fn has_zone_qi_inspect(
 
 fn emit_event_alerts_on_major_event_creation(
     mut active_events: Option<valence::prelude::ResMut<ActiveEventsResource>>,
-    mut clients: Query<(Entity, &mut Client), With<Client>>,
+    mut clients: Query<(Entity, &mut Client), AmbientServerDataClientFilter>,
     audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
 ) {
     let Some(active_events) = active_events.as_deref_mut() else {
@@ -2634,7 +2662,10 @@ fn major_event_alert_message(event_name: &str, zone_name: &str, duration_ticks: 
 fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
-    mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    mut clients: ParamSet<(
+        AmbientServerDataClientQuery<'_, '_>,
+        AllClientPositionQuery<'_, '_>,
+    )>,
     mut spirit_treasure_holders: Query<
         (&ActiveSpiritTreasures, Option<&mut StatusEffects>),
         With<Client>,
@@ -2715,6 +2746,7 @@ fn process_redis_inbound(
                     offer.choices.len()
                 );
                 let Some((entity, _, _, _)) = clients
+                    .p1()
                     .iter_mut()
                     .find(|(_, _, name, _)| name.0 == offer.character_id)
                 else {
@@ -2761,7 +2793,7 @@ fn process_redis_inbound(
                     offer.trigger_id,
                     offer.choices.len()
                 );
-                let Some((entity, _, _, _)) = clients.iter_mut().find(|(entity, _, _, _)| {
+                let Some((entity, _, _, _)) = clients.p1().iter_mut().find(|(entity, _, _, _)| {
                     let Some((entity_index, started_tick)) =
                         parse_heart_demon_trigger_id(&offer.trigger_id)
                     else {
@@ -2790,7 +2822,7 @@ fn process_redis_inbound(
                         dialogue,
                         zone_registry.as_deref(),
                         registry,
-                        &mut clients,
+                        &mut clients.p1(),
                         &mut spirit_treasure_holders,
                     );
                 }
@@ -3146,23 +3178,43 @@ fn write_world_model_runtime_mirror(
 }
 
 fn process_agent_narrations(
-    clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    clients: &mut ParamSet<(
+        AmbientServerDataClientQuery<'_, '_>,
+        AllClientPositionQuery<'_, '_>,
+    )>,
     zone_registry: Option<&ZoneRegistry>,
     mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narrations: &[crate::schema::narration::Narration],
 ) {
     for narration in narrations {
-        process_single_narration(
-            clients,
-            zone_registry,
-            audio_events.as_deref_mut(),
-            narration,
-        );
+        match narration.scope {
+            NarrationScope::Broadcast => {
+                let mut clients = clients.p0();
+                process_single_narration(
+                    &mut clients,
+                    zone_registry,
+                    audio_events.as_deref_mut(),
+                    narration,
+                );
+            }
+            NarrationScope::Zone | NarrationScope::Player => {
+                let mut clients = clients.p1();
+                process_single_narration(
+                    &mut clients,
+                    zone_registry,
+                    audio_events.as_deref_mut(),
+                    narration,
+                );
+            }
+        }
     }
 }
 
 fn process_agent_narrations_with_dedupe(
-    clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    clients: &mut ParamSet<(
+        AmbientServerDataClientQuery<'_, '_>,
+        AllClientPositionQuery<'_, '_>,
+    )>,
     zone_registry: Option<&ZoneRegistry>,
     narration_dedupe: &mut NarrationDedupeResource,
     life_records: &mut Query<ClientLifeRecordQueryItem<'_>, ClientLifeRecordQueryFilter>,
@@ -3182,12 +3234,26 @@ fn process_agent_narrations_with_dedupe(
         }
 
         archive_death_insight_narration(life_records, persistence_settings, narration);
-        process_single_narration(
-            clients,
-            zone_registry,
-            audio_events.as_deref_mut(),
-            narration,
-        );
+        match narration.scope {
+            NarrationScope::Broadcast => {
+                let mut clients = clients.p0();
+                process_single_narration(
+                    &mut clients,
+                    zone_registry,
+                    audio_events.as_deref_mut(),
+                    narration,
+                );
+            }
+            NarrationScope::Zone | NarrationScope::Player => {
+                let mut clients = clients.p1();
+                process_single_narration(
+                    &mut clients,
+                    zone_registry,
+                    audio_events.as_deref_mut(),
+                    narration,
+                );
+            }
+        }
     }
 }
 
@@ -3348,8 +3414,8 @@ fn normalize_life_record_target(value: &str) -> Option<String> {
     }
 }
 
-fn process_single_narration(
-    clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+fn process_single_narration<F: QueryFilter>(
+    clients: &mut Query<(Entity, &mut Client, &Username, &Position), F>,
     zone_registry: Option<&ZoneRegistry>,
     mut audio_events: Option<&mut Events<audio_event_emit::PlaySoundRecipeRequest>>,
     narration: &crate::schema::narration::Narration,
@@ -3434,8 +3500,8 @@ fn narration_selector(
     }
 }
 
-fn collect_routed_targets(
-    clients: &mut Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+fn collect_routed_targets<F: QueryFilter>(
+    clients: &mut Query<(Entity, &mut Client, &Username, &Position), F>,
     zone_registry: Option<&ZoneRegistry>,
     selector: &RecipientSelector,
 ) -> Vec<Entity> {
@@ -3502,7 +3568,10 @@ fn send_welcome_payload_on_join(mut joined_clients: Query<(Entity, &mut Client),
     }
 }
 
-fn process_bridge_messages(bridge: Res<NetworkBridgeResource>, mut clients: Query<&mut Client>) {
+fn process_bridge_messages(
+    bridge: Res<NetworkBridgeResource>,
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
+) {
     let payload = ServerDataV1::heartbeat(crate::schema::server_data::HEARTBEAT_MESSAGE);
     let payload_type = payload_type_label(payload.payload_type());
     let heartbeat_payload = match serialize_server_data_payload(&payload) {

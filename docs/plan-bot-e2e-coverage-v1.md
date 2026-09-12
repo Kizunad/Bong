@@ -22,7 +22,7 @@
 | P3 | 库存/物品：背包 intent、容器、装备、`/clearinv` 分支 | ✅ 2026-07-29 |
 | P4 | 生产系统：炼丹 / 锻造 / 制作 / 灵田 / 采集 | ✅ 2026-07-29 |
 | P5 | 多 bot 并发：可见性/共同 NPC/chat 隔离已落地；组队渡劫/贸易/Agent 回流待补 | ⏳ |
-| P6 | `bong:server_data` 零依赖 protobuf 深解码已落地；剩余 HUD oneof 全覆盖 | ⏳ |
+| P6 | `bong:server_data` 零依赖 protobuf 深解码与 oneof identity 覆盖 | ✅ 2026-09-10 |
 
 ## P0 — 框架 + 首批场景（本 PR）
 
@@ -79,18 +79,66 @@
 
 - **玩家可感知验收**：双 Bot 的交易、组队渡劫和聊天回流必须分别证明“发起方/接收方/旁观者”的可见范围；Tiandao 回流使用现有 `Narration` scope/style，至少锁定 player/zone 隔离和一条符合 §八语调的真实 narration，不以 server echo 冒充 Agent 输出。
 
-## P6 — server_data protobuf 深断言 ⏳
+## P6 — server_data protobuf 深断言 ✅ 2026-09-10
 
 已落地：
 
-- `scripts/bot/proto_min.py`：纯 stdlib 的 protobuf wire decoder，不新增 CI Python 依赖；按 `Envelope` oneof tag 分发 typed payload。
-- `scripts/bot/server_data.py` 与 `scripts/bot/test_protocol.py`：数值级断言 `player_state.spirit_qi`、`breakthrough_cinematic`、`craft_session_state.elapsed_ticks`、库存/容器/战斗/生产 payload。
-- 真实场景不以 raw bytes/chat 假阳性替代 typed payload。
+- `scripts/bot/proto_min.py`：纯 stdlib 的 `extract_server_data_payload_fields` 只解析
+  `proto/bong/envelope.proto` 的 `ServerDataEnvelope.payload`，当前提取 142 个
+  `(tag, name)`；`SERVER_DATA_PAYLOAD_NAMES` 逐 tag 对齐 canonical proto spelling，
+  不新增 CI Python 依赖。
+- `SERVER_DATA_PAYLOAD_DECODERS` 为每个已声明 tag 提供分派：已有数值级 typed decoder
+  继续覆盖 `player_state.spirit_qi`、`breakthrough_cinematic`、
+  `craft_session_state.elapsed_ticks`、库存/容器/战斗/生产 payload，其余保留
+  `field + raw` 的 identity decoder，不再把声明过的 oneof 静默变成 `None`。
+- `scripts/bot/test_protocol.py` 的四方契约测试将权威 proto、name 表、decoder 分派
+  和 `SERVER_DATA_PAYLOAD_SCENARIO_MATRIX` 按 tag 做集合等价；矩阵为 142 个协议
+  identity 行，`combat_hud_state` 另由 `combat_attack_hit` 真实场景观察并断言完整
+  百分比/派生旗标，未以 raw bytes 或聊天回显冒充 HUD 行为。
+- 未知枚举继续输出 `unknown_N`；未知 oneof tag 输出 `field_N`、原始 tag/wire/payload，
+  并有专门回归用例，确保未来字段可诊断而非折叠为缺省值。
+- HUD 缺口盘点：`combat_hud_state` 原有 field-level decoder pin 但没有默认 gameplay
+  场景断言；本批补入 `combat_attack_hit`。其余尚未有字段级玩法消费者的 oneof 以
+  协议 identity 行覆盖，并明确保留后续需要时添加 typed decoder 的边界。
+- 先红验收：临时向 oneof 添加 `FutureP6Probe future_p6_probe = 143`，运行
+  `python3 -m unittest scripts.bot.test_protocol.ProtoMinTest.test_server_data_oneof_matches_four_way_identity_contract`
+  得到真实失败：`SERVER_DATA_PAYLOAD_NAMES: missing tags=[143]`、
+  `SERVER_DATA_PAYLOAD_DECODERS: missing tags=[143]`、`场景覆盖矩阵: missing tags=[143]`；
+  随后撤回临时 proto 行，工作 diff 不含 `envelope.proto`。
+- 若未来改用生成式 Python bindings，需单独决定依赖与构建产物策略；本阶段保持零依赖
+  decoder，不虚报“已生成 bindings”。
 
-剩余验收（本 plan 保持 active）：
+### P6 拒收窗口返工证据（2026-09-10）
 
-- 盘点并补齐所有仍未覆盖的 HUD oneof（含 `combat_hud_state`）。
-- 若未来改用生成式 Python bindings，需单独决定依赖与构建产物策略；本阶段当前选择零依赖 decoder，不虚报“已生成 bindings”。
+identity decoder 接入后的同 SHA e2e 先后在两个场景暴露了
+`server_data/spirit_treasure_state`、`server_data/tribulation_broadcast` 与
+`server_data/weapon_equipped`。它们分别来自 join/背包/装备/渡劫同步，并非请求
+响应；事实核验见 `server/src/network/spirit_treasure_emit.rs`、
+`server/src/network/tribulation_broadcast_emit.rs` 与
+`server/src/network/weapon_equipped_emit.rs` 的 Added/Changed 或周期发送条件。
+因此按 payload 类型逐项维护场景排除集的路线被否决，不能继续扩充
+`UNRELATED_SETUP_SYNC_PAYLOAD_TYPES`。wire 的 `bong:client_request` 与相关响应也没有
+可用的 request_id/correlation 字段，未伪造请求关联。
+
+原先的静默等待也不能作为屏障：`carrier_state_emit.rs` 会按 client 周期发送
+`carrier_state`，事件流没有可依赖的静默期，等待静默会在上限处超时或把在途事件
+误归因。最终采用同一连接已有的 `/ping`→`pong` 有序 protocol fence：
+
+- `scripts/bot/scenarios/_rejection_helpers.py::server_data_protocol_fence` 在请求前
+  建立 lower watermark，在预期响应后建立 upper watermark；只按事件游标扫描两者
+  之间的完整窗口，不按 payload 类型豁免。`server_data_raw` 未跟随可解码事件或出现
+  `server_data_decode_error` 时同样 fail-closed。
+- `fauna_give_dan_to_elder_reject.py` 的拒收窗口只允许本次预期 chat 与 fence 自身
+  `pong`；所有 server_data 都判红。`freshness_probe_paths.py` 的 RealmTooLow 只
+  允许预期 `event_alert`，成功探针各自只允许自己的 `freshness_update`；NoFreshness
+  与不存在实例的无响应路径各用两次 ping 往返确认处理已越过 ingress/flush，再扫描
+  窗口内所有 server_data 与 chat。
+- `scripts/bot/test_protocol.py` 覆盖连续 server_data 下 fence 仍建立、缺失 pong
+  fail-closed、显式允许事件、未解码 server_data 及四种已暴露 payload 类型的全类型
+  拒收断言；`python3 scripts/bot/test_protocol.py` 实际 `554 tests` 全部通过。
+
+本返工只改 Bot harness、两个场景与协议单测；未改 `proto/bong/envelope.proto`、
+server、schema 或 client，也未引入类型排除集或新的 CI 依赖。
 
 ## 问题记录（开发中实际踩到，后续阶段留意）
 

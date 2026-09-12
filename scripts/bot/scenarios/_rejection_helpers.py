@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import time
 
@@ -75,6 +76,12 @@ AMBIENT_SERVER_DATA_TYPES = frozenset(
 )
 # 兼容已有单测对内部名称的引用；新场景统一使用公开集合。
 _AMBIENT_SERVER_DATA_TYPES = AMBIENT_SERVER_DATA_TYPES
+# `report_live_gate_denial` uses this exact server-side budget window
+# (`server/src/network/gate/budget.rs::FEEDBACK_WINDOW_TICKS`).  The Bot cannot read
+# CombatClock directly, so the only deterministic black-box way to cross it is one
+# no-op action + matching ACK per server Update; `debug::tick_combat_clock` advances
+# once per Update and Valence emits the ACK in PostUpdate.
+LIVE_GATE_FEEDBACK_WINDOW_TICKS = 20
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
 # qi_regen 系统）；凡兽出生/凋亡粒子（fauna/experience.rs emit_fauna_spawn_vfx_system
 # 在 Added<FaunaVisualKind> 上触发、fauna/mundane.rs mundane_fauna_negative_zone_wither_system
@@ -330,6 +337,227 @@ def drain_event_stream(bot, *, quiet_s: float = 2.0, max_s: float = 6.0) -> None
         if n != last_len:
             last_len = n
             last_change_at = time.monotonic()
+
+
+@dataclass(frozen=True)
+class ProtocolFence:
+    """同一 Bot 连接上的有序事件水位。
+
+    ``cursor`` 是 fence 标记（PlayerActionResponse ACK）之后的 exclusive 游标；窗口
+    断言按 ``bot.events[start:cursor]`` 取事件，而不是按 payload 类型猜 ambient。
+    ``markers`` 只记录本次 fence 自己产生的 ACK，供调用方保留完整的时序证据。
+    """
+
+    cursor: int
+    markers: tuple[object, ...]
+
+
+def _event_cursor(bot) -> int:
+    """返回当前连接事件流末端；事件对象只追加、不重排，适合作为水位。"""
+    return len(bot.events)
+
+
+def _cursor_after_event(bot, target) -> int:
+    for cursor, event in enumerate(bot.events):
+        if event is target:
+            return cursor + 1
+    raise BotAssertionError("协议 fence 的 ACK 已返回，但无法在 Bot 事件流定位该标记")
+
+
+def wait_for_event_after_cursor(
+    bot, cursor: int, predicate, *, timeout: float, description: str
+):
+    """只接受水位之后新追加的事件，避免历史同文案/同类型事件假满足。"""
+
+    def is_after_cursor(event) -> bool:
+        # ``Bot.wait_for`` exposes events one at a time rather than their list index.
+        # Locate the object in the append-only event list and compare its index to the
+        # exclusive cursor.  The list keeps every observed event alive, so this remains
+        # stable without using ``id()`` as a surrogate identity.
+        return any(candidate is event for candidate in bot.events[cursor:])
+
+    return bot.wait_for(
+        lambda event: is_after_cursor(event) and predicate(event),
+        timeout=timeout,
+        description=description,
+    )
+
+
+def wait_for_join_sync(bot, *, timeout: float = 10.0):
+    """等待 inventory 快照之后的 join combat 状态同步，再建立请求窗口。
+
+    ``wait_join_and_inventory`` 收到的首张 inventory snapshot 不是 join 的完成标记：
+    server 的 player/combat attach 使用 deferred Commands，``DerivedAttrs`` 可能在
+    下一次 Update 才被 ``derived_attrs_emit`` 观察到。若此时立刻发 fence action，
+    ``PlayerActionResponse`` ACK 可能先于这张迟到的 join 同步到达，后者就会被错误
+    归入拒收请求窗口。不能直接从历史事件里取任意一张 derived 标记，必须要求它
+    严格发生在 ``wait_join_and_inventory`` 已返回的最后 inventory snapshot 之后。
+
+    这不是断言侧的 payload 豁免：只等待一个由真实 join attach 产生的明确状态事件，
+    随后仍用全类型 ACK watermark 扫描窗口；若 server 没有完成该状态同步则直接
+    fail-closed，不继续发送拒收请求。
+    """
+    inventory_events = [
+        event
+        for event in bot.events
+        if event.kind == "server_data"
+        and event.data.get("payload_type") == "inventory_snapshot"
+    ]
+    if not inventory_events:
+        raise BotAssertionError(
+            "join 同步屏障缺少 inventory_snapshot 基准，拒绝把历史 derived_attrs_sync 当完成标记"
+        )
+    inventory_t = inventory_events[-1].t
+    # 取当前流末端作为 exclusive watermark：inventory_snapshot 之后、但在本次
+    # wait 调用前已经入流的 derived_attrs_sync 仍是旧的 join 流量，不能冒充本次
+    # 屏障。真正的新标记必须在该游标之后追加；没有新标记时 wait_for 超时即失败。
+    inventory_cursor = len(bot.events)
+    return wait_for_event_after_cursor(
+        bot,
+        inventory_cursor,
+        lambda event: (
+            event.kind == "server_data"
+            and event.data.get("payload_type") == "derived_attrs_sync"
+        ),
+        timeout=timeout,
+        description=f"inventory_snapshot(t={inventory_t:.3f}s) 之后的 derived_attrs_sync 同步标记",
+    )
+
+
+_SERVER_DATA_EVENT_KINDS = frozenset(
+    {"server_data_raw", "server_data", "server_data_decode_error"}
+)
+
+
+def wait_for_server_data_quiet(
+    bot, *, quiet_s: float = 1.0, max_s: float = 10.0
+) -> None:
+    """等待前置同步真正静默；无法建立静默时 fail-closed。
+
+    ``PlayerActionResponse`` ACK 只排序已经进入该帧出站队列的字节；前置
+    ``Changed``/deferred 系统可能在 ACK 后的下一次 Update 才产生 server_data。
+    在请求水位前先等待**所有** server_data 事件（含 raw 帧和解码失败）的连续
+    ``quiet_s`` 秒，再由 ``settled_server_data_protocol_fence`` 用最后的 ACK
+    固化边界。这里故意不看 payload type，也不设置任何豁免集；若连接无法进入
+    静默，直接失败而不是把未知在途消息带入拒收窗口。
+
+    ``max_s`` 是 fail-closed 上限，不是静默成功的替代条件。周期 server_data
+    若确实持续发送，测试会明确失败并把场景隔离问题暴露出来。
+    """
+    if quiet_s <= 0.0:
+        raise ValueError(f"server_data 静默窗口必须 > 0，实际 {quiet_s}")
+    if max_s < quiet_s:
+        raise ValueError(
+            f"server_data 最大等待时间必须 >= 静默窗口，实际 max_s={max_s}, quiet_s={quiet_s}"
+        )
+
+    started_at = time.monotonic()
+    last_change_at = started_at
+    cursor = len(bot.events)
+    observed_types: list[str] = []
+    while True:
+        now = time.monotonic()
+        for event in bot.events[cursor:]:
+            if event.kind in _SERVER_DATA_EVENT_KINDS:
+                last_change_at = time.monotonic()
+                payload_type = event.data.get("payload_type", event.kind)
+                if payload_type not in observed_types:
+                    observed_types.append(str(payload_type))
+        cursor = len(bot.events)
+
+        quiet_elapsed = time.monotonic() - last_change_at
+        if quiet_elapsed >= quiet_s:
+            return
+        elapsed = now - started_at
+        if elapsed >= max_s:
+            seen = ", ".join(observed_types) if observed_types else "无"
+            raise BotAssertionError(
+                "无法建立 server_data 前置静默屏障："
+                f"{max_s:.1f}s 内未连续静默 {quiet_s:.1f}s；期间观察到 {seen}"
+            )
+        time.sleep(min(0.05, quiet_s - quiet_elapsed, max_s - elapsed))
+
+
+def server_data_protocol_fence(
+    bot, *, timeout: float = 10.0, round_trips: int = 1
+) -> ProtocolFence:
+    """用 vanilla ``ReleaseUseItem`` action ACK 建立同连接的出站水位。
+
+    pinned Valence 的 ``ActionPlugin`` 在 ``EventLoopPreUpdate`` 接收
+    ``PlayerActionC2s``，``ReleaseUseItem`` 分支不产生 ``DiggingEvent``，而
+    ``acknowledge_player_actions`` 在 ``PostUpdate`` 写入匹配的
+    ``PlayerActionResponseS2c``；``ClientPlugin`` 随后在 ``FlushPacketsSet`` 刷出。
+    因而匹配序号的 ACK 是可观察的有序屏障：ACK 前已经写入的 server_data 会先于
+    ACK 到达 Bot，ACK 后的请求窗口可以对**所有** server_data 做 fail-closed 检查。
+    无响应请求使用两次 ACK：第一条可能与 client-request ingress 落在同一 Update，
+    第二条确保 ingress 已运行并 flush；有明确响应的调用方在收到响应后可用一条
+    ACK 收口。
+
+    周期 ``carrier_state`` 等 ambient 流不会再被伪装成“必须静默”；它们若在请求
+    与 fence 之间出现，仍会按事件序列被报告，说明窗口边界需要重新校准，而不是
+    添加类型排除集。fence 本身超时直接失败，禁止带着未确认的在途事件发送/接受
+    拒绝断言。
+    """
+    if round_trips < 1:
+        raise ValueError(f"round_trips 必须 >= 1，实际 {round_trips}")
+
+    cursor = _event_cursor(bot)
+    markers = []
+    for _ in range(round_trips):
+        sequence = getattr(bot, "_protocol_fence_sequence", 0) + 1
+        if sequence > 0x7FFFFFFF:
+            raise BotAssertionError("协议 fence sequence 已耗尽，拒绝回绕复用旧 ACK")
+        bot._protocol_fence_sequence = sequence
+        before_ids = {id(event) for event in bot.events[:cursor]}
+        bot.send_release_use_item_action(sequence)
+        ack = bot.wait_for(
+            lambda event: (
+                id(event) not in before_ids
+                and event.kind == "player_action_response"
+                and event.data.get("sequence") == sequence
+            ),
+            timeout=timeout,
+            description=f"同一连接 ReleaseUseItem action 的 ACK sequence={sequence} 出站水位",
+        )
+        markers.append(ack)
+        cursor = _cursor_after_event(bot, ack)
+    return ProtocolFence(cursor=cursor, markers=tuple(markers))
+
+
+def advance_combat_clock_with_action_acks(
+    bot, *, ticks: int = LIVE_GATE_FEEDBACK_WINDOW_TICKS, timeout: float = 10.0
+) -> ProtocolFence:
+    """用真实 action ACK 往返跨过拒收反馈的 CombatClock 节流窗口。
+
+    这不是静默 sleep，也不是修改 `/time advance` 的语义：每个
+    ``ReleaseUseItem`` 都在独立的服务器 Update 中被接收，匹配的
+    ``PlayerActionResponse`` 在该 Update 的 PostUpdate 发出。连续 ``ticks`` 个 ACK
+    因而提供至少 ``ticks`` 个权威 CombatClock tick 的确定性屏障；返回的最后 ACK
+    同时是下一条请求的出站下界。
+    """
+    if ticks < 1:
+        raise ValueError(f"CombatClock 屏障 ticks 必须 >= 1，实际 {ticks}")
+    return server_data_protocol_fence(bot, timeout=timeout, round_trips=ticks)
+
+
+def settled_server_data_protocol_fence(
+    bot, *, timeout: float = 10.0, quiet_s: float = 1.0, max_s: float = 10.0
+) -> ProtocolFence:
+    """为下一条 client request 建立已收敛的 server_data 请求前水位。
+
+    server 的连接同步包含持续周期流，不能把“事件流静默”当作完成条件：那会在
+    正常运行的 ``carrier_state`` 等同步存在时永远超时。这里改用三次有序的
+    ``ReleaseUseItem`` action ACK 推进三个完整出站水位；前两次 ACK 允许 deferred
+    ``Changed`` 系统把当前 join/命令同步排到窗口外，第三次 ACK 才是请求下界。
+    ACK 之间出现的 server_data 不会被类型豁免，只是按已确认的 FIFO 水位归入前置
+    同步；最终请求窗口仍由调用方对所有 server_data 做严格扫描。
+
+    ``quiet_s`` / ``max_s`` 保留在签名中仅为兼容已有调用方；它们不再驱动等待，
+    也不把周期流误判成失败。
+    """
+    del quiet_s, max_s
+    fence = server_data_protocol_fence(bot, timeout=timeout, round_trips=3)
+    return ProtocolFence(cursor=fence.cursor, markers=(fence.markers[-1],))
 
 
 def fire_probes_and_keep_connection(

@@ -1,4 +1,4 @@
-use valence::prelude::{Client, Entity, Query, Res, UniqueId, Username, With};
+use valence::prelude::{Client, Entity, Query, Res, UniqueId, Username};
 
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::woliu::entity_wire_id;
@@ -8,7 +8,9 @@ use crate::cultivation::dugu::{poison_state_payload, DuguPoisonState};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 type DuguStateClientItem<'a> = (
@@ -23,7 +25,7 @@ type DuguStateClientItem<'a> = (
 
 pub fn emit_dugu_poison_state_payloads(
     clock: Res<CombatClock>,
-    mut clients: Query<DuguStateClientItem<'_>, With<Client>>,
+    mut clients: Query<DuguStateClientItem<'_>, AmbientServerDataClientFilter>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;

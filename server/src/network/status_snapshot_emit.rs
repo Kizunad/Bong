@@ -3,7 +3,7 @@
 //! 客户端已有 `StatusSnapshotHandler` / `StatusEffectStore`；这里把 server
 //! `StatusEffects` 的变化转成同一 wire shape，避免为战场丹药另建 HUD 通道。
 
-use valence::prelude::{Changed, Client, Entity, Query, Username, With};
+use valence::prelude::{Changed, Client, Entity, Query, Username, With, Without};
 
 use crate::combat::components::{BodyPart, StatusEffects};
 use crate::combat::events::StatusEffectKind;
@@ -12,7 +12,11 @@ use crate::network::agent_bridge::{PayloadBuildError, SERVER_DATA_CHANNEL};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::common::MAX_PAYLOAD_BYTES;
 
-type StatusSnapshotEmitFilter = (With<Client>, Changed<StatusEffects>);
+type StatusSnapshotEmitFilter = (
+    With<Client>,
+    Without<crate::network::AmbientServerDataIsolation>,
+    Changed<StatusEffects>,
+);
 
 pub fn emit_status_snapshot_payloads(
     mut clients: Query<(Entity, &mut Client, &Username, &StatusEffects), StatusSnapshotEmitFilter>,

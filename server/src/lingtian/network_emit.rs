@@ -12,7 +12,9 @@ use valence::prelude::{BlockPos, Client, Entity, Query, Res};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::lingtian::{LingtianSessionDataV1, LingtianSessionKindV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
@@ -23,7 +25,7 @@ use super::systems::{ActiveLingtianSessions, ActiveSession};
 pub fn emit_lingtian_session_to_clients(
     sessions: Res<ActiveLingtianSessions>,
     plots: Query<&LingtianPlot>,
-    mut clients: Query<(Entity, &mut Client)>,
+    mut clients: Query<(Entity, &mut Client), AmbientServerDataClientFilter>,
 ) {
     for (player, mut client) in clients.iter_mut() {
         let payload_data = sessions

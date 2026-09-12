@@ -553,6 +553,26 @@ class Bot:
         )
         self._send(mc.C2S_COMMAND_EXECUTION, body)
 
+    def enable_ambient_server_data_isolation(self, timeout: float = 10.0) -> None:
+        """协商本连接的 E2E ambient server_data 隔离能力。
+
+        只有本轮自起、显式以 ``BONG_E2E_AMBIENT_ISOLATION=1`` 启动的 server 才会把
+        ``/ping ambient_isolation`` 放进 command tree。等待精确的成功回执；命令缺失、
+        被拒或回执超时都直接 fail-closed，不能把未隔离连接当作负向断言夹具。
+        """
+        cursor = len(self.events)
+        before_ids = {id(event) for event in self.events[:cursor]}
+        self.cmd("ping ambient_isolation")
+        self.wait_for(
+            lambda event: (
+                id(event) not in before_ids
+                and event.kind == "chat"
+                and event.data.get("text") == "[dev] ambient server_data isolation enabled"
+            ),
+            timeout=timeout,
+            description="/ping ambient_isolation 的明确成功回执",
+        )
+
     def chat(self, message: str, *, timestamp_millis: int | None = None) -> None:
         # Vanilla 1.20.1 writes Instant.now() through PacketByteBuf.writeInstant(),
         # whose wire representation is signed Unix epoch milliseconds. Tests may
@@ -644,6 +664,27 @@ class Bot:
             write_varint(0)
             + mc.block_position(x, y, z)
             + bytes([face])
+            + write_varint(sequence)
+        )
+        self._send(mc.C2S_PLAYER_ACTION, body)
+
+    def send_release_use_item_action(self, sequence: int) -> None:
+        """Send a no-gameplay ``ReleaseUseItem`` action as an ordered fence.
+
+        Valence acknowledges every non-zero ``PlayerActionC2s.sequence`` in
+        ``PostUpdate``. ``ReleaseUseItem`` is handled only by the vanilla
+        equipment interaction flag in the pinned fork; unlike ``DropItem`` it
+        cannot remove the currently selected inventory item. This gives the Bot
+        an observable server-side watermark without a gameplay side effect.
+        """
+        if not 1 <= sequence <= 0x7FFFFFFF:
+            raise ValueError(
+                f"release-use-item fence sequence must be in 1..=0x7FFFFFFF, got {sequence}"
+            )
+        body = (
+            write_varint(5)  # PlayerAction::ReleaseUseItem; no gameplay event is emitted
+            + mc.block_position(0, 0, 0)
+            + bytes([1])  # Direction::Up; ignored by the ReleaseUseItem branch
             + write_varint(sequence)
         )
         self._send(mc.C2S_PLAYER_ACTION, body)
