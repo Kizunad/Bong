@@ -44,6 +44,10 @@ import java.util.Map;
 /** UI 截图场景白名单。新增场景必须显式登记并提供确定性 fixture。 */
 final class UiPreviewScenes {
     private static final Map<String, UiPreviewScene> SCENES = Map.ofEntries(
+        Map.entry("item-windows", new UiWindowPreviewScene()),
+        Map.entry("item-windows-armor", new UiWindowPreviewScene("armor_iron_leggings")),
+        Map.entry("item-windows-pack", new UiWindowPreviewScene("grass_pouch")),
+        Map.entry("item-windows-block", new UiWindowPreviewScene("weathered_stone")),
         Map.entry("craft", new CraftScene()),
         Map.entry("terminate", new TerminateScene(0)),
         Map.entry("terminate-kind", new TerminateScene(1)),
@@ -89,7 +93,7 @@ final class UiPreviewScenes {
     }
 
     private static final class MainMenuScene implements UiPreviewScene {
-        @Override public void installFixture() {}
+        @Override public void installFixture(UiPreviewConfig config) {}
         @Override public Screen createScreen() { return new MainMenuScreen(); }
         @Override public String selectedTemplateId(Screen screen) {
             return ((MainMenuScreen) screen).selectedTemplateIdForTests();
@@ -169,7 +173,7 @@ final class UiPreviewScenes {
         private static final double PREVIEW_PLAYER_QI_MAX = 96.0;
 
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
             CraftStore.clear();
             CraftStore.replaceRecipes(List.of(
                 recipe("rough_knife", CraftCategory.TOOL, "粗铁短刀", "rust_iron", 3, true),
@@ -369,7 +373,7 @@ final class UiPreviewScenes {
         private TerminateScene(int voice) { this.voice = voice; }
 
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
             var summary = new TerminationSummary("行客", "Condense", 4, 47.5, 88.0, 72.0, 3, 7);
             // 改动无展示用途的旧建议字段，确定性覆盖四种终局口吻。
             TerminateStateStore.State fixture;
@@ -453,7 +457,7 @@ final class UiPreviewScenes {
 
     private static final class CoffinMenuScene implements UiPreviewScene {
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
         }
 
         @Override
@@ -513,7 +517,7 @@ final class UiPreviewScenes {
 
     private static final class RepairScene implements UiPreviewScene {
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
         }
 
         @Override
@@ -586,7 +590,7 @@ final class UiPreviewScenes {
 
     private static final class ForgeCarrierScene implements UiPreviewScene {
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
         }
 
         @Override
@@ -665,7 +669,7 @@ final class UiPreviewScenes {
 
     private static final class ZhenfaLayoutScene implements UiPreviewScene {
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
         }
 
         @Override
@@ -751,7 +755,7 @@ final class UiPreviewScenes {
         }
 
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
             dispatched = null;
             DeathStateStore.replace(new DeathStateStore.State(
                 true,
@@ -865,7 +869,7 @@ final class UiPreviewScenes {
         }
 
         @Override
-        public void installFixture() {
+        public void installFixture(UiPreviewConfig config) {
             if (empty) {
                 IdentityPanelStateStore.replace(IdentityPanelState.empty());
                 return;

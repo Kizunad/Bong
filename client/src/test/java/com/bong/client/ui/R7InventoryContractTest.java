@@ -37,10 +37,10 @@ class R7InventoryContractTest {
 
         assertEquals(expectedRows, actualRows,
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
-        assertEquals(30, expectedRows.size(), "fixture includes the new multiplayer-only title screen");
+        assertEquals(29, expectedRows.size(), "物品详情已迁入窗口内容，不再作为独立 Screen");
         assertEquals(14, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
         assertEquals(9, count(expectedRows, "OWO_XML"), "owo XML host set changed");
-        assertEquals(6, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
+        assertEquals(5, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
         assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
         assertEquals(14, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
             "P1 base migration is limited to direct legacy owo Screens");
@@ -245,8 +245,7 @@ class R7InventoryContractTest {
             case "combat/screen/TerminateScreen.java" -> "P4 XML migration slice; system-terminal screen";
             case "combat/screen/ZhenfaLayoutScreen.java" -> "P4 XML migration slice; 阵法布置";
             case "cultivation/voidaction/VoidActionScreen.java",
-                "forge/ForgeScreen.java", "inspect/ItemInspectScreen.java",
-                "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
+                "forge/ForgeScreen.java", "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
             case "identity/IdentityPanelScreen.java" -> "P4 XML migration slice; identity panel";
             case "combat/screen/ForgeCarrierScreen.java" -> "P4 XML migration slice;暗器注入";
             case "combat/screen/RepairScreen.java" -> "P4 XML migration slice; weapon repair";
@@ -284,7 +283,7 @@ class R7InventoryContractTest {
             "craft/CraftRecipeListWidget.java:134",
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
-            "inventory/InspectScreen.java:1685",
+            "inventory/InspectScreen.java:1673",
             "npc/NpcTradeScreen.java:163"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");

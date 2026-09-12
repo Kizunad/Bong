@@ -134,7 +134,7 @@ final class UiPreviewSession {
     private void openScreen(MinecraftClient client) {
         UiPreviewShot shot = currentShot();
         openedScene = UiPreviewScenes.require(shot.sceneId());
-        openedScene.installFixture();
+        openedScene.installFixture(config);
         openedScreen = openedScene.createScreen();
         client.setScreen(openedScreen);
         advance(Phase.WAIT_SCREEN);
@@ -157,6 +157,7 @@ final class UiPreviewSession {
                     "布局模板错误: expected=" + currentShot().expectedTemplateId()
                         + ", actual=" + actualTemplate);
             }
+            openedScene.prepareScreenshot(openedScreen, currentShot());
             advance(Phase.SETTLE);
             return;
         }

@@ -2,7 +2,7 @@
 
 > 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：消费现有 Store、semantic surface 和 typed intent，把 Inspect、锻造、手搓、工作台制作等功能接入全客户端窗口管理器，支持独立多窗、最小化、拖动、输入尺寸、HUD 固定和可更换背景；窗口视图使用本地 owo XML，SVG / PNG 与 Minecraft GUI 承担表现，不改变 server/schema/wire 和领域权限规则。
 >
-> 阶段：P0 ✅ 2026-07-30；P0R ✅ 2026-08-25；P1 ✅ 2026-08-26；P2 ✅ 2026-08-27；P3 ✅ 2026-08-30；P4 ⏳（已有 XML/SVG 基础，窗口管理器未实施）；P5/P6/P7 ⬜。2026-09-12 调整的是后续范围，不把计划变更记为实现完成。
+> 阶段：P0 ✅ 2026-07-30；P0R ✅ 2026-08-25；P1 ✅ 2026-08-26；P2 ✅ 2026-08-27；P3 ✅ 2026-08-30；P4 ⏳（P4a 首窗实现、完整构建与原生预览已通过，联网及 HUD 验收待补）；P5/P6/P7 ⬜。2026-09-12 尚未完成 P4a 全部验收。
 
 ## 2026-09-12 范围修订：全客户端窗口体系
 
@@ -530,7 +530,7 @@ Store / server snapshot
 - ✅ 2026-08-26 **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy`；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake 和 `StoreUiStateSource`；contract、intent、state、headless 包均未依赖 owo、vanilla widget、Minecraft 或具体 UI 库。
 - ✅ 2026-08-27 **P2 owo XML adapter + bootstrap reference slice**：唯一 owo XML host、Craft wide/compact 本地模板、host 生命周期、分阶段 bootstrap 和真实 Fabric/owo 截图/交互门均已落地；Store/Intent 解耦留给 P3。
 - ✅ 2026-08-30 **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
-- ⏳ **P4 公共窗口基础与首窗**：已有 XML/SVG/parser/backend/open policy 基础；新增 P4a 窗口 identity/scope/input/布局与真实物品详情窗，P4b 最小化/HUD 固定/尺寸输入/动画/背景/偏好。两子阶段当前均 ⬜。
+- ⏳ **P4 公共窗口基础与首窗**：已有 XML/SVG/parser/backend/open policy 基础；P4a 窗口 identity/scope/input/布局与物品详情窗 ⏳，P4b 最小化/HUD 固定/尺寸输入/动画/背景/偏好 ⬜。
 - ⬜ **P5 功能窗口分批迁移**：P5a Inspect 工作台＋装备/背包/跨窗拖放；P5b 修仙/技艺/功法/配置；P5c 手搓/工作台制作/锻造；P5d 炼丹/养护/布阵等工位；P5e 搜刮/NPC/交易/阅读等交互。每批同时迁移真实入口与关闭语义。
 - ⬜ **P6 受控界面、HUD 与 Bootstrap 收口**：P6a offer/系统界面/raw XML 依赖和全局开窗仲裁；P6b 固定窗 HUD 协调、剩余 SVG layer 和旧路径删除；保留 exact offer settlement、权威 combat snapshot 与 R2/R6 ownership。
 - ⬜ **P7 全量验收 + 归档**：逐项核对范围表及运行时入口；必要逻辑测试、Java 17 门禁、真实窗口矩阵、受影响 wire smoke 和 reconnect 通过；未接线项有明确处理结果，旧窗口管理器和退役 Screen 路径删除后补 Finish Evidence。
@@ -597,11 +597,26 @@ Store / server snapshot
 
 ### P4 — 公共窗口基础与首个真实窗口
 
-- **P4a ⬜ 模块与交付**：`ui/window/{UiWindowManager,UiWindowDefinition}`、owo XML 窗口内容 adapter、工作台宿主与 `UiBootstrapRegistry` 登记；将 `inspect/ItemInspectScreen` 的真实长按入口迁为首窗。冻结 key/重复打开/独立 scope/顶层命中/尺寸测量/窗口关闭语义。已有 `UiScreenController`、`UiStateBinder`、`OwoXmlScreenHost` 继续复用，不增加并列 Screen 框架。
+- **P4a ⏳ 模块与交付**：`ui/window/{UiWindowManager,UiWindowDefinition}`、owo XML 窗口内容 adapter、工作台宿主与 `UiBootstrapRegistry` 登记；将 `inspect/ItemInspectScreen` 迁为首窗，物品统一左键双击查看、右键使用。冻结 key/重复打开/独立 scope/顶层命中/尺寸测量/窗口关闭语义。已有 `UiScreenController`、`UiStateBinder`、`OwoXmlScreenHost` 继续复用，不增加并列 Screen 框架。
 - **P4a 真实证明**：在真实 Fabric/owo 中完成打开、置顶、拖动与关闭；证明 XML 内容可以由工作台和 `currentScreen == null` 时的 GUI adapter 呈现，无第二套 state source。不能仅用 fake driver 或截图贴片宣称 HUD 窗口可行。旧 Inspect 功能只允许在逐域迁移期继续使用，P5a 删除替换后的入口。
 - **P4b ⬜ 模块与交付**：最小化恢复条、固定图标、宽高输入、动画、背景选择/本地图片导入、`WindowLayoutPreferenceStore`；按 §4.9 实现，首窗同时用于验证工作台/HUD 转换。背景 PNG 与窗口框架跟随本批交付，执行三轮视觉打磨，Round 2 必须给用户看接触表。
 - **必要逻辑测试**：同 identity 重开不复制资源；最小化/固定/宿主切换不结束业务 scope；明确关闭/失效后动作不可执行、迟到回调不复活旧实例；重叠命中与捕获取消；非法尺寸和坏配置有可用回退。以业务动作与状态结果断言，不测试私有字段数、每帧坐标、固定 easing 时长或配置 JSON 字段顺序。
 - **前置与边界**：检查现有 SVG/XML 与 `ScreenOpenPolicy` 实现，不重复实现已完成 vertical slice；native parser 独立交付。R6 receive boundary 不重复 marshal，R2 仍拥有 Store 的断线清理。
+
+#### P4a 工作记录（2026-09-12，未验收）
+
+- 规划 commit：`d791995c5`。首窗实现位于 `r7-svg-batch-1` 工作区，用户已确认本轮详情窗口并授权提交；原 `r7-window-core` 草稿保留。
+- 代码：`ui/window/{UiWindowDefinition,UiWindowManager,UiWindowRuntime}.java`、`ui/adapter/owo/OwoXmlWindowContentAdapter.java`；`ItemInspectScreen` 退役为 `inspect/{ItemInspectContent,ItemInspectWindows}.java`，左键双击在既有 `InspectScreen` 中打开独立 XML 窗口，不再替换 Screen。窗口 scope 与宿主关闭分离，明确关窗、物品失效、连接/世界切换才清理。
+- 状态读取：全部物品窗共享库存和当前外部容器的 `UiStateSource`，每个客户端 tick 读取一次当前快照；XML 和 HUD 不创建库存订阅。外部容器会话结束后详情失效。首窗仅显示详情，无新增业务 action。窗口 generation 只管理本地 UI identity，不改 R2/R6 token。
+- 新增用户范围：`inspect/{ItemInspectModel,ItemModelPreviewComponent}.java` 复用武器/工具/盾、方块、护甲与背包现有模型注册；有模型时显示 `3D`/`PNG` 切换。模型按包围盒居中等比显示，区域内按住左/右键反向连续旋转，释放、离开区域、失焦或退出宿主停止。属性刷新保留当前视图与角度，不新增资产映射或业务请求。
+- 叠放与输入修复：`window-frame.xml` 使用不透明背景和扁平关闭按钮；每个窗口独立递增绘制深度，避免 owo 子组件文字穿过上层背景。独立 adapter 将屏幕坐标转换成根组件局部坐标，修复非零窗口位置下的按钮/滚动/模型命中偏移。
+- 用户反馈修订：移除 Inspect 右栏的旧 `ItemTooltipPanel` 挂载及动态悬停重排；装备层数约束保留为槽位简短提示。`ItemInspectClickTracker` 统一网格、装备、快捷栏、套包和 loot 的双击判定，鼠标越过移动阈值才拾取，避免查看时发送库存移动/快捷栏解绑；右键沿用使用菜单和开包。铁镐恢复原版 handheld 模型，同时解除 SML 接管。窗口增加层叠边缘、阴影、渐变标题栏与凹入媒体区，本轮未引入新的图片资产。
+- 测试调整：删除旧右键长按、双击开包判定测试以及重复的容器谓词测试，改为 3 条点击/拖动/取消状态转换回归；保留背包移动协议和工具槽位权限回归。退役 OBJ 的存在性断言改为原版模型与 SML 接线回归，不新增颜色或源码字符串测试。
+- 详情数据修订：`ItemInspectContent.detailRows` 输出标签/值结构，`item-inspect.xml` 按左右两列排版，描述和丹药说明独立换行。删除 `durability` 冒充保质期、空充能占位和按名称猜灵材的规则；充能/铭文/灵核等仅在服务器元数据存在时展示，耐久仅在受损时展示。名称/描述/重量/占格继续来自 `server/assets/items/*.toml` → `ItemInstance` → inventory snapshot；不改 wire 或另建前端物品配置。`scripts/export-item-preview.py --output /tmp/bong-item-preview.json` 从这些 TOML 生成预览配置，预览复用正式物品解析器，不再写死名称、文案和尺寸。
+- 预览入口：`UiWindowPreviewScene` 与 `client/window-ui-preview.json`，最低/奇数/宽屏三个 viewport，另含腿甲、背包、方块模型场景；覆盖两窗去重置顶、真实鼠标拖动、非零坐标关闭。`UiPreviewScene.prepareScreenshot` 在等待阶段前完成输入，后续正常帧才截图。Windows Java 17 原生 Fabric jar 预览已成功运行，不走 WSLg/HTML；临时启动参数与截图位于 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/`，不改正常启动器。
+- 构建验证：解除环境限制后，以 Java 17 在 client 执行 `../scripts/build-token.sh gradle test build --offline` 通过，5134 条 JUnit、3 条 Fabric GameTest，无失败。仅新增窗口状态与物品失效的必要逻辑测试；原详情测试随内容类迁名，旧 Screen 转场登记断言随退役移除，未增加截图像素或动画常数单测。
+- 本轮反馈修订验证：预览夹具改为容纳真实 TOML 尺寸后，以 Java 17 完整门禁再次通过，5118 条 JUnit、3 条 GameTest，无失败；Windows 原生 `item-windows-check-20260912-204442` 记录 `status=passed / completed=6`。场景通过真实 `Screen` 输入验证悬停不重排、双击无库存请求、关闭后重开、拖放取消回源；截图留在该输出目录。本轮首窗视觉经用户确认，P4b 背景和窗口体验仍需单独验收。
+- 待验：连接场景下的物品失效、重连与 `currentScreen == null` HUD 绘制尚未完成实机验收。`UiWindowRuntime.renderHud` 仅提供复用 adapter 的入口，P4b 尚未登记固定窗的生产 HUD 回调。不得把当前记录视为 P4a 完成或整个 R7 的 Finish Evidence。
 
 ### P5 — Inspect 与全部普通功能窗口
 
@@ -695,7 +710,7 @@ Store / server snapshot
 
 ### #6 Open policy
 
-**决议**：passive social invite 保留 domain Store；战斗/已有屏时首次同 identity `DEFER_NOTIFY`，重复 `DEFER_SILENT`，空屏且 TTL 有效才 `OPEN`；普通 hotkey 永不排队重放；Insight 按 exact `offer_id` settlement；system terminal 按优先级抢占。
+**决议**：passive social invite 保留 domain Store；战斗/已有屏时首次同 identity `DEFER_NOTIFY`，重复 `DEFER_SILENT`，空屏且 TTL 有效才 `OPEN`；普通 hotkey 不重放，不排队；Insight 按 exact `offer_id` settlement；system terminal 按优先级抢占。战斗门消费 server-authoritative combat snapshot，快照缺失时 fail closed。
 
 该决议同时冻结 `BLOCK_DROP` 的普通 hotkey 结果（契约向量见
 `client/src/test/resources/bong/ui/screen-open-policy.tsv:17-19`，断言见
@@ -704,7 +719,7 @@ production policy seam 是 `SparringInviteScreenBootstrap.decide(...)`（含 com
 首次 `DEFER_NOTIFY`、重复 `DEFER_SILENT`，见
 `client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java:64-119`），其行为回归
 见 `client/src/test/java/com/bong/client/social/SparringInviteScreenBootstrapTest.java:231-265`。
-Insight lifecycle 必须证明 stale offer A 不能清除 offer B；精确 `offer_id` compare-and-clear
+Insight lifecycle 必须证明 stale A/duplicate callback 不影响 B；沿用 exact offerId claim/compare-and-clear exactly-once，精确 `offer_id` compare-and-clear
 见 `client/src/main/java/com/bong/client/insight/InsightOfferStore.java:93-160`，旧屏回归见
 `client/src/test/java/com/bong/client/insight/InsightOfferScreenTest.java:101-120`。
 
@@ -770,7 +785,7 @@ P0R-P3 和已有 SVG/XML 切片是历史已完成批次，不重开。后续按�
 9. **P6b / HUD 与旧路径收口**：固定窗和现有 HUD 的可见性/输入协调，剩余 SVG layer、bootstrap 与 primitive 删除。
 10. **P7 / 全量验收和归档**：范围表、必要回归、实机动画/分辨率矩阵、接线依赖与删除门闭环。
 
-前一实施 PR 的最终 HEAD 通过受影响门禁、review、必要 e2e 并合入后推进下一批。P4 不再要求先将所有独立 Screen XML 化才允许 P5；各窗在所属批次直接迁移到目标结构。新 HEAD 按实际变更重验并绑定证据，不能引用旧 SHA 冒充当前通过。本轮仅修改文档，尚未开始 P4a。
+前一实施 PR 的最终 HEAD 通过受影响门禁、review、必要 e2e 并合入后推进下一批。P4 不再要求先将所有独立 Screen XML 化才允许 P5；各窗在所属批次直接迁移到目标结构。新 HEAD 按实际变更重验并绑定证据，不能引用旧 SHA 冒充当前通过。P4a 当前已开始实施，剩余验收见 P4a 工作记录。
 
 ### 10.3 每个 PR 的闭环门
 

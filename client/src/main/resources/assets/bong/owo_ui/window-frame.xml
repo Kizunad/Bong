@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components>
+        <flow-layout direction="vertical">
+            <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+            <children>
+                <flow-layout id="window-header" direction="horizontal">
+                    <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing>
+                    <padding><left>9</left><right>26</right></padding>
+                    <vertical-alignment>center</vertical-alignment>
+                    <children>
+                        <label id="window-title">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">12</vertical></sizing>
+                            <text>物品检视</text><color>#E2EAE5</color>
+                        </label>
+                    </children>
+                </flow-layout>
+                <flow-layout id="window-content" direction="vertical">
+                    <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">1</vertical></sizing>
+                </flow-layout>
+                <button id="window-close">
+                    <text>×</text><tooltip>关闭窗口</tooltip>
+                    <text-shadow>false</text-shadow>
+                    <renderer><flat color="#00343935" hovered-color="#824548" disabled-color="#343935" /></renderer>
+                    <sizing><horizontal method="fixed">20</horizontal><vertical method="fixed">20</vertical></sizing>
+                    <positioning type="relative">100,0</positioning>
+                </button>
+            </children>
+        </flow-layout>
+    </components>
+</owo-ui>

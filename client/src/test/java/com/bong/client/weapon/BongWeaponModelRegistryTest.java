@@ -77,14 +77,14 @@ class BongWeaponModelRegistryTest {
     }
 
     @Test
-    void toolModelRegistryPickaxeIronRegistered() {
-        assertTrue(BongWeaponModelRegistry.get("pickaxe_iron").isPresent(),
-            "pickaxe_iron should be registered in BongWeaponModelRegistry");
+    void ironPickaxeUsesVanillaModelWithoutObjInterception() throws IOException {
         BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get("pickaxe_iron").orElseThrow();
-        assertEquals("item/iron_pickaxe", entry.vanillaModelPath(),
-            "pickaxe_iron vanilla model path should be item/iron_pickaxe");
-        assertEquals("bong:models/item/pickaxe_iron/pickaxe_iron.obj", entry.bongObjModelPath(),
-            "pickaxe_iron bong OBJ path mismatch");
+        assertNull(entry.bongObjModelPath());
+        assertFalse(BongWeaponModelRegistry.vanillaModelPaths().contains(entry.vanillaModelPath()),
+            "移除 JSON 引用还不够，铁镐宿主不能继续被 SML 接管");
+        JsonObject host = readHostJson(entry);
+        assertEquals("minecraft:item/handheld", host.get("parent").getAsString());
+        assertEquals("minecraft:item/iron_pickaxe", host.getAsJsonObject("textures").get("layer0").getAsString());
     }
 
     @Test
@@ -193,18 +193,12 @@ class BongWeaponModelRegistryTest {
     }
 
     @Test
-    void pickaxeIronObjResourceExists() {
-        var url = getClass().getClassLoader().getResource(
-            "assets/bong/models/item/pickaxe_iron/pickaxe_iron.obj");
-        assertTrue(url != null, "pickaxe_iron.obj should exist in resources");
-    }
-
-    @Test
     void toolResourcePathsExistAndHostJsonPointsAtRegistryObj() throws IOException {
         for (String templateId : BongWeaponModelRegistry.TOOL_TEMPLATE_IDS) {
             assertTrue(BongWeaponModelRegistry.get(templateId).isPresent(),
                 "tool " + templateId + " should be registered");
             BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(templateId).orElseThrow();
+            if (entry.bongObjModelPath() == null) continue;
             JsonObject hostJson = readHostJson(entry);
 
             assertEquals("sml:builtin/obj", hostJson.get("parent").getAsString(), templateId + " host parent");

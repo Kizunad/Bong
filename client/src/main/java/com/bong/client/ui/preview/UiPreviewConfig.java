@@ -3,11 +3,15 @@ package com.bong.client.ui.preview;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.network.InventorySnapshotHandler;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Map;
+import java.util.LinkedHashMap;
 
 /** UI 截图配置；只描述本地白名单场景和可核验的 viewport。 */
 public record UiPreviewConfig(
@@ -16,7 +20,8 @@ public record UiPreviewConfig(
     int resizeTimeoutTicks,
     int settleTicks,
     boolean exitOnComplete,
-    List<UiPreviewShot> screenshots
+    List<UiPreviewShot> screenshots,
+    Map<String, InventoryItem> items
 ) {
     public UiPreviewConfig {
         if (outputDir == null || outputDir.isBlank()) {
@@ -32,6 +37,7 @@ public record UiPreviewConfig(
             throw new IllegalArgumentException("截图 name 必须唯一");
         }
         screenshots = List.copyOf(screenshots);
+        items = Map.copyOf(items);
     }
 
     /** 从已读取的配置文本解析配置；文件系统 I/O 由外部入口负责。 */
@@ -55,13 +61,23 @@ public record UiPreviewConfig(
                 requiredString(shot, "expected_template_id")
             ));
         }
+        Map<String, InventoryItem> items = new LinkedHashMap<>();
+        if (root.has("items")) {
+            for (JsonElement element : root.getAsJsonArray("items")) {
+                InventoryItem item = InventorySnapshotHandler.parseInventoryItem(element.getAsJsonObject());
+                if (item == null || items.putIfAbsent(item.itemId(), item) != null) {
+                    throw new IllegalArgumentException("预览物品数据无效或重复");
+                }
+            }
+        }
         return new UiPreviewConfig(
             optionalString(root, "output_dir").orElse("ui-preview-screenshots"),
             optionalInt(root, "wait_client_ticks").orElse(600),
             optionalInt(root, "resize_timeout_ticks").orElse(200),
             optionalInt(root, "settle_ticks").orElse(20),
             optionalBoolean(root, "exit_on_complete").orElse(true),
-            shots
+            shots,
+            items
         );
     }
 

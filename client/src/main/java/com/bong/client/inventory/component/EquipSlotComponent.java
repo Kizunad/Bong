@@ -7,6 +7,7 @@ import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import io.wispforest.owo.ui.core.Sizing;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.tooltip.TooltipComponent;
 import net.minecraft.text.Text;
 
 import java.util.List;
@@ -57,6 +58,7 @@ public class EquipSlotComponent extends BaseComponent {
     public EquipSlotComponent(EquipSlotType slotType) {
         this.slotType = slotType;
         this.sizing(Sizing.fixed(SLOT_SIZE), Sizing.fixed(SLOT_SIZE));
+        updateConstraintTooltip();
     }
 
     public EquipSlotType slotType() { return slotType; }
@@ -82,9 +84,17 @@ public class EquipSlotComponent extends BaseComponent {
 
     public void setContents(SlotContents contents) {
         this.contents = contents == null ? SlotContents.empty() : contents;
+        updateConstraintTooltip();
     }
 
-    public void clearContents() { this.contents = SlotContents.empty(); }
+    public void clearContents() { setContents(SlotContents.empty()); }
+
+    private void updateConstraintTooltip() {
+        tooltip(List.of(
+            TooltipComponent.of(Text.literal(slotType.displayName()).asOrderedText()),
+            TooltipComponent.of(Text.literal(ItemTooltipPanel.slotConstraintLine(slotType, contents.wornCount())).asOrderedText())
+        ));
+    }
 
     /** worn 栈顶件（决议 #12：唯一可拖/可卸），无则 null。 */
     public InventoryItem wornTop() { return contents.wornTop(); }
