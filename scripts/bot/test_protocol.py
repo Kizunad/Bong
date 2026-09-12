@@ -5809,16 +5809,40 @@ class RejectionHelperTest(unittest.TestCase):
             "server_data",
             {"payload_type": "inventory_snapshot"},
         )
-        derived = _FakeEvent(
+        stale_derived = _FakeEvent(
             1.0,
             "server_data",
             {"payload_type": "derived_attrs_sync"},
         )
-        bot = _RejectionFakeBot([inventory, derived])
+        fresh_derived = _FakeEvent(
+            1.5,
+            "server_data",
+            {"payload_type": "derived_attrs_sync"},
+        )
+        bot = _RejectionFakeBot([inventory, stale_derived], pending=[fresh_derived])
 
         marker = rejection_helpers.wait_for_join_sync(bot)
 
-        self.assertIs(marker, derived)
+        self.assertIs(marker, fresh_derived)
+
+    def test_wait_for_join_sync_fails_closed_when_only_stale_marker_is_buffered(self):
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.wait_for_join_sync(
+                _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            0.5,
+                            "server_data",
+                            {"payload_type": "inventory_snapshot"},
+                        ),
+                        _FakeEvent(
+                            1.0,
+                            "server_data",
+                            {"payload_type": "derived_attrs_sync"},
+                        ),
+                    ],
+                )
+            )
 
     def test_wait_for_join_sync_fails_closed_when_marker_is_missing(self):
         with self.assertRaises(BotAssertionError):

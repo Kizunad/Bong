@@ -13,7 +13,7 @@
 //! 3. [`emit_shield_broken_payloads`]：消费 [`ShieldBroken`] 事件推送
 //!    `ShieldBrokenV1 { instance_id, template_id }`。（plan-shield-block-v1 P3）
 
-use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res};
+use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res, With};
 
 use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, WeaponBroken, WeaponKind};
 use crate::inventory::{ItemCategory, ItemRegistry, PlayerInventory};
@@ -196,7 +196,7 @@ pub fn emit_weapon_equipped_payloads(
 /// plan-weapon-v1 §6.3：消费 [`WeaponBroken`] 事件并推送到对应玩家 client。
 pub fn emit_weapon_broken_payloads(
     mut events: EventReader<WeaponBroken>,
-    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
+    mut clients: Query<&mut Client, With<Client>>,
 ) {
     let broken: Vec<WeaponBroken> = events.read().cloned().collect();
     for ev in broken {
@@ -230,7 +230,7 @@ fn send_shield_broken(client: &mut Client, instance_id: u64, template_id: &str) 
 /// plan-shield-block-v1 P3：消费 [`ShieldBroken`] 事件并推送到对应玩家 client。
 pub fn emit_shield_broken_payloads(
     mut events: EventReader<ShieldBroken>,
-    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
+    mut clients: Query<&mut Client, With<Client>>,
 ) {
     let broken: Vec<ShieldBroken> = events.read().cloned().collect();
     for ev in broken {
@@ -264,7 +264,7 @@ fn send_shield_block_hit(client: &mut Client, template_id: &str) {
 /// client ShieldBlockHitHandler 按 template_id 触发材质差异化粒子+音效。
 pub fn emit_shield_block_hit_payloads(
     mut events: EventReader<ShieldBlockHit>,
-    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
+    mut clients: Query<&mut Client, With<Client>>,
 ) {
     let hits: Vec<ShieldBlockHit> = events.read().cloned().collect();
     for ev in hits {
@@ -583,7 +583,10 @@ mod tests {
         app.add_systems(Update, emit_weapon_broken_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, crate::network::AmbientServerDataIsolation))
+            .id();
         app.world_mut()
             .resource_mut::<Events<WeaponBroken>>()
             .send(WeaponBroken {
@@ -622,7 +625,10 @@ mod tests {
         app.add_systems(Update, emit_shield_broken_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, crate::network::AmbientServerDataIsolation))
+            .id();
         app.world_mut()
             .resource_mut::<Events<ShieldBroken>>()
             .send(ShieldBroken {
@@ -667,7 +673,10 @@ mod tests {
         app.add_systems(Update, emit_shield_broken_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("Bone");
-        let entity = app.world_mut().spawn(client_bundle).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, crate::network::AmbientServerDataIsolation))
+            .id();
         app.world_mut()
             .resource_mut::<Events<ShieldBroken>>()
             .send(ShieldBroken {
@@ -705,7 +714,10 @@ mod tests {
         app.add_systems(Update, emit_shield_block_hit_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("PlayerA");
-        let entity = app.world_mut().spawn(client_bundle).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, crate::network::AmbientServerDataIsolation))
+            .id();
         app.world_mut()
             .resource_mut::<Events<ShieldBlockHit>>()
             .send(ShieldBlockHit {
@@ -746,7 +758,10 @@ mod tests {
         app.add_systems(Update, emit_shield_block_hit_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("PlayerB");
-        let entity = app.world_mut().spawn(client_bundle).id();
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, crate::network::AmbientServerDataIsolation))
+            .id();
         app.world_mut()
             .resource_mut::<Events<ShieldBlockHit>>()
             .send(ShieldBlockHit {

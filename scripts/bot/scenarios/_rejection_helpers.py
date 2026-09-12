@@ -368,9 +368,16 @@ def wait_for_event_after_cursor(
     bot, cursor: int, predicate, *, timeout: float, description: str
 ):
     """只接受水位之后新追加的事件，避免历史同文案/同类型事件假满足。"""
-    before_ids = {id(event) for event in bot.events[:cursor]}
+
+    def is_after_cursor(event) -> bool:
+        # ``Bot.wait_for`` exposes events one at a time rather than their list index.
+        # Locate the object in the append-only event list and compare its index to the
+        # exclusive cursor.  The list keeps every observed event alive, so this remains
+        # stable without using ``id()`` as a surrogate identity.
+        return any(candidate is event for candidate in bot.events[cursor:])
+
     return bot.wait_for(
-        lambda event: id(event) not in before_ids and predicate(event),
+        lambda event: is_after_cursor(event) and predicate(event),
         timeout=timeout,
         description=description,
     )
@@ -401,11 +408,16 @@ def wait_for_join_sync(bot, *, timeout: float = 10.0):
             "join 同步屏障缺少 inventory_snapshot 基准，拒绝把历史 derived_attrs_sync 当完成标记"
         )
     inventory_t = inventory_events[-1].t
-    return bot.wait_for(
+    # 取当前流末端作为 exclusive watermark：inventory_snapshot 之后、但在本次
+    # wait 调用前已经入流的 derived_attrs_sync 仍是旧的 join 流量，不能冒充本次
+    # 屏障。真正的新标记必须在该游标之后追加；没有新标记时 wait_for 超时即失败。
+    inventory_cursor = len(bot.events)
+    return wait_for_event_after_cursor(
+        bot,
+        inventory_cursor,
         lambda event: (
             event.kind == "server_data"
             and event.data.get("payload_type") == "derived_attrs_sync"
-            and event.t > inventory_t
         ),
         timeout=timeout,
         description=f"inventory_snapshot(t={inventory_t:.3f}s) 之后的 derived_attrs_sync 同步标记",

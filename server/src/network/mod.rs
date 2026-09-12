@@ -2746,7 +2746,7 @@ fn process_redis_inbound(
                     offer.choices.len()
                 );
                 let Some((entity, _, _, _)) = clients
-                    .p0()
+                    .p1()
                     .iter_mut()
                     .find(|(_, _, name, _)| name.0 == offer.character_id)
                 else {

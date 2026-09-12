@@ -198,6 +198,9 @@ fn process_redis_inbound_keeps_contextual_insight_offer_when_agent_overwrites_pe
 
     let (client_bundle, _helper) = create_mock_client("Azure");
     let entity = app.world_mut().spawn(client_bundle).id();
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(AmbientServerDataIsolation);
     let trigger_id = "first_breakthrough_to_Induce";
     let qi_color = QiColor {
         main: ColorKind::Sharp,
