@@ -34,6 +34,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "revive",
     // plan-sou-da-che-v1 P0：区域风险热图 GM 调试命令
     "riskmap",
+    "scene",
     "season",
     "shader_push",
     "shrine",
@@ -118,6 +119,10 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "revive self",
     // plan-sou-da-che-v1 P0：区域风险热图 GM 调试命令（无参数，直接输出所在 zone 风险信息）
     "riskmap",
+    "scene",
+    "scene <name:string>",
+    "scene clear",
+    "scene list",
     "season advance <amount:string>",
     "season query",
     "season set <phase:string>",
@@ -208,6 +213,7 @@ mod tests {
                 "reset",
                 "revive",
                 "riskmap",
+                "scene",
                 "season",
                 "shader_push",
                 "shrine",

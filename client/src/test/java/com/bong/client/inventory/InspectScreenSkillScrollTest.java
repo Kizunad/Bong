@@ -156,13 +156,15 @@ class InspectScreenSkillScrollTest {
         InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
         var item = com.bong.client.inventory.model.InventoryItem.createFullWithScrollMeta(
             1005L,
-            "scroll_woliu_vortex",
-            "涡流残卷·绝灵涡流",
+            "scroll_technique_movement_dash",
+            "《闪身步残页》",
             1, 2, 0.05, "uncommon", "泛黄残页", 1, 1.0, 1.0,
-            "combat_technique", "woliu.vortex", 0
+            "combat_technique", "movement.dash", 0
         );
 
         assertTrue(screen.tryLearnSkillScroll(item));
+        assertFalse(com.bong.client.movement.DashSkill.learned(),
+            "点击卷轴只发请求，身法解锁须等待服务端功法快照");
         assertEquals("已送出研读请求", screen.debugSkillScrollDropFeedback());
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());

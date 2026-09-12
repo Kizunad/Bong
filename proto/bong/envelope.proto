@@ -2571,6 +2571,18 @@ message TerminateScreen {
   string final_words            = 2;
   string epilogue               = 3;
   string archetype_suggestion   = 4;
+  TerminationSummary summary   = 5;
+}
+
+message TerminationSummary {
+  string character_name = 1;
+  string realm = 2;
+  uint32 death_count = 3;
+  optional double years_lived = 4;
+  optional double qi_max = 5;
+  optional float health_max = 6;
+  optional uint32 meridians_open = 7;
+  optional uint32 techniques_learned = 8;
 }
 
 // ─── QiColorObserved ───────────────────────────────────────────
@@ -3176,6 +3188,7 @@ message MovementStateProto {
   bool                       low_stamina                      = 9;
   optional uint64            last_action_tick                 = 10;
   optional MovementActionRequestKind rejected_action          = 11;
+  uint64                     dash_cooldown_total_ticks        = 12;
 }
 
 // ─── SpiritTreasure ──────────────────────────────────────────────

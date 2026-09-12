@@ -35,11 +35,18 @@ final class GatheringProgressPayloadReader {
 
         boolean interrupted = readOptionalBoolean(payload, "interrupted") == Boolean.TRUE;
         boolean completed = readOptionalBoolean(payload, "completed") == Boolean.TRUE || progress >= 1.0;
+        GatheringSessionViewModel current = GatheringSessionStore.snapshot();
         if (interrupted || completed) {
-            GatheringSessionStore.clear(sessionId);
+            if (sessionId.trim().equals(current.sessionId())) {
+                // 两类进度消息共用 HUD 终态；不能先清空再让 gathering_session 重播退场。
+                GatheringSessionStore.replace(GatheringSessionViewModel.create(
+                    current.sessionId(), completed ? current.totalTicks() : current.progressTicks(), current.totalTicks(),
+                    current.targetName(), current.targetType(), current.qualityHint(), current.toolUsed(),
+                    interrupted, completed, System.currentTimeMillis()));
+            }
             return ServerDataDispatch.handled(
                 envelope.type(),
-                "Cleared gathering progress '" + sessionId.trim() + "' from " + envelope.type()
+                "Finished gathering progress '" + sessionId.trim() + "' from " + envelope.type()
             );
         }
 

@@ -1,0 +1,12 @@
+# 用户已确认的概念图、三视图、分解图的特征转录。
+# 来源：2026-09-10 用户要求“嵌入身体的熔炉”和“部分融合进肉体的人体手臂”。
+# 视角遵循 bbmodel_maker：正面朝 -Z，SIDE_R 是观者右侧（-X）。
+facing = "-z"
+mirror_x = 0.0
+size = 640
+
+[features]
+embedded_furnace = { elements = ["furnace_"], must_show_in = ["FRONT", "3/4"], min_px = 90 }
+human_arm_a = { elements = ["human_a_"], must_show_in = ["FRONT"], min_px = 60 }
+human_arm_b = { elements = ["human_b_"], must_show_in = ["FRONT", "3/4"], min_px = 60 }
+healed_fusion = { elements = ["fusion_"], must_show_in = ["FRONT"], min_px = 60 }

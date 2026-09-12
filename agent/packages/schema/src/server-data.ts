@@ -958,6 +958,17 @@ export const ServerDataDeathScreenV1 = Type.Object(
 );
 export type ServerDataDeathScreenV1 = Static<typeof ServerDataDeathScreenV1>;
 
+const TerminationSummaryV1 = Type.Object({
+  character_name: Type.String(),
+  realm: Type.String(),
+  death_count: Type.Integer({ minimum: 0 }),
+  years_lived: Type.Optional(Type.Number({ minimum: 0 })),
+  qi_max: Type.Optional(Type.Number({ minimum: 0 })),
+  health_max: Type.Optional(Type.Number({ minimum: 0 })),
+  meridians_open: Type.Optional(Type.Integer({ minimum: 0 })),
+  techniques_learned: Type.Optional(Type.Integer({ minimum: 0 })),
+}, { additionalProperties: false });
+
 export const ServerDataTerminateScreenV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -966,6 +977,7 @@ export const ServerDataTerminateScreenV1 = Type.Object(
     final_words: Type.String(),
     epilogue: Type.String(),
     archetype_suggestion: Type.String(),
+    summary: Type.Optional(TerminationSummaryV1),
   },
   { additionalProperties: false },
 );

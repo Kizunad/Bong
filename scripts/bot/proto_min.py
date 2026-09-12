@@ -507,6 +507,7 @@ def _terminate_screen(data: bytes) -> dict[str, Any]:
     visible=false。
     """
     fields = _fields(data)
+    summary = _message(fields, 5) if _has(fields, 5) else None
     return {
         "v": 1,
         "type": "terminate_screen",
@@ -514,6 +515,16 @@ def _terminate_screen(data: bytes) -> dict[str, Any]:
         "final_words": _string(fields, 2),
         "epilogue": _string(fields, 3),
         "archetype_suggestion": _string(fields, 4),
+        "summary": {
+            "character_name": _string(summary, 1),
+            "realm": _string(summary, 2),
+            "death_count": _varint(summary, 3),
+            "years_lived": _optional_double(summary, 4),
+            "qi_max": _optional_double(summary, 5),
+            "health_max": _optional_float32(summary, 6),
+            "meridians_open": _optional_varint(summary, 7),
+            "techniques_learned": _optional_varint(summary, 8),
+        } if summary is not None else None,
     }
 
 

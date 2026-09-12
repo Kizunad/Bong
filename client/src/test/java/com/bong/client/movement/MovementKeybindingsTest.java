@@ -31,6 +31,7 @@ class MovementKeybindingsTest {
             MovementState.Action.NONE,
             MovementState.ZoneKind.NORMAL,
             0L,
+            0L,
             1.8,
             4.0,
             100.0,

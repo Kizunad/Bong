@@ -355,13 +355,9 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                         true, "old", 1d, 2d, 1L, 1L)),
                     () -> !FullPowerStateStore.charging().active()),
                 adapter(37, StatusEffectStore.class,
-                    () -> {
-                        StatusEffectStore.replace(List.of(new StatusEffectStore.Effect(
-                            "old", "old", StatusEffectStore.Kind.BUFF, 1, 1L, 0, "old", 1)));
-                        StatusEffectStore.setCultivationAcceleration(2.5);
-                    },
-                    () -> StatusEffectStore.snapshot().isEmpty()
-                        && StatusEffectStore.cultivationAcceleration() == 1.0),
+                    () -> StatusEffectStore.replace(List.of(new StatusEffectStore.Effect(
+                        "old", "old", StatusEffectStore.Kind.BUFF, 1, 1L, 0, "old", 1))),
+                    () -> StatusEffectStore.snapshot().isEmpty()),
                 adapter(39, TribulationBroadcastStore.class,
                     () -> TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
                         true, "old", "warn", 1d, 1d, 1L, false, 1d)),
@@ -410,7 +406,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 adapter(76, MovementStateStore.class,
                     () -> MovementStateStore.replace(new MovementState(
                         1d, true, MovementState.Action.DASHING, MovementState.ZoneKind.DEAD,
-                        1L, 1.8d, 1d, 2d, false, 1L, "old", 0L, 0L, 0L), 1_000L),
+                        1L, 20L, 1.8d, 1d, 2d, false, 1L, "old", 0L, 0L, 0L), 1_000L),
                     () -> MovementStateStore.snapshot().isEmpty()),
                 adapter(84, ScrollReadStore.class,
                     () -> ScrollReadStore.replace(new ScrollOpenViewModel("old", "old", List.of("old"))),

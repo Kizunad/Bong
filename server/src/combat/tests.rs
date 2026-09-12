@@ -222,6 +222,7 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         spawn_anchor_damaged: false,
         awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.15 }),
         revival_decision_deadline_tick: Some(9_999),
+        revival_roll_survived: None,
         weakened_until_tick: None,
         state: LifecycleState::AwaitingRevival,
     };

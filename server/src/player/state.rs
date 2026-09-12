@@ -4448,6 +4448,7 @@ mod player_state_tests {
             spawn_anchor_damaged: true,
             awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
             revival_decision_deadline_tick: Some(1_600),
+            revival_roll_survived: Some(false),
             weakened_until_tick: None,
             state: LifecycleState::AwaitingRevival,
         }

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bong 图标审查</title>
+  <style>
+    * { box-sizing: border-box; letter-spacing: 0; }
+    :root { color-scheme: dark; font-family: system-ui, "Microsoft YaHei", sans-serif; background: #181b1a; color: #e6e9e6; --preview: #354039; }
+    body { margin: 0; }
+    header { padding: 22px 28px 16px; border-bottom: 1px solid #414642; }
+    h1 { font-size: 24px; margin: 0 0 8px; overflow-wrap: anywhere; }
+    p { font-size: 13px; color: #aeb8b1; margin: 5px 0; line-height: 1.6; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 28px; align-items: center; background: #181b1a; position: sticky; top: 0; z-index: 5; border-bottom: 1px solid #414642; }
+    button, input, select, textarea { font: inherit; color: inherit; border: 1px solid #515954; background: #252a27; border-radius: 5px; padding: 8px 11px; max-width: 100%; }
+    button { cursor: pointer; }
+    button:hover { border-color: #dbbb7d; }
+    #search { width: 240px; }
+    #count { color: #d6bd91; font-size: 13px; margin-right: auto; }
+    main { padding: 22px 28px 50px; }
+    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(430px, 100%), 1fr)); gap: 20px; }
+    .card { min-width: 0; border: 1px solid #444c46; border-radius: 8px; overflow: hidden; background: #232925; }
+    .card.marked { border-color: #d8aa73; }
+    .heading { padding: 14px 16px; display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+    .heading h2 { min-width: 0; overflow-wrap: anywhere; font-size: 16px; margin: 0; }
+    .id { font-size: 12px; color: #c5bea8; flex-shrink: 0; }
+    .views { display: grid; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); gap: 1px; background: #444c46; }
+    figure { margin: 0; min-width: 0; background: #232925; }
+    figcaption { text-align: center; font-size: 11px; color: #b0bfb0; padding: 8px; }
+    .stage { height: 174px; background: var(--preview); display: flex; justify-content: center; align-items: center; }
+    .stage img { max-width: 100%; width: 160px; height: 160px; object-fit: contain; }
+    .samples { display: flex; align-items: center; gap: 16px; padding: 10px 16px; min-height: 90px; }
+    .slot { display: flex; align-items: center; justify-content: center; background: var(--preview); width: 70px; height: 70px; flex-shrink: 0; }
+    .slot.small { width: 36px; height: 36px; }
+    .slot img { width: 64px; height: 64px; object-fit: contain; }
+    .slot.small img { width: 32px; height: 32px; }
+    .samples a { font-size: 12px; }
+    .footer { padding: 0 16px 15px; }
+    .file { font-size: 11px; font-family: monospace; overflow-wrap: anywhere; color: #aeb8b1; margin: 8px 0; }
+    .footer textarea { width: 100%; resize: vertical; min-height: 52px; font-size: 12px; margin-top: 8px; }
+    .choices { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; }
+    .choices label { display: flex; align-items: center; gap: 5px; }
+    .choices input { accent-color: #d8aa73; }
+    .meta { font-size: 11px; color: #aeb8b1; overflow-wrap: anywhere; }
+    .bad, #saveWarning { color: #e4b481; }
+    body[data-bg="white"] { --preview: #f0f1ed; }
+    body[data-bg="black"] { --preview: #080a09; }
+    body[data-bg="checker"] .stage, body[data-bg="checker"] .slot { background-color: #d0d3d0; background-image: conic-gradient(#a4aaa4 25%, transparent 0 50%, #a4aaa4 0 75%, transparent 0); background-size: 16px 16px; }
+    #toast { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 28px); background: #d9c69e; color: #252219; padding: 12px 20px; border-radius: 6px; z-index: 10; overflow-wrap: anywhere; }
+    #empty { padding: 50px 10px; text-align: center; }
+    a { color: #c7d4b1; }
+    :focus-visible { outline: 2px solid #dbbb7d; outline-offset: 2px; }
+    @media (max-width: 600px) {
+      header, .toolbar { padding: 14px; }
+      .toolbar { position: static; }
+      main { padding: 14px; }
+      .stage { height: 125px; }
+      .stage img { height: 116px; width: 116px; }
+      #search { width: 100%; }
+    }
+  </style>
+</head>
+<body data-bg="game">
+  <header>
+    <h1 id="title"></h1>
+    <p id="totals"></p>
+    <p id="saveWarning" hidden>浏览器未允许保存标记，请在离开前导出清单。</p>
+  </header>
+  <div class="toolbar">
+    <input id="search" type="search" aria-label="搜索图标" placeholder="名称、编号、文件名">
+    <select id="filter" aria-label="分类">
+      <option value="all">全部</option>
+      <option value="redraw">重画图标</option>
+      <option value="background">原图去背景</option>
+      <option value="opaque">不含透明像素</option>
+      <option value="marked">已标记</option>
+      <option value="warning">检测异常</option>
+    </select>
+    <select id="bg" aria-label="底色">
+      <option value="game">深灰绿底</option>
+      <option value="white">白底</option>
+      <option value="black">黑底</option>
+      <option value="checker">棋盘底</option>
+    </select>
+    <span id="count"></span>
+    <button id="import">导入标记</button>
+    <input id="importFile" type="file" accept="application/json,.json" hidden>
+    <button id="copy">复制清单</button>
+    <button id="export">导出清单</button>
+  </div>
+  <main>
+    <div id="grid"></div>
+    <p id="empty" hidden>没有符合条件的图片。</p>
+    <p><a href="review-data.json" target="_blank" rel="noreferrer">完整图标清单</a></p>
+  </main>
+  <div id="toast" hidden role="status"></div>
+  <script id="data" type="application/json">__DATA__</script>
+  <script>
+    "use strict";
+    const $ = id => document.getElementById(id);
+    const data = JSON.parse($('data').textContent);
+    const images = data.images;
+    const key = 'bong-icon-review:' + data.datasetId;
+    const byPath = new Map(images.map(row => [row.path, row]));
+    let marks = Object.create(null), timer;
+
+    function validMark(value) {
+      return value && typeof value === 'object' && !Array.isArray(value)
+        && ['redo', 'redraw', 'remove_background'].every(k => value[k] === undefined || typeof value[k] === 'boolean')
+        && (value.note === undefined || typeof value.note === 'string');
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || '{}');
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw Error('Invalid marks');
+      for (const [path, value] of Object.entries(saved)) {
+        if (byPath.has(path) && validMark(value)) marks[path] = value;
+      }
+    } catch { $('saveWarning').hidden = false; }
+
+    function el(tag, cls, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    function marked(path) {
+      const m = marks[path];
+      return !!(m && (m.redo || m.redraw || m.remove_background || m.note?.trim()));
+    }
+    function counts() {
+      $('count').textContent = `${images.filter(r => marked(r.path)).length} 张已标记`;
+    }
+    function save() {
+      try { localStorage.setItem(key, JSON.stringify(marks)); }
+      catch { $('saveWarning').hidden = false; }
+      counts();
+    }
+    function notify(text) {
+      $('toast').textContent = text;
+      $('toast').hidden = false;
+      clearTimeout(timer);
+      timer = setTimeout(() => $('toast').hidden = true, 4000);
+    }
+    function link(label, path) {
+      const a = el('a', '', label);
+      a.href = path;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      return a;
+    }
+    function figure(row, label, field) {
+      const fig = el('figure');
+      fig.append(el('figcaption', '', label));
+      const a = link('', row[field]);
+      a.className = 'stage';
+      a.setAttribute('aria-label', row.id + ' ' + label);
+      const img = el('img');
+      img.src = row[field + 'Thumb'];
+      img.alt = row.name + ' ' + label;
+      img.loading = 'lazy';
+      a.append(img);
+      fig.append(a);
+      return fig;
+    }
+    function render() {
+      const q = $('search').value.trim().toLowerCase(), filter = $('filter').value;
+      const filtered = images.filter(row => {
+        if (q && ![row.id, row.name, row.path].join(' ').toLowerCase().includes(q)) return false;
+        if (['redraw', 'background'].includes(filter)) return row.group === filter;
+        if (filter === 'marked') return marked(row.path);
+        if (filter === 'warning') return row.warnings.length > 0;
+        if (filter === 'opaque') return row.alpha === 'opaque';
+        return true;
+      });
+      const fragment = document.createDocumentFragment();
+      for (const row of filtered) {
+        const card = el('article', 'card' + (marked(row.path) ? ' marked' : ''));
+        card.dataset.id = row.id;
+        const heading = el('div', 'heading');
+        heading.append(el('h2', '', row.name), el('span', 'id', row.id));
+        const views = el('div', 'views');
+        const fields = [];
+        if (row.old) fields.push(['原图', 'old']);
+        if (row.input) fields.push([row.redraw ? '重画原图' : '处理输入', 'input']);
+        fields.push([row.cutout ? '处理结果' : '图标', row.cutout ? 'cutout' : 'icon']);
+        views.style.setProperty('--columns', fields.length);
+        for (const [label, field] of fields) views.append(figure(row, label, field));
+        const samples = el('div', 'samples');
+        for (const small of [false, true]) {
+          const slot = el('span', 'slot' + (small ? ' small' : ''));
+          const img = el('img');
+          img.src = row.icon;
+          img.alt = row.name + (small ? ' 32px' : ' 64px');
+          img.loading = 'lazy';
+          slot.append(img);
+          samples.append(slot);
+        }
+        const links = el('div');
+        links.append(link(row.size.join(' × ') + ' PNG', row.icon));
+        if (row.mask) links.append(el('br'), link('遮罩', row.mask));
+        samples.append(links);
+        const foot = el('div', 'footer');
+        foot.append(el('div', 'file', row.path));
+        if (row.description) foot.append(el('p', 'meta', row.description));
+        if (row.note) foot.append(el('p', 'meta', '原备注：' + row.note));
+        if (row.warnings.length) foot.append(el('p', 'bad', row.warnings.join('；')));
+        const choices = el('div', 'choices');
+        for (const [field, label] of [['redo', '返工'], ['redraw', '重画'], ['remove_background', '去背景']]) {
+          const wrapper = el('label'), checkbox = el('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = !!marks[row.path]?.[field];
+          checkbox.setAttribute('aria-label', row.id + ' ' + label);
+          checkbox.onchange = () => {
+            marks[row.path] ??= {};
+            marks[row.path][field] = checkbox.checked;
+            card.classList.toggle('marked', marked(row.path));
+            save();
+            if (filter === 'marked' && !marked(row.path)) render();
+          };
+          wrapper.append(checkbox, label);
+          choices.append(wrapper);
+        }
+        foot.append(choices);
+        const note = el('textarea');
+        note.setAttribute('aria-label', row.id + ' 审图备注');
+        note.placeholder = '边缘、形状、材质或细节问题';
+        note.value = marks[row.path]?.note || '';
+        note.oninput = () => {
+          marks[row.path] ??= {};
+          marks[row.path].note = note.value;
+          card.classList.toggle('marked', marked(row.path));
+          save();
+        };
+        // 编辑期间保留焦点；离开备注后再更新“已标记”筛选。
+        note.onchange = () => { if (filter === 'marked' && !marked(row.path)) render(); };
+        foot.append(note);
+        card.append(heading, views, samples, foot);
+        fragment.append(card);
+      }
+      $('grid').replaceChildren(fragment);
+      $('empty').hidden = filtered.length > 0;
+      counts();
+    }
+    function selections() {
+      return images.filter(row => marked(row.path)).map(row => ({
+        id: row.id, name: row.name, path: row.path,
+        redo: !!marks[row.path].redo, redraw: !!marks[row.path].redraw,
+        remove_background: !!marks[row.path].remove_background, note: marks[row.path].note || ''
+      }));
+    }
+    $('title').textContent = document.title = data.title;
+    $('totals').textContent = `${images.length} 张图标 · 重画 ${images.filter(r => r.group === 'redraw').length} 张 · 去背景 ${images.filter(r => r.group === 'background').length} 张`;
+    $('search').oninput = render;
+    $('filter').onchange = render;
+    $('bg').onchange = () => document.body.dataset.bg = $('bg').value;
+    $('export').onclick = () => {
+      const rows = selections();
+      if (!rows.length) return notify('尚未标记图片');
+      const json = {version: 1, datasetId: data.datasetId, selections: rows};
+      const url = URL.createObjectURL(new Blob([JSON.stringify(json, null, 2)], {type: 'application/json'}));
+      const a = el('a');
+      a.href = url;
+      a.download = 'bong-icon-review-selection.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    $('import').onclick = () => $('importFile').click();
+    $('importFile').onchange = async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const imported = JSON.parse(await file.text());
+        if (imported.version !== 1 || imported.datasetId !== data.datasetId || !Array.isArray(imported.selections)) {
+          throw Error('清单格式不符或不属于这批图片');
+        }
+        const incoming = Object.create(null);
+        for (const row of imported.selections) {
+          if (!validMark(row) || !byPath.has(row.path) || incoming[row.path]) throw Error('清单含无效或重复的资源路径');
+          incoming[row.path] = {redo: !!row.redo, redraw: !!row.redraw, remove_background: !!row.remove_background, note: row.note || ''};
+        }
+        Object.assign(marks, incoming);
+        save();
+        render();
+        notify(`已导入 ${imported.selections.length} 项标记`);
+      } catch (error) { notify('导入失败：' + error.message); }
+      finally { event.target.value = ''; }
+    };
+    $('copy').onclick = async () => {
+      const rows = selections();
+      if (!rows.length) return notify('尚未标记图片');
+      const text = rows.map(row => {
+        const tags = [row.redo && '返工', row.redraw && '重画', row.remove_background && '去背景'].filter(Boolean).join('、');
+        return `${row.id} ${row.name} [${tags}] ${row.note}\n${row.path}`;
+      }).join('\n');
+      try { await navigator.clipboard.writeText(text); notify('已复制'); }
+      catch { notify('浏览器未允许复制，请使用导出清单'); }
+    };
+    render();
+  </script>
+</body>
+</html>

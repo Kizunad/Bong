@@ -73,7 +73,7 @@ pub(crate) fn dispatch_combat_request(
                 return CombatDispatchOutcome::DroppedMissingEventResource;
             };
             let action = match request {
-                CombatRequest::Reincarnate => RevivalActionKind::Reincarnate,
+                CombatRequest::Reincarnate => RevivalActionKind::RollRebirth,
                 CombatRequest::Terminate => RevivalActionKind::Terminate,
                 CombatRequest::CreateNewCharacter => RevivalActionKind::CreateNewCharacter,
                 CombatRequest::RaiseShield | CombatRequest::LowerShield => unreachable!(),
@@ -224,7 +224,7 @@ mod tests {
         let cases = [
             (
                 CombatRequest::Reincarnate,
-                RevivalActionKind::Reincarnate,
+                RevivalActionKind::RollRebirth,
                 101,
             ),
             (CombatRequest::Terminate, RevivalActionKind::Terminate, 202),

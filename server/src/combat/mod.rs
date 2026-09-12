@@ -31,6 +31,7 @@ pub mod shield_block;
 pub mod status;
 pub mod style_telemetry;
 pub mod sword_basics;
+pub mod termination;
 pub mod tuike;
 pub mod tuike_v2;
 pub mod weapon;
@@ -368,6 +369,13 @@ pub fn register(app: &mut App) {
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
     );
+    // 终结属性必须先截取，再由修炼侧移除组件；所有终结来源共用这一出口。
+    app.add_systems(
+        Update,
+        termination::publish_termination
+            .in_set(CombatSystemSet::Emit)
+            .before(crate::cultivation::death_hooks::on_player_terminated),
+    );
     // 活跃战斗窗口逐 tick 精确到期；拆开注册避免超过 Bevy 0.14 系统元组上限。
     app.add_systems(
         Update,
@@ -439,13 +447,6 @@ pub fn register(app: &mut App) {
         Update,
         rat_bite::interrupt_meditation_on_rat_bite
             .in_set(CombatSystemSet::Resolve)
-            .after(resolve::resolve_attack_intents),
-    );
-    // plan-onboarding-loop-v1 P1.2: 首次受击自学闪身步。
-    app.add_systems(
-        Update,
-        crate::cultivation::first_hit_dash::first_hit_dash_insight
-            .in_set(CombatSystemSet::Emit)
             .after(resolve::resolve_attack_intents),
     );
     app.add_systems(

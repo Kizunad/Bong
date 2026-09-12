@@ -300,7 +300,7 @@ def generate_openai(
         dreq = urllib.request.Request(
             full,
             headers={
-                "Authorization": f"Bearer {api_key}",
+                # 返回的素材 URL 可指向外部 CDN，不向素材下载地址转发 API 密钥。
                 "User-Agent": CLIPROXY_FAKE_UA,
             },
         )
@@ -396,7 +396,7 @@ def generate_cliproxy_images(
         dreq = urllib.request.Request(
             full,
             headers={
-                "Authorization": f"Bearer {api_key}",
+                # 素材 CDN 使用公开或签名 URL，不接受生成接口的 Bearer 鉴权。
                 "User-Agent": CLIPROXY_FAKE_UA,
             },
         )

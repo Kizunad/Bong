@@ -20,7 +20,7 @@ use crate::combat::anqi_v2::{
 };
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::carrier::CarrierChargedEvent;
-use crate::combat::components::{Lifecycle, Wounds};
+use crate::combat::components::{Lifecycle, LifecycleState, Wounds};
 use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
 use crate::combat::dugu_v2::ReverseTriggeredEvent;
 use crate::combat::events::{AttackSource, CombatEvent, DefenseKind};
@@ -109,8 +109,7 @@ pub fn register(app: &mut App) {
             .after(tick_audio_dedup_clock)
             .before(crate::network::audio_event_emit::emit_audio_play_payloads),
     );
-    // 重生必须收掉低血心跳 loop（`heartbeat_low_hp` 第二层 = entity.player.hurt，client 侧每
-    // 20 tick 自行重放，漏 stop 就变成重生后一直响受伤音）。约束与 #1264 逐字一致：排在低血上沿
+    // 重生必须收掉低血心跳 loop（client 侧每 20 tick 自行重放，旧配方曾含受伤叫声）。排在低血上沿
     // 系统之后（先让血量记账落定，再由重生收尾清账 + 发 stop，否则两系统争 `AudioTriggerState`
     // 是 Bevy ambiguous order），并在 stop payload 投递之前，保证同帧下发。
     // 注意它挂的是 **stop** sink，与上面那组 emit 系统的 `.before(emit_audio_play_payloads)` 不同，
@@ -139,8 +138,8 @@ const LOW_HP_HEARTBEAT_FLAG: &str = "hp_below_20";
 
 /// 低血心跳 loop 的稳定 instance id（同 fauna fuya pressure hum 惯例：`Entity::to_bits`）。
 ///
-/// `heartbeat_low_hp` 是 **loop recipe**（`interval_ticks: 20`，第二层是
-/// `minecraft:entity.player.hurt`），client 侧收到后由 `SoundRecipePlayer` 自己每秒重放；
+/// `heartbeat_low_hp` 是 **loop recipe**（`interval_ticks: 20`），
+/// client 侧收到后由 `SoundRecipePlayer` 自己每秒重放；
 /// 想收掉它必须发 `bong:audio/stop` 带**同一个 instance id**。所以这条 loop 不能再用
 /// `instance_id: 0`（让 server 侧 allocator 随机分配、事后无从指认），必须按玩家实体派生
 /// 一个稳定 id。
@@ -148,10 +147,10 @@ pub(crate) fn low_hp_heartbeat_instance_id(entity: Entity) -> u64 {
     entity.to_bits().max(1)
 }
 
-/// 低血心跳的唯一触发判据（严格小于阈值）。抽成函数是为了让「重生血量会不会重新
+/// 低血心跳的血量判据（大于零且严格小于阈值）。抽成函数是为了让「重生血量会不会重新
 /// 起心跳」这类不变量能对着**生产判据**断言，而不是在测试里另写一遍比较。
 pub(crate) fn is_low_hp_for_heartbeat(hp_ratio: f32) -> bool {
-    hp_ratio < LOW_HP_HEARTBEAT_RATIO
+    hp_ratio > 0.0 && hp_ratio < LOW_HP_HEARTBEAT_RATIO
 }
 
 type PlayerAudioStateItem<'a> = (
@@ -159,6 +158,7 @@ type PlayerAudioStateItem<'a> = (
     &'a Position,
     Option<&'a Wounds>,
     Option<&'a Cultivation>,
+    Option<&'a Lifecycle>,
 );
 type PlayerAudioStateFilter = With<Client>;
 
@@ -169,10 +169,12 @@ pub fn emit_player_state_audio_triggers(
     mut audio_stops: EventWriter<StopSoundRecipeRequest>,
 ) {
     let mut audio = audio.context();
-    for (entity, position, wounds, cultivation) in &players {
+    for (entity, position, wounds, cultivation, lifecycle) in &players {
         if let Some(wounds) = wounds {
             let hp_ratio = wounds.health_current / wounds.health_max.max(1.0);
-            let low_hp = is_low_hp_for_heartbeat(hp_ratio);
+            // 等待复活裁决和终结均不是存活低血，不能继续播放心跳。
+            let alive = !lifecycle.is_some_and(|life| life.state != LifecycleState::Alive);
+            let low_hp = alive && is_low_hp_for_heartbeat(hp_ratio);
             let was_low_hp = state.low_hp.get(&entity).copied().unwrap_or(false);
             if low_hp && !was_low_hp {
                 emit_play_loop(
@@ -185,10 +187,7 @@ pub fn emit_player_state_audio_triggers(
                     1.0,
                 );
             } else if !low_hp && was_low_hp {
-                // 血量回到阈值以上必须显式收 loop：开 loop 的一方负责关（同
-                // fauna fuya pressure hum 的 play/stop 配对惯例）。漏关的话 client
-                // 侧心跳会一直每秒重放 `entity.player.hurt` 层——实机表现就是
-                // 重生（血量回到 REVIVE_HEALTH_FRACTION）之后仍在响受伤音。
+                // 退出存活低血就显式收 loop，不能等复活后再停止死亡界面里的循环。
                 audio_stops.send(stop_low_hp_heartbeat(entity));
             }
             state.low_hp.insert(entity, low_hp);
@@ -2548,7 +2547,7 @@ mod tests {
         );
     }
 
-    /// 主线场景：低血 → 死亡 → 重生。重生必须收掉心跳 loop（否则重生后一直响受伤音）。
+    /// 血量归零立即停，重生事件仍会幂等收尾，不依赖生命周期快照先到。
     #[test]
     fn revive_stops_low_hp_heartbeat_loop() {
         let (mut app, player, _client) = heartbeat_app("hbrev");
@@ -2557,10 +2556,13 @@ mod tests {
         assert_eq!(drain_plays(&mut app).len(), 1, "低血先起心跳");
         drain_stops(&mut app);
 
-        // 死亡（hp=0）期间心跳照旧（条件仍成立），关键是重生这一刻要收掉。
         set_health(&mut app, player, 0.0);
         app.update();
-        assert!(drain_stops(&mut app).is_empty(), "死亡本身不触发 stop");
+        let stops = drain_stops(&mut app);
+        assert_eq!(stops.len(), 1, "血量归零时必须立即停止心跳");
+        assert_eq!(stops[0].instance_id, low_hp_heartbeat_instance_id(player));
+        app.update();
+        assert!(drain_plays(&mut app).is_empty(), "零血量不能重开心跳");
 
         app.world_mut().send_event(PlayerRevived { entity: player });
         app.update();
@@ -2577,6 +2579,39 @@ mod tests {
                 .map(|stop| stop.instance_id)
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// 实机回归：离开存活状态就停心跳，即使仍有残余低血快照也不能重新开启。
+    #[test]
+    fn nonliving_player_stops_heartbeat_without_rearming() {
+        for state in [LifecycleState::AwaitingRevival, LifecycleState::Terminated] {
+            let (mut app, player, _client) = heartbeat_app("hbdead");
+            set_health(&mut app, player, 10.0);
+            app.world_mut()
+                .entity_mut(player)
+                .insert(Lifecycle::default());
+            app.update();
+            let plays = drain_plays(&mut app);
+            assert_eq!(plays.len(), 1, "存活低血应正常启动心跳");
+
+            app.world_mut().get_mut::<Lifecycle>(player).unwrap().state = state;
+            app.update();
+            let stops = drain_stops(&mut app);
+            assert_eq!(stops.len(), 1, "进入 {state:?} 必须停止心跳");
+            assert_eq!(stops[0].instance_id, plays[0].instance_id);
+            assert_eq!(stops[0].fade_out_ticks, 0, "死亡裁决中的心跳必须硬停");
+            assert!(
+                matches!(stops[0].recipient, AudioRecipient::Single(entity) if entity == player)
+            );
+            app.update();
+            assert!(drain_plays(&mut app).is_empty(), "{state:?} 不得重开心跳");
+
+            app.world_mut()
+                .entity_mut(player)
+                .insert(Lifecycle::default());
+            app.update();
+            assert_eq!(drain_plays(&mut app).len(), 1, "后续存活玩家仍应有低血反馈");
+        }
     }
 
     /// 重生后记账要清干净：下一次真掉血能重新起心跳（修复不能把低血反馈永久关死）。

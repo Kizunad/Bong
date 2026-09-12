@@ -26,6 +26,7 @@ export const MovementStateV1 = Type.Object(
     movement_action: MovementActionV1,
     zone_kind: MovementZoneKindV1,
     dash_cooldown_remaining_ticks: Type.Integer({ minimum: 0 }),
+    dash_cooldown_total_ticks: Type.Integer({ minimum: 0 }),
     hitbox_height_blocks: Type.Number({ minimum: 0 }),
     stamina_current: Type.Number({ minimum: 0 }),
     stamina_max: Type.Number({ exclusiveMinimum: 0 }),

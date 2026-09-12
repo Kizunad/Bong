@@ -3158,7 +3158,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item.isCraftRecipeScroll()) {
             actions.add(new PillMenuAction("研读制作残卷", ActionKind.CRAFT_RECIPE_SCROLL_USE));
         }
-        if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
+        if (item.isTechniqueScroll() && hasTechniqueScrollMetadata(item) && !isKnownTechnique(item)) {
             actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
         }
         // plan-scroll-reading-v1 P0 — 可阅读残卷（如《经脉浅述·残卷》）右键菜单 [阅读]。
@@ -3724,7 +3724,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private SkillScrollDropState skillScrollDropState(InventoryItem item) {
         if (item == null) return SkillScrollDropState.IDLE;
         if ((item.isSkillScroll() && isKnownSkillScroll(item) && !isConsumedSkillScroll(item))
-            || (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item))) {
+            || (item.isTechniqueScroll() && hasTechniqueScrollMetadata(item) && !isKnownTechnique(item))) {
             return SkillScrollDropState.VALID;
         }
         return SkillScrollDropState.INVALID;
@@ -3789,7 +3789,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private boolean tryReadTechniqueScroll(InventoryItem item) {
-        if (!isKnownTechniqueScroll(item)) {
+        if (!hasTechniqueScrollMetadata(item)) {
             skillScrollDropFeedback = "不识此法，暂不能悟";
             return false;
         }
@@ -3803,7 +3803,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     boolean dispatchTechniqueScrollUse(InventoryItem item) {
-        if (item == null || item.instanceId() == 0L || !item.isTechniqueScroll() || !isKnownTechniqueScroll(item)) {
+        if (item == null || item.instanceId() == 0L || !item.isTechniqueScroll() || !hasTechniqueScrollMetadata(item)) {
             return false;
         }
         com.bong.client.cultivation.TechniqueScrollReadScreen.showReadRequested(
@@ -3837,8 +3837,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return com.bong.client.skill.SkillId.fromWire(item.scrollSkillId()) != null;
     }
 
-    private boolean isKnownTechniqueScroll(InventoryItem item) {
-        return com.bong.client.cultivation.TechniqueScrollReadScreen.isWoliuTechniqueId(item.scrollSkillId());
+    private boolean hasTechniqueScrollMetadata(InventoryItem item) {
+        return item.isTechniqueScroll() && !item.scrollSkillId().isBlank();
     }
 
     private boolean isKnownTechnique(InventoryItem item) {

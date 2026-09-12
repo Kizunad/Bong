@@ -251,13 +251,21 @@ public class BongHud {
         if (command.isTexturedRect()) {
             Identifier tex = parseIdentifier(command.texturePath());
             if (tex != null) {
-                context.drawTexture(
+                int color = command.color();
+                RenderSystem.enableBlend();
+                RenderSystem.defaultBlendFunc();
+                context.setShaderColor(((color >>> 16) & 255) / 255f, ((color >>> 8) & 255) / 255f,
+                    (color & 255) / 255f, (color >>> 24) / 255f);
+                renderWithCleanup(() -> context.drawTexture(
                     tex,
                     command.x(), command.y(),
                     0.0f, 0.0f,
                     command.width(), command.height(),
                     command.width(), command.height()
-                );
+                ), () -> {
+                    context.setShaderColor(1, 1, 1, 1);
+                    RenderSystem.disableBlend();
+                });
             }
             return;
         }

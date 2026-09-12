@@ -64,6 +64,7 @@ class HudRenderRegistryTest {
                 HudRenderLayer.QUICK_BAR,
                 HudRenderLayer.CAST_BAR,
                 HudRenderLayer.JIEMAI_RING,
+                HudRenderLayer.GATHERING,
                 HudRenderLayer.STATUS_EFFECTS,
                 HudRenderLayer.MOVEMENT_HUD
             ),

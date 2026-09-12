@@ -73,6 +73,7 @@ use super::events::{
 };
 
 const COMBAT_DRAIN_PER_SEC: f32 = 5.0;
+pub const REVIVAL_ROLL_TICKS: u64 = 64;
 const JOG_DRAIN_PER_SEC: f32 = 2.0;
 const SPRINT_DRAIN_PER_SEC: f32 = 10.0;
 /// plan-shield-block-v1 P2 — 举盾持续每秒体力消耗（量级：COMBAT=5.0，JOG=2.0，盾=3.0）。
@@ -1156,6 +1157,52 @@ pub fn handle_revival_action_intents(
         };
 
         match intent.action {
+            RevivalActionKind::RollRebirth => {
+                if npc_marker.is_some()
+                    || lifecycle.state != LifecycleState::AwaitingRevival
+                    || lifecycle.revival_roll_survived.is_some()
+                {
+                    continue;
+                }
+                let Some(decision) = lifecycle.awaiting_decision else {
+                    continue;
+                };
+                let survived = matches!(decision, RevivalDecision::Fortune { .. })
+                    || matches!(decision, RevivalDecision::Tribulation { chance } if roll_rebirth(clock.tick, entity, chance));
+                let mut staged = lifecycle.clone();
+                staged.revival_roll_survived = Some(survived);
+                staged.revival_decision_deadline_tick =
+                    Some(clock.tick.saturating_add(REVIVAL_ROLL_TICKS));
+                if let (Some(storage), Some(username)) = (player_persistence.as_deref(), username) {
+                    if let Err(error) = crate::player::state::save_player_lifecycle_slice(
+                        storage,
+                        &username.0,
+                        &staged,
+                        clock.tick,
+                    ) {
+                        tracing::warn!("[bong][combat] cannot persist revival roll: {error}");
+                        continue;
+                    }
+                }
+                *lifecycle = staged;
+                let context = DeathScreenContext {
+                    lifecycle: &lifecycle,
+                    death_registry: death_registry.as_deref(),
+                    lifespan: lifespan.as_deref(),
+                    position: position.as_deref(),
+                    zones: qi.zones.as_deref(),
+                    final_words: Vec::new(),
+                    cinematic: None,
+                };
+                let payload = build_death_screen_payload(
+                    &eventual_cause(life_record.as_deref()),
+                    decision,
+                    context,
+                    clock.tick,
+                    lifecycle.revival_decision_deadline_tick.unwrap(),
+                );
+                send_payload(&mut clients, entity, payload);
+            }
             RevivalActionKind::Reincarnate => {
                 if npc_marker.is_some() {
                     tracing::warn!(
@@ -1167,12 +1214,20 @@ pub fn handle_revival_action_intents(
                 if lifecycle.state != LifecycleState::AwaitingRevival {
                     continue;
                 }
+                if lifecycle.revival_roll_survived.is_some()
+                    && lifecycle
+                        .revival_decision_deadline_tick
+                        .is_some_and(|deadline| clock.tick < deadline)
+                {
+                    continue;
+                }
                 let Some(decision) = lifecycle.awaiting_decision else {
                     continue;
                 };
 
-                let survived = matches!(decision, RevivalDecision::Fortune { .. })
-                    || matches!(decision, RevivalDecision::Tribulation { chance } if roll_rebirth(clock.tick, entity, chance));
+                let survived = lifecycle.revival_roll_survived.unwrap_or_else(||
+                    matches!(decision, RevivalDecision::Fortune { .. })
+                    || matches!(decision, RevivalDecision::Tribulation { chance } if roll_rebirth(clock.tick, entity, chance)));
 
                 if survived {
                     if revive_lifecycle(
@@ -1234,18 +1289,13 @@ pub fn handle_revival_action_intents(
                     commands
                         .entity(entity)
                         .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
-                    emit_terminate_screen(
-                        &mut clients,
-                        entity,
-                        "终焉之言未竟。",
-                        "劫数已定，形神俱散。",
-                        "凡人",
-                    );
                     hide_death_screen(&mut clients, entity);
                 }
             }
             RevivalActionKind::Terminate => {
-                if lifecycle.state != LifecycleState::AwaitingRevival {
+                if lifecycle.state != LifecycleState::AwaitingRevival
+                    || lifecycle.revival_roll_survived.is_some()
+                {
                     continue;
                 }
                 let Some(decision) = lifecycle.awaiting_decision else {
@@ -1281,13 +1331,6 @@ pub fn handle_revival_action_intents(
                     commands
                         .entity(entity)
                         .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
-                    emit_terminate_screen(
-                        &mut clients,
-                        entity,
-                        "此身止于此。",
-                        "你选择了归隐与终结。",
-                        "凡人",
-                    );
                     hide_death_screen(&mut clients, entity);
                 }
             }
@@ -1346,7 +1389,11 @@ pub fn auto_confirm_revival_decisions(
         }
         revival_tx.send(RevivalActionIntent {
             entity,
-            action: RevivalActionKind::Reincarnate,
+            action: if lifecycle.revival_roll_survived.is_some() {
+                RevivalActionKind::Reincarnate
+            } else {
+                RevivalActionKind::RollRebirth
+            },
             issued_at_tick: clock.tick,
         });
     }
@@ -2316,14 +2363,50 @@ fn build_death_screen_payload(
     decision_deadline_tick: u64,
 ) -> ServerDataV1 {
     let zone_kind = death_zone_from_context(cause, context.position, context.zones);
+    let rolling = context.lifecycle.revival_roll_survived;
+    let cinematic = rolling
+        .map(|survived| {
+            use crate::schema::death_cinematic::{
+                DeathCinematicPhaseV1, DeathCinematicRollV1, DeathRollResultV1,
+            };
+            let remaining = decision_deadline_tick
+                .saturating_sub(now_tick)
+                .min(REVIVAL_ROLL_TICKS);
+            DeathCinematicS2cV1 {
+                v: 1,
+                character_id: context.lifecycle.character_id.clone(),
+                phase: DeathCinematicPhaseV1::Roll,
+                phase_tick: REVIVAL_ROLL_TICKS - remaining,
+                phase_duration_ticks: REVIVAL_ROLL_TICKS,
+                total_elapsed_ticks: REVIVAL_ROLL_TICKS - remaining,
+                total_duration_ticks: REVIVAL_ROLL_TICKS,
+                roll: DeathCinematicRollV1 {
+                    probability: decision.chance_shown(),
+                    threshold: decision.chance_shown(),
+                    luck_value: 0.0,
+                    result: if survived {
+                        DeathRollResultV1::Survive
+                    } else {
+                        DeathRollResultV1::Fall
+                    },
+                },
+                insight_text: Vec::new(),
+                is_final: false,
+                death_number: context.lifecycle.death_count,
+                zone_kind: crate::death_lifecycle::cinematic::map_zone_kind(zone_kind),
+                tsy_death: false,
+                rebirth_weakened_ticks: super::components::REVIVE_WEAKENED_TICKS,
+            }
+        })
+        .or(context.cinematic);
     ServerDataV1::new(ServerDataPayloadV1::DeathScreen {
         visible: true,
         cause: cause.to_string(),
         luck_remaining: decision.chance_shown(),
         final_words: context.final_words,
         countdown_until_ms: decision_deadline_ms(decision_deadline_tick, now_tick),
-        can_reincarnate: decision.can_reincarnate(),
-        can_terminate: decision.can_terminate(),
+        can_reincarnate: rolling.is_none() && decision.can_reincarnate(),
+        can_terminate: rolling.is_none() && decision.can_terminate(),
         stage: Some(death_screen_stage(decision)),
         death_number: Some(
             context
@@ -2336,7 +2419,7 @@ fn build_death_screen_payload(
         lifespan: context.lifespan.map(|lifespan| {
             death_screen_lifespan_preview(lifespan, context.position, context.zones)
         }),
-        cinematic: context.cinematic,
+        cinematic,
     })
 }
 
@@ -2354,26 +2437,10 @@ fn emit_death_screen(
     send_payload(clients, entity, payload);
 }
 
-fn emit_terminate_screen(
+pub(crate) fn hide_death_screen(
     clients: &mut Query<&mut valence::prelude::Client>,
     entity: Entity,
-    final_words: &str,
-    epilogue: &str,
-    archetype_suggestion: &str,
 ) {
-    send_payload(
-        clients,
-        entity,
-        ServerDataV1::new(ServerDataPayloadV1::TerminateScreen {
-            visible: true,
-            final_words: final_words.to_string(),
-            epilogue: epilogue.to_string(),
-            archetype_suggestion: archetype_suggestion.to_string(),
-        }),
-    );
-}
-
-fn hide_death_screen(clients: &mut Query<&mut valence::prelude::Client>, entity: Entity) {
     send_payload(
         clients,
         entity,
@@ -2443,11 +2510,12 @@ fn hide_terminate_screen(clients: &mut Query<&mut valence::prelude::Client>, ent
             final_words: String::new(),
             epilogue: String::new(),
             archetype_suggestion: String::new(),
+            summary: None,
         }),
     );
 }
 
-fn send_payload(
+pub(crate) fn send_payload(
     clients: &mut Query<&mut valence::prelude::Client>,
     entity: Entity,
     payload: ServerDataV1,
@@ -5173,6 +5241,183 @@ mod tests {
     }
 
     #[test]
+    fn revival_roll_is_locked_persisted_and_settled_only_after_animation() {
+        for (chance, survived) in [(1.0, true), (0.0, false)] {
+            let mut app = App::new();
+            let (settings, _root) = persistence_settings("locked-revival-roll");
+            let storage =
+                PlayerStatePersistence::with_db_path(_root.join("data"), settings.db_path());
+            app.insert_resource(settings.clone());
+            app.insert_resource(storage.clone());
+            app.insert_resource(CombatClock { tick: 100 });
+            app.insert_resource(WorldQiAccount::default());
+            app.add_event::<RevivalActionIntent>();
+            app.add_event::<PlayerRevived>();
+            app.add_event::<PlayerTerminated>();
+            app.add_event::<AscensionQuotaOpened>();
+            app.add_event::<VfxEventRequest>();
+            app.add_event::<QiTransfer>();
+            app.add_event::<crate::coffin::CoffinStateChanged>();
+            app.add_systems(
+                Update,
+                (
+                    auto_confirm_revival_decisions,
+                    handle_revival_action_intents,
+                )
+                    .chain(),
+            );
+            let (entity, mut helper) = spawn_client_actor(
+                &mut app,
+                "Dice",
+                Wounds {
+                    health_current: 0.0,
+                    ..Default::default()
+                },
+                Stamina::default(),
+                Lifecycle {
+                    character_id: "offline:Dice".into(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Tribulation { chance }),
+                    revival_decision_deadline_tick: Some(900),
+                    ..Default::default()
+                },
+            );
+            app.world_mut().entity_mut(entity).insert((
+                Cultivation::default(),
+                MeridianSystem::default(),
+                Contamination::default(),
+            ));
+            seed_revival_entity_bundle(&mut app, &settings, entity, "Dice");
+            app.world_mut().send_event(RevivalActionIntent {
+                entity,
+                action: RevivalActionKind::RollRebirth,
+                issued_at_tick: 100,
+            });
+            app.update();
+            let locked = app.world().get::<Lifecycle>(entity).unwrap().clone();
+            assert_eq!(
+                locked.state,
+                LifecycleState::AwaitingRevival,
+                "掷骰时不能提前复活或终结"
+            );
+            let persisted =
+                crate::player::state::load_player_lifecycle_slice(&storage, "Dice", 100)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                persisted.revival_roll_survived,
+                Some(survived),
+                "重连必须恢复同一次裁决"
+            );
+            flush_client_packets(&mut app);
+            assert!(collect_server_data_payloads(&mut helper).iter().any(|payload| matches!(
+                &payload.payload, ServerDataPayloadV1::DeathScreen {
+                    can_reincarnate: false, can_terminate: false, cinematic: Some(cinematic), ..
+                } if cinematic.roll.result == if survived { crate::schema::death_cinematic::DeathRollResultV1::Survive } else { crate::schema::death_cinematic::DeathRollResultV1::Fall }
+            )), "客户端必须收到锁定结果且两项操作禁用");
+            app.world_mut().resource_mut::<CombatClock>().tick = 101;
+            for action in [
+                RevivalActionKind::RollRebirth,
+                RevivalActionKind::Terminate,
+                RevivalActionKind::Reincarnate,
+            ] {
+                app.world_mut().send_event(RevivalActionIntent {
+                    entity,
+                    action,
+                    issued_at_tick: 101,
+                });
+            }
+            app.update();
+            let life = app.world().get::<Lifecycle>(entity).unwrap();
+            assert_eq!(life.state, LifecycleState::AwaitingRevival);
+            assert_eq!(life.revival_roll_survived, locked.revival_roll_survived);
+            assert_eq!(
+                life.revival_decision_deadline_tick, locked.revival_decision_deadline_tick,
+                "重复请求不能重掷、改选或延长演出"
+            );
+            app.world_mut().resource_mut::<CombatClock>().tick = 100 + REVIVAL_ROLL_TICKS;
+            app.update();
+            let life = app.world().get::<Lifecycle>(entity).unwrap();
+            assert_eq!(
+                life.state,
+                if survived {
+                    LifecycleState::Alive
+                } else {
+                    LifecycleState::Terminated
+                },
+                "大重生，小终结，结算沿用锁定结果"
+            );
+        }
+    }
+
+    #[test]
+    fn termination_publishes_final_attributes_before_cleanup_and_does_not_resample() {
+        let mut app = App::new();
+        let (settings, _root) = persistence_settings("termination-summary");
+        app.insert_resource(settings);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(
+            Update,
+            (
+                crate::combat::termination::publish_termination,
+                crate::cultivation::death_hooks::on_player_terminated,
+            )
+                .chain(),
+        );
+        let (entity, mut helper) = spawn_client_actor(
+            &mut app,
+            "LastName",
+            Wounds {
+                health_max: 72.0,
+                ..Default::default()
+            },
+            Stamina::default(),
+            Lifecycle {
+                character_id: "offline:LastName".into(),
+                state: LifecycleState::Terminated,
+                death_count: 4,
+                ..Default::default()
+            },
+        );
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: Realm::Condense,
+                qi_max: 88.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+        ));
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "测试必须走真实终结清理"
+        );
+        flush_client_packets(&mut app);
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| matches!(&payload.payload,
+                ServerDataPayloadV1::TerminateScreen { visible: true, summary: Some(summary), .. }
+                if summary.realm == "Condense" && summary.qi_max == Some(88.0)
+                    && summary.health_max == Some(72.0) && summary.death_count == 4
+            )),
+            "终局协议必须携带清理之前的真实属性"
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Cultivation::default());
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_server_data_payloads(&mut helper).is_empty(),
+            "同一终局不能被后续组件快照覆盖"
+        );
+    }
+
+    #[test]
     fn create_new_character_rehydrates_default_character_state_and_persists_slices() {
         let mut app = App::new();
         let (settings, root) = persistence_settings("create-new-character");
@@ -5361,8 +5606,10 @@ mod tests {
         #[cfg(feature = "dev-techniques")]
         assert_eq!(
             known_techniques.entries.len(),
-            app.world().resource::<TechniqueRegistry>().len(),
-            "dev-techniques new-character reset must preserve full catalog grants"
+            KnownTechniques::progression_reset(app.world().resource::<TechniqueRegistry>())
+                .entries
+                .len(),
+            "新角色应按出生配置获得功法，身法由卷轴学习"
         );
         #[cfg(not(feature = "dev-techniques"))]
         assert!(
