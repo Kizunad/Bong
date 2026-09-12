@@ -506,6 +506,13 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **源码消费者与生产边界**：已复核 `server/src`、`server/tests`、`scripts` 与 `docs`，没有 `include_str!` 读取 `dying_elder.rs`，也没有其它源码文本消费者；未改生产逻辑、事件、掉落/交互契约、qi_physics、schema、client、agent 或其它 plan。生产文件无测试体残留，仅保留挂载；无新增/扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam。
 - **提交与验证证据**：迁移提交 `b5b985569`、Rustfmt 收口提交 `cce4bf0e9`（均带 `Model: gpt-5.6-luna`）；在代码输入 HEAD `cce4bf0e91824b895508ff05983b63a304b3f163` 上，无上下文只读 validator PASS。随后执行 `git fetch origin && git merge origin/main`，当前 `origin/main=154705a3251eb3ebb396f29fc27787a905405524` 已是最新，Already up to date，无冲突。该代码输入 HEAD 的完整 server gate（直接经 `scripts/build-token.sh`，无外层 flock）三条均 exit 0：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；library `11987 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 integration targets 通过，doc-tests `3 passed / 0 failed / 5 ignored`。本条仅记录 P2-27，P2 其它模块、P3、P4 仍未完成，plan 不归档。
 
+### P2-28 fauna daozhan（⏳ 2026-09-09）
+
+- **范围与落点**：仅将 `server/src/fauna/daozhan.rs` 原 `#[cfg(test)] mod tests` 的全部 79 个测试外置到同 crate 同目录 `server/src/fauna/daozhan_tests.rs`；生产文件现仅保留 `#[cfg(test)] #[path = "daozhan_tests.rs"] mod tests;` 挂载。全部测试均为 B 类，未新增 `server/Cargo.toml` 的 `[[test]]` target。
+- **迁移前后对拍与筛选**：迁移前先执行 `cd server && ../scripts/build-token.sh cargo test --lib -- --list`，从完整列表确认真实选择器为 `fauna::daozhan::tests::` 且命中 79 条；迁移前、迁移后均执行 `cd server && ../scripts/build-token.sh cargo test --lib 'fauna::daozhan::tests::'`，分别为 `79 passed / 0 failed / 0 ignored`。测试名序列差集为 0，原测试函数、断言、fixture、错误/边界语义与执行顺序保持不变；本批仅有普通 `#[test]`，无遗漏异步测试属性。
+- **B 类理由与 seam**：79 条测试均直接使用 `daozhan` 模块私有类型、函数、常量或同 crate Bevy/ECS 装配；外置到 integration crate 将迫使这些实现细节成为生产 API，故统一保留同 crate 路径。已核对该源码无 `include_str!` 或其它源码文本消费者；未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，未复制生产实现。
+- **生产边界**：未改道伥状态、伪装/伏击、掉落、天道凝结、死亡真元释放、事件、system 注册顺序、schema、wire、Redis、client、agent、qi_physics 或其它测试迁移范围；生产文件从 3,101 行收缩至测试挂载与生产实现共 1,335 行，测试体完整落在独立同 crate 文件。
+- **提交与后续状态**：代码迁移对应 `ce96346d9`（2026-09-09，带 `Model: gpt-5.6-luna`）；本条仅记录 P2-28 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
 ### P2-29 alchemy/pill（⏳ 2026-09-09）
 
 - **范围与落点**：仅处置 `server/src/alchemy/pill.rs` 原唯一 `#[cfg(test)] mod tests` 的 89 条测试；全部作为 B 类原样外置到同 crate 同目录 `server/src/alchemy/pill_tests.rs`，生产文件仅保留 `#[cfg(test)] #[path = "pill_tests.rs"] mod tests;` 挂载。不新增 `server/Cargo.toml` 的 `[[test]]` target，A 类为 0。
