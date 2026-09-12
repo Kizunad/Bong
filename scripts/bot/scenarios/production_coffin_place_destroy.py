@@ -99,11 +99,6 @@ PLACE_OFFSET = -2  # 横向偏移，与 forge 放砧一致
 # 地形/结构上，不能把固定 surface_y 或 py+1 当成空气保证。成功层会回写给所有后续
 # 空气、边界和 stale 探针；非空气拒绝目标同样由真实放置消费结果向下探测。
 AIR_LAYER_SEARCH_OFFSETS = range(1, 6)
-# 拒绝路径没有 server 回执；一次周期快照足以观察保持不变。每次重置位置后再探针，
-# 防止出生点处于未加载支撑面时，等待多个 5s 窗口让玩家重力下坠到放置半径外。
-# marker spawn / not-empty 判定都在同一 tick 路径完成；窗口过长会让无支撑出生点在
-# 拒绝探针之间下坠，下一层被错误归因于 too far。完整拒绝世界事件仍用 2s 窗口。
-_AIR_LAYER_PROBE_TIMEOUT = 0.4
 # marker entity spawn is emitted on a later server tick than the inventory snapshot;
 # under the Redis-loaded runtime fixture the tail reached just over one second. Give
 # temporary successful probes enough time to be observed and broken before the next
@@ -597,8 +592,8 @@ def _place_on_first_air_layer(bot, px, py, pz, instance_id):
     """通过真实放置消费结果找出当前列首个可放置空气层。
 
     Bot 协议观察面没有方块查询；逐层提交同一个实例，只有服务端确认消费后才接受
-    该层。非空气层会静默拒绝并保留实例，下一层继续探测。这样既不引入测试专用
-    server API，也把实际成功坐标交给后续所有契约断言。
+    该层。只有收到服务端的“位置不为空”拒绝回执才探测下一层；超时必须失败，
+    否则上一层迟到的消费快照会被错认成下一层成功，之后永远等不到对应 marker。
     """
     last_attempt = None
     for offset in AIR_LAYER_SEARCH_OFFSETS:
@@ -606,18 +601,22 @@ def _place_on_first_air_layer(bot, px, py, pz, instance_id):
         _anchor_coffin_probe_position(bot, candidate)
         attempt_anchor = last_event_time(bot)
         _send_coffin_place(bot, candidate, instance_id)
-        try:
-            consumed = _wait_coffin_count(
-                bot,
-                0,
-                attempt_anchor,
-                timeout=_AIR_LAYER_PROBE_TIMEOUT,
-                description=f"动态空气层探测 {candidate} 成功消费棺材实例",
-            )
-        except BotAssertionError:
+        response = bot.wait_for(
+            lambda e: e.t > attempt_anchor and (
+                (e.kind == "server_data"
+                 and e.data.get("payload_type") == "inventory_snapshot"
+                 and _coffin_count(e.data["payload"]) == 0)
+                or (e.kind == "chat" and "[棺] 放置被拒：" in e.data.get("text", ""))
+            ),
+            timeout=_STEP_TIMEOUT,
+            description=f"动态空气层探测 {candidate} 的消费快照或拒绝回执",
+        )
+        if response.kind == "chat":
+            if not response.data["text"].endswith("放置被拒：目标位置不为空"):
+                raise BotAssertionError(f"空气层探测 {candidate} 未完成：{response.data['text']}")
             last_attempt = candidate
             continue
-        return candidate, attempt_anchor, consumed
+        return candidate, attempt_anchor, response.data["payload"]
     raise BotAssertionError(
         f"动态空气层探测失败：从 y={py} 向上尝试 {list(AIR_LAYER_SEARCH_OFFSETS)}，"
         f"最后目标={last_attempt}；服务端未确认任何目标为空气并消费实例"

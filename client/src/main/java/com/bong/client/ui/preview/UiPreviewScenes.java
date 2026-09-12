@@ -12,6 +12,7 @@ import com.bong.client.combat.screen.RepairScreen;
 import com.bong.client.combat.screen.DeathScreen;
 import com.bong.client.combat.store.DeathStateStore;
 import com.bong.client.combat.store.TerminateStateStore;
+import com.bong.client.combat.store.TerminationSummary;
 import com.bong.client.death.DeathCinematicState;
 import com.bong.client.coffin.CoffinMenuScreen;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
@@ -27,7 +28,9 @@ import com.bong.client.lifecycle.SessionScopedStoreRegistry;
 import com.bong.client.skill.SkillSetSnapshot;
 import com.bong.client.skill.SkillSetStore;
 import com.bong.client.ui.adapter.owo.OwoXmlScreenHost.ComponentBounds;
+import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
 import com.bong.client.ui.contract.UiViewport;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.DisconnectedScreen;
@@ -40,20 +43,49 @@ import java.util.Map;
 
 /** UI 截图场景白名单。新增场景必须显式登记并提供确定性 fixture。 */
 final class UiPreviewScenes {
-    private static final Map<String, UiPreviewScene> SCENES = Map.of(
-        "craft", new CraftScene(),
-        "terminate", new TerminateScene(),
-        "coffin-menu", new CoffinMenuScene(),
-        "repair", new RepairScene(),
-        "forge-carrier", new ForgeCarrierScene(),
-        "death", new DeathScene(),
-        "identity-panel", new IdentityPanelScene(false),
-        "identity-panel-empty", new IdentityPanelScene(true),
-        "zhenfa-layout", new ZhenfaLayoutScene(),
-        "main-menu", new MainMenuScene()
+    private static final Map<String, UiPreviewScene> SCENES = Map.ofEntries(
+        Map.entry("craft", new CraftScene()),
+        Map.entry("terminate", new TerminateScene(0)),
+        Map.entry("terminate-kind", new TerminateScene(1)),
+        Map.entry("terminate-hungry", new TerminateScene(2)),
+        Map.entry("terminate-mocking", new TerminateScene(3)),
+        Map.entry("coffin-menu", new CoffinMenuScene()),
+        Map.entry("repair", new RepairScene()),
+        Map.entry("forge-carrier", new ForgeCarrierScene()),
+        Map.entry("death", new DeathScene(-1, true)),
+        Map.entry("death-dice-close", new DeathScene(0, true)),
+        Map.entry("death-dice-roll", new DeathScene(23, true)),
+        Map.entry("death-dice-land", new DeathScene(42, true)),
+        Map.entry("death-dice-big", new DeathScene(60, true)),
+        Map.entry("death-dice-small", new DeathScene(60, false)),
+        Map.entry("death-dice-throw-big", new DeathScene(0, true, true)),
+        Map.entry("death-dice-throw-small", new DeathScene(0, false, true)),
+        Map.entry("identity-panel", new IdentityPanelScene(false)),
+        Map.entry("identity-panel-empty", new IdentityPanelScene(true)),
+        Map.entry("zhenfa-layout", new ZhenfaLayoutScene()),
+        Map.entry("main-menu", new MainMenuScene())
     );
 
     private UiPreviewScenes() {
+    }
+
+    private static void verifyEmptyLabelInput(OwoXmlScreenHost<?> screen, String... ids) {
+        var client = MinecraftClient.getInstance();
+        var context = new DrawContext(client, client.getBufferBuilders().getEntityVertexConsumers());
+        for (String id : ids) {
+            var bounds = screen.componentBoundsForPreview(id);
+            int mouseX = (int) bounds.centerX();
+            int mouseY = (int) bounds.centerY();
+            try {
+                // 复现空反馈栏悬停崩溃：实际渲染 tooltip，并走同一个文本点击入口。
+                screen.render(context, mouseX, mouseY, 0);
+                context.draw();
+                screen.mouseClicked(mouseX, mouseY, 0);
+                screen.mouseReleased(mouseX, mouseY, 0);
+            } catch (RuntimeException failure) {
+                throw new IllegalStateException("空文本区域悬停或点击失败: " + id, failure);
+            }
+        }
     }
 
     private static final class MainMenuScene implements UiPreviewScene {
@@ -332,14 +364,25 @@ final class UiPreviewScenes {
     }
 
     private static final class TerminateScene implements UiPreviewScene {
+        private final int voice;
+
+        private TerminateScene(int voice) { this.voice = voice; }
+
         @Override
         public void installFixture() {
-            TerminateStateStore.replace(new TerminateStateStore.State(
+            var summary = new TerminationSummary("行客", "Condense", 4, 47.5, 88.0, 72.0, 3, 7);
+            // 改动无展示用途的旧建议字段，确定性覆盖四种终局口吻。
+            TerminateStateStore.State fixture;
+            int seed = 0;
+            do {
+                fixture = new TerminateStateStore.State(
                 true,
                 "此身已尽，遗言仍在。\n愿后来者少走一段旧路。",
                 "尘土收拢，旧名不再回应。",
-                "游侠"
-            ));
+                "preview-" + seed++, summary
+                );
+            } while (Math.floorMod(fixture.hashCode(), 4) != voice);
+            TerminateStateStore.replace(fixture);
         }
 
         @Override
@@ -375,8 +418,8 @@ final class UiPreviewScenes {
             ComponentBounds panel = terminate.componentBoundsForPreview("terminate-panel");
             requireInViewport("terminate-panel", panel, width, height);
             for (String id : new String[] {
-                "terminate-title", "terminate-final-words", "terminate-epilogue",
-                "terminate-archetype", "terminate-create-character"
+                "terminate-title", "terminate-epilogue", "terminate-content-scroll",
+                "terminate-create-character"
             }) {
                 ComponentBounds bounds = terminate.componentBoundsForPreview(id);
                 requireInViewport(id, bounds, width, height);
@@ -392,6 +435,7 @@ final class UiPreviewScenes {
             if (!terminate.focusOrderForPreview().contains("terminate-create-character")) {
                 throw new IllegalStateException("终结屏创建按钮没有进入 Tab 焦点顺序");
             }
+            verifyEmptyLabelInput(terminate, "terminate-feedback", "terminate-title");
         }
 
         @Override
@@ -691,17 +735,33 @@ final class UiPreviewScenes {
     }
 
     private static final class DeathScene implements UiPreviewScene {
+        private final int rollTick;
+        private final boolean big;
+        private final boolean realtime;
+        private com.bong.client.combat.DeathIntent dispatched;
+
+        private DeathScene(int rollTick, boolean big) {
+            this(rollTick, big, false);
+        }
+
+        private DeathScene(int rollTick, boolean big, boolean realtime) {
+            this.rollTick = rollTick;
+            this.big = big;
+            this.realtime = realtime;
+        }
+
         @Override
         public void installFixture() {
+            dispatched = null;
             DeathStateStore.replace(new DeathStateStore.State(
                 true,
                 "pk",
                 0.42f,
                 List.of("不甘心", "旧名未曾留下", "愿后来者少走一段旧路"),
-                Long.MAX_VALUE,
-                true,
-                true,
-                "fortune",
+                System.currentTimeMillis() + 30_000,
+                rollTick < 0,
+                rollTick < 0,
+                "tribulation",
                 2,
                 "ordinary",
                 0.0,
@@ -710,7 +770,10 @@ final class UiPreviewScenes {
                 0,
                 0.0,
                 false,
-                DeathCinematicState.INACTIVE
+                rollTick < 0 ? DeathCinematicState.INACTIVE : new DeathCinematicState(
+                    true, "preview", DeathCinematicState.Phase.ROLL, rollTick, 64, rollTick, 64,
+                    new DeathCinematicState.Roll(0.42, 0.42, 0, big ? DeathCinematicState.RollResult.SURVIVE : DeathCinematicState.RollResult.FALL),
+                    List.of(), false, 2, "ordinary", false, 0, realtime ? System.currentTimeMillis() + 4_000 : Long.MAX_VALUE)
             ));
         }
 
@@ -718,7 +781,10 @@ final class UiPreviewScenes {
         public Screen createScreen() {
             return new DeathScreen(
                 DeathStateStore.snapshot(),
-                intent -> com.bong.client.ui.intent.UiIntentResult.accepted()
+                intent -> {
+                    dispatched = intent;
+                    return com.bong.client.ui.intent.UiIntentResult.accepted();
+                }
             );
         }
 
@@ -752,9 +818,7 @@ final class UiPreviewScenes {
                 throw new IllegalStateException("死亡屏面板越出 viewport: " + panel + ", viewport=" + width + "x" + height);
             }
             for (String id : new String[] {
-                "death-title", "death-luck", "death-luck-track", "death-content-scroll",
-                "death-phase", "death-countdown", "death-final-words-title",
-                "death-final-words", "death-actions",
+                "death-title", "death-dice", "death-content-scroll", "death-actions",
                 "death-reincarnate", "death-terminate"
             }) {
                 ComponentBounds bounds = death.componentBoundsForPreview(id);
@@ -774,8 +838,16 @@ final class UiPreviewScenes {
                     throw new IllegalStateException("死亡屏按钮中心命中错误: expected=" + id + ", actual=" + hit);
                 }
             }
-            if (!death.focusOrderForPreview().containsAll(List.of("death-reincarnate", "death-terminate"))) {
+            if (rollTick < 0 && !death.focusOrderForPreview().containsAll(List.of("death-reincarnate", "death-terminate"))) {
                 throw new IllegalStateException("死亡屏按钮没有进入 Tab 焦点顺序");
+            }
+            verifyEmptyLabelInput(death, "death-feedback", "death-title");
+            if (rollTick < 0) {
+                var button = death.componentBoundsForPreview("death-terminate");
+                death.mouseClicked(button.centerX(), button.centerY(), 0);
+                if (!(dispatched instanceof com.bong.client.combat.DeathIntent.Terminate)) {
+                    throw new IllegalStateException("真实鼠标点击未发送终结意图");
+                }
             }
         }
 

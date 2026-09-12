@@ -7589,6 +7589,7 @@ mod tests {
             final_words: "归于虚无".to_string(),
             epilogue: "角色终结".to_string(),
             archetype_suggestion: "warrior".to_string(),
+            summary: None,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::TerminateScreen(ts)),
@@ -7613,6 +7614,7 @@ mod tests {
             final_words: String::new(),
             epilogue: String::new(),
             archetype_suggestion: String::new(),
+            summary: None,
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::TerminateScreen(ts)),
@@ -8029,6 +8031,7 @@ mod tests {
                     final_words: "f".to_string(),
                     epilogue: "e".to_string(),
                     archetype_suggestion: "a".to_string(),
+                    summary: None,
                 }),
                 "TerminateScreen",
             ),
@@ -9012,6 +9015,7 @@ mod tests {
                     movement_action: MovementAction::Dashing.into(),
                     zone_kind: MovementZoneKind::Normal.into(),
                     dash_cooldown_remaining_ticks: 20,
+                    dash_cooldown_total_ticks: 30,
                     hitbox_height_blocks: 1.8,
                     stamina_current: 80.0,
                     stamina_max: 100.0,
@@ -10276,6 +10280,7 @@ mod tests {
                     movement_action: 1,
                     zone_kind: 1,
                     dash_cooldown_remaining_ticks: 0,
+                    dash_cooldown_total_ticks: 0,
                     hitbox_height_blocks: 1.8,
                     stamina_current: 100.0,
                     stamina_max: 100.0,

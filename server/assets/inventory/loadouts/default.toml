@@ -24,10 +24,16 @@ cols = 3
   stack_count = 1
 
   [[containers.items]]
-  row = 0
-  col = 1
+  row = 1
+  col = 0
   template_id = "fengling_bone_coin"
   stack_count = 5
+
+  [[containers.items]]
+  row = 0
+  col = 2
+  template_id = "scroll_technique_movement_dash"
+  stack_count = 1
 
 # ─── 破草包 3×3（穿戴在 chest 身体槽的 worn 层背包件，运行时容器 id = pack_<instance_id>） ───
 [[containers]]

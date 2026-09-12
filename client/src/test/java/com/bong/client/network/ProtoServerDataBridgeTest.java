@@ -58,6 +58,7 @@ class ProtoServerDataBridgeTest {
         LootContainerStateStore.clear();
         DefenseWindowStore.resetForTests();
         DeathStateStore.resetForTests();
+        com.bong.client.combat.store.TerminateStateStore.resetForTests();
         FullPowerStateStore.resetForTests();
         WoundsStore.resetForTests();
         FalseSkinHudStateStore.resetForTests();
@@ -67,6 +68,28 @@ class ProtoServerDataBridgeTest {
         com.bong.client.insight.InsightOfferStore.resetForTests();
         com.bong.client.scroll.ScrollReadStore.resetForTests();
         com.bong.client.lingtian.state.LingtianSessionStore.clearOnDisconnect();
+    }
+
+    @Test
+    void terminationSummarySurvivesProtoBridgeWithoutInventingMissingAttributes() {
+        var envelope = Envelope.ServerDataEnvelope.newBuilder().setTerminateScreen(
+            Envelope.TerminateScreen.newBuilder().setVisible(true).setSummary(
+                Envelope.TerminationSummary.newBuilder().setCharacterName("行客").setRealm("Condense")
+                    .setDeathCount(4).setYearsLived(47.5).setQiMax(88).setHealthMax(72).setMeridiansOpen(3)
+            )).build();
+        var bridge = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridge.isSuccess(), bridge.errorMessage());
+        var route = ServerDataRouter.createDefault().route(bridge.legacyJson(), bridge.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled());
+        var summary = com.bong.client.combat.store.TerminateStateStore.snapshot().summary();
+        assertEquals("行客", summary.characterName());
+        assertEquals("Condense", summary.realm());
+        assertEquals(88.0, summary.qiMax());
+        assertEquals(72.0, summary.healthMax());
+        assertEquals(47.5, summary.yearsLived());
+        assertEquals(4, summary.deathCount());
+        assertEquals(3, summary.meridiansOpen());
+        assertNull(summary.techniquesLearned(), "未记录的功法数不能伪造成零");
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────

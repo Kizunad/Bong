@@ -308,6 +308,11 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
     }
 
     match template_id {
+        "scroll_technique_movement_dash" => (
+            Some("combat_technique".to_string()),
+            Some("movement.dash".to_string()),
+            None,
+        ),
         "skill_scroll_herbalism_baicao_can" => (
             Some("skill_scroll".to_string()),
             Some("herbalism".to_string()),

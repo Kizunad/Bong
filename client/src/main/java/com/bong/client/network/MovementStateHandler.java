@@ -46,6 +46,7 @@ public final class MovementStateHandler implements ServerDataHandler {
         MovementState.Action action = MovementState.Action.fromWireName(readString(payload, "movement_action"));
         MovementState.ZoneKind zoneKind = MovementState.ZoneKind.fromWireName(readString(payload, "zone_kind"));
         Long dashCooldown = readLong(payload, "dash_cooldown_remaining_ticks");
+        Long dashCooldownTotal = readLong(payload, "dash_cooldown_total_ticks");
         Double hitboxHeight = readDouble(payload, "hitbox_height_blocks");
         Double staminaCurrent = readDouble(payload, "stamina_current");
         Double staminaMax = readDouble(payload, "stamina_max");
@@ -57,12 +58,14 @@ public final class MovementStateHandler implements ServerDataHandler {
             || action == null
             || zoneKind == null
             || dashCooldown == null
+            || dashCooldownTotal == null
             || hitboxHeight == null
             || staminaCurrent == null
             || staminaMax == null
             || lowStamina == null
             || speed < 0.0
             || dashCooldown < 0L
+            || dashCooldownTotal < 0L
             || hitboxHeight < 0.0
             || staminaCurrent < 0.0
             || staminaMax <= 0.0
@@ -81,6 +84,7 @@ public final class MovementStateHandler implements ServerDataHandler {
             action,
             zoneKind,
             dashCooldown,
+            dashCooldownTotal,
             hitboxHeight,
             staminaCurrent,
             staminaMax,

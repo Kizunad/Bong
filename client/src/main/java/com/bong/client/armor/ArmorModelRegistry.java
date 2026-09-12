@@ -48,6 +48,11 @@ public final class ArmorModelRegistry {
         register("armor_hide_chestplate", EquipSlotType.CHEST, "hide_chestplate");
         register("armor_hide_leggings", EquipSlotType.LEGS, "hide_leggings");
         register("armor_hide_boots", EquipSlotType.FEET, "hide_boots");
+
+        register("armor_scroll_wrap_helmet", EquipSlotType.HEAD, "scroll_wrap_helmet");
+        register("armor_scroll_wrap_chestplate", EquipSlotType.CHEST, "scroll_wrap_chestplate");
+        register("armor_scroll_wrap_leggings", EquipSlotType.LEGS, "scroll_wrap_leggings");
+        register("armor_scroll_wrap_boots", EquipSlotType.FEET, "scroll_wrap_boots");
     }
 
     private static void register(String templateId, EquipSlotType slot, String modelKey) {

@@ -129,8 +129,9 @@ def escalate_to_tribulation_death(bot: Bot) -> dict:
     被服务端静默拒绝，收屏永远不来（实测三连超时）。初始锚点用进入时的最新事件时间：
     调用方可能已有前置死亡（如负向门禁），锚到 0.0 会重匹配那屏。
     """
-    after = last_event_time(bot)
     for cycle in range(1, MAX_ESCALATION_DEATHS + 1):
+        # 骰子过程也会发布 visible=true；每次复活收屏后重新锚定，排除上一轮更新。
+        after = last_event_time(bot)
         kill_self(bot)
         screen = wait_death_screen(bot, after=after)
         if screen.get("can_terminate"):

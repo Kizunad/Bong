@@ -33,7 +33,9 @@ class DeathScreenXmlTest {
         assertEquals("操作未提交: 暂不可操作", screen.feedbackTextForTests());
 
         screen.dispatch(new DeathIntent.Reincarnate());
-        assertEquals("", screen.feedbackTextForTests(),
-            "重试成功必须清除上一次失败反馈，避免界面继续显示过期错误");
+        assertEquals("已提交，等待裁决", screen.feedbackTextForTests(),
+            "重试成功必须替换过期错误，等待服务端裁决");
+        screen.dispatch(new DeathIntent.Reincarnate());
+        assertEquals(2, attempts[0], "裁决未返回时不得重复发送请求");
     }
 }

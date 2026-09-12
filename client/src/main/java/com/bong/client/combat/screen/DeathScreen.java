@@ -2,14 +2,15 @@ package com.bong.client.combat.screen;
 
 import com.bong.client.combat.DeathIntent;
 import com.bong.client.combat.store.DeathStateStore;
-import com.bong.client.death.DeathCinematicRenderer;
-import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.death.DeathBackdrop;
+import com.bong.client.death.DeathDiceRenderer;
 import com.bong.client.ui.adapter.owo.OwoXmlScreenHost;
 import com.bong.client.ui.intent.UiIntentResult;
 import com.bong.client.ui.intent.UiIntentSink;
 import io.wispforest.owo.ui.component.ButtonComponent;
 import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.container.FlowLayout;
+import io.wispforest.owo.ui.container.ScrollContainer;
 import io.wispforest.owo.ui.core.Sizing;
 import io.wispforest.owo.ui.core.Surface;
 import net.minecraft.client.gui.DrawContext;
@@ -33,7 +34,7 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
 
     private static final int LUCK_BAR_WIDTH = 220;
 
-    private final DeathStateStore.State state;
+    private DeathStateStore.State state;
     private final UiIntentSink<DeathIntent> intentSink;
     private LabelComponent titleLabel;
     private LabelComponent luckLabel;
@@ -43,8 +44,11 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
     private LabelComponent finalWordsLabel;
     private LabelComponent feedbackLabel;
     private FlowLayout luckFill;
+    private ButtonComponent reincarnateButton;
+    private ButtonComponent terminateButton;
     private String feedbackText = "";
     private long lastRenderMs;
+    private long pendingSinceMs;
 
     public DeathScreen(DeathStateStore.State state, UiIntentSink<DeathIntent> intentSink) {
         super(Text.literal("死亡"), FlowLayout.class, "death");
@@ -74,60 +78,66 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
         feedbackLabel = label("death-feedback");
         luckFill = component(FlowLayout.class, "death-luck-fill");
 
-        ButtonComponent reincarnate = component(ButtonComponent.class, "death-reincarnate")
+        reincarnateButton = component(ButtonComponent.class, "death-reincarnate")
             .onPress(button -> dispatch(new DeathIntent.Reincarnate()));
-        ButtonComponent terminate = component(ButtonComponent.class, "death-terminate")
+        terminateButton = component(ButtonComponent.class, "death-terminate")
             .onPress(button -> dispatch(new DeathIntent.Terminate()));
-        if (!state.hasLifespanPreview()) {
-            lifespanLabel.remove();
-            lifespanLabel = null;
-        }
-        // 不可用动作从已挂载树移除，保持旧屏“不可用按钮不出现”的行为。
-        if (!state.canReincarnate()) {
-            reincarnate.remove();
-        }
-        if (!state.canTerminate()) {
-            terminate.remove();
-        }
+        DeathBackdrop.command(reincarnateButton, DeathBackdrop.REBIRTH_COLOR);
+        DeathBackdrop.command(terminateButton, DeathBackdrop.ENDING_COLOR);
         refreshBindings(System.currentTimeMillis());
     }
 
     @Override
-    public void tick() {
-        super.tick();
-        if (!DeathStateStore.snapshot().visible()) {
-            close();
-        }
+    public void init() {
+        super.init();
+        if (!hostReadyForTests()) return;
+        component(FlowLayout.class, "death-panel").horizontalSizing(Sizing.fixed(Math.min(400, width - 32)));
+        int diceHeight = Math.min(190, Math.max(40, Math.min(height * 4 / 9, height - 180)));
+        component(FlowLayout.class, "death-dice").verticalSizing(Sizing.fixed(diceHeight));
+        component(ScrollContainer.class, "death-content-scroll").verticalSizing(Sizing.fixed(Math.max(16, height - 164 - diceHeight)));
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         long now = System.currentTimeMillis();
         lastRenderMs = now;
-        context.fill(0, 0, width, height, BG_COLOR);
+        DeathBackdrop.render(context, width, height, DeathBackdrop.ENDING_COLOR);
         refreshBindings(now);
         super.render(context, mouseX, mouseY, delta);
-        renderCinematicCommands(
-            context,
-            DeathCinematicRenderer.buildCommands(state.cinematic(), now, width, height)
-        );
+        if (hostReadyForTests()) {
+            var title = componentBoundsForPreview("death-title");
+            DeathBackdrop.title(context, "一息未尽", (int) title.centerX(), title.y());
+            var dice = componentBoundsForPreview("death-dice");
+            DeathDiceRenderer.render(context, state, now, dice.x(), dice.y(), dice.width(), dice.height());
+        }
     }
 
     private void refreshBindings(long nowMs) {
         if (titleLabel == null) {
             return;
         }
-        titleLabel.text(Text.literal("道陨——" + causeLabel(state.cause())));
-        luckLabel.text(Text.literal("重生概率: " + Math.round(state.luckRemaining() * 100) + "%"));
+        if (DeathStateStore.snapshot().visible()) state = DeathStateStore.snapshot();
+        boolean rolling = DeathDiceRenderer.rolling(state);
+        if (pendingSinceMs != 0 && nowMs - pendingSinceMs >= 5_000) {
+            pendingSinceMs = 0;
+            feedbackText = "尚未收到裁决，可重试";
+        }
+        label("death-cause").text(Text.literal(causeLabel(state.cause())));
+        luckLabel.text(Text.literal("再续此身的运数  " + Math.round(state.luckRemaining() * 100) + "%"));
         phaseLabel.text(Text.literal(formatPhaseLine()));
-        countdownLabel.text(Text.literal("倒计时: " + (state.remainingMs(nowMs) / 1000) + "s"));
+        countdownLabel.text(Text.literal(rolling ? "运数已掷" : "余 " + (state.remainingMs(nowMs) / 1000) + " 息"));
         if (lifespanLabel != null) {
             lifespanLabel.text(Text.literal(formatLifespan()));
         }
         finalWordsLabel.text(Text.literal(formatFinalWords(state.finalWords())));
-        feedbackLabel.text(Text.literal(feedbackText));
+        feedbackLabel.text(Text.literal(rolling ? "" : feedbackText));
         luckFill.horizontalSizing(Sizing.fixed(Math.round(state.luckRemaining() * LUCK_BAR_WIDTH)));
         luckFill.surface(Surface.flat(luckFillColor()));
+        reincarnateButton.active(state.canReincarnate() && pendingSinceMs == 0);
+        terminateButton.active(state.canTerminate() && pendingSinceMs == 0);
+        reincarnateButton.setMessage(Text.literal(rolling ? "听候落定" : "掷下运数").styled(style -> style.withColor(DeathBackdrop.REBIRTH_COLOR)));
+        terminateButton.setMessage(Text.literal(rolling ? "运数已掷" : state.canTerminate() ? "终结此生" : "运数未尽")
+            .styled(style -> style.withColor(state.canTerminate() ? DeathBackdrop.ENDING_COLOR : 0x75817A)));
     }
 
     private String formatPhaseLine() {
@@ -151,9 +161,11 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
     }
 
     void dispatch(DeathIntent intent) {
+        if (pendingSinceMs != 0) return;
         UiIntentResult result = intentSink.dispatch(intent);
         if (result.kind() == UiIntentResult.Kind.LOCAL_ACCEPTED) {
-            feedbackText = "";
+            pendingSinceMs = System.currentTimeMillis();
+            feedbackText = "已提交，等待裁决";
             if (feedbackLabel != null) {
                 feedbackLabel.text(Text.literal(feedbackText));
             }
@@ -167,46 +179,8 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
 
     private int luckFillColor() {
         return state.luckRemaining() < 0.3f
-            ? 0xFFE04040
-            : state.luckRemaining() < 0.7f ? LUCK_FILL_COLOR : 0xFF60D060;
-    }
-
-    private void renderCinematicCommands(DrawContext context, List<HudRenderCommand> commands) {
-        for (HudRenderCommand command : commands) {
-            if (command.isScreenTint()) {
-                context.fill(0, 0, width, height, command.color());
-                continue;
-            }
-            if (command.isEdgeVignette()) {
-                renderEdgeVignette(context, command.color());
-                continue;
-            }
-            if (command.isRect()) {
-                context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
-                continue;
-            }
-            if (command.isText()) {
-                context.drawTextWithShadow(this.textRenderer, command.text(), command.x(), command.y(), command.color());
-                continue;
-            }
-            if (command.isScaledText()) {
-                var matrices = context.getMatrices();
-                matrices.push();
-                matrices.translate(command.x(), command.y(), 0);
-                float scale = (float) command.textScale();
-                matrices.scale(scale, scale, 1.0f);
-                context.drawTextWithShadow(this.textRenderer, command.text(), 0, 0, command.color());
-                matrices.pop();
-            }
-        }
-    }
-
-    private void renderEdgeVignette(DrawContext context, int color) {
-        int edge = Math.max(12, Math.min(width, height) / 8);
-        context.fill(0, 0, width, edge, color);
-        context.fill(0, height - edge, width, height, color);
-        context.fill(0, edge, edge, height - edge, color);
-        context.fill(width - edge, edge, width, height - edge, color);
+            ? DeathBackdrop.ENDING_COLOR
+            : DeathBackdrop.REBIRTH_COLOR;
     }
 
     static String formatFinalWords(List<String> words) {
@@ -226,6 +200,8 @@ public final class DeathScreen extends OwoXmlScreenHost<FlowLayout> {
             case "tribulation" -> "死于天劫";
             case "dao_heart_shatter" -> "道心崩塌";
             case "starvation" -> "饿死";
+            case "cultivation:SwarmQiDrain" -> "真元遭啮，气息断绝";
+            case "cultivation:DevCommand" -> "气息断绝";
             default -> cause == null || cause.isBlank() ? "未知" : cause;
         };
     }

@@ -51,6 +51,25 @@ class TechniquesSnapshotHandlerTest {
     }
 
     @Test
+    void dashAvailabilityFollowsSnapshotAndDisconnect() {
+        var handler = new TechniquesSnapshotHandler();
+        String learned = """
+            {"v":1,"type":"techniques_snapshot","entries":[{
+              "id":"movement.dash","display_name":"闪避","grade":"common",
+              "proficiency":0,"active":true,"description":"","required_realm":"Awaken",
+              "required_meridians":[],"qi_cost":0,"cast_ticks":0,"cooldown_ticks":40,"range":2.8
+            }]}""";
+        assertTrue(handler.handle(parseEnvelope(learned)).handled());
+        assertTrue(com.bong.client.movement.DashSkill.learned());
+        handler.handle(parseEnvelope(learned.replace("\"active\":true", "\"active\":false")));
+        org.junit.jupiter.api.Assertions.assertFalse(com.bong.client.movement.DashSkill.learned());
+        handler.handle(parseEnvelope(learned));
+        TechniquesListPanel.clearOnDisconnect();
+        org.junit.jupiter.api.Assertions.assertFalse(com.bong.client.movement.DashSkill.learned(),
+            "断线后 HUD 和按键不得沿用上个角色的身法解锁");
+    }
+
+    @Test
     void preservesLegacyFloatQiCost() {
         ServerDataDispatch dispatch = new TechniquesSnapshotHandler().handle(parseEnvelope("""
             {"v":1,"type":"techniques_snapshot","entries":[{

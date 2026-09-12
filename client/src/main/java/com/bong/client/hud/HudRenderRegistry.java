@@ -27,8 +27,10 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.HUD_VARIANT, "HudEnvironmentVariantPlanner", "zone_state+extract_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.TARGET_INFO, "NpcInteractionLogHudPlanner+TsyBossHealthBar+TsyCorpseDeathVfx", "npc_interaction_log+tsy_boss_health+tsy_death_vfx", "目标总览已停用，保留交互记录及秘境专用反馈"),
         command(HudRenderLayer.MINI_BODY, "MiniBodyHudPlanner", "combat_snapshot+inventory+season", "数值文字仍走 Minecraft GUI"),
-        svg(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+cast_state", "物品与技能图标、冷却遮罩及武器侧槽仍走 Minecraft GUI",
-            List.of(asset("slot", "quick-slot"), asset("selected", "quick-slot-selected"))),
+        svg(HudRenderLayer.QUICK_BAR, "QuickBarHudPlanner+WeaponHotbarHudPlanner", "hotbar+skillbar+cast_state+weapon_equipped+shield_equipped+treasure_equipped", "物品与技能 PNG、冷却遮罩仍走 Minecraft GUI",
+            List.of(asset("slot", "quick-slot"), asset("selected", "quick-slot-selected"),
+                asset("hand-left", "hand-left"), asset("hand-right", "hand-right"),
+                asset("hand-crest", "hand-crest"), asset("hand-tick", "hand-tick"), asset("hand-fracture", "hand-fracture"))),
         svg(HudRenderLayer.CAST_BAR, "CastRingHudPlanner+ChargingProgressBarHud+ExhaustedGreyOverlay+AnqiHudPlanner", "cast_state+charging_state+anqi_state", "专用蓄力条与动态文字仍走 Minecraft GUI", castAssets()),
         command(HudRenderLayer.EVENT_STREAM, "CombatJuiceHudPlanner", "combat_clock", "滚动事件列表已移除，保留击杀反馈文字"),
         svg(HudRenderLayer.JIEMAI_RING, "JiemaiRingHudPlanner", "defense_window+clock", "动态文字仍走 Minecraft GUI"),
@@ -36,16 +38,19 @@ public final class HudRenderRegistry {
         command(HudRenderLayer.CARRIER, "CarrierHudPlanner+AnqiHudPlanner", "carrier_state+anqi_state", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.YIDAO, "YidaoHudPlanner", "yidao_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.BOTANY, "BotanyHudPlanner", "botany_projection+clock", "动态文字与物品图标仍走 Minecraft GUI"),
-        command(HudRenderLayer.GATHERING, "GatheringProgressHud", "gathering_state+clock", "动态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.GATHERING, "GatheringProgressHud", "gathering_state+clock", "材质 PNG 与动态文字仍走 Minecraft GUI", gatheringAssets()),
         command(HudRenderLayer.DERIVED_ATTR, "StyleBadgeHudPlanner+DerivedAttrIconHudPlanner", "combat_attributes+loadout", "属性文字与图标仍走 Minecraft GUI"),
         command(HudRenderLayer.TOAST, "ToastHudRenderer+ForgeProgressHudPlanner", "toast_queue+forge_outcome", "通知文字仍走 Minecraft GUI"),
         command(HudRenderLayer.VISUAL, "VisualHudRenderer", "visual_effect_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.SPIRITUAL_SENSE, "RetiredHud", "retired", "灵觉 HUD 已移除，不再生成命令"),
         command(HudRenderLayer.EDGE_FEEDBACK, "EdgeFeedbackHudPlanner+TiandaoPresenceHudPlanner", "combat_feedback+tiandao_presence", "动态文字不适用"),
-        svg(HudRenderLayer.STATUS_EFFECTS, "StatusEffectHudPlanner", "status_effects", "状态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.STATUS_EFFECTS, "StatusEffectHudPlanner", "status_effects+clock", "专属 PNG 图标与状态文字仍走 Minecraft GUI",
+            List.of(asset("rect", "primitive-rect"), asset("socket", "status-socket"), asset("rim", "status-rim"),
+                asset("unknown", "status-unknown"), asset("blood", "status-blood"), asset("taint", "status-taint"))),
         command(HudRenderLayer.PROCESSING_HUD, "ForgeProgressHudPlanner+AlchemyProgressHudPlanner", "forge_session+alchemy_session", "步骤文字仍走 Minecraft GUI"),
         command(HudRenderLayer.LINGTIAN_OVERLAY, "LingtianOverlayHudPlanner", "lingtian_session+season", "动态文字与物品图标仍走 Minecraft GUI"),
-        svg(HudRenderLayer.MOVEMENT_HUD, "MovementHudPlanner", "movement_state+clock", "动态文字仍走 Minecraft GUI"),
+        svg(HudRenderLayer.MOVEMENT_HUD, "MovementHudPlanner", "movement_state+techniques_snapshot+clock", "身法 PNG 与区域反馈仍走 Minecraft GUI",
+            List.of(asset("rect", "primitive-rect"), asset("track", "dash-track"), asset("tick", "dash-tick"), asset("flare", "dash-flare"))),
         command(HudRenderLayer.SEARCH_PROGRESS, "SearchProgressHudPlanner", "search_state+clock", "动态文字仍走 Minecraft GUI"),
         command(HudRenderLayer.DAMAGE_FLOATER, "DamageFloaterHudPlanner", "damage_events+clock", "飘字仍走 Minecraft GUI"),
         command(HudRenderLayer.FLIGHT_HUD, "FlightHudPlanner", "flight_state+clock", "动态文字仍走 Minecraft GUI"),
@@ -140,6 +145,14 @@ public final class HudRenderRegistry {
 
     private static SvgAsset asset(String key, String filename) {
         return new SvgAsset(key, Identifier.of("bong-client", "svg/hud/" + filename + ".svg"));
+    }
+
+    private static List<SvgAsset> gatheringAssets() {
+        List<SvgAsset> assets = new ArrayList<>(List.of(asset("track", "gathering-track")));
+        for (String key : GatheringProgressHud.SEGMENT_KEYS) {
+            assets.add(asset(key, "gathering-" + key));
+        }
+        return List.copyOf(assets);
     }
 
     private static List<SvgAsset> castAssets() {
