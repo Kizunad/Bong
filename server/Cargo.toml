@@ -123,6 +123,10 @@ name = "woliu_v2_erosion_unit"
 path = "tests/unit/combat/woliu_v2/erosion_test.rs"
 
 [[test]]
+name = "npc_technique_unit"
+path = "tests/unit/npc/technique_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
