@@ -777,6 +777,14 @@ Test Refactor 附录（plan-test-layout-refactor-v1）
 - **验证与门禁**：无上下文只读 validator 绑定迁移 HEAD `fd052c338c4f1c7b7179facedae0e57481e422c7` 并 PASS，确认 68 条外置、`A=68/B=0`、target、生产边界与无 seam。定向 `meridian_severed_unit` 为 `68 passed / 0 failed / 0 ignored`；`scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 真实退出码均为 `0`。完整 cargo test 为 library `11479 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`，其它 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
 - **主线与提交状态**：按本任务卡“merge 不归你做”未执行主线合并；代码迁移提交为 `fd052c338c4f1c7b7179facedae0e57481e422c7`（带 `Model: gpt-5.6-luna`）。本条仅记录 P2-39 进度；P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
 
+### P2-40 server/coffin（✅ 2026-09-13）
+
+- **范围与落点**：仅将 `server/src/coffin/mod.rs` 原有 65 条内联测试外置；生产文件现仅保留 `#[cfg(test)] #[path = "../coffin_tests.rs"] mod tests;` 挂载。18 条 A 类测试原样外置到 `server/tests/unit/coffin_test.rs`，由 `server/Cargo.toml` 的显式 `coffin_unit` target 发现；47 条依赖私有系统/辅助函数的 B 类测试保留在 `server/src/coffin_tests.rs`。未改 coffin 生产实现、生命周期、registry、持久化或 qi 逻辑。
+- **A/B 分类与逐位守恒**：迁移前基线为 65 条，迁移后严格为 `A=18 + B=47 = 65`。A 类覆盖公开 coffin grade/item/db round-trip、寿命倍率、registry 占用/回收/grade/marker 行为、模板注册和守恒可观察契约；B 类逐条保留私有系统/辅助函数访问，外置会迫使测试专用 seam 进入生产 API。测试名称、断言、fixture、边界/失败分支和状态语义保持不变，无漏测或重复。
+- **路径、生产边界与 seam**：`server/src/coffin/mod.rs` 只新增外置测试挂载；`server/src/coffin_tests.rs` 承载同 crate 私有测试，`server/tests/unit/coffin_test.rs` 承载公开 API 测试。未新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam，未复制生产实现，未触及 schema、wire、client、agent、qi 物理或 bbmodel 资产。
+- **验证与门禁**：最终无上下文只读 validator 绑定主线合并后的代码 HEAD `ebf7d82c199cecc18df45ec84113605a5e7de7ef` 并 PASS，确认目标 SHA 对拍一致、`65=18+47`、测试集合无漏测/重复、`coffin_unit` 路径正确且无生产 seam。合并 `origin/main` 后再次运行完整 server gate，三条真实退出码均为 `0`：`scripts/build-token.sh cargo fmt --check` 的 `PIPESTATUS[0]=0`；`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 的 `PIPESTATUS[0]=0`；`scripts/build-token.sh cargo test` 的 `PIPESTATUS[0]=0`。该次 cargo test 为 library `11343 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`；相关外置 targets 为 `body_plan_validate_unit=69 passed`、`burst_meridian_unit=46 passed`、`meridian_severed_unit=68 passed`、`coffin_unit=18 passed`、`raster_unit=1 passed`、`hybrid_beast_unit=71 passed`，doc-tests `3 passed / 0 failed / 5 ignored`，其余 targets 无失败。此前 B 类定向结果为本轮 coffin 测试逐条通过（过滤输出合计 107 条，因命中其它 coffin 模块）。
+- **提交与状态**：代码/测试/Cargo target 提交为 `00dd624779831d0b3354b6c0a23cc0fa5a0a5f63`（2026-09-13，带 `Model: gpt-5.6-luna`）；随后合并主线并保留 `coffin_unit`、`raster_unit` 与 `hybrid_beast_unit` 条目并存，merge commits 为 `c3982d61474399fca813d5481d6147e54919d1d1`、`ebf7d82c199cecc18df45ec84113605a5e7de7ef`。本条仅记录 P2-40 进度；P2 总体、P3、P4 仍未完成，plan 不归档。
+
 ### P2-41 world/terrain/raster（✅ 2026-09-13）
 
 - **范围与落点**：仅处置 `server/src/world/terrain/raster.rs` 原有 64 个测试；生产文件删除内联测试体并保留 `#[cfg(test)] #[path = "raster_tests.rs"] mod tests;` 挂载。1 条 A 类测试外置到 `server/tests/unit/world/raster_test.rs`，由 `server/Cargo.toml` 的显式 `raster_unit` target 发现；63 条 B 类原样保留在 `server/src/world/terrain/raster_tests.rs`。未改 raster 生产 loader、manifest/preflight、mmap/span 解码、layer/schema、placement/index 或 worldgen→server handoff 行为。
@@ -792,6 +800,23 @@ Test Refactor 附录（plan-test-layout-refactor-v1）
 - **路径与生产边界**：新文件与原测试体逐行等价后仅接受 rustfmt 的格式重排；没有 `include_str!`/`include_bytes!` 路径消费者，无生产逻辑、事件、交易/切磋链路、schema/wire、Redis、client、agent 或 qi 物理改动。`git cat-file -e` 已核验 `server/src/social/mod.rs` 与 `server/src/social/mod_tests.rs` 存在；本轮构造性测试生成的 `server/data/` 与 `scripts/nbt/__pycache__/` 已清理，`server/target` 保温缓存未清理。
 - **验证与门禁**：定向 `scripts/build-token.sh cargo test --lib social::tests` 为 `95 passed / 0 failed / 0 ignored`（过滤结果包含 social 相关命名空间，其中本模块 61 条）。无上下文只读 validator 在最终 HEAD `91c9baa992812160bac4332c8653cb6a04e688f1` 对拍并 PASS，确认 61 条完整、挂载正确、生产边界与无 seam。`scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 真实退出码均为 `0`；完整 library `11334 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，全部 registered integration targets 与 doc-tests 无失败（doc-tests `3 passed / 0 failed / 5 ignored`）。
 - **提交与状态**：代码迁移提交为 `b4c1920421a82d40e50284f6c03db5b1301b77c0`，格式收口提交为 `91c9baa992812160bac4332c8653cb6a04e688f1`，均带 `Model: gpt-5.6-luna`；按任务卡“merge 不归你做”未执行主线合并。本条仅记录 P2-44 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+### P2-43 npc/trade（✅ 2026-09-13）
+
+- **范围与落点**：仅处置 `server/src/npc/trade.rs` 原有 62 个 `#[test]`/`#[tokio::test]`；53 条 A 类原样外置到 `server/tests/unit/npc/trade_test.rs`，由 `server/Cargo.toml` 的显式 `npc_trade_unit` target 发现；9 条 B 类保留在 `server/src/npc/trade_tests.rs`，由 `server/src/npc/trade.rs` 的 `#[cfg(test)] #[path = "trade_tests.rs"] mod tests;` 挂载。生产交易目录、NPC 商店运行时与物品/骨币处理逻辑未改动。
+- **A/B 分类与逐位守恒**：迁移前按 `#[(test|tokio::test)]` 全集口径核得 62 条，迁移后为 `A=53 + B=9 = 62`。A 类通过公开交易 API、玩家/NPC 状态与购买结果验证可观察的解锁、边界、拒绝、所有权转移和价格行为；测试名、fixture、断言、错误分支及交易副作用保持不变。
+- **B 类逐条理由**：以下测试直接读取私有 `TRADE_CATALOGUE`；外置会迫使私有目录或测试专用访问 seam 进入生产 API，故保持同 crate，不新增 `pub`/`pub(crate)`/`#[doc(hidden)]`：
+  - `awaken_only_gets_awaken_tier_items`：直接读取并遍历私有目录，核对醒灵境界商品集合。
+  - `higher_realm_unlocks_more_items`：直接读取私有目录，比较境界解锁条目数量。
+  - `item_counts_within_catalogue_bounds`：直接读取私有目录，核对目录条目数量边界。
+  - `prices_match_catalogue`：直接读取私有目录，核对目录中的价格定义。
+  - `catalogue_all_entries_purchasable_via_buy_path`：直接读取私有目录并逐项驱动购买路径，测试 fixture 与私有目录形状耦合。
+  - `catalogue_spirit_grass_price_matches_buy_path`：直接读取私有目录，核对灵草价格与购买路径。
+  - `catalogue_broken_artifact_scroll_price_matches_buy_path`：直接读取私有目录，核对残破法器卷轴价格与购买路径。
+  - `catalogue_no_legacy_misaligned_ids`：直接读取私有目录，锁定旧 template id 不对齐项不存在。
+  - `catalogue_prices_propagate_to_trade_offers`：直接读取私有目录并对拍批量生成 offer 的价格传播，锁定内部目录到 offer 的映射。
+- **路径、生产边界与守恒复核**：外置测试无 `include_str!`/`include_bytes!` 等相对路径消费者；`git cat-file -e` 已核验 `server/src/npc/trade.rs`、`server/src/npc/trade_tests.rs`、`server/tests/unit/npc/trade_test.rs` 与 `server/Cargo.toml` 均存在。生产文件仅删除测试体并增加同 crate 测试挂载，未新增测试专用可见性 seam；未触及 `qi_physics`、schema、wire、Redis、client、agent 或其它 gameplay 逻辑。交易面可能涉及骨币/物品语义的独立疑点已另写 scratchpad 纯文字报告，未纳入本纯搬迁 PR。
+- **验证与门禁**：迁移后 `npc_trade_unit` 为 `53 passed / 0 failed / 0 ignored`，同 crate B 类定向为 `9 passed / 0 failed / 0 ignored`。无上下文只读 validator 先绑定代码 HEAD `67206d011d4235d7427a7e09ac83de278daa1f8a` 并 PASS，确认 53/9 分类、生产边界及无新增 seam；随后紧邻执行 `git fetch origin && git merge origin/main`，合并主线 P2-42（merge commit `1c1ed7dc647950d93e951cc5f1f5f8e268aa8653`），双方 Cargo target 与 plan evidence 均保留。对该合并 HEAD 重开无上下文只读 validator 并 PASS；post-merge 三条 server gate 均取 `PIPESTATUS[0]`：`scripts/build-token.sh cargo fmt --check` 为 `fmt_exit=0`，`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 为 `clippy_exit=0`，`scripts/build-token.sh cargo test` 为 `test_exit=0`。完整 post-merge `cargo test` 为 library `11281 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`，`npc_faction_unit=27 passed / 0 failed / 0 ignored`、`npc_trade_unit=53 passed / 0 failed / 0 ignored`，doc-tests `3 passed / 0 failed / 5 ignored`，其余 registered integration targets 无失败。
+- **提交与状态**：代码迁移提交为 `67720475a0963d8d69444a433d73c176c3c4b5d4`（2026-09-13，带 `Model: gpt-5-codex`）；本条为独立中文 evidence 提交。P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
 
 ### P2-42 npc/faction（✅ 2026-09-13）
 

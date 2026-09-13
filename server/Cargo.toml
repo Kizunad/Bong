@@ -135,6 +135,10 @@ name = "npc_technique_unit"
 path = "tests/unit/npc/technique_test.rs"
 
 [[test]]
+name = "npc_trade_unit"
+path = "tests/unit/npc/trade_test.rs"
+
+[[test]]
 name = "npc_faction_unit"
 path = "tests/unit/npc/faction_test.rs"
 
@@ -145,6 +149,10 @@ path = "tests/unit/cultivation/burst_meridian_test.rs"
 [[test]]
 name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
+
+[[test]]
+name = "coffin_unit"
+path = "tests/unit/coffin_test.rs"
 
 [[test]]
 name = "raster_unit"
