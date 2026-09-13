@@ -785,6 +785,24 @@ Test Refactor 附录（plan-test-layout-refactor-v1）
 - **验证与门禁**：外置 target `raster_unit` 为 `1 passed / 0 failed / 0 ignored`；同 crate B 类定向在 Linux 为 `62 passed / 0 failed / 1 ignored`（Windows-only 声明测试按平台未执行）。`scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 已完成且真实退出码均为 `0`；完整 library `11432 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，其余 registered integration targets 与 doc-tests 无失败。该 evidence 提交产生新 HEAD，按流程再绑定无上下文只读 validator，并在 PR 收口补充最终 SHA 的 PASS 证据。
 - **提交与状态**：代码/测试/Cargo target 提交为 `0421a3231ee4acae40de48b6d73b8b274599e12b`、`eb74ca368ea4fa63fb512092950754b71caaabc4`（2026-09-13，均带 `Model: gpt-5.6-luna`）；本条 evidence 为后续独立中文提交。按本任务卡“merge 不归你做”未执行主线合并，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
 
+### P2-43 npc/trade（✅ 2026-09-13）
+
+- **范围与落点**：仅处置 `server/src/npc/trade.rs` 原有 62 个 `#[test]`/`#[tokio::test]`；53 条 A 类原样外置到 `server/tests/unit/npc/trade_test.rs`，由 `server/Cargo.toml` 的显式 `npc_trade_unit` target 发现；9 条 B 类保留在 `server/src/npc/trade_tests.rs`，由 `server/src/npc/trade.rs` 的 `#[cfg(test)] #[path = "trade_tests.rs"] mod tests;` 挂载。生产交易目录、NPC 商店运行时与物品/骨币处理逻辑未改动。
+- **A/B 分类与逐位守恒**：迁移前按 `#[(test|tokio::test)]` 全集口径核得 62 条，迁移后为 `A=53 + B=9 = 62`。A 类通过公开交易 API、玩家/NPC 状态与购买结果验证可观察的解锁、边界、拒绝、所有权转移和价格行为；测试名、fixture、断言、错误分支及交易副作用保持不变。
+- **B 类逐条理由**：以下测试直接读取私有 `TRADE_CATALOGUE`；外置会迫使私有目录或测试专用访问 seam 进入生产 API，故保持同 crate，不新增 `pub`/`pub(crate)`/`#[doc(hidden)]`：
+  - `awaken_only_gets_awaken_tier_items`：直接读取并遍历私有目录，核对醒灵境界商品集合。
+  - `higher_realm_unlocks_more_items`：直接读取私有目录，比较境界解锁条目数量。
+  - `item_counts_within_catalogue_bounds`：直接读取私有目录，核对目录条目数量边界。
+  - `prices_match_catalogue`：直接读取私有目录，核对目录中的价格定义。
+  - `catalogue_all_entries_purchasable_via_buy_path`：直接读取私有目录并逐项驱动购买路径，测试 fixture 与私有目录形状耦合。
+  - `catalogue_spirit_grass_price_matches_buy_path`：直接读取私有目录，核对灵草价格与购买路径。
+  - `catalogue_broken_artifact_scroll_price_matches_buy_path`：直接读取私有目录，核对残破法器卷轴价格与购买路径。
+  - `catalogue_no_legacy_misaligned_ids`：直接读取私有目录，锁定旧 template id 不对齐项不存在。
+  - `catalogue_prices_propagate_to_trade_offers`：直接读取私有目录并对拍批量生成 offer 的价格传播，锁定内部目录到 offer 的映射。
+- **路径、生产边界与守恒复核**：外置测试无 `include_str!`/`include_bytes!` 等相对路径消费者；`git cat-file -e` 已核验 `server/src/npc/trade.rs`、`server/src/npc/trade_tests.rs`、`server/tests/unit/npc/trade_test.rs` 与 `server/Cargo.toml` 均存在。生产文件仅删除测试体并增加同 crate 测试挂载，未新增测试专用可见性 seam；未触及 `qi_physics`、schema、wire、Redis、client、agent 或其它 gameplay 逻辑。交易面可能涉及骨币/物品语义的独立疑点已另写 scratchpad 纯文字报告，未纳入本纯搬迁 PR。
+- **验证与门禁**：迁移后 `npc_trade_unit` 为 `53 passed / 0 failed / 0 ignored`，同 crate B 类定向为 `9 passed / 0 failed / 0 ignored`。无上下文只读 validator 先绑定代码 HEAD `67206d011d4235d7427a7e09ac83de278daa1f8a` 并 PASS，确认 53/9 分类、生产边界及无新增 seam；随后紧邻执行 `git fetch origin && git merge origin/main`，合并主线 P2-42（merge commit `1c1ed7dc647950d93e951cc5f1f5f8e268aa8653`），双方 Cargo target 与 plan evidence 均保留。对该合并 HEAD 重开无上下文只读 validator 并 PASS；post-merge 三条 server gate 均取 `PIPESTATUS[0]`：`scripts/build-token.sh cargo fmt --check` 为 `fmt_exit=0`，`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` 为 `clippy_exit=0`，`scripts/build-token.sh cargo test` 为 `test_exit=0`。完整 post-merge `cargo test` 为 library `11281 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`，`npc_faction_unit=27 passed / 0 failed / 0 ignored`、`npc_trade_unit=53 passed / 0 failed / 0 ignored`，doc-tests `3 passed / 0 failed / 5 ignored`，其余 registered integration targets 无失败。
+- **提交与状态**：代码迁移提交为 `67720475a0963d8d69444a433d73c176c3c4b5d4`（2026-09-13，带 `Model: gpt-5-codex`）；本条为独立中文 evidence 提交。P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+
 ### P2-42 npc/faction（✅ 2026-09-13）
 
 - **范围与落点**：仅处置 `server/src/npc/faction.rs` 原有 64 个 `#[test]`/`#[tokio::test]`；生产文件删除内联测试体并保留 `#[cfg(test)] #[path = "faction_tests.rs"] mod tests;` 挂载。27 条 A 类测试原样外置到 `server/tests/unit/npc/faction_test.rs`，由 `server/Cargo.toml` 的显式 `npc_faction_unit` target 发现；37 条 B 类测试保留在 `server/src/npc/faction_tests.rs`。未改派系状态、关系矩阵、NPC 敌对遭遇分配、忠诚/任务 scorer、派系首领 patrol/census 或其它 NPC 运行时逻辑。
