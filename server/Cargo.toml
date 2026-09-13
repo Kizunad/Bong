@@ -159,6 +159,10 @@ name = "raster_unit"
 path = "tests/unit/world/raster_test.rs"
 
 [[test]]
+name = "territory_unit"
+path = "tests/unit/world/territory_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
