@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::qi_physics::ledger::{assert_conservation, summarize_world_qi, WorldQiSnapshot};
+use crate::schema::common::SPIRIT_QI_TOTAL;
+
 // ── 枚举 pin 测试 ────────────────────────────────────────────────────────
 
 #[test]
@@ -280,13 +283,16 @@ fn blackboard_tiandao_condense_has_no_origin_realm() {
 }
 
 #[test]
-fn blackboard_daozhan_qi_is_conservation_tracked() {
-    // daozhan_qi 字段存在且初始为 0，测试"守恒不变式：吸取后 daozhan_qi > 0"
+// 这不是守恒测试，只验证 blackboard 的 `daozhan_qi` 字段能累积实际写入值。
+// 真正的 player→道伥守恒覆盖在 `ambush_drain_commits_both_owners_and_canonical_audit_together`；
+// 凝结路径的分率/raw 单位错配缺口归 `plan-bughunt-qi-ledger-asymmetry-v1` P1。
+fn blackboard_daozhan_qi_field_accumulates() {
+    // blackboard 字段行为 pin：生产吸取路径写入后的字段应保留累积值。
     let mut bb = DaoZhangBehaviorBlackboard::new("spawn", DVec3::ZERO, Some(Realm::Void));
-    bb.daozhan_qi += 5.0; // 模拟 P2 DaoZhangDrain 后累积
+    bb.daozhan_qi += 5.0;
     assert!(
         bb.daozhan_qi > 0.0,
-        "累积 daozhan_qi={} 应 > 0（守恒：已吸取玩家真元 5.0）",
+        "累积 daozhan_qi={} 应 > 0（字段写入值必须可观察）",
         bb.daozhan_qi
     );
 }
@@ -414,7 +420,7 @@ fn mimicry_duration_varies_across_seeds() {
 // ── P1: DaoZhangMimicryScorer / Action big-brain 测试 ───────────────────
 
 use big_brain::prelude::{ActionState, Score};
-use valence::prelude::{App, Update};
+use valence::prelude::{App, IntoSystemConfigs, Update};
 
 fn daozhan_test_app() -> App {
     let mut app = App::new();
@@ -1185,6 +1191,9 @@ fn ambush_scorer_zero_when_no_player_nearby() {
 fn ambush_action_test_app() -> App {
     let mut app = App::new();
     app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(crate::qi_physics::ledger::WorldQiBudget::from_total(
+        SPIRIT_QI_TOTAL,
+    ));
     app.add_event::<VfxEventRequest>();
     app.add_event::<PlaySoundRecipeRequest>();
     app.add_event::<DaoZhangRevealEvent>();
@@ -1239,6 +1248,7 @@ fn spawn_executing_ambush(
 fn ambush_drain_commits_both_owners_and_canonical_audit_together() {
     let mut app = ambush_action_test_app();
     let (player, daozhan) = spawn_executing_ambush(&mut app, 20.0, Some("ambush_target"), 5.0);
+    let before = snapshot_with_daozhan_owners(&mut app);
 
     app.update();
 
@@ -1277,6 +1287,11 @@ fn ambush_drain_commits_both_owners_and_canonical_audit_together() {
         chain.hits_done, 1,
         "连击计数只能在两端 owner 与 audit 同步提交后推进"
     );
+
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实伏击事务必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
@@ -1425,84 +1440,142 @@ fn drain_amount_constant_pin() {
 
 #[test]
 fn drain_conservation_normal_case() {
-    // 守恒：player.qi_current -= drained，daozhan.daozhan_qi += drained（之和不变）
-    let player_qi_before = 100.0f64;
-    let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
-    let available = player_qi_before.max(0.0);
-    let drained = drain.min(available);
+    // 真实生产路径：伏击 action 同时提交玩家与道伥两个物理 owner。
+    let mut app = ambush_action_test_app();
+    let (player, daozhan) = spawn_executing_ambush(&mut app, 20.0, Some("normal_target"), 0.0);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    app.update();
 
-    let player_qi_after = player_qi_before - drained;
-    let daozhan_qi_after = 0.0f64 + drained; // 初始 daozhan_qi=0
-
-    // 守恒：player 减少量 == daozhan 增加量
-    assert!(
-        (player_qi_before - player_qi_after - daozhan_qi_after).abs() < 1e-9,
-        "守恒失败：player 减少 {:.3}，daozhan 增加 {:.3}，差值应为 0",
-        player_qi_before - player_qi_after,
-        daozhan_qi_after
+    assert_eq!(
+        app.world().get::<Cultivation>(player).unwrap().qi_current,
+        12.0,
+        "真实伏击命中应从玩家 owner 扣除 DAOZHAN_DRAIN_AMOUNT_PER_HIT"
     );
+    assert_eq!(
+        app.world()
+            .get::<DaoZhangBehaviorBlackboard>(daozhan)
+            .unwrap()
+            .daozhan_qi,
+        DAOZHAN_DRAIN_AMOUNT_PER_HIT,
+        "真实伏击命中应把实际吸取量写入道伥 owner"
+    );
+
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实伏击正常路径必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
 fn drain_conservation_player_has_less_than_drain_amount() {
-    // 边界：玩家真元 < DAOZHAN_DRAIN_AMOUNT_PER_HIT 时，drained = 玩家实际量（不负数）
-    let player_qi_before = 3.0f64; // 远小于 DAOZHAN_DRAIN_AMOUNT_PER_HIT=8
-    let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
-    let available = player_qi_before.max(0.0);
-    let drained = drain.min(available);
+    // 真实生产边界：玩家余额不足单次成本时只转移可用余额，且不变负。
+    let mut app = ambush_action_test_app();
+    let (player, daozhan) = spawn_executing_ambush(&mut app, 3.0, Some("short_target"), 0.0);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    app.update();
 
-    assert!(
-        (drained - 3.0).abs() < 1e-9,
-        "玩家 qi=3 时应只吸取 3，实际吸取={drained}"
+    assert_eq!(
+        app.world().get::<Cultivation>(player).unwrap().qi_current,
+        0.0,
+        "玩家 qi 不足单次吸取成本时生产路径应耗尽但不得变负"
+    );
+    assert_eq!(
+        app.world()
+            .get::<DaoZhangBehaviorBlackboard>(daozhan)
+            .unwrap()
+            .daozhan_qi,
+        3.0,
+        "玩家仅有 3 点真元时道伥 owner 应只收到实际可用量"
     );
 
-    let player_qi_after = player_qi_before - drained;
-    assert!(
-        player_qi_after >= 0.0,
-        "玩家 qi 不应变负数，实际={player_qi_after}"
-    );
-
-    let daozhan_qi_after = drained;
-    // 总和守恒
-    assert!(
-        (player_qi_before - (player_qi_after + daozhan_qi_after)).abs() < 1e-9,
-        "守恒：player_before={player_qi_before}，player_after+daozhan={:.3}",
-        player_qi_after + daozhan_qi_after
-    );
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实伏击不足余额边界必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
 fn drain_conservation_player_qi_zero() {
-    // 边界：玩家 qi=0 时 drained=0，daozhan_qi 不增加（无真元可吸）
-    let player_qi_before = 0.0f64;
-    let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
-    let available = player_qi_before.max(0.0);
-    let drained = drain.min(available);
+    // 真实生产边界：玩家无真元时 action 是 no-op，不伪造转账 audit。
+    let mut app = ambush_action_test_app();
+    let (player, daozhan) = spawn_executing_ambush(&mut app, 0.0, Some("empty_target"), 0.0);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    app.update();
 
-    assert!(
-        drained.abs() < 1e-9,
-        "玩家 qi=0 时 drained 应为 0，实际={drained}"
+    assert_eq!(
+        app.world().get::<Cultivation>(player).unwrap().qi_current,
+        0.0,
+        "玩家 qi=0 时生产路径不得产生负余额"
     );
+    assert_eq!(
+        app.world()
+            .get::<DaoZhangBehaviorBlackboard>(daozhan)
+            .unwrap()
+            .daozhan_qi,
+        0.0,
+        "玩家 qi=0 时道伥 owner 不应增加"
+    );
+    assert!(
+        app.world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .iter()
+            .all(|transfer| transfer.reason != QiTransferReason::DaoZhangDrain),
+        "玩家 qi=0 时生产路径不得伪造 DaoZhangDrain audit"
+    );
+
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实伏击零余额边界必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
 fn drain_conservation_three_hits_total() {
-    // 三连击总守恒：player 总减少量 == daozhan 总累积量
-    let mut player_qi = 100.0f64;
-    let mut daozhan_qi = 0.0f64;
-    let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
+    // 真实生产路径：按连击间隔推进三次 action，而不是重演 drain 算术。
+    let mut app = ambush_action_test_app();
+    app.insert_resource(GameTick(0));
+    let initial_player_qi = 30.0;
+    let (player, daozhan) =
+        spawn_executing_ambush(&mut app, initial_player_qi, Some("chain_target"), 0.0);
+    let before = snapshot_with_daozhan_owners(&mut app);
 
-    for _ in 0..DAOZHAN_AMBUSH_CHAIN_COUNT {
-        let available = player_qi.max(0.0);
-        let drained = drain.min(available);
-        player_qi -= drained;
-        daozhan_qi += drained;
+    for tick in [
+        0,
+        DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS,
+        DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS * 2,
+    ] {
+        app.world_mut().resource_mut::<GameTick>().0 = tick;
+        app.update();
     }
 
-    assert!(
-        (player_qi + daozhan_qi - 100.0).abs() < 1e-9,
-        "三连击后 player_qi({player_qi:.3}) + daozhan_qi({daozhan_qi:.3}) 应等于初始总量 100"
+    let expected_drained = DAOZHAN_DRAIN_AMOUNT_PER_HIT * DAOZHAN_AMBUSH_CHAIN_COUNT as f64;
+    assert_eq!(
+        app.world().get::<Cultivation>(player).unwrap().qi_current,
+        initial_player_qi - expected_drained,
+        "真实三连击后玩家 owner 应扣除三次实际吸取量"
     );
+    assert_eq!(
+        app.world()
+            .get::<DaoZhangBehaviorBlackboard>(daozhan)
+            .unwrap()
+            .daozhan_qi,
+        expected_drained,
+        "真实三连击后道伥 owner 应累积三次实际吸取量"
+    );
+    assert_eq!(
+        app.world()
+            .get::<DaoZhangAmbushChainState>(daozhan)
+            .unwrap()
+            .hits_done,
+        DAOZHAN_AMBUSH_CHAIN_COUNT,
+        "真实三连击应推进生产连击状态三次"
+    );
+
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实伏击三连击必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
@@ -1578,66 +1651,207 @@ fn reveal_vfx_constants_pin() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// P3: 天道凝结守恒测试
+// P3: 天道凝结及死亡 qi 测试
 // ═══════════════════════════════════════════════════════════════════════
+
+fn tiandao_condense_test_app(zone_spirit_qi: f64) -> App {
+    let mut app = App::new();
+    let mut zones = ZoneRegistry::fallback();
+    zones
+        .find_zone_mut("spawn")
+        .expect("fallback registry 必须含 spawn zone")
+        .spirit_qi = zone_spirit_qi;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(crate::qi_physics::ledger::WorldQiBudget::from_total(
+        SPIRIT_QI_TOTAL,
+    ));
+    app.init_resource::<DaoZhangCondenseState>();
+    app.insert_resource(GameTick(TIANDAO_CONDENSE_INTERVAL_TICKS));
+    app.insert_resource(crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests());
+
+    let overworld = app.world_mut().spawn_empty().id();
+    let tsy = app.world_mut().spawn_empty().id();
+    app.insert_resource(crate::world::dimension::DimensionLayers { overworld, tsy });
+
+    app.add_event::<QiTransfer>();
+    app.add_event::<SpawnDaoZhangFromCondenseRequest>();
+    app.add_systems(
+        Update,
+        (
+            daozhan_tiandao_condense_system,
+            daozhan_condense_spawn_system.after(daozhan_tiandao_condense_system),
+        ),
+    );
+    app
+}
+
+fn snapshot_with_daozhan_owners(app: &mut App) -> WorldQiSnapshot {
+    let mut snapshot = summarize_world_qi(app.world_mut());
+    // `summarize_world_qi` 没有专用 NPC-ECS owner bucket；测试把实际存在的
+    // daozhan_qi 加入 ledger_qi 聚合槽，仍由同一全局守恒断言比较 before/after。
+    let daozhan_qi = {
+        let world = app.world_mut();
+        let mut query = world.query::<&DaoZhangBehaviorBlackboard>();
+        query
+            .iter(world)
+            .map(|blackboard| blackboard.daozhan_qi)
+            .sum::<f64>()
+    };
+    snapshot.ledger_qi += daozhan_qi;
+    snapshot
+}
+
+fn death_release_test_app(zone_spirit_qi: f64) -> App {
+    let mut app = App::new();
+    let mut zones = ZoneRegistry::fallback();
+    zones
+        .find_zone_mut("spawn")
+        .expect("fallback registry 必须含 spawn zone")
+        .spirit_qi = zone_spirit_qi;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(crate::qi_physics::ledger::WorldQiBudget::from_total(
+        SPIRIT_QI_TOTAL,
+    ));
+    app.add_event::<DeathEvent>();
+    app.add_event::<QiTransfer>();
+    app.add_systems(Update, daozhan_death_qi_release_system);
+    app
+}
+
+fn spawn_daozhan_for_death(app: &mut App, daozhan_qi: f64) -> Entity {
+    let pos = DVec3::new(0.0, 64.0, 0.0);
+    let mut blackboard = DaoZhangBehaviorBlackboard::new("spawn", pos, None);
+    blackboard.daozhan_qi = daozhan_qi;
+    app.world_mut()
+        .spawn((
+            NpcMarker,
+            Position::new([pos.x, pos.y, pos.z]),
+            CurrentDimension(crate::world::dimension::DimensionKind::Overworld),
+            blackboard,
+        ))
+        .id()
+}
+
+fn send_daozhan_death(app: &mut App, target: Entity) {
+    app.world_mut()
+        .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+        .send(DeathEvent {
+            target,
+            cause: "test_daozhan_release".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+}
 
 #[test]
 fn tiandao_condense_threshold_blocks_low_zone_spirit_qi() {
-    // zone.spirit_qi <= TIANDAO_CONDENSE_THRESHOLD 时不应触发凝结
-    // 模拟：spirit_qi=0.7 < threshold=0.8 → 不触发
-    let spirit_qi = 0.70f64;
-    let threshold: f64 = TIANDAO_CONDENSE_THRESHOLD;
-    assert!(
-        spirit_qi <= threshold,
-        "spirit_qi={spirit_qi} 应 <= TIANDAO_CONDENSE_THRESHOLD={threshold}（不触发凝结）"
+    // 真实生产路径：低于阈值时凝结 system 不应改动 zone，也不应创建道伥。
+    let mut app = tiandao_condense_test_app(0.70);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("fallback registry 必须含 spawn zone")
+        .spirit_qi;
+    assert_eq!(
+        zone_qi_after, 0.70,
+        "低于凝结阈值时生产 zone 必须保持不变，实际={zone_qi_after}"
     );
-    // 模拟凝结守卫：不触发时 zone 灵气不变
-    let zone_qi_before = spirit_qi;
-    let should_condense = spirit_qi > threshold;
-    let zone_qi_after = if should_condense {
-        (spirit_qi - TIANDAO_CONDENSE_QI_COST).clamp(-1.0, 1.0)
-    } else {
-        spirit_qi
+    let daozhan_count = {
+        let world = app.world_mut();
+        let mut query = world.query::<&DaoZhangBehaviorBlackboard>();
+        query.iter(world).count()
     };
-    assert!(
-            (zone_qi_before - zone_qi_after).abs() < 1e-9,
-            "低于阈值时 zone 灵气不应变化（守恒：不凝结不扣减），before={zone_qi_before:.3} after={zone_qi_after:.3}"
-        );
+    assert_eq!(
+        daozhan_count, 0,
+        "低于凝结阈值时生产路径不得创建道伥，实际数量={daozhan_count}"
+    );
+
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("低于阈值的凝结 no-op 必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
-fn tiandao_condense_conservation_zone_decreases_by_cost() {
-    // 守恒：zone 扣减量 == 道伥获得初始 qi
-    let spirit_qi_before = 0.90f64; // > threshold=0.8
-    let threshold: f64 = TIANDAO_CONDENSE_THRESHOLD;
-    assert!(
-        spirit_qi_before > threshold,
-        "测试前提：spirit_qi={spirit_qi_before} 应 > threshold={threshold}"
-    );
-    // 实际 cost = min(COST, spirit_qi - threshold)（防止扣过头）
-    let actual_cost = TIANDAO_CONDENSE_QI_COST.min(spirit_qi_before - threshold);
-    let spirit_qi_after = (spirit_qi_before - actual_cost).clamp(-1.0, 1.0);
-    let daozhan_initial_qi = actual_cost;
+// 注意：本测试不是守恒测试，只验证生产凝结路径把成本转发到道伥 owner。
+// 当前真正的守恒缺口是归一化 `spirit_qi` 扣减量被当成绝对真元转账量，
+// 每次凝结到死亡净蒸发 `actual_cost * (QI_ZONE_UNIT_CAPACITY - 1.0)`；
+// 真正的守恒覆盖与修复归属在 `plan-bughunt-qi-ledger-asymmetry-v1` P1。
+fn tiandao_condense_production_path_forwards_initial_qi() {
+    let mut app = tiandao_condense_test_app(0.90);
+    app.update();
 
-    // 守恒：zone 减少量 == 道伥初始 qi
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("fallback registry 必须含 spawn zone")
+        .spirit_qi;
     assert!(
-        (spirit_qi_before - spirit_qi_after - daozhan_initial_qi).abs() < 1e-9,
-        "守恒失败：zone 减少 {:.4}，道伥初始 qi={:.4}，差值应为 0",
-        spirit_qi_before - spirit_qi_after,
-        daozhan_initial_qi
+        zone_qi_after < 0.90,
+        "高于阈值时生产凝结应降低 zone spirit_qi，实际={zone_qi_after}"
+    );
+
+    let daozhan_qi: Vec<f64> = {
+        let world = app.world_mut();
+        let mut query = world.query::<&DaoZhangBehaviorBlackboard>();
+        query.iter(world).map(|bb| bb.daozhan_qi).collect()
+    };
+    assert_eq!(
+        daozhan_qi.len(),
+        1,
+        "高于阈值的真实凝结应生成一只道伥，实际数量={}（若为 0 先修测试 fixture）",
+        daozhan_qi.len()
+    );
+    assert_eq!(
+        daozhan_qi[0], TIANDAO_CONDENSE_INITIAL_QI,
+        "道伥 owner 应接收生产凝结事件携带的初始 qi={TIANDAO_CONDENSE_INITIAL_QI}，实际={}",
+        daozhan_qi[0]
     );
 }
 
 #[test]
-fn tiandao_condense_actual_cost_capped_to_available_headroom() {
-    // 边界：spirit_qi = threshold + 极小量（0.001），cost 不超过可用头量
-    let spirit_qi = TIANDAO_CONDENSE_THRESHOLD + 0.001;
-    let actual_cost = TIANDAO_CONDENSE_QI_COST.min(spirit_qi - TIANDAO_CONDENSE_THRESHOLD);
-    let headroom = spirit_qi - TIANDAO_CONDENSE_THRESHOLD;
+fn tiandao_condense_production_path_caps_cost_to_available_headroom() {
+    // 真实生产边界：threshold 以上仅剩 0.001 时，凝结成本不得越过可用头量。
+    // 这不是完整守恒测试：完整凝结守恒目前会暴露分率/raw 单位错配；缺口与修复
+    // 归属在 `plan-bughunt-qi-ledger-asymmetry-v1` P1。
+    let headroom = 0.001;
+    let mut app = tiandao_condense_test_app(TIANDAO_CONDENSE_THRESHOLD + headroom);
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("fallback registry 必须含 spawn zone")
+        .spirit_qi;
     assert!(
-            actual_cost <= headroom + 1e-9,
-            "actual_cost={actual_cost:.5} 不应超过可用头量 headroom={headroom:.5}（防止 zone 跌穿 threshold）"
-        );
+        (zone_qi_after - TIANDAO_CONDENSE_THRESHOLD).abs() < 1e-9,
+        "生产凝结应只消耗 headroom={headroom:.5}，zone 不得跌穿 threshold，实际={zone_qi_after:.5}"
+    );
+    let daozhan_qi: Vec<f64> = {
+        let world = app.world_mut();
+        let mut query = world.query::<&DaoZhangBehaviorBlackboard>();
+        query.iter(world).map(|bb| bb.daozhan_qi).collect()
+    };
+    assert_eq!(
+        daozhan_qi.len(),
+        1,
+        "生产凝结应产生一个承接可用头量的道伥 owner，实际数量={}",
+        daozhan_qi.len()
+    );
+    assert!(
+        (daozhan_qi[0] - headroom).abs() < 1e-9,
+        "生产凝结应把可用头量 {headroom:.5} 转发给道伥 owner，实际={:.5}",
+        daozhan_qi[0]
+    );
 }
 
 #[test]
@@ -1669,58 +1883,97 @@ fn tiandao_condense_max_per_zone_plausible() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// P3: DaoZhangDeathSystem 守恒测试（unit level，无 ECS）
+// P3: DaoZhangDeathSystem 守恒测试（真实 ECS 路径）
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
 fn death_release_full_amount_not_partial() {
-    // 守恒语义：死亡时 daozhan_qi 全额归还（非1%），验证数学逻辑
-    let daozhan_qi_accumulated = 24.0f64; // 三连击 × 8.0 = 24.0
-                                          // 正典 helper 返回归还的实际量（全额 or 0）
-                                          // 我们只测逻辑：release_amount == daozhan_qi（不是 0.01 × daozhan_qi）
-    let release_amount = daozhan_qi_accumulated;
-    let partial_1pct = daozhan_qi_accumulated * 0.01;
-    assert!(
-        release_amount > partial_1pct,
-        "道伥死亡应全额归还（{release_amount:.3}），而非 1%（{partial_1pct:.3}）"
+    // 真实生产路径：死亡 system 必须把道伥 owner 的全部余额释放到 zone/overflow。
+    let daozhan_qi_accumulated = DAOZHAN_DRAIN_AMOUNT_PER_HIT * DAOZHAN_AMBUSH_CHAIN_COUNT as f64;
+    let mut app = death_release_test_app(0.90);
+    let daozhan = spawn_daozhan_for_death(&mut app, daozhan_qi_accumulated);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    send_daozhan_death(&mut app, daozhan);
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .get::<DaoZhangBehaviorBlackboard>(daozhan)
+            .unwrap()
+            .daozhan_qi,
+        0.0,
+        "真实死亡路径完成后道伥 owner 必须清零"
     );
-    // 守恒不变式：release == daozhan_qi
+    let released: f64 = app
+        .world()
+        .resource::<WorldQiAccount>()
+        .transfers()
+        .iter()
+        .filter(|transfer| transfer.reason == QiTransferReason::ReleaseToZone)
+        .map(|transfer| transfer.amount)
+        .sum();
     assert!(
-        (release_amount - daozhan_qi_accumulated).abs() < 1e-9,
-        "release_amount 应等于 daozhan_qi_accumulated（守恒），差值应为 0"
+        (released - daozhan_qi_accumulated).abs() < 1e-9,
+        "真实死亡路径必须全额释放 owner qi：expected={daozhan_qi_accumulated:.6}, actual={released:.6}"
     );
+
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实死亡全额释放路径必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
 fn death_release_zero_when_daozhan_qi_is_zero() {
-    // 天道凝结道伥未吸取任何真元时，daozhan_qi=0，死亡时不应触发释放（守恒：无吸无还）
-    let daozhan_qi = 0.0f64;
-    let should_release = daozhan_qi > 0.0;
+    // 真实生产边界：无余额死亡是 no-op，不产生释放 audit。
+    let mut app = death_release_test_app(0.90);
+    let daozhan = spawn_daozhan_for_death(&mut app, 0.0);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    send_daozhan_death(&mut app, daozhan);
+    app.update();
+
     assert!(
-        !should_release,
-        "daozhan_qi=0 时不应触发 release_qi_amount_to_zone（无真元可还）"
+        app.world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .iter()
+            .all(|transfer| transfer.reason != QiTransferReason::ReleaseToZone),
+        "道伥 owner 为 0 时生产路径不得产生 ReleaseToZone audit"
     );
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实死亡零余额路径必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 #[test]
 fn death_release_includes_both_accumulated_and_initial_qi() {
-    // 道伥既有天道凝结初始 qi，又有伏击吸取累积量
-    // 两者都存在于 daozhan_qi 字段（天道凝结路径：condense 初始量写入 daozhan_qi）
+    // 真实生产路径：死亡释放读取同一个 owner 字段中的凝结初始量与伏击累积量。
     let condense_qi = TIANDAO_CONDENSE_INITIAL_QI;
     let drained_from_player = DAOZHAN_DRAIN_AMOUNT_PER_HIT * 2.0; // 2 连击
-                                                                  // 模拟 blackboard.daozhan_qi 包含两部分
     let total_daozhan_qi = condense_qi + drained_from_player;
-    let release_amount = total_daozhan_qi;
+    let mut app = death_release_test_app(0.90);
+    let daozhan = spawn_daozhan_for_death(&mut app, total_daozhan_qi);
+    let before = snapshot_with_daozhan_owners(&mut app);
+    send_daozhan_death(&mut app, daozhan);
+    app.update();
 
-    // 守恒：全额归还（含凝结量 + 吸取量）
+    let released: f64 = app
+        .world()
+        .resource::<WorldQiAccount>()
+        .transfers()
+        .iter()
+        .filter(|transfer| transfer.reason == QiTransferReason::ReleaseToZone)
+        .map(|transfer| transfer.amount)
+        .sum();
     assert!(
-            (release_amount - total_daozhan_qi).abs() < 1e-9,
-            "死亡归还量应包含凝结量({condense_qi:.4}) + 吸取量({drained_from_player:.4})，合计={total_daozhan_qi:.4}"
-        );
-    assert!(
-        total_daozhan_qi > condense_qi,
-        "含伏击吸取后总量 {total_daozhan_qi:.4} 应大于仅凝结量 {condense_qi:.4}"
+        (released - total_daozhan_qi).abs() < 1e-9,
+        "真实死亡释放必须包含凝结量({condense_qi:.4})与吸取量({drained_from_player:.4})，expected={total_daozhan_qi:.4} actual={released:.4}"
     );
+    let after = snapshot_with_daozhan_owners(&mut app);
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+        panic!("真实死亡混合 owner 路径必须守恒：{error:?}; before={before:?}, after={after:?}")
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1738,8 +1991,10 @@ fn disguised_daozhan_condense_state_default_is_empty() {
 }
 
 #[test]
-fn spawn_request_event_fields_accessible() {
-    // SpawnDaoZhangFromCondenseRequest 字段语义 pin（守恒测试用）
+// 这不是守恒测试，只 pin spawn request 的 payload 字段；真正的凝结守恒覆盖归
+// `plan-bughunt-qi-ledger-asymmetry-v1` P1，当前分率/raw 单位缺口也在该 plan 修复。
+fn spawn_request_event_fields_preserve_payload() {
+    // SpawnDaoZhangFromCondenseRequest 字段语义 pin。
     let req = SpawnDaoZhangFromCondenseRequest {
         zone_name: "spawn".to_string(),
         condensed_qi: TIANDAO_CONDENSE_INITIAL_QI,
@@ -1754,11 +2009,15 @@ fn spawn_request_event_fields_accessible() {
 }
 
 #[test]
-fn tiandao_initial_qi_equals_cost() {
-    // TIANDAO_CONDENSE_INITIAL_QI 应等于 TIANDAO_CONDENSE_QI_COST（守恒：zone 扣多少，道伥得多少）
+// 这不是守恒测试，只 pin 两个配置常量的声明关系；归一化 spirit_qi 与 raw qi
+// 的转账单位错配（每次凝结到死亡净蒸发 actual_cost * (QI_ZONE_UNIT_CAPACITY - 1.0)）
+// 不在此处验证，跨 owner 的真实守恒覆盖与修复归属在
+// `plan-bughunt-qi-ledger-asymmetry-v1` P1。
+fn tiandao_initial_qi_matches_configured_cost() {
+    // TIANDAO_CONDENSE_INITIAL_QI 应等于 TIANDAO_CONDENSE_QI_COST（配置关系）。
     assert!(
         (TIANDAO_CONDENSE_INITIAL_QI - TIANDAO_CONDENSE_QI_COST).abs() < 1e-9,
-        "TIANDAO_CONDENSE_INITIAL_QI({}) 应等于 TIANDAO_CONDENSE_QI_COST({})（守恒 1:1 转移）",
+        "配置 pin：TIANDAO_CONDENSE_INITIAL_QI({}) 应等于 TIANDAO_CONDENSE_QI_COST({})；这不等价于运行时跨 owner 守恒",
         TIANDAO_CONDENSE_INITIAL_QI,
         TIANDAO_CONDENSE_QI_COST
     );
