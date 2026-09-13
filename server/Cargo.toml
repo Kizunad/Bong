@@ -95,6 +95,10 @@ name = "tribulation_unit"
 path = "tests/unit/cultivation/tribulation_test.rs"
 
 [[test]]
+name = "meridian_severed_unit"
+path = "tests/unit/cultivation/meridian/severed_test.rs"
+
+[[test]]
 name = "proto_convert_unit"
 path = "tests/unit/schema/proto_convert_test.rs"
 
@@ -125,6 +129,10 @@ path = "tests/unit/combat/woliu_v2/erosion_test.rs"
 [[test]]
 name = "npc_technique_unit"
 path = "tests/unit/npc/technique_test.rs"
+
+[[test]]
+name = "burst_meridian_unit"
+path = "tests/unit/cultivation/burst_meridian_test.rs"
 
 [[test]]
 name = "body_plan_validate_unit"
