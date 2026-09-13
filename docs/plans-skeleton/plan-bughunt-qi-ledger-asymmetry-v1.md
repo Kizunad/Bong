@@ -14,7 +14,7 @@
 
 ## 最高严重度红旗：分率/raw 单位错配导致真元蒸发（P0，阻塞合并）
 
-本轮复核收口了此前的错误裁决：`Zone.spirit_qi` 是 0..1 的归一化分率，绝对 zone 真元必须是 `zone.spirit_qi × QI_ZONE_UNIT_CAPACITY`；`Cultivation.qi_current`、`DaoZhangBehaviorBlackboard.daozhan_qi`、`QiTransfer.amount` 和 `release_external_qi_to_zone` 的 `requested` 则是 raw 绝对真元。凝结侧的 `actual_cost` 由 `zone.spirit_qi - TIANDAO_CONDENSE_THRESHOLD` 计算，仍是分率。
+本轮复核收口了此前的错误裁决：`Zone.spirit_qi` 是 `-1..1` 的 signed 归一化分率，绝对 zone 真元必须是 `zone.spirit_qi × QI_ZONE_UNIT_CAPACITY`；`Cultivation.qi_current`、`DaoZhangBehaviorBlackboard.daozhan_qi`、`QiTransfer.amount` 和 `release_external_qi_to_zone` 的 `requested` 则是 raw 绝对真元。凝结入口只对高于 `TIANDAO_CONDENSE_THRESHOLD` 的正灵气区计算正的 `actual_cost`，该值仍是分率。
 
 当前实现先按分率扣掉 `actual_cost × QI_ZONE_UNIT_CAPACITY` 的 zone 绝对真元，却把未换算的 `actual_cost` 写入 `SpawnDaoZhangFromCondenseRequest.condensed_qi`，再写入 raw blackboard。若完整 spawn→死亡路径按现有接口把这笔 raw 余额归还，净效果仍是：
 
@@ -226,7 +226,11 @@
 
 优点：适配当前凝结 system 不直接持有 Commands 的架构。风险：需要处理重复 event、重启恢复、冷却 state 和 reservation 持久化，不能只把现有 QiTransfer 从一个 system 移到另一个 system。
 
-## 开放问题（转 active / P0 决策门前必须收口）
+## Pre-P0 Decisions（2026-09-13）
+
+1. **collapse redistribution 单位缺陷归属**：经 `server/src/world/events.rs:2004-2070` 代码核查，zone fraction→raw overflow 转换、该分支的 typed transaction 接入和真实回归验收纳入本计划 **§P3，由本计划唯一负责**；`plan-refactor-qi-ledger-v1` 的 P3 不重复实现这一 collapse 分支。R5 仍负责其更宽的字段私有化和其它 producer 批次，接入时必须复用本计划收口的单位/owner contract。
+
+以下开放问题仍保留供转 active 时追溯；已在本节收口的归属不得在 P0 实施阶段重新二选一。
 
 1. **actual_cost 的单位与唯一换算点（本轮证据已收口，P0 仍须冻结 API）**：代码证据表明它是归一化 `zone.spirit_qi` fraction，不是 raw qi；active P0 必须把 `actual_cost × QI_ZONE_UNIT_CAPACITY` 固定为唯一 raw 换算，明确 zone debit、condensed_qi、DaoZhangBehaviorBlackboard.daozhan_qi、WorldQiAccount、QiTransfer.amount、release requested 和 snapshot 的标尺。
 2. **durable entity id 与扣款顺序是什么？** 应先生成/保留 canonical NPC id 再扣 zone，还是先创建可恢复 reservation 再提交 debit？每个 spawn、duplicate event、system restart、spawn failure 分支的回滚/overflow 落点是什么？
@@ -234,7 +238,7 @@
 4. **是否需要统一 consumer？** TiandaoCondense、现有 canonical producer、event-only producer、AuditOnly reason 的处理边界是什么？如何以 reason disposition、owner capability、transaction id 和 system ordering 防止已有 producer 双扣/双记？
 5. **summarize_world_qi 的投影契约是什么？** external owner 是否全部纳入 WorldQiSnapshot，还是只允许持久化 ledger owner；registry 中的 owner 是否要进入 persistence/IPC，以及如何证明 snapshot 不漏计、不重复计入。
 6. **与 plan-refactor-qi-ledger-v1 如何交接？** 本问题的道伥具体 owner/transaction 修复由 R5 P3 吸收，还是独立 PR 先落；两者不得同时改变 qi_current/zone.spirit_qi API 或各自引入 registry。
-7. **collapse redistribution 的单位缺陷由谁收口？** `world/events.rs` 的 zone fraction→raw overflow 转换是本 plan P3 迁移，还是由 R5 P3 吸收；无论归属如何，不能与道伥 P1 的缺陷合并成一条泛化 event-only 待办。
+7. **collapse redistribution 的单位缺陷（已收口）**：`world/events.rs` 的 zone fraction→raw overflow 转换由本计划 §P3 唯一负责，R5 P3 不重复实现；不得与道伥 P1 的缺陷合并成一条泛化 event-only 待办。
 
 原始开放问题保留以便追溯；在所有问题由代码证据支持并写入 active plan 的 §N.1 决议前，禁止进入 P0 实施。每条决议必须落到真实 file:line 与 plan 章节双锚点。
 
@@ -243,7 +247,7 @@
 **可核验交付物：**
 
 - 冻结 P/L/T、WorldQiBudget、QI_ZONE_UNIT_CAPACITY、signed zone、external owner 与 stable ledger account 的单位和唯一性合同；明确 WorldQiAccount::transfers 仅是审计，不是余额。
-- 单独冻结两个单位缺陷的决策门：道伥 `actual_cost` 必须在唯一入口从 zone fraction 换成 raw；`world/events.rs:2004-2070` 的 collapse operator 可继续以 fraction 处理 zone，但所有 `QiTransfer.amount`/overflow balance 必须显式换成 raw；两者都要写出换算前后量级和失败零写入语义。
+- 按 `Pre-P0 Decisions（2026-09-13）` 冻结两个单位缺陷的执行边界：道伥 `actual_cost` 必须在唯一入口从 zone fraction 换成 raw；`world/events.rs:2004-2070` 的 collapse operator 可继续以 fraction 处理 zone，但所有 `QiTransfer.amount`/overflow balance 必须显式换成 raw；两者都要写出换算前后量级和失败零写入语义，不得再把 collapse 归属留作 P0 实施时的二选一。
 - 对 QiTransferReason::{TiandaoCondense,ReleaseToZone,HalfStepBuff} 写出 disposition 表：哪些是 BalanceMutating，哪些是 AuditOnly，每个 reason 的唯一 source/target owner capability、transaction id、失败语义和 audit 顺序。
 - 以 server/src/fauna/daozhan.rs::daozhan_tiandao_condense_system、SpawnDaoZhangFromCondenseRequest、DaoZhangBehaviorBlackboard、release_external_qi_to_zone 和 summarize_world_qi 为接入清单；不能用“统一 consumer”一句话替代 owner/transaction 设计。
 - 建立 TIANDAO_CONDENSE_INITIAL_QI 的迁移清单：定义处 server/src/fauna/daozhan.rs:1002 加上 server/src/fauna/daozhan_tests.rs:1709,1745,1750,1751,1758,1760,1761,1762；删除/重命名的前置交付物必须是 8 处测试引用已迁移并由 actual_cost boundary 契约替代。
@@ -280,7 +284,7 @@
 
 - 对上表每个 EventWriter<QiTransfer> 文件完成逐条责任记录：canonical producer、event-only 真实物理 owner、mixed 分支、AuditOnly 分支和后续 owner/plan；不能把全表机械改成统一 consumer。
 - 先以 P0 的 reason/owner contract 选择本 plan 实际拥有的迁移范围；carrier.rs、needle.rs、woliu.rs、hybrid_beast.rs、world/events.rs、zhenfa/mod.rs 等 event-only/mixed 路径若不在本 PR，必须留下明确的 follow-up basename 和不重复接管说明。
-- `world/events.rs:2004-2070` 的 collapse fraction/raw mismatch 作为独立 P3 条目处理：邻接 zone 继续接收 fraction，overflow/no-neighbor 的 `QiTransfer.amount` 必须按 `× QI_ZONE_UNIT_CAPACITY` 进入 raw 账户；不能因它同时是 event-only queue 就只写“后续核验”，也不能把它冒充道伥 P1 已修。
+- `world/events.rs:2004-2070` 的 collapse fraction/raw mismatch 作为本计划唯一负责的独立 P3 条目处理：邻接 zone 继续接收 fraction，overflow/no-neighbor 的 `QiTransfer.amount` 必须按 `× QI_ZONE_UNIT_CAPACITY` 进入 raw 账户；不能因它同时是 event-only queue 就只写“后续核验”，也不能把它冒充道伥 P1 已修或交给 R5 P3 重复实现。
 - 对所有纳入迁移的 producer 使用同一 typed transaction API；保持已有物理字段语义，不因补 ledger 而再扣一次 zone/player，也不把 HalfStepBuff 等 AuditOnly 误转为 balance mutation。
 
 **测试声明：** 每种分类至少有一条真实 producer→owner→zone/ledger 的契约测试；覆盖 pre-existing canonical path 不双扣、event-only 路径的 owner 归属、AuditOnly 不改变 T、mixed overflow/zone accepted 分叉、invalid owner/duplicate event fail-closed。测试断言 payload、余额、zone、audit 和 snapshot，不断言内部调用次数。
