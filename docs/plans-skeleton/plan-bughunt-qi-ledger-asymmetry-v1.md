@@ -7,7 +7,7 @@
 | 阶段 | 交付物 | 状态 | 验收日期 |
 |---|---|---|---|
 | P0 | P/L/T 守恒口径、owner 唯一性、单位/事务/失败边界和既有 plan 责任收口 | ⬜ | YYYY-MM-DD（待定） |
-| P1 | 道伥凝结→spawn→死亡归还的 canonical transaction 与稳定 owner identity | ⬜ | YYYY-MM-DD（待定） |
+| P1 | 道伥凝结→spawn→死亡归还的 canonical transaction、稳定 owner identity 与常量引用测试迁移 | ⬜ | YYYY-MM-DD（待定） |
 | P2 | external-owner registry、summarize_world_qi 投影和持久化/重启生命周期 | ⬜ | YYYY-MM-DD（待定） |
 | P3 | QiTransfer 影响面逐条归类、选定路径迁移和不双扣回归 | ⬜ | YYYY-MM-DD（待定） |
 | P4 | 真实运行链路、snapshot/ledger 审计和守恒集成验收 | ⬜ | YYYY-MM-DD（待定） |
@@ -17,7 +17,7 @@
 - **进料**：server/src/fauna/daozhan.rs::daozhan_tiandao_condense_system 从高灵气 ZoneRegistry 读取 Zone.spirit_qi，计算 actual_cost，发出 SpawnDaoZhangFromCondenseRequest 和 QiTransferReason::TiandaoCondense；spawn consumer 将 condensed_qi 写入 DaoZhangBehaviorBlackboard.daozhan_qi。死亡/销毁入口读取同一 blackboard 余额，调用 release_external_qi_to_zone，再投影已提交的 transfers。
 - **出料**：修复后的 canonical transaction 必须同时定义 zone、道伥 external owner、WorldQiAccount balance/audit、spawn request、死亡释放和 WorldQiSnapshot 的边界；失败时不可留下部分 zone debit、孤儿账户或重复 owner 余额。
 - **共享类型 / event**：复用 ZoneRegistry、Zone.spirit_qi、DaoZhangBehaviorBlackboard、SpawnDaoZhangFromCondenseRequest、QiTransfer、QiTransferReason::{TiandaoCondense,ReleaseToZone}、WorldQiAccount、WorldQiBudget、summarize_world_qi、release_external_qi_to_zone、QI_ZONE_UNIT_CAPACITY。不得另造第二套 qi ledger 或把 QiTransfer event 当作自动 consumer。
-- **跨仓库契约**：本 bughunt 的核心修复是 server 内部 owner/ledger contract，不新增 agent/client wire。已有 bong:world_state 若继续发布 qi snapshot，必须使用修复后的唯一 owner 投影；若后续需要新的 telemetry（例如 bong:qi/ledger），必须在 active 阶段明确 schema、发布者和消费者，不能只发无消费者的 event。
+- **跨仓库契约（按阶段）**：**server（P0-P4）**命中 `qi_physics::ledger::{WorldQiAccount, QiTransfer, WorldQiSnapshot, QiPhysicsIpcSnapshot, summarize_world_qi, assert_conservation}`、`fauna::daozhan::{daozhan_tiandao_condense_system, daozhan_death_qi_release_system, DaoZhangBehaviorBlackboard}`、`cultivation::components::qi_flow::{release_external_qi_to_zone, transfer_external_qi_to_ledger}`、`network::publish_qi_ledger_to_redis` 和 `schema::channels::QI_LEDGER_REDIS_KEY`。当前 `summarize_world_qi` 的结果在 `server/src/network/mod.rs:1425-1464` 只进入 `bong:qi/ledger` telemetry；`server/src/network/mod.rs:1297-1377` 的 `publish_world_state_to_redis` 不消费它，因此 **agent：N/A，client：N/A**——agent/packages/schema、agent runtime 和 client 没有订阅/解析 `bong:qi/ledger` 的现有 symbol，本 plan 当前也不改 `bong:world_state` 字段集或新增 wire。若 P2 决定把 external owner 投影进 `bong:world_state`，或改变 `QiPhysicsIpcSnapshot`/`bong:qi/ledger` 使 agent/client 需要消费，则该阶段不得继续写 N/A，必须同时列出新增 schema、发布者、agent/client consumer 和契约测试；当前范围不作该扩展。
 - **worldview 锚点**：docs/worldview.md §二 L30-L50 的正域/死域/负灵域与灵压语义；docs/worldview.md §十 L870-L880 的全服灵气零和与缓慢重分配。真元总量是质量流向，不是任意字段加减。
 - **qi_physics 锚点**：底盘复用 qi_physics::ledger::{WorldQiAccount, QiTransfer, assert_conservation, summarize_world_qi}、qi_physics::release::qi_release_to_zone、qi_physics::constants::QI_ZONE_UNIT_CAPACITY。新增物理常数、单位换算或衰减公式必须先进入 qi_physics，本 plan 不自定义一份。
 
@@ -75,9 +75,12 @@
 - WorldQiSnapshot 因此是通用 snapshot，不是当前道伥完整 external-owner projection；即使 spawn consumer 被挂进测试，仍需先决定 registry/投影契约，否则会漏计或双计。
 - 本轮测试债现场的临时投影位于保留的旧分支 commit 99ce719a8，不是本 skeleton PR 的文件；该现场不能替代生产 snapshot contract。
 
-### 4. TIANDAO_CONDENSE_INITIAL_QI 是死常量
+### 4. 生产凝结路径不引用 TIANDAO_CONDENSE_INITIAL_QI；测试仍有 8 处引用
 
-- server/src/fauna/daozhan.rs:1002 定义 TIANDAO_CONDENSE_INITIAL_QI，全仓只有定义处一处引用；真实凝结使用的是 actual_cost。实施时应删除/重命名死常量或补充其明确语义，不能让它继续暗示凝结总是固定量。
+- `server/src/fauna/daozhan.rs:1002` 定义 `TIANDAO_CONDENSE_INITIAL_QI`；全仓实际有 9 处文本引用：该定义 1 处，加上 `server/src/fauna/daozhan_tests.rs:1709`、`:1745`、`:1750`、`:1751`、`:1758`、`:1760`、`:1761`、`:1762` 共 8 处测试引用。
+- 生产凝结路径 `server/src/fauna/daozhan.rs:1064-1068` 不引用这个常量，而是用 `actual_cost = TIANDAO_CONDENSE_QI_COST.min(zone.spirit_qi - TIANDAO_CONDENSE_THRESHOLD)`；因此 `actual_cost` 在 zone 灵气接近阈值时可以小于 `TIANDAO_CONDENSE_QI_COST`。
+- `server/src/fauna/daozhan_tests.rs:1741-1753` 的 fixture 在 `:1745` 写入 `condensed_qi: TIANDAO_CONDENSE_INITIAL_QI`，并在 `:1750-1751` 断言 `condensed_qi == TIANDAO_CONDENSE_INITIAL_QI`。该测试没有覆盖接近阈值的 actual_cost boundary；它目前能过只因为 fixture 把 zone 灵气设得足够高，锁住的是 fixture 而不是生产契约，并掩盖了常量与实际语义的脱节。
+- 因此删除或重命名该常量前，必须先迁移上述 8 处测试引用：把固定初始量断言改成实际 `actual_cost`/单位契约与低余量 boundary 的测试，不能按“死常量”直接删除，否则构建会失败。
 
 ### 5. 这不是“物理侧必然吞真元”的无条件结论
 
@@ -216,6 +219,7 @@ fixture 的 spirit_qi_before = 0.90，凝结 system 发出一个 request，conde
 - 冻结 P/L/T、WorldQiBudget、QI_ZONE_UNIT_CAPACITY、signed zone、external owner 与 stable ledger account 的单位和唯一性合同；明确 WorldQiAccount::transfers 仅是审计，不是余额。
 - 对 QiTransferReason::{TiandaoCondense,ReleaseToZone,HalfStepBuff} 写出 disposition 表：哪些是 BalanceMutating，哪些是 AuditOnly，每个 reason 的唯一 source/target owner capability、transaction id、失败语义和 audit 顺序。
 - 以 server/src/fauna/daozhan.rs::daozhan_tiandao_condense_system、SpawnDaoZhangFromCondenseRequest、DaoZhangBehaviorBlackboard、release_external_qi_to_zone 和 summarize_world_qi 为接入清单；不能用“统一 consumer”一句话替代 owner/transaction 设计。
+- 建立 TIANDAO_CONDENSE_INITIAL_QI 的迁移清单：定义处 server/src/fauna/daozhan.rs:1002 加上 server/src/fauna/daozhan_tests.rs:1709,1745,1750,1751,1758,1760,1761,1762；删除/重命名的前置交付物必须是 8 处测试引用已迁移并由 actual_cost boundary 契约替代。
 - 由代码核查补齐开放问题的 §N.1 决议，并明确本 plan 与 plan-refactor-qi-ledger-v1 P3 的单一责任主体。
 
 **测试声明：** 在不改生产代码的骨架阶段不新增测试；active P0 必须增加 qi_physics/transaction fixture，覆盖单位换算、same-account、insufficient、destination overflow、owner identity、AuditOnly 排除、失败零写入和 assert_conservation 的 era_decay 分支。
@@ -227,6 +231,7 @@ fixture 的 spirit_qi_before = 0.90，凝结 system 发出一个 request，conde
 - server/src/fauna/daozhan.rs 的凝结 system 不再以裸 zone.spirit_qi 写入充当事务；actual_cost 从唯一换算入口产生，并与 SpawnDaoZhangFromCondenseRequest、external owner credit、TiandaoCondense audit 绑定同一 durable owner/transaction id。
 - spawn consumer 对 DaoZhangBehaviorBlackboard.daozhan_qi 的写入必须与 canonical owner registry 一致；死亡 server/src/fauna/daozhan.rs:1192-1221 必须从同一 owner 读取，并沿 release_external_qi_to_zone 走 zone accepted/overflow 的真实 ledger 边界。
 - 所有可失败步骤（阈值/冷却/数量、spawn、owner registration、zone debit、ledger/audit）定义 preflight、rollback、重复 request 和 restart recovery；不能留下 daozhan:condense:<zone>:<tick> 与 canonical_npc_id(entity) 两个长期账户。
+- 在删除或重命名 TIANDAO_CONDENSE_INITIAL_QI 前，先迁移 server/src/fauna/daozhan_tests.rs:1709,1745,1750,1751,1758,1760,1761,1762 八处引用；spawn_request_event_fields_accessible 必须改测实际 actual_cost/单位语义和接近阈值的边界，不能继续用高灵气 fixture 锁定固定常量。
 
 **测试声明：** fauna::daozhan 真实 App 路径必须覆盖阈值 < / == / >、actual_cost 低于请求量的 boundary、zero/negative/overflow zone、spawn failure/no consumer、duplicate transaction、同一 owner 跨凝结→spawn→死亡、zone accepted 与 stable overflow、审计顺序和 T 严格守恒。测试断言取 SPIRIT_QI_TOTAL/QI_ZONE_UNIT_CAPACITY/QI_EPSILON 等 canonical 引用，不写全服总量字面量。
 
@@ -237,6 +242,7 @@ fixture 的 spirit_qi_before = 0.90，凝结 system 发出一个 request，conde
 - 在 server/src/qi_physics/ledger.rs 或经 P0 决议指定的模块定义 typed external owner registry；明确 DaoZhangBehaviorBlackboard.daozhan_qi 与 WorldQiAccount 哪一方是唯一物理 owner，另一路只能是只读 projection。
 - 扩展 summarize_world_qi/WorldQiSnapshot 的 external-owner 投影和去重规则；WorldQiAccount::total()、ledger_qi、audit transfers、WorldQiBudget.current_total 四种观测不得混用。
 - 若 owner 跨 tick、despawn、离屏或重启仍存在，接入 persistence 的 encode/decode/hydrate、stable id、缺行/非法值 fail-closed 和 unregister/terminal release；不得把 store.remove 当作释放真元。
+- 核对 P2 的发布边界：当前 summarize_world_qi 经 publish_qi_ledger_to_redis 发布到 server/src/schema/channels.rs:91-93 的 bong:qi/ledger，不进入 publish_world_state_to_redis；若 P2 不新增 agent/client wire，则以该事实完成 server telemetry 验收，agent/client 仍为 N/A。若改为 bong:world_state 或新增消费方，必须在本阶段改列真实跨仓 symbol 和测试。
 
 **测试声明：** snapshot 需覆盖 blackboard-only、ledger-only、合法转换中间态、zone accepted、overflow、缺失/重复 registry、despawn/death/restart hydrate、same owner 不双计和 unrelated owner 隔离；每个状态转换至少有专属用例，并对 assert_conservation(before, after, era_decay) 做外部可观察断言。
 
@@ -278,4 +284,3 @@ fixture 的 spirit_qi_before = 0.90，凝结 system 发出一个 request，conde
 ## Finish Evidence
 
 > 骨架阶段未填写。升 active、所有阶段完成并准备归档时，必须补齐：各阶段真实文件/函数落点、关键 commit（hash + 日期 + 一句话）、运行过的测试命令与数量、server/agent/client 命中的跨仓 symbol，以及未纳入本 plan 的遗留/后续事项。
-
