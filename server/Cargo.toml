@@ -135,6 +135,10 @@ name = "npc_technique_unit"
 path = "tests/unit/npc/technique_test.rs"
 
 [[test]]
+name = "npc_trade_unit"
+path = "tests/unit/npc/trade_test.rs"
+
+[[test]]
 name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
 
