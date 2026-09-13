@@ -79,7 +79,11 @@ GATE_FILE="$LOCK_ROOT/acquire.lock"
 MANUAL_AUDIT_FILE="$REG_ROOT/manual-recovery.audit.jsonl"
 DEFAULT_MAX=2
 GATE_WAIT_SEC="${SLOT_REGISTRY_GATE_WAIT_SEC:-5}"
-CACHE_DIRS=("server/target" "client/build" "client/.gradle")
+# 此列表只表示 ignored 路径可接受存在，不表示路径可安全删除；它与 wt-janitor.sh
+# 的同名 CACHE_DIRS 刻意保持分裂，后者还承担 rm -rf 回收语义，严禁合并或共享。
+# server/data 与 scripts/nbt/__pycache__ 是测试/跑服自动产生的可再生、无密钥运行物；
+# 向本列表新增目录前必须确认不会被误当作可删除项。
+CACHE_DIRS=("server/target" "client/build" "client/.gradle" "server/data" "scripts/nbt/__pycache__")
 REQUIRED_FIELDS=(task_id branch claim_sha agent_id owner_token state created_local_branch reserved_at)
 HANDOFF_DIR_NAME=manual-handoff
 REQUIRED_HANDOFF_FIELDS=(operation_id task_id branch claim_sha old_agent old_token recovery_agent new_token from_state target_state operator reason timestamp)
