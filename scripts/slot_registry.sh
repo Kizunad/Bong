@@ -81,9 +81,11 @@ DEFAULT_MAX=2
 GATE_WAIT_SEC="${SLOT_REGISTRY_GATE_WAIT_SEC:-5}"
 # 此列表只表示 ignored 路径可接受存在，不表示路径可安全删除；它与 wt-janitor.sh
 # 的同名 CACHE_DIRS 刻意保持分裂，后者还承担 rm -rf 回收语义，严禁合并或共享。
-# server/data 是测试/跑服自动产生的可再生、无密钥运行物；__pycache__ 由下方具名
-# 路径规则处理。向本列表新增目录前必须确认不会被误当作可删除项。
-CACHE_DIRS=("server/target" "client/build" "client/.gradle" "server/data")
+# server/data 是测试/跑服自动产生的可再生、无密钥运行物；tmp/ 由
+# scripts/tests/cargo_dev_profile_config_test.sh:27 的 mktemp -d "$ROOT/tmp/..." 产生，
+# 同样可再生且无密钥。__pycache__ 由下方具名路径规则处理。向本列表新增目录前必须
+# 确认不会被误当作可删除项。
+CACHE_DIRS=("server/target" "client/build" "client/.gradle" "server/data" "tmp")
 REQUIRED_FIELDS=(task_id branch claim_sha agent_id owner_token state created_local_branch reserved_at)
 HANDOFF_DIR_NAME=manual-handoff
 REQUIRED_HANDOFF_FIELDS=(operation_id task_id branch claim_sha old_agent old_token recovery_agent new_token from_state target_state operator reason timestamp)
