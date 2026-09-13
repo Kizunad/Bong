@@ -127,6 +127,10 @@ name = "npc_technique_unit"
 path = "tests/unit/npc/technique_test.rs"
 
 [[test]]
+name = "burst_meridian_unit"
+path = "tests/unit/cultivation/burst_meridian_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
