@@ -131,6 +131,10 @@ name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
 
 [[test]]
+name = "body_plan_validate_unit"
+path = "tests/unit/body_plan/validate_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
