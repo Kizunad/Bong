@@ -717,3 +717,37 @@ Test Refactor 附录（plan-test-layout-refactor-v1）
 - **路径与生产边界**：外置测试没有 `include_str!`/`include_bytes!` 等相对路径消费者；目标源文件与外置落点均以 `git cat-file -e` 核验存在。生产实现文件除测试挂载外逐字保持，未复制生产实现，未触及 `TechniqueRegistry` 数据化、schema、wire、Redis、client、agent 或 qi 账本路径。
 - **验证与门禁**：外置 target `npc_technique_unit` 为 `61 passed / 0 failed / 0 ignored`，同 crate B 类定向为 `12 passed / 0 failed / 0 ignored`。此前无上下文只读 validator 已绑定代码 HEAD `223524be69b7bef9c8c0526addd3a095507e0818` 并 PASS，确认 61/12 分类、生产边界及无新增 seam。基于该 HEAD 紧邻执行 `git fetch origin && git merge origin/main`，结果 `Already up to date`；server 完整 gate 的 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 真实退出码均为 `0`：library `11692 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，外置 target `61 passed / 0 failed / 0 ignored`，doc-tests `3 passed / 0 failed / 5 ignored`，其余 integration targets 无失败。因本 evidence 提交会产生新 HEAD，按流程再以最终 SHA 重开 validator 并在 PR 收口补充其结果。
 - **提交与状态**：代码/测试/Cargo target 提交为 `223524be69b7bef9c8c0526addd3a095507e0818`（2026-09-13，带 `Model: gpt-5.6-luna`）；本条仅记录 P2-35 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+
+### P2-37 cultivation/burst_meridian（✅ 2026-09-13）
+
+- **范围与落点**：仅处置 `server/src/cultivation/burst_meridian.rs` 原有 70 条 `#[test]`；生产文件删除内联测试体并保留 `#[cfg(test)] #[path = "burst_meridian_tests.rs"] mod tests;` 挂载。46 条 A 类测试外置到 `server/tests/unit/cultivation/burst_meridian_test.rs`，由 `server/Cargo.toml` 的显式 `burst_meridian_unit` target 发现；24 条 B 类测试保留在 `server/src/cultivation/burst_meridian_tests.rs`。未改爆脉三招 resolver、经脉撕裂、真元释放、状态转换或 AV 生产路径。
+- **规模闸门与逐位守恒**：迁移前以 `#[test]` 全集核得 70 条，迁移后为 `A=46 + B=24 = 70`；外置 target 与同 crate filter 均逐名对拍，无漏测、重复或删除。`burst_meridian.rs` 仅新增测试挂载，未新增 `pub`、`pub(crate)` 或 `#[doc(hidden)]` seam；`server/target` 等保温缓存未清理。A 类覆盖公开 resolver/registry contract、realm/race/qi/stamina/cooldown/meridian/target/facing 拒绝边界、状态转换、Attack/Burst/QiTransfer payload、守恒释放/overflow、音效/动画/粒子及护体环生命周期等可观察行为。
+- **A 类落点明细**：`beng_quan` 组 12 条覆盖 checked-in metadata、wire entity id、境界/经脉/目标/冷却拒绝、whiff、浮点快照和 Heavy AV；`tie_shan_kao` 组 7 条覆盖成功结算、境界/真元/目标/经脉/冷却拒绝、浮点；`xue_beng_bu` 组 6 条覆盖突进成功、朝向/境界/真元/经脉/冷却边界；`ni_mai_hu_ti` 组 6 条覆盖护体成功、境界/真元/经脉/冷却和无 `UniqueId` 的 AV 防御路径；另有 2 条技能注册/依赖审计、5 条四招真元释放/overflow/拒绝守恒、1 条拒绝粒子、7 条护体锚点/重发 cadence/到期/重施放契约。上述合计 46 条均只通过公开运行时 API、公开 VFX wiring 或公开事件/组件观察行为。
+- **B 类逐条理由**：以下测试直接依赖同 crate 才能访问的测试 loader、私有纯函数、`pub(crate)`/私有 AV 常量或同级锚点 fixture；外置会迫使测试专用 seam 进入生产 API，或需要复制实现/硬编码实现细节，因此逐条保留，不新增 seam。
+  - `beng_quan_uses_overridden_runtime_metadata`：使用仅在 `#[cfg(test)]` 提供的 `TechniqueRegistry::load_for_tests_with_override` 注入 qi/range/cast/cooldown metadata。
+  - `beng_quan_uses_overridden_runtime_race_gate_without_mutation`：使用 test-only registry override 注入 race gate，验证 resolver 的运行时 metadata 分支。
+  - `beng_quan_rejects_when_all_meridians_miss_overridden_health_threshold`：使用 test-only registry override 改写 required-meridian health threshold，验证定义驱动的经脉拒绝分支。
+  - `tie_shan_kao_uses_overridden_runtime_metadata`：使用 test-only registry override 注入贴山靠 metadata，不能将 fixture loader 变成生产 API。
+  - `tie_shan_kao_uses_overridden_runtime_race_gate_without_mutation`：使用 test-only registry override 注入 race gate 并锁定失败原子性。
+  - `tie_shan_kao_tears_first_overridden_meridian_not_hard_coded_stomach`：使用 test-only registry override 注入经脉定义，直接验证 resolver 对 override 后首个依赖的私有测试 fixture。
+  - `tie_shan_kao_rejects_closed_overridden_meridian_without_mutation`：使用 test-only registry override 改写依赖经脉并验证关闭分支，外置会暴露该测试 fixture loader。
+  - `xue_beng_bu_uses_overridden_runtime_metadata`：使用 test-only registry override 注入血崩步 metadata，锁定运行时定义而非静态 fixture。
+  - `xue_beng_bu_uses_overridden_runtime_race_gate_without_mutation`：使用 test-only registry override 注入 race gate 并对拍无突变。
+  - `xue_beng_bu_tears_first_overridden_meridian_not_hard_coded_gallbladder`：使用 test-only registry override 注入经脉定义，验证撕裂目标不回退硬编码。
+  - `xue_beng_bu_rejects_closed_overridden_meridian_without_mutation`：使用 test-only registry override 改写依赖经脉并验证关闭拒绝原子性。
+  - `xue_beng_bu_exact_stamina_cost_enters_exhausted`：使用 test-only registry override 注入体力成本，直接锁定 exhausted 边界。
+  - `xue_beng_bu_rejects_when_stamina_insufficient_without_displacement`：使用 test-only registry override 注入体力成本，验证不足分支不位移不扣款。
+  - `xue_beng_bu_zero_stamina_cost_casts_even_when_exhausted`：使用 test-only registry override 注入零体力成本，验证 exhausted 前置的反例边界。
+  - `ni_mai_hu_ti_uses_overridden_runtime_metadata`：使用 test-only registry override 注入护体 metadata，验证状态窗口由运行时定义驱动。
+  - `ni_mai_hu_ti_uses_overridden_runtime_race_gate_without_mutation`：使用 test-only registry override 注入 race gate 并锁定失败原子性。
+  - `ni_mai_hu_ti_tears_first_overridden_meridian_not_hard_coded_pericardium`：使用 test-only registry override 注入经脉定义，验证护体撕裂目标不硬编码。
+  - `ni_mai_hu_ti_rejects_closed_overridden_meridian_without_mutation`：使用 test-only registry override 改写依赖经脉并验证关闭拒绝原子性。
+  - `beng_quan_happy_path_mutates_atomically_and_emits_events`：直接使用同级 `app()` 的 `TechniqueRegistry::load_for_tests()` fixture，并观察 `pub(crate)` 崩拳粒子常量；外置需改写既有 fixture/观察 seam，超出纯测试搬迁边界。
+  - `p3_bespoke_anim_ids_emitted_and_beng_quan_borrow_removed`：直接对拍私有专属动画 id 常量及同级事件收集 helper；公开 API 不承诺这些实现常量。
+  - `flat_qi_cost_reads_from_known_techniques_single_source`：直接调用生产私有纯函数 `flat_qi_cost`，没有公开等价入口；外置只能新增 seam 或复制实现。
+  - `p5_bespoke_particle_ids_emitted_and_beng_quan_particle_borrow_removed`：直接使用 `pub(crate)` 粒子 id 与同级粒子观察 helper，锁的是内部 wiring 常量而非独立公开协议。
+  - `p5_burst_family_shares_one_color_but_never_one_id`：直接对拍 `pub(crate)` 四招粒子常量和私有家族识别色，外置会把内部视觉常量扩大为生产 API。
+  - `p5_ni_mai_hu_ti_aura_ring_follows_moving_caster`：直接使用同级 aura fixture、私有形态参数/重发辅助逻辑，验证锚点内部发射细节；公开事件生命周期契约已由 A 类覆盖。
+- **生产边界**：外置测试通过公开 `TechniqueRegistry::load_from_path`、公开 VFX wiring 和事件/组件观察，不复制 resolver 实现；同 crate 测试未增加新的 `pub`/`pub(crate)`/`#[doc(hidden)]`。未触及 schema、wire、Redis、client、agent 或其它 gameplay/qi 物理实现。
+- **验证与门禁**：外置 target `scripts/build-token.sh cargo test --test burst_meridian_unit` 为 `46 passed / 0 failed / 0 ignored`；同 crate `scripts/build-token.sh cargo test --lib cultivation::burst_meridian::tests` 为 `24 passed / 0 failed / 0 ignored`。完整 server gate `scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test` 真实 exit `0`：library `11570 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，`burst_meridian_unit` `46 passed / 0 failed / 0 ignored`，其余 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。无上下文只读 validator 首步核验实际 HEAD 与目标 `5a5a986f4b79f225c7c4d60aa2aca32fb3f41b94` 一致并 PASS，确认 70 条测试逐名保留、A/B 分类、无新增生产 seam；evidence commit 产生新 HEAD 后按流程重新绑定 validator。
+- **提交与状态**：代码/测试/Cargo target 提交为 `4661e75a8`（2026-09-13，带 `Model: gpt-5.6-luna`）；本条仅记录 P2-37 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
