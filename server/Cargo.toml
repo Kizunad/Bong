@@ -127,6 +127,10 @@ name = "woliu_v2_erosion_unit"
 path = "tests/unit/combat/woliu_v2/erosion_test.rs"
 
 [[test]]
+name = "hybrid_beast_unit"
+path = "tests/unit/fauna/hybrid_beast_test.rs"
+
+[[test]]
 name = "npc_technique_unit"
 path = "tests/unit/npc/technique_test.rs"
 
