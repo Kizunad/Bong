@@ -79,7 +79,7 @@
 
 - `server/src/fauna/daozhan.rs:1002` 定义 `TIANDAO_CONDENSE_INITIAL_QI`；全仓实际有 9 处文本引用：该定义 1 处，加上 `server/src/fauna/daozhan_tests.rs:1709`、`:1745`、`:1750`、`:1751`、`:1758`、`:1760`、`:1761`、`:1762` 共 8 处测试引用。
 - 生产凝结路径 `server/src/fauna/daozhan.rs:1064-1068` 不引用这个常量，而是用 `actual_cost = TIANDAO_CONDENSE_QI_COST.min(zone.spirit_qi - TIANDAO_CONDENSE_THRESHOLD)`；因此 `actual_cost` 在 zone 灵气接近阈值时可以小于 `TIANDAO_CONDENSE_QI_COST`。
-- `server/src/fauna/daozhan_tests.rs:1741-1753` 的 fixture 在 `:1745` 写入 `condensed_qi: TIANDAO_CONDENSE_INITIAL_QI`，并在 `:1750-1751` 断言 `condensed_qi == TIANDAO_CONDENSE_INITIAL_QI`。该测试没有覆盖接近阈值的 actual_cost boundary；它目前能过只因为 fixture 把 zone 灵气设得足够高，锁住的是 fixture 而不是生产契约，并掩盖了常量与实际语义的脱节。
+- `server/src/fauna/daozhan_tests.rs:1741-1753` 只是手工构造 `SpawnDaoZhangFromCondenseRequest` 并在 `:1745` 写入、`:1750-1751` 断言 `condensed_qi == TIANDAO_CONDENSE_INITIAL_QI`；它没有创建 `ZoneRegistry`，也没有调用凝结 system，因此不覆盖接近阈值的 actual_cost boundary。当前 skeleton HEAD 中，`:1609-1628` 的 `spirit_qi_before = 0.90` 仅是算术测试，`:1631-1641` 才是 `threshold + 0.001` 的独立边界算术测试；二者都没有把实际 `actual_cost` 接入 request 字段。高灵气 fixture 与真实 system 调用只存在于保留的测试债现场 commit `99ce719a8cf2b3bce5601f5bfb38020497bcb3d0`（该现场的 `daozhan_tests.rs:1695-1709` 构造 App、`:1758` 使用 `0.90`、`:1763-1805` 调用 system），不能把它们归因给当前 skeleton HEAD。因而现有字段 pin 锁住的是 fixture 常量而不是生产契约，并掩盖了常量与实际语义的脱节。
 - 因此删除或重命名该常量前，必须先迁移上述 8 处测试引用：把固定初始量断言改成实际 `actual_cost`/单位契约与低余量 boundary 的测试，不能按“死常量”直接删除，否则构建会失败。
 
 ### 5. 这不是“物理侧必然吞真元”的无条件结论
@@ -96,7 +96,7 @@ actual_cost 被传入 blackboard，物理上可以形成 zone → 道伥 → zon
 
 ## 红测证据（保留原始条件，不为变绿而放宽）
 
-真实调用 daozhan_tiandao_condense_system 的测试过滤命令：
+以下红测来自保留的测试债分支 `fix/daozhan-self-referential-conservation-tests`、commit `99ce719a8cf2b3bce5601f5bfb38020497bcb3d0`，不是当前 skeleton HEAD；该现场的测试确实真实调用了 daozhan_tiandao_condense_system。过滤命令：
 
     scripts/build-token.sh cargo test fauna::daozhan::tests::tiandao_condense_conservation_zone_decreases_by_cost --lib
 
@@ -135,7 +135,7 @@ actual_cost 被传入 blackboard，物理上可以形成 zone → 道伥 → zon
         tolerance: 1e-6,
     }
 
-fixture 的 spirit_qi_before = 0.90，凝结 system 发出一个 request，condensed_qi = actual_cost = 0.05，zone 归一化字段减少 0.05。snapshot 按 QI_ZONE_UNIT_CAPACITY = 50 观察到 zone 绝对量减少 2.5，所以 before.total_observed - after.total_observed = 45.0 - 42.5 = 2.5，era_decay = 0。
+该旧现场 fixture 的 spirit_qi_before = 0.90，凝结 system 发出一个 request，condensed_qi = actual_cost = 0.05，zone 归一化字段减少 0.05。snapshot 按 QI_ZONE_UNIT_CAPACITY = 50 观察到 zone 绝对量减少 2.5，所以 before.total_observed - after.total_observed = 45.0 - 42.5 = 2.5，era_decay = 0；当前 skeleton HEAD 的同名测试仍只是算术测试，不能把这段红测描述成当前 HEAD 已执行的 ECS 调用。
 
 必须同时保留以下限定条件：
 
