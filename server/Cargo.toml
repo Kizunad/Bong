@@ -147,6 +147,10 @@ name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
 
 [[test]]
+name = "cultivation_tick_unit"
+path = "tests/unit/cultivation/tick_test.rs"
+
+[[test]]
 name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
 
