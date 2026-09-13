@@ -1688,8 +1688,12 @@ fn tiandao_condense_test_app(zone_spirit_qi: f64) -> App {
 
 fn snapshot_with_daozhan_owners(app: &mut App) -> WorldQiSnapshot {
     let mut snapshot = summarize_world_qi(app.world_mut());
-    // `summarize_world_qi` 没有专用 NPC-ECS owner bucket；测试把实际存在的
-    // daozhan_qi 加入 ledger_qi 聚合槽，仍由同一全局守恒断言比较 before/after。
+    // 这是测试层的受控补偿：当前 `summarize_world_qi` 没有专用 NPC-ECS
+    // external-owner bucket，测试才把实际存在的 `daozhan_qi` 加入 ledger_qi
+    // 聚合槽。因此下面的 `assert_conservation` 只比较测试显式纳入的观察总量，
+    // **不验证道伥余额已经登记在 canonical ledger**，也不能掩盖未被快照发现的 qi。
+    // 让 `summarize_world_qi` 原生投影 external owner 的修复归
+    // `plan-bughunt-qi-ledger-asymmetry-v1` P2（external-owner registry + snapshot 契约）。
     let daozhan_qi = {
         let world = app.world_mut();
         let mut query = world.query::<&DaoZhangBehaviorBlackboard>();
