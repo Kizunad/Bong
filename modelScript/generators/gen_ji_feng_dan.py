@@ -126,14 +126,14 @@ def part_leaves(rig: Rig) -> None:
                   mat_m="leaf_mid", mat_s="leaf_lit")
 
     # 5. 原画精髓：错落耸立展开的四方灵叶大尖瓣
-    # 前叶瓣 (+Z)：前领低伏外翻，露出饱满丹丸
+    # 前叶瓣 (+Z)：前领充分低伏外翻（倾斜约 -45°，高度降到 y≈6.0），彻底露出饱满丹药！
     rig.cube("leaves", "leaf_front_main",
-             (-2.6, 4.6, 3.4), (2.6, 7.2, 4.0),
-             rot=(-20.0, 0.0, 0.0), org=(0.0, 4.6, 3.4),
+             (-2.6, 4.4, 3.2), (2.6, 6.0, 3.8),
+             rot=(-45.0, 0.0, 0.0), org=(0.0, 4.4, 3.2),
              mat="leaf_lit")
     rig.cube("leaves", "leaf_front_tip",
-             (-1.4, 6.8, 3.6), (1.4, 8.4, 4.1),
-             rot=(-26.0, 0.0, 0.0), org=(0.0, 6.8, 3.6),
+             (-1.4, 5.6, 3.6), (1.4, 6.8, 4.1),
+             rot=(-55.0, 0.0, 0.0), org=(0.0, 5.6, 3.6),
              mat="leaf_lit")
 
     # 后叶瓣 (-Z)：后方高高耸立的拱形大叶屏障（直达 y≈10.2！）
@@ -173,23 +173,23 @@ def part_pills(rig: Rig) -> None:
     """
     rig.bone("pills", (0.0, 5.0, 0.0))
 
-    r_main = 1.35
-    r_sub = 1.20
+    r_main = 1.40
+    r_sub = 1.25
 
-    # 1. 顶峰核心主丹（青翠饱满，向阳受光亮丽）
-    add_smooth_pill(rig, "pills", "p_main", cx=0.0, cy=6.8, cz=0.1, r=r_main)
+    # 1. 顶峰核心主丹（青翠饱满，向阳受光亮丽，耸立冲到 y=8.8）
+    add_smooth_pill(rig, "pills", "p_main", cx=0.0, cy=7.4, cz=0.1, r=r_main)
 
     # 2. 前排左侧丹丸
-    add_smooth_pill(rig, "pills", "p_fl", cx=-1.1, cy=5.8, cz=1.25, r=r_sub)
+    add_smooth_pill(rig, "pills", "p_fl", cx=-1.1, cy=6.4, cz=1.3, r=r_sub)
 
     # 3. 前排右侧丹丸
-    add_smooth_pill(rig, "pills", "p_fr", cx=1.2, cy=5.9, cz=1.1, r=r_sub)
+    add_smooth_pill(rig, "pills", "p_fr", cx=1.2, cy=6.5, cz=1.1, r=r_sub)
 
     # 4. 后排左侧丹丸
-    add_smooth_pill(rig, "pills", "p_bl", cx=-1.2, cy=6.0, cz=-1.1, r=r_sub)
+    add_smooth_pill(rig, "pills", "p_bl", cx=-1.2, cy=6.6, cz=-1.1, r=r_sub)
 
     # 5. 后排右侧丹丸
-    add_smooth_pill(rig, "pills", "p_br", cx=1.1, cy=6.1, cz=-1.2, r=r_sub)
+    add_smooth_pill(rig, "pills", "p_br", cx=1.1, cy=6.7, cz=-1.2, r=r_sub)
 
 
 def build_rig() -> Rig:
