@@ -537,6 +537,14 @@ scripts/test-all.sh [--profile unit|contract|full|e2e|preview] \
 - **验证与门禁**：无上下文只读 validator 绑定最终 HEAD `4d904e16ff8500f113a9a4eae65a4b61a2cea977` 并 PASS。随后紧邻执行 `git fetch origin && git merge origin/main`，输入 `origin/main=9ea621a400c34c9807cd11afdf2cbd6f6dbe24de`，结果 `Already up to date`；因此无需合并后代码复验。server 完整 gate 的 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 真实退出码均为 `0`；全量结果为 library `11929 passed / 0 failed / 1 ignored`、main `18 passed / 0 failed / 0 ignored`，所有 integration targets 及 doc-tests 无失败（doc-tests `3 passed / 0 failed / 5 ignored`），其中 `zhenfa_unit` `53 passed / 0 failed / 0 ignored`、同 crate zhenfa `34 passed / 0 failed / 0 ignored`。
 - **提交与状态**：迁移及收口提交依次为 `ea5782c00`、`a43010d76`、`3d781559f`、`23ff15d9c`、`4d904e16f`，均带 `Model: gpt-5.6-luna`。本条仅记录 P2-30 进度；P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
 
+### P2-33 combat/woliu_v2/erosion（✅ 2026-09-13）
+
+- **范围与落点**：仅将 `server/src/combat/woliu_v2/erosion.rs` 原内联测试整体外置到 `server/tests/unit/combat/woliu_v2/erosion_test.rs`，并在 `server/Cargo.toml` 增加显式 `woliu_v2_erosion_unit` target；生产文件不再保留测试体或测试挂载声明。未改虚蚀生产逻辑、事件、技能解锁、境界上限、serde、wire、Redis、client、agent 或其它 qi 路径。
+- **A/B 分类与逐位守恒**：基线父版本以 `#[(test|tokio::test)]` 口径计得 78 条；78 条均为 A 类，验证既有公开 `VoidErosion`/`VoidErosionStage`/`ErosionModifier` API、公开常量与函数及其可观察阶段、解锁、概率、serde 和事件字段契约；测试本地的 `TestRng`、`bb_*` helper 不属于生产符号。B 类为 0，故 `A=78 + B=0 = 78`。没有私有生产符号、`include_str!` 或其它源码文本消费者需要特殊处理，也没有新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或测试专用 seam。
+- **迁移对拍与静态核验**：外置 target `woliu_v2_erosion_unit` 定向运行 `78 passed / 0 failed / 0 ignored`；当前生产文件测试属性计数为 0，外置落点计数为 78。`git cat-file -e` 对 `server/src/combat/woliu_v2/erosion.rs` 与 `server/tests/unit/combat/woliu_v2/erosion_test.rs` 均成功；Rustfmt 归一化后测试正文与原基线一致，仅发生外置所需的 crate 路径/格式调整。
+- **验证与门禁**：无上下文只读 validator 绑定代码 HEAD `c4f4961dcc67a36994267b05d074152e4d6b8c45` 并 PASS。随后紧邻执行 `git fetch origin && git merge origin/main`，`origin/main=4dda89fc065548ef908731e9b09b26a238c119ac`，结果 `Already up to date`，无冲突。server 完整 gate 的 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 真实退出码均为 `0`；library `11859 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，外置 `woliu_v2_erosion_unit` `78 passed / 0 failed / 0 ignored`，其它 integration targets 与 doc-tests 无失败，doc-tests 为 `3 passed / 0 failed / 5 ignored`。
+- **提交与后续状态**：代码、测试落点与 Cargo target 对应提交 `c4f4961dcc67a36994267b05d074152e4d6b8c45`（带 `Model: gpt-5.6-luna`）；本条仅记录 P2-33 进度，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+
 ### P2 测试准入策略重基线（✅ 2026-09-05）
 
 - **保留的硬断言**：安全/权限、原子性/并发、真元守恒、真实状态机分支、跨进程或跨版本协议/schema、持久化兼容，以及已发生 bug 的最小回归。硬编码值仅在其本身是外部或领域契约时保留，例如 MC packet ID/编码顺序、文件权限、`qi_physics` 常量引用或明确版本化 payload tag；能引用生产常量时不得复制魔法数。
