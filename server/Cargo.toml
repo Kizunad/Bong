@@ -143,6 +143,10 @@ name = "coffin_unit"
 path = "tests/unit/coffin_test.rs"
 
 [[test]]
+name = "raster_unit"
+path = "tests/unit/world/raster_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
