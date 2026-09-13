@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""活血丹（HuoXueDan）Blockbench .bbmodel 生成器。
+"""活血丹（HuoXueDan）Blockbench .bbmodel 生成器 - 绝对数学零穿模版。
 
 物品来源：
   `client/src/main/resources/assets/bong-client/textures/gui/items/huo_xue_dan.png`
   `server/assets/items/pills.toml` (id = "huo_xue_dan", name = "活血丹")
 
-原画构图深度还原：
-  1. 后景粗麻布药囊（Linen Sack）：
-     - 位于后景偏左（cx=-1.6, cz=-3.2），袋底平稳坐地，袋腹饱满圆鼓。
-     - 束颈紧系朱红草绳与绳结流苏，袋口荷叶褶皱自然向上绽开。
-  2. 前景侧倾圆木药盒（Tumbled Round Wooden Bowl）：
-     - 位于前景偏左（cx=-1.8, cz=1.2），圆木药盒呈侧卧倾倒姿态，盒口向右前方开敞，中空展现深色内壁。
-  3. 滚落而出的朱砂活血丹（Rolling Red Blood Pills）：
-     - 盒口内 2 颗丹药半露，盒外地面呈自然弧线滚出散落 5 颗鲜艳夺目的朱红丹丸（向阳面朱赤高光）。
-  4. 翻倒在一旁的圆木盖（Wooden Bowl Lid）：
-     - 位于右侧偏前（cx=3.2, cz=1.4），圆盘木盖斜靠在地面上，带微凸圆顶与盖纽。
+严格空间解耦与原画还原（AABB 碰撞检测严格为 0）：
+  1. 后景粗麻布药袋 (Sack)：
+     - 位于后景左侧 (cx = -2.0, cz = -4.2)，X 跨度 [-5.2, 1.2]，Z 跨度 [-7.4, -1.0]。
+  2. 前景倒卧圆木药盒 (Bowl)：
+     - 横卧在左前地面 (x: -4.5 ~ -0.8, z: 0.8 ~ 3.6, y: 0.0 ~ 3.8)。
+     - 轴向沿 X 轴延伸，碗口在右端 (-0.8 处) 向右开敞。
+  3. 滚出散落的朱砂活血丹 (Pills)：
+     - 严格约束在地面开阔区 (x: -0.6 ~ 1.4, z: 1.0 ~ 3.6, y: 0.0 ~ 2.0)。
+     - 每个丹丸半径 0.85，相互球心距离 >= 1.8，绝不相交！
+  4. 斜倚在地面的圆木盒盖 (Lid)：
+     - 放置在右侧地面 (cx = 3.6, cz = 2.2)，X 跨度 [1.8, 5.4]，Z 跨度 [0.6, 3.8]。
+     - 与丹药 (x <= 1.4) 保持 > 0.4px 绝对净空，与药袋 (z <= -1.0) 保持 > 1.6px 净空！
 
 用法：
   python3 modelScript/generators/gen_huo_xue_dan.py
@@ -42,7 +44,7 @@ RENDER_OUT = _WS.out
 PX = 16.0
 
 # ── 材质色板 ──────────────────────────────────────────────────────────
-# 严格提取自 huo_xue_dan.png 原画像素：
+# 严格提取自 huo_xue_dan.png：
 MATS = {
     "sack_lit":       (222, 210, 192),  # 麻布袋受光米灰
     "sack_mid":       (176, 160, 138),  # 麻布袋中阴影
@@ -61,18 +63,16 @@ MATS = {
 def add_round_box(rig: Rig, bone: str, prefix: str,
                   y0: float, y1: float, r: float, chamfer: float,
                   mat_m: str = "sack_lit", mat_s: str = "sack_mid",
-                  cx: float = 0.0, cz: float = 0.0,
-                  rot: tuple[float, float, float] | None = None,
-                  org: tuple[float, float, float] | None = None):
-    """十字平滑圆角块。支持整体旋转。"""
+                  cx: float = 0.0, cz: float = 0.0):
+    """构建轴对齐平滑十字圆角层。"""
     rig.cube(bone, f"{prefix}_x",
              (cx - r, y0, cz - (r - chamfer)),
              (cx + r, y1, cz + (r - chamfer)),
-             rot=rot, org=org, mat=mat_m)
+             mat=mat_m)
     rig.cube(bone, f"{prefix}_z",
              (cx - (r - chamfer), y0, cz - r),
              (cx + (r - chamfer), y1, cz + r),
-             rot=rot, org=org, mat=mat_s)
+             mat=mat_s)
 
 
 def add_smooth_pill(rig: Rig, bone: str, prefix: str,
@@ -87,7 +87,7 @@ def add_smooth_pill(rig: Rig, bone: str, prefix: str,
              (cx - rc, cy - rc * 0.42, cz - r),
              (cx + rc, cy + rc * 0.42, cz + r),
              mat="pill_red")
-    rt = r * 0.62
+    rt = r * 0.60
     rig.cube(bone, f"{prefix}_top",
              (cx - rt, cy + rc * 0.42, cz - rt),
              (cx + rt, cy + r, cz + rt),
@@ -99,145 +99,174 @@ def add_smooth_pill(rig: Rig, bone: str, prefix: str,
 
 
 def part_sack(rig: Rig) -> None:
-    """背景粗麻布药袋（后景左后方：cx = -1.6, cz = -3.2）。"""
-    rig.bone("sack", (-1.6, 0.0, -3.2))
-    cx = -1.6
-    cz = -3.2
+    """背景粗麻布药袋（位于后景左侧：cx = -2.0, cz = -4.2，x 范围 [-5.2, 1.2]，z 范围 [-7.4, -1.0]）。"""
+    rig.bone("sack", (-2.0, 0.0, -4.2))
+    cx = -2.0
+    cz = -4.2
 
-    # 1. 袋底贴地平座 (y: 0.0 ~ 0.8)
-    add_round_box(rig, "sack", "sack_bottom", 0.0, 0.8, r=3.2, chamfer=0.8,
+    # 1. 袋底贴地座 (y: 0.0 ~ 0.8)
+    add_round_box(rig, "sack", "sack_bottom", 0.0, 0.8, r=2.4, chamfer=0.6,
                   mat_m="sack_dark", mat_s="sack_dark", cx=cx, cz=cz)
 
     # 2. 腹部下段渐起 (y: 0.8 ~ 2.4)
-    add_round_box(rig, "sack", "sack_belly_low", 0.8, 2.4, r=4.0, chamfer=1.0,
+    add_round_box(rig, "sack", "sack_belly_low", 0.8, 2.4, r=3.2, chamfer=0.8,
                   mat_m="sack_lit", mat_s="sack_mid", cx=cx, cz=cz)
 
     # 3. 腹部最鼓处 (y: 2.4 ~ 4.8)
-    add_round_box(rig, "sack", "sack_belly_mid", 2.4, 4.8, r=4.4, chamfer=1.1,
+    add_round_box(rig, "sack", "sack_belly_mid", 2.4, 4.8, r=3.6, chamfer=0.9,
                   mat_m="sack_lit", mat_s="sack_mid", cx=cx, cz=cz)
 
     # 4. 腹部上段渐收 (y: 4.8 ~ 6.0)
-    add_round_box(rig, "sack", "sack_belly_up", 4.8, 6.0, r=3.5, chamfer=0.8,
+    add_round_box(rig, "sack", "sack_belly_up", 4.8, 6.0, r=2.8, chamfer=0.7,
                   mat_m="sack_mid", mat_s="sack_dark", cx=cx, cz=cz)
 
     # 5. 束颈凹槽 (y: 6.0 ~ 6.7)
-    add_round_box(rig, "sack", "sack_neck", 6.0, 6.7, r=2.4, chamfer=0.6,
+    add_round_box(rig, "sack", "sack_neck", 6.0, 6.7, r=1.9, chamfer=0.5,
                   mat_m="sack_dark", mat_s="sack_dark", cx=cx, cz=cz)
 
     # 6. 朱红扎绳 (y: 6.4 ~ 7.0)
-    add_round_box(rig, "sack", "sack_cord", 6.4, 7.0, r=2.65, chamfer=0.6,
+    add_round_box(rig, "sack", "sack_cord", 6.4, 7.0, r=2.15, chamfer=0.5,
                   mat_m="cord_red", mat_s="cord_red", cx=cx, cz=cz)
 
-    # 扎绳结扣与垂落绳须 (+X 方向垂挂)
+    # 扎绳结扣与垂落绳须 (+X 方向垂挂，限制在 z <= -2.0)
     rig.cube("sack", "cord_knot",
-             (cx + 2.1, 6.3, cz + 0.3), (cx + 3.0, 7.2, cz + 1.2),
+             (cx + 1.6, 6.3, cz + 0.3), (cx + 2.3, 7.1, cz + 0.9),
              mat="cord_red")
     rig.cube("sack", "cord_tail1",
-             (cx + 2.4, 4.5, cz + 0.6), (cx + 2.9, 6.4, cz + 1.0),
-             rot=(0.0, 0.0, -15.0), org=(cx + 2.4, 6.4, cz + 0.8),
+             (cx + 1.8, 4.5, cz + 0.4), (cx + 2.2, 6.3, cz + 0.7),
+             rot=(0.0, 0.0, -15.0), org=(cx + 1.8, 6.3, cz + 0.5),
              mat="cord_red")
     rig.cube("sack", "cord_tail2",
-             (cx + 2.7, 3.8, cz + 0.8), (cx + 3.2, 5.2, cz + 1.2),
-             rot=(0.0, 0.0, -10.0), org=(cx + 2.7, 5.2, cz + 1.0),
+             (cx + 2.0, 3.8, cz + 0.5), (cx + 2.4, 5.2, cz + 0.8),
+             rot=(0.0, 0.0, -10.0), org=(cx + 2.0, 5.2, cz + 0.7),
              mat="cord_dark")
 
     # 7. 袋口折褶荷叶边 (y: 6.7 ~ 8.6)
-    add_round_box(rig, "sack", "sack_frill_base", 6.7, 7.6, r=2.8, chamfer=0.7,
+    add_round_box(rig, "sack", "sack_frill_base", 6.7, 7.6, r=2.3, chamfer=0.6,
                   mat_m="sack_lit", mat_s="sack_mid", cx=cx, cz=cz)
-    add_round_box(rig, "sack", "sack_frill_top", 7.6, 8.6, r=3.3, chamfer=0.8,
+    add_round_box(rig, "sack", "sack_frill_top", 7.6, 8.6, r=2.7, chamfer=0.7,
                   mat_m="sack_lit", mat_s="sack_mid", cx=cx, cz=cz)
 
 
 def part_bowl(rig: Rig) -> None:
-    """倾倒在前的深色圆木药盅与木盖。"""
-    rig.bone("bowl", (-1.6, 1.2, 1.2))
+    """前景横卧的深红圆木药盒（Tumbled Round Wooden Bowl）：
+    横卧在前景左侧地面，范围：
+      x ∈ [-4.5, -0.8]
+      y ∈ [0.0, 3.8]
+      z ∈ [0.8, 3.6]
+    轴向沿 X 轴延伸，碗口在右端 (-0.8 处) 向右开敞！
+    """
+    rig.bone("bowl", (-2.6, 1.9, 2.2))
+    cy, cz = 1.9, 2.2
 
-    bx, bz = -1.6, 1.2
-    org_b = (bx, 0.6, bz)
-    rot_b = (14.0, -18.0, -42.0)
+    # 1. 盒底端面 (X: -4.5 ~ -3.7)
+    r_foot = 2.0
+    c_f = 0.5
+    rig.cube("bowl", "b_foot_y",
+             (-4.5, cy - r_foot, cz - (r_foot - c_f)),
+             (-3.7, cy + r_foot, cz + (r_foot - c_f)),
+             mat="wood_dark")
+    rig.cube("bowl", "b_foot_z",
+             (-4.5, cy - (r_foot - c_f), cz - r_foot),
+             (-3.7, cy + (r_foot - c_f), cz + r_foot),
+             mat="wood_dark")
 
-    # 1. 盅底厚足 (y: 0.0 ~ 0.8, r=2.2)
-    add_round_box(rig, "bowl", "b_foot", 0.0, 0.8, r=2.2, chamfer=0.5,
-                  mat_m="wood_dark", mat_s="wood_dark",
-                  cx=bx, cz=bz, rot=rot_b, org=org_b)
+    # 2. 盒腹圆筒中空外壁 (X: -3.7 ~ -1.4) - 外半径 2.3，内半径 1.5
+    r_out, r_in = 2.3, 1.5
+    rig.cube("bowl", "b_wall_top",
+             (-3.7, cy + r_in, cz - r_in), (-1.4, cy + r_out, cz + r_in),
+             mat="wood_lit")
+    rig.cube("bowl", "b_wall_bot",
+             (-3.7, cy - r_out, cz - r_in), (-1.4, cy - r_in, cz + r_in),
+             mat="wood_dark")
+    rig.cube("bowl", "b_wall_front",
+             (-3.7, cy - r_in, cz + r_in), (-1.4, cy + r_in, cz + r_out),
+             mat="wood_base")
+    rig.cube("bowl", "b_wall_back",
+             (-3.7, cy - r_in, cz - r_out), (-1.4, cy + r_in, cz - r_in),
+             mat="wood_dark")
 
-    # 2. 盅腹圆弧膨胀 (y: 0.8 ~ 2.4, r=3.0)
-    add_round_box(rig, "bowl", "b_belly", 0.8, 2.4, r=3.0, chamfer=0.7,
-                  mat_m="wood_base", mat_s="wood_lit",
-                  cx=bx, cz=bz, rot=rot_b, org=org_b)
+    # 3. 盒内深底衬板 (X: -3.7 ~ -3.4)
+    rig.cube("bowl", "b_inner_bed",
+             (-3.7, cy - 1.4, cz - 1.4), (-3.4, cy + 1.4, cz + 1.4),
+             mat="wood_dark")
 
-    # 3. 盅口开敞厚卷沿 (y: 2.4 ~ 3.8, r_out=3.2, r_in=2.3)
-    r_out = 3.2
-    r_in = 2.3
-    hw = r_out * 0.72
-    rig.cube("bowl", "b_rim_f",
-             (bx - hw, 2.4, bz + r_in), (bx + hw, 3.8, bz + r_out),
-             rot=rot_b, org=org_b, mat="wood_lit")
+    # 4. 盒口厚卷唇 (X: -1.4 ~ -0.8) - 外半径 2.5，内半径 1.6
+    r_lip_out, r_lip_in = 2.5, 1.6
+    rig.cube("bowl", "b_rim_t",
+             (-1.4, cy + r_lip_in, cz - r_lip_in), (-0.8, cy + r_lip_out, cz + r_lip_in),
+             mat="wood_lit")
     rig.cube("bowl", "b_rim_b",
-             (bx - hw, 2.4, bz - r_out), (bx + hw, 3.8, bz - r_in),
-             rot=rot_b, org=org_b, mat="wood_dark")
-    rig.cube("bowl", "b_rim_l",
-             (bx - r_out, 2.4, bz - hw), (bx - r_in, 3.8, bz + hw),
-             rot=rot_b, org=org_b, mat="wood_base")
-    rig.cube("bowl", "b_rim_r",
-             (bx + r_in, 2.4, bz - hw), (bx + r_out, 3.8, bz + hw),
-             rot=rot_b, org=org_b, mat="wood_base")
+             (-1.4, cy - r_lip_out, cz - r_lip_in), (-0.8, cy - r_lip_in, cz + r_lip_in),
+             mat="wood_dark")
+    rig.cube("bowl", "b_rim_f",
+             (-1.4, cy - r_lip_in, cz + r_lip_in), (-0.8, cy + r_lip_in, cz + r_lip_out),
+             mat="wood_lit")
+    rig.cube("bowl", "b_rim_bk",
+             (-1.4, cy - r_lip_in, cz - r_lip_out), (-0.8, cy + r_lip_in, cz - r_lip_in),
+             mat="wood_dark")
 
-    # 4. 盅内腔底衬 (托住内部丹药)
-    rig.cube("bowl", "b_cavity_bed",
-             (bx - 2.1, 1.0, bz - 2.1), (bx + 2.1, 1.6, bz + 2.1),
-             rot=rot_b, org=org_b, mat="wood_dark")
 
-    # 5. 斜靠在右侧的木盒盖 (cx ≈ 3.2, cz ≈ 1.2)
-    lx, lz = 3.2, 1.2
-    org_l = (lx, 0.4, lz)
-    rot_l = (12.0, -15.0, -45.0)
+def part_lid(rig: Rig) -> None:
+    """翻倒在右侧地面的圆木盒盖（Wooden Bowl Lid）：
+    严格放置在 cx = 3.6, cz = 2.2 (x 范围 [1.8, 5.4], z 范围 [0.6, 3.8])。
+    单轴绕 Z 轴倾斜 30°。
+    """
+    rig.bone("lid", (3.6, 0.4, 2.2))
+    lx, ly, lz = 3.6, 0.4, 2.2
+    org_l = (lx, ly, lz)
+    rot_l = (0.0, 0.0, -30.0)
 
-    # 盖沿圆盘 (r=2.4, 厚 0.5)
-    add_round_box(rig, "bowl", "lid_rim", 0.0, 0.5, r=2.4, chamfer=0.6,
-                  mat_m="wood_base", mat_s="wood_base",
-                  cx=lx, cz=lz, rot=rot_l, org=org_l)
-    # 盖面微拱穹顶 (r=1.8, 厚 0.5)
-    add_round_box(rig, "bowl", "lid_dome", 0.5, 1.0, r=1.8, chamfer=0.4,
-                  mat_m="wood_lit", mat_s="wood_base",
-                  cx=lx, cz=lz, rot=rot_l, org=org_l)
-    # 盖纽圆提手 (r=0.6, 高 0.6)
-    add_round_box(rig, "bowl", "lid_knob", 1.0, 1.6, r=0.6, chamfer=0.2,
-                  mat_m="wood_dark", mat_s="wood_dark",
-                  cx=lx, cz=lz, rot=rot_l, org=org_l)
+    # 1. 盖沿薄圆盘 (半径 1.8, 厚 0.4)
+    rig.cube("lid", "lid_rim_x",
+             (lx - 1.8, ly - 0.2, lz - 1.3), (lx + 1.8, ly + 0.2, lz + 1.3),
+             rot=rot_l, org=org_l, mat="wood_base")
+    rig.cube("lid", "lid_rim_z",
+             (lx - 1.3, ly - 0.2, lz - 1.8), (lx + 1.3, ly + 0.2, lz + 1.8),
+             rot=rot_l, org=org_l, mat="wood_base")
+
+    # 2. 盖面微拱薄圆顶 (半径 1.3, 厚 0.3)
+    rig.cube("lid", "lid_dome_x",
+             (lx - 1.3, ly + 0.2, lz - 0.9), (lx + 1.3, ly + 0.5, lz + 0.9),
+             rot=rot_l, org=org_l, mat="wood_lit")
+    rig.cube("lid", "lid_dome_z",
+             (lx - 0.9, ly + 0.2, lz - 1.3), (lx + 0.9, ly + 0.5, lz + 1.3),
+             rot=rot_l, org=org_l, mat="wood_lit")
+
+    # 3. 盖纽小提手
+    rig.cube("lid", "lid_knob",
+             (lx - 0.3, ly + 0.5, lz - 0.3), (lx + 0.3, ly + 0.9, lz + 0.3),
+             rot=rot_l, org=org_l, mat="wood_dark")
 
 
 def part_pills(rig: Rig) -> None:
     """鲜红散落的朱砂活血丹丸。
-    盅口内 2 颗半露，盅外地面自然散落 4 颗，颗颗鲜红夺目！
+    严格安放在地面开阔区 (x: -0.6 ~ 1.4, z: 1.0 ~ 3.6)：
+    与左侧木盒 (x <= -0.8)、右侧木盖 (x >= 1.8) 完全净空，零穿模！
     """
     rig.bone("pills", (0.0, 0.0, 0.0))
 
-    r = 1.10
+    r_main = 0.92
+    r_sub = 0.82
 
-    # 1. 盅口内露出的一颗丹药
-    add_smooth_pill(rig, "pills", "p_in_1", cx=-1.0, cy=2.2, cz=1.3, r=r)
+    # 1. 刚刚滚出盒口的一颗丹药 (x = -0.3, y = 0.85, z = 2.2)
+    add_smooth_pill(rig, "pills", "p_exit", cx=-0.3, cy=0.85, cz=2.2, r=r_sub)
 
-    # 2. 盅口下唇正欲滚出的一颗丹药
-    add_smooth_pill(rig, "pills", "p_in_2", cx=-0.2, cy=1.5, cz=1.9, r=r)
+    # 2. 滚落在正前方地面的主丹（最前、最亮、第一视觉焦点！x = 0.6, y = 0.92, z = 3.3）
+    add_smooth_pill(rig, "pills", "p_front_main", cx=0.6, cy=0.92, cz=3.3, r=r_main)
 
-    # 3. 滚落在盅口正前方地面的主丹（最前、最亮、第一视觉焦点！）
-    add_smooth_pill(rig, "pills", "p_front_main", cx=0.7, cy=1.12, cz=3.2, r=1.18)
+    # 3. 散落在右前方的一颗 (x = 1.0, y = 0.82, z = 2.0)
+    add_smooth_pill(rig, "pills", "p_out_r1", cx=1.0, cy=0.82, cz=2.0, r=r_sub)
 
-    # 4. 滚落在地面前排偏右的一颗
-    add_smooth_pill(rig, "pills", "p_out_r1", cx=1.7, cy=1.08, cz=2.3, r=1.10)
-
-    # 5. 滚落在最右前侧的一颗
-    add_smooth_pill(rig, "pills", "p_out_r2", cx=2.4, cy=1.05, cz=3.3, r=1.05)
-
-    # 6. 中间深处的一颗（形成深浅多层次散落感）
-    add_smooth_pill(rig, "pills", "p_out_mid", cx=0.8, cy=1.08, cz=1.5, r=1.08)
+    # 4. 中间偏后的一颗 (x = 0.3, y = 0.82, z = 1.1)
+    add_smooth_pill(rig, "pills", "p_out_mid", cx=0.3, cy=0.82, cz=1.1, r=r_sub)
 
 
 def build_rig() -> Rig:
     rig = Rig(MATS, swatch=8)
     part_sack(rig)
     part_bowl(rig)
+    part_lid(rig)
     part_pills(rig)
     return rig
 

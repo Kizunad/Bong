@@ -1,0 +1,33 @@
+# 活血丹 HuoXueDan —— 特征点名清单
+#
+# 特征来源：`huo_xue_dan.png` 图标解析：
+# 1. linen_sack: 后景粗麻布药袋 + 朱红扎绳
+# 2. wooden_bowl: 前景侧倾倒下的深红木药盒与斜靠木盖
+# 3. blood_pills: 盒内与滚落散开在地面上的鲜红朱砂活血丹丸
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+sack_lit    = [222, 210, 192]
+sack_mid    = [176, 160, 138]
+sack_dark   = [132, 118, 98]
+cord_red    = [180, 50, 40]
+cord_dark   = [124, 30, 24]
+wood_base   = [134, 78, 46]
+wood_lit    = [168, 106, 66]
+wood_dark   = [84, 44, 26]
+pill_red    = [202, 58, 42]
+pill_lit    = [240, 102, 74]
+pill_shadow = [130, 32, 22]
+
+[features]
+# 麻布药袋：袋底 + 腹部 + 颈部 + 红扎带 + 袋口
+linen_sack = { elements = ["sack_bottom", "sack_belly", "sack_neck", "sack_cord", "cord_knot", "cord_tail", "sack_frill"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
+
+# 倾倒木盒与盒盖
+wooden_bowl = { elements = ["b_foot", "b_belly", "b_rim", "lid_rim", "lid_dome", "lid_knob"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 800, "3/4" = 1000 } }
+
+# 散落活血丹
+blood_pills = { elements = ["p_exit", "p_front_main", "p_out_"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 300, "3/4" = 500 } }
