@@ -103,6 +103,10 @@ name = "inventory_unit"
 path = "tests/unit/inventory/inventory_test.rs"
 
 [[test]]
+name = "player_state_unit"
+path = "tests/unit/player/state_test.rs"
+
+[[test]]
 name = "zhenfa_unit"
 path = "tests/unit/zhenfa/zhenfa_test.rs"
 
