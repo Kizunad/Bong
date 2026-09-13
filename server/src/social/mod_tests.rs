@@ -241,8 +241,7 @@ fn collect_server_data_payloads(helper: &mut MockClientHelper) -> Vec<ServerData
             continue;
         }
         payloads.push(
-            serde_json::from_slice(packet.data.0 .0)
-                .expect("server_data payload should decode"),
+            serde_json::from_slice(packet.data.0 .0).expect("server_data payload should decode"),
         );
     }
     payloads
@@ -633,8 +632,7 @@ fn faction_reputation_delta_updates_matching_client_only() {
         "expected char:azure QingyunHunters reputation to increase by 25 because event char_id matched, actual {azure_score}"
     );
     let other_reputation = app.world().get::<FactionReputation>(other).unwrap();
-    let other_score =
-        other_reputation.score(crate::npc::faction::NamedFactionId::QingyunHunters);
+    let other_score = other_reputation.score(crate::npc::faction::NamedFactionId::QingyunHunters);
     assert_eq!(
         other_score, 0,
         "expected char:other QingyunHunters reputation to stay 0 because event targets char:azure, actual {other_score}"
@@ -811,8 +809,8 @@ fn pact_events_create_relationship_exposure_and_betrayer_renown() {
     assert_eq!(alice.relationships.edges[0].peer, "char:bob");
     assert_eq!(alice.relationships.edges[0].metadata["terms"], "同渡此劫");
     assert_eq!(alice.relationships.edges[0].metadata["broken"], false);
-    let bob = load_social_components(&persistence, "char:bob")
-        .expect("bob pact state should persist");
+    let bob =
+        load_social_components(&persistence, "char:bob").expect("bob pact state should persist");
     assert!(bob.anonymity.is_exposed_to("char:alice"));
     assert!(bob.anonymity.is_exposed_to("char:witness"));
     assert_eq!(bob.relationships.edges[0].peer, "char:alice");
@@ -1674,11 +1672,10 @@ fn non_target_trade_response_does_not_consume_offer_before_target_accepts() {
         1001
     )
     .is_some());
-    assert!(inventory_item_by_instance(
-        app.world().get::<PlayerInventory>(target).unwrap(),
-        2002
-    )
-    .is_some());
+    assert!(
+        inventory_item_by_instance(app.world().get::<PlayerInventory>(target).unwrap(), 2002)
+            .is_some()
+    );
 
     app.world_mut().send_event(TradeOfferResponseEvent {
         player: target,
@@ -1694,11 +1691,10 @@ fn non_target_trade_response_does_not_consume_offer_before_target_accepts() {
         2002
     )
     .is_some());
-    assert!(inventory_item_by_instance(
-        app.world().get::<PlayerInventory>(target).unwrap(),
-        1001
-    )
-    .is_some());
+    assert!(
+        inventory_item_by_instance(app.world().get::<PlayerInventory>(target).unwrap(), 1001)
+            .is_some()
+    );
     assert!(app
         .world()
         .resource::<TradeOfferRegistry>()
@@ -1834,9 +1830,7 @@ fn capacity_rejected_trade_does_not_emit_unchanged_inventory_snapshots() {
     ] {
         let snapshots = collect_server_data_payloads(helper)
             .into_iter()
-            .filter(|payload| {
-                matches!(payload.payload, ServerDataPayloadV1::InventorySnapshot(_))
-            })
+            .filter(|payload| matches!(payload.payload, ServerDataPayloadV1::InventorySnapshot(_)))
             .count();
         assert_eq!(
             snapshots, 0,
@@ -2278,9 +2272,9 @@ fn resign_persists_neutral_faction_prevents_reconnect_readmission() {
     // Simulated reconnect: load persisted membership from DB.
     let loaded = load_social_components(&persistence, "char:resign-neutral")
         .expect("load after resign should succeed");
-    let persisted_membership = loaded.faction_membership.expect(
-        "persisted membership record must exist to hold betrayal state for invite gating",
-    );
+    let persisted_membership = loaded
+        .faction_membership
+        .expect("persisted membership record must exist to hold betrayal state for invite gating");
     assert_eq!(
         persisted_membership.faction,
         FactionId::Neutral,
