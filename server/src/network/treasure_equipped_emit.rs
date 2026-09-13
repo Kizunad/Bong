@@ -4,7 +4,7 @@
 //! 再由 JSON `type=treasure_equipped` 分发；不注册独立
 //! `bong:combat/treasure_equipped` channel。
 
-use valence::prelude::{Changed, Client, Entity, Query, Res, With};
+use valence::prelude::{Changed, Client, Entity, Query, Res};
 
 use crate::inventory::{
     ItemCategory, ItemRegistry, PlayerInventory, EQUIP_SLOT_OFF_HAND, TREASURE_TRIGGER_CAP,
@@ -12,7 +12,9 @@ use crate::inventory::{
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::combat_hud::{TreasureEquippedV1, TreasureViewV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
@@ -58,7 +60,7 @@ pub fn trigger_slot_key(index: usize) -> String {
 pub fn emit_treasure_equipped_payloads(
     registry: Res<ItemRegistry>,
     changed_inventories: Query<(Entity, &PlayerInventory), Changed<PlayerInventory>>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<&mut Client, AmbientServerDataClientFilter>,
 ) {
     // plan-layered-equip-v1 P0.2/P4（决议 #8 / #17）— treasure_belt 装备槽取消，法宝激活态由
     // 灵宝 UI 触发位承载（trigger_0..trigger_(CAP-1)）。off_hand held treasure 仍下发作装备态展示。

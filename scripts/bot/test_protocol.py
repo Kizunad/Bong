@@ -82,9 +82,11 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios import network_session_token_stale as stale_session_scenario  # noqa: E402
+from bot.scenarios import fauna_give_dan_to_elder_reject as fauna_reject_scenario  # noqa: E402
 from bot.scenarios import freshness_probe_paths as freshness_probe_scenario  # noqa: E402
 from bot.scenarios import fauna_give_dan_to_elder_reject as elder_reject_scenario  # noqa: E402
 from bot.scenarios import cultivation_qi_color_inspect as qi_color_inspect_scenario  # noqa: E402
+from bot.scenarios import _rejection_helpers as rejection_helpers  # noqa: E402
 from bot.scenarios._rejection_helpers import (  # noqa: E402
     assert_no_gameplay_side_effect_since,
     assert_valid_request_still_works,
@@ -208,6 +210,20 @@ from bot.run_scenarios import (  # noqa: E402
 )
 
 
+# Protocol identity coverage is deliberately a checked-in matrix, not a copy
+# derived from the proto at import time.  That makes a newly added oneof fail
+# the four-way contract test until its identity row, name registration and
+# decoder dispatch are reviewed.  The rows are field tags because three
+# historical scenario labels intentionally differ from proto spelling.
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX = {
+    field: ("protocol_identity",) for field in range(1, 143)
+}
+SERVER_DATA_PAYLOAD_SCENARIO_MATRIX[9] = (
+    "protocol_identity",
+    "combat_attack_hit",
+)
+
+
 class VarIntTest(unittest.TestCase):
     def test_roundtrip_boundaries(self):
         for value in [0, 1, 127, 128, 255, 300, 25565, 2**21, 2**28, 2**31 - 1, -1, -(2**31)]:
@@ -303,6 +319,34 @@ class DiggingActionTest(unittest.TestCase):
         self.assertEqual(reader.u8(), 1)
         self.assertEqual(reader.varint(), 0x7FFFFFFF)
         self.assertEqual(reader.rest(), b"")
+
+    def test_release_use_item_action_encodes_no_gameplay_protocol_fence(self):
+        bot = _bare_bot()
+        sent = []
+        bot._send = lambda packet_id, body=b"": sent.append((packet_id, body))
+
+        bot.send_release_use_item_action(7)
+
+        self.assertEqual(len(sent), 1)
+        packet_id, body = sent[0]
+        self.assertEqual(packet_id, mc.C2S_PLAYER_ACTION)
+        reader = mc.Reader(body)
+        self.assertEqual(reader.varint(), 5, "action=5 才是无 gameplay event 的 Release Use Item")
+        self.assertEqual(
+            reader.data[reader.pos : reader.pos + 8], mc.block_position(0, 0, 0)
+        )
+        reader.pos += 8
+        self.assertEqual(reader.u8(), 1, "fence 使用合法 Direction::Up 编码")
+        self.assertEqual(reader.varint(), 7)
+        self.assertEqual(reader.rest(), b"")
+
+    def test_release_use_item_action_rejects_zero_or_out_of_range_sequence(self):
+        bot = _bare_bot()
+        bot._send = lambda *_args: self.fail("invalid fence sequence must not be sent")
+        for sequence in (0, -1, 0x80000000):
+            with self.subTest(sequence=sequence):
+                with self.assertRaises(ValueError):
+                    bot.send_release_use_item_action(sequence)
 
     def test_player_action_response_decodes_sequence(self):
         bot = _bare_bot()
@@ -2270,14 +2314,14 @@ class ServerDataDecodeTest(unittest.TestCase):
 
     def test_proto_carrier_state_decodes_every_charge_phase(self):
         # CARRIER_CHARGE_PHASE_NAMES 是本次引入的完整 wire→domain 契约：每个 phase
-        # 值都必须解出正确名称，未知值回退 unspecified（findings：原测试只覆盖 phase=2，
-        # idle/charging 映射错或未知值不回退都测不出来）。
+        # 值都必须解出正确名称，未知值保留 unknown_N（findings：原测试只覆盖 phase=2，
+        # idle/charging 映射错或未知值身份丢失都测不出来）。
         cases = {
             0: "unspecified",
             1: "idle",
             2: "charging",
             3: "charged",
-            9: "unspecified",
+            9: "unknown_9",
         }
         for phase, expected in cases.items():
             with self.subTest(phase=phase):
@@ -2302,6 +2346,24 @@ class ServerDataDecodeTest(unittest.TestCase):
                     decoded["item_instance_id"],
                     f"phase={phase} 时 field 7 缺省应解出 None，实际 {decoded['item_instance_id']!r}",
                 )
+
+    def test_proto_carrier_state_preserves_unknown_charge_phase_identity(self):
+        decoded = decode_server_data_payload(
+            _server_data_carrier_state_bytes(
+                carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                phase=9,
+                progress=0.0,
+                sealed_qi=0.0,
+                sealed_qi_initial=0.0,
+                half_life_remaining_ticks=0,
+                item_instance_id=None,
+            )
+        )
+        self.assertEqual(
+            decoded["phase"],
+            "unknown_9",
+            "未知 CarrierState.charge_phase 必须保留 unknown_N 身份，不能伪装成 unspecified",
+        )
 
 
 class CombatServerDataGateTest(unittest.TestCase):
@@ -5643,6 +5705,8 @@ class _RejectionFakeBot(_FakeBot):
     - ``assert_alive`` 按 disconnect_reason / reader 存活判连接状态；
     - ``wait_for`` 在 events 里找不到时按顺序补充 ``pending`` 事件（模拟 server
       后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测；
+    - ``action_batches`` 为每次 DropItem action ACK 注入按 wire 顺序到达的事件，测试
+      fence 不依赖静默期；ACK 序号由 fake 方法记录。
     - ``t0`` 是模拟相对时钟（``time.monotonic() - t0 == self._now``），随事件
       append 推进 —— 让 ``time.monotonic() - bot.t0`` 锚与 ``event.t`` 同帧可测。
     """
@@ -5652,6 +5716,7 @@ class _RejectionFakeBot(_FakeBot):
         events: list[_FakeEvent],
         *,
         pending: list[_FakeEvent] | None = None,
+        action_batches: list[list[_FakeEvent]] | None = None,
         disconnected: bool = False,
         reader_alive: bool = True,
     ):
@@ -5661,10 +5726,12 @@ class _RejectionFakeBot(_FakeBot):
         self.events = _ClockAdvancingList(self)
         self.events.extend(events)
         self.pending = list(pending or [])
+        self.action_batches = [list(batch) for batch in (action_batches or [])]
         self.disconnect_reason = "服务器主动断开" if disconnected else None
         self._reader_thread = _ReaderAlive(reader_alive)
         self.intents: list[dict] = []
         self.commands: list[str] = []
+        self.player_action_sequences: list[int] = []
 
     @property
     def t0(self) -> float:
@@ -5703,6 +5770,11 @@ class _RejectionFakeBot(_FakeBot):
     def cmd(self, command: str) -> None:
         self.commands.append(command)
 
+    def send_release_use_item_action(self, sequence: int) -> None:
+        self.player_action_sequences.append(sequence)
+        if self.action_batches:
+            self.events.extend(self.action_batches.pop(0))
+
     def expect_chat(self, substring: str, timeout: float = 5.0) -> _FakeEvent:
         return self.wait_for(
             lambda e: e.kind == "chat" and substring in e.data["text"],
@@ -5731,52 +5803,318 @@ class _RejectionFakeBot(_FakeBot):
 
 
 class RejectionHelperTest(unittest.TestCase):
-    def test_freshness_realm_settle_excludes_late_sync_but_keeps_probe_oracle_strict(self):
+    def test_wait_for_join_sync_requires_explicit_deferred_state_marker(self):
+        inventory = _FakeEvent(
+            0.5,
+            "server_data",
+            {"payload_type": "inventory_snapshot"},
+        )
+        stale_derived = _FakeEvent(
+            1.0,
+            "server_data",
+            {"payload_type": "derived_attrs_sync"},
+        )
+        fresh_derived = _FakeEvent(
+            1.5,
+            "server_data",
+            {"payload_type": "derived_attrs_sync"},
+        )
+        bot = _RejectionFakeBot([inventory, stale_derived], pending=[fresh_derived])
+
+        marker = rejection_helpers.wait_for_join_sync(bot)
+
+        self.assertIs(marker, fresh_derived)
+
+    def test_wait_for_join_sync_fails_closed_when_only_stale_marker_is_buffered(self):
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.wait_for_join_sync(
+                _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            0.5,
+                            "server_data",
+                            {"payload_type": "inventory_snapshot"},
+                        ),
+                        _FakeEvent(
+                            1.0,
+                            "server_data",
+                            {"payload_type": "derived_attrs_sync"},
+                        ),
+                    ],
+                )
+            )
+
+    def test_wait_for_join_sync_fails_closed_when_marker_is_missing(self):
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.wait_for_join_sync(
+                _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            0.5,
+                            "server_data",
+                            {"payload_type": "inventory_snapshot"},
+                        )
+                    ]
+                ),
+                timeout=0.0,
+            )
+
+    def test_server_data_protocol_fence_uses_ordered_player_action_watermark(self):
+        late_setup = _FakeEvent(
+            0.5,
+            "server_data",
+            {"payload_type": "tribulation_broadcast"},
+        )
+        periodic = _FakeEvent(
+            0.75,
+            "server_data",
+            {"payload_type": "carrier_state"},
+        )
+        ack = _FakeEvent(1.0, "player_action_response", {"sequence": 1})
+        bot = _RejectionFakeBot(
+            [],
+            action_batches=[[late_setup, periodic, ack]],
+        )
+
+        fence = rejection_helpers.server_data_protocol_fence(bot)
+
+        self.assertEqual(bot.player_action_sequences, [1])
+        self.assertEqual(fence.cursor, 3, "fence 游标必须落在 action ACK 之后")
+        self.assertEqual(fence.markers, (ack,))
+        self.assertEqual(
+            list(bot.events[: fence.cursor]),
+            [late_setup, periodic, ack],
+            "连续 server_data 不应让 action ACK fence 依赖静默期",
+        )
+
+    def test_server_data_protocol_fence_fails_closed_without_action_ack(self):
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.server_data_protocol_fence(_RejectionFakeBot([]))
+
+        with self.assertRaises(ValueError):
+            rejection_helpers.server_data_protocol_fence(
+                _RejectionFakeBot([]), round_trips=0
+            )
+
+    def test_server_data_protocol_fence_does_not_accept_stale_action_ack(self):
+        stale_ack = _FakeEvent(
+            1.0, "player_action_response", {"sequence": 2}
+        )
+        bot = _RejectionFakeBot([], action_batches=[[stale_ack]])
+
+        with self.assertRaises(BotAssertionError):
+            rejection_helpers.server_data_protocol_fence(bot)
+
+        self.assertEqual(
+            bot.player_action_sequences,
+            [1],
+            "fence 必须发送新的序号，不能用旧 ACK 冒充当前出站水位",
+        )
+
+    def test_combat_clock_feedback_barrier_uses_one_ack_per_requested_tick(self):
+        ticks = rejection_helpers.LIVE_GATE_FEEDBACK_WINDOW_TICKS
+        acks = [
+            [_FakeEvent(float(index), "player_action_response", {"sequence": index})]
+            for index in range(1, ticks + 1)
+        ]
+        bot = _RejectionFakeBot([], action_batches=acks)
+
+        fence = rejection_helpers.advance_combat_clock_with_action_acks(bot)
+
+        self.assertEqual(
+            bot.player_action_sequences,
+            list(range(1, ticks + 1)),
+            "CombatClock 节流屏障必须逐 tick 发送新的 ReleaseUseItem action，不能静默 sleep",
+        )
+        self.assertEqual(
+            fence.markers[-1].data["sequence"],
+            ticks,
+            "反馈窗口屏障的最后一个 ACK 必须覆盖请求的全部 tick",
+        )
+        with self.assertRaises(ValueError):
+            rejection_helpers.advance_combat_clock_with_action_acks(bot, ticks=0)
+
+    def test_wait_for_server_data_quiet_resets_after_late_setup_sync(self):
         bot = _RejectionFakeBot([])
-        clock = 0.0
+
+        def append_late_setup_sync():
+            time.sleep(0.01)
+            bot.events.append(
+                _FakeEvent(1.0, "server_data", {"payload_type": "zone_info"})
+            )
+
+        thread = threading.Thread(target=append_late_setup_sync)
+        thread.start()
+        try:
+            rejection_helpers.wait_for_server_data_quiet(
+                bot, quiet_s=0.03, max_s=0.2
+            )
+        finally:
+            thread.join(timeout=1.0)
+
+        self.assertTrue(
+            any(
+                event.data.get("payload_type") == "zone_info"
+                for event in bot.events
+            ),
+            "静默屏障必须观察到静默期开始后迟到的前置 zone_info",
+        )
+
+    def test_wait_for_server_data_quiet_fails_closed_when_stream_never_quiets(self):
+        bot = _RejectionFakeBot([])
+        stop = threading.Event()
+
+        def append_periodic_sync():
+            while not stop.is_set():
+                bot.events.append(
+                    _FakeEvent(
+                        1.0, "server_data_raw", {"payload_type": "status_snapshot"}
+                    )
+                )
+                time.sleep(0.005)
+
+        thread = threading.Thread(target=append_periodic_sync)
+        thread.start()
+        try:
+            with self.assertRaises(BotAssertionError):
+                rejection_helpers.wait_for_server_data_quiet(
+                    bot, quiet_s=0.02, max_s=0.06
+                )
+        finally:
+            stop.set()
+            thread.join(timeout=1.0)
+
+    def test_settled_server_data_protocol_fence_adds_final_ack_after_quiet(self):
+        acks = [
+            _FakeEvent(index, "player_action_response", {"sequence": index})
+            for index in (1.0, 2.0, 3.0)
+        ]
+        bot = _RejectionFakeBot(
+            [], action_batches=[[acks[0]], [acks[1]], [acks[2]]]
+        )
+
+        fence = rejection_helpers.settled_server_data_protocol_fence(
+            bot, quiet_s=0.01, max_s=0.05
+        )
+
+        self.assertEqual(bot.player_action_sequences, [1, 2, 3])
+        self.assertEqual(fence.markers, (acks[2],))
+        self.assertEqual(fence.cursor, 3, "最终 ACK 后的游标才是请求窗口下界")
+
+    def test_rejection_scans_are_fail_closed_for_every_server_data_type(self):
+        for payload_type in (
+            "spirit_treasure_state",
+            "weapon_equipped",
+            "tribulation_broadcast",
+            "freshness_update",
+        ):
+            with self.subTest(scenario="freshness", payload_type=payload_type):
+                with self.assertRaises(BotAssertionError):
+                    freshness_probe_scenario._scan_silent_violations(
+                        _RejectionFakeBot(
+                            [_FakeEvent(2.0, "server_data", {"payload_type": payload_type})]
+                        ),
+                        start_cursor=0,
+                        end_cursor=1,
+                        description="探针请求窗口",
+                        allowed_server_data_events=(),
+                        allowed_chat_events=(),
+                    )
+            with self.subTest(scenario="fauna", payload_type=payload_type):
+                with self.assertRaises(BotAssertionError):
+                    fauna_reject_scenario._scan_chat_only_violations(
+                        _RejectionFakeBot(
+                            [_FakeEvent(2.0, "server_data", {"payload_type": payload_type})]
+                        ),
+                        start_cursor=0,
+                        end_cursor=1,
+                        description="give 拒收请求窗口",
+                        allowed_chat_events=(),
+                    )
+
+    def test_freshness_realm_settle_uses_action_ack_fence_before_probe_window(self):
         narration = _FakeEvent(
             1.5,
             "server_data",
             {"payload_type": "narration", "payload": {"text": "境界同步旁白"}},
         )
-        narration_injected = False
-
-        def monotonic() -> float:
-            return clock
-
-        def sleep(duration: float) -> None:
-            nonlocal clock, narration_injected
-            clock += duration
-            if not narration_injected and clock >= narration.t:
-                bot.events.append(narration)
-                narration_injected = True
-
-        with (
-            mock.patch.object(freshness_probe_scenario.time, "monotonic", side_effect=monotonic),
-            mock.patch.object(freshness_probe_scenario.time, "sleep", side_effect=sleep),
-        ):
-            anchor = freshness_probe_scenario._settle_realm_change(bot)
-
-        self.assertTrue(narration_injected, "测试必须让迟到 narration 落入 realm 同步排空期")
-        self.assertGreaterEqual(
-            clock,
-            narration.t + freshness_probe_scenario.SILENT_WINDOW,
-            "请求锚点前必须观察完整静默窗，不能在 0.5s 假静默后提前发送",
+        ack = _FakeEvent(2.0, "player_action_response", {"sequence": 1})
+        second_ack = _FakeEvent(
+            3.0, "player_action_response", {"sequence": 2}
         )
-        self.assertGreaterEqual(anchor, narration.t, "realm set 的迟到 narration 必须早于请求锚点")
+        final_ack = _FakeEvent(
+            4.0, "player_action_response", {"sequence": 3}
+        )
+        bot = _RejectionFakeBot(
+            [],
+            action_batches=[[narration, ack], [second_ack], [final_ack]],
+        )
 
-        bot.events.append(
-            _FakeEvent(
-                anchor + 0.1,
-                "server_data",
-                {"payload_type": "narration", "payload": {"text": "探针后旁白"}},
+        fence = freshness_probe_scenario._settle_realm_change(
+            bot, quiet_s=0.01, max_s=0.05
+        )
+
+        self.assertEqual(fence.cursor, 4, "realm 同步 fence 必须落在最终 action ACK 之后")
+        self.assertEqual(fence.markers, (final_ack,))
+
+        late_probe_side_effect = _FakeEvent(
+            2.1,
+            "server_data",
+            {"payload_type": "narration", "payload": {"text": "探针后旁白"}},
+        )
+        bot.events.append(late_probe_side_effect)
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                bot,
+                fence.cursor,
+                len(bot.events),
+                "成功探针不得产生额外 narration",
+                (),
+                (),
             )
+
+    def test_fenced_window_allows_only_explicit_events(self):
+        expected = _FakeEvent(1.0, "server_data", {"payload_type": "event_alert"})
+        pong = _FakeEvent(2.0, "chat", {"text": "pong"})
+        bot = _RejectionFakeBot([expected, pong])
+
+        freshness_probe_scenario._scan_silent_violations(
+            bot,
+            0,
+            len(bot.events),
+            "只允许显式预期事件",
+            (expected,),
+            (pong,),
         )
         with self.assertRaises(BotAssertionError):
             freshness_probe_scenario._scan_silent_violations(
                 bot,
-                anchor,
-                "成功探针不得产生额外 narration",
+                0,
+                len(bot.events),
+                "缺少允许的 event_alert",
+                (),
+                (pong,),
+            )
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                _RejectionFakeBot(
+                    [_FakeEvent(1.0, "server_data_decode_error", {"error": "unknown"})]
+                ),
+                0,
+                1,
+                "无法解码的 server_data",
+                (),
+                (),
+            )
+        with self.assertRaises(BotAssertionError):
+            freshness_probe_scenario._scan_silent_violations(
+                _RejectionFakeBot(
+                    [_FakeEvent(1.0, "server_data_raw", {"data": b"unknown"})]
+                ),
+                0,
+                1,
+                "未解码的 server_data",
+                (),
                 (),
             )
 
@@ -6054,9 +6392,9 @@ class RejectionHelperTest(unittest.TestCase):
                 })])
                 if outgoing:
                     with self.assertRaises(BotAssertionError):
-                        elder_reject_scenario._scan_chat_only_violations(bot, 1.0, "拒收", ())
+                        assert_no_gameplay_side_effect_since(bot, 1.0, "拒收")
                 else:
-                    elder_reject_scenario._scan_chat_only_violations(bot, 1.0, "拒收", ())
+                    assert_no_gameplay_side_effect_since(bot, 1.0, "拒收")
 
     def test_ambient_fauna_bite_in_probe_window_is_not_side_effect(self):
         # 回归锁：野生生物（实测噬元鼠）在探针窗口内咬 bot 会产生
@@ -8403,6 +8741,113 @@ def _pb_len_field(number: int, value: bytes) -> bytes:
 
 
 class ProtoMinTest(unittest.TestCase):
+    def test_server_data_oneof_matches_four_way_identity_contract(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        authoritative = proto_min.extract_server_data_payload_fields(source)
+        registries = {
+            "SERVER_DATA_PAYLOAD_NAMES": set(proto_min.SERVER_DATA_PAYLOAD_NAMES),
+            "SERVER_DATA_PAYLOAD_DECODERS": set(proto_min.SERVER_DATA_PAYLOAD_DECODERS),
+            "场景覆盖矩阵": set(SERVER_DATA_PAYLOAD_SCENARIO_MATRIX),
+        }
+
+        mismatches = []
+        for label, actual in registries.items():
+            missing = sorted(set(authoritative) - actual)
+            extra = sorted(actual - set(authoritative))
+            if missing or extra:
+                mismatches.append(f"{label}: missing tags={missing}, extra tags={extra}")
+        self.assertEqual(
+            mismatches,
+            [],
+            "ServerDataPayload 四方 tag 集合必须等价；新增 oneof 必须同步登记、分派和场景矩阵：\n"
+            + "\n".join(mismatches),
+        )
+
+        name_mismatches = [
+            f"tag {field}: proto={proto_name!r}, names={proto_min.SERVER_DATA_PAYLOAD_NAMES.get(field)!r}"
+            for field, proto_name in sorted(authoritative.items())
+            if proto_min.SERVER_DATA_PAYLOAD_NAMES.get(field) != proto_name
+        ]
+        self.assertEqual(
+            name_mismatches,
+            [],
+            "SERVER_DATA_PAYLOAD_NAMES 必须逐 tag 保留 envelope.proto 的 canonical field name：\n"
+            + "\n".join(name_mismatches),
+        )
+
+    def test_server_data_oneof_parser_is_scoped_and_comment_safe(self):
+        source = """
+        message OtherEnvelope {
+          oneof payload { Other other = 1; }
+        }
+        message ServerDataEnvelope {
+          oneof payload {
+            // A comment containing Fake fake = 99; must not become a row.
+            Alpha alpha = 1;
+            /* nested-looking text: Beta beta = 88; */
+            Beta beta = 2;
+          }
+        }
+        """
+        self.assertEqual(
+            proto_min.extract_server_data_payload_fields(source),
+            {1: "alpha", 2: "beta"},
+            "oneof 提取必须只读取 ServerDataEnvelope.payload，并忽略注释中的伪字段",
+        )
+
+    def test_server_data_identity_dispatch_covers_every_oneof_tag(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        authoritative = proto_min.extract_server_data_payload_fields(
+            proto_path.read_text(encoding="utf-8")
+        )
+        failures = []
+        for field, proto_name in sorted(authoritative.items()):
+            envelope = _pb_len_field(field, b"")
+            decoded = proto_min.decode_server_data_envelope(envelope)
+            expected_name = proto_min.server_data_payload_runtime_name(field)
+            if decoded is None:
+                failures.append(f"tag {field} ({proto_name}) decoder returned None")
+                continue
+            if decoded.get("type") != expected_name:
+                failures.append(
+                    f"tag {field} ({proto_name}) decoder type={decoded.get('type')!r}, "
+                    f"expected runtime identity={expected_name!r}"
+                )
+            if proto_min.server_data_payload_name(envelope) != expected_name:
+                failures.append(
+                    f"tag {field} ({proto_name}) name bridge returned "
+                    f"{proto_min.server_data_payload_name(envelope)!r}, expected {expected_name!r}"
+                )
+        self.assertEqual(
+            failures,
+            [],
+            "每个已声明 oneof tag 都必须可分派且保持可观察 identity：\n"
+            + "\n".join(failures),
+        )
+
+    def test_unknown_server_data_tag_keeps_diagnostic_identity(self):
+        unknown_tag = 999
+        payload = b"\x08\x01"
+        envelope = _pb_len_field(unknown_tag, payload)
+        decoded = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "field_999",
+                "field": unknown_tag,
+                "wire_type": 2,
+                "raw": payload,
+            },
+            "未知 oneof tag 必须保留原始 tag/wire/payload，不能静默返回 None 或伪造缺省类型",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(envelope),
+            "field_999",
+            "未知 oneof tag 的 name bridge 必须保留 field_N 诊断 identity",
+        )
+
     def test_server_data_payload_name_reads_oneof_field(self):
         envelope = _pb_len_field(31, b"\x08\x01")
         self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
@@ -9226,6 +9671,11 @@ class RunnerLogicTest(unittest.TestCase):
     def test_decoder_acceptance_matrix_covers_every_default_server_data_assertion_type(self):
         scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
         asserted_types: set[str] = set()
+        runtime_names = {
+            proto_min.server_data_payload_runtime_name(field)
+            for field in proto_min.SERVER_DATA_PAYLOAD_NAMES
+        }
+        known_names = set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()) | runtime_names
 
         for path in scenarios_dir.glob("*.py"):
             if path.name.startswith("_"):
@@ -9241,13 +9691,18 @@ class RunnerLogicTest(unittest.TestCase):
                 expressions = [node.left, *node.comparators]
                 for expression in expressions:
                     if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
-                        if expression.value in set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()):
+                        if expression.value in known_names:
                             asserted_types.add(expression.value)
 
         deep_decoded_fields = set(proto_min.SERVER_DATA_PAYLOAD_DECODERS)
 
         field_for_name = {
-            name: field for field, name in proto_min.SERVER_DATA_PAYLOAD_NAMES.items()
+            name: field
+            for field in proto_min.SERVER_DATA_PAYLOAD_NAMES
+            for name in (
+                proto_min.SERVER_DATA_PAYLOAD_NAMES[field],
+                proto_min.server_data_payload_runtime_name(field),
+            )
         }
         missing = sorted(
             payload_type
@@ -10779,6 +11234,16 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "CastOutcome=8 → meridian_gated（场景负分支断言依赖此命名）",
         )
 
+    def test_cast_sync_preserves_unknown_phase_and_outcome_identity(self):
+        msg = _pb_varint_field(1, 99) + _pb_varint_field(5, 98)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(34, msg))
+        self.assertEqual(decoded["phase"], "unknown_99")
+        self.assertEqual(
+            decoded["outcome"],
+            "unknown_98",
+            "未知 CastOutcome 必须保留 unknown_N 身份，不能伪装成 unspecified",
+        )
+
     def test_inventory_move_rejected_tag137_race_mismatch_reason_no_extra_fields(self):
         # plan-race-system-v1 P3b —— field 137 此前未接入 decode_server_data_envelope
         # 白名单，任何 bot 场景断言 inventory_move_rejected（含新增的 race_mismatch）
@@ -10926,6 +11391,16 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "无 billet/tempering/inscription/consecration 分支时应兜底 kind=none",
         )
 
+    def test_forge_session_preserves_unknown_step_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(18, _pb_varint_field(5, 98))
+        )
+        self.assertEqual(
+            decoded["current_step"],
+            "unknown_98",
+            "未知 ForgeStep 必须保留 unknown_N 身份，不能伪装成 unspecified",
+        )
+
     def test_forge_outcome_tag19_perfect_bucket(self):
         outcome = (
             _pb_varint_field(1, 9)
@@ -10969,6 +11444,16 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertTrue(decoded["flawed_path"], "field 9=1 → flawed_path=True")
         self.assertEqual(
             decoded["side_effects"], [], "无 repeated 条目时应兜底空列表，不得 crash"
+        )
+
+    def test_forge_outcome_preserves_unknown_bucket_identity(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(19, _pb_varint_field(3, 98))
+        )
+        self.assertEqual(
+            decoded["bucket"],
+            "unknown_98",
+            "未知 ForgeOutcomeBucket 必须保留 unknown_N 身份，不能伪装成 unspecified",
         )
 
     def test_forge_blueprint_book_tag20(self):
@@ -12509,10 +12994,13 @@ class NewServerDataDecoderContractTest(unittest.TestCase):
                     f"envelope tag {field} 必须有深度解码器，实际返回 None",
                 )
                 self.assertEqual(decoded["type"], expected_type)
-        self.assertIsNone(
-            proto_min.decode_server_data_envelope(_pb_message(6, b"")),
-            "无深度解码器的 known oneof tag（cultivation_detail）应返回 None，不得误分发",
+        generic = proto_min.decode_server_data_envelope(_pb_message(6, b""))
+        self.assertEqual(
+            generic["type"],
+            "cultivation_detail",
+            "已声明但尚无字段级 decoder 的 oneof 也必须保留可诊断 identity",
         )
+        self.assertEqual(generic["field"], 6)
 
 
 class PlayerPacketContractTest(unittest.TestCase):

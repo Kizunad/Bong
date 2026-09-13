@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use valence::prelude::{Client, Entity, Local, Query, Res, UniqueId, Username, With};
+use valence::prelude::{Client, Entity, Local, Query, Res, UniqueId, Username};
 
 use crate::combat::carrier::{CarrierCharging, CarrierStore};
 use crate::combat::components::TICKS_PER_SECOND;
@@ -9,7 +9,9 @@ use crate::combat::CombatClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::combat_carrier::{CarrierChargePhaseV1, CarrierStateV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
@@ -30,7 +32,7 @@ type CarrierStateClientItem<'a> = (
 pub fn emit_carrier_state_payloads(
     clock: Res<CombatClock>,
     mut cache: Local<CarrierStateEmitCache>,
-    mut clients: Query<CarrierStateClientItem<'_>, With<Client>>,
+    mut clients: Query<CarrierStateClientItem<'_>, AmbientServerDataClientFilter>,
 ) {
     let periodic = clock.tick.is_multiple_of(TICKS_PER_SECOND);
     for (entity, mut client, username, unique_id, charging, store) in &mut clients {

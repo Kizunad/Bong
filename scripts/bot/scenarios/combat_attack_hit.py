@@ -47,6 +47,31 @@ def run(env) -> None:
             if event.t > anchor
         )
         assert outgoing_hit, "被动靶左键命中必须产生 outgoing=true 且 amount>0 的 typed combat_event"
+
+        combat_hud = bot.wait_for(
+            lambda event: (
+                event.kind == "server_data"
+                and event.data.get("payload_type") == "combat_hud_state"
+                and event.t > anchor
+                and event.data.get("payload", {}).get("combat_active") is True
+            ),
+            timeout=10.0,
+            description=(
+                "攻击命中后应收到 combat_hud_state（field 9）并标记 combat_active=true；"
+                "Bot 必须观察权威 HUD，而不是只凭 combat_event 判断战斗态"
+            ),
+        )
+        hud_payload = combat_hud.data["payload"]
+        for field in ("hp_percent", "qi_percent", "stamina_percent"):
+            value = hud_payload.get(field)
+            assert isinstance(value, (int, float)) and 0.0 <= value <= 1.0, (
+                f"combat_hud_state.{field} 必须是 [0,1] 内的权威百分比，实际 {value!r}"
+            )
+        assert set(hud_payload.get("derived", {})) == {
+            "flying",
+            "phasing",
+            "tribulation_locked",
+        }, "combat_hud_state.derived 必须完整保留三项派生战斗旗标"
         destroyed = bot.wait_for(
             lambda event: event.kind == "entities_destroy"
             and target_id in event.data.get("entity_ids", [])

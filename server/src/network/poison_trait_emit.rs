@@ -1,4 +1,4 @@
-use valence::prelude::{Client, Entity, EventReader, Query, Res, With};
+use valence::prelude::{Client, Entity, EventReader, Query, Res};
 
 use crate::cultivation::poison_trait::{
     DigestionLoad, PoisonDoseEvent, PoisonOverdoseEvent, PoisonToxicity,
@@ -8,7 +8,10 @@ use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::redis_bridge::RedisOutbound;
-use crate::network::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+    RedisBridgeResource,
+};
 use crate::schema::poison_trait::{
     PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonOverdoseSeverityV1, PoisonTraitStateV1,
 };
@@ -66,7 +69,10 @@ pub fn publish_poison_overdose_events(
 
 pub fn emit_poison_trait_state_payloads(
     clock: Res<CultivationClock>,
-    mut clients: Query<(Entity, &mut Client, &PoisonToxicity, &DigestionLoad), With<Client>>,
+    mut clients: Query<
+        (Entity, &mut Client, &PoisonToxicity, &DigestionLoad),
+        AmbientServerDataClientFilter,
+    >,
 ) {
     if !clock.tick.is_multiple_of(POISON_STATE_EMIT_INTERVAL_TICKS) {
         return;
@@ -305,5 +311,24 @@ mod tests {
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0]["type"], "poison_trait_state");
         assert_eq!(payloads[0]["digestion_capacity"], 100.0);
+    }
+
+    #[test]
+    fn periodic_state_payload_skips_an_isolated_client() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 20 });
+        app.add_systems(Update, emit_poison_trait_state_payloads);
+        let (player, mut helper) = spawn_client_with_poison(&mut app);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::network::AmbientServerDataIsolation);
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            drained_payloads(&mut helper).is_empty(),
+            "ambient isolation must suppress unsolicited poison_trait_state payloads"
+        );
     }
 }

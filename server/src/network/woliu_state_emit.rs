@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use valence::prelude::{Client, Entity, EventReader, Local, Query, Res, UniqueId, Username, With};
+use valence::prelude::{Client, Entity, EventReader, Local, Query, Res, UniqueId, Username};
 
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::woliu::{
@@ -12,7 +12,9 @@ use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::cast_emit::current_unix_millis;
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 #[derive(Default)]
@@ -35,7 +37,7 @@ pub fn emit_vortex_state_payloads(
     clock: Res<CombatClock>,
     mut cache: Local<VortexStateEmitCache>,
     mut drained_events: EventReader<ProjectileQiDrainedEvent>,
-    mut clients: Query<VortexStateClientItem<'_>, With<Client>>,
+    mut clients: Query<VortexStateClientItem<'_>, AmbientServerDataClientFilter>,
 ) {
     for event in drained_events.read() {
         let count = cache

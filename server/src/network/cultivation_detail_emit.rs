@@ -8,7 +8,7 @@
 //! 节流：每 20 tick 最多发一次（~1s @ 20TPS）。
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Component, Entity, Position, Query, Res, ResMut, Resource, With,
+    bevy_ecs, Client, Commands, Component, Entity, Position, Query, Res, ResMut, Resource,
 };
 
 use crate::body_plan::layout::BodyPlanLayoutRegistry;
@@ -29,7 +29,9 @@ use crate::cultivation::tick::CultivationClock;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::cultivation::SkillMilestoneSnapshotV1;
 use crate::schema::server_data::{
     LifespanPreviewV1, PracticeWeightV1, ServerDataPayloadV1, ServerDataV1,
@@ -76,7 +78,7 @@ pub fn emit_cultivation_detail_payloads(
     body_plans: Option<Res<BodyPlanRegistry>>,
     races: Option<Res<RaceRegistry>>,
     mut state: ResMut<CultivationDetailEmitState>,
-    mut clients: Query<CultivationDetailEmitQueryItem<'_>, With<Client>>,
+    mut clients: Query<CultivationDetailEmitQueryItem<'_>, AmbientServerDataClientFilter>,
 ) {
     if clock.tick.saturating_sub(state.last_emit_tick) < EMIT_INTERVAL_TICKS {
         return;
@@ -262,7 +264,7 @@ pub fn emit_body_plan_layout_payloads(
     body_plans: Option<Res<BodyPlanRegistry>>,
     races: Option<Res<RaceRegistry>>,
     layouts: Option<Res<BodyPlanLayoutRegistry>>,
-    mut clients: Query<BodyPlanLayoutEmitQueryItem<'_>, With<Client>>,
+    mut clients: Query<BodyPlanLayoutEmitQueryItem<'_>, AmbientServerDataClientFilter>,
 ) {
     let Some(layouts) = layouts.as_deref() else {
         return;

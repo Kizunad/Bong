@@ -17,26 +17,31 @@ protocol entity id 上分别验证距离与维度门。每条拒收都断言聊�
 单边损耗实现。
 
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。chat-only 契约由
-_assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何非周期 S2C 响应
-（central-review 2029 #5）。
+_assert_chat_only_response 逐条锁死：每条拒收只回聊天、绝不发任何针对本请求的 S2C
+响应（central-review 2029 #5）。拒收窗口在前置 join/背包/装备/渡劫同步之后用同连接
+vanilla ``ReleaseUseItem`` action ACK 建立水位；两个水位之间的所有 server_data 一律视为
+本请求窗口内的响应，任何类型都判红。
 """
 
 import json
-import time
 
 from bot.bot import BotAssertionError
 
 from ._combat_helpers import last_event_time, queue_passive_target
 from ._inventory_helpers import (
+    give_inventory_revision_barrier,
     require_item,
-    wait_inventory_contains,
     wait_inventory_revision_after,
     wait_join_and_inventory,
 )
 from ._rejection_helpers import (
-    AMBIENT_SERVER_DATA_TYPES,
+    ProtocolFence,
+    advance_combat_clock_with_action_acks,
     drain_event_stream,
-    is_gameplay_side_effect,
+    settled_server_data_protocol_fence,
+    server_data_protocol_fence,
+    wait_for_join_sync,
+    wait_for_event_after_cursor,
 )
 
 DESCRIPTION = "give_dan_to_elder 拒收链：背包缺失→非回元丹→有效 pill 的目标门禁，逐条拒绝"
@@ -44,8 +49,8 @@ MODULES = ["fauna", "network"]
 
 DAN_REQUEST = {"type": "give_dan_to_elder", "v": 1}
 MEAT_ITEM = "food.mundane.cooked_meat"
+BARRIER_ITEM = "spirit_grass"
 NO_SUCH_ELDER_ID = 987654321
-SILENT_WINDOW = 4.0
 TSY_ZONE_CENTERS = {
     "tsy_lingxu_01_shallow": (50.0, 80.0, 50.0),
     "tsy_lingxu_01_mid": (50.0, 20.0, 50.0),
@@ -65,45 +70,44 @@ TSY_ZONE_ORDER = tuple(TSY_ZONE_CENTERS)
 def run(env) -> None:
     with env.new_bot("DhH") as bot:
         snapshot = wait_join_and_inventory(bot)
+        wait_for_join_sync(bot)
         # 起手物品会随玩法迭代增加；拒收测试自己腾出空间，避免 give 因满包失败。
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv PackAndHotbar", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
         # inventory_snapshot 不是 JOIN 同步的末包，先排空迟到的 tribulation_state 等。
         drain_event_stream(bot)
-        revision = snapshot["revision"]
-
+        bot.enable_ambient_server_data_isolation()
         # 1. instance_id 不在背包 → 背包中未找到该回元丹。
-        sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {**DAN_REQUEST, "pill_instance_id": 999999999999, "elder_entity_id": NO_SUCH_ELDER_ID}
-        )
-        reject = bot.expect_chat("背包中未找到该回元丹。", timeout=10.0)
-        _assert_chat_only_response(
-            bot, sent_at, "背包缺失拒收应只回 chat（无 S2C 响应）", allowed_chat_ts=(reject.t,)
+        _assert_rejected_request(
+            bot,
+            {
+                **DAN_REQUEST,
+                "pill_instance_id": 999999999999,
+                "elder_entity_id": NO_SUCH_ELDER_ID,
+            },
+            "背包中未找到该回元丹。",
+            "背包缺失拒收应只回 chat（无 S2C 响应）",
         )
         bot.assert_alive("背包缺失拒收后")
 
         # 2. 背包内有非回元丹物品 → 只接受回元丹。
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_contains(bot, MEAT_ITEM, timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, MEAT_ITEM)
         meat = require_item(snapshot, MEAT_ITEM)
-        sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {**DAN_REQUEST, "pill_instance_id": meat["item"]["instance_id"], "elder_entity_id": NO_SUCH_ELDER_ID}
-        )
-        reject = bot.expect_chat("只接受回元丹。", timeout=10.0)
-        _assert_chat_only_response(
-            bot, sent_at, "非回元丹拒收应只回 chat（无 S2C 响应）", allowed_chat_ts=(reject.t,)
+        _assert_rejected_request(
+            bot,
+            {
+                **DAN_REQUEST,
+                "pill_instance_id": meat["item"]["instance_id"],
+                "elder_entity_id": NO_SUCH_ELDER_ID,
+            },
+            "只接受回元丹。",
+            "非回元丹拒收应只回 chat（无 S2C 响应）",
         )
         bot.assert_alive("非回元丹拒收后")
 
         # 3. 回元丹在背包、目标协议实体不存在 → 找不到目标大能。
-        revision = snapshot["revision"]
-        bot.cmd("give huiyuan_pill 1")
-        bot.expect_chat("[dev] gave huiyuan_pill x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, "huiyuan_pill")
         pill = require_item(snapshot, "huiyuan_pill")
         # 拒收契约：拒绝分支只回 chat、绝不消费被拒物品。上一拒（非回元丹）后，
         # cooked_meat 的**同实例**必须仍在背包——断在下一张快照（give 回元丹触发）；
@@ -113,20 +117,19 @@ def run(env) -> None:
                 f"[{bot.username}] 拒收「只接受回元丹」后 cooked_meat 应保留原实例 "
                 f"{meat['item']['instance_id']}，实际丢失或替换"
             )
-        sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": NO_SUCH_ELDER_ID}
+        _assert_rejected_request(
+            bot,
+            {
+                **DAN_REQUEST,
+                "pill_instance_id": pill["item"]["instance_id"],
+                "elder_entity_id": NO_SUCH_ELDER_ID,
+            },
+            "找不到目标大能。",
+            "找不到目标大能拒收应只回 chat（无 S2C 响应）",
         )
-        reject = bot.expect_chat("找不到目标大能。", timeout=10.0)
-        _assert_chat_only_response(
-            bot, sent_at, "找不到目标大能拒收应只回 chat（无 S2C 响应）", allowed_chat_ts=(reject.t,)
-        )
-        # 拒收分支不推新快照；用一次无害 give 触发 revision，验证上一拒（找不到
+        # 拒收分支不推新快照；用一次可堆叠的无害 give 触发 revision，验证上一拒（找不到
         # 目标大能）后 huiyuan_pill 的**同实例**仍在背包（未被吞掉再补发/替换）。
-        revision = snapshot["revision"]
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 拒收「找不到目标大能」后 huiyuan_pill 应保留原实例 "
@@ -142,17 +145,17 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"[{bot.username}] passive_target entity_id 应为正整数，实际 {target_id!r}"
             )
-        sent_at = last_event_time(bot)
-        bot.intent(
-            {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": target_id}
+        _assert_rejected_request(
+            bot,
+            {
+                **DAN_REQUEST,
+                "pill_instance_id": pill["item"]["instance_id"],
+                "elder_entity_id": target_id,
+            },
+            "目标不是可交互的大能。",
+            "解析到非大能目标时应在消费前拒绝",
         )
-        reject = bot.expect_chat("目标不是可交互的大能。", timeout=10.0)
-        _assert_chat_only_response(
-            bot, sent_at, "解析到非大能目标时应在消费前拒绝", allowed_chat_ts=(reject.t,)
-        )
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 解析到非大能目标后 huiyuan_pill 应保留原实例 "
@@ -161,26 +164,17 @@ def run(env) -> None:
         # 5. Spawn a real production DyingElder, then exercise the resolved-target
         # range gate and the cross-dimension gate with the same valid pill instance.
         elder_id = _spawn_real_elder(bot)
-        sent_at = last_event_time(bot)
-        bot.intent(
+        _assert_rejected_request(
+            bot,
             {
                 **DAN_REQUEST,
                 "pill_instance_id": pill["item"]["instance_id"],
                 "elder_entity_id": elder_id,
-            }
-        )
-        reject = _expect_chat_after(
-            bot, "目标不在当前位面或交互范围内。", sent_at, timeout=10.0
-        )
-        _assert_chat_only_response(
-            bot,
-            sent_at,
+            },
+            "目标不在当前位面或交互范围内。",
             "真实 Plea 大能超出 6 格时应在消费前拒绝",
-            allowed_chat_ts=(reject.t,),
         )
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 超距真实大能拒绝后 huiyuan_pill 应保留原实例 "
@@ -188,26 +182,17 @@ def run(env) -> None:
             )
 
         _transfer_dimension(bot, "overworld")
-        sent_at = last_event_time(bot)
-        bot.intent(
+        _assert_rejected_request(
+            bot,
             {
                 **DAN_REQUEST,
                 "pill_instance_id": pill["item"]["instance_id"],
                 "elder_entity_id": elder_id,
-            }
-        )
-        reject = _expect_chat_after(
-            bot, "目标不在当前位面或交互范围内。", sent_at, timeout=10.0
-        )
-        _assert_chat_only_response(
-            bot,
-            sent_at,
+            },
+            "目标不在当前位面或交互范围内。",
             "跨维真实大能请求应在消费前拒绝",
-            allowed_chat_ts=(reject.t,),
         )
-        bot.cmd(f"give {MEAT_ITEM} 1")
-        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        snapshot = give_inventory_revision_barrier(bot, BARRIER_ITEM)
         if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
             raise BotAssertionError(
                 f"[{bot.username}] 跨维真实大能拒绝后 huiyuan_pill 应保留原实例 "
@@ -286,14 +271,36 @@ def _elder_appeared_payload(event):
     return payload if isinstance(payload, dict) and payload.get("event_kind") == "appeared" else None
 
 
-def _expect_chat_after(bot, substring: str, after: float, timeout: float = 10.0):
-    """等待当前请求产生的聊天，避免匹配前一条同文案拒绝。"""
-    return bot.wait_for(
-        lambda event: event.kind == "chat"
-        and event.t > after
-        and substring in event.data.get("text", ""),
-        timeout=timeout,
-        description=f"t>{after:.3f}s 后包含「{substring}」的聊天消息",
+def _assert_rejected_request(
+    bot,
+    request: dict,
+    expected_chat: str,
+    description: str,
+) -> None:
+    """以同连接 action ACK fence 限定一次拒收的完整 S2C 观察窗口。"""
+    # `report_live_gate_denial` 的聊天反馈是 client 级 20 CombatClock tick 节流。
+    # 每次拒收前都用无玩法 ReleaseUseItem ACK 跨过它，避免相邻拒收把正确的第二条
+    # chat 压掉；这是真实 Update/ACK 屏障，不是断言侧的类型豁免或静默 sleep。
+    advance_combat_clock_with_action_acks(bot)
+    # ACK 是 PostUpdate 的真实出站水位：第一条 lower fence 排出已入队帧，且第二条
+    # upper fence 让没有响应的请求跨过下一次 server update；窗口仍不按 payload 类型
+    # 维护任何豁免集。
+    start_fence: ProtocolFence = settled_server_data_protocol_fence(bot)
+    bot.intent(request)
+    reject = wait_for_event_after_cursor(
+        bot,
+        start_fence.cursor,
+        lambda event: event.kind == "chat" and expected_chat in event.data.get("text", ""),
+        timeout=10.0,
+        description=f"拒收后的聊天回执：{expected_chat}",
+    )
+    end_fence = server_data_protocol_fence(bot)
+    _assert_chat_only_response(
+        bot,
+        start_fence.cursor,
+        end_fence.cursor,
+        description,
+        allowed_chat_events=(reject, *end_fence.markers),
     )
 
 
@@ -317,41 +324,56 @@ def _transfer_dimension(bot, target: str) -> None:
 
 
 def _assert_chat_only_response(
-    bot, sent_at: float, description: str, allowed_chat_ts: tuple = ()
+    bot,
+    start_cursor: int,
+    end_cursor: int,
+    description: str,
+    allowed_chat_events: tuple = (),
 ) -> None:
-    """断言拒收分支只回聊天：窗口内无任何非白名单 server_data、无预期拒信外的聊天。
+    """断言 action ACK fence 之间只回预期聊天：无任何 server_data 或额外聊天。
 
-    只等预期 chat 会放走「照发拒收文案 + 额外发 event_alert / 库存更新 / 拒绝型
-    server_data」的坏实现（central-review 2029 #5）——chat-only 契约的 S2C 半必须
-    由窗口扫描锁死，白名单外一律判红。已消费的拒信 chat 按事件时刻豁免
-    （allowed_chat_ts）。截止时刻用单调钟（time.monotonic），不用事件时间戳
-    bot.events[-1].t：静默断言正是"之后无事件到达"，事件时间不会推进，以事件时间
-    做 deadline 会永远等不到 now >= end_at 而死循环（review finding 1/5）。"""
-    deadline = time.monotonic() + SILENT_WINDOW
-    while True:
-        _scan_chat_only_violations(bot, sent_at, description, allowed_chat_ts)
-        if time.monotonic() >= deadline:
-            # 终末复扫：事件扫描与 deadline 判定非原子（central-review 2029 #3），
-            # deadline 判定成立后、返回前再扫一次，收口最后一段未观测窗口——否则
-            # 该段内到达的 server_data/聊天会被漏掉。
-            _scan_chat_only_violations(bot, sent_at, description, allowed_chat_ts)
-            return
-        bot.assert_alive(f"{description} 窗口内连接保持")
-        time.sleep(0.1)
+    允许项只能是当前窗口产生的预期拒信；action ACK 不是聊天且由扫描器忽略，
+    不会按 payload type 豁免任何 server_data。"""
+    _scan_chat_only_violations(
+        bot,
+        start_cursor,
+        end_cursor,
+        description,
+        allowed_chat_events,
+    )
+    bot.assert_alive(f"{description} fence 窗口内连接保持")
 
 
 def _scan_chat_only_violations(
-    bot, sent_at: float, description: str, allowed_chat_ts: tuple
+    bot,
+    start_cursor: int,
+    end_cursor: int,
+    description: str,
+    allowed_chat_events: tuple,
 ) -> None:
-    for e in bot.events_of("server_data"):
-        if e.t > sent_at and is_gameplay_side_effect(e, AMBIENT_SERVER_DATA_TYPES):
+    allowed_chat_ids = {id(event) for event in allowed_chat_events}
+    window = bot.events[start_cursor:end_cursor]
+    for index, e in enumerate(window):
+        if e.kind == "server_data":
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"
                 f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
             )
-    for e in bot.events_of("chat"):
-        # 预期拒信本身按事件时刻豁免；其余真实新聊天一律判红。
-        if e.t > sent_at and e.t not in allowed_chat_ts:
+        if e.kind == "server_data_raw":
+            next_event = window[index + 1] if index + 1 < len(window) else None
+            if next_event is None or next_event.kind not in (
+                "server_data",
+                "server_data_decode_error",
+            ):
+                raise BotAssertionError(
+                    f"[{bot.username}] {description}，实际窗口内收到未解码的 server_data"
+                )
+        if e.kind == "server_data_decode_error":
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际窗口内收到无法解码的 server_data"
+                f"（{e.data.get('error')}）"
+            )
+        if e.kind == "chat" and id(e) not in allowed_chat_ids:
             raise BotAssertionError(
                 f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
             )

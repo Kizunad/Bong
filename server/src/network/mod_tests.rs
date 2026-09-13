@@ -129,7 +129,7 @@ fn parse_heart_demon_trigger_id_requires_current_format() {
 }
 
 #[test]
-fn process_redis_inbound_caches_heart_demon_offer_for_matching_client() {
+fn process_redis_inbound_caches_heart_demon_offer_for_matching_isolated_client() {
     let (tx_outbound, _rx_outbound) = unbounded();
     let (tx_inbound, rx_inbound) = unbounded();
     let mut app = App::new();
@@ -146,6 +146,9 @@ fn process_redis_inbound_caches_heart_demon_offer_for_matching_client() {
 
     let (client_bundle, _helper) = create_mock_client("Azure");
     let entity = app.world_mut().spawn(client_bundle).id();
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(AmbientServerDataIsolation);
     let offer = HeartDemonOfferV1 {
         offer_id: format!("heart_demon:{}:1000", entity.index()),
         trigger_id: format!("heart_demon:{}:1000", entity.index()),
@@ -195,6 +198,9 @@ fn process_redis_inbound_keeps_contextual_insight_offer_when_agent_overwrites_pe
 
     let (client_bundle, _helper) = create_mock_client("Azure");
     let entity = app.world_mut().spawn(client_bundle).id();
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(AmbientServerDataIsolation);
     let trigger_id = "first_breakthrough_to_Induce";
     let qi_color = QiColor {
         main: ColorKind::Sharp,
@@ -1189,6 +1195,12 @@ mod narration_tests {
         (entity, helper)
     }
 
+    fn isolate_client(app: &mut App, entity: Entity) {
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(AmbientServerDataIsolation);
+    }
+
     fn enqueue_single_narration(tx_inbound: &Sender<RedisInbound>, narration: Narration) {
         tx_inbound
             .send(RedisInbound::AgentNarration(NarrationV1 {
@@ -1282,6 +1294,127 @@ mod narration_tests {
         assert_eq!(
             alice_chat_packets, 0,
             "narration path should not emit mirrored GameMessageS2c chat packets"
+        );
+    }
+
+    #[test]
+    fn isolated_client_does_not_receive_broadcast_narration() {
+        let (mut app, tx_inbound) = setup_narration_app(None);
+        let (alice, mut alice_helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        isolate_client(&mut app, alice);
+
+        enqueue_single_narration(
+            &tx_inbound,
+            Narration {
+                scope: NarrationScope::Broadcast,
+                target: None,
+                text: "隔离客户端不应收到环境广播。".to_string(),
+                style: NarrationStyle::Narration,
+                kind: None,
+            },
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let (payloads, chat_packets) = collect_narration_and_chat_packets(&mut alice_helper);
+        assert!(
+            payloads.is_empty(),
+            "ambient-isolated client must not receive Broadcast narration"
+        );
+        assert_eq!(
+            chat_packets, 0,
+            "ambient isolation must not turn Broadcast narration into a chat packet"
+        );
+    }
+
+    #[test]
+    fn isolated_client_receives_targeted_player_narration() {
+        let (mut app, tx_inbound) = setup_narration_app(None);
+        let (alice, mut alice_helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let (_bob, mut bob_helper) =
+            spawn_test_client_with_helper(&mut app, "Bob", [18.0, 66.0, 18.0]);
+        isolate_client(&mut app, alice);
+
+        enqueue_single_narration(
+            &tx_inbound,
+            Narration {
+                scope: NarrationScope::Player,
+                target: Some("Alice".to_string()),
+                text: "隔离客户端仍应收到定向叙事。".to_string(),
+                style: NarrationStyle::SystemWarning,
+                kind: None,
+            },
+        );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let (alice_payloads, alice_chat_packets) =
+            collect_narration_and_chat_packets(&mut alice_helper);
+        let (bob_payloads, bob_chat_packets) = collect_narration_and_chat_packets(&mut bob_helper);
+        assert_single_narration_payload(alice_payloads.as_slice(), "隔离客户端仍应收到定向叙事。");
+        assert!(
+            bob_payloads.is_empty(),
+            "player-scoped narration must not leak to the non-targeted client"
+        );
+        assert_eq!(
+            alice_chat_packets, 0,
+            "targeted narration must remain typed server_data"
+        );
+        assert_eq!(
+            bob_chat_packets, 0,
+            "non-targeted client must not receive a chat packet"
+        );
+    }
+
+    #[test]
+    fn non_isolated_clients_receive_broadcast_and_player_narrations() {
+        let (mut app, tx_inbound) = setup_narration_app(None);
+        let (_alice, mut alice_helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let (_bob, mut bob_helper) =
+            spawn_test_client_with_helper(&mut app, "Bob", [18.0, 66.0, 18.0]);
+
+        enqueue_single_narration(
+            &tx_inbound,
+            Narration {
+                scope: NarrationScope::Broadcast,
+                target: None,
+                text: "普通客户端收到环境广播。".to_string(),
+                style: NarrationStyle::Narration,
+                kind: None,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let (alice_broadcast, _) = collect_narration_and_chat_packets(&mut alice_helper);
+        let (bob_broadcast, _) = collect_narration_and_chat_packets(&mut bob_helper);
+        assert_single_narration_payload(alice_broadcast.as_slice(), "普通客户端收到环境广播。");
+        assert_single_narration_payload(bob_broadcast.as_slice(), "普通客户端收到环境广播。");
+
+        enqueue_single_narration(
+            &tx_inbound,
+            Narration {
+                scope: NarrationScope::Player,
+                target: Some("Alice".to_string()),
+                text: "普通客户端收到定向叙事。".to_string(),
+                style: NarrationStyle::Perception,
+                kind: None,
+            },
+        );
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let (alice_player, _) = collect_narration_and_chat_packets(&mut alice_helper);
+        let (bob_player, _) = collect_narration_and_chat_packets(&mut bob_helper);
+        assert_single_narration_payload(alice_player.as_slice(), "普通客户端收到定向叙事。");
+        assert!(
+            bob_player.is_empty(),
+            "player-scoped narration must remain limited to its target"
         );
     }
 
@@ -2868,6 +3001,7 @@ mod gameplay_tests {
     use crate::schema::agent_world_model::{
         AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
     };
+    use crate::schema::common::NarrationStyle;
     use crate::skill::components::SkillId;
     use crate::world::events::ActiveEventsResource;
     use crossbeam_channel::{unbounded, Receiver};
@@ -3022,6 +3156,53 @@ mod gameplay_tests {
             .iter()
             .filter(|payload| matches!(payload.payload, ServerDataPayloadV1::Narration { .. }))
             .collect()
+    }
+
+    #[test]
+    fn gameplay_player_narration_reaches_isolated_target() {
+        let (mut app, _rx_outbound) = setup_gameplay_app();
+        let (target, mut target_helper) = spawn_test_client_with_state(
+            &mut app,
+            "Azure",
+            [8.0, 66.0, 8.0],
+            PlayerState::default(),
+            Cultivation::default(),
+        );
+        let (_bystander, mut bystander_helper) = spawn_test_client_with_state(
+            &mut app,
+            "Bystander",
+            [18.0, 66.0, 18.0],
+            PlayerState::default(),
+            Cultivation::default(),
+        );
+        app.world_mut()
+            .entity_mut(target)
+            .insert(AmbientServerDataIsolation);
+
+        app.world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .push_player(
+                "Azure",
+                "战斗流程定向叙事仍应抵达。",
+                NarrationStyle::SystemWarning,
+            );
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let target_all_payloads = collect_server_data_payloads(&mut target_helper);
+        let bystander_all_payloads = collect_server_data_payloads(&mut bystander_helper);
+        let target_payloads = extract_narration_payloads(target_all_payloads.as_slice());
+        let bystander_payloads = extract_narration_payloads(bystander_all_payloads.as_slice());
+        assert_eq!(
+            target_payloads.len(),
+            1,
+            "gameplay Player narration must reach its ambient-isolated target"
+        );
+        assert!(
+            bystander_payloads.is_empty(),
+            "gameplay Player narration must not leak to a bystander"
+        );
     }
 
     fn dequeue_world_state(rx_outbound: &Receiver<RedisOutbound>) -> WorldStateV1 {

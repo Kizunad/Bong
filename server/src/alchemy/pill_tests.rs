@@ -1349,32 +1349,123 @@ fn xi_sui_ye_recipe_requires_tier_2() {
 
 #[test]
 fn ju_ling_dan_with_zone_qi_first_meridian_under_30min() {
+    const THIRTY_MINUTES_TICKS: u64 = 30 * 60 * crate::combat::components::TICKS_PER_SECOND;
+
     // 使用 PR-1 的 cultivation_acceleration_multiplier 验证：
-    // 聚灵丹 mag=1.0 → multiplier=(1+1.0)=2.0
-    // 正经基础速率（PR-1 定义）× 2.0 × zone_qi 0.6
-    // 验证首条正经 30 分钟内可打通
-    use crate::combat::components::ActiveStatusEffect;
+    // 聚灵丹 mag=1.0 → multiplier=(1+1.0)=2.0。这个中间量断言保留，
+    // 但下面还会通过真实的 meridian_open_tick 锁住首经在 30 分钟内打通。
+    use crate::combat::CombatClock;
+    use crate::cultivation::components::{MeridianId, MeridianSystem};
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::cultivation::meridian_open::{meridian_open_tick, MeridianTarget};
     use crate::cultivation::tick::cultivation_acceleration_multiplier;
+    use crate::cultivation::tick::CultivationClock;
+    use crate::qi_physics::WorldQiAccount;
+    use valence::prelude::{App, IntoSystemConfigs, Position, Update};
 
-    let se = StatusEffects {
-        active: vec![ActiveStatusEffect {
-            kind: StatusEffectKind::CultivationAcceleration,
-            magnitude: 1.0,
-            remaining_ticks: 24_000,
-            source_pill: Some("ju_ling_dan".to_string()),
-        }],
-    };
+    let mut pill_statuses = fresh_status_effects();
+    let mut contam = fresh_contam();
+    let pill = cultivation_pill_spec("ju_ling_dan").expect("聚灵丹规格应存在");
+    let consumed = consume_cultivation_pill(&pill, &mut contam, &mut pill_statuses, 0);
+    assert_eq!(
+        consumed.applied_effects.len(),
+        1,
+        "聚灵丹应真实挂载加速状态"
+    );
 
-    let mult = cultivation_acceleration_multiplier(&se);
+    let mult = cultivation_acceleration_multiplier(&pill_statuses);
     assert!(
         (mult - 2.0).abs() < 1e-9,
         "聚灵丹 mag=1.0 应给 2× 修炼加速；实际为 {mult}"
     );
-    // zone_qi=0.6 时基础每 tick 修炼进度 ≈ BASE_RATE × zone_qi × accel_mult
-    // 首条正经难度 = 1.0（PR-1）
-    // 打通时间 = difficulty / (per_tick_rate × accel_mult)
-    // 只要 accel_mult=2.0，时间减半 → 验证概念正确性
-    assert!(mult >= 2.0, "聚灵丹应至少 2× 加速以确保 ≤30min 首经");
+
+    fn first_meridian_open_tick(with_ju_ling_dan: bool) -> (Option<u64>, f64) {
+        const ZONE_QI: f64 = 0.6;
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(WorldQiAccount::default());
+
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = ZONE_QI;
+        app.insert_resource(zones);
+
+        // 与生产生命周期一致：药效按 CombatClock 到期，开脉在每次 Update 消费当前
+        // StatusEffects。两个系统的显式顺序让到期 tick 先移除状态，再推进开脉。
+        app.add_systems(Update, crate::combat::status::status_effect_tick);
+        app.add_systems(
+            Update,
+            meridian_open_tick.after(crate::combat::status::status_effect_tick),
+        );
+
+        let mut statuses = fresh_status_effects();
+        if with_ju_ling_dan {
+            let mut contam = fresh_contam();
+            let pill = cultivation_pill_spec("ju_ling_dan").expect("聚灵丹规格应存在");
+            let result = consume_cultivation_pill(&pill, &mut contam, &mut statuses, 0);
+            assert_eq!(
+                result.applied_effects.len(),
+                1,
+                "正向场景必须通过真实消费流程挂载聚灵丹状态"
+            );
+        }
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung.channel_id()),
+                Cultivation {
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                statuses,
+                LifeRecord::new(if with_ju_ling_dan {
+                    "ju-ling-dan-first-meridian"
+                } else {
+                    "no-pill-first-meridian-control"
+                }),
+            ))
+            .id();
+
+        for tick in 1..=THIRTY_MINUTES_TICKS {
+            app.world_mut().resource_mut::<CultivationClock>().tick = tick;
+            app.world_mut().resource_mut::<CombatClock>().tick = tick;
+            app.update();
+
+            let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+            if meridians.get(MeridianId::Lung).opened {
+                return (Some(tick), meridians.get(MeridianId::Lung).open_progress);
+            }
+        }
+
+        let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+        (None, meridians.get(MeridianId::Lung).open_progress)
+    }
+
+    let (pill_opened_at, pill_progress) = first_meridian_open_tick(true);
+    let pill_opened_at = pill_opened_at.expect("服下聚灵丹后首条正经应在 30 分钟内打通");
+    assert!(
+        pill_opened_at <= THIRTY_MINUTES_TICKS,
+        "聚灵丹首经打通 tick={pill_opened_at} 不应超过 30 分钟 tick 上限"
+    );
+    assert!(
+        pill_progress >= 1.0,
+        "首经打通时 open_progress 应达到 1.0，实际 {pill_progress}"
+    );
+
+    let (control_opened_at, control_progress) = first_meridian_open_tick(false);
+    assert!(
+        control_opened_at.is_none(),
+        "无聚灵丹对照在 30 分钟内不应打通首经，实际 tick={control_opened_at:?}"
+    );
+    assert!(
+        control_progress > 0.0 && control_progress < 1.0,
+        "无丹对照必须真实推进但尚未打通，实际 open_progress={control_progress}"
+    );
 }
 
 // ── §10 全 8 种丹药消费后的 source_pill 字段正确 ──

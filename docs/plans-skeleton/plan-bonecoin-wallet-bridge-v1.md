@@ -67,3 +67,48 @@
 3. **NPC 收款去向**：入 NPC PlayerInventory（推荐，依赖 npc-combat-gear-v2 P1 落地节奏）vs 世界回收池过渡方案——若 gear-v2 未先行，P1 是否临时走"回收池"再迁（倾向：等 gear-v2 P1，避免过渡态）。
 4. **存量标量余额铸币的守恒来源**：迁移铸出的物理币封存真元从哪记账（一次性从 `WorldQiBudget` 沉降槽划拨 vs 铸 `spirit_quality=0` 空壳币只保面值）——空壳币违背"价值按真元"，划拨需 qi_physics 侧确认口径；数额极小（每人 ≤7 枚）但守恒律无小事。
 5. **`price_bone_coins` wire 字段处置**：原地改语义（枚→真元）vs 改名 `price_qi_value`——倾向改名自documenting，破坏面已由 proto/samples 同步覆盖。
+
+## 现状证据补充（2026-09-13，P2-43 搬迁期实测）
+
+> 本节只记录本轮对现有代码的实测，不把疑点直接定性为已违反既定契约；本 skeleton 尚未被消费。NPC 无限库存或货币 sink 也可能是有意的虚拟商店设计。证据的用途是给 P1/P3 提供精确的接入起点。
+
+### NPC 买货路径
+
+- `server/src/network/client_request/npc.rs:223-227` 从目标 NPC 的 `NpcTradeInventory.offers` 找到匹配项并 `.cloned()`，这里只读取 offer 的 `template_id`、`count`、`price_bone_coins` 等字段，没有写回 offer、NPC 库存组件或 NPC 物品容器。
+- `server/src/network/client_request/npc.rs:294-305` 读取玩家 `PlayerInventory`，以 legacy 标量 `inventory.bone_coins` 检查余额；`price` 也仍由 `price_bone_coins` 按枚数语义计算。
+- `server/src/network/client_request/npc.rs:311-318` 调用 `add_item_to_player_inventory(..., template_id, offer.count, tick)`。该 helper 的入口在 `server/src/inventory/mod.rs:1840-1857`，内部先在 `:1993-1999` 查模板，再由模板建立/合并运行时物品；这里发给玩家的是模板物化的 `ItemInstance`，不是从 NPC 持有的 `ItemInstance` 转移出来的实例。
+- 成功发货后 `server/src/network/client_request/npc.rs:322` 只执行 `inventory.bone_coins = inventory.bone_coins.saturating_sub(price)`；随后 `:327-329` 发送“从 NPC 手中买下”的消息。该路径没有 NPC 钱包入账、NPC 物品扣减、世界回收账户入账或物理骨币 item 转移。
+
+### 双轨表示与供给投影
+
+- legacy 钱包字段是 `server/src/inventory/mod.rs:775-782` 的 `PlayerInventory.bone_coins`，并投影到 `server/src/schema/inventory.rs:266-277`。遗骸流程在 `server/src/inventory/mod.rs:1027-1028` 将其移出玩家，在 `:1194-1201` 拾取加回；通用 inventory transfer 在 `:4758-4762` 也按标量做 from→to 搬运。
+- 物理骨币由 `server/src/inventory/mod.rs:510-521` 的 `ItemInstance` 承载，模板 ID 与每实例 `spirit_quality` 同时存在；`server/src/economy/mod.rs:59-70` 识别面值和 rotten 状态，`server/src/economy/mod.rs:221-235` 将 `face_value × spirit_quality × stack` 计入物理币的 `active_coin_count`、`total_face_value`、`total_spirit_qi`。
+- `server/src/economy/mod.rs:73-85` 另把 `inventory.bone_coins` 累加到 `BoneCoinSupply.legacy_scalar_count`，没有换算进 `total_spirit_qi`；因此同一 supply struct 内是两条并列账，当前没有玩法层转换通道。
+- IPC 仍保留双轨：`server/src/schema/economy.rs:14-24` 的 `BoneCoinTickV1` 同时暴露 `total_spirit_qi` 与 `legacy_scalar_count`；`server/src/schema/economy.rs:66-78` 的 `PriceIndexV1.supply_spirit_qi` 来自物理币 `total_spirit_qi`，不包含 legacy 标量换算值。
+
+### `add_item_to_player_inventory` 生产调用面
+
+当前 `server/src` 中，除测试代码外，已核到的调用点和可读出的来源语义如下。这里仅区分“是否存在事件、材料消费、返还或 dev/tutorial 前置来源”，不声称表中其他路径已经满足完整的骨币/物品守恒契约。
+
+| 调用点 | 当前用途/来源判断 |
+|---|---|
+| `network/client_request/npc.rs:311` | NPC 交易出货；无 NPC `ItemInstance` 前置转移，最直接的模板物化 + legacy 标量扣款疑点。 |
+| `botany/harvest.rs:1899` | 采集结果入玩家包，来源是 harvest session 的植物产出。 |
+| `lingtian/systems.rs:1465,1495` | 灵田收获物与种子奖励，来源是已完成的 harvest session。 |
+| `world/block_drop.rs:241` | 方块掉落，来源是 block drop 事件。 |
+| `craft/workbench.rs:239` | 工作台拆除返还，来源是已存在的工作台物品。 |
+| `coffin/mod.rs:541` | 棺材位置登记失败时返还此前已接受/登记失败的物品。 |
+| `coffin/mod.rs:1112` | 棺材 reclaim drop 返还已登记的回收掉落。 |
+| `combat/tuike.rs:349` | 退魄/伪皮制作产物，调用前已有材料消费和 staged inventory。 |
+| `network/craft_emit.rs:586` | 制作完成产物，调用前在 staged inventory 中消费材料。 |
+| `network/tuike_ash_emit.rs:42` | 灰烬回收产物，来源是 ash event 的 `output_item_id`。 |
+| `zhenfa/mod.rs:3461` | 阵法拆解/解除后的 pearl 奖励，来源是已处理的阵法事件。 |
+| `world/spawn_tutorial.rs:381,646` | 新手教程固定赠品，属于显式的一次性 tutorial grant。 |
+| `cmd/dev/give.rs:102`、`cmd/dev/block_picker.rs:87` | dev-only 物品发放，属于明确的测试/开发入口。 |
+| `inventory/mod.rs:1840` | 统一 grant primitive 本身，不是独立的 gameplay 来源。 |
+
+`server/src/npc/loot.rs:533`、`coffin/mod.rs:2359,2499,3145` 以及 `server/src/network/client_request_handler_tests.rs:6143` 等命中位于 `#[cfg(test)]` 测试代码，未计入上述生产影响面。该分类只说明 NPC 路径缺少可见的前置物品来源，不能替代后续对各自契约的独立守恒核验。
+
+### 归属与后续边界
+
+本证据属于既有 `plan-bonecoin-wallet-bridge-v1` 的 P1/P3 范围，不新建 plan，也不修改 P2-43 搬迁涉及的生产文件。后续实现仍需在 P1 收口 NPC 收款方和物品所有权，在 P3 决定非 NPC sink 的回收路径，并用 e2e 证明支付失败原子性及支付后去向；本节仅提供上述 file:line 起点。

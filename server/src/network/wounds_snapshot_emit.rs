@@ -6,17 +6,22 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use valence::prelude::{Changed, Client, Entity, Or, Query, Username, With};
+use valence::prelude::{Changed, Client, Entity, Or, Query, Username};
 
 use crate::combat::components::{Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::{
+    log_payload_build_error, send_server_data_payload, AmbientServerDataClientFilter,
+};
 use crate::schema::combat_hud::{WoundEntryV1, WoundsSnapshotV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
-type WoundsEmitFilter = (With<Client>, Or<(Changed<Wounds>, Changed<Lifecycle>)>);
+type WoundsEmitFilter = (
+    AmbientServerDataClientFilter,
+    Or<(Changed<Wounds>, Changed<Lifecycle>)>,
+);
 
 pub fn emit_wounds_snapshot_payloads(
     mut clients: Query<
@@ -265,6 +270,27 @@ mod tests {
         assert_eq!(
             payloads[0].wounds[0].part, "chest",
             "expected missing Lifecycle snapshot to carry sample chest wound"
+        );
+    }
+
+    #[test]
+    fn isolated_client_does_not_receive_changed_wounds_snapshot() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_wounds_snapshot_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((
+            client_bundle,
+            sample_wounds(),
+            crate::network::AmbientServerDataIsolation,
+        ));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        assert!(
+            collect_wounds_snapshot_payloads(&mut helper).is_empty(),
+            "ambient isolation must suppress unsolicited wounds_snapshot payloads"
         );
     }
 

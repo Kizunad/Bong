@@ -532,6 +532,7 @@ type MovementStateEmitItem<'a> = (
 
 type MovementStateEmitFilter = (
     With<Client>,
+    Without<crate::network::AmbientServerDataIsolation>,
     Or<(
         Added<MovementState>,
         Changed<MovementState>,

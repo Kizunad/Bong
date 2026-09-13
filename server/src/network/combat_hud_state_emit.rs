@@ -5,7 +5,7 @@
 //! HP 百分比当前直接取 Wounds 聚合结果；Flying/Phasing/TribulationLocked
 //! 组件接入前，DerivedAttrFlags 默认全部为 false。
 
-use valence::prelude::{Changed, Client, Entity, Or, Query, Res, Username, With};
+use valence::prelude::{Changed, Client, Entity, Or, Query, Res, Username, With, Without};
 
 use crate::combat::components::{CombatState, Stamina, Wounds};
 use crate::combat::CombatClock;
@@ -31,6 +31,7 @@ type CombatHudEmitQueryItem<'a> = (
 
 type CombatHudEmitFilter = (
     With<Client>,
+    Without<crate::network::AmbientServerDataIsolation>,
     Or<(
         Changed<Cultivation>,
         Changed<Stamina>,
