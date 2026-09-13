@@ -760,6 +760,15 @@ Test Refactor 附录（plan-test-layout-refactor-v1）
 - **验证与门禁**：无上下文只读 validator 绑定代码 HEAD `6f8d20e19ec333286aef3fea0e484bb9c2db33b9` 并 PASS，确认父/当前均 69 条、嵌套 `layout_tests` 完整、生产逻辑与断言仅作外置变换。`scripts/build-token.sh cargo fmt --check`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings`、`scripts/build-token.sh cargo test` 真实退出码均为 `0`；全量 library `11547 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，`body_plan_validate_unit=69 passed / 0 failed / 0 ignored`，其余 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
 - **主线与提交状态**：claim 基于 `origin/main=5a5a986f4b79f225c7c4d60aa2aca32fb3f41b94`；按本任务卡“merge 不归你做”未执行主线合并。代码迁移提交为 `6f8d20e19ec333286aef3fea0e484bb9c2db33b9`（带 `Model: gpt-5.6-luna`）；本条仅记录 P2-38 进度，P2 总体、P3、P4 仍未完成，plan 不归档。
 
+### P2-36 fauna/hybrid_beast（✅ 2026-09-13）
+
+- **范围与落点**：仅处置 `server/src/fauna/hybrid_beast.rs` 原有 71 个 `#[test]`/`#[tokio::test]`；71 条全部判为 A 类，原样外置到 `server/tests/unit/fauna/hybrid_beast_test.rs`，由 `server/Cargo.toml` 的显式 `hybrid_beast_unit` target 发现。生产文件删除测试体且不保留 `#[path]` 挂载；未改融合、rage、hallucination、VFX/audio、系统注册或其它 gameplay 生产逻辑。
+- **A/B 分类与逐位守恒**：迁移前按 `#[(test|tokio::test)]` 全集口径复核为 71 条，迁移后外置 A 类 71 条、同目录 B 类 0 条，`71 + 0 = 71`。A 类均验证公开 hybrid beast API、ECS 系统可观察状态/事件、边界与失败分支，以及融合、rage 和死亡释放的守恒行为；没有依赖私有纯逻辑或仅供测试调用的生产入口。B 类为空，故无 B 类理由、无同级挂载文件。
+- **守恒测试只搬不改**：`system_fusion_world_qi_conserved_beasts_at_zero`、`system_fusion_world_qi_conserved_beasts_with_qi`、`system_rage_zone_minus_equals_hybrid_plus`、`system_death_releases_qi_to_zone` 均只迁移测试落点。复核确认 `zone.spirit_qi` 写入使用 `released_to_zone / QI_ZONE_UNIT_CAPACITY` 的分率口径，而 `QiTransfer::new` 使用 raw `released_to_zone`；本批没有分率/raw 混用，也未修改生产 qi 逻辑。
+- **路径、生产边界与 seam**：外置文件没有 `include_str!`/`include_bytes!` 相对路径消费者，故无路径深度改写；`git cat-file -e` 已核验 `server/src/fauna/hybrid_beast.rs`、`server/tests/unit/fauna/hybrid_beast_test.rs` 与 `server/Cargo.toml` 均存在。测试名、断言、fixture 和行为 token 仅作外置所需的模块导入适配；无新增或扩大 `pub`、`pub(crate)`、`#[doc(hidden)]` 或其它 test-only seam。
+- **验证与门禁**：无上下文只读 validator 绑定合并后完整 HEAD `8c1eb45427aff3d7fb0f22571d21c7edd39ee9cb` 并 PASS，确认原 71 条已移除、外置 71 条、target 无冲突、生产 diff 仅删除测试代码。紧邻合并后的三条 server gate 均取真实 `PIPESTATUS[0]`：`scripts/build-token.sh cargo fmt --check` `fmt_exit=0`、`scripts/build-token.sh cargo clippy --all-targets -- -D warnings` `clippy_exit=0`、`scripts/build-token.sh cargo test` `test_exit=0`；library `11476 passed / 0 failed / 1 ignored`，main `18 passed / 0 failed / 0 ignored`，`hybrid_beast_unit=71 passed / 0 failed / 0 ignored`，其余 integration targets 无失败，doc-tests `3 passed / 0 failed / 5 ignored`。
+- **提交与状态**：代码/测试/Cargo target 提交为 `61e3547346700b203e35313d65e63fb8262a1758`，主线 `#2232` 合并提交为 `8c1eb45427aff3d7fb0f22571d21c7edd39ee9cb`，均带 `Model: gpt-5`；本条仅记录 P2-36，P2 总体、P3、P4 仍未完成，plan 保持 active、不归档。
+
 ### P2-39 cultivation/meridian/severed（✅ 2026-09-13）
 
 - **范围与落点**：仅处置 `server/src/cultivation/meridian/severed.rs` 原有 68 个 `#[test]`/`#[tokio::test]`；生产文件删除内联测试体，68 条 A 类原样外置到 `server/tests/unit/cultivation/meridian/severed_test.rs`，由 `server/Cargo.toml` 的显式 `meridian_severed_unit` target 发现。未改 `MeridianSeveredPermanent`、`MeridianSeveredEvent`、SEVERED 检测/应用、接经术、经脉依赖或任何其它生产行为。
