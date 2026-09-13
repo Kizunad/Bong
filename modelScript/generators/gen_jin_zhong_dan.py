@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""金钟丹（JinZhongDan）Blockbench .bbmodel 生成器。
+"""金钟丹（JinZhongDan）Blockbench .bbmodel 生成器 - 叠放金丹群版。
 
 物品来源：
   `client/src/main/resources/assets/bong-client/textures/gui/items/jin_zhong_dan.png`
   `server/assets/items/pills.toml` (id = "jin_zhong_dan", name = "金钟丹")
 
-原画特征分析：
-  1. 金钟宝丹（Golden Bell Sphere）：
-     - 纯净无暇、灿烂耀眼的浑圆真金宝丹！
-     - 原画中无外罩容器或纸托，独此一枚浑圆硕大的金色大丹，光芒内敛温润，通体金光流动。
-     - 顶部有强烈的暖白高光斑点与极度丝滑的金铜过渡，底部沉稳。
-  2. 极致纯正的体素圆球解算（True Voxel Sphere）：
-     - 直径 7.2px（体量丰硕浑厚）。
-     - 采用多层渐变正交切片 + 向光受光层分色，打造具有真金质感的纯丹模型。
+用户反馈需求：
+  “做几个叠在一起吧”
+  - 经典四面体紧密堆积的金丹塔群（Tetrahedral Golden Pill Cluster）：
+    - 底部 3 颗饱满金钟大丹呈正三角形稳稳坐落于地面。
+    - 顶端 1 颗主丹稳坐于三丹正中央的凹窝中，顶峰高耸，纯金高光耀眼。
+    - 侧前方滚落 1 颗饱满伴生金丹，形成自然生动、满盅金光四溢的宝丹堆叠场景！
+
+结构设计：
+  - part_pills: 叠放在一起的 5 颗浑圆金钟宝丹
 
 用法：
   python3 modelScript/generators/gen_jin_zhong_dan.py
@@ -40,9 +41,7 @@ RENDER_OUT = _WS.out
 PX = 16.0
 
 # ── 材质色板 ──────────────────────────────────────────────────────────
-# 严格提取自 jin_zhong_dan.png 图标像素：
-# 纯金宝丹：主体耀金 (224, 172, 42)、向阳亮金 (252, 218, 76)、极顶纯金高光 (255, 246, 154)、
-#          侧阴金褐 (184, 134, 30)、底阴深铜金 (138, 96, 22)
+# 纯金宝丹渐变色系：
 MATS = {
     "gold_spec":      (255, 246, 154),  # 极顶受光纯金白高光
     "gold_lit":       (252, 218, 76),   # 向上受光亮金
@@ -67,37 +66,71 @@ def add_round_box(rig: Rig, bone: str, prefix: str,
              mat=mat_s)
 
 
-def part_pill(rig: Rig) -> None:
-    """金钟丹浑圆金身：
-    采用 9 层细致微切分层逼近真球体（半径 3.6px，直径 7.2px），
-    坐落于 (0, 3.8, 0)，顶端达 y=7.4，底端落于 y=0.2。
+def add_smooth_golden_dan(rig: Rig, bone: str, prefix: str,
+                          cx: float, cy: float, cz: float, r: float):
+    """构建一颗多层高精度体素圆润金丹。"""
+    rc = r * 0.76
+    # 核心赤道层
+    rig.cube(bone, f"{prefix}_mx",
+             (cx - r, cy - rc * 0.42, cz - rc),
+             (cx + r, cy + rc * 0.42, cz + rc),
+             mat="gold_base")
+    rig.cube(bone, f"{prefix}_mz",
+             (cx - rc, cy - rc * 0.42, cz - r),
+             (cx + rc, cy + rc * 0.42, cz + r),
+             mat="gold_base")
+
+    # 顶层向阳亮面与纯金高光
+    rt = r * 0.62
+    rig.cube(bone, f"{prefix}_top_mid",
+             (cx - rt, cy + rc * 0.42, cz - rt),
+             (cx + rt, cy + r * 0.85, cz + rt),
+             mat="gold_lit")
+    # 极顶高光点
+    rs = r * 0.38
+    rig.cube(bone, f"{prefix}_top_spec",
+             (cx - rs, cy + r * 0.85, cz - rs),
+             (cx + rs, cy + r, cz + rs),
+             mat="gold_spec")
+
+    # 底层阴影面
+    rig.cube(bone, f"{prefix}_bot",
+             (cx - rt, cy - r, cz - rt),
+             (cx + rt, cy - rc * 0.42, cz + rt),
+             mat="gold_shadow")
+
+
+def part_pills(rig: Rig) -> None:
+    """叠放的金钟宝丹群：
+    - 底层 3 颗大金丹呈正三角环抱基底 (r = 1.9)
+    - 顶端 1 颗核心金丹耸立在正中央金字塔顶端 (y = 4.8)
+    - 前侧滚落 1 颗伴生金丹 (r = 1.6)，形成自然的生动散落感！
     """
-    rig.bone("pill", (0.0, 3.8, 0.0))
-    cx, cy, cz = 0.0, 3.8, 0.0
-    r = 3.6
+    rig.bone("pills", (0.0, 0.0, 0.0))
 
-    cuts = [
-        # (tag, dy0, dy1, rad, c, mat_m, mat_s)
-        ("p0_bot",  -r * 1.00, -r * 0.82, r * 0.48, r * 0.12, "gold_shadow", "gold_shadow"),
-        ("p1_d2",   -r * 0.82, -r * 0.58, r * 0.74, r * 0.18, "gold_shadow", "gold_mid"),
-        ("p2_d1",   -r * 0.58, -r * 0.32, r * 0.90, r * 0.24, "gold_mid",    "gold_base"),
-        ("p3_md",   -r * 0.32, -r * 0.06, r * 0.99, r * 0.28, "gold_base",   "gold_base"),
-        ("p4_mu",   -r * 0.06,  r * 0.22, r * 1.00, r * 0.28, "gold_lit",    "gold_base"),
-        ("p5_u1",    r * 0.22,  r * 0.52, r * 0.94, r * 0.26, "gold_lit",    "gold_lit"),
-        ("p6_u2",    r * 0.52,  r * 0.76, r * 0.80, r * 0.22, "gold_lit",    "gold_spec"),
-        ("p7_u3",    r * 0.76,  r * 0.92, r * 0.58, r * 0.16, "gold_spec",   "gold_spec"),
-        ("p8_top",   r * 0.92,  r * 1.00, r * 0.32, r * 0.08, "gold_spec",   "gold_spec"),
-    ]
+    r = 1.95
+    y_base = 1.95
 
-    for tag, dy0, dy1, rad, c, mm, ms in cuts:
-        y0 = cy + dy0
-        y1 = cy + dy1
-        add_round_box(rig, "pill", f"golden_bell_{tag}", y0, y1, rad, c, mm, ms, cx, cz)
+    # 底部三角形顶点坐标 (外接圆半径 R = 2.3)
+    # 丹 1: 正前方偏左 (-1.9, y_base, 1.1)
+    add_smooth_golden_dan(rig, "pills", "p_base_fl", cx=-1.7, cy=y_base, cz=1.0, r=r)
+
+    # 丹 2: 正前方偏右 (1.9, y_base, 1.1)
+    add_smooth_golden_dan(rig, "pills", "p_base_fr", cx=1.7, cy=y_base, cz=1.0, r=r)
+
+    # 丹 3: 正后方 (0.0, y_base, -1.9)
+    add_smooth_golden_dan(rig, "pills", "p_base_back", cx=0.0, cy=y_base, cz=-1.9, r=r)
+
+    # 顶层核心主丹：安稳压在三丹正中央金字塔顶，顶峰高达 y=7.0！
+    add_smooth_golden_dan(rig, "pills", "p_top_main", cx=0.0, cy=4.75, cz=0.0, r=2.05)
+
+    # 前方散落滚出的第 5 颗金丹（打破僵硬对称，原画活泼感）
+    add_smooth_golden_dan(rig, "pills", "p_out_front", cx=0.5, cy=1.5, cz=3.4, r=1.50)
 
 
 def build_rig() -> Rig:
     rig = Rig(MATS, swatch=8)
-    part_pill(rig)
+    part_pills(rig)
     return rig
 
 
