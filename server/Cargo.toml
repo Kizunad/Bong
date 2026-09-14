@@ -155,6 +155,10 @@ name = "npc_lod_unit"
 path = "tests/unit/npc/lod_test.rs"
 
 [[test]]
+name = "npc_hydrate_unit"
+path = "tests/unit/npc/hydrate_test.rs"
+
+[[test]]
 name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
 
