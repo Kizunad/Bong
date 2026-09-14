@@ -1561,3 +1561,62 @@ fn narration_count_resets_after_response_drops_to_none() {
     );
     assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 0);
 }
+
+#[test]
+fn response_profile_matches_four_levels() {
+    assert!(tiandao_response_profile(TiandaoResponseLevel::None).is_none());
+
+    let watch = tiandao_response_profile(TiandaoResponseLevel::Watch).unwrap();
+    assert_eq!(watch.audio_recipe_id, "tiandao_watch_ambient");
+    assert_eq!(watch.vfx_event_id, None);
+    assert_eq!(watch.event_name, None);
+
+    let pressure = tiandao_response_profile(TiandaoResponseLevel::Pressure).unwrap();
+    assert_eq!(pressure.audio_recipe_id, "tiandao_pressure_ambient");
+    assert_eq!(pressure.vfx_event_id, Some("bong:tiandao_beast_spawn"));
+    assert_eq!(pressure.event_name, Some(EVENT_BEAST_TIDE));
+
+    let tribulation = tiandao_response_profile(TiandaoResponseLevel::Tribulation).unwrap();
+    assert_eq!(tribulation.audio_recipe_id, "tiandao_tribulation_ambient");
+    assert_eq!(
+        tribulation.vfx_event_id,
+        Some("bong:tiandao_directed_thunder")
+    );
+    assert_eq!(tribulation.event_name, Some(EVENT_THUNDER_TRIBULATION));
+
+    let annihilate = tiandao_response_profile(TiandaoResponseLevel::Annihilate).unwrap();
+    assert_eq!(annihilate.audio_recipe_id, "tiandao_annihilate_ambient");
+    assert_eq!(
+        annihilate.vfx_event_id,
+        Some("bong:realm_collapse_boundary")
+    );
+    assert_eq!(annihilate.event_name, Some(EVENT_REALM_COLLAPSE));
+}
+
+#[test]
+fn response_profiles_pin_plan_intervals() {
+    assert_eq!(
+        tiandao_response_profile(TiandaoResponseLevel::Watch)
+            .unwrap()
+            .interval_ticks,
+        5 * 60 * 20
+    );
+    assert_eq!(
+        tiandao_response_profile(TiandaoResponseLevel::Pressure)
+            .unwrap()
+            .interval_ticks,
+        TIANDAO_PRESSURE_EVENT_INTERVAL_TICKS
+    );
+    assert_eq!(
+        tiandao_response_profile(TiandaoResponseLevel::Tribulation)
+            .unwrap()
+            .interval_ticks,
+        TIANDAO_TRIBULATION_EVENT_INTERVAL_TICKS
+    );
+    assert_eq!(
+        tiandao_response_profile(TiandaoResponseLevel::Annihilate)
+            .unwrap()
+            .interval_ticks,
+        TIANDAO_ANNIHILATE_EVENT_INTERVAL_TICKS
+    );
+}
