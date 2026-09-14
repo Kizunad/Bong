@@ -185,6 +185,8 @@ path = "tests/unit/network/audio_trigger_test.rs"
 [[test]]
 name = "vfx_event_emit_unit"
 path = "tests/unit/network/vfx_event_emit_test.rs"
+name = "agent_ui_unit"
+path = "tests/unit/network/agent_ui_test.rs"
 
 [[test]]
 name = "raster_unit"
@@ -201,6 +203,10 @@ path = "tests/unit/world/tiandao_hunt_test.rs"
 [[test]]
 name = "shelflife_compute_unit"
 path = "tests/unit/shelflife/compute_test.rs"
+
+[[test]]
+name = "zhenmai_v2_unit"
+path = "tests/unit/combat/zhenmai_v2_test.rs"
 
 [[test]]
 name = "workbench_reach_profile"
