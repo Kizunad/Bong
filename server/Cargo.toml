@@ -123,6 +123,10 @@ name = "inventory_unit"
 path = "tests/unit/inventory/inventory_test.rs"
 
 [[test]]
+name = "persistence_slice_unit"
+path = "tests/unit/persistence/slice_test.rs"
+
+[[test]]
 name = "player_state_unit"
 path = "tests/unit/player/state_test.rs"
 
