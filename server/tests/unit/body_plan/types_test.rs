@@ -349,8 +349,7 @@ fn meridian_profile_missing_field_defaults_to_none() {
         #[serde(default)]
         meridian_profile: Option<MeridianProfile>,
     }
-    let missing: Wrapper =
-        serde_json::from_str("{}").expect("missing field should deserialize");
+    let missing: Wrapper = serde_json::from_str("{}").expect("missing field should deserialize");
     assert_eq!(missing.meridian_profile, None);
 }
 
