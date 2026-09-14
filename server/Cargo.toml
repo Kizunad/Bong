@@ -171,6 +171,10 @@ name = "coffin_unit"
 path = "tests/unit/coffin_test.rs"
 
 [[test]]
+name = "audio_trigger_unit"
+path = "tests/unit/network/audio_trigger_test.rs"
+
+[[test]]
 name = "raster_unit"
 path = "tests/unit/world/raster_test.rs"
 
