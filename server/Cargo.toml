@@ -191,6 +191,10 @@ name = "shelflife_compute_unit"
 path = "tests/unit/shelflife/compute_test.rs"
 
 [[test]]
+name = "zhenmai_v2_unit"
+path = "tests/unit/combat/zhenmai_v2_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
