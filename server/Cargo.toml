@@ -31,6 +31,10 @@ name = "craft_unlock_unit"
 path = "tests/unit/craft/unlock_test.rs"
 
 [[test]]
+name = "craft_session_unit"
+path = "tests/unit/craft/session_test.rs"
+
+[[test]]
 name = "alchemy_furnace_unit"
 path = "tests/unit/alchemy/furnace_test.rs"
 
