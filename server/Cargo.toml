@@ -183,6 +183,10 @@ name = "audio_trigger_unit"
 path = "tests/unit/network/audio_trigger_test.rs"
 
 [[test]]
+name = "vfx_event_emit_unit"
+path = "tests/unit/network/vfx_event_emit_test.rs"
+
+[[test]]
 name = "agent_ui_unit"
 path = "tests/unit/network/agent_ui_test.rs"
 
