@@ -11,7 +11,8 @@ public final class ClientStoreScopeManifest {
     );
 
     private static final Set<String> PERSISTENT_CONFIG_STORES = Set.of(
-        "com.bong.client.hud.HudLayoutPreferenceStore"
+        "com.bong.client.hud.HudLayoutPreferenceStore",
+        "com.bong.client.ui.window.WindowLayoutPreferenceStore"
     );
 
     private static final Set<String> CONSTANT_STORES = Set.of(

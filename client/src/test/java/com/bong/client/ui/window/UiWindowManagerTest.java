@@ -12,6 +12,45 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class UiWindowManagerTest {
+    @Test
+    void presentationChangesKeepScopeAndPinUntilExplicitClose() {
+        var manager = new UiWindowManager(300, 200);
+        var key = manager.key("item-inspect", "presentation");
+        var state = manager.openOrFocus(DEFINITION, key, new UiWindowManager.Rect(10, 10, 80, 60));
+        var closed = new java.util.concurrent.atomic.AtomicInteger();
+        state.scope().addCleanup(closed::incrementAndGet);
+        manager.beginDrag(15, 15);
+        manager.pin(key, true);
+        manager.minimize(key);
+        assertNull(manager.capturedKey());
+        assertNull(manager.hitTest(20, 20), "最小化窗口不能继续拦截工作台输入");
+        assertTrue(state.pinned());
+        manager.cancelCapture();
+        assertEquals(0, closed.get(), "最小化、固定和离开宿主不得结算业务");
+        assertSame(state, manager.openOrFocus(DEFINITION, key, new UiWindowManager.Rect(0, 0, 60, 40)));
+        assertFalse(state.minimized());
+        assertTrue(state.pinned());
+        manager.close(key);
+        manager.close(key);
+        assertEquals(1, closed.get(), "明确关闭只能执行一次 cleanup");
+    }
+
+    @Test
+    void invalidSizeDoesNotMutateAndViewportChangePreservesRequestedSize() {
+        var manager = new UiWindowManager(300, 200);
+        var key = manager.key("item-inspect", "size");
+        var state = manager.openOrFocus(DEFINITION, key, new UiWindowManager.Rect(5, 5, 80, 60));
+        for (String invalid : new String[] {"", "-1", "0", "NaN", "12.5", "2147483648"}) {
+            assertFalse(manager.resize(key, invalid, "90"));
+            assertEquals(new UiWindowManager.Rect(5, 5, 80, 60), state.bounds());
+        }
+        assertTrue(manager.resize(key, "450", "280"));
+        assertEquals(300, state.bounds().width());
+        manager.resizeViewport(600, 400);
+        assertEquals(450, state.bounds().width(), "临时小 viewport 不应覆盖玩家期望尺寸");
+        assertEquals(280, state.bounds().height());
+    }
+
     private static final UiWindowDefinition DEFINITION = new UiWindowDefinition(
         "item-inspect", "item-inspect", 40, 30, Set.of(UiWindowDefinition.Capability.WINDOW)
     );

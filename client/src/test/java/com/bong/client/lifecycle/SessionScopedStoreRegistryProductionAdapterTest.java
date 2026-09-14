@@ -292,7 +292,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     () -> EquippedShieldStore.snapshot() == null),
                 adapter(17, QuickUseSlotStore.class,
                     () -> QuickUseSlotStore.replace(QuickSlotConfig.of(
-                        new QuickSlotEntry[] {new QuickSlotEntry("old", "old", 1, 1, "")}, new long[] {2_000L})),
+                        new QuickSlotEntry[] {new QuickSlotEntry(42L, 1, "old", "old", 1, 1, "")}, new long[] {2_000L})),
                     () -> QuickUseSlotStore.snapshot() == QuickSlotConfig.empty()),
                 adapter(18, SkillBarStore.class,
                     () -> {
@@ -778,7 +778,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         CastStateStore.beginSkillBarCast(3, 100, 1_000L);
         QuickUseSlotStore.replaceAuthoritative(
             QuickSlotConfig.of(
-                new QuickSlotEntry[] {new QuickSlotEntry("old", "old", 1, 1, "")},
+                new QuickSlotEntry[] {new QuickSlotEntry(42L, 1, "old", "old", 1, 1, "")},
                 new long[] {2_000L}
             ),
             "old-ack",
@@ -833,7 +833,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         CastStateStore.beginCast(2, 200, 2_000L);
         QuickUseSlotStore.replaceAuthoritative(
             QuickSlotConfig.of(
-                new QuickSlotEntry[] {new QuickSlotEntry("fresh", "fresh", 1, 1, "")},
+                new QuickSlotEntry[] {new QuickSlotEntry(42L, 1, "fresh", "fresh", 1, 1, "")},
                 new long[] {3_000L}
             ),
             "fresh-ack",

@@ -25,6 +25,8 @@ class ItemInspectWindowsTest {
         var second = windows.open(102L, bounds);
         var loot = windows.open(103L, bounds);
         assertSame(first, windows.open(101L, bounds));
+        manager.pin(second.key(), true);
+        manager.minimize(second.key());
         manager.cancelCapture();
         assertFalse(first.scope().isClosed(), "离开宿主仅取消输入，业务窗口仍然存活");
 
@@ -33,7 +35,7 @@ class ItemInspectWindowsTest {
         external.set(List.of());
         windows.refresh();
         assertSame(updated, windows.item(first.key()), "位置变化与数量更新不能换成另一 instance");
-        assertTrue(second.scope().isClosed(), "隐藏窗口也必须消费物品失效");
+        assertTrue(second.scope().isClosed(), "固定且最小化的窗口也必须消费物品失效");
         assertTrue(loot.scope().isClosed(), "外部容器会话结束后，其物品详情必须失效");
         assertNull(windows.item(second.key()));
         assertNull(windows.open(102L, bounds), "旧点击不得重建已失效物品");
