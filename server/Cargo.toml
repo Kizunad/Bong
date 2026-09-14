@@ -147,6 +147,10 @@ name = "npc_faction_unit"
 path = "tests/unit/npc/faction_test.rs"
 
 [[test]]
+name = "npc_lod_unit"
+path = "tests/unit/npc/lod_test.rs"
+
+[[test]]
 name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
 
@@ -165,6 +169,10 @@ path = "tests/unit/coffin_test.rs"
 [[test]]
 name = "raster_unit"
 path = "tests/unit/world/raster_test.rs"
+
+[[test]]
+name = "territory_unit"
+path = "tests/unit/world/territory_test.rs"
 
 [[test]]
 name = "workbench_reach_profile"
