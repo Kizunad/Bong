@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::combat::components::StatusEffects;
 use crate::combat::events::AttackIntent;
