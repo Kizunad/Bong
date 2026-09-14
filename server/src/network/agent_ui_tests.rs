@@ -105,10 +105,9 @@ fn agent_ui_close_channel_wire_fixture_matches_production_encoder() {
             "{name} fixture 必须与 server 生产 encoder 的原始 bytes 完全一致"
         );
 
-        let parsed: AgentUiClosePayloadV1 =
-            serde_json::from_slice(&actual).unwrap_or_else(|err| {
-                panic!("{name} 生产 bytes 无法按 AgentUiClosePayloadV1 解析：{err}")
-            });
+        let parsed: AgentUiClosePayloadV1 = serde_json::from_slice(&actual).unwrap_or_else(|err| {
+            panic!("{name} 生产 bytes 无法按 AgentUiClosePayloadV1 解析：{err}")
+        });
         assert_eq!(parsed.request_id, request_id, "{name} request_id 漂移");
         assert_eq!(parsed.reason.as_deref(), reason, "{name} reason 漂移");
     }
