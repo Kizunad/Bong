@@ -17,7 +17,7 @@ class OwoXmlTemplateRegistryTest {
     void productionRegistryContainsWideAndCompactCraftTemplates() {
         OwoXmlTemplateRegistry registry = OwoXmlTemplateRegistry.production();
         assertEquals(
-            java.util.Set.of("craft", "craft-compact", "terminate", "coffin-menu", "repair", "death", "forge-carrier", "identity-panel", "zhenfa-layout", "main-menu", "item-inspect", "window-frame"),
+            java.util.Set.of("craft", "craft-compact", "terminate", "coffin-menu", "repair", "death", "forge-carrier", "identity-panel", "zhenfa-layout", "main-menu", "item-inspect", "window-frame", "workspace-controls", "hud-widget", "inventory-container", "inventory-equipment", "inventory-shortcuts"),
             registry.templateIds(),
             "生产 registry 必须只登记已接入的本地 XML 模板");
         assertEquals(OwoXmlTemplateRegistry.CRAFT, registry.identifierFor("craft"));
@@ -45,7 +45,12 @@ class OwoXmlTemplateRegistryTest {
             "/assets/bong/owo_ui/zhenfa-layout.xml",
             "/assets/bong/owo_ui/main-menu.xml",
             "/assets/bong/owo_ui/item-inspect.xml",
-            "/assets/bong/owo_ui/window-frame.xml"
+            "/assets/bong/owo_ui/window-frame.xml",
+            "/assets/bong/owo_ui/workspace-controls.xml",
+            "/assets/bong/owo_ui/hud-widget.xml",
+            "/assets/bong/owo_ui/inventory-container.xml",
+            "/assets/bong/owo_ui/inventory-equipment.xml",
+            "/assets/bong/owo_ui/inventory-shortcuts.xml"
         }) {
             try (InputStream stream = getClass().getResourceAsStream(resource)) {
                 assertNotNull(stream, "缺少随包发布的 owo XML: " + resource);

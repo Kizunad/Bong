@@ -290,6 +290,7 @@ mod tests {
 
     fn weapon_template() -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: "iron_sword".to_string(),
             display_name: "铁剑".to_string(),
             category: ItemCategory::Weapon,
@@ -353,6 +354,7 @@ mod tests {
     fn tool_template() -> ItemTemplate {
         // category=tool，无 weapon_spec / shield_spec —— 工具的典型形态。
         ItemTemplate {
+            quick_use: false,
             id: "stone_pickaxe".to_string(),
             display_name: "石镐".to_string(),
             category: ItemCategory::Tool,
@@ -814,6 +816,7 @@ mod tests {
 
     fn shield_template(id: &str) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: "木盾".to_string(),
             category: ItemCategory::Shield,

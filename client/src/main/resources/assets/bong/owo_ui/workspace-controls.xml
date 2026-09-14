@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components>
+        <flow-layout direction="vertical">
+            <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+        </flow-layout>
+    </components>
+    <templates>
+        <template name="bar">
+            <flow-layout direction="horizontal">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">28</vertical></sizing>
+                <positioning type="relative">0,100</positioning>
+                <padding><all>3</all></padding><gap>4</gap>
+                <surface><flat>#FF171E20</flat><outline>#FF4D5B55</outline></surface>
+                <children>
+                    <button id="workspace-settings">
+                        <text>⚙</text><tooltip>工作台设置</tooltip><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fixed">24</horizontal><vertical method="fixed">22</vertical></sizing>
+                        <renderer><flat color="#FF293432" hovered-color="#FF485A51" disabled-color="#FF293432" /></renderer>
+                    </button>
+                    <button id="workspace-hud">
+                        <text> </text><tooltip>HUD 布局</tooltip><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fixed">24</horizontal><vertical method="fixed">22</vertical></sizing>
+                    </button>
+                    <button id="workspace-reset">
+                        <text> </text><tooltip>一键还原布局与显隐</tooltip><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fixed">24</horizontal><vertical method="fixed">22</vertical></sizing>
+                    </button>
+                    <scroll id="workspace-restore-scroll" direction="horizontal">
+                        <flow-layout id="workspace-minimized" direction="horizontal">
+                            <sizing><horizontal method="content" /><vertical method="fixed">20</vertical></sizing>
+                            <gap>4</gap>
+                        </flow-layout>
+                        <sizing><horizontal method="fixed">260</horizontal><vertical method="fixed">22</vertical></sizing>
+                    </scroll>
+                </children>
+            </flow-layout>
+        </template>
+        <template name="restore">
+            <button>
+                <text> </text><tooltip>恢复窗口</tooltip><text-shadow>false</text-shadow>
+                <sizing><horizontal method="fixed">112</horizontal><vertical method="fixed">20</vertical></sizing>
+                <renderer><flat color="#FF303D37" hovered-color="#FF526052" disabled-color="#FF293432" /></renderer>
+            </button>
+        </template>
+        <template name="hud-list">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fixed">240</horizontal><vertical method="fixed">300</vertical></sizing>
+                <padding><all>8</all></padding><gap>5</gap>
+                <surface><flat>#FF212A2A</flat><outline>#FF819187</outline></surface>
+                <children>
+                    <label><text>HUD</text><color>#E2EAE5</color></label>
+                    <scroll id="workspace-hud-scroll" direction="vertical">
+                        <flow-layout id="workspace-hud-rows" direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                            <gap>3</gap>
+                        </flow-layout>
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">270</vertical></sizing>
+                    </scroll>
+                </children>
+            </flow-layout>
+        </template>
+        <template name="hud-entry">
+            <flow-layout direction="horizontal">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing>
+                <gap>4</gap><vertical-alignment>center</vertical-alignment>
+                <children>
+                    <checkbox id="hud-visible">
+                        <text> </text>
+                        <sizing><horizontal method="fixed">20</horizontal><vertical method="fixed">20</vertical></sizing>
+                    </checkbox>
+                    <label id="hud-label"><text> </text><color>#E2EAE5</color><sizing><horizontal method="fixed">164</horizontal><vertical method="fixed">12</vertical></sizing></label>
+                    <button id="hud-edit">
+                        <text> </text><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fixed">22</horizontal><vertical method="fixed">20</vertical></sizing>
+                    </button>
+                </children>
+            </flow-layout>
+        </template>
+        <template name="settings">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fixed">258</horizontal><vertical method="fixed">196</vertical></sizing>
+                <padding><all>10</all></padding><gap>8</gap>
+                <surface><flat>#FF212A2A</flat><outline>#FF819187</outline></surface>
+                <children>
+                    <flow-layout direction="horizontal">
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">20</vertical></sizing>
+                        <gap>8</gap><vertical-alignment>center</vertical-alignment>
+                        <children>
+                            <checkbox id="workspace-motion"><text>窗口动画</text></checkbox>
+                            <button id="workspace-import">
+                                <text>▣</text><tooltip>打开背景目录</tooltip><text-shadow>false</text-shadow>
+                                <sizing><horizontal method="fixed">22</horizontal><vertical method="fixed">20</vertical></sizing>
+                                <renderer><flat color="#FF303D37" hovered-color="#FF526052" disabled-color="#FF293432" /></renderer>
+                            </button>
+                            <button id="workspace-refresh">
+                                <text>↻</text><tooltip>刷新背景</tooltip><text-shadow>false</text-shadow>
+                                <sizing><horizontal method="fixed">22</horizontal><vertical method="fixed">20</vertical></sizing>
+                                <renderer><flat color="#FF303D37" hovered-color="#FF526052" disabled-color="#FF293432" /></renderer>
+                            </button>
+                        </children>
+                    </flow-layout>
+                    <scroll direction="vertical">
+                        <flow-layout id="workspace-backgrounds" direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                            <gap>6</gap>
+                        </flow-layout>
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">120</vertical></sizing>
+                    </scroll>
+                    <label id="workspace-background-status">
+                        <text> </text><color>#D0B999</color>
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">10</vertical></sizing>
+                    </label>
+                </children>
+            </flow-layout>
+        </template>
+        <template name="background">
+            <button>
+                <text> </text><text-shadow>false</text-shadow>
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">56</vertical></sizing>
+            </button>
+        </template>
+    </templates>
+</owo-ui>

@@ -493,6 +493,7 @@ mod tests {
         use crate::combat::weapon::WeaponKind;
         use crate::inventory::{ItemCategory, ItemTemplate, WeaponSpec};
         ItemTemplate {
+            quick_use: false,
             id: id.into(),
             display_name: id.into(),
             category: ItemCategory::Weapon,

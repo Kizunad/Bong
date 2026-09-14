@@ -52,14 +52,14 @@ OUT_OF_RANGE_PROBES = [
         "quick_slot_bind slot=2 越界且无回执",
         {
             "type": "quick_slot_bind", "v": 1, "slot": 2,
-            "item_id": None, "request_id": "rng-invalid-slot2",
+            "instance_id": None, "request_id": "rng-invalid-slot2",
         },
     ),
     (
         "quick_slot_bind slot=8 越界且无回执",
         {
             "type": "quick_slot_bind", "v": 1, "slot": 8,
-            "item_id": None, "request_id": "rng-invalid-slot8",
+            "instance_id": None, "request_id": "rng-invalid-slot8",
         },
     ),
     (
@@ -122,7 +122,7 @@ def _bind_slot_with_item(bot, slot: int, label: str) -> None:
             "v": 1,
             "type": "quick_slot_bind",
             "slot": slot,
-            "item_id": _PILL_TEMPLATE,
+            "instance_id": 42,
             "request_id": request_id,
         }
     )
@@ -162,7 +162,7 @@ def _assert_slot_boundary_accepted(bot, slot: int, label: str) -> None:
             "v": 1,
             "type": "quick_slot_bind",
             "slot": slot,
-            "item_id": None,
+            "instance_id": None,
             "request_id": request_id,
         }
     )
@@ -281,7 +281,7 @@ def _harvest_processing_barrier(bot, label: str) -> float:
             "v": 1,
             "type": "quick_slot_bind",
             "slot": _BARRIER_SLOT,
-            "item_id": None,
+            "instance_id": None,
             "request_id": request_id,
         }
     )

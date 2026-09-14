@@ -243,6 +243,7 @@ mod tests {
 
     fn template(id: &str, category: ItemCategory, grid_w: u8, grid_h: u8) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category,

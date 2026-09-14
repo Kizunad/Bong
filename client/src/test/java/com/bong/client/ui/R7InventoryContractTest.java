@@ -53,7 +53,7 @@ class R7InventoryContractTest {
     void fill100InventoryPinsExactRegistrationSites() throws IOException {
         List<FillInventoryRow> rows = readFillInventory();
         List<R7SourceScan.TokenOccurrence> actual = R7SourceScan.tokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)");
-        assertEquals(89, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
+        assertEquals(88, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
         assertEquals(rows.stream().map(FillInventoryRow::stableKey).toList(),
             actual.stream().map(R7SourceScan.TokenOccurrence::stableKey).toList(),
             "the fixture must enumerate every production fill token in path-local order");
@@ -68,7 +68,7 @@ class R7InventoryContractTest {
             "every frozen source line must match production bytes");
         assertEquals(19, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
             "the frozen fill inventory file set changed");
-        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 79L, "RISK", 5L),
+        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 78L, "RISK", 5L),
             histogram(rows.stream().map(FillInventoryRow::verdict).toList()),
             "the frozen fill classification counts changed");
         assertEquals(expectedFillClassifications(), rows.stream()
@@ -79,9 +79,9 @@ class R7InventoryContractTest {
         List<R7SourceScan.StructuralTokenOccurrence> structural = readFillStructuralContext();
         assertEquals(structural, R7SourceScan.structuralTokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)"),
             "every executable fill site must match its production enclosing class, method, and source hash");
-        assertEquals(84, structural.size(),
+        assertEquals(83, structural.size(),
             "all executable fill sites must carry one frozen structural context");
-        assertEquals(84, structural.stream().map(R7SourceScan.StructuralTokenOccurrence::stableKey).distinct().count(),
+        assertEquals(83, structural.stream().map(R7SourceScan.StructuralTokenOccurrence::stableKey).distinct().count(),
             "structural-context stable keys must be unique");
     }
 
@@ -283,11 +283,14 @@ class R7InventoryContractTest {
             "craft/CraftRecipeListWidget.java:134",
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
-            "inventory/InspectScreen.java:1673",
-            "npc/NpcTradeScreen.java:163"
+            "inventory/InspectScreen.java:1517",
+            "inventory/InventoryContainerContent.java:28",
+            "npc/NpcTradeScreen.java:163",
+            "ui/adapter/owo/WorkspaceControls.java:126",
+            "ui/adapter/owo/WorkspaceControls.java:151"
         );
         List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(15, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(18, sites.size(), "the frozen executable clearChildren inventory changed");
         assertEquals(sites.stream().sorted().toList(), actual,
             "the inventory must match every executable zero-argument production clearChildren call");
     }
@@ -421,7 +424,6 @@ class R7InventoryContractTest {
             inventory/InspectScreen.java#6\tLEGAL\tNONE
             inventory/InspectScreen.java#7\tLEGAL\tNONE
             inventory/InspectScreen.java#8\tLEGAL\tNONE
-            inventory/InspectScreen.java#9\tLEGAL\tNONE
             inventory/component/EquipmentPanel.java#1\tCOMMENT\tNONE
             lingtian/LingtianActionScreen.java#1\tLEGAL\tNONE
             lingtian/LingtianActionScreen.java#2\tLEGAL\tNONE

@@ -101,4 +101,30 @@ public class InspectScreenWornContainerTest {
         assertTrue(body.contains("\"from\":{\"kind\":\"container\",\"container_id\":\"pack_1007\""),
             "拖出来源应是 pack_1007 容器，实际 payload = " + body);
     }
+
+    @Test
+    void unequipPouchToBodyPocketDispatchesEquipToContainerMove() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem pouch = InventoryItem.createFull(
+            7001L, "grass_pouch", "小草包", 2, 2, 0.3, "common", "", 1, 0.0, 1.0);
+
+        // 卸下胸部 worn 层的小草包到贴身口袋，必须保持 inventory_move_intent 路由。
+        screen.dispatchMoveIntent(
+            pouch,
+            new ClientRequestProtocol.EquipLoc("chest", "worn"),
+            new ClientRequestProtocol.ContainerLoc("body_pocket", 0, 0),
+            false
+        );
+
+        assertEquals(1, sent.size(), "卸包应发出且仅发出一条 move intent");
+        String body = sent.get(0).body();
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":7001,"
+                + "\"from\":{\"kind\":\"equip\",\"slot\":\"chest\",\"state\":\"worn\"},"
+                + "\"to\":{\"kind\":\"container\",\"container_id\":\"body_pocket\",\"row\":0,\"col\":0}}",
+            body,
+            "卸包必须发送 EquipLoc(chest,worn) → ContainerLoc(body_pocket,0,0)"
+        );
+    }
 }

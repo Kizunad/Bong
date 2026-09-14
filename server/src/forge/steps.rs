@@ -546,6 +546,7 @@ mod tests {
             (
                 "inscription_scroll_sharp_v0".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "inscription_scroll_sharp_v0".to_string(),
                     display_name: "锐意铭文残卷".to_string(),
                     category: ItemCategory::Misc,
@@ -579,6 +580,7 @@ mod tests {
             (
                 "plain_paper".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "plain_paper".to_string(),
                     display_name: "白纸".to_string(),
                     category: ItemCategory::Misc,

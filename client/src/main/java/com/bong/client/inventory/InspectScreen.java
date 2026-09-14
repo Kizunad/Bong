@@ -21,6 +21,8 @@ import com.bong.client.hud.SwordBondHudState;
 import com.bong.client.hud.SwordBondHudStateStore;
 import com.bong.client.inspect.ItemInspectClickTracker;
 import com.bong.client.ui.window.UiWindowRuntime;
+import com.bong.client.ui.adapter.owo.OwoXmlTemplateRegistry;
+import io.wispforest.owo.ui.component.ButtonComponent;
 import com.bong.client.inventory.component.*;
 import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
@@ -66,7 +68,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_SKILL = 2;
     private static final int TAB_TECHNIQUES = 3;
     private static final int TAB_CRAFT = 4;
-    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "功法", "手搓"};
+    private static final String[] TAB_NAMES = {"随身", "修仙", "技艺", "功法", "手搓"};
     private static final int ACTION_TOAST_OK = 0xFFA8E6CF;
     private static final int ACTION_TOAST_WARN = 0xFFFFAA55;
     private static final long ACTION_TOAST_MS = 2_200L;
@@ -87,23 +89,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private Consumer<InventoryModel> inventoryListener;
 
     // --- Container grids (driven by model.containers()) ---
-    private BackpackGridPanel[] containerGrids;
-    private FlowLayout[] containerWrappers;
-    private LabelComponent[] containerLabels;
+    private BackpackGridPanel[] containerGrids = new BackpackGridPanel[0];
     private int containerCount;
-    // plan-layered-equip-v1 P4（决议 #13/#18）：行囊面板 + containerCount 哨兵已删除。
-    // -1 = 尚未激活任一页（初始）；之后 activeContainer 落 0..containerCount-1（body_pocket=index 0，默认激活）。
+    // 保存最近操作的容器，供快捷转移选择目标；无容器时为 -1。
     private int activeContainer = -1;
-    // 容器 tab 列表 = model.containers()，body_pocket 置 index 0（决议 #18）。
-    // switchContainer 用这份列表索引 containerLabels[]/containerGrids[]。
+    // 口袋和穿戴容器的常驻入口；套包可由容器物品右键打开。
     private java.util.List<InventoryModel.ContainerDef> filteredContainerDefs = java.util.List.of();
-    // plan-tarkov-backpack-v1 后续修复：容器 tab 栏 + grids 的 holder。
-    // snapshot 结构变化（卸/穿背包→容器增删）时 clearChildren + rebuildContainerSection 重建，
-    // 无需重开界面（populateFromModel 只重填已有格子，不会增删 tab）。
     private FlowLayout containerSection;
 
+    private InventoryLoadoutWindows loadout = new InventoryLoadoutWindows();
     private EquipmentPanel equipPanel;
-    private StatusBarsPanel statusBars;
     private BottomInfoBar bottomBar;
     // buff/状态效果条 —— 所有 tab 常驻（挂在 mainPanel，非某个 tab 专属内容），
     // 无 buff 时自行收起为 0 高度不占位。
@@ -140,14 +135,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private java.util.function.Consumer<com.bong.client.skill.SkillSetSnapshot> skillListener;
 
     // Hotbar
-    private final GridSlotComponent[] hotbarSlots = new GridSlotComponent[HOTBAR_SLOTS];
-    private final InventoryItem[] hotbarItems = new InventoryItem[HOTBAR_SLOTS];
-    private FlowLayout hotbarStrip;
+    private GridSlotComponent[] hotbarSlots = loadout.hotbarSlots;
+    private InventoryItem[] hotbarItems = loadout.hotbarItems;
 
     // 物品快捷栏当前开放 F1/F2，与下方技能栏容量独立。
-    private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[QuickSlotConfig.SLOT_COUNT];
-    private final InventoryItem[] quickUseItems = new InventoryItem[QuickSlotConfig.SLOT_COUNT];
-    private FlowLayout quickUseStrip;
+    private GridSlotComponent[] quickUseSlots = loadout.quickUseSlots;
+    private InventoryItem[] quickUseItems = loadout.quickUseItems;
     private Consumer<QuickUseSlotStore.Update> quickUseStoreListener;
     private Consumer<SkillBarConfig> skillBarStoreListener;
     private long lastQuickUseUpdateSequence = -1L;
@@ -156,7 +149,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private record PendingQuickUseIntent(
         String requestId,
         int slot,
-        String expectedItemId,
+        Long expectedInstanceId,
         Runnable onAccepted,
         Runnable onRejected
     ) {}
@@ -170,11 +163,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout lootPanelLayout;
     private LootContainerStateStore.Listener lootStoreListener;
 
-    // plan-tarkov-floating-windows — 套包内含物悬浮窗口系统（右键背包件打开，多开 + 可拖动 +
-    // z-order）。挂在 owo root（absolute 定位），不再占容器 tab，也不挂 outerRow（脱离 vertical flow）。
-    private final PackWindowManager packWindows = new PackWindowManager();
-    // build() 接收的 owo root FlowLayout（悬浮窗挂载点 + bringToFront 重挂目标）。
-    private FlowLayout root;
 
     // Block picker panel (plan-worldgen-v4 P5 §8.1#5 — dev-only 方块审阅浮窗)
     private BlockPickerPanel blockPickerPanel;
@@ -219,6 +207,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     public InspectScreen(InventoryModel model) {
         super(TITLE);
         this.model = model == null ? InventoryModel.empty() : model;
+        loadout.populate(this.model);
     }
 
     @Override
@@ -260,8 +249,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             LootContainerStateStore.removeListener(lootStoreListener);
             lootStoreListener = null;
         }
-        // plan-tarkov-floating-windows —— 全关悬浮窗（dispose 内含面板的 InventoryStateStore 订阅）。
-        packWindows.closeAll();
+        if (dragState.isDragging()) returnDragToSource();
         unmountBlockPickerPanel();
         super.removed();
     }
@@ -273,7 +261,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     protected void build(FlowLayout root) {
-        root.surface(Surface.VANILLA_TRANSLUCENT);
+        root.surface((context, component) -> UiWindowRuntime.renderBackground(context, component.width(), component.height()));
         root.horizontalAlignment(HorizontalAlignment.CENTER);
         root.verticalAlignment(VerticalAlignment.CENTER);
 
@@ -282,11 +270,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         outerRow.gap(2);
         outerRow.verticalAlignment(VerticalAlignment.CENTER);
 
-        // === FAR LEFT: Hotbar (1-9 战斗栏) + Quick-use (F1-F9 快捷使用栏) ===
-        hotbarStrip = buildHotbarStrip();
-        outerRow.child(hotbarStrip);
-        quickUseStrip = buildQuickUseStrip();
-        outerRow.child(quickUseStrip);
+        loadout = UiWindowRuntime.loadout();
+        equipPanel = loadout.equipment();
+        hotbarSlots = loadout.hotbarSlots;
+        hotbarItems = loadout.hotbarItems;
+        quickUseSlots = loadout.quickUseSlots;
+        quickUseItems = loadout.quickUseItems;
         registerAuthoritativeBarListeners(task -> MinecraftClient.getInstance().execute(task));
 
         // === CENTER: Main panel ===
@@ -326,13 +315,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         leftCol.child(tabBar);
 
-        // Tab 0: Equipment + Status
-        equipTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-        equipTabContent.gap(2);
-        equipPanel = new EquipmentPanel();
-        equipTabContent.child(equipPanel.container());
-        statusBars = new StatusBarsPanel();
-        equipTabContent.child(statusBars);
+        // 装备和快捷槽只保留统一窗口入口。
+        equipTabContent = OwoXmlTemplateRegistry.production().require("inventory-equipment")
+            .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
+        equipTabContent.childById(ButtonComponent.class, "open-equipment")
+            .onPress(ignored -> UiWindowRuntime.openLoadout(InventoryLoadoutWindows.EQUIPMENT));
+        equipTabContent.childById(ButtonComponent.class, "open-shortcuts")
+            .onPress(ignored -> UiWindowRuntime.openLoadout(InventoryLoadoutWindows.SHORTCUTS));
         leftCol.child(equipTabContent);
 
         // Tab 1: Cultivation (body inspect — dual layer)
@@ -591,11 +580,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
         rightCol.gap(2);
 
-        // Container tabs + grids（plan-tarkov-backpack-v1 后续修复）：放进 containerSection holder，
-        // 由 rebuildContainerSection() 从 model.containers() 重建；snapshot 结构变化时（卸/穿背包→
-        // 容器增删）listener 整体重建，无需重开界面。
-        containerSection = Containers.verticalFlow(Sizing.content(), Sizing.content());
-        containerSection.gap(2);
+        containerSection = OwoXmlTemplateRegistry.production().require("inventory-container")
+            .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
         rebuildContainerSection();
         rightCol.child(containerSection);
 
@@ -631,9 +617,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         mountBlockPickerPanelIfDev();
 
         root.child(outerRow);
-        // plan-tarkov-floating-windows：悬浮窗挂在 root（absolute 定位），不进 outerRow 的 horizontal flow。
-        this.root = root;
-        packWindows.attach(root);
+        UiWindowRuntime.openInventory(filteredContainerDefs);
+        if (!UiWindowRuntime.manager().contains(UiWindowRuntime.manager().key(InventoryLoadoutWindows.EQUIPMENT.windowType(), "player"))) {
+            UiWindowRuntime.openLoadout(InventoryLoadoutWindows.EQUIPMENT);
+        }
+        if (!UiWindowRuntime.manager().contains(UiWindowRuntime.manager().key(InventoryLoadoutWindows.SHORTCUTS.windowType(), "player"))) {
+            UiWindowRuntime.openLoadout(InventoryLoadoutWindows.SHORTCUTS);
+        }
         populateFromModel();
 
         // Server 增量到达时（InventoryEventHandler 写入或新 snapshot 落地）刷新 UI。
@@ -641,42 +631,24 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         inventoryListener = next -> {
             if (next == null) return;
             MinecraftClient.getInstance().execute(() -> {
-                // 容器集合变化（卸/穿背包→pack_<id> 增删）时重建 tab 栏 + grids，免重开界面；
-                // 仅内含物变化时 populateFromModel 重填已有格子即可。
+                if (inventoryListener == null) return;
+                // 穿戴或容量变化时刷新入口；容器网格和窗口生命周期由统一 runtime 更新。
                 boolean structuralChange = containerStructureChanged(next);
                 this.model = next;
                 if (structuralChange) {
                     rebuildContainerSection();
                 }
-                // plan-tarkov-floating-windows / fix/tarkov-nest-persistence §C4 —— 悬浮窗不 stale：
-                // 背包真离开（丢地/转移走）后其 pack_<id> 从 snapshot 消失，已开的悬浮窗须关闭，否则空壳
-                // 窗仍可点 → 产生 stale move_intent。卸到 body_pocket/手持/快捷栏等仍在携带面的情形 pack_<id>
-                // 仍在 → 窗口不关（用户可继续看包），这正是预期。
-                // 注意：A 准则后 worn pack 会进容器 tab，穿/卸 pack 经 structuralChange→rebuildContainerSection
-                // 增删该 tab；但 reconcile 仍必须每个 snapshot 跑（不依赖 structuralChange），否则丢地后窗口不关。
-                // 二者是独立通道：tab 增删看 worn 态（owner 在不在 worn 层），悬浮窗开关看 pack_<id> 在不在
-                // containers()——worn↔非worn 切换不改变 containers() 成员，故悬浮窗不被误关，互不冲突。
-                for (var win : packWindows.ordered()) {
-                    boolean stillExists = next.containers().stream()
-                            .anyMatch(d -> win.containerId().equals(d.id()));
-                    if (!stillExists) {
-                        // 若正从该被销毁容器拖拽，先取消拖拽避免 stale from-location。
-                        if (dragState.isDragging()
-                                && win.containerId().equals(dragState.sourceContainerId())) {
-                            dragState.cancel();
-                        }
-                        packWindows.close(win.containerId());
-                    }
+                if (dragState.isDragging() && dragState.sourceKind() == DragState.SourceKind.GRID
+                    && next.containers().stream().noneMatch(def -> def.id().equals(dragState.sourceContainerId()))
+                    && (lootPanel == null || !lootPanel.extContainerId().equals(dragState.sourceContainerId()))) {
+                    dragState.cancel();
+                    itemInspectClicks.cancel();
                 }
                 populateFromModel();
             });
         };
         InventoryStateStore.addListener(inventoryListener);
 
-        // plan-layered-equip-v1 P4（决议 #18）：body_pocket（容器 tab 第一个，index 0）是默认激活页。
-        if (containerCount > 0) {
-            switchContainer(0);
-        }
     }
 
     // ==================== Build helpers ====================
@@ -733,38 +705,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return lbl;
     }
 
-    private FlowLayout buildHotbarStrip() {
-        int cs = GridSlotComponent.CELL_SIZE;
-        FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
-        strip.surface(Surface.flat(0xFF141414));
-        strip.padding(Insets.of(3));
-        strip.gap(1);
-        strip.horizontalAlignment(HorizontalAlignment.CENTER);
-
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            GridSlotComponent slot = new GridSlotComponent(i, 0);
-            hotbarSlots[i] = slot;
-            strip.child(slot);
-        }
-        return strip;
-    }
-
-    /** 物品快捷栏先开放两格；以后由背包/装备扩展，最多十格。 */
-    private FlowLayout buildQuickUseStrip() {
-        int cs = GridSlotComponent.CELL_SIZE;
-        FlowLayout strip = Containers.verticalFlow(Sizing.fixed(cs + 6), Sizing.content());
-        strip.surface(Surface.flat(0xFF0F1A14));
-        strip.padding(Insets.of(3));
-        strip.gap(1);
-        strip.horizontalAlignment(HorizontalAlignment.CENTER);
-
-        for (int i = 0; i < QuickSlotConfig.SLOT_COUNT; i++) {
-            GridSlotComponent slot = new GridSlotComponent(i, 0);
-            quickUseSlots[i] = slot;
-            strip.child(slot);
-        }
-        return strip;
-    }
 
     private FlowLayout buildCraftTabEntryContent() {
         FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
@@ -827,17 +767,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void hydrateQuickUseFromConfig(QuickSlotConfig config) {
-        for (int i = 0; i < quickUseItems.length; i++) {
-            QuickSlotEntry entry = config.slot(i);
-            if (entry == null) {
-                quickUseItems[i] = null;
-                setQuickUseSlotVisual(i, null);
-                continue;
-            }
-            InventoryItem matched = findItemInModel(entry.itemId());
-            quickUseItems[i] = matched;
-            setQuickUseSlotVisual(i, matched);
-        }
+        loadout.hydrateQuickUse(config);
     }
 
     private void registerAuthoritativeBarListeners(Consumer<Runnable> executor) {
@@ -883,9 +813,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         QuickSlotEntry confirmed = update.config() == null
             ? null
             : update.config().slot(pending.slot());
-        boolean expectedState = pending.expectedItemId() == null
+        boolean expectedState = pending.expectedInstanceId() == null
             ? confirmed == null
-            : confirmed != null && pending.expectedItemId().equals(confirmed.itemId());
+            : confirmed != null && pending.expectedInstanceId() == confirmed.instanceId();
         if (update.bindAccepted() && expectedState) {
             pending.onAccepted().run();
         } else {
@@ -904,55 +834,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void hydrateSkillBarFromStore() {
-        var config = SkillBarStore.snapshot();
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            SkillBarEntry entry = config.slot(i);
-            if (entry == null) {
-                if (hotbarSlots[i] != null) {
-                    if (hotbarItems[i] != null) hotbarSlots[i].setItem(hotbarItems[i], true);
-                    else hotbarSlots[i].clearItem();
-                }
-                continue;
-            }
-            if (entry.kind() == SkillBarEntry.Kind.ITEM) {
-                InventoryItem matched = findItemInModel(entry.id());
-                if (matched == null && !model.isEmpty()) {
-                    // P1 — 槽绑定的物品在 authoritative 库存里已不存在（放置耗尽最后一个实例 →
-                    // server 删实例 → inventory_snapshot 回写后 model 里再也找不到该 template_id）。
-                    // 服务端 skillbar_config emit 用 Changed<SkillBarBindings> 触发，而放置消耗不
-                    // 改 SkillBarBindings 组件（仍持悬空 instance_id）→ 服务端不会主动重推清空，
-                    // 故由客户端依据 inventory_snapshot 自洽清槽。SkillBarStore.updateSlot(null) 同步
-                    // 触发 selectedSlot 失效复位（clearInvalidSelectedSlot），避免热键仍指向空槽。
-                    //
-                    // 仅在 model 非空（已落地 authoritative snapshot）时清，防开屏首帧空 model
-                    // 误清掉服务端刚下发的有效绑定。
-                    SkillBarStore.updateSlot(i, null);
-                    if (hotbarSlots[i] != null) {
-                        if (hotbarItems[i] != null) hotbarSlots[i].setItem(hotbarItems[i], true);
-                        else hotbarSlots[i].clearItem();
-                    }
-                    continue;
-                }
-                if (hotbarSlots[i] != null) {
-                    // count>1 时由 GridSlotComponent.drawItemOverlays 在右下角绘数量；
-                    // count 扣减/=0 全程由 inventory_snapshot → matched 自然刷新，无需本地扣减。
-                    // model 为空（未加载）且暂时 matched==null 时，沿用占位名硬撑，待 snapshot 到达再校准。
-                    hotbarSlots[i].setItem(
-                        matched == null ? InventoryItem.simple(entry.id(), entry.displayName()) : matched,
-                        true
-                    );
-                }
-                continue;
-            }
-            if (hotbarSlots[i] != null) {
-                hotbarSlots[i].setItem(InventoryItem.simple("skill_scroll_" + safeSkillIconId(entry.id()), entry.displayName()), true);
-            }
-        }
-    }
-
-    private static String safeSkillIconId(String skillId) {
-        // 与 HUD 共用同一规约，避免两端解析到不同贴图路径。
-        return com.bong.client.combat.SkillIconIds.safeSkillIconId(skillId);
+        loadout.hydrateSkills();
     }
 
     private InventoryItem findItemInModel(String itemId) {
@@ -976,31 +858,24 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (!QuickSlotConfig.isAvailable(index) || pendingQuickUseIntent != null) {
             return false;
         }
-        String itemId = item == null ? null : item.itemId();
+        if (item != null && !InventoryEquipRules.canPlaceIntoQuickUse(item)) return false;
+        Long instanceId = item == null ? null : item.instanceId();
         String requestId = com.bong.client.network.ClientRequestSender.sendQuickSlotBindTracked(
-            index, itemId);
+            index, instanceId);
         if (requestId == null) {
             return false;
         }
         pendingQuickUseIntent = new PendingQuickUseIntent(
             requestId,
             index,
-            itemId,
+            instanceId,
             onAccepted,
             onRejected
         );
         return true;
     }
 
-    /**
-     * 拖放落到快捷使用栏（F1-F9）槽位时的绑定收口。
-     *
-     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick slot 与 SkillBar 是两套 server 组件，
-     * 但方块拖放只发送一条 {@code quick_slot_bind}；server 识别 Block 类模板后在同一 handler
-     * 原子写入两份组件并分别回推权威 config，避免两条 C2S 之间失败形成半提交。
-     *
-     * <p>非方块物品只走 quick_slot 一条路径，行为不变。
-     */
+    /** 绑定现有库存实例的快捷使用链接。 */
     boolean commitQuickUseDrop(int index, InventoryItem item) {
         return requestQuickUseSlot(index, item, () -> {}, () -> {});
     }
@@ -1048,9 +923,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return false;
         }
     }
-
-    private static final int QUICK_USE_DEFAULT_CAST_MS = 1500;
-    private static final int QUICK_USE_DEFAULT_COOLDOWN_MS = 500;
 
     private FlowLayout buildDiscardStrip() {
         int cs = GridSlotComponent.CELL_SIZE;
@@ -1103,9 +975,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    static java.util.List<String> tabNamesForTests() {
-        return java.util.List.of(TAB_NAMES);
-    }
     // plan-layered-equip-v1 P4（决议 #19）：行囊重量条 backpackWeightBreakdown 删除——负重沿用整体
     // inventory 底部既有 BottomInfoBar（读 model.currentWeight()/maxWeight()，过载变红）。
 
@@ -1574,8 +1443,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /**
-     * A 准则（worn-tab）：owner 背包件是否当前穿戴在某身体槽的 worn 层（区别于「当货物塞在
-     * body_pocket / 手持」）。worn → 显常驻 tab；否则只走悬浮窗。
+     * owner 背包件是否当前穿戴在身体槽的 worn 层；穿戴容器显示常驻入口。
      *
      * <p>判据走 {@link SlotContents#worn()} 全栈（而非 {@code wornTop()} / {@code held()}）：
      * {@code held} 是手持代表件不算「穿戴上身」；用全栈而非栈顶避免叠穿（多层穿戴）时非栈顶 pack 漏判。
@@ -1593,29 +1461,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /**
-     * plan-tarkov-backpack-v1 后续修复：从 model.containers() 计算容器 tab 列表，
-     * body_pocket 恒置 index 0（默认/最左，决议 #18），server 未下发时补默认 2×3。
-     *
-     * <p>A 准则：穿戴态的 {@code pack_<id>} 容器（owner 在 worn 层）也进 tab；穿/卸背包经
-     * {@code containerStructureChanged → rebuildContainerSection} 自动增删该 tab（列表成员集合变化触发
-     * {@link #containerDefsDiffer}）。reconcile（每 snapshot 跑、不依赖 structuralChange）独立管理悬浮窗
-     * 开关，与 tab 增删互不冲突——worn↔非worn 切换不改变 {@code containers()} 成员，悬浮窗不被误关。
+     * 口袋入口置首，穿戴容器随后；其他套包通过容器物品右键打开。
+     * 穿脱只改变入口集合，已打开的窗口在权威快照移除容器时关闭。
      */
-    static java.util.List<InventoryModel.ContainerDef> computeContainerDefs(InventoryModel m) {
+    public static java.util.List<InventoryModel.ContainerDef> computeContainerDefs(InventoryModel m) {
         java.util.List<InventoryModel.ContainerDef> defs = new java.util.ArrayList<>();
         InventoryModel.ContainerDef bodyPocketDef = null;
         for (var def : m.containers()) {
             if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
                 bodyPocketDef = def;
             } else if (parseWornPackInstance(def.id()).isPresent()) {
-                // A 准则（worn-tab）：owner 背包件当前**穿戴**在某身体槽 worn 层 → 保留常驻 tab
-                // （双击/右键悬浮窗入口并存，不互斥）；非 worn（当货物躺 body_pocket / 手持 / 已落地）
-                // → skip，仅经悬浮窗访问。收窄 #778「pack 一律不显 tab」为「仅穿戴态显 tab」。
                 Long owner = def.ownerInstanceId();
                 if (owner != null && isPackOwnerInWornSlot(m, owner)) {
                     defs.add(def);
                 }
-                // else（owner==null 旧 server 缺字段 / owner 不在 worn 层）：skip，不退化为显示。
             } else {
                 defs.add(def);
             }
@@ -1629,8 +1488,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /**
-     * 两个有序容器列表的结构（id + rows + cols）是否不同。
-     * 仅内含物变化 → false（populateFromModel 即可重填）；容器增/删/换尺寸 → true（需 rebuildContainerSection）。
+     * 比较入口定义；仅内含物变化不重建入口，名称、容量或成员变化时刷新。
      */
     static boolean containerDefsDiffer(
             java.util.List<InventoryModel.ContainerDef> a,
@@ -1639,116 +1497,40 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         for (int i = 0; i < a.size(); i++) {
             var x = a.get(i);
             var y = b.get(i);
-            if (!x.id().equals(y.id()) || x.rows() != y.rows() || x.cols() != y.cols()) {
+            if (!x.equals(y)) {
                 return true;
             }
         }
         return false;
     }
 
-    /** 新 snapshot 的容器集合是否与当前 tab 栏结构不同 → 需重建 tab 栏 + grids。 */
+    /** 穿戴容器入口或容量变化时重建入口列表。 */
     private boolean containerStructureChanged(InventoryModel next) {
         return containerDefsDiffer(computeContainerDefs(next), filteredContainerDefs);
     }
 
-    /**
-     * plan-tarkov-backpack-v1 后续修复：从当前 model 重建容器 tab 栏 + grids 到 containerSection。
-     * build() 初次构建 + snapshot 结构变化（卸/穿背包→容器增删）时调用，免重开界面。
-     * 保留当前选中容器（id 仍在则切回，否则落 body_pocket=0）。
-     */
+    /** 入口只请求打开统一窗口，不持有或重新挂载容器网格。 */
     private void rebuildContainerSection() {
         if (containerSection == null) return;
-        String prevActiveId = (activeContainer >= 0 && activeContainer < filteredContainerDefs.size())
-            ? filteredContainerDefs.get(activeContainer).id()
-            : null;
-
-        var containerDefs = computeContainerDefs(model);
-        filteredContainerDefs = containerDefs;
-        containerCount = containerDefs.size();
-        containerGrids = new BackpackGridPanel[containerCount];
-        containerWrappers = new FlowLayout[containerCount];
-        containerLabels = new LabelComponent[containerCount];
-        activeContainer = -1; // 强制下面 switchContainer 真正生效（不被 idx==activeContainer 短路）
-
-        containerSection.clearChildren();
-
-        FlowLayout containerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-        containerRow.gap(2);
-        int maxCols = 3; // floor at body_pocket(2×3) width 防容器面板宽度塌
-        for (var def : containerDefs) maxCols = Math.max(maxCols, def.cols());
-
-        // 全部容器 tab（body_pocket 第一个 + 身体槽 worn 背包件产生的容器）。
-        for (int i = 0; i < containerCount; i++) {
-            final int ci = i;
-            var def = containerDefs.get(i);
-
-            FlowLayout tab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
-            tab.surface(Surface.flat(0xFF1E1E1E));
-            tab.padding(Insets.of(1, 4, 1, 4));
-            tab.verticalAlignment(VerticalAlignment.CENTER);
-            tab.cursorStyle(CursorStyle.HAND);
-
-            var label = Components.label(Text.literal(
-                "§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"
-            ));
-            containerLabels[i] = label;
-            tab.child(label);
-            tab.mouseDown().subscribe((mx, my, btn) -> {
-                if (btn == 0) { switchContainer(ci); return true; }
-                return false;
-            });
-            tab.mouseEnter().subscribe(() -> {
-                if (dragState.isDragging()) switchContainer(ci);
-            });
-            containerRow.child(tab);
-        }
-        containerSection.child(containerRow);
-
-        // Build all grids, hidden by default（active 页由下方 switchContainer 切出）。
-        int wrapperW = maxCols * GridSlotComponent.CELL_SIZE + 4;
-        for (int i = 0; i < containerCount; i++) {
-            var def = containerDefs.get(i);
-            containerGrids[i] = new BackpackGridPanel(def.id(), def.rows(), def.cols());
-            FlowLayout w = Containers.verticalFlow(Sizing.fixed(wrapperW), Sizing.content());
-            w.surface(Surface.flat(0xFF111111));
-            w.padding(Insets.of(2));
-            w.child(containerGrids[i].container());
-            containerWrappers[i] = w;
-            containerSection.child(w);
-            w.positioning(Positioning.absolute(-9999, -9999));
-        }
-
-        // 恢复选中：原选中容器仍在 → 切回；否则落 body_pocket(index 0)。
-        int target = 0;
-        if (prevActiveId != null) {
-            for (int i = 0; i < containerCount; i++) {
-                if (filteredContainerDefs.get(i).id().equals(prevActiveId)) { target = i; break; }
-            }
-        }
-        if (containerCount > 0) switchContainer(target);
-    }
-
-    private void switchContainer(int idx) {
-        if (idx == activeContainer || idx < 0 || idx >= containerCount) return;
-        activeContainer = idx;
-        // 用 filteredContainerDefs 索引 —— 与 containerLabels[]/containerGrids[] 同源同序（body_pocket=index 0）。
-        var defs = filteredContainerDefs;
-        for (int i = 0; i < containerCount; i++) {
-            containerWrappers[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
-            var def = defs.get(i);
-            containerLabels[i].text(Text.literal(
-                (i == idx ? "§f" : "§7") + def.name()
-                + " §8(" + def.rows() + "×" + def.cols() + ")"
-            ));
+        filteredContainerDefs = computeContainerDefs(model);
+        var entries = containerSection.childById(FlowLayout.class, "container-entries");
+        entries.clearChildren();
+        var template = OwoXmlTemplateRegistry.production().require("inventory-container");
+        for (var def : filteredContainerDefs) {
+            var button = template.expandTemplate(ButtonComponent.class, "container-entry", java.util.Map.of());
+            button.setMessage(Text.literal(MinecraftClient.getInstance().textRenderer.trimToWidth(def.name(), 94)));
+            button.tooltip(Text.literal(def.name()));
+            button.onPress(ignored -> UiWindowRuntime.openContainer(def.id()));
+            entries.child(button);
         }
     }
 
-    /** 切换到承载指定 containerId 的页（body_pocket 与其余容器同走普通 switchContainer，决议 #13）。无匹配则不动。 */
+    /** 记录最近操作的容器；无匹配时保持当前目标。 */
     private void switchToGridContainer(String containerId) {
         if (containerId == null) return;
         for (int i = 0; i < containerCount; i++) {
-            if (filteredContainerDefs.get(i).id().equals(containerId)) {
-                switchContainer(i);
+            if (containerGrids[i].containerId().equals(containerId)) {
+                activeContainer = i;
                 return;
             }
         }
@@ -1788,44 +1570,32 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Populate ====================
 
-    /**
-     * 测试专用：以 authoritative inventory snapshot 设置 model 后，仅驱动 P1 的 SkillBar 自洽收口
-     * （{@link #hydrateSkillBarFromStore}）。
-     *
-     * <p>生产路径是 {@code listener → MinecraftClient.execute(this.model = next; populateFromModel())}，
-     * 而 {@code populateFromModel} 还会刷 owo UI 面板（equipPanel/statusBars/...），这些面板只在
-     * owo {@code build()} 生命周期里实例化、headless 测试不可用。本 seam 只设 model + 调
-     * {@code hydrateSkillBarFromStore}，精确锁住「实例消耗后清槽 / 仍在则保留 / count 刷新 /
-     * selectedSlot 失效复位 / 空 model 不误清」这些<b>客户端状态机</b>契约（其余 UI 刷新与槽位视觉
-     * 由 e2e 覆盖）。</p>
-     */
+    /** 测试通过同一 loadout 刷新路径验证实例耗尽清槽、选中态复位与空快照保护。 */
     void reconcileSkillBarForTests(InventoryModel next) {
         if (next == null) return;
         this.model = next;
-        hydrateSkillBarFromStore();
+        loadout.populate(next);
     }
 
     private void populateFromModel() {
-        populateContainerGrids(model, containerGrids);
-
-        equipPanel.populateFromModel(model);
-        statusBars.updateFromModel(model);
-        bottomBar.updateFromModel(model);
-
-        // Equipment state is managed solely by EquipmentPanel
-
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            InventoryItem item = i < model.hotbar().size() ? model.hotbar().get(i) : null;
-            hotbarItems[i] = item;
-            if (hotbarSlots[i] != null) {
-                if (item != null) hotbarSlots[i].setItem(item, true);
-                else hotbarSlots[i].clearItem();
+        UiWindowRuntime.containers().refresh();
+        String selected = activeGrid() == null ? null : activeGrid().containerId();
+        containerGrids = UiWindowRuntime.containers().grids().toArray(BackpackGridPanel[]::new);
+        containerCount = containerGrids.length;
+        activeContainer = containerCount == 0 ? -1 : 0;
+        switchToGridContainer(InventoryModel.BODY_POCKET_CONTAINER_ID);
+        switchToGridContainer(selected);
+        if (dragState.isDragging() && dragState.sourceKind() == DragState.SourceKind.GRID) {
+            var grid = gridById(dragState.sourceContainerId());
+            if (grid != null) {
+                for (var entry : grid.toGridEntries()) {
+                    if (entry.item().instanceId() == dragState.draggedItem().instanceId()) grid.remove(entry.item());
+                }
             }
         }
 
-        hydrateSkillBarFromStore();
-
-        hydrateQuickUseFromStore();
+        loadout.populate(model);
+        bottomBar.updateFromModel(model);
     }
 
     static void populateContainerGrids(InventoryModel model, BackpackGridPanel[] containerGrids) {
@@ -1866,7 +1636,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     BackpackGridPanel openPackGridForTests(String containerId) {
-        return packWindows.open(containerId, model, 0, 0).grid();
+        var existing = gridById(containerId);
+        if (existing != null) return existing;
+        var def = model.containers().stream().filter(value -> value.id().equals(containerId)).findFirst().orElseThrow();
+        var grid = new BackpackGridPanel(containerId, def.rows(), def.cols());
+        grid.populateFromModel(model);
+        containerGrids = java.util.Arrays.copyOf(containerGrids, containerGrids.length + 1);
+        containerGrids[containerGrids.length - 1] = grid;
+        containerCount = containerGrids.length;
+        return grid;
     }
 
     boolean beginPackGridEquipDragForTests(String containerId, InventoryItem item) {
@@ -1875,13 +1653,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     InventoryItem packGridItemForTests(String containerId, int row, int col) {
-        var win = packWindows.get(containerId);
-        return win == null || win.isClosed() || win.grid() == null
-            ? null
-            : win.grid().itemAt(row, col);
+        var grid = gridById(containerId);
+        return grid == null ? null : grid.itemAt(row, col);
     }
 
-    /** Headless 回归复用真实 QUICK_USE 拾起语义（解绑 → dragState 记录来源）。 */
+    private BackpackGridPanel gridById(String id) {
+        for (var grid : containerGrids) if (grid.containerId().equals(id)) return grid;
+        return null;
+    }
+
+    /** Headless 回归复用真实 QUICK_USE 链接拾起语义。 */
     boolean beginQuickUseEquipDragForTests(InventoryItem item, int index) {
         quickUseItems[index] = item;
         return beginQuickUseDrag(index);
@@ -2096,23 +1877,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Hit detection ====================
 
     private int hotbarSlotAtScreen(double sx, double sy) {
-        int cs = GridSlotComponent.CELL_SIZE;
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            GridSlotComponent s = hotbarSlots[i];
-            if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
-                return i;
-        }
-        return -1;
+        return UiWindowRuntime.hotbarAt(sx, sy);
     }
 
     private int quickUseSlotAtScreen(double sx, double sy) {
-        int cs = GridSlotComponent.CELL_SIZE;
-        for (int i = 0; i < quickUseSlots.length; i++) {
-            GridSlotComponent s = quickUseSlots[i];
-            if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
-                return i;
-        }
-        return -1;
+        return UiWindowRuntime.quickUseAt(sx, sy);
     }
 
     private boolean isOverDiscard(double sx, double sy) {
@@ -2195,7 +1964,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (UiWindowRuntime.mouseDown(mouseX, mouseY, button)) {
+        if (handleContextMenuClick(mouseX, mouseY, button)) return true;
+        var containerGrid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
+        boolean loadoutSlot = UiWindowRuntime.loadoutSlotAt(mouseX, mouseY);
+        if (containerGrid != null) {
+            UiWindowRuntime.focusContainerAt(mouseX, mouseY);
+            uiAdapter.rootComponent.focusHandler().focus(null, Component.FocusSource.MOUSE_CLICK);
+            switchToGridContainer(containerGrid.containerId());
+        } else if (loadoutSlot) {
+            UiWindowRuntime.focusLoadoutAt(mouseX, mouseY);
+            uiAdapter.rootComponent.focusHandler().focus(null, Component.FocusSource.MOUSE_CLICK);
+        } else if (UiWindowRuntime.mouseDown(mouseX, mouseY, button)) {
             uiAdapter.rootComponent.focusHandler().focus(null, Component.FocusSource.MOUSE_CLICK);
             itemInspectClicks.cancel();
             if (dragState.isDragging()) returnDragToSource();
@@ -2204,15 +1983,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (button != 0 || hasShiftDown()) itemInspectClicks.cancel();
 
-        // plan-block-placement-ux-v1 P2 — context menu（pill/skillBar/weapon）的「命中-触发」对
-        // 左键(0)和右键(1)都响应：一个菜单已经打开后，玩家用左键点 action 行也应触发，符合
-        // 直觉。菜单的「打开」在右键（见下方 button==1 块的 open* 调用）。菜单的「关闭」
-        // （点 action 行之外）只在右键触发，左键点空白不关菜单，避免误关。
-        if (handleContextMenuClick(mouseX, mouseY, button)) {
-            return true;
-        }
-
-        if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
+        if (containerGrid == null && !loadoutSlot && button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
             itemInspectClicks.cancel();
             return true;
         }
@@ -2229,28 +2000,31 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             itemInspectClicks.cancel();
         }
 
-        // plan-tarkov-floating-windows：套包悬浮窗 z 最上，优先命中（点 ✕ 关闭 / grid 拾取 / 标题栏拖动 +
-        // 点击置顶）。命中即不穿透到主 grid。RAISED = 标题栏/空白区 → 置顶后交回 owo（focusHandler →
-        // DraggableContainer.childAt 返回窗口 → 后续 mouseDragged 路由 onMouseDrag 移位）。
-        PackWindowClick pw = handlePackWindowMouseDown(mouseX, mouseY, button);
-        if (pw == PackWindowClick.CONSUMED) {
-            itemInspectClicks.cancel();
+        if (containerGrid != null) {
+            var pos = containerGrid.screenToGrid(mouseX, mouseY);
+            var item = pos == null ? null : containerGrid.itemAt(pos.row(), pos.col());
+            if (item != null && button == 1) {
+                pendingMeridianUse = null;
+                if (InventoryEquipRules.isContainer(item)) openContainerItem(item);
+                else if (!openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
+                    openSkillBarContextMenu(item, (int) mouseX, (int) mouseY);
+                }
+            } else if (item != null && button == 0 && !dragState.isDragging()) {
+                if (hasShiftDown()) quickEquipFromGrid(item);
+                else beginGridDrag(containerGrid, item);
+            }
             return true;
-        }
-        if (pw == PackWindowClick.RAISED) {
-            itemInspectClicks.cancel();
-            return super.mouseClicked(mouseX, mouseY, button);
         }
 
         if (button == 1) {
-            if (activeTab == TAB_EQUIP) {
-                var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+            {
+                var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
                 // 决议 #12：仅栈顶/held（representative）可操作。
                 InventoryItem top = eq == null ? null : eq.representative();
                 // fix/tarkov-nest-persistence §C3 — 右键背包件直接开包（容器件对 weapon/pill 菜单
                 // 都返回 false，故前置拦截）。覆盖装备槽持有位。
                 if (eq != null && top != null && InventoryEquipRules.isContainer(top)) {
-                    openWornContainerPanel(top, eq.slotType());
+                    openContainerItem(top);
                     itemInspectClicks.cancel();
                     return true;
                 }
@@ -2268,36 +2042,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
 
-            BackpackGridPanel grid = activeGrid();
-            if (grid != null && grid.containsPoint(mouseX, mouseY)) {
-                var pos = grid.screenToGrid(mouseX, mouseY);
-                if (pos != null) {
-                    InventoryItem item = grid.itemAt(pos.row(), pos.col());
-                    // fix/tarkov-nest-persistence §C3 — 右键 grid 内背包件直接开包（前置拦截）。
-                    if (item != null && InventoryEquipRules.isContainer(item)) {
-                        openWornContainerPanel(item, null);
-                        itemInspectClicks.cancel();
-                        return true;
-                    }
-                    // plan-interaction-intent-cleanup-v1 P1 — 感保鲜触发已从「任意物品 Shift+右键」
-                    // 收窄并迁出鼠标路径：改为焦点槽位 Shift+F（见 keyPressed），且仅对「已知有
-                    // 保鲜数据」的物品发探针，杜绝通配误触与对普通物品的无效探针。
-                    if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
-                        itemInspectClicks.cancel();
-                        return true;
-                    }
-                    if (item != null && openSkillBarContextMenu(item, (int) mouseX, (int) mouseY)) {
-                        itemInspectClicks.cancel();
-                        return true;
-                    }
-                }
-            }
-
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             // fix/tarkov-nest-persistence §C3 — 右键快捷栏背包件直接开包（前置拦截）。
             if (hIdx >= 0 && hotbarItems[hIdx] != null
                     && InventoryEquipRules.isContainer(hotbarItems[hIdx])) {
-                openWornContainerPanel(hotbarItems[hIdx], null);
+                openContainerItem(hotbarItems[hIdx]);
                 itemInspectClicks.cancel();
                 return true;
             }
@@ -2312,10 +2061,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
             int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
-            if (qIdx >= 0 && quickUseItems[qIdx] != null
-                    && openPillContextMenu(quickUseItems[qIdx], (int) mouseX, (int) mouseY)) return true;
+            if (qIdx >= 0 && quickUseItems[qIdx] != null) {
+                com.bong.client.network.ClientRequestSender.sendUseQuickSlot(qIdx);
+                return true;
+            }
             // 右键【已绑定功法】的 1-9 槽 → 清空解绑（绑定功法不写 hotbarItems[]，单独走 SkillBarStore）。
-            if (activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null) {
+            if (hIdx >= 0 && techniquesTabPanel != null) {
                 SkillBarEntry bound = SkillBarStore.snapshot().slot(hIdx);
                 if (bound != null && bound.kind() == SkillBarEntry.Kind.SKILL
                         && techniquesTabPanel.clearSkillSlot(hIdx)) {
@@ -2328,25 +2079,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         if (button == 0) {
             boolean shift = hasShiftDown();
-            BackpackGridPanel grid = activeGrid();
-
-            // Grid
-            if (grid != null && grid.containsPoint(mouseX, mouseY)) {
-                var pos = grid.screenToGrid(mouseX, mouseY);
-                if (pos != null) {
-                    InventoryItem item = grid.itemAt(pos.row(), pos.col());
-                    if (item != null) {
-                        if (shift) quickEquipFromGrid(item);
-                        else beginGridDrag(grid, item);
-                        return true;
-                    }
-                }
-            }
 
             // Equip
             // 决议 #12：仅栈顶/held（representative）可被拖下/卸下；下层被压住不可动。
-            if (activeTab == TAB_EQUIP) {
-                var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+            {
+                var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
                 InventoryItem item = eq == null ? null : eq.representative();
                 if (eq != null && item != null) {
                     if (shift) quickUnequipToGrid(eq.slotType(), item);
@@ -2359,7 +2096,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             // Body inspect applied items (physical or meridian layer)
-            if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
+            if (!loadoutSlot && activeTab == TAB_CULTIVATION && bodyInspect != null) {
                 if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                     BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
                     if (bp != null) {
@@ -2388,7 +2125,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
             // 功法拖拽起手：在功法列表行上按下 → 选中 + 进入拖拽态（释放时落槽绑定）。
             // 两步点击（点行选中、点槽绑定）仍由下方 Hotbar 分支兜底。
-            if (activeTab == TAB_TECHNIQUES && techniquesTabPanel != null && !dragState.isDragging()) {
+            if (!loadoutSlot && activeTab == TAB_TECHNIQUES && techniquesTabPanel != null && !dragState.isDragging()) {
                 com.bong.client.combat.inspect.TechniquesListPanel.Technique tech =
                     techniquesTabPanel.techniqueAtScreen(mouseX, mouseY);
                 if (tech != null) {
@@ -2406,7 +2143,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             // 功法拖出起手：按下一个【已绑定功法】的 1-9 槽 → 拾起拖拽。
             // 松手落到某槽=移动/换绑、落到槽外(背包/空白)=解绑消失（见 mouseReleased + TechniqueDragDecision）。
-            if (button == 0 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null
+            if (button == 0 && hIdx >= 0 && techniquesTabPanel != null
                     && draggedTechnique == null && !dragState.isDragging()) {
                 SkillBarEntry bound = SkillBarStore.snapshot().slot(hIdx);
                 if (bound != null && bound.kind() == SkillBarEntry.Kind.SKILL) {
@@ -2449,13 +2186,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             // Quick-use bar (F1-F9)
             int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
             if (qIdx >= 0 && quickUseItems[qIdx] != null) {
-                if (shift) quickMoveQuickUseToGrid(qIdx);
+                if (shift) clearQuickUseSlot(qIdx);
                 else beginQuickUseDrag(qIdx);
                 return true;
             }
 
             // Loot grid (supply coffin)
-            if (lootPanel != null && !lootPanel.isClosed()) {
+            if (!loadoutSlot && lootPanel != null && !lootPanel.isClosed()) {
                 BackpackGridPanel lg = lootPanel.lootGrid();
                 if (lg.containsPoint(mouseX, mouseY)) {
                     var pos = lg.screenToGrid(mouseX, mouseY);
@@ -2474,11 +2211,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
 
-            // 套包悬浮窗 grid 的拾取（拖出）已在 mouseClicked 顶部 handlePackWindowMouseDown 处理
-            // （窗口 z 最上，先于主 grid/equip 命中）。
         }
 
-        return super.mouseClicked(mouseX, mouseY, button);
+        return loadoutSlot || super.mouseClicked(mouseX, mouseY, button);
     }
 
     @Override
@@ -2516,13 +2251,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (UiWindowRuntime.mouseUp(mouseX, mouseY, button)) {
+        if (button == 0 && itemInspectClicks.release(mouseX, mouseY, System.currentTimeMillis())) return true;
+        if (!dragState.isDragging() && draggedTechnique == null && UiWindowRuntime.mouseUp(mouseX, mouseY, button)) {
             itemInspectClicks.cancel();
-            if (dragState.isDragging()) returnDragToSource();
             if (draggedTechnique != null) endTechniqueDrag();
             return true;
         }
-        if (button == 0 && itemInspectClicks.release(mouseX, mouseY, System.currentTimeMillis())) return true;
         // 功法拖拽落槽：松手时若落在某个 1-9 槽上则绑定（锁定功法由 bindTechniqueToSlot 拒绝并给原因）；
         // 落在槽位外则仅取消拖拽，选中态保留（兼容两步点击）。
         if (button == 0 && draggedTechnique != null) {
@@ -2585,15 +2319,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private InventoryItem itemAtScreen(double mouseX, double mouseY) {
-        var windows = packWindows.ordered();
-        for (int i = windows.size() - 1; i >= 0; i--) {
-            var window = windows.get(i);
-            if (window.isClosed() || !window.isInBoundingBox(mouseX, mouseY)) continue;
-            var grid = window.grid();
-            var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
-            return pos == null ? null : grid.itemAt(pos.row(), pos.col());
-        }
-        BackpackGridPanel grid = activeGrid();
+        BackpackGridPanel grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
         if (grid != null && grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
             if (pos != null) {
@@ -2601,14 +2327,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (item != null) return item;
             }
         }
-        if (activeTab == TAB_EQUIP) {
-            var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+        {
+            var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
             if (eq != null && eq.representative() != null) return eq.representative();
         }
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
         if (hIdx >= 0 && hotbarItems[hIdx] != null) return hotbarItems[hIdx];
         int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
         if (qIdx >= 0 && quickUseItems[qIdx] != null) return quickUseItems[qIdx];
+        if (UiWindowRuntime.hit(mouseX, mouseY)) return null;
         if (lootPanel != null && !lootPanel.isClosed()) {
             BackpackGridPanel lg = lootPanel.lootGrid();
             if (lg.containsPoint(mouseX, mouseY)) {
@@ -2638,7 +2365,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             close();
             return true;
         }
-        if (UiWindowRuntime.hasKeyboardFocus() || UiWindowRuntime.manager().hitTest(mouseX(), mouseY()) != null) return true;
+        if (UiWindowRuntime.hasKeyboardFocus()) return true;
         // plan-rotate-v1 — 拖拽中按 R 旋转拖拽物（2x1 ↔ 1x2）。旋转后 draggedItem
         // 换成宽高互换的副本，高亮 / canPlace / 拖拽 ghost 每帧重读宽高即自动生效；
         // 落位时 dispatchMoveIntent 透传 dragState.draggedRotated() 让 server 权威互换。
@@ -2648,8 +2375,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_Q && activeTab == TAB_EQUIP && !dragState.isDragging()) {
-            var eq = equipPanel.slotAtScreen(mouseX(), mouseY());
+        if (keyCode == GLFW.GLFW_KEY_Q && !dragState.isDragging()) {
+            var eq = UiWindowRuntime.equipmentAt(mouseX(), mouseY());
             InventoryItem top = eq == null ? null : eq.representative();
             if (eq != null && top != null && InventoryEquipRules.isWeapon(top)) {
                 if (dispatchDropWeaponFromEquip(eq.slotType(), top)) {
@@ -2673,7 +2400,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     /** 当前鼠标焦点所在 backpack 网格槽位的物品；无则返回 null。 */
     private InventoryItem focusedGridItem() {
-        BackpackGridPanel grid = activeGrid();
+        BackpackGridPanel grid = UiWindowRuntime.containerGridAt(mouseX(), mouseY());
         if (grid == null) {
             return null;
         }
@@ -2723,7 +2450,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Drag ====================
 
-    /** 普通容器页与浮动 pack 共用的真实拾取边界：记录精确来源后再移除本地格子。 */
+    /** 容器拾取先记录精确来源，再移除本地格子。 */
     private boolean beginGridDrag(BackpackGridPanel grid, InventoryItem item) {
         if (grid == null || item == null || dragState.phase() != DragState.Phase.IDLE) {
             return false;
@@ -2737,7 +2464,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return true;
     }
 
-    /** QUICK_USE 只有在解绑请求被本地传输接受后才清视觉并进入拖拽态。 */
+    /** 快捷槽拖拽只拾取使用链接，物品仍留在原容器中。 */
     private boolean beginQuickUseDrag(int index) {
         if (!QuickSlotConfig.isAvailable(index)) {
             return false;
@@ -2746,18 +2473,29 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item == null) {
             return false;
         }
-        return requestQuickUseSlot(
-            index,
-            null,
-            () -> dragState.pickupFromQuickUse(item, index),
-            () -> com.bong.client.BongClient.LOGGER.warn(
-                "[bong][inspect] quick-use unbind rejected slot={}", index)
-        );
+        // 快捷槽只保存使用链接，不是物品容器。拾取链接不得先解绑或从背包移除物品。
+        dragState.pickupFromQuickUse(item, index);
+        return true;
     }
 
     private void attemptDrop(double mouseX, double mouseY) {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) { dragState.cancel(); clearAllHighlights(); return; }
+
+        // QUICK_USE 是引用链接，不参与库存移动。拖到另一个快捷槽时复制链接；
+        // 其它位置直接结束拖拽，原快捷链接和背包物品都保持不变。
+        if (dragState.sourceKind() == DragState.SourceKind.QUICK_USE) {
+            int target = quickUseSlotAtScreen(mouseX, mouseY);
+            if (target >= 0 && InventoryEquipRules.canPlaceIntoQuickUse(dragged)) {
+                requestQuickUseSlot(target, dragged, dragState::drop, () ->
+                    com.bong.client.BongClient.LOGGER.warn(
+                        "[bong][inspect] authoritative quick-use copy rejected slot={}", target));
+            } else {
+                dragState.drop();
+            }
+            clearAllHighlights();
+            return;
+        }
 
         // Capture source before drop() resets dragState; needed for the C2S move intent.
         com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc = snapshotSourceLocation();
@@ -2765,8 +2503,37 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // 非网格目标（装备槽 / hotbar / 快捷栏 / 丢弃 / loot 外部容器）恒发 false。
         boolean dropRotated = dragState.draggedRotated();
 
+        if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY)) {
+            var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
+            var pos = grid == null ? null : grid.screenToGrid(mouseX, mouseY);
+            boolean fromLoot = lootPanel != null && !lootPanel.isClosed()
+                && lootPanel.extContainerId().equals(dragState.sourceContainerId());
+            var item = fromLoot && dropRotated ? dragState.originalDraggedItem() : dragged;
+            if (pos != null && grid.canPlace(item, pos.row(), pos.col())
+                && isWornPackContainerDroppable(InventoryStateStore.snapshot(), grid.containerId())) {
+                boolean accepted;
+                if (fromLoot) {
+                    lootPanel.sendMove(item.instanceId(), dragState.sourceContainerId(),
+                        dragState.sourceRow(), dragState.sourceCol(), grid.containerId(), pos.row(), pos.col());
+                    accepted = true;
+                } else {
+                    accepted = dispatchMoveIntent(item, fromLoc,
+                        new com.bong.client.network.ClientRequestProtocol.ContainerLoc(grid.containerId(), pos.row(), pos.col()),
+                        dropRotated);
+                }
+                if (accepted) {
+                    grid.place(item, pos.row(), pos.col());
+                    dragState.drop();
+                } else returnDragToSource();
+            } else returnDragToSource();
+            clearAllHighlights();
+            return;
+        }
+
+        boolean workbenchTarget = !UiWindowRuntime.hit(mouseX, mouseY);
+
         // Discard
-        if (isOverDiscard(mouseX, mouseY)) {
+        if (workbenchTarget && isOverDiscard(mouseX, mouseY)) {
             if (dispatchDiscardIntent(dragged, fromLoc)) {
                 dragState.drop();
             } else {
@@ -2776,7 +2543,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
 
-        if (activeTab == TAB_SKILL && isOverSkillScrollDropZone(mouseX, mouseY)) {
+        if (workbenchTarget && activeTab == TAB_SKILL && isOverSkillScrollDropZone(mouseX, mouseY)) {
             if (tryLearnSkillScroll(dragged)) {
                 dragState.drop();
             } else {
@@ -2787,7 +2554,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Loot grid drop (supply coffin) — handle both directions
-        if (lootPanel != null && !lootPanel.isClosed()) {
+        if (workbenchTarget && lootPanel != null && !lootPanel.isClosed()) {
             boolean fromLoot = lootPanel.extContainerId().equals(dragState.sourceContainerId());
 
             // plan-rotate-v1 — loot 面板走 external_container_move 协议（无 rotated 字段），
@@ -2814,100 +2581,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
 
-            // Drop from loot grid onto active player grid
-            if (fromLoot) {
-                BackpackGridPanel destGrid = activeGrid();
-                if (destGrid != null && destGrid.containsPoint(mouseX, mouseY)) {
-                    var pos = destGrid.screenToGrid(mouseX, mouseY);
-                    if (pos != null && destGrid.canPlace(lootDropItem, pos.row(), pos.col())) {
-                        destGrid.place(lootDropItem, pos.row(), pos.col());
-                        String srcCid = dragState.sourceContainerId();
-                        int srcRow = dragState.sourceRow();
-                        int srcCol = dragState.sourceCol();
-                        dragState.drop();
-                        lootPanel.sendMove(dragged.instanceId(),
-                            srcCid, srcRow, srcCol,
-                            destGrid.containerId(), pos.row(), pos.col());
-                        clearAllHighlights();
-                        return;
-                    }
-                }
-            }
-        }
-
-        // plan-tarkov-floating-windows（交付物 #4）—— 拖入套包悬浮窗内含物（含跨窗拖移：两窗 grid 的
-        // containerId 不同，dispatchMoveIntent 用各自 containerId 构 ContainerLoc）。
-        // 发包硬约束：走 dispatchMoveIntent → sendInventoryMove，严禁 sendExternalContainerMove（loot 专用）。
-        // 落位前过 isWornPackContainerDroppable 门控（owner 背包件须在携带面任意位置）。逆序遍历（z 最上优先）。
-        var packWins = packWindows.ordered();
-        for (int i = packWins.size() - 1; i >= 0; i--) {
-            var win = packWins.get(i);
-            if (win.isClosed()) {
-                continue;
-            }
-            BackpackGridPanel wg = win.grid();
-            if (wg == null || !wg.containsPoint(mouseX, mouseY)) {
-                continue;
-            }
-            var pos = wg.screenToGrid(mouseX, mouseY);
-            if (pos == null || !wg.canPlace(dragged, pos.row(), pos.col())) {
-                continue;
-            }
-            if (!isWornPackContainerDroppable(
-                    InventoryStateStore.snapshot(), wg.containerId())) {
-                showActionToast("背包未在携带中，无法放入", ACTION_TOAST_WARN);
-                returnDragToSource();
-                clearAllHighlights();
-                return;
-            }
-            var toLoc = new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                wg.containerId(), pos.row(), pos.col());
-            if (!dispatchMoveIntent(dragged, fromLoc, toLoc, dropRotated)) {
-                returnDragToSource();
-                clearAllHighlights();
-                return;
-            }
-            wg.place(dragged, pos.row(), pos.col());
-            dragState.drop();
-            clearAllHighlights();
-            return;
-        }
-
-        // Active grid
-        BackpackGridPanel grid = activeGrid();
-        if (grid != null && grid.containsPoint(mouseX, mouseY)) {
-            var pos = grid.screenToGrid(mouseX, mouseY);
-            if (pos != null && grid.canPlace(dragged, pos.row(), pos.col())) {
-                // plan-tarkov-backpack-v1 P2（交付物 #3，穿戴态门控 client 侧）——
-                // 拖入 `pack_<数字>` 套包容器前，校验其 owner 背包件仍穿戴在某身体槽 worn 层。
-                // 非穿戴（已卸下的套包，server snapshot 仍含其容器但拒绝拖入）→ 不乐观落位 + 给 toast，
-                // 避免「拖进去瞬间弹回且无提示」。与 server validate_move_semantics 的 Container 门控对齐。
-                if (!isWornPackContainerDroppable(
-                        InventoryStateStore.snapshot(), grid.containerId())) {
-                    showActionToast("背包未在携带中，无法放入", ACTION_TOAST_WARN);
-                    returnDragToSource();
-                    clearAllHighlights();
-                    return;
-                }
-                var toLoc = new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                    grid.containerId(), pos.row(), pos.col());
-                if (!dispatchMoveIntent(dragged, fromLoc, toLoc, dropRotated)) {
-                    returnDragToSource();
-                    clearAllHighlights();
-                    return;
-                }
-                grid.place(dragged, pos.row(), pos.col());
-                dragState.drop();
-                clearAllHighlights();
-                return;
-            }
         }
 
         // Equip (with hand restriction from physical body)
         // plan-layered-equip-v1 P4（决议 #3/#12）：删除旧 swap 分支——满/占=飘红退回不顶替；
         // worn 合法则 push 栈顶（乐观更新，server 快照为权威）。canEquip 已含「worn 满 / held 占 / 锁手」拒绝。
-        if (activeTab == TAB_EQUIP) {
-            var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+        {
+            var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
             if (eq != null) {
                 if (!commitEquipDropOrReturnToSource(dragged, fromLoc, eq.slotType())) {
                     clearAllHighlights();
@@ -2919,7 +2599,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Body inspect drop (physical or meridian layer) — only 1×1 items
-        if (activeTab == TAB_CULTIVATION && bodyInspect != null
+        if (workbenchTarget && activeTab == TAB_CULTIVATION && bodyInspect != null
                 && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                 BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
@@ -2983,19 +2663,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 clearAllHighlights();
                 return;
             }
-            InventoryItem old = quickUseItems[qIdx];
+            // 绑定只引用现有库存；结束网格拖拽时立即把物品放回原位。
+            returnDragToSource();
             if (!requestQuickUseSlot(
                     qIdx,
                     dragged,
                     () -> {
-                        dragState.drop();
-                        if (old != null) placeItemAnywhere(old);
                         clearAllHighlights();
                     },
                     () -> com.bong.client.BongClient.LOGGER.warn(
                         "[bong][inspect] authoritative quick-use bind rejected slot={}", qIdx)
                 )) {
-                returnDragToSource();
                 clearAllHighlights();
                 return;
             }
@@ -3440,31 +3118,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void returnDragToSource() {
-        // QUICK_USE 已在拾取时把解绑请求发给 server。回绑若被本地传输拒绝，不能先 cancel
-        // 再丢失 item/source；保留拖拽态供下一次取消/落位重试，直到回绑真正被接受。
+        // 链接没有被移动出库存，取消时也不能回填出第二份物品。
         if (dragState.sourceKind() == DragState.SourceKind.QUICK_USE) {
-            int index = dragState.sourceQuickUseIndex();
-            InventoryItem item = dragState.originalDraggedItem() != null
-                ? dragState.originalDraggedItem()
-                : dragState.draggedItem();
-            if (QuickSlotConfig.isAvailable(index) && item != null) {
-                if (!requestQuickUseSlot(
-                        index,
-                        item,
-                        dragState::drop,
-                        () -> com.bong.client.BongClient.LOGGER.warn(
-                            "[bong][inspect] authoritative quick-use rebind rejected slot={}", index)
-                    )) {
-                    com.bong.client.BongClient.LOGGER.warn(
-                        "[bong][inspect] quick-use rebind rejected; retaining drag for retry slot={}",
-                        index);
-                }
-                return;
-            }
-            com.bong.client.BongClient.LOGGER.warn(
-                "[bong][inspect] invalid quick-use drag source; retaining drag index={} item={}",
-                index,
-                item == null ? null : item.itemId());
+            // 取消引用拖拽只结束 UI 手势，不能把链接误当作库存移动请求。
+            dragState.drop();
             return;
         }
         DragState.CancelResult r = dragState.cancel();
@@ -3480,24 +3137,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     if (!restoreItemToGrid(lg, item, r.sourceRow(), r.sourceCol()))
                         placeItemAnywhere(item);
                 } else {
-                    var sourceWindow = packWindows.get(r.sourceContainerId());
-                    BackpackGridPanel sourcePackGrid = sourceWindow == null || sourceWindow.isClosed()
-                        ? null
-                        : sourceWindow.grid();
-                    if (sourcePackGrid != null) {
-                        // 浮动 pack 不属于 containerGrids[] 页签；必须按原 window/containerId
-                        // 直接回原 grid，不能误落当前普通容器。
-                        if (!restoreItemToGrid(
-                                sourcePackGrid, item, r.sourceRow(), r.sourceCol())) {
-                            placeItemAnywhere(item);
-                        }
-                    } else {
-                        // 先切回来源容器页（用户可能已手动/drag-hover 切走），再放回原位。
-                        switchToGridContainer(r.sourceContainerId());
-                        BackpackGridPanel grid = activeGrid();
-                        if (!restoreItemToGrid(grid, item, r.sourceRow(), r.sourceCol()))
-                            placeItemAnywhere(item);
-                    }
+                    restoreItemToGrid(gridById(r.sourceContainerId()), item, r.sourceRow(), r.sourceCol());
                 }
             }
             case EQUIP -> {
@@ -3538,6 +3178,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null || item == null) {
             return false;
         }
+        if (grid.toGridEntries().stream().anyMatch(entry -> entry.item().instanceId() == item.instanceId())) return true;
         if (grid.canPlace(item, sourceRow, sourceCol)) {
             grid.place(item, sourceRow, sourceCol);
             return true;
@@ -3587,11 +3228,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) return;
 
-        if (activeTab == TAB_SKILL && skillScrollDropZone != null && isOverSkillScrollDropZone(mouseX, mouseY)) {
-            setSkillScrollDropZoneState(skillScrollDropState(dragged));
-        }
-
-        BackpackGridPanel grid = activeGrid();
+        BackpackGridPanel grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
         if (grid != null && grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
             if (pos != null) {
@@ -3600,9 +3237,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
             }
         }
+        if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY)) return;
+        if (activeTab == TAB_SKILL && skillScrollDropZone != null && isOverSkillScrollDropZone(mouseX, mouseY)) {
+            setSkillScrollDropZoneState(skillScrollDropState(dragged));
+        }
 
-        if (activeTab == TAB_EQUIP) {
-            var eq = equipPanel.slotAtScreen(mouseX, mouseY);
+        {
+            var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
             if (eq != null) {
                 boolean valid = isEquipSlotDropValid(dragged, eq.slotType());
                 eq.setHighlightState(valid
@@ -4005,27 +3646,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    private void quickMoveQuickUseToGrid(int index) {
-        InventoryItem item = quickUseItems[index];
-        if (item == null) return;
-        BackpackGridPanel grid = activeGrid();
-        if (grid == null) return;
-        var pos = grid.findFreeSpace(item);
-        if (pos != null) {
-            requestQuickUseSlot(
-                index,
-                null,
-                () -> {
-                    if (grid.canPlace(item, pos.row(), pos.col())) {
-                        grid.place(item, pos.row(), pos.col());
-                    } else {
-                        placeItemAnywhere(item);
-                    }
-                },
-                () -> com.bong.client.BongClient.LOGGER.warn(
-                    "[bong][inspect] authoritative quick-use clear rejected slot={}", index)
-            );
-        }
+    private void clearQuickUseSlot(int index) {
+        if (quickUseItems[index] == null) return;
+        requestQuickUseSlot(
+            index,
+            null,
+            () -> {},
+            () -> com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] authoritative quick-use clear rejected slot={}", index)
+        );
     }
 
     // ==================== Render ====================
@@ -4034,15 +3663,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         int windowMouseX = mouseX;
         int windowMouseY = mouseY;
-        if (UiWindowRuntime.manager().hitTest(mouseX, mouseY) != null) {
+        if (UiWindowRuntime.hit(mouseX, mouseY)) {
             mouseX = -1;
             mouseY = -1;
         }
         super.render(context, mouseX, mouseY, delta);
-        drawMultiCellItems(context);
-        drawPillMenuOverlay(context, mouseX, mouseY);
-        drawWeaponMenuOverlay(context, mouseX, mouseY);
-        drawSkillBarMenuOverlay(context, mouseX, mouseY);
         drawPendingMeridianPrompt(context);
 
         // Body inspect tooltip — drawn here to escape owo-lib component clipping
@@ -4063,47 +3688,58 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             matrices.pop();
         }
 
-        if (dragState.isDragging() && dragState.draggedItem() != null) {
-            InventoryItem item = dragState.draggedItem();
-            int cs = GridSlotComponent.CELL_SIZE;
-            int gw = item.gridWidth() * cs, gh = item.gridHeight() * cs;
-
-            var matrices = context.getMatrices();
-            matrices.push();
-            matrices.translate(0, 0, 200);
-
-            int fitSize = Math.min(gw, gh);
-            int fitX = mouseX - fitSize / 2, fitY = mouseY - fitSize / 2;
-
-            // P3 — 拖拽中的 vanilla 方块物品用原生方块图标跟随光标（与落点槽位图标一致）；
-            // 非 vanilla 物品走原扁平贴图 + 0.75 幽灵透明。
-            if (!BlockVanillaIconMap.drawVanillaIcon(context, item.itemId(), fitX, fitY, fitSize)) {
-                Identifier tex = GridSlotComponent.textureIdForItem(item);
-                RenderSystem.enableBlend();
-                RenderSystem.defaultBlendFunc();
-                RenderSystem.setShaderColor(1f, 1f, 1f, 0.75f);
-                matrices.push();
-                matrices.translate(fitX, fitY, 0);
-                matrices.scale((float) fitSize / ICON_SIZE, (float) fitSize / ICON_SIZE, 1f);
-                context.drawTexture(tex, 0, 0, ICON_SIZE, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-                matrices.pop();
-                RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-                RenderSystem.disableBlend();
-            }
-            matrices.pop();
-        }
-
-        if (draggedTechnique != null) {
-            drawTechniqueDragGhost(context, (int) techniqueDragX, (int) techniqueDragY);
-        }
-
-        // 左下角功法名：绑定功法图标都一样（缺专属贴图，全 fallback 同一张残卷），
-        // 拖拽中 / hover 已绑槽时在左下角标出名字以便分辨。
-        String cornerName = cornerTechniqueName(mouseX, mouseY);
-        if (cornerName != null) {
-            drawCornerTechniqueName(context, cornerName);
-        }
         UiWindowRuntime.renderWorkspace(context, windowMouseX, windowMouseY, delta);
+        mouseX = windowMouseX;
+        mouseY = windowMouseY;
+        context.getMatrices().push();
+        try {
+            context.getMatrices().translate(0, 0, UiWindowRuntime.overlayDepth());
+            drawPillMenuOverlay(context, mouseX, mouseY);
+            drawWeaponMenuOverlay(context, mouseX, mouseY);
+            drawSkillBarMenuOverlay(context, mouseX, mouseY);
+
+            if (dragState.isDragging() && dragState.draggedItem() != null) {
+                InventoryItem item = dragState.draggedItem();
+                int cs = GridSlotComponent.CELL_SIZE;
+                int gw = item.gridWidth() * cs, gh = item.gridHeight() * cs;
+
+                var matrices = context.getMatrices();
+                matrices.push();
+                matrices.translate(0, 0, 200);
+
+                int fitSize = Math.min(gw, gh);
+                int fitX = mouseX - fitSize / 2, fitY = mouseY - fitSize / 2;
+
+                // P3 — 拖拽中的 vanilla 方块物品用原生方块图标跟随光标（与落点槽位图标一致）；
+                // 非 vanilla 物品走原扁平贴图 + 0.75 幽灵透明。
+                if (!BlockVanillaIconMap.drawVanillaIcon(context, item.itemId(), fitX, fitY, fitSize)) {
+                    Identifier tex = GridSlotComponent.textureIdForItem(item);
+                    RenderSystem.enableBlend();
+                    RenderSystem.defaultBlendFunc();
+                    RenderSystem.setShaderColor(1f, 1f, 1f, 0.75f);
+                    matrices.push();
+                    matrices.translate(fitX, fitY, 0);
+                    matrices.scale((float) fitSize / ICON_SIZE, (float) fitSize / ICON_SIZE, 1f);
+                    context.drawTexture(tex, 0, 0, ICON_SIZE, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+                    matrices.pop();
+                    RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
+                    RenderSystem.disableBlend();
+                }
+                matrices.pop();
+            }
+
+            if (draggedTechnique != null) {
+                drawTechniqueDragGhost(context, (int) techniqueDragX, (int) techniqueDragY);
+            }
+
+            // 左下角功法名：绑定功法图标都一样（缺专属贴图，全 fallback 同一张残卷），
+            // 拖拽中 / hover 已绑槽时在左下角标出名字以便分辨。
+            String cornerName = cornerTechniqueName(mouseX, mouseY);
+            if (cornerName != null) {
+                drawCornerTechniqueName(context, cornerName);
+            }
+            context.draw();
+        } finally { context.getMatrices().pop(); }
     }
 
     @Override
@@ -4120,12 +3756,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     public boolean windowHostFailedForPreview() { return invalid; }
 
     public GridSlotComponent itemSlotForPreview(long instanceId) {
-        BackpackGridPanel grid = activeGrid();
-        if (grid == null) return null;
-        for (int row = 0; row < grid.rows(); row++) {
-            for (int col = 0; col < grid.cols(); col++) {
-                InventoryItem item = grid.itemAt(row, col);
-                if (item != null && item.instanceId() == instanceId) return grid.slotAt(row, col);
+        for (BackpackGridPanel grid : containerGrids) {
+            for (int row = 0; row < grid.rows(); row++) {
+                for (int col = 0; col < grid.cols(); col++) {
+                    InventoryItem item = grid.itemAt(row, col);
+                    if (item != null && item.instanceId() == instanceId) return grid.slotAt(row, col);
+                }
             }
         }
         return null;
@@ -4186,53 +3822,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         matrices.pop();
     }
 
-    private void drawMultiCellItems(DrawContext context) {
-        BackpackGridPanel grid = activeGrid();
-        if (grid == null) return;
-        for (var entry : grid.toGridEntries()) {
-            InventoryItem item = entry.item();
-            if (item.gridWidth() == 1 && item.gridHeight() == 1) continue;
-            if (dragState.isDragging() && dragState.draggedItem() == item) continue;
-
-            GridSlotComponent anchor = grid.slotAt(entry.row(), entry.col());
-            if (anchor == null) continue;
-
-            int px = anchor.x() + 2, py = anchor.y() + 2;
-            int pw = item.gridWidth() * GridSlotComponent.CELL_SIZE - 4;
-            int ph = item.gridHeight() * GridSlotComponent.CELL_SIZE - 4;
-            drawItemTextureRaw(context, item, px, py, pw, ph);
-            GridSlotComponent.drawItemOverlays(
-                context, item,
-                anchor.x(), anchor.y(),
-                item.gridWidth() * GridSlotComponent.CELL_SIZE,
-                item.gridHeight() * GridSlotComponent.CELL_SIZE
-            );
-        }
-    }
-
-    private static void drawItemTextureRaw(DrawContext ctx, InventoryItem item, int dx, int dy, int dw, int dh) {
-        if (item == null || item.isEmpty()) return;
-        int fitSize = Math.min(dw, dh);
-        int ox = (dw - fitSize) / 2, oy = (dh - fitSize) / 2;
-
-        // P3 — vanilla 方块物品走原生方块图标，与单格槽/HUD 一致；非 vanilla 回退扁平贴图。
-        if (BlockVanillaIconMap.drawVanillaIcon(ctx, item.itemId(), dx + ox, dy + oy, fitSize)) {
-            return;
-        }
-
-        Identifier tex = GridSlotComponent.textureIdForItem(item);
-
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.enableDepthTest();
-        var m = ctx.getMatrices();
-        m.push();
-        m.translate(dx + ox, dy + oy, 100);
-        m.scale((float) fitSize / ICON_SIZE, (float) fitSize / ICON_SIZE, 1f);
-        ctx.drawTexture(tex, 0, 0, ICON_SIZE, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        m.pop();
-        RenderSystem.disableBlend();
-    }
 
     private int pillMenuHeight() {
         return pillContextMenu == null ? 0 : PILL_MENU_PADDING * 2 + pillContextMenu.actions().size() * PILL_MENU_ROW_HEIGHT;
@@ -4477,92 +4066,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    // ==================== Worn container panel mount/unmount (P3) ============
-
-    /**
-     * plan-tarkov-backpack-v1 P3（交付物 #2/#3）—— 打开穿戴背包件的内含物视图。
-     *
-     * <p>由双击装备槽内的容器件触发。owner instance_id 来自被双击件，容器 id 约定为
-     * {@code pack_<instance_id>}（与 server {@code container_id_for_worn_pack} 一致）。已挂同一容器
-     * 则忽略；切换到另一个背包件则先卸旧再挂新。挂在 outerRow 的 discardStrip 之前（同 loot）。</p>
-     */
-    private void openWornContainerPanel(InventoryItem packItem, EquipSlotType slotType) {
-        if (packItem == null || root == null) return;
-        String containerId = "pack_" + packItem.instanceId();
-        // 已开则置顶（去重）；否则新建悬浮窗，初始坐标错开堆叠（占位策略，后续真机再调）。
-        int n = packWindows.size();
-        int anchorX = 8 + 16 * n;
-        int anchorY = 8 + 16 * n;
-        packWindows.open(containerId, this.model, anchorX, anchorY);
-    }
-
-    /** mouseClicked 顶部命中悬浮窗的三态结果。 */
-    private enum PackWindowClick {
-        /** 未命中任何悬浮窗 → 继续主 grid/equip 流程。 */
-        NONE,
-        /** 命中并已处理（关闭 / grid 拾取 / 空白置顶）→ 吞掉本次点击。 */
-        CONSUMED,
-        /** 命中标题栏（拖动起手）→ 已置顶，交回 owo 做 focus + 后续 onMouseDrag 移位。 */
-        RAISED
-    }
-
-    /**
-     * plan-tarkov-floating-windows：mouseClicked 顶部对悬浮窗的命中分流。逆序遍历（map 末尾=z 最上）：
-     * <ul>
-     *   <li>命中 ✕ → 关闭该窗（若正从它拖拽则先取消）→ CONSUMED；</li>
-     *   <li>左键命中 grid → 从该窗拾取物品（拖出）+ 置顶 → CONSUMED；</li>
-     *   <li>命中标题栏 / 非 grid 空白 → 置顶 → RAISED（交回 owo 处理拖动）。</li>
-     * </ul>
-     * 命中即停（不穿透到主 grid）。
-     */
-    private PackWindowClick handlePackWindowMouseDown(double mouseX, double mouseY, int button) {
-        var wins = packWindows.ordered();
-        for (int i = wins.size() - 1; i >= 0; i--) {
-            var win = wins.get(i);
-            if (win.isClosed() || !win.isInBoundingBox(mouseX, mouseY)) {
-                continue;
-            }
-            // ✕ 关闭按钮（任意键）。
-            if (win.isOverCloseButton(mouseX, mouseY)) {
-                if (dragState.isDragging()
-                        && win.containerId().equals(dragState.sourceContainerId())) {
-                    dragState.cancel();
-                    clearAllHighlights();
-                }
-                packWindows.close(win.containerId());
-                return PackWindowClick.CONSUMED;
-            }
-            // 左键命中内含物 grid → 拾取（拖出），随后置顶。
-            if (button == 1 && win.grid() != null) {
-                var pos = win.grid().screenToGrid(mouseX, mouseY);
-                InventoryItem item = pos == null ? null : win.grid().itemAt(pos.row(), pos.col());
-                if (item != null) {
-                    if (InventoryEquipRules.isContainer(item)) openWornContainerPanel(item, null);
-                    else if (!openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
-                        openSkillBarContextMenu(item, (int) mouseX, (int) mouseY);
-                    }
-                    return PackWindowClick.CONSUMED;
-                }
-            }
-            if (button == 0) {
-                BackpackGridPanel wg = win.grid();
-                if (wg != null && wg.containsPoint(mouseX, mouseY)) {
-                    var pos = wg.screenToGrid(mouseX, mouseY);
-                    if (pos != null) {
-                        InventoryItem item = wg.itemAt(pos.row(), pos.col());
-                        if (item != null && dragState.phase() == DragState.Phase.IDLE) {
-                            beginGridDrag(wg, item);
-                        }
-                    }
-                    packWindows.raise(win);
-                    return PackWindowClick.CONSUMED; // grid 区命中即吞，不穿透主 grid。
-                }
-            }
-            // 标题栏 / 非 grid 空白 → 置顶后交回 owo（focus → 后续 onMouseDrag 拖动窗口）。
-            packWindows.raise(win);
-            return PackWindowClick.RAISED;
-        }
-        return PackWindowClick.NONE;
+    /** 右键容器物品打开内含物；与服务端 container_id_for_worn_pack 使用同一身份。 */
+    private void openContainerItem(InventoryItem packItem) {
+        if (packItem != null) UiWindowRuntime.openContainer("pack_" + packItem.instanceId());
     }
 
     // ==================== Block picker panel mount/unmount (P5 §8.1#5) ====

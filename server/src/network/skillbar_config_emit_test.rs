@@ -45,6 +45,7 @@ fn empty_inventory() -> PlayerInventory {
 
 fn template(id: &str, display_name: &str) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.to_string(),
         display_name: display_name.to_string(),
         category: ItemCategory::Pill,

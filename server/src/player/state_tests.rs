@@ -1891,6 +1891,7 @@ fn transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload() {
 
     // 合成 registry：一个 worn chest pack 模板 + 一个可移动 misc 内含物模板。
     let pack_template = ItemTemplate {
+        quick_use: false,
         id: "tribulation_chest_pack".to_string(),
         display_name: "夺魂背包".to_string(),
         category: ItemCategory::Container,
@@ -2033,11 +2034,11 @@ fn transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload() {
 #[test]
 fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
     let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-        "quick_slots": ["tea", null]
+        "quick_slots": [42, null]
     }))
     .expect("legacy prefs should decode with default skill_bar");
 
-    assert_eq!(prefs.quick_slots[0], Some("tea".to_string()));
+    assert_eq!(prefs.quick_slots[0], Some(42));
     assert!(prefs.skill_configs.is_empty());
     assert!(prefs
         .skill_bar
@@ -2092,7 +2093,7 @@ fn ui_prefs_sanitizes_legacy_dedicated_input_bindings() {
 #[test]
 fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
     let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-        "quick_slots": ["tea", null],
+        "quick_slots": [42, null],
         "skill_bar": [
             {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
             {"kind":"item","template_id":"tea"}

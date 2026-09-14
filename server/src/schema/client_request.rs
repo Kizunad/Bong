@@ -463,12 +463,12 @@ pub enum ClientRequestV1 {
         slot: u8,
     },
     /// plan-HUD-v1 §10 / §11.3 InspectScreen 内拖拽配置 F1-F9 槽。
-    /// `item_id` 为 None 表示清空槽位。
+    /// `instance_id` 为 None 表示清空使用链接。
     QuickSlotBind {
         v: u8,
         #[serde(deserialize_with = "deserialize_slot_index")]
         slot: u8,
-        item_id: Option<String>,
+        instance_id: Option<u64>,
         #[serde(default)]
         request_id: String,
     },

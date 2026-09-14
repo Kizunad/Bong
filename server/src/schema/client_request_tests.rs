@@ -670,27 +670,28 @@ fn use_quick_slot_roundtrip() {
 
 #[test]
 fn quick_slot_bind_roundtrip_and_clear() {
-    let bind_json = r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"kai_mai_pill","request_id":"bind-1"}"#;
+    let bind_json =
+        r#"{"type":"quick_slot_bind","v":1,"slot":1,"instance_id":42,"request_id":"bind-1"}"#;
     let req: ClientRequestV1 = serde_json::from_str(bind_json).unwrap();
     assert!(matches!(
         req,
         ClientRequestV1::QuickSlotBind {
             v: 1,
             slot: 1,
-            item_id: Some(ref item_id),
+            instance_id: Some(42),
             ref request_id,
-        } if item_id == "kai_mai_pill" && request_id == "bind-1"
+        } if request_id == "bind-1"
     ));
 
     let clear_json =
-        r#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":null,"request_id":"clear-1"}"#;
+        r#"{"type":"quick_slot_bind","v":1,"slot":1,"instance_id":null,"request_id":"clear-1"}"#;
     let req: ClientRequestV1 = serde_json::from_str(clear_json).unwrap();
     assert!(matches!(
         req,
         ClientRequestV1::QuickSlotBind {
             v: 1,
             slot: 1,
-            item_id: None,
+            instance_id: None,
             ref request_id,
         } if request_id == "clear-1"
     ));

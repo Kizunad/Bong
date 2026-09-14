@@ -1,6 +1,7 @@
 package com.bong.client.combat;
 
 import java.util.Arrays;
+import java.util.Set;
 
 /**
  * Immutable snapshot of the F-key quick-use slot bindings.
@@ -8,14 +9,22 @@ import java.util.Arrays;
 public final class QuickSlotConfig {
     /** 默认两格；后续由背包/装备扩展，最多 10 格。 */
     public static final int SLOT_COUNT = 2;
-    private static final QuickSlotConfig EMPTY = new QuickSlotConfig(new QuickSlotEntry[SLOT_COUNT], new long[SLOT_COUNT]);
+    private static final QuickSlotConfig EMPTY = new QuickSlotConfig(new QuickSlotEntry[SLOT_COUNT], new long[SLOT_COUNT], Set.of());
 
     private final QuickSlotEntry[] slots;
     private final long[] cooldownUntilMs;
+    private final Set<String> eligibleItemIds;
 
-    private QuickSlotConfig(QuickSlotEntry[] slots, long[] cooldownUntilMs) {
+    private QuickSlotConfig(QuickSlotEntry[] slots, long[] cooldownUntilMs, Set<String> eligibleItemIds) {
         this.slots = slots;
         this.cooldownUntilMs = cooldownUntilMs;
+        this.eligibleItemIds = Set.copyOf(eligibleItemIds);
+    }
+
+    public boolean allowsItem(String itemId) { return eligibleItemIds.contains(itemId); }
+
+    public QuickSlotConfig withEligibleItems(Set<String> itemIds) {
+        return new QuickSlotConfig(slots, cooldownUntilMs, itemIds);
     }
 
     public static boolean isAvailable(int slot) {
@@ -37,7 +46,7 @@ public final class QuickSlotConfig {
             int n = Math.min(SLOT_COUNT, cooldownUntilMs.length);
             System.arraycopy(cooldownUntilMs, 0, cds, 0, n);
         }
-        return new QuickSlotConfig(copy, cds);
+        return new QuickSlotConfig(copy, cds, Set.of());
     }
 
     public QuickSlotEntry slot(int index) {
@@ -68,13 +77,13 @@ public final class QuickSlotConfig {
         if (index < 0 || index >= SLOT_COUNT) return this;
         QuickSlotEntry[] copy = Arrays.copyOf(slots, SLOT_COUNT);
         copy[index] = entry;
-        return new QuickSlotConfig(copy, Arrays.copyOf(cooldownUntilMs, SLOT_COUNT));
+        return new QuickSlotConfig(copy, Arrays.copyOf(cooldownUntilMs, SLOT_COUNT), eligibleItemIds);
     }
 
     public QuickSlotConfig withCooldownUntil(int index, long untilMs) {
         if (index < 0 || index >= SLOT_COUNT) return this;
         long[] copy = Arrays.copyOf(cooldownUntilMs, SLOT_COUNT);
         copy[index] = Math.max(copy[index], untilMs);
-        return new QuickSlotConfig(Arrays.copyOf(slots, SLOT_COUNT), copy);
+        return new QuickSlotConfig(Arrays.copyOf(slots, SLOT_COUNT), copy, eligibleItemIds);
     }
 }

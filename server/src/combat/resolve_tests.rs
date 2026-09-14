@@ -478,6 +478,7 @@ fn weapon_test_registry() -> ItemRegistry {
         (
             "iron_sword".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
@@ -515,6 +516,7 @@ fn weapon_test_registry() -> ItemRegistry {
         (
             "strong_sword".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "strong_sword".to_string(),
                 display_name: "强剑".to_string(),
                 category: ItemCategory::Weapon,
@@ -552,6 +554,7 @@ fn weapon_test_registry() -> ItemRegistry {
         (
             "glass_sword".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "glass_sword".to_string(),
                 display_name: "玻璃剑".to_string(),
                 category: ItemCategory::Weapon,
@@ -7500,6 +7503,7 @@ fn make_shield_durability_app() -> App {
         (
             "wooden_shield".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "wooden_shield".to_string(),
                 display_name: "木盾".to_string(),
                 category: ItemCategory::Shield,
@@ -7535,6 +7539,7 @@ fn make_shield_durability_app() -> App {
         (
             "bone_shield".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "bone_shield".to_string(),
                 display_name: "骨盾".to_string(),
                 category: ItemCategory::Shield,

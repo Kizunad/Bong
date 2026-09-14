@@ -363,6 +363,7 @@ mod tests {
 
     fn base_template(id: &str, category: ItemCategory) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: id.to_string(),
             display_name: id.to_string(),
             category,

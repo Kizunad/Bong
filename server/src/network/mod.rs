@@ -1053,6 +1053,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
                 .after(audio_trigger::tick_audio_dedup_clock),
             // After cast tick (which sets cooldown) so client sees fresh state same frame.
             quickslot_config_emit::emit_quickslot_config_payloads
+                .after(client_request_handler::handle_client_request_payloads)
                 .after(crate::combat::yidao::complete_yidao_casts),
             skillbar_config_emit::emit_skillbar_config_payloads
                 .after(crate::combat::yidao::complete_yidao_casts),

@@ -151,6 +151,8 @@ pub struct ItemTemplate {
     pub spirit_quality_initial: f64,
     pub description: String,
     pub effect: Option<ItemEffect>,
+    /// 仅显式开放的无需选取目标的消耗品可以绑定快捷使用键。
+    pub quick_use: bool,
     /// plan-HUD-v1 §10.4 / §4.1 cast 持续时间（ms）。
     pub cast_duration_ms: u32,
     /// plan-HUD-v1 §4.4 完成后冷却（ms）。中断短冷却另算固定值。
@@ -186,6 +188,24 @@ pub struct ItemTemplate {
 }
 
 impl ItemTemplate {
+    /// 快捷使用只允许能在玩家自身上确定目标的消耗品；需要选择经脉、
+    /// 身体部位、方块位置或其它目标的物品必须走完整物品菜单。
+    pub fn is_quick_use_eligible(&self) -> bool {
+        self.quick_use
+            && matches!(
+                self.effect.as_ref(),
+                Some(ItemEffect::BreakthroughBonus { .. })
+                    | Some(ItemEffect::QiRecovery { .. })
+                    | Some(ItemEffect::ContaminationCleanse { .. })
+                    | Some(ItemEffect::ComposureRestore { .. })
+                    | Some(ItemEffect::WoundHeal { target: None, .. })
+                    | Some(ItemEffect::LifespanExtension { .. })
+                    | Some(ItemEffect::AntiSpiritPressure { .. })
+                    | Some(ItemEffect::PoisonPill { .. })
+                    | Some(ItemEffect::FoodRegen { .. })
+            )
+    }
+
     /// 测试装配用最小模板（`Misc` 类、1×1、`wearer_race = Any`），供跨模块单测
     /// （如 `network::race_gate_meta_emit`）构造 `ItemRegistry` 而无需手抄全字段。
     /// 仿 `ItemRegistry::from_map` 的 `#[doc(hidden)] pub`——非生产 API，生产走
@@ -205,6 +225,7 @@ impl ItemTemplate {
             spirit_quality_initial: 0.0,
             description: String::new(),
             effect: None,
+            quick_use: false,
             cast_duration_ms: DEFAULT_CAST_DURATION_MS,
             cooldown_ms: DEFAULT_COOLDOWN_MS,
             weapon_spec: None,
@@ -1615,6 +1636,7 @@ fn vanilla_block_template(block_id: &str) -> ItemTemplate {
         spirit_quality_initial: 0.0,
         description: format!("vanilla {block_id}（dev-only 画廊方块）"),
         effect: None,
+        quick_use: false,
         cast_duration_ms: DEFAULT_CAST_DURATION_MS,
         cooldown_ms: DEFAULT_COOLDOWN_MS,
         weapon_spec: None,
@@ -2358,6 +2380,8 @@ struct ItemTemplateToml {
     #[serde(default)]
     max_stack_count: Option<u32>,
     effect: Option<ItemEffectToml>,
+    #[serde(default)]
+    quick_use: bool,
     /// 缺省 → DEFAULT_CAST_DURATION_MS。
     #[serde(default)]
     cast_duration_ms: Option<u32>,
@@ -2832,6 +2856,7 @@ impl ItemTemplateToml {
             spirit_quality_initial: self.spirit_quality_initial,
             description,
             effect,
+            quick_use: self.quick_use,
             cast_duration_ms: self.cast_duration_ms.unwrap_or(DEFAULT_CAST_DURATION_MS),
             cooldown_ms: self.cooldown_ms.unwrap_or(DEFAULT_COOLDOWN_MS),
             weapon_spec,

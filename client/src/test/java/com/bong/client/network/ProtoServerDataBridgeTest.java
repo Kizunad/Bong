@@ -1138,10 +1138,12 @@ class ProtoServerDataBridgeTest {
 
     @Test
     void quickSlotConfigUnwrapsEntryAndNullifiesEmpty() {
-        Envelope.QuickSlotConfig.Builder qsc = Envelope.QuickSlotConfig.newBuilder();
+        Envelope.QuickSlotConfig.Builder qsc = Envelope.QuickSlotConfig.newBuilder().addEligibleItemIds("healing_pill");
         // slot 0: filled
         qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder()
                 .setEntry(Envelope.QuickSlotEntry.newBuilder()
+                        .setInstanceId(4_294_967_338L)
+                        .setStackCount(2)
                         .setItemId("healing_pill")
                         .setDisplayName("灵息丸")
                         .setCastDurationMs(500)));
@@ -1178,6 +1180,22 @@ class ProtoServerDataBridgeTest {
         for (int i = 1; i < slots.size(); i++) {
             assertTrue(slots.get(i).isJsonNull(),
                     "empty slot " + i + " should be null (not empty object {})");
+        }
+
+        try {
+            var router = ServerDataRouter.createDefault();
+            assertTrue(router.route(json.toString(), 0).isHandled());
+            var config = com.bong.client.combat.QuickUseSlotStore.snapshot();
+            assertEquals(4_294_967_338L, config.slot(0).instanceId());
+            assertEquals(2, config.slot(0).stackCount());
+            assertTrue(config.allowsItem("healing_pill"));
+            qsc.setSlots(0, Envelope.OptionalQuickSlotEntry.newBuilder());
+            var empty = Envelope.ServerDataEnvelope.newBuilder().setQuickSlotConfig(qsc).build();
+            assertTrue(router.route(bridgeAndParse(empty).toString(), 0).isHandled());
+            assertNull(com.bong.client.combat.QuickUseSlotStore.snapshot().slot(0),
+                "服务器移除最后一份实例后必须清空 HUD Store");
+        } finally {
+            com.bong.client.combat.QuickUseSlotStore.resetForTests();
         }
     }
 

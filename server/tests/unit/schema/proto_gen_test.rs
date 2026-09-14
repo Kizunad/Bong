@@ -4225,9 +4225,12 @@ mod tests {
 
     fn quick_slot_config_roundtrip_mixed_slots() {
         let msg = QuickSlotConfig {
+            eligible_item_ids: vec![],
             slots: vec![
                 OptionalQuickSlotEntry {
                     entry: Some(QuickSlotEntry {
+                        instance_id: 42,
+                        stack_count: 2,
                         item_id: "kai_mai_pill".to_string(),
                         display_name: "开脉丹".to_string(),
                         cast_duration_ms: 1500,
@@ -5166,7 +5169,7 @@ mod tests {
             payload: Some(client_request_envelope::Payload::QuickSlotBind(
                 QuickSlotBind {
                     slot: 1,
-                    item_id: Some("kai_mai_pill".to_string()),
+                    instance_id: Some(42),
                     request_id: "bind-1".to_string(),
                 },
             )),
@@ -5177,7 +5180,7 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
                 assert_eq!(b.slot, 1);
-                assert_eq!(b.item_id.as_deref(), Some("kai_mai_pill"));
+                assert_eq!(b.instance_id, Some(42));
                 assert_eq!(b.request_id, "bind-1");
             }
             other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
@@ -5189,7 +5192,7 @@ mod tests {
             payload: Some(client_request_envelope::Payload::QuickSlotBind(
                 QuickSlotBind {
                     slot: 5,
-                    item_id: None,
+                    instance_id: None,
                     request_id: "clear-1".to_string(),
                 },
             )),
@@ -5200,7 +5203,7 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
                 assert_eq!(b.slot, 5);
-                assert!(b.item_id.is_none(), "清空槽位 item_id 应为 None");
+                assert!(b.instance_id.is_none(), "清空链接 instance_id 应为 None");
                 assert_eq!(b.request_id, "clear-1");
             }
             other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
@@ -5435,6 +5438,7 @@ mod tests {
             ),
             (
                 server_data_envelope::Payload::QuickSlotConfig(QuickSlotConfig {
+                    eligible_item_ids: vec![],
                     slots: vec![],
                     cooldown_until_ms: vec![],
                     ack_request_id: None,
@@ -5700,7 +5704,7 @@ mod tests {
             (
                 client_request_envelope::Payload::QuickSlotBind(QuickSlotBind {
                     slot: 0,
-                    item_id: None,
+                    instance_id: None,
                     request_id: "pin-bind".to_string(),
                 }),
                 "QuickSlotBind",

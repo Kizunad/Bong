@@ -1107,6 +1107,7 @@ mod tests {
         templates.insert(
             SPIRIT_NICHE_BASE_TEMPLATE_ID.to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: SPIRIT_NICHE_BASE_TEMPLATE_ID.to_string(),
                 display_name: "灵龛基座".to_string(),
                 category: ItemCategory::Misc,
@@ -1145,6 +1146,7 @@ mod tests {
         templates.insert(
             MERIDIAN_PRIMER_TEMPLATE_ID.to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: MERIDIAN_PRIMER_TEMPLATE_ID.to_string(),
                 display_name: "《经脉浅述·残卷》".to_string(),
                 category: ItemCategory::Scroll,

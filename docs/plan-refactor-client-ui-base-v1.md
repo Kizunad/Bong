@@ -2,7 +2,7 @@
 
 > 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：消费现有 Store、semantic surface 和 typed intent，把 Inspect、锻造、手搓、工作台制作等功能接入全客户端窗口管理器，支持独立多窗、最小化、拖动、输入尺寸、HUD 固定和可更换背景；窗口视图使用本地 owo XML，SVG / PNG 与 Minecraft GUI 承担表现，不改变 server/schema/wire 和领域权限规则。
 >
-> 阶段：P0 ✅ 2026-07-30；P0R ✅ 2026-08-25；P1 ✅ 2026-08-26；P2 ✅ 2026-08-27；P3 ✅ 2026-08-30；P4 ⏳（P4a 首窗实现、完整构建与原生预览已通过，联网及 HUD 验收待补）；P5/P6/P7 ⬜。2026-09-12 尚未完成 P4a 全部验收。
+> 阶段：P0 ✅ 2026-07-30；P0R ✅ 2026-08-25；P1 ✅ 2026-08-26；P2 ✅ 2026-08-27；P3 ✅ 2026-08-30；P4 ⏳（P4a 首窗已提交；P4b 窗口外观获用户认可，连续动画与联网验收待补）；P5 ⏳（P5a 容器子批次获用户认可，装备/快捷槽已迁移，待外观与联网验收）；P6 ⏳（按用户要求先接入既有 HUD 的工作台编辑，P6a 与旧绘制路径收口未完成）；P7 ⬜。2026-09-13 尚未完成 P4/P5 全部验收。
 
 ## 2026-09-12 范围修订：全客户端窗口体系
 
@@ -58,7 +58,7 @@
 | `combat/screen/TerminateScreen.java` | 死亡终结链路 | SYSTEM；保持高于普通窗口的优先级；P6a |
 | `menu/MainMenuScreen.java` | 主菜单 Mixin / 登录入口 | SYSTEM；连接外不恢复业务窗口；P6a |
 
-`cultivation/TechniqueScrollReadScreen.java` 是 toast/text helper，随卷轴调用方核验，不重复注册为窗口。原版暂停、聊天、容器、断线与加载界面仅作为互操作边界，不在本计划内重画。现有 MiniBody/双手/Dash/状态效果/采集等 HUD 不自动变成窗口；新固定窗口接入同一 HUD 可见性和绘制协调，既有 HUD 的后续 SVG 迁移仍归 P6b。
+`cultivation/TechniqueScrollReadScreen.java` 是 toast/text helper，随卷轴调用方核验，不重复注册为窗口。原版暂停、聊天、容器、断线与加载界面仅作为互操作边界，不在本计划内重画。按 2026-09-13 用户补充要求，现有 MiniBody/双手/Dash/状态效果/采集等 HUD 可从工作台底部列表打开编辑窗，自定义位置、尺寸与显隐；游戏内保持原来的无边框呈现。全屏染色、边缘效果与 Toast 不作为可移动面板。新固定窗口接入同一 HUD 可见性和绘制协调，剩余 SVG 迁移及直接 overlay 收口仍归 P6b。
 
 ### 已知迁移风险与依赖
 
@@ -390,7 +390,7 @@ server/agent **不得**下发 owo XML、HTML、CSS、JavaScript、任意 URL、D
 
 ### 4.9 全客户端窗口契约（2026-09-12）
 
-以下新增名称为**规划落点，当前尚未实现**。优先复用已有 contract，不为每个操作新增抽象层。
+以下为窗口目标契约，具体已实现部分及待验项见 P4a/P4b 工作记录。优先复用已有 contract，不为每个操作新增抽象层。
 
 #### Owner、身份与状态读取
 
@@ -419,7 +419,7 @@ SYSTEM 界面不能被最小化或固定绕过。死亡/终焉抢占会遮挡固
 - 游戏 HUD 只展示固定窗，不获取鼠标或文本焦点；玩家打开 Inspect 工作台后才能拖动、输入尺寸、编辑或执行窗口按钮。切换时清理按键积压，不回放旧 hotkey，不影响正常视角/移动。工艺节拍等领域输入只能由当前有效且允许输入的窗口 owner 消费。
 - Esc 先取消当前尺寸草稿、拖拽或顶层弹层，再退出工作台；文本输入获得焦点时 E 作为文本处理，不能触发关窗。最小化恢复条容纳不下时滚动，保持所有恢复入口可达，不压缩标题字号。
 - 跨窗拖放携带既有 `instance_id`、来源容器/槽位和目的地 intent；焦点变化不改变物品 identity。目标只接受本领域已支持的操作，不能为视觉拖放发明新的 wire。拖动中容器消失、会话过期或被系统抢占时取消本地拖拽，禁止向新目标提交旧请求。
-- 标题栏提供最小化、固定、关闭图标与 tooltip；尺寸使用相邻的宽/高数值输入，形式 `n × m`。单位为 GUI logical px，含标题栏的目标外框尺寸；Enter/确认提交，Esc 回退草稿，拒绝空值、非有限/非正/溢出输入，按最小尺寸与当前可用 viewport 限制显示有效结果。
+- 标题栏提供尺寸、最小化、固定、关闭图标与 tooltip；宽/高数值输入平时隐藏，点击尺寸图标后在标题栏下方展开，形式 `n × m`。单位为 GUI logical px，含标题栏的目标外框尺寸；Enter/确认提交并收起，Esc 回退草稿并收起，再点尺寸图标可收起；最小化或切换 HUD 时收起并释放输入焦点。拒绝空值、非有限/非正/溢出输入，按最小尺寸与当前可用 viewport 限制显示有效结果。
 - 依据窗口自己的**内容区宽高**选择 compact/regular/wide 模板，而不是拿整屏宽度决定每个窗布局。空间不足优先换行、堆叠、滚动；图标/人体保持宽高比，文字不按窗口宽度连续缩小。极小 viewport 下允许内容滚动，但标题栏和关闭/恢复入口必须可达。
 - 位置和期望尺寸与当帧动画矩形分开；屏幕/GUI scale 改变时将有效窗口钳回可见区，不永久覆写玩家期望尺寸。拖动直接跟随指针，不叠加有延迟的平滑滤波；命中测试与当帧可见 transform 一致。
 
@@ -530,9 +530,9 @@ Store / server snapshot
 - ✅ 2026-08-26 **P1 core contract + fake/headless projection**：落地 `ui/contract/**`、reconciler、scope、intent result、bootstrap graph、`UiViewport`/`UiLayoutPolicy`；提供不依赖渲染器的 `UiSurfaceProjection`/`UiDriver` fake 和 `StoreUiStateSource`；contract、intent、state、headless 包均未依赖 owo、vanilla widget、Minecraft 或具体 UI 库。
 - ✅ 2026-08-27 **P2 owo XML adapter + bootstrap reference slice**：唯一 owo XML host、Craft wide/compact 本地模板、host 生命周期、分阶段 bootstrap 和真实 Fabric/owo 截图/交互门均已落地；Store/Intent 解耦留给 P3。
 - ✅ 2026-08-30 **P3 Store/Intent 边界迁移批次 A**：用 semantic surface + 本地 owo XML template 接通同一 controller/view-model/typed intent，再迁移 `AlchemyScreen`、`CraftScreen`、`TradeOfferScreen`、`LootContainerScreen` 及其 panel；UI 不再直接引用 sender/handler；bot 用同一 action id 完成 roundtrip；保留现有 wire 与 server authoritative semantics，wire 形状变更按 R6/schema amendment 原子接入。
-- ⏳ **P4 公共窗口基础与首窗**：已有 XML/SVG/parser/backend/open policy 基础；P4a 窗口 identity/scope/input/布局与物品详情窗 ⏳，P4b 最小化/HUD 固定/尺寸输入/动画/背景/偏好 ⬜。
-- ⬜ **P5 功能窗口分批迁移**：P5a Inspect 工作台＋装备/背包/跨窗拖放；P5b 修仙/技艺/功法/配置；P5c 手搓/工作台制作/锻造；P5d 炼丹/养护/布阵等工位；P5e 搜刮/NPC/交易/阅读等交互。每批同时迁移真实入口与关闭语义。
-- ⬜ **P6 受控界面、HUD 与 Bootstrap 收口**：P6a offer/系统界面/raw XML 依赖和全局开窗仲裁；P6b 固定窗 HUD 协调、剩余 SVG layer 和旧路径删除；保留 exact offer settlement、权威 combat snapshot 与 R2/R6 ownership。
+- ⏳ **P4 公共窗口基础与首窗**：已有 XML/SVG/parser/backend/open policy 基础；P4a 窗口 identity/scope/input/布局与物品详情窗 ⏳，P4b 最小化/HUD 固定/尺寸输入/动画/背景/偏好 ⏳。
+- ⏳ **P5 功能窗口分批迁移**：P5a 已迁移背包/容器、装备/快捷槽与跨窗拖放，待本批完整验收；P5b 修仙/技艺/功法/配置；P5c 手搓/工作台制作/锻造；P5d 炼丹/养护/布阵等工位；P5e 搜刮/NPC/交易/阅读等交互。每批同时迁移真实入口与关闭语义。
+- ⏳ **P6 受控界面、HUD 与 Bootstrap 收口**：先按用户要求接入既有 HUD 布局编辑；P6a offer/系统界面/raw XML 依赖和全局开窗仲裁未开始，P6b 剩余 SVG layer 和旧路径删除待续；保留 exact offer settlement、权威 combat snapshot 与 R2/R6 ownership。
 - ⬜ **P7 全量验收 + 归档**：逐项核对范围表及运行时入口；必要逻辑测试、Java 17 门禁、真实窗口矩阵、受影响 wire smoke 和 reconnect 通过；未接线项有明确处理结果，旧窗口管理器和退役 Screen 路径删除后补 Finish Evidence。
 
 ## 7. 分阶段交付物与验收抓手
@@ -599,13 +599,13 @@ Store / server snapshot
 
 - **P4a ⏳ 模块与交付**：`ui/window/{UiWindowManager,UiWindowDefinition}`、owo XML 窗口内容 adapter、工作台宿主与 `UiBootstrapRegistry` 登记；将 `inspect/ItemInspectScreen` 迁为首窗，物品统一左键双击查看、右键使用。冻结 key/重复打开/独立 scope/顶层命中/尺寸测量/窗口关闭语义。已有 `UiScreenController`、`UiStateBinder`、`OwoXmlScreenHost` 继续复用，不增加并列 Screen 框架。
 - **P4a 真实证明**：在真实 Fabric/owo 中完成打开、置顶、拖动与关闭；证明 XML 内容可以由工作台和 `currentScreen == null` 时的 GUI adapter 呈现，无第二套 state source。不能仅用 fake driver 或截图贴片宣称 HUD 窗口可行。旧 Inspect 功能只允许在逐域迁移期继续使用，P5a 删除替换后的入口。
-- **P4b ⬜ 模块与交付**：最小化恢复条、固定图标、宽高输入、动画、背景选择/本地图片导入、`WindowLayoutPreferenceStore`；按 §4.9 实现，首窗同时用于验证工作台/HUD 转换。背景 PNG 与窗口框架跟随本批交付，执行三轮视觉打磨，Round 2 必须给用户看接触表。
+- **P4b ⏳ 模块与交付**：最小化恢复条、固定图标、宽高输入、动画、背景选择/本地图片导入、`WindowLayoutPreferenceStore`；按 §4.9 实现，首窗同时用于验证工作台/HUD 转换。背景 PNG 与窗口框架跟随本批交付，执行三轮视觉打磨，Round 2 必须给用户看接触表。
 - **必要逻辑测试**：同 identity 重开不复制资源；最小化/固定/宿主切换不结束业务 scope；明确关闭/失效后动作不可执行、迟到回调不复活旧实例；重叠命中与捕获取消；非法尺寸和坏配置有可用回退。以业务动作与状态结果断言，不测试私有字段数、每帧坐标、固定 easing 时长或配置 JSON 字段顺序。
 - **前置与边界**：检查现有 SVG/XML 与 `ScreenOpenPolicy` 实现，不重复实现已完成 vertical slice；native parser 独立交付。R6 receive boundary 不重复 marshal，R2 仍拥有 Store 的断线清理。
 
 #### P4a 工作记录（2026-09-12，未验收）
 
-- 规划 commit：`d791995c5`。首窗实现位于 `r7-svg-batch-1` 工作区，用户已确认本轮详情窗口并授权提交；原 `r7-window-core` 草稿保留。
+- 规划 commit：`d791995c5`。首窗实现 commit：`2c9bb04eb`（2026-09-12）；用户确认详情窗口后授权提交并继续下一阶段，原 `r7-window-core` 草稿保留。
 - 代码：`ui/window/{UiWindowDefinition,UiWindowManager,UiWindowRuntime}.java`、`ui/adapter/owo/OwoXmlWindowContentAdapter.java`；`ItemInspectScreen` 退役为 `inspect/{ItemInspectContent,ItemInspectWindows}.java`，左键双击在既有 `InspectScreen` 中打开独立 XML 窗口，不再替换 Screen。窗口 scope 与宿主关闭分离，明确关窗、物品失效、连接/世界切换才清理。
 - 状态读取：全部物品窗共享库存和当前外部容器的 `UiStateSource`，每个客户端 tick 读取一次当前快照；XML 和 HUD 不创建库存订阅。外部容器会话结束后详情失效。首窗仅显示详情，无新增业务 action。窗口 generation 只管理本地 UI identity，不改 R2/R6 token。
 - 新增用户范围：`inspect/{ItemInspectModel,ItemModelPreviewComponent}.java` 复用武器/工具/盾、方块、护甲与背包现有模型注册；有模型时显示 `3D`/`PNG` 切换。模型按包围盒居中等比显示，区域内按住左/右键反向连续旋转，释放、离开区域、失焦或退出宿主停止。属性刷新保留当前视图与角度，不新增资产映射或业务请求。
@@ -616,13 +616,27 @@ Store / server snapshot
 - 预览入口：`UiWindowPreviewScene` 与 `client/window-ui-preview.json`，最低/奇数/宽屏三个 viewport，另含腿甲、背包、方块模型场景；覆盖两窗去重置顶、真实鼠标拖动、非零坐标关闭。`UiPreviewScene.prepareScreenshot` 在等待阶段前完成输入，后续正常帧才截图。Windows Java 17 原生 Fabric jar 预览已成功运行，不走 WSLg/HTML；临时启动参数与截图位于 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/`，不改正常启动器。
 - 构建验证：解除环境限制后，以 Java 17 在 client 执行 `../scripts/build-token.sh gradle test build --offline` 通过，5134 条 JUnit、3 条 Fabric GameTest，无失败。仅新增窗口状态与物品失效的必要逻辑测试；原详情测试随内容类迁名，旧 Screen 转场登记断言随退役移除，未增加截图像素或动画常数单测。
 - 本轮反馈修订验证：预览夹具改为容纳真实 TOML 尺寸后，以 Java 17 完整门禁再次通过，5118 条 JUnit、3 条 GameTest，无失败；Windows 原生 `item-windows-check-20260912-204442` 记录 `status=passed / completed=6`。场景通过真实 `Screen` 输入验证悬停不重排、双击无库存请求、关闭后重开、拖放取消回源；截图留在该输出目录。本轮首窗视觉经用户确认，P4b 背景和窗口体验仍需单独验收。
-- 待验：连接场景下的物品失效、重连与 `currentScreen == null` HUD 绘制尚未完成实机验收。`UiWindowRuntime.renderHud` 仅提供复用 adapter 的入口，P4b 尚未登记固定窗的生产 HUD 回调。不得把当前记录视为 P4a 完成或整个 R7 的 Finish Evidence。
+- 待验：连接场景下的物品失效和重连尚未完成实机验收。无 Screen adapter 呈现能力已在 P4b 原生 fixture 证明；该证明不等于联网游戏 HUD 的完整验收。不得把当前记录视为 P4a 完成或整个 R7 的 Finish Evidence。
+
+#### P4b 工作记录（2026-09-13，外观已认可，连续动画与联网待验）
+
+- 本轮用户授权先提交 P4a 已验证部分，再在同一工作区推进 P4b；阶段依赖保持，PR/review/合入门尚未执行。
+- 窗口状态：`UiWindowManager.minimize/restore/pin/resize` 保留 scope；最小化撤销捕获与命中，显式同 key 打开恢复并置顶。期望尺寸独立保存，viewport 缩小只钳制有效外框；窗口底部留出 28 logical px 恢复条。
+- 表现：`OwoXmlWindowContentAdapter` + `window-frame.xml` 提供最小化、锁定、关闭、宽高输入；Enter 提交，非法输入保留旧布局，Esc 取消草稿。锁定后仍能在工作台拖动。HUD 隐藏标题操作与尺寸行，复用同一个内容 adapter；`BongHud.render` 接入 `UiWindowRuntime.renderHud`，仅正常游戏且未隐藏 HUD 时显示固定展开窗。
+- 工作台：`WorkspaceControls` + `workspace-controls.xml` 提供底部横向滚动恢复条、动画开关、背景选择、打开本地目录和刷新。`WorkspaceBackgrounds` 等比 cover 内置宇宙/地形，支持 `config/bong/workspace-backgrounds/` 的 PNG/JPEG；检查 16 MiB、4096 边长、8 Mi 像素限制后解码，失败保留当前图像，替换和资源 reload 释放旧动态纹理。外部图片的未选中缩略图仍待打磨。
+- 动画：`WindowMotion` 使用单调时钟；打开、尺寸变化和最小化/恢复已有矩形过渡，新操作从当前插值继续，拖动直接跟随；尚需连续帧验收和 §4.9 的渐隐/曲线终轮调参，不以静态截图声称动画全验收。
+- 偏好：`WindowLayoutPreferenceStore` 以 Gson/UTF-8 和临时文件替换写入 `config/bong/window-layout.json`；仅保存类型布局、固定/最小化、背景与动画开关，已登记 persistent-config lifecycle。缺失配置使用默认，坏配置不部分覆盖；显式物品双击总是展开，磁盘偏好不会重建旧实例。预览使用独立内存偏好，退出还原，不污染用户磁盘配置。
+- 生图：沿用 `gen-image` 的 `scripts/images/gen.py --style none`，`gpt-image-2` 生成 `textures/gui/workspace/{cosmos,terrain}.png`；初始渠道 502 后使用主仓库已有本地配置成功。原图与 prompt 位于 ignored 的 `local_images/workspace/`，资源为待人工确认稿。
+- 验证：Java 17 `../scripts/build-token.sh gradle test build --offline` 通过，5122 条 JUnit、3 条 Fabric GameTest，无失败。`item-windows-check-20260913-095947` Windows 原生预览 `status=passed / completed=9`，覆盖最低/odd/宽屏、不同物品模型、锁定、尺寸输入与 Esc 回退、恢复条、背景设置，以及 `currentScreen == null` 的同 adapter 呈现（无世界 fixture，非联网证据）。HUD 场景在正常渲染帧中绘制，并检查背景像素与非空内容；此前 tick 内补画会截到旧工作台帧的预览路径已修正，旧输出不再作为 HUD 证据。
+- 测试范围：增加两条窗口状态/尺寸契约、两条偏好落盘/坏配置回归，已有物品失效回归扩展到固定且最小化状态；未添加颜色、动画时间常数或每帧坐标断言。scope/XML/R7 既有清单随新增入口同步。
+- Round 2 人工接触表：`local_images/workspace/p4b-round-2-contact.png`，含前后同一宽屏取景、宇宙/地形、背景设置、minimum 和无世界 HUD adapter；原始 PNG 在上述 Windows 输出目录。用户确认后再进入 Round 3，当前不标 P4b 完成。
+- 用户后续确认“看着不错了，继续加一个阶段”：窗口控制统一为 Lucide `lock-keyhole` / `lock-keyhole-open` / `minus` / `x`，48×48 PNG 以 14×14 显示，SVG 源及许可证留在 `assets/bong-client/svg/ui/`；图标对比为 `local_images/workspace/window-controls-review.png`。本次外观认可不替代连续动画和联网验收；按用户指令在同一工作区继续 P5a 容器子批次，尚未提交或执行 PR 门禁。
 
 ### P5 — Inspect 与全部普通功能窗口
 
 | 子阶段 | 模块 / 可核验交付 | 必要回归 |
 |---|---|---|
-| P5a ⬜ | `inventory/InspectScreen` 改为工作台组合入口；装备、库存与容器 XML 窗口；统一 quick-use/SkillBar 配置、tooltip、菜单、跨窗拖放；吸收 `PackWindowManager` | 背包→装备/快捷槽的真实 identity 请求；拖动时容器消失；浮窗置顶与挡住的槽位不命中；缩放不拉伸物品/人体 |
+| P5a ⏳ | `InventoryContainerWindows` / `InventoryContainerContent` 管理容器；`InventoryLoadoutWindows` 管理装备、quick-use/SkillBar；`InspectScreen` 保留工作台入口和既有领域操作 | 背包→装备/快捷槽的真实 identity 请求；拖动时容器消失；浮窗置顶与挡住的槽位不命中；缩放不拉伸物品/人体 |
 | P5b ⬜ | 修仙、技艺、功法、身份、化虚、玩家概览窗口；吸收 `SkillConfigPanelManager`；ViewModel + 窄 intent；共享经脉/技能状态 | 搜索/选择/滚动在最小化恢复后保留；施法/经脉/种族/config 限制仍生效；配置关闭与迟到更新不串对象 |
 | P5c ⬜ | `CraftScreen`、`WorkbenchScreen`、`ForgeScreen` 的 XML 内容和真实入口；移除 `removed()` 与制作取消的耦合 | 制作进行时最小化并回到游戏仍按服务器计时；明确关闭才按原约定取消；切工位不沿用旧 session；同一 CraftStore 不产生两个可操作会话 |
 | P5d ⬜ | Alchemy、Repair、ForgeCarrier、ZhenfaLayout、Lingtian 窗口；Processing 内容适配与接线依赖登记 | 有效工位/物品/材料约束，终态收取/取消/拒绝仍走原 intent；未接线加工无假按钮，无预览冒充生产 |
@@ -632,12 +646,57 @@ Store / server snapshot
 
 **边界**：不等待、不改 R10 server inventory 内部重排；不为多窗扩 server 并发会话。active session bugfix 与本批触碰同一文件时先核对现行修复，保留其业务契约；独立缺失的生产接线由领域 owner 处理。
 
+#### P5a 容器子批次工作记录（2026-09-13）
+
+- 范围：贴身口袋、穿戴背包、套包接入 `UiWindowManager`，每个真实 `containerId` 唯一窗口和网格。`InventoryContainerWindows` 从库存快照刷新，`InventoryContainerContent` + `inventory-container.xml` 负责双向滚动和固定比例格子。装备、快捷槽及修炼等原页仍待后续完整功能迁移，本批不标整个 P5a 完成。
+- 入口与操作：Inspect 的常驻容器入口和容器物品右键均打开统一窗口；普通物品仍是左键双击详情、右键使用。顶层可见网格接收拾取/落位，跨窗拖放保留真实 instance/container identity 与旋转协议；菜单和拖动物品在窗口之上绘制，裁剪外格子与滚动条不接收物品操作。
+- 生命周期：最小化/固定/隐藏工作台保留同一 scope；显式关闭只关闭容器视图，重开从当前库存恢复。权威移除容器则关闭对应窗口，正在使用该来源的拖动取消；取消拖放按原 `containerId` 回源。容器容量（行列数）变化重建网格而不复制窗口；窗口尺寸变化只重排内容与滚动区域。摘要仅在快照变化时更新，避免每帧触发 owo 布局。
+- 退役：删除 `PackWindowManager`、`WornContainerPanel`、`PackContainerWindow` 及 Inspect 内旧 tab 网格/局部浮窗命中/屏幕级多格物品绘制，统一管理器复用既有窗口状态、动画、HUD 固定与尺寸控制。
+- 测试替代：删除上述三类旧实现测试，其局部偏移、root 挂载顺序和每窗独立订阅已不再是生产行为；通用 identity/scope/置顶契约沿用 `UiWindowManagerTest`。新增 `InventoryContainerWindowsTest` 两条必要契约保护容器失效与容量变化，保留真实移动意图、取消回源、穿戴包协议等原有逻辑测试；未新增颜色、图标尺寸、动画常量或源码字符串断言。
+- 验证：最终代码以 Java 17 完整运行 `../scripts/build-token.sh gradle test build --offline`，5104 条 JUnit、3 条 Fabric GameTest 无失败，日志 `/tmp/bong-p5a-resume-gate.log`。`inventory-window-ui-preview.json` 与 `UiInventoryWindowPreviewScene` 提供 minimum/odd/wide/裁剪场景，沿用服务端 TOML 导出夹具与 Windows 原生 Fabric 启动链路；`D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/item-windows-check-20260913-135128` 记录 `status=passed / completed=4`，覆盖跨窗拖放及旋转请求、遮挡、最小化恢复、关闭重开和容器失效；同 jar 的旧详情场景 `item-windows-check-20260913-135711` 记录 `status=passed / completed=9`。
+- Round 2 人工接触表：`local_images/workspace/p5a-round-2-contact.png`，含本批前次预览 `item-windows-check-20260913-113447` 与最终代码的同一宽屏取景、minimum/odd/滚动裁剪和详情回归截图；同取景 PNG 像素完全一致，最后收尾修改没有静态外观差异。截图尺寸与非空像素统计保存于同名 JSON，仅用于产物核验，不代表外观或联网验收。已将最新 jar 更新到 Windows 测试实例，待用户看图后继续视觉终轮。
+- 实机反馈修订：用户认可容器窗口后要求尺寸输入按需展开。共享 `OwoXmlWindowContentAdapter` / `window-frame.xml` 新增 Lucide `maximize-2` 按钮，宽高输入默认不挂载，点击后在标题栏下方展开；提交、Esc、再次点击、最小化或进入 HUD 时收起并清除输入焦点。沿用既有尺寸校验与偏好存储，无新增 JUnit；原生详情场景调整为真实展开/提交/非法值/Esc 输入流程，增加收起后焦点释放检查。
+- 修订验证：Java 17 `gradle test build --offline` 重跑通过（5104 JUnit、3 GameTest；首次进程退出 143 未计为通过，完整日志 `/tmp/bong-window-resize-toggle-gate-retry.log`）。同一 jar 的 Windows 原生 `item-windows-check-20260913-142704` 详情 9 场景与 `item-windows-check-20260913-142854` 容器 5 场景均通过；后者新增展开尺寸输入截图。`local_images/workspace/resize-toggle-review.png` 为同一容器窗口的此前/收起/展开局部取景对比。
+- 待验与边界：当前原生场景通过真实 `Screen` 输入与 C2S 编码检查，传输由预览 harness 捕获，不能当作真实服务器回执或联网背包验收。新容器外观需以本批接触表交用户验收；PR/review/合入尚未执行。
+
+#### P5a 装备与快捷槽子批次工作记录（2026-09-13）
+
+- 前置验收：用户认可容器窗口及按需展开的尺寸输入，并要求继续下一阶段。本批接着迁移装备和快捷槽，不提前推进 P5b/P5c。
+- 落点：`InventoryLoadoutWindows`、`inventory-equipment.xml`、`inventory-shortcuts.xml`；窗口 key 分别为 `inventory-equipment/player` 和 `inventory-shortcuts/player`。`UiWindowRuntime.openLoadout` 统一打开和置顶，沿用共享窗口的拖动、尺寸控制、最小化与 HUD 固定。装备槽保持固定比例，窗口缩小时滚动内容。
+- 入口与状态：Inspect 原装备页收敛为“随身”入口，旧侧边槽条退役。库存、SkillBar、QuickUse Store 仍为状态来源，窗口隐藏时继续刷新；关闭先卸载组件再销毁 adapter，重开挂回同一组组件。物品仍走双击详情、右键使用与原拖放请求；装备保持 instance/location，快捷绑定采用 instance_id/request_id 及权威确认。
+- 输入修订：只有顶层窗口可见且未被裁剪的槽位参与命中，原 Inspect 内容不接收覆盖区域输入；已绑定技能的拖动与右键解绑不再要求选中“功法”标签。技能松手先完成领域拖放，再由通用窗口处理其它鼠标释放，避免吞掉换槽请求。
+- 测试范围：沿用既有装备限制、移动意图、快捷槽确认、实例耗尽清槽与选中态测试；删除绑定旧标签文案和索引的显示断言，保留手搓真实入口测试。原生场景扩展到最低/odd/宽屏，覆盖装备往返、两类窗口关闭重开、最小化与隐藏刷新、遮挡/裁剪、快捷绑定确认、技能换槽与解绑；未添加颜色、动画常量或私有布局字段测试。
+- 验证：最终 Java 17 `../scripts/build-token.sh gradle test build --offline` 通过，5104 条 JUnit、3 条 GameTest 无失败，日志 `/tmp/bong-loadout-final-gate.log`。Windows 原生 `item-windows-check-20260913-153545` 为本批 8 场景通过；旧详情的 9 场景在 `item-windows-check-20260913-153028` 通过，此后只替换库存预览中的测试技能为带真实 PNG 的 `sword.thrust`，生产逻辑未变。预览健康人体快照显式注入，避免旧 `MockPhysicalData` 的断臂夹具阻止主手装备。
+- Round 2 接触表：`local_images/workspace/p5a-loadout-round-2.png`，含前次/当前宽屏、minimum/odd 裁剪和容器同取景回归；同名 JSON 记录原始截图路径、尺寸与非空像素统计。新技能图标复用仓库现有 PNG，无新生成资产；Windows 测试实例已更新为最终 jar。
+- 待验与边界：原生场景捕获真实 C2S 编码并注入确认快照，不代表服务器联调。外观等待本批接触表人工验收；P4 连续动画与联网验收仍待补，P5a 暂不标完成。当前未提交、未推送、未开 PR。
+
 ### P6 — 受控界面、HUD 与 Bootstrap 收口
 
 - **P6a ⬜**：Insight/AgentUi/DynamicXml 受控窗口；Death/Terminate/MainMenu 系统界面；`ScreenOpenPolicy`、`ScreenTransitionController`、`ScreenHudVisibility` 与剩余 bootstrap。普通窗口并存、scope 与 HUD 固定以 §4.9 为准；被动社交邀请仍以权威 `combat_active` 判定，缺快照 fail closed；系统终端按现有优先级抢占。
 - **身份与依赖**：保留 exact `offer_id`/reading token settlement 和专属 Agent UI VFX；旧 A 的迟到关闭不能影响 B。raw XML 退出须等待 R6/schema/domain amendment，不能把它描述为仅 XML 换皮即可完成；`InsightDecision` wire 仍只有 `trigger_id`/`choice_idx` 时，不宣称已有 wire-level offer isolation。
-- **P6b ⬜**：`BongHudOrchestrator`/render backend 与固定窗口 adapter 的顺序、遮挡、资源 reload 统一；按当前 `ui-svg-hud-inventory.tsv` 处理剩余 layer/overlay，保留必要 PNG/文字/物品 GUI 例外，删除旧 primitive path、`renderSurface` 与生产 fallback。背景纹理不进 SVG parser；窗口内容不因 HUD 固定而改走另一套 controller。
+- **P6b ⏳**：既有 HUD 的布局编辑子批次见下；`BongHudOrchestrator`/render backend 与固定窗口 adapter 的顺序、遮挡、资源 reload 统一仍需收口。按当前 `ui-svg-hud-inventory.tsv` 处理剩余 layer/overlay，保留必要 PNG/文字/物品 GUI 例外，删除旧 primitive path、`renderSurface` 与生产 fallback。背景纹理不进 SVG parser；窗口内容不因 HUD 固定而改走另一套 controller。
 - **必要回归**：普通窗打开/关闭与 pinned HUD 恰有一次呈现；死亡/终焉/暂停/聊天不发生输入穿透；stale offer、断线迟到回调、资源替换和 parser failure；保留已有 semantic/headless 业务路径，窗口布局不成为 gameplay admission 条件。
+
+#### P5a 快捷使用链接修复（2026-09-14）
+
+- 快捷槽按物品 `instance_id` 保存使用链接；拖起、取消或绑定均不搬动库存，Shift 点击解除链接，右键调用 `use_quick_slot`。相同模板的不同实例不会串绑。
+- `ItemTemplate.quick_use` 从物品 TOML 读取，缺省关闭；`is_quick_use_eligible` 只允许已实现的直接自用效果。绑定、开始使用和完成消费都校验资格。定向夹板、经脉药、方块、工具等不进入快捷槽，方块仍可由原技能栏入口绑定。
+- `quickslot_config` 携带实例、数量和允许快捷使用的模板列表；`emit_quickslot_config_payloads` 监听库存及绑定变化，用尽后清空所有引用该实例的槽位，保留冷却。Rust、TypeBox、protobuf、Java、bot 消费同一协议。
+- 测试调整：删除旧模板扫描顺序、方块自动镜像和物品尺寸枚举测试，这些已不属于快捷使用契约；保留实例不移动、资格拒绝、持久化失败原子性、消耗后 HUD 清空和三端协议回归。未引入旧协议兼容分支。
+- 主线同步：合入 `origin/main` 的 `b6eb6751a`，合并提交 `b5b4b6d64`；主线拆出的 player/schema/combat 等测试同步更新实例绑定与模板字段，保留此前 R7 工作区改动。
+- 验证：合并后 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、完整 `cargo test` 通过，12,557 项通过、0 失败、6 项忽略；Java 17 `gradle test build` 及补强的 `ProtoServerDataBridgeTest` 通过；Schema 构建、408 份生成文件新鲜度检查与 912 项测试通过；bot 协议测试 569 项通过。
+- 联网回归：独立端口、临时存档与 Redis 上运行 `network_quickslot_config`，1 场景通过、0 跳过、0 失败。现有场景增加两格同实例的消费数量推送、耗尽后全部链接清空和冷却保留断言；日志 `/tmp/bong-quick-use-live-verified.log`，完整 Rust 日志 `/tmp/bong-quick-use-rust-full.log`。未替换运行中的 Windows native 客户端和开发服。
+- 提交检查点（2026-09-14）：用户要求先提交当前成果。窗口控制、背景与布局持久化已在 `56d5eddef` 提交；容器、装备、HUD 工作台接入与快捷链接修复随本记录提交。前面“未提交”的工作记录是当时状态；本轮仅本地 commit，未 push 或开 PR。P4/P5/P6 剩余验收及 P5b 后续迁移仍按阶段表保留，未以本次提交标成完成。
+
+#### P6b HUD 布局编辑子批次工作记录（2026-09-13）
+
+- 用户追加范围：原 HUD 接入工作台，自定义位置与显隐，底部增加一键还原。`HudWidgetWindows` 将已有 command layer 映射为编辑窗口，复用 `UiWindowManager` 的拖动、尺寸输入、固定、最小化与关闭；`BongHud.workspaceCommands` 读取现有快照，`HudRenderCommand.transformed` 只改变呈现坐标和等比尺寸，不发送领域意图。
+- 渲染：`BongHud` 在游戏中应用本地布局，Inspect 中交由窗口内容展示；HUD 编辑窗不在游戏中重复绘制标题和边框。`BongHudRenderer` 注入原 SVG backend。屏幕染色、边缘效果、Toast 和同 layer 的全屏遮罩不随面板移动或消失；窗口内预览使用 scissor，保留原 PNG/SVG/文字资源。旧直接 overlay 和 primitive 删除仍是后续 P6b 工作。
+- 控制：`WorkspaceControls` / `workspace-controls.xml` 的 HUD 列表以复选框设置显隐，编辑按钮打开或置顶目标窗并收起列表；仅展开列表不创建所有窗口。Lucide `panels-top-left` / `rotate-ccw` 图标沿用现有风格。还原调用 `UiWindowRuntime.resetLayout`，恢复本地布局与显隐，不关闭 scope 或重建业务 identity，不清除背景、动画设置、库存、装备或制作会话。
+- 偏好：`WindowLayoutPreferenceStore` 在原版本配置追加 `hud` 对象，保存屏幕比例位移、等比缩放与显隐。未配置时保持原布局。锁定/最小化不因窗口最小尺寸或 viewport 钳制改写 HUD 几何；从列表恢复最小化窗口保留原 pinned 状态。
+- 必要验证：`HudWidgetWindowsTest` 覆盖同 layer 全屏效果保留、锁定不改变默认几何、最小化重开与还原；原 `WindowLayoutPreferenceStoreTest` 扩展磁盘往返和还原，不新增属性镜像测试。`UiHudWindowPreviewScene` / `hud-window-ui-preview.json` 通过真实复选框、编辑、锁定、拖动、关闭和底部还原操作，验证现有业务窗口 scope 保留、编辑按钮不溢出；最低/odd/宽屏与无世界 HUD 渲染共 4 场景 `status=passed, completed=4`，HUD 像素校验包含季节全屏叠色。
+- 最终门禁：Java 17 `scripts/build-token.sh gradle test build --offline --console=plain` 通过，5107 条 JUnit、3 条 Fabric GameTest，无失败，进程退出码 0；日志 `/tmp/bong-hud-window-final-gate.log`。首次全量检查发现 `WorkspaceControls.clearChildren` 的既有 R7 调用清单行号漂移，核对调用后更新清单并完整重跑通过。
+- 产物：`client/run/hud-window-ui-preview/contact-sheet.png` 为四场景接触表，原始 PNG 和结果标记在同目录，预览日志 `/tmp/bong-hud-window-preview.log`。当前预览使用 Xvfb/Fabric，尚未完成 Windows 联网验收或连续动画验收；本批外观待用户确认，未提交、推送或开 PR，不标整个 P6b 完成。
 
 ### P7 — 验收与归档
 
