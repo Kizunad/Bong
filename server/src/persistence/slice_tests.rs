@@ -490,8 +490,7 @@ fn absent_shutdown_request_does_not_invoke_hooks() {
         wall_unix_millis: 0,
     };
     let report =
-        dispatch_shutdown_flushes(&mut world, ShutdownFlushRequest::NotRequested, &clock)
-            .unwrap();
+        dispatch_shutdown_flushes(&mut world, ShutdownFlushRequest::NotRequested, &clock).unwrap();
 
     assert_eq!(report, ShutdownFlushReport::default());
     assert!(world.resource::<FlushTrace>().0.is_empty());
@@ -647,17 +646,11 @@ fn handoff_load_second(world: &mut World, context: &SliceRunContext) -> SliceRun
     trace_handoff_load(world, context, SliceId::new("player.handoff_second"))
 }
 
-fn handoff_load_activation_first(
-    world: &mut World,
-    context: &SliceRunContext,
-) -> SliceRunResult {
+fn handoff_load_activation_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
     trace_handoff_load(world, context, SliceId::new("player.activation_first"))
 }
 
-fn handoff_load_activation_second(
-    world: &mut World,
-    context: &SliceRunContext,
-) -> SliceRunResult {
+fn handoff_load_activation_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
     trace_handoff_load(world, context, SliceId::new("player.activation_second"))
 }
 
@@ -790,9 +783,7 @@ fn dispatch_samples_each_injected_clock_anchor_once() {
         .resource::<HandoffTrace>()
         .events
         .iter()
-        .all(|event| {
-            event.1 == 400 && event.2 == 49_999 && event.3 == "offline:clock_once"
-        }));
+        .all(|event| { event.1 == 400 && event.2 == 49_999 && event.3 == "offline:clock_once" }));
 }
 
 #[test]
@@ -1177,8 +1168,7 @@ fn reconnect_handoff_aborts_partial_hydrate_and_allows_clean_retry() {
         wall_unix_millis: 49_999,
     };
 
-    for (name, fail_second, block_second) in [("error", true, false), ("blocked", false, true)]
-    {
+    for (name, fail_second, block_second) in [("error", true, false), ("blocked", false, true)] {
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(first).unwrap();
         registry.register(second).unwrap();
@@ -1499,8 +1489,7 @@ fn reconnect_preflight_failure_preserves_all_old_real_activation_leases_until_cl
     };
 
     for injected in [InjectedHookResult::Blocked, InjectedHookResult::Error] {
-        let mut world =
-            atomic_reconnect_world(first, second, injected, InjectedHookResult::Clean);
+        let mut world = atomic_reconnect_world(first, second, injected, InjectedHookResult::Clean);
         let report =
             dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
 
@@ -1529,8 +1518,7 @@ fn reconnect_preflight_failure_preserves_all_old_real_activation_leases_until_cl
         world
             .resource_mut::<AtomicReconnectState>()
             .second_preflight = InjectedHookResult::Clean;
-        let retry =
-            dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+        let retry = dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
         assert_eq!(retry.cleanups_completed, 2, "{injected:?}");
         assert_eq!(retry.loads_completed, 2, "{injected:?}");
         assert_eq!(retry.rebases_completed, 2, "{injected:?}");
@@ -1700,8 +1688,7 @@ fn reconnect_hydrate_failure_after_real_activation_rolls_back_all_and_retries_cl
     };
 
     for injected in [InjectedHookResult::Blocked, InjectedHookResult::Error] {
-        let mut world =
-            atomic_reconnect_world(first, second, InjectedHookResult::Clean, injected);
+        let mut world = atomic_reconnect_world(first, second, InjectedHookResult::Clean, injected);
         let report =
             dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
 
@@ -1722,8 +1709,7 @@ fn reconnect_hydrate_failure_after_real_activation_rolls_back_all_and_retries_cl
         }
 
         world.resource_mut::<AtomicReconnectState>().second_hydrate = InjectedHookResult::Clean;
-        let retry =
-            dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+        let retry = dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
         assert_eq!(retry.loads_completed, 2, "{injected:?}");
         assert_eq!(retry.rebases_completed, 2, "{injected:?}");
         assert_eq!(retry.aborts_completed, 0, "{injected:?}");
@@ -2202,8 +2188,8 @@ fn reconnect_handoff_requires_all_old_activation_leases_released_before_any_hydr
 
     for case in &retained_cases {
         let mut world = handoff_world_with_retained_activation(first, second, case);
-        let error = dispatch_reconnect_handoff(&mut world, token("player:activation"), &clock)
-            .unwrap_err();
+        let error =
+            dispatch_reconnect_handoff(&mut world, token("player:activation"), &clock).unwrap_err();
         assert_eq!(
             error,
             SliceDispatchError::DuplicateSubject {
@@ -2244,7 +2230,6 @@ fn reconnect_handoff_requires_all_old_activation_leases_released_before_any_hydr
     assert_eq!(report.rebases_completed, 2);
     assert!(report.failures.is_empty());
 }
-
 
 #[test]
 fn failed_load_fallback_is_read_only_and_never_becomes_dirty() {
