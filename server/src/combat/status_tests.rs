@@ -26,5 +26,3 @@ fn health_regen_boost_multiplier_caps_runaway_stack() {
         MAX_HEALTH_REGEN_BOOST_MULTIPLIER
     );
 }
-
-

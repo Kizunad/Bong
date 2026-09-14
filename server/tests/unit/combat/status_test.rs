@@ -659,8 +659,7 @@ fn body_part_damage_multiplier_combines_active_resist_and_weaken() {
     };
 
     assert!(
-        (body_part_damage_multiplier(Some(&status_effects), BodyPart::Chest) - 0.75).abs()
-            < 1e-6
+        (body_part_damage_multiplier(Some(&status_effects), BodyPart::Chest) - 0.75).abs() < 1e-6
     );
     assert_eq!(
         body_part_damage_multiplier(Some(&status_effects), BodyPart::ArmL),
