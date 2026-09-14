@@ -179,6 +179,10 @@ name = "territory_unit"
 path = "tests/unit/world/territory_test.rs"
 
 [[test]]
+name = "tiandao_hunt_unit"
+path = "tests/unit/world/tiandao_hunt_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
