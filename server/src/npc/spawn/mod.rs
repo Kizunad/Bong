@@ -2236,9 +2236,10 @@ mod tests {
         let dist = (dx * dx + dz * dz).sqrt();
         // In a 500x500 zone with one NPC, the sampler should find a well-spaced position.
         assert!(
-            dist > 0.0,
-            "cross-archetype NPC should be placed away from existing; dist={:.1}",
-            dist
+            dist >= sampler.min_cross_archetype_dist,
+            "cross-archetype NPC should respect the minimum distance; dist={:.1}, min={:.1}",
+            dist,
+            sampler.min_cross_archetype_dist
         );
     }
 
