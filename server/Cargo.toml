@@ -27,6 +27,10 @@ name = "craft_recipe_unit"
 path = "tests/unit/craft/recipe_test.rs"
 
 [[test]]
+name = "craft_unlock_unit"
+path = "tests/unit/craft/unlock_test.rs"
+
+[[test]]
 name = "alchemy_furnace_unit"
 path = "tests/unit/alchemy/furnace_test.rs"
 
@@ -85,6 +89,10 @@ path = "tests/unit/combat/resolve_test.rs"
 [[test]]
 name = "shield_block_unit"
 path = "tests/unit/combat/shield_block_test.rs"
+
+[[test]]
+name = "combat_lifecycle_unit"
+path = "tests/unit/combat/lifecycle_test.rs"
 
 [[test]]
 name = "recipe_fragment_unit"
