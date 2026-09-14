@@ -27,6 +27,10 @@ name = "craft_recipe_unit"
 path = "tests/unit/craft/recipe_test.rs"
 
 [[test]]
+name = "craft_unlock_unit"
+path = "tests/unit/craft/unlock_test.rs"
+
+[[test]]
 name = "alchemy_furnace_unit"
 path = "tests/unit/alchemy/furnace_test.rs"
 
@@ -87,6 +91,10 @@ name = "shield_block_unit"
 path = "tests/unit/combat/shield_block_test.rs"
 
 [[test]]
+name = "combat_lifecycle_unit"
+path = "tests/unit/combat/lifecycle_test.rs"
+
+[[test]]
 name = "recipe_fragment_unit"
 path = "tests/unit/alchemy/recipe_fragment_test.rs"
 
@@ -143,8 +151,28 @@ name = "npc_faction_unit"
 path = "tests/unit/npc/faction_test.rs"
 
 [[test]]
+name = "npc_lod_unit"
+path = "tests/unit/npc/lod_test.rs"
+
+[[test]]
+name = "npc_hydrate_unit"
+path = "tests/unit/npc/hydrate_test.rs"
+
+[[test]]
+name = "npc_spawn_unit"
+path = "tests/unit/npc/spawn_test.rs"
+
+[[test]]
 name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
+
+[[test]]
+name = "cultivation_tick_unit"
+path = "tests/unit/cultivation/tick_test.rs"
+
+[[test]]
+name = "cultivation_color_unit"
+path = "tests/unit/cultivation/color_test.rs"
 
 [[test]]
 name = "body_plan_validate_unit"
@@ -155,8 +183,36 @@ name = "coffin_unit"
 path = "tests/unit/coffin_test.rs"
 
 [[test]]
+name = "audio_trigger_unit"
+path = "tests/unit/network/audio_trigger_test.rs"
+
+[[test]]
+name = "vfx_event_emit_unit"
+path = "tests/unit/network/vfx_event_emit_test.rs"
+
+[[test]]
+name = "agent_ui_unit"
+path = "tests/unit/network/agent_ui_test.rs"
+
+[[test]]
 name = "raster_unit"
 path = "tests/unit/world/raster_test.rs"
+
+[[test]]
+name = "territory_unit"
+path = "tests/unit/world/territory_test.rs"
+
+[[test]]
+name = "tiandao_hunt_unit"
+path = "tests/unit/world/tiandao_hunt_test.rs"
+
+[[test]]
+name = "shelflife_compute_unit"
+path = "tests/unit/shelflife/compute_test.rs"
+
+[[test]]
+name = "zhenmai_v2_unit"
+path = "tests/unit/combat/zhenmai_v2_test.rs"
 
 [[test]]
 name = "workbench_reach_profile"

@@ -570,6 +570,7 @@ fn ecs_coffin_break_despawns_marker_and_grants_partial_materials() {
     for container in &inventory.containers {
         for placed in &container.items {
             let template_id = placed.instance.template_id.as_str();
+            // 未知材料映射为 0，随后 recipe_max > 0 断言会 fail-closed 地拒绝它。
             let recipe_max = valid_materials.get(template_id).copied().unwrap_or(0);
             assert!(
                 recipe_max > 0,
@@ -643,6 +644,7 @@ fn ecs_coffin_menu_reclaim_despawns_marker_and_grants_full_materials() {
                 .or_insert(0) += placed.instance.stack_count;
         }
     }
+    // 缺失材料映射为 0，下面的精确数量断言会 fail-closed 地暴露返还缺项。
     assert_eq!(
         totals.get("ling_mu_ban").copied().unwrap_or(0),
         6,
@@ -1215,19 +1217,19 @@ fn p4_grade_monotonicity() {
         registry
             .get(&coffin_recipe_id(CoffinGrade::Mundane))
             .map(|r| r.qi_cost)
-            .unwrap_or(0.0),
+            .expect("Mundane 棺材配方必须存在"),
         registry
             .get(&coffin_recipe_id(CoffinGrade::Jade))
             .map(|r| r.qi_cost)
-            .unwrap_or(0.0),
+            .expect("Jade 棺材配方必须存在"),
         registry
             .get(&coffin_recipe_id(CoffinGrade::Stone))
             .map(|r| r.qi_cost)
-            .unwrap_or(0.0),
+            .expect("Stone 棺材配方必须存在"),
         registry
             .get(&coffin_recipe_id(CoffinGrade::Bronze))
             .map(|r| r.qi_cost)
-            .unwrap_or(0.0),
+            .expect("Bronze 棺材配方必须存在"),
     ];
     for i in 0..3 {
         assert!(
@@ -1245,19 +1247,19 @@ fn p4_grade_monotonicity() {
         registry
             .get(&coffin_recipe_id(CoffinGrade::Mundane))
             .map(|r| r.time_ticks)
-            .unwrap_or(0),
+            .expect("Mundane 棺材配方必须存在"),
         registry
             .get(&coffin_recipe_id(CoffinGrade::Jade))
             .map(|r| r.time_ticks)
-            .unwrap_or(0),
+            .expect("Jade 棺材配方必须存在"),
         registry
             .get(&coffin_recipe_id(CoffinGrade::Stone))
             .map(|r| r.time_ticks)
-            .unwrap_or(0),
+            .expect("Stone 棺材配方必须存在"),
         registry
             .get(&coffin_recipe_id(CoffinGrade::Bronze))
             .map(|r| r.time_ticks)
-            .unwrap_or(0),
+            .expect("Bronze 棺材配方必须存在"),
     ];
     for i in 0..3 {
         assert!(
