@@ -171,6 +171,10 @@ name = "territory_unit"
 path = "tests/unit/world/territory_test.rs"
 
 [[test]]
+name = "shelflife_compute_unit"
+path = "tests/unit/shelflife/compute_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
