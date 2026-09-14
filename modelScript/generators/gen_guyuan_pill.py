@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
-"""固元丹（GuYuanPill）Blockbench .bbmodel 生成器。
+"""固元丹（GuYuanPill）Blockbench .bbmodel 生成器 - 曲面贴合真元阵纹版。
 
 物品来源：
   `client/src/main/resources/assets/bong-client/textures/gui/items/guyuan_pill.png`
   `server/assets/items/pills.toml` (id = "guyuan_pill", name = "固元丹")
 
-原画特征分析（极具视觉张力的阵纹星核宝丹）：
+原画特征深度还原：
   1. 赤炎玄黑丹壳（Magma Crust）：
      - 丹体如地火淬炼的星核，外层为深黑褐色碳化药皮，内蕴金红真元地火。
-  2. 核心同心圆金光丹纹（Concentric Rune Rings & Orbits）：
-     - 丹体正前方刻制着精密的同心圆灵力固元法阵（金光璀璨的圆环、轨道线与灵力节点）。
-  3. 裂隙地火光芒（Glowing Veins）：
-     - 丹皮表面纵横交错着金红色熔岩裂纹。
-  4. 三才稳固堆叠布局（Triadic Base & Crown Dan）：
-     - 结合用户打磨反馈（“做几个叠在一起”）：
-       - 底层左右两颗玄赤伴生丹沉稳托底，形成“三才固元”之势；
-       - 中央顶峰高耸主丹（直径 6.8px），正对正面视线，完整展示璀璨金光阵纹与裂痕！
-
-结构设计：
-  - part_base_pills: 底层稳固托底的两颗玄黑地火伴生丹
-  - part_main_pill: 顶峰主丹身（多层圆球体素逼近真圆）
-  - part_runes: 主丹正前方的同心金光阵纹环、环形轨道与灵力节点
+     - 左下角带有原画鲜明的剥落骨白药蜕斑（crust_flake）。
+  2. 曲面贴合的同心圆固元金光丹纹（Curved Concentric Rune Array）：
+     - 阵纹严格按照丹丸球面曲率 z = cz + sqrt(R^2 - r^2) 向球体前后顺滑收束贴合，
+       杜绝侧视悬空与薄板穿插感，从任何角度看都如精雕在星核表面一般！
+     - 包含中心灵核、内金环、外轨道金环、轨道灵力节点小珠、横向纬线轨道与赤炎地火裂隙。
+  3. 三才稳固堆叠布局（Triadic Base）：
+     - 底层左右双伴生丹沉稳托底，中央高耸浑圆大主丹（直径 6.8px）。
 
 用法：
   python3 modelScript/generators/gen_guyuan_pill.py
@@ -49,9 +43,6 @@ PX = 16.0
 
 # ── 材质色板 ──────────────────────────────────────────────────────────
 # 严格提炼自 guyuan_pill.png 图标像素：
-# 玄黑药皮：墨黑焦褐 (36, 16, 12)、深暗熔岩壳 (58, 24, 16)、中红褐 (108, 42, 22)
-# 熔岩金红裂纹：赤红炽火 (214, 78, 28)、高亮金焰 (254, 186, 42)、纯金灵阵光 (255, 228, 88)
-# 蜕变白斑/壳裂：骨白药蜕 (236, 230, 218)
 MATS = {
     "crust_dark":     (36, 16, 12),     # 玄黑深焦药皮
     "crust_mid":      (68, 28, 18),     # 药皮深红褐过渡
@@ -59,7 +50,7 @@ MATS = {
     "vein_fire":      (214, 78, 28),    # 裂隙赤红炽火
     "rune_gold":      (254, 186, 42),   # 阵纹灿金
     "rune_bright":    (255, 232, 96),   # 阵核极亮纯金光
-    "crust_flake":    (228, 218, 204),  # 丹皮剥落露出的骨白药晕
+    "crust_flake":    (228, 218, 204),  # 丹皮剥落露出的骨白药蜕
 }
 
 
@@ -124,118 +115,126 @@ def add_true_sphere(rig: Rig, bone: str, prefix: str,
 
 
 def part_base_pills(rig: Rig) -> None:
-    """底层稳固托底的两颗玄黑地火伴生丹（左前与右前下沉）。"""
+    """底层稳固托底的两颗玄黑地火伴生丹。"""
     rig.bone("base_pills", (0.0, 0.0, 0.0))
 
     r_sub = 1.95
-    # 左侧托底伴生丹 (cx=-2.0, cy=1.9, cz=-0.4)
+    # 左侧托底伴生丹
     add_smooth_pill(rig, "base_pills", "sub_left", cx=-2.2, cy=1.95, cz=-0.4, r=r_sub,
                     mat_body="crust_dark", mat_lit="crust_mid")
-    # 右侧托底伴生丹 (cx=2.0, cy=1.9, cz=-0.4)
+    # 右侧托底伴生丹
     add_smooth_pill(rig, "base_pills", "sub_right", cx=2.2, cy=1.95, cz=-0.4, r=r_sub,
                     mat_body="crust_dark", mat_lit="crust_mid")
 
 
 def part_main_pill(rig: Rig) -> None:
-    """顶峰核心大丹：
-    位于 (0.0, 4.4, 0.6)，半径 3.3px（直径 6.6px），稳坐在双伴生丹之上，
-    正面对准正面视线，展示最完整的圆润球形与地火色泽。
-    并在左下方带一块原画独特的剥落骨白药蜕斑（crust_flake）！
-    """
-    rig.bone("main_pill", (0.0, 4.4, 0.6))
-    cx, cy, cz = 0.0, 4.4, 0.6
-    r = 3.3
+    """顶峰核心大丹（直径 6.8px，坐落于中心偏上）。"""
+    rig.bone("main_pill", (0.0, 4.4, 0.4))
+    cx, cy, cz = 0.0, 4.4, 0.4
+    r = 3.4
 
     # 1. 浑圆主丹球体
     add_true_sphere(rig, "main_pill", "grand_guyuan", cx=cx, cy=cy, cz=cz, r=r)
 
-    # 2. 原画左下角鲜明的剥落骨白药蜕斑 (Flake)
+    # 2. 原画左下角剥落骨白药蜕斑 (Flake) - 贴合球面
     rig.cube("main_pill", "flake_patch",
-             (cx - 2.5, cy - 2.8, cz + 1.2), (cx - 1.2, cy - 1.5, cz + 2.6),
+             (cx - 2.5, cy - 2.7, cz + 1.6), (cx - 1.2, cy - 1.4, cz + 2.8),
              mat="crust_flake")
 
 
 def part_runes(rig: Rig) -> None:
-    """主丹正面极具辨识度的【同心金光丹纹与裂隙灵阵】（Concentric Rune Array）：
-    紧密贴附在主丹前向表面 (+Z 侧，z ≈ 3.7~4.0)，正对正交前方视角：
-    - 中心灵光金核 (Rune Center)
-    - 内同心圆金环 (Inner Ring)
-    - 外同心圆轨道与节点小球 (Outer Ring & Orbit Nodes)
-    - 左右放射延伸的灵脉金纹 (Radial Meridian Lines)
-    - 纵横交织的赤红炽火裂纹 (Fire Veins)
+    """按球面曲率贴合的同心金光丹纹与裂隙灵阵：
+    球心位于 (0, 4.4, 0.4)，半径 R=3.4。
+    随着距中心距离增加，各同心圆环和节点顺滑内缩，紧贴球面！
     """
-    rig.bone("runes", (0.0, 4.4, 0.6))
-    cx, cy, cz = 0.0, 4.4, 0.6
-    zf = cz + 3.32  # 贴在主丹球体前表面
+    rig.bone("runes", (0.0, 4.4, 0.4))
+    cx, cy, cz = 0.0, 4.4, 0.4
 
-    # 1. 中心金光阵核 (高度约 4.4，正中)
+    # 1. 中心金光阵核 (r ≈ 0, z_surf ≈ cz + 3.42 = 3.82)
+    z_core = cz + 3.42
     rig.cube("runes", "rune_core",
-             (cx - 0.45, cy - 0.45, zf), (cx + 0.45, cy + 0.45, zf + 0.18),
+             (cx - 0.45, cy - 0.45, z_core - 0.05), (cx + 0.45, cy + 0.45, z_core + 0.15),
              mat="rune_bright")
 
-    # 2. 内圈同心圆金环 (半径约 1.2px)
-    # 上下左右 4 段弧块拼成内同心环
+    # 2. 内圈同心圆金环 (环半径约 1.15, z_surf ≈ cz + 3.20 = 3.60)
+    z_in = cz + 3.22
     rig.cube("runes", "ring_in_t",
-             (cx - 0.9, cy + 0.9, zf), (cx + 0.9, cy + 1.25, zf + 0.15),
+             (cx - 0.85, cy + 0.85, z_in), (cx + 0.85, cy + 1.25, z_in + 0.15),
              mat="rune_gold")
     rig.cube("runes", "ring_in_b",
-             (cx - 0.9, cy - 1.25, zf), (cx + 0.9, cy - 0.9, zf + 0.15),
+             (cx - 0.85, cy - 1.25, z_in), (cx + 0.85, cy - 0.85, z_in + 0.15),
              mat="rune_gold")
     rig.cube("runes", "ring_in_l",
-             (cx - 1.25, cy - 0.9, zf), (cx - 0.9, cy + 0.9, zf + 0.15),
+             (cx - 1.25, cy - 0.85, z_in), (cx - 0.85, cy + 0.85, z_in + 0.15),
              mat="rune_gold")
     rig.cube("runes", "ring_in_r",
-             (cx + 0.9, cy - 0.9, zf), (cx + 1.25, cy + 0.9, zf + 0.15),
+             (cx + 0.85, cy - 0.85, z_in), (cx + 1.25, cy + 0.85, z_in + 0.15),
              mat="rune_gold")
 
-    # 3. 外圈同心圆轨道 (半径约 2.1px)
+    # 3. 外圈同心圆轨道 (环半径约 2.05, z_surf ≈ cz + 2.71 = 3.11)
+    z_out = cz + 2.75
     rig.cube("runes", "ring_out_t",
-             (cx - 1.6, cy + 1.8, zf - 0.08), (cx + 1.6, cy + 2.15, zf + 0.08),
+             (cx - 1.5, cy + 1.75, z_out), (cx + 1.5, cy + 2.10, z_out + 0.15),
              mat="rune_gold")
     rig.cube("runes", "ring_out_b",
-             (cx - 1.6, cy - 2.15, zf - 0.08), (cx + 1.6, cy - 1.8, zf + 0.08),
+             (cx - 1.5, cy - 2.10, z_out), (cx + 1.5, cy - 1.75, z_out + 0.15),
              mat="rune_gold")
     rig.cube("runes", "ring_out_l",
-             (cx - 2.15, cy - 1.6, zf - 0.08), (cx - 1.8, cy + 1.6, zf + 0.08),
+             (cx - 2.10, cy - 1.5, z_out), (cx - 1.75, cy + 1.5, z_out + 0.15),
              mat="rune_gold")
     rig.cube("runes", "ring_out_r",
-             (cx + 1.8, cy - 1.6, zf - 0.08), (cx + 2.15, cy + 1.6, zf + 0.08),
+             (cx + 1.75, cy - 1.5, z_out), (cx + 2.10, cy + 1.5, z_out + 0.15),
              mat="rune_gold")
 
-    # 4. 轨道上的灵力节点小金珠 (Nodes)
+    # 4. 轨道上的灵力节点小金珠 (Nodes, 半径约 2.3, z_surf ≈ cz + 2.5 = 2.9)
+    z_node = cz + 2.55
     rig.cube("runes", "node_top",
-             (cx - 0.3, cy + 2.1, zf - 0.05), (cx + 0.3, cy + 2.7, zf + 0.15),
+             (cx - 0.3, cy + 2.1, z_node), (cx + 0.3, cy + 2.7, z_node + 0.18),
              mat="rune_bright")
     rig.cube("runes", "node_bot",
-             (cx - 0.3, cy - 2.7, zf - 0.05), (cx + 0.3, cy - 2.1, zf + 0.15),
+             (cx - 0.3, cy - 2.7, z_node), (cx + 0.3, cy - 2.1, z_node + 0.18),
              mat="rune_bright")
     rig.cube("runes", "node_left",
-             (cx - 2.7, cy - 0.3, zf - 0.05), (cx - 2.1, cy + 0.3, zf + 0.15),
+             (cx - 2.7, cy - 0.3, z_node), (cx - 2.1, cy + 0.3, z_node + 0.18),
              mat="rune_bright")
     rig.cube("runes", "node_right",
-             (cx + 2.1, cy - 0.3, zf - 0.05), (cx + 2.7, cy + 0.3, zf + 0.15),
+             (cx + 2.1, cy - 0.3, z_node), (cx + 2.7, cy + 0.3, z_node + 0.18),
              mat="rune_bright")
 
-    # 5. 横贯左右的纬线灵力轨道（原画左右弧形轨道）
-    rig.cube("runes", "orbit_lat_up",
-             (cx - 2.9, cy + 0.7, zf - 0.15), (cx + 2.9, cy + 0.95, zf + 0.05),
+    # 5. 横贯左右的纬线灵力轨道 (外延到两侧，向后贴紧球面)
+    # 中间段 (x: -1.8 ~ 1.8, z ≈ cz + 2.85)
+    rig.cube("runes", "orbit_lat_up_mid",
+             (cx - 1.8, cy + 0.72, cz + 2.95), (cx + 1.8, cy + 0.95, cz + 3.10),
              mat="rune_gold")
-    rig.cube("runes", "orbit_lat_dn",
-             (cx - 2.9, cy - 0.95, zf - 0.15), (cx + 2.9, cy - 0.7, zf + 0.05),
+    rig.cube("runes", "orbit_lat_dn_mid",
+             (cx - 1.8, cy - 0.95, cz + 2.95), (cx + 1.8, cy - 0.72, cz + 3.10),
+             mat="rune_gold")
+    # 两侧延伸段 (向后收束弯曲贴合球面，z 降至 cz + 2.0)
+    rig.cube("runes", "orbit_lat_up_l",
+             (cx - 2.8, cy + 0.72, cz + 2.10), (cx - 1.8, cy + 0.95, cz + 2.95),
+             mat="rune_gold")
+    rig.cube("runes", "orbit_lat_up_r",
+             (cx + 1.8, cy + 0.72, cz + 2.10), (cx + 2.8, cy + 0.95, cz + 2.95),
+             mat="rune_gold")
+    rig.cube("runes", "orbit_lat_dn_l",
+             (cx - 2.8, cy - 0.95, cz + 2.10), (cx - 1.8, cy - 0.72, cz + 2.95),
+             mat="rune_gold")
+    rig.cube("runes", "orbit_lat_dn_r",
+             (cx + 1.8, cy - 0.95, cz + 2.10), (cx + 2.8, cy - 0.72, cz + 2.95),
              mat="rune_gold")
 
-    # 6. 原画特有的斜向赤火熔岩裂纹（Fire Veins）
+    # 6. 斜向赤火熔岩裂纹 (同样按球面深度分段贴合)
     rig.cube("runes", "fire_vein_ne",
-             (cx + 0.5, cy + 0.8, zf), (cx + 2.4, cy + 2.6, zf + 0.12),
-             rot=(0.0, 0.0, 42.0), org=(cx + 1.4, cy + 1.7, zf),
+             (cx + 0.4, cy + 0.7, cz + 2.85), (cx + 2.2, cy + 2.4, cz + 3.15),
+             rot=(0.0, 0.0, 42.0), org=(cx + 1.3, cy + 1.6, cz + 3.0),
              mat="vein_fire")
     rig.cube("runes", "fire_vein_sw",
-             (cx - 2.4, cy - 2.6, zf), (cx - 0.5, cy - 0.8, zf + 0.12),
-             rot=(0.0, 0.0, 45.0), org=(cx - 1.4, cy - 1.7, zf),
+             (cx - 2.2, cy - 2.4, cz + 2.85), (cx - 0.4, cy - 0.7, cz + 3.15),
+             rot=(0.0, 0.0, 45.0), org=(cx - 1.3, cy - 1.6, cz + 3.0),
              mat="vein_fire")
     rig.cube("runes", "fire_vein_nw",
-             (cx - 2.2, cy + 0.6, zf), (cx - 0.6, cy + 2.4, zf + 0.12),
-             rot=(0.0, 0.0, -42.0), org=(cx - 1.4, cy + 1.5, zf),
+             (cx - 2.1, cy + 0.5, cz + 2.85), (cx - 0.5, cy + 2.2, cz + 3.15),
+             rot=(0.0, 0.0, -42.0), org=(cx - 1.3, cy + 1.4, cz + 3.0),
              mat="vein_fire")
 
 
