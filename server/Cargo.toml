@@ -159,6 +159,10 @@ name = "npc_hydrate_unit"
 path = "tests/unit/npc/hydrate_test.rs"
 
 [[test]]
+name = "npc_spawn_unit"
+path = "tests/unit/npc/spawn_test.rs"
+
+[[test]]
 name = "burst_meridian_unit"
 path = "tests/unit/cultivation/burst_meridian_test.rs"
 
@@ -181,6 +185,10 @@ path = "tests/unit/coffin_test.rs"
 [[test]]
 name = "audio_trigger_unit"
 path = "tests/unit/network/audio_trigger_test.rs"
+
+[[test]]
+name = "vfx_event_emit_unit"
+path = "tests/unit/network/vfx_event_emit_test.rs"
 
 [[test]]
 name = "agent_ui_unit"
