@@ -243,6 +243,10 @@ name = "zhenmai_v2_unit"
 path = "tests/unit/combat/zhenmai_v2_test.rs"
 
 [[test]]
+name = "sword_path_skill_register_unit"
+path = "tests/unit/sword_path/skill_register_test.rs"
+
+[[test]]
 name = "workbench_reach_profile"
 path = "tests/workbench_reach_profile.rs"
 
