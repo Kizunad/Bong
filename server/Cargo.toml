@@ -187,6 +187,10 @@ name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
 
 [[test]]
+name = "body_plan_types_unit"
+path = "tests/unit/body_plan/types_test.rs"
+
+[[test]]
 name = "coffin_unit"
 path = "tests/unit/coffin_test.rs"
 
