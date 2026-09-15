@@ -191,6 +191,10 @@ name = "cultivation_epitaph_unit"
 path = "tests/unit/cultivation/epitaph_test.rs"
 
 [[test]]
+name = "cultivation_breakthrough_unit"
+path = "tests/unit/cultivation/breakthrough_test.rs"
+
+[[test]]
 name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
 
