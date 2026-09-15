@@ -173,15 +173,11 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
 
 把 skeleton 补成范围明确、决策已收口、验收与测试矩阵可执行的 active plan，不扩写无关需求。执行 `git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，去掉骨架状态并记录来源与 promotion 日期。
 
-只提交 promotion，不夹带代码或测试。使用中文 commit，并在 commit message 末尾加入精确模型 trailer，例如：
+只提交 promotion，不夹带代码或测试。使用中文 commit，例如：
 
 ```text
 升格 plan-X：明确 BugFix 验证范围
-
-Model: gpt-5.6-sol-xhigh
 ```
-
-后续**每一个** agent commit（复现、修复、证伪、返工、归档）都必须带 `Model: <真实精确模型 id>` trailer；不得写 `AI`、`agent` 等泛称。
 
 ### 3. 第一性原理证真或证伪
 
@@ -211,8 +207,8 @@ Model: gpt-5.6-sol-xhigh
 门禁全绿后执行 `git fetch origin`，立即用 merge-base 分类，不允许直接运行会默认生成提交的 `git merge origin/main`：
 
 - **already-up-to-date**：`origin/main` 已是 HEAD 祖先，不改 HEAD，保留当前门禁证据。
-- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 没有 agent 新建 commit，因此无需新增 trailer；HEAD 变化后重跑受影响栈完整门禁。
-- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；通过后用中文消息和精确 trailer 显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复" -m "Model: <实际实施模型精确 id>"`。
+- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 不会产生 agent 新建 commit；HEAD 变化后重跑受影响栈完整门禁。
+- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；通过后用中文消息显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复"`。
 
 任何同步带入变化都必须重跑受影响栈完整门禁；冲突或触及修复相关文件时扩大针对性复验。
 
@@ -227,19 +223,15 @@ Model: gpt-5.6-sol-xhigh
 1. 把 plan 所有阶段标成 `✅ YYYY-MM-DD`。
 2. 填写严格命名的 `## Finish Evidence`，包含落地清单、关键 commit、完整测试结果、跨栈核验、遗留/后续。
 3. 运行 `bash scripts/plan-finish.sh <name>`，确认它把 active plan 移到 `docs/finished_plans/`。
-4. 以独立中文归档 commit 提交，并带精确 `Model:` trailer。
+4. 以独立中文归档 commit 提交。
 
 归档是开 PR 前最后一次允许的 mutation。归档 commit 后重新跑受影响栈门禁；若 review 返工，只原地更新现有 Finish Evidence/归档文件，不重复 promotion、追加第二份 Finish Evidence 或再次移动文件。
 
 ### 7. Push、PR 与 gates
 
-push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空，并确认所有预期改动均已提交。用 `git log origin/main..HEAD` 检查本分支新增的**每一个 commit**都存在且仅使用真实精确 id 的 `Model:` trailer；缺失、空值、`AI`、`agent`、`unknown` 等值一律阻止 push。
+push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空，并确认所有预期改动均已提交。
 
-只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论和完整测试。创建时写入实施模型字段：
-
-```text
-Model: <实际实施模型精确 id>
-```
+只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论和完整测试。
 
 PR 创建和 push 新提交后由 Kody 自动 review，不发送手动 `/review` 或 `/review-next` 评论；发现问题或需要针对最新 HEAD 复审时，才执行 `gh pr comment <PR> --body "@kody review --force"`。等待 Kody、e2e 与相关 checks。
 
