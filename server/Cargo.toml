@@ -31,6 +31,10 @@ name = "craft_unlock_unit"
 path = "tests/unit/craft/unlock_test.rs"
 
 [[test]]
+name = "craft_session_unit"
+path = "tests/unit/craft/session_test.rs"
+
+[[test]]
 name = "alchemy_furnace_unit"
 path = "tests/unit/alchemy/furnace_test.rs"
 
@@ -123,6 +127,10 @@ name = "inventory_unit"
 path = "tests/unit/inventory/inventory_test.rs"
 
 [[test]]
+name = "persistence_slice_unit"
+path = "tests/unit/persistence/slice_test.rs"
+
+[[test]]
 name = "player_state_unit"
 path = "tests/unit/player/state_test.rs"
 
@@ -177,6 +185,10 @@ path = "tests/unit/cultivation/color_test.rs"
 [[test]]
 name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
+
+[[test]]
+name = "body_plan_types_unit"
+path = "tests/unit/body_plan/types_test.rs"
 
 [[test]]
 name = "coffin_unit"
