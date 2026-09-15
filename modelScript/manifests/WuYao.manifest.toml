@@ -1,0 +1,30 @@
+# 乌曜石 WuYao —— 特征点名清单
+#
+# 特征来源：`wu_yao.png` 原画与天然贝壳断口原矿模型：
+# 1. obsidian_body: 饱满椭圆形深黑原矿母体（夹出正面深凹纵向裂谷）
+# 2. outer_facets: 周围层叠舒展翘起的黑莲/贝壳断口锐利鳞片（犬牙差互轮廓）
+# 3. gold_core_crevice: 正中向内深陷的 V 形裂谷中透出的炽亮十字聚阴金芒
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+obs_void  = [10, 10, 14]
+obs_dark  = [22, 22, 28]
+obs_mid   = [38, 40, 48]
+obs_edge  = [62, 68, 80]
+obs_spec  = [118, 128, 150]
+gold_core = [255, 236, 140]
+gold_mid  = [224, 172, 64]
+gold_deep = [152, 104, 32]
+
+[features]
+# 黑曜石母体
+obsidian_body = { elements = ["body_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 6000, SIDE_R = 7000 } }
+
+# 外围贝壳鳞片
+outer_facets = { elements = ["facet_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
+
+# 中心深陷金核裂隙
+gold_core_crevice = { elements = ["gold_"], must_show_in = ["FRONT"], min_px = { FRONT = 600 } }
