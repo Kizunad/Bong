@@ -235,6 +235,10 @@ name = "zone_unit"
 path = "tests/unit/world/zone_test.rs"
 
 [[test]]
+name = "heartbeat_unit"
+path = "tests/unit/world/heartbeat_test.rs"
+
+[[test]]
 name = "shelflife_compute_unit"
 path = "tests/unit/shelflife/compute_test.rs"
 
