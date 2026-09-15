@@ -159,6 +159,10 @@ name = "hybrid_beast_unit"
 path = "tests/unit/fauna/hybrid_beast_test.rs"
 
 [[test]]
+name = "fauna_mundane_unit"
+path = "tests/unit/fauna/mundane_test.rs"
+
+[[test]]
 name = "npc_technique_unit"
 path = "tests/unit/npc/technique_test.rs"
 
