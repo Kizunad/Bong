@@ -1,0 +1,37 @@
+# 古铜片 GuTongPian —— 特征点名清单
+#
+# 特征来源：`gu_tong_pian.png` 物品图标与上古礼器残垣方块：
+# 1. plate_body: 带有弧度与侧边包框的青铜残片基板
+# 2. fracture_top: 顶端崩裂的粗糙金属断茬与断口截面
+# 3. taotie_relief: 正面立体高浮雕饕餮兽面（兽角、凸目、大鼻、阔口）
+# 4. loose_ring: 兽口衔着的下垂倾斜青铜重环
+# 5. patina_scars: 阴刻与缝隙处的古青铜薄锈
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+bronze_void    = [28, 24, 20]
+bronze_dark    = [48, 40, 32]
+bronze_mid     = [76, 64, 52]
+bronze_lit     = [108, 92, 74]
+bronze_high    = [142, 122, 98]
+fracture_grain = [88, 76, 64]
+patina_moss    = [48, 62, 54]
+
+[features]
+# 残片基板与边框（薄片件侧向投影天然收缩）
+plate_body = { elements = ["plate_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 1500 } }
+
+# 顶端金属崩裂断茬
+fracture_top = { elements = ["fracture_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 500 } }
+
+# 饕餮浮雕兽面
+taotie_relief = { elements = ["taotie_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2500, SIDE_R = 800 } }
+
+# 衔环铜环
+loose_ring = { elements = ["ring_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 800, SIDE_R = 300 } }
+
+# 青铜薄锈
+patina_scars = { elements = ["patina_"], must_show_in = ["FRONT"], min_px = { FRONT = 100 } }
