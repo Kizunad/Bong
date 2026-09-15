@@ -1,0 +1,34 @@
+# 玉髓 YuSui —— 特征点名清单
+#
+# 特征来源：`yu_sui.png` 物品图标与 `ore_yu_sui.png` 矿石方块贴图：
+# 1. shale_crust: 深渊墨黑寒页岩外壳基座（深沉包覆围岩）
+# 2. jade_core: 中央十字裂缝处的温润冷翠玉髓核心（带冰白冷高光）
+# 3. jade_cross_arms: 向四方斜向劈裂延展的玉脉晶棱
+# 4. glow_crevices: 寒岩与玉石交接处的冷翠灵光暗流
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+shale_dark = [16, 20, 22]
+shale_base = [32, 40, 42]
+shale_mid  = [52, 62, 64]
+jade_deep  = [48, 82, 76]
+jade_body  = [88, 142, 132]
+jade_lit   = [148, 202, 190]
+jade_high  = [218, 244, 238]
+glow_seam  = [168, 232, 218]
+
+[features]
+# 寒页岩外壳基座
+shale_crust = { elements = ["shale_bed_", "shale_wall_", "shale_back_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
+
+# 核心温润冷玉核
+jade_core = { elements = ["jade_core_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 600 } }
+
+# 放射状玉脉
+jade_cross_arms = { elements = ["arm_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 1500 } }
+
+# 裂隙冷翠灵光
+glow_crevices = { elements = ["glow_"], must_show_in = ["FRONT"], min_px = { FRONT = 200 } }
