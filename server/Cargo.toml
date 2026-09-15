@@ -171,6 +171,10 @@ name = "npc_hydrate_unit"
 path = "tests/unit/npc/hydrate_test.rs"
 
 [[test]]
+name = "npc_equipment_unit"
+path = "tests/unit/npc/equipment_test.rs"
+
+[[test]]
 name = "npc_spawn_unit"
 path = "tests/unit/npc/spawn_test.rs"
 
