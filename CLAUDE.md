@@ -173,7 +173,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 1. **Claim + 进驻常驻 slot**：subagent 是 claim ref 的**唯一创建主体**。分支名固定 `bugfix/<plan-basename>`，认领 = create-ref API 原子创建远端分支：`gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/bugfix/plan-X" -f sha="$(git rev-parse origin/main)"`——**201 = 认领到手**；**422 先甄别再判占用**（查响应体 / `git ls-remote` 确认同名 ref 确实存在才算被占、回报主干换任务；其他原因的 422 = 流程错误，上报诊断而不是换任务）。认领成功后 `git fetch origin bugfix/plan-X` 同步远端引用，再进驻主干分派的常驻 slot：先用 `out=$(bash scripts/slot_registry.sh acquire --slot slot-k --task <plan> --branch bugfix/plan-X --claim-sha <sha> --agent <id>)` 原子获取 reservation，并从仅本次 stdout 提取 `OWNER_TOKEN`（默认 status 不暴露；失败=换 slot/排队，禁止无 reservation checkout）→ 核验 detached + `git status --porcelain=v1 --untracked-files=all` 为空 + ignored 仅缓存白名单 → 本地分支不存在时 `git checkout -B bugfix/plan-X origin/bugfix/plan-X` 并执行带 `--agent <canonical-id> --owner-token "$owner_token"` 的 `mark-created-local --value true`，本地分支已存在则直接 `git checkout` 并核验 SHA==claim SHA（不一致转人工，**禁 `checkout -B` 覆盖残留提交**，`created_local_branch` 保持 false）+ 显式设 upstream，配置 upstream 后，只通过带 `--agent <id> --owner-token "$owner_token"` 的 `occupy` executable gate 进驻（由命令自己重验 canonical path、registered+locked、branch/HEAD/upstream/claim、dirty/untracked/ignored）；slot 不存在时主干先 `git worktree add --lock --detach` 一次性创建。**进驻失败回滚**：slot 内 detach（若已 checkout）+ `bash scripts/slot_registry.sh rollback --slot slot-k --task <plan> --agent <id> --owner-token "$owner_token"`，**仅当 stdout `DELETE_LOCAL_BRANCH=true`（本轮新建本地分支）才 `git branch -D`**；既有分支（含 SHA 冲突/BLOCKED 残留）一律保留并交人工。远端 claim ref 也只允许该 subagent 在「本轮 create-ref 刚创建、PR 尚未创建、且删除前重新查询确认远端 SHA 仍等于本轮 claim SHA」三项同时成立时回滚删除并核验不存在；否则保留 ref 交主干。slot 不 remove。
 2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
 3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
-   - **真 bug** → 最小正确修复 + 最小契约测试锁住该 bug 的可观察行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
+   - **真 bug** → 最小正确修复 + 最小契约测试锁住该 bug 的可观察行为，按小阶段中文 commit
    - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
 4. **本地门禁**：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`；client：`scripts/build-token.sh gradle test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；BongWorldGen：在独立仓库运行其 `pytest` 和生成器测试。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
 5. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或触及修复相关文件 → 重新跑受影响栈门禁
@@ -212,7 +212,6 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 - commit message **中文**，匹配仓库近 30 提交风格；每个逻辑单元一个 atomic commit，不堆积巨型 commit
 - 归档 commit 形如：`归档 plan-<name>：<一句话总结>`
-- **模型署名（供后续统计，必填）**：agent 产出的每个 commit 末尾必须带 trailer 注明**真实执行模型**：`Model: <精确模型 id>`（如 `claude-fable-5` / `claude-opus-4-8` / `gpt-5.6-sol-xhigh`），`Co-Authored-By` 照旧保留。PR body 末尾同样注明主导模型及参与模型（reviewer 用了不同模型也逐个列出）。不许漏署，不许写泛称 "AI" / "agent"。统计入口：`git log --format='%(trailers:key=Model,valueonly)'`
 
 ## 反 machine slop（"给人读"是硬要求，不是审美偏好）
 
