@@ -235,6 +235,10 @@ name = "network_craft_emit_unit"
 path = "tests/unit/network/craft_emit_test.rs"
 
 [[test]]
+name = "network_cast_emit_unit"
+path = "tests/unit/network/cast_emit_test.rs"
+
+[[test]]
 name = "raster_unit"
 path = "tests/unit/world/raster_test.rs"
 
