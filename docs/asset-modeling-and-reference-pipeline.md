@@ -47,7 +47,7 @@
     │
     ▼
 [Phase 5: 提交与提 PR]
-    1. 分支创建与 Atomic Commit (携带 Model: trailer)
+    1. 分支创建与 Atomic Commit
     2. gh pr create 创建 Pull Request
 ```
 
@@ -147,21 +147,18 @@ shoulder_skull = { elements = ["skull_"], must_show_in = ["FRONT", "SIDE_L"], as
 
 ### 1. Git Commit 规范
 - Commit 消息使用**中文**，遵循原子提交（Atomic Commit）。
-- 每个 commit 末尾必须包含真实执行模型署名 trailer：
   ```
   feat(modelScript): 完成 <资产名称> 3D 程序化建模与贴图系统 (round 3/3)
 
   <PROMISE>已完成 3 轮打磨与人工闸门确认，贴图已核验无共面 z-fighting</PROMISE>
-
-  Model: gpt-5.6-sol-xhigh
   ```
 
 ### 2. PR 创建规范
-使用 `gh pr create` 创建 PR，附带清晰说明与生成模型：
+使用 `gh pr create` 创建 PR，附带清晰说明：
 ```bash
 gh pr create --head feat/<branch-name> \
   --title "feat(modelScript): 实现 <资产名称> 3D 程序化建模与参考图资产" \
-  --body "## 概要\n- 完成 <资产名称> 概念图、黑底图标、MC 三视图、爆炸分解图设计\n- 完成 gen_<asset>.py 程序化建模与 64x64 贴图生成\n- 通过 Round 2 人工闸门与单元测试\n\n主导模型: gpt-5.6-sol-xhigh"
+  --body "## 概要\n- 完成 <资产名称> 概念图、黑底图标、MC 三视图、爆炸分解图设计\n- 完成 gen_<asset>.py 程序化建模与 64x64 贴图生成\n- 通过 Round 2 人工闸门与单元测试"
 ```
 
 ---
