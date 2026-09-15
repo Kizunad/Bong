@@ -1,0 +1,25 @@
+# 抗灵压丹 AntiSpiritPressurePill —— 特征点名清单
+#
+# 特征来源：`anti_spirit_pressure_pill.png` 图标解析：
+# 1. bronze_chalice: 高足古青铜药钵（喇叭圈足 + 束腰颈 + 弧形展腹 + 外撇平唇）
+# 2. obsidian_pills: 钵中满盛堆叠的致密玄黑抗灵压丹丸
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+chalice_base = [54, 44, 38]
+chalice_lit  = [118, 96, 78]
+chalice_mid  = [86, 70, 58]
+chalice_dark = [34, 28, 24]
+pill_base    = [42, 40, 44]
+pill_lit     = [72, 70, 76]
+pill_shadow  = [24, 22, 26]
+
+[features]
+# 高足古铜钵
+bronze_chalice = { elements = ["foot_", "belly_", "rim_", "inner_bed"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3500, SIDE_R = 3500 } }
+
+# 满盛玄墨丹药
+obsidian_pills = { elements = ["p_main", "p_fl", "p_fr", "p_bl", "p_br", "p_bm"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 800, "3/4" = 1500 } }

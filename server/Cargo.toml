@@ -99,6 +99,10 @@ name = "combat_lifecycle_unit"
 path = "tests/unit/combat/lifecycle_test.rs"
 
 [[test]]
+name = "combat_status_unit"
+path = "tests/unit/combat/status_test.rs"
+
+[[test]]
 name = "recipe_fragment_unit"
 path = "tests/unit/alchemy/recipe_fragment_test.rs"
 
@@ -189,6 +193,10 @@ path = "tests/unit/cultivation/epitaph_test.rs"
 [[test]]
 name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
+
+[[test]]
+name = "body_plan_types_unit"
+path = "tests/unit/body_plan/types_test.rs"
 
 [[test]]
 name = "coffin_unit"

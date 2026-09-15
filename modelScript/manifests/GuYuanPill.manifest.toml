@@ -1,0 +1,29 @@
+# 固元丹 GuYuanPill —— 特征点名清单
+#
+# 特征来源：`guyuan_pill.png` 图标解析：
+# 1. rune_core: 固元丹正前方的同心圆金光阵核、轨道与节点
+# 2. grand_guyuan: 浑圆硕大的地火主丹身
+# 3. sub_pills: 底层稳固托底的双伴生丹
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+crust_dark  = [36, 16, 12]
+crust_mid   = [68, 28, 18]
+crust_red   = [118, 48, 24]
+vein_fire   = [214, 78, 28]
+rune_gold   = [254, 186, 42]
+rune_bright = [255, 232, 96]
+crust_flake = [228, 218, 204]
+
+[features]
+# 同心金光阵纹与裂纹
+rune_core = { elements = ["rune_", "ring_", "node_", "orbit_", "fire_"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 1000, "3/4" = 1200 } }
+
+# 核心大丹
+grand_guyuan = { elements = ["grand_guyuan", "flake_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 4000, SIDE_R = 4000 } }
+
+# 底层伴生丹
+sub_pills = { elements = ["sub_left", "sub_right"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 1000 } }
