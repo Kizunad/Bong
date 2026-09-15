@@ -136,7 +136,6 @@ fn spawn_charge_actor(app: &mut App) -> Entity {
         .id()
 }
 
-
 #[test]
 fn transform_charged_carrier_is_non_stackable_and_bumps_revision() {
     let registry = registry();
@@ -687,8 +686,8 @@ mod partboxes_carrier_production_integration_tests {
 
     fn registries_for(plan: crate::body_plan::BodyPlan) -> (BodyPlanRegistry, RaceRegistry) {
         let plan_id = plan.id.clone();
-        let body_plans = BodyPlanRegistry::from_plans(vec![plan])
-            .expect("synthetic carrier plan must validate");
+        let body_plans =
+            BodyPlanRegistry::from_plans(vec![plan]).expect("synthetic carrier plan must validate");
         let races = RaceRegistry::from_parts_for_test(
             vec![RaceEntry {
                 id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
@@ -855,10 +854,9 @@ mod partboxes_carrier_production_integration_tests {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let plans_dir = manifest_dir.join(crate::body_plan::registry::DEFAULT_BODY_PLANS_DIR);
         let races_path = manifest_dir.join(crate::body_plan::race_registry::DEFAULT_RACES_PATH);
-        let body_plans =
-            BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
-        let races = RaceRegistry::load_file(&races_path, &body_plans)
-            .expect("real races.json should load");
+        let body_plans = BodyPlanRegistry::load_dir(&plans_dir).expect("real plans/ should load");
+        let races =
+            RaceRegistry::load_file(&races_path, &body_plans).expect("real races.json should load");
         (body_plans, races)
     }
 
@@ -983,8 +981,6 @@ mod partboxes_carrier_production_integration_tests {
         );
     }
 }
-
-
 
 #[test]
 fn carrier_charge_qi_uses_artifact_resonance_efficiency() {
@@ -1206,15 +1202,7 @@ fn conservation_invariant_residual_equals_transfer_total() {
 
 // ── 经脉门测试：charge_carrier meridian gate ─────────────────────────────────────
 
-
-
-
 // ── qi 门测试：resolve_anqi_charge_skill 真元不足时提前拒绝 ────────────────────
-
-
-
-
-
 
 // ══════════════════════════════════════════════════════════════════════════
 // bughunt-20260726 carrier-throw-dir-nan-leak — client `dir_unit` 溢出
