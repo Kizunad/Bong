@@ -63,6 +63,10 @@ name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
 
 [[test]]
+name = "lingtian_weather_unit"
+path = "tests/unit/lingtian/weather_test.rs"
+
+[[test]]
 name = "dimension_unit"
 path = "tests/unit/world/dimension_test.rs"
 
@@ -101,6 +105,10 @@ path = "tests/unit/combat/lifecycle_test.rs"
 [[test]]
 name = "combat_status_unit"
 path = "tests/unit/combat/status_test.rs"
+
+[[test]]
+name = "combat_carrier_unit"
+path = "tests/unit/combat/carrier_test.rs"
 
 [[test]]
 name = "recipe_fragment_unit"
@@ -175,6 +183,10 @@ name = "npc_hydrate_unit"
 path = "tests/unit/npc/hydrate_test.rs"
 
 [[test]]
+name = "npc_equipment_unit"
+path = "tests/unit/npc/equipment_test.rs"
+
+[[test]]
 name = "npc_spawn_unit"
 path = "tests/unit/npc/spawn_test.rs"
 
@@ -245,6 +257,10 @@ path = "tests/unit/world/zone_test.rs"
 [[test]]
 name = "heartbeat_unit"
 path = "tests/unit/world/heartbeat_test.rs"
+
+[[test]]
+name = "world_block_place_unit"
+path = "tests/unit/world/block_place_test.rs"
 
 [[test]]
 name = "shelflife_compute_unit"
