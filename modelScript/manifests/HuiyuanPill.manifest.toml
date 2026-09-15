@@ -21,7 +21,7 @@ pill_shadow    = [76, 28, 18]
 
 [features]
 # 瓷罐身：下腹 + 鼓腹 + 上腹
-jar_body = { elements = ["belly_", "foot"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
+jar_body = { elements = ["belly_", "foot", "inner_bed"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
 
 # 罐口外卷沿：陶黄烧边
 jar_rim = { elements = ["rim", "neck"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 400, "3/4" = 500 } }
