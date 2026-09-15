@@ -227,6 +227,10 @@ name = "tiandao_hunt_unit"
 path = "tests/unit/world/tiandao_hunt_test.rs"
 
 [[test]]
+name = "zone_unit"
+path = "tests/unit/world/zone_test.rs"
+
+[[test]]
 name = "shelflife_compute_unit"
 path = "tests/unit/shelflife/compute_test.rs"
 
