@@ -3,8 +3,8 @@ use bong_server::fauna::mundane::{
     mundane_habitat_allows_spawn, mundane_passive_budget_fn, mundane_season_weight_multiplier,
     mundane_species_for_position, mundane_species_for_position_seasonal, register,
     select_mundane_species, select_mundane_species_weighted, MundaneFaunaKind, MundaneFaunaMarker,
-    MundaneFaunaSpecies,
-    MundaneFaunaWithering, NEGATIVE_ZONE_WITHER_SOUND_RECIPE_ID, NEGATIVE_ZONE_WITHER_TICKS,
+    MundaneFaunaSpecies, MundaneFaunaWithering, NEGATIVE_ZONE_WITHER_SOUND_RECIPE_ID,
+    NEGATIVE_ZONE_WITHER_TICKS,
 };
 use bong_server::network::audio_event_emit::PlaySoundRecipeRequest;
 use bong_server::network::vfx_event_emit::VfxEventRequest;
@@ -478,7 +478,11 @@ fn wither_system_emits_burst_particle_on_entering_and_final_burst_plus_sound_on_
         app.update();
     }
     let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
-    let audio: Vec<_> = audio_events.get_reader().read(audio_events).cloned().collect();
+    let audio: Vec<_> = audio_events
+        .get_reader()
+        .read(audio_events)
+        .cloned()
+        .collect();
     assert_eq!(audio.len(), 1, "despawn 瞬间应恰好发一次消亡音效");
     assert_eq!(audio[0].recipe_id, NEGATIVE_ZONE_WITHER_SOUND_RECIPE_ID);
 }
