@@ -263,6 +263,9 @@ name = "world_block_place_unit"
 path = "tests/unit/world/block_place_test.rs"
 
 [[test]]
+name = "world_spawn_tutorial_unit"
+path = "tests/unit/world/spawn_tutorial_test.rs"
+[[test]]
 name = "shelflife_compute_unit"
 path = "tests/unit/shelflife/compute_test.rs"
 
