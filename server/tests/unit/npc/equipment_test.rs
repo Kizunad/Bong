@@ -423,8 +423,7 @@ fn assign_disciple_always_has_weapon() {
             Some(FactionId::Defend),
             Some(FactionId::Neutral),
         ] {
-            let eq =
-                assign_npc_equipment(NpcArchetype::Disciple, Realm::Awaken, faction, seed * 7);
+            let eq = assign_npc_equipment(NpcArchetype::Disciple, Realm::Awaken, faction, seed * 7);
             assert!(
                 eq.main_hand.is_some(),
                 "disciple should always have main_hand weapon (seed={seed}, faction={faction:?})"
@@ -529,8 +528,7 @@ fn assign_deterministic_all_archetypes() {
 #[test]
 fn merge_equipment_no_npc_eq_uses_visual_profile() {
     use bong_server::skin::npc_skin_selector::select_npc_visual_profile;
-    let profile =
-        select_npc_visual_profile(NpcArchetype::Disciple, Realm::Awaken, None, None, 0.5);
+    let profile = select_npc_visual_profile(NpcArchetype::Disciple, Realm::Awaken, None, None, 0.5);
     let merged = merge_equipment(None, &profile);
     let visual_only = visual_equipment(&profile);
     // Without NpcEquipment, should match visual profile output
@@ -588,8 +586,7 @@ fn merge_equipment_empty_npc_eq_preserves_visual() {
 #[test]
 fn merge_equipment_main_hand_weapon() {
     use bong_server::skin::npc_skin_selector::select_npc_visual_profile;
-    let profile =
-        select_npc_visual_profile(NpcArchetype::Rogue, Realm::Awaken, None, None, 0.5);
+    let profile = select_npc_visual_profile(NpcArchetype::Rogue, Realm::Awaken, None, None, 0.5);
     let npc_eq = NpcEquipment {
         main_hand: Some(make_weapon_slot(
             "iron_sword",
