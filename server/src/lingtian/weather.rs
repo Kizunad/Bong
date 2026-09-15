@@ -614,4 +614,3 @@ pub fn weather_apply_to_plot_system(
         });
     }
 }
-
