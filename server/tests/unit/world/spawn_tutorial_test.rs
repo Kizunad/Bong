@@ -2,9 +2,9 @@ use bong_server::alchemy::learned::LearnedRecipes;
 use bong_server::alchemy::recipe_fragment::PartialRecipeKnowledge;
 use bong_server::forge::learned::LearnedBlueprints;
 use bong_server::inventory::{
-ContainerState, InventoryInstanceIdAllocator, InventoryRevision, ItemCategory, ItemInstance,
-ItemRarity, ItemRegistry, ItemTemplate, PlacedItemState, PlayerInventory,
-MAIN_PACK_CONTAINER_ID,
+    ContainerState, InventoryInstanceIdAllocator, InventoryRevision, ItemCategory, ItemInstance,
+    ItemRarity, ItemRegistry, ItemTemplate, PlacedItemState, PlayerInventory,
+    MAIN_PACK_CONTAINER_ID,
 };
 use bong_server::world::spawn_tutorial::*;
 use std::collections::HashMap;
@@ -157,8 +157,7 @@ fn grant_meridian_primer_once_happy_path() {
     let mut state = TutorialState::new(0);
     let mut inventory = empty_inventory();
 
-    let outcome =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let outcome = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
 
     assert!(matches!(
         outcome,
@@ -184,8 +183,7 @@ fn grant_meridian_primer_once_does_not_regrant_when_hook_already_set() {
     state.trigger(TutorialHook::MeridianPrimerGranted);
     let mut inventory = empty_inventory();
 
-    let outcome =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let outcome = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
 
     assert_eq!(outcome, MeridianPrimerGrantOutcome::AlreadyGranted);
     assert!(
@@ -202,12 +200,10 @@ fn grant_meridian_primer_once_reconnect_does_not_regrant() {
     let mut state = TutorialState::new(0);
     let mut inventory = empty_inventory();
 
-    let first =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let first = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
     assert!(matches!(first, MeridianPrimerGrantOutcome::Granted { .. }));
 
-    let second =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let second = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
     assert_eq!(
         second,
         MeridianPrimerGrantOutcome::AlreadyGranted,
@@ -230,8 +226,7 @@ fn grant_meridian_primer_once_crash_window_item_present_hook_missing_does_not_du
     let mut state = TutorialState::new(0); // hook 未设置——模拟未持久化
     let mut inventory = inventory_with_items(vec![(MERIDIAN_PRIMER_TEMPLATE_ID, 777)]);
 
-    let outcome =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let outcome = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
 
     assert_eq!(
         outcome,
@@ -259,8 +254,7 @@ fn grant_meridian_primer_once_old_player_backfill_when_never_granted() {
     state.trigger(TutorialHook::Moved200Blocks);
     let mut inventory = empty_inventory();
 
-    let outcome =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let outcome = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
 
     assert!(
         matches!(outcome, MeridianPrimerGrantOutcome::Granted { .. }),
@@ -276,8 +270,7 @@ fn grant_meridian_primer_once_missing_template_reports_error_without_panicking()
     let mut state = TutorialState::new(0);
     let mut inventory = empty_inventory();
 
-    let outcome =
-        grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+    let outcome = grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
 
     assert!(
         matches!(
@@ -293,8 +286,6 @@ fn grant_meridian_primer_once_missing_template_reports_error_without_panicking()
     assert!(inventory.containers[0].items.is_empty());
 }
 
-
-
 #[test]
 fn moved_200_blocks_uses_spawn_anchor_not_last_position() {
     let mut state = TutorialState::new(0);
@@ -304,14 +295,6 @@ fn moved_200_blocks_uses_spawn_anchor_not_last_position() {
     assert!(!moved_at_least_200_blocks(&state, [190.0, 70.0, 8.0]));
     assert!(moved_at_least_200_blocks(&state, [210.0, 70.0, 8.0]));
 }
-
-
-
-
-
-
-
-
 
 #[test]
 fn rat_swarm_requires_coffin_first_meridian_and_movement_toward_lingquan() {
@@ -473,7 +456,8 @@ fn alchemy_learn_recipe_fragment_serde_roundtrip() {
 #[test]
 fn alchemy_learn_recipe_fragment_rejects_extra_fields() {
     use bong_server::schema::client_request::ClientRequestV1;
-    let json = r#"{"type":"alchemy_learn_recipe_fragment","v":1,"item_instance_id":4242,"extra":true}"#;
+    let json =
+        r#"{"type":"alchemy_learn_recipe_fragment","v":1,"item_instance_id":4242,"extra":true}"#;
     assert!(
         serde_json::from_str::<ClientRequestV1>(json).is_err(),
         "extra fields should be rejected by deny_unknown_fields"
@@ -613,7 +597,5 @@ fn forge_hint_needs_at_least_one_blueprint() {
 }
 
 // ── F9 跨层修复：send_tutorial_coffin_pos_on_join ──────────────
-
-
 
 // ── plan-scroll-reading-v1 P0 §8.1 #1：grant_meridian_primer_on_join tick-poll ──
