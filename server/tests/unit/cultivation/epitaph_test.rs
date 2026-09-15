@@ -4,11 +4,11 @@ use bong_server::combat::components::Lifecycle;
 use bong_server::cultivation::components::Realm;
 use bong_server::cultivation::death_hooks::PlayerTerminated;
 use bong_server::cultivation::epitaph::*;
+use bong_server::cultivation::life_record::{BiographyEntry, LifeRecord, SkillMilestone};
 use bong_server::npc::spawn::NpcMarker;
 use bong_server::persistence::{bootstrap_sqlite, PersistenceSettings};
 use bong_server::player::state::canonical_player_id;
 use bong_server::skill::components::SkillId;
-use bong_server::cultivation::life_record::{BiographyEntry, LifeRecord, SkillMilestone};
 use std::path::PathBuf;
 use valence::prelude::*;
 
@@ -514,8 +514,7 @@ fn persist_epitaph_1001_all_present_in_sqlite_after_registry_eviction() {
 fn final_thought_none_serde_roundtrip() {
     let ft = FinalThought::None;
     let json = serde_json::to_string(&ft).expect("FinalThought::None 应可序列化");
-    let back: FinalThought =
-        serde_json::from_str(&json).expect("FinalThought::None 应可反序列化");
+    let back: FinalThought = serde_json::from_str(&json).expect("FinalThought::None 应可反序列化");
     assert_eq!(ft, back, "期望 FinalThought::None serde round-trip 一致");
 }
 
