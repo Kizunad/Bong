@@ -18,8 +18,6 @@ impl RollSource for FixedRoll {
     }
 }
 
-
-
 fn setup_for_induce() -> (Cultivation, MeridianSystem) {
     let mut c = Cultivation {
         qi_current: 100.0,
@@ -168,11 +166,6 @@ fn credit_active_breakthrough_cost_handles_boundaries() {
         "breakthrough audit transfer amount must equal the spent qi"
     );
 }
-
-
-
-
-
 
 #[test]
 fn breakthrough_error_message_covers_all_error_variants() {
@@ -512,17 +505,6 @@ fn breakthrough_system_uses_target_entity_own_race_profile_not_humanoid() {
         cultivation.qi_current
     );
 }
-
-
-
-
-
-
-
-
-
-
-
 
 #[test]
 fn breakthrough_rejects_when_zone_qi_too_weak() {
@@ -1085,7 +1067,6 @@ fn guyuan_requires_high_qi_or_spirit_eye() {
     );
 }
 
-
 #[test]
 fn spirit_eye_bonus_is_gated_to_guyuan_breakthrough() {
     assert_eq!(
@@ -1100,7 +1081,6 @@ fn spirit_eye_bonus_is_gated_to_guyuan_breakthrough() {
     assert_eq!(spirit_eye_env_bonus_for(Realm::Induce, Some(false)), 0.0);
     assert_eq!(spirit_eye_env_bonus_for(Realm::Condense, None), 0.0);
 }
-
 
 fn setup_rapid_breakthrough_karma_app(now: u64) -> App {
     let mut app = App::new();
@@ -1123,9 +1103,6 @@ fn breakthrough_success_outcome(entity: Entity) -> BreakthroughOutcome {
         }),
     }
 }
-
-
-
 
 // ───────────────────────────────────────────────────────────────────────
 // qi_max_frozen cap: 突破失败不能永久废人
@@ -1161,7 +1138,6 @@ fn single_breakthrough_failure_freezes_qi_within_cap() {
         "期望有效 qi_max > 0 以防玩家废人，实际 effective_qi_max = {effective}"
     );
 }
-
 
 /// 验证 cap 边界：pre-existing frozen 接近 cap 时，再叠一次不会超过 cap。
 #[test]

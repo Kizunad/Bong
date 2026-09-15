@@ -15,7 +15,6 @@ use bong_server::world::season::Season;
 use bong_server::world::spirit_eye::SpiritEyeUsedForBreakthroughEvent;
 use valence::prelude::{Entity, Position};
 
-
 use bong_server::cultivation::components::MeridianId;
 use bong_server::cultivation::overload;
 use bong_server::npc::spawn::NpcMarker;
@@ -114,9 +113,6 @@ fn open_all_meridians(meridians: &mut MeridianSystem) {
     }
 }
 
-
-
-
 #[test]
 fn awaken_to_induce_always_succeeds_with_roll_zero() {
     let (mut c, mut m) = setup_for_induce();
@@ -187,9 +183,6 @@ fn spirit_to_void_is_gated_by_tribulation() {
     let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
     assert_eq!(err, BreakthroughError::RequiresTribulation);
 }
-
-
-
 
 #[test]
 fn material_bonus_capped_at_30_percent() {
@@ -362,16 +355,6 @@ fn spirit_allows_twelve_regular_and_four_extraordinary_meridians() {
     assert_eq!(c.realm, Realm::Spirit);
 }
 
-
-
-
-
-
-
-
-
-
-
 #[test]
 fn spirit_eye_bonus_raises_guyuan_success_rate() {
     let base = compute_success_rate_with_env_bonus(Realm::Solidify, 1.0, 1.0, 1.0, 0.0, 0.0);
@@ -386,7 +369,6 @@ fn spirit_eye_bonus_raises_guyuan_success_rate() {
 
     assert!(boosted > base);
 }
-
 
 /// plan-skill-v1 §4 cap 表锚点：六境界分别对应 3/5/7/8/9/10。
 #[test]
@@ -520,7 +502,6 @@ fn failed_breakthrough_outcome_does_not_mark_karma() {
     assert!(weights.entry_for_player("Azure").is_none());
 }
 
-
 /// 连续多次失败，qi_max_frozen 不超过 qi_max * 0.5 的硬上限。
 #[test]
 fn repeated_breakthrough_failures_frozen_capped_at_half_qi_max() {
@@ -558,8 +539,6 @@ fn repeated_breakthrough_failures_frozen_capped_at_half_qi_max() {
         "期望有效真元上限精确保留 qi_max×(1-cap_ratio)，实际 effective_qi_max = {effective_qi_max}"
     );
 }
-
-
 
 /// 成功突破不应修改 qi_max_frozen。
 #[test]
