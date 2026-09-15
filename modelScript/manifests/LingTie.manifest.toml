@@ -1,0 +1,26 @@
+# 灵铁 LingTie —— 特征点名清单
+#
+# 特征来源：`ling_tie.png` 物品原画与血谷灵铁矿方块：
+# 1. iron_lobes: 水滴梭形冷铁原矿咬合母体（斜向水滴尖、深凹峡谷内壁）
+# 2. teal_chasm_veins: 纵贯峡谷与裂隙深处的青碧储灵冷光网与高光交汇点
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+iron_void = [10, 16, 18]
+iron_dark = [20, 30, 32]
+iron_mid  = [38, 52, 54]
+iron_lit  = [58, 78, 80]
+iron_spec = [96, 126, 130]
+qi_deep   = [42, 102, 108]
+qi_body   = [68, 172, 178]
+qi_high   = [148, 242, 248]
+
+[features]
+# 冷铁水滴矿体
+iron_lobes = { elements = ["lobe_", "nodule_", "back_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 6000, SIDE_R = 6000 } }
+
+# 青碧储灵裂纹网
+teal_chasm_veins = { elements = ["chasm_", "vein_"], must_show_in = ["FRONT"], min_px = { FRONT = 1000 } }
