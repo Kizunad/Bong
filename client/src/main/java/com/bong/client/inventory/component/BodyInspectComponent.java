@@ -1,1078 +1,278 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.inventory.model.*;
-import com.bong.client.inventory.model.bodyplan.BodyPlanLayout;
-import com.bong.client.inventory.model.bodyplan.MeridianPath;
-import com.bong.client.inventory.model.bodyplan.PartAnchor;
-import com.bong.client.inventory.model.bodyplan.Point2;
-import com.bong.client.inventory.model.bodyplan.SilhouettePart;
-import com.bong.client.inventory.state.BodyPlanLayoutStore;
-import com.mojang.blaze3d.systems.RenderSystem;
-import io.wispforest.owo.ui.base.BaseComponent;
+import com.bong.client.inventory.state.PlayerRaceIdentityStore;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.ui.model.BodyModelGeometry;
+import com.bong.client.ui.model.BodyModelCapture;
+import com.bong.client.ui.model.ModelOverlayMesh;
+import com.bong.client.ui.model.ModelPreviewComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
-import io.wispforest.owo.ui.core.Sizing;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.render.*;
+import net.minecraft.client.render.entity.PlayerEntityRenderer;
+import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
-import java.util.EnumMap;
-import java.util.EnumSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Consumer;
 
-/**
- * 双层人体检视组件 — 体表层(肉体伤势) + 经脉层(气脉状态)。
- * 支持物品放置到身体部位/经脉上。
- *
- * <p>经脉层支持分组筛选（全部 / 手经 / 足经 / 奇经），
- * 使用多层 glow 描边绘制，点击选中脉以锁定详情面板。
- */
-public class BodyInspectComponent extends BaseComponent {
-    private static final int W = 168;           // 画布宽
-    private static final int BODY_BOTTOM_Y = 192; // 足底 y（body 绘制上限）
-    private static final int DETAIL_TOP = 196;    // 底部详情带顶部
-    private static final int DETAIL_H = 40;       // 底部详情带高度
-    private static final int H = DETAIL_TOP + DETAIL_H; // 236
-    private static final int ICON_SIZE = 128;
-    private static final int ITEM_RENDER_SIZE = 14;
-    private static final int BODY_COLOR = 0x88222233;
-
+/** 自身内观与通用模型预览共享镜头、网格取景和输入；领域选择只在点击释放后提交。 */
+public final class BodyInspectComponent extends ModelPreviewComponent {
     public enum Layer { PHYSICAL, MERIDIAN }
-
-    /** 经脉筛选 — 缩减同屏显示数量，让间距加大 */
     public enum MeridianFilter {
         ALL("全部"), ARM("手经"), LEG("足经"), EXTRA("奇经");
         private final String label;
         MeridianFilter(String label) { this.label = label; }
         public String label() { return label; }
-
-        /** 是否包含指定经脉 */
         public boolean includes(MeridianChannel ch) {
             return switch (this) {
                 case ALL -> true;
-                case ARM -> ch == MeridianChannel.LU || ch == MeridianChannel.HT || ch == MeridianChannel.PC
-                         || ch == MeridianChannel.LI || ch == MeridianChannel.SI || ch == MeridianChannel.TE;
-                case LEG -> ch == MeridianChannel.SP || ch == MeridianChannel.KI || ch == MeridianChannel.LR
-                         || ch == MeridianChannel.ST || ch == MeridianChannel.BL || ch == MeridianChannel.GB;
+                case ARM -> ch.region() == MeridianChannel.BodyRegion.LEFT_ARM || ch.region() == MeridianChannel.BodyRegion.RIGHT_ARM;
+                case LEG -> ch.region() == MeridianChannel.BodyRegion.LEFT_LEG || ch.region() == MeridianChannel.BodyRegion.RIGHT_LEG;
                 case EXTRA -> ch.family() == MeridianChannel.Family.EXTRAORDINARY;
             };
         }
     }
-
-    private Layer activeLayer = Layer.PHYSICAL;
-    private MeridianFilter meridianFilter = MeridianFilter.ALL;
-    private PhysicalBody physicalBody;
-    private MeridianBody meridianBody;
-    private long tickCount;
-
-    // Hover state
-    private BodyPart hoveredPart;
-    private MeridianChannel hoveredChannel;
-
-    // Persistent selection (click to pin)
-    private MeridianChannel selectedChannel;
-    private final java.util.List<java.util.function.Consumer<MeridianChannel>> selectionListeners =
-        new java.util.concurrent.CopyOnWriteArrayList<>();
-
-    // Highlight (drag)
-    private BodyPart highlightedPart;
-    private MeridianChannel highlightedChannel;
-    private boolean highlightValid;
-    private final EnumSet<MeridianChannel> techniqueHighlightedChannels = EnumSet.noneOf(MeridianChannel.class);
-
-    // 运行时物品（可被玩家拖拽修改，初始化时从模型同步）
-    private final EnumMap<BodyPart, InventoryItem> physicalApplied = new EnumMap<>(BodyPart.class);
-    private final EnumMap<MeridianChannel, InventoryItem> meridianApplied = new EnumMap<>(MeridianChannel.class);
+    private Layer layer = Layer.PHYSICAL;
+    private MeridianFilter filter = MeridianFilter.ALL;
+    private PhysicalBody physical;
+    private MeridianBody meridians;
+    private BodyPart selectedPart = BodyPart.CHEST, hoveredPart, highlightedPart;
+    private MeridianChannel selectedChannel, hoveredChannel, highlightedChannel;
+    private final Set<MeridianChannel> techniques = EnumSet.noneOf(MeridianChannel.class);
+    private final List<Consumer<MeridianChannel>> listeners = new ArrayList<>();
+    private final Map<BodyPart, InventoryItem> physicalApplied = new EnumMap<>(BodyPart.class);
+    private final Map<MeridianChannel, InventoryItem> meridianApplied = new EnumMap<>(MeridianChannel.class);
+    private BodyModelGeometry geometry;
+    private boolean entrance = true, focusPending = true, pressed;
+    private Box modelBounds;
+    private double dragged, seconds;
+    private Matrix4f projection;
 
     public BodyInspectComponent() {
-        this.sizing(Sizing.fixed(W), Sizing.fixed(H));
+        id("body-model"); material(false); camera().autoRotate(false);
     }
-
-    // ==================== Data setters ====================
-
     public void setPhysicalBody(PhysicalBody body) {
-        this.physicalBody = body;
-        physicalApplied.clear();
+        if (physical == body) return;
+        physical = body; physicalApplied.clear();
         if (body != null) physicalApplied.putAll(body.allAppliedItems());
     }
-
     public void setMeridianBody(MeridianBody body) {
-        this.meridianBody = body;
-        meridianApplied.clear();
+        if (meridians == body) return;
+        meridians = body; meridianApplied.clear();
         if (body != null) meridianApplied.putAll(body.allAppliedItems());
+        if (selectedChannel != null && (body == null || body.channel(selectedChannel) == null)) setSelectedChannel(null);
     }
-
-    public PhysicalBody physicalBody() { return physicalBody; }
-    public MeridianBody meridianBody() { return meridianBody; }
-
-    public Layer activeLayer() { return activeLayer; }
-    public void setActiveLayer(Layer layer) { this.activeLayer = layer; }
-
-    public MeridianFilter meridianFilter() { return meridianFilter; }
-    public void setMeridianFilter(MeridianFilter filter) {
-        this.meridianFilter = filter;
-        // 若选中脉被过滤掉，则解除选中
-        if (selectedChannel != null && !filter.includes(selectedChannel)) {
-            selectedChannel = null;
-            fireSelectionChanged();
-        }
+    public PhysicalBody physicalBody() { return physical; }
+    public MeridianBody meridianBody() { return meridians; }
+    public Layer activeLayer() { return layer; }
+    public void setActiveLayer(Layer value) { layer = value; entrance = true; }
+    public MeridianFilter meridianFilter() { return filter; }
+    public void setMeridianFilter(MeridianFilter value) {
+        filter = value;
+        if (selectedChannel != null && !value.includes(selectedChannel)) setSelectedChannel(null);
     }
-
+    public BodyPart selectedPart() { return selectedPart; }
+    public void setSelectedPart(BodyPart part) { selectedPart = part; focus(false); }
     public MeridianChannel selectedChannel() { return selectedChannel; }
-    public void setSelectedChannel(MeridianChannel ch) {
-        if (this.selectedChannel == ch) return;
-        this.selectedChannel = ch;
-        fireSelectionChanged();
+    public void setSelectedChannel(MeridianChannel channel) {
+        if (selectedChannel == channel) return;
+        selectedChannel = channel; focus(false);
+        listeners.forEach(listener -> listener.accept(channel));
     }
-
-    public void addSelectionListener(java.util.function.Consumer<MeridianChannel> l) {
-        selectionListeners.add(l);
-    }
-
-    private void fireSelectionChanged() {
-        for (var l : selectionListeners) l.accept(selectedChannel);
-    }
-    /** 当前用于显示详情的脉：优先 hover，其次 selected。 */
-    public MeridianChannel focusedChannel() {
-        return hoveredChannel != null ? hoveredChannel : selectedChannel;
-    }
-
+    public void addSelectionListener(Consumer<MeridianChannel> listener) { listeners.add(listener); }
+    public MeridianChannel focusedChannel() { return hoveredChannel != null ? hoveredChannel : selectedChannel; }
     public BodyPart hoveredPart() { return hoveredPart; }
     public MeridianChannel hoveredChannel() { return hoveredChannel; }
-
-    // ==================== Applied items API ====================
-
     public void applyPhysicalItem(BodyPart part, InventoryItem item) { physicalApplied.put(part, item); }
     public InventoryItem removePhysicalItem(BodyPart part) { return physicalApplied.remove(part); }
     public InventoryItem physicalItemAt(BodyPart part) { return physicalApplied.get(part); }
-
     public void applyMeridianItem(MeridianChannel ch, InventoryItem item) { meridianApplied.put(ch, item); }
     public InventoryItem removeMeridianItem(MeridianChannel ch) { return meridianApplied.remove(ch); }
     public InventoryItem meridianItemAt(MeridianChannel ch) { return meridianApplied.get(ch); }
-
-    // ==================== Hit detection (public, for InspectScreen) ====================
-
-    public BodyPart bodyPartAtScreen(double screenX, double screenY) {
-        int mx = (int) screenX - x, my = (int) screenY - y;
-        if (mx < 0 || mx >= W || my < 0 || my >= H) return null;
-        for (BodyPart bp : physicalApplied.keySet()) {
-            if (isOverBodyPart(bp, mx, my)) return bp;
-        }
-        for (BodyPart bp : BodyPart.values()) {
-            if (!physicalApplied.containsKey(bp) && isOverBodyPart(bp, mx, my)) return bp;
-        }
-        return null;
+    public void setPhysicalHighlight(BodyPart part, boolean valid) { highlightedPart = valid ? part : null; }
+    public void setMeridianHighlight(MeridianChannel ch, boolean valid) { highlightedChannel = valid ? ch : null; }
+    public void clearHighlight() { highlightedPart = null; highlightedChannel = null; }
+    public void setTechniqueMeridianHighlights(Collection<MeridianChannel> channels) {
+        techniques.clear();
+        if (channels != null) channels.stream().filter(Objects::nonNull).forEach(techniques::add);
     }
+    public void clearTechniqueMeridianHighlights() { techniques.clear(); }
+    public Set<MeridianChannel> techniqueMeridianHighlightsForTests() { return Set.copyOf(techniques); }
 
-    public MeridianChannel channelAtScreen(double screenX, double screenY) {
-        int mx = (int) screenX - x, my = (int) screenY - y;
-        if (mx < 0 || mx >= W || my < 0 || my >= H) return null;
-        // 按线段距离命中 — 取最小距离的脉（且必须在 filter 范围内）
-        MeridianChannel best = null;
-        double bestDist = 6.0; // 命中阈值：6 像素以内
-        int cx = W / 2;
-        for (MeridianChannel ch : MeridianChannel.values()) {
-            if (!meridianFilter.includes(ch)) continue;
-            double d = distanceToPath(mx, my, cx, ch);
-            if (d < bestDist) { bestDist = d; best = ch; }
+    public boolean hasModelGeometry() { return geometry != null; }
+
+    public boolean anatomical() {
+        return PlayerRaceIdentityStore.formIsHumanoid() && PlayerRaceIdentityStore.intrinsicIsHumanoid();
+    }
+    public void overview() {
+        selectedChannel = null; selectedPart = null;
+        listeners.forEach(listener -> listener.accept(null));
+        camera().focus(new Vec3d(.5, .5, .5), 1, 8, -5, false);
+    }
+    private void focus(boolean intro) {
+        if (modelBounds == null || geometry == null) { focusPending = true; return; }
+        Vec3d target; float zoom;
+        if (layer == Layer.MERIDIAN && selectedChannel != null) {
+            var box = BodyModelGeometry.bounds(geometry.route(selectedChannel));
+            target = box.getCenter();
+            zoom = (float) Math.max(1.15, Math.min(2.35, 1.55 / Math.max(.6, box.getYLength())));
+        } else if (layer == Layer.PHYSICAL && selectedPart != null) {
+            target = geometry.part(selectedPart).center(); zoom = intro ? 1.35f : 2.4f;
+        } else { target = geometry.pool(); zoom = 1.25f; }
+        camera().focus(BodyModelGeometry.normalized(target, modelBounds), zoom,
+            selectedChannel == MeridianChannel.DU ? 172 : 8, -5, intro);
+    }
+    @Override public void invalidate() { super.invalidate(); geometry = null; projection = null; modelBounds = null; entrance = true; focusPending = true; }
+    @Override protected void collectModel(MatrixStack matrices, VertexConsumerProvider vertices, float partialTicks) {
+        geometry = null;
+        var client = MinecraftClient.getInstance();
+        var renderer = client.getEntityRenderDispatcher().getRenderer(client.player);
+        if (anatomical() && renderer instanceof PlayerEntityRenderer playerRenderer) {
+            // 真实玩家 renderer 负责皮肤、粗细手臂和当前姿态；在同一次绘制中捕获最终部件变换。
+            geometry = BodyModelCapture.collect(playerRenderer.getModel(),
+                () -> super.collectModel(matrices, vertices, partialTicks));
+        } else super.collectModel(matrices, vertices, partialTicks);
+    }
+    @Override protected void prepareCamera(Box bounds) {
+        modelBounds = bounds;
+        if (geometry != null && (entrance || focusPending)) {
+            focus(entrance); entrance = false; focusPending = false;
+        }
+    }
+    @Override public void draw(OwoUIDrawContext ctx, int mouseX, int mouseY, float partialTicks, float delta) {
+        super.draw(ctx, mouseX, mouseY, partialTicks, delta);
+        hoveredPart = layer == Layer.PHYSICAL ? bodyPartAtScreen(mouseX, mouseY) : null;
+        hoveredChannel = layer == Layer.MERIDIAN ? channelAtScreen(mouseX, mouseY) : null;
+        if (!hasModelGeometry()) ctx.drawText(MinecraftClient.getInstance().textRenderer,
+            "当前形态尚无三维内观定位", x + 8, y + 8, 0xFFB9C7CB, false);
+    }
+    @Override protected void drawModelOverlay(OwoUIDrawContext ctx, MatrixStack matrices, Box bounds,
+                                               int mouseX, int mouseY, float elapsed) {
+        projection = new Matrix4f(matrices.peek().getPositionMatrix()); seconds += elapsed;
+        if (!anatomical() || geometry == null) return;
+        var buffers = MinecraftClient.getInstance().getBufferBuilders().getEntityVertexConsumers();
+        var buffer = buffers.getBuffer(RenderLayer.getGuiOverlay());
+        try {
+            if (layer == Layer.PHYSICAL) drawWounds(buffer, matrices);
+            else if (meridians != null) drawMeridians(buffer, matrices);
+        } catch (RuntimeException | Error original) {
+            try { buffers.draw(RenderLayer.getGuiOverlay()); }
+            catch (RuntimeException | Error cleanup) { if (cleanup != original) original.addSuppressed(cleanup); }
+            throw original;
+        }
+        buffers.draw(RenderLayer.getGuiOverlay());
+    }
+    private void drawWounds(VertexConsumer buffer, MatrixStack matrices) {
+        for (var part : BodyPart.values()) {
+            var state = physical == null ? null : physical.part(part);
+            boolean focused = part == selectedPart || part == hoveredPart || part == highlightedPart;
+            if (!focused && (state == null || state.wound() == WoundLevel.INTACT)) continue;
+            var region = geometry.part(part);
+            int color = focused ? 0xFFEBCC8C : state.wound().color();
+            ModelOverlayMesh.orb(buffer, matrices, region.anchor(.5, .5, 1), focused ? .026 : .018, color);
+            for (var edge : region.edges()) for (int i = 1; i < edge.size(); i++)
+                ModelOverlayMesh.tube(buffer, matrices, edge.get(i - 1), edge.get(i), .003, alpha(color, .65));
+        }
+    }
+    private void drawMeridians(VertexConsumer buffer, MatrixStack matrices) {
+        double qi = PlayerStateStore.snapshot().spiritQiFillRatio();
+        int hue = meridians.qiColorMain().argb();
+        for (var ch : meridians.allChannels().keySet()) if (filter.includes(ch)) {
+            var state = meridians.channel(ch);
+            boolean chosen = ch == selectedChannel || ch == hoveredChannel || ch == highlightedChannel || techniques.contains(ch);
+            double strength = selectedChannel == null ? .65 : chosen ? 1 : .16;
+            var path = geometry.route(ch);
+            var returningPath = geometry.returnRoute(ch);
+            boolean flows = carriesQi(state, qi);
+            int color = alpha(flows ? hue : 0xFF65727F, strength * (flows ? .85 : .45));
+            for (int i = 1; i < path.size(); i++) {
+                var a = path.get(i - 1); var b = path.get(i);
+                if (state.damage() == ChannelState.DamageLevel.SEVERED && Math.abs(i - path.size() / 2) < 3) continue;
+                ModelOverlayMesh.tube(buffer, matrices, a, b, chosen ? .006 : .003, color);
+                if (flows) ModelOverlayMesh.tube(buffer, matrices, returningPath.get(i-1), returningPath.get(i), .0025,
+                    alpha(0xFF75C7CE, strength * .6));
+            }
+            if (!flows) continue;
+            double speed = .18 + .36 * Math.min(1, state.effectiveFlow() / Math.max(1, state.capacity()));
+            for (int pulse = 0; pulse < 3; pulse++) {
+                double t = (seconds * speed + pulse / 3.0) % 1;
+                var outward = BodyModelGeometry.sample(path, t);
+                var returning = BodyModelGeometry.sample(returningPath, t);
+                int pulseColor = state.contamination() > 0 && t < state.contamination() ? 0xFFC68BCE : 0xFFFFE1A4;
+                ModelOverlayMesh.orb(buffer, matrices, outward, chosen ? .014 : .010, alpha(pulseColor, strength));
+                ModelOverlayMesh.orb(buffer, matrices, returning, .008, alpha(0xFF9AE8E4, strength));
+            }
+        }
+        double pulse = qi > 0 ? 1 + .07 * Math.sin(seconds * Math.PI * 2) : 1;
+        ModelOverlayMesh.orb(buffer, matrices, geometry.pool(), .09 * pulse, alpha(hue, .16));
+        ModelOverlayMesh.orb(buffer, matrices, geometry.pool(), .065 * Math.cbrt(qi) * pulse, alpha(hue, .75));
+        ModelOverlayMesh.orb(buffer, matrices, geometry.pool(), .018 * Math.cbrt(qi), 0xFFFFF0C7);
+    }
+    public static boolean carriesQi(ChannelState state, double poolRatio) {
+        return state != null && Double.isFinite(poolRatio) && poolRatio > 0 && state.effectiveFlow() > 0;
+    }
+    private static int alpha(int color, double opacity) { return color & 0xFFFFFF | (int) (255 * opacity) << 24; }
+    private Vec3d project(Vec3d p) {
+        var v = projection.transformPosition((float) p.x, (float) p.y, (float) p.z, new Vector3f());
+        return new Vec3d(v.x, v.y, v.z);
+    }
+    private boolean inside(double sx, double sy) { return anatomical() && geometry != null && projection != null && sx >= x && sx < x + width && sy >= y && sy < y + height; }
+    public BodyPart bodyPartAtScreen(double sx, double sy) {
+        if (!inside(sx, sy)) return null;
+        // 从 GUI 近面投射到模型局部坐标；缩放后整块肢体仍可选，不只命中中心小圆。
+        var inverse = new Matrix4f(projection).invert();
+        var near = inverse.transformPosition((float)sx, (float)sy, 10000, new Vector3f());
+        var far = inverse.transformPosition((float)sx, (float)sy, -10000, new Vector3f());
+        var start = new Vec3d(near.x, near.y, near.z);
+        var end = new Vec3d(far.x, far.y, far.z);
+        BodyPart best = null;
+        double distance = Double.POSITIVE_INFINITY;
+        for (var part : BodyPart.values()) {
+            var hit = geometry.part(part).raycast(start, end);
+            if (hit.isPresent() && hit.get().squaredDistanceTo(start) < distance) {
+                best = part; distance = hit.get().squaredDistanceTo(start);
+            }
         }
         return best;
     }
-
-    // ==================== Selection ====================
-
-    /** 在经脉层点击：若点中某脉，切换选中；再次点中同一脉则解除。 */
-    public boolean clickSelectMeridian(double screenX, double screenY) {
-        if (activeLayer != Layer.MERIDIAN) return false;
-        MeridianChannel ch = channelAtScreen(screenX, screenY);
-        if (ch == null) return false;
-        selectedChannel = (ch == selectedChannel) ? null : ch;
-        fireSelectionChanged();
-        return true;
-    }
-
-    // ==================== Highlight (drag) ====================
-
-    public void setPhysicalHighlight(BodyPart part, boolean valid) {
-        this.highlightedPart = part; this.highlightValid = valid;
-    }
-
-    public void setMeridianHighlight(MeridianChannel ch, boolean valid) {
-        this.highlightedChannel = ch; this.highlightValid = valid;
-    }
-
-    public void clearHighlight() {
-        this.highlightedPart = null;
-        this.highlightedChannel = null;
-    }
-
-    public void setTechniqueMeridianHighlights(java.util.Collection<MeridianChannel> channels) {
-        techniqueHighlightedChannels.clear();
-        if (channels == null) return;
-        for (MeridianChannel channel : channels) {
-            if (channel != null) techniqueHighlightedChannels.add(channel);
-        }
-    }
-
-    public void clearTechniqueMeridianHighlights() {
-        techniqueHighlightedChannels.clear();
-    }
-
-    public Set<MeridianChannel> techniqueMeridianHighlightsForTests() {
-        return techniqueHighlightedChannels.isEmpty()
-            ? Set.of()
-            : EnumSet.copyOf(techniqueHighlightedChannels);
-    }
-
-    // ==================== Rendering ====================
-
-    @Override
-    public void draw(OwoUIDrawContext ctx, int mouseX, int mouseY, float partialTicks, float delta) {
-        tickCount++;
-        int bx = x, by = y;
-        // 背景带细边框
-        ctx.fill(bx, by, bx + W, by + H, 0xDD0E0E14);
-        ctx.fill(bx, by, bx + W, by + 1, 0x44FFFFFF);
-        ctx.fill(bx, by + H - 1, bx + W, by + H, 0x44000000);
-
-        int cx = bx + W / 2;
-        int hmx = mouseX - bx, hmy = mouseY - by;
-
-        if (activeLayer == Layer.PHYSICAL) {
-            drawPhysicalLayer(ctx, cx, by, hmx, hmy);
-        } else {
-            drawMeridianLayer(ctx, cx, by, hmx, hmy);
-        }
-    }
-
-    // ==================== Physical Layer ====================
-
-    private void drawPhysicalLayer(OwoUIDrawContext ctx, int cx, int by, int hmx, int hmy) {
-        hoveredPart = null;
-        hoveredChannel = null;
-
-        if (physicalBody == null) {
-            drawBodySilhouette(ctx, cx, by, null);
-            var tr = MinecraftClient.getInstance().textRenderer;
-            ctx.drawTextWithShadow(tr, Text.literal("§7无体表数据"), x + 30, y + 90, 0xFF666666);
-            return;
-        }
-
-        for (BodyPart bp : physicalApplied.keySet()) {
-            if (isOverBodyPart(bp, hmx, hmy)) { hoveredPart = bp; break; }
-        }
-        if (hoveredPart == null) {
-            for (BodyPart bp : BodyPart.values()) {
-                if (!physicalApplied.containsKey(bp) && isOverBodyPart(bp, hmx, hmy)) {
-                    hoveredPart = bp; break;
-                }
+    public MeridianChannel channelAtScreen(double sx, double sy) {
+        if (!inside(sx, sy) || meridians == null) return null;
+        MeridianChannel best = null; double distance = 6;
+        for (var ch : meridians.allChannels().keySet()) if (filter.includes(ch)) {
+            var path = geometry.route(ch);
+            for (int i = 1; i < path.size(); i++) {
+                var a = project(path.get(i - 1)); var b = project(path.get(i));
+                double dx = b.x - a.x, dy = b.y - a.y;
+                double t = Math.max(0, Math.min(1, ((sx-a.x)*dx+(sy-a.y)*dy) / Math.max(.00001, dx*dx+dy*dy)));
+                double d = Math.hypot(sx - a.x - t*dx, sy - a.y - t*dy);
+                if (d < distance) { best = ch; distance = d; }
             }
-        }
-
-        drawBodySilhouette(ctx, cx, by, physicalBody);
-
-        if (highlightedPart != null) {
-            int[] r = bodyPartRect(highlightedPart);
-            int hlColor = highlightValid ? 0x4444CC66 : 0x44CC4444;
-            ctx.fill(cx + r[0], by + r[1], cx + r[2], by + r[3], hlColor);
-        }
-
-        for (var entry : physicalApplied.entrySet()) {
-            drawAppliedIcon(ctx, cx, by, bodyPartAnchor(entry.getKey()), entry.getValue());
-        }
-
-        drawPhysicalStatus(ctx, x, by);
-    }
-
-    /** 体表层的人体剪影 — 每个部位按伤势着色 */
-    private void drawBodySilhouette(OwoUIDrawContext ctx, int cx, int by, PhysicalBody pb) {
-        for (BodyPart bp : BodyPart.values()) {
-            int color = BODY_COLOR;
-            if (pb != null) {
-                BodyPartState state = pb.part(bp);
-                if (state.wound() != WoundLevel.INTACT) {
-                    int wc = state.wound().color();
-                    int alpha = 0x88 + (int) ((1.0 - state.wound().functionRatio()) * 0x44);
-                    color = (Math.min(0xFF, alpha) << 24) | (wc & 0x00FFFFFF);
-                }
-                if (state.wound().isSevered()) color = 0x33666666;
-            }
-            drawBodyPartFill(ctx, cx, by, bp, color);
-        }
-        // Head outline glow
-        fillCircle(ctx, cx, by + 17, 12, 0x44666688);
-    }
-
-    private void drawBodyPartFill(OwoUIDrawContext ctx, int cx, int by, BodyPart bp, int color) {
-        int[] r = bodyPartRect(bp);
-        if (bp == BodyPart.HEAD) {
-            fillCircle(ctx, cx, by + 17, 11, color);
-        } else {
-            ctx.fill(cx + r[0], by + r[1], cx + r[2], by + r[3], color);
-        }
-        if (physicalBody != null) {
-            BodyPartState state = physicalBody.part(bp);
-            if (state.bleedRate() > 0.01) {
-                int pulse = (int) (Math.sin(tickCount * 0.2 + bp.ordinal()) * 30 + 30);
-                int bleedAlpha = (int) (state.bleedRate() * 120) + pulse;
-                int bleedColor = (Math.min(255, bleedAlpha) << 24) | 0xCC2222;
-                if (bp == BodyPart.HEAD) fillCircle(ctx, cx, by + 17, 11, bleedColor);
-                else ctx.fill(cx + r[0], by + r[1], cx + r[2], by + r[3], bleedColor);
-            }
-        }
-    }
-
-    private void drawPhysicalStatus(OwoUIDrawContext ctx, int bx, int by) {
-        var tr = MinecraftClient.getInstance().textRenderer;
-        drawDetailBandBackground(ctx, bx, by);
-
-        int ey = by + DETAIL_TOP + 4;
-        ctx.drawTextWithShadow(tr, Text.literal("§8肉体状态"), bx + 4, ey, 0xFF666666);
-        ey += tr.fontHeight + 2;
-
-        boolean anyStatus = false;
-        PhysicalBody.MovementImpairment imp = physicalBody.worstLegImpairment();
-        if (imp != PhysicalBody.MovementImpairment.NONE) {
-            int impColor = imp == PhysicalBody.MovementImpairment.IMMOBILE ? 0xFFCC2222 : 0xFFCCAA44;
-            ctx.drawTextWithShadow(tr, Text.literal("§7移动: " + imp.label()), bx + 4, ey, impColor);
-            ey += tr.fontHeight + 1;
-            anyStatus = true;
-        }
-
-        if (physicalBody.isBleeding()) {
-            int pulse = (int) (Math.sin(tickCount * 0.15) * 40 + 40);
-            ctx.drawTextWithShadow(tr, Text.literal("§c出血中"),
-                bx + 4, ey, 0xFF000000 | (Math.min(255, 180 + pulse) << 16));
-            ey += tr.fontHeight + 1;
-            anyStatus = true;
-        }
-
-        if (!anyStatus) {
-            ctx.drawTextWithShadow(tr, Text.literal("§8正常"), bx + 4, ey, 0xFF555555);
-        }
-    }
-
-    /** 画底部详情带背景 + 顶部分隔线，给 physical/meridian 两层共用 */
-    private void drawDetailBandBackground(OwoUIDrawContext ctx, int bx, int by) {
-        int bandY = by + DETAIL_TOP;
-        ctx.fill(bx, bandY - 1, bx + W, bandY, 0x33FFFFFF);           // 细分隔线
-        ctx.fill(bx, bandY, bx + W, by + H, 0x88101018);               // 半透底
-    }
-
-    // ==================== Meridian Layer ====================
-
-    private void drawMeridianLayer(OwoUIDrawContext ctx, int cx, int by, int hmx, int hmy) {
-        hoveredPart = null;
-
-        // Body silhouette (faded base)
-        drawBodySilhouette(ctx, cx, by, physicalBody);
-
-        if (meridianBody == null) {
-            var tr = MinecraftClient.getInstance().textRenderer;
-            ctx.drawTextWithShadow(tr, Text.literal("§7无经脉数据"), x + 30, y + 90, 0xFF666666);
-            return;
-        }
-
-        // Hover detection — path-distance based
-        hoveredChannel = null;
-        double bestDist = 6.0;
-        for (MeridianChannel ch : MeridianChannel.values()) {
-            if (!meridianFilter.includes(ch)) continue;
-            double d = distanceToPath(hmx, hmy, W / 2, ch);
-            if (d < bestDist) { bestDist = d; hoveredChannel = ch; }
-        }
-
-        // Phase 1: 被过滤掉的脉 — 画极淡底色参考
-        if (meridianFilter != MeridianFilter.ALL) {
-            for (MeridianChannel ch : MeridianChannel.values()) {
-                if (meridianFilter.includes(ch)) continue;
-                ChannelState cs = meridianBody.channel(ch);
-                if (cs == null) continue;
-                drawMeridianGhost(ctx, cx, by, ch);
-            }
-        }
-
-        // Phase 2: 显示范围内的脉 — glow 粗笔
-        for (MeridianChannel ch : MeridianChannel.values()) {
-            if (!meridianFilter.includes(ch)) continue;
-            ChannelState cs = meridianBody.channel(ch);
-            if (cs == null) continue;
-            boolean hover = (ch == hoveredChannel);
-            boolean selected = (ch == selectedChannel);
-            boolean target = (ch == meridianBody.targetMeridian());
-            boolean techniqueHighlighted = techniqueHighlightedChannels.contains(ch);
-            drawMeridianGlow(ctx, cx, by, ch, cs, hover, selected, target, techniqueHighlighted);
-        }
-
-        // Highlight drag target
-        if (highlightedChannel != null) {
-            int[] a = meridianAnchor(highlightedChannel);
-            int hlColor = highlightValid ? 0x4444CC66 : 0x44CC4444;
-            fillCircle(ctx, cx + a[0], by + a[1], ITEM_RENDER_SIZE / 2 + 3, hlColor);
-        }
-
-        for (var entry : meridianApplied.entrySet()) {
-            if (!meridianFilter.includes(entry.getKey())) continue;
-            drawAppliedIcon(ctx, cx, by, meridianAnchor(entry.getKey()), entry.getValue());
-        }
-
-        // 底部详情带（焦点经脉信息）
-        drawMeridianDetailInline(ctx, x, by);
-
-        // 状态效果 badge 贴右上角
-        drawStatusEffects(ctx, x, by);
-    }
-
-    /** 在画布底部区域直接绘制当前聚焦脉的详情（不另开面板）。 */
-    private void drawMeridianDetailInline(OwoUIDrawContext ctx, int bx, int by) {
-        drawDetailBandBackground(ctx, bx, by);
-
-        var tr = MinecraftClient.getInstance().textRenderer;
-        MeridianChannel focus = focusedChannel();
-
-        int py = by + DETAIL_TOP + 3;
-        if (focus == null || meridianBody == null) {
-            ctx.drawTextWithShadow(tr, Text.literal("§8悬浮或点击经脉查看详情"),
-                bx + 4, py + 12, 0xFF555555);
-            return;
-        }
-
-        ChannelState cs = meridianBody.channel(focus);
-        if (cs == null) {
-            ctx.drawTextWithShadow(tr, Text.literal(focus.displayName()),
-                bx + 4, py, focus.baseColor());
-            ctx.drawTextWithShadow(tr, Text.literal("§7（未录入）"),
-                bx + 4, py + 12, 0xFF666666);
-            return;
-        }
-
-        boolean opened = !cs.blocked();
-
-        // === Row 1: 经脉名 + 族 + 状态（右对齐） ===
-        String name = focus.displayName();
-        ctx.drawTextWithShadow(tr, Text.literal(name), bx + 4, py, focus.baseColor());
-
-        int afterName = bx + 4 + tr.getWidth(name) + 4;
-        String fam = focus.family() == MeridianChannel.Family.REGULAR ? "§8正经" : "§d奇经";
-        ctx.drawTextWithShadow(tr, Text.literal(fam), afterName, py, 0xFFAAAAAA);
-
-        boolean target = meridianBody.targetMeridian() == focus;
-        if (opened) {
-            String dmg = cs.damage().label();
-            int cracks = meridianBody.cracksFor(focus);
-            String rightText = cracks > 0 ? (dmg + " · 裂 " + cracks) : dmg;
-            if (target) rightText = "目标 · " + rightText;
-            int rightColor = cracks > 0 ? 0xFFFF5050 : cs.damage().color();
-            ctx.drawTextWithShadow(tr, Text.literal(rightText),
-                bx + W - 4 - tr.getWidth(rightText), py, rightColor);
-        } else {
-            String rightText = target ? "目标 · 未通" : "未通";
-            ctx.drawTextWithShadow(tr, Text.literal("§c" + rightText),
-                bx + W - 4 - tr.getWidth(rightText), py, 0xFFCC6644);
-        }
-
-        if (opened) {
-            // === Row 2: 流量条（仅已通经脉）===
-            int row2Y = py + 12;
-            String flowStr = String.format("%.0f/%.0f", cs.currentFlow(), cs.capacity());
-            ctx.drawTextWithShadow(tr, Text.literal("§7流量"), bx + 4, row2Y, 0xFFAAAAAA);
-            int numStart = bx + 4 + tr.getWidth("流量") + 4;
-            ctx.drawTextWithShadow(tr, Text.literal("§f" + flowStr), numStart, row2Y, 0xFFDDDDDD);
-            int barX = numStart + tr.getWidth(flowStr) + 4;
-            int barW = bx + W - 4 - barX;
-            if (barW > 20) {
-                drawBar(ctx, barX, row2Y + 2, barW, 4, cs.flowRatio(), 0xFF44AACC, 0xFF223344);
-            }
-
-            // === Row 3: 污染 + 恢复（左右并列）===
-            int row3Y = py + 24;
-            int half = (W - 8) / 2;
-
-            if (cs.contamination() > 0.01) {
-                String t = String.format("污 %.0f%%", cs.contamination() * 100);
-                ctx.drawTextWithShadow(tr, Text.literal("§d" + t), bx + 4, row3Y, 0xFFCC88DD);
-                int tw = tr.getWidth(t) + 4;
-                if (half - tw > 10) {
-                    drawBar(ctx, bx + 4 + tw, row3Y + 2, half - tw - 4, 3,
-                        cs.contamination(), 0xFF9944CC, 0xFF2A1A3A);
-                }
-            } else {
-                ctx.drawTextWithShadow(tr, Text.literal("§8污染 无"), bx + 4, row3Y, 0xFF666666);
-            }
-
-            int rightX = bx + 4 + half;
-            if (cs.healProgress() > 0.01) {
-                String t = String.format("恢 %.0f%%", cs.healProgress() * 100);
-                ctx.drawTextWithShadow(tr, Text.literal("§a" + t), rightX, row3Y, 0xFF88CC88);
-                int tw = tr.getWidth(t) + 4;
-                if (half - tw > 10) {
-                    drawBar(ctx, rightX + tw, row3Y + 2, half - tw - 4, 3,
-                        cs.healProgress(), 0xFF44AA66, 0xFF1A2A1F);
-                }
-            } else {
-                ctx.drawTextWithShadow(tr, Text.literal("§8恢复 —"), rightX, row3Y, 0xFF666666);
-            }
-        } else {
-            // === Row 2-3: 冲脉进度（未通经脉）===
-            int row2Y = py + 12;
-            if (cs.healProgress() > 0.01) {
-                String t = String.format("冲脉 %.0f%%", cs.healProgress() * 100);
-                ctx.drawTextWithShadow(tr, Text.literal("§e" + t), bx + 4, row2Y, 0xFFCCAA44);
-                int tw = tr.getWidth(t) + 4;
-                int barW = bx + W - 4 - (bx + 4 + tw);
-                if (barW > 20) {
-                    drawBar(ctx, bx + 4 + tw, row2Y + 2, barW, 4,
-                        cs.healProgress(), 0xFFCCAA44, 0xFF2A2A1A);
-                }
-            } else {
-                ctx.drawTextWithShadow(tr, Text.literal("§8冲脉 未开始"), bx + 4, row2Y, 0xFF666666);
-            }
-        }
-    }
-
-    /** 水平进度条（内联详情用） */
-    private static void drawBar(OwoUIDrawContext ctx, int bx, int by, int bw, int bh, double ratio,
-                                int fgColor, int bgColor) {
-        if (bw <= 0) return;
-        ratio = Math.max(0, Math.min(1, ratio));
-        ctx.fill(bx, by, bx + bw, by + bh, bgColor);
-        int fillW = (int) (bw * ratio);
-        if (fillW > 0) ctx.fill(bx, by, bx + fillW, by + bh, fgColor);
-    }
-
-    // ==================== Meridian glow rendering ====================
-
-    /** 未选中/未显示脉的参考线（极淡） */
-    private void drawMeridianGhost(OwoUIDrawContext ctx, int cx, int by, MeridianChannel ch) {
-        int[][] wp = meridianPathPoints(ch);
-        if (wp == null) return;
-        int color = 0x22FFFFFF;
-        for (int i = 0; i < wp.length - 1; i++) {
-            drawThickLine(ctx, cx + wp[i][0], by + wp[i][1], cx + wp[i + 1][0], by + wp[i + 1][1], color, 1);
-        }
-    }
-
-    /** 显示脉 — 干净的单笔画：深色边 + 主色线 + 可选选中环。不发光。 */
-    private void drawMeridianGlow(OwoUIDrawContext ctx, int cx, int by,
-                                  MeridianChannel ch, ChannelState cs,
-                                  boolean hover, boolean selected, boolean target,
-                                  boolean techniqueHighlighted) {
-        int[][] wp = meridianPathPoints(ch);
-        if (wp == null) return;
-
-        boolean active = hover || selected || target || techniqueHighlighted;
-        int baseRgb;
-        if (cs.blocked()) {
-            baseRgb = active ? 0x888888 : 0x555555;
-        } else {
-            baseRgb = cs.damage().color() & 0x00FFFFFF;
-        }
-
-        // Alpha / 粗度：默认纤细，激活时加粗提亮
-        int mainAlpha;
-        int thickness;
-        if (active) {
-            mainAlpha = 240;
-            thickness = 3;
-        } else if (cs.blocked()) {
-            mainAlpha = (int) (0.3 * 255);
-            thickness = 1;
-        } else {
-            // 全部视图下更低调，专项筛选时稍亮
-            double a = (meridianFilter == MeridianFilter.ALL ? 0.45 : 0.75)
-                + cs.flowRatio() * 0.15;
-            mainAlpha = (int) (a * 255);
-            thickness = 2;
-        }
-
-        // 深色描边 (+1 px)：增加对比，不让线融进背景
-        int edgeAlpha = Math.min(255, (int) (mainAlpha * 0.75));
-        int edgeColor = (edgeAlpha << 24) | darken(baseRgb, 60);
-        for (int i = 0; i < wp.length - 1; i++) {
-            drawThickLine(ctx, cx + wp[i][0], by + wp[i][1],
-                cx + wp[i + 1][0], by + wp[i + 1][1], edgeColor, thickness + 1);
-        }
-
-        // 主色线
-        int mainColor = (mainAlpha << 24) | baseRgb;
-        for (int i = 0; i < wp.length - 1; i++) {
-            drawThickLine(ctx, cx + wp[i][0], by + wp[i][1],
-                cx + wp[i + 1][0], by + wp[i + 1][1], mainColor, thickness);
-        }
-
-        // 激活时亮芯线（中央 1 px 更亮）
-        if (active) {
-            int coreColor = 0xFFFFFFFF;
-            for (int i = 0; i < wp.length - 1; i++) {
-                drawThickLine(ctx, cx + wp[i][0], by + wp[i][1],
-                    cx + wp[i + 1][0], by + wp[i + 1][1], coreColor, 1);
-            }
-        }
-
-        // 污染：沿路径散布紫点（仅达到阈值才显示）
-        if (cs.contamination() > 0.05) {
-            int dotAlpha = (int) (cs.contamination() * 200);
-            int dotColor = (dotAlpha << 24) | 0x9944CC;
-            for (int i = 0; i < wp.length - 1; i++) {
-                int mxp = (wp[i][0] + wp[i + 1][0]) / 2;
-                int myp = (wp[i][1] + wp[i + 1][1]) / 2;
-                fillCircle(ctx, cx + mxp, by + myp, 1, dotColor);
-            }
-        }
-
-        // 裂痕：沿路径画短红色横杠（数量 = cracksCount，均匀分布）
-        int cracks = meridianBody == null ? 0 : meridianBody.cracksFor(ch);
-        if (cracks > 0) {
-            int maxMarkers = Math.min(cracks, Math.max(1, wp.length - 1));
-            int crackColor = active ? 0xFFFF5050 : 0xCCCC4040;
-            for (int k = 0; k < maxMarkers; k++) {
-                // 插值到路径段：k/(maxMarkers+1) * (wp.length-1)
-                double t = (double) (k + 1) / (maxMarkers + 1) * (wp.length - 1);
-                int si = (int) Math.floor(t);
-                double frac = t - si;
-                if (si >= wp.length - 1) { si = wp.length - 2; frac = 1.0; }
-                int ax = (int) (wp[si][0] + (wp[si + 1][0] - wp[si][0]) * frac);
-                int ay = (int) (wp[si][1] + (wp[si + 1][1] - wp[si][1]) * frac);
-                // 跟路径段接近垂直的短杠
-                int dx = wp[si + 1][0] - wp[si][0];
-                int dy = wp[si + 1][1] - wp[si][1];
-                double len = Math.max(1.0, Math.hypot(dx, dy));
-                int px = (int) Math.round(-dy / len * 2.0);
-                int py = (int) Math.round(dx / len * 2.0);
-                drawThickLine(ctx, cx + ax - px, by + ay - py,
-                    cx + ax + px, by + ay + py, crackColor, 1);
-            }
-        }
-
-        // 选中：终点位置画一个静态白环（无脉动、不闪烁）
-        if (techniqueHighlighted && !selected) {
-            int[] end = wp[wp.length - 1];
-            drawCircleOutline(ctx, cx + end[0], by + end[1], 4, 0xCC9FE0D0);
-        }
-        if (target) {
-            int[] end = wp[wp.length - 1];
-            drawCircleOutline(ctx, cx + end[0], by + end[1], 6, 0xDD40C0E0);
-        }
-        if (selected) {
-            int[] end = wp[wp.length - 1];
-            drawCircleOutline(ctx, cx + end[0], by + end[1], 4, 0xDDFFFFFF);
-        }
-    }
-
-    /** 将基色调暗指定量（clamp 到 0） */
-    private static int darken(int rgb, int amount) {
-        int r = Math.max(0, ((rgb >> 16) & 0xFF) - amount);
-        int g = Math.max(0, ((rgb >> 8) & 0xFF) - amount);
-        int b = Math.max(0, (rgb & 0xFF) - amount);
-        return (r << 16) | (g << 8) | b;
-    }
-
-    private static void drawCircleOutline(OwoUIDrawContext ctx, int cx, int cy, int r, int color) {
-        for (int a = 0; a < 360; a += 15) {
-            double rad = Math.toRadians(a);
-            int px = cx + (int) (Math.cos(rad) * r);
-            int py = cy + (int) (Math.sin(rad) * r);
-            ctx.fill(px, py, px + 1, py + 1, color);
-        }
-    }
-
-    // ==================== Shared rendering ====================
-
-    private void drawAppliedIcon(OwoUIDrawContext ctx, int cx, int by, int[] anchor, InventoryItem item) {
-        if (item == null || item.isEmpty()) return;
-        int ax = cx + anchor[0] - ITEM_RENDER_SIZE / 2;
-        int ay = by + anchor[1] - ITEM_RENDER_SIZE / 2;
-
-        ctx.fill(ax - 1, ay - 1, ax + ITEM_RENDER_SIZE + 1, ay + ITEM_RENDER_SIZE + 1, 0x88000000);
-
-        Identifier tex = GridSlotComponent.textureIdForItem(item);
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        var m = ctx.getMatrices();
-        m.push();
-        m.translate(ax, ay, 50);
-        m.scale((float) ITEM_RENDER_SIZE / ICON_SIZE, (float) ITEM_RENDER_SIZE / ICON_SIZE, 1f);
-        ctx.drawTexture(tex, 0, 0, ICON_SIZE, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        m.pop();
-        RenderSystem.disableBlend();
-
-        int bc = (0xAA << 24) | item.rarityColor();
-        ctx.fill(ax - 1, ay - 1, ax + ITEM_RENDER_SIZE + 1, ay, bc);
-        ctx.fill(ax - 1, ay + ITEM_RENDER_SIZE, ax + ITEM_RENDER_SIZE + 1, ay + ITEM_RENDER_SIZE + 1, bc);
-        ctx.fill(ax - 1, ay, ax, ay + ITEM_RENDER_SIZE, bc);
-        ctx.fill(ax + ITEM_RENDER_SIZE, ay, ax + ITEM_RENDER_SIZE + 1, ay + ITEM_RENDER_SIZE, bc);
-    }
-
-    // ==================== Tooltip (only for physical layer now) ====================
-
-    public void drawTooltip(DrawContext ctx, int mx, int my) {
-        if (activeLayer == Layer.PHYSICAL) drawPhysicalTooltip(ctx, mx, my);
-        // 经脉层的详情由外部面板展示，不再走 tooltip
-    }
-
-    private void drawPhysicalTooltip(DrawContext ctx, int mx, int my) {
-        if (hoveredPart == null || physicalBody == null) return;
-        BodyPartState state = physicalBody.part(hoveredPart);
-
-        var tr = MinecraftClient.getInstance().textRenderer;
-        String line1 = hoveredPart.displayName() + " — " + state.wound().label();
-        String line2 = state.bleedRate() > 0.01 ? String.format("出血 %.0f%%", state.bleedRate() * 100) : "";
-        String line3 = state.healProgress() > 0.01 ? String.format("恢复 %.0f%%", state.healProgress() * 100) : "";
-        String line4 = state.splinted() ? "已上夹板" : "";
-        InventoryItem applied = physicalApplied.get(hoveredPart);
-        String line5 = applied != null ? "已用: " + applied.displayName() : "";
-
-        drawTooltipBox(ctx, mx, my, tr, state.wound().color(),
-            line1, line2, line3, line4, line5);
-    }
-
-    private void drawTooltipBox(DrawContext ctx, int mx, int my,
-                                net.minecraft.client.font.TextRenderer tr, int titleColor,
-                                String... lines) {
-        int count = 0;
-        int maxW = 0;
-        for (String l : lines) {
-            if (!l.isEmpty()) { count++; maxW = Math.max(maxW, tr.getWidth(l)); }
-        }
-        if (count == 0) return;
-        int tw = maxW + 8, th = count * (tr.fontHeight + 1) + 6;
-        int tx = mx + 8, ty = my - th - 4;
-        if (ty < 0) ty = my + 12;
-
-        ctx.fill(tx - 2, ty - 2, tx + tw + 2, ty + th + 2, 0xEE111122);
-        ctx.fill(tx - 1, ty - 1, tx + tw + 1, ty + th + 1, 0xEE1A1A2A);
-
-        int cy = ty + 2;
-        int[] colors = {titleColor, 0xFFAAAAAA, 0xFF9944CC, 0xFF44AA66, 0xFF88CCFF};
-        int ci = 0;
-        for (String l : lines) {
-            if (l.isEmpty()) { ci++; continue; }
-            ctx.drawTextWithShadow(tr, Text.literal(l), tx + 2, cy, colors[Math.min(ci, colors.length - 1)]);
-            cy += tr.fontHeight + 1;
-            ci++;
-        }
-    }
-
-    // ==================== Status effects ====================
-
-    private void drawStatusEffects(OwoUIDrawContext ctx, int bx, int by) {
-        // 经脉层状态效果作为 badge 绘制在右上角（避免和底部详情带冲突）
-        if (meridianBody == null) return;
-        var effects = meridianBody.activeEffects();
-        if (effects.isEmpty()) return;
-        var tr = MinecraftClient.getInstance().textRenderer;
-        int ey = by + 2;
-        for (var effect : effects) {
-            String txt = effect.name();
-            int tw = tr.getWidth(txt) + 6;
-            int ex = bx + W - tw - 2;
-            ctx.fill(ex, ey, ex + tw, ey + tr.fontHeight + 1, 0xCC1A1A28);
-            ctx.fill(ex, ey, ex + 2, ey + tr.fontHeight + 1, effect.color());
-            ctx.drawTextWithShadow(tr, Text.literal("§7" + txt), ex + 4, ey + 1, 0xFFDDDDDD);
-            ey += tr.fontHeight + 2;
-        }
-    }
-
-    // ==================== Geometry tables ====================
-    //
-    // plan-race-system-v1 P2b — 部位剪影 / 锚点 / 经脉折线改读
-    // BodyPlanLayoutStore.current()（server 下发的归一化 [0,1] 坐标，按本组件画布
-    // W×H 反推回局部坐标）。store 尚无当前 layout（首帧竞态 / 未知 plan id）时
-    // 回退到下方 FALLBACK_* 硬编码表——这些表就是 humanoid.json 的原始抽取来源，
-    // 因此"无 layout 时仅视觉 fallback"与"读 store 后渲染"在 humanoid 构型上产生
-    // 完全相同的像素坐标（server/assets/body_plans/layouts/humanoid.json 与本表
-    // 逐值对拍见 body_plan::layout 的 pin 测试）。gate 判定不读这里——纯渲染几何。
-
-    /**
-     * 归一化坐标 → 本组件局部坐标（原点=画布左上角，X 以 cx 为中心偏移）。
-     * 与 server humanoid.json 抽取时使用的反函数 x=(84+px)/168、y=py/236 精确对应
-     * （W=168, H=236）。
-     */
-    private static int[] fromNormalized(Point2 p) {
-        int px = (int) Math.round(p.x() * W - (W / 2.0));
-        int py = (int) Math.round(p.y() * H);
-        return new int[]{px, py};
-    }
-
-    /** Body part bounding rect relative to (center_x, top_y) → [x1, y1, x2, y2]。 */
-    private static int[] bodyPartRect(BodyPart bp) {
-        BodyPlanLayout layout = BodyPlanLayoutStore.current();
-        if (layout != null) {
-            SilhouettePart part = layout.silhouetteFor(bp.name().toLowerCase(java.util.Locale.ROOT));
-            if (part != null && !part.polygon().isEmpty()) {
-                int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
-                int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
-                for (Point2 pt : part.polygon()) {
-                    int[] xy = fromNormalized(pt);
-                    minX = Math.min(minX, xy[0]);
-                    maxX = Math.max(maxX, xy[0]);
-                    minY = Math.min(minY, xy[1]);
-                    maxY = Math.max(maxY, xy[1]);
-                }
-                return new int[]{minX, minY, maxX, maxY};
-            }
-        }
-        return fallbackBodyPartRect(bp);
-    }
-
-    /** 内建常量保底（layout 缺失时的仅视觉 fallback，见类头文档）。 */
-    static int[] fallbackBodyPartRect(BodyPart bp) {
-        return switch (bp) {
-            case HEAD             -> new int[]{-11, 6, 11, 28};
-            case NECK             -> new int[]{-4, 28, 4, 34};
-            case CHEST            -> new int[]{-22, 34, 22, 66};
-            case ABDOMEN          -> new int[]{-22, 66, 22, 98};
-            case LEFT_UPPER_ARM   -> new int[]{-34, 36, -26, 72};
-            case LEFT_FOREARM     -> new int[]{-36, 72, -28, 108};
-            case LEFT_HAND        -> new int[]{-38, 105, -28, 115};
-            case RIGHT_UPPER_ARM  -> new int[]{26, 36, 34, 72};
-            case RIGHT_FOREARM    -> new int[]{28, 72, 36, 108};
-            case RIGHT_HAND       -> new int[]{28, 105, 38, 115};
-            case LEFT_THIGH       -> new int[]{-19, 110, -7, 156};
-            case LEFT_CALF        -> new int[]{-18, 156, -8, 186};
-            case LEFT_FOOT        -> new int[]{-22, 186, -6, 192};
-            case RIGHT_THIGH      -> new int[]{7, 110, 19, 156};
-            case RIGHT_CALF       -> new int[]{8, 156, 18, 186};
-            case RIGHT_FOOT       -> new int[]{6, 186, 22, 192};
-        };
-    }
-
-    private static int[] bodyPartAnchor(BodyPart bp) {
-        BodyPlanLayout layout = BodyPlanLayoutStore.current();
-        if (layout != null) {
-            PartAnchor anchor = layout.anchorFor(bp.name().toLowerCase(java.util.Locale.ROOT));
-            if (anchor != null) {
-                return fromNormalized(anchor.point());
-            }
-        }
-        return fallbackBodyPartAnchor(bp);
-    }
-
-    /** 内建常量保底（layout 缺失时的仅视觉 fallback，见类头文档）。 */
-    static int[] fallbackBodyPartAnchor(BodyPart bp) {
-        return switch (bp) {
-            case HEAD             -> new int[]{0, 10};
-            case NECK             -> new int[]{0, 30};
-            case CHEST            -> new int[]{0, 48};
-            case ABDOMEN          -> new int[]{0, 82};
-            case LEFT_UPPER_ARM   -> new int[]{-36, 53};
-            case LEFT_FOREARM     -> new int[]{-40, 89};
-            case LEFT_HAND        -> new int[]{-41, 110};
-            case RIGHT_UPPER_ARM  -> new int[]{36, 53};
-            case RIGHT_FOREARM    -> new int[]{40, 89};
-            case RIGHT_HAND       -> new int[]{41, 110};
-            case LEFT_THIGH       -> new int[]{-22, 132};
-            case LEFT_CALF        -> new int[]{-22, 170};
-            case LEFT_FOOT        -> new int[]{-19, 190};
-            case RIGHT_THIGH      -> new int[]{22, 132};
-            case RIGHT_CALF       -> new int[]{22, 170};
-            case RIGHT_FOOT       -> new int[]{19, 190};
-        };
-    }
-
-    /** 经脉 tooltip icon 锚点 — 取路径末端 */
-    private static int[] meridianAnchor(MeridianChannel ch) {
-        int[][] wp = meridianPathPoints(ch);
-        if (wp == null || wp.length == 0) return new int[]{0, 0};
-        return wp[wp.length - 1];
-    }
-
-    /**
-     * 单条经脉的折线路径（局部坐标）。优先读 {@link BodyPlanLayoutStore#current()}
-     * 的 {@code meridian_paths}（按 {@link MeridianChannel#channelId()} 查找）；
-     * store 缺失该 layout，或 layout 未声明这条经脉（非 humanoid 构型，例如飞鲸没有
-     * 十二正经）时回退到 {@link #FALLBACK_MERIDIAN_PATHS}——回退表同样可能没有该
-     * channel（不存在，理论上 humanoid 20 条恒有），届时返回 {@code null}，调用方
-     * （{@link #meridianAnchor} / {@link #distanceToPath}）必须处理 {@code null}。
-     */
-    private static int[][] meridianPathPoints(MeridianChannel ch) {
-        BodyPlanLayout layout = BodyPlanLayoutStore.current();
-        if (layout != null) {
-            MeridianPath path = layout.meridianPathFor(ch.channelId());
-            if (path != null && !path.points().isEmpty()) {
-                int[][] pts = new int[path.points().size()][];
-                for (int i = 0; i < pts.length; i++) {
-                    pts[i] = fromNormalized(path.points().get(i));
-                }
-                return pts;
-            }
-        }
-        return FALLBACK_MERIDIAN_PATHS.get(ch);
-    }
-
-    // ==================== Meridian path waypoints (fallback) ====================
-
-    /** 内建常量保底：每条经脉的多段折线路径（cx 相对坐标），按画布 H=210 调教。 */
-    private static final Map<MeridianChannel, int[][]> FALLBACK_MERIDIAN_PATHS = new EnumMap<>(MeridianChannel.class);
-    static {
-        // ===== 手三阴 (左臂) — 从胸肩出发扇形展开到手部 =====
-        // LU 肺经：胸前上 → 肩前外 → 前臂外侧 → 拇指端
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.LU, new int[][]{
-            {-8, 40}, {-18, 50}, {-28, 74}, {-34, 100}, {-36, 112}
-        });
-        // HT 心经：腋下 → 肘内 → 腕尺 → 小指端（最内侧，贴体）
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.HT, new int[][]{
-            {-16, 48}, {-22, 64}, {-26, 88}, {-28, 108}, {-26, 113}
-        });
-        // PC 心包经：胸中 → 肘中 → 腕中 → 中指端（中间路径）
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.PC, new int[][]{
-            {-2, 50}, {-14, 66}, {-22, 86}, {-30, 107}, {-32, 113}
-        });
-
-        // ===== 手三阳 (右臂) — 镜像 =====
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.LI, new int[][]{
-            {8, 40}, {18, 50}, {28, 74}, {34, 100}, {36, 112}
-        });
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.SI, new int[][]{
-            {16, 48}, {22, 64}, {26, 88}, {28, 108}, {26, 113}
-        });
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.TE, new int[][]{
-            {2, 50}, {14, 66}, {22, 86}, {30, 107}, {32, 113}
-        });
-
-        // ===== 足三阴 (左腿) — 从足端上行至腹 =====
-        // SP 脾经：大趾 → 腿内侧中 → 腹侧
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.SP, new int[][]{
-            {-17, 188}, {-14, 170}, {-11, 140}, {-8, 110}, {-14, 90}
-        });
-        // KI 肾经：足心 → 小腿内 → 大腿内 → 胸
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.KI, new int[][]{
-            {-13, 190}, {-11, 170}, {-7, 140}, {-4, 105}, {-2, 72}
-        });
-        // LR 肝经：大趾外 → 腿内 → 胁
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.LR, new int[][]{
-            {-15, 188}, {-12, 170}, {-9, 142}, {-6, 112}, {-10, 82}
-        });
-
-        // ===== 足三阳 (右腿) — 镜像 =====
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.ST, new int[][]{
-            {17, 188}, {14, 170}, {11, 140}, {8, 110}, {14, 90}
-        });
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.BL, new int[][]{
-            {13, 190}, {11, 170}, {7, 140}, {4, 105}, {2, 72}
-        });
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.GB, new int[][]{
-            {15, 188}, {12, 170}, {9, 142}, {6, 112}, {10, 82}
-        });
-
-        // ===== 8 奇经 =====
-        // 任脉：前正中，腹→咽
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.REN, new int[][]{
-            {-3, 98}, {-3, 80}, {-3, 62}, {-3, 44}, {-3, 30}
-        });
-        // 督脉：后正中（右偏绘制以区分）
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.DU, new int[][]{
-            {3, 98}, {3, 80}, {3, 62}, {3, 44}, {3, 30}
-        });
-        // 冲脉：深部正中
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.CHONG, new int[][]{
-            {0, 94}, {0, 74}, {0, 54}, {0, 34}
-        });
-        // 带脉：腰间环行
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.DAI, new int[][]{
-            {-20, 84}, {-10, 86}, {0, 87}, {10, 86}, {20, 84}
-        });
-        // 阴维：左侧躯干弧
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YIN_WEI, new int[][]{
-            {-12, 100}, {-16, 78}, {-16, 54}, {-10, 36}
-        });
-        // 阳维：右侧躯干弧
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YANG_WEI, new int[][]{
-            {12, 100}, {16, 78}, {16, 54}, {10, 36}
-        });
-        // 阴跷：内踝 → 内眼（腿内侧长链）
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YIN_QIAO, new int[][]{
-            {-8, 180}, {-6, 145}, {-5, 110}, {-4, 75}, {-2, 26}
-        });
-        // 阳跷：外踝 → 外眼
-        FALLBACK_MERIDIAN_PATHS.put(MeridianChannel.YANG_QIAO, new int[][]{
-            {8, 180}, {6, 145}, {5, 110}, {4, 75}, {2, 26}
-        });
-    }
-
-    // ==================== Hit detection ====================
-
-    private boolean isOverBodyPart(BodyPart bp, int mx, int my) {
-        if (bp == BodyPart.HEAD) return dist(mx, my, W / 2, 17) < 13;
-        int[] r = bodyPartRect(bp);
-        int cx = W / 2;
-        return mx >= cx + r[0] && mx < cx + r[2] && my >= r[1] && my < r[3];
-    }
-
-    /** 鼠标到某条脉路径的最小距离（折线段距离）。 */
-    private static double distanceToPath(int mx, int my, int cx, MeridianChannel ch) {
-        int[][] wp = meridianPathPoints(ch);
-        if (wp == null || wp.length < 2) return Double.MAX_VALUE;
-        double best = Double.MAX_VALUE;
-        for (int i = 0; i < wp.length - 1; i++) {
-            double d = pointToSegmentDist(mx, my,
-                cx + wp[i][0], wp[i][1],
-                cx + wp[i + 1][0], wp[i + 1][1]);
-            if (d < best) best = d;
         }
         return best;
     }
-
-    private static double pointToSegmentDist(int px, int py, int x1, int y1, int x2, int y2) {
-        double dx = x2 - x1, dy = y2 - y1;
-        double len2 = dx * dx + dy * dy;
-        if (len2 < 0.001) {
-            double ddx = px - x1, ddy = py - y1;
-            return Math.sqrt(ddx * ddx + ddy * ddy);
-        }
-        double t = ((px - x1) * dx + (py - y1) * dy) / len2;
-        t = Math.max(0, Math.min(1, t));
-        double cx = x1 + t * dx, cy = y1 + t * dy;
-        double ddx = px - cx, ddy = py - cy;
-        return Math.sqrt(ddx * ddx + ddy * ddy);
+    public boolean clickSelectMeridian(double sx, double sy) {
+        var ch = channelAtScreen(sx, sy);
+        if (ch == null || layer != Layer.MERIDIAN) return false;
+        setSelectedChannel(ch); return true;
     }
-
-    private static double dist(int x1, int y1, int x2, int y2) {
-        return Math.sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2));
+    @Override public boolean onMouseDown(double mx, double my, int button) {
+        pressed = button == 0; dragged = 0;
+        return super.onMouseDown(mx, my, button);
     }
-
-    // ==================== Drawing primitives ====================
-
-    /** 绘制从 (x1,y1) 到 (x2,y2) 的粗线，笔画宽度 thickness（以线段为中心）。 */
-    private static void drawThickLine(OwoUIDrawContext ctx, int x1, int y1, int x2, int y2, int color, int thickness) {
-        int dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
-        int steps = Math.max(dx, dy);
-        int half = thickness / 2;
-        if (steps == 0) {
-            ctx.fill(x1 - half, y1 - half, x1 - half + thickness, y1 - half + thickness, color);
-            return;
-        }
-        float xi = (float) (x2 - x1) / steps;
-        float yi = (float) (y2 - y1) / steps;
-        float px = x1, py = y1;
-        for (int i = 0; i <= steps; i++) {
-            int ix = (int) px - half, iy = (int) py - half;
-            ctx.fill(ix, iy, ix + thickness, iy + thickness, color);
-            px += xi; py += yi;
-        }
+    @Override public boolean onMouseDrag(double mx, double my, double dx, double dy, int button) {
+        dragged += Math.hypot(dx, dy); return super.onMouseDrag(mx, my, dx, dy, button);
     }
-
-    private static void fillCircle(OwoUIDrawContext ctx, int cx, int cy, int radius, int color) {
-        for (int dy = -radius; dy <= radius; dy++) {
-            int hw = (int) Math.sqrt(radius * radius - dy * dy);
-            ctx.fill(cx - hw, cy + dy, cx + hw + 1, cy + dy + 1, color);
+    @Override public boolean onMouseUp(double mx, double my, int button) {
+        if (pressed && button == 0 && dragged < 4) {
+            if (layer == Layer.MERIDIAN) clickSelectMeridian(x + mx, y + my);
+            else { var part = bodyPartAtScreen(x + mx, y + my); if (part != null) setSelectedPart(part); }
         }
+        pressed = false; return super.onMouseUp(mx, my, button);
     }
-
-    @Override
-    protected int determineHorizontalContentSize(Sizing sizing) { return W; }
-    @Override
-    protected int determineVerticalContentSize(Sizing sizing) { return H; }
-
-    // ==================== Test-only geometry accessors ====================
-    // plan-race-system-v1 P2b — bodyPartRect/bodyPartAnchor/meridianPathPoints 是
-    // private static，像素回归 pin 测试需要直接核验其输出（含 BodyPlanLayoutStore
-    // 已加载 / 未加载两条路径），走既有 "*ForTests()" 命名约定暴露只读快照。
-
-    static int[] bodyPartRectForTests(BodyPart bp) { return bodyPartRect(bp); }
-    static int[] bodyPartAnchorForTests(BodyPart bp) { return bodyPartAnchor(bp); }
-    static int[][] meridianPathPointsForTests(MeridianChannel ch) { return meridianPathPoints(ch); }
-    static int[] meridianAnchorForTests(MeridianChannel ch) { return meridianAnchor(ch); }
-    static int[] fromNormalizedForTests(double x, double y) { return fromNormalized(new Point2(x, y)); }
+    @Override public void close() { super.close(); geometry = null; projection = null; listeners.clear(); }
 }

@@ -9,7 +9,8 @@ public final class DashSkill {
     private DashSkill() {}
 
     public static boolean learned() {
+        String selected = com.bong.client.combat.SkillBarStore.snapshot().dashSkillId();
         return TechniquesListPanel.snapshot().stream()
-            .anyMatch(technique -> ID.equals(technique.id()) && technique.active());
+            .anyMatch(technique -> selected.equals(technique.id()) && technique.active());
     }
 }

@@ -26,5 +26,4 @@ scroll/ScrollReadScreen.java	ScrollReadScreen	BASE_OWO	CODE	true	Code-built Flow
 social/SparringInviteScreen.java	SparringInviteScreen	VANILLA_SCREEN	VANILLA	false	Vanilla modal screen
 social/TradeOfferScreen.java	TradeOfferScreen	VANILLA_SCREEN	VANILLA	false	Vanilla modal screen
 spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
-ui/CultivationScreen.java	CultivationScreen	BASE_OWO	CODE	true	Code-built FlowLayout
 ui/DynamicXmlScreen.java	DynamicXmlScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory

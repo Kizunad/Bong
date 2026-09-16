@@ -52,4 +52,6 @@ public final class WornPackModelRegistry {
     public static int size() {
         return SPECS.size();
     }
+
+    public static java.util.Set<String> templateIds() { return SPECS.keySet(); }
 }

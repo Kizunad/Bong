@@ -637,7 +637,7 @@ Store / server snapshot
 | 子阶段 | 模块 / 可核验交付 | 必要回归 |
 |---|---|---|
 | P5a ⏳ | `InventoryContainerWindows` / `InventoryContainerContent` 管理容器；`InventoryLoadoutWindows` 管理装备、quick-use/SkillBar；`InspectScreen` 保留工作台入口和既有领域操作 | 背包→装备/快捷槽的真实 identity 请求；拖动时容器消失；浮窗置顶与挡住的槽位不命中；缩放不拉伸物品/人体 |
-| P5b ⬜ | 修仙、技艺、功法、身份、化虚、玩家概览窗口；吸收 `SkillConfigPanelManager`；ViewModel + 窄 intent；共享经脉/技能状态 | 搜索/选择/滚动在最小化恢复后保留；施法/经脉/种族/config 限制仍生效；配置关闭与迟到更新不串对象 |
+| P5b ⏳ | 修仙、技艺、功法、身份、化虚、玩家概览窗口；吸收 `SkillConfigPanelManager`；ViewModel + 窄 intent；共享经脉/技能状态 | 搜索/选择/滚动在最小化恢复后保留；施法/经脉/种族/config 限制仍生效；配置关闭与迟到更新不串对象 |
 | P5c ⬜ | `CraftScreen`、`WorkbenchScreen`、`ForgeScreen` 的 XML 内容和真实入口；移除 `removed()` 与制作取消的耦合 | 制作进行时最小化并回到游戏仍按服务器计时；明确关闭才按原约定取消；切工位不沿用旧 session；同一 CraftStore 不产生两个可操作会话 |
 | P5d ⬜ | Alchemy、Repair、ForgeCarrier、ZhenfaLayout、Lingtian 窗口；Processing 内容适配与接线依赖登记 | 有效工位/物品/材料约束，终态收取/取消/拒绝仍走原 intent；未接线加工无假按钮，无预览冒充生产 |
 | P5e ⬜ | Loot、NPC 三页、TradeOffer、SparringInvite、ScrollRead、SpiritTreasure、Coffin 操作窗口及入口 | session/offer/token 过期与替换；跨窗物品选择；阅读最小化不结算，关闭只结算当前 token；被动邀请不抢普通输入 |
@@ -669,6 +669,24 @@ Store / server snapshot
 - 验证：最终 Java 17 `../scripts/build-token.sh gradle test build --offline` 通过，5104 条 JUnit、3 条 GameTest 无失败，日志 `/tmp/bong-loadout-final-gate.log`。Windows 原生 `item-windows-check-20260913-153545` 为本批 8 场景通过；旧详情的 9 场景在 `item-windows-check-20260913-153028` 通过，此后只替换库存预览中的测试技能为带真实 PNG 的 `sword.thrust`，生产逻辑未变。预览健康人体快照显式注入，避免旧 `MockPhysicalData` 的断臂夹具阻止主手装备。
 - Round 2 接触表：`local_images/workspace/p5a-loadout-round-2.png`，含前次/当前宽屏、minimum/odd 裁剪和容器同取景回归；同名 JSON 记录原始截图路径、尺寸与非空像素统计。新技能图标复用仓库现有 PNG，无新生成资产；Windows 测试实例已更新为最终 jar。
 - 待验与边界：原生场景捕获真实 C2S 编码并注入确认快照，不代表服务器联调。外观等待本批接触表人工验收；P4 连续动画与联网验收仍待补，P5a 暂不标完成。当前未提交、未推送、未开 PR。
+
+#### P5b 自身模型内观子批次工作记录（2026-09-15）
+
+- 用户追加：体表／经脉以模型窗口呈现，旋转放大入场并停在选定部位；经脉高亮显示真元流出与回流。仅保留 Inspect「心·身·境」入口；K 键注册与 `CultivationScreenBootstrap` 退役。远端 `UiOpenScreens.player_overview` 语义请求仍打开同一 Inspect 工作台，移除独立 `CultivationScreen`；普通玩家可看自身，全模型目录仍单独限制 OP。
+- 共享基底：`ModelPreviewComponent.collectModel/drawModelOverlay/prepareCamera`；`ModelPreviewCamera.focus/center` 依据实际网格边界归一化焦点，入场与换焦平滑插值后停止，拖拽／滚轮中断旧转场。`BodyInspectComponent` 直接复用当前玩家 renderer；`BodyModelCapture` 在同次模型绘制中读取真实部件和最终根变换，不另建人体模型。
+- 窗口接口：`UiWindowRuntime.PHYSICAL_BODY/MERIDIANS/openBody/bodyAt`、`BodyModelContent`、`body-inspect.xml`。两个窗口独立保存选择和镜头，沿用统一拖动、尺寸、最小化、关闭、HUD 固定及遮挡；定向外敷命中改走最上层模型。肢体点击按模型局部射线与部位体积求交。
+- 可视化：`BodyModelGeometry.Region` 保存实际模型部件的局部体积与变换，供部位框、点击、镜头和经脉共享；路径从部件内归一化锚点生成，`ModelOverlayMesh` 将细管、光点和真元池放进模型坐标系。流出／回程在池与末梢汇合；`carriesQi` 用已有有效流量与池比例判定，不在空池、闭塞、断脉或全污染时播放通畅周流。腹部池与回路仅为客户端内观示意，不扩展种族解剖协议、不写真元 ledger；非人形未有三维定位时显示实际模型与说明，不套人形经脉。
+- 领域边界：`CultivationClientIntentSink` 统一冲脉目标、突破、渡虚、淬炼流速／容量，复用现有请求和准入。`CultivationOverview` 与详情区保留寿元、真元色／色种、名额、灵剑、因果／实力和区域信息，实时读 Store；不持有打开旧面板时的快照。
+- 必要测试与退役记录：镜头到达／停止／拖拽打断；无有效流量停流和回路端点相接；修炼请求真实 channel ID、渡虚条件、首脉与已通门控；断线后概览丢弃旧角色。旧二维像素表及 fallback 的逐值镜像断言退役，旧修仙面板固定文案／排序／字符进度条测试收缩为快照生命周期契约；旧 Screen 专属转场断言随入口退役。R7 Store 审核删除“消费者文件名必须以 Screen/Bootstrap/UiStateSource 结尾”的源码名称断言，保留 Store 存在、读取接口和生命周期边界检查，避免正确拆入窗口内容导致假失败。
+- 原生验收：`UiBodyModelPreviewScene` + `client/body-model-ui-preview.json` 使用 Windows Fabric、真实 ClientWorld 与窗口输入；覆盖全身／经脉／背部／肢体／详情／空池／最小尺寸／叠放。夹具只由显式启用的 preview harness 装配，有限生命周期 tick 维持并在 cleanup 恢复，不向服务端发送演示状态。
+- 首版验证（用户已指出模型错位，不作为外观验收）：Java 17 `scripts/build-token.sh gradle test build` 通过，5,080 JUnit、3 Fabric GameTest，0 失败／跳过；日志 `/tmp/bong-body-final-gate.log`。Windows 原生验收 `status=passed, completed=10`，结果在 `D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/body-model-check-20260915/shots/`。20 张入场连续帧按 10fps 合成 GIF；录制暴露的低帧率时间截断已移除，镜头按实际经过时间停稳。定向外敷右键取消先于窗口派发，提示位于浮窗之上。
+- Round 2 产物：`local_images/workspace/body-model/contact-sheet.png`、`entrance.gif`、`evidence.json`；接触表为 9 种真实窗口状态，非六面模型资产图。像素检查确认通畅全貌有 5,950 个回流色像素、空池为 0，上层体表遮挡后下层回流为 0；逐图人工美术审阅尚未完成，不以像素检查替代。场景覆盖在 render 前注入，仅用于避免真实服务端快照在 tick 与绘制之间覆盖测试状态。
+- 对齐返工：首版独立 `PlayerEntityModel` 未经过 renderer 的状态同步，默认 child 缩放与静态定位表不一致；静态手臂宽度和固定正面高亮框还会在细手臂或旋转时错位。按用户要求直接绘制当前玩家，内观捕获限定在当前收集调用中并在 finally 解除，普通世界渲染不收集经脉。边框改为实际部件的三维边，点击先逆变换回部件内部；不以扩大命中盒掩盖错位。
+- 对齐回归：用标准／细手臂原版模型的真实渲染顶点验证部件边界，包含抬臂、转头及根变换；验证体内流路、末梢与回流相接、旋转后命中表面。删除旧 bootstrap 固定 30 项及绑定清单固定 26 项的数量断言（数量是实现清单，不是业务契约），保留非空、注册身份、顺序、依赖、唯一性和按键冲突检查；旧静态回路端点测试合并进真实模型回归。
+- 动画渲染接线：首轮原生对齐验收发现 Player Animator 的活动动画绕过 `AnimalModel.render`，整模型捕获返回空；`MixinBodyModelCapture` 因而改到 `ModelPart.render`，只收集当前预览玩家的六个主体部件，包含上半身附加矩阵。`BodyModelDeformation` 复用现有 BendyLib 的三参数 `applyBend` 映射内观点，不修改动画网格；肢体边框、体表命中面随弯曲细分。新增真实 BendyLib 网格／内观边界与弯曲表面命中的最小回归。
+- 对齐最终验证：Java 17 `scripts/build-token.sh gradle test build` 通过，5,083 条 JUnit、3 条 GameTest，退出码 0；日志 `/tmp/bong-body-parts-final-gate.log`。Windows 原生 `body-model-alignment-parts-20260915` 为 `status=passed, completed=16`，包含实际模型捕获、旋转／滚轮、聚焦／停稳、空池、体表、详情、最小尺寸、叠放、最小化恢复、HUD 固定及六个相机方向；未出现本批模型渲染错误。此前只通过普通模型单元测试不等同于带动画库的原生接线通过，该失败已由原生验收捕获并修正。
+- 对齐 Round 2 产物：`local_images/workspace/body-model-alignment/{before-after.png,six-views.png,window-states.png,entrance.gif,evidence.json}`。前后对照使用相同视口与选定窗口内容；六视角按实际相机轴向标注，俯仰方向为 ±85°；GIF 使用 20 张原生连续帧。截图源和摘要见 manifest，尚待用户外观验收，不将自动几何检查称为美术验收。
+- 本批仍待外观人工验收，不将整个 P5b 或 R7 标为完成；未 commit、push 或开 PR。技艺、身份、化虚与 P5c/P5d/P5e 仍按阶段表推进。
 
 ### P6 — 受控界面、HUD 与 Bootstrap 收口
 
@@ -824,6 +842,34 @@ HUD SVG 的范围与历史证据见 `Pre-P0 Decisions`；已实现 backend/真�
 本轮已收口功能范围；视觉细节在 P4b Round 2 接触表中由用户确认。不得把该视觉确认扩展为重新询问已经确定的多窗、HUD 固定或全客户端接入目标。
 
 ## 10. 实施工作流
+
+### P5b 工作记录：修习目录与绑定（2026-09-15，⏳）
+
+用户确认的本批范围：Inspect「功法 / 技艺」合并为「修习」，固定搜索栏支持文字及多个 `#标签` 交集检索；目录滚动浏览，双击打开独立详情；详情品阶/类型点击恢复并筛选目录，经脉需求跳转真实玩家经脉模型焦点。技艺六类经验、等级压制、近期流水及里程碑抽出 Inspect；展示进度，不改经验算法。
+
+- `practice/PracticeCatalog` / `PracticeCatalogContent`：不可变目录投影、组合检索与滚动列表；`PracticeDetailContent` / `SkillExperienceView`：独立详情和经验呈现。
+- `PracticeWindows` / `UiWindowRuntime`：目录、详情、绑定、闪避对比均复用窗口 identity/scope、最小化、固定 HUD、尺寸和输入遮挡。
+- `PracticeBindingSession`：空槽绑定、占用确认、确认失效、等待权威快照；`TechniqueIntent.BindChecked` 经过唯一 intent sink。
+- 本批明确扩展所需领域接线：TypeBox `TechniqueBindRequestV1` → Rust `TechniqueBindTargetV1` → `handle_technique_bind` 比较旧绑定；protobuf 同步投影。功法快照暴露既有 category/icon 和真实 input_kind；`skillbar_config.dash_skill_id`、`PlayerUiPrefs.dash_skill_id` 保存闪避选择。战斗槽中的初始闪避进入真实 movement 事件，共用体力/冷却；不新增第二套闪避数值或虚构新功法。
+- 删除旧内嵌功法卡、二维经脉小图、技艺行组件和按下即起拖的功法绑定入口。原 `TechniqueDragDecisionTest` 及 `TechniquesTabPanelTest` 只保护已退役拖拽/矩形实现，随实现移除；必要回归改保护组合筛选、替换确认/过期、请求通道、权威同步与闪避施放。
+- 验证（2026-09-15）：Java 17 `gradle test build` 通过，5,074 JUnit + 3 GameTest；Rust `cargo test` 共 12,560 通过、6 ignored，`cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` 通过；schema 913 测试与 408 个生成文件 freshness 通过；Bot 协议 569 测试及新增功法元数据的定向回归通过。日志分别为 `/tmp/bong-practice-client-complete.log`、`/tmp/bong-practice-server-tests-final.log`、`/tmp/bong-practice-clippy-final.log`、`/tmp/bong-practice-schema-final.log`、`/tmp/bong-practice-bot-protocol.log`。
+- 协议测试收口：移除手工固定 C2S enum 数量的断言，它不能证明真实覆盖且随新增请求无效失败；保留代表请求的真实编码/解码，将必要回归改为 `c2s_technique_bind_preserves_target_and_expected_binding`，验证战斗槽 0、闪避目标和旧绑定身份不会在传输中丢失。`scripts/bot/proto_min.py` 同步读取闪避选择和功法分类/图标元数据。
+- 真实联网验证：在独立端口、临时存档和 Redis 上运行新服务端，空槽绑定、过期确认拒绝、有效替换、战斗槽闪避进入 movement 并开始冷却、断线重连恢复战斗槽和闪避选择全部通过；`/tmp/bong-practice-live-verified.log`。截图夹具不作为服务端回执证据。
+- Windows native：`UiTechniqueWindowPreviewScene` / `client/technique-window-ui-preview.json` 的 9 场景通过，包括 minimum/odd/wide、目录、详情、分类经验、替换、对比、经脉联动；实际输入覆盖最小化恢复搜索、双击详情、标签恢复目录、取消/确认替换、打开对比及选中足少阴肾经。`D:/Minecraft/.minecraft/Fabric_Bang_Test/bong-native/practice-review-20260915/shots/ui-preview-result.txt` 为 `status=passed / completed=9`；同目录上一层的 `practice-contact-sheet.png` 和 `index.html` 为 Round 2 展示。预览保存/恢复自己覆盖的 Store，不再清空真实身体数据。
+- 当前边界：游戏仅有 `movement.dash`，第二闪避只存在于显式预览夹具；没有新增可习得功法。绑定尚无专用拒绝 receipt，成功等权威快照，拒绝/丢包可能等待 5 秒后提示未确认。原生预览沿用旧开发服，仍记录已有 proto bridge 警告，不能宣称全客户端网络无异常。本批未提交；截图查看工具未返回可视图像，本轮未完成逐图人工式外观检查，Round 2 接触表仍待用户确认，P5b 保持进行中。
+
+#### 修习空白与裁剪回归（2026-09-16）
+
+- 前次 `status=passed / completed=9` 只证明交互和几何断言，未证明文字实际绘入截图。补充 `UiTechniqueWindowPreviewScene.assertPracticeTextVisible` 后，原实现在详情正文“闪身步”处稳定失败；不能继续引用旧预览结果作为显示完整的证据。
+- 根因：`PracticeCatalogContent.Results.draw` 嵌套使用原版 `DrawContext` 裁剪，内层退出会调用 `RenderSystem.enableScissor` 恢复外层；owo 的拦截却将它再次压入自身全局 `ScissorStack`，留下裁剪区域。详情只剩背景、对比局部缺失，以及关闭重开仍异常，均与这一残留吻合。改用 owo 裁剪栈，切换区域前提交绘制，并在 `finally` 中配对退栈。临时探针确认修复前详情入口残留 4 层、修复后为空，探针已移除。
+- 真实 Fabric 客户端在 Xvfb 中完成 9 场景复验，包含目录与详情关闭重开、最小化恢复、经验、替换、对比和经脉链接；最前窗口的可见正文标签通过 framebuffer 前景像素检查。结果为 `client/run/technique-window-ui-preview/ui-preview-result.txt`，日志 `/tmp/bong-practice-final-preview.log`。同取景详情正文从 0 个亮色像素恢复为 10,824 个；此检查用于防空白回归，不代替外观验收。
+- Java 17 经构建令牌执行 `gradle test build` 通过：5,074 JUnit、3 GameTest；日志 `/tmp/bong-practice-render-client-check.log`。本轮只修客户端显示并补必要实机回归，未重跑服务端或协议门禁，P5b 仍待用户外观验收。
+
+#### 闪避绑定入口实机修正（2026-09-16）
+
+- 用户实机未见闪避键绑定：本地 25565 测试服仍运行 9 月 13 日的旧可执行文件。真实 Bot 使用初始卷轴后收到的 `movement.dash` 快照中，`input_kind/category/icon_texture` 为空；客户端因此不会显示闪避入口。重启为当前构建后，同一测试玩家收到 `input_kind=dash` 和图标地址，`technique_bind(target=dash)` 请求后也收到新的权威 `skillbar_config`。证据：`/tmp/bong-dash-metadata-before.log`、`/tmp/bong-dash-binding-live-check.log`。未添加按功法 ID 猜测类型的客户端兼容分支。
+- `PracticeBindingContent` 将闪避区放在战斗槽之前，明确显示“绑定到闪避键 [当前按键]”和当前功法；继续复用既有替换确认与对比流程。Java 17 `gradle test build` 通过（5,074 JUnit、3 GameTest），日志 `/tmp/bong-dash-binding-client-check.log`；Windows 测试实例已更新 jar 并重启连接更新后的测试服。
+- 更新服务端后的 9 个真实 Fabric 预览场景全部通过，日志 `/tmp/bong-dash-binding-preview-final.log`；自动预览在独立 Xvfb 中拒绝了可选资源包提示，未操作用户的 Windows 窗口。最初因资源包确认页阻塞的运行记录为失败，不计入通过结果。
 
 ### 10.1 适用边界
 

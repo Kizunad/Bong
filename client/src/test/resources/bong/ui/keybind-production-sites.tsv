@@ -24,4 +24,3 @@ spirittreasure.open_screen	spirittreasure/SpiritTreasureScreenBootstrap.java	ope
 tsy.extract_start	tsy/ExtractInteractionBootstrap.java	extractKey	key.bong-client.tsy_extract	KEYSYM	Y	category.bong-client.controls	1
 tsy.extract_cancel	tsy/ExtractInteractionBootstrap.java	cancelKey	key.bong-client.tsy_extract_cancel	KEYSYM	U	category.bong-client.controls	1
 tsy.search_cancel	tsy/SearchCancelInteractionBootstrap.java	cancelKey	key.bong-client.tsy_search_cancel	KEYSYM	H	category.bong-client.controls	1
-ui.cultivation.open_screen	ui/CultivationScreenBootstrap.java	openScreenKey	key.bong-client.open_cultivation_screen	KEYSYM	K	category.bong-client.controls	1

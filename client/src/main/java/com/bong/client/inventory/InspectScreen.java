@@ -6,15 +6,8 @@ import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarStore;
-import com.bong.client.combat.inspect.TechniqueDragDecision;
 import com.bong.client.block.BlockVanillaIconMap;
-import com.bong.client.combat.inspect.StatusPanelExtension;
 import com.bong.client.craft.CraftScreen;
-import com.bong.client.combat.store.AscensionQuotaStore;
-import com.bong.client.cultivation.ColorKind;
-import com.bong.client.cultivation.QiColorVectorHud;
-import com.bong.client.cultivation.QiColorObservedState;
-import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.hud.SwordBondHudState;
@@ -27,8 +20,6 @@ import com.bong.client.inventory.component.*;
 import com.bong.client.inventory.model.*;
 import com.bong.client.inventory.state.DragState;
 import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.inventory.state.MeridianStateStore;
-import com.bong.client.util.RealmLabel;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.processing.state.FreshnessStore;
 import net.minecraft.client.MinecraftClient;
@@ -65,24 +56,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_INACTIVE_COLOR = 0xFF555555;
     private static final int TAB_EQUIP = 0;
     private static final int TAB_CULTIVATION = 1;
-    private static final int TAB_SKILL = 2;
-    private static final int TAB_TECHNIQUES = 3;
-    private static final int TAB_CRAFT = 4;
-    private static final String[] TAB_NAMES = {"随身", "修仙", "技艺", "功法", "手搓"};
+    private static final int TAB_PRACTICE = 2;
+    private static final int TAB_CRAFT = 3;
+    private static final String[] TAB_NAMES = {"随身", "修仙", "修习", "手搓"};
     private static final int ACTION_TOAST_OK = 0xFFA8E6CF;
     private static final int ACTION_TOAST_WARN = 0xFFFFAA55;
     private static final long ACTION_TOAST_MS = 2_200L;
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
-    // 功法拖拽落槽 —— 与物品 dragState 平行的独立轻量态（功法非 InventoryItem，不复用 DragState）。
-    // 非 null 即「正在拖某条功法」；按下功法行起手、松手落 1-9 槽绑定，渲染期画跟手 ghost。
-    private com.bong.client.combat.inspect.TechniquesListPanel.Technique draggedTechnique;
-    private boolean draggedTechniqueLocked;
-    // 拖拽来源槽：>=0 表示从已绑定的 1-9 槽拖出（松手落槽外=解绑）；-1 表示从功法列表拖出。
-    private int draggedFromSlot = -1;
-    private double techniqueDragX;
-    private double techniqueDragY;
     private final ItemInspectClickTracker itemInspectClicks = new ItemInspectClickTracker();
     private boolean startingItemDrag;
     /** Screen 存活期间持有的 InventoryStateStore 订阅，close 时解绑避免泄漏。 */
@@ -106,33 +88,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Tabs (left panel)
     private int activeTab = TAB_EQUIP;
-        // plan-skill-v1 §5.1 第三个 tab "技艺"
     private final LabelComponent[] tabLabels = new LabelComponent[TAB_NAMES.length];
     private FlowLayout equipTabContent;
     private FlowLayout cultivationTabContent;
-    private FlowLayout skillTabContent;
-    private com.bong.client.combat.inspect.TechniquesTabPanel techniquesTabPanel;
-    private FlowLayout techniquesTabContent;
     private FlowLayout craftTabContent;
-    private FlowLayout skillScrollDropZone;
-    private LabelComponent skillScrollDropTitle;
-    private LabelComponent skillScrollDropHint;
     private String skillScrollDropFeedback = "仅 skill 残卷可悟";
-    // plan-cross-system-patch-v1 P1：按 SkillId.values() 展示所有技艺。
-    private com.bong.client.skill.SkillRowComponent[] skillRows;
-    private com.bong.client.skill.SkillId selectedSkill = com.bong.client.skill.SkillId.HERBALISM;
-    private LabelComponent skillDetailTitle;
-    private LabelComponent skillDetailLevel;
-    private LabelComponent skillDetailProgress;
-    private LabelComponent skillDetailCurrent;
-    private LabelComponent skillDetailNext;
-    private LabelComponent skillDetailHint;
-    private LabelComponent skillRecentHeader;
-    private LabelComponent[] skillRecentLines;
-    private LabelComponent skillMilestoneHeader;
-    private LabelComponent[] skillMilestoneLines;
-    /** Screen 存活期间持有的 SkillSetStore 订阅，close 时解绑避免泄漏。 */
-    private java.util.function.Consumer<com.bong.client.skill.SkillSetSnapshot> skillListener;
 
     // Hotbar
     private GridSlotComponent[] hotbarSlots = loadout.hotbarSlots;
@@ -170,16 +130,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Body inspect (cultivation tab) — dual-layer: physical + meridian
     private BodyInspectComponent bodyInspect;
-    private QiColorVectorHud qiColorVectorHud;
-    private LabelComponent physicalLayerLabel;
-    private LabelComponent meridianLayerLabel;
-    private FlowLayout meridianFilterBar;
-    private io.wispforest.owo.ui.container.ScrollContainer<?> cultivationActionScroll;
-    /** Screen 存活期间持有的 MeridianStateStore 订阅，close 时移除避免泄漏。 */
-    private Consumer<MeridianBody> meridianBodyListener;
-    private Consumer<QiColorObservedState> qiColorObservedListener;
-    private Consumer<AscensionQuotaStore.State> ascensionQuotaListener;
-    private final LabelComponent[] filterLabels = new LabelComponent[4];
+    private BodyInspectComponent.Layer initialBodyLayer;
+
+    /** 远端语义入口使用 Inspect 工作台，窗口在工作台初始化后打开。 */
+    public InspectScreen withBodyWindow(BodyInspectComponent.Layer layer) {
+        initialBodyLayer = layer;
+        return this;
+    }
+
+    public void openBodyWindow(BodyInspectComponent.Layer layer) {
+        UiWindowRuntime.openBody(layer);
+        bodyInspect = UiWindowRuntime.body(layer);
+    }
 
     record PillMenuAction(String label, ActionKind kind) {}
     enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, CRAFT_RECIPE_SCROLL_USE, READ_SCROLL }
@@ -214,32 +176,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     public void removed() {
         itemInspectClicks.cancel();
         UiWindowRuntime.cancelInput();
-        // Screen 被关闭时解绑全局 store 订阅，防止后续快照到达仍回调已销毁组件。
-        if (meridianBodyListener != null) {
-            MeridianStateStore.removeListener(meridianBodyListener);
-            meridianBodyListener = null;
-        }
-        if (qiColorObservedListener != null) {
-            QiColorObservedStore.removeListener(qiColorObservedListener);
-            qiColorObservedListener = null;
-        }
-        if (ascensionQuotaListener != null) {
-            AscensionQuotaStore.removeListener(ascensionQuotaListener);
-            ascensionQuotaListener = null;
-        }
+        // Screen 被关闭时解绑背包和技艺订阅；模型内容由窗口 scope 持有。
         if (inventoryListener != null) {
             InventoryStateStore.removeListener(inventoryListener);
             inventoryListener = null;
         }
-        if (skillListener != null) {
-            com.bong.client.skill.SkillSetStore.removeListener(skillListener);
-            skillListener = null;
-        }
         unregisterAuthoritativeBarListeners();
-        if (techniquesTabPanel != null) {
-            techniquesTabPanel.close();
-            techniquesTabPanel = null;
-        }
         // Loot panel cleanup — send close to server if still active
         if (lootPanel != null && !lootPanel.isClosed()) {
             lootPanel.sendClose();
@@ -324,247 +266,22 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             .onPress(ignored -> UiWindowRuntime.openLoadout(InventoryLoadoutWindows.SHORTCUTS));
         leftCol.child(equipTabContent);
 
-        // Tab 1: Cultivation (body inspect — dual layer)
-        cultivationTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-        cultivationTabContent.gap(2);
-        cultivationTabContent.horizontalAlignment(HorizontalAlignment.CENTER);
-
-        // Layer toggle: [体表] [经脉]
-        FlowLayout layerBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-        layerBar.gap(6);
-        layerBar.padding(Insets.of(1, 2, 1, 2));
-        physicalLayerLabel = Components.label(Text.literal("体表"));
-        physicalLayerLabel.color(Color.ofArgb(TAB_ACTIVE_COLOR));
-        physicalLayerLabel.cursorStyle(CursorStyle.HAND);
-        physicalLayerLabel.mouseDown().subscribe((mx, my, btn) -> {
-            if (btn == 0) { switchBodyLayer(BodyInspectComponent.Layer.PHYSICAL); return true; }
-            return false;
+        // 心·身·境只保留入口，模型、详情和修炼操作由各自窗口持有。
+        cultivationTabContent = OwoXmlTemplateRegistry.production().require("body-inspect")
+            .expandTemplate(FlowLayout.class, "launcher", java.util.Map.of());
+        cultivationTabContent.childById(LabelComponent.class, "open-physical-body").mouseDown().subscribe((mx, my, btn) -> {
+            if (btn != 0) return false;
+            openBodyWindow(BodyInspectComponent.Layer.PHYSICAL);
+            return true;
         });
-        meridianLayerLabel = Components.label(Text.literal("经脉"));
-        meridianLayerLabel.color(Color.ofArgb(TAB_INACTIVE_COLOR));
-        meridianLayerLabel.cursorStyle(CursorStyle.HAND);
-        meridianLayerLabel.mouseDown().subscribe((mx, my, btn) -> {
-            if (btn == 0) { switchBodyLayer(BodyInspectComponent.Layer.MERIDIAN); return true; }
-            return false;
+        cultivationTabContent.childById(LabelComponent.class, "open-meridians").mouseDown().subscribe((mx, my, btn) -> {
+            if (btn != 0) return false;
+            openBodyWindow(BodyInspectComponent.Layer.MERIDIAN);
+            return true;
         });
-        layerBar.child(physicalLayerLabel);
-        layerBar.child(meridianLayerLabel);
-        cultivationTabContent.child(layerBar);
-
-        // Meridian filter bar: [全部] [手经] [足经] [奇经] — 仅经脉层显示
-        meridianFilterBar = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-        meridianFilterBar.gap(6);
-        meridianFilterBar.padding(Insets.of(1, 2, 1, 2));
-        BodyInspectComponent.MeridianFilter[] filters = BodyInspectComponent.MeridianFilter.values();
-        for (int i = 0; i < filters.length; i++) {
-            final int idx = i;
-            var lbl = Components.label(Text.literal(filters[i].label()));
-            lbl.color(Color.ofArgb(i == 0 ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-            lbl.cursorStyle(CursorStyle.HAND);
-            lbl.mouseDown().subscribe((mx, my, btn) -> {
-                if (btn == 0) { switchMeridianFilter(filters[idx]); return true; }
-                return false;
-            });
-            filterLabels[i] = lbl;
-            meridianFilterBar.child(lbl);
-        }
-        cultivationTabContent.child(meridianFilterBar);
-        meridianFilterBar.positioning(Positioning.absolute(-9999, -9999));
-
-        // Body 必须在 action bar 之前创建，action bar 需要引用 selectedChannel
-        bodyInspect = new BodyInspectComponent();
-        PhysicalBody physData = PhysicalBodyStore.snapshot();
-        bodyInspect.setPhysicalBody(physData != null ? physData : MockPhysicalData.create());
-        MeridianBody meridianData = MeridianStateStore.snapshot();
-        // 经脉必须以服务端 cultivation_detail 为准；无快照时宁可显示加载态，不能用 mock 误导目标选择。
-        bodyInspect.setMeridianBody(meridianData);
-
-        // Cultivation action bar: [设为目标] [突破] [淬炼·流速] [淬炼·容量]
-        // 「突破」常开；其余三项需选中某条经脉 — 灰态表示禁用。
-        FlowLayout actionBar = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-        actionBar.gap(4);
-        actionBar.padding(Insets.of(2, 2, 2, 2));
-        actionBar.verticalAlignment(VerticalAlignment.CENTER);
-        Object[] setTargetBtn = buildActionButton("设为目标", this::dispatchSetMeridianTarget);
-        Object[] breakthroughBtn = buildActionButton("突破",
-            this::dispatchBreakthroughRequest);
-        Object[] duXuBtn = buildActionButton("渡虚劫", this::dispatchStartDuXuIfEligible);
-        Object[] forgeRateBtn = buildActionButton("淬炼·流速", () -> {
-            var sel = bodyInspect.selectedChannel();
-            if (sel == null) {
-                showActionToast("先选中一条经脉", ACTION_TOAST_WARN);
-                return;
-            }
-            com.bong.client.network.ClientRequestSender.sendForgeRequest(
-                com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
-                com.bong.client.network.ClientRequestProtocol.ForgeAxis.Rate);
-        });
-        Object[] forgeCapBtn = buildActionButton("淬炼·容量", () -> {
-            var sel = bodyInspect.selectedChannel();
-            if (sel == null) {
-                showActionToast("先选中一条经脉", ACTION_TOAST_WARN);
-                return;
-            }
-            com.bong.client.network.ClientRequestSender.sendForgeRequest(
-                com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
-                com.bong.client.network.ClientRequestProtocol.ForgeAxis.Capacity);
-        });
-        var setTargetLabel = (LabelComponent) setTargetBtn[1];
-        var duXuLabel = (LabelComponent) duXuBtn[1];
-        var forgeRateLabel = (LabelComponent) forgeRateBtn[1];
-        var forgeCapLabel = (LabelComponent) forgeCapBtn[1];
-        actionBar.child((io.wispforest.owo.ui.core.Component) setTargetBtn[0]);
-        actionBar.child((io.wispforest.owo.ui.core.Component) breakthroughBtn[0]);
-        actionBar.child((io.wispforest.owo.ui.core.Component) duXuBtn[0]);
-        actionBar.child((io.wispforest.owo.ui.core.Component) forgeRateBtn[0]);
-        actionBar.child((io.wispforest.owo.ui.core.Component) forgeCapBtn[0]);
-        // 横向可滚动容器：塞不下时可拖滚动条或滚轮横向浏览
-        var actionScroll = Containers.horizontalScroll(Sizing.fill(100), Sizing.content(), actionBar);
-        actionScroll.scrollbarThiccness(3);
-        cultivationActionScroll = actionScroll;
-        cultivationTabContent.child(actionScroll);
-        // 初始 layer = PHYSICAL，按钮组应与 meridianFilterBar 一样初始隐藏；
-        // 否则首次切到 心·身·境 tab 时按钮短暂可见，直到用户切一次经脉层 switchBodyLayer 才触发 hide。
-        actionScroll.positioning(Positioning.absolute(-9999, -9999));
-
-        // 状态条：境界 · 污染总量（数据来源 cultivation_detail S2C）
-        LabelComponent bodyStatusLabel = Components.label(Text.literal(""));
-        bodyStatusLabel.color(Color.ofArgb(0xFFAAAAAA));
-        cultivationTabContent.child(bodyStatusLabel);
-        Runnable refreshBodyStatus = () -> {
-            MeridianBody b = bodyInspect.meridianBody();
-            if (b == null) { bodyStatusLabel.text(Text.literal("")); return; }
-            StringBuilder sb = new StringBuilder();
-            if (b.realm() != null && !b.realm().isEmpty()) {
-                sb.append("§7境界 §f").append(RealmLabel.displayName(b.realm()));
-            }
-            if (b.contaminationTotal() > 0.0) {
-                if (sb.length() > 0) sb.append("  §8·  ");
-                sb.append(String.format("§d污染 §f%.1f", b.contaminationTotal()));
-            }
-            if (b.hasLifespanPreview()) {
-                if (sb.length() > 0) sb.append("  §8·  ");
-                sb.append(String.format("§7寿元 §f%.1f/%d", b.yearsLived(), b.lifespanCapByRealm()));
-                sb.append(String.format(" §8(余%.1f 扣%d ×%.1f)",
-                    b.remainingYears(), b.deathPenaltyYears(), b.lifespanTickRateMultiplier()));
-                if (b.isWindCandle()) sb.append(" §c风烛");
-            }
-            ColorKind ownColor = b.qiColorMain();
-            if (ownColor != null) {
-                if (sb.length() > 0) sb.append("  §8·  ");
-                sb.append("§7真元 §f").append(ownColor.label());
-                if (b.qiColorSecondary() != null) sb.append("/").append(b.qiColorSecondary().label());
-                if (b.qiColorChaotic()) sb.append(" §c杂");
-                if (b.qiColorHunyuan()) sb.append(" §b混");
-            }
-            QiColorObservedState observedColor = QiColorObservedStore.snapshot();
-            if (observedColor != null && !observedColor.displayText().isEmpty()) {
-                if (sb.length() > 0) sb.append("  §8·  ");
-                sb.append("§7").append(observedColor.displayText());
-            }
-            String quotaLine = StatusPanelExtension.ascensionQuotaLine(b.realm());
-            if (!quotaLine.isEmpty()) {
-                if (sb.length() > 0) sb.append("  §8·  ");
-                sb.append("§7").append(quotaLine);
-            }
-            bodyStatusLabel.text(Text.literal(sb.toString()));
-        };
-        refreshBodyStatus.run();
-        qiColorVectorHud = new QiColorVectorHud();
-        qiColorVectorHud.setBody(bodyInspect.meridianBody());
-        cultivationTabContent.child(qiColorVectorHud);
-        // 网络新快照到达时推到 UI（BodyInspect 内部不会自动感知 MeridianStateStore.replace）。
-        // 存成字段以便 removed() 回调里解绑 —— 否则每开一次 InspectScreen 都累积一个悬挂监听。
-        meridianBodyListener = body -> MinecraftClient.getInstance().execute(() -> {
-            if (body != null) bodyInspect.setMeridianBody(body);
-            if (qiColorVectorHud != null) qiColorVectorHud.setBody(body);
-            refreshBodyStatus.run();
-        });
-        MeridianStateStore.addListener(meridianBodyListener);
-        qiColorObservedListener = ignored -> MinecraftClient.getInstance().execute(refreshBodyStatus);
-        QiColorObservedStore.addListener(qiColorObservedListener);
-        ascensionQuotaListener = ignored -> MinecraftClient.getInstance().execute(refreshBodyStatus);
-        AscensionQuotaStore.addListener(ascensionQuotaListener);
-        bodyInspect.addSelectionListener(ch -> refreshBodyStatus.run());
-
-        // 根据当前选择应用灰态，并订阅变化
-        Runnable refreshActionColors = () -> {
-            boolean hasSel = bodyInspect.selectedChannel() != null;
-            int c = hasSel ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR;
-            setTargetLabel.color(Color.ofArgb(c));
-            duXuLabel.color(Color.ofArgb(isDuXuEligible(bodyInspect.meridianBody()) ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-            forgeRateLabel.color(Color.ofArgb(c));
-            forgeCapLabel.color(Color.ofArgb(c));
-        };
-        refreshActionColors.run();
-        bodyInspect.addSelectionListener(ch -> refreshActionColors.run());
-
-        cultivationTabContent.child(bodyInspect);
-
-        // 灵剑信息区块（F.3 §sword-path-complete 契约）
-        // 数据在打开面板时读 store 快照（store 由 SwordBondHudStateHandler S2C 写入）。
-        // active=false 时整个区块不添加，以免留白影响布局。
-        List<String> bondLines = swordBondInfoLines(SwordBondHudStateStore.snapshot());
-        if (!bondLines.isEmpty()) {
-            FlowLayout bondSection = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-            bondSection.gap(1);
-            bondSection.padding(Insets.of(4, 0, 0, 0));
-            for (String line : bondLines) {
-                LabelComponent bondLbl = Components.label(Text.literal(line));
-                bondLbl.color(Color.ofArgb(0xFFCCCCCC));
-                bondSection.child(bondLbl);
-            }
-            cultivationTabContent.child(bondSection);
-        }
 
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
-
-        // Tab 2: 技艺 (plan-skill-v1 §5.1)
-        //   现阶段做最小闭环：左列固定三行 + 选中高亮；中列展示当前生效等级、cap 压制与效果说明。
-        //   曲线 canvas / 里程碑 / 残卷拖入槽留 P4/P5/P6。
-        skillTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-        skillTabContent.gap(2);
-        skillTabContent.padding(Insets.of(2));
-
-        com.bong.client.skill.SkillId[] order = com.bong.client.skill.SkillId.values();
-        skillRows = new com.bong.client.skill.SkillRowComponent[order.length];
-        for (int i = 0; i < order.length; i++) {
-            skillRows[i] = new com.bong.client.skill.SkillRowComponent(order[i]);
-            final com.bong.client.skill.SkillId skillId = order[i];
-            skillRows[i].component().cursorStyle(CursorStyle.HAND);
-            skillRows[i].component().mouseDown().subscribe((mx, my, btn) -> {
-                if (btn == 0) {
-                    selectedSkill = skillId;
-                    refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
-                    return true;
-                }
-                return false;
-            });
-            skillTabContent.child(skillRows[i].component());
-        }
-        skillTabContent.child(buildSkillScrollDropZone());
-        skillTabContent.child(buildSkillDetailPanel());
-
-        // 初次填充
-        refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
-        // 订阅更新 —— 回主线程再刷 UI，避免网络线程 mutate owo-lib 组件。
-        skillListener = next -> {
-            if (next == null) return;
-            MinecraftClient.getInstance().execute(() -> refreshSkillRows(next));
-        };
-        com.bong.client.skill.SkillSetStore.addListener(skillListener);
-
-        leftCol.child(skillTabContent);
-        skillTabContent.positioning(Positioning.absolute(-9999, -9999));
-
-        // Tab 3: 功法（plan-hotbar-modify-v2 §1）
-        techniquesTabPanel = new com.bong.client.combat.inspect.TechniquesTabPanel(channels -> {
-            if (bodyInspect != null) bodyInspect.setTechniqueMeridianHighlights(channels);
-        });
-        techniquesTabContent = techniquesTabPanel.component();
-        leftCol.child(techniquesTabContent);
-        techniquesTabContent.positioning(Positioning.absolute(-9999, -9999));
 
         // Tab 4: 手搓入口。完整三栏布局在独立 CraftScreen，避免挤进 172px 左栏。
         craftTabContent = buildCraftTabEntryContent();
@@ -648,6 +365,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             });
         };
         InventoryStateStore.addListener(inventoryListener);
+        if (initialBodyLayer != null) {
+            switchTab(TAB_CULTIVATION);
+            openBodyWindow(initialBodyLayer);
+            initialBodyLayer = null;
+        }
 
     }
 
@@ -949,13 +671,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Tab / Container switching ====================
 
     private void switchTab(int idx) {
+        if (idx == TAB_PRACTICE) {
+            UiWindowRuntime.openPractice();
+            return;
+        }
         if (idx == activeTab || idx < 0 || idx >= TAB_NAMES.length) return;
         activeTab = idx;
         FlowLayout[] tabs = {
             equipTabContent,
             cultivationTabContent,
-            skillTabContent,
-            techniquesTabContent,
+            null,
             craftTabContent,
         };
         for (int i = 0; i < tabs.length; i++) {
@@ -964,483 +689,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 tabs[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
             }
         }
-        // 切到技艺 tab 时刷一次最新快照（离开其他 tab 时可能积攒了若干事件）。
-        if (idx == TAB_SKILL) {
-            refreshSkillRows(com.bong.client.skill.SkillSetStore.snapshot());
-        } else if (idx == TAB_TECHNIQUES && techniquesTabPanel != null) {
-            techniquesTabPanel.refreshFromStores();
-            hydrateSkillBarFromStore();
-        } else if (idx == TAB_CRAFT) {
+        if (idx == TAB_CRAFT) {
             openCraftScreen();
         }
     }
 
     // plan-layered-equip-v1 P4（决议 #19）：行囊重量条 backpackWeightBreakdown 删除——负重沿用整体
     // inventory 底部既有 BottomInfoBar（读 model.currentWeight()/maxWeight()，过载变红）。
-
-    /** plan-skill-v1 §5.1 三行固定刷新；listener / switchTab 共用此入口。 */
-    private void refreshSkillRows(com.bong.client.skill.SkillSetSnapshot snapshot) {
-        if (skillRows == null || snapshot == null) return;
-        long now = System.currentTimeMillis();
-        for (com.bong.client.skill.SkillRowComponent row : skillRows) {
-            if (row == null) continue;
-            row.update(snapshot.get(row.skill()), now);
-            row.setSelected(row.skill() == selectedSkill);
-        }
-        refreshSkillDetail(snapshot.get(selectedSkill));
-    }
-
-    private FlowLayout buildSkillDetailPanel() {
-        FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-        panel.surface(Surface.flat(0xFF121712).and(Surface.outline(0xFF4A5C46)));
-        panel.padding(Insets.of(4));
-        panel.gap(2);
-
-        skillDetailTitle = Components.label(Text.literal("采药"));
-        skillDetailTitle.color(Color.ofArgb(0xFFD8E4D0));
-        panel.child(skillDetailTitle);
-
-        skillDetailLevel = Components.label(Text.literal("Lv.0 / effective 0 / cap 10"));
-        skillDetailLevel.color(Color.ofArgb(0xFFE0B060));
-        panel.child(skillDetailLevel);
-
-        skillDetailProgress = Components.label(Text.literal("当前 XP 0 / 100 · 累计 0"));
-        skillDetailProgress.color(Color.ofArgb(0xFFAAAAAA));
-        panel.child(skillDetailProgress);
-
-        skillDetailCurrent = Components.label(Text.literal("当前效果：尚未入门。"));
-        skillDetailCurrent.color(Color.ofArgb(0xFFCCCCCC));
-        skillDetailCurrent.maxWidth(160);
-        panel.child(skillDetailCurrent);
-
-        skillDetailNext = Components.label(Text.literal("下一阶：继续修习可见首层变化。"));
-        skillDetailNext.color(Color.ofArgb(0xFF88B090));
-        skillDetailNext.maxWidth(160);
-        panel.child(skillDetailNext);
-
-        skillDetailHint = Components.label(Text.literal("点左侧条目切换；若境界不足，超出 cap 的等级只按 effective 生效。"));
-        skillDetailHint.color(Color.ofArgb(0xFF666666));
-        skillDetailHint.maxWidth(160);
-        panel.child(skillDetailHint);
-
-        skillRecentHeader = Components.label(Text.literal("近期流水"));
-        skillRecentHeader.color(Color.ofArgb(0xFF88B090));
-        panel.child(skillRecentHeader);
-
-        skillRecentLines = new LabelComponent[3];
-        for (int i = 0; i < skillRecentLines.length; i++) {
-            LabelComponent line = Components.label(Text.literal("§8（暂无）"));
-            line.color(Color.ofArgb(0xFF888888));
-            line.maxWidth(160);
-            skillRecentLines[i] = line;
-            panel.child(line);
-        }
-
-        skillMilestoneHeader = Components.label(Text.literal("最近里程碑"));
-        skillMilestoneHeader.color(Color.ofArgb(0xFF88B090));
-        panel.child(skillMilestoneHeader);
-
-        skillMilestoneLines = new LabelComponent[3];
-        for (int i = 0; i < skillMilestoneLines.length; i++) {
-            LabelComponent line = Components.label(Text.literal("§8（暂无）"));
-            line.color(Color.ofArgb(0xFF888888));
-            line.maxWidth(160);
-            skillMilestoneLines[i] = line;
-            panel.child(line);
-        }
-
-        return panel;
-    }
-
-    private FlowLayout buildSkillScrollDropZone() {
-        FlowLayout zone = Containers.verticalFlow(Sizing.fixed(56), Sizing.fixed(68));
-        zone.surface(Surface.flat(0xFF201A14).and(Surface.outline(0xFF6A5030)));
-        zone.padding(Insets.of(3));
-        zone.gap(2);
-        zone.horizontalAlignment(HorizontalAlignment.CENTER);
-        zone.verticalAlignment(VerticalAlignment.CENTER);
-
-        FlowLayout slot = Containers.verticalFlow(Sizing.fixed(28), Sizing.fixed(56));
-        slot.surface(Surface.flat(0xFF15110E).and(Surface.outline(0xFF8A6A40)));
-        zone.child(slot);
-
-        skillScrollDropTitle = Components.label(Text.literal("技能残卷"));
-        skillScrollDropTitle.color(Color.ofArgb(0xFFB89A68));
-        zone.child(skillScrollDropTitle);
-
-        skillScrollDropHint = Components.label(Text.literal(skillScrollDropFeedback));
-        skillScrollDropHint.color(Color.ofArgb(0xFF888888));
-        zone.child(skillScrollDropHint);
-        skillScrollDropZone = zone;
-        return zone;
-    }
-
-    private void refreshSkillDetail(com.bong.client.skill.SkillSetSnapshot.Entry entry) {
-        if (skillDetailTitle == null || entry == null) return;
-        skillDetailTitle.text(Text.literal(selectedSkill.displayName()));
-        skillDetailLevel.text(Text.literal(formatSkillLevelLine(selectedSkill, entry)));
-        skillDetailLevel.color(Color.ofArgb(entry.lv() > entry.cap() ? 0xFF907050 : 0xFFE0B060));
-        skillDetailProgress.text(Text.literal(formatSkillProgressLine(entry)));
-        skillDetailCurrent.text(Text.literal(formatSkillCurrentEffect(selectedSkill, entry)));
-        skillDetailNext.text(Text.literal(formatSkillNextEffect(selectedSkill, entry)));
-        skillDetailHint.text(Text.literal(formatSkillHint(entry)));
-        refreshSkillRecentEvents();
-        refreshSkillMilestones();
-    }
-
-    private void refreshSkillRecentEvents() {
-        if (skillRecentHeader == null || skillRecentLines == null) return;
-        java.util.List<com.bong.client.skill.SkillRecentEventStore.Entry> lines = recentEventsForSkill(selectedSkill);
-        skillRecentHeader.text(Text.literal("近期流水" + (lines.isEmpty() ? "" : " · " + selectedSkill.displayName())));
-        for (int i = 0; i < skillRecentLines.length; i++) {
-            LabelComponent line = skillRecentLines[i];
-            if (line == null) continue;
-            if (i >= lines.size()) {
-                line.text(Text.literal(i == 0 ? "§8（暂无）" : ""));
-                line.color(Color.ofArgb(0xFF888888));
-                continue;
-            }
-            line.text(Text.literal(formatSkillRecentEventLine(lines.get(i))));
-            line.color(Color.ofArgb(0xFFAAAAAA));
-        }
-    }
-
-    private void refreshSkillMilestones() {
-        if (skillMilestoneHeader == null || skillMilestoneLines == null) return;
-        java.util.List<com.bong.client.skill.SkillMilestoneSnapshot> lines = recentMilestonesForSkill(selectedSkill);
-        skillMilestoneHeader.text(Text.literal("最近里程碑" + (lines.isEmpty() ? "" : " · " + selectedSkill.displayName())));
-        for (int i = 0; i < skillMilestoneLines.length; i++) {
-            LabelComponent line = skillMilestoneLines[i];
-            if (line == null) continue;
-            if (i >= lines.size()) {
-                line.text(Text.literal(i == 0 ? "§8（暂无）" : ""));
-                line.color(Color.ofArgb(0xFF888888));
-                continue;
-            }
-            line.text(Text.literal(formatSkillMilestoneLine(lines.get(i))));
-            line.color(Color.ofArgb(0xFFAAAAAA));
-        }
-    }
-
-    private static java.util.List<com.bong.client.skill.SkillMilestoneSnapshot> recentMilestonesForSkill(
-        com.bong.client.skill.SkillId skill
-    ) {
-        java.util.List<com.bong.client.skill.SkillMilestoneSnapshot> all =
-            com.bong.client.skill.SkillMilestoneStore.snapshot();
-        java.util.ArrayList<com.bong.client.skill.SkillMilestoneSnapshot> filtered = new java.util.ArrayList<>();
-        for (int i = all.size() - 1; i >= 0 && filtered.size() < 3; i--) {
-            com.bong.client.skill.SkillMilestoneSnapshot snapshot = all.get(i);
-            if (snapshot != null && snapshot.skill() == skill) {
-                filtered.add(snapshot);
-            }
-        }
-        return java.util.List.copyOf(filtered);
-    }
-
-    private static java.util.List<com.bong.client.skill.SkillRecentEventStore.Entry> recentEventsForSkill(
-        com.bong.client.skill.SkillId skill
-    ) {
-        java.util.List<com.bong.client.skill.SkillRecentEventStore.Entry> all =
-            com.bong.client.skill.SkillRecentEventStore.snapshot();
-        java.util.ArrayList<com.bong.client.skill.SkillRecentEventStore.Entry> filtered = new java.util.ArrayList<>();
-        for (com.bong.client.skill.SkillRecentEventStore.Entry entry : all) {
-            if (entry != null && entry.skill() == skill) {
-                filtered.add(entry);
-                if (filtered.size() >= 3) break;
-            }
-        }
-        return java.util.List.copyOf(filtered);
-    }
-
-    static String formatSkillRecentEventLine(com.bong.client.skill.SkillRecentEventStore.Entry entry) {
-        if (entry == null) return "（暂无）";
-        return switch (entry.kind()) {
-            case "xp_gain" -> entry.text();
-            case "lv_up" -> entry.text();
-            case "cap_changed" -> entry.text();
-            case "scroll_used" -> entry.text();
-            default -> entry.text();
-        };
-    }
-
-    static String formatSkillMilestoneLine(com.bong.client.skill.SkillMilestoneSnapshot milestone) {
-        if (milestone == null) return "（暂无）";
-        String narration = milestone.narration();
-        if (narration != null && !narration.isBlank()) {
-            return "Lv." + milestone.newLv() + " · " + narration;
-        }
-        return "Lv." + milestone.newLv() + " · t" + milestone.achievedAt() + " · 累计 " + milestone.totalXpAt() + " XP";
-    }
-
-    static String formatSkillLevelLine(com.bong.client.skill.SkillId skill, com.bong.client.skill.SkillSetSnapshot.Entry entry) {
-        if (skill == null || entry == null) return "Lv.0 / effective 0 / cap 10";
-        String line = "Lv." + entry.lv() + " / effective " + entry.effectiveLv() + " / cap " + entry.cap();
-        if (entry.lv() > entry.cap()) {
-            line += " · 境界压制";
-        }
-        return line;
-    }
-
-    static String formatSkillProgressLine(com.bong.client.skill.SkillSetSnapshot.Entry entry) {
-        if (entry == null) return "当前 XP 0 / 100 · 累计 0";
-        if (entry.lv() >= 10) {
-            return "Lv.10 已满 · 累计 " + entry.totalXp() + " XP";
-        }
-        return "当前 XP " + entry.xp() + " / " + entry.xpToNext() + " · 累计 " + entry.totalXp();
-    }
-
-    static String formatSkillCurrentEffect(com.bong.client.skill.SkillId skill, com.bong.client.skill.SkillSetSnapshot.Entry entry) {
-        if (skill == null || entry == null) return "当前效果：尚未入门。";
-        int lv = entry.effectiveLv();
-        return "当前效果：" + switch (skill) {
-            case HERBALISM -> herbalismCurrentEffect(lv);
-            case ALCHEMY -> alchemyCurrentEffect(lv);
-            case FORGING -> forgingCurrentEffect(lv);
-            case COMBAT -> combatCurrentEffect(lv);
-            case MINERAL -> mineralCurrentEffect(lv);
-            case CULTIVATION -> cultivationCurrentEffect(lv);
-        };
-    }
-
-    static String formatSkillNextEffect(com.bong.client.skill.SkillId skill, com.bong.client.skill.SkillSetSnapshot.Entry entry) {
-        if (skill == null || entry == null) return "下一阶：继续修习可见首层变化。";
-        int effective = entry.effectiveLv();
-        if (entry.lv() >= 10) {
-            return "下一阶：已至极限，后续只看境界能否完全承住这门手艺。";
-        }
-        if (entry.lv() > entry.cap()) {
-            return "下一阶：真实等级已高于境界上限；待突破后，压住的效果会直接放开。";
-        }
-        int nextLv = Math.min(10, effective + 1);
-        return "下一阶：effective 提到 " + nextLv + " 时，"
-            + switch (skill) {
-                case HERBALISM -> herbalismNextEffect(nextLv);
-                case ALCHEMY -> alchemyNextEffect(nextLv);
-                case FORGING -> forgingNextEffect(nextLv);
-                case COMBAT -> combatNextEffect(nextLv);
-                case MINERAL -> mineralNextEffect(nextLv);
-                case CULTIVATION -> cultivationNextEffect(nextLv);
-            };
-    }
-
-    static String formatSkillHint(com.bong.client.skill.SkillSetSnapshot.Entry entry) {
-        if (entry == null) return "点左侧条目切换；若境界不足，超出 cap 的等级只按 effective 生效。";
-        if (entry.lv() > entry.cap()) {
-            return "你已练到更高层次，但经脉未承住，只能按 effective_lv 发挥。";
-        }
-        if (entry.cap() < 10) {
-            return "当前境界最多承到 cap " + entry.cap() + "；继续突破后，高等级效果会自然放开。";
-        }
-        return "当前境界已不再压制这门技艺，条目显示的 real_lv 就是实际生效等级。";
-    }
-
-    private static String herbalismCurrentEffect(int effectiveLv) {
-        return String.format(
-            Locale.ROOT,
-            "手动采集 %.1fs，加成种子掉率 +%s%%，品质偏移 +%s%%。%s",
-            herbalismManualDurationDelta(effectiveLv),
-            formatPercent1(herbalismSeedBonus(effectiveLv)),
-            formatInt(herbalismQualityBias(effectiveLv)),
-            herbalismAutoText(effectiveLv)
-        );
-    }
-
-    private static String herbalismNextEffect(int nextLv) {
-        return String.format(
-            Locale.ROOT,
-            "手动采集 %.1fs，种子掉率 +%s%%，品质偏移 +%s%%。%s",
-            herbalismManualDurationDelta(nextLv),
-            formatPercent1(herbalismSeedBonus(nextLv)),
-            formatInt(herbalismQualityBias(nextLv)),
-            herbalismAutoText(nextLv)
-        );
-    }
-
-    private static String alchemyCurrentEffect(int effectiveLv) {
-        return String.format(
-            Locale.ROOT,
-            "火候容差 ×%s，坏副作用权重 ×%s，丹毒排异 +%s%%。",
-            formatPercent2(alchemyToleranceScale(effectiveLv)),
-            formatPercent2(alchemyBadWeightScale(effectiveLv)),
-            formatPercent1(alchemyPurgeBonus(effectiveLv) * 100.0)
-        );
-    }
-
-    private static String alchemyNextEffect(int nextLv) {
-        return String.format(
-            Locale.ROOT,
-            "火候容差 ×%s，坏副作用权重 ×%s，丹毒排异 +%s%%。",
-            formatPercent2(alchemyToleranceScale(nextLv)),
-            formatPercent2(alchemyBadWeightScale(nextLv)),
-            formatPercent1(alchemyPurgeBonus(nextLv) * 100.0)
-        );
-    }
-
-    private static String forgingCurrentEffect(int effectiveLv) {
-        return String.format(
-            Locale.ROOT,
-            "淬火命中窗 +%s tick，允许失误 +%s，铭文失败率 -%s%%。",
-            formatInt(forgingWindowBonus(effectiveLv)),
-            formatInt(forgingAllowedMiss(effectiveLv)),
-            formatPercent1(forgingFailureReduction(effectiveLv) * 100.0)
-        );
-    }
-
-    private static String forgingNextEffect(int nextLv) {
-        return String.format(
-            Locale.ROOT,
-            "淬火命中窗 +%s tick，允许失误 +%s，铭文失败率 -%s%%。",
-            formatInt(forgingWindowBonus(nextLv)),
-            formatInt(forgingAllowedMiss(nextLv)),
-            formatPercent1(forgingFailureReduction(nextLv) * 100.0)
-        );
-    }
-
-    private static String combatCurrentEffect(int effectiveLv) {
-        return "击杀、实战与截脉对练会增长此项；当前只作熟练度记录，细分武学待后续 plan。"
-            + " 实效 Lv." + effectiveLv + "。";
-    }
-
-    private static String combatNextEffect(int nextLv) {
-        return "实战熟练度将提到 Lv." + nextLv + "；细分剑术/拳法等仍由后续 combat plan 定义。";
-    }
-
-    private static String mineralCurrentEffect(int effectiveLv) {
-        return "采矿、辨矿与落袋会增长此项；当前只作熟练度记录。实效 Lv." + effectiveLv + "。";
-    }
-
-    private static String mineralNextEffect(int nextLv) {
-        return "采矿熟练度将提到 Lv." + nextLv + "；矿物品质/概率加成留给 mineral 后续表。";
-    }
-
-    private static String cultivationCurrentEffect(int effectiveLv) {
-        return "开脉与突破会增长此项；境界仍是根本，本项只记行功熟练。实效 Lv." + effectiveLv + "。";
-    }
-
-    private static String cultivationNextEffect(int nextLv) {
-        return "行功熟练度将提到 Lv." + nextLv + "；不替代境界，只辅助展示修行履历。";
-    }
-
-    private static String herbalismAutoText(int effectiveLv) {
-        if (effectiveLv < 3) return "自动采集未开。";
-        return String.format(Locale.ROOT, "自动采集已开，时长 %.1fs。", herbalismAutoDuration(effectiveLv));
-    }
-
-    private static double herbalismManualDurationDelta(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 0.0}, {1, -0.2}, {3, -0.5}, {5, -1.0}, {7, -1.2}, {10, -1.5}
-        });
-    }
-
-    private static double herbalismSeedBonus(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 0.0}, {1, 2.0}, {3, 5.0}, {5, 10.0}, {7, 15.0}, {10, 25.0}
-        });
-    }
-
-    private static double herbalismQualityBias(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 0.0}, {1, 5.0}, {3, 10.0}, {5, 15.0}, {7, 20.0}, {10, 30.0}
-        });
-    }
-
-    private static double herbalismAutoDuration(int effectiveLv) {
-        if (effectiveLv < 3) return 0.0;
-        return interpolate(effectiveLv, new double[][] {
-            {3, 8.0}, {5, 6.0}, {7, 5.0}, {10, 5.0}
-        });
-    }
-
-    private static double alchemyToleranceScale(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 1.00}, {1, 1.05}, {3, 1.15}, {5, 1.25}, {7, 1.35}, {10, 1.50}
-        });
-    }
-
-    private static double alchemyBadWeightScale(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 1.00}, {1, 0.95}, {3, 0.85}, {5, 0.75}, {7, 0.60}, {10, 0.40}
-        });
-    }
-
-    private static double alchemyPurgeBonus(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 0.00}, {1, 0.02}, {3, 0.05}, {5, 0.10}, {7, 0.15}, {10, 0.25}
-        });
-    }
-
-    private static double forgingWindowBonus(int effectiveLv) {
-        return Math.round(interpolate(effectiveLv, new double[][] {
-            {0, 0.0}, {1, 1.0}, {3, 3.0}, {5, 5.0}, {7, 6.0}, {10, 8.0}
-        }));
-    }
-
-    private static double forgingAllowedMiss(int effectiveLv) {
-        return Math.round(interpolate(effectiveLv, new double[][] {
-            {0, 0.0}, {1, 0.0}, {3, 1.0}, {5, 1.0}, {7, 2.0}, {10, 3.0}
-        }));
-    }
-
-    private static double forgingFailureReduction(int effectiveLv) {
-        return interpolate(effectiveLv, new double[][] {
-            {0, 0.00}, {1, 0.03}, {3, 0.10}, {5, 0.15}, {7, 0.22}, {10, 0.30}
-        });
-    }
-
-    private static double interpolate(int lv, double[][] points) {
-        if (points == null || points.length == 0) return 0.0;
-        if (lv <= points[0][0]) return points[0][1];
-        for (int i = 0; i < points.length - 1; i++) {
-            double l0 = points[i][0];
-            double v0 = points[i][1];
-            double l1 = points[i + 1][0];
-            double v1 = points[i + 1][1];
-            if (lv <= l1) {
-                double t = (lv - l0) / (l1 - l0);
-                return v0 + (v1 - v0) * t;
-            }
-        }
-        return points[points.length - 1][1];
-    }
-
-    private static String formatPercent1(double value) {
-        return String.format(Locale.ROOT, "%.1f", value);
-    }
-
-    private static String formatPercent2(double value) {
-        return String.format(Locale.ROOT, "%.2f", value);
-    }
-
-    private static String formatInt(double value) {
-        return Integer.toString((int) Math.round(value));
-    }
-
-    private void switchBodyLayer(BodyInspectComponent.Layer layer) {
-        if (bodyInspect == null) return;
-        bodyInspect.setActiveLayer(layer);
-        boolean isPhys = layer == BodyInspectComponent.Layer.PHYSICAL;
-        if (physicalLayerLabel != null) {
-            physicalLayerLabel.color(Color.ofArgb(isPhys ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        }
-        if (meridianLayerLabel != null) {
-            meridianLayerLabel.color(Color.ofArgb(isPhys ? TAB_INACTIVE_COLOR : TAB_ACTIVE_COLOR));
-        }
-        if (meridianFilterBar != null) {
-            meridianFilterBar.positioning(isPhys ? Positioning.absolute(-9999, -9999) : Positioning.layout());
-        }
-        if (cultivationActionScroll != null) {
-            cultivationActionScroll.positioning(isPhys ? Positioning.absolute(-9999, -9999) : Positioning.layout());
-        }
-    }
-
-    private void switchMeridianFilter(BodyInspectComponent.MeridianFilter filter) {
-        if (bodyInspect == null) return;
-        bodyInspect.setMeridianFilter(filter);
-        BodyInspectComponent.MeridianFilter[] all = BodyInspectComponent.MeridianFilter.values();
-        for (int i = 0; i < all.length; i++) {
-            filterLabels[i].color(Color.ofArgb(all[i] == filter ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
-        }
-    }
 
     /**
      * owner 背包件是否当前穿戴在身体槽的 worn 层；穿戴容器显示常驻入口。
@@ -1706,77 +961,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return quickUseItems[index];
     }
 
-    boolean dispatchSetMeridianTarget() {
-        MeridianChannel selected = bodyInspect == null ? null : bodyInspect.selectedChannel();
-        MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
-        String blockedReason = meridianTargetBlockReason(body, selected);
-        if (blockedReason != null) {
-            showActionToast(blockedReason, ACTION_TOAST_WARN);
-            com.bong.client.BongClient.LOGGER.warn("[bong][inspect] set_meridian_target skipped: {}", blockedReason);
-            return false;
-        }
-
-        com.bong.client.network.ClientRequestSender.sendSetMeridianTarget(
-            com.bong.client.network.ClientRequestProtocol.toMeridianId(selected));
-        showActionToast("经脉目标：" + selected.displayName(), ACTION_TOAST_OK);
-        return true;
-    }
-
-    boolean dispatchBreakthroughRequest() {
-        com.bong.client.network.ClientRequestSender.sendBreakthroughRequest();
-        showActionToast("已请求突破", ACTION_TOAST_OK);
-        return true;
-    }
-
-    boolean dispatchStartDuXuIfEligible() {
-        MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
-        if (!isDuXuEligible(body)) {
-            // 灰态按钮仍可点击（颜色仅 cosmetic），被拦时必须给玩家可见反馈，
-            // 与 dispatchSetMeridianTarget 的 showActionToast 一致。按未满足的具体条件分流文案。
-            String reason = (body == null || !"Spirit".equals(body.realm()))
-                ? "渡虚劫需通灵境"
-                : "渡虚劫需打通全部经脉";
-            showActionToast(reason, ACTION_TOAST_WARN);
-            com.bong.client.BongClient.LOGGER.warn(
-                "[bong][inspect] start_du_xu skipped: requires Spirit realm and all 20 meridians opened");
-            return false;
-        }
-        com.bong.client.network.ClientRequestSender.sendStartDuXuRequest();
-        return true;
-    }
-
-    static String meridianTargetBlockReason(MeridianBody body, MeridianChannel selected) {
-        if (body == null) {
-            return "经脉数据加载中";
-        }
-        if (selected == null) {
-            return "先点击一条经脉";
-        }
-        ChannelState state = body.channel(selected);
-        if (state != null && !state.blocked()) {
-            return selected.displayName() + "已通，不需要再设为经脉目标";
-        }
-        if (openedMeridianCount(body) == 0
-            && selected.family() == MeridianChannel.Family.EXTRAORDINARY) {
-            return "首脉需先走十二正经";
-        }
-        return null;
-    }
-
-    private static int openedMeridianCount(MeridianBody body) {
-        if (body == null) {
-            return 0;
-        }
-        int count = 0;
-        for (MeridianChannel channel : MeridianChannel.values()) {
-            ChannelState state = body.channel(channel);
-            if (state != null && !state.blocked()) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     private static void showActionToast(String text, int color) {
         BongToast.show(text, color, System.currentTimeMillis(), ACTION_TOAST_MS);
     }
@@ -1845,19 +1029,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
         return false; // owner 背包件不在任何携带面 → 真丢地/转移走，拒绝拖入。
-    }
-
-    static boolean isDuXuEligible(MeridianBody body) {
-        if (body == null || !"Spirit".equals(body.realm())) {
-            return false;
-        }
-        for (MeridianChannel channel : MeridianChannel.values()) {
-            ChannelState state = body.channel(channel);
-            if (state == null || state.blocked()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     static InventoryModel.ContainerDef containerDefAt(InventoryModel model, int index) {
@@ -1965,6 +1136,49 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (handleContextMenuClick(mouseX, mouseY, button)) return true;
+        if (button == 1 && pendingMeridianUse != null) {
+            pendingMeridianUse = null;
+            itemInspectClicks.cancel();
+            return true;
+        }
+        var modelTarget = UiWindowRuntime.bodyAt(mouseX, mouseY);
+        if (modelTarget != null) {
+            bodyInspect = modelTarget;
+            if (button == 0 && pendingMeridianUse != null && modelTarget.activeLayer() == BodyInspectComponent.Layer.MERIDIAN) {
+                var target = modelTarget.channelAtScreen(mouseX, mouseY);
+                if (target != null) modelTarget.setSelectedChannel(target);
+                if (target != null && confirmPendingMeridianUse()) {
+                    itemInspectClicks.cancel();
+                    return true;
+                }
+            }
+        }
+        boolean shift = hasShiftDown();
+        if (modelTarget != null && button == 0 && !dragState.isDragging()) {
+            if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
+                BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
+                if (bp != null) {
+                    InventoryItem item = bodyInspect.physicalItemAt(bp);
+                    if (item != null) {
+                        if (shift) { bodyInspect.removePhysicalItem(bp); placeItemAnywhere(item); }
+                        else { bodyInspect.removePhysicalItem(bp); dragState.pickupFromBodyPart(item, bp); }
+                        return true;
+                    }
+                }
+            } else {
+                MeridianChannel ch = bodyInspect.channelAtScreen(mouseX, mouseY);
+                if (ch != null) {
+                    InventoryItem item = bodyInspect.meridianItemAt(ch);
+                    if (item != null) {
+                        if (shift) { bodyInspect.removeMeridianItem(ch); placeItemAnywhere(item); }
+                        else { bodyInspect.removeMeridianItem(ch); dragState.pickupFromMeridian(item, ch); }
+                        return true;
+                    }
+                }
+            }
+        }
+
+
         var containerGrid = UiWindowRuntime.containerGridAt(mouseX, mouseY);
         boolean loadoutSlot = UiWindowRuntime.loadoutSlotAt(mouseX, mouseY);
         if (containerGrid != null) {
@@ -1978,18 +1192,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             uiAdapter.rootComponent.focusHandler().focus(null, Component.FocusSource.MOUSE_CLICK);
             itemInspectClicks.cancel();
             if (dragState.isDragging()) returnDragToSource();
-            if (draggedTechnique != null) endTechniqueDrag();
             return true;
         }
         if (button != 0 || hasShiftDown()) itemInspectClicks.cancel();
 
-        if (containerGrid == null && !loadoutSlot && button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
-            itemInspectClicks.cancel();
-            return true;
-        }
-
         if (button == 0 && !hasShiftDown() && !startingItemDrag && !dragState.isDragging()
-                && draggedTechnique == null) {
+) {
             InventoryItem item = itemAtScreen(mouseX, mouseY);
             if (item != null) {
                 if (itemInspectClicks.press(item.instanceId(), mouseX, mouseY, System.currentTimeMillis())) {
@@ -2066,10 +1274,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
             // 右键【已绑定功法】的 1-9 槽 → 清空解绑（绑定功法不写 hotbarItems[]，单独走 SkillBarStore）。
-            if (hIdx >= 0 && techniquesTabPanel != null) {
+            if (hIdx >= 0) {
                 SkillBarEntry bound = SkillBarStore.snapshot().slot(hIdx);
                 if (bound != null && bound.kind() == SkillBarEntry.Kind.SKILL
-                        && techniquesTabPanel.clearSkillSlot(hIdx)) {
+                        && clearCombatSkill(hIdx)) {
                     hydrateSkillBarFromStore();
                     itemInspectClicks.cancel();
                     return true;
@@ -2078,7 +1286,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         if (button == 0) {
-            boolean shift = hasShiftDown();
+
 
             // Equip
             // 决议 #12：仅栈顶/held（representative）可被拖下/卸下；下层被压住不可动。
@@ -2096,81 +1304,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             // Body inspect applied items (physical or meridian layer)
-            if (!loadoutSlot && activeTab == TAB_CULTIVATION && bodyInspect != null) {
-                if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
-                    BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
-                    if (bp != null) {
-                        InventoryItem item = bodyInspect.physicalItemAt(bp);
-                        if (item != null) {
-                            if (shift) { bodyInspect.removePhysicalItem(bp); placeItemAnywhere(item); }
-                            else { bodyInspect.removePhysicalItem(bp); dragState.pickupFromBodyPart(item, bp); }
-                            return true;
-                        }
-                    }
-                } else {
-                    MeridianChannel ch = bodyInspect.channelAtScreen(mouseX, mouseY);
-                    if (ch != null) {
-                        InventoryItem item = bodyInspect.meridianItemAt(ch);
-                        if (item != null) {
-                            if (shift) { bodyInspect.removeMeridianItem(ch); placeItemAnywhere(item); }
-                            else { bodyInspect.removeMeridianItem(ch); dragState.pickupFromMeridian(item, ch); }
-                            return true;
-                        }
-                        // 无物品 — 纯点击即"选中此脉"，锁定详情面板
-                        bodyInspect.clickSelectMeridian(mouseX, mouseY);
-                        return true;
-                    }
-                }
-            }
-
-            // 功法拖拽起手：在功法列表行上按下 → 选中 + 进入拖拽态（释放时落槽绑定）。
-            // 两步点击（点行选中、点槽绑定）仍由下方 Hotbar 分支兜底。
-            if (!loadoutSlot && activeTab == TAB_TECHNIQUES && techniquesTabPanel != null && !dragState.isDragging()) {
-                com.bong.client.combat.inspect.TechniquesListPanel.Technique tech =
-                    techniquesTabPanel.techniqueAtScreen(mouseX, mouseY);
-                if (tech != null) {
-                    techniquesTabPanel.selectTechnique(tech.id());
-                    draggedTechnique = tech;
-                    draggedTechniqueLocked = !techniquesTabPanel.lockReasonFor(tech).isBlank();
-                    techniqueDragX = mouseX;
-                    techniqueDragY = mouseY;
-                    updateTechniqueHotbarHighlight(mouseX, mouseY);
-                    return true;
-                }
-            }
-
-            // Hotbar
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-            // 功法拖出起手：按下一个【已绑定功法】的 1-9 槽 → 拾起拖拽。
-            // 松手落到某槽=移动/换绑、落到槽外(背包/空白)=解绑消失（见 mouseReleased + TechniqueDragDecision）。
-            if (button == 0 && hIdx >= 0 && techniquesTabPanel != null
-                    && draggedTechnique == null && !dragState.isDragging()) {
-                SkillBarEntry bound = SkillBarStore.snapshot().slot(hIdx);
-                if (bound != null && bound.kind() == SkillBarEntry.Kind.SKILL) {
-                    com.bong.client.combat.inspect.TechniquesListPanel.Technique tech =
-                        techniquesTabPanel.techniqueById(bound.id());
-                    if (tech != null) {
-                        techniquesTabPanel.selectTechnique(tech.id());
-                        draggedTechnique = tech;
-                        draggedFromSlot = hIdx;
-                        draggedTechniqueLocked = !techniquesTabPanel.lockReasonFor(tech).isBlank();
-                        techniqueDragX = mouseX;
-                        techniqueDragY = mouseY;
-                        if (hotbarSlots[hIdx] != null) {
-                            // 拾起：仅清源槽视觉，store 暂不动；任何取消/失败由 hydrate 还原。
-                            hotbarSlots[hIdx].clearItem();
-                        }
-                        updateTechniqueHotbarHighlight(mouseX, mouseY);
-                        return true;
-                    }
-                }
-            }
-            if (button == 0 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null
-                    && techniquesTabPanel.selectedTechnique() != null) {
-                if (techniquesTabPanel.bindSelectedTechniqueToSlot(hIdx)) {
-                    hydrateSkillBarFromStore();
-                    return true;
-                }
+            if (hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null
+                    && SkillBarStore.snapshot().slot(hIdx).kind() == SkillBarEntry.Kind.SKILL) {
+                UiWindowRuntime.openPracticeDetail("technique:" + SkillBarStore.snapshot().slot(hIdx).id());
+                return true;
             }
             if (hIdx >= 0 && hotbarItems[hIdx] != null) {
                 InventoryItem item = hotbarItems[hIdx];
@@ -2233,14 +1371,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
         }
-        // 功法拖拽中：吞掉 drag 事件（不下传给 ScrollContainer，否则列表会跟着滚动），
-        // 更新 ghost 位置与落点槽位高亮。
-        if (draggedTechnique != null) {
-            techniqueDragX = mouseX;
-            techniqueDragY = mouseY;
-            updateTechniqueHotbarHighlight(mouseX, mouseY);
-            return true;
-        }
         if (dragState.isDragging()) {
             dragState.updateMouse(mouseX, mouseY);
             updateHighlights(mouseX, mouseY);
@@ -2252,36 +1382,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         if (button == 0 && itemInspectClicks.release(mouseX, mouseY, System.currentTimeMillis())) return true;
-        if (!dragState.isDragging() && draggedTechnique == null && UiWindowRuntime.mouseUp(mouseX, mouseY, button)) {
+        if (!dragState.isDragging() && UiWindowRuntime.mouseUp(mouseX, mouseY, button)) {
             itemInspectClicks.cancel();
-            if (draggedTechnique != null) endTechniqueDrag();
-            return true;
-        }
-        // 功法拖拽落槽：松手时若落在某个 1-9 槽上则绑定（锁定功法由 bindTechniqueToSlot 拒绝并给原因）；
-        // 落在槽位外则仅取消拖拽，选中态保留（兼容两步点击）。
-        if (button == 0 && draggedTechnique != null) {
-            int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-            if (techniquesTabPanel != null) {
-                switch (TechniqueDragDecision.decide(hIdx, draggedFromSlot)) {
-                    case BIND ->
-                        // 从功法列表拖入、或拖回同一槽：绑定（锁定则失败并在状态栏给原因）。
-                        techniquesTabPanel.bindTechniqueToSlot(draggedTechnique.id(), hIdx);
-                    case MOVE -> {
-                        // 从已绑槽移到不同槽：绑新槽成功后清空源槽（失败则不动源槽，hydrate 还原）。
-                        if (techniquesTabPanel.bindTechniqueToSlot(draggedTechnique.id(), hIdx)) {
-                            techniquesTabPanel.clearSkillSlot(draggedFromSlot);
-                        }
-                    }
-                    case UNBIND ->
-                        // 从已绑槽拖出、落在 1-9 之外（背包/空白）：解绑消失。
-                        techniquesTabPanel.clearSkillSlot(draggedFromSlot);
-                    case CANCEL -> {
-                        // 从功法列表拖出、落空：不改绑定，保留选中（两步点击兜底）。
-                    }
-                }
-            }
-            hydrateSkillBarFromStore();
-            endTechniqueDrag();
             return true;
         }
         if (button == 0 && dragState.isDragging()) {
@@ -2291,31 +1393,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
-    /** 拖拽中：清掉所有 hotbar 槽高亮，再把光标下的槽标成绿(可绑)/红(锁定)。 */
-    private void updateTechniqueHotbarHighlight(double mouseX, double mouseY) {
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            if (hotbarSlots[i] != null) {
-                hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
-            }
-        }
-        int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-        if (hIdx >= 0 && hotbarSlots[hIdx] != null) {
-            hotbarSlots[hIdx].setHighlightState(draggedTechniqueLocked
-                ? GridSlotComponent.HighlightState.INVALID
-                : GridSlotComponent.HighlightState.VALID);
-        }
-    }
-
-    /** 结束功法拖拽：清状态 + 清槽位高亮。 */
-    private void endTechniqueDrag() {
-        draggedTechnique = null;
-        draggedTechniqueLocked = false;
-        draggedFromSlot = -1;
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            if (hotbarSlots[i] != null) {
-                hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
-            }
-        }
+    private boolean clearCombatSkill(int slot) {
+        return new com.bong.client.combat.inspect.TechniqueClientIntentSink()
+            .dispatch(new com.bong.client.combat.inspect.TechniqueIntent.Clear(slot)).kind()
+            == com.bong.client.ui.intent.UiIntentResult.Kind.LOCAL_ACCEPTED;
     }
 
     private InventoryItem itemAtScreen(double mouseX, double mouseY) {
@@ -2543,15 +1624,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
 
-        if (workbenchTarget && activeTab == TAB_SKILL && isOverSkillScrollDropZone(mouseX, mouseY)) {
-            if (tryLearnSkillScroll(dragged)) {
-                dragState.drop();
-            } else {
-                returnDragToSource();
-            }
-            clearAllHighlights();
-            return;
-        }
 
         // Loot grid drop (supply coffin) — handle both directions
         if (workbenchTarget && lootPanel != null && !lootPanel.isClosed()) {
@@ -2599,7 +1671,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Body inspect drop (physical or meridian layer) — only 1×1 items
-        if (workbenchTarget && activeTab == TAB_CULTIVATION && bodyInspect != null
+        var dropBody = UiWindowRuntime.bodyAt(mouseX, mouseY);
+        if (dropBody != null) bodyInspect = dropBody;
+        if (dropBody != null
                 && dragged.gridWidth() == 1 && dragged.gridHeight() == 1) {
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                 BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
@@ -2844,9 +1918,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 } else {
                     activeTab = TAB_CULTIVATION;
                 }
-                if (bodyInspect != null) {
-                    switchBodyLayer(BodyInspectComponent.Layer.MERIDIAN);
-                }
+                if (uiAdapter != null) openBodyWindow(BodyInspectComponent.Layer.MERIDIAN);
+                else if (bodyInspect != null) bodyInspect.setActiveLayer(BodyInspectComponent.Layer.MERIDIAN);
                 pendingMeridianUse = new PendingMeridianUse(item);
             }
             case PLACE_FORGE_STATION -> {
@@ -3040,7 +2113,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (pendingMeridianUse == null || bodyInspect == null) {
             return false;
         }
-        MeridianChannel target = bodyInspect.focusedChannel();
+        MeridianChannel target = bodyInspect.selectedChannel();
         if (!dispatchApplyPillMeridianToChannel(pendingMeridianUse.item(), target)) {
             return false;
         }
@@ -3237,10 +2310,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
             }
         }
-        if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY)) return;
-        if (activeTab == TAB_SKILL && skillScrollDropZone != null && isOverSkillScrollDropZone(mouseX, mouseY)) {
-            setSkillScrollDropZoneState(skillScrollDropState(dragged));
-        }
+        var hoverBody = UiWindowRuntime.bodyAt(mouseX, mouseY);
+        if (hoverBody != null) bodyInspect = hoverBody;
+        if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY) && hoverBody == null) return;
 
         {
             var eq = UiWindowRuntime.equipmentAt(mouseX, mouseY);
@@ -3253,7 +2325,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Body inspect highlight
-        if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
+        if (hoverBody != null) {
             boolean valid1x1 = dragged.gridWidth() == 1 && dragged.gridHeight() == 1;
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
                 BodyPart bp = bodyInspect.bodyPartAtScreen(mouseX, mouseY);
@@ -3308,50 +2380,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (bodyInspect != null) bodyInspect.clearHighlight();
         if (lootPanel != null && lootPanel.lootGrid() != null) lootPanel.lootGrid().clearHighlights();
         discardStrip.surface(Surface.flat(0xFF201010));
-        setSkillScrollDropZoneState(SkillScrollDropState.IDLE);
-    }
-
-    private boolean isOverSkillScrollDropZone(double sx, double sy) {
-        if (skillScrollDropZone == null) return false;
-        return sx >= skillScrollDropZone.x() && sx < skillScrollDropZone.x() + skillScrollDropZone.width()
-            && sy >= skillScrollDropZone.y() && sy < skillScrollDropZone.y() + skillScrollDropZone.height();
-    }
-
-    private enum SkillScrollDropState {
-        IDLE, VALID, INVALID
-    }
-
-    private SkillScrollDropState skillScrollDropState(InventoryItem item) {
-        if (item == null) return SkillScrollDropState.IDLE;
-        if ((item.isSkillScroll() && isKnownSkillScroll(item) && !isConsumedSkillScroll(item))
-            || (item.isTechniqueScroll() && hasTechniqueScrollMetadata(item) && !isKnownTechnique(item))) {
-            return SkillScrollDropState.VALID;
-        }
-        return SkillScrollDropState.INVALID;
-    }
-
-    private void setSkillScrollDropZoneState(SkillScrollDropState state) {
-        if (skillScrollDropZone == null || skillScrollDropTitle == null || skillScrollDropHint == null) return;
-        switch (state) {
-            case VALID -> {
-                skillScrollDropZone.surface(Surface.flat(0xFF1A2418).and(Surface.outline(0xFF5C8A50)));
-                skillScrollDropTitle.text(Text.literal("技能残卷"));
-                skillScrollDropHint.text(Text.literal("拖入即可顿悟"));
-                skillScrollDropHint.color(Color.ofArgb(0xFF88CC88));
-            }
-            case INVALID -> {
-                skillScrollDropZone.surface(Surface.flat(0xFF241616).and(Surface.outline(0xFFAA5050)));
-                skillScrollDropTitle.text(Text.literal("不可投入"));
-                skillScrollDropHint.text(Text.literal(skillScrollDropFeedback));
-                skillScrollDropHint.color(Color.ofArgb(0xFFCC8888));
-            }
-            case IDLE -> {
-                skillScrollDropZone.surface(Surface.flat(0xFF201A14).and(Surface.outline(0xFF6A5030)));
-                skillScrollDropTitle.text(Text.literal("技能残卷"));
-                skillScrollDropHint.text(Text.literal(skillScrollDropFeedback));
-                skillScrollDropHint.color(Color.ofArgb(0xFF888888));
-            }
-        }
     }
 
     boolean tryLearnSkillScroll(InventoryItem item) {
@@ -3457,7 +2485,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     /** 检查装备槽是否可用（断臂不能持物） */
     private boolean isEquipSlotUsable(EquipSlotType slot) {
-        PhysicalBody pb = bodyInspect != null ? bodyInspect.physicalBody() : null;
+        PhysicalBody pb = PhysicalBodyStore.snapshot();
         if (pb == null) return true; // 无体表数据时不限制
         return switch (slot) {
             // 决议 #17：TWO_HAND 专槽删除，双手武器走 MAIN_HAND（右手可用性）。
@@ -3668,16 +2696,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             mouseY = -1;
         }
         super.render(context, mouseX, mouseY, delta);
-        drawPendingMeridianPrompt(context);
-
-        // Body inspect tooltip — drawn here to escape owo-lib component clipping
-        if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
-            var matrices = context.getMatrices();
-            matrices.push();
-            matrices.translate(0, 0, 400);
-            bodyInspect.drawTooltip(context, mouseX, mouseY);
-            matrices.pop();
-        }
 
         // Buff bar tooltip — 同理逃出 owo 组件裁剪区；buff 条所有 tab 常驻，此处不按 activeTab 过滤。
         if (buffBarPanel != null) {
@@ -3694,6 +2712,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         context.getMatrices().push();
         try {
             context.getMatrices().translate(0, 0, UiWindowRuntime.overlayDepth());
+            drawPendingMeridianPrompt(context);
             drawPillMenuOverlay(context, mouseX, mouseY);
             drawWeaponMenuOverlay(context, mouseX, mouseY);
             drawSkillBarMenuOverlay(context, mouseX, mouseY);
@@ -3728,9 +2747,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 matrices.pop();
             }
 
-            if (draggedTechnique != null) {
-                drawTechniqueDragGhost(context, (int) techniqueDragX, (int) techniqueDragY);
-            }
 
             // 左下角功法名：绑定功法图标都一样（缺专属贴图，全 fallback 同一张残卷），
             // 拖拽中 / hover 已绑槽时在左下角标出名字以便分辨。
@@ -3769,12 +2785,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     /** 左下角要显示的功法名：优先拖拽中的功法，其次 hover 到的已绑定 1-9 槽；都没有则 null。 */
     private String cornerTechniqueName(int mouseX, int mouseY) {
-        if (draggedTechnique != null) {
-            return draggedTechnique.displayName();
-        }
-        if (activeTab != TAB_TECHNIQUES) {
-            return null;
-        }
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
         if (hIdx >= 0) {
             SkillBarEntry entry = SkillBarStore.snapshot().slot(hIdx);
@@ -3799,28 +2809,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /** 功法拖拽跟手 ghost：跟随光标的功法名小标签；锁定态用红框 + ✕ 提示不可绑定。 */
-    private void drawTechniqueDragGhost(DrawContext context, int mouseX, int mouseY) {
-        String label = draggedTechnique.displayName();
-        int padX = 4;
-        int padY = 3;
-        int boxW = textRenderer.getWidth(label) + padX * 2;
-        int boxH = textRenderer.fontHeight + padY * 2;
-        int x = mouseX + 10;
-        int y = mouseY - boxH / 2;
-        int border = draggedTechniqueLocked ? 0xFFCC5555 : 0xFFE0B060;
-        int textColor = draggedTechniqueLocked ? 0xFFCC8888 : 0xFFE8E0D0;
-
-        var matrices = context.getMatrices();
-        matrices.push();
-        matrices.translate(0, 0, 400);
-        context.fill(x - 1, y - 1, x + boxW + 1, y + boxH + 1, border);
-        context.fill(x, y, x + boxW, y + boxH, 0xE8181410);
-        context.drawText(textRenderer, Text.literal(label), x + padX, y + padY, textColor, false);
-        if (draggedTechniqueLocked) {
-            context.drawText(textRenderer, Text.literal("✕"), x + boxW + 3, y + padY, 0xFFFF5555, false);
-        }
-        matrices.pop();
-    }
 
 
     private int pillMenuHeight() {
@@ -3970,7 +2958,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         MeridianChannel focus = bodyInspect.focusedChannel();
         String text = focus == null
             ? "外敷：请先选择经脉（左键确认 / 右键取消）"
-            : "外敷：左键确认至 " + focus.name();
+            : "外敷：点击模型中的 " + focus.displayName() + "（右键取消）";
         var matrices = context.getMatrices();
         matrices.push();
         matrices.translate(0, 0, 430);

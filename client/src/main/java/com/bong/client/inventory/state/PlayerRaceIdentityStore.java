@@ -20,7 +20,7 @@ package com.bong.client.inventory.state;
  * 下发 template_id/skill_id → {@code RaceGate} 映射表；{@link RaceGateEval} 联合本
  * store 的身份快照对每个装备槽 / 功法条目做纯判定，{@link com.bong.client.inventory.
  * component.EquipmentPanel}、{@link com.bong.client.inventory.InspectScreen}、
- * {@link com.bong.client.combat.inspect.TechniquesTabPanel} 据此置灰。装备被绕过
+ * {@link com.bong.client.practice.TechniqueAvailability} 据此展示准入。装备被绕过
  * 提交时仍有 {@code race_mismatch} toast 兜底（见
  * {@link com.bong.client.network.InventoryMoveRejectedHandler}）——client 置灰只是
  * 预览，server 才是权威判定。
