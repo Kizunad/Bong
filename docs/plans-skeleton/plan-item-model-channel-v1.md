@@ -454,11 +454,25 @@ P5 将资源结构问题变成可自动核验的门禁：
 
 ### 8.1 既有 plan 的关系
 
+**Integration preflight 记录（2026-09-16）**：本次预检对照了相关 finished plan、active
+plan 和 `docs/plans-skeleton/` 的现有 owner，沿 `BongWeaponModelRegistry`、
+`WeaponRenderBootstrap`、`HeldItemStackResolver`、五套 `VanillaIconMap` 和
+`HeldItemRenderer` 接入面逐项核对。结果不是「没有重叠」，而是确认旧的手持注册骨架和
+craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在升 active 前与本 plan 的
+所有者裁决做 supersede/redirect 对表，不能让两个 plan 同时继续写同一条模型通道。
+
 - `docs/plans-skeleton/plan-held-item-registration-v1.md` 当前提出「每模板注册
   render-only Fabric Item，再由 fake stack 走 vanilla HeldItemRenderer」。这与本所有者
   已否决的 fake vanilla host 方向冲突；本 plan 是「物品模型来源/消费通道」主题的新唯一
   owner。升 active 前由人工给旧 skeleton 写 supersede/redirect 或明确拆分边界；本 PR
   只新增本 skeleton，不修改旧 plan。
+- `docs/plans-skeleton/plan-craft-chain-items-v1.md:11,22,81` 也命中同一接口面：其 P2
+  把「导出 OBJ → `BongWeaponModelRegistry` 条目」写成既定模型链路，并要求检查
+  `vanillaModelPaths` 后继续选择未占用的 vanilla item，甚至点名 `Items.TRIDENT` 候选。
+  这与所有者已经否掉的 vanilla 宿主方向直接冲突，且三叉戟正是宿主覆盖会污染真实
+  vanilla 物品的实证边界；该 skeleton 在人工 supersede/redirect 前不得按原文实施。
+  craft-chain 的物品接入应依赖本 plan 建成的 canonical `template_id → BakedModel`
+  通道。本 PR 只记录 preflight 和 owner 边界，不修改该旧 skeleton。
 - `plan-weapon-v1` / `plan-weapon-v1.1` 的武器 gameplay、OBJ 产物和既有加载器评估不
   在本 plan 内重做；本 plan 只接管模型挂载和渲染消费路径。其 `§5.3.Y` 的加载器评估
   仍需在 P0 对表，不能把「继续 SML」当未验证的永恒承诺。
