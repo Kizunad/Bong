@@ -1,0 +1,26 @@
+# 疾风丹 JiFengDan —— 特征点名清单
+#
+# 特征来源：`ji_feng_dan.png` 图标解析：
+# 1. leaf_pouch: 青翠灵叶折成的花苞漏斗托 + 下部草青扎绳箍与绳尾
+# 2. breeze_pills: 叶兜内饱满堆叠的碧玉青绿疾风丹丸
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+leaf_lit    = [154, 186, 92]
+leaf_mid    = [106, 142, 62]
+leaf_dark   = [62, 94, 40]
+leaf_shadow = [42, 66, 28]
+cord_grass  = [166, 178, 102]
+pill_base   = [148, 172, 114]
+pill_lit    = [192, 212, 150]
+pill_shadow = [84, 112, 68]
+
+[features]
+# 灵叶花托：底座 + 绳箍与绳结 + 展开叶筒 + 四方灵叶尖
+leaf_pouch = { elements = ["stem_base", "cord_", "leaf_tube_", "leaf_front_", "leaf_back_", "leaf_left_", "leaf_right_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
+
+# 疾风丹丸：叶兜内簇拥聚拢的碧玉丹丸
+breeze_pills = { elements = ["p_main", "p_fl", "p_fr", "p_bl", "p_br"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 600, "3/4" = 1000 } }

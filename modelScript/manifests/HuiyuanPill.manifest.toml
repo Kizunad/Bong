@@ -1,0 +1,33 @@
+# 回元丹 HuiyuanPill —— 特征点名清单
+#
+# 特征来源：`huiyuan_pill.png` 图标解析：
+# 1. jar_body: 柔润米白瓷罐身（圆鼓腹、厚胎质感）
+# 2. jar_rim: 罐口开敞厚卷沿与陶黄烧边
+# 3. pills: 罐内堆叠饱满的 5 颗赤褐/赭红回元丹丸
+# 4. lid: 右侧斜靠在地面上的瓷盖与宝珠钮
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+porcelain      = [238, 234, 226]
+porcelain_side = [220, 214, 204]
+porcelain_dark = [182, 172, 158]
+porcelain_rim  = [200, 176, 140]
+pill_base      = [128, 54, 36]
+pill_lit       = [178, 92, 66]
+pill_shadow    = [76, 28, 18]
+
+[features]
+# 瓷罐身：下腹 + 鼓腹 + 上腹
+jar_body = { elements = ["belly_", "foot", "inner_bed"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
+
+# 罐口外卷沿：陶黄烧边
+jar_rim = { elements = ["rim", "neck"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 400, "3/4" = 500 } }
+
+# 丹丸：罐内堆满盛装的赤褐色回元丹丸
+pills = { elements = ["p_main", "p_fl", "p_fr", "p_bl", "p_br"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 300, "3/4" = 600 } }
+
+# 斜靠罐盖：右侧斜靠地面与罐壁
+porcelain_lid = { elements = ["lid_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 250, SIDE_R = 150 } }

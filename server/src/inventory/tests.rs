@@ -1983,7 +1983,7 @@ cols = 4
 }
 
 #[test]
-fn item_registry_loads_all_24_mundane_armor_templates() {
+fn item_registry_loads_all_36_mundane_armor_templates() {
     let registry = load_item_registry().expect("item registry should load");
 
     for item in crate::armor::mundane::all_mundane_armor_items() {
@@ -1992,6 +1992,43 @@ fn item_registry_loads_all_24_mundane_armor_templates() {
             .unwrap_or_else(|| panic!("{} should load from armor.toml", item.item_id()));
         assert_eq!(template.category, ItemCategory::Armor);
         assert_eq!(template.max_stack_count, 1);
+    }
+}
+
+#[test]
+fn item_registry_loads_n2_modeled_weapons_with_final_specs() {
+    use crate::combat::weapon::WeaponKind;
+
+    let registry = load_item_registry().expect("item registry should load");
+    let expected = [
+        ("beast_spine_sword", WeaponKind::Sword, 10.0, 160.0),
+        ("bamboo_jian", WeaponKind::Sword, 7.0, 90.0),
+        ("herb_sickle", WeaponKind::Dagger, 3.5, 100.0),
+    ];
+
+    for (id, kind, base_attack, durability_max) in expected {
+        let template = registry
+            .get(id)
+            .unwrap_or_else(|| panic!("{id} 应从 weapons.toml 加载"));
+        assert_eq!(
+            template.category,
+            ItemCategory::Weapon,
+            "{id} 必须是 weapon 类，避免新物品落入错误分类"
+        );
+        let spec = template
+            .weapon_spec
+            .as_ref()
+            .unwrap_or_else(|| panic!("{id} 必须有 [item.weapon] block"));
+        assert_eq!(spec.weapon_kind, kind, "{id} 的 weapon.kind 不符合定稿表");
+        assert_eq!(
+            spec.base_attack, base_attack,
+            "{id} 的 base_attack 不符合定稿表"
+        );
+        assert_eq!(spec.quality_tier, 0, "{id} 必须保持 quality_tier=0");
+        assert_eq!(
+            spec.durability_max, durability_max,
+            "{id} 的 durability_max 不符合定稿表"
+        );
     }
 }
 

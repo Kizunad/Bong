@@ -1,4 +1,10 @@
 {
+ "gen_anti_spirit_pressure_pill.py": {
+  "exit": 0,
+  "outputs": {
+   "AntiSpiritPressurePill.bbmodel": "4994ec3b843863e83a930612d0c9ec66bac0f127f604f85d84d7d275a53ffde6"
+  }
+ },
  "gen_array_flag.py": {
   "exit": 0,
   "outputs": {
@@ -127,6 +133,12 @@
    "GuYuanGen.bbmodel": "283d62ec4f97d97f3272f6a2f914219caab108d787a8596ae6546ac3817d1402"
   }
  },
+ "gen_guyuan_pill.py": {
+  "exit": 0,
+  "outputs": {
+   "GuYuanPill.bbmodel": "52a19a541712825e1643e5ebcefd104ee7f7a0867cedf13742a0e7f16f09a238"
+  }
+ },
  "gen_hei_gu_jun.py": {
   "exit": 0,
   "outputs": {
@@ -180,6 +192,24 @@
    "HuaXingGen.bbmodel": "2466478965570915188fd7c112ce9fcbf313147cfd37677ca922ffb6470f9249"
   }
  },
+ "gen_hui_li_dan.py": {
+  "exit": 0,
+  "outputs": {
+   "HuiLiDan.bbmodel": "38e3861c8922b69fb10cb12cbe4f3e808b4f5564e37d83ae688c881faf2a8da8"
+  }
+ },
+ "gen_huiyuan_pill.py": {
+  "exit": 0,
+  "outputs": {
+   "HuiyuanPill.bbmodel": "9f916e9c53b7220c7e327b74e8ca19aa53ecb865a946bc037f61ce0431f26085"
+  }
+ },
+ "gen_huo_xue_dan.py": {
+  "exit": 0,
+  "outputs": {
+   "HuoXueDan.bbmodel": "05d38c3bed5164ec7e09a1a51dc819b3d0830c066351cf85ec52aaba4f1faa5d"
+  }
+ },
  "gen_iron_armor.py": {
   "exit": 0,
   "outputs": {
@@ -207,6 +237,12 @@
    "JadeCoffin.bbmodel": "700ec576f1becc4d5aa4d5905339dc67548000f5b4764fa21bac6eed37b1b1b7"
   }
  },
+ "gen_ji_feng_dan.py": {
+  "exit": 0,
+  "outputs": {
+   "JiFengDan.bbmodel": "08fa13f27b8f49e4fe48f5da82cb0b47a583356a8440127e426f934c87ff2ec6"
+  }
+ },
  "gen_jian_player.py": {
   "exit": 1,
   "outputs": {}
@@ -215,6 +251,18 @@
   "exit": 0,
   "outputs": {
    "JianPlayerAnim.bbmodel": "cf4fbbbb845b777820aab31850e2116fa852b3b84205f5246da7813bdd274ab8"
+  }
+ },
+ "gen_jin_zhong_dan.py": {
+  "exit": 0,
+  "outputs": {
+   "JinZhongDan.bbmodel": "49f2e9a21eb6845020112d844f9fc14b1801d6f66bdf8ffc6caeda42628f4db3"
+  }
+ },
+ "gen_kaimai_dan.py": {
+  "exit": 0,
+  "outputs": {
+   "KaimaiDan.bbmodel": "67e5093868a8e4692bafd6766acdfd2f910445840da850550daca16c69857e21"
   }
  },
  "gen_knife_trio.py": {

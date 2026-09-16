@@ -121,6 +121,55 @@ base_attack = 11.0
 quality_tier = 0
 durability_max = 180.0
 
+# ─── 新立项凡器（server 侧已上架，模型接线另批） ─────────────────────────────
+[[item]]
+id = "beast_spine_sword"
+name = "兽脊剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 1.0
+rarity = "common"
+spirit_quality_initial = 0.8
+description = "异兽脊骨削成的长剑，脊节保留棘刺，挥砍沉重但比普通骨剑更耐用。"
+[item.weapon]
+kind = "sword"
+base_attack = 10.0
+quality_tier = 0
+durability_max = 160.0
+
+[[item]]
+id = "bamboo_jian"
+name = "竹剑"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.5
+description = "削直的青竹练习剑，轻便顺手却经不起硬碰，适合初学者熟悉剑路。"
+[item.weapon]
+kind = "sword"
+base_attack = 7.0
+quality_tier = 0
+durability_max = 90.0
+
+[[item]]
+id = "herb_sickle"
+name = "采药镰"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 0.9
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "采药人用的短柄镰，刃口为割茎磨薄，战斗时只能勉强自保。"
+[item.weapon]
+kind = "dagger"
+base_attack = 3.5
+quality_tier = 0
+durability_max = 100.0
+
 # ─── 灵器级 tier 1 ────────────────────────────────────────────────────────
 [[item]]
 id = "spirit_sword"

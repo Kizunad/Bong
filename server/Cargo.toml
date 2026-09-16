@@ -31,6 +31,10 @@ name = "craft_unlock_unit"
 path = "tests/unit/craft/unlock_test.rs"
 
 [[test]]
+name = "craft_session_unit"
+path = "tests/unit/craft/session_test.rs"
+
+[[test]]
 name = "alchemy_furnace_unit"
 path = "tests/unit/alchemy/furnace_test.rs"
 
@@ -57,6 +61,10 @@ path = "tests/unit/shader/state_test.rs"
 [[test]]
 name = "range_gate_unit"
 path = "tests/unit/lingtian/range_gate_test.rs"
+
+[[test]]
+name = "lingtian_weather_unit"
+path = "tests/unit/lingtian/weather_test.rs"
 
 [[test]]
 name = "dimension_unit"
@@ -95,6 +103,14 @@ name = "combat_lifecycle_unit"
 path = "tests/unit/combat/lifecycle_test.rs"
 
 [[test]]
+name = "combat_status_unit"
+path = "tests/unit/combat/status_test.rs"
+
+[[test]]
+name = "combat_carrier_unit"
+path = "tests/unit/combat/carrier_test.rs"
+
+[[test]]
 name = "recipe_fragment_unit"
 path = "tests/unit/alchemy/recipe_fragment_test.rs"
 
@@ -123,6 +139,10 @@ name = "inventory_unit"
 path = "tests/unit/inventory/inventory_test.rs"
 
 [[test]]
+name = "persistence_slice_unit"
+path = "tests/unit/persistence/slice_test.rs"
+
+[[test]]
 name = "player_state_unit"
 path = "tests/unit/player/state_test.rs"
 
@@ -137,6 +157,10 @@ path = "tests/unit/combat/woliu_v2/erosion_test.rs"
 [[test]]
 name = "hybrid_beast_unit"
 path = "tests/unit/fauna/hybrid_beast_test.rs"
+
+[[test]]
+name = "fauna_mundane_unit"
+path = "tests/unit/fauna/mundane_test.rs"
 
 [[test]]
 name = "npc_technique_unit"
@@ -159,6 +183,10 @@ name = "npc_hydrate_unit"
 path = "tests/unit/npc/hydrate_test.rs"
 
 [[test]]
+name = "npc_equipment_unit"
+path = "tests/unit/npc/equipment_test.rs"
+
+[[test]]
 name = "npc_spawn_unit"
 path = "tests/unit/npc/spawn_test.rs"
 
@@ -175,8 +203,20 @@ name = "cultivation_color_unit"
 path = "tests/unit/cultivation/color_test.rs"
 
 [[test]]
+name = "cultivation_epitaph_unit"
+path = "tests/unit/cultivation/epitaph_test.rs"
+
+[[test]]
+name = "cultivation_breakthrough_unit"
+path = "tests/unit/cultivation/breakthrough_test.rs"
+
+[[test]]
 name = "body_plan_validate_unit"
 path = "tests/unit/body_plan/validate_test.rs"
+
+[[test]]
+name = "body_plan_types_unit"
+path = "tests/unit/body_plan/types_test.rs"
 
 [[test]]
 name = "coffin_unit"
@@ -195,6 +235,14 @@ name = "agent_ui_unit"
 path = "tests/unit/network/agent_ui_test.rs"
 
 [[test]]
+name = "network_craft_emit_unit"
+path = "tests/unit/network/craft_emit_test.rs"
+
+[[test]]
+name = "network_cast_emit_unit"
+path = "tests/unit/network/cast_emit_test.rs"
+
+[[test]]
 name = "raster_unit"
 path = "tests/unit/world/raster_test.rs"
 
@@ -207,12 +255,31 @@ name = "tiandao_hunt_unit"
 path = "tests/unit/world/tiandao_hunt_test.rs"
 
 [[test]]
+name = "zone_unit"
+path = "tests/unit/world/zone_test.rs"
+
+[[test]]
+name = "heartbeat_unit"
+path = "tests/unit/world/heartbeat_test.rs"
+
+[[test]]
+name = "world_block_place_unit"
+path = "tests/unit/world/block_place_test.rs"
+
+[[test]]
+name = "world_spawn_tutorial_unit"
+path = "tests/unit/world/spawn_tutorial_test.rs"
+[[test]]
 name = "shelflife_compute_unit"
 path = "tests/unit/shelflife/compute_test.rs"
 
 [[test]]
 name = "zhenmai_v2_unit"
 path = "tests/unit/combat/zhenmai_v2_test.rs"
+
+[[test]]
+name = "sword_path_skill_register_unit"
+path = "tests/unit/sword_path/skill_register_test.rs"
 
 [[test]]
 name = "workbench_reach_profile"
