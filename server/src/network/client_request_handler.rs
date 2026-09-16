@@ -1209,6 +1209,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::QuickSlotBind { v, .. }
             | ClientRequestV1::SkillBarCast { v, .. }
             | ClientRequestV1::SkillBarBind { v, .. }
+            | ClientRequestV1::TechniqueBind { v, .. }
             | ClientRequestV1::SkillConfigIntent { v, .. }
             | ClientRequestV1::CombatReincarnate { v }
             | ClientRequestV1::CombatTerminate { v }
@@ -2329,6 +2330,26 @@ pub fn handle_client_request_payloads(
                 );
             }
             ClientRequestV1::SkillBarCast { slot, target, .. } => {
+                // 身法共享 movement 的拥有门、体力与冷却，不进入无位移的通用施法。
+                let is_dash = combat_params
+                    .skillbar_bindings_q
+                    .get(ev.client)
+                    .ok()
+                    .and_then(|bindings| bindings.get(slot))
+                    .is_some_and(|binding| {
+                        matches!(binding, SkillSlot::Skill { skill_id }
+                        if skill_id == crate::movement::dash_proficiency::DASH_TECHNIQUE_ID)
+                    });
+                if is_dash {
+                    if let Some(events) = dispatch.movement_action_tx.as_deref_mut() {
+                        events.send(MovementActionIntent {
+                            entity: ev.client,
+                            action: MovementAction::Dashing,
+                            yaw_degrees: None,
+                        });
+                    }
+                    continue;
+                }
                 handle_skill_bar_cast(
                     ev.client,
                     slot,
@@ -2338,6 +2359,25 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     &mut combat_params,
                     alchemy_params.vfx_events.as_deref_mut(),
+                    &skill_scroll_params.known_techniques,
+                );
+            }
+            ClientRequestV1::TechniqueBind {
+                skill_id,
+                target,
+                expected_binding,
+                ..
+            } => {
+                handle_technique_bind(
+                    ev.client,
+                    skill_id,
+                    target,
+                    &expected_binding,
+                    &mut combat_params.skillbar_bindings_q,
+                    &inventories,
+                    &clients,
+                    persistence.as_deref(),
+                    &skill_scroll_params.technique_registry,
                     &skill_scroll_params.known_techniques,
                 );
             }
@@ -3555,6 +3595,85 @@ fn send_authoritative_skill_config_snapshot(
 ) {
     if let Ok((_, mut client)) = clients.get_mut(entity) {
         send_skill_config_snapshot_to_client(&mut client, snapshot, entity, username);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_technique_bind(
+    entity: valence::prelude::Entity,
+    skill_id: String,
+    target: crate::schema::client_request::TechniqueBindTargetV1,
+    expected_binding: &str,
+    bindings_q: &mut Query<&mut SkillBarBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    clients: &Query<(&Username, &mut Client)>,
+    persistence: Option<&PlayerStatePersistence>,
+    registry: &TechniqueRegistry,
+    known: &Query<&mut KnownTechniques>,
+) {
+    use crate::schema::client_request::TechniqueBindTargetV1;
+    let Some(definition) = registry.get(&skill_id) else {
+        return;
+    };
+    if !known
+        .get(entity)
+        .is_ok_and(|known| player_knows_technique(known, &skill_id))
+    {
+        return;
+    }
+    let Ok(bindings) = bindings_q.get(entity) else {
+        return;
+    };
+    let current = match target {
+        TechniqueBindTargetV1::Dash => format!("skill:{}", bindings.dash_skill_id()),
+        TechniqueBindTargetV1::Combat { slot } => match bindings.get(slot) {
+            Some(SkillSlot::Empty) => String::new(),
+            Some(SkillSlot::Skill { skill_id }) => format!("skill:{skill_id}"),
+            Some(SkillSlot::Item { instance_id }) => {
+                let template = inventories.get(entity).ok().and_then(|inventory| {
+                    crate::network::skillbar_config_emit::lookup_template_id(
+                        inventory,
+                        *instance_id,
+                    )
+                });
+                format!("item:{}", template.unwrap_or_default())
+            }
+            None => return,
+        },
+    };
+    // 比较与赋值在同一 ECS 系统内完成；确认期间换槽不能覆盖新绑定。
+    if current != expected_binding {
+        return;
+    }
+    match target {
+        TechniqueBindTargetV1::Combat { slot } if definition.input_kind() != "dedicated" => {
+            handle_skill_bar_bind(
+                entity,
+                slot,
+                Some(SkillBarBindingV1::Skill { skill_id }),
+                bindings_q,
+                inventories,
+                clients,
+                persistence,
+                registry,
+                known,
+            );
+        }
+        TechniqueBindTargetV1::Dash if definition.input_kind() == "dash" => {
+            if let Ok(mut bindings) = bindings_q.get_mut(entity) {
+                bindings.dash_skill_id = Some(skill_id.clone());
+            }
+            if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
+                if let Err(error) =
+                    update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
+                        prefs.dash_skill_id = Some(skill_id.clone());
+                    })
+                {
+                    tracing::warn!("failed to persist dash binding: {error}");
+                }
+            }
+        }
+        _ => {}
     }
 }
 

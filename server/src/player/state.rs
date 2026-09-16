@@ -13,9 +13,7 @@ use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::{
-    has_dedicated_input_consumer, KnownTechniques, TechniqueDispatch, TechniqueRegistry,
-};
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
@@ -60,6 +58,8 @@ impl Default for PlayerState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct PlayerUiPrefs {
+    #[serde(default)]
+    pub dash_skill_id: Option<String>,
     #[serde(default)]
     pub quick_slots: [Option<u64>; QuickSlotBindings::SLOT_COUNT],
     #[serde(default)]
@@ -112,10 +112,9 @@ impl PlayerUiPrefs {
             let SkillSlotPersist::Skill { skill_id } = persist else {
                 continue;
             };
-            let invalid = has_dedicated_input_consumer(skill_id)
-                || registry.get(skill_id).is_none_or(|definition| {
-                    definition.dispatch == TechniqueDispatch::DedicatedInput
-                });
+            let invalid = registry
+                .get(skill_id)
+                .is_none_or(|definition| definition.input_kind() == "dedicated");
             if invalid {
                 *persist = SkillSlotPersist::Empty;
                 changed = true;
@@ -129,7 +128,20 @@ impl PlayerUiPrefs {
         inventory: Option<&PlayerInventory>,
         registry: Option<&TechniqueRegistry>,
     ) -> SkillBarBindings {
-        let mut bindings = SkillBarBindings::default();
+        let mut bindings = SkillBarBindings {
+            dash_skill_id: self
+                .dash_skill_id
+                .as_ref()
+                .filter(|id| {
+                    registry.is_some_and(|registry| {
+                        registry
+                            .get(id)
+                            .is_some_and(|definition| definition.input_kind() == "dash")
+                    })
+                })
+                .cloned(),
+            ..Default::default()
+        };
         for (slot, persist) in self.skill_bar.iter().enumerate() {
             let slot_value = match persist {
                 SkillSlotPersist::Empty => SkillSlot::Empty,
@@ -140,12 +152,11 @@ impl PlayerUiPrefs {
                     .map(|instance_id| SkillSlot::Item { instance_id })
                     .unwrap_or_default(),
                 SkillSlotPersist::Skill { skill_id } => {
-                    let valid = !has_dedicated_input_consumer(skill_id)
-                        && registry.is_none_or(|registry| {
-                            registry.get(skill_id).is_some_and(|definition| {
-                                definition.dispatch != TechniqueDispatch::DedicatedInput
-                            })
-                        });
+                    let valid = registry.is_none_or(|registry| {
+                        registry
+                            .get(skill_id)
+                            .is_some_and(|definition| definition.input_kind() != "dedicated")
+                    });
                     if valid {
                         SkillSlot::Skill {
                             skill_id: skill_id.clone(),

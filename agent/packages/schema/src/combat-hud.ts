@@ -97,6 +97,7 @@ export type SkillBarEntryV1 = Static<typeof SkillBarEntryV1>;
 
 export const SkillBarConfigV1 = Type.Object(
   {
+    dash_skill_id: Type.Optional(Type.String()),
     slots: Type.Array(Type.Union([SkillBarEntryV1, Type.Null()]), {
       minItems: HOTBAR_SLOT_COUNT,
       maxItems: HOTBAR_SLOT_COUNT,
@@ -121,6 +122,9 @@ export type TechniqueRequiredMeridianV1 = Static<typeof TechniqueRequiredMeridia
 
 export const TechniqueEntryV1 = Type.Object(
   {
+    category: Type.Optional(Type.String()),
+    input_kind: Type.Optional(Type.String()),
+    icon_texture: Type.Optional(Type.String()),
     id: Type.String({ minLength: 1 }),
     display_name: Type.String({ minLength: 1 }),
     grade: Type.String({ minLength: 1 }),

@@ -199,6 +199,28 @@ pub struct TechniqueRequiredMeridian {
 }
 
 impl TechniqueDefinition {
+    /// 输入类型由真实专属消费者决定；不会因为名称含“闪避”而改变施放通道。
+    pub fn input_kind(&self) -> &'static str {
+        if self.id == crate::movement::dash_proficiency::DASH_TECHNIQUE_ID {
+            "dash"
+        } else if has_dedicated_input_consumer(&self.id)
+            || self.dispatch == TechniqueDispatch::DedicatedInput
+        {
+            "dedicated"
+        } else {
+            "skill"
+        }
+    }
+
+    pub fn category_label(&self) -> &'static str {
+        match self.category {
+            SkillCategory::Attack => "attack",
+            SkillCategory::Heal => "heal",
+            SkillCategory::Buff => "buff",
+            SkillCategory::Control => "control",
+            SkillCategory::Defense => "defense",
+        }
+    }
     /// 加载期已验证为六境界之一；运行时消费者复用同一 parser，避免另写 match 第二真源。
     pub fn required_realm_value(&self) -> Realm {
         parse_required_realm(&self.required_realm)
@@ -296,6 +318,9 @@ impl TechniqueRegistry {
                 .definitions
                 .iter()
                 .map(|definition| TechniqueEntryV1 {
+                    category: definition.category_label().to_string(),
+                    input_kind: definition.input_kind().to_string(),
+                    icon_texture: definition.icon_texture.clone(),
                     id: definition.id.clone(),
                     display_name: definition.display_name.clone(),
                     grade: definition.grade.clone(),
