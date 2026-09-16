@@ -33,17 +33,14 @@ public final class BongWeaponModelRegistry {
         "bone_sword",
         "lingmu_sword",
         "spirit_sword",
-        "flying_sword_feixuan",
-        "iron_dagger",
-        "wooden_club"
+        "flying_sword_feixuan"
     );
 
     public static final Set<String> TOOL_TEMPLATE_IDS = Set.of(
         "axe_bone",
         "pickaxe_bone",
         "axe_iron",
-        "pickaxe_iron",
-        "herb_knife_iron"
+        "pickaxe_iron"
     );
 
     /**
@@ -122,21 +119,6 @@ public final class BongWeaponModelRegistry {
             "item/diamond_sword",
             "bong:models/item/flying_sword_feixuan/flying_sword_feixuan.obj"
         ));
-        // M2 三件 server 已上架且有独立模型：每个 OBJ 需要一个不与既有劫持冲突的 vanilla host。
-        // iron_dagger 是 dagger，剑形宿主优先；既有四个 sword host 都已有专属 OBJ，故选未占用的
-        // trident blade host，避免覆盖任何现有条目。wooden_club 是 staff 钝器，选未占用的 rod host。
-        entries.put("iron_dagger", new Entry(
-            "iron_dagger",
-            () -> Items.TRIDENT,
-            "item/trident",
-            "bong:models/item/iron_dagger/iron_dagger.obj"
-        ));
-        entries.put("wooden_club", new Entry(
-            "wooden_club",
-            () -> Items.BLAZE_ROD,
-            "item/blaze_rod",
-            "bong:models/item/wooden_club/wooden_club.obj"
-        ));
         entries.put("axe_bone", new Entry(
             "axe_bone",
             () -> Items.WOODEN_AXE,
@@ -160,14 +142,6 @@ public final class BongWeaponModelRegistry {
             () -> Items.IRON_PICKAXE,
             "item/iron_pickaxe",
             "bong:models/item/pickaxe_iron/pickaxe_iron.obj"
-        ));
-        // herb_knife_iron 是 craft_legacy_items.toml 的 category=tool，不是 weapon；但它有独立
-        // 手持 OBJ，故与采矿工具同列 TOOL_TEMPLATE_IDS。brush 是未被本表劫持的短柄采集宿主。
-        entries.put("herb_knife_iron", new Entry(
-            "herb_knife_iron",
-            () -> Items.BRUSH,
-            "item/brush",
-            "bong:models/item/herb_knife_iron/herb_knife_iron.obj"
         ));
         // 工具手持模型：镐/斧/锄直接白嫖 vanilla 模型（bongObjModelPath=null → 宿主 item 即模型，
         // 不走 SML 劫持）。与 bone_sword→STONE_SWORD 同模式。server 现对 category=tool 下发

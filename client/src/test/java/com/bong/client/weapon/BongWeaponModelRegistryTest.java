@@ -14,7 +14,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,7 +22,7 @@ class BongWeaponModelRegistryTest {
     private static final Map<String, ExpectedWeaponResource> V1_EXPECTED_RESOURCES = expectedResources();
 
     @Test
-    void registryCoversExactlyTheElevenV1WeaponTemplates() {
+    void registryCoversExactlyTheNineV1WeaponTemplates() {
         assertEquals(V1_EXPECTED_RESOURCES.keySet(), BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS);
 
         for (Map.Entry<String, ExpectedWeaponResource> expected : V1_EXPECTED_RESOURCES.entrySet()) {
@@ -86,26 +85,6 @@ class BongWeaponModelRegistryTest {
             "pickaxe_iron vanilla model path should be item/iron_pickaxe");
         assertEquals("bong:models/item/pickaxe_iron/pickaxe_iron.obj", entry.bongObjModelPath(),
             "pickaxe_iron bong OBJ path mismatch");
-    }
-
-    @Test
-    void m2WeaponAndToolEntriesPinTemplateHostModelAndObjPaths() {
-        record Case(String id, String hostModelPath, String objPath) {}
-        Case[] cases = {
-            new Case("iron_dagger", "item/trident", "bong:models/item/iron_dagger/iron_dagger.obj"),
-            new Case("wooden_club", "item/blaze_rod", "bong:models/item/wooden_club/wooden_club.obj"),
-            new Case("herb_knife_iron", "item/brush", "bong:models/item/herb_knife_iron/herb_knife_iron.obj"),
-        };
-        for (Case c : cases) {
-            BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(c.id()).orElseThrow();
-            assertEquals(c.id(), entry.templateId(), c.id() + " template_id 必须与 registry key 一致");
-            assertNotNull(entry.hostItemSupplier(), c.id() + " 必须有 fake vanilla host supplier");
-            assertEquals(c.hostModelPath(), entry.vanillaModelPath(), c.id() + " host model path");
-            assertEquals(c.objPath(), entry.bongObjModelPath(), c.id() + " OBJ path");
-        }
-        assertTrue(BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS.contains("iron_dagger"));
-        assertTrue(BongWeaponModelRegistry.V1_WEAPON_TEMPLATE_IDS.contains("wooden_club"));
-        assertTrue(BongWeaponModelRegistry.TOOL_TEMPLATE_IDS.contains("herb_knife_iron"));
     }
 
     @Test
@@ -239,8 +218,7 @@ class BongWeaponModelRegistryTest {
 
     @Test
     void toolTemplateIdsSetMatchesRegisteredTools() {
-        Set<String> expected = Set.of(
-            "axe_bone", "pickaxe_bone", "axe_iron", "pickaxe_iron", "herb_knife_iron");
+        Set<String> expected = Set.of("axe_bone", "pickaxe_bone", "axe_iron", "pickaxe_iron");
         assertEquals(expected, BongWeaponModelRegistry.TOOL_TEMPLATE_IDS,
             "expected TOOL_TEMPLATE_IDS=" + expected + ", actual=" + BongWeaponModelRegistry.TOOL_TEMPLATE_IDS);
         for (String templateId : BongWeaponModelRegistry.TOOL_TEMPLATE_IDS) {
@@ -328,8 +306,6 @@ class BongWeaponModelRegistryTest {
         out.put("lingmu_sword", new ExpectedWeaponResource("item/wooden_sword", null));
         out.put("spirit_sword", new ExpectedWeaponResource("item/nether_star", "bong:models/item/spirit_sword/spirit_sword.obj"));
         out.put("flying_sword_feixuan", new ExpectedWeaponResource("item/diamond_sword", "bong:models/item/flying_sword_feixuan/flying_sword_feixuan.obj"));
-        out.put("iron_dagger", new ExpectedWeaponResource("item/trident", "bong:models/item/iron_dagger/iron_dagger.obj"));
-        out.put("wooden_club", new ExpectedWeaponResource("item/blaze_rod", "bong:models/item/wooden_club/wooden_club.obj"));
         return Collections.unmodifiableMap(out);
     }
 

@@ -30,12 +30,10 @@ public final class InventoryEquipRules {
         Map.entry("flying_sword_feixuan", WeaponKind.SWORD),
         Map.entry("bronze_saber", WeaponKind.SABER),
         Map.entry("wooden_staff", WeaponKind.STAFF),
-        Map.entry("wooden_club", WeaponKind.STAFF),
         Map.entry("bone_dagger", WeaponKind.DAGGER),
         Map.entry("bone_spike", WeaponKind.DAGGER),
         Map.entry("poison_needle", WeaponKind.DAGGER),
         Map.entry("zhenyuan_mine", WeaponKind.DAGGER),
-        Map.entry("iron_dagger", WeaponKind.DAGGER),
         Map.entry("hand_wrap", WeaponKind.FIST)
     );
 
@@ -47,7 +45,6 @@ public final class InventoryEquipRules {
 
     private static final Set<String> TOOL_TEMPLATE_IDS = Set.of(
         "cai_yao_dao",
-        "herb_knife_iron",
         "bao_chu",
         "cao_lian",
         "dun_qi_jia",
