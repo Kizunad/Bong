@@ -12,11 +12,21 @@
 
 两张图是各自独立出的，拉伸倍率都不一样，所以**纵向一律按腿长比例映射**，
 不拿 px/单位硬乘。下面每处偏离参考的地方都写了理由。
+
+斗笠与蓑衣本轮没有独立参考图，也不冒充由 `orthograph #6/#7` 外推：两件均以仓库
+已有的 `modelScript/models/DouliHat.bbmodel` / `SuoYiCloak.bbmodel` 为形制依据，
+直接沿用其中相对玩家头/躯干枢轴的 MC 单位 `from/to` 几何，不另行缩放。为适配
+vanilla `ModelPart` 的 box-UV，只沿 z 轴把过宽的盒分成相邻片，并统一落到本生成器的
+64×64 草甲纹理；源稿中已知的内部接触边只按 `SOURCE_FACE_CLEARANCES` 留 0.01 单位
+间隙。这样后续可逐项对照两份既有 bbmodel 的坐标、分片位置和 clearance，而不是只
+复核「看起来像不像」的结论。
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
+from dataclasses import replace
 import json
 import math
 import random
@@ -29,7 +39,15 @@ from pathlib import Path as _Path
 
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
 
-from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.gates import gatekit
+from bbmodel_maker.model.armor_model_common import (
+    ArmorPart,
+    Cube,
+    MOUNT_X,
+    TEXTURE_SIZE,
+    write_material_assets,
+)
+from bbmodel_maker.rig.rigkit import Rig
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -639,6 +657,131 @@ def _assert_mirror_symmetry(all_parts: tuple[ArmorPart, ...]) -> None:
                 raise ValueError(f"{part.key}/{name}: 左右 y/z 不一致")
 
 
+# ─── gatekit 差分自证 ───────────────────────────────────────────────────────
+# 这些是玩家护甲，不是 0..16 的方块模型：斗笠的宽檐本来就会超过一个方块，
+# 因而不能把 gatekit 的 block-overflow 门硬套上来。仍使用 gatekit.AssetGates 作为
+# 差分自证运行器，但只把适用于本轮两件新造模型的两道不变式接到对应注入器上。
+GATE_MATS = {
+    "straw": (172, 150, 108),
+    "worn": (137, 114, 78),
+    "braid": (127, 107, 68),
+    "cord": (105, 85, 52),
+}
+
+
+def _gate_material(cube: Cube) -> str:
+    if cube.uv in (*STRAW_TONES, UV_STRAW_WIDE):
+        return "straw"
+    if cube.uv in (UV_WORN_A, UV_WORN_B):
+        return "worn"
+    if cube.uv == UV_BRAID:
+        return "braid"
+    if cube.uv == UV_CORD:
+        return "cord"
+    raise ValueError(f"{cube.name}: 未知 uv {cube.uv}")
+
+
+def _cube_bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    box = _world_box(cube)
+    return tuple(axis[0] for axis in box), tuple(axis[1] for axis in box)
+
+
+def _gate_rig(all_parts: tuple[ArmorPart, ...]) -> Rig:
+    """把 ArmorPart 适配为 gatekit 的 Rig；不参与任何运行时输出。"""
+    rig = Rig(GATE_MATS)
+    # gatekit 的 report 需要 Rig，护甲专用 gate 则需要原始 ArmorPart 元组。
+    # 动态属性随 deepcopy 一起复制，供差分注入器只改测试输入而不碰磁盘资产。
+    rig._straw_parts = tuple(all_parts)
+    for part in all_parts:
+        rig.bone(part.key, (0.0, 0.0, 0.0))
+        for cube in part.cubes:
+            offset = MOUNT_X[cube.mount]
+            origin = (cube.origin[0] + offset, cube.origin[1], cube.origin[2])
+            end = (cube.end[0] + offset, cube.end[1], cube.end[2])
+            rig.cube(part.key, cube.name, origin, end, mat=_gate_material(cube))
+    return rig
+
+
+def build() -> Rig:
+    """供 bbmodel-contact-sheet 与 `--self-test` 使用的 gatekit 适配 Rig。"""
+    # 只有这两件是本轮新造模型；腿套与草鞋沿用既有几何，不在本轮差分自证范围内。
+    return _gate_rig((part_helmet(), part_chestplate()))
+
+
+def _gate_violations(rig: Rig, check) -> list[str]:
+    try:
+        check(rig._straw_parts)
+    except ValueError as exc:
+        return [str(exc)]
+    return []
+
+
+def _replace_gate_cube(rig: Rig, part_key: str, index: int, cube: Cube) -> Rig:
+    updated = []
+    found = False
+    for part in rig._straw_parts:
+        if part.key == part_key:
+            cubes = list(part.cubes)
+            cubes[index] = cube
+            part = replace(part, cubes=tuple(cubes))
+            found = True
+        updated.append(part)
+    if not found:
+        raise ValueError(f"gate rig 中没有 {part_key}")
+    rig._straw_parts = tuple(updated)
+    return rig
+
+
+def _inject_coplanar(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._straw_parts:
+        for first_index, first in enumerate(part.cubes):
+            low_a, high_a = _cube_bounds(first)
+            for second_index in range(first_index + 1, len(part.cubes)):
+                second = part.cubes[second_index]
+                low_b, high_b = _cube_bounds(second)
+                for axis in range(3):
+                    projection = 1.0
+                    for other in (k for k in range(3) if k != axis):
+                        projection *= max(
+                            0.0,
+                            min(high_a[other], high_b[other])
+                            - max(low_a[other], low_b[other]),
+                        )
+                    if projection <= 0.02:
+                        continue
+                    origin = list(second.origin)
+                    offset = MOUNT_X[second.mount] if axis == 0 else 0.0
+                    origin[axis] = high_a[axis] - second.size[axis] - offset
+                    _replace_gate_cube(r, part.key, second_index,
+                                       replace(second, origin=tuple(origin)))
+                    return r, second.name, f"把 {second.name} 的 {'xyz'[axis]} 面移到共面"
+    raise gatekit.InjectionImpossible("找不到可造共面且有投影重叠的 cube 对")
+
+
+def _inject_uv(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    part = r._straw_parts[0]
+    cube = part.cubes[0]
+    _replace_gate_cube(r, part.key, 0, replace(cube, uv=(TEXTURE_SIZE, TEXTURE_SIZE)))
+    return r, cube.name, f"把 {cube.name} 的 uv 移出 64×64 贴图"
+
+
+class _StrawArmorGates(gatekit.AssetGates):
+    """用 gatekit 的统一 self_test 跑本轮两件新造模型的不变式。"""
+
+    def specs(self):
+        return (
+            ("coplanar", "单件共面 / z-fighting",
+             lambda r: _gate_violations(r, _assert_no_coplanar_faces), _inject_coplanar),
+            ("uv_tiles", "box-UV 越出指定色调格",
+             lambda r: _gate_violations(r, _assert_uv_tiles), _inject_uv),
+        )
+
+
+GATES = _StrawArmorGates("草甲四件套 / straw armor", GATE_MATS)
+
+
 # ─── 贴图 ─────────────────────────────────────────────────────────────────
 
 
@@ -839,25 +982,31 @@ def generate(render_previews: bool = True, install: bool = False) -> dict[str, P
     )
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-preview", action="store_true", help="只写 bbmodel/texture")
     parser.add_argument("--emit-java", action="store_true", help="打印 ArmorPartModel 用的 cube 表")
+    parser.add_argument("--self-test", action="store_true",
+                        help="gatekit 差分自证：先注入缺陷再确认每道门能报出")
     parser.add_argument("--install", action="store_true",
                         help="贴图写进 client 资源树（接线那轮再用，记得同步资源包 sha1）")
     args = parser.parse_args()
+
+    if args.self_test:
+        return GATES.self_test(build())
 
     if args.emit_java:
         for part in parts():
             print(f"// {part.key}: {len(part.cubes)} cubes, digest {cube_digest(part)}")
             print(emit_java(part))
             print()
-        return
+        return 0
 
     outputs = generate(render_previews=not args.no_preview, install=args.install)
     for key, path in outputs.items():
         print(f"[{key}] {path.relative_to(REPO)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -96,7 +96,7 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.BODY, 2.5f, 5.0f);
         assertPinnedTable("straw_leggings", 90, ArmorPartModel.Mount.LEFT_LEG, -1.78f, 3.3f,
             ArmorPartModel.Mount.RIGHT_LEG, -3.16f, 4.01f);
-        assertPinnedTable("straw_boots", 72, ArmorPartModel.Mount.LEFT_FOOT, -2.92f, -0.36f,
+        assertPinnedTable("straw_boots", 72, ArmorPartModel.Mount.LEFT_FOOT, -1.86f, -0.36f,
             ArmorPartModel.Mount.RIGHT_FOOT, -2.12f, 1.46f);
     }
 

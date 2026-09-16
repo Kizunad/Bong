@@ -170,6 +170,13 @@ class StrawArmorGuardTest(unittest.TestCase):
         straw._assert_no_body_clash(parts)
         straw._assert_parts_stack_cleanly(parts)
 
+    def test_new_model_gatekit_self_test_is_discriminating(self) -> None:
+        self.assertEqual(
+            0,
+            straw.GATES.self_test(straw.build(), verbose=False),
+            "斗笠/蓑衣的两道适用 gate 必须能从干净模型中识别注入缺陷",
+        )
+
     def test_coplanar_guard_catches_same_plane_pair(self) -> None:
         bad = _part_with((
             Cube("LEFT_LEG", "a", (0.0, 4.0, 0.0), (1.0, 2.0, 1.0), straw.UV_STRAW_A),
