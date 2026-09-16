@@ -16,6 +16,42 @@
 | P4 | 接入丹药 8 项、灵植 9 项，收口 3D 场景范围 | ⬜ |
 | P5 | 防复发门禁、资源包同步和全场景回归 | ⬜ |
 
+## 接入面
+
+- **进料**：服务端现有 `ServerDataPayloadV1::WeaponEquipped` / `WeaponEquippedV1`
+  的 `template_id`（`server/src/schema/combat_hud.rs:290-383`、
+  `server/src/network/weapon_equipped_emit.rs:99-190`）进入客户端
+  `WeaponEquippedHandler` → `WeaponEquippedStore`；手持渲染再由
+  `HeldItemStackResolver` 和 FPV/TPV mixin 消费。模型 manifest 的模板集合来自
+  `server/assets/items/*.toml`，几何、MTL、贴图和模型 definition 来自
+  `client/src/main/resources/assets/bong/` 及 `modelScript/core/held_item_common.py::write_assets`。
+  背包 GUI 的既有 2D 输入仍来自 `ItemIconRegistry`，不因 3D 通道而改成模型输入。
+- **出料**：canonical registry 输出按 `template_id` 查到的 Bong `BakedModel` 和各
+  `ModelTransformation` context，供 `MixinHeldItemRenderer`（FPV）与
+  `MixinPlayerEntityHeldItem`（TPV）直接渲染；纳入范围的 GUI/fixed/ground 场景写入
+  各自 owner。资源文件最终进入 `assets/bong/` 的资源包并由
+  `server/src/network/resourcepack.rs::DEFAULT_RESOURCE_PACK_MANIFEST` 校验。本 plan
+  不向 gameplay、inventory 状态、Redis 或 server event 产出新副作用。
+- **共享类型 / event**：复用已有 `WeaponEquippedV1`、`template_id`、
+  `WeaponEquippedStore`、`EquippedShieldStore`、`ItemIconRegistry` 以及现有 SML/模型
+  加载契约；不另建 `ItemStack` host 映射、装备态 store、wire event 或 schema。新的
+  model definition/registry 是 client 渲染内部类型，若实现需要新增类型，必须让 FPV、
+  TPV 和资源 reload 共用同一份，而不是为测试另开可见性 seam。
+- **跨仓库契约**：server 侧命中
+  `network::weapon_equipped_emit::emit_weapon_equipped_payloads`、
+  `ServerDataPayloadV1::WeaponEquipped` / `WeaponEquippedV1.template_id`；client 侧命中
+  `ProtoServerDataBridge`、`WeaponEquippedHandler`、`WeaponEquippedStore`。agent 侧
+  **不适用**：模型查询发生在 client resource/render 层，不经过 agent、Redis channel
+  或新的 IPC；本 plan 不改 server↔agent↔client 的 wire/schema，P5 只用既有
+  `weapon_equipped` 登录/装备场景做回归。
+- **worldview 锚点**：**不适用**。这是 client 资源加载和物品模型挂载基建，不新增
+  境界、经济、传承、阵法、区域或物品 gameplay 语义；丹药/灵植的世界观含义由既有
+  item/botany owner 维护，P4 只接模型，不在本 plan 改 `docs/worldview.md`。
+- **qi_physics 锚点**：**不适用**。模型 lookup、OBJ/MTL/贴图加载和 transform 不读写
+  真元/灵气、不实现衰减/逸散/距离损耗，也不改变任何 ledger；若未来要为模型添加会
+  影响真元数值的视觉/玩法效果，必须另行接入既有 `qi_physics`，不能在本 plan 自定
+  物理常数。
+
 ## 0. 不可逆裁决、范围与完成定义
 
 ### 0.1 所有者裁决（本 plan 的前提，不是待投票事项）
