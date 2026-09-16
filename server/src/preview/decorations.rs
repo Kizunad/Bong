@@ -62,9 +62,14 @@ pub fn load_from_path(path: &PathBuf) -> Result<DecorationsConfig, String> {
 
 /// env-driven 路径解析（默认 assets/preview/decorations.json）。
 pub fn resolve_path() -> PathBuf {
-    std::env::var("BONG_PREVIEW_DECORATIONS")
+    resolve_path_from(std::env::var("BONG_PREVIEW_DECORATIONS").ok().as_deref())
+}
+
+/// 按可选 override 解析路径；生产入口与测试都复用这层纯逻辑。
+fn resolve_path_from(override_path: Option<&str>) -> PathBuf {
+    override_path
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_PATH))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_PATH))
 }
 
 /// 把 block name 字符串映射到 [`BlockState`]。当前只覆盖装饰常用几种；不识别
@@ -287,23 +292,13 @@ mod tests {
 
     #[test]
     fn resolve_path_default() {
-        // SAFETY: 单测内 manipulate env
-        unsafe {
-            std::env::remove_var("BONG_PREVIEW_DECORATIONS");
-        }
-        let path = resolve_path();
+        let path = resolve_path_from(None);
         assert_eq!(path, PathBuf::from("assets/preview/decorations.json"));
     }
 
     #[test]
     fn resolve_path_env_override() {
-        unsafe {
-            std::env::set_var("BONG_PREVIEW_DECORATIONS", "/tmp/custom.json");
-        }
-        let path = resolve_path();
+        let path = resolve_path_from(Some("/tmp/custom.json"));
         assert_eq!(path, PathBuf::from("/tmp/custom.json"));
-        unsafe {
-            std::env::remove_var("BONG_PREVIEW_DECORATIONS");
-        }
     }
 }
