@@ -454,7 +454,9 @@ P5 将资源结构问题变成可自动核验的门禁：
 
 ### 8.1 既有 plan 的关系
 
-**Integration preflight 记录（2026-09-16）**：本次预检对照了相关 finished plan、active
+**Integration preflight 记录（2026-09-16）**：本次预检已检 `docs/worldview.md`（client 渲染基建，无对应章节）、
+`docs/finished_plans/`、`docs/plan-*.md`（active）、`docs/plans-skeleton/plan-*.md` 和
+`docs/plans-skeleton/reminder.md`（已检，41 行，无物品模型/渲染相关待办），对照相关 finished plan、active
 plan 和 `docs/plans-skeleton/` 的现有 owner，沿 `BongWeaponModelRegistry`、
 `WeaponRenderBootstrap`、`HeldItemStackResolver`、五套 `VanillaIconMap` 和
 `HeldItemRenderer` 接入面逐项核对。结果不是「没有重叠」，而是确认旧的手持注册骨架和
