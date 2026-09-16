@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""草甲（straw）护腿 / 草鞋的 bbmodel + 贴图 + 三视图生成器。
+"""草甲（straw）四件套的 bbmodel + 贴图 + 三视图生成器。
 
 参考图：`orthograph #6`（草护腿：竖向稻杆捆扎 + 五道绳箍 + 上下出穗）、
 `orthograph #7`（草鞋：编织草底 + 趾间绳桩 + 脚背 V 叉 + 踝箍与外侧结）。
@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import random
 from pathlib import Path
 
@@ -60,6 +62,9 @@ UV_WORN_A = (32, 0)      # 旧稻杆：穗头、断口
 UV_WORN_B = (48, 0)      # 旧稻杆（另一调）
 UV_BRAID = (0, 32)       # 编织草底：横向编纹
 UV_CORD = (32, 32)       # 搓绳：斜向拧纹
+# 斗笠檐口和蓑衣的大面不是腿/鞋的窄盒，使用整行 straw 纹理；必要时由
+# _source_cubes 沿 z 分片，使每一片的 box-UV 仍落在 64×64 内。
+UV_STRAW_WIDE = (0, 1)
 
 STRAW_TONES = (UV_STRAW_A, UV_STRAW_B, UV_STRAW_C, UV_STRAW_D)
 
@@ -68,6 +73,35 @@ UV_TILES = {
     UV_STRAW_A: (8, 32), UV_STRAW_B: (8, 32), UV_STRAW_C: (8, 32), UV_STRAW_D: (8, 32),
     UV_WORN_A: (16, 32), UV_WORN_B: (16, 32),
     UV_BRAID: (32, 32), UV_CORD: (32, 32),
+    UV_STRAW_WIDE: (64, 31),
+}
+
+# DouliHat/SuoYiCloak 的旧设计稿用相邻、分层的 cube 表达软材料。少数层的边界
+# 恰好落在同一平面；在 Blockbench/GeckoLib 里这些面大多被下一层遮住，但 vanilla
+# ModelPart 会把它们作为同一 mesh 的两个面烘焙出来，边界处会 z-fighting。这里只
+# 给已知的内部接触边留 0.01 单位的 clearance，不放宽共面 guard，也不修改源稿。
+# 数值很小，不改变任何可见外轮廓；若未来源稿新增叠层，guard 会明确报出新位置。
+SOURCE_FACE_CLEARANCES = {
+    "DouliHat.bbmodel": {
+        "Inner_Band_Front": (("y", "max", -0.01),),
+        "Inner_Band_Back": (("y", "max", -0.01),),
+        "Inner_Band_Left": (("y", "max", -0.01),),
+        "Inner_Band_Right": (("y", "max", -0.01),),
+    },
+    "SuoYiCloak.bbmodel": {
+        "Side_L1": (("y", "min", 0.01), ("y", "max", -0.01)),
+        "Side_R1": (("y", "min", 0.01), ("y", "max", -0.01)),
+        "Side_L2": (("y", "max", -0.01),),
+        "Side_R2": (("y", "max", -0.01),),
+        "Fringe_BL": (("z", "max", -0.01),),
+        "Fringe_BR": (("z", "max", -0.01),),
+        "Front_L2": (("x", "max", -0.01),),
+        "Front_R2": (("x", "min", 0.01),),
+        "Front_L4": (("x", "min", 0.01),),
+        "Front_R4": (("x", "max", -0.01),),
+        "Side_L3": (("z", "max", -0.01),),
+        "Side_R3": (("z", "max", -0.01),),
+    },
 }
 
 
@@ -355,8 +389,72 @@ def part_boots() -> ArmorPart:
     )
 
 
+def _source_cubes(source_name: str, mount: str) -> tuple[Cube, ...]:
+    """把同套旧 bbmodel 的轴对齐 cube 转成 ArmorCube。
+
+    DouliHat/SuoYiCloak 是已有的 Blockbench 设计稿，不是运行时加载路径。它们的
+    自定义逐面 UV 不能直接塞进 vanilla ModelPart 的单一 box-UV 原点，所以这里保留
+    ``from/to`` 的几何外轮廓，统一使用草甲贴图，并只在 box-UV 宽度超出 64 时沿 z
+    轴切成相邻片。相邻片的并集与源 cube 完全相同，--emit-java 再把最终表吐给 Java。
+    """
+    source_path = LOCAL_MODELS / source_name
+    document = json.loads(source_path.read_text(encoding="utf-8"))
+    cubes: list[Cube] = []
+    for element in document.get("elements", []):
+        if element.get("type", "cube") != "cube":
+            raise ValueError(f"{source_name}/{element.get('name')}: 只支持轴对齐 cube")
+        start = [float(value) for value in element["from"]]
+        end = [float(value) for value in element["to"]]
+        for axis, side, delta in SOURCE_FACE_CLEARANCES.get(source_name, {}).get(
+            element["name"], ()
+        ):
+            axis_index = "xyz".index(axis)
+            target = start if side == "min" else end
+            target[axis_index] += delta
+        start = tuple(start)
+        end = tuple(end)
+        size = tuple(end[index] - start[index] for index in range(3))
+        if any(value <= 0.0 for value in size):
+            raise ValueError(f"{source_name}/{element.get('name')}: cube 尺寸必须为正")
+
+        # box-UV 的横向展开是 2 * (sx + sz)。只沿 z 切，避免改变 x/y 轮廓。
+        max_z = TEXTURE_SIZE / 2 - size[0]
+        if max_z <= 0.0:
+            raise ValueError(f"{source_name}/{element['name']}: x 尺寸无法放入 64px box-UV")
+        segments = max(1, math.ceil(size[2] / max_z))
+        while 2 * (size[0] + size[2] / segments) > TEXTURE_SIZE + 1e-6:
+            segments += 1
+        segment_z = size[2] / segments
+        for index in range(segments):
+            suffix = f"_z{index + 1}" if segments > 1 else ""
+            cubes.append(Cube(
+                mount,
+                f"{element['name']}{suffix}",
+                (start[0], start[1], start[2] + index * segment_z),
+                (size[0], size[1], segment_z),
+                UV_STRAW_WIDE,
+            ))
+    return tuple(cubes)
+
+
+def part_helmet() -> ArmorPart:
+    return ArmorPart(
+        "straw_helmet",
+        "STRAW HELMET",
+        _source_cubes("DouliHat.bbmodel", "HEAD"),
+    )
+
+
+def part_chestplate() -> ArmorPart:
+    return ArmorPart(
+        "straw_chestplate",
+        "STRAW CHESTPLATE",
+        _source_cubes("SuoYiCloak.bbmodel", "BODY"),
+    )
+
+
 def parts() -> tuple[ArmorPart, ...]:
-    return (part_leggings(), part_boots())
+    return (part_helmet(), part_chestplate(), part_leggings(), part_boots())
 
 
 # ─── 校验 ─────────────────────────────────────────────────────────────────

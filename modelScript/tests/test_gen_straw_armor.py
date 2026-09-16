@@ -42,11 +42,43 @@ def _median_hsv(image, box) -> tuple[float, float, float]:
 
 
 class StrawArmorShapeTest(unittest.TestCase):
-    def test_exposes_exactly_leggings_and_boots(self) -> None:
+    def test_exposes_the_complete_four_piece_set(self) -> None:
         parts = straw.parts()
-        self.assertEqual(["straw_leggings", "straw_boots"], [p.key for p in parts])
+        self.assertEqual(
+            ["straw_helmet", "straw_chestplate", "straw_leggings", "straw_boots"],
+            [p.key for p in parts],
+        )
         for part in parts:
             validate_part(part)
+
+    def test_source_parts_keep_wide_brim_and_layered_drape(self) -> None:
+        helmet = straw.part_helmet()
+        chestplate = straw.part_chestplate()
+        self.assertEqual(24, len(helmet.cubes), "斗笠宽檐分片后仍须保留完整源模型轮廓")
+        self.assertEqual(25, len(chestplate.cubes), "蓑衣每一片垂坠层都须进入 cube 表")
+        self.assertEqual({"HEAD"}, {cube.mount for cube in helmet.cubes})
+        self.assertEqual({"BODY"}, {cube.mount for cube in chestplate.cubes})
+        self.assertEqual(
+            14.0,
+            max(cube.origin[0] + cube.size[0] for cube in helmet.cubes),
+            "斗笠檐口的世界坐标外轮廓不可因分片缩窄",
+        )
+        self.assertEqual(
+            8.0,
+            max(cube.origin[0] + cube.size[0] for cube in chestplate.cubes),
+            "蓑衣下摆宽度不可因转写丢失",
+        )
+
+    def test_source_layer_clearance_is_explicit_and_minimal(self) -> None:
+        helmet = {cube.name: cube for cube in straw.part_helmet().cubes}
+        chestplate = {cube.name: cube for cube in straw.part_chestplate().cubes}
+        self.assertAlmostEqual(31.99, helmet["Inner_Band_Front"].origin[1]
+                               + helmet["Inner_Band_Front"].size[1], places=6)
+        self.assertAlmostEqual(17.01, chestplate["Side_L1"].origin[1], places=6)
+        self.assertAlmostEqual(23.99, chestplate["Side_L1"].origin[1]
+                               + chestplate["Side_L1"].size[1], places=6)
+        self.assertAlmostEqual(3.69, chestplate["Fringe_BL"].origin[2]
+                               + chestplate["Fringe_BL"].size[2], places=6)
 
     def test_leggings_ring_is_staves_not_one_box(self) -> None:
         """稻杆捆必须是一圈杆板。做成一个整盒就没有板缝，正视读成一只桶。"""
@@ -274,7 +306,7 @@ class StrawArmorTextureTest(unittest.TestCase):
 
 
 class StrawArmorOutputTest(unittest.TestCase):
-    def test_bbmodel_round_trips_for_both_parts(self) -> None:
+    def test_bbmodel_round_trips_for_all_parts(self) -> None:
         texture = straw.make_texture()
         for part in straw.parts():
             model = build_bbmodel(straw.MATERIAL, part, texture)
@@ -287,18 +319,19 @@ class StrawArmorOutputTest(unittest.TestCase):
         """bbmodel 里的坐标是**世界**坐标（局部 + MOUNT_X），group origin 才是枢轴。
         写混了在 Blockbench 里一拖旋转就散架。"""
         texture = straw.make_texture()
-        part = straw.part_boots()
-        model = build_bbmodel(straw.MATERIAL, part, texture)
-        by_name = {e["name"]: e for e in model["elements"]}
-        for cube in part.cubes:
-            self.assertAlmostEqual(cube.origin[0] + MOUNT_X[cube.mount],
-                                   by_name[cube.name]["from"][0], places=3)
+        for part in straw.parts():
+            model = build_bbmodel(straw.MATERIAL, part, texture)
+            by_name = {e["name"]: e for e in model["elements"]}
+            for cube in part.cubes:
+                self.assertAlmostEqual(cube.origin[0] + MOUNT_X[cube.mount],
+                                       by_name[cube.name]["from"][0], places=3)
 
     def test_emit_java_and_digest_are_stable(self) -> None:
         for part in straw.parts():
             java = straw.emit_java(part)
             self.assertEqual(len(part.cubes), java.count("new ArmorCube("))
-            self.assertIn("Mount.LEFT_", java)
+            for mount in {cube.mount for cube in part.cubes}:
+                self.assertIn(f"Mount.{mount}", java)
             digest = straw.cube_digest(part)
             self.assertEqual(16, len(digest))
             self.assertEqual(digest, straw.cube_digest(part))
