@@ -54,6 +54,33 @@ class InventoryEquipRulesTest {
         );
     }
 
+    @Test
+    void newlyRegisteredM2ItemsFollowServerWeaponAndToolCategories() {
+        InventoryItem dagger = item(1101L, "iron_dagger", 1, 1);
+        assertTrue(InventoryEquipRules.isWeapon(dagger),
+            "iron_dagger 在 workbench_materials.toml 是 weapon/dagger，客户端不得把它当未知物");
+        assertTrue(InventoryEquipRules.canEquip(dagger, EquipSlotType.MAIN_HAND, null, equipped()));
+        assertTrue(InventoryEquipRules.canEquip(dagger, EquipSlotType.OFF_HAND, null, equipped()),
+            "dagger 与 server weapon_kind=dagger 对齐，应允许副手");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(dagger), "武器不进入 hotbar");
+
+        InventoryItem club = item(1102L, "wooden_club", 1, 2);
+        assertTrue(InventoryEquipRules.isWeapon(club),
+            "wooden_club 在 workbench_materials.toml 是 weapon/staff，客户端不得把它当未知物");
+        assertTrue(InventoryEquipRules.canEquip(club, EquipSlotType.MAIN_HAND, null, equipped()));
+        assertFalse(InventoryEquipRules.canEquip(club, EquipSlotType.OFF_HAND, null, equipped()),
+            "staff 是双手武器，只能从主手进入并锁副手");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(club), "武器不进入 hotbar");
+
+        InventoryItem herbKnife = item(1103L, "herb_knife_iron", 1, 1);
+        assertTrue(InventoryEquipRules.isTool(herbKnife),
+            "herb_knife_iron 在 craft_legacy_items.toml 是 category=tool，客户端必须镜像工具白名单");
+        assertTrue(InventoryEquipRules.canEquip(herbKnife, EquipSlotType.MAIN_HAND, null, equipped()));
+        assertTrue(InventoryEquipRules.canEquip(herbKnife, EquipSlotType.OFF_HAND, null, equipped()),
+            "工具与 server ItemCategory::Tool 对齐，应允许副手");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(herbKnife), "工具不进入 hotbar");
+    }
+
     // ── 双手武器（spear/staff）：走 MAIN_HAND held + 锁 OFF_HAND（取代旧 TWO_HAND 专槽，决议 #17） ──
 
     @Test
