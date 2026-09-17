@@ -1,4 +1,4 @@
-//! plan-armor-visual-v1 — 6 套凡物盔甲规格、profile 注册与 hand-craft 配方。
+//! plan-armor-visual-v1 — 9 套凡物盔甲规格、profile 注册与 hand-craft 配方。
 
 use std::collections::HashMap;
 
@@ -22,10 +22,12 @@ pub enum MundaneArmorMaterial {
     Copper,
     SpiritCloth,
     ScrollWrap,
+    Linen,
+    MutatedBone,
 }
 
 impl MundaneArmorMaterial {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Straw,
         Self::Bone,
         Self::Hide,
@@ -33,6 +35,8 @@ impl MundaneArmorMaterial {
         Self::Copper,
         Self::SpiritCloth,
         Self::ScrollWrap,
+        Self::Linen,
+        Self::MutatedBone,
     ];
 
     pub fn id(self) -> &'static str {
@@ -44,6 +48,8 @@ impl MundaneArmorMaterial {
             Self::Copper => "copper",
             Self::SpiritCloth => "spirit_cloth",
             Self::ScrollWrap => "scroll_wrap",
+            Self::Linen => "linen",
+            Self::MutatedBone => "mutated_bone",
         }
     }
 
@@ -56,6 +62,8 @@ impl MundaneArmorMaterial {
             Self::Copper => "铜甲",
             Self::SpiritCloth => "灵布衫",
             Self::ScrollWrap => "残卷缠甲",
+            Self::Linen => "麻布僧袍",
+            Self::MutatedBone => "异兽刺骨甲",
         }
     }
 
@@ -68,6 +76,8 @@ impl MundaneArmorMaterial {
             Self::Copper => 7.0,
             Self::SpiritCloth => 4.0,
             Self::ScrollWrap => 6.0,
+            Self::Linen => 2.5,
+            Self::MutatedBone => 8.0,
         }
     }
 
@@ -80,6 +90,8 @@ impl MundaneArmorMaterial {
             Self::Copper => 160,
             Self::SpiritCloth => 100,
             Self::ScrollWrap => 140,
+            Self::Linen => 70,
+            Self::MutatedBone => 180,
         }
     }
 
@@ -92,6 +104,12 @@ impl MundaneArmorMaterial {
             Self::Copper => &[("copper_ore", 4), ("raw_beast_hide", 2)],
             Self::SpiritCloth => &[("spirit_cloth", 3), ("spirit_grass", 2)],
             Self::ScrollWrap => &[("scroll_fragment", 4), (BONE_COIN_TEMPLATE, 4)],
+            Self::Linen => &[("rough_cloth", 4), ("grass_rope", 2), ("bone_chip_mat", 2)],
+            Self::MutatedBone => &[
+                ("bone_chip_mat", 5),
+                ("raw_beast_hide", 3),
+                ("rough_cloth", 2),
+            ],
         }
     }
 }
@@ -249,7 +267,7 @@ pub fn equip_slot_for_item_id(item_id: &str) -> Option<EquipSlotV1> {
 pub fn register_mundane_armors(registry: &mut ArmorProfileRegistry) -> Result<(), String> {
     // armor_profiles/*.json 的手调 profile（分 WoundKind 数值、broken_multiplier）
     // 优先于本函数的程序生成粗值：已注册的 template 跳过而非报错。历史 bug：
-    // 撞 armor_bone_helmet 时 `?` 直接中断整批 → Bone 之后全部材质（24 件甲）
+    // 撞 armor_bone_helmet 时 `?` 直接中断整批 → Bone 之后的其余材质全部静默无 profile
     // 无 profile 静默零减伤（2026-07-06 bot playtest 发现）。
     let mut errors = Vec::new();
     for item in all_mundane_armor_items() {
@@ -314,7 +332,7 @@ mod tests {
     #[test]
     fn register_mundane_skips_hand_tuned_and_registers_rest() {
         // 手调 json（armor_profiles/*.json 先加载）与程序生成撞 template_id 时：
-        // 手调赢、不中断整批。历史 bug：第一个 duplicate 让 Bone 之后 24 件甲
+        // 手调赢、不中断整批。历史 bug：第一个 duplicate 让 Bone 之后的其余材质
         // 全部静默无 profile。
         let mut registry = ArmorProfileRegistry::new();
         let hand_tuned = ArmorProfile {
@@ -368,14 +386,14 @@ mod tests {
     }
 
     #[test]
-    fn all_28_items_registered() {
+    fn all_36_items_registered() {
         let mut registry = ArmorProfileRegistry::new();
         register_mundane_armors(&mut registry).expect("mundane armor profiles register");
 
         assert_eq!(
             registry.len(),
-            28,
-            "expected 28 mundane armor profiles (7 materials × 4 slots), got {}",
+            36,
+            "expected 36 mundane armor profiles (9 materials × 4 slots), got {}",
             registry.len()
         );
         for item in all_mundane_armor_items() {
@@ -385,6 +403,40 @@ mod tests {
                 item.item_id()
             );
         }
+    }
+
+    #[test]
+    fn new_mundane_materials_pin_strength_and_recipe_inputs() {
+        assert_eq!(
+            MundaneArmorMaterial::ALL.len(),
+            9,
+            "凡物护甲材质应有 9 套，新增 Linen 与 MutatedBone 不能漏注册"
+        );
+
+        assert_eq!(MundaneArmorMaterial::Linen.id(), "linen");
+        assert_eq!(MundaneArmorMaterial::Linen.display_name(), "麻布僧袍");
+        assert_eq!(MundaneArmorMaterial::Linen.defense(), 2.5);
+        assert_eq!(MundaneArmorMaterial::Linen.durability_max(), 70);
+        assert_eq!(
+            MundaneArmorMaterial::Linen.base_materials(),
+            &[("rough_cloth", 4), ("grass_rope", 2), ("bone_chip_mat", 2),]
+        );
+
+        assert_eq!(MundaneArmorMaterial::MutatedBone.id(), "mutated_bone");
+        assert_eq!(
+            MundaneArmorMaterial::MutatedBone.display_name(),
+            "异兽刺骨甲"
+        );
+        assert_eq!(MundaneArmorMaterial::MutatedBone.defense(), 8.0);
+        assert_eq!(MundaneArmorMaterial::MutatedBone.durability_max(), 180);
+        assert_eq!(
+            MundaneArmorMaterial::MutatedBone.base_materials(),
+            &[
+                ("bone_chip_mat", 5),
+                ("raw_beast_hide", 3),
+                ("rough_cloth", 2),
+            ]
+        );
     }
 
     #[test]
