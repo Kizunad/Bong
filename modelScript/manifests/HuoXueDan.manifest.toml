@@ -27,7 +27,7 @@ pill_shadow = [130, 32, 22]
 linen_sack = { elements = ["sack_bottom", "sack_belly", "sack_neck", "sack_cord", "cord_knot", "cord_tail", "sack_frill"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
 
 # 倾倒木盒与盒盖
-wooden_bowl = { elements = ["b_foot", "b_belly", "b_rim", "lid_rim", "lid_dome", "lid_knob"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 800, "3/4" = 1000 } }
+wooden_bowl = { elements = ["b_foot", "b_wall_", "b_inner_bed", "b_rim", "lid_rim", "lid_dome", "lid_knob"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 800, "3/4" = 1000 } }
 
 # 散落活血丹
 blood_pills = { elements = ["p_exit", "p_front_main", "p_out_"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 300, "3/4" = 500 } }

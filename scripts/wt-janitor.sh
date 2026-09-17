@@ -104,10 +104,12 @@ command -v gh >/dev/null 2>&1 || HAVE_GH=0
 [[ $HAVE_GH -eq 0 ]] && echo "警告：gh 不可用，PR 状态一律按 UNKNOWN 处理（不会 --apply 回收任何树，也不会 clean-artifacts）" >&2
 
 # 已知可再生的构建缓存目录（相对 worktree 根）——单一真相源。
+# 本列表同时驱动 rm -rf，因此与 slot_registry.sh 的同名列表刻意保持内容不同：
+# server/data / tmp 只在 slot_registry.sh 中作为可接受 ignored 路径，绝不移入本列表。
 # 回收前：① 主动枚举 ignored/untracked，只允许这些白名单路径；② 再物理删除缓存；
 # ③ 最后不带 --force 调用 worktree remove。安全门在脚本侧 fail-closed，
 # 不依赖 git remove 是否拒绝（Git 2.47 会对含 ignored 的干净树直接删掉）。
-CACHE_DIRS=("server/target" "client/build" "client/.gradle")
+CACHE_DIRS=("server/target" "client/build" "client/.gradle" "__pycache__")
 
 reclaimed=0
 partial=0
@@ -242,6 +244,11 @@ is_allowlisted_cache() {
   local rel="${1#./}"
   rel="${rel%/}"
   local d
+  # __pycache__ 只含 .pyc 字节码，可再生、无密钥；Python 会在任意执行目录下生成，
+  # 因此按这个具名路径段放行，而不逐条枚举目录。
+  case "/$rel/" in
+    */__pycache__/*) return 0 ;;
+  esac
   for d in "${CACHE_DIRS[@]}"; do
     if [[ "$rel" == "$d" || "$rel" == "$d"/* ]]; then
       return 0
@@ -254,9 +261,25 @@ is_allowlisted_cache() {
 cache_dir_present() {
   local p="$1" d
   for d in "${CACHE_DIRS[@]}"; do
-    [[ -d "$p/$d" ]] && return 0
+    if [[ "$d" == "__pycache__" ]]; then
+      [[ -n "$(find "$p" -type d -name "$d" -prune -print -quit 2>/dev/null)" ]] && return 0
+    elif [[ -d "$p/$d" ]]; then
+      return 0
+    fi
   done
   return 1
+}
+
+# 删除 CACHE_DIRS 中的缓存；__pycache__ 是路径段规则，必须清理 worktree 内所有同名目录。
+remove_cache_dirs() {
+  local p="$1" d
+  for d in "${CACHE_DIRS[@]}"; do
+    if [[ "$d" == "__pycache__" ]]; then
+      find "$p" -type d -name "$d" -prune -exec rm -rf -- {} + 2>/dev/null || return 1
+    else
+      rm -rf "${p:?}/$d" 2>/dev/null || return 1
+    fi
+  done
 }
 
 # 枚举 worktree 内 ignored + untracked；若存在非白名单项则 fail-closed。
@@ -575,9 +598,7 @@ for i in "${!paths[@]}"; do
       else
         [[ $locked -eq 1 ]] && git worktree unlock "$path" 2>/dev/null || true
         cache_ok=1
-        for d in "${CACHE_DIRS[@]}"; do
-          rm -rf "${path:?}/$d" 2>/dev/null || cache_ok=0
-        done
+        remove_cache_dirs "$path" || cache_ok=0
         if [[ $cache_ok -eq 0 ]]; then
           verdict="缓存清理失败（权限/挂载问题？）→ 交人工"
         elif git worktree remove "$path" 2>/dev/null; then
@@ -620,9 +641,7 @@ for i in "${!paths[@]}"; do
           verdict="$verdict + BUSY（构建产物删除前复扫发现进程引用）→ 不 clean（交人工）"
         else
           artifacts_ok=1
-          for d in "${CACHE_DIRS[@]}"; do
-            rm -rf "${path:?}/$d" 2>/dev/null || artifacts_ok=0
-          done
+          remove_cache_dirs "$path" || artifacts_ok=0
           if [[ $artifacts_ok -eq 1 ]]; then
             verdict="$verdict + 构建产物已清（闲置 ${idle_days}d ≥ ${IDLE_DAYS}d）"
           else

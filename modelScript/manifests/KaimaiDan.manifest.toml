@@ -18,7 +18,7 @@ pill_lit     = [196, 126, 78]
 
 [features]
 # 折纸花托：底座 + 四面纸壁 + 四角尖峰
-paper_wrap = { elements = ["base_", "cup_", "petal_", "corner_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
+paper_wrap = { elements = ["base_", "cup_", "front_", "side_", "back_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2000, SIDE_R = 2000 } }
 
 # 开脉大丹：正中央浑圆饱满的大丹药
 grand_dan = { elements = ["grand_dan"], must_show_in = ["FRONT", "3/4"], min_px = { FRONT = 1500, "3/4" = 2000 } }
