@@ -1,0 +1,16 @@
+# 斗笠（straw_helmet）视觉点名清单。
+#
+# 运行时由 ArmorPartModel 的 HEAD cube 表承载；这里点名的是离线 bbmodel 的可见契约，
+# 不是从模型自动推断出来的清单。斗笠正面朝 -z，与护甲预览工具的正面约定一致。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 斗笠的宽檐是第一眼轮廓，内外两道都必须保留。
+wide_brim = { elements = ["Brim"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = { FRONT = 1200, SIDE_R = 1000, BACK = 1200, SIDE_L = 1200, TOP = 10000 } }
+# 逐层收窄的斗顶不可被简化成一只平顶盒。
+tapered_crown = { names = ["Apex"], elements = ["Cone_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = { FRONT = 1800, SIDE_R = 1600, BACK = 1800, SIDE_L = 1800, TOP = 10000 } }
+# 下颌带左右成对，缺一侧会让斗笠变成悬浮的帽檐。
+chin_straps = { elements = ["Chin_Strap_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 150, SIDE_R = 150 }, mirror = true }

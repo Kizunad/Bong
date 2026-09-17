@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""草甲（straw）护腿 / 草鞋的 bbmodel + 贴图 + 三视图生成器。
+"""草甲（straw）四件套的 bbmodel + 贴图 + 三视图生成器。
 
 参考图：`orthograph #6`（草护腿：竖向稻杆捆扎 + 五道绳箍 + 上下出穗）、
 `orthograph #7`（草鞋：编织草底 + 趾间绳桩 + 脚背 V 叉 + 踝箍与外侧结）。
@@ -12,11 +12,23 @@
 
 两张图是各自独立出的，拉伸倍率都不一样，所以**纵向一律按腿长比例映射**，
 不拿 px/单位硬乘。下面每处偏离参考的地方都写了理由。
+
+斗笠与蓑衣本轮没有独立参考图，也不冒充由 `orthograph #6/#7` 外推：两件均以仓库
+已有的 `modelScript/models/DouliHat.bbmodel` / `SuoYiCloak.bbmodel` 为形制依据，
+直接沿用其中相对玩家头/躯干枢轴的 MC 单位 `from/to` 几何，不另行缩放。为适配
+vanilla `ModelPart` 的 box-UV，只沿 z 轴把过宽的盒分成相邻片，并统一落到本生成器的
+64×64 草甲纹理；源稿中已知的内部接触边只按 `SOURCE_FACE_CLEARANCES` 留 0.01 单位
+间隙。这样后续可逐项对照两份既有 bbmodel 的坐标、分片位置和 clearance，而不是只
+复核「看起来像不像」的结论。
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
+from dataclasses import replace
+import json
+import math
 import random
 from pathlib import Path
 
@@ -27,7 +39,15 @@ from pathlib import Path as _Path
 
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
 
-from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.gates import gatekit
+from bbmodel_maker.model.armor_model_common import (
+    ArmorPart,
+    Cube,
+    MOUNT_X,
+    TEXTURE_SIZE,
+    write_material_assets,
+)
+from bbmodel_maker.rig.rigkit import Rig
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -60,6 +80,9 @@ UV_WORN_A = (32, 0)      # 旧稻杆：穗头、断口
 UV_WORN_B = (48, 0)      # 旧稻杆（另一调）
 UV_BRAID = (0, 32)       # 编织草底：横向编纹
 UV_CORD = (32, 32)       # 搓绳：斜向拧纹
+# 斗笠檐口和蓑衣的大面不是腿/鞋的窄盒，使用整行 straw 纹理；必要时由
+# _source_cubes 沿 z 分片，使每一片的 box-UV 仍落在 64×64 内。
+UV_STRAW_WIDE = (0, 1)
 
 STRAW_TONES = (UV_STRAW_A, UV_STRAW_B, UV_STRAW_C, UV_STRAW_D)
 
@@ -68,6 +91,35 @@ UV_TILES = {
     UV_STRAW_A: (8, 32), UV_STRAW_B: (8, 32), UV_STRAW_C: (8, 32), UV_STRAW_D: (8, 32),
     UV_WORN_A: (16, 32), UV_WORN_B: (16, 32),
     UV_BRAID: (32, 32), UV_CORD: (32, 32),
+    UV_STRAW_WIDE: (64, 31),
+}
+
+# DouliHat/SuoYiCloak 的旧设计稿用相邻、分层的 cube 表达软材料。少数层的边界
+# 恰好落在同一平面；在 Blockbench/GeckoLib 里这些面大多被下一层遮住，但 vanilla
+# ModelPart 会把它们作为同一 mesh 的两个面烘焙出来，边界处会 z-fighting。这里只
+# 给已知的内部接触边留 0.01 单位的 clearance，不放宽共面 guard，也不修改源稿。
+# 数值很小，不改变任何可见外轮廓；若未来源稿新增叠层，guard 会明确报出新位置。
+SOURCE_FACE_CLEARANCES = {
+    "DouliHat.bbmodel": {
+        "Inner_Band_Front": (("y", "max", -0.01),),
+        "Inner_Band_Back": (("y", "max", -0.01),),
+        "Inner_Band_Left": (("y", "max", -0.01),),
+        "Inner_Band_Right": (("y", "max", -0.01),),
+    },
+    "SuoYiCloak.bbmodel": {
+        "Side_L1": (("y", "min", 0.01), ("y", "max", -0.01)),
+        "Side_R1": (("y", "min", 0.01), ("y", "max", -0.01)),
+        "Side_L2": (("y", "max", -0.01),),
+        "Side_R2": (("y", "max", -0.01),),
+        "Fringe_BL": (("z", "max", -0.01),),
+        "Fringe_BR": (("z", "max", -0.01),),
+        "Front_L2": (("x", "max", -0.01),),
+        "Front_R2": (("x", "min", 0.01),),
+        "Front_L4": (("x", "min", 0.01),),
+        "Front_R4": (("x", "max", -0.01),),
+        "Side_L3": (("z", "max", -0.01),),
+        "Side_R3": (("z", "max", -0.01),),
+    },
 }
 
 
@@ -355,8 +407,72 @@ def part_boots() -> ArmorPart:
     )
 
 
+def _source_cubes(source_name: str, mount: str) -> tuple[Cube, ...]:
+    """把同套旧 bbmodel 的轴对齐 cube 转成 ArmorCube。
+
+    DouliHat/SuoYiCloak 是已有的 Blockbench 设计稿，不是运行时加载路径。它们的
+    自定义逐面 UV 不能直接塞进 vanilla ModelPart 的单一 box-UV 原点，所以这里保留
+    ``from/to`` 的几何外轮廓，统一使用草甲贴图，并只在 box-UV 宽度超出 64 时沿 z
+    轴切成相邻片。相邻片的并集与源 cube 完全相同，--emit-java 再把最终表吐给 Java。
+    """
+    source_path = LOCAL_MODELS / source_name
+    document = json.loads(source_path.read_text(encoding="utf-8"))
+    cubes: list[Cube] = []
+    for element in document.get("elements", []):
+        if element.get("type", "cube") != "cube":
+            raise ValueError(f"{source_name}/{element.get('name')}: 只支持轴对齐 cube")
+        start = [float(value) for value in element["from"]]
+        end = [float(value) for value in element["to"]]
+        for axis, side, delta in SOURCE_FACE_CLEARANCES.get(source_name, {}).get(
+            element["name"], ()
+        ):
+            axis_index = "xyz".index(axis)
+            target = start if side == "min" else end
+            target[axis_index] += delta
+        start = tuple(start)
+        end = tuple(end)
+        size = tuple(end[index] - start[index] for index in range(3))
+        if any(value <= 0.0 for value in size):
+            raise ValueError(f"{source_name}/{element.get('name')}: cube 尺寸必须为正")
+
+        # box-UV 的横向展开是 2 * (sx + sz)。只沿 z 切，避免改变 x/y 轮廓。
+        max_z = TEXTURE_SIZE / 2 - size[0]
+        if max_z <= 0.0:
+            raise ValueError(f"{source_name}/{element['name']}: x 尺寸无法放入 64px box-UV")
+        segments = max(1, math.ceil(size[2] / max_z))
+        while 2 * (size[0] + size[2] / segments) > TEXTURE_SIZE + 1e-6:
+            segments += 1
+        segment_z = size[2] / segments
+        for index in range(segments):
+            suffix = f"_z{index + 1}" if segments > 1 else ""
+            cubes.append(Cube(
+                mount,
+                f"{element['name']}{suffix}",
+                (start[0], start[1], start[2] + index * segment_z),
+                (size[0], size[1], segment_z),
+                UV_STRAW_WIDE,
+            ))
+    return tuple(cubes)
+
+
+def part_helmet() -> ArmorPart:
+    return ArmorPart(
+        "straw_helmet",
+        "STRAW HELMET",
+        _source_cubes("DouliHat.bbmodel", "HEAD"),
+    )
+
+
+def part_chestplate() -> ArmorPart:
+    return ArmorPart(
+        "straw_chestplate",
+        "STRAW CHESTPLATE",
+        _source_cubes("SuoYiCloak.bbmodel", "BODY"),
+    )
+
+
 def parts() -> tuple[ArmorPart, ...]:
-    return (part_leggings(), part_boots())
+    return (part_helmet(), part_chestplate(), part_leggings(), part_boots())
 
 
 # ─── 校验 ─────────────────────────────────────────────────────────────────
@@ -539,6 +655,131 @@ def _assert_mirror_symmetry(all_parts: tuple[ArmorPart, ...]) -> None:
                 )
             if lc.origin[1:] != rc.origin[1:]:
                 raise ValueError(f"{part.key}/{name}: 左右 y/z 不一致")
+
+
+# ─── gatekit 差分自证 ───────────────────────────────────────────────────────
+# 这些是玩家护甲，不是 0..16 的方块模型：斗笠的宽檐本来就会超过一个方块，
+# 因而不能把 gatekit 的 block-overflow 门硬套上来。仍使用 gatekit.AssetGates 作为
+# 差分自证运行器，但只把适用于本轮两件新造模型的两道不变式接到对应注入器上。
+GATE_MATS = {
+    "straw": (172, 150, 108),
+    "worn": (137, 114, 78),
+    "braid": (127, 107, 68),
+    "cord": (105, 85, 52),
+}
+
+
+def _gate_material(cube: Cube) -> str:
+    if cube.uv in (*STRAW_TONES, UV_STRAW_WIDE):
+        return "straw"
+    if cube.uv in (UV_WORN_A, UV_WORN_B):
+        return "worn"
+    if cube.uv == UV_BRAID:
+        return "braid"
+    if cube.uv == UV_CORD:
+        return "cord"
+    raise ValueError(f"{cube.name}: 未知 uv {cube.uv}")
+
+
+def _cube_bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    box = _world_box(cube)
+    return tuple(axis[0] for axis in box), tuple(axis[1] for axis in box)
+
+
+def _gate_rig(all_parts: tuple[ArmorPart, ...]) -> Rig:
+    """把 ArmorPart 适配为 gatekit 的 Rig；不参与任何运行时输出。"""
+    rig = Rig(GATE_MATS)
+    # gatekit 的 report 需要 Rig，护甲专用 gate 则需要原始 ArmorPart 元组。
+    # 动态属性随 deepcopy 一起复制，供差分注入器只改测试输入而不碰磁盘资产。
+    rig._straw_parts = tuple(all_parts)
+    for part in all_parts:
+        rig.bone(part.key, (0.0, 0.0, 0.0))
+        for cube in part.cubes:
+            offset = MOUNT_X[cube.mount]
+            origin = (cube.origin[0] + offset, cube.origin[1], cube.origin[2])
+            end = (cube.end[0] + offset, cube.end[1], cube.end[2])
+            rig.cube(part.key, cube.name, origin, end, mat=_gate_material(cube))
+    return rig
+
+
+def build() -> Rig:
+    """供 bbmodel-contact-sheet 与 `--self-test` 使用的 gatekit 适配 Rig。"""
+    # 只有这两件是本轮新造模型；腿套与草鞋沿用既有几何，不在本轮差分自证范围内。
+    return _gate_rig((part_helmet(), part_chestplate()))
+
+
+def _gate_violations(rig: Rig, check) -> list[str]:
+    try:
+        check(rig._straw_parts)
+    except ValueError as exc:
+        return [str(exc)]
+    return []
+
+
+def _replace_gate_cube(rig: Rig, part_key: str, index: int, cube: Cube) -> Rig:
+    updated = []
+    found = False
+    for part in rig._straw_parts:
+        if part.key == part_key:
+            cubes = list(part.cubes)
+            cubes[index] = cube
+            part = replace(part, cubes=tuple(cubes))
+            found = True
+        updated.append(part)
+    if not found:
+        raise ValueError(f"gate rig 中没有 {part_key}")
+    rig._straw_parts = tuple(updated)
+    return rig
+
+
+def _inject_coplanar(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._straw_parts:
+        for first_index, first in enumerate(part.cubes):
+            low_a, high_a = _cube_bounds(first)
+            for second_index in range(first_index + 1, len(part.cubes)):
+                second = part.cubes[second_index]
+                low_b, high_b = _cube_bounds(second)
+                for axis in range(3):
+                    projection = 1.0
+                    for other in (k for k in range(3) if k != axis):
+                        projection *= max(
+                            0.0,
+                            min(high_a[other], high_b[other])
+                            - max(low_a[other], low_b[other]),
+                        )
+                    if projection <= 0.02:
+                        continue
+                    origin = list(second.origin)
+                    offset = MOUNT_X[second.mount] if axis == 0 else 0.0
+                    origin[axis] = high_a[axis] - second.size[axis] - offset
+                    _replace_gate_cube(r, part.key, second_index,
+                                       replace(second, origin=tuple(origin)))
+                    return r, second.name, f"把 {second.name} 的 {'xyz'[axis]} 面移到共面"
+    raise gatekit.InjectionImpossible("找不到可造共面且有投影重叠的 cube 对")
+
+
+def _inject_uv(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    part = r._straw_parts[0]
+    cube = part.cubes[0]
+    _replace_gate_cube(r, part.key, 0, replace(cube, uv=(TEXTURE_SIZE, TEXTURE_SIZE)))
+    return r, cube.name, f"把 {cube.name} 的 uv 移出 64×64 贴图"
+
+
+class _StrawArmorGates(gatekit.AssetGates):
+    """用 gatekit 的统一 self_test 跑本轮两件新造模型的不变式。"""
+
+    def specs(self):
+        return (
+            ("coplanar", "单件共面 / z-fighting",
+             lambda r: _gate_violations(r, _assert_no_coplanar_faces), _inject_coplanar),
+            ("uv_tiles", "box-UV 越出指定色调格",
+             lambda r: _gate_violations(r, _assert_uv_tiles), _inject_uv),
+        )
+
+
+GATES = _StrawArmorGates("草甲四件套 / straw armor", GATE_MATS)
 
 
 # ─── 贴图 ─────────────────────────────────────────────────────────────────
@@ -741,25 +982,31 @@ def generate(render_previews: bool = True, install: bool = False) -> dict[str, P
     )
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-preview", action="store_true", help="只写 bbmodel/texture")
     parser.add_argument("--emit-java", action="store_true", help="打印 ArmorPartModel 用的 cube 表")
+    parser.add_argument("--self-test", action="store_true",
+                        help="gatekit 差分自证：先注入缺陷再确认每道门能报出")
     parser.add_argument("--install", action="store_true",
                         help="贴图写进 client 资源树（接线那轮再用，记得同步资源包 sha1）")
     args = parser.parse_args()
+
+    if args.self_test:
+        return GATES.self_test(build())
 
     if args.emit_java:
         for part in parts():
             print(f"// {part.key}: {len(part.cubes)} cubes, digest {cube_digest(part)}")
             print(emit_java(part))
             print()
-        return
+        return 0
 
     outputs = generate(render_previews=not args.no_preview, install=args.install)
     for key, path in outputs.items():
         print(f"[{key}] {path.relative_to(REPO)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
