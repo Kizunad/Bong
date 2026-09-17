@@ -6,7 +6,7 @@
 - 视觉构成：
   1. 深灰深板岩片状层理基底。
   2. 嵌生的大块泥褐风化结核包裹体。
-  3. 结核崩裂露出的铅灰生铁多面体晶斑与金橙地热火痕。
+  3. 结核崩裂露出的暖焦生铁多面体晶斑与金橙地热火痕。
 """
 
 from __future__ import annotations
@@ -19,15 +19,15 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "core"))
 from palette_cutie import (
-    MUD_VOID, MUD_DARK, MUD_MID, MUD_LIT,
-    IRON_VOID, IRON_DARK, IRON_MID, IRON_LIT, IRON_SPEC,
+    ORE_VOID, ORE_DARK, ORE_MUD_MID, ORE_MUD_LIT,
+    ORE_IRON_MID, ORE_IRON_LIT, ORE_IRON_SPEC,
     FIRE_DEEP, FIRE_MID, FIRE_HIGH
 )
 
 def generate_cutie_ore_block_texture() -> Image.Image:
     """生成 16×16 深板岩粗铁矿石方块贴图。"""
     np.random.seed(414)
-    img = Image.new("RGBA", (16, 16), IRON_DARK + (255,))
+    img = Image.new("RGBA", (16, 16), ORE_DARK + (255,))
     pixels = img.load()
 
     # 1. 铺设深板岩岩体基底（深灰黑水平片理）
@@ -36,35 +36,35 @@ def generate_cutie_ore_block_texture() -> Image.Image:
             noise = (math.sin(y * 1.2) + math.cos(x * 0.4 + y * 0.8)) * 0.5
             r = np.random.rand() + noise * 0.3
             if r < 0.28:
-                col = IRON_VOID
+                col = ORE_VOID
             elif r < 0.72:
-                col = IRON_DARK
+                col = ORE_DARK
             else:
-                col = IRON_MID
+                col = ORE_IRON_MID
             pixels[x, y] = col + (255,)
 
     # 2. 嵌生的粗铁风化泥褐结核大斑（中左核心区 3~11, 3~12）
     mud_nodule = [
-        (6, 3, MUD_LIT), (7, 3, MUD_LIT), (8, 3, MUD_MID),
-        (5, 4, MUD_LIT), (6, 4, MUD_MID), (7, 4, MUD_MID), (8, 4, MUD_MID), (9, 4, MUD_DARK),
-        (4, 5, MUD_LIT), (9, 5, MUD_DARK), (10, 5, MUD_DARK),
-        (3, 6, MUD_LIT), (10, 6, MUD_DARK), (11, 6, MUD_VOID),
-        (3, 7, MUD_LIT), (10, 7, MUD_DARK),
-        (3, 8, MUD_MID), (9, 8, MUD_DARK), (10, 8, MUD_VOID),
-        (4, 9, MUD_MID), (9, 9, MUD_DARK),
-        (4, 10, MUD_DARK), (5, 10, MUD_DARK), (8, 10, MUD_DARK), (9, 10, MUD_VOID),
-        (5, 11, MUD_DARK), (6, 11, MUD_VOID), (7, 11, MUD_VOID), (8, 11, MUD_VOID)
+        (6, 3, ORE_MUD_LIT), (7, 3, ORE_MUD_LIT), (8, 3, ORE_MUD_MID),
+        (5, 4, ORE_MUD_LIT), (6, 4, ORE_MUD_MID), (7, 4, ORE_MUD_MID), (8, 4, ORE_MUD_MID), (9, 4, ORE_DARK),
+        (4, 5, ORE_MUD_LIT), (9, 5, ORE_DARK), (10, 5, ORE_DARK),
+        (3, 6, ORE_MUD_LIT), (10, 6, ORE_DARK), (11, 6, ORE_VOID),
+        (3, 7, ORE_MUD_LIT), (10, 7, ORE_DARK),
+        (3, 8, ORE_MUD_MID), (9, 8, ORE_DARK), (10, 8, ORE_VOID),
+        (4, 9, ORE_MUD_MID), (9, 9, ORE_DARK),
+        (4, 10, ORE_DARK), (5, 10, ORE_DARK), (8, 10, ORE_DARK), (9, 10, ORE_VOID),
+        (5, 11, ORE_DARK), (6, 11, ORE_VOID), (7, 11, ORE_VOID), (8, 11, ORE_VOID)
     ]
     for mx, my, col in mud_nodule:
         pixels[mx, my] = col + (255,)
 
-    # 3. 结核崩裂露出的铅灰生铁多面体金属块（核内金属 5~8, 5~9）
+    # 3. 结核崩裂露出的生铁多面体金属块（核内金属 5~8, 5~9）
     metallic_facets = [
-        (5, 5, IRON_LIT), (6, 5, IRON_SPEC), (7, 5, IRON_LIT), (8, 5, IRON_MID),
-        (4, 6, IRON_LIT), (5, 6, IRON_SPEC), (6, 6, IRON_LIT), (7, 6, IRON_MID), (8, 6, IRON_DARK),
-        (4, 7, IRON_MID), (5, 7, IRON_LIT), (6, 7, IRON_MID), (7, 7, IRON_DARK), (8, 7, IRON_VOID),
-        (5, 8, IRON_MID), (6, 8, IRON_DARK), (7, 8, IRON_VOID),
-        (5, 9, IRON_DARK), (6, 9, IRON_VOID)
+        (5, 5, ORE_IRON_LIT), (6, 5, ORE_IRON_SPEC), (7, 5, ORE_IRON_LIT), (8, 5, ORE_IRON_MID),
+        (4, 6, ORE_IRON_LIT), (5, 6, ORE_IRON_SPEC), (6, 6, ORE_IRON_LIT), (7, 6, ORE_IRON_MID), (8, 6, ORE_DARK),
+        (4, 7, ORE_IRON_MID), (5, 7, ORE_IRON_LIT), (6, 7, ORE_IRON_MID), (7, 7, ORE_DARK), (8, 7, ORE_VOID),
+        (5, 8, ORE_IRON_MID), (6, 8, ORE_DARK), (7, 8, ORE_VOID),
+        (5, 9, ORE_DARK), (6, 9, ORE_VOID)
     ]
     for ox, oy, col in metallic_facets:
         pixels[ox, oy] = col + (255,)
