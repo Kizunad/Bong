@@ -182,6 +182,10 @@ public final class ArmorPartModel {
         tables.put("linen_chestplate", linenChestplate());
         tables.put("linen_leggings", linenLeggings());
         tables.put("linen_boots", linenBoots());
+        tables.put("mutated_bone_helmet", mutatedBoneHelmet());
+        tables.put("mutated_bone_chestplate", mutatedBoneChestplate());
+        tables.put("mutated_bone_leggings", mutatedBoneLeggings());
+        tables.put("mutated_bone_boots", mutatedBoneBoots());
         return Map.copyOf(tables);
     }
 
@@ -1298,6 +1302,184 @@ public final class ArmorPartModel {
             new ArmorCube(Mount.RIGHT_FOOT, -2.31f, 2.76f, 1.6f, 3.72f, 0.3f, 0.26f, 32, 32),
             new ArmorCube(Mount.RIGHT_FOOT, -2.5300000000000002f, 2.74f, -1.66f, 0.28f, 0.3f, 3.34f, 32, 32),
             new ArmorCube(Mount.RIGHT_FOOT, -3.29f, 2.32f, -0.86f, 0.72f, 0.76f, 0.76f, 48, 48)
+        );
+    }
+
+    private static List<ArmorCube> mutatedBoneHelmet() {
+        return List.of(
+            new ArmorCube(Mount.HEAD, -4.55f, 29.55f, -2.90f, 1.35f, 2.55f, 5.50f, 0, 0),
+            new ArmorCube(Mount.HEAD, 3.20f, 29.55f, -2.90f, 1.35f, 2.55f, 5.50f, 0, 0),
+            new ArmorCube(Mount.HEAD, -1.75f, 30.25f, -3.65f, 3.50f, 1.65f, 1.45f, 0, 0),
+            new ArmorCube(Mount.HEAD, -1.55f, 30.15f, -2.00f, 3.10f, 1.50f, 4.55f, 0, 0),
+            new ArmorCube(Mount.HEAD, -0.55f, 31.55f, -2.25f, 1.10f, 0.65f, 3.50f, 32, 32),
+            new ArmorCube(Mount.HEAD, -4.25f, 28.10f, -4.65f, 3.50f, 1.15f, 0.80f, 0, 0),
+            new ArmorCube(Mount.HEAD, 0.75f, 28.10f, -4.65f, 3.50f, 1.15f, 0.80f, 0, 0),
+            new ArmorCube(Mount.HEAD, -0.55f, 28.00f, -4.82f, 1.10f, 2.00f, 0.65f, 32, 32),
+            new ArmorCube(Mount.HEAD, -4.70f, 27.95f, -4.72f, 9.40f, 0.30f, 0.30f, 0, 32),
+            new ArmorCube(Mount.HEAD, -4.60f, 26.55f, -3.65f, 0.80f, 3.10f, 3.20f, 0, 0),
+            new ArmorCube(Mount.HEAD, 3.80f, 26.55f, -3.65f, 0.80f, 3.10f, 3.20f, 0, 0),
+            new ArmorCube(Mount.HEAD, -4.75f, 24.35f, -3.30f, 0.75f, 4.00f, 2.60f, 32, 32),
+            new ArmorCube(Mount.HEAD, 4.00f, 24.35f, -3.30f, 0.75f, 4.00f, 2.60f, 32, 32),
+            new ArmorCube(Mount.HEAD, -4.80f, 24.45f, -3.55f, 0.55f, 1.00f, 1.10f, 0, 0),
+            new ArmorCube(Mount.HEAD, 4.25f, 24.45f, -3.55f, 0.55f, 1.00f, 1.10f, 0, 0),
+            new ArmorCube(Mount.HEAD, -3.65f, 28.75f, 3.75f, 7.30f, 1.00f, 0.55f, 0, 0),
+            new ArmorCube(Mount.HEAD, -0.70f, 27.55f, 3.60f, 1.40f, 1.90f, 0.55f, 32, 32),
+            new ArmorCube(Mount.HEAD, -4.10f, 28.65f, 4.12f, 8.20f, 0.30f, 0.25f, 0, 32),
+            new ArmorCube(Mount.HEAD, -5.00f, 25.70f, -2.95f, 0.28f, 0.40f, 1.85f, 0, 32),
+            new ArmorCube(Mount.HEAD, 4.72f, 25.70f, -2.95f, 0.28f, 0.40f, 1.85f, 0, 32),
+            new ArmorCube(Mount.HEAD, -5.10f, 26.15f, -1.90f, 0.40f, 0.80f, 0.80f, 32, 32),
+            new ArmorCube(Mount.HEAD, 4.70f, 26.15f, -1.90f, 0.40f, 0.80f, 0.80f, 32, 32)
+        );
+    }
+
+    private static List<ArmorCube> mutatedBoneChestplate() {
+        return List.of(
+            new ArmorCube(Mount.BODY, -4.06f, 12.12f, -2.18f, 8.12f, 4.35f, 0.35f, 32, 0),
+            new ArmorCube(Mount.BODY, -4.06f, 12.12f, 1.83f, 8.12f, 4.35f, 0.35f, 32, 0),
+            new ArmorCube(Mount.BODY, 3.83f, 12.18f, -2.15f, 0.35f, 4.25f, 4.30f, 32, 0),
+            new ArmorCube(Mount.BODY, -4.18f, 12.18f, -2.15f, 0.35f, 4.25f, 4.30f, 32, 0),
+            new ArmorCube(Mount.BODY, -3.65f, 16.20f, -2.35f, 3.40f, 6.75f, 0.38f, 32, 0),
+            new ArmorCube(Mount.BODY, -3.65f, 16.20f, 1.97f, 3.40f, 6.75f, 0.38f, 32, 0),
+            new ArmorCube(Mount.BODY, -8.15f, 22.80f, -2.25f, 4.30f, 1.35f, 4.50f, 32, 0),
+            new ArmorCube(Mount.BODY, 3.92f, 22.60f, -2.32f, 4.35f, 1.45f, 4.64f, 32, 0),
+            new ArmorCube(Mount.BODY, -2.60f, 9.50f, -2.48f, 3.60f, 2.70f, 0.38f, 32, 0),
+            new ArmorCube(Mount.BODY, -2.40f, 9.80f, 2.10f, 3.40f, 2.40f, 0.38f, 32, 0),
+            new ArmorCube(Mount.BODY, -1.10f, 15.60f, -2.88f, 2.20f, 7.20f, 0.92f, 0, 0),
+            new ArmorCube(Mount.BODY, -0.60f, 16.40f, -3.28f, 1.20f, 5.80f, 0.44f, 0, 0),
+            new ArmorCube(Mount.BODY, -1.30f, 19.50f, -3.18f, 2.60f, 1.60f, 0.52f, 32, 32),
+            new ArmorCube(Mount.BODY, 1.00f, 19.80f, -2.82f, 2.75f, 1.45f, 0.74f, 0, 0),
+            new ArmorCube(Mount.BODY, -3.75f, 19.80f, -2.82f, 2.75f, 1.45f, 0.74f, 0, 0),
+            new ArmorCube(Mount.BODY, 0.90f, 16.80f, -2.78f, 2.85f, 1.40f, 0.71f, 0, 0),
+            new ArmorCube(Mount.BODY, -3.75f, 16.80f, -2.78f, 2.85f, 1.40f, 0.71f, 0, 0),
+            new ArmorCube(Mount.BODY, 0.80f, 22.40f, -2.74f, 3.10f, 0.95f, 0.82f, 32, 32),
+            new ArmorCube(Mount.BODY, -3.90f, 22.40f, -2.74f, 3.10f, 0.95f, 0.82f, 32, 32),
+            new ArmorCube(Mount.BODY, -0.85f, 18.20f, 2.05f, 1.70f, 4.80f, 0.78f, 0, 0),
+            new ArmorCube(Mount.BODY, -0.75f, 13.50f, 2.05f, 1.50f, 4.40f, 0.72f, 32, 32),
+            new ArmorCube(Mount.BODY, -0.95f, 20.80f, 2.65f, 1.90f, 1.20f, 0.45f, 32, 32),
+            new ArmorCube(Mount.BODY, -0.85f, 16.50f, 2.65f, 1.70f, 1.10f, 0.42f, 32, 32),
+            new ArmorCube(Mount.BODY, 1.80f, 19.55f, -2.96f, 0.45f, 1.95f, 0.35f, 0, 32),
+            new ArmorCube(Mount.BODY, -2.25f, 19.55f, -2.96f, 0.45f, 1.95f, 0.35f, 0, 32),
+            new ArmorCube(Mount.BODY, 1.60f, 16.55f, -2.92f, 0.45f, 1.90f, 0.35f, 0, 32),
+            new ArmorCube(Mount.BODY, -2.05f, 16.55f, -2.92f, 0.45f, 1.90f, 0.35f, 0, 32),
+            new ArmorCube(Mount.BODY, -0.75f, 21.10f, -3.38f, 1.50f, 0.45f, 0.35f, 0, 32),
+            new ArmorCube(Mount.BODY, -0.75f, 17.60f, -3.38f, 1.50f, 0.45f, 0.35f, 0, 32),
+            new ArmorCube(Mount.BODY, 2.20f, 14.50f, -2.55f, 0.75f, 7.80f, 0.32f, 0, 32),
+            new ArmorCube(Mount.BODY, -2.95f, 14.50f, -2.55f, 0.75f, 7.80f, 0.32f, 0, 32),
+            new ArmorCube(Mount.BODY, 3.94f, 15.60f, -2.25f, 0.32f, 0.65f, 4.50f, 0, 32),
+            new ArmorCube(Mount.BODY, 3.94f, 13.80f, -2.25f, 0.32f, 0.65f, 4.50f, 0, 32),
+            new ArmorCube(Mount.BODY, -4.26f, 15.60f, -2.25f, 0.32f, 0.65f, 4.50f, 0, 32),
+            new ArmorCube(Mount.BODY, -4.26f, 13.80f, -2.25f, 0.32f, 0.65f, 4.50f, 0, 32),
+            new ArmorCube(Mount.BODY, -3.60f, 17.20f, 2.02f, 7.20f, 0.95f, 0.28f, 0, 32),
+            new ArmorCube(Mount.BODY, -3.60f, 14.80f, 2.02f, 7.20f, 0.95f, 0.28f, 0, 32),
+            new ArmorCube(Mount.BODY, -0.98f, 19.40f, 2.68f, 1.96f, 0.45f, 0.32f, 0, 32),
+            new ArmorCube(Mount.BODY, -0.88f, 15.20f, 2.68f, 1.76f, 0.45f, 0.32f, 0, 32),
+            new ArmorCube(Mount.BODY, -4.22f, 13.25f, -2.62f, 8.44f, 0.62f, 5.24f, 0, 32),
+            new ArmorCube(Mount.BODY, -4.22f, 12.25f, -2.62f, 8.44f, 0.62f, 5.24f, 0, 32),
+            new ArmorCube(Mount.BODY, -1.20f, 12.05f, -2.95f, 2.40f, 1.80f, 0.48f, 0, 0),
+            new ArmorCube(Mount.BODY, 2.10f, 11.40f, -2.85f, 1.30f, 1.40f, 0.65f, 0, 32),
+            new ArmorCube(Mount.BODY, 2.20f, 8.40f, -2.76f, 0.45f, 3.20f, 0.45f, 0, 32),
+            new ArmorCube(Mount.BODY, 2.80f, 9.10f, -2.76f, 0.45f, 2.40f, 0.45f, 0, 32),
+            new ArmorCube(Mount.BODY, 4.10f, 22.80f, -2.40f, 4.30f, 1.30f, 4.80f, 0, 32),
+            new ArmorCube(Mount.BODY, 4.40f, 21.60f, -2.65f, 3.60f, 1.30f, 0.40f, 0, 32),
+            new ArmorCube(Mount.BODY, 4.40f, 21.60f, 2.25f, 3.60f, 1.30f, 0.40f, 0, 32),
+            new ArmorCube(Mount.BODY, 6.10f, 27.60f, -2.38f, 0.75f, 0.45f, 4.76f, 0, 32),
+            new ArmorCube(Mount.BODY, 4.40f, 24.20f, -2.30f, 4.20f, 3.40f, 4.60f, 0, 0),
+            new ArmorCube(Mount.BODY, 5.80f, 27.40f, -1.80f, 1.40f, 1.20f, 3.60f, 32, 32),
+            new ArmorCube(Mount.BODY, 7.80f, 24.40f, -2.10f, 1.80f, 2.20f, 4.20f, 0, 0),
+            new ArmorCube(Mount.BODY, 7.40f, 26.20f, -2.25f, 1.60f, 1.10f, 4.50f, 32, 32),
+            new ArmorCube(Mount.BODY, 6.20f, 24.80f, -2.55f, 1.80f, 1.80f, 0.38f, 32, 32),
+            new ArmorCube(Mount.BODY, 6.20f, 24.80f, 2.18f, 1.80f, 1.80f, 0.38f, 32, 32),
+            new ArmorCube(Mount.BODY, 8.65f, 23.10f, -1.90f, 0.85f, 1.50f, 0.85f, 32, 32),
+            new ArmorCube(Mount.BODY, 8.65f, 23.10f, 1.05f, 0.85f, 1.50f, 0.85f, 32, 32),
+            new ArmorCube(Mount.BODY, 4.60f, 26.80f, 2.05f, 0.90f, 1.80f, 0.90f, 0, 0),
+            new ArmorCube(Mount.BODY, 3.95f, 12.20f, -2.12f, 4.10f, 5.40f, 4.24f, 32, 0),
+            new ArmorCube(Mount.BODY, 7.90f, 12.40f, -1.80f, 0.65f, 4.80f, 3.60f, 0, 0),
+            new ArmorCube(Mount.BODY, 8.40f, 13.20f, -1.20f, 0.38f, 3.40f, 2.30f, 32, 32),
+            new ArmorCube(Mount.BODY, 8.25f, 16.50f, 1.15f, 0.55f, 1.20f, 0.80f, 32, 32),
+            new ArmorCube(Mount.BODY, 3.96f, 16.10f, -2.22f, 4.14f, 0.65f, 4.44f, 0, 32),
+            new ArmorCube(Mount.BODY, 3.96f, 14.30f, -2.22f, 4.14f, 0.65f, 4.44f, 0, 32),
+            new ArmorCube(Mount.BODY, 3.96f, 12.50f, -2.22f, 4.14f, 0.65f, 4.44f, 0, 32),
+            new ArmorCube(Mount.BODY, 8.25f, 14.30f, -2.25f, 0.45f, 0.75f, 0.75f, 0, 32),
+            new ArmorCube(Mount.BODY, -8.05f, 12.20f, -2.12f, 4.10f, 5.40f, 4.24f, 32, 0),
+            new ArmorCube(Mount.BODY, -8.55f, 12.40f, -1.80f, 0.65f, 4.80f, 3.60f, 0, 0),
+            new ArmorCube(Mount.BODY, -8.78f, 13.20f, -1.20f, 0.38f, 3.40f, 2.30f, 32, 32),
+            new ArmorCube(Mount.BODY, -8.80f, 16.50f, 1.15f, 0.55f, 1.20f, 0.80f, 32, 32),
+            new ArmorCube(Mount.BODY, -8.10f, 16.10f, -2.22f, 4.14f, 0.65f, 4.44f, 0, 32),
+            new ArmorCube(Mount.BODY, -8.10f, 14.30f, -2.22f, 4.14f, 0.65f, 4.44f, 0, 32),
+            new ArmorCube(Mount.BODY, -8.10f, 12.50f, -2.22f, 4.14f, 0.65f, 4.44f, 0, 32),
+            new ArmorCube(Mount.BODY, -8.70f, 14.30f, -2.25f, 0.45f, 0.75f, 0.75f, 0, 32)
+        );
+    }
+
+    private static List<ArmorCube> mutatedBoneLeggings() {
+        return List.of(
+            new ArmorCube(Mount.LEFT_LEG, -1.40f, 2.25f, -2.79f, 2.80f, 6.20f, 0.85f, 0, 0),
+            new ArmorCube(Mount.LEFT_LEG, -0.60f, 2.85f, -3.12f, 1.20f, 5.20f, 0.42f, 0, 0),
+            new ArmorCube(Mount.LEFT_LEG, -1.20f, 7.85f, -3.07f, 2.40f, 1.40f, 0.45f, 32, 32),
+            new ArmorCube(Mount.LEFT_LEG, 1.25f, 3.05f, -1.57f, 0.65f, 4.80f, 3.20f, 32, 32),
+            new ArmorCube(Mount.LEFT_LEG, -2.12f, 7.65f, -2.09f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.LEFT_LEG, -2.12f, 5.25f, -2.09f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.LEFT_LEG, -2.12f, 2.65f, -2.09f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.LEFT_LEG, -2.15f, 10.45f, -2.12f, 4.30f, 0.80f, 4.30f, 0, 32),
+            new ArmorCube(Mount.LEFT_LEG, -2.12f, 8.85f, -2.09f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.LEFT_LEG, 1.70f, 10.25f, -0.57f, 0.55f, 1.20f, 1.20f, 0, 0),
+            new ArmorCube(Mount.RIGHT_LEG, -1.40f, 2.15f, -2.85f, 2.80f, 6.20f, 0.85f, 0, 0),
+            new ArmorCube(Mount.RIGHT_LEG, -0.60f, 2.75f, -3.18f, 1.20f, 5.20f, 0.42f, 0, 0),
+            new ArmorCube(Mount.RIGHT_LEG, -1.20f, 7.75f, -3.13f, 2.40f, 1.40f, 0.45f, 32, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -1.90f, 2.95f, -1.63f, 0.65f, 4.80f, 3.20f, 32, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -2.12f, 7.55f, -2.15f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -2.12f, 5.15f, -2.15f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -2.12f, 2.55f, -2.15f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -2.15f, 10.35f, -2.18f, 4.30f, 0.80f, 4.30f, 0, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -2.12f, 8.75f, -2.15f, 4.24f, 0.65f, 4.24f, 0, 32),
+            new ArmorCube(Mount.RIGHT_LEG, -2.25f, 10.15f, -0.63f, 0.55f, 1.20f, 1.20f, 0, 0)
+        );
+    }
+
+    private static List<ArmorCube> mutatedBoneBoots() {
+        return List.of(
+            new ArmorCube(Mount.LEFT_FOOT, -1.50f, -0.48f, -4.02f, 3.90f, 0.55f, 2.10f, 32, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.40f, -0.43f, -1.82f, 3.70f, 0.50f, 2.00f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -1.20f, -0.36f, 0.25f, 3.30f, 0.55f, 2.30f, 32, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.60f, 0.02f, -4.18f, 4.10f, 0.38f, 0.36f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.25f, 0.03f, 2.52f, 3.40f, 0.36f, 0.32f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -0.10f, 0.08f, -4.48f, 1.10f, 1.00f, 1.20f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, 1.23f, 0.12f, -4.15f, 0.62f, 0.88f, 0.95f, 32, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.25f, 0.10f, -3.34f, 3.40f, 1.00f, 1.82f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -1.10f, 0.24f, -1.54f, 3.10f, 1.18f, 1.48f, 32, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -0.57f, 1.03f, -3.72f, 2.04f, 0.42f, 0.48f, 32, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.00f, 0.20f, 1.76f, 2.90f, 1.72f, 0.68f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -1.20f, 1.30f, -1.94f, 3.30f, 3.00f, 0.56f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -1.15f, 1.30f, 1.48f, 3.20f, 3.00f, 0.52f, 0, 0),
+            new ArmorCube(Mount.LEFT_FOOT, 2.17f, 1.30f, -1.62f, 0.42f, 3.00f, 3.20f, 32, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.21f, 1.34f, -1.58f, 0.34f, 3.00f, 3.12f, 32, 0),
+            new ArmorCube(Mount.LEFT_FOOT, -1.27f, 4.45f, -2.00f, 3.44f, 0.38f, 0.34f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.21f, 4.45f, 1.54f, 3.32f, 0.38f, 0.32f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.33f, 1.48f, -2.12f, 3.56f, 0.34f, 0.28f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, -1.27f, 1.52f, 1.72f, 3.44f, 0.34f, 0.26f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, 2.25f, 1.50f, -1.82f, 0.28f, 0.34f, 3.60f, 0, 32),
+            new ArmorCube(Mount.LEFT_FOOT, 2.50f, 2.25f, -1.35f, 0.68f, 0.90f, 0.88f, 32, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.40f, -0.48f, -4.02f, 3.90f, 0.55f, 2.10f, 32, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.30f, -0.43f, -1.82f, 3.70f, 0.50f, 2.00f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.10f, -0.36f, 0.25f, 3.30f, 0.55f, 2.30f, 32, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.50f, 0.02f, -4.18f, 4.10f, 0.38f, 0.36f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.15f, 0.03f, 2.52f, 3.40f, 0.36f, 0.32f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -1.00f, 0.08f, -4.48f, 1.10f, 1.00f, 1.20f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -1.85f, 0.12f, -4.15f, 0.62f, 0.88f, 0.95f, 32, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.15f, 0.10f, -3.34f, 3.40f, 1.00f, 1.82f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.00f, 0.24f, -1.54f, 3.10f, 1.18f, 1.48f, 32, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -1.47f, 1.03f, -3.72f, 2.04f, 0.42f, 0.48f, 32, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -1.90f, 0.20f, 1.76f, 2.90f, 1.72f, 0.68f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.10f, 1.30f, -1.94f, 3.30f, 3.00f, 0.56f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.05f, 1.30f, 1.48f, 3.20f, 3.00f, 0.52f, 0, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.59f, 1.30f, -1.62f, 0.42f, 3.00f, 3.20f, 32, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, 0.87f, 1.34f, -1.58f, 0.34f, 3.00f, 3.12f, 32, 0),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.17f, 4.45f, -2.00f, 3.44f, 0.38f, 0.34f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.11f, 4.45f, 1.54f, 3.32f, 0.38f, 0.32f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.23f, 1.48f, -2.12f, 3.56f, 0.34f, 0.28f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.17f, 1.52f, 1.72f, 3.44f, 0.34f, 0.26f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -2.53f, 1.50f, -1.82f, 0.28f, 0.34f, 3.60f, 0, 32),
+            new ArmorCube(Mount.RIGHT_FOOT, -3.18f, 2.25f, -1.35f, 0.68f, 0.90f, 0.88f, 32, 32)
         );
     }
 }
