@@ -434,8 +434,12 @@
   "exit": 0,
   "outputs": {
    "armor/straw/StrawBoots.bbmodel": "914458b760ec0342300be5d7c8f10aed0f75b33a3e5b18d36698fce561a49d3a",
+   "armor/straw/StrawChestplate.bbmodel": "2c9f00e49b7d8c63ceacbfd39f3b114fa80ec638cd6bafefb3b6da2e7a888df6",
+   "armor/straw/StrawHelmet.bbmodel": "802dd5d4460031d97243ec4964c9958c9614033e5823dcbe2e5cfc95dba7829c",
    "armor/straw/StrawLeggings.bbmodel": "5d70803a2876f3e6d0d99dbbd953934d35addd9466c543d745de8215daf63c13",
    "armor/straw/textures/straw_boots/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e",
+   "armor/straw/textures/straw_chestplate/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e",
+   "armor/straw/textures/straw_helmet/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e",
    "armor/straw/textures/straw_leggings/0.png": "620e13ff99902d8f205dfce76709afe5d0858b69958c385c90a83e51c1b40a4e"
   }
  },

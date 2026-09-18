@@ -1,0 +1,12 @@
+# 草鞋（straw_boots）视觉点名清单。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 左右鞋底都要成对出现，鞋底的编织盘不能被压成一只平板。
+sole = { elements = ["base_", "fill_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 1000, SIDE_R = 700, BACK = 1000, SIDE_L = 700 }, mirror = true }
+braid = { elements = ["rim_", "welt_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 1100, SIDE_R = 700, BACK = 1000, SIDE_L = 700 }, mirror = true }
+ankle_wrap = { elements = ["wrap_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 800, SIDE_R = 200, BACK = 800, SIDE_L = 200 }, mirror = true }
+knot_and_tails = { elements = ["knot_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 300, SIDE_R = 150 }, mirror = true }

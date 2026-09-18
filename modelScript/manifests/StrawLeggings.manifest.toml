@@ -1,0 +1,11 @@
+# 草编腿套（straw_leggings）视觉点名清单。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 左右两捆必须成对，五道箍和杆板共同组成竖向稻杆读法。
+staves = { elements = ["stave_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 10000, SIDE_R = 6000, BACK = 10000, SIDE_L = 6000 }, mirror = true }
+bands = { elements = ["band"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 3000, SIDE_R = 1500, BACK = 3000, SIDE_L = 1500 }, mirror = true }
+tufts = { elements = ["tuft_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 2000, SIDE_R = 700, BACK = 2000, SIDE_L = 700 }, mirror = true }
