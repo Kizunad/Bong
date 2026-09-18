@@ -1,0 +1,34 @@
+# 盐蓬晶 SaltCrystal —— 特征点名清单
+#
+# 特征来源：`salt_crystal.png` 物品原画与盐蓬晶岩方块：
+# 1. oblique_pillar: 大角度斜插向右上直刺的修长海蓝主晶柱（带单斜锐利晶尖）
+# 2. lightning_frost: 顺晶柱长轴曲折贯穿的闪电状白霜解理裂隙（极亮纯白霜芒）
+# 3. base_cluster: 底部犬牙差互向外放射咬合的次生小晶簇群（无平整底座）
+# 4. satellite_spikes: 侧腰部斜挑出的锐利次生伴生晶芒
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+salt_void   = [14, 16, 22]
+salt_dark   = [28, 34, 48]
+salt_indigo = [46, 58, 82]
+cryst_mid   = [72, 94, 134]
+cryst_lit   = [108, 142, 196]
+cryst_high  = [164, 202, 248]
+frost_deep  = [130, 164, 220]
+frost_white = [226, 238, 255]
+
+[features]
+# 修长斜插主晶柱
+oblique_pillar = { elements = ["pillar_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 4000, SIDE_R = 4000 } }
+
+# 白霜闪电解理
+lightning_frost = { elements = ["lightning_"], must_show_in = ["FRONT"], min_px = { FRONT = 300 } }
+
+# 底部放射次生晶簇
+base_cluster = { elements = ["cluster_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2500, SIDE_R = 2500 } }
+
+# 侧翼伴生晶角
+satellite_spikes = { elements = ["sat_spike_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 800, SIDE_R = 800 } }
