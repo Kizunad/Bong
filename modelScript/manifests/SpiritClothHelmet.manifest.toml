@@ -1,0 +1,14 @@
+# 灵布衫盔（spirit_cloth_helmet）Round 2 人工点名清单。
+#
+# 没有外部正交参考图；形制依据是 server 物品描述「淡青灵布缠成的头巾」和
+# gen_hide_armor.py 的贴头坐标约束。点名器只核对可见件，不替人工判断软布形制。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+crown_wrap = { elements = ["wrap_crown_", "wrap_top_fold", "rear_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = { FRONT = 20, SIDE_R = 18, BACK = 20, SIDE_L = 18, "3/4" = 18, TOP = 24 } }
+brow_wrap = { elements = ["brow_", "temple_wrap_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = { FRONT = 18, SIDE_R = 8, SIDE_L = 8, "3/4" = 12 } }
+ear_flaps = { elements = ["ear_flap_", "ear_band_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 14, SIDE_R = 18, BACK = 14, SIDE_L = 18, "3/4" = 14 }, mirror = true }
+ties = { elements = ["temple_tail_", "tie_knot_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = { FRONT = 6, SIDE_R = 6, SIDE_L = 6, "3/4" = 6 }, mirror = true }
