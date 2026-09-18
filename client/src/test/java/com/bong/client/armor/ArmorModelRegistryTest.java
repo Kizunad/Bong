@@ -4,6 +4,7 @@ import com.bong.client.inventory.model.EquipSlotType;
 import net.minecraft.entity.EquipmentSlot;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -77,6 +78,19 @@ class ArmorModelRegistryTest {
             Path texture = RESOURCES.resolve("assets")
                 .resolve(spec.texturePath().replace(':', '/'));
             assertTrue(Files.isRegularFile(texture), spec.texturePath() + " 贴图缺失");
+        }
+    }
+
+    @Test
+    void everyRegisteredTextureExistsOnClasspath() throws IOException {
+        for (ArmorModelRegistry.ArmorModelSpec spec : ArmorModelRegistry.all()) {
+            String classpathPath = "/assets/" + spec.texturePath().replace(':', '/');
+            try (var stream = ArmorModelRegistryTest.class.getResourceAsStream(classpathPath)) {
+                assertNotNull(stream,
+                    "templateId=" + spec.templateId()
+                        + " texturePath=" + spec.texturePath()
+                        + " classpath=" + classpathPath + " 的护甲贴图文件不存在");
+            }
         }
     }
 
