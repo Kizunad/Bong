@@ -1,0 +1,142 @@
+{
+  "parent": "sml:builtin/obj",
+  "model": "bong:models/item/herb_sickle/herb_sickle.obj",
+  "display": {
+    "thirdperson_righthand": {
+      "rotation": [
+        -80,
+        90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        1.5
+      ],
+      "scale": [
+        0.85,
+        0.85,
+        0.85
+      ]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [
+        -80,
+        -90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        1.5
+      ],
+      "scale": [
+        0.85,
+        0.85,
+        0.85
+      ]
+    },
+    "firstperson_righthand": {
+      "rotation": [
+        -80,
+        90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        -4.0
+      ],
+      "scale": [
+        0.81,
+        0.81,
+        0.81
+      ]
+    },
+    "firstperson_lefthand": {
+      "rotation": [
+        -80,
+        -90,
+        0
+      ],
+      "translation": [
+        0,
+        -2.0,
+        -4.0
+      ],
+      "scale": [
+        0.81,
+        0.81,
+        0.81
+      ]
+    },
+    "ground": {
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        0.45,
+        0.45,
+        0.45
+      ],
+      "translation": [
+        0.0,
+        0.785,
+        0.0
+      ]
+    },
+    "gui": {
+      "rotation": [
+        0,
+        0,
+        45
+      ],
+      "scale": [
+        1.15,
+        1.15,
+        1.15
+      ],
+      "translation": [
+        2.196,
+        -2.196,
+        0.0
+      ]
+    },
+    "fixed": {
+      "rotation": [
+        0,
+        180,
+        0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "translation": [
+        0.0,
+        -2.7,
+        0.0
+      ]
+    },
+    "head": {
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "translation": [
+        0.0,
+        9.3,
+        0.0
+      ]
+    }
+  }
+}
