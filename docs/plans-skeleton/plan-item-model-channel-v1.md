@@ -515,3 +515,118 @@ craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在�
 
 这些开放问题不阻止本 skeleton 作为规划入口，但在 P0 证据落盘前不得宣称通道已可用，
 也不得提前删除 vanilla override。
+
+## 9. P0 spike 证据（2026-09-18）
+
+本节是 P0 可行性证据，不把 skeleton 升为 active，也不删除现有 vanilla override。结论
+分成「API/最小 adapter 已编译」与「必须人工在 `runClient` 下目视确认」两层；后者没有
+在 headless 环境中冒充完成。
+
+### 9.1 A：加载入口与真实 baked lookup
+
+- 实际解析版本由 `client/gradle.properties:2-5` 与 `client/build.gradle:45-52` 确定为
+  Minecraft 1.20.1、loader 0.16.10、Fabric API 0.92.3+1.20.1。翻本机 Gradle 缓存的
+  实际依赖 JAR 后，`fabric-model-loading-api-v1-1.0.3+1802ada577.jar` 确实包含
+  `net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin`；同一解析树的
+  `fabric-models-v0-0.3.35+b3afc78b77.jar` 还包含旧的
+  `ModelLoadingRegistry`、`ModelResourceProvider`、`ModelVariantProvider`。因此本版本
+  不必猜测或退回旧 provider，spike 选择前者；类、方法签名均由 `javap` 对实际 JAR
+  验过，不是读文档推断。
+- 最小注册代码在
+  `client/src/main/java/com/bong/client/itemmodel/BongItemModelChannel.java:59-71`，由
+  `client/src/main/java/com/bong/client/BongClient.java:158` 接入客户端 bootstrap。
+  `ModelLoadingPlugin` 的 callback 每次资源 reload 都重新 `addModels`；lookup 不缓存
+  baked 实例，在 `BongItemModelChannel.java:82-122` 每次从当前
+  `BakedModelManager` 查询，因而不会把第一次 bake 永久留在独立缓存里。
+- 真实模板 `wooden_shield` 的 model id 是
+  `bong:item/wooden_shield/wooden_shield#inventory`（代码
+  `BongItemModelChannel.java:28-33,125-127`），对应资源
+  `client/src/main/resources/assets/bong/models/item/wooden_shield/wooden_shield.json:1-124`。
+  OBJ/MTL/贴图均留在 `assets/bong`：
+  `models/item/wooden_shield/wooden_shield.{obj,mtl}` 与
+  `textures/item/wooden_shield/{0,1}.png`。现有 SML scope 在
+  `client/src/main/java/com/bong/client/weapon/WeaponRenderBootstrap.java:24-39` 对
+  `bong` namespace 放行；新 spike 没有把资源转发到 `minecraft:item/<host>`。
+- 通过旧 `assets/minecraft` override 加载的旧链路没有删除或改写；本次只把一个
+  Bong-owned model 加入 bake 列表，不能把这条 additive spike 误记成存量迁移完成。
+- 实测编译命令 `scripts/build-token.sh gradle compileJava` 返回 0（`BUILD SUCCESSFUL`）。
+- 定向 `scripts/build-token.sh gradle test --tests com.bong.client.itemmodel.BongItemModelChannelTest`
+  返回 0；随后卡片要求的完整
+  `scripts/build-token.sh gradle test build` 也返回 0（`BUILD SUCCESSFUL`，21 actionable
+  tasks；其中既有 3 个 GameTest 全部通过）。没有运行 `gradle runClient`，所以这里证明
+  的是实际 API/JAR + 生产代码可编译和契约测试通过，不是运行时画面验收。
+
+### 9.2 B：transform 来源
+
+- `BongItemModelChannel.ModelHandle` 在
+  `client/src/main/java/com/bong/client/itemmodel/BongItemModelChannel.java:117-122`
+  直接携带 `BakedModel.getTransformation()`；没有从 `Items.*` 或旧宿主 model 读取
+  display。真实 Bong-owned JSON 的 `display` 块覆盖：
+  `thirdperson_righthand` `:5-20`、`thirdperson_lefthand` `:22-37`、
+  `firstperson_righthand` `:39-54`、`firstperson_lefthand` `:56-71`，以及
+  `ground` `:73-88`、`gui` `:90-105`、`fixed` `:107-123`。
+- 最小资源契约测试
+  `client/src/test/java/com/bong/client/itemmodel/BongItemModelChannelTest.java:35-52`
+  实际从 classpath 读该 JSON，核对 SML OBJ parent、Bong OBJ location、左右手四个
+  context 与 `ground/gui/fixed`，并拒绝 `minecraft:item/` 中转。它不把测试可见性 seam
+  加进生产代码。
+- 这只证明 `wooden_shield` 的自有 transform 来源。显式借用不等于借用 transform：
+  `qing_feng_sword → iron_sword` 只作为候选记录在
+  `BongItemModelChannel.java:35-44`，没有把 `iron_sword` 的 transform 偷塞给借用者；
+  候选在拥有自己的 model definition/transform 前保持不可渲染。
+
+### 9.3 C：FPV/TPV 共同 lookup 与直接绘制入口
+
+- 可供 FPV、TPV 共同调用的生产 adapter 在
+  `client/src/main/java/com/bong/client/itemmodel/BongItemModelRenderAdapter.java:22-48`。
+  它调用同一个 `BongItemModelChannel.lookup(template_id)`，再使用实际 Minecraft 1.20.1
+  `ItemRenderer.renderItem(ItemStack, ModelTransformationMode, boolean, MatrixStack,
+  VertexConsumerProvider, int, int, BakedModel)` overload；签名由本机
+  `minecraft-merged` JAR 实测。`ItemStack.EMPTY` 只是该公开 overload 为 glint/dynamic
+  display 保留的参数，不是注册的 vanilla item、不是 fake host，也不参与 model 选择。
+- 当前两个 mixin 的接入点仍是旧的 stack-only 路径：
+  `client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java:47-63`（FPV
+  更新 `mainHand/offHand`）和
+  `client/src/main/java/com/bong/client/mixin/MixinPlayerEntityHeldItem.java:46-65`
+  （TPV 改写 `getMainHandStack/getOffHandStack`）。本 spike 没有把它们伪装成已经完成
+  直接模型迁移；下一阶段必须把实际 FPV/TPV render hook 接到该 adapter/同一 lookup，
+  而不是继续在这里合成 fake stack。
+- 因 headless 限制，左右手 FPV/TPV、resource reload 后姿态的画面尚未实测，必须由人工
+  在 `runClient` 下确认：主/副手各一遍、第一/第三人称各一遍、reload 后再次确认
+  `wooden_shield` 仍来自 `bong:item/wooden_shield/wooden_shield#inventory`。
+
+### 9.4 D：场景边界与错误语义
+
+- 自有模型样本是 `wooden_shield`，资源位置见 §9.1；显式 borrow 候选是
+  `qing_feng_sword → iron_sword`，来源依据是旧注册表的明确注释
+  `client/src/main/java/com/bong/client/weapon/BongWeaponModelRegistry.java:205-206`。
+  新通道不把这个旧 host 关系当成已完成资源：
+  `BongItemModelChannel.java:98-105` 对候选返回 empty 并留下 warning；测试
+  `BongItemModelChannelTest.java:26-33` 锁住「不能静默加载 target 模型」。
+- unknown/空 `template_id` 在 `BongItemModelChannel.java:74-79,90-95` 返回 empty 并
+  warning；已登记但缺 bake 的资源在 `:108-115` 与当前 `missing model` 比较后同样
+  返回 empty。不会 fall through 到 `STONE_SWORD`、`BONE` 或其他默认宿主。
+- `ModelLoadingPlugin.addModels` 只加入 baked model，不注册 Item、ItemGroup 或搜索
+  条目；因此创造栏/搜索污染在静态接线层面没有新增入口，但实际 GUI/REI 画面仍待人工
+  `runClient` 确认。2D icon、lang/tooltip 继续由既有
+  `client/src/main/java/com/bong/client/inventory/ItemIconRegistry.java:12-20,75-85`
+  与 `assets/bong-client/lang/` 负责，本 spike 不把内部模型变成物品条目。
+- `DroppedItemWorldRenderer` 仍由
+  `client/src/main/java/com/bong/client/inventory/render/DroppedItemWorldRenderer.java:27-38,55-68`
+  直接画 billboard/GUI texture，不使用本 baked-model channel；掉落物保持既有 owner，
+  不因 P0 强行替换。
+- 缺 JSON、OBJ/MTL/贴图、borrow cycle、缺 transform 的逐项破坏性运行时注入没有在
+  headless 环境实际执行；本 spike 已实作的是缺 baked model/缺 definition/未完成 borrow
+  的可观测 missing 语义。OBJ 资源 reload 失败、借用环检测和完整 manifest/fail-fast
+  校验仍是 P1 交付物，不能在本节伪造为已验证。
+
+### 9.5 边界声明与结论
+
+- 本提交没有新 fake vanilla host，没有新增 `client/src/main/resources/assets/minecraft/`
+  下的 Bong override，没有 test-only production visibility seam，也没有改 server、agent
+  或任何 wire/schema 契约。
+- P0 spike 结论：**API/最小真实模板 lookup + 直接 BakedModel adapter 可行（PASS）**；
+  视觉、FPV/TPV 实际 hook、GUI/搜索污染和资源缺失负例仍明确标为「待人工
+  `runClient`/后续 P1 验证」，不等同于完整迁移已经验收。若人工确认当前
+  `ItemRenderer` adapter 在 FPV/TPV 中无法满足最终画面，再另行决定无宿主自绘方案；本
+  spike 没有偷偷退回 vanilla host。
