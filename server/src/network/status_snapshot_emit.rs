@@ -3,25 +3,64 @@
 //! 客户端已有 `StatusSnapshotHandler` / `StatusEffectStore`；这里把 server
 //! `StatusEffects` 的变化转成同一 wire shape，避免为战场丹药另建 HUD 通道。
 
-use valence::prelude::{Changed, Client, Entity, Query, Username, With, Without};
+use std::collections::{BTreeSet, HashMap};
 
-use crate::combat::components::{BodyPart, StatusEffects};
+use valence::prelude::{Changed, Client, Entity, Or, Query, Res, Username, With, Without};
+
+use crate::combat::components::{ActiveStatusEffect, BodyPart, StatusEffects, Wounds};
 use crate::combat::events::StatusEffectKind;
 use crate::cultivation::tick::cultivation_acceleration_multiplier;
+use crate::fauna::components::{BeastKind, FaunaTag};
+use crate::inventory::ItemRegistry;
 use crate::network::agent_bridge::{PayloadBuildError, SERVER_DATA_CHANNEL};
 use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::npc::brain::canonical_npc_id;
+use crate::npc::lifecycle::NpcArchetype;
+use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
+
+// 与客户端 long 上界一致，表示由领域条件解除、没有可展示倒计时的效果。
+const INDEFINITE_REMAINING_MS: u64 = i64::MAX as u64;
 
 type StatusSnapshotEmitFilter = (
     With<Client>,
     Without<crate::network::AmbientServerDataIsolation>,
-    Changed<StatusEffects>,
+    Or<(Changed<StatusEffects>, Changed<Wounds>)>,
 );
 
+#[allow(clippy::type_complexity)]
 pub fn emit_status_snapshot_payloads(
-    mut clients: Query<(Entity, &mut Client, &Username, &StatusEffects), StatusSnapshotEmitFilter>,
+    mut clients: Query<
+        (
+            Entity,
+            &mut Client,
+            &Username,
+            &StatusEffects,
+            Option<&Wounds>,
+        ),
+        StatusSnapshotEmitFilter,
+    >,
+    npcs: Query<(Entity, Option<&FaunaTag>, Option<&NpcArchetype>), With<NpcMarker>>,
+    items: Option<Res<ItemRegistry>>,
 ) {
-    for (entity, mut client, username, status_effects) in &mut clients {
+    if clients.is_empty() {
+        return;
+    }
+    let sources: HashMap<_, _> = npcs
+        .iter()
+        .map(|(entity, fauna, archetype)| {
+            let label = match fauna.map(|tag| tag.beast_kind) {
+                Some(BeastKind::Spider) => "灰烬蛛",
+                Some(BeastKind::GreenSpider | BeastKind::BlueSpider) => "蜘蛛",
+                _ => archetype
+                    .copied()
+                    .map(crate::network::npc_metadata::archetype_label)
+                    .unwrap_or("生物"),
+            };
+            (canonical_npc_id(entity), label)
+        })
+        .collect();
+    for (entity, mut client, username, status_effects, wounds) in &mut clients {
         let effects = status_effects
             .active
             .iter()
@@ -32,9 +71,10 @@ pub fn emit_status_snapshot_payloads(
                     "name": status_effect_name(&effect.kind),
                     "kind": status_effect_category(&effect.kind),
                     "stacks": 1,
-                    "remaining_ms": effect.remaining_ticks.saturating_mul(crate::time::MILLIS_PER_TICK),
+                    "remaining_ms": effect.remaining_ticks.saturating_mul(crate::time::MILLIS_PER_TICK)
+                        .min(INDEFINITE_REMAINING_MS),
                     "source_color": status_effect_color(&effect.kind),
-                    "source_label": status_effect_source_label(&effect.kind),
+                    "source_label": status_effect_source(effect, wounds, &sources, items.as_deref()),
                     "dispel": status_effect_dispel(&effect.kind)
                 })
             })
@@ -68,6 +108,39 @@ pub fn emit_status_snapshot_payloads(
             status_effects.active.len()
         );
     }
+}
+
+fn status_effect_source(
+    effect: &ActiveStatusEffect,
+    wounds: Option<&Wounds>,
+    sources: &HashMap<String, &str>,
+    items: Option<&ItemRegistry>,
+) -> String {
+    if let Some(pill) = &effect.source_pill {
+        return items
+            .and_then(|registry| registry.get(pill))
+            .map(|template| template.display_name.clone())
+            .unwrap_or_else(|| "丹药".into());
+    }
+    if effect.kind == StatusEffectKind::Bleeding {
+        // 复用伤口已有的攻击者记录，不按效果种类猜来源，也不向玩家暴露内部实体 ID。
+        let labels: BTreeSet<_> = wounds
+            .into_iter()
+            .flat_map(|wounds| &wounds.entries)
+            .filter(|wound| wound.bleeding_per_sec > 0.0)
+            .filter_map(|wound| wound.inflicted_by.as_deref())
+            .filter_map(|id| {
+                sources
+                    .get(id)
+                    .copied()
+                    .or_else(|| id.strip_prefix("offline:"))
+            })
+            .collect();
+        if !labels.is_empty() {
+            return labels.into_iter().collect::<Vec<_>>().join("、");
+        }
+    }
+    status_effect_source_label(&effect.kind).into()
 }
 
 fn status_effect_id(kind: &StatusEffectKind) -> String {
@@ -184,6 +257,7 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
 
 fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
     match kind {
+        StatusEffectKind::Bleeding => "伤口",
         StatusEffectKind::MirrorConcealment
         | StatusEffectKind::MirrorExposed
         | StatusEffectKind::SpiritTreasurePerception => "灵宝",
@@ -195,7 +269,7 @@ fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::DamageVulnerability => "修炼丹药",
         StatusEffectKind::Immobilized => "机关陷阱",
         StatusEffectKind::Exhausted => "全力一击",
-        _ => "战场丹药",
+        _ => "",
     }
 }
 
@@ -287,6 +361,82 @@ mod tests {
         for mut client in q.iter_mut(world) {
             client.flush_packets().expect("mock client should flush");
         }
+    }
+
+    #[test]
+    fn wound_status_uses_attack_source_and_indefinite_duration_on_the_wire() {
+        use crate::combat::components::{Wound, WoundKind};
+
+        let mut app = App::new();
+        app.add_systems(Update, emit_status_snapshot_payloads);
+        let spider = app
+            .world_mut()
+            .spawn((NpcMarker, FaunaTag::new(BeastKind::Spider)))
+            .id();
+        let (bundle, mut helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::Bleeding,
+                    magnitude: 0.1,
+                    remaining_ticks: u64::MAX - 20,
+                    source_pill: None,
+                }],
+            },
+            Wounds {
+                entries: vec![Wound {
+                    location: crate::body_plan::BodyPartId::from("chest"),
+                    kind: WoundKind::Cut,
+                    severity: 0.2,
+                    bleeding_per_sec: 0.1,
+                    created_at_tick: 1,
+                    inflicted_by: Some(canonical_npc_id(spider)),
+                }],
+                ..Default::default()
+            },
+        ));
+
+        app.update();
+        flush_clients(&mut app);
+        let first = collect_status_snapshots(&mut helper);
+        let effect = &first[0]["effects"][0];
+        assert_eq!(effect["id"], "bleeding", "蜘蛛造成的伤口不能改称中毒");
+        assert_eq!(
+            effect["source_label"], "灰烬蛛",
+            "应读取实际伤口来源，不能回退丹药"
+        );
+        assert_eq!(effect["remaining_ms"], INDEFINITE_REMAINING_MS);
+
+        // 同一种效果未变，换成另一玩家造成的伤口也必须刷新来源。
+        app.world_mut().get_mut::<Wounds>(player).unwrap().entries[0].inflicted_by =
+            Some("offline:OtherPlayer".into());
+        app.update();
+        flush_clients(&mut app);
+        let second = collect_status_snapshots(&mut helper);
+        assert_eq!(second[0]["effects"][0]["source_label"], "OtherPlayer");
+
+        app.world_mut()
+            .get_mut::<Wounds>(player)
+            .unwrap()
+            .entries
+            .clear();
+        app.world_mut()
+            .get_mut::<StatusEffects>(player)
+            .unwrap()
+            .active[0]
+            .remaining_ticks = 100;
+        app.update();
+        flush_clients(&mut app);
+        let third = collect_status_snapshots(&mut helper);
+        assert_eq!(
+            third[0]["effects"][0]["source_label"], "伤口",
+            "无来源时不能捏造攻击者"
+        );
+        assert_eq!(
+            third[0]["effects"][0]["remaining_ms"],
+            100 * crate::time::MILLIS_PER_TICK
+        );
     }
 
     /// 施加虚脱 status → status_snapshot 含一条 name="虚脱"/kind="debuff" 的 effect。
