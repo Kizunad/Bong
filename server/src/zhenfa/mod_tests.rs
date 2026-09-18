@@ -921,6 +921,7 @@ fn scatter_bead_inventory(instance_id: u64) -> PlayerInventory {
 
 fn pearl_registry() -> ItemRegistry {
     let template = ItemTemplate {
+        quick_use: false,
         id: ZHENFA_PEARL_ITEM_ID.to_string(),
         display_name: "散逸真元珠".to_string(),
         category: ItemCategory::Misc,

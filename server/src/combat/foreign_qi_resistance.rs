@@ -46,6 +46,7 @@ mod tests {
 
     fn template(category: ItemCategory) -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: "test_item".to_string(),
             display_name: "测试物品".to_string(),
             category,

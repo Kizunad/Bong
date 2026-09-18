@@ -56,6 +56,36 @@
       "expected_template_id": "item-inspect"
     },
     {
+      "name": "item-windows-settings",
+      "scene_id": "item-windows-settings",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-terrain",
+      "scene_id": "item-windows-terrain",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-hud",
+      "scene_id": "item-windows-hud",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    },
+    {
       "name": "item-windows-wide",
       "scene_id": "item-windows",
       "framebuffer_width": 1366,

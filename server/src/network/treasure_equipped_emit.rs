@@ -115,6 +115,7 @@ mod tests {
 
     fn treasure_template() -> ItemTemplate {
         ItemTemplate {
+            quick_use: false,
             id: "starter_talisman".to_string(),
             display_name: "启程护符".to_string(),
             category: ItemCategory::Treasure,

@@ -866,6 +866,7 @@ fn e2e_drag_item_into_pack_persists_across_reload() {
 
     // 合成 registry：一个 worn pack 模板（chest，3×3）+ 一个 1×1 misc 可移动物品。
     let pack_template = ItemTemplate {
+        quick_use: false,
         id: "e2e_chest_pack".to_string(),
         display_name: "胸前套包".to_string(),
         category: ItemCategory::Container,

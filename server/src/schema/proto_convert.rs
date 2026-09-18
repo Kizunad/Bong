@@ -2195,6 +2195,8 @@ fn quick_slot_config_to_proto(c: &super::combat_hud::QuickSlotConfigV1) -> bong:
             .iter()
             .map(|opt| bong::OptionalQuickSlotEntry {
                 entry: opt.as_ref().map(|e| bong::QuickSlotEntry {
+                    instance_id: e.instance_id,
+                    stack_count: e.stack_count,
                     item_id: e.item_id.clone(),
                     display_name: e.display_name.clone(),
                     cast_duration_ms: e.cast_duration_ms,
@@ -2206,6 +2208,7 @@ fn quick_slot_config_to_proto(c: &super::combat_hud::QuickSlotConfigV1) -> bong:
         cooldown_until_ms: c.cooldown_until_ms.to_vec(),
         ack_request_id: c.ack_request_id.clone(),
         bind_accepted: c.bind_accepted,
+        eligible_item_ids: c.eligible_item_ids.clone(),
     }
 }
 
@@ -4009,12 +4012,12 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             }
             ClientRequestV1::QuickSlotBind {
                 slot,
-                item_id,
+                instance_id,
                 request_id,
                 ..
             } => Payload::QuickSlotBind(bong::QuickSlotBind {
                 slot: *slot as u32,
-                item_id: item_id.clone(),
+                instance_id: *instance_id,
                 request_id: request_id.clone(),
             }),
             ClientRequestV1::SkillBarCast { slot, target, .. } => {

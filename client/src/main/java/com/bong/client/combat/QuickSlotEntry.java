@@ -7,6 +7,8 @@ import java.util.Objects;
  * payload).
  */
 public final class QuickSlotEntry {
+    private final long instanceId;
+    private final int stackCount;
     private final String itemId;
     private final String displayName;
     private final int castDurationMs;
@@ -14,12 +16,16 @@ public final class QuickSlotEntry {
     private final String iconTexture;
 
     public QuickSlotEntry(
+        long instanceId,
+        int stackCount,
         String itemId,
         String displayName,
         int castDurationMs,
         int cooldownMs,
         String iconTexture
     ) {
+        this.instanceId = instanceId;
+        this.stackCount = stackCount;
         this.itemId = Objects.requireNonNull(itemId, "itemId");
         this.displayName = displayName == null ? "" : displayName;
         this.castDurationMs = Math.max(0, castDurationMs);
@@ -28,6 +34,8 @@ public final class QuickSlotEntry {
     }
 
     public String itemId() { return itemId; }
+    public long instanceId() { return instanceId; }
+    public int stackCount() { return stackCount; }
     public String displayName() { return displayName; }
     public int castDurationMs() { return castDurationMs; }
     public int cooldownMs() { return cooldownMs; }

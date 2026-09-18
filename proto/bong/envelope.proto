@@ -1618,6 +1618,8 @@ message QuickSlotEntry {
   uint32 cast_duration_ms = 3;
   uint32 cooldown_ms      = 4;
   string icon_texture     = 5;
+  uint64 instance_id      = 6;
+  uint32 stack_count      = 7;
 }
 
 // QuickSlotConfigV1.slots 是 Vec<Option<QuickSlotEntryV1>>，
@@ -1632,6 +1634,7 @@ message QuickSlotConfig {
   repeated uint64 cooldown_until_ms     = 2; // 固定 9 个 cooldown 截止时间
   optional string ack_request_id        = 3;
   optional bool bind_accepted           = 4;
+  repeated string eligible_item_ids     = 5;
 }
 
 // 与 Rust SkillBarEntryV1 精确对应 — tagged union (Item / Skill)。
@@ -2050,8 +2053,9 @@ message UseQuickSlot {
 // 与 Rust ClientRequestV1::QuickSlotBind 精确对应。
 message QuickSlotBind {
   uint32          slot    = 1; // Rust u8 (0..=8)
-  optional string item_id = 2;
+  reserved 2;
   string request_id       = 3;
+  optional uint64 instance_id = 4;
 }
 
 // 与 Rust ClientRequestV1::SkillBarCast 精确对应。

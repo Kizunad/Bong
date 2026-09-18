@@ -61,7 +61,7 @@ impl Default for PlayerState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct PlayerUiPrefs {
     #[serde(default)]
-    pub quick_slots: [Option<String>; QuickSlotBindings::SLOT_COUNT],
+    pub quick_slots: [Option<u64>; QuickSlotBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_bar: [SkillSlotPersist; SkillBarBindings::SLOT_COUNT],
     #[serde(default)]
@@ -91,11 +91,11 @@ impl PlayerUiPrefs {
             return bindings;
         };
 
-        for (slot, template_id) in self.quick_slots.iter().enumerate() {
-            let Some(template_id) = template_id.as_deref() else {
+        for (slot, instance_id) in self.quick_slots.iter().enumerate() {
+            let Some(instance_id) = *instance_id else {
                 continue;
             };
-            if let Some(instance_id) = first_inventory_instance_for_template(inventory, template_id)
+            if crate::inventory::inventory_item_by_instance_borrow(inventory, instance_id).is_some()
             {
                 bindings.set(slot as u8, Some(instance_id));
             }

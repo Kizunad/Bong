@@ -118,67 +118,13 @@ class InspectScreenSkillBarBindItemTest {
     // 此处用 HOST_ITEMS 命中（不查 registry）的 earth_crumb 锁住 iconTexture=blank 契约，
     // vanilla:<short> 的图标分流由 BlockVanillaIconMapTest.usesVanillaItemIcon* 单测覆盖。
 
-    // ---- P0: 方块拖放只发 quick_slot，由 server 原子镜像 SkillBar ----
-
     @Test
-    void dropBlockIntoQuickUseUsesSingleAtomicServerIntent() {
+    void blocksCannotBindToQuickUse() {
         captureBackend();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
-
-        // 模拟拖放落到快捷栏第 2 槽（index=1）的收口。
-        assertTrue(screen.commitQuickUseDrop(1, blockItem()));
-
-        // 只发一包；server 识别 Block category 后同一 handler 写 QuickSlotBindings + SkillBarBindings。
-        assertEquals(1, sent.size(),
-            "拖方块进快捷栏应只发一条原子 quick_slot_bind，实际发了 " + sent.size() + " 条");
-        assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"item_id\":\"earth_crumb\",\"request_id\":\"quick-bind-test-1\"}",
-            sent.get(0).body());
-        assertNull(
-            SkillBarStore.snapshot().slot(1),
-            "本地不得在 server skillbar_config 前乐观制造第二份半提交"
-        );
-    }
-
-    @Test
-    void rejectedAtomicBlockQuickBindLeavesBothStoresUnchanged() {
-        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
-        InspectScreen screen = new InspectScreen(InventoryModel.empty());
-
-        assertFalse(
-            screen.commitQuickUseDrop(1, blockItem()),
-            "expected rejected single transport to abort both bindings, actual true"
-        );
-        assertNull(QuickUseSlotStore.snapshot().slot(1));
+        assertFalse(screen.commitQuickUseDrop(1, blockItem()));
+        assertTrue(sent.isEmpty());
         assertNull(SkillBarStore.snapshot().slot(1));
-        assertTrue(sent.isEmpty(), "expected rejecting backend to capture no payload, actual " + sent);
-    }
-
-    @Test
-    void dropBlockIntoQuickUseEnablesBlockPlaceIntent() {
-        captureBackend();
-        InspectScreen screen = new InspectScreen(InventoryModel.empty());
-
-        // 拖放收口只发 quick_slot；这里模拟 server 原子镜像后的 skillbar_config。
-        screen.commitQuickUseDrop(1, blockItem());
-        SkillBarStore.updateSlot(1, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
-        // 玩家用 HUD 热键选中第 2 槽（1-9 选中栏 index=1）。
-        SkillBarStore.setSelectedSlot(1);
-
-        // 库存中存在该方块实例（hotbar 槽 1 携带 earth_crumb instance=1）。
-        InventoryModel inventory = InventoryModel.builder()
-            .hotbar(1, blockItem())
-            .build();
-
-        BlockPlaceIntentResolver.Intent intent = BlockPlaceIntentResolver.selectedBlockPlaceIntent(
-            1, inventory, new BlockPos(10, 64, 20), Direction.UP);
-
-        assertNotNull(intent,
-            "拖方块进快捷栏并选中该槽后，selectedBlockPlaceIntent 应非空（拖放=可放置）");
-        assertEquals(1L, intent.instanceId(),
-            "intent 应指向被拖入方块的实例 id=1");
-        assertEquals(new BlockPos(10, 65, 20), intent.placePos(),
-            "UP 面放置点应在 targetPos 上方一格");
     }
 
     @Test
@@ -188,13 +134,15 @@ class InspectScreenSkillBarBindItemTest {
 
         InventoryItem pill =
             InventoryItem.createFull(9L, "guyuan_pill", "固元丹", 1, 1, 0.2, "rare", "", 1, 1.0, 1.0);
-        screen.commitQuickUseDrop(1, pill);
+        QuickUseSlotStore.replace(com.bong.client.combat.QuickSlotConfig.empty()
+            .withEligibleItems(java.util.Set.of("guyuan_pill")));
+        assertTrue(screen.commitQuickUseDrop(1, pill));
 
         // 非方块物品：只发 quick_slot_bind，SkillBar 不动（行为回归）。
         assertEquals(1, sent.size(),
             "非方块物品拖进快捷栏只应发 quick_slot_bind，实际发了 " + sent.size() + " 条");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"item_id\":\"guyuan_pill\",\"request_id\":\"quick-bind-test-1\"}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"instance_id\":9,\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
 
         SkillBarEntry entry = SkillBarStore.snapshot().slot(1);
@@ -213,7 +161,7 @@ class InspectScreenSkillBarBindItemTest {
         assertEquals(1, sent.size(),
             "清快捷栏槽只应发一条 quick_slot_bind(null)");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"item_id\":null,\"request_id\":\"quick-bind-test-1\"}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"instance_id\":null,\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
         assertNull(SkillBarStore.snapshot().slot(1));
     }

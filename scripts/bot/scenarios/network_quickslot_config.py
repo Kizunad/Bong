@@ -6,7 +6,7 @@
   成功 → 绑定物品（slots[i].entry.item_id）；物品不存在 → accepted=false 且槽为空；
   slot 越界（>=2）→ schema 层拒绝（请求在反序列化处 drop，无回执）；request_id 非法（空串/超长
   >128）→ handle_quick_slot_bind 静默返回（无回执）。
-  item_id=null → 解绑（accepted=true，槽清空）。
+  instance_id=null → 解绑（accepted=true，槽清空）。
 - `use_quick_slot` → handle_use_quick_slot：未开放槽（>=2）/ 无绑定 / 冷却（cast 完成后
   1500ms，DEFAULT_COOLDOWN_MS）/ 同槽 cast 中 → 静默忽略；
   命中绑定 → insert Casting + 推 `cast_sync`{phase=casting, slot, duration_ms}。
@@ -125,7 +125,7 @@ def _assert_no_cast_sync_until(bot, anchor_t: float, until_t: float) -> None:
         )
 
 
-def _authoritative_slots(bot, probe_request_id: str) -> list:
+def _authoritative_slots(bot, probe_request_id: str, instance_id: int) -> list:
     """发合法 bind 回执取权威 2 槽快照。
 
     静默拒绝只断言「无回执」不足以证明请求未产生副作用——错误实现可先写入绑定、
@@ -138,7 +138,7 @@ def _authoritative_slots(bot, probe_request_id: str) -> list:
             "type": "quick_slot_bind",
             "v": 1,
             "slot": BIND_SLOT,
-            "item_id": PILL,
+            "instance_id": instance_id,
             "request_id": probe_request_id,
         }
     )
@@ -146,12 +146,14 @@ def _authoritative_slots(bot, probe_request_id: str) -> list:
 
 
 def _slot_entries(slots: list) -> list:
-    """2 槽快照的逐槽投影：None 或 (item_id, count)，用于全槽逐槽对比。
+    """2 槽快照的逐槽投影：None 或 (instance_id, item_id, count)。
 
     review finding [3]：静默拒绝后的权威状态断言必须比较**全部 2 槽**，抽样会放过
     把越界槽 clamp 到邻近槽（尤其 slot 8）的错误实现。"""
     return [
-        None if entry is None else (entry.get("item_id"), entry.get("count", 1))
+        None
+        if entry is None
+        else (entry["instance_id"], entry["item_id"], entry["stack_count"])
         for entry in slots
     ]
 
@@ -161,8 +163,8 @@ def _give_fresh_pill_and_bind(
 ) -> tuple[dict, int]:
     """补一枚全新固元丹，证明上一枚已消费，再把新实例绑定到 ``slot``。
 
-    QuickSlot 按 instance_id 绑定；仅重新发送 bind 而不补给会命中服务端的
-    ``inventory_has_instance`` 早退。谓词同时要求新实例存在、旧实例消失，故
+    QuickSlot 按 instance_id 绑定；耗尽后仅重发旧实例的 bind 会被拒绝。
+    谓词同时要求新实例存在、旧实例消失，故
     「cast 完成只发 complete 但没有消费」或「give 合并/错误复用旧实例」都会红。
     """
     anchor = last_event_time(bot)
@@ -198,7 +200,7 @@ def _give_fresh_pill_and_bind(
             "type": "quick_slot_bind",
             "v": 1,
             "slot": slot,
-            "item_id": PILL,
+            "instance_id": fresh_instance_id,
             "request_id": request_id,
         }
     )
@@ -206,7 +208,7 @@ def _give_fresh_pill_and_bind(
     return snapshot, fresh_instance_id
 
 
-def _wait_quickslot_cooldown_clear(bot) -> None:
+def _wait_quickslot_cooldown_clear(bot, instance_id: int) -> None:
     """同值重绑获取权威冷却；到期提示是 wall-clock 估计，不能替代服务器 tick。"""
     deadline = time.monotonic() + 10.0
     attempt = 0
@@ -214,7 +216,7 @@ def _wait_quickslot_cooldown_clear(bot) -> None:
         request_id = f"gap10-cooldown-{attempt}"
         bot.intent({
             "type": "quick_slot_bind", "v": 1, "slot": BIND_SLOT,
-            "item_id": PILL, "request_id": request_id,
+            "instance_id": instance_id, "request_id": request_id,
         })
         config = _expect_bind_response(bot, request_id, True, BIND_SLOT)
         if config["cooldown_until_ms"][BIND_SLOT] == 0:
@@ -244,7 +246,7 @@ def run(env) -> None:
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": BIND_SLOT,
-                "item_id": PILL,
+                "instance_id": initial_pill_instance,
                 "request_id": "gap10-bind-1",
             }
         )
@@ -256,21 +258,21 @@ def run(env) -> None:
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": 0,
-                "item_id": "no_such_item_xyz",
+                "instance_id": 9007199254740991,
                 "request_id": "gap10-bind-2",
             }
         )
         _expect_bind_response(bot, "gap10-bind-2", False, 0)
 
         # 越界绑定无回执；前后对比两格权威快照，防止错误 clamp 后静默改绑。
-        baseline_slots = _authoritative_slots(bot, "gap10-probe-3-base")
+        baseline_slots = _authoritative_slots(bot, "gap10-probe-3-base", initial_pill_instance)
         anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": 2,
-                "item_id": PILL,
+                "instance_id": initial_pill_instance,
                 "request_id": "gap10-bind-3",
             }
         )
@@ -284,7 +286,7 @@ def run(env) -> None:
             f"[{bot.username}] slot=2 bind 应在 schema 层静默拒绝，实际收到 {len(stray)} 条 quickslot_config"
         )
         # ── 3b. slot=2 静默后权威 2 槽状态逐槽不变（review finding [1]/[3]）──
-        slots = _authoritative_slots(bot, "gap10-probe-3")
+        slots = _authoritative_slots(bot, "gap10-probe-3", initial_pill_instance)
         assert _slot_entries(slots) == _slot_entries(baseline_slots), (
             f"slot=2 请求后权威 2 槽必须逐槽不变，实际 {_slot_entries(slots)}"
         )
@@ -293,7 +295,7 @@ def run(env) -> None:
         #    review finding [6]：旧场景只测空串，放过了「接受任意超长非空 id 且
         #    变异绑定」的错误实现。schema maxLength=128、handler len()>128 双拒。
         #    请求前捕获基线，请求后对比全部两格。
-        baseline_slots = _authoritative_slots(bot, "gap10-probe-4-base")
+        baseline_slots = _authoritative_slots(bot, "gap10-probe-4-base", initial_pill_instance)
         for slot, bad_request_id in ((0, ""), (0, "x" * 129)):
             anchor = last_event_time(bot)
             bot.intent(
@@ -301,7 +303,7 @@ def run(env) -> None:
                     "type": "quick_slot_bind",
                     "v": 1,
                     "slot": slot,
-                    "item_id": PILL,
+                    "instance_id": initial_pill_instance,
                     "request_id": bad_request_id,
                 }
             )
@@ -317,7 +319,7 @@ def run(env) -> None:
             )
 
         # ── 4b. 静默拒绝后权威 2 槽状态逐槽不变（review finding [1]/[6]）──
-        slots = _authoritative_slots(bot, "gap10-probe-4")
+        slots = _authoritative_slots(bot, "gap10-probe-4", initial_pill_instance)
         assert _slot_entries(slots) == _slot_entries(baseline_slots), (
             f"非法 request_id 请求后权威 2 槽必须逐槽不变，实际 {_slot_entries(slots)}"
         )
@@ -336,22 +338,21 @@ def run(env) -> None:
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": 0,
-                "item_id": PILL,
+                "instance_id": initial_pill_instance,
                 "request_id": rid128,
             }
         )
         bind_0 = _expect_bind_response(bot, rid128, True, 0)
 
-        # ── 4e. 畸形 item_id="" 拒绝且既有绑定不变 ──
-        #     schema 契约仅允许 null 或 minLength:1 字符串，item_id="" 为畸形输入。
-        #     服务端应回推 bind_accepted=false，不得将其当成 null 解绑清空槽 0。
+        # ── 4e. instance_id=0 拒绝且既有绑定不变 ──
+        #     0 不是合法实例，不得将其当成 null 解绑清空槽 0。
         empty_item_rid = "gap10-empty-item-4e"
         bot.intent(
             {
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": 0,
-                "item_id": "",
+                "instance_id": 0,
                 "request_id": empty_item_rid,
             }
         )
@@ -363,18 +364,18 @@ def run(env) -> None:
             expected_entry=bind_0["slots"][0],
         )
         # 槽 0 必须保持槽含物品（未被清空）
-        slots_after_empty = _authoritative_slots(bot, "gap10-probe-4e")
+        slots_after_empty = _authoritative_slots(bot, "gap10-probe-4e", initial_pill_instance)
         assert slots_after_empty[0] is not None, (
-            f"item_id='' 拒绝后槽 0 必须保持绑定，实际被清空为 None: {slots_after_empty[0]!r}"
+            f"instance_id=0 拒绝后槽 0 必须保持绑定，实际被清空为 None: {slots_after_empty[0]!r}"
         )
 
-        # ── 5. bind 解绑：item_id=null → accepted=true + 槽清空 ──
+        # ── 5. bind 解绑：instance_id=null → accepted=true + 槽清空 ──
         bot.intent(
             {
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": BIND_SLOT,
-                "item_id": None,
+                "instance_id": None,
                 "request_id": "gap10-bind-5",
             }
         )
@@ -401,7 +402,7 @@ def run(env) -> None:
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": BIND_SLOT,
-                "item_id": PILL,
+                "instance_id": initial_pill_instance,
                 "request_id": "gap10-bind-6",
             }
         )
@@ -465,9 +466,13 @@ def run(env) -> None:
             description="首次消费后的非零快捷槽冷却",
         ).data["payload"]
         assert cooldown["slots"][BIND_SLOT]["cooldown_ms"] == COOLDOWN_MS
+        assert _slot_entries(cooldown["slots"]) == [
+            (initial_pill_instance, PILL, 1),
+            (initial_pill_instance, PILL, 1),
+        ], "消费后的快捷栏推送必须同步所有引用槽的剩余数量"
         cooldown_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
-        _wait_quickslot_cooldown_clear(bot)
+        _wait_quickslot_cooldown_clear(bot, initial_pill_instance)
         after_anchor = last_event_time(bot)
         _assert_no_cast_sync_until(bot, cooldown_anchor, after_anchor)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
@@ -492,7 +497,7 @@ def run(env) -> None:
         # 恢复 cast 同样要等 complete 收尾：后续 step 7 在异槽 use，玩家 Casting 态
         # 未清会触发 UserCancel+重启而非干净新 cast（见 7a 注释），必须同步回 Idle。
         recover_anchor = last_event_time(bot)
-        bot.wait_for(
+        exhausted = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "cast_sync"
@@ -503,6 +508,17 @@ def run(env) -> None:
             timeout=10.0,
             description=f"冷却恢复 cast 的 cast_sync(complete)",
         )
+        cleared = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "quickslot_config"
+                and e.t > exhausted.t
+                and e.data["payload"]["slots"] == [None, None]
+            ),
+            timeout=10.0,
+            description="最后一枚耗尽后，所有快捷链接主动清空",
+        ).data["payload"]
+        assert cleared["cooldown_until_ms"][BIND_SLOT] > 0, "清空链接必须保留消费冷却"
 
         # 补给并绑定第一格，再证明越界使用不会误用现有物品。
         _give_fresh_pill_and_bind(bot, initial_pill_instance, 0, "gap10-bind-0")
@@ -516,7 +532,7 @@ def run(env) -> None:
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": BIND_SLOT,
-                "item_id": None,
+                "instance_id": None,
                 "request_id": "unbind-before-cross-slot",
             }
         )

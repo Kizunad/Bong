@@ -47,7 +47,7 @@ class CombatHudBootstrapTest {
     void boundQuickSlotSendsUseRequestWithSameSlot() {
         int slot = QuickSlotConfig.SLOT_COUNT - 1;
         QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(slot, new QuickSlotEntry(
-            "item:quick-slot-boundary",
+            42L, 1, "item:quick-slot-boundary",
             "边界快捷物品",
             750,
             1_500,
@@ -78,7 +78,7 @@ class CombatHudBootstrapTest {
     void unavailableBoundSlotDoesNotSendOrInterruptCurrentCast() {
         int lockedSlot = QuickSlotConfig.SLOT_COUNT;
         QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(lockedSlot,
-            new QuickSlotEntry("earth_crumb", "土块", 1000, 0, "")));
+            new QuickSlotEntry(42L, 1, "earth_crumb", "土块", 1000, 0, "")));
         CastStateStore.beginSkillBarCast(0, 5000, System.currentTimeMillis());
         CastState current = CastStateStore.snapshot();
 

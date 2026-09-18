@@ -41,7 +41,12 @@ public final class OwoXmlTemplateRegistry {
         Map.entry("zhenfa-layout", ZHENFA_LAYOUT),
         Map.entry("main-menu", MAIN_MENU),
         Map.entry("item-inspect", ITEM_INSPECT),
-        Map.entry("window-frame", new Identifier("bong", "window-frame"))
+        Map.entry("window-frame", new Identifier("bong", "window-frame")),
+        Map.entry("inventory-container", new Identifier("bong", "inventory-container")),
+        Map.entry("inventory-equipment", new Identifier("bong", "inventory-equipment")),
+        Map.entry("inventory-shortcuts", new Identifier("bong", "inventory-shortcuts")),
+        Map.entry("workspace-controls", new Identifier("bong", "workspace-controls")),
+        Map.entry("hud-widget", new Identifier("bong", "hud-widget"))
     );
     private static final OwoXmlTemplateRegistry PRODUCTION = new OwoXmlTemplateRegistry(
         UIModelLoader::get,

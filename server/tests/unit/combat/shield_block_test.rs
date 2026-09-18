@@ -1355,6 +1355,7 @@ fn raise_shield_reads_block_ratio_from_item_registry() {
     let registry = ItemRegistry::from_map(std::collections::HashMap::from([(
         "bone_shield".to_string(),
         ItemTemplate {
+            quick_use: false,
             id: "bone_shield".to_string(),
             placeable: None,
             display_name: "骨盾".to_string(),

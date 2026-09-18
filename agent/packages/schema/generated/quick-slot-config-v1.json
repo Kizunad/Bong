@@ -2,10 +2,19 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "eligible_item_ids",
     "slots",
     "cooldown_until_ms"
   ],
   "properties": {
+    "eligible_item_ids": {
+      "uniqueItems": true,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
     "slots": {
       "minItems": 2,
       "maxItems": 2,
@@ -16,6 +25,8 @@
             "additionalProperties": false,
             "type": "object",
             "required": [
+              "instance_id",
+              "stack_count",
               "item_id",
               "display_name",
               "cast_duration_ms",
@@ -23,6 +34,15 @@
               "icon_texture"
             ],
             "properties": {
+              "instance_id": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "stack_count": {
+                "minimum": 1,
+                "type": "integer"
+              },
               "item_id": {
                 "minLength": 1,
                 "type": "string"
@@ -70,5 +90,5 @@
       "type": "boolean"
     }
   },
-  "x-bong-typebox-source-sha256": "460a6373a63a52f3a9b6b5aaef4f399ae372d07a54b1271061787f614b27f62b"
+  "x-bong-typebox-source-sha256": "8c48b4356e34ae13036e254cfe627fb29e31077164e64e54b401c099665b45a8"
 }

@@ -44,10 +44,15 @@ import java.util.Map;
 /** UI 截图场景白名单。新增场景必须显式登记并提供确定性 fixture。 */
 final class UiPreviewScenes {
     private static final Map<String, UiPreviewScene> SCENES = Map.ofEntries(
+        Map.entry("hud-windows", new UiHudWindowPreviewScene()),
+        Map.entry("inventory-windows", new UiInventoryWindowPreviewScene()),
         Map.entry("item-windows", new UiWindowPreviewScene()),
         Map.entry("item-windows-armor", new UiWindowPreviewScene("armor_iron_leggings")),
         Map.entry("item-windows-pack", new UiWindowPreviewScene("grass_pouch")),
         Map.entry("item-windows-block", new UiWindowPreviewScene("weathered_stone")),
+        Map.entry("item-windows-settings", new UiWindowPreviewScene("pickaxe_iron", "settings")),
+        Map.entry("item-windows-terrain", new UiWindowPreviewScene("pickaxe_iron", "terrain")),
+        Map.entry("item-windows-hud", new UiWindowPreviewScene("pickaxe_iron", "hud")),
         Map.entry("craft", new CraftScene()),
         Map.entry("terminate", new TerminateScene(0)),
         Map.entry("terminate-kind", new TerminateScene(1)),

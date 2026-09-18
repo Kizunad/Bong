@@ -362,6 +362,7 @@ mod tests {
         templates.insert(
             "iron_sword".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
@@ -399,6 +400,7 @@ mod tests {
         templates.insert(
             "spirit_saber".to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: "spirit_saber".to_string(),
                 display_name: "灵刀".to_string(),
                 category: ItemCategory::Weapon,

@@ -190,6 +190,7 @@ mod tests {
             map.insert(
                 id.to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: id.to_string(),
                     display_name: id.to_string(),
                     category: ItemCategory::Misc,

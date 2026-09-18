@@ -2165,6 +2165,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
             outcome: CastOutcomeV1::None,
         })),
         fix!(ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
+            eligible_item_ids: vec![],
             slots: vec![None; bong_server::combat::components::QuickSlotBindings::SLOT_COUNT],
             cooldown_until_ms: vec![
                 0;
@@ -3664,7 +3665,7 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
         build(ClientRequestV1::QuickSlotBind {
             v: 1,
             slot: 0,
-            item_id: Some("herb_a".to_string()),
+            instance_id: Some(42),
             request_id: "quick-bind-1".to_string(),
         }),
         build(ClientRequestV1::SkillBarCast {

@@ -111,6 +111,7 @@ pub struct CastSyncV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotConfigV1 {
+    pub eligible_item_ids: Vec<String>,
     pub slots: Vec<Option<QuickSlotEntryV1>>,
     /// 0 表示无冷却；否则为 unix ms 截止时间。
     pub cooldown_until_ms: Vec<u64>,
@@ -125,6 +126,8 @@ pub struct QuickSlotConfigV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickSlotEntryV1 {
+    pub instance_id: u64,
+    pub stack_count: u32,
     pub item_id: String,
     pub display_name: String,
     pub cast_duration_ms: u32,
@@ -589,10 +592,13 @@ mod tests {
     #[test]
     fn quickslot_config_roundtrip_preserves_content() {
         let original = QuickSlotConfigV1 {
+            eligible_item_ids: vec!["huiyuan_pill".into()],
             slots: vec![
                 Some(QuickSlotEntryV1 {
-                    item_id: "kai_mai_pill".to_string(),
-                    display_name: "开脉丹".to_string(),
+                    instance_id: 42,
+                    stack_count: 2,
+                    item_id: "huiyuan_pill".to_string(),
+                    display_name: "回元丹".to_string(),
                     cast_duration_ms: 1500,
                     cooldown_ms: 1500,
                     icon_texture: String::new(),
