@@ -1,0 +1,26 @@
+# 凡铁矿 FanTie —— 特征点名清单
+#
+# 特征来源：`fan_tie.png` 物品原画与地表凡铁矿方块：
+# 1. stepped_iron_lobes: 凡铁金属阶梯立方断层矿体（左瓣下阶断层与右瓣高耸断层）
+# 2. golden_chasm_veins: 沿中央咬合深裂谷纵贯穿行的曲折金色地火脉网（暗金深底 + 灿金主脉 + 炽金火核）
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+iron_void = [22, 18, 16]
+iron_dark = [48, 42, 38]
+iron_mid  = [82, 74, 68]
+iron_lit  = [126, 116, 110]
+iron_spec = [176, 168, 162]
+gold_deep = [164, 88, 28]
+gold_mid  = [232, 162, 48]
+gold_high = [255, 232, 140]
+
+[features]
+# 阶梯断层矿体
+stepped_iron_lobes = { elements = ["lobe_", "nodule_", "back_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 10000, SIDE_R = 10000 } }
+
+# 纵贯深谷金火脉
+golden_chasm_veins = { elements = ["chasm_", "gold_"], must_show_in = ["FRONT"], min_px = { FRONT = 2000 } }

@@ -106,11 +106,41 @@
    "armor/copper/textures/copper_leggings/0.png": "3b8370b4e05c8b2fba33afa9607a4fdafb3376ec859e0707a87c95eca0be8f37"
   }
  },
+ "gen_cu_tie.py": {
+  "exit": 0,
+  "outputs": {
+   "CuTie.bbmodel": "32d74f460bd8ea6ee89febac8040e6e5aa82b36a4fe12f78aee72023fb93677d"
+  }
+ },
+ "gen_cu_tie_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
+ "gen_dan_sha.py": {
+  "exit": 0,
+  "outputs": {
+   "DanSha.bbmodel": "e27a454627b22473dc9331dac2fe31b8a7fb6199484d19339bc12855868aab90"
+  }
+ },
+ "gen_dan_sha_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
  "gen_dead_drop_box.py": {
   "exit": 0,
   "outputs": {
    "DeadDropBox.bbmodel": "97dde7b09f5f9fa4d242301474d3e9824d2dfed81ba6dea15243687691aaebac"
   }
+ },
+ "gen_fan_tie.py": {
+  "exit": 0,
+  "outputs": {
+   "FanTie.bbmodel": "6e619dfb3bb6571042e2a5bb6fff6f395b9296ea10177baf6856db200bde3791"
+  }
+ },
+ "gen_fan_tie_block.py": {
+  "exit": 0,
+  "outputs": {}
  },
  "gen_furniture.py": {
   "exit": 0,
@@ -126,6 +156,16 @@
   "outputs": {
    "GrassPouch.bbmodel": "90d99189434e97478c1d7c02d6c4ae0baeb7fa04db79260bbc482cfec8b66729"
   }
+ },
+ "gen_gu_tong_pian.py": {
+  "exit": 0,
+  "outputs": {
+   "GuTongPian.bbmodel": "588a8de4587e61a58a787fd79961ddf7a424f06a6633cd7bdbcc16e66631f3ca"
+  }
+ },
+ "gen_gu_tong_pian_block.py": {
+  "exit": 0,
+  "outputs": {}
  },
  "gen_gu_yuan_gen.py": {
   "exit": 0,
@@ -231,6 +271,16 @@
    "IronDaggerPlayerAnim.bbmodel": "0849a315ae704a4433f776dd568d0bd54e36d4ccfd3b730108e1f6d88e930d34"
   }
  },
+ "gen_iron_ingot.py": {
+  "exit": 0,
+  "outputs": {
+   "IronIngot.bbmodel": "ea9e7f30777833774121b4b07c3e06e18c2155bc6d2f997d81639fba3324715b"
+  }
+ },
+ "gen_iron_ingot_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
  "gen_jade_coffin.py": {
   "exit": 0,
   "outputs": {
@@ -282,6 +332,26 @@
    "armor/linen/textures/linen_leggings/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d"
   }
  },
+ "gen_ling_jing.py": {
+  "exit": 0,
+  "outputs": {
+   "LingJing.bbmodel": "6153f1fa9f28e2d6d69744770d893c549763918570ec577a50a97bb753afb9b5"
+  }
+ },
+ "gen_ling_jing_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
+ "gen_ling_tie.py": {
+  "exit": 0,
+  "outputs": {
+   "LingTie.bbmodel": "88672caffc8cf9025c3b6ce94112683a1020775cf2dbc18d6f7a16ee48ddfd35"
+  }
+ },
+ "gen_ling_tie_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
  "gen_ling_yan_shi_zhi.py": {
   "exit": 0,
   "outputs": {
@@ -324,6 +394,16 @@
   "outputs": {
    "RemnantScroll.bbmodel": "c4fba96734706dfb87997a486e23530f84a05305c1a41a0dbec40a55e1994551"
   }
+ },
+ "gen_salt_crystal.py": {
+  "exit": 0,
+  "outputs": {
+   "SaltCrystal.bbmodel": "b2c36c8abc78f099c2d61cf719f6b4a54aa21c6fa9e265f4760d48f452cfc745"
+  }
+ },
+ "gen_salt_crystal_block.py": {
+  "exit": 0,
+  "outputs": {}
  },
  "gen_scroll_wrap_armor.py": {
   "exit": 0,
@@ -393,11 +473,41 @@
    "Workbench.bbmodel": "064f70eb9c99c30e580dd04fa5f7c34af1f649933b2b96b81ba25709e53550c9"
   }
  },
+ "gen_wu_yao.py": {
+  "exit": 0,
+  "outputs": {
+   "WuYao.bbmodel": "ec7633a0b1b1aad8e7f923f1499a3de6b05a4b193abff9b2ddfd506f6881e759"
+  }
+ },
+ "gen_wu_yao_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
+ "gen_xiong_huang.py": {
+  "exit": 0,
+  "outputs": {
+   "XiongHuang.bbmodel": "75eefcc15761b6b2f8de8be0ea6670ee2aeecc61c4f5e23b0e456702992cdb1b"
+  }
+ },
+ "gen_xiong_huang_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
  "gen_xu_yuan_rui.py": {
   "exit": 0,
   "outputs": {
    "XuYuanRui.bbmodel": "0fa72fe49eb7e787d61b002685178ddb59566dddbfd34fcb1a6e2e342b02f4b7"
   }
+ },
+ "gen_xuan_iron.py": {
+  "exit": 0,
+  "outputs": {
+   "XuanIron.bbmodel": "96cd10aa7782176a6dff57a6607e4400d4cae24b1a692cae85a822e69c5a5f57"
+  }
+ },
+ "gen_xuan_iron_block.py": {
+  "exit": 0,
+  "outputs": {}
  },
  "gen_xue_po_lian.py": {
   "exit": 0,
@@ -405,10 +515,30 @@
    "XuePoLian.bbmodel": "cd9b4e7a4c5c3e21a7ce9231325bfe7f26bea8e93d5844dac7e175f98e46fbed"
   }
  },
+ "gen_yu_sui.py": {
+  "exit": 0,
+  "outputs": {
+   "YuSui.bbmodel": "c244c390c500b3e1c3dd54301efaee807c828c864e8fb0966139a35aebf78a08"
+  }
+ },
+ "gen_yu_sui_block.py": {
+  "exit": 0,
+  "outputs": {}
+ },
  "gen_zhenyuan_mine.py": {
   "exit": 0,
   "outputs": {
    "ZhenyuanMine.bbmodel": "18d35232ed47a46e9f0ced1398a548699914a118add61ce42c12f34ad269598d"
   }
+ },
+ "gen_zhu_sha.py": {
+  "exit": 0,
+  "outputs": {
+   "ZhuSha.bbmodel": "c909855c3facdc11d9bf1d6c7c6e8cc54ed0971b0867b83b7f23886cc7309d67"
+  }
+ },
+ "gen_zhu_sha_block.py": {
+  "exit": 0,
+  "outputs": {}
  }
 }

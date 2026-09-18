@@ -1,0 +1,26 @@
+# 灵晶 LingJing —— 特征点名清单
+#
+# 特征来源：`ling_jing.png` 物品原画与深岩晶洞方块：
+# 1. bipyramid_core: 悬浮在空中的双锥八面梭形主晶核（上下对称收尖锥，离地悬浮）
+# 2. celestial_runes: 晶体表面阳刻的苍白天道灵符刻痕
+# 3. floating_shards: 四周悬浮漂移的微晶碎砾
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+cryst_deep = [58, 72, 98]
+cryst_mid  = [98, 126, 162]
+cryst_lit  = [148, 184, 222]
+cryst_high = [212, 236, 255]
+
+[features]
+# 双锥八面主核
+bipyramid_core = { elements = ["waist_", "upper_", "lower_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 4000, SIDE_R = 4000 } }
+
+# 天道灵符
+celestial_runes = { elements = ["rune_"], must_show_in = ["FRONT"], min_px = { FRONT = 300 } }
+
+# 悬浮伴生晶砾
+floating_shards = { elements = ["shard_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 400, SIDE_R = 300 } }

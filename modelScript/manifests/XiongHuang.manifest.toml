@@ -1,0 +1,34 @@
+# 雄黄 XiongHuang —— 特征点名清单
+#
+# 特征来源：`xiong_huang.png` 物品图标与 `ore_xiong_huang.png` 矿石方块贴图：
+# 1. soot_rock: 焦黑深层洞穴围岩基座
+# 2. amber_core: 粗壮六棱蜜蜡金黄主晶柱（带向阳高光晶面）
+# 3. cluster_prisms: 伴生参差簇拥的次生金晶群
+# 4. sulfur_crust: 晶石接缝处的硫磺黄晕与细脉
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+rock_dark   = [24, 20, 18]
+rock_base   = [48, 42, 38]
+rock_mid    = [72, 64, 58]
+amber_deep  = [142, 62, 10]
+amber_body  = [208, 136, 18]
+amber_lit   = [238, 172, 42]
+amber_high  = [252, 218, 104]
+sulfur_seam = [244, 188, 32]
+
+[features]
+# 焦黑围岩基座
+soot_rock = { elements = ["rock_bed_", "rock_wall_", "rock_back_", "rock_fr_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 3000, SIDE_R = 3000 } }
+
+# 核心蜜蜡金黄主晶
+amber_core = { elements = ["amber_main_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2500, SIDE_R = 2500 } }
+
+# 伴生小晶簇
+cluster_prisms = { elements = ["amber_sub_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 1500 } }
+
+# 硫磺裂缝细脉
+sulfur_crust = { elements = ["sulfur_"], must_show_in = ["FRONT"], min_px = { FRONT = 200 } }
