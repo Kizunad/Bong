@@ -45,6 +45,7 @@ public final class MiniBodyHudPlanner {
     static final int BODY_H = 75;
     static final int BODY_COLOR = 0xCC808080;
     static final String BODY_TEXTURE = "bong-client:textures/gui/hud/mini_body_intact.png";
+    static final int WOUND_ICON_SIZE = 9;
 
     // Vertical bars (8×65 each, to the right of silhouette).
     static final int BAR_W = 8;
@@ -62,7 +63,7 @@ public final class MiniBodyHudPlanner {
     static final int ARTIFACT_INDICATOR_SIZE = 3;
     static final int ARTIFACT_INDICATOR_COLOR_FALLBACK = 0xFF808080;
 
-    // plan-armor-v1 §5：破损护甲裂纹提示（同 layer，靠命令顺序实现 wound dot 覆盖）。
+    // plan-armor-v1 §5：破损护甲裂纹提示（同 layer，伤势图标绘制在裂纹之上）。
     static final int BROKEN_ARMOR_CRACK_COLOR = 0xFFB0B0B0;
     static final int BODY_PART_RESIST_FRAME_COLOR = 0xFF409CFF;
     static final int BODY_PART_WEAKEN_FRAME_COLOR = 0xFFFF5050;
@@ -104,7 +105,7 @@ public final class MiniBodyHudPlanner {
         appendSilhouette(out, anchorX, anchorY);
         appendBrokenArmorCracks(out, anchorX, anchorY, equipped);
         appendArtifactIndicator(out, anchorX, anchorY, equipped);
-        appendWoundDots(out, anchorX, anchorY, body);
+        appendWoundIcons(out, anchorX, anchorY, body);
         appendCombatPillPartFrames(out, anchorX, anchorY);
         appendBars(out, anchorX, anchorY, hud, nowMillis, seasonState);
 
@@ -129,7 +130,7 @@ public final class MiniBodyHudPlanner {
         ));
     }
 
-    private static void appendWoundDots(
+    private static void appendWoundIcons(
         List<HudRenderCommand> out,
         int anchorX,
         int anchorY,
@@ -147,15 +148,14 @@ public final class MiniBodyHudPlanner {
             if (level == null || level == WoundLevel.INTACT) continue;
 
             int[] pos = locatePart(bx, by, part);
-            int dotSize = dotSizeFor(level);
-            int dotColor = dotColorFor(level);
-            out.add(HudRenderCommand.rect(
+            out.add(HudRenderCommand.texture(
                 HudRenderLayer.MINI_BODY,
-                pos[0] - dotSize / 2,
-                pos[1] - dotSize / 2,
-                dotSize,
-                dotSize,
-                dotColor
+                woundTexture(level),
+                pos[0] - WOUND_ICON_SIZE / 2,
+                pos[1] - WOUND_ICON_SIZE / 2,
+                WOUND_ICON_SIZE,
+                WOUND_ICON_SIZE,
+                0xFFFFFFFF
             ));
         }
     }
@@ -403,26 +403,16 @@ public final class MiniBodyHudPlanner {
         return point;
     }
 
-    private static int dotSizeFor(WoundLevel level) {
-        return switch (level) {
-            case INTACT -> 0;
-            case BRUISE -> 2;
-            case ABRASION -> 3;
-            case LACERATION -> 5;
-            case FRACTURE -> 4;
-            case SEVERED -> 6;
+    private static String woundTexture(WoundLevel level) {
+        String name = switch (level) {
+            case INTACT -> throw new IllegalArgumentException("完好部位不绘制伤势图标");
+            case BRUISE -> "bruise";
+            case ABRASION -> "abrasion";
+            case LACERATION -> "laceration";
+            case FRACTURE -> "fracture";
+            case SEVERED -> "severed";
         };
-    }
-
-    private static int dotColorFor(WoundLevel level) {
-        return switch (level) {
-            case INTACT -> 0;
-            case BRUISE -> 0xFFC08040;
-            case ABRASION -> 0xFFFFCC40;
-            case LACERATION -> 0xFFFF4040;
-            case FRACTURE -> 0xFFA01818;
-            case SEVERED -> 0xFF303030;
-        };
+        return "bong-client:textures/gui/hud/wounds/" + name + ".png";
     }
 
     private static void appendBars(
