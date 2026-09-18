@@ -1105,7 +1105,7 @@ public final class ArmorPartModel {
         );
     }
 
-+    private static List<ArmorCube> linenHelmet() {
+    private static List<ArmorCube> linenHelmet() {
         return List.of(
             new ArmorCube(Mount.HEAD, -4.5f, 32.0f, -5.6f, 9.0f, 1.6f, 5.65f, 32, 0),
             new ArmorCube(Mount.HEAD, -4.7f, 31.55f, 0.1f, 9.4f, 1.6f, 4.55f, 32, 0),
