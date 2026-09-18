@@ -20,7 +20,7 @@
  "gen_bamboo_jian.py": {
   "exit": 0,
   "outputs": {
-   "BambooJian.bbmodel": "fc861dc6a5ad266abb619240d4e9859d98a43b740ef5975c790a41478ff86180"
+   "BambooJian.bbmodel": "a669d5799bb8708852ce76704bb81704fb15442fb4bc34d77a0e60b7e41a1033"
   }
  },
  "gen_beast_spine_sword.py": {
@@ -300,7 +300,7 @@
  "gen_jian_player_anim.py": {
   "exit": 0,
   "outputs": {
-   "JianPlayerAnim.bbmodel": "cf4fbbbb845b777820aab31850e2116fa852b3b84205f5246da7813bdd274ab8"
+   "JianPlayerAnim.bbmodel": "9e9dd92558156ffdf64cd188780d0a21f48dff56cbc179b2cbbe51d643b8f11c"
   }
  },
  "gen_jin_zhong_dan.py": {
