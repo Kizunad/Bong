@@ -387,10 +387,18 @@
  "gen_mutated_bone_armor.py": {
   "exit": 0,
   "outputs": {
+   "armor/mutated_bone/MutatedBoneBoots.bbmodel": "b81ce18897e67938d38e84dafd08c708e4b18e120f570b7c578079cbbbe70f85",
+   "armor/mutated_bone/MutatedBoneBootsOnPlayer.bbmodel": "8c35e92840bea0b421f3304a05d211a0d653acbad2a485377a3327ae589498f0",
    "armor/mutated_bone/MutatedBoneChestplate.bbmodel": "cc9642d3579d193be77078dbae5bb6aceae1d8c259d62492b6d4c47acf329bc4",
    "armor/mutated_bone/MutatedBoneChestplateOnPlayer.bbmodel": "256f53deb348b3ccb08474f895ba9ad66eda70f9d0b4a6e2d25060b1310a2cd6",
+   "armor/mutated_bone/MutatedBoneHelmet.bbmodel": "5bd05545b89637813db4d3da2fbc2e9c8d105eacfa84cf6851ab0ccd36140440",
+   "armor/mutated_bone/MutatedBoneHelmetOnPlayer.bbmodel": "8ae8184dfd60935ac35b75b51ac9c0b1614f07c49a11c1efbce88818ae22f9cf",
    "armor/mutated_bone/MutatedBoneLeggings.bbmodel": "71b2b967470cc78ae6da3b6ae8a1336c30be04ae7fd548d2a951df648a81b11c",
-   "armor/mutated_bone/MutatedBoneLeggingsOnPlayer.bbmodel": "697282b98f4b5426407aa45b4b3ce879ed58e5c77013adaa2f872a8cbd8c5b19"
+   "armor/mutated_bone/MutatedBoneLeggingsOnPlayer.bbmodel": "697282b98f4b5426407aa45b4b3ce879ed58e5c77013adaa2f872a8cbd8c5b19",
+   "armor/mutated_bone/textures/mutated_bone_boots/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
+   "armor/mutated_bone/textures/mutated_bone_chestplate/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
+   "armor/mutated_bone/textures/mutated_bone_helmet/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042",
+   "armor/mutated_bone/textures/mutated_bone_leggings/0.png": "a6bcb67e1cc31f40c4da72c814021200b9968899fb9108f4dc039156cdf7b042"
   }
  },
  "gen_remnant_scroll.py": {
