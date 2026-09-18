@@ -205,44 +205,62 @@ def part_chestplate() -> ArmorPart:
 
 
 def _helmet_crown() -> tuple[Cube, ...]:
-    """贴着头盒分层铺布；薄片沿头顶收边，不做外伸的硬帽檐。"""
+    """贴头颅盖：横向只到 ±4.7，前后两片错层而不是一张四角平板。"""
     return (
-        # 内层只比头盒略收，薄而低，不形成四面外伸的平板。
-        c("HEAD", "cap_top_front", (-3.72, 31.62, -3.55), (7.44, 0.30, 3.05), UV_LINEN_DARK),
-        # 后半片向后错 0.12，和前半片的边缘读成搭接而不是一整块硬壳。
-        c("HEAD", "cap_top_back", (-3.72, 31.74, -0.42), (7.44, 0.30, 3.80), UV_LINEN_MAIN),
-        # 顶布左右的折边收在头盒侧面，形成缠布的两道纵向转折。
-        c("HEAD", "cap_front_fold", (-3.88, 31.28, -3.82), (7.76, 0.28, 0.42), UV_LINEN_MAIN),
-        c("HEAD", "cap_back_bridge", (-3.88, 31.18, 3.42), (7.76, 0.28, 0.42), UV_LINEN_DARK),
+        # 头盒是 x∈[-4,4]；颅盖只放宽到 ±4.5/±4.7，前缘可沿 -z 探出，
+        # 但横向不会变成斗笠式大檐。后片向下错 0.45，和前片形成压布搭接。
+        c("HEAD", "cap_top_front", (-4.5, 32.0, -5.6), (9.0, 1.6, 5.65), UV_LINEN_DARK),
+        c("HEAD", "cap_top_back", (-4.7, 31.55, 0.1), (9.4, 1.6, 4.55), UV_LINEN_MAIN),
+        # 前缘卷边挂在颅盖下方，负责把平面读成折过来的布边。
+        c("HEAD", "cap_front_fold", (-4.7, 31.8, -5.75), (9.4, 1.3, 0.9), UV_LINEN_DARK),
     )
 
 
-def _helmet_wrap() -> tuple[Cube, ...]:
-    """额前压布、双侧缠布和短护耳；护耳只贴左右脸颊，不垂到肩部。"""
+def _helmet_brow() -> tuple[Cube, ...]:
+    """眉箍：整顶最宽的一圈，两端绕到太阳穴后收住。"""
     return (
-        # 三层高差形成「额前压布 → 顶布 → 后脑搭接」的缠绕顺序；浅色只在压边。
-        c("HEAD", "forehead_wrap", (-4.12, 28.72, -4.18), (8.24, 1.42, 0.44), UV_LINEN_WRAP),
-        c("HEAD", "forehead_edge", (-4.18, 28.48, -4.42), (8.36, 0.26, 0.28), UV_HEMP_ROPE),
-        c("HEAD", "side_wrap_left", (-4.28, 28.35, -3.35), (0.38, 2.45, 6.7), UV_LINEN_DARK),
-        c("HEAD", "side_wrap_right", (3.90, 28.35, -3.35), (0.38, 2.45, 6.7), UV_LINEN_DARK),
-        # 护耳片只占前侧脸颊，底边在下颌线上方，不再把头盔撑成四条桌腿。
-        c("HEAD", "ear_flap_left", (-4.38, 24.72, -3.62), (0.46, 2.42, 2.35), UV_LINEN_DARK),
-        c("HEAD", "ear_flap_right", (3.92, 24.72, -3.62), (0.46, 2.42, 2.35), UV_LINEN_DARK),
-        c("HEAD", "ear_flap_hem_left", (-4.44, 24.48, -3.68), (0.52, 0.20, 2.45), UV_LINEN_WRAP),
-        c("HEAD", "ear_flap_hem_right", (3.92, 24.48, -3.68), (0.52, 0.20, 2.45), UV_LINEN_WRAP),
-        # 后脑搭接比顶布低一层，贴着后枕而非向外伸出一圈。
-        c("HEAD", "back_drape", (-4.10, 25.85, 3.92), (8.20, 2.15, 0.38), UV_LINEN_DARK),
+        # 眉箍宽度 ±5.4，比颅盖多出一圈压边；它在颅盖下方，形成连续连接。
+        c("HEAD", "forehead_wrap", (-5.4, 30.3, -5.2), (10.8, 2.15, 1.35), UV_LINEN_DARK),
+        c("HEAD", "side_wrap_left", (-5.4, 30.3, -3.75), (1.4, 2.15, 2.85), UV_LINEN_DARK),
+        c("HEAD", "side_wrap_right", (4.0, 30.3, -3.75), (1.4, 2.15, 2.85), UV_LINEN_DARK),
+        # 只在前缘留一条细麻绳，不能把整件切成浅色板条。
+        c("HEAD", "forehead_edge", (-5.45, 30.02, -5.38), (10.9, 0.28, 0.28), UV_HEMP_ROPE),
     )
 
 
-def _helmet_fasteners() -> tuple[Cube, ...]:
-    """外露的双侧系带与额中骨扣；固定件沿缠布边缘走，不成为桌腿。"""
+def _helmet_ear_flaps() -> tuple[Cube, ...]:
+    """护耳：只有左右两片，贴在 x=±5.25，底边收在头底 y≈24.3。"""
     return (
-        c("HEAD", "side_tie_left", (-4.82, 27.15, -3.12), (0.58, 0.64, 0.96), UV_HEMP_ROPE),
-        c("HEAD", "side_tie_right", (4.24, 27.15, -3.12), (0.58, 0.64, 0.96), UV_HEMP_ROPE),
-        c("HEAD", "side_knot_left", (-4.92, 26.40, -3.22), (0.78, 0.78, 0.78), UV_HEMP_ROPE),
-        c("HEAD", "side_knot_right", (4.14, 26.40, -3.22), (0.78, 0.78, 0.78), UV_HEMP_ROPE),
-        c("HEAD", "bone_toggle", (-0.60, 29.42, -4.52), (1.20, 0.82, 0.34), UV_BONE_RING),
+        # 前后角不放任何垂条；z∈[-4.3,1.6] 只覆盖脸颊到耳后的连续侧面。
+        c("HEAD", "ear_flap_left", (-5.25, 24.3, -4.3), (1.2, 7.3, 5.9), UV_LINEN_MAIN),
+        c("HEAD", "ear_flap_right", (4.05, 24.3, -4.3), (1.2, 7.3, 5.9), UV_LINEN_MAIN),
+    )
+
+
+def _helmet_side_skirt() -> tuple[Cube, ...]:
+    """侧裙把眉箍后沿接到后帘，消除侧视的漂浮断缝。"""
+    return (
+        c("HEAD", "side_skirt_left", (-5.05, 24.35, 1.62), (1.0, 7.6, 2.45), UV_LINEN_DARK),
+        c("HEAD", "side_skirt_right", (4.05, 24.35, 1.62), (1.0, 7.6, 2.45), UV_LINEN_DARK),
+    )
+
+
+def _helmet_curtain() -> tuple[Cube, ...]:
+    """后脑搭接与短后帘：接住颅盖和侧裙，不在前后角另造桌腿。"""
+    return (
+        c("HEAD", "back_drape", (-4.6, 27.3, 3.95), (9.2, 4.3, 1.1), UV_LINEN_DARK),
+        c("HEAD", "back_drape_lower", (-4.25, 24.35, 4.05), (8.5, 2.85, 0.9), UV_LINEN_MAIN),
+    )
+
+
+def _helmet_cords() -> tuple[Cube, ...]:
+    """系带与骨扣：只保留承重固定件，细节不堆成脱开的竖条。"""
+    return (
+        c("HEAD", "side_tie_left", (-5.6, 29.15, -4.9), (0.3, 1.9, 0.3), UV_HEMP_ROPE),
+        c("HEAD", "side_tie_right", (5.3, 29.15, -4.9), (0.3, 1.9, 0.3), UV_HEMP_ROPE),
+        c("HEAD", "side_knot_left", (-5.75, 30.7, -5.02), (0.6, 0.6, 0.35), UV_HEMP_ROPE),
+        c("HEAD", "side_knot_right", (5.15, 30.7, -5.02), (0.6, 0.6, 0.35), UV_HEMP_ROPE),
+        c("HEAD", "bone_toggle", (-0.6, 30.62, -5.46), (1.2, 0.75, 0.35), UV_BONE_RING),
     )
 
 
@@ -250,7 +268,12 @@ def part_helmet() -> ArmorPart:
     return ArmorPart(
         "linen_helmet",
         "LINEN HELMET",
-        _helmet_crown() + _helmet_wrap() + _helmet_fasteners(),
+        _helmet_crown()
+        + _helmet_brow()
+        + _helmet_ear_flaps()
+        + _helmet_side_skirt()
+        + _helmet_curtain()
+        + _helmet_cords(),
     )
 
 
