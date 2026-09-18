@@ -55,6 +55,7 @@ UV_LINEN_DARK = (32, 0)
 UV_LINEN_WRAP = (0, 32)
 UV_HEMP_ROPE = (32, 32)
 UV_BONE_RING = (48, 48)
+BROW_FRONT_Z_MIN = -5.2  # 对齐已验收的 gen_hide_armor.py 眉箍前缘量级
 
 
 def c(mount: str, name: str, origin: tuple[float, float, float], size: tuple[float, float, float], uv: tuple[int, int] = UV_LINEN_MAIN) -> Cube:
@@ -210,7 +211,7 @@ def _helmet_crown() -> tuple[Cube, ...]:
         # 头盒是 x∈[-4,4]；颅盖只放宽到 ±4.5/±4.7，前缘可沿 -z 探出，
         # 但横向不会变成斗笠式大檐。后片向下错 0.45，和前片形成压布搭接。
         c("HEAD", "cap_top_front", (-4.5, 32.0, -5.6), (9.0, 1.6, 5.65), UV_LINEN_DARK),
-        c("HEAD", "cap_top_back", (-4.7, 31.55, 0.1), (9.4, 1.6, 4.55), UV_LINEN_MAIN),
+        c("HEAD", "cap_top_back", (-4.7, 31.55, 0.1), (9.4, 1.6, 4.55), UV_LINEN_DARK),
         # 前缘卷边挂在颅盖下方，负责把平面读成折过来的布边。
         c("HEAD", "cap_front_fold", (-4.7, 31.8, -5.75), (9.4, 1.3, 0.9), UV_LINEN_DARK),
     )
@@ -232,8 +233,13 @@ def _helmet_ear_flaps() -> tuple[Cube, ...]:
     """护耳：只有左右两片，贴在 x=±5.25，底边收在头底 y≈24.3。"""
     return (
         # 前后角不放任何垂条；z∈[-4.3,1.6] 只覆盖脸颊到耳后的连续侧面。
-        c("HEAD", "ear_flap_left", (-5.25, 24.3, -4.3), (1.2, 7.3, 5.9), UV_LINEN_MAIN),
-        c("HEAD", "ear_flap_right", (4.05, 24.3, -4.3), (1.2, 7.3, 5.9), UV_LINEN_MAIN),
+        c("HEAD", "ear_flap_left", (-5.25, 24.3, -4.3), (1.2, 7.3, 5.9), UV_LINEN_DARK),
+        c("HEAD", "ear_flap_right", (4.05, 24.3, -4.3), (1.2, 7.3, 5.9), UV_LINEN_DARK),
+        # 护耳主面保持深棕；两道米白织带沿侧面横向压住层次，照胸甲的横箍语言。
+        c("HEAD", "ear_flap_band_low_left", (-5.31, 26.72, -4.15), (0.18, 0.34, 5.5), UV_LINEN_WRAP),
+        c("HEAD", "ear_flap_band_low_right", (5.13, 26.72, -4.15), (0.18, 0.34, 5.5), UV_LINEN_WRAP),
+        c("HEAD", "ear_flap_band_high_left", (-5.31, 29.18, -4.15), (0.18, 0.34, 5.5), UV_LINEN_WRAP),
+        c("HEAD", "ear_flap_band_high_right", (5.13, 29.18, -4.15), (0.18, 0.34, 5.5), UV_LINEN_WRAP),
     )
 
 
@@ -249,7 +255,7 @@ def _helmet_curtain() -> tuple[Cube, ...]:
     """后脑搭接与短后帘：接住颅盖和侧裙，不在前后角另造桌腿。"""
     return (
         c("HEAD", "back_drape", (-4.6, 27.3, 3.95), (9.2, 4.3, 1.1), UV_LINEN_DARK),
-        c("HEAD", "back_drape_lower", (-4.25, 24.35, 4.05), (8.5, 2.85, 0.9), UV_LINEN_MAIN),
+        c("HEAD", "back_drape_lower", (-4.25, 24.35, 4.05), (8.5, 2.85, 0.9), UV_LINEN_DARK),
     )
 
 
@@ -592,6 +598,21 @@ def _assert_mirror_symmetry(all_parts: tuple[ArmorPart, ...]) -> None:
                 raise ValueError(f"{part.key}/{name}: 左右 y/z/size 不一致")
 
 
+def _assert_helmet_front_projection(all_parts: tuple[ArmorPart, ...]) -> None:
+    """眉箍前檐不超过已验收 hide 头盔的 z=-5.2 量级。"""
+    helmet = next((part for part in all_parts if part.key == "linen_helmet"), None)
+    if helmet is None:
+        raise ValueError("缺少 linen_helmet，无法核对前檐")
+    brow = next((cube for cube in helmet.cubes if cube.name == "forehead_wrap"), None)
+    if brow is None:
+        raise ValueError("linen_helmet 缺少 forehead_wrap 眉箍")
+    if brow.origin[2] < BROW_FRONT_Z_MIN - 1e-6:
+        raise ValueError(
+            f"linen_helmet/forehead_wrap 前檐 z={brow.origin[2]:.2f}，"
+            f"超过 hide 眉箍前缘 {BROW_FRONT_Z_MIN:.2f}"
+        )
+
+
 # ─── gatekit 差分自证 ───────────────────────────────────────────────────────
 # Round 2 的接触表只看本批新造的头盔/靴子；胸甲和护腿沿用既有模型，不让它们把本轮
 # 的门禁结果稀释掉。门本身必须配缺陷注入器，干净通过不是差分自证。
@@ -778,10 +799,14 @@ def cube_digest(part: ArmorPart) -> str:
 
 
 def generate(render_previews: bool = True, install: bool = False) -> dict[str, Path]:
-    _assert_no_coplanar_faces(parts())
+    all_parts = parts()
+    _assert_no_coplanar_faces(all_parts)
+    _assert_uv_tiles(all_parts)
+    _assert_mirror_symmetry(all_parts)
+    _assert_helmet_front_projection(all_parts)
     return write_material_assets(
         MATERIAL,
-        parts(),
+        all_parts,
         make_texture(),
         LOCAL_MODELS,
         CLIENT_TEXTURE_ROOT if install else DRAFT_TEXTURE_ROOT,

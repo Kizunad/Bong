@@ -101,6 +101,7 @@ class LinenArmorGeneratorTest(unittest.TestCase):
         parts = linen.parts()
         linen._assert_uv_tiles(parts)
         linen._assert_mirror_symmetry(parts)
+        linen._assert_helmet_front_projection(parts)
 
     def test_gatekit_differential_self_test_passes(self) -> None:
         self.assertEqual(0, linen.GATES.self_test(linen.build(), verbose=False))
