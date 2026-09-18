@@ -631,8 +631,26 @@ craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在�
 - `BongItemModelRenderAdapter.render()` 当前没有生产调用方，测试也没有调用；因此
   `register → bake → lookup → render` 整条运行时链路在 headless 环境下一次都没跑过。
   本节证明的是 API 存在性、资源形状和可编译性，不能把它写成运行时链路或视觉验收通过。
-- P0 spike 结论：**API/最小真实模板 lookup + 直接 BakedModel adapter 可行（PASS）**；
-  视觉、FPV/TPV 实际 hook、GUI/搜索污染和资源缺失负例仍明确标为「待人工
-  `runClient`/后续 P1 验证」，不等同于完整迁移已经验收。若人工确认当前
+- P0 的 PASS 只覆盖 **API 存在性、资源形状与可编译性** 这三项；整条
+  `register → bake → lookup → render` 链路、视觉、FPV/TPV 实际 hook、GUI/搜索污染和
+  资源缺失负例等其余未决项，全部按 §9.6 归属，**不计入 P0 交付物**。若人工确认当前
   `ItemRenderer` adapter 在 FPV/TPV 中无法满足最终画面，再另行决定无宿主自绘方案；本
   spike 没有偷偷退回 vanilla host。
+
+### 9.6 待验证项的归属与放行标准
+
+下表把 §9 中仍未实际验证的项目逐项交给明确 owner，并把「可以放行」定义到可观察
+证据；这些项目在完成对应归属方的验收前，均不改变 §9.5 对 P0 的三项 PASS 范围。
+
+| 待验证项 | 归属方 | 通过标准（具体观察/断言） | 对应 §8.3 的人工决策 |
+|---|---|---|---|
+| `register → bake → lookup → render` 整条运行时链路 | P1 交付物接入真实 FPV/TPV hook；完成后人工 `runClient` | 资源 reload 触发注册回调并加入 `bong:item/wooden_shield/wooden_shield#inventory`；bake 结果不是 missing；同一 `template_id` 的 lookup 返回该 baked model；真实 FPV/TPV 消费点实际调用 `render`，且没有 fake vanilla `ItemStack` 宿主 | §8.3 #1、#2 |
+| FPV 左手/右手画面 | 人工 `runClient` | 手持 `wooden_shield` 分别观察主手和副手第一人称画面：两侧都显示 Bong-owned OBJ，左右手 transform 生效，无 missing model、vanilla host 或错误默认姿态 | §8.3 #1、#2 |
+| TPV 左手/右手画面 | 人工 `runClient` | 第三人称分别切换主手和副手并观察角色画面：两侧都显示同一 Bong-owned baked model，左右手 transform 生效，无回退到宿主物品 | §8.3 #1、#2 |
+| resource reload 后姿态 | 人工 `runClient` | 在资源已加载和 reload 后各观察 FPV/TPV；reload 后 lookup 仍指向同一 Bong model id，七个 display context 的姿态不丢失、不变 missing、不退回 vanilla host | §8.3 #1、#2 |
+| GUI 与创造栏/搜索污染 | 人工 `runClient` | 打开 GUI、创造栏和搜索（含 REI 如启用）：模型不会凭空注册成额外物品条目，不出现 Bong 内部模型污染或错误 vanilla 条目；纳入的 GUI/fixed 姿态按最终 owner 正确显示 | §8.3 #3、#4 |
+| `DroppedItemWorldRenderer` 边界 | P1 交付物 | 在迁移矩阵中明确 ground/drop owner；当前若保持排除，则断言掉落物仍由既有 billboard/GUI renderer 负责且不调用本 channel，不把「未纳入」写成已迁移；若纳入，另立可验收迁移项 | §8.3 #4 |
+| 缺 JSON | P1 交付物 | 删除或破坏目标 JSON 后执行资源 reload/启动，必须产生带 `template_id` 的可见诊断或明确 missing 状态；lookup 不得返回另一模板、STONE/BONE 等默认宿主 | §8.3 #1、#3 |
+| 缺 OBJ/MTL/贴图 | P1 交付物 | 分别移除或破坏 OBJ、MTL、贴图后执行资源 reload/启动，必须 fail-fast 或进入可见 missing 状态并指出资源；不得静默成功、使用旧 bake 或回退 vanilla host | §8.3 #1、#2 |
+| borrow cycle | P1 交付物 | 对含环的 borrow graph 做校验时，以涉及的 `template_id` 报错并拒绝加载/lookup；不得递归卡死、静默选宿主或把环当作已完成模型 | §8.3 #2、#3 |
+| 缺 transform | P1 交付物 | model definition 缺少最终 schema 要求的 transform/context 时，校验必须拒绝或返回可见 missing；不得从借用目标、vanilla host 或默认姿态静默补齐 | §8.3 #2 |
