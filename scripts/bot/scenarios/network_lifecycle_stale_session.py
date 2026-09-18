@@ -152,6 +152,7 @@ def _expect_restored_session_idempotent(
 
 
 def _start_craft(bot) -> tuple[int, int]:
+    from bot.scenarios._craft_helpers import stage_material
     bot.cmd("clearinv all")
     bot.expect_chat("[dev] clearinv", timeout=10.0)
     bot.cmd("give stone_chunk 2")
@@ -162,6 +163,8 @@ def _start_craft(bot) -> tuple[int, int]:
     wait_inventory_contains(bot, "wood_handle")
     time.sleep(1.0)
 
+    stage_material(bot, RECIPE_ID, "stone_chunk")
+    stage_material(bot, RECIPE_ID, "wood_handle")
     anchor = last_event_time(bot)
     bot.intent(
         {

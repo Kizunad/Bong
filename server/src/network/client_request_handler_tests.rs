@@ -167,6 +167,7 @@ fn explosion_inventory_item(instance_id: u64, template_id: &str, stack_count: u3
 
 fn explosion_inventory_with_stack(template_id: &str, count: u32) -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: crate::inventory::InventoryRevision(0),
         containers: vec![crate::inventory::ContainerState {
@@ -527,6 +528,7 @@ mod take_pill_tests {
 
     fn fresh_inventory() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -1949,6 +1951,7 @@ mod external_ingress_tests {
 
         fn inventory_with_skill_scroll(item: ItemInstance) -> PlayerInventory {
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -1974,6 +1977,7 @@ mod external_ingress_tests {
 
         fn inventory_with_stack(template_id: &str, count: u32) -> PlayerInventory {
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -2028,6 +2032,7 @@ mod external_ingress_tests {
 
         fn empty_inventory() -> PlayerInventory {
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -2242,6 +2247,22 @@ mod external_ingress_tests {
                             display_name: entry.display_name,
                             tier_cap: u8::try_from(entry.tier_cap).ok()?,
                             step_count: entry.step_count,
+                            output_item: entry.output_item,
+                            steps: entry
+                                .steps
+                                .into_iter()
+                                .map(|step| {
+                                    serde_json::from_value(serde_json::Value::String(step)).unwrap()
+                                })
+                                .collect(),
+                            required_materials: entry
+                                .required_materials
+                                .into_iter()
+                                .map(|item| crate::schema::forge::ForgeMaterialRequirementV1 {
+                                    material: item.material,
+                                    count: item.count,
+                                })
+                                .collect(),
                         })
                     })
                     .collect::<Option<Vec<_>>>()?,
@@ -3140,6 +3161,7 @@ mod external_ingress_tests {
 
         fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -5124,6 +5146,7 @@ mod external_ingress_tests {
                 lingering_owner_qi: None,
             };
             let inventory = PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -6012,6 +6035,7 @@ mod external_ingress_tests {
         #[test]
         fn npc_trade_request_inventory_failure_keeps_coins_and_revision() {
             let inventory = PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(11),
                 containers: Vec::new(),
@@ -6723,6 +6747,7 @@ mod external_ingress_tests {
                     }],
                     equipped: Default::default(),
                     hotbar: Default::default(),
+                    material_preparation: Default::default(),
                     triggered_treasures: Vec::new(),
                     bone_coins: 0,
                     max_weight: 50.0,
@@ -7131,6 +7156,7 @@ mod external_ingress_tests {
                     PlayerState::default(),
                     // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
                     PlayerInventory {
+                        material_preparation: Default::default(),
                         triggered_treasures: Vec::new(),
                         revision: InventoryRevision(0),
                         containers: vec![ContainerState {
@@ -14344,6 +14370,7 @@ dispatch = "direct_generic"
 
         fn empty_inventory() -> PlayerInventory {
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -14365,6 +14392,7 @@ dispatch = "direct_generic"
 
         fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
             PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
@@ -14547,6 +14575,7 @@ dispatch = "direct_generic"
                 lingering_owner_qi: None,
             };
             let inv = PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![

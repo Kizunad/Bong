@@ -44,6 +44,7 @@ fn make_inventory(items: &[(&str, u32)]) -> PlayerInventory {
         })
         .collect();
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -77,6 +78,19 @@ fn simple_recipe(id: &str) -> CraftRecipe {
         }],
         station: None,
     }
+}
+
+fn prepared_inventory(recipe: &CraftRecipe, items: &[(&str, u32)]) -> PlayerInventory {
+    let mut inventory = make_inventory(items);
+    let ids: Vec<_> = inventory.containers[0]
+        .items
+        .iter()
+        .map(|entry| entry.instance.instance_id)
+        .collect();
+    for id in ids {
+        crate::craft::preparation::stage_material(&mut inventory, recipe, id).unwrap();
+    }
+    inventory
 }
 
 fn ok_deps_for_player<'a>(
@@ -137,7 +151,12 @@ fn start_craft_baseline_workbench_passes_unlock_gate_with_empty_state() {
     let mut registry = CraftRegistry::new();
     crate::craft::register_workbench_recipes(&mut registry).unwrap();
     let unlock = RecipeUnlockState::new(); // 从未解锁过任何配方
-    let mut inv = make_inventory(&[("spirit_wood", 4), ("iron_ingot", 2), ("shu_gu", 2)]);
+    let mut inv = prepared_inventory(
+        registry
+            .get(&RecipeId::new("craft.tool.workbench"))
+            .unwrap(),
+        &[("spirit_wood", 4), ("iron_ingot", 2), ("shu_gu", 2)],
+    );
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,
@@ -180,9 +199,21 @@ fn start_craft_baseline_workbench_passes_unlock_gate_with_empty_state() {
         RecipeId::new("craft.tool.workbench")
     );
     // 材料照常扣除（豁免只绕 unlock 门，不绕材料校验）
-    assert_eq!(count_template_in_inventory(&inv, "spirit_wood"), 0);
-    assert_eq!(count_template_in_inventory(&inv, "iron_ingot"), 0);
-    assert_eq!(count_template_in_inventory(&inv, "shu_gu"), 0);
+    assert_eq!(
+        inv.material_preparation
+            .count("craft.tool.workbench", "spirit_wood"),
+        0
+    );
+    assert_eq!(
+        inv.material_preparation
+            .count("craft.tool.workbench", "iron_ingot"),
+        0
+    );
+    assert_eq!(
+        inv.material_preparation
+            .count("craft.tool.workbench", "shu_gu"),
+        0
+    );
 }
 
 #[test]
@@ -192,7 +223,12 @@ fn start_craft_baseline_exemption_does_not_leak_to_other_workbench_recipes() {
     let mut registry = CraftRegistry::new();
     crate::craft::register_workbench_recipes(&mut registry).unwrap();
     let unlock = RecipeUnlockState::new();
-    let mut inv = make_inventory(&[("stone_chunk", 3), ("wood_handle", 1)]);
+    let mut inv = prepared_inventory(
+        registry
+            .get(&RecipeId::new("workbench.tool.stone_pickaxe"))
+            .unwrap(),
+        &[("stone_chunk", 3), ("wood_handle", 1)],
+    );
     let mut cult = Cultivation {
         qi_current: 50.0,
         qi_max: 80.0,

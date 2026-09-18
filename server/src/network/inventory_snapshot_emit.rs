@@ -228,6 +228,16 @@ pub(crate) fn build_inventory_snapshot(
 
     InventorySnapshotV1 {
         revision: inventory.revision.0,
+        material_preparation: crate::schema::inventory::MaterialPreparationV1 {
+            recipe_id: inventory.material_preparation.recipe_id.clone(),
+            station_pos: inventory.material_preparation.station_pos,
+            materials: inventory
+                .material_preparation
+                .materials
+                .iter()
+                .map(|entry| item_view_from_instance(&entry.item))
+                .collect(),
+        },
         containers,
         placed_items,
         equipped,
@@ -738,6 +748,7 @@ mod tests {
         hotbar[0] = Some(make_item(2005, "healing_draught", "疗伤药剂", 0.3, 2));
 
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(revision),
             containers,

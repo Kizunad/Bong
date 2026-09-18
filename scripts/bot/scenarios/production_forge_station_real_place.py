@@ -157,6 +157,20 @@ def run(env) -> None:
             description="真实 instance_id 放砧后砧应从背包消耗（forge_station_place_consumed）",
         )
 
+        # 右键语义必须先回推空炉次，再确认打开对应工位；放置回执本身不打开界面。
+        anchor = last_event_time(bot)
+        bot.intent({"type": "forge_station_open", "v": 1, "station_pos": list(station_pos)})
+        opened = _wait_forge_payload_after(
+            bot, anchor, "forge_station",
+            lambda p: p["open_screen"] and tuple(p["pos"]) == station_pos,
+            timeout=45.0, description="真实炼器砧右键开窗确认",
+        )
+        cleared = _wait_forge_payload_after(
+            bot, anchor, "forge_session", lambda p: not p["active"] and p["session_id"] == 0,
+            timeout=45.0, description="空工位清除旧炉次",
+        )
+        assert cleared.t <= opened.t, "旧会话必须在开窗前清除"
+
         # ── 学图谱：给残卷 → forge_learn_blueprint → 残卷消耗 ─────────────
         bot.cmd(f"give {SCROLL_ID} 1")
         wait_inventory_contains(bot, SCROLL_ID)
@@ -233,6 +247,9 @@ def run(env) -> None:
         assert fan_tie_before_start["item"]["stack_count"] == 4, (
             f"起炉前应恰好持有 fan_tie x4，实际={fan_tie_before_start['item']['stack_count']}"
         )
+        from bot.scenarios._craft_helpers import stage_material
+        stage_material(bot, BLUEPRINT_ID, "fan_tie", station_pos)
+        stage_material(bot, BLUEPRINT_ID, "mineral_za_gang", station_pos)
 
         anchor = last_event_time(bot)
         _forge_start_session(
@@ -382,6 +399,8 @@ def run(env) -> None:
             description="give fan_tie 3 后应出现 stack_count=3 的 inventory_snapshot",
         )
 
+        anchor = last_event_time(bot)
+        stage_material(bot, IRON_BLUEPRINT_ID, "fan_tie", station_pos)
         anchor = last_event_time(bot)
         _forge_start_session(bot, station_pos, IRON_BLUEPRINT_ID, [("fan_tie", 3)])
         iron_session_payload = _wait_forge_payload_after(

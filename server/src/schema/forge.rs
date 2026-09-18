@@ -83,6 +83,8 @@ pub struct WeaponForgeStationDataV1 {
     pub integrity: f32,
     pub owner_name: String,
     pub has_session: bool,
+    /// 仅右键工位通过授权后的回执打开窗口，普通刷新不抢占界面。
+    pub open_screen: bool,
     /// plan-forge-session-entry-wiring-v1 §4.1#3（新发现连带缺口）—— 砧方块坐标。
     /// U 键全局打开的 ForgeScreen 没有 station 上下文，client 必须从本 payload 拿到
     /// pos 才能在起炉时发出 `ForgeStartSession.station_pos`（与 alchemy furnace_pos 同模式）。
@@ -179,6 +181,16 @@ pub struct ForgeBlueprintEntryV1 {
     pub display_name: String,
     pub tier_cap: u8,
     pub step_count: u32,
+    pub output_item: String,
+    pub steps: Vec<ForgeStepV1>,
+    pub required_materials: Vec<ForgeMaterialRequirementV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForgeMaterialRequirementV1 {
+    pub material: String,
+    pub count: u32,
 }
 
 #[cfg(test)]
@@ -275,6 +287,7 @@ mod tests {
             integrity: 0.95,
             owner_name: "test".into(),
             has_session: false,
+            open_screen: false,
             station_pos_x: -12,
             station_pos_y: 64,
             station_pos_z: 38,
@@ -306,6 +319,12 @@ mod tests {
             display_name: "铁剑（测试）".into(),
             tier_cap: 1,
             step_count: 1,
+            output_item: "iron_sword".into(),
+            steps: vec![ForgeStepV1::Billet],
+            required_materials: vec![ForgeMaterialRequirementV1 {
+                material: "fan_tie".into(),
+                count: 3,
+            }],
         };
         let s = serde_json::to_string(&entry).unwrap();
         let back: ForgeBlueprintEntryV1 = serde_json::from_str(&s).unwrap();

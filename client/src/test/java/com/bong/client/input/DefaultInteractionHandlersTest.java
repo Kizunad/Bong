@@ -1,6 +1,7 @@
 package com.bong.client.input;
 
 import com.bong.client.coffin.CoffinEnterIntentHandler;
+import com.bong.client.forge.ForgeStationInteractIntentHandler;
 import com.bong.client.inventory.DeadDropInteractIntentHandler;
 import com.bong.client.inventory.StorageCrateInteractIntentHandler;
 import org.junit.jupiter.api.AfterEach;
@@ -27,6 +28,10 @@ class DefaultInteractionHandlersTest {
         assertTrue(
             InteractKeyRouter.global().hasHandlerForTests(DeadDropInteractIntentHandler.class),
             "expected DeadDropInteractIntentHandler because default route must expose dead drops"
+        );
+        assertTrue(
+            InteractKeyRouter.global().hasHandlerForTests(ForgeStationInteractIntentHandler.class),
+            "锻造移除右键入口后，默认交互路由必须保留真实工位的开窗入口"
         );
     }
 

@@ -17,8 +17,6 @@ import java.util.function.Function;
  * 资源包里加载，避免远端输入直接变成组件树。</p>
  */
 public final class OwoXmlTemplateRegistry {
-    public static final Identifier CRAFT = new Identifier("bong", "craft");
-    public static final Identifier CRAFT_COMPACT = new Identifier("bong", "craft-compact");
     public static final Identifier TERMINATE = new Identifier("bong", "terminate");
     public static final Identifier COFFIN_MENU = new Identifier("bong", "coffin-menu");
     public static final Identifier REPAIR = new Identifier("bong", "repair");
@@ -30,8 +28,8 @@ public final class OwoXmlTemplateRegistry {
     public static final Identifier ITEM_INSPECT = new Identifier("bong", "item-inspect");
 
     private static final Map<String, Identifier> PRODUCTION_TEMPLATES = Map.ofEntries(
-        Map.entry("craft", CRAFT),
-        Map.entry("craft-compact", CRAFT_COMPACT),
+        Map.entry("craft-window", new Identifier("bong", "craft-window")),
+        Map.entry("forge-window", new Identifier("bong", "forge-window")),
         Map.entry("terminate", TERMINATE),
         Map.entry("coffin-menu", COFFIN_MENU),
         Map.entry("repair", REPAIR),

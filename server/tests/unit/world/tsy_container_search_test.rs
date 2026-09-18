@@ -21,6 +21,7 @@ use valence::testing::ScenarioSingleClient;
 
 fn make_inv() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: bong_server::inventory::InventoryRevision(0),
         containers: vec![ContainerState {
@@ -534,6 +535,7 @@ fn place_loot_in_carried_inventory_full_pack_does_not_panic() {
     // 期望：背包已满（1x1 背包放了 1 件）时，再放第二件不 panic、不插入，revision 不再增加。
     use bong_server::inventory::ContainerState;
     let mut inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: bong_server::inventory::InventoryRevision(0),
         containers: vec![ContainerState {
@@ -585,6 +587,7 @@ fn place_loot_in_carried_inventory_2x1_item_finds_free_slot() {
     // 不会因 grid_w>1 而塞到 col=0..0 导致溢出。
     use bong_server::inventory::ContainerState;
     let mut inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: bong_server::inventory::InventoryRevision(0),
         containers: vec![ContainerState {

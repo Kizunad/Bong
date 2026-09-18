@@ -525,7 +525,8 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 () -> HallucinationLayerStore.activate(200),
                 () -> !HallucinationLayerStore.isActive() && HallucinationLayerStore.getRemainingTicks() == 0),
             adapter(49, BlueprintScrollStore.class,
-                () -> BlueprintScrollStore.replace(List.of(new BlueprintScrollStore.Entry("old", "old", 1, 1)), 0),
+                () -> BlueprintScrollStore.replace(List.of(new BlueprintScrollStore.Entry("old", "old", 1, 1,
+                    "iron_sword", List.of("billet"), List.of())), 0),
                 () -> BlueprintScrollStore.entries().isEmpty()),
             adapter(50, ForgeOutcomeStore.class,
                 () -> ForgeOutcomeStore.replace(new ForgeOutcomeStore.Snapshot(

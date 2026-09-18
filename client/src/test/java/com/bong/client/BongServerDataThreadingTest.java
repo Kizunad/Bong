@@ -5,9 +5,10 @@ import com.bong.client.combat.CastState;
 import com.bong.client.combat.CastStateStore;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.craft.CraftOutcomeFeedback;
-import com.bong.client.craft.CraftScreen;
+import com.bong.client.craft.CraftScreenController;
+import com.bong.client.craft.CraftScreenViewModel;
+import com.bong.client.craft.CraftUiStateSource;
 import com.bong.client.craft.CraftStore;
-import com.bong.client.craft.WorkbenchScreen;
 import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
@@ -958,49 +959,33 @@ class BongServerDataThreadingTest {
     }
 
     @Test
-    void craftScreenAndWorkbenchScreenFeedbackWaitForClientThread() {
-        CraftScreen craftScreen = new CraftScreen();
-        WorkbenchScreen workbenchScreen = new WorkbenchScreen();
-        craftScreen.attachOutcomeListenerForTests();
-        craftScreen.attachOutcomeListenerForTests();
-        workbenchScreen.attachOutcomeListenerForTests();
-        workbenchScreen.attachOutcomeListenerForTests();
-
+    void craftWindowFeedbackWaitsForClientThreadAndStopsAtScopeClose() {
         List<String> sharedOrder = new ArrayList<>();
         AtomicInteger completeSounds = new AtomicInteger();
-        CraftStore.addOutcomeListener(event -> CraftOutcomeFeedback.apply(
-            event,
-            ticks -> sharedOrder.add("flash=" + ticks + "@" + Thread.currentThread().getName()),
-            () -> {
-                completeSounds.incrementAndGet();
-                sharedOrder.add("sound@" + Thread.currentThread().getName());
-            },
-            () -> sharedOrder.add("refresh@" + Thread.currentThread().getName())
-        ));
+        var scope = new com.bong.client.ui.contract.DefaultUiScreenScope();
+        scope.onOpen();
+        var controller = new CraftScreenController(CraftUiStateSource.production(),
+            intent -> com.bong.client.ui.intent.UiIntentResult.accepted(), model -> {
+                if (model.change() != CraftScreenViewModel.Change.OUTCOME) return;
+                CraftOutcomeFeedback.apply(model,
+                    ticks -> sharedOrder.add("flash=" + ticks + "@" + Thread.currentThread().getName()),
+                    () -> {
+                        completeSounds.incrementAndGet();
+                        sharedOrder.add("sound@" + Thread.currentThread().getName());
+                    },
+                    () -> sharedOrder.add("refresh@" + Thread.currentThread().getName()));
+            });
+        controller.onOpen(scope);
+        controller.onOpen(scope);
 
         dispatchDefaultOnNetworkThread(craftOutcome("completed", "craft.ui.completed"));
 
-        assertEquals(0, craftScreen.flashTicksForTests(),
-            "drain 前 CraftScreen 不得写 flashTicks；实际=" + craftScreen.flashTicksForTests());
-        assertEquals(0, workbenchScreen.flashTicksForTests(),
-            "drain 前 WorkbenchScreen 不得写 flashTicks；实际=" + workbenchScreen.flashTicksForTests());
         assertTrue(sharedOrder.isEmpty(), "drain 前不得触发 flash/sound/refresh；实际=" + sharedOrder);
         assertEquals(0, completeSounds.get(), "drain 前不得播放完成音");
         assertEquals(1, clientTasks.size());
 
         runNextClientTask();
 
-        assertEquals(
-            CraftOutcomeFeedback.COMPLETED_FLASH_TICKS,
-            craftScreen.flashTicksForTests(),
-            "CraftScreen completed 后 flashTicks 必须为 6；实际=" + craftScreen.flashTicksForTests()
-        );
-        assertEquals(
-            CraftOutcomeFeedback.COMPLETED_FLASH_TICKS,
-            workbenchScreen.flashTicksForTests(),
-            "WorkbenchScreen completed 后 flashTicks 必须为 6；实际="
-                + workbenchScreen.flashTicksForTests()
-        );
         assertEquals(1, completeSounds.get(), "completed 必须恰好一声共享观察音；实际=" + completeSounds.get());
         assertEquals(
             List.of(
@@ -1014,15 +999,9 @@ class BongServerDataThreadingTest {
 
         sharedOrder.clear();
         completeSounds.set(0);
-        int craftFlash = craftScreen.flashTicksForTests();
-        int wbFlash = workbenchScreen.flashTicksForTests();
         dispatchDefaultOnNetworkThread(craftOutcome("failed", "craft.ui.failed"));
         assertEquals(1, clientTasks.size());
         runNextClientTask();
-        assertEquals(craftFlash, craftScreen.flashTicksForTests(),
-            "failed 不得改 CraftScreen flashTicks；实际=" + craftScreen.flashTicksForTests());
-        assertEquals(wbFlash, workbenchScreen.flashTicksForTests(),
-            "failed 不得改 WorkbenchScreen flashTicks；实际=" + workbenchScreen.flashTicksForTests());
         assertEquals(0, completeSounds.get(), "failed 不得播放完成音；实际 sounds=" + completeSounds.get());
         assertEquals(
             List.of("refresh@" + CLIENT_THREAD),
@@ -1034,20 +1013,12 @@ class BongServerDataThreadingTest {
             CraftStore.lastOutcome().orElseThrow().kind()
         );
 
-        craftScreen.detachOutcomeListenerForTests();
-        workbenchScreen.detachOutcomeListenerForTests();
-        CraftStore.clearAllListenersForTests();
-        CraftScreen closedCraft = new CraftScreen();
-        closedCraft.attachOutcomeListenerForTests();
-        closedCraft.detachOutcomeListenerForTests();
+        scope.close();
+        controller.onClose();
+        sharedOrder.clear();
         dispatchDefaultOnNetworkThread(craftOutcome("completed", "craft.ui.after.close"));
         runNextClientTask();
-        assertEquals(
-            0,
-            closedCraft.flashTicksForTests(),
-            "screen 关闭后 delayed completed 不得写 flashTicks；实际="
-                + closedCraft.flashTicksForTests()
-        );
+        assertTrue(sharedOrder.isEmpty(), "窗口 scope 关闭后不能播放迟到的完成反馈");
     }
 
     @Test

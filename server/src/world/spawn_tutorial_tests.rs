@@ -52,6 +52,7 @@ fn registry_with_meridian_primer() -> ItemRegistry {
 /// registry 缺 `MERIDIAN_PRIMER_TEMPLATE_ID`（配置错误场景）——只含无关模板。
 fn empty_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {

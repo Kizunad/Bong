@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "material_move",
+  "recipe_id": "iron_sword_v0",
+  "instance_id": 42,
+  "station_pos": [2, 64, -3],
+  "returning": false,
+  "expected_revision": 8
+}

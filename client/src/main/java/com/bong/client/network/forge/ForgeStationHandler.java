@@ -36,6 +36,9 @@ public final class ForgeStationHandler implements ServerDataHandler {
             }
             ForgeStationStore.replace(new ForgeStationStore.Snapshot(
                 pos, stationId, tier, integrity, owner, hasSession));
+            if (p.has("open_screen") && p.get("open_screen").getAsBoolean()) {
+                com.bong.client.forge.ForgeScreenBootstrap.open(ForgeStationStore.snapshot());
+            }
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied forge_station snapshot (tier=" + tier + ")");
         } catch (RuntimeException e) {

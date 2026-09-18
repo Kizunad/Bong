@@ -14,7 +14,7 @@ class R7CraftBoundaryContractTest {
     @Test
     void craftScreenAndPanelDoNotReachBackIntoStoresOrNetwork() {
         for (String relative : List.of(
-            "craft/CraftScreen.java",
+            "craft/CraftWindowContent.java",
             "craft/CraftRecipeListWidget.java"
         )) {
             String source = R7SourceScan.read(PRODUCTION_ROOT.resolve(relative));

@@ -1340,6 +1340,7 @@ mod tests {
         };
         write_artifact_state_to_item(&mut item, &state);
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -1617,6 +1618,7 @@ mod tests {
         };
         write_artifact_state_to_item(&mut item, &state);
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {

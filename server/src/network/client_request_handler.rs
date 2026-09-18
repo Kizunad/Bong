@@ -475,6 +475,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
     // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
     pub craft_start_tx: Option<ResMut<'w, Events<crate::craft::CraftStartIntent>>>,
+    pub material_move_tx: Option<ResMut<'w, Events<crate::craft::events::MaterialMoveIntent>>>,
     pub craft_cancel_tx: Option<ResMut<'w, Events<crate::craft::CraftCancelIntent>>>,
     // ─── plan-supply-coffin-loot-ui P2：外部容器 + entity-based open ──────
     pub ext_container_registry:
@@ -598,6 +599,7 @@ fn live_gate_request_kind(request: &ClientRequestV1) -> Option<&'static str> {
         ClientRequestV1::GiveDanToElder { .. } => Some("give_dan_to_elder"),
         ClientRequestV1::LingtianStartTill { .. } => Some("lingtian_start_till"),
         ClientRequestV1::CraftStart { .. } => Some("craft_start"),
+        ClientRequestV1::MaterialMove { .. } => Some("material_move"),
         ClientRequestV1::WorkbenchOpen { .. } => Some("workbench_open"),
         ClientRequestV1::ExternalContainerMove { .. } => Some("external_container_move"),
         _ => None,
@@ -681,7 +683,7 @@ fn evaluate_live_gate(
     let requester = requester_gate_context(client, ingress, clients)?;
 
     match request {
-        ClientRequestV1::CraftStart { .. } => {
+        ClientRequestV1::CraftStart { .. } | ClientRequestV1::MaterialMove { .. } => {
             gate.check(&requester)?;
             if inventories.get_mut(client).is_err() {
                 return Err(GateDenialReason::InvalidState);
@@ -1232,10 +1234,12 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeBlueprintTurnPage { v, .. }
             | ClientRequestV1::ForgeLearnBlueprint { v, .. }
             | ClientRequestV1::ForgeStationPlace { v, .. }
+            | ClientRequestV1::ForgeStationOpen { v, .. }
             | ClientRequestV1::ChargeCarrier { v, .. }
             | ClientRequestV1::ThrowCarrier { v, .. }
             | ClientRequestV1::AnqiContainerSwitch { v, .. }
             | ClientRequestV1::CraftStart { v, .. }
+            | ClientRequestV1::MaterialMove { v, .. }
             | ClientRequestV1::CraftCancel { v }
             | ClientRequestV1::SupplyCoffinOpen { v, .. }
             | ClientRequestV1::ContainerOpen { v, .. }
@@ -1490,7 +1494,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ForgeStepAdvance { .. }
             | ClientRequestV1::ForgeBlueprintTurnPage { .. }
             | ClientRequestV1::ForgeLearnBlueprint { .. }
-            | ClientRequestV1::ForgeStationPlace { .. } => {
+            | ClientRequestV1::ForgeStationPlace { .. }
+            | ClientRequestV1::ForgeStationOpen { .. } => {
                 unreachable!("Forge requests are dispatched by the typed Forge dispatcher")
             }
             ClientRequestV1::SetMeridianTarget { meridian, .. } => {
@@ -2514,6 +2519,25 @@ pub fn handle_client_request_payloads(
                         caster: ev.client,
                         recipe_id: crate::craft::RecipeId::new(recipe_id),
                         quantity,
+                    });
+                }
+            }
+            ClientRequestV1::MaterialMove {
+                recipe_id,
+                instance_id,
+                station_pos,
+                returning,
+                expected_revision,
+                ..
+            } => {
+                if let Some(tx) = dispatch.material_move_tx.as_deref_mut() {
+                    tx.send(crate::craft::events::MaterialMoveIntent {
+                        caster: ev.client,
+                        recipe_id: crate::craft::RecipeId::new(recipe_id),
+                        instance_id,
+                        station_pos,
+                        returning,
+                        expected_revision,
                     });
                 }
             }

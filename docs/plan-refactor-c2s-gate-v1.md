@@ -6,7 +6,7 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | 设计收口 + 104 变体门禁矩阵 + 吸收清单验真 | ✅ 2026-08-03 |
+| P0 | 设计收口 + 107 变体门禁矩阵 + 吸收清单验真 | ✅ 2026-08-03 |
 | P1 | 全量门禁声明 + 中间件原子上线 + 已知漏洞簇首批接入 | ⬜ |
 | P2 | 巨石拆分批次 A（combat / production / world / social / npc） | ⬜ |
 | P3 | 删除重复门禁 + adapter 收敛 | ⬜ |
@@ -133,7 +133,7 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 
 **落点**：`client_request_handler.rs:522-2960`；总纲 §4；plan P2/P3。
 
-## P0 104 变体门禁矩阵
+## P0 107 变体门禁矩阵
 
 记法：距离列为目标 + profile；维度列只描述请求者与空间目标的实际维度关系，`同目标` 表示请求者与目标权威维度相同，`主世界` 表示请求者必须是 Overworld，`—` 表示无空间维度门；session / request 的 authenticated authority 不填入维度列，统一见下方 **Authority contract field**；所有权/状态是 **P3 终态要求**。现状列的“域内”表示已有下游校验但尚未统一，“缺”表示本轮验真的真实缺口，“显式 no_gate”仍必须写理由。
 
@@ -217,43 +217,46 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 67 | `QuickSlotBind` | inventory/config / — | — | self | slot/request_id/item 合法 | 域内 |
 | 68 | `SkillBarCast` | optional target / skill profile | target 存在时同目标 | self | cooldown/qi/meridian/cast state | 由 R9 定 cast target；R4 承载通用 gate |
 | 69 | `SkillBarBind` | config / — | — | self | slot/skill/item 已解锁 | 域内 |
-| 70 | `SkillConfigIntent` | config / — | — | self | skill 已解锁、config schema 合法 | 域内 |
-| 71 | `CombatReincarnate` | — | — | self | death screen/state transition 合法 | 显式 no spatial gate |
-| 72 | `CombatTerminate` | — | — | self | death state 可终结 | 显式 no spatial gate |
-| 73 | `CombatCreateNewCharacter` | — | — | self | terminated/new-character transition | 显式 no spatial gate |
-| 74 | `StartExtractRequest` | portal entity / profile-preserved | 同目标 | — | portal active、玩家可撤离、非忙态 | 域内需登记 |
-| 75 | `CancelExtractRequest` | session / — | — | session owner | extract active | R1 session gate |
-| 76 | `StartSearch` | container entity / profile-preserved | 同目标 | loot authority | container searchable、非忙态 | 域内需登记 |
-| 77 | `CancelSearch` | session / — | — | session owner | search active | R1 session gate |
-| 78 | `SupplyCoffinOpen` | entity / `SupplyCoffinOpen` | 同目标 | — | coffin active/unopened | 已有 authority helper |
-| 79 | `ContainerOpen` | entity / profile-preserved | 同目标 | access authority | container active | 域内需登记 |
-| 80 | `WorkbenchOpen` | entity / `Workbench` | 同目标 | — | workbench active | 距离已有；同维缺 |
-| 81 | `ExternalContainerMove` | session world target / `ExternalSession` | 同目标 | session owner | revision/source/destination 合法 | session authority 已有；通用容器缺 target dimension/reach 复验，迁 R1/R10 adapter |
-| 82 | `ExternalContainerClose` | session / — | — | session owner | session active | 已有 owner；迁 R1 adapter |
-| 83 | `LingtianStartTill` | block / `NearbyInteract` | 同目标 | hoe owner | terrain/mode/非忙态 | 距离/维度缺 |
-| 84 | `LingtianStartRenew` | block / `NearbyInteract` | 同目标 | hoe owner | plot 可翻新 | 距离/维度缺 |
-| 85 | `LingtianStartPlanting` | block / `NearbyInteract` | 同目标 | seed owner | plot/plant/非忙态 | 距离/维度缺 |
-| 86 | `LingtianStartHarvest` | block / `NearbyInteract` | 同目标 | plot access | crop ripe/mode/非忙态 | 距离/维度缺 |
-| 87 | `LingtianStartReplenish` | block / `NearbyInteract` | 同目标 | source owner | plot/source/ledger/非忙态 | 距离/维度缺 |
-| 88 | `LingtianStartDrainQi` | block / `NearbyInteract` | 同目标 | plot access | drain 条件/非忙态 | 距离/维度缺 |
-| 89 | `ForgeStartSession` | station / `NearbyInteract` | 同目标 | station/session owner + materials owner | blueprint/material/非忙态 | 距离/维度缺 |
-| 90 | `ForgeTemperingHit` | session / `NearbyInteract` | station dimension | session owner | phase/timing 合法 | 距离/维度缺 |
-| 91 | `ForgeInscriptionScroll` | session / `NearbyInteract` | station dimension | session + scroll owner | phase/scroll 合法 | 距离/维度缺 |
-| 92 | `ForgeConsecrationInject` | session / `NearbyInteract` | station dimension | session owner | phase/qi/ledger 合法 | 距离/维度缺 |
-| 93 | `ForgeStepAdvance` | session / `NearbyInteract` | station dimension | session owner | current step complete | 距离/维度缺 |
-| 94 | `ForgeBlueprintTurnPage` | — | — | self | blueprint book 可用 | 显式 no spatial gate |
-| 95 | `ForgeLearnBlueprint` | inventory / — | — | scroll/material owner | blueprint/unlock 合法 | 域内；R10 transaction |
-| 96 | `ForgeStationPlace` | block / `NearbyInteract` | 主世界/同目标 | item owner | tier/位置可放置 | 距离/维度缺 |
-| 97 | `CraftStart` | recipe station / recipe profile | station 存在时同目标 | material owner | unlock/material/qi/非忙态 | station 规则域内；接 R1/R10 |
-| 98 | `CraftCancel` | session / — | — | session owner | craft active | R1 session gate |
-| 99 | `GiveDanToElder` | entity / `NearbyInteract` | 同目标 | pill owner | DyingElder + Plea/Recovering、存活 | 目标/状态/距离/维度须在扣丹前 |
-| 100 | `RaiseShield` | equipped / — | — | shield owner | 存活、off-hand shield、非冲突态 | 域内 |
-| 101 | `LowerShield` | — | — | self | blocking active；幂等退出允许 | 域内 |
-| 102 | `ScrollReadRequest` | inventory / — | — | item owner | readable spec、非冲突态 | owner/spec 域内 |
-| 103 | `ScrollReadClosed` | session / — | — | reader self | read session active；幂等关闭允许 | P2 接 R1 session |
-| 104 | `AgentUiResponse` | request / — | — | authenticated player / session request owner | request_id/action/button 未过期且获准 | 域内；AgentUiSessionStore 按 player entity 校验 request_id；显式 no spatial gate |
+| 70 | `TechniqueBind` | config / — | — | self | 已掌握、槽位类型与 expected_binding 匹配 | 域内原子替换 |
+| 71 | `SkillConfigIntent` | config / — | — | self | skill 已解锁、config schema 合法 | 域内 |
+| 72 | `CombatReincarnate` | — | — | self | death screen/state transition 合法 | 显式 no spatial gate |
+| 73 | `CombatTerminate` | — | — | self | death state 可终结 | 显式 no spatial gate |
+| 74 | `CombatCreateNewCharacter` | — | — | self | terminated/new-character transition | 显式 no spatial gate |
+| 75 | `StartExtractRequest` | portal entity / profile-preserved | 同目标 | — | portal active、玩家可撤离、非忙态 | 域内需登记 |
+| 76 | `CancelExtractRequest` | session / — | — | session owner | extract active | R1 session gate |
+| 77 | `StartSearch` | container entity / profile-preserved | 同目标 | loot authority | container searchable、非忙态 | 域内需登记 |
+| 78 | `CancelSearch` | session / — | — | session owner | search active | R1 session gate |
+| 79 | `SupplyCoffinOpen` | entity / `SupplyCoffinOpen` | 同目标 | — | coffin active/unopened | 已有 authority helper |
+| 80 | `ContainerOpen` | entity / profile-preserved | 同目标 | access authority | container active | 域内需登记 |
+| 81 | `WorkbenchOpen` | entity / `Workbench` | 同目标 | — | workbench active | 距离已有；同维缺 |
+| 82 | `ExternalContainerMove` | session world target / `ExternalSession` | 同目标 | session owner | revision/source/destination 合法 | session authority 已有；通用容器缺 target dimension/reach 复验，迁 R1/R10 adapter |
+| 83 | `ExternalContainerClose` | session / — | — | session owner | session active | 已有 owner；迁 R1 adapter |
+| 84 | `LingtianStartTill` | block / `NearbyInteract` | 同目标 | hoe owner | terrain/mode/非忙态 | 距离/维度缺 |
+| 85 | `LingtianStartRenew` | block / `NearbyInteract` | 同目标 | hoe owner | plot 可翻新 | 距离/维度缺 |
+| 86 | `LingtianStartPlanting` | block / `NearbyInteract` | 同目标 | seed owner | plot/plant/非忙态 | 距离/维度缺 |
+| 87 | `LingtianStartHarvest` | block / `NearbyInteract` | 同目标 | plot access | crop ripe/mode/非忙态 | 距离/维度缺 |
+| 88 | `LingtianStartReplenish` | block / `NearbyInteract` | 同目标 | source owner | plot/source/ledger/非忙态 | 距离/维度缺 |
+| 89 | `LingtianStartDrainQi` | block / `NearbyInteract` | 同目标 | plot access | drain 条件/非忙态 | 距离/维度缺 |
+| 90 | `ForgeStartSession` | station / `NearbyInteract` | 同目标 | station/session owner + materials owner | blueprint/material/非忙态 | 距离/维度缺 |
+| 91 | `ForgeTemperingHit` | session / `NearbyInteract` | station dimension | session owner | phase/timing 合法 | 距离/维度缺 |
+| 92 | `ForgeInscriptionScroll` | session / `NearbyInteract` | station dimension | session + scroll owner | phase/scroll 合法 | 距离/维度缺 |
+| 93 | `ForgeConsecrationInject` | session / `NearbyInteract` | station dimension | session owner | phase/qi/ledger 合法 | 距离/维度缺 |
+| 94 | `ForgeStepAdvance` | session / `NearbyInteract` | station dimension | session owner | current step complete | 距离/维度缺 |
+| 95 | `ForgeBlueprintTurnPage` | — | — | self | blueprint book 可用 | 显式 no spatial gate |
+| 96 | `ForgeLearnBlueprint` | inventory / — | — | scroll/material owner | blueprint/unlock 合法 | 域内；R10 transaction |
+| 97 | `ForgeStationOpen` | station / 逐轴 3 格 | 主世界 | station owner / 公共工位；活动 session caster | 工位存在、未损坏、玩家位置有限 | Forge 域内校验；先同步状态，最后下发 open_screen |
+| 98 | `ForgeStationPlace` | block / `NearbyInteract` | 主世界/同目标 | item owner | tier/位置可放置 | 距离/维度缺 |
+| 99 | `CraftStart` | recipe station / recipe profile | station 存在时同目标 | material owner | unlock/material/qi/非忙态 | station 规则域内；接 R1/R10 |
+| 100 | `CraftCancel` | session / — | — | session owner | craft active | R1 session gate |
+| 101 | `MaterialMove` | inventory / station | 同玩家；锻造投料需主世界、近工位 | 精确实例 owner + station owner | 存活、背包可用、未开工、revision 匹配、配方或图谱已学；返还匹配暂存归属 | 共用托管事务，先持久化后发布 |
+| 102 | `GiveDanToElder` | entity / `NearbyInteract` | 同目标 | pill owner | DyingElder + Plea/Recovering、存活 | 目标/状态/距离/维度须在扣丹前 |
+| 103 | `RaiseShield` | equipped / — | — | shield owner | 存活、off-hand shield、非冲突态 | 域内 |
+| 104 | `LowerShield` | — | — | self | blocking active；幂等退出允许 | 域内 |
+| 105 | `ScrollReadRequest` | inventory / — | — | item owner | readable spec、非冲突态 | owner/spec 域内 |
+| 106 | `ScrollReadClosed` | session / — | — | reader self | read session active；幂等关闭允许 | P2 接 R1 session |
+| 107 | `AgentUiResponse` | request / — | — | authenticated player / session request owner | request_id/action/button 未过期且获准 | 域内；AgentUiSessionStore 按 player entity 校验 request_id；显式 no spatial gate |
 
-P1 测试必须从 TypeBox `agent/packages/schema/src/client-request.ts::ClientRequestV1` IPC source of truth 导出/对拍，并同时校验 Rust serde mirror、Markdown matrix、生成的 `agent/packages/schema/generated/client-request-v1.json` 与未来 gate registry；不把当前变体数写成永恒常数。当前 TypeBox/generated mirror 只覆盖 Rust enum 的 **86/104** 个变体，以下 **18** 个 wire gap 由 R6 generation machinery 负责生成链与 transport 接缝，但每个 domain 的 TypeBox declaration content 仍由对应 domain owner 定义。已由 Java client 与 Rust dispatcher 实际连通、必须纳入 P1 production gate 的 gap 为 `give_dan_to_elder`、`lingtian_start_till`、`craft_start`、`workbench_open`、`external_container_move`；它们暂缺 TypeBox/generated mirror 只影响 schema 对拍，不得被误判为没有 production producer/consumer。其余尚无 production producer/consumer 的 gap，以及 `coffin_break`、`coffin_menu_reclaim` 的 authenticated owner persistence/hydration、owner-proof wire 与 reject contract，仍属于 tracked owner-plan amendment follow-up。按总纲 §3（Wave 表为 inter-track ordering/start/cutover 唯一 authority）与 §4.1 第 3、5 条，R4 不修改 R6 独占的 TypeBox/generated wire 文件；上游 artifact 尚未就绪时，R4 P1 只落对应 `GateSpec`/adapter contract-first stub（declared、unwired、test-only），不得接 production 或以临时 `NoGate` 宣称完成；但已连通的五个 gap 必须在本 P1 接入 production gate，不能以 TypeBox 缺口推迟门禁。真实上游 artifact 是这些变体的 schema/transport production cutover dependency，不是 R4 P1 start gate。每个 `NoGateReason` 仍须非空。P0 的仓内静态对拍由 CI 强制执行的 `agent/packages/schema` `npm run check` 与 `python3 scripts/check_c2s_gate_matrix.py` 提供：前者编译 TypeBox source 并拒绝 committed generated artifacts 过期，后者读取生成 JSON 的 `type` discriminants，比较 Rust `ClientRequestV1`、Markdown matrix 与 TypeBox/generated mirror 的集合；Rust-only 的上述 18 个已登记 gap 被显式允许，但已解决的 gap 若出现在 schema 会使 documented baseline freshness 检查失败，任何新增缺口、schema-only 变体、重复 discriminant 或生成 JSON 畸形均 fail closed。矩阵表内畸形/额外行以及 unit/tuple/struct 以外的未知顶层 enum 语法也必须 fail closed。
+P1 测试必须从 TypeBox `agent/packages/schema/src/client-request.ts::ClientRequestV1` IPC source of truth 导出/对拍，并同时校验 Rust serde mirror、Markdown matrix、生成的 `agent/packages/schema/generated/client-request-v1.json` 与未来 gate registry；不把当前变体数写成永恒常数。当前 TypeBox/generated mirror 只覆盖 Rust enum 的 **89/107** 个变体，以下 **18** 个 wire gap 由 R6 generation machinery 负责生成链与 transport 接缝，但每个 domain 的 TypeBox declaration content 仍由对应 domain owner 定义。已由 Java client 与 Rust dispatcher 实际连通、必须纳入 P1 production gate 的 gap 为 `give_dan_to_elder`、`lingtian_start_till`、`craft_start`、`workbench_open`、`external_container_move`；它们暂缺 TypeBox/generated mirror 只影响 schema 对拍，不得被误判为没有 production producer/consumer。其余尚无 production producer/consumer 的 gap，以及 `coffin_break`、`coffin_menu_reclaim` 的 authenticated owner persistence/hydration、owner-proof wire 与 reject contract，仍属于 tracked owner-plan amendment follow-up。按总纲 §3（Wave 表为 inter-track ordering/start/cutover 唯一 authority）与 §4.1 第 3、5 条，R4 不修改 R6 独占的 TypeBox/generated wire 文件；上游 artifact 尚未就绪时，R4 P1 只落对应 `GateSpec`/adapter contract-first stub（declared、unwired、test-only），不得接 production 或以临时 `NoGate` 宣称完成；但已连通的五个 gap 必须在本 P1 接入 production gate，不能以 TypeBox 缺口推迟门禁。真实上游 artifact 是这些变体的 schema/transport production cutover dependency，不是 R4 P1 start gate。每个 `NoGateReason` 仍须非空。P0 的仓内静态对拍由 CI 强制执行的 `agent/packages/schema` `npm run check` 与 `python3 scripts/check_c2s_gate_matrix.py` 提供：前者编译 TypeBox source 并拒绝 committed generated artifacts 过期，后者读取生成 JSON 的 `type` discriminants，比较 Rust `ClientRequestV1`、Markdown matrix 与 TypeBox/generated mirror 的集合；Rust-only 的上述 18 个已登记 gap 被显式允许，但已解决的 gap 若出现在 schema 会使 documented baseline freshness 检查失败，任何新增缺口、schema-only 变体、重复 discriminant 或生成 JSON 畸形均 fail closed。矩阵表内畸形/额外行以及 unit/tuple/struct 以外的未知顶层 enum 语法也必须 fail closed。
 
 ## 吸收清单验真（2026-08-03）
 

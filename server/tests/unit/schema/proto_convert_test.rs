@@ -271,6 +271,7 @@ fn inv_snapshot_with_pack(
         ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryWeightV1,
     };
     bong_server::schema::inventory::InventorySnapshotV1 {
+        material_preparation: Default::default(),
         revision: 1,
         containers: vec![
             ContainerSnapshotV1 {
@@ -1924,6 +1925,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
         })),
         fix!(ServerDataPayloadV1::InventorySnapshot(Box::new(
             bong_server::schema::inventory::InventorySnapshotV1 {
+                material_preparation: Default::default(),
                 revision: 1,
                 containers: vec![],
                 placed_items: vec![],
@@ -2472,6 +2474,7 @@ fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
                 integrity: 1.0,
                 owner_name: String::new(),
                 has_session: false,
+                open_screen: false,
                 station_pos_x: 0,
                 station_pos_y: 64,
                 station_pos_z: 0,

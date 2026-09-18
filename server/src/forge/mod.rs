@@ -22,6 +22,7 @@ pub mod fallback;
 pub mod history;
 pub mod inventory_bridge;
 pub mod learned;
+pub mod preparation;
 pub mod processing_mode;
 pub mod resonance;
 pub mod session;
@@ -56,8 +57,7 @@ use self::steps::{
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::inventory::{
-    consume_forge_materials_atomic, consume_item_instance_once, inventory_item_by_instance_borrow,
-    ItemRegistry, PlayerInventory,
+    consume_item_instance_once, inventory_item_by_instance_borrow, ItemRegistry, PlayerInventory,
 };
 use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
@@ -113,7 +113,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             station::handle_place_station_request,
-            handle_start_forge_requests,
+            handle_start_forge_requests
+                .after(crate::network::craft_materials::apply_craft_material_intents),
             crate::network::forge_bridge::publish_forge_start_on_session_create
                 .after(handle_start_forge_requests),
             // plan-forge-session-entry-wiring-v1 P2 —— 起炉受理 S2C 回执
@@ -190,6 +191,14 @@ fn handle_start_forge_requests(
     mut accepted: EventWriter<ForgeStartAccepted>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
     mut feedback: EventWriter<MineralFeedbackEvent>,
+    item_registry: Option<Res<ItemRegistry>>,
+    persistence: Option<Res<crate::player::state::PlayerStatePersistence>>,
+    contexts: Query<(
+        &Username,
+        &valence::prelude::Position,
+        Option<&crate::world::dimension::CurrentDimension>,
+    )>,
+    mut dropped: Option<ResMut<crate::inventory::DroppedLootRegistry>>,
 ) {
     for req in ev.read() {
         let Some(bp) = registry.get(&req.blueprint) else {
@@ -283,6 +292,18 @@ fn handle_start_forge_requests(
             continue;
         }
 
+        let Ok(mut inventory) = inventories.get_mut(req.caster) else {
+            continue;
+        };
+        if inventory.material_preparation.recipe_id.as_deref() != Some(bp.id.as_str())
+            || inventory.material_preparation.station_pos != station.pos
+        {
+            feedback.send(MineralFeedbackEvent::forge_materials_insufficient(
+                req.caster,
+                &[],
+            ));
+            continue;
+        }
         // 收集投料。optional carrier 允许来自 fauna/spiritwood 等后续专项；required
         // mineral 已在 blueprint load + runtime 双重校验为正典金属。
         let mut inputs: HashMap<String, u32> = HashMap::new();
@@ -324,17 +345,8 @@ fn handle_start_forge_requests(
         // 实际持有的输入料。不足则整体不改动、发 reject 回执、不建会话（不吞料）；这同时
         // 封堵了"引擎只记账 committed_materials、从不核实玩家是否真持有 req.materials
         // 声明"的 anti-cheat 漏洞。Waste 路径已在上面 continue，天然不会走到这里。
-        let materials_to_consume: Vec<(String, u32)> =
-            inputs.iter().map(|(m, c)| (m.clone(), *c)).collect();
-        let Ok(mut inventory) = inventories.get_mut(req.caster) else {
-            tracing::warn!(
-                "[bong][forge] start session rejected: caster={:?} has no PlayerInventory",
-                req.caster
-            );
-            continue;
-        };
-        if let Err(deficits) = consume_forge_materials_atomic(&mut inventory, &materials_to_consume)
-        {
+        let mut staged = inventory.clone();
+        if let Err(deficits) = preparation::consume(&mut staged, &inputs) {
             tracing::info!(
                 "[bong][forge] start session rejected: insufficient materials caster={:?} deficits={deficits:?}",
                 req.caster
@@ -355,6 +367,50 @@ fn handle_start_forge_requests(
                 req.caster, &detail,
             ));
             continue;
+        }
+
+        // 未用到的余料在开炉事务内返还；确认开炉后，投入本炉的材料不再可取回。
+        let mut refunds = Vec::new();
+        if !staged.material_preparation.materials.is_empty() {
+            let (Some(items), Ok((_, position, dimension))) =
+                (item_registry.as_deref(), contexts.get(req.caster))
+            else {
+                continue;
+            };
+            refunds = crate::craft::preparation::return_materials(
+                &mut staged,
+                items,
+                None,
+                [position.0.x, position.0.y, position.0.z],
+                dimension.map(|value| value.0).unwrap_or_default(),
+            )
+            .expect("全部返还不要求指定实例");
+            if !refunds.is_empty() && dropped.is_none() {
+                continue;
+            }
+        }
+        if let Some(persistence) = persistence.as_deref() {
+            let Ok((username, _, _)) = contexts.get(req.caster) else {
+                continue;
+            };
+            if let Err(error) = crate::player::state::save_player_craft_checkpoint(
+                persistence,
+                &username.0,
+                Some(&staged),
+                None,
+                None,
+                None,
+                &refunds,
+            ) {
+                tracing::warn!("[bong][forge] 起炉材料保存失败：{error}");
+                continue;
+            }
+        }
+        *inventory = staged;
+        if let Some(dropped) = dropped.as_deref_mut() {
+            dropped
+                .entries
+                .extend(refunds.into_iter().map(|entry| (entry.instance_id, entry)));
         }
 
         let id = sessions.allocate_id();
@@ -1472,6 +1528,7 @@ mod tests {
             hotbar: Default::default(),
             bone_coins: 0,
             max_weight: 50.0,
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
         }
     }
@@ -2850,6 +2907,7 @@ mod tests {
         app.insert_resource(registry);
         app.insert_resource(minerals);
         app.insert_resource(ForgeSessions::new());
+        app.insert_resource(ItemRegistry::default());
         app.add_event::<StartForgeRequest>();
         app.add_event::<ForgeStartAccepted>();
         app.add_event::<ForgeOutcomeEvent>();
@@ -2885,6 +2943,7 @@ mod tests {
 
     fn inventory_with_items(items: Vec<crate::inventory::ItemInstance>) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![crate::inventory::ContainerState {
@@ -2911,6 +2970,21 @@ mod tests {
         }
     }
 
+    fn stage_test_forge(app: &mut App, caster: Entity) {
+        let blueprint = app
+            .world()
+            .resource::<BlueprintRegistry>()
+            .get("iron_sword_v0")
+            .unwrap()
+            .clone();
+        app.world_mut().entity_mut(caster).insert((
+            Username("Forger".into()),
+            valence::prelude::Position::new([8.0, 66.0, 8.0]),
+        ));
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(caster).unwrap();
+        preparation::stage(&mut inventory, &blueprint, (8, 66, 8), 1).unwrap();
+    }
+
     #[test]
     fn start_forge_request_happy_path_consumes_materials_and_creates_session() {
         let mut app = start_forge_app();
@@ -2933,6 +3007,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -2986,6 +3061,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -3105,6 +3181,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -3176,7 +3253,7 @@ mod tests {
     fn start_forge_request_waste_billet_rejects_without_touching_inventory() {
         // 客户端声明的 materials 只有 1 个 fan_tie（< 需求 3，超出 tolerance），
         // resolve_billet 判定 Waste；即使真实背包里其实有 5 个 fan_tie，也不应被
-        // consume_forge_materials_atomic 碰到——Waste 路径在到达扣料代码之前就 continue。
+        // 扣料碰到——Waste 路径在到达扣料代码之前就 continue。
         let mut app = start_forge_app();
         let caster = app
             .world_mut()
@@ -3197,6 +3274,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -3215,7 +3293,7 @@ mod tests {
 
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         assert_eq!(
-            inventory.containers[0].items[0].instance.stack_count, 5,
+            inventory.material_preparation.materials[0].item.stack_count, 5,
             "Waste 路径必须不吞料——真实持有的 5 个 fan_tie 应原封不动"
         );
     }
@@ -3245,6 +3323,7 @@ mod tests {
             ))
             .id();
 
+        stage_test_forge(&mut app, caster);
         app.world_mut().send_event(StartForgeRequest {
             station,
             caster,
@@ -3273,7 +3352,7 @@ mod tests {
 
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         assert_eq!(
-            inventory.containers[0].items[0].instance.stack_count, 1,
+            inventory.material_preparation.materials[0].item.stack_count, 1,
             "拒绝路径不吞料——真实持有的 1 个 fan_tie 应原封不动"
         );
     }

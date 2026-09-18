@@ -1047,6 +1047,17 @@ export const ForgeStationPlaceRequestV1 = Type.Object(
 );
 export type ForgeStationPlaceRequestV1 = Static<typeof ForgeStationPlaceRequestV1>;
 
+/** 右键炼器砧。服务端按坐标校验真实工位、距离和使用权。 */
+export const ForgeStationOpenRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("forge_station_open"),
+    station_pos: Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]),
+  },
+  { additionalProperties: false },
+);
+export type ForgeStationOpenRequestV1 = Static<typeof ForgeStationOpenRequestV1>;
+
 export const BlockPlaceRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1147,7 +1158,18 @@ export const BlockPickerActionV1 = Type.Object(
 );
 export type BlockPickerActionV1 = Static<typeof BlockPickerActionV1>;
 
+export const MaterialMoveRequestV1 = Type.Object({
+  v: Type.Literal(1),
+  type: Type.Literal('material_move'),
+  recipe_id: Type.String({ minLength: 1 }),
+  instance_id: Type.Union([Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), Type.Null()]),
+  station_pos: Type.Union([Type.Tuple([Type.Integer(), Type.Integer(), Type.Integer()]), Type.Null()]),
+  returning: Type.Boolean(),
+  expected_revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+}, { additionalProperties: false });
+
 export const ClientRequestV1 = Type.Union([
+  MaterialMoveRequestV1,
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
   StartDuXuRequestV1,
@@ -1228,6 +1250,7 @@ export const ClientRequestV1 = Type.Union([
   ForgeBlueprintTurnPageRequestV1,
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
+  ForgeStationOpenRequestV1,
   BlockPlaceRequestV1,
   BlockPickerActionV1,
   RaiseShieldRequestV1,

@@ -70,6 +70,9 @@ def run(env) -> None:
         wait_inventory_contains(bot, "wood_handle")
         time.sleep(1.0)
 
+        from bot.scenarios._craft_helpers import stage_material
+        stage_material(bot, RECIPE_ID, "stone_chunk")
+        stage_material(bot, RECIPE_ID, "wood_handle")
         start_anchor = last_event_time(bot)
         bot.intent(
             {

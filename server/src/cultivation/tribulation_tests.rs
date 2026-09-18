@@ -18,6 +18,7 @@ use valence::testing::ScenarioSingleClient;
 
 fn test_inventory(items: Vec<ItemInstance>, bone_coins: u64) -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {

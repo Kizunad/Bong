@@ -75,6 +75,10 @@ public final class CraftRecipe {
     public String outputTemplate() { return outputTemplate; }
     public int outputCount() { return outputCount; }
     public Requirements requirements() { return requirements; }
+    public boolean skillSatisfied(com.bong.client.skill.SkillSetSnapshot skills) {
+        return requirements.skillLvMin() == null
+            || (skills == null ? 0 : skills.maxEffectiveLv()) >= requirements.skillLvMin();
+    }
     public boolean unlocked() { return unlocked; }
     /** null = 手搓（无站台要求）, "workbench" = 需制作台. */
     public String station() { return station; }

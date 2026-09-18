@@ -33,6 +33,7 @@ fn make_inventory_with_stack(instance_id: u64, stack: u32) -> PlayerInventory {
         lingering_owner_qi: None,
     };
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(5),
         containers: vec![ContainerState {
@@ -129,6 +130,7 @@ fn setup_quickslot_effect_app(template_id: &str, effect: ItemEffect) -> (App, En
     );
 
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -1223,6 +1225,7 @@ fn tick_casts_or_interrupt_critical_block_does_not_consume_inventory() {
         lingering_owner_qi: None,
     };
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -1395,6 +1398,7 @@ fn build_cast_tick_app(clock_tick: u64) -> App {
 
 fn empty_inventory_for_cast() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![],

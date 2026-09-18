@@ -233,6 +233,7 @@ mod tests {
             owner_instance_id: None,
         };
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(1),
             containers: vec![container],

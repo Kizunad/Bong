@@ -26,6 +26,7 @@ pub mod combat_hud_state_emit;
 pub mod command_executor;
 pub mod craft_emit;
 pub mod craft_event_bridge;
+pub mod craft_materials;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
 pub mod cultivation_insight_offer_emit;
@@ -983,6 +984,12 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     // ── plan-craft-v1 P2/P3：通用手搓 IPC（client_request → intent → session → outcome
     //    + 三渠道解锁 intent → unlock_via_* → RecipeUnlocked）──
     register_craft_start_runtime_system(app);
+    app.add_systems(
+        Update,
+        craft_materials::apply_craft_material_intents
+            .after(client_request_handler::handle_client_request_payloads)
+            .before(craft_emit::apply_craft_start_intents),
+    );
     app.add_systems(
         Update,
         (

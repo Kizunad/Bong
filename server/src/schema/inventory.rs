@@ -267,6 +267,8 @@ pub struct ContainerSnapshotV1 {
 #[serde(deny_unknown_fields)]
 pub struct InventorySnapshotV1 {
     pub revision: u64,
+    #[serde(default)]
+    pub material_preparation: MaterialPreparationV1,
     #[serde(deserialize_with = "deserialize_inventory_containers")]
     pub containers: Vec<ContainerSnapshotV1>,
     pub placed_items: Vec<PlacedInventoryItemV1>,
@@ -284,6 +286,14 @@ pub struct InventorySnapshotV1 {
     pub qi_max: f64,
     #[serde(deserialize_with = "deserialize_non_negative_f64")]
     pub body_level: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialPreparationV1 {
+    pub recipe_id: Option<String>,
+    pub station_pos: Option<(i32, i32, i32)>,
+    pub materials: Vec<InventoryItemViewV1>,
 }
 
 // TODO: Dropped variant 较大（含 InventoryItemViewV1）；boxing 可降 enum 大小但影响 wire schema 兼容性，暂 allow。

@@ -180,7 +180,7 @@ def run(env) -> None:
         px, py, pz = (int(v) for v in bot.position)
         # 与 production_forge_station_real_place 的 (px-2,py,pz) 错开，避免同套
         # e2e 里站台位置撞车（station.rs 只拦 position 唯一，无 air/距离门）。
-        station_pos = (px, py, pz - 3)
+        station_pos = (px, py, pz - 2)
 
         anchor = last_event_time(bot)
         bot.intent(
@@ -239,6 +239,8 @@ def run(env) -> None:
         )
 
         anchor = last_event_time(bot)
+        from bot.scenarios._craft_helpers import stage_material
+        stage_material(bot, BLUEPRINT_ID, MATERIAL_ITEM_ID, station_pos)
         _forge_start_session(bot, station_pos, BLUEPRINT_ID, [(MATERIAL, 3)])
         session_payload = _wait_forge_payload_after(
             bot,

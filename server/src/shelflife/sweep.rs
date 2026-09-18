@@ -97,7 +97,13 @@ pub fn sweep_shelflife_variants(
             }
         }
 
-        for item in inventory_data.hotbar.iter_mut().flatten() {
+        for item in inventory_data.hotbar.iter_mut().flatten().chain(
+            inventory_data
+                .material_preparation
+                .materials
+                .iter_mut()
+                .map(|entry| &mut entry.item),
+        ) {
             let entropy_seed = item.instance_id;
             if apply_variant_switch_with_season(
                 item,
@@ -269,6 +275,7 @@ mod tests {
                 hotbar: Default::default(),
                 bone_coins: 0,
                 max_weight: 45.0,
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
             },
             PlayerState::default(),

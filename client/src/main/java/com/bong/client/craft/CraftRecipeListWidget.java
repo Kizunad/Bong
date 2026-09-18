@@ -7,6 +7,7 @@ import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.component.TextBoxComponent;
 import io.wispforest.owo.ui.container.Containers;
 import io.wispforest.owo.ui.container.FlowLayout;
+import io.wispforest.owo.ui.container.ScrollContainer;
 import io.wispforest.owo.ui.core.Color;
 import io.wispforest.owo.ui.core.CursorStyle;
 import io.wispforest.owo.ui.core.Insets;
@@ -30,6 +31,7 @@ public final class CraftRecipeListWidget {
     private final FlowLayout root;
     private final FlowLayout rows;
     private final TextBoxComponent searchBox;
+    private final ScrollContainer<FlowLayout> scroll;
     private final Consumer<String> onSelected;
     private final Predicate<CraftRecipe> stationScope;
     private final Set<String> favorites = new LinkedHashSet<>();
@@ -39,7 +41,8 @@ public final class CraftRecipeListWidget {
 
     private CraftCategory category;
     private String selectedId;
-    /** 配方列表滚动视口高度(px)；BODY_H 减标题/搜索/分类 tab/padding 后约余 208px,取 200 留余量,约 10 行。 */
+    private int rowWidth = CraftScreenLayout.LEFT_W - 12;
+    /** 挂载前的初始视口；窗口 layout 会替换为可用高度。 */
     private static final int LIST_VIEWPORT_HEIGHT = 200;
 
     private String query = "";
@@ -53,27 +56,21 @@ public final class CraftRecipeListWidget {
      * 导致占位 label 都不渲染。 */
     private boolean rowsBuilt = false;
 
-    /** 旧签名：不限 station（向后兼容测试），实际屏幕应传 stationScope。 */
-    public CraftRecipeListWidget(Consumer<String> onSelected) {
-        this(onSelected, r -> true);
-    }
-
     /**
-     * @param stationScope 站台作用域过滤：手搓台传 {@code CraftRecipe::isHandcraft}，
-     *     制作台屏传 {@code CraftRecipe::isWorkbenchRecipe}。避免两类配方互相串台。
+     * @param stationScope 当前入口的配方范围，切换工位时由窗口所有者更新。
      */
     public CraftRecipeListWidget(Consumer<String> onSelected, Predicate<CraftRecipe> stationScope) {
         this.onSelected = onSelected;
         // fail-fast：null 会在 refresh() 的 filter(stationScope) 处晚到地 NPE，构造时即拒。
         this.stationScope = java.util.Objects.requireNonNull(stationScope, "stationScope must not be null");
         root = Containers.verticalFlow(Sizing.fixed(CraftScreenLayout.LEFT_W), Sizing.fill(100));
-        root.surface(Surface.flat(0xFF1A1814).and(Surface.outline(0xFF4A4030)));
+        root.surface(Surface.flat(0xFF111D22).and(Surface.outline(0xFF33474A)));
         root.padding(Insets.of(4));
         root.gap(3);
-        root.child(label("配方", 0xFFE8DDC4));
 
         searchBox = Components.textBox(Sizing.fixed(CraftScreenLayout.LEFT_W - 10));
         searchBox.id("craft-search");
+        searchBox.tooltip(Text.literal("搜索配方"));
         searchBox.text("");
         searchBox.onChanged().subscribe(value -> {
             query = value == null ? "" : value;
@@ -88,7 +85,7 @@ public final class CraftRecipeListWidget {
         // viewport 高度必须 Sizing.fixed —— owo 里 Sizing.fill(100) 是"撑满父容器整高"(非剩余
         // 空间),viewport 会被解算到 ≥ 内容高度,scroll 判定无需滚动 → 滚动条钉死拖不动(配方
         // 22 条时尤其明显)。仿能滚的先例 TechniquesTabPanel(固定 viewport)。
-        var scroll = Containers.verticalScroll(Sizing.fill(100), Sizing.fixed(LIST_VIEWPORT_HEIGHT), rowContent);
+        scroll = Containers.verticalScroll(Sizing.fill(100), Sizing.fixed(LIST_VIEWPORT_HEIGHT), rowContent);
         scroll.id("craft-recipe-scroll");
         scroll.scrollbarThiccness(3);
         root.child(scroll);
@@ -96,6 +93,14 @@ public final class CraftRecipeListWidget {
 
     public FlowLayout root() {
         return root;
+    }
+
+    public void layout(int width, int height) {
+        root.sizing(Sizing.fixed(width), Sizing.fixed(height));
+        searchBox.horizontalSizing(Sizing.fixed(Math.max(1, width - 8)));
+        scroll.verticalSizing(Sizing.fixed(Math.max(1, height - 54)));
+        rowWidth = Math.max(1, width - 12);
+        labelById.values().forEach(label -> label.maxWidth(rowWidth));
     }
 
     public void setSelectedId(String selectedId) {
@@ -174,7 +179,7 @@ public final class CraftRecipeListWidget {
         SkillSetSnapshot skills
     ) {
         String fav = favorites.contains(recipe.id()) ? "★" : " ";
-        boolean skillSatisfied = CraftActionBar.skillSatisfied(recipe, skills);
+        boolean skillSatisfied = recipe.skillSatisfied(skills);
         boolean available = recipe.unlocked() && skillSatisfied;
         String lock = recipe.unlocked() ? (skillSatisfied ? " " : "技") : "🔒";
         int max = CraftInventoryCounter.maxCraftable(recipe, inventory);
@@ -211,11 +216,13 @@ public final class CraftRecipeListWidget {
         first.child(tab("暗", CraftCategory.ANQI_CARRIER));
         first.child(tab("汤", CraftCategory.DUGU_POTION));
         first.child(tab("皮", CraftCategory.TUIKE_SKIN));
+        first.child(tab("甲", CraftCategory.ARMOR_CRAFT));
         FlowLayout second = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         second.gap(2);
         second.child(tab("阵", CraftCategory.ZHENFA_TRAP));
         second.child(tab("器", CraftCategory.TOOL));
         second.child(tab("容", CraftCategory.CONTAINER));
+        second.child(tab("毒", CraftCategory.POISON_POWDER));
         second.child(tab("杂", CraftCategory.MISC));
         wrap.child(first);
         wrap.child(second);
@@ -238,11 +245,11 @@ public final class CraftRecipeListWidget {
     }
 
     private FlowLayout row(CraftRecipe recipe, InventoryModel inventory, SkillSetSnapshot skills) {
-        FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
+        FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         row.verticalAlignment(VerticalAlignment.CENTER);
         row.padding(Insets.of(1, 2, 2, 2));
         LabelComponent text = label("", 0xFFE8DDC4);
-        text.maxWidth(CraftScreenLayout.LEFT_W - 12);
+        text.maxWidth(rowWidth);
         row.child(text);
         row.cursorStyle(CursorStyle.HAND);
         applyRowContent(row, text, recipe, inventory, skills);

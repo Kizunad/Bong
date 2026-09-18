@@ -340,7 +340,10 @@ pub fn start_craft(
     let mut deficits = Vec::new();
     for (template, need) in &recipe.materials {
         let total_need = need.saturating_mul(request.quantity);
-        let have = count_template_in_inventory(deps.inventory, template);
+        let have = deps
+            .inventory
+            .material_preparation
+            .count(recipe.id.as_str(), template);
         if have < total_need {
             deficits.push(MaterialDeficit {
                 template_id: template.clone(),
@@ -385,10 +388,12 @@ pub fn start_craft(
     let mut consumed = Vec::with_capacity(recipe.materials.len());
     for (template, need) in &recipe.materials {
         let total_need = need.saturating_mul(request.quantity);
-        consume_materials_from_inventory(deps.inventory, template, total_need)
-            .expect("materials checked above");
+        deps.inventory
+            .material_preparation
+            .consume(template, total_need);
         consumed.push((template.clone(), total_need));
     }
+    bump_revision(deps.inventory);
 
     let session = CraftSession {
         recipe_id: recipe.id.clone(),

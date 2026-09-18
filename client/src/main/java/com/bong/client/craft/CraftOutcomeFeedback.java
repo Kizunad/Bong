@@ -7,9 +7,9 @@ import java.util.Objects;
 import java.util.function.IntConsumer;
 
 /**
- * CraftScreen / WorkbenchScreen 共用的 completed/failed 玩家反馈契约。
+ * 制作窗口的 completed/failed 玩家反馈契约。
  *
- * <p>抽出可测 seam，避免单测绑定 Screen 私有字段或完整 owo UI 树，同时保证两屏
+ * <p>反馈不依赖 Screen 私有字段或完整 owo UI 树，手搓与制作台
  * 使用同一套顺序：completed 先 flashTicks=6 → 完成音 → refresh；failed 只 refresh
  * 且不播放完成音。player 缺失时静默跳过音效，不崩溃。</p>
  */

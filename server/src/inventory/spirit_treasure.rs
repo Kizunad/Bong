@@ -489,6 +489,7 @@ mod tests {
 
     fn inventory_with_container_item(instance_id: u64) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {

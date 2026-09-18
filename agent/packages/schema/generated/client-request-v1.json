@@ -6,6 +6,77 @@
       "required": [
         "v",
         "type",
+        "recipe_id",
+        "instance_id",
+        "station_pos",
+        "returning",
+        "expected_revision"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "material_move",
+          "type": "string"
+        },
+        "recipe_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "instance_id": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "station_pos": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "returning": {
+          "type": "boolean"
+        },
+        "expected_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "meridian"
       ],
       "properties": {
@@ -3270,6 +3341,42 @@
       "required": [
         "v",
         "type",
+        "station_pos"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "forge_station_open",
+          "type": "string"
+        },
+        "station_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "x",
         "y",
         "z",
@@ -3499,5 +3606,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "9c4ba45c74c228d91fe3a80821f639677c00d9440dd310df752ca3cce0eb63b4"
+  "x-bong-typebox-source-sha256": "7ddafa2c71926ab1931bac34b2027943015e43bc0167807fa0905341f92117de"
 }

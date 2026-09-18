@@ -4,7 +4,11 @@ import com.bong.client.craft.CraftCategory;
 import com.bong.client.menu.MainMenuScreen;
 import com.bong.client.menu.MainMenuReasonWidget;
 import com.bong.client.craft.CraftRecipe;
-import com.bong.client.craft.CraftScreen;
+import com.bong.client.craft.CraftContext;
+import com.bong.client.craft.CraftWindows;
+import com.bong.client.inventory.InspectScreen;
+import com.bong.client.ui.window.UiWindowRuntime;
+import com.bong.client.ui.window.UiWindowManager;
 import com.bong.client.craft.CraftStore;
 import com.bong.client.combat.screen.ForgeCarrierScreen;
 import com.bong.client.combat.screen.TerminateScreen;
@@ -57,6 +61,7 @@ final class UiPreviewScenes {
         Map.entry("item-windows-terrain", new UiWindowPreviewScene("pickaxe_iron", "terrain")),
         Map.entry("item-windows-hud", new UiWindowPreviewScene("pickaxe_iron", "hud")),
         Map.entry("craft", new CraftScene()),
+        Map.entry("forge-window", new UiForgeWindowPreviewScene()),
         Map.entry("terminate", new TerminateScene(0)),
         Map.entry("terminate-kind", new TerminateScene(1)),
         Map.entry("terminate-hungry", new TerminateScene(2)),
@@ -182,9 +187,15 @@ final class UiPreviewScenes {
 
         @Override
         public void installFixture(UiPreviewConfig config) {
+            UiWindowRuntime.beginPreview();
+            UiWindowRuntime.manager().reset();
             CraftStore.clear();
             CraftStore.replaceRecipes(List.of(
-                recipe("rough_knife", CraftCategory.TOOL, "粗铁短刀", "rust_iron", 3, true),
+                new CraftRecipe("rough_knife", CraftCategory.TOOL, "粗铁短刀", List.of(
+                    new CraftRecipe.MaterialEntry("rust_iron", 3),
+                    new CraftRecipe.MaterialEntry("withered_herb", 2),
+                    new CraftRecipe.MaterialEntry("bitter_root", 1)
+                ), 5.0, 80L, "rough_knife", 1, CraftRecipe.Requirements.NONE, true),
                 recipe("herb_wrap", CraftCategory.MISC, "枯草裹伤布", "withered_herb", 2, true),
                 recipe("sealed_powder", CraftCategory.POISON_POWDER, "未辨毒粉", "bitter_root", 4, false)
             ));
@@ -199,143 +210,95 @@ final class UiPreviewScenes {
 
         @Override
         public Screen createScreen() {
-            return new CraftScreen();
+            return new InspectScreen(InventoryStateStore.snapshot());
         }
 
         @Override
         public String selectedTemplateId(Screen screen) {
-            if (!(screen instanceof CraftScreen craft)) {
-                throw new IllegalStateException("craft scene 打开的不是 CraftScreen");
-            }
-            return craft.selectedTemplateIdForTests();
+            return "craft-window";
         }
 
         @Override
         public boolean isReady(Screen screen) {
-            return screen instanceof CraftScreen craft && craft.hostReadyForTests();
+            return screen instanceof InspectScreen inspect && inspect.windowHostReadyForPreview();
         }
 
         @Override
         public boolean initializationFailed(Screen screen) {
-            return screen instanceof CraftScreen craft && craft.hostInitializationFailedForTests();
+            return screen instanceof InspectScreen inspect && inspect.windowHostFailedForPreview();
+        }
+
+        @Override
+        public void prepareScreenshot(Screen screen, UiPreviewShot shot) {
+            var manager = UiWindowRuntime.manager();
+            for (var state : manager.snapshot()) manager.close(state.key());
+            UiWindowRuntime.openCraft(CraftContext.HANDCRAFT);
+            var state = manager.snapshot().stream().filter(window -> window.definition().equals(CraftWindows.DEFINITION))
+                .findFirst().orElseThrow();
+            manager.settleAt(state.key(), new UiWindowManager.Rect(4, 4,
+                shot.expectedLogicalWidth() - 8, shot.expectedLogicalHeight() - 36));
+            renderCraft(screen);
+            var target = state.bounds();
+            if (shot.name().equals("craft-wide")) {
+                manager.resize(state.key(), "300", "200");
+                renderCraft(screen);
+                verifyDetailScroll(screen, state);
+                manager.settleAt(state.key(), target);
+                renderCraft(screen);
+            } else {
+                verifyDetailScroll(screen, state);
+            }
+            manager.minimize(state.key());
+            renderCraft(screen);
+            UiWindowRuntime.openCraft(CraftContext.HANDCRAFT);
+            renderCraft(screen);
+            if (state.minimized() || state.scope().isClosed() || !manager.snapshot().contains(state)) {
+                throw new IllegalStateException("最小化恢复必须保留制作窗口及其订阅");
+            }
+        }
+
+        private static void verifyDetailScroll(Screen screen, UiWindowManager.WindowState state) {
+            var scroll = UiWindowRuntime.windowContentForPreview(state.key()).childById(
+                io.wispforest.owo.ui.container.ScrollContainer.class, "craft-detail-scroll");
+            int before = scroll.child().y();
+            screen.mouseScrolled(scroll.x() + 10, scroll.y() + 10, -8);
+            renderCraft(screen);
+            if (scroll.child().height() > scroll.height() && scroll.child().y() >= before) {
+                throw new IllegalStateException("制作详情内容溢出时，滚轮没有移动材料和产物");
+            }
+            screen.mouseScrolled(scroll.x() + 10, scroll.y() + 10, 100);
+            renderCraft(screen);
+        }
+
+        private static void renderCraft(Screen screen) {
+            var client = MinecraftClient.getInstance();
+            var context = new DrawContext(client, client.getBufferBuilders().getEntityVertexConsumers());
+            screen.render(context, -1, -1, 0);
+            context.draw();
         }
 
         @Override
         public void validateGeometry(Screen screen, UiPreviewShot shot) {
-            if (!(screen instanceof CraftScreen craft)) {
-                throw new IllegalStateException("craft scene 打开的不是 CraftScreen");
-            }
-            int logicalWidth = shot.expectedLogicalWidth();
-            int logicalHeight = shot.expectedLogicalHeight();
-            ComponentBounds panel = craft.componentBoundsForPreview("craft-panel");
-            ComponentBounds expectedPanel = new ComponentBounds(
-                10, 6, logicalWidth - 20, logicalHeight - 12
-            );
-            if (!expectedPanel.equals(panel)) {
-                throw new IllegalStateException(
-                    "响应式面板没有填满安全区: expected=" + expectedPanel + ", actual=" + panel);
-            }
-            for (String id : new String[] {"craft-panel", "craft-header", "action-host"}) {
-                requireInViewport(id, craft.componentBoundsForPreview(id), logicalWidth, logicalHeight);
-            }
-            String layoutBodyId = "craft-compact".equals(craft.selectedTemplateIdForTests())
-                ? "craft-content-scroll"
-                : "craft-columns";
-            requireInViewport(
-                layoutBodyId,
-                craft.componentBoundsForPreview(layoutBodyId),
-                logicalWidth,
-                logicalHeight
-            );
-            for (String bridgeId : new String[] {"recipe-host", "material-host", "output-host"}) {
-                ComponentBounds bounds = craft.componentBoundsForPreview(bridgeId);
-                if (!bounds.isPositive()) {
-                    throw new IllegalStateException("动态 bridge 没有有效布局: " + bridgeId + " -> " + bounds);
+            var state = UiWindowRuntime.manager().snapshot().stream()
+                .filter(window -> window.definition().equals(CraftWindows.DEFINITION)).findFirst().orElseThrow();
+            var content = UiWindowRuntime.windowContentForPreview(state.key());
+            for (String id : List.of("craft-search", "craft-return", "craft-minus", "craft-plus", "craft-start")) {
+                var component = content.childById(io.wispforest.owo.ui.core.Component.class, id);
+                var bounds = new ComponentBounds(component.x(), component.y(), component.width(), component.height());
+                requireInViewport(id, bounds, shot.expectedLogicalWidth(), shot.expectedLogicalHeight());
+                var window = state.bounds();
+                if (bounds.x() < window.x() || bounds.y() < window.y()
+                    || bounds.x() + bounds.width() > window.x() + window.width()
+                    || bounds.y() + bounds.height() > window.y() + window.height()) {
+                    throw new IllegalStateException("制作操作超出窗口: " + id);
                 }
-            }
-            validateHitRegions(craft, panel, shot);
-            validateFocusOrder(craft);
-            if ("craft-compact".equals(craft.selectedTemplateIdForTests())) {
-                validateCompactScrollReachability(craft);
-            }
-        }
-
-        private static void validateHitRegions(CraftScreen craft, ComponentBounds panel, UiPreviewShot shot) {
-            for (String id : List.of("craft-search", "craft-fill", "craft-minus", "craft-plus", "craft-start")) {
-                ComponentBounds bounds = craft.componentBoundsForPreview(id);
-                if (!panel.contains(bounds)) {
-                    throw new IllegalStateException("交互 hit region 不在面板安全区: " + id + " -> " + bounds);
-                }
-                requireHit(craft, id, bounds.centerX(), bounds.centerY(), "逻辑中心");
-                UiViewport viewport = new UiViewport(
-                    shot.expectedLogicalWidth(), shot.expectedLogicalHeight(), shot.guiScale(), shot.guiScale()
-                );
-                UiViewport.Point logical = new UiViewport.Point(bounds.centerX(), bounds.centerY());
-                UiViewport.Point roundTrip = viewport.physicalToLogical(viewport.logicalToPhysical(logical));
-                requireHit(craft, id, roundTrip.x(), roundTrip.y(), "物理坐标逆变换");
-            }
-        }
-
-        private static void requireHit(
-            CraftScreen craft,
-            String expectedId,
-            double logicalX,
-            double logicalY,
-            String source
-        ) {
-            String actualId = craft.componentIdAtForPreview(logicalX, logicalY);
-            if (!expectedId.equals(actualId)) {
-                throw new IllegalStateException(
-                    source + "没有命中预期组件: expected=" + expectedId + ", actual=" + actualId
-                        + ", point=" + logicalX + "," + logicalY);
-            }
-        }
-
-        private static void validateFocusOrder(CraftScreen craft) {
-            List<String> actual = craft.focusOrderForPreview();
-            List<String> expected = "craft-compact".equals(craft.selectedTemplateIdForTests())
-                ? List.of(
-                    "craft-content-scroll", "craft-search", "craft-recipe-scroll",
-                    "craft-fill", "craft-minus", "craft-plus", "craft-start"
-                )
-                : List.of(
-                    "craft-search", "craft-recipe-scroll",
-                    "craft-fill", "craft-minus", "craft-plus", "craft-start"
-                );
-            int cursor = -1;
-            for (String id : expected) {
-                int next = actual.subList(cursor + 1, actual.size()).indexOf(id);
-                if (next < 0) {
-                    throw new IllegalStateException(
-                        "Tab 焦点顺序缺失或倒置: expected subsequence=" + expected + ", actual=" + actual);
-                }
-                cursor += next + 1;
-            }
-            if (actual.stream().anyMatch(id -> id.startsWith("<missing:"))) {
-                throw new IllegalStateException("可聚焦组件缺少稳定 id: " + actual);
-            }
-        }
-
-        private static void validateCompactScrollReachability(CraftScreen craft) {
-            ComponentBounds scroll = craft.componentBoundsForPreview("craft-content-scroll");
-            ComponentBounds content = craft.componentBoundsForPreview("craft-scroll-content");
-            if (content.height() <= scroll.height() || content.width() > scroll.width()) {
-                throw new IllegalStateException(
-                    "compact 内容没有形成可用纵向滚动范围: viewport=" + scroll + ", content=" + content);
-            }
-            int previousBottom = content.y();
-            for (String id : List.of("recipe-host", "material-host", "output-host")) {
-                ComponentBounds bounds = craft.componentBoundsForPreview(id);
-                if (!content.contains(bounds) || bounds.y() < previousBottom) {
-                    throw new IllegalStateException(
-                        "compact 滚动区域不可按顺序到达: " + id + " -> " + bounds + ", content=" + content);
-                }
-                previousBottom = bounds.y() + bounds.height();
             }
         }
 
         @Override
         public void cleanup() {
+            UiWindowRuntime.manager().reset();
+            UiWindowRuntime.endPreview();
             SessionScopedStoreRegistry.clearAllOnDisconnect();
         }
 

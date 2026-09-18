@@ -196,6 +196,7 @@ mod tests {
 
     fn inventory_with_main_hand_tool(template_id: &str, durability: f64) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {

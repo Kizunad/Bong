@@ -235,6 +235,8 @@ def inventory_instance_map(snapshot: dict[str, Any]) -> dict[int, dict[str, Any]
     for item in snapshot.get("hotbar", []):
         if item:
             add(item)
+    for item in snapshot.get("material_preparation", {}).get("materials", []):
+        add(item)
     return items
 
 

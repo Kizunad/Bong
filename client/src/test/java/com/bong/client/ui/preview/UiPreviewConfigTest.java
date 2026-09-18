@@ -18,11 +18,11 @@ class UiPreviewConfigTest {
         UiPreviewConfig config = UiPreviewConfig.parse(
             Files.readString(Path.of("ui-preview-harness.json")));
         assertEquals(15, config.screenshots().size());
-        assertEquals("craft-compact", config.screenshots().get(0).expectedTemplateId());
+        assertEquals("craft-window", config.screenshots().get(0).expectedTemplateId());
         assertEquals(320, config.screenshots().get(0).expectedLogicalWidth());
         assertEquals(401, config.screenshots().get(1).expectedLogicalWidth(),
             "奇数 framebuffer 必须按 Minecraft 规则向上取整");
-        assertEquals("craft", config.screenshots().get(2).expectedTemplateId());
+        assertEquals("craft-window", config.screenshots().get(2).expectedTemplateId());
         assertEquals("terminate", config.screenshots().get(3).sceneId());
         assertEquals("terminate", config.screenshots().get(3).expectedTemplateId());
         assertEquals("coffin-menu", config.screenshots().get(4).sceneId());
@@ -81,19 +81,19 @@ class UiPreviewConfigTest {
     @Test
     void malformedDimensionsScaleAndExpectedViewportAreRejected() {
         assertThrows(IllegalArgumentException.class, () ->
-            new UiPreviewShot("x", "craft", 0, 480, 2, 320, 240, "craft-compact"));
+            new UiPreviewShot("x", "craft", 0, 480, 2, 320, 240, "craft-window"));
         assertThrows(IllegalArgumentException.class, () ->
-            new UiPreviewShot("x", "craft", 640, 480, 0, 320, 240, "craft-compact"));
+            new UiPreviewShot("x", "craft", 640, 480, 0, 320, 240, "craft-window"));
         assertThrows(IllegalArgumentException.class, () ->
-            new UiPreviewShot("x", "craft", 801, 481, 2, 400, 240, "craft-compact"));
+            new UiPreviewShot("x", "craft", 801, 481, 2, 400, 240, "craft-window"));
     }
 
     @Test
     void unsafeSceneAndFileTokensAreRejected() {
         assertThrows(IllegalArgumentException.class, () ->
-            new UiPreviewShot("../escape", "craft", 640, 480, 2, 320, 240, "craft-compact"));
+            new UiPreviewShot("../escape", "craft", 640, 480, 2, 320, 240, "craft-window"));
         assertThrows(IllegalArgumentException.class, () ->
-            new UiPreviewShot("safe", "java.lang.Screen", 640, 480, 2, 320, 240, "craft-compact"));
+            new UiPreviewShot("safe", "java.lang.Screen", 640, 480, 2, 320, 240, "craft-window"));
     }
 
     @Test
@@ -123,7 +123,7 @@ class UiPreviewConfigTest {
         return "{\"name\":\"minimum\",\"scene_id\":\"" + sceneId
             + "\",\"framebuffer_width\":640,\"framebuffer_height\":480,\"gui_scale\":2,"
             + "\"expected_logical_width\":320,\"expected_logical_height\":240,"
-            + "\"expected_template_id\":\"craft-compact\"}";
+            + "\"expected_template_id\":\"craft-window\"}";
     }
 
     private static UiPreviewShot shot(
@@ -140,7 +140,7 @@ class UiPreviewConfigTest {
             2,
             (framebufferWidth + 1) / 2,
             (framebufferHeight + 1) / 2,
-            "craft-compact"
+            "craft-window"
         );
     }
 

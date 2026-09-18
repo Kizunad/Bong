@@ -776,6 +776,7 @@ mod tests {
 
     fn inventory_with_materials() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -854,6 +855,7 @@ mod tests {
     #[test]
     fn forge_false_skin_rejects_equipped_materials() {
         let mut inventory = PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {

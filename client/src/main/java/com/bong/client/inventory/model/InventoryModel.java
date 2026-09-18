@@ -77,6 +77,9 @@ public final class InventoryModel {
     private final Map<EquipSlotType, SlotContents> equippedSlots;
     private final Map<EquipSlotType, InventoryItem> equipped;
     private final List<InventoryItem> hotbar;
+    private final String craftRecipeId;
+    private final List<InventoryItem> craftMaterials;
+    private final net.minecraft.util.math.BlockPos preparationStation;
     private final double currentWeight;
     private final double maxWeight;
     private final long boneCoins;
@@ -90,6 +93,9 @@ public final class InventoryModel {
         List<GridEntry> gridItems,
         Map<EquipSlotType, SlotContents> equippedSlots,
         List<InventoryItem> hotbar,
+        String craftRecipeId,
+        List<InventoryItem> craftMaterials,
+        net.minecraft.util.math.BlockPos preparationStation,
         double currentWeight,
         double maxWeight,
         long boneCoins,
@@ -114,6 +120,9 @@ public final class InventoryModel {
         this.equippedSlots = Collections.unmodifiableMap(slots);
         this.equipped = Collections.unmodifiableMap(rep);
         this.hotbar = Collections.unmodifiableList(new ArrayList<>(hotbar));
+        this.craftRecipeId = craftRecipeId;
+        this.craftMaterials = List.copyOf(craftMaterials);
+        this.preparationStation = preparationStation;
         this.currentWeight = currentWeight;
         this.maxWeight = maxWeight;
         this.boneCoins = boneCoins;
@@ -133,6 +142,7 @@ public final class InventoryModel {
             List.of(),
             new EnumMap<>(EquipSlotType.class),
             emptyHotbar,
+            null, List.of(), null,
             0.0, 50.0, 0,
             "", 0.0, 100.0, 0.0
         );
@@ -162,6 +172,13 @@ public final class InventoryModel {
     public List<InventoryItem> hotbar() {
         return hotbar;
     }
+
+    public String craftRecipeId() { return preparationStation == null ? craftRecipeId : null; }
+
+    public List<InventoryItem> craftMaterials() { return preparationStation == null ? craftMaterials : List.of(); }
+    public String preparationRecipeId() { return craftRecipeId; }
+    public net.minecraft.util.math.BlockPos preparationStation() { return preparationStation; }
+    public List<InventoryItem> preparedMaterials() { return craftMaterials; }
 
     public double currentWeight() {
         return currentWeight;
@@ -196,7 +213,7 @@ public final class InventoryModel {
     }
 
     public boolean isEmpty() {
-        if (!gridItems.isEmpty() || !equipped.isEmpty() || !realm.isEmpty()) {
+        if (!gridItems.isEmpty() || !equipped.isEmpty() || !craftMaterials.isEmpty() || !realm.isEmpty()) {
             return false;
         }
 
@@ -228,6 +245,9 @@ public final class InventoryModel {
         private final List<GridEntry> gridItems = new ArrayList<>();
         private final EnumMap<EquipSlotType, SlotContents> equippedSlots = new EnumMap<>(EquipSlotType.class);
         private final InventoryItem[] hotbar = new InventoryItem[HOTBAR_SIZE];
+        private String craftRecipeId;
+        private List<InventoryItem> craftMaterials = List.of();
+        private net.minecraft.util.math.BlockPos preparationStation;
         private double currentWeight = 0.0;
         private double maxWeight = 50.0;
         private long boneCoins = 0;
@@ -300,6 +320,17 @@ public final class InventoryModel {
             return this;
         }
 
+        public Builder craftPreparation(String recipeId, List<InventoryItem> materials) {
+            return materialPreparation(recipeId, null, materials);
+        }
+
+        public Builder materialPreparation(String recipeId, net.minecraft.util.math.BlockPos station, List<InventoryItem> materials) {
+            this.craftRecipeId = recipeId;
+            this.craftMaterials = List.copyOf(materials);
+            this.preparationStation = station;
+            return this;
+        }
+
         public Builder boneCoins(long value) {
             this.boneCoins = value;
             return this;
@@ -320,6 +351,7 @@ public final class InventoryModel {
             }
             return new InventoryModel(
                 containers, gridItems, equippedSlots, hotbarList,
+                craftRecipeId, craftMaterials, preparationStation,
                 currentWeight, maxWeight, boneCoins,
                 realm, qiCurrent, qiMax, bodyLevel
             );

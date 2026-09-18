@@ -76,6 +76,7 @@ fn inv_with(items: &[(&str, u32)]) -> PlayerInventory {
         })
         .collect();
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -181,6 +182,209 @@ fn current_failed_events(app: &App) -> Vec<CraftFailedEvent> {
         .iter_current_update_events()
         .cloned()
         .collect()
+}
+
+#[test]
+fn material_transfer_persists_once_and_failed_return_keeps_custody() {
+    use bong_server::craft::events::MaterialMoveIntent;
+    use bong_server::network::craft_materials::apply_craft_material_intents;
+    let recipe_id = RecipeId::new("craft.tool.workbench");
+    let mut app = craft_refund_test_app(
+        make_recipe(recipe_id.as_str(), &[("fan_tie", 1)], vec![]),
+        &[("fan_tie", 64)],
+        10,
+    );
+    app.add_event::<MaterialMoveIntent>();
+    app.add_systems(Update, apply_craft_material_intents);
+    app.add_systems(Update, apply_craft_cancel_intents);
+    let (persistence, data_dir) = craft_test_persistence("material-custody");
+    app.insert_resource(persistence.clone());
+    let original = inv_with(&[("fan_tie", 2)]);
+    let original_item = original.containers[0].items[0].clone();
+    let (bundle, _helper) = create_mock_client("Azure");
+    let player = app
+        .world_mut()
+        .spawn(bundle)
+        .insert(original)
+        .insert(PlayerState::default())
+        .insert(Cultivation::default())
+        .insert(Position::new([0.0, 64.0, 0.0]))
+        .id();
+    let intent = MaterialMoveIntent {
+        caster: player,
+        recipe_id,
+        instance_id: Some(1),
+        station_pos: None,
+        returning: false,
+        expected_revision: 1,
+    };
+    app.world_mut().send_event(intent.clone());
+    app.world_mut().send_event(intent.clone());
+    app.update();
+    let saved = load_player_slices(&persistence, "Azure").inventory.unwrap();
+    assert!(saved.containers[0].items.is_empty());
+    assert_eq!(
+        saved.material_preparation.materials.len(),
+        1,
+        "重复请求不能重复托管"
+    );
+    assert_eq!(
+        saved.material_preparation.materials[0].item,
+        original_item.instance
+    );
+
+    let connection = rusqlite::Connection::open(persistence.db_path()).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_material_return BEFORE UPDATE ON inventories
+        BEGIN SELECT RAISE(FAIL, 'forced material return failure'); END;",
+        )
+        .unwrap();
+    app.world_mut().send_event(MaterialMoveIntent {
+        returning: true,
+        expected_revision: saved.revision.0,
+        ..intent
+    });
+    app.update();
+    let current = app.world().get::<PlayerInventory>(player).unwrap();
+    assert!(
+        current.containers[0].items.is_empty(),
+        "落盘失败不得提前把材料放回背包"
+    );
+    assert_eq!(current.material_preparation, saved.material_preparation);
+    assert!(app
+        .world()
+        .resource::<DroppedLootRegistry>()
+        .entries
+        .is_empty());
+
+    connection
+        .execute_batch("DROP TRIGGER fail_material_return;")
+        .unwrap();
+    app.world_mut()
+        .send_event(CraftCancelIntent { caster: player });
+    app.update();
+    let saved = load_player_slices(&persistence, "Azure").inventory.unwrap();
+    assert_eq!(
+        saved.containers[0].items,
+        vec![original_item],
+        "未开工关闭时全额原样返还"
+    );
+    assert!(saved.material_preparation.materials.is_empty());
+    drop(connection);
+    drop(app);
+    std::fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+fn forge_material_custody_checks_station_authority_and_survives_station_loss() {
+    use bong_server::craft::events::MaterialMoveIntent;
+    use bong_server::forge::{
+        blueprint::BlueprintRegistry, learned::LearnedBlueprints, station::WeaponForgeStation,
+    };
+    use bong_server::network::craft_materials::apply_craft_material_intents;
+    let mut app = craft_refund_test_app(
+        make_recipe("unrelated", &[("fan_tie", 1)], vec![]),
+        &[("fan_tie", 64)],
+        10,
+    );
+    app.insert_resource(BlueprintRegistry::load_dir("assets/forge/blueprints").unwrap());
+    app.add_event::<MaterialMoveIntent>();
+    app.add_systems(Update, apply_craft_material_intents);
+    let (bundle, _helper) = create_mock_client("Azure");
+    let original = inv_with(&[("fan_tie", 3)]);
+    let original_item = original.containers[0].items[0].clone();
+    let player = app
+        .world_mut()
+        .spawn(bundle)
+        .insert((
+            original,
+            PlayerState::default(),
+            Cultivation::default(),
+            Position::new([1.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            LearnedBlueprints {
+                ids: vec!["iron_sword_v0".into()],
+                current_index: 0,
+            },
+        ))
+        .id();
+    let other = app.world_mut().spawn_empty().id();
+    let station = app
+        .world_mut()
+        .spawn(WeaponForgeStation::placed(
+            valence::prelude::BlockPos::new(2, 64, 0),
+            1,
+            other,
+        ))
+        .id();
+    let intent = MaterialMoveIntent {
+        caster: player,
+        recipe_id: RecipeId::new("iron_sword_v0"),
+        instance_id: Some(1),
+        station_pos: Some((2, 64, 0)),
+        returning: false,
+        expected_revision: 1,
+    };
+    app.world_mut().send_event(intent.clone());
+    app.update();
+    assert!(
+        app.world()
+            .get::<PlayerInventory>(player)
+            .unwrap()
+            .material_preparation
+            .materials
+            .is_empty(),
+        "不能向他人的工位投入材料"
+    );
+    app.world_mut()
+        .get_mut::<WeaponForgeStation>(station)
+        .unwrap()
+        .owner = Some(player);
+    app.world_mut()
+        .get_mut::<Position>(player)
+        .unwrap()
+        .set([20.0, 64.0, 0.0]);
+    app.world_mut().send_event(intent.clone());
+    app.update();
+    assert!(
+        app.world()
+            .get::<PlayerInventory>(player)
+            .unwrap()
+            .material_preparation
+            .materials
+            .is_empty(),
+        "不能隔空投料"
+    );
+    app.world_mut()
+        .get_mut::<Position>(player)
+        .unwrap()
+        .set([1.0, 64.0, 0.0]);
+    app.world_mut().send_event(intent.clone());
+    app.update();
+    assert_eq!(
+        app.world()
+            .get::<PlayerInventory>(player)
+            .unwrap()
+            .material_preparation
+            .materials
+            .len(),
+        1
+    );
+    app.world_mut().despawn(station);
+    app.world_mut().send_event(MaterialMoveIntent {
+        returning: true,
+        instance_id: None,
+        ..intent
+    });
+    app.update();
+    let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+    assert_eq!(
+        inventory.containers[0].items,
+        vec![original_item],
+        "未开炉材料在工位消失后仍可原样取回"
+    );
+    assert!(inventory.material_preparation.materials.is_empty());
 }
 
 fn current_completed_events(app: &App) -> Vec<CraftCompletedEvent> {
@@ -375,6 +579,16 @@ fn duplicate_start_intents_same_frame_consume_materials_only_once() {
         .insert(QiColor::default())
         .insert(Position::new([0.0, 64.0, 0.0]))
         .id();
+    {
+        let recipe = app
+            .world()
+            .resource::<CraftRegistry>()
+            .get(&RecipeId::new("craft.tool.workbench"))
+            .unwrap()
+            .clone();
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(player).unwrap();
+        bong_server::craft::preparation::stage_material(&mut inventory, &recipe, 1).unwrap();
+    }
     for _ in 0..2 {
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
@@ -397,7 +611,9 @@ fn duplicate_start_intents_same_frame_consume_materials_only_once() {
     );
     let inventory = app.world().get::<PlayerInventory>(player).unwrap();
     assert_eq!(
-        count_template_in_inventory(inventory, "fan_tie"),
+        inventory
+            .material_preparation
+            .count("craft.tool.workbench", "fan_tie"),
         2,
         "同帧重复 start 只能预扣一次 fan_tie x2，不能在 deferred insert 前重复扣料"
     );
@@ -425,6 +641,16 @@ fn apply_craft_start_intents_without_spatial_context_credits_pending_never_spawn
         .insert(QiColor::default())
         .remove::<Position>();
     let player = player_entity.id();
+    {
+        let recipe = app
+            .world()
+            .resource::<CraftRegistry>()
+            .get(&RecipeId::new("craft.tool.workbench"))
+            .unwrap()
+            .clone();
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(player).unwrap();
+        bong_server::craft::preparation::stage_material(&mut inventory, &recipe, 1).unwrap();
+    }
     let player_account = QiAccountId::player(canonical_player_id("Azure"));
     let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
         + app.world().resource::<WorldQiAccount>().total();
@@ -523,6 +749,16 @@ fn start_persistence_failure_keeps_inventory_qi_ledger_and_session_at_pre_state(
         .insert(QiColor::default())
         .insert(Position::new([0.0, 64.0, 0.0]))
         .id();
+    {
+        let recipe = app
+            .world()
+            .resource::<CraftRegistry>()
+            .get(&RecipeId::new("craft.tool.workbench"))
+            .unwrap()
+            .clone();
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(player).unwrap();
+        bong_server::craft::preparation::stage_material(&mut inventory, &recipe, 1).unwrap();
+    }
     let player_account = QiAccountId::player(canonical_player_id("Azure"));
     app.world_mut().send_event(CraftStartIntent {
         caster: player,
@@ -534,7 +770,9 @@ fn start_persistence_failure_keeps_inventory_qi_ledger_and_session_at_pre_state(
 
     let inventory = app.world().get::<PlayerInventory>(player).unwrap();
     assert_eq!(
-        count_template_in_inventory(inventory, "fan_tie"),
+        inventory
+            .material_preparation
+            .count("craft.tool.workbench", "fan_tie"),
         2,
         "failed durable start must not publish the staged material debit"
     );

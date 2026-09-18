@@ -647,6 +647,7 @@ fn armor_hit_scales_contamination_and_ticks_item_durability() {
 
     // 给 target 装一件胸甲，初始耐久比例 1.0。
     app.world_mut().entity_mut(target).insert(PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -775,6 +776,7 @@ fn armor_break_emits_durability_event_and_radius_audio() {
         Stamina::default(),
     );
     app.world_mut().entity_mut(target).insert(PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -1039,6 +1041,7 @@ mod morph_armor_coverage_integration_tests {
             ));
         }
         app.world_mut().entity_mut(target).insert(PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -4620,6 +4623,7 @@ fn weapon_increases_outgoing_damage_versus_unarmed() {
         Stamina::default(),
     );
     app.world_mut().entity_mut(armed).insert(PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -4775,6 +4779,7 @@ fn iron_sword_increases_damage_by_at_least_20_percent_vs_unarmed() {
         Stamina::default(),
     );
     app.world_mut().entity_mut(armed).insert(PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -4923,6 +4928,7 @@ fn tool_main_hand_deals_low_damage_above_unarmed_below_entry_sword() {
         app.world_mut()
             .entity_mut(tool_user)
             .insert(PlayerInventory {
+                material_preparation: Default::default(),
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
@@ -5077,6 +5083,7 @@ fn broken_tool_main_hand_uses_unarmed_baseline() {
     app.world_mut()
         .entity_mut(broken_tool_user)
         .insert(PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -5209,6 +5216,7 @@ fn weapon_breaks_after_durability_depleted() {
     app.world_mut()
         .entity_mut(attacker)
         .insert(PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -5350,6 +5358,7 @@ fn broken_weapon_drops_when_no_container_slot_is_available() {
     app.world_mut()
         .entity_mut(attacker)
         .insert(PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
@@ -6229,6 +6238,7 @@ fn shield_block_off_arm_fracture_reduces_defense_effectiveness() {
             pitch: 0.0,
         },
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![],
@@ -6372,6 +6382,7 @@ fn equip_main_hand_weapon(app: &mut App, target: Entity, instance_id: u64) {
     use crate::combat::weapon::{EquipSlot, WeaponKind};
     app.world_mut().entity_mut(target).insert((
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![],
@@ -7208,6 +7219,7 @@ fn shield_block_front_face_reduces_severity_bleeding_and_contam() {
         }, // 朝 +Z
         // P4: off_hand 骨盾供 profile 查找（template_id → block_ratio=0.65）
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![],
@@ -7598,6 +7610,7 @@ fn equip_shield_off_hand(
     durability: f64,
 ) {
     let inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {

@@ -19,21 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CraftUxViewModelTest {
 
     @Test
-    void screenHeightMatchesAlchemyTabHeight() {
-        assertEquals(640, CraftScreenLayout.PANEL_W);
-        assertEquals(340, CraftScreenLayout.PANEL_H);
-        assertTrue(CraftScreenLayout.matchesAlchemyTabHeight());
-        assertEquals(44, CraftScreenLayout.MATERIAL_SLOT_SIZE);
-        assertEquals(3, CraftScreenLayout.MATERIAL_COLUMNS,
-            "expected MATERIAL_COLUMNS=3 because craft grid contract is fixed 3x3, actual "
-                + CraftScreenLayout.MATERIAL_COLUMNS);
-        assertEquals(3, CraftScreenLayout.MATERIAL_ROWS,
-            "expected MATERIAL_ROWS=3 because craft grid contract is fixed 3x3, actual "
-                + CraftScreenLayout.MATERIAL_ROWS);
-        assertEquals(32, CraftScreenLayout.ACTION_BAR_H);
-    }
-
-    @Test
     void materialStatesTrackSufficientAndMissingCounts() {
         CraftRecipe recipe = recipe("armor", CraftCategory.TOOL, true,
             List.of(
@@ -43,8 +28,7 @@ class CraftUxViewModelTest {
             0.0
         );
         InventoryModel inventory = InventoryModel.builder()
-            .gridItem(stack("iron_ore", 7), 0, 0)
-            .hotbar(0, stack("bone_coin", 1))
+            .craftPreparation("armor", List.of(stack("iron_ore", 7), stack("bone_coin", 1)))
             .build();
 
         List<CraftMaterialState> states = CraftInventoryCounter.materialStates(recipe, inventory);
@@ -60,7 +44,7 @@ class CraftUxViewModelTest {
             0.0
         );
         InventoryModel inventory = InventoryModel.builder()
-            .gridItem(stack("iron_ore", 7), 0, 0)
+            .craftPreparation("armor", List.of(stack("iron_ore", 7)))
             .build();
 
         List<CraftMaterialState> states = CraftInventoryCounter.materialStates(recipe, inventory, 2);
@@ -76,7 +60,7 @@ class CraftUxViewModelTest {
             4.0
         );
         InventoryModel inventory = InventoryModel.builder()
-            .gridItem(stack("iron_ingot", 9), 0, 0)
+            .craftPreparation("knife", List.of(stack("iron_ingot", 9)))
             .cultivation("Awaken", 10.0, 20.0, 0.0)
             .build();
 
@@ -138,7 +122,7 @@ class CraftUxViewModelTest {
     @Test
     void skillGateTreatsMissingSkillAsLevelZero() {
         CraftRecipe recipe = skillRecipe(2);
-        assertFalse(CraftActionBar.skillSatisfied(recipe, SkillSetSnapshot.empty()),
+        assertFalse(recipe.skillSatisfied(SkillSetSnapshot.empty()),
             "缺失技能快照必须按 Lv.0 处理，不能让客户端显示可制作");
     }
 
@@ -152,8 +136,8 @@ class CraftUxViewModelTest {
             SkillId.FORGING, new SkillSetSnapshot.Entry(2, 0, 100, 0, 10, 0, 0)
         ));
 
-        assertFalse(CraftActionBar.skillSatisfied(recipe, below), "Lv.1 不得通过 Lv.2 门槛");
-        assertTrue(CraftActionBar.skillSatisfied(recipe, exact), "Lv.2 应通过 Lv.2 门槛");
+        assertFalse(recipe.skillSatisfied(below), "Lv.1 不得通过 Lv.2 门槛");
+        assertTrue(recipe.skillSatisfied(exact), "Lv.2 应通过 Lv.2 门槛");
     }
 
     @Test
@@ -163,14 +147,14 @@ class CraftUxViewModelTest {
             SkillId.HERBALISM, new SkillSetSnapshot.Entry(10, 0, 100, 0, 2, 0, 0),
             SkillId.FORGING, new SkillSetSnapshot.Entry(3, 0, 100, 0, 5, 0, 0)
         ));
-        assertTrue(CraftActionBar.skillSatisfied(recipe, capped),
+        assertTrue(recipe.skillSatisfied(capped),
             "技能门使用各条目的 effectiveLv 最大值，另一条 capped Lv.10 不应污染结果");
     }
 
     @Test
     void recipesWithoutSkillRequirementAlwaysPassSkillGate() {
         CraftRecipe recipe = recipe("plain", CraftCategory.TOOL, true, List.of(), 0.0);
-        assertTrue(CraftActionBar.skillSatisfied(recipe, SkillSetSnapshot.empty()));
+        assertTrue(recipe.skillSatisfied(SkillSetSnapshot.empty()));
     }
 
     private static CraftRecipe skillRecipe(int required) {

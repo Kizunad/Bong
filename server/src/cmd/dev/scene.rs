@@ -19,6 +19,7 @@ use crate::gathering::tools::GatheringTargetKind;
 use crate::gathering::GatheringSystemSet;
 use crate::network::status_snapshot_emit::emit_status_snapshot_payloads;
 
+mod forge;
 mod gathering;
 
 pub(crate) struct SceneDefinition {
@@ -28,6 +29,7 @@ pub(crate) struct SceneDefinition {
 }
 
 enum SceneContent {
+    Forge,
     StatusEffects(&'static [(StatusEffectKind, f32, u64)]),
     Gathering {
         target: GatheringTargetKind,
@@ -37,6 +39,11 @@ enum SceneContent {
 
 // 每个场景明确指定效果、强度和秒数；组合不从 enum 或分类自动生成。
 pub(crate) const SCENES: &[SceneDefinition] = &[
+    SceneDefinition {
+        name: "test_forge_station_1",
+        description: "身边放置真实炼器砧，按交互键打开锻造窗口；解锁铁剑与青锋剑测试图谱",
+        content: SceneContent::Forge,
+    },
     SceneDefinition {
         name: "test_status_effect_animation_1",
         description: "流血、僵直、丹毒、疾行：逐个入场、越框侵染、最后 5 秒闪烁和退场",
@@ -169,6 +176,7 @@ pub(super) fn register(app: &mut App, test_env: bool) {
     }
     app.insert_resource(TestSceneAccess)
         .init_resource::<gathering::GatheringSceneState>()
+        .init_resource::<forge::ForgeSceneState>()
         .add_command::<SceneCmd>()
         .add_systems(
             Update,
@@ -205,6 +213,7 @@ fn handle_scene(
     permissions: Res<DevCommandPermissions>,
     mut players: Query<ScenePlayer<'_>>,
     mut gathering: gathering::GatheringSceneContext<'_>,
+    mut forge: forge::ForgeSceneContext<'_, '_>,
 ) {
     for event in events.read() {
         let Ok((username, mut client, statuses, lifecycle, position)) =
@@ -247,6 +256,32 @@ fn handle_scene(
             client.send_chat_message("[scene] 当前角色的状态组件尚未就绪。");
             continue;
         };
+
+        if matches!(scene.map(|value| &value.content), Some(SceneContent::Forge)) {
+            let Some(position) = position else { continue };
+            let value = position.get();
+            let origin = valence::prelude::BlockPos::new(
+                value.x.floor() as i32,
+                value.y.floor() as i32,
+                value.z.floor() as i32,
+            );
+            match forge.start(event.executor, origin) {
+                Ok(pos) => {
+                    gathering.clear(event.executor);
+                    statuses.active.clear();
+                    client.send_chat_message(format!(
+                        "[scene] 炼器砧已就绪 [{}, {}, {}]，按交互键使用（默认 G）；/give fan_tie 3 可备齐铁剑材料。/scene clear 清理空闲测试砧。",
+                        pos.x, pos.y, pos.z
+                    ));
+                }
+                Err(message) => client.send_chat_message(format!("[scene] {message}")),
+            }
+            continue;
+        }
+        if let Err(message) = forge.clear(event.executor) {
+            client.send_chat_message(format!("[scene] {message}"));
+            continue;
+        }
 
         if let Some(SceneDefinition {
             name,
@@ -293,7 +328,7 @@ fn handle_scene(
                 "[scene] 已加载 {}：{}。效果按预设时长到期，可用 /scene clear 清空。",
                 scene.name, scene.description
             )),
-            None => client.send_chat_message("[scene] 已清空状态效果并结束当前角色的测试采集。"),
+            None => client.send_chat_message("[scene] 已清空状态效果、测试采集与空闲测试砧。"),
         }
     }
 }

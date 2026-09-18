@@ -1,7 +1,7 @@
 //! C2S Forge 请求的编译期 typed dispatch。
 //!
 //! 顶层 ingress 负责 channel、decode、版本、预算与 live gate；本模块只负责
-//! Forge 八个请求的静态提取和领域分发。Forge 业务校验仍复用原有 helper，
+//! Forge 请求的静态提取和领域分发。Forge 业务校验仍复用原有 helper，
 //! 同一 `handle_client_request_payloads` 调用内的 projected step 由调用方持有，
 //! 不跨 tick 或跨请求生命周期泄漏。
 
@@ -30,6 +30,9 @@ use crate::schema::client_request::ClientRequestV1;
 /// 已通过 schema/version/live gate 的 Forge 请求。
 #[derive(Debug, PartialEq)]
 pub enum ForgeRequest {
+    StationOpen {
+        station_pos: (i32, i32, i32),
+    },
     StationPlace {
         x: i32,
         y: i32,
@@ -69,6 +72,9 @@ pub enum ForgeRequest {
 /// 从总 C2S enum 提取 Forge 域；非 Forge 请求原样交还顶层 handler。
 pub fn try_into_forge_request(request: ClientRequestV1) -> Result<ForgeRequest, ClientRequestV1> {
     match request {
+        ClientRequestV1::ForgeStationOpen { station_pos, .. } => {
+            Ok(ForgeRequest::StationOpen { station_pos })
+        }
         ClientRequestV1::ForgeStationPlace {
             x,
             y,
@@ -150,6 +156,9 @@ pub fn dispatch_forge_request(
     player_states: &Query<&PlayerState>,
 ) {
     match request {
+        ForgeRequest::StationOpen { station_pos } => {
+            handle_forge_station_open(player, station_pos, skill_scroll, clients);
+        }
         ForgeRequest::StationPlace {
             x,
             y,
@@ -284,6 +293,69 @@ pub fn dispatch_forge_request(
 enum ForgeStationRouteError {
     Missing,
     Forbidden { owner: Option<Entity> },
+}
+
+fn handle_forge_station_open(
+    player: Entity,
+    station_pos: (i32, i32, i32),
+    state: &mut SkillScrollRequestParams<'_, '_>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    use crate::world::dimension::DimensionKind;
+
+    let Ok((username, mut client)) = clients.get_mut(player) else {
+        return;
+    };
+    let reachable = state.positions.get(player).is_ok_and(|position| {
+        let position = position.get();
+        position.is_finite()
+            && (position.x - f64::from(station_pos.0)).abs() <= 3.0
+            && (position.y - f64::from(station_pos.1)).abs() <= 3.0
+            && (position.z - f64::from(station_pos.2)).abs() <= 3.0
+    }) && state
+        .dimensions
+        .get(player)
+        .is_ok_and(|dimension| dimension.0 == DimensionKind::Overworld);
+    if !reachable {
+        client.send_chat_message("[炼器] 请靠近炼器砧后再使用。");
+        return;
+    }
+    let Ok(entity) = find_owned_forge_station(player, station_pos, &state.forge_stations) else {
+        client.send_chat_message("[炼器] 工位不存在或无权使用。");
+        return;
+    };
+    let (_, station) = state.forge_stations.get(entity).unwrap();
+    if station.integrity <= 0.0 {
+        client.send_chat_message("[炼器] 工位已经损坏。");
+        return;
+    }
+    let Some(registry) = state.blueprint_registry.as_deref() else {
+        return;
+    };
+    let session = station
+        .session
+        .and_then(|id| state.forge_sessions.as_deref()?.get(id));
+    if session.is_some_and(|session| session.caster != player && !session.is_done()) {
+        client.send_chat_message("[炼器] 这座工位正在被其他人使用。");
+        return;
+    }
+    let learned = state
+        .learned_blueprints
+        .get(player)
+        .cloned()
+        .unwrap_or_default();
+    forge_snapshot_emit::send_forge_open_to_player(
+        &mut client,
+        station,
+        if station.owner.is_some() {
+            &username.0
+        } else {
+            "公共工位"
+        },
+        session,
+        &learned,
+        registry,
+    );
 }
 
 /// 按 `station_pos` 在 `WeaponForgeStation` 里查实体，并校验 owner。

@@ -302,9 +302,17 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeStartSession(stationPos, blueprintId, materials));
     }
 
+    public static void sendForgeStationOpen(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeForgeStationOpen(pos));
+    }
+
     /** plan-forge-session-entry-wiring-v1 §4.1#2 —— 图谱书翻页请求，server 权威页码。 */
     public static void sendForgeBlueprintTurnPage(int delta) {
         dispatch(ClientRequestProtocol.encodeForgeBlueprintTurnPage(delta));
+    }
+
+    public static void sendForgeStepAdvance(long sessionId) {
+        dispatch(ClientRequestProtocol.encodeForgeStepAdvance(sessionId));
     }
 
     public static void sendForgeTemperingHit(
@@ -572,6 +580,14 @@ public final class ClientRequestSender {
     /** plan-craft-v1 §5 决策门 #3 — 取消进行中的 craft session（70% 材料返还，qi 不退）。 */
     public static void sendCraftCancel() {
         dispatch(ClientRequestProtocol.encodeCraftCancel());
+    }
+
+    public static void sendMaterialMove(String recipeId, long instanceId, boolean returning, long revision) {
+        dispatch(ClientRequestProtocol.encodeMaterialMove(recipeId, instanceId, returning, revision));
+    }
+
+    public static void sendMaterialMove(String recipeId, BlockPos station, Long instanceId, boolean returning, long revision) {
+        dispatch(ClientRequestProtocol.encodeMaterialMove(recipeId, station, instanceId, returning, revision));
     }
 
     // ─── plan-supply-coffin-loot-ui P2：supply coffin open (entity-based) ──

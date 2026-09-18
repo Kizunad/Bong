@@ -101,6 +101,7 @@ fn e2e_unequip_nonempty_pack_drops_overflow_not_lost() {
 
     let pack_id = container_id_for_worn_pack(4242);
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![
@@ -304,6 +305,7 @@ fn setup_worn_pack_e2e(contents: &[u64]) -> (PlayerInventory, ItemRegistry, u64)
     pack_item.grid_w = 2;
     pack_item.grid_h = 2;
     let inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![
