@@ -110,7 +110,7 @@ class UiPreviewConfigTest {
         UiPreviewShot duplicate = shot("same-name", "craft", 800, 480);
 
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
-            new UiPreviewConfig("shots", 20, 20, 1, false, java.util.List.of(first, duplicate)));
+            new UiPreviewConfig("shots", 20, 20, 1, false, java.util.List.of(first, duplicate), java.util.Map.of()));
 
         assertTrue(failure.getMessage().contains("name 必须唯一"));
     }

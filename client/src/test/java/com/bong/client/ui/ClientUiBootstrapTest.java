@@ -16,7 +16,8 @@ class ClientUiBootstrapTest {
         List<String> calls = new ArrayList<>();
         UiBootstrapRegistry registry = ClientUiBootstrap.referenceRegistry(
             () -> calls.add("screen_transition"),
-            () -> calls.add("craft_screen")
+            () -> calls.add("craft_screen"),
+            () -> calls.add("window_manager")
         );
         UiRuntime runtime = new UiRuntime() {
         };
@@ -26,9 +27,9 @@ class ClientUiBootstrapTest {
         registry.register("craft_screen", runtime);
         registry.register("craft_screen", runtime);
 
-        assertEquals(List.of("screen_transition", "craft_screen"), calls,
+        assertEquals(List.of("window_manager", "screen_transition", "craft_screen"), calls,
             "分阶段触发不能重复注册 Fabric callback，且 Craft 必须晚于 Screen transition");
-        assertEquals(List.of("screen_transition", "craft_screen"), registry.completedModuleIds());
+        assertEquals(List.of("window_manager", "screen_transition", "craft_screen"), registry.completedModuleIds());
     }
 
     @Test
@@ -36,13 +37,14 @@ class ClientUiBootstrapTest {
         List<String> calls = new ArrayList<>();
         UiBootstrapRegistry registry = ClientUiBootstrap.referenceRegistry(
             () -> calls.add("screen_transition"),
-            () -> calls.add("craft_screen")
+            () -> calls.add("craft_screen"),
+            () -> calls.add("window_manager")
         );
 
         registry.register("craft_screen", new UiRuntime() {
         });
 
-        assertEquals(List.of("screen_transition", "craft_screen"), calls);
+        assertEquals(List.of("window_manager", "screen_transition", "craft_screen"), calls);
         assertTrue(registry.isRegistered("screen_transition"));
         assertTrue(registry.isRegistered("craft_screen"));
     }

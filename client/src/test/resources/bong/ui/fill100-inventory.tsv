@@ -64,15 +64,15 @@ craft/WorkbenchScreen.java	2	183	LEGAL	NONE	Sizing.fill(100), Sizing.fixed(Craft
 craft/WorkbenchScreen.java	3	190	LEGAL	TERMINAL_INTENTIONAL	header.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
 inventory/BlockPickerPanel.java	1	83	LEGAL	NONE	rows = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
 inventory/BlockPickerPanel.java	2	121	LEGAL	NONE	FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(ROW_HEIGHT));
-inventory/InspectScreen.java	1	320	LEGAL	NONE	FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	2	338	LEGAL	NONE	equipTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	3	347	LEGAL	NONE	cultivationTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	4	352	LEGAL	NONE	FlowLayout layerBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	5	441	LEGAL	NONE	var actionScroll = Containers.horizontalScroll(Sizing.fill(100), Sizing.content(), actionBar);
-inventory/InspectScreen.java	6	528	LEGAL	NONE	FlowLayout bondSection = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	7	545	LEGAL	NONE	skillTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	8	782	LEGAL	NONE	FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-inventory/InspectScreen.java	9	1137	LEGAL	NONE	FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	1	312	LEGAL	NONE	FlowLayout tabBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	2	330	LEGAL	NONE	equipTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	3	339	LEGAL	NONE	cultivationTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	4	344	LEGAL	NONE	FlowLayout layerBar = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	5	433	LEGAL	NONE	var actionScroll = Containers.horizontalScroll(Sizing.fill(100), Sizing.content(), actionBar);
+inventory/InspectScreen.java	6	520	LEGAL	NONE	FlowLayout bondSection = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	7	537	LEGAL	NONE	skillTabContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	8	770	LEGAL	NONE	FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+inventory/InspectScreen.java	9	1125	LEGAL	NONE	FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
 inventory/component/EquipmentPanel.java	1	35	COMMENT	NONE	* 层数角标 y-2，均落在 PANEL_HEIGHT=168 内。绝对定位避免 owo Sizing.fill(100) 顶飞兄弟节点
 lingtian/LingtianActionScreen.java	1	104	LEGAL	NONE	FlowLayout h = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
 lingtian/LingtianActionScreen.java	2	111	LEGAL	NONE	FlowLayout h = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());

@@ -2,7 +2,6 @@ package com.bong.client.ui;
 
 import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.forge.ForgeScreen;
-import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
 import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
@@ -189,7 +188,6 @@ class ScreenTransitionTest {
         assertTrue(ScreenTransitionRegistry.get(ForgeScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(AlchemyScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(CultivationScreen.class).isPresent());
-        assertTrue(ScreenTransitionRegistry.get(ItemInspectScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(GameMenuScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.SparringInviteScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.TradeOfferScreen.class).isPresent());

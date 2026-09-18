@@ -13,7 +13,6 @@ cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA	VANILLA	OW
 forge/ForgeScreen.java	ForgeScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 identity/IdentityPanelScreen.java	IdentityPanelScreen	OWO	OWO_XML_TEMPLATE	OWO	OWO_XML_TEMPLATE	COMPLETE
 insight/InsightOfferScreen.java	InsightOfferScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
-inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA	VANILLA	OWO	OWO_XML_TEMPLATE	REWRITE_VANILLA
 inventory/InspectScreen.java	InspectScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
 inventory/LootContainerScreen.java	LootContainerScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
 lingtian/LingtianActionScreen.java	LingtianActionScreen	OWO	CODE	OWO	OWO_XML_TEMPLATE	REWRITE_OWO_CODE
