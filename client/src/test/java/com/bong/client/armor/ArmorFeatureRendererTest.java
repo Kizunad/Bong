@@ -64,7 +64,7 @@ class ArmorFeatureRendererTest {
 
     @Test
     void collectRenderableCoversAllRegisteredMaterialsAcrossAllFourSlots() {
-        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen", "mutated_bone"}) {
+        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen", "mutated_bone", "spirit_cloth"}) {
             EnumMap<EquipSlotType, SlotContents> slots = new EnumMap<>(EquipSlotType.class);
             slots.put(EquipSlotType.HEAD, SlotContents.ofWorn(item("armor_" + material + "_helmet", 1.0)));
             slots.put(EquipSlotType.CHEST, SlotContents.ofWorn(item("armor_" + material + "_chestplate", 1.0)));
@@ -86,7 +86,7 @@ class ArmorFeatureRendererTest {
         pieces.put(EquipSlotType.LEGS, "leggings");
         pieces.put(EquipSlotType.FEET, "boots");
 
-        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen", "mutated_bone"}) {
+        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen", "mutated_bone", "spirit_cloth"}) {
             for (Map.Entry<EquipSlotType, String> entry : pieces.entrySet()) {
                 String templateId = "armor_" + material + "_" + entry.getValue();
                 EnumMap<EquipSlotType, SlotContents> worn = new EnumMap<>(EquipSlotType.class);
