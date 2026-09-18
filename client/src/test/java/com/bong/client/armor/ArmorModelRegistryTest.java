@@ -24,8 +24,8 @@ class ArmorModelRegistryTest {
 
     @Test
     void registryContainsMaterialsAcrossAllFourSlots() {
-        assertEquals(24, ArmorModelRegistry.size(), "6 套 ModelPart 材质 × 4 槽必须恰好注册 24 件");
-        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw"}) {
+        assertEquals(28, ArmorModelRegistry.size(), "7 套 ModelPart 材质 × 4 槽必须恰好注册 28 件");
+        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen"}) {
             assertSpec(material, "helmet", EquipSlotType.HEAD);
             assertSpec(material, "chestplate", EquipSlotType.CHEST);
             assertSpec(material, "leggings", EquipSlotType.LEGS);
@@ -47,10 +47,10 @@ class ArmorModelRegistryTest {
     @Test
     void allReturnsUnmodifiableSnapshotWithoutRegistryMutationBackdoor() {
         List<ArmorModelRegistry.ArmorModelSpec> snapshot = ArmorModelRegistry.all();
-        assertEquals(24, snapshot.size(), "快照必须保留全部 24 个注册项");
+        assertEquals(28, snapshot.size(), "快照必须保留全部 28 个注册项");
         assertThrows(UnsupportedOperationException.class, snapshot::clear,
             "all() 必须返回不可修改快照，调用方不得通过 clear/remove 篡改全局注册表");
-        assertEquals(24, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
+        assertEquals(28, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
     }
 
     @Test
@@ -105,8 +105,9 @@ class ArmorModelRegistryTest {
         for (ArmorModelRegistry.ArmorModelSpec modelSpec : ArmorModelRegistry.all()) {
             ArmorTintRegistry.ArmorItemSpec tint = ArmorTintRegistry.item(modelSpec.templateId());
             if (tint == null) {
-                assertTrue(modelSpec.templateId().startsWith("armor_straw_"),
-                    modelSpec.templateId() + " 缺少 leather fallback 规格且不是本批 ModelPart-only 草甲");
+                assertTrue(modelSpec.templateId().startsWith("armor_straw_")
+                        || modelSpec.templateId().startsWith("armor_linen_"),
+                    modelSpec.templateId() + " 缺少 leather fallback 规格且不是本批 ModelPart-only 草甲/麻布甲");
                 continue;
             }
             assertNotNull(tint, modelSpec.templateId() + " 应保留 leather fallback 数据");
