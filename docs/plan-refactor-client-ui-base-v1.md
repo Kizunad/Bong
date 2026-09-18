@@ -969,9 +969,11 @@ P0R-P3 和已有 SVG/XML 切片是历史已完成批次，不重开。后续按�
 | 2 | `pr/r7-02-window-controls`（[#2291](https://github.com/Kizunad/Bong/pull/2291)） | 完整工作台、窗口控制、库存/装备/HUD、快捷使用链接 |
 | 3 | `pr/r7-03-body-practice`（[#2292](https://github.com/Kizunad/Bong/pull/2292)） | 模型预览、体表/经脉、修习检索与绑定 |
 | 4 | `pr/r7-04-status-wounds`（[#2293](https://github.com/Kizunad/Bong/pull/2293)） | 人体伤势 PNG、状态来源与持续时间 |
-| 5 | `pr/r7-05-craft-forge` | 制作/锻造窗口、材料暂存、G 键工位交互 |
+| 5 | `pr/r7-05-craft-forge`（[#2294](https://github.com/Kizunad/Bong/pull/2294)） | 制作/锻造窗口、材料暂存、G 键工位交互 |
 
 集成版本 `3e5857e2e` 的 Rust `cargo fmt --check`、`cargo clippy --all-targets --offline -- -D warnings`、完整 `cargo test --offline` 通过，85 个测试目标共 12,561 passed、6 ignored、0 failed。日志为 `/tmp/bong-r7-final-clippy.log`、`/tmp/bong-r7-final-server-tests.log`；分批时另验各中间版本，不把最终集成结果视为所有中间版本的通过证据。
+
+分批本地验证：五批 Java 17 完整 `gradle test build` 分别通过 5,119／5,099／5,075／5,074／5,037 条 JUnit，各含 3 条 GameTest；第二、三批 Rust fmt、Clippy、完整测试分别为 12,559／12,562 passed、6 ignored；第四批 fmt、Clippy 与状态发送 25 条、资源包 16 条定向测试通过。涉及协议的第二、三、五批完成 schema 构建、生成新鲜度与 912／913／913 条 schema 测试，bot 协议各 569 条，C2S 矩阵分别对齐 104／105／107 个实际请求。CI 和 Kody 结论以每个 PR 当前 HEAD 为准，创建 PR 不代表已通过审查或合并。
 
 重新生成完整资源包后，SHA-1 为 `4d3995d598d56015eaa88eac9bd3c82239308751`、大小为 72,978,818 字节，和提交的 manifest、服务端默认值一致。分批引入的后续 GUI 图片不属于资源包打包路径；它们由客户端 mod 提供。本地设计原稿、生成日志和无关死亡背景不提交。
 
