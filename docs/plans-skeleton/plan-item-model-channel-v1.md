@@ -566,7 +566,7 @@ craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在�
   `firstperson_righthand` `:39-54`、`firstperson_lefthand` `:56-71`，以及
   `ground` `:73-88`、`gui` `:90-105`、`fixed` `:107-123`。
 - 最小资源契约测试
-  `client/src/test/java/com/bong/client/itemmodel/BongItemModelChannelTest.java:35-52`
+  `client/src/test/java/com/bong/client/itemmodel/BongItemModelChannelTest.java:40-71`
   实际从 classpath 读该 JSON，核对 SML OBJ parent、Bong OBJ location、左右手四个
   context 与 `ground/gui/fixed`，并拒绝 `minecraft:item/` 中转。它不把测试可见性 seam
   加进生产代码。
@@ -584,6 +584,9 @@ craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在�
   VertexConsumerProvider, int, int, BakedModel)` overload；签名由本机
   `minecraft-merged` JAR 实测。`ItemStack.EMPTY` 只是该公开 overload 为 glint/dynamic
   display 保留的参数，不是注册的 vanilla item、不是 fake host，也不参与 model 选择。
+- 截至本 spike，`BongItemModelRenderAdapter.render()` 没有生产调用方，测试也没有调用它。
+  因此 `register → bake → lookup → render` 整条运行时链路在 headless 环境下一次都没跑过；
+  本节证明的是 API 存在性、资源形状和可编译性，不是该运行时链路已经执行。
 - 当前两个 mixin 的接入点仍是旧的 stack-only 路径：
   `client/src/main/java/com/bong/client/mixin/MixinHeldItemRenderer.java:47-63`（FPV
   更新 `mainHand/offHand`）和
@@ -625,6 +628,9 @@ craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在�
 - 本提交没有新 fake vanilla host，没有新增 `client/src/main/resources/assets/minecraft/`
   下的 Bong override，没有 test-only production visibility seam，也没有改 server、agent
   或任何 wire/schema 契约。
+- `BongItemModelRenderAdapter.render()` 当前没有生产调用方，测试也没有调用；因此
+  `register → bake → lookup → render` 整条运行时链路在 headless 环境下一次都没跑过。
+  本节证明的是 API 存在性、资源形状和可编译性，不能把它写成运行时链路或视觉验收通过。
 - P0 spike 结论：**API/最小真实模板 lookup + 直接 BakedModel adapter 可行（PASS）**；
   视觉、FPV/TPV 实际 hook、GUI/搜索污染和资源缺失负例仍明确标为「待人工
   `runClient`/后续 P1 验证」，不等同于完整迁移已经验收。若人工确认当前
