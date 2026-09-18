@@ -88,6 +88,24 @@ class SpiritClothArmorGeneratorTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "前缘"):
             spirit._assert_shape_dimensions((replace(helmet, cubes=cubes),))
 
+    def test_helmet_side_coverage_is_continuous(self) -> None:
+        helmet = spirit.part_helmet()
+        for side in ("left", "right"):
+            ratio, max_gap, broken_layers = spirit._helmet_side_coverage(helmet, side)
+            self.assertAlmostEqual(1.0, ratio, msg=f"{side} 侧面覆盖率")
+            self.assertEqual(0.0, max_gap, f"{side} 侧面不能有断口")
+            self.assertEqual(0, broken_layers, f"{side} 侧面不能有断层")
+        spirit._assert_helmet_side_coverage((helmet,))
+
+    def test_side_coverage_guard_catches_a_removed_curtain(self) -> None:
+        helmet = spirit.part_helmet()
+        curtain_index = next(index for index, cube in enumerate(helmet.cubes) if cube.name == "side_curtain_left")
+        curtain = helmet.cubes[curtain_index]
+        moved = replace(curtain, origin=(curtain.origin[0], curtain.origin[1], curtain.origin[2] + 8.0))
+        broken = helmet.cubes[:curtain_index] + (moved,) + helmet.cubes[curtain_index + 1:]
+        with self.assertRaisesRegex(ValueError, "侧面覆盖不足"):
+            spirit._assert_helmet_side_coverage((replace(helmet, cubes=broken),))
+
     def test_connectivity_guard_catches_a_moved_cube(self) -> None:
         part = spirit.part_helmet()
         moved = replace(part.cubes[0], origin=(part.cubes[0].origin[0] + 12.0, *part.cubes[0].origin[1:]))

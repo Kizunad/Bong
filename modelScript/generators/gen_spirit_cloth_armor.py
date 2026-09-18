@@ -104,8 +104,8 @@ def _helmet_brow() -> tuple[Cube, ...]:
 def _helmet_ear_flaps() -> tuple[Cube, ...]:
     """护耳只在 x=±5.25 两侧下落，前后角留空，底边收在 y≈24.3。"""
     return (
-        c("HEAD", "ear_flap_left", (-5.25, 24.28, -3.86), (1.15, 5.45, 3.42), UV_CLOTH_MAIN),
-        c("HEAD", "ear_flap_right", (4.10, 24.28, -3.86), (1.15, 5.45, 3.42), UV_CLOTH_MAIN),
+        c("HEAD", "ear_flap_left", (-5.25, 24.28, -4.00), (1.15, 5.45, 3.70), UV_CLOTH_MAIN),
+        c("HEAD", "ear_flap_right", (4.10, 24.28, -4.00), (1.15, 5.45, 3.70), UV_CLOTH_MAIN),
         c("HEAD", "ear_band_left", (-5.33, 26.10, -3.72), (0.20, 0.38, 3.12), UV_WRAP_LIGHT),
         c("HEAD", "ear_band_right", (5.13, 26.10, -3.72), (0.20, 0.38, 3.12), UV_WRAP_LIGHT),
         c("HEAD", "ear_band_high_left", (-5.33, 28.38, -3.72), (0.20, 0.38, 3.12), UV_WRAP_LIGHT),
@@ -115,6 +115,10 @@ def _helmet_ear_flaps() -> tuple[Cube, ...]:
 
 def _helmet_rear_and_ties() -> tuple[Cube, ...]:
     return (
+        # 侧后缠布接住护耳、眉侧与后脑，填掉 y=26..31 的连续包覆区；
+        # x 仍收在 ±5.04，不把轻薄头巾横向做宽。
+        c("HEAD", "side_curtain_left", (-5.04, 26.00, -0.36), (0.88, 5.44, 4.38), UV_CLOTH_MAIN),
+        c("HEAD", "side_curtain_right", (4.16, 26.00, -0.36), (0.88, 5.44, 4.38), UV_CLOTH_MAIN),
         c("HEAD", "rear_wrap", (-4.40, 27.25, 2.76), (8.80, 4.18, 1.02), UV_CLOTH_SHADE),
         c("HEAD", "rear_fold", (-4.22, 24.42, 3.02), (8.44, 2.88, 0.92), UV_CLOTH_MAIN),
         c("HEAD", "temple_tail_left", (-5.36, 26.92, -3.58), (0.32, 2.92, 0.38), UV_STITCH),
@@ -439,6 +443,78 @@ def _assert_shape_dimensions(all_parts: tuple[ArmorPart, ...]) -> None:
             )
 
 
+def _helmet_side_coverage(helmet: ArmorPart, side: str) -> tuple[float, float, int]:
+    """量 HEAD 两侧耳高区间的 y/z 覆盖，返回面积率、最大断口和断层数。
+
+    这是「缠成的头巾」的几何契约：在 y=26..31 的每个水平薄层，
+    z=-4..4 必须由同侧的布片连续覆盖。只看投影总长会把不同 y 的两段
+    错当成相连，所以按所有 y 边界分层后再合并 z 区间。
+    """
+    if side not in {"left", "right"}:
+        raise ValueError(f"未知头巾侧面 {side!r}")
+    side_x = (-5.25, -4.0) if side == "left" else (4.0, 5.25)
+    y_low, y_high = 26.0, 31.0
+    z_low, z_high = -4.0, 4.0
+    rectangles: list[tuple[float, float, float, float]] = []
+    for cube in helmet.cubes:
+        box = _world_box(cube)
+        if min(box[0][1], side_x[1]) <= max(box[0][0], side_x[0]):
+            continue
+        y0 = max(box[1][0], y_low)
+        y1 = min(box[1][1], y_high)
+        z0 = max(box[2][0], z_low)
+        z1 = min(box[2][1], z_high)
+        if y1 > y0 and z1 > z0:
+            rectangles.append((y0, y1, z0, z1))
+
+    y_cuts = sorted({y_low, y_high, *(edge for rect in rectangles for edge in rect[:2])})
+    covered_area = 0.0
+    max_gap = 0.0
+    broken_layers = 0
+    for slab_low, slab_high in zip(y_cuts, y_cuts[1:]):
+        if slab_high <= slab_low:
+            continue
+        intervals = sorted(
+            (z0, z1)
+            for y0, y1, z0, z1 in rectangles
+            if y0 <= slab_low and y1 >= slab_high
+        )
+        merged: list[list[float]] = []
+        for z0, z1 in intervals:
+            if not merged or z0 > merged[-1][1] + 1e-9:
+                merged.append([z0, z1])
+            else:
+                merged[-1][1] = max(merged[-1][1], z1)
+
+        gaps: list[tuple[float, float]] = []
+        cursor = z_low
+        for z0, z1 in merged:
+            if z0 > cursor + 1e-9:
+                gaps.append((cursor, z0))
+            cursor = max(cursor, z1)
+        if cursor < z_high - 1e-9:
+            gaps.append((cursor, z_high))
+        if gaps:
+            broken_layers += 1
+            max_gap = max(max_gap, *(z1 - z0 for z0, z1 in gaps))
+        covered_area += (slab_high - slab_low) * sum(z1 - z0 for z0, z1 in merged)
+
+    area_ratio = covered_area / ((y_high - y_low) * (z_high - z_low))
+    return area_ratio, max_gap, broken_layers
+
+
+def _assert_helmet_side_coverage(all_parts: tuple[ArmorPart, ...]) -> None:
+    helmet = next(part for part in all_parts if part.key == "spirit_cloth_helmet")
+    for side in ("left", "right"):
+        ratio, max_gap, broken_layers = _helmet_side_coverage(helmet, side)
+        if ratio < 0.999999 or max_gap > 1e-9 or broken_layers:
+            curtain = f"side_curtain_{side}"
+            raise ValueError(
+                f"{helmet.key}/{side}/{curtain}: 侧面覆盖不足，y=26..31 对 z=-4..4 覆盖率 {ratio:.4%}，"
+                f"最大断口 {max_gap:.2f}，断层 {broken_layers}"
+            )
+
+
 # ─── gatekit 差分自证 ───────────────────────────────────────────────────────
 
 GATE_MATS = {
@@ -557,6 +633,17 @@ def _inject_dimensions(rig: Rig, **_) -> tuple[Rig, str, str]:
     raise gatekit.InjectionImpossible("没有 brow_wrap 可注入尺寸违例")
 
 
+def _inject_side_coverage(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._spirit_parts:
+        for index, cube in enumerate(part.cubes):
+            if cube.name == "side_curtain_left":
+                moved = replace(cube, origin=(cube.origin[0], cube.origin[1], cube.origin[2] + 8.0))
+                _replace_gate_cube(r, part.key, index, moved)
+                return r, cube.name, "把左侧后缠布沿 z 移走，制造耳高区间断口"
+    raise gatekit.InjectionImpossible("没有 side_curtain_left 可注入侧面覆盖违例")
+
+
 class _SpiritClothGates(gatekit.AssetGates):
     def specs(self):
         return (
@@ -565,6 +652,7 @@ class _SpiritClothGates(gatekit.AssetGates):
             ("mirror", "对称件左右不镜像", lambda r: _gate_violations(r, _assert_mirror_symmetry), _inject_mirror),
             ("isolated_cube", "同挂载点孤立 cube", lambda r: _gate_violations(r, _assert_no_isolated_cubes), _inject_isolated),
             ("shape_dimensions", "贴头/鞋头前后尺寸契约", lambda r: _gate_violations(r, _assert_shape_dimensions), _inject_dimensions),
+            ("side_coverage", "头巾耳高区间连续覆盖", lambda r: _gate_violations(r, _assert_helmet_side_coverage), _inject_side_coverage),
         )
 
 
@@ -695,6 +783,7 @@ def generate(render_previews: bool = True, install: bool = False) -> dict[str, P
     _assert_mirror_symmetry(all_parts)
     _assert_no_isolated_cubes(all_parts)
     _assert_helmet_front_projection(all_parts)
+    _assert_helmet_side_coverage(all_parts)
     return write_material_assets(
         MATERIAL,
         all_parts,

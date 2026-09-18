@@ -11,4 +11,5 @@ size = 260
 crown_wrap = { elements = ["wrap_crown_", "wrap_top_fold", "rear_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4", "TOP"], min_px = { FRONT = 20, SIDE_R = 18, BACK = 20, SIDE_L = 18, "3/4" = 18, TOP = 24 } }
 brow_wrap = { elements = ["brow_", "temple_wrap_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = { FRONT = 18, SIDE_R = 8, SIDE_L = 8, "3/4" = 12 } }
 ear_flaps = { elements = ["ear_flap_", "ear_band_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { FRONT = 14, SIDE_R = 18, BACK = 14, SIDE_L = 18, "3/4" = 14 }, mirror = true }
+side_curtain = { elements = ["side_curtain_"], must_show_in = ["SIDE_R", "BACK", "SIDE_L", "3/4"], min_px = { SIDE_R = 18, BACK = 14, SIDE_L = 18, "3/4" = 14 }, mirror = true }
 ties = { elements = ["temple_tail_", "tie_knot_"], must_show_in = ["FRONT", "SIDE_R", "SIDE_L", "3/4"], min_px = { FRONT = 6, SIDE_R = 6, SIDE_L = 6, "3/4" = 6 }, mirror = true }
