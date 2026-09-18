@@ -255,7 +255,8 @@ def _helmet_brow() -> tuple[Cube, ...]:
         c("HEAD", "brow_left", (-4.25, 28.10, -4.65), (3.50, 1.15, 0.80), UV_BONE_MAIN),
         c("HEAD", "brow_right", (0.75, 28.10, -4.65), (3.50, 1.15, 0.80), UV_BONE_MAIN),
         c("HEAD", "brow_keel", (-0.55, 28.00, -4.82), (1.10, 2.00, 0.65), UV_SKULL_ACCENT),
-        c("HEAD", "brow_lash_front", (-4.70, 27.35, -4.96), (9.40, 0.30, 0.26), UV_LEATHER_STRAP),
+        # 前额带要吃进眉骨一点：只贴边会在 SIDE 视角读成悬空薄片。
+        c("HEAD", "brow_lash_front", (-4.70, 27.95, -4.72), (9.40, 0.30, 0.30), UV_LEATHER_STRAP),
     )
 
 
@@ -276,9 +277,11 @@ def _helmet_rear_and_fasteners() -> tuple[Cube, ...]:
     return (
         c("HEAD", "rear_rail", (-3.65, 28.75, 3.75), (7.30, 1.00, 0.55), UV_BONE_MAIN),
         c("HEAD", "rear_spine", (-0.70, 27.55, 3.60), (1.40, 1.90, 0.55), UV_SKULL_ACCENT),
-        c("HEAD", "rear_lash", (-4.10, 27.95, 4.12), (8.20, 0.30, 0.25), UV_LEATHER_STRAP),
-        c("HEAD", "ear_binding_left", (-5.00, 25.70, -2.95), (0.25, 0.40, 1.85), UV_LEATHER_STRAP),
-        c("HEAD", "ear_binding_right", (4.75, 25.70, -2.95), (0.25, 0.40, 1.85), UV_LEATHER_STRAP),
+        # 后脑带与后轨保持少量体积交叠，避免侧视出现一条断开的细片。
+        c("HEAD", "rear_lash", (-4.10, 28.65, 4.12), (8.20, 0.30, 0.25), UV_LEATHER_STRAP),
+        # 绑带左右各吃入护耳 0.03 格；仍是细固定件，但不悬在侧面。
+        c("HEAD", "ear_binding_left", (-5.00, 25.70, -2.95), (0.28, 0.40, 1.85), UV_LEATHER_STRAP),
+        c("HEAD", "ear_binding_right", (4.72, 25.70, -2.95), (0.28, 0.40, 1.85), UV_LEATHER_STRAP),
         c("HEAD", "ear_spur_left", (-5.10, 26.15, -1.90), (0.40, 0.80, 0.80), UV_SKULL_ACCENT),
         c("HEAD", "ear_spur_right", (4.70, 26.15, -1.90), (0.40, 0.80, 0.80), UV_SKULL_ACCENT),
     )
