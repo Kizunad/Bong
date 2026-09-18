@@ -1,0 +1,10 @@
+# beast_spine_sword materials -- source bbmodel atlas
+
+newmtl beast_spine_sword_atlas
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/beast_spine_sword/atlas
