@@ -406,6 +406,39 @@ def _assert_helmet_front_projection(all_parts: tuple[ArmorPart, ...]) -> None:
         )
 
 
+def _assert_shape_dimensions(all_parts: tuple[ArmorPart, ...]) -> None:
+    """把「贴头」「前后有脚」这些容易被独立缩放骗过的判断钉成坐标门。"""
+    helmet = next(part for part in all_parts if part.key == "spirit_cloth_helmet")
+    crown = [cube for cube in helmet.cubes if cube.name.startswith("wrap_crown_")]
+    crown_boxes = [_world_box(cube) for cube in crown]
+    crown_extent = max(max(box[0][1], -box[0][0]) for box in crown_boxes)
+    if crown_extent > 4.70 + 1e-6:
+        raise ValueError(f"spirit_cloth_helmet 颅盖横向 {crown_extent:.2f} 超过 ±4.70")
+    brow = next(cube for cube in helmet.cubes if cube.name == "brow_wrap")
+    if brow.origin[2] < BROW_FRONT_Z_MIN - 1e-6:
+        raise ValueError(
+            f"spirit_cloth_helmet/brow_wrap 前缘 z={brow.origin[2]:.2f} 超过 {BROW_FRONT_Z_MIN:.2f}"
+        )
+    left_ear = next(cube for cube in helmet.cubes if cube.name == "ear_flap_left")
+    right_ear = next(cube for cube in helmet.cubes if cube.name == "ear_flap_right")
+    left_box, right_box = _world_box(left_ear), _world_box(right_ear)
+    if abs(left_box[0][0] + 5.25) > 1e-6 or abs(right_box[0][1] - 5.25) > 1e-6:
+        raise ValueError("spirit_cloth_helmet 护耳没有落在 x=±5.25")
+    if abs(left_box[1][0] - 24.28) > 1e-6 or abs(right_box[1][0] - 24.28) > 1e-6:
+        raise ValueError("spirit_cloth_helmet 护耳下沿没有收在 y≈24.3")
+
+    boots = next(part for part in all_parts if part.key == "spirit_cloth_boots")
+    for mount in ("LEFT_FOOT", "RIGHT_FOOT"):
+        toe = next(cube for cube in boots.cubes if cube.mount == mount and cube.name.startswith("toe_cap_"))
+        heel = next(cube for cube in boots.cubes if cube.mount == mount and cube.name.startswith("heel_panel_"))
+        toe_min_z = _world_box(toe)[2][0]
+        heel_min_z = _world_box(heel)[2][0]
+        if toe_min_z >= heel_min_z - 2.0:
+            raise ValueError(
+                f"{boots.key}/{mount}: 鞋头 z={toe_min_z:.2f} 与后跟 z={heel_min_z:.2f} 前后差不足"
+            )
+
+
 # ─── gatekit 差分自证 ───────────────────────────────────────────────────────
 
 GATE_MATS = {
@@ -513,6 +546,17 @@ def _inject_isolated(rig: Rig, **_) -> tuple[Rig, str, str]:
     raise gatekit.InjectionImpossible("没有足够 cube 可注入孤立件")
 
 
+def _inject_dimensions(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._spirit_parts:
+        for index, cube in enumerate(part.cubes):
+            if cube.name == "brow_wrap":
+                moved = replace(cube, origin=(cube.origin[0], cube.origin[1], cube.origin[2] - 1.0))
+                _replace_gate_cube(r, part.key, index, moved)
+                return r, cube.name, "把 brow_wrap 前移 1.0，制造超出头巾前缘的尺寸违例"
+    raise gatekit.InjectionImpossible("没有 brow_wrap 可注入尺寸违例")
+
+
 class _SpiritClothGates(gatekit.AssetGates):
     def specs(self):
         return (
@@ -520,6 +564,7 @@ class _SpiritClothGates(gatekit.AssetGates):
             ("uv_tiles", "box-UV 越出指定色块", lambda r: _gate_violations(r, _assert_uv_tiles), _inject_uv),
             ("mirror", "对称件左右不镜像", lambda r: _gate_violations(r, _assert_mirror_symmetry), _inject_mirror),
             ("isolated_cube", "同挂载点孤立 cube", lambda r: _gate_violations(r, _assert_no_isolated_cubes), _inject_isolated),
+            ("shape_dimensions", "贴头/鞋头前后尺寸契约", lambda r: _gate_violations(r, _assert_shape_dimensions), _inject_dimensions),
         )
 
 

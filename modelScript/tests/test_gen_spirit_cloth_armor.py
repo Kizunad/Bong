@@ -77,6 +77,16 @@ class SpiritClothArmorGeneratorTest(unittest.TestCase):
         spirit._assert_mirror_symmetry(all_parts)
         spirit._assert_no_isolated_cubes(all_parts)
         spirit._assert_helmet_front_projection(all_parts)
+        spirit._assert_shape_dimensions(all_parts)
+
+    def test_shape_dimension_guard_catches_a_front_projection_regression(self) -> None:
+        helmet = spirit.part_helmet()
+        brow_index = next(index for index, cube in enumerate(helmet.cubes) if cube.name == "brow_wrap")
+        brow = helmet.cubes[brow_index]
+        broken = replace(brow, origin=(brow.origin[0], brow.origin[1], brow.origin[2] - 1.0))
+        cubes = helmet.cubes[:brow_index] + (broken,) + helmet.cubes[brow_index + 1:]
+        with self.assertRaisesRegex(ValueError, "前缘"):
+            spirit._assert_shape_dimensions((replace(helmet, cubes=cubes),))
 
     def test_connectivity_guard_catches_a_moved_cube(self) -> None:
         part = spirit.part_helmet()
