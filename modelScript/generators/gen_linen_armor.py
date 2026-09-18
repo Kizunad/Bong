@@ -205,41 +205,44 @@ def part_chestplate() -> ArmorPart:
 
 
 def _helmet_crown() -> tuple[Cube, ...]:
-    """两片错开的顶布，避免一个平顶盒把麻布缠头读成铁盔。"""
+    """贴着头盒分层铺布；薄片沿头顶收边，不做外伸的硬帽檐。"""
     return (
-        c("HEAD", "cap_top_front", (-3.85, 31.55, -3.5), (7.7, 0.9, 3.35), UV_LINEN_MAIN),
-        # 与前片留 0.02 的层间缝；这是刻意的可见折缝，不是共面接缝。
-        c("HEAD", "cap_top_back", (-3.85, 31.35, -0.13), (7.7, 1.0, 3.55), UV_LINEN_MAIN),
-        c("HEAD", "cap_front_fold", (-4.05, 30.96, -4.1), (8.1, 0.55, 0.55), UV_LINEN_DARK),
-        c("HEAD", "cap_back_bridge", (-4.15, 30.3, 3.3), (8.3, 0.7, 0.7), UV_LINEN_DARK),
+        # 内层只比头盒略收，薄而低，不形成四面外伸的平板。
+        c("HEAD", "cap_top_front", (-3.72, 31.62, -3.55), (7.44, 0.30, 3.05), UV_LINEN_DARK),
+        # 后半片向后错 0.12，和前半片的边缘读成搭接而不是一整块硬壳。
+        c("HEAD", "cap_top_back", (-3.72, 31.74, -0.42), (7.44, 0.30, 3.80), UV_LINEN_MAIN),
+        # 顶布左右的折边收在头盒侧面，形成缠布的两道纵向转折。
+        c("HEAD", "cap_front_fold", (-3.88, 31.28, -3.82), (7.76, 0.28, 0.42), UV_LINEN_MAIN),
+        c("HEAD", "cap_back_bridge", (-3.88, 31.18, 3.42), (7.76, 0.28, 0.42), UV_LINEN_DARK),
     )
 
 
 def _helmet_wrap() -> tuple[Cube, ...]:
-    """额前压布、双侧护耳和后脑布帘，全部左右成对。"""
+    """额前压布、双侧缠布和短护耳；护耳只贴左右脸颊，不垂到肩部。"""
     return (
-        c("HEAD", "forehead_wrap", (-4.25, 28.6, -4.35), (8.5, 2.0, 0.5), UV_LINEN_WRAP),
-        c("HEAD", "forehead_edge", (-4.3, 28.35, -4.6), (8.6, 0.42, 0.38), UV_HEMP_ROPE),
-        c("HEAD", "side_wrap_left", (-4.45, 27.5, -3.7), (0.55, 3.0, 7.3), UV_LINEN_MAIN),
-        c("HEAD", "side_wrap_right", (3.9, 27.5, -3.7), (0.55, 3.0, 7.3), UV_LINEN_MAIN),
-        c("HEAD", "ear_flap_left", (-4.65, 24.1, -2.9), (0.65, 3.6, 4.2), UV_LINEN_DARK),
-        c("HEAD", "ear_flap_right", (4.0, 24.1, -2.9), (0.65, 3.6, 4.2), UV_LINEN_DARK),
-        # 下缘比护耳片收回 0.05，避免相接水平面在侧视里闪烁。
-        c("HEAD", "ear_flap_hem_left", (-4.75, 23.65, -2.7), (0.55, 0.4, 3.8), UV_LINEN_WRAP),
-        c("HEAD", "ear_flap_hem_right", (4.2, 23.65, -2.7), (0.55, 0.4, 3.8), UV_LINEN_WRAP),
-        c("HEAD", "back_drape", (-4.3, 25.0, 3.95), (8.6, 3.2, 0.55), UV_LINEN_DARK),
+        # 三层高差形成「额前压布 → 顶布 → 后脑搭接」的缠绕顺序；浅色只在压边。
+        c("HEAD", "forehead_wrap", (-4.12, 28.72, -4.18), (8.24, 1.42, 0.44), UV_LINEN_WRAP),
+        c("HEAD", "forehead_edge", (-4.18, 28.48, -4.42), (8.36, 0.26, 0.28), UV_HEMP_ROPE),
+        c("HEAD", "side_wrap_left", (-4.28, 28.35, -3.35), (0.38, 2.45, 6.7), UV_LINEN_DARK),
+        c("HEAD", "side_wrap_right", (3.90, 28.35, -3.35), (0.38, 2.45, 6.7), UV_LINEN_DARK),
+        # 护耳片只占前侧脸颊，底边在下颌线上方，不再把头盔撑成四条桌腿。
+        c("HEAD", "ear_flap_left", (-4.38, 24.72, -3.62), (0.46, 2.42, 2.35), UV_LINEN_DARK),
+        c("HEAD", "ear_flap_right", (3.92, 24.72, -3.62), (0.46, 2.42, 2.35), UV_LINEN_DARK),
+        c("HEAD", "ear_flap_hem_left", (-4.44, 24.48, -3.68), (0.52, 0.20, 2.45), UV_LINEN_WRAP),
+        c("HEAD", "ear_flap_hem_right", (3.92, 24.48, -3.68), (0.52, 0.20, 2.45), UV_LINEN_WRAP),
+        # 后脑搭接比顶布低一层，贴着后枕而非向外伸出一圈。
+        c("HEAD", "back_drape", (-4.10, 25.85, 3.92), (8.20, 2.15, 0.38), UV_LINEN_DARK),
     )
 
 
 def _helmet_fasteners() -> tuple[Cube, ...]:
-    """外露的双侧系带与额中骨扣；骨扣居中，系带保持镜像。"""
+    """外露的双侧系带与额中骨扣；固定件沿缠布边缘走，不成为桌腿。"""
     return (
-        # 系带顶缘比护耳片顶缘高 0.02，避免绑带与护耳片在 y-max 共面。
-        c("HEAD", "side_tie_left", (-5.0, 27.02, -0.45), (0.65, 0.7, 1.2), UV_HEMP_ROPE),
-        c("HEAD", "side_tie_right", (4.35, 27.02, -0.45), (0.65, 0.7, 1.2), UV_HEMP_ROPE),
-        c("HEAD", "side_knot_left", (-5.15, 26.25, -0.7), (0.9, 0.9, 0.9), UV_HEMP_ROPE),
-        c("HEAD", "side_knot_right", (4.25, 26.25, -0.7), (0.9, 0.9, 0.9), UV_HEMP_ROPE),
-        c("HEAD", "bone_toggle", (-0.6, 27.65, -4.85), (1.2, 1.2, 0.4), UV_BONE_RING),
+        c("HEAD", "side_tie_left", (-4.82, 27.15, -3.12), (0.58, 0.64, 0.96), UV_HEMP_ROPE),
+        c("HEAD", "side_tie_right", (4.24, 27.15, -3.12), (0.58, 0.64, 0.96), UV_HEMP_ROPE),
+        c("HEAD", "side_knot_left", (-4.92, 26.40, -3.22), (0.78, 0.78, 0.78), UV_HEMP_ROPE),
+        c("HEAD", "side_knot_right", (4.14, 26.40, -3.22), (0.78, 0.78, 0.78), UV_HEMP_ROPE),
+        c("HEAD", "bone_toggle", (-0.60, 29.42, -4.52), (1.20, 0.82, 0.34), UV_BONE_RING),
     )
 
 
@@ -258,7 +261,7 @@ def part_helmet() -> ArmorPart:
 
 
 def _boot_cubes(mount: str, sign: float) -> tuple[Cube, ...]:
-    """一只麻布软靴。sign=+1 左脚，-1 右脚。"""
+    """一只麻布软靴：前伸鞋头、收窄后跟与明显立起的鞋筒。"""
     side = "left" if sign > 0 else "right"
     outward_clearance = 0.45
 
@@ -275,37 +278,40 @@ def _boot_cubes(mount: str, sign: float) -> tuple[Cube, ...]:
         return Cube(mount, f"{name}_{side}", origin, size, uv)
 
     return (
-        # 鞋底：主体低于脚底，前后沿口错开 0.01~0.02 避免角部共面。
-        c2("sole_base", (x(-2.2, 4.4), -0.38, -2.75), (4.4, 0.55, 5.2), UV_LINEN_DARK),
-        c2("sole_front_rim", (x(-2.32, 4.64), 0.0, -3.05), (4.64, 0.5, 0.42), UV_HEMP_ROPE),
-        c2("sole_back_rim", (x(-2.28, 4.56), 0.02, 2.5), (4.56, 0.48, 0.42), UV_HEMP_ROPE),
-        c2("sole_outer_rim", (x(2.28, 0.42), 0.01, -2.52), (0.42, 0.5, 5.08), UV_HEMP_ROPE),
-        c2("sole_inner_rim", (x(-1.86, 0.32), 0.01, -2.5), (0.32, 0.45, 5.0), UV_HEMP_ROPE),
+        # 鞋底按前掌/中掌/后跟分段，前端明显多伸一截，避免侧视读成方盒。
+        c2("sole_base_toe", (x(-2.0, 4.0), -0.42, -3.82), (4.0, 0.52, 2.30), UV_LINEN_DARK),
+        c2("sole_base_mid", (x(-2.0, 4.0), -0.39, -1.48), (4.0, 0.49, 2.16), UV_LINEN_DARK),
+        c2("sole_base_heel", (x(-1.76, 3.52), -0.35, 0.74), (3.52, 0.45, 1.92), UV_LINEN_DARK),
+        c2("sole_front_rim", (x(-2.10, 4.20), -0.02, -4.04), (4.20, 0.42, 0.40), UV_HEMP_ROPE),
+        c2("sole_back_rim", (x(-1.86, 3.72), 0.01, 2.68), (3.72, 0.40, 0.34), UV_HEMP_ROPE),
+        c2("sole_outer_rim", (x(2.03, 0.32), 0.01, -3.62), (0.32, 0.43, 6.00), UV_HEMP_ROPE),
+        c2("sole_inner_rim", (x(-2.03, 0.28), 0.01, -3.58), (0.28, 0.40, 5.94), UV_HEMP_ROPE),
 
-        # 脚背和鞋头：主布在下，深色折边压出鞋头轮廓。
-        c2("vamp_main", (x(-2.0, 4.0), 0.15, -2.45), (4.0, 0.95, 3.0), UV_LINEN_WRAP),
-        c2("vamp_toe_panel", (x(-2.05, 4.1), 0.85, -2.7), (4.1, 0.7, 1.0), UV_LINEN_DARK),
-        # 后跟折边略收窄，避免与脚背主片的外侧 x-max 面重合。
-        c2("vamp_heel_fold", (x(-1.95, 3.9), 0.75, 0.45), (3.9, 0.65, 0.45), UV_LINEN_MAIN),
-        c2("vamp_lace_front", (x(-1.45, 2.9), 1.15, -2.86), (2.9, 0.42, 0.38), UV_HEMP_ROPE),
-        c2("vamp_lace_back", (x(-1.25, 2.5), 1.65, -2.72), (2.5, 0.4, 0.36), UV_HEMP_ROPE),
+        # 鞋面深色为底：前掌向 -z 伸出，后跟向 +z 收窄，侧视能明确分出前后。
+        c2("vamp_main", (x(-1.90, 3.80), 0.14, -3.48), (3.80, 0.88, 2.48), UV_LINEN_DARK),
+        c2("vamp_mid", (x(-1.94, 3.88), 0.20, -1.08), (3.88, 1.02, 1.72), UV_LINEN_DARK),
+        c2("vamp_toe_panel", (x(-1.84, 3.68), 0.92, -3.72), (3.68, 0.42, 0.74), UV_LINEN_MAIN),
+        c2("vamp_heel_fold", (x(-1.78, 3.56), 0.22, 0.62), (3.56, 0.96, 1.36), UV_LINEN_MAIN),
+        c2("vamp_lace_front", (x(-1.48, 2.96), 1.12, -2.56), (2.96, 0.34, 0.34), UV_HEMP_ROPE),
+        c2("vamp_lace_back", (x(-1.34, 2.68), 1.42, -0.92), (2.68, 0.34, 0.34), UV_HEMP_ROPE),
 
-        # 鞋筒四面开盒，随脚骨运动；前后片的高度相同但深度错开，保持软布层次。
-        c2("shaft_front", (x(-2.1, 4.2), 1.25, -2.35), (4.2, 2.7, 0.42), UV_LINEN_MAIN),
-        c2("shaft_back", (x(-2.1, 4.2), 1.25, 2.0), (4.2, 2.7, 0.42), UV_LINEN_MAIN),
-        c2("shaft_outer", (x(2.05, 0.42), 1.25, -1.93), (0.42, 2.7, 3.95), UV_LINEN_DARK),
-        c2("shaft_inner", (x(-1.93, 0.32), 1.25, -1.9), (0.32, 2.7, 3.9), UV_LINEN_DARK),
-        c2("shaft_top_front", (x(-2.16, 3.1), 3.75, -2.37), (3.1, 0.45, 0.45), UV_LINEN_WRAP),
-        c2("shaft_top_back", (x(-1.95, 3.0), 3.75, 1.99), (3.0, 0.45, 0.44), UV_LINEN_WRAP),
+        # 鞋筒从踝部向上立起约 3.2 单位，围住小腿但保留顶部开口；四片不做整块箱体。
+        c2("shaft_front", (x(-1.80, 3.60), 1.28, -1.72), (3.60, 3.12, 0.36), UV_LINEN_DARK),
+        c2("shaft_back", (x(-1.76, 3.52), 1.28, 1.34), (3.52, 3.12, 0.38), UV_LINEN_DARK),
+        c2("shaft_outer", (x(1.75, 0.38), 1.28, -1.34), (0.38, 3.12, 2.70), UV_LINEN_DARK),
+        c2("shaft_inner", (x(-1.72, 0.32), 1.28, -1.30), (0.32, 3.12, 2.62), UV_LINEN_MAIN),
+        # 靴筒口延续护腿底部的米白横箍；只做前后和两侧窄条，不封住开口。
+        c2("shaft_top_front", (x(-1.86, 3.72), 4.42, -1.78), (3.72, 0.42, 0.38), UV_LINEN_WRAP),
+        c2("shaft_top_back", (x(-1.82, 3.64), 4.42, 1.40), (3.64, 0.42, 0.36), UV_LINEN_WRAP),
 
-        # 踝部双道麻绳：前后和两侧分片，不用一只穿过脚面的实心环。
-        c2("ankle_band_low_front", (x(-2.2, 4.4), 1.45, -2.62), (4.4, 0.4, 0.34), UV_HEMP_ROPE),
-        c2("ankle_band_low_back", (x(-2.18, 4.36), 1.49, 2.28), (4.36, 0.4, 0.34), UV_HEMP_ROPE),
-        c2("ankle_band_low_outer", (x(2.18, 0.34), 1.46, -2.28), (0.34, 0.4, 4.56), UV_HEMP_ROPE),
-        c2("ankle_band_high_front", (x(-2.18, 4.36), 2.75, -2.58), (4.36, 0.4, 0.34), UV_HEMP_ROPE),
-        c2("ankle_band_high_back", (x(-2.16, 4.32), 2.79, 2.24), (4.32, 0.4, 0.34), UV_HEMP_ROPE),
-        c2("ankle_band_high_outer", (x(2.14, 0.34), 2.76, -2.24), (0.34, 0.4, 4.48), UV_HEMP_ROPE),
-        c2("side_knot", (x(2.22, 0.78), 2.18, -1.0), (0.78, 0.85, 0.82), UV_BONE_RING),
+        # 踝部深色绳带作为点缀，避免米白面被切成密集板条。
+        c2("ankle_band_low_front", (x(-1.92, 3.84), 1.44, -1.98), (3.84, 0.32, 0.30), UV_HEMP_ROPE),
+        c2("ankle_band_low_back", (x(-1.88, 3.76), 1.48, 1.64), (3.76, 0.32, 0.28), UV_HEMP_ROPE),
+        c2("ankle_band_low_outer", (x(1.82, 0.30), 1.46, -1.70), (0.30, 0.32, 3.42), UV_HEMP_ROPE),
+        c2("ankle_band_high_front", (x(-1.90, 3.80), 2.72, -1.94), (3.80, 0.30, 0.28), UV_HEMP_ROPE),
+        c2("ankle_band_high_back", (x(-1.86, 3.72), 2.76, 1.60), (3.72, 0.30, 0.26), UV_HEMP_ROPE),
+        c2("ankle_band_high_outer", (x(1.80, 0.28), 2.74, -1.66), (0.28, 0.30, 3.34), UV_HEMP_ROPE),
+        c2("side_knot", (x(2.12, 0.72), 2.32, -0.86), (0.72, 0.76, 0.76), UV_BONE_RING),
     )
 
 
