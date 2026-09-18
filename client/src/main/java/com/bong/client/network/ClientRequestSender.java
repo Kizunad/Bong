@@ -364,6 +364,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSkillBarBindSkill(slot, skillId));
     }
 
+    public static void sendTechniqueBind(boolean dash, int slot, String skillId, String expectedBinding) {
+        dispatch(ClientRequestProtocol.encodeTechniqueBind(dash, slot, skillId, expectedBinding));
+    }
+
     public static void sendSkillBarBindItem(int slot, String templateId) {
         dispatch(ClientRequestProtocol.encodeSkillBarBindItem(slot, templateId));
     }

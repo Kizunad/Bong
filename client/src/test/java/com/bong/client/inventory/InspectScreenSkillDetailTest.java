@@ -15,7 +15,7 @@ class InspectScreenSkillDetailTest {
 
         assertEquals(
             "Lv.7 / effective 5 / cap 5 · 境界压制",
-            InspectScreen.formatSkillLevelLine(SkillId.HERBALISM, entry)
+            com.bong.client.practice.SkillExperienceView.formatSkillLevelLine(SkillId.HERBALISM, entry)
         );
     }
 
@@ -23,7 +23,7 @@ class InspectScreenSkillDetailTest {
     void herbalismCurrentEffectReflectsEffectiveLevelNotRealLevel() {
         SkillSetSnapshot.Entry entry = new SkillSetSnapshot.Entry(7, 30, 1600, 3000, 5, 0, 0);
 
-        String line = InspectScreen.formatSkillCurrentEffect(SkillId.HERBALISM, entry);
+        String line = com.bong.client.practice.SkillExperienceView.formatSkillCurrentEffect(SkillId.HERBALISM, entry);
 
         assertTrue(line.contains("当前效果：手动采集 -1.0s"));
         assertTrue(line.contains("种子掉率 +10.0%"));
@@ -37,7 +37,7 @@ class InspectScreenSkillDetailTest {
 
         assertEquals(
             "下一阶：真实等级已高于境界上限；待突破后，压住的效果会直接放开。",
-            InspectScreen.formatSkillNextEffect(SkillId.ALCHEMY, entry)
+            com.bong.client.practice.SkillExperienceView.formatSkillNextEffect(SkillId.ALCHEMY, entry)
         );
     }
 
@@ -47,7 +47,7 @@ class InspectScreenSkillDetailTest {
 
         assertEquals(
             "当前效果：淬火命中窗 +3 tick，允许失误 +1，铭文失败率 -10.0%。",
-            InspectScreen.formatSkillCurrentEffect(SkillId.FORGING, entry)
+            com.bong.client.practice.SkillExperienceView.formatSkillCurrentEffect(SkillId.FORGING, entry)
         );
     }
 
@@ -55,6 +55,6 @@ class InspectScreenSkillDetailTest {
     void maxLevelProgressLineStopsShowingNextBucketXp() {
         SkillSetSnapshot.Entry entry = new SkillSetSnapshot.Entry(10, 0, 10000, 38500, 10, 0, 0);
 
-        assertEquals("Lv.10 已满 · 累计 38500 XP", InspectScreen.formatSkillProgressLine(entry));
+        assertEquals("Lv.10 已满 · 累计 38500 XP", com.bong.client.practice.SkillExperienceView.formatSkillProgressLine(entry));
     }
 }

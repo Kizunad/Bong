@@ -23,8 +23,8 @@ class InspectScreenQuickUseTabTest {
     @Test
     void craftEntryStillOpensDedicatedScreen() {
         assertTrue(
-            InspectScreen.opensCraftScreenForTabForTests(4),
-            "expected tab index 4 to open CraftScreen because 手搓 tab is now an entry into the standalone screen"
+            InspectScreen.opensCraftScreenForTabForTests(3),
+            "合并修习后，手搓入口仍应打开制作界面"
         );
     }
 

@@ -2214,6 +2214,7 @@ fn quick_slot_config_to_proto(c: &super::combat_hud::QuickSlotConfigV1) -> bong:
 
 fn skill_bar_config_to_proto(c: &super::combat_hud::SkillBarConfigV1) -> bong::SkillBarConfig {
     bong::SkillBarConfig {
+        dash_skill_id: c.dash_skill_id.clone(),
         slots: c
             .slots
             .iter()
@@ -2271,6 +2272,9 @@ fn techniques_snapshot_to_proto(
             .entries
             .iter()
             .map(|e| bong::TechniqueEntry {
+                category: e.category.clone(),
+                input_kind: e.input_kind.clone(),
+                icon_texture: e.icon_texture.clone(),
                 id: e.id.clone(),
                 display_name: e.display_name.clone(),
                 grade: e.grade.clone(),
@@ -4024,6 +4028,24 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 Payload::SkillBarCast(bong::SkillBarCast {
                     slot: *slot as u32,
                     target: target.clone(),
+                })
+            }
+            ClientRequestV1::TechniqueBind {
+                skill_id,
+                target,
+                expected_binding,
+                ..
+            } => {
+                use super::client_request::TechniqueBindTargetV1;
+                Payload::TechniqueBind(bong::TechniqueBind {
+                    skill_id: skill_id.clone(),
+                    target: Some(match target {
+                        TechniqueBindTargetV1::Combat { slot } => {
+                            bong::technique_bind::Target::CombatSlot(u32::from(*slot))
+                        }
+                        TechniqueBindTargetV1::Dash => bong::technique_bind::Target::Dash(true),
+                    }),
+                    expected_binding: expected_binding.clone(),
                 })
             }
             ClientRequestV1::SkillBarBind { slot, binding, .. } => {

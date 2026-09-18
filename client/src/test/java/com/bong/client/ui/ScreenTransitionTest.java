@@ -4,6 +4,7 @@ import com.bong.client.alchemy.AlchemyScreen;
 import com.bong.client.forge.ForgeScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
@@ -25,6 +26,23 @@ class ScreenTransitionTest {
         ScreenTransitionRegistry.resetForTests();
         ScreenTransitionController.resetForTests();
         UiTransitionSettings.resetForTests();
+    }
+
+    @Test
+    void quickPlayBeforePlayerCreationDoesNotDelayScreenInstallation() throws Exception {
+        // 不启动 GL 窗口，模拟 Quick Play 尚未创建 world/player 的客户端。
+        var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        var unsafe = (sun.misc.Unsafe) field.get(null);
+        var client = (MinecraftClient) unsafe.allocateInstance(MinecraftClient.class);
+        var stale = ScreenTransition.play(null, new DummyScreen("pending"),
+            ScreenTransition.Type.FADE, 200, ScreenTransition.Easing.LINEAR, () -> {});
+        ScreenTransitionController.setActiveTransitionForTests(active(stale));
+
+        assertFalse(ScreenTransitionController.interceptSetScreen(client, new DummyScreen("connecting")),
+            "登录前必须让原版立即挂载连接界面，避免无玩家时进入 handleInputEvents");
+        assertNull(ScreenTransitionController.activeTransition(), "旧转场不得覆盖新的连接界面");
+        assertTrue(stale.cancelled());
     }
 
     @Test
@@ -170,24 +188,12 @@ class ScreenTransitionTest {
     }
 
     @Test
-    void cultivation_slowest() {
-        ScreenTransitionRegistry.bootstrapDefaults();
-
-        TransitionConfig config = ScreenTransitionRegistry.getOrDefault(CultivationScreen.class);
-
-        assertEquals(ScreenTransition.Type.FADE, config.openTransition());
-        assertEquals(600, config.openDurationMs());
-        assertEquals(TransitionConfig.OverlayStyle.VIGNETTE, config.overlayStyle());
-    }
-
-    @Test
     void eight_screen_defaults_cover_core_surfaces() {
         ScreenTransitionRegistry.bootstrapDefaults();
 
         assertTrue(ScreenTransitionRegistry.get(InspectScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(ForgeScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(AlchemyScreen.class).isPresent());
-        assertTrue(ScreenTransitionRegistry.get(CultivationScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(GameMenuScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.SparringInviteScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.TradeOfferScreen.class).isPresent());

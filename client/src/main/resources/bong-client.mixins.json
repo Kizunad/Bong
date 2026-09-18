@@ -14,6 +14,7 @@
     "MenuScreenAccessor",
     "MixinBackgroundRendererRealmVision",
     "MixinCamera",
+    "MixinBodyModelCapture",
     "MixinClientPlayerInteractionManagerAlchemy",
     "MixinEntityRenderer",
     "MixinFogPerZone",

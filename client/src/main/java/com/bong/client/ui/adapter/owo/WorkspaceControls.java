@@ -31,11 +31,14 @@ public final class WorkspaceControls {
     private final Consumer<HudWidgetWindows.Widget> openHud;
     private final BiConsumer<HudWidgetWindows.Widget, Boolean> showHud;
     private final Runnable resetLayout;
+    private final Runnable openModelPreview;
+    private final java.util.function.BooleanSupplier canPreviewModels;
     private final Consumer<UiWindowManager.WindowState> remember;
     private OwoUIAdapter<FlowLayout> adapter;
     private FlowLayout bar;
     private FlowLayout settings;
     private FlowLayout hudList;
+    private ButtonComponent modelButton;
     private final Map<HudWidgetWindows.Widget, CheckboxComponent> hudChecks = new EnumMap<>(HudWidgetWindows.Widget.class);
     private final Map<UiWindowManager.WindowKey, ButtonComponent> restoreButtons = new LinkedHashMap<>();
     private int width;
@@ -48,7 +51,8 @@ public final class WorkspaceControls {
                              WindowLayoutPreferenceStore preferences, Runnable save, HudWidgetWindows hud,
                              Consumer<HudWidgetWindows.Widget> openHud,
                              BiConsumer<HudWidgetWindows.Widget, Boolean> showHud, Runnable resetLayout,
-                             Consumer<UiWindowManager.WindowState> remember) {
+                             Consumer<UiWindowManager.WindowState> remember, Runnable openModelPreview,
+                             java.util.function.BooleanSupplier canPreviewModels) {
         this.manager = manager;
         this.backgrounds = backgrounds;
         this.preferences = preferences;
@@ -58,6 +62,8 @@ public final class WorkspaceControls {
         this.showHud = showHud;
         this.resetLayout = resetLayout;
         this.remember = remember;
+        this.openModelPreview = openModelPreview;
+        this.canPreviewModels = canPreviewModels;
     }
 
     public void layout(int w, int h, Function<UiWindowManager.WindowKey, String> titles) {
@@ -77,6 +83,8 @@ public final class WorkspaceControls {
                 .renderer((context, button, delta) -> OwoXmlWindowContentAdapter.renderControlIcon(context, button,
                     new net.minecraft.util.Identifier("bong-client", "textures/gui/window/rotate-ccw.png"), 0xFF485A51))
                 .onPress(button -> resetLayout.run());
+            modelButton = bar.childById(ButtonComponent.class, "workspace-model");
+            modelButton.onPress(button -> { if (canPreviewModels.getAsBoolean()) openModelPreview.run(); });
             var hudRows = hudList.childById(FlowLayout.class, "workspace-hud-rows");
             for (var widget : HudWidgetWindows.Widget.values()) {
                 var row = template.expandTemplate(FlowLayout.class, "hud-entry", Map.of());
@@ -109,8 +117,6 @@ public final class WorkspaceControls {
         if (width != w || height != h) {
             width = w;
             height = h;
-            bar.childById(io.wispforest.owo.ui.container.ScrollContainer.class, "workspace-restore-scroll")
-                .horizontalSizing(io.wispforest.owo.ui.core.Sizing.fixed(Math.max(1, w - 90)));
             settings.positioning(Positioning.absolute(Math.max(0, w - 264), Math.max(0, h - 230)));
             int listHeight = Math.max(60, Math.min(300, h - 40));
             hudList.verticalSizing(io.wispforest.owo.ui.core.Sizing.fixed(listHeight));
@@ -119,6 +125,15 @@ public final class WorkspaceControls {
             hudList.positioning(Positioning.absolute(4, Math.max(0, h - listHeight - 32)));
             adapter.moveAndResize(0, 0, w, h);
         }
+        boolean canPreview = canPreviewModels.getAsBoolean();
+        if (canPreview != bar.children().contains(modelButton)) {
+            if (canPreview) bar.child(3, modelButton);
+            else bar.removeChild(modelButton);
+        }
+        var restore = bar.childById(io.wispforest.owo.ui.container.ScrollContainer.class, "workspace-restore-scroll");
+        int restoreWidth = Math.max(1, w - (canPreview ? 130 : 90));
+        if (restore.horizontalSizing().get().value != restoreWidth)
+            restore.horizontalSizing(io.wispforest.owo.ui.core.Sizing.fixed(restoreWidth));
         List<UiWindowManager.WindowKey> minimized = manager.snapshot().stream()
             .filter(UiWindowManager.WindowState::minimized).map(UiWindowManager.WindowState::key).toList();
         if (!List.copyOf(restoreButtons.keySet()).equals(minimized)) {

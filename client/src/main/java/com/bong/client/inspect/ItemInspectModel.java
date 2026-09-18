@@ -27,10 +27,14 @@ import java.util.ArrayList;
 import java.util.Optional;
 
 /** 消费现有物品/穿戴模型；检视只调整取景，不建立第二份资产映射。 */
-interface ItemInspectModel {
+public interface ItemInspectModel {
     Box bounds();
     boolean yUp();
     void render(MatrixStack matrices, VertexConsumerProvider consumers);
+
+    static ItemInspectModel stack(ItemStack stack) {
+        return new StackModel(stack);
+    }
 
     static Optional<ItemInspectModel> find(String itemId) {
         var armor = ArmorModelRegistry.get(itemId);

@@ -37,6 +37,15 @@
           "range"
         ],
         "properties": {
+          "category": {
+            "type": "string"
+          },
+          "input_kind": {
+            "type": "string"
+          },
+          "icon_texture": {
+            "type": "string"
+          },
           "id": {
             "minLength": 1,
             "type": "string"
@@ -113,5 +122,5 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "aa5fee48b435c27ba5bbc22d8b3b9b0509da4976b0c7a1d6a8d6c3e44ed581e8"
+  "x-bong-typebox-source-sha256": "80d6ac6024ac05b43f979187239b2db977511602600d7d709bd77e4d4a1b92f3"
 }

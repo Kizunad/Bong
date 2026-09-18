@@ -58,7 +58,6 @@ import com.bong.client.social.TradeOfferScreenBootstrap;
 import com.bong.client.spirittreasure.SpiritTreasureScreenBootstrap;
 import com.bong.client.tsy.ExtractInteractionBootstrap;
 import com.bong.client.tsy.SearchCancelInteractionBootstrap;
-import com.bong.client.ui.CultivationScreenBootstrap;
 import com.bong.client.ui.ClientUiBootstrap;
 import com.bong.client.ui.preview.UiPreviewHarnessClient;
 import com.bong.client.visual.particle.BongParticles;
@@ -102,7 +101,6 @@ public class BongClient implements ClientModInitializer {
         com.bong.client.animation.UpperBodyViewPitchLayer.register();
         DyingElderInteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
-        CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();
         LootContainerScreenBootstrap.register();
         DroppedItemPickupBootstrap.register();

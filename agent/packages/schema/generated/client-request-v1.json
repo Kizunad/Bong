@@ -1512,6 +1512,70 @@
         "v",
         "type",
         "skill_id",
+        "target",
+        "expected_binding"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "technique_bind",
+          "type": "string"
+        },
+        "skill_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "slot"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "combat",
+                  "type": "string"
+                },
+                "slot": {
+                  "minimum": 0,
+                  "maximum": 1,
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "dash",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "expected_binding": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "skill_id",
         "config"
       ],
       "properties": {
@@ -3435,5 +3499,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "fada0eea035666a385f053596f18dd62571fccf1b88dbbb8a146e80289a0225c"
+  "x-bong-typebox-source-sha256": "9c4ba45c74c228d91fe3a80821f639677c00d9440dd310df752ca3cce0eb63b4"
 }

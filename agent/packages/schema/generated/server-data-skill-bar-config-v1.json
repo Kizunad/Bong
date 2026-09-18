@@ -16,6 +16,9 @@
       "const": "skillbar_config",
       "type": "string"
     },
+    "dash_skill_id": {
+      "type": "string"
+    },
     "slots": {
       "minItems": 2,
       "maxItems": 2,
@@ -116,5 +119,5 @@
       }
     }
   },
-  "x-bong-typebox-source-sha256": "afc5a405e75352661061364aed48f8cb062d03999d89986fe65ce3dd55264de2"
+  "x-bong-typebox-source-sha256": "e6a0ce372c808779cbf1962f63d81fdcd0684585de460d7f48c0be4868b57f56"
 }

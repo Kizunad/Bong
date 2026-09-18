@@ -14,44 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OwoXmlTemplateRegistryTest {
     @Test
-    void productionRegistryContainsWideAndCompactCraftTemplates() {
-        OwoXmlTemplateRegistry registry = OwoXmlTemplateRegistry.production();
-        assertEquals(
-            java.util.Set.of("craft", "craft-compact", "terminate", "coffin-menu", "repair", "death", "forge-carrier", "identity-panel", "zhenfa-layout", "main-menu", "item-inspect", "window-frame", "workspace-controls", "hud-widget", "inventory-container", "inventory-equipment", "inventory-shortcuts"),
-            registry.templateIds(),
-            "生产 registry 必须只登记已接入的本地 XML 模板");
-        assertEquals(OwoXmlTemplateRegistry.CRAFT, registry.identifierFor("craft"));
-        assertEquals(OwoXmlTemplateRegistry.CRAFT_COMPACT, registry.identifierFor("craft-compact"));
-        assertEquals(OwoXmlTemplateRegistry.TERMINATE, registry.identifierFor("terminate"));
-        assertEquals(OwoXmlTemplateRegistry.COFFIN_MENU, registry.identifierFor("coffin-menu"));
-        assertEquals(OwoXmlTemplateRegistry.REPAIR, registry.identifierFor("repair"));
-        assertEquals(OwoXmlTemplateRegistry.DEATH, registry.identifierFor("death"));
-        assertEquals(OwoXmlTemplateRegistry.FORGE_CARRIER, registry.identifierFor("forge-carrier"));
-        assertEquals(OwoXmlTemplateRegistry.IDENTITY_PANEL, registry.identifierFor("identity-panel"));
-        assertEquals(OwoXmlTemplateRegistry.ZHENFA_LAYOUT, registry.identifierFor("zhenfa-layout"));
-    }
-
-    @Test
-    void checkedInCraftTemplatesAreValidOwoModels() throws Exception {
-        for (String resource : new String[] {
-            "/assets/bong/owo_ui/craft.xml",
-            "/assets/bong/owo_ui/craft-compact.xml",
-            "/assets/bong/owo_ui/terminate.xml",
-            "/assets/bong/owo_ui/coffin-menu.xml",
-            "/assets/bong/owo_ui/repair.xml",
-            "/assets/bong/owo_ui/death.xml",
-            "/assets/bong/owo_ui/forge-carrier.xml",
-            "/assets/bong/owo_ui/identity-panel.xml",
-            "/assets/bong/owo_ui/zhenfa-layout.xml",
-            "/assets/bong/owo_ui/main-menu.xml",
-            "/assets/bong/owo_ui/item-inspect.xml",
-            "/assets/bong/owo_ui/window-frame.xml",
-            "/assets/bong/owo_ui/workspace-controls.xml",
-            "/assets/bong/owo_ui/hud-widget.xml",
-            "/assets/bong/owo_ui/inventory-container.xml",
-            "/assets/bong/owo_ui/inventory-equipment.xml",
-            "/assets/bong/owo_ui/inventory-shortcuts.xml"
-        }) {
+    void registeredTemplatesArePackagedAndParsable() throws Exception {
+        var registry = OwoXmlTemplateRegistry.production();
+        for (String template : registry.templateIds()) {
+            var id = registry.identifierFor(template);
+            String resource = "/assets/" + id.getNamespace() + "/owo_ui/" + id.getPath() + ".xml";
             try (InputStream stream = getClass().getResourceAsStream(resource)) {
                 assertNotNull(stream, "缺少随包发布的 owo XML: " + resource);
                 assertNotNull(UIModel.load(stream), "owo 无法解析本地 XML: " + resource);

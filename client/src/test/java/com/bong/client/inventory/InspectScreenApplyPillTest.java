@@ -167,8 +167,24 @@ public class InspectScreenApplyPillTest {
         assertTrue(sent.isEmpty());
     }
 
+
     @Test
-    void confirmPendingMeridianUseSendsUsingFocusedChannel() {
+    void rightClickCancelsPendingTargetBeforeWindowInput() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(1002L, "ningmai_powder", "凝脉散",
+            1,1,.1,"common","",1,1,1);
+        // 使用已登记的经脉丹药元数据走菜单，避免直接写 pending 私有状态。
+        assertTrue(screen.openPillContextMenu(item,10,20));
+        screen.triggerPillMenuAction(InspectScreen.ActionKind.MERIDIAN_TARGET);
+        assertTrue(screen.hasPendingMeridianUse());
+        assertTrue(screen.mouseClicked(500,300,1));
+        assertFalse(screen.hasPendingMeridianUse());
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void confirmPendingMeridianUseSendsUsingSelectedChannel() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
         BodyInspectComponent bodyInspect = new BodyInspectComponent();
