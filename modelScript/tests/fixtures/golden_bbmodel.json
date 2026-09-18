@@ -326,9 +326,13 @@
  "gen_linen_armor.py": {
   "exit": 0,
   "outputs": {
+   "armor/linen/LinenBoots.bbmodel": "f1659be25ed1f533ad5e8f26bcb56cc00e857e58355ba6c0957fb36d2b8923fe",
    "armor/linen/LinenChestplate.bbmodel": "4211da047383d04a18eacb813cfaf445bb510bcce65f041c3fb00a047e3e0aa0",
+   "armor/linen/LinenHelmet.bbmodel": "0aeb0f8cac9493c0364e8576a6606c5686494e38ab3277e88fa501b77cb4985b",
    "armor/linen/LinenLeggings.bbmodel": "e3ae39e2140847c339c4348f048dd9f34ad0b6cb3a19525a49c53218834f9057",
+   "armor/linen/textures/linen_boots/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
    "armor/linen/textures/linen_chestplate/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
+   "armor/linen/textures/linen_helmet/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d",
    "armor/linen/textures/linen_leggings/0.png": "c6219642c6587666c72cb4736b2a6bbeef04817ea3cf8178d76091490bab261d"
   }
  },
