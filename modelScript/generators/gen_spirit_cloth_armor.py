@@ -782,6 +782,7 @@ def generate(render_previews: bool = True, install: bool = False) -> dict[str, P
     _assert_uv_tiles(all_parts)
     _assert_mirror_symmetry(all_parts)
     _assert_no_isolated_cubes(all_parts)
+    _assert_shape_dimensions(all_parts)
     _assert_helmet_front_projection(all_parts)
     _assert_helmet_side_coverage(all_parts)
     return write_material_assets(
