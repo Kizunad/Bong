@@ -27,9 +27,22 @@ def _part_with(cubes: tuple[Cube, ...]) -> ArmorPart:
 class LinenArmorGeneratorTest(unittest.TestCase):
     def test_exposes_chestplate_and_leggings(self) -> None:
         parts = linen.parts()
-        self.assertEqual(["linen_chestplate", "linen_leggings"], [part.key for part in parts])
+        self.assertEqual(
+            ["linen_helmet", "linen_chestplate", "linen_leggings", "linen_boots"],
+            [part.key for part in parts],
+        )
         for part in parts:
             validate_part(part)
+
+    def test_helmet_and_boots_have_distinct_geometry_contracts(self) -> None:
+        helmet = linen.part_helmet()
+        boots = linen.part_boots()
+        self.assertGreaterEqual(len(helmet.cubes), 12, "头盔必须有缠布、护耳与固定件的可见层次")
+        self.assertEqual({"HEAD"}, {cube.mount for cube in helmet.cubes})
+        self.assertGreaterEqual(len(boots.cubes), 32, "双靴必须同时覆盖鞋底、鞋面、鞋筒和踝部系带")
+        self.assertEqual({"LEFT_FOOT", "RIGHT_FOOT"}, {cube.mount for cube in boots.cubes})
+        self.assertTrue(any(cube.name.startswith("sole_") for cube in boots.cubes))
+        self.assertTrue(any(cube.name.startswith("shaft_") for cube in boots.cubes))
 
     def test_texture_is_deterministic_64_square_and_not_flat(self) -> None:
         first = linen.make_texture()
@@ -84,6 +97,14 @@ class LinenArmorGeneratorTest(unittest.TestCase):
         parts = linen.parts()
         linen._assert_no_coplanar_faces(parts)
 
+    def test_uv_and_mirror_guards_pass_on_real_parts(self) -> None:
+        parts = linen.parts()
+        linen._assert_uv_tiles(parts)
+        linen._assert_mirror_symmetry(parts)
+
+    def test_gatekit_differential_self_test_passes(self) -> None:
+        self.assertEqual(0, linen.GATES.self_test(linen.build(), verbose=False))
+
     def test_coplanar_guard_catches_mutation(self) -> None:
         bad = _part_with((
             Cube("BODY", "c1", (-4.0, 12.0, -2.5), (8.0, 10.0, 1.0), linen.UV_LINEN_MAIN),
@@ -117,15 +138,21 @@ class LinenArmorGeneratorTest(unittest.TestCase):
                 root / "previews",
                 render_previews=True,
             )
-            self.assertEqual(7, len(outputs), "2 model + 2 texture + 2 three-view + 1 combined 应全部产出")
-            self.assertEqual(2, len(list((root / "models/armor/linen").glob("*.bbmodel"))))
+            self.assertEqual(13, len(outputs), "4 model + 4 texture + 4 three-view + 1 combined 应全部产出")
+            self.assertEqual(4, len(list((root / "models/armor/linen").glob("*.bbmodel"))))
             textures = list((root / "textures").glob("linen_*/0.png"))
-            self.assertEqual(2, len(textures))
+            self.assertEqual(4, len(textures))
             for path in textures:
                 with Image.open(path) as tex:
                     self.assertEqual((64, 64), tex.size)
 
-            for key in ("preview:linen_chestplate", "preview:linen_leggings", "preview:all"):
+            for key in (
+                "preview:linen_helmet",
+                "preview:linen_chestplate",
+                "preview:linen_leggings",
+                "preview:linen_boots",
+                "preview:all",
+            ):
                 path = outputs[key]
                 self.assertTrue(path.is_file(), f"预览输出缺失: {path}")
                 with Image.open(path) as prev:

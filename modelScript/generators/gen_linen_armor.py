@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""生成麻布僧袍（linen armor）胸甲与护腿 bbmodel、64x64 UV 贴图与真实三视图预览。
+"""生成麻布僧袍（linen armor）四件 bbmodel、64x64 UV 贴图与真实三视图预览。
 
 配方对应粗布（rough_cloth）+ 草绳（grass_rope / dried_grass）+ 异变兽骨环扣（bone_chip_mat）。
-本套装聚焦在【胸甲 (chestplate)】与【护腿 (leggings)】：
+本套装包含【头盔 (helmet)】、【胸甲 (chestplate)】、【护腿 (leggings)】与【靴子 (boots)】：
+- 头盔：多层缠头麻布、额前压边、双侧护耳布片与骨扣/系绳。
 - 胸甲：交领右衽僧袍衣身、单肩斜披搭褡（偏衫）、兽骨环扣、多圈麻绳束腰、双臂麻布绑带（绑臂）。
 - 护腿：分衩式中长僧袍下摆（随双腿各自运动，杜绝跨腿穿模撕裂）、宽松苦修麻裤、小腿十字交叉绑腿（行缠）。
+- 靴子：压低脚底的麻布鞋底、分层鞋面、踝部绳带与外侧系结。
 
 运行时真相是 client 的 ArmorPartModel.CUBE_TABLES，本文件的 --emit-java
 直接吐那张表的 Java 字面量。
@@ -13,7 +15,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import random
+from dataclasses import replace
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -21,7 +25,15 @@ from PIL import Image, ImageDraw
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
-from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.gates import gatekit
+from bbmodel_maker.model.armor_model_common import (
+    ArmorPart,
+    Cube,
+    MOUNT_X,
+    TEXTURE_SIZE,
+    write_material_assets,
+)
+from bbmodel_maker.rig.rigkit import Rig
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -186,6 +198,125 @@ def part_chestplate() -> ArmorPart:
     )
 
 
+# ─── 头盔 (HELMET) ────────────────────────────────────────────────────────────
+# 头盒 x∈[-4,4] y∈[24,32] z∈[-4,4]，脸朝 -z。
+# 这里做的是软麻布护头，不把它误做成硬壳：两层顶布负责遮住头顶，额前压边、
+# 护耳片与后脑搭接负责「缠住」的连续轮廓，绳带和骨扣只做外露的固定件。
+
+
+def _helmet_crown() -> tuple[Cube, ...]:
+    """两片错开的顶布，避免一个平顶盒把麻布缠头读成铁盔。"""
+    return (
+        c("HEAD", "cap_top_front", (-3.85, 31.55, -3.5), (7.7, 0.9, 3.35), UV_LINEN_MAIN),
+        # 与前片留 0.02 的层间缝；这是刻意的可见折缝，不是共面接缝。
+        c("HEAD", "cap_top_back", (-3.85, 31.35, -0.13), (7.7, 1.0, 3.55), UV_LINEN_MAIN),
+        c("HEAD", "cap_front_fold", (-4.05, 30.96, -4.1), (8.1, 0.55, 0.55), UV_LINEN_DARK),
+        c("HEAD", "cap_back_bridge", (-4.15, 30.3, 3.3), (8.3, 0.7, 0.7), UV_LINEN_DARK),
+    )
+
+
+def _helmet_wrap() -> tuple[Cube, ...]:
+    """额前压布、双侧护耳和后脑布帘，全部左右成对。"""
+    return (
+        c("HEAD", "forehead_wrap", (-4.25, 28.6, -4.35), (8.5, 2.0, 0.5), UV_LINEN_WRAP),
+        c("HEAD", "forehead_edge", (-4.3, 28.35, -4.6), (8.6, 0.42, 0.38), UV_HEMP_ROPE),
+        c("HEAD", "side_wrap_left", (-4.45, 27.5, -3.7), (0.55, 3.0, 7.3), UV_LINEN_MAIN),
+        c("HEAD", "side_wrap_right", (3.9, 27.5, -3.7), (0.55, 3.0, 7.3), UV_LINEN_MAIN),
+        c("HEAD", "ear_flap_left", (-4.65, 24.1, -2.9), (0.65, 3.6, 4.2), UV_LINEN_DARK),
+        c("HEAD", "ear_flap_right", (4.0, 24.1, -2.9), (0.65, 3.6, 4.2), UV_LINEN_DARK),
+        # 下缘比护耳片收回 0.05，避免相接水平面在侧视里闪烁。
+        c("HEAD", "ear_flap_hem_left", (-4.75, 23.65, -2.7), (0.55, 0.4, 3.8), UV_LINEN_WRAP),
+        c("HEAD", "ear_flap_hem_right", (4.2, 23.65, -2.7), (0.55, 0.4, 3.8), UV_LINEN_WRAP),
+        c("HEAD", "back_drape", (-4.3, 25.0, 3.95), (8.6, 3.2, 0.55), UV_LINEN_DARK),
+    )
+
+
+def _helmet_fasteners() -> tuple[Cube, ...]:
+    """外露的双侧系带与额中骨扣；骨扣居中，系带保持镜像。"""
+    return (
+        # 系带顶缘比护耳片顶缘高 0.02，避免绑带与护耳片在 y-max 共面。
+        c("HEAD", "side_tie_left", (-5.0, 27.02, -0.45), (0.65, 0.7, 1.2), UV_HEMP_ROPE),
+        c("HEAD", "side_tie_right", (4.35, 27.02, -0.45), (0.65, 0.7, 1.2), UV_HEMP_ROPE),
+        c("HEAD", "side_knot_left", (-5.15, 26.25, -0.7), (0.9, 0.9, 0.9), UV_HEMP_ROPE),
+        c("HEAD", "side_knot_right", (4.25, 26.25, -0.7), (0.9, 0.9, 0.9), UV_HEMP_ROPE),
+        c("HEAD", "bone_toggle", (-0.6, 27.65, -4.85), (1.2, 1.2, 0.4), UV_BONE_RING),
+    )
+
+
+def part_helmet() -> ArmorPart:
+    return ArmorPart(
+        "linen_helmet",
+        "LINEN HELMET",
+        _helmet_crown() + _helmet_wrap() + _helmet_fasteners(),
+    )
+
+
+# ─── 靴子 (BOOTS) ────────────────────────────────────────────────────────────
+# 脚 mount 的枢轴在 y=12，但脚底的世界高度仍是 y=0；因此鞋底必须压到 y<0，
+# 鞋筒从脚背向上包到 y≈4。左右脚只在局部 x 上镜像，内缘留在中线外侧，避免
+# 两只软靴静止时粘成一块。
+
+
+def _boot_cubes(mount: str, sign: float) -> tuple[Cube, ...]:
+    """一只麻布软靴。sign=+1 左脚，-1 右脚。"""
+    side = "left" if sign > 0 else "right"
+    outward_clearance = 0.45
+
+    def x(inner: float, width: float) -> float:
+        # vanilla 左右脚枢轴相距 3.8，而鞋底最宽处超过 4 单位；向外侧挪开
+        # 0.45，给中线留出 0.06~0.16 的可见缝，避免两只静止软靴互相穿入。
+        return (
+            inner + outward_clearance
+            if sign > 0
+            else -inner - width - outward_clearance
+        )
+
+    def c2(name: str, origin: tuple[float, float, float], size: tuple[float, float, float], uv=UV_LINEN_MAIN) -> Cube:
+        return Cube(mount, f"{name}_{side}", origin, size, uv)
+
+    return (
+        # 鞋底：主体低于脚底，前后沿口错开 0.01~0.02 避免角部共面。
+        c2("sole_base", (x(-2.2, 4.4), -0.38, -2.75), (4.4, 0.55, 5.2), UV_LINEN_DARK),
+        c2("sole_front_rim", (x(-2.32, 4.64), 0.0, -3.05), (4.64, 0.5, 0.42), UV_HEMP_ROPE),
+        c2("sole_back_rim", (x(-2.28, 4.56), 0.02, 2.5), (4.56, 0.48, 0.42), UV_HEMP_ROPE),
+        c2("sole_outer_rim", (x(2.28, 0.42), 0.01, -2.52), (0.42, 0.5, 5.08), UV_HEMP_ROPE),
+        c2("sole_inner_rim", (x(-1.86, 0.32), 0.01, -2.5), (0.32, 0.45, 5.0), UV_HEMP_ROPE),
+
+        # 脚背和鞋头：主布在下，深色折边压出鞋头轮廓。
+        c2("vamp_main", (x(-2.0, 4.0), 0.15, -2.45), (4.0, 0.95, 3.0), UV_LINEN_WRAP),
+        c2("vamp_toe_panel", (x(-2.05, 4.1), 0.85, -2.7), (4.1, 0.7, 1.0), UV_LINEN_DARK),
+        # 后跟折边略收窄，避免与脚背主片的外侧 x-max 面重合。
+        c2("vamp_heel_fold", (x(-1.95, 3.9), 0.75, 0.45), (3.9, 0.65, 0.45), UV_LINEN_MAIN),
+        c2("vamp_lace_front", (x(-1.45, 2.9), 1.15, -2.86), (2.9, 0.42, 0.38), UV_HEMP_ROPE),
+        c2("vamp_lace_back", (x(-1.25, 2.5), 1.65, -2.72), (2.5, 0.4, 0.36), UV_HEMP_ROPE),
+
+        # 鞋筒四面开盒，随脚骨运动；前后片的高度相同但深度错开，保持软布层次。
+        c2("shaft_front", (x(-2.1, 4.2), 1.25, -2.35), (4.2, 2.7, 0.42), UV_LINEN_MAIN),
+        c2("shaft_back", (x(-2.1, 4.2), 1.25, 2.0), (4.2, 2.7, 0.42), UV_LINEN_MAIN),
+        c2("shaft_outer", (x(2.05, 0.42), 1.25, -1.93), (0.42, 2.7, 3.95), UV_LINEN_DARK),
+        c2("shaft_inner", (x(-1.93, 0.32), 1.25, -1.9), (0.32, 2.7, 3.9), UV_LINEN_DARK),
+        c2("shaft_top_front", (x(-2.16, 3.1), 3.75, -2.37), (3.1, 0.45, 0.45), UV_LINEN_WRAP),
+        c2("shaft_top_back", (x(-1.95, 3.0), 3.75, 1.99), (3.0, 0.45, 0.44), UV_LINEN_WRAP),
+
+        # 踝部双道麻绳：前后和两侧分片，不用一只穿过脚面的实心环。
+        c2("ankle_band_low_front", (x(-2.2, 4.4), 1.45, -2.62), (4.4, 0.4, 0.34), UV_HEMP_ROPE),
+        c2("ankle_band_low_back", (x(-2.18, 4.36), 1.49, 2.28), (4.36, 0.4, 0.34), UV_HEMP_ROPE),
+        c2("ankle_band_low_outer", (x(2.18, 0.34), 1.46, -2.28), (0.34, 0.4, 4.56), UV_HEMP_ROPE),
+        c2("ankle_band_high_front", (x(-2.18, 4.36), 2.75, -2.58), (4.36, 0.4, 0.34), UV_HEMP_ROPE),
+        c2("ankle_band_high_back", (x(-2.16, 4.32), 2.79, 2.24), (4.32, 0.4, 0.34), UV_HEMP_ROPE),
+        c2("ankle_band_high_outer", (x(2.14, 0.34), 2.76, -2.24), (0.34, 0.4, 4.48), UV_HEMP_ROPE),
+        c2("side_knot", (x(2.22, 0.78), 2.18, -1.0), (0.78, 0.85, 0.82), UV_BONE_RING),
+    )
+
+
+def part_boots() -> ArmorPart:
+    return ArmorPart(
+        "linen_boots",
+        "LINEN BOOTS",
+        _boot_cubes("LEFT_FOOT", 1.0) + _boot_cubes("RIGHT_FOOT", -1.0),
+    )
+
+
 # ─── 护腿 (LEGGINGS) ──────────────────────────────────────────────────────────
 # 腿盒局部坐标 x∈[-2,2] y∈[0,12] z∈[-2,2]，骨骼枢轴在 y=12。
 # 构件划分：
@@ -261,7 +392,7 @@ def part_leggings() -> ArmorPart:
 
 
 def parts() -> tuple[ArmorPart, ...]:
-    return (part_chestplate(), part_leggings())
+    return (part_helmet(), part_chestplate(), part_leggings(), part_boots())
 
 
 # ─── 贴图生成 (64x64) ─────────────────────────────────────────────────────────
@@ -384,6 +515,194 @@ def _assert_no_coplanar_faces(all_parts: tuple[ArmorPart, ...]) -> None:
                             )
 
 
+UV_TILES = {
+    UV_LINEN_MAIN: (32, 32),
+    UV_LINEN_DARK: (32, 32),
+    UV_LINEN_WRAP: (32, 32),
+    UV_HEMP_ROPE: (32, 32),
+    UV_BONE_RING: (12, 12),
+}
+
+
+def _assert_uv_tiles(all_parts: tuple[ArmorPart, ...]) -> None:
+    """每只 box 的展开面必须留在它声明的材质象限内。"""
+    for part in all_parts:
+        for cube in part.cubes:
+            tile = UV_TILES.get(cube.uv)
+            if tile is None:
+                raise ValueError(f"{part.key}/{cube.name}: uv {cube.uv} 不在 UV_TILES")
+            tile_w, tile_h = tile
+            u, v = cube.uv
+            sx, sy, sz = cube.size
+            if 2 * (sx + sz) > tile_w + 1e-6 or sy + sz > tile_h + 1e-6:
+                raise ValueError(
+                    f"{part.key}/{cube.name}: box-UV {2 * (sx + sz):.2f}×{sy + sz:.2f} "
+                    f"超出 {tile_w}×{tile_h} 色块"
+                )
+
+
+def _assert_mirror_symmetry(all_parts: tuple[ArmorPart, ...]) -> None:
+    """头盔/双靴的左右件必须关于世界中线镜像。"""
+    for part in all_parts:
+        if part.key not in {"linen_helmet", "linen_boots"}:
+            continue
+        by_name = {cube.name: cube for cube in part.cubes}
+        left = {name[:-5]: cube for name, cube in by_name.items() if name.endswith("_left")}
+        right = {name[:-6]: cube for name, cube in by_name.items() if name.endswith("_right")}
+        if set(left) != set(right):
+            raise ValueError(f"{part.key}: 左右件名不成对 {set(left) ^ set(right)}")
+        for name, left_cube in left.items():
+            right_cube = right[name]
+            left_low = left_cube.origin[0] + MOUNT_X[left_cube.mount]
+            right_high = right_cube.origin[0] + MOUNT_X[right_cube.mount] + right_cube.size[0]
+            if abs(left_low + right_high) > 1e-6:
+                raise ValueError(
+                    f"{part.key}/{name}: 左右不镜像（左 x0={left_low:.3f}，右 x1={right_high:.3f}）"
+                )
+            if left_cube.size != right_cube.size or left_cube.origin[1:] != right_cube.origin[1:]:
+                raise ValueError(f"{part.key}/{name}: 左右 y/z/size 不一致")
+
+
+# ─── gatekit 差分自证 ───────────────────────────────────────────────────────
+# Round 2 的接触表只看本批新造的头盔/靴子；胸甲和护腿沿用既有模型，不让它们把本轮
+# 的门禁结果稀释掉。门本身必须配缺陷注入器，干净通过不是差分自证。
+GATE_MATS = {
+    "linen": (118, 108, 95),
+    "dark": (64, 52, 40),
+    "wrap": (178, 168, 150),
+    "rope": (85, 72, 54),
+    "bone": (210, 204, 185),
+}
+
+
+def _gate_material(cube: Cube) -> str:
+    if cube.uv == UV_LINEN_MAIN:
+        return "linen"
+    if cube.uv == UV_LINEN_DARK:
+        return "dark"
+    if cube.uv == UV_LINEN_WRAP:
+        return "wrap"
+    if cube.uv == UV_HEMP_ROPE:
+        return "rope"
+    if cube.uv == UV_BONE_RING:
+        return "bone"
+    raise ValueError(f"{cube.name}: 未知 uv {cube.uv}")
+
+
+def _world_box(cube: Cube) -> tuple[tuple[float, float], ...]:
+    offset = MOUNT_X[cube.mount]
+    origin = (cube.origin[0] + offset, cube.origin[1], cube.origin[2])
+    return tuple((origin[i], origin[i] + cube.size[i]) for i in range(3))
+
+
+def _cube_bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    box = _world_box(cube)
+    return tuple(axis[0] for axis in box), tuple(axis[1] for axis in box)
+
+
+def _gate_rig(all_parts: tuple[ArmorPart, ...]) -> Rig:
+    rig = Rig(GATE_MATS)
+    rig._linen_parts = tuple(all_parts)
+    for part in all_parts:
+        rig.bone(part.key, (0.0, 0.0, 0.0))
+        for cube in part.cubes:
+            low, high = _cube_bounds(cube)
+            rig.cube(part.key, cube.name, low, high, mat=_gate_material(cube))
+    return rig
+
+
+def build() -> Rig:
+    """供接触表与 gatekit 使用的头盔/靴子适配 Rig。"""
+    return _gate_rig((part_helmet(), part_boots()))
+
+
+def _gate_violations(rig: Rig, check) -> list[str]:
+    try:
+        check(rig._linen_parts)
+    except ValueError as exc:
+        return [str(exc)]
+    return []
+
+
+def _replace_gate_cube(rig: Rig, part_key: str, index: int, cube: Cube) -> Rig:
+    updated = []
+    found = False
+    for part in rig._linen_parts:
+        if part.key == part_key:
+            cubes = list(part.cubes)
+            cubes[index] = cube
+            part = replace(part, cubes=tuple(cubes))
+            found = True
+        updated.append(part)
+    if not found:
+        raise ValueError(f"gate rig 中没有 {part_key}")
+    rig._linen_parts = tuple(updated)
+    return rig
+
+
+def _inject_coplanar(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._linen_parts:
+        for first_index, first in enumerate(part.cubes):
+            low_a, high_a = _cube_bounds(first)
+            for second_index in range(first_index + 1, len(part.cubes)):
+                second = part.cubes[second_index]
+                low_b, high_b = _cube_bounds(second)
+                for axis in range(3):
+                    projection = 1.0
+                    for other in (k for k in range(3) if k != axis):
+                        projection *= max(
+                            0.0,
+                            min(high_a[other], high_b[other])
+                            - max(low_a[other], low_b[other]),
+                        )
+                    if projection <= 0.02:
+                        continue
+                    origin = list(second.origin)
+                    offset = MOUNT_X[second.mount] if axis == 0 else 0.0
+                    origin[axis] = high_a[axis] - second.size[axis] - offset
+                    _replace_gate_cube(r, part.key, second_index,
+                                       replace(second, origin=tuple(origin)))
+                    return r, second.name, f"把 {second.name} 的 {'xyz'[axis]} 面移到共面"
+    raise gatekit.InjectionImpossible("找不到可造共面且有投影重叠的 cube 对")
+
+
+def _inject_uv(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    part = r._linen_parts[0]
+    cube = part.cubes[0]
+    _replace_gate_cube(r, part.key, 0, replace(cube, uv=(TEXTURE_SIZE, TEXTURE_SIZE)))
+    return r, cube.name, f"把 {cube.name} 的 uv 移出 64×64 贴图"
+
+
+def _inject_mirror(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._linen_parts:
+        for index, cube in enumerate(part.cubes):
+            if cube.name.endswith("_left"):
+                moved = replace(cube, origin=(cube.origin[0] + 0.9, *cube.origin[1:]))
+                _replace_gate_cube(r, part.key, index, moved)
+                # 断言信息按成对基名报告（side_wrap），因此把同一基名交给
+                # gatekit 做命中核验；描述仍保留实际被注入的左件名称。
+                return r, cube.name[:-5], f"把 {cube.name} 单侧平移 0.9px"
+    raise gatekit.InjectionImpossible("没有参与镜像自检的件")
+
+
+class _LinenArmorGates(gatekit.AssetGates):
+    def specs(self):
+        return (
+            ("coplanar", "单件共面 / z-fighting",
+             lambda r: _gate_violations(r, _assert_no_coplanar_faces), _inject_coplanar),
+            ("uv_tiles", "box-UV 越出指定色块",
+             lambda r: _gate_violations(r, _assert_uv_tiles), _inject_uv),
+            ("mirror", "左右件不镜像",
+             lambda r: _gate_violations(r, _assert_mirror_symmetry), _inject_mirror),
+        )
+
+
+GATES = _LinenArmorGates("麻布甲头盔/靴子", GATE_MATS)
+
+
 def emit_java(part: ArmorPart) -> str:
     """输出 ArmorPartModel.java 格式。"""
     method = "".join(word.capitalize() for word in part.key.split("_"))
@@ -446,8 +765,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="生成麻布僧袍套装 3D 资产")
     parser.add_argument("--no-preview", action="store_true", help="只写 bbmodel/texture")
     parser.add_argument("--emit-java", action="store_true", help="打印 ArmorPartModel 用的 Java 代码")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="gatekit 差分自证：先注入缺陷再确认每道门能报出",
+    )
     parser.add_argument("--install", action="store_true", help="写入客户端正式资源目录")
     args = parser.parse_args()
+
+    if args.self_test:
+        raise SystemExit(GATES.self_test(build()))
 
     if args.emit_java:
         for part in parts():
