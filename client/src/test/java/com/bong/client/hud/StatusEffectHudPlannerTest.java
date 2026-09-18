@@ -1,5 +1,6 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.StatusEffectIcons;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.hud.svg.NanoSvgParser;
 import com.bong.client.hud.svg.SvgTessellator;
@@ -83,7 +84,7 @@ class StatusEffectHudPlannerTest {
     }
 
     private static String iconPath(String id) {
-        String path = StatusEffectHudPlanner.iconPathFor(id);
+        String path = StatusEffectIcons.textureFor(id);
         assertNotNull(path, "缺少状态图标映射: " + id);
         return path;
     }
