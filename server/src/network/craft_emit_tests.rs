@@ -81,6 +81,7 @@ fn registry_with_templates(templates: &[(&str, u32)]) -> ItemRegistry {
         .iter()
         .map(|(id, max_stack_count)| {
             let template = ItemTemplate {
+                quick_use: false,
                 id: (*id).to_string(),
                 display_name: (*id).to_string(),
                 category: ItemCategory::Misc,
