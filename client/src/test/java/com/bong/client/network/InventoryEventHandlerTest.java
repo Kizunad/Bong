@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -314,6 +315,68 @@ public class InventoryEventHandlerTest {
         assertTrue(after.gridItems().isEmpty(), "grid should be empty after move out");
         InventoryItem hotbarItem = after.hotbar().get(1);
         assertEquals(1001L, hotbarItem.instanceId());
+    }
+
+    @Test
+    void inventoryMutationPreservesActiveForgePreparationProjection() {
+        InventoryItem starter = InventoryItem.createFull(
+            1001L,
+            "starter_talisman",
+            "启程护符",
+            1,
+            1,
+            0.2,
+            "uncommon",
+            "初入修途者配发的护身符。",
+            1,
+            0.76,
+            0.93
+        );
+        InventoryItem prepared = InventoryItem.createFull(
+            2001L,
+            "mineral_fan_tie",
+            "凡铁",
+            1,
+            1,
+            1.0,
+            "common",
+            "锻造材料。",
+            2,
+            0.4,
+            1.0
+        );
+        net.minecraft.util.math.BlockPos station = new net.minecraft.util.math.BlockPos(12, 64, -4);
+        InventoryModel baseline = InventoryModel.builder()
+            .containers(InventoryModel.DEFAULT_CONTAINERS)
+            .gridItem(starter, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .materialPreparation("ling_feng_v0", station, java.util.List.of(prepared))
+            .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
+            {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1001,
+             "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+             "to":{"kind":"hotbar","index":1}}
+            """));
+
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+        InventoryModel after = InventoryStateStore.snapshot();
+        assertEquals(
+            "ling_feng_v0",
+            after.preparationRecipeId(),
+            "inventory event rebuild must preserve the active forge recipe"
+        );
+        assertEquals(
+            station,
+            after.preparationStation(),
+            "inventory event rebuild must preserve the forge station coordinate"
+        );
+        assertEquals(1, after.preparedMaterials().size());
+        assertSame(
+            prepared,
+            after.preparedMaterials().get(0),
+            "inventory event rebuild must preserve the prepared material projection"
+        );
     }
 
     @Test

@@ -334,8 +334,9 @@ fn handle_forge_station_open(
     };
     let session = station
         .session
-        .and_then(|id| state.forge_sessions.as_deref()?.get(id));
-    if session.is_some_and(|session| session.caster != player && !session.is_done()) {
+        .and_then(|id| state.forge_sessions.as_deref()?.get(id))
+        .filter(|session| !session.is_done());
+    if session.is_some_and(|session| session.caster != player) {
         client.send_chat_message("[炼器] 这座工位正在被其他人使用。");
         return;
     }

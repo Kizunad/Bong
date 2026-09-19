@@ -281,6 +281,14 @@ fn station_open_requires_reach_dimension_and_ownership_then_clears_stale_session
             other,
         ))
         .id();
+    let stale_session_id = ForgeSessionId(7);
+    app.world_mut()
+        .get_mut::<WeaponForgeStation>(station)
+        .unwrap()
+        .session = Some(stale_session_id);
+    let mut sessions = ForgeSessions::new();
+    sessions.insert(session(7, other, ForgeStep::Done, 0));
+    app.insert_resource(sessions);
 
     for (owner, x, dimension, allowed) in [
         (other, 0.0, DimensionKind::Overworld, false),
