@@ -114,6 +114,14 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_LEG, -2.25f, 10.15f);
         assertPinnedTable("mutated_bone_boots", 42, ArmorPartModel.Mount.LEFT_FOOT, -1.5f, -0.48f,
             ArmorPartModel.Mount.RIGHT_FOOT, -3.18f, 2.25f);
+        assertPinnedTable("spirit_cloth_helmet", 23, ArmorPartModel.Mount.HEAD, -4.55f, 31.15f,
+            ArmorPartModel.Mount.HEAD, -0.18f, 29.72f);
+        assertPinnedTable("spirit_cloth_chestplate", 30, ArmorPartModel.Mount.BODY, -4.28f, 12.42f,
+            ArmorPartModel.Mount.BODY, -8.18f, 19.2f);
+        assertPinnedTable("spirit_cloth_leggings", 30, ArmorPartModel.Mount.LEFT_LEG, -1.82f, 10.3f,
+            ArmorPartModel.Mount.RIGHT_LEG, -1.94f, 0.62f);
+        assertPinnedTable("spirit_cloth_boots", 44, ArmorPartModel.Mount.LEFT_FOOT, -1.75f, -0.48f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -2.99f, 2.18f);
     }
 
     @Test
@@ -150,7 +158,11 @@ class ArmorPartModelTest {
             Map.entry("mutated_bone_helmet", "0ea2ea6242f70c8f"),
             Map.entry("mutated_bone_chestplate", "2a058cfa4a764396"),
             Map.entry("mutated_bone_leggings", "f47aa63362b0c328"),
-            Map.entry("mutated_bone_boots", "51b834878a05e123")
+            Map.entry("mutated_bone_boots", "51b834878a05e123"),
+            Map.entry("spirit_cloth_helmet", "16bb668cef6fa861"),
+            Map.entry("spirit_cloth_chestplate", "dff15d76995792eb"),
+            Map.entry("spirit_cloth_leggings", "ea3e09593196d382"),
+            Map.entry("spirit_cloth_boots", "fda07e04a3ec0f2e")
         );
 
         assertEquals(expected.keySet(), ArmorPartModel.modelKeys(), "digest 表必须覆盖全部运行时模型");

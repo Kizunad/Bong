@@ -25,8 +25,8 @@ class ArmorModelRegistryTest {
 
     @Test
     void registryContainsMaterialsAcrossAllFourSlots() {
-        assertEquals(32, ArmorModelRegistry.size(), "8 套 ModelPart 材质 × 4 槽必须恰好注册 32 件");
-        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen", "mutated_bone"}) {
+        assertEquals(36, ArmorModelRegistry.size(), "9 套 ModelPart 材质 × 4 槽必须恰好注册 36 件");
+        for (String material : new String[]{"iron", "bone", "copper", "hide", "scroll_wrap", "straw", "linen", "mutated_bone", "spirit_cloth"}) {
             assertSpec(material, "helmet", EquipSlotType.HEAD);
             assertSpec(material, "chestplate", EquipSlotType.CHEST);
             assertSpec(material, "leggings", EquipSlotType.LEGS);
@@ -48,10 +48,10 @@ class ArmorModelRegistryTest {
     @Test
     void allReturnsUnmodifiableSnapshotWithoutRegistryMutationBackdoor() {
         List<ArmorModelRegistry.ArmorModelSpec> snapshot = ArmorModelRegistry.all();
-        assertEquals(32, snapshot.size(), "快照必须保留全部 32 个注册项");
+        assertEquals(36, snapshot.size(), "快照必须保留全部 36 个注册项");
         assertThrows(UnsupportedOperationException.class, snapshot::clear,
             "all() 必须返回不可修改快照，调用方不得通过 clear/remove 篡改全局注册表");
-        assertEquals(32, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
+        assertEquals(36, ArmorModelRegistry.size(), "修改快照失败后全局注册表仍须完整");
     }
 
     @Test
@@ -108,9 +108,9 @@ class ArmorModelRegistryTest {
     }
 
     @Test
-    void unregisteredMaterialsKeepLeatherFallback() {
-        assertTrue(ArmorModelRegistry.get("armor_spirit_cloth_helmet").isEmpty(),
-            "灵布甲尚无专属 ModelPart，必须保持未注册以继续走染色皮甲兜底");
+    void spiritClothUsesModelPartWithLeatherTintFallbackData() {
+        assertTrue(ArmorModelRegistry.get("armor_spirit_cloth_helmet").isPresent(),
+            "灵布甲四件应注册专属 ModelPart，不得继续落回默认模型");
         assertNotNull(ArmorTintRegistry.item("armor_spirit_cloth_helmet"));
     }
 
@@ -147,6 +147,8 @@ class ArmorModelRegistryTest {
                 ArmorModelRegistry.get("armor_straw_" + piece).orElseThrow();
             ArmorModelRegistry.ArmorModelSpec mutatedBone =
                 ArmorModelRegistry.get("armor_mutated_bone_" + piece).orElseThrow();
+            ArmorModelRegistry.ArmorModelSpec spiritCloth =
+                ArmorModelRegistry.get("armor_spirit_cloth_" + piece).orElseThrow();
 
             assertNotEquals(ArmorPartModel.cubes(iron.modelKey()), ArmorPartModel.cubes(bone.modelKey()),
                 piece + " 的铁/骨 cube 轮廓必须不同");
@@ -184,6 +186,20 @@ class ArmorModelRegistryTest {
                 piece + " 的异变骨甲/骨 cube 轮廓必须不同");
             assertNotEquals(ArmorPartModel.cubes(mutatedBone.modelKey()), ArmorPartModel.cubes(straw.modelKey()),
                 piece + " 的异变骨甲/草甲 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(iron.modelKey()),
+                piece + " 的灵布/铁 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(bone.modelKey()),
+                piece + " 的灵布/骨 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(copper.modelKey()),
+                piece + " 的灵布/铜 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(hide.modelKey()),
+                piece + " 的灵布/兽皮 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(scrollWrap.modelKey()),
+                piece + " 的灵布/残卷 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(straw.modelKey()),
+                piece + " 的灵布/草甲 cube 轮廓必须不同");
+            assertNotEquals(ArmorPartModel.cubes(spiritCloth.modelKey()), ArmorPartModel.cubes(mutatedBone.modelKey()),
+                piece + " 的灵布/异变骨甲 cube 轮廓必须不同");
 
             assertTrue(Files.mismatch(texturePath(iron), texturePath(bone)) >= 0,
                 piece + " 的铁/骨贴图不得字节相同");
@@ -195,6 +211,8 @@ class ArmorModelRegistryTest {
                 piece + " 的草甲/铁贴图不得字节相同");
             assertTrue(Files.mismatch(texturePath(mutatedBone), texturePath(iron)) >= 0,
                 piece + " 的异变骨甲/铁贴图不得字节相同");
+            assertTrue(Files.mismatch(texturePath(spiritCloth), texturePath(iron)) >= 0,
+                piece + " 的灵布/铁贴图不得字节相同");
 
             String hideId = "armor_hide_" + piece;
             assertTrue(ArmorModelRegistry.get(hideId).isPresent(), hideId + " 应走兽皮专属 ModelPart");
@@ -210,15 +228,20 @@ class ArmorModelRegistryTest {
             String mutatedBoneId = "armor_mutated_bone_" + piece;
             assertTrue(ArmorModelRegistry.get(mutatedBoneId).isPresent(),
                 mutatedBoneId + " 应走异变骨甲专属 ModelPart");
+
+            String spiritClothId = "armor_spirit_cloth_" + piece;
+            assertTrue(ArmorModelRegistry.get(spiritClothId).isPresent(),
+                spiritClothId + " 应走灵布衫专属 ModelPart");
         }
 
-        assertEquals(5, Set.of(
+        assertEquals(6, Set.of(
             ArmorTintRegistry.tintForItemId("armor_iron_chestplate"),
             ArmorTintRegistry.tintForItemId("armor_bone_chestplate"),
             ArmorTintRegistry.tintForItemId("armor_copper_chestplate"),
             ArmorTintRegistry.tintForItemId("armor_hide_chestplate"),
-            ArmorTintRegistry.tintForItemId("armor_scroll_wrap_chestplate")
-        ).size(), "铁、骨、铜、皮、残卷染色兜底必须保留不同色相");
+            ArmorTintRegistry.tintForItemId("armor_scroll_wrap_chestplate"),
+            ArmorTintRegistry.tintForItemId("armor_spirit_cloth_chestplate")
+        ).size(), "铁、骨、铜、皮、残卷、灵布染色兜底必须保留不同色相");
     }
 
     private static void assertSpec(String material, String piece, EquipSlotType expectedSlot) {
