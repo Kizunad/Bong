@@ -275,16 +275,17 @@ fn apply_persisted_quick_slot_bind(
     item_registry: &ItemRegistry,
     combat_clock: &CombatClock,
 ) -> bool {
-    let Ok(mut bindings) = bindings_q.get_mut(pending.entity) else {
-        tracing::debug!(
-            entity = ?pending.entity,
-            request_id = %pending.request_id,
-            "dropping persisted quick_slot_bind completion for a missing entity"
-        );
-        return false;
-    };
-    let _ = bindings.set(pending.slot as u8, pending.instance_id);
-    drop(bindings);
+    {
+        let Ok(mut bindings) = bindings_q.get_mut(pending.entity) else {
+            tracing::debug!(
+                entity = ?pending.entity,
+                request_id = %pending.request_id,
+                "dropping persisted quick_slot_bind completion for a missing entity"
+            );
+            return false;
+        };
+        let _ = bindings.set(pending.slot as u8, pending.instance_id);
+    }
 
     if let Some(desired_skill_slot) = pending.desired_skill_slot.as_ref() {
         let Ok(mut skillbar) = skillbar_bindings_q.get_mut(pending.entity) else {
@@ -320,6 +321,7 @@ fn apply_persisted_quick_slot_bind(
 }
 
 /// 在 handler 之后运行，每帧只做零等待写入；锁仍在时保留队首，下一帧重试。
+#[allow(clippy::too_many_arguments)] // Bevy system signature: one query/resource per completion concern.
 pub fn flush_quick_slot_prefs_writes(
     persistence: Option<Res<PlayerStatePersistence>>,
     mut queue: Option<ResMut<QuickSlotPrefsWriteQueue>>,
