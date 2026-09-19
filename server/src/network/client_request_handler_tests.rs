@@ -8743,7 +8743,7 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn quick_slot_bind_ack_is_not_blocked_by_sqlite_busy() {
+        fn quick_slot_bind_ack_waits_for_sqlite_busy_write_to_commit() {
             let unique = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system clock should be after unix epoch")
@@ -8795,13 +8795,16 @@ mod external_ingress_tests {
                     .get::<QuickSlotBindings>(entity)
                     .expect("quick-slot component should remain present")
                     .get(1),
-                Some(88),
-                "runtime binding should be accepted while durable prefs wait for the lock"
+                None,
+                "runtime binding must wait until durable prefs commit after a BUSY write"
             );
-            assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
-                config.ack_request_id.as_deref() == Some("busy-bind")
-                    && config.bind_accepted == Some(true)
-            }));
+            assert!(
+                !collect_quickslot_configs(&mut helper).iter().any(|config| {
+                    config.ack_request_id.as_deref() == Some("busy-bind")
+                        && config.bind_accepted == Some(true)
+                }),
+                "BUSY must not emit bind_accepted=true before durable prefs commit"
+            );
             assert_eq!(
                 app.world()
                     .resource::<QuickSlotPrefsWriteQueue>()
@@ -8815,6 +8818,7 @@ mod external_ingress_tests {
                 .execute_batch("ROLLBACK")
                 .expect("test writer lock should release");
             app.update();
+            flush_all_client_packets(&mut app);
             assert_eq!(
                 app.world()
                     .resource::<QuickSlotPrefsWriteQueue>()
@@ -8823,6 +8827,18 @@ mod external_ingress_tests {
                 0,
                 "queued prefs should flush after the SQLite writer lock releases"
             );
+            assert_eq!(
+                app.world()
+                    .get::<QuickSlotBindings>(entity)
+                    .expect("quick-slot component should remain present")
+                    .get(1),
+                Some(88),
+                "runtime binding should commit with the durable write"
+            );
+            assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
+                config.ack_request_id.as_deref() == Some("busy-bind")
+                    && config.bind_accepted == Some(true)
+            }));
             let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
             let prefs_json: String = connection
                 .query_row(

@@ -203,7 +203,8 @@ pub struct AlchemyMockState {
 /// `quick_slot_bind` 的持久化补偿队列。
 ///
 /// 请求路径只做一次零等待 SQLite 写入；若数据库正被另一个合法写事务占用，
-/// 运行时绑定和 ACK 仍然可以在当前 ECS 帧完成，偏好更新留在这里由后续帧重试。
+/// 完整绑定请求留在这里由后续帧重试，避免阻塞当前 ECS 帧。只有持久化成功后才提交
+/// 运行时绑定并发送 `bind_accepted=true` ACK，保证 ACK 的“已持久化并提交”契约。
 /// 队列项按收到顺序处理，避免同一玩家连续绑定时旧写入覆盖新写入。
 #[derive(Debug, Default, Resource)]
 pub(crate) struct QuickSlotPrefsWriteQueue {
@@ -212,10 +213,14 @@ pub(crate) struct QuickSlotPrefsWriteQueue {
 
 #[derive(Debug, Clone)]
 struct PendingQuickSlotPrefsWrite {
+    entity: Entity,
+    request_id: String,
     username: String,
     slot: usize,
     item_id: Option<String>,
     skill_bar: Option<SkillSlotPersist>,
+    instance_id: Option<u64>,
+    desired_skill_slot: Option<SkillSlot>,
 }
 
 impl QuickSlotPrefsWriteQueue {
@@ -260,12 +265,74 @@ impl PendingQuickSlotPrefsWrite {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn apply_persisted_quick_slot_bind(
+    pending: &PendingQuickSlotPrefsWrite,
+    bindings_q: &mut Query<&mut QuickSlotBindings>,
+    skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    item_registry: &ItemRegistry,
+    combat_clock: &CombatClock,
+) -> bool {
+    let Ok(mut bindings) = bindings_q.get_mut(pending.entity) else {
+        tracing::debug!(
+            entity = ?pending.entity,
+            request_id = %pending.request_id,
+            "dropping persisted quick_slot_bind completion for a missing entity"
+        );
+        return false;
+    };
+    let _ = bindings.set(pending.slot as u8, pending.instance_id);
+    drop(bindings);
+
+    if let Some(desired_skill_slot) = pending.desired_skill_slot.as_ref() {
+        let Ok(mut skillbar) = skillbar_bindings_q.get_mut(pending.entity) else {
+            tracing::debug!(
+                entity = ?pending.entity,
+                request_id = %pending.request_id,
+                "dropping persisted quick_slot_bind completion without a skill-bar component"
+            );
+            return false;
+        };
+        let _ = skillbar.set(pending.slot as u8, desired_skill_slot.clone());
+    }
+
+    send_quick_slot_bind_response(
+        pending.entity,
+        pending.request_id.clone(),
+        true,
+        bindings_q,
+        inventories,
+        item_registry,
+        combat_clock,
+        clients,
+    );
+    tracing::info!(
+        entity = ?pending.entity,
+        slot = pending.slot,
+        request_id = %pending.request_id,
+        item_id = ?pending.item_id,
+        instance = ?pending.instance_id,
+        "quick_slot_bind persisted and accepted"
+    );
+    true
+}
+
 /// 在 handler 之后运行，每帧只做零等待写入；锁仍在时保留队首，下一帧重试。
 pub fn flush_quick_slot_prefs_writes(
     persistence: Option<Res<PlayerStatePersistence>>,
     mut queue: Option<ResMut<QuickSlotPrefsWriteQueue>>,
+    mut bindings_q: Query<&mut QuickSlotBindings>,
+    mut skillbar_bindings_q: Query<&mut SkillBarBindings>,
+    inventories: Query<&mut PlayerInventory>,
+    mut clients: Query<(&Username, &mut Client)>,
+    item_registry: Option<Res<ItemRegistry>>,
+    combat_clock: Option<Res<CombatClock>>,
 ) {
-    let (Some(persistence), Some(mut queue)) = (persistence, queue.take()) else {
+    let (Some(persistence), Some(mut queue), Some(item_registry), Some(combat_clock)) =
+        (persistence, queue.take(), item_registry, combat_clock)
+    else {
         return;
     };
 
@@ -276,14 +343,24 @@ pub fn flush_quick_slot_prefs_writes(
             break;
         };
         match pending.persist_without_waiting(&persistence) {
-            Ok(_) => {}
+            Ok(_) => {
+                let _ = apply_persisted_quick_slot_bind(
+                    &pending,
+                    &mut bindings_q,
+                    &mut skillbar_bindings_q,
+                    &inventories,
+                    &mut clients,
+                    &item_registry,
+                    &combat_clock,
+                );
+            }
             Err(error) if is_sqlite_busy_error(&error) => {
                 queue.pending.push_front(pending);
                 break;
             }
             Err(error) => {
-                // 非 BUSY 错误不是瞬时竞争；保留数据并等待数据库恢复，避免 ACK 已
-                // 成功但 durable 偏好被静默丢弃。每帧最多尝试一次队首，故不会阻塞 ECS。
+                // 非 BUSY 错误不是瞬时竞争；保留完整请求并等待数据库恢复，避免
+                // 绑定状态与 durable 偏好分叉。每帧最多尝试一次队首，故不会阻塞 ECS。
                 tracing::warn!(
                     "[bong][network] queued quick_slot_bind persistence retry failed: {error}"
                 );
@@ -3047,22 +3124,26 @@ fn handle_quick_slot_bind(
         None
     };
     let pending_prefs_write = PendingQuickSlotPrefsWrite {
+        entity,
+        request_id: request_id.clone(),
         username: username.clone(),
         slot: slot as usize,
         item_id: persisted_item_id,
         skill_bar: persisted_skill_bar,
+        instance_id,
+        desired_skill_slot: desired_skill_slot.clone(),
     };
     if let Some(persistence) = persistence {
         let persistence_result = if let Some(prefs_queue) = prefs_queue {
             if prefs_queue.has_pending_for(username.as_str()) {
                 prefs_queue.push(pending_prefs_write);
-                Ok(())
+                return;
             } else {
                 match pending_prefs_write.persist_without_waiting(persistence) {
                     Ok(_) => Ok(()),
                     Err(error) if is_sqlite_busy_error(&error) => {
                         prefs_queue.push(pending_prefs_write);
-                        Ok(())
+                        return;
                     }
                     Err(error) => Err(error),
                 }
@@ -3090,31 +3171,14 @@ fn handle_quick_slot_bind(
             return;
         }
     }
-    let mut bindings = bindings_q
-        .get_mut(entity)
-        .expect("quick-slot component was preflighted in the same system");
-    let _ = bindings.set(slot, instance_id);
-    if let Some(desired_skill_slot) = desired_skill_slot {
-        let mut skillbar = skillbar_bindings_q
-            .get_mut(entity)
-            .expect("skill-bar component was preflighted in the same system");
-        let _ = skillbar.set(slot, desired_skill_slot);
-    }
-    send_quick_slot_bind_response(
-        entity,
-        request_id.clone(),
-        true,
+    let _ = apply_persisted_quick_slot_bind(
+        &pending_prefs_write,
         bindings_q,
+        skillbar_bindings_q,
         inventories,
+        clients,
         item_registry,
         combat_clock,
-        clients,
-    );
-    tracing::info!(
-        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} request_id={} item_id={:?} → instance={:?} mirror_skillbar={mirror_block_to_skillbar} cleared_old_mirror={clears_old_auto_mirror}",
-        request_id,
-        item_id,
-        instance_id
     );
 }
 
