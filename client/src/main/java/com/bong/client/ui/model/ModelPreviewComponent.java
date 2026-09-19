@@ -114,11 +114,33 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
             failure = "模型加载失败，请选择其他模型";
             BongClient.LOGGER.error("模型预览失败：{}", option.id(), renderFailure);
         } finally {
+            restoreRenderState(context, shaderColor, depth, blending);
+        }
+    }
+
+    /**
+     * Restores every global render state even when an earlier restoration step fails.
+     * This stays nested instead of using UiPreviewCleanup because draw() runs every frame
+     * and a varargs cleanup call would allocate on the render hot path.
+     */
+    private static void restoreRenderState(OwoUIDrawContext context, float[] shaderColor,
+                                           boolean depth, boolean blending) {
+        try {
             context.disableScissor();
-            DiffuseLighting.enableGuiDepthLighting();
-            RenderSystem.setShaderColor(shaderColor[0], shaderColor[1], shaderColor[2], shaderColor[3]);
-            if (depth) RenderSystem.enableDepthTest(); else RenderSystem.disableDepthTest();
-            if (blending) RenderSystem.enableBlend(); else RenderSystem.disableBlend();
+        } finally {
+            try {
+                DiffuseLighting.enableGuiDepthLighting();
+            } finally {
+                try {
+                    RenderSystem.setShaderColor(shaderColor[0], shaderColor[1], shaderColor[2], shaderColor[3]);
+                } finally {
+                    try {
+                        if (depth) RenderSystem.enableDepthTest(); else RenderSystem.disableDepthTest();
+                    } finally {
+                        if (blending) RenderSystem.enableBlend(); else RenderSystem.disableBlend();
+                    }
+                }
+            }
         }
     }
 
