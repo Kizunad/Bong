@@ -60,12 +60,37 @@ impl Default for PlayerState {
 pub(crate) struct PlayerUiPrefs {
     #[serde(default)]
     pub dash_skill_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_quick_slot_instances")]
     pub quick_slots: [Option<u64>; QuickSlotBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_bar: [SkillSlotPersist; SkillBarBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_configs: BTreeMap<String, SkillConfig>,
+}
+
+fn deserialize_quick_slot_instances<'de, D>(
+    deserializer: D,
+) -> Result<[Option<u64>; QuickSlotBindings::SLOT_COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PersistedQuickSlot {
+        Instance(u64),
+        LegacyTemplate(String),
+    }
+
+    let entries: [Option<PersistedQuickSlot>; QuickSlotBindings::SLOT_COUNT] =
+        Deserialize::deserialize(deserializer)?;
+    Ok(entries.map(|entry| match entry {
+        Some(PersistedQuickSlot::Instance(instance_id)) => Some(instance_id),
+        Some(PersistedQuickSlot::LegacyTemplate(legacy_template)) => {
+            let _ = legacy_template;
+            None
+        }
+        None => None,
+    }))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

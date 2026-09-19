@@ -271,8 +271,11 @@ final class UiWindowPreviewScene implements UiPreviewScene {
 
     @Override
     public void cleanup() {
-        UiWindowRuntime.manager().reset();
-        InventoryStateStore.replace(InventoryModel.empty());
-        UiWindowRuntime.endPreview();
+        try {
+            UiWindowRuntime.manager().reset();
+            InventoryStateStore.replace(InventoryModel.empty());
+        } finally {
+            UiWindowRuntime.endPreview();
+        }
     }
 }
