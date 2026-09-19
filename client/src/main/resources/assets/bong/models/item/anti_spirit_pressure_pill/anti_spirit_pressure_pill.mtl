@@ -1,0 +1,10 @@
+# anti_spirit_pressure_pill materials -- source bbmodel atlas
+
+newmtl anti_spirit_pressure_pill_atlas
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/anti_spirit_pressure_pill/atlas
