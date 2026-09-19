@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成异兽刺骨甲（mutated_bone_armor）胸甲与护腿 bbmodel、64x64 UV 贴图与真实三视图预览。
+"""生成异兽刺骨甲（mutated_bone_armor）四件 bbmodel、64x64 UV 贴图与真实三视图预览。
 
 配方对应异变兽骨（bone_chip_mat / mutated_bone_shard）+ 熟皮革带（tanned_hide_strap / dark_leather）+ 粗布内衬（rough_cloth）。
 设计原则（对齐 worldview §四「截脉/震爆流」与 §十「异兽骨骼载体」）：
@@ -12,6 +12,10 @@
 - 护腿 (Leggings)：
   - 小腿正面：纵向弧形异兽胫骨护胫（shinbone greaves）+ 纵向骨脊 + 膝下防撞骨节 + 三道交叉绑腿皮绳。
   - 大腿/侧腰：大腿双层皮质固定环带 + 外侧加固骨扣。
+- 头盔 (Helmet)：
+  - 贴头分段颅盖、眉骨中脊、双侧太阳穴/护耳骨片与后脑脊骨，不做宽平顶硬壳。
+- 靴子 (Boots)：
+  - 前伸趾甲、收窄后跟、分层脚背与开口胫筒，配皮绳固定和外侧骨刺，明确读出脚的前后。
 
 运行时真相是 client 的 ArmorPartModel.CUBE_TABLES，本文件的 --emit-java
 可直接输出该表的 Java 字面量。
@@ -20,7 +24,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import random
+from dataclasses import replace
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -28,7 +34,15 @@ from PIL import Image, ImageDraw
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "core"))
-from bbmodel_maker.model.armor_model_common import ArmorPart, Cube, TEXTURE_SIZE, write_material_assets
+from bbmodel_maker.gates import gatekit
+from bbmodel_maker.model.armor_model_common import (
+    ArmorPart,
+    Cube,
+    MOUNT_X,
+    TEXTURE_SIZE,
+    write_material_assets,
+)
+from bbmodel_maker.rig.rigkit import Rig
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MODELS = Path(__file__).resolve().parents[1] / "models"
@@ -219,6 +233,128 @@ def part_chestplate() -> ArmorPart:
     )
 
 
+# ─── 头盔 (HELMET) ────────────────────────────────────────────────────────────
+# 头盒 x∈[-4,4] y∈[24,32] z∈[-4,4]，脸朝 -z。颅盖只在头顶分段贴合，
+# 侧护耳收在 x=±4.75、y≈24.35；前缘不越过 -z=5，避免做成宽平顶面具。
+
+
+def _helmet_crown() -> tuple[Cube, ...]:
+    """贴头分段颅盖：左右骨板、前后搭接与一条窄中脊。"""
+    return (
+        c("HEAD", "crown_left", (-4.55, 29.55, -2.90), (1.35, 2.55, 5.50), UV_BONE_MAIN),
+        c("HEAD", "crown_right", (3.20, 29.55, -2.90), (1.35, 2.55, 5.50), UV_BONE_MAIN),
+        c("HEAD", "crown_center_front", (-1.75, 30.25, -3.65), (3.50, 1.65, 1.45), UV_BONE_MAIN),
+        c("HEAD", "crown_center_back", (-1.55, 30.15, -2.00), (3.10, 1.50, 4.55), UV_BONE_MAIN),
+        c("HEAD", "crown_ridge", (-0.55, 31.55, -2.25), (1.10, 0.65, 3.50), UV_SKULL_ACCENT),
+    )
+
+
+def _helmet_brow() -> tuple[Cube, ...]:
+    """眉骨与额中骨：分成左右承重段，中间用窄骨脊连接。"""
+    return (
+        c("HEAD", "brow_left", (-4.25, 28.10, -4.65), (3.50, 1.15, 0.80), UV_BONE_MAIN),
+        c("HEAD", "brow_right", (0.75, 28.10, -4.65), (3.50, 1.15, 0.80), UV_BONE_MAIN),
+        c("HEAD", "brow_keel", (-0.55, 28.00, -4.82), (1.10, 2.00, 0.65), UV_SKULL_ACCENT),
+        # 前额带要吃进眉骨一点：只贴边会在 SIDE 视角读成悬空薄片。
+        c("HEAD", "brow_lash_front", (-4.70, 27.95, -4.72), (9.40, 0.30, 0.30), UV_LEATHER_STRAP),
+    )
+
+
+def _helmet_side_plates() -> tuple[Cube, ...]:
+    """太阳穴到耳下的连续侧骨片；不在头的前后四角另立柱。"""
+    return (
+        c("HEAD", "temple_left", (-4.60, 26.55, -3.65), (0.80, 3.10, 3.20), UV_BONE_MAIN),
+        c("HEAD", "temple_right", (3.80, 26.55, -3.65), (0.80, 3.10, 3.20), UV_BONE_MAIN),
+        c("HEAD", "ear_guard_left", (-4.75, 24.35, -3.30), (0.75, 4.00, 2.60), UV_SKULL_ACCENT),
+        c("HEAD", "ear_guard_right", (4.00, 24.35, -3.30), (0.75, 4.00, 2.60), UV_SKULL_ACCENT),
+        c("HEAD", "jaw_tip_left", (-4.80, 24.45, -3.55), (0.55, 1.00, 1.10), UV_BONE_MAIN),
+        c("HEAD", "jaw_tip_right", (4.25, 24.45, -3.55), (0.55, 1.00, 1.10), UV_BONE_MAIN),
+    )
+
+
+def _helmet_rear_and_fasteners() -> tuple[Cube, ...]:
+    """后脑骨脊与皮绳固定件，给颅盖明确的前后收束。"""
+    return (
+        c("HEAD", "rear_rail", (-3.65, 28.75, 3.75), (7.30, 1.00, 0.55), UV_BONE_MAIN),
+        c("HEAD", "rear_spine", (-0.70, 27.55, 3.60), (1.40, 1.90, 0.55), UV_SKULL_ACCENT),
+        # 后脑带与后轨保持少量体积交叠，避免侧视出现一条断开的细片。
+        c("HEAD", "rear_lash", (-4.10, 28.65, 4.12), (8.20, 0.30, 0.25), UV_LEATHER_STRAP),
+        # 绑带左右各吃入护耳 0.03 格；仍是细固定件，但不悬在侧面。
+        c("HEAD", "ear_binding_left", (-5.00, 25.70, -2.95), (0.28, 0.40, 1.85), UV_LEATHER_STRAP),
+        c("HEAD", "ear_binding_right", (4.72, 25.70, -2.95), (0.28, 0.40, 1.85), UV_LEATHER_STRAP),
+        c("HEAD", "ear_spur_left", (-5.10, 26.15, -1.90), (0.40, 0.80, 0.80), UV_SKULL_ACCENT),
+        c("HEAD", "ear_spur_right", (4.70, 26.15, -1.90), (0.40, 0.80, 0.80), UV_SKULL_ACCENT),
+    )
+
+
+def part_helmet() -> ArmorPart:
+    return ArmorPart(
+        "mutated_bone_helmet",
+        "MUTATED BONE HELMET",
+        _helmet_crown() + _helmet_brow() + _helmet_side_plates() + _helmet_rear_and_fasteners(),
+    )
+
+
+# ─── 靴子 (BOOTS) ────────────────────────────────────────────────────────────
+# 脚 mount 的局部 x/z 与 y=0 脚底约定沿用既有 bone armor；前方为 -z。
+
+
+def _boot_cubes(mount: str, sign: float) -> tuple[Cube, ...]:
+    """一只异兽骨靴：趾甲前伸、后跟收窄，胫筒四片围合但保留顶部开口。"""
+    side = "left" if sign > 0 else "right"
+    outward_clearance = 0.45
+
+    def x(inner: float, width: float) -> float:
+        return inner + outward_clearance if sign > 0 else -inner - width - outward_clearance
+
+    def c2(
+        name: str,
+        origin: tuple[float, float, float],
+        size: tuple[float, float, float],
+        uv: tuple[int, int] = UV_BONE_MAIN,
+    ) -> Cube:
+        return c(mount, f"{name}_{side}", origin, size, uv)
+
+    return (
+        # 分段鞋底：前掌更长、后跟更短，先建立脚的方向性。
+        c2("sole_toe", (x(-1.95, 3.90), -0.48, -4.02), (3.90, 0.55, 2.10), UV_SKULL_ACCENT),
+        c2("sole_mid", (x(-1.85, 3.70), -0.43, -1.82), (3.70, 0.50, 2.00), UV_BONE_MAIN),
+        c2("sole_heel", (x(-1.65, 3.30), -0.36, 0.25), (3.30, 0.55, 2.30), UV_SKULL_ACCENT),
+        c2("sole_front_rim", (x(-2.05, 4.10), 0.02, -4.18), (4.10, 0.38, 0.36), UV_LEATHER_STRAP),
+        c2("sole_back_rim", (x(-1.70, 3.40), 0.03, 2.52), (3.40, 0.36, 0.32), UV_LEATHER_STRAP),
+
+        # 趾甲与脚背骨板：前端只在 -z 伸出，不做前后对称木箱。
+        c2("toe_claw_center", (x(-0.55, 1.10), 0.08, -4.48), (1.10, 1.00, 1.20), UV_BONE_MAIN),
+        c2("toe_claw_outer", (x(0.78, 0.62), 0.12, -4.15), (0.62, 0.88, 0.95), UV_SKULL_ACCENT),
+        c2("vamp_front", (x(-1.70, 3.40), 0.10, -3.34), (3.40, 1.00, 1.82), UV_BONE_MAIN),
+        c2("vamp_back", (x(-1.55, 3.10), 0.24, -1.54), (3.10, 1.18, 1.48), UV_CLOTH_LINING),
+        c2("vamp_ridge", (x(-1.02, 2.04), 1.03, -3.72), (2.04, 0.42, 0.48), UV_SKULL_ACCENT),
+        c2("heel_plate", (x(-1.45, 2.90), 0.20, 1.76), (2.90, 1.72, 0.68), UV_BONE_MAIN),
+
+        # 胫筒前后和两侧骨片围住脚踝，顶部保持开口并露出内衬。
+        c2("shaft_front", (x(-1.65, 3.30), 1.30, -1.94), (3.30, 3.00, 0.56), UV_BONE_MAIN),
+        c2("shaft_back", (x(-1.60, 3.20), 1.30, 1.48), (3.20, 3.00, 0.52), UV_BONE_MAIN),
+        c2("shaft_outer", (x(1.72, 0.42), 1.30, -1.62), (0.42, 3.00, 3.20), UV_SKULL_ACCENT),
+        c2("shaft_inner", (x(-1.66, 0.34), 1.34, -1.58), (0.34, 3.00, 3.12), UV_CLOTH_LINING),
+        c2("shaft_top_front", (x(-1.72, 3.44), 4.45, -2.00), (3.44, 0.38, 0.34), UV_LEATHER_STRAP),
+        c2("shaft_top_back", (x(-1.66, 3.32), 4.45, 1.54), (3.32, 0.38, 0.32), UV_LEATHER_STRAP),
+
+        # 踝部皮绳与外侧骨刺让固定逻辑延续胸甲/护腿，而非只剩一块骨盒。
+        c2("ankle_lash_front", (x(-1.78, 3.56), 1.48, -2.12), (3.56, 0.34, 0.28), UV_LEATHER_STRAP),
+        c2("ankle_lash_back", (x(-1.72, 3.44), 1.52, 1.72), (3.44, 0.34, 0.26), UV_LEATHER_STRAP),
+        c2("ankle_lash_outer", (x(1.80, 0.28), 1.50, -1.82), (0.28, 0.34, 3.60), UV_LEATHER_STRAP),
+        c2("ankle_spur", (x(2.05, 0.68), 2.25, -1.35), (0.68, 0.90, 0.88), UV_SKULL_ACCENT),
+    )
+
+
+def part_boots() -> ArmorPart:
+    return ArmorPart(
+        "mutated_bone_boots",
+        "MUTATED BONE BOOTS",
+        _boot_cubes("LEFT_FOOT", 1.0) + _boot_cubes("RIGHT_FOOT", -1.0),
+    )
+
+
 # ─── 护腿 (LEGGINGS) ──────────────────────────────────────────────────────────
 # 腿盒局部坐标 x∈[-2,2], y∈[0,12], z∈[-2,2]，骨骼枢轴在 y=12。
 # 左右腿独立分侧 (LEFT_LEG: x_offset=+1.9, RIGHT_LEG: x_offset=-1.9)。
@@ -266,7 +402,7 @@ def part_leggings() -> ArmorPart:
 
 
 def parts() -> tuple[ArmorPart, ...]:
-    return part_chestplate(), part_leggings()
+    return part_helmet(), part_chestplate(), part_leggings(), part_boots()
 
 
 # ─── 贴图生成 (64x64 异兽骨、粗麻布与熟皮材质) ──────────────────────────────────
@@ -379,6 +515,215 @@ def _assert_no_coplanar_faces(all_parts: tuple[ArmorPart, ...]) -> None:
                             )
 
 
+UV_TILES = {
+    UV_BONE_MAIN: (32, 32),
+    UV_CLOTH_LINING: (32, 32),
+    UV_LEATHER_STRAP: (32, 32),
+    UV_SKULL_ACCENT: (32, 32),
+}
+
+
+def _assert_uv_tiles(all_parts: tuple[ArmorPart, ...]) -> None:
+    """每只 box 的展开面必须留在其声明的材质象限内。"""
+    for part in all_parts:
+        for cube in part.cubes:
+            tile = UV_TILES.get(cube.uv)
+            if tile is None:
+                raise ValueError(f"{part.key}/{cube.name}: uv {cube.uv} 不在 UV_TILES")
+            tile_w, tile_h = tile
+            sx, sy, sz = cube.size
+            if 2 * (sx + sz) > tile_w + 1e-6 or sy + sz > tile_h + 1e-6:
+                raise ValueError(
+                    f"{part.key}/{cube.name}: box-UV {2 * (sx + sz):.2f}×{sy + sz:.2f} "
+                    f"超出 {tile_w}×{tile_h} 色块"
+                )
+
+
+def _assert_mirror_symmetry(all_parts: tuple[ArmorPart, ...]) -> None:
+    """头盔/双靴的左右件必须关于世界中线镜像。"""
+    for part in all_parts:
+        if part.key not in {"mutated_bone_helmet", "mutated_bone_boots"}:
+            continue
+        by_name = {cube.name: cube for cube in part.cubes}
+        left = {name[:-5]: cube for name, cube in by_name.items() if name.endswith("_left")}
+        right = {name[:-6]: cube for name, cube in by_name.items() if name.endswith("_right")}
+        if set(left) != set(right):
+            raise ValueError(f"{part.key}: 左右件名不成对 {set(left) ^ set(right)}")
+        for name, left_cube in left.items():
+            right_cube = right[name]
+            left_low = left_cube.origin[0] + MOUNT_X[left_cube.mount]
+            right_high = right_cube.origin[0] + MOUNT_X[right_cube.mount] + right_cube.size[0]
+            if abs(left_low + right_high) > 1e-6:
+                raise ValueError(
+                    f"{part.key}/{name}: 左右不镜像（左 x0={left_low:.3f}，右 x1={right_high:.3f}）"
+                )
+            if left_cube.size != right_cube.size or left_cube.origin[1:] != right_cube.origin[1:]:
+                raise ValueError(f"{part.key}/{name}: 左右 y/z/size 不一致")
+
+
+def _assert_helmet_front_projection(all_parts: tuple[ArmorPart, ...]) -> None:
+    """头盔任何前缘不得越过 -z=5，避免裸甲和玩家脸部穿插。"""
+    helmet = next((part for part in all_parts if part.key == "mutated_bone_helmet"), None)
+    if helmet is None:
+        raise ValueError("缺少 mutated_bone_helmet，无法核对前缘")
+    for cube in helmet.cubes:
+        if cube.origin[2] < -5.0 - 1e-6:
+            raise ValueError(
+                f"mutated_bone_helmet/{cube.name} 前缘 z={cube.origin[2]:.2f}，超过 -5.00"
+            )
+
+
+# ─── gatekit 差分自证 ───────────────────────────────────────────────────────
+# 接触表只看本批新造的头盔/靴子；每道门都必须先注入坏几何再证明自己能报错。
+GATE_MATS = {
+    "bone": (224, 216, 198),
+    "cloth": (138, 124, 106),
+    "leather": (64, 46, 34),
+    "skull": (118, 52, 42),
+}
+
+
+def _gate_material(cube: Cube) -> str:
+    if cube.uv == UV_BONE_MAIN:
+        return "bone"
+    if cube.uv == UV_CLOTH_LINING:
+        return "cloth"
+    if cube.uv == UV_LEATHER_STRAP:
+        return "leather"
+    if cube.uv == UV_SKULL_ACCENT:
+        return "skull"
+    raise ValueError(f"{cube.name}: 未知 uv {cube.uv}")
+
+
+def _world_box(cube: Cube) -> tuple[tuple[float, float], ...]:
+    offset = MOUNT_X[cube.mount]
+    origin = (cube.origin[0] + offset, cube.origin[1], cube.origin[2])
+    return tuple((origin[i], origin[i] + cube.size[i]) for i in range(3))
+
+
+def _cube_bounds(cube: Cube) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    box = _world_box(cube)
+    return tuple(axis[0] for axis in box), tuple(axis[1] for axis in box)
+
+
+def _gate_rig(all_parts: tuple[ArmorPart, ...]) -> Rig:
+    rig = Rig(GATE_MATS)
+    rig._mutated_bone_parts = tuple(all_parts)
+    for part in all_parts:
+        rig.bone(part.key, (0.0, 0.0, 0.0))
+        for cube in part.cubes:
+            low, high = _cube_bounds(cube)
+            rig.cube(part.key, cube.name, low, high, mat=_gate_material(cube))
+    return rig
+
+
+def build() -> Rig:
+    """供接触表与 gatekit 使用的头盔/靴子适配 Rig。"""
+    return _gate_rig((part_helmet(), part_boots()))
+
+
+def _gate_violations(rig: Rig, check) -> list[str]:
+    try:
+        check(rig._mutated_bone_parts)
+    except ValueError as exc:
+        return [str(exc)]
+    return []
+
+
+def _replace_gate_cube(rig: Rig, part_key: str, index: int, cube: Cube) -> Rig:
+    updated = []
+    found = False
+    for part in rig._mutated_bone_parts:
+        if part.key == part_key:
+            cubes = list(part.cubes)
+            cubes[index] = cube
+            part = replace(part, cubes=tuple(cubes))
+            found = True
+        updated.append(part)
+    if not found:
+        raise ValueError(f"gate rig 中没有 {part_key}")
+    rig._mutated_bone_parts = tuple(updated)
+    return rig
+
+
+def _inject_coplanar(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._mutated_bone_parts:
+        for first_index, first in enumerate(part.cubes):
+            low_a, high_a = _cube_bounds(first)
+            for second_index in range(first_index + 1, len(part.cubes)):
+                second = part.cubes[second_index]
+                low_b, high_b = _cube_bounds(second)
+                for axis in range(3):
+                    projection = 1.0
+                    for other in (k for k in range(3) if k != axis):
+                        projection *= max(
+                            0.0,
+                            min(high_a[other], high_b[other])
+                            - max(low_a[other], low_b[other]),
+                        )
+                    if projection <= 0.02:
+                        continue
+                    origin = list(second.origin)
+                    offset = MOUNT_X[second.mount] if axis == 0 else 0.0
+                    origin[axis] = high_a[axis] - second.size[axis] - offset
+                    _replace_gate_cube(
+                        r,
+                        part.key,
+                        second_index,
+                        replace(second, origin=tuple(origin)),
+                    )
+                    return r, second.name, f"把 {second.name} 的 {'xyz'[axis]} 面移到共面"
+    raise gatekit.InjectionImpossible("找不到可造共面且有投影重叠的 cube 对")
+
+
+def _inject_uv(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    part = r._mutated_bone_parts[0]
+    cube = part.cubes[0]
+    _replace_gate_cube(r, part.key, 0, replace(cube, uv=(TEXTURE_SIZE, TEXTURE_SIZE)))
+    return r, cube.name, f"把 {cube.name} 的 uv 移出 64×64 贴图"
+
+
+def _inject_mirror(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    for part in r._mutated_bone_parts:
+        for index, cube in enumerate(part.cubes):
+            if cube.name.endswith("_left"):
+                moved = replace(cube, origin=(cube.origin[0] + 0.9, *cube.origin[1:]))
+                _replace_gate_cube(r, part.key, index, moved)
+                return r, cube.name[:-5], f"把 {cube.name} 单侧平移 0.9 格"
+    raise gatekit.InjectionImpossible("没有参与镜像自检的件")
+
+
+def _inject_front(rig: Rig, **_) -> tuple[Rig, str, str]:
+    r = copy.deepcopy(rig)
+    part = next(part for part in r._mutated_bone_parts if part.key == "mutated_bone_helmet")
+    for index, cube in enumerate(part.cubes):
+        if cube.name == "brow_keel":
+            moved = replace(cube, origin=(cube.origin[0], cube.origin[1], -5.2))
+            _replace_gate_cube(r, part.key, index, moved)
+            return r, cube.name, "把 brow_keel 前移到脸部禁区"
+    raise gatekit.InjectionImpossible("缺少 brow_keel")
+
+
+class _MutatedBoneArmorGates(gatekit.AssetGates):
+    def specs(self):
+        return (
+            ("coplanar", "单件共面 / z-fighting",
+             lambda r: _gate_violations(r, _assert_no_coplanar_faces), _inject_coplanar),
+            ("uv_tiles", "box-UV 越出指定色块",
+             lambda r: _gate_violations(r, _assert_uv_tiles), _inject_uv),
+            ("mirror", "左右件不镜像",
+             lambda r: _gate_violations(r, _assert_mirror_symmetry), _inject_mirror),
+            ("front_projection", "头盔前缘越过脸部禁区",
+             lambda r: _gate_violations(r, _assert_helmet_front_projection), _inject_front),
+        )
+
+
+GATES = _MutatedBoneArmorGates("异变骨甲头盔/靴子", GATE_MATS)
+
+
 def emit_java(all_parts: tuple[ArmorPart, ...]) -> str:
     """生成注入 ArmorPartModel.java 的字面量。"""
     lines = []
@@ -404,16 +749,44 @@ def emit_java(all_parts: tuple[ArmorPart, ...]) -> str:
     return "\n".join(lines)
 
 
-def generate(render_previews: bool = True) -> dict[str, Path]:
+def cube_digest(part: ArmorPart) -> str:
+    """复刻 ArmorPartModelTest.cubeDigest 的 FNV-1a，免得手抄 pin 值。"""
+    import struct
+
+    def fnv1a(hash_value: int, value: int) -> int:
+        for _ in range(4):
+            hash_value ^= value & 0xFF
+            hash_value = (hash_value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+            value >>= 8
+        return hash_value
+
+    def bits(value: float) -> int:
+        return struct.unpack("<I", struct.pack("<f", value))[0]
+
+    mounts = ["HEAD", "BODY", "LEFT_LEG", "RIGHT_LEG", "LEFT_FOOT", "RIGHT_FOOT"]
+    digest = 0xCBF29CE484222325
+    for cube in part.cubes:
+        digest = fnv1a(digest, mounts.index(cube.mount))
+        for value in (*cube.origin, *cube.size):
+            digest = fnv1a(digest, bits(value))
+        digest = fnv1a(digest, cube.uv[0])
+        digest = fnv1a(digest, cube.uv[1])
+    return f"{digest:016x}"
+
+
+def generate(render_previews: bool = True, install: bool = False) -> dict[str, Path]:
     all_parts = parts()
     _assert_no_coplanar_faces(all_parts)
+    _assert_uv_tiles(all_parts)
+    _assert_mirror_symmetry(all_parts)
+    _assert_helmet_front_projection(all_parts)
     texture = make_texture()
     outputs = write_material_assets(
         MATERIAL,
         all_parts,
         texture,
         LOCAL_MODELS,
-        CLIENT_TEXTURE_ROOT,
+        CLIENT_TEXTURE_ROOT if install else DRAFT_TEXTURE_ROOT,
         PREVIEW_ROOT,
         render_previews,
     )
@@ -435,13 +808,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="生成异兽刺骨甲 3D 程序化资产与贴图。")
     parser.add_argument("--no-preview", action="store_true", help="跳过三视图渲染")
     parser.add_argument("--emit-java", action="store_true", help="输出 ArmorPartModel Java 代码")
+    parser.add_argument("--self-test", action="store_true", help="gatekit 差分自证")
+    parser.add_argument("--install", action="store_true", help="写入客户端正式资源目录")
     args = parser.parse_args()
+
+    if args.self_test:
+        raise SystemExit(GATES.self_test(build()))
 
     if args.emit_java:
         print(emit_java(parts()))
         return
 
-    outputs = generate(render_previews=not args.no_preview)
+    outputs = generate(render_previews=not args.no_preview, install=args.install)
     for key, path in outputs.items():
         print(f"[{key}] {path.relative_to(REPO)}")
 
