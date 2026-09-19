@@ -208,9 +208,10 @@ pub struct AlchemyMockState {
 /// 队列项按收到顺序处理，避免同一玩家连续绑定时旧写入覆盖新写入。
 ///
 /// 队列当前有意不设容量上限：宁可保留完整请求并让客户端等待 durable 状态，也不在
-/// 数据库故障时丢请求或伪造成功/拒绝回执。永久性故障会使队列无界增长；当前运维信号
-/// 是 flush 路径每次重试产生的 `queued quick_slot_bind persistence retry failed` WARN，
-/// 因而可能逐帧刷屏。若将来要设上限，必须先定义明确的丢弃/失败回执契约。
+/// 数据库故障时丢请求或伪造成功/拒绝回执。永久性故障会使队列无界增长；非 BUSY 错误的
+/// 当前运维信号是 flush 路径每次重试产生的 `queued quick_slot_bind persistence retry failed`
+/// WARN，因而可能逐帧刷屏；BUSY/LOCKED 分支目前只重排队、不打日志，也没有专用指标，
+/// 所以永久 BUSY 的增长暂时没有这个信号。若将来要设上限，必须先定义明确的丢弃/失败回执契约。
 #[derive(Debug, Default, Resource)]
 pub(crate) struct QuickSlotPrefsWriteQueue {
     pending: VecDeque<PendingQuickSlotPrefsWrite>,
