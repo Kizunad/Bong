@@ -136,6 +136,12 @@ export const ForgeBlueprintEntryV1 = Type.Object(
     display_name: Type.String(),
     tier_cap: Type.Integer({ minimum: 1, maximum: 4 }),
     step_count: Type.Integer({ minimum: 0 }),
+    output_item: Type.String(),
+    steps: Type.Array(ForgeStep),
+    required_materials: Type.Array(Type.Object({
+      material: Type.String(),
+      count: Type.Integer({ minimum: 1 }),
+    }, { additionalProperties: false })),
   },
   { additionalProperties: false },
 );
@@ -151,6 +157,7 @@ export const WeaponForgeStationDataV1 = Type.Object(
     integrity: Type.Number({ minimum: 0, maximum: 1 }),
     owner_name: Type.String(),
     has_session: Type.Boolean(),
+    open_screen: Type.Boolean(),
     // plan-forge-session-entry-wiring-v1 §4.1#3（新发现连带缺口）—— 砧方块坐标。
     // U 键全局打开的 ForgeScreen 没有 station 上下文，client 必须从本 payload 拿到
     // pos 才能在起炉时发出 ForgeStartSession.station_pos（与 alchemy furnace_pos 同模式）。

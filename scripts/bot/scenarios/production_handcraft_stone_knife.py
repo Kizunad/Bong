@@ -15,6 +15,7 @@
 """
 
 import time
+from bot.scenarios._craft_helpers import stage_material
 
 from bot.scenarios._inventory_helpers import wait_inventory_contains, wait_join_and_inventory
 from bot.scenarios._combat_helpers import last_event_time
@@ -38,6 +39,8 @@ def run(env) -> None:
         wait_inventory_contains(bot, "wood_handle")
         time.sleep(1.0)  # 材料发现解锁跑一个 inventory tick
 
+        stage_material(bot, RECIPE_ID, "stone_chunk")
+        stage_material(bot, RECIPE_ID, "wood_handle")
         anchor = last_event_time(bot)
         bot.intent({"type": "craft_start", "v": 1, "recipe_id": RECIPE_ID})
 

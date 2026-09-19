@@ -24,7 +24,16 @@ public final class ForgeBlueprintBookHandler implements ServerDataHandler {
                     String name = entry.has("display_name") ? entry.get("display_name").getAsString() : "";
                     int tierCap = entry.has("tier_cap") ? entry.get("tier_cap").getAsInt() : 1;
                     int stepCount = entry.has("step_count") ? entry.get("step_count").getAsInt() : 0;
-                    entries.add(new BlueprintScrollStore.Entry(id, name, tierCap, stepCount));
+                    var steps = new ArrayList<String>();
+                    for (var step : entry.getAsJsonArray("steps")) steps.add(step.getAsString());
+                    var materials = new ArrayList<BlueprintScrollStore.Material>();
+                    for (var raw : entry.getAsJsonArray("required_materials")) {
+                        var material = raw.getAsJsonObject();
+                        materials.add(new BlueprintScrollStore.Material(material.get("material").getAsString(),
+                            material.get("count").getAsInt()));
+                    }
+                    entries.add(new BlueprintScrollStore.Entry(id, name, tierCap, stepCount,
+                        entry.get("output_item").getAsString(), steps, materials));
                 }
             }
             int idx = p.has("current_index") ? p.get("current_index").getAsInt() : 0;

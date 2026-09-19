@@ -38,6 +38,12 @@ public final class ForgeOutcomeHandler implements ServerDataHandler {
             ForgeOutcomeStore.replace(new ForgeOutcomeStore.Snapshot(
                 sessionId, bpId, bucket, weapon, quality, color,
                 sideFx.toString(), tier, flawed));
+            var session = com.bong.client.forge.state.ForgeSessionStore.snapshot();
+            if (session.sessionId() == sessionId) {
+                com.bong.client.forge.state.ForgeSessionStore.replace(
+                    new com.bong.client.forge.state.ForgeSessionStore.Snapshot(sessionId, bpId,
+                        session.blueprintName(), false, "done", session.stepIndex(), tier, "{}"));
+            }
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied forge_outcome snapshot (session=" + sessionId + " bucket=" + bucket + ")");
         } catch (RuntimeException e) {

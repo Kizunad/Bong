@@ -4,6 +4,8 @@ import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryModel;
 import io.wispforest.owo.ui.component.LabelComponent;
+import io.wispforest.owo.ui.component.Components;
+import io.wispforest.owo.ui.component.ButtonComponent;
 import io.wispforest.owo.ui.container.FlowLayout;
 import io.wispforest.owo.ui.container.ScrollContainer;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -16,13 +18,26 @@ public final class InventoryContainerContent {
     private final FlowLayout root;
     private BackpackGridPanel grid;
     private InventoryModel model;
+    private final Runnable returnPreparation;
 
-    public InventoryContainerContent(FlowLayout root) { this.root = root; }
+    public InventoryContainerContent(FlowLayout root, Runnable returnPreparation) {
+        this.root = root;
+        this.returnPreparation = returnPreparation;
+    }
 
     public void bind(InventoryContainerWindows windows, String id) {
         var next = windows.grid(id);
         if (windows.snapshot() == model && next == grid) return;
         model = windows.snapshot();
+        var preparation = root.childById(FlowLayout.class, "container-preparation");
+        preparation.clearChildren();
+        if (model.preparationStation() != null && !model.preparedMaterials().isEmpty()) {
+            var button = Components.button(Text.literal("取回未开炉材料"), ignored -> returnPreparation.run());
+            button.sizing(Sizing.fill(100), Sizing.fixed(22));
+            button.textShadow(false);
+            button.renderer(ButtonComponent.Renderer.flat(0xFF463C32, 0xFF705B43, 0xFF252320));
+            preparation.child(button);
+        }
         if (next != grid) {
             var slot = root.childById(FlowLayout.class, "container-grid");
             slot.clearChildren();

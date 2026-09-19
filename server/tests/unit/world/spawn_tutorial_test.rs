@@ -96,6 +96,7 @@ fn registry_missing_meridian_primer() -> ItemRegistry {
 
 fn empty_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {

@@ -722,6 +722,7 @@ mod integration_tests {
             owner_instance_id: None,
         };
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![container],

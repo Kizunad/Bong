@@ -400,6 +400,7 @@ def _player_state(data: bytes) -> dict[str, Any]:
 def _inventory_snapshot(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     equipped = _message(fields, 4)
+    preparation = _message(fields, 12)
     return {
         "v": 1,
         "type": "inventory_snapshot",
@@ -414,6 +415,11 @@ def _inventory_snapshot(data: bytes) -> dict[str, Any]:
         "qi_current": _double(fields, 9),
         "qi_max": _double(fields, 10),
         "body_level": _double(fields, 11),
+        "material_preparation": {
+            "recipe_id": _string(preparation, 1) or None,
+            "station_pos": [_int32(_message(preparation, 3), axis) for axis in (1, 2, 3)] if _message(preparation, 3) else None,
+            "materials": [_item_view(_fields(raw)) for raw in _messages(preparation, 2)],
+        },
     }
 
 
@@ -1821,6 +1827,7 @@ def _forge_station(data: bytes) -> dict[str, Any]:
         "owner_name": _string(fields, 4),
         "has_session": bool(_varint(fields, 5)),
         "pos": [_int32(fields, 6), _int32(fields, 7), _int32(fields, 8)],
+        "open_screen": bool(_varint(fields, 9)),
     }
 
 
@@ -1942,6 +1949,10 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
                 "display_name": _string(entry, 2),
                 "tier_cap": _varint(entry, 3),
                 "step_count": _varint(entry, 4),
+                "output_item": _string(entry, 5),
+                "steps": [raw.decode("utf-8") for raw in _messages(entry, 6)],
+                "required_materials": [{"material": _string(_fields(raw), 1), "count": _varint(_fields(raw), 2)}
+                                       for raw in _messages(entry, 7)],
             }
         )
     return {

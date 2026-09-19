@@ -68,10 +68,9 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
         lastFrame = now;
         if (!client.isWindowFocused() || client.currentScreen == null) dragging = false;
         camera.advance(elapsed);
-        context.fillGradient(x, y, x + width, y + height, 0xFF0B1219, 0xFF202F36);
-        context.drawRectOutline(x, y, width, height, 0xFF40515A);
+        drawBackdrop(context);
         context.draw();
-        if (client.world == null) { message(context, "进入世界后可预览模型"); return; }
+        if (client.world == null && option.item() == null) { message(context, "进入世界后可预览模型"); return; }
         if (failure != null) { message(context, failure); return; }
         boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
         boolean blending = GL11.glIsEnabled(GL11.GL_BLEND);
@@ -120,6 +119,11 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
             if (depth) RenderSystem.enableDepthTest(); else RenderSystem.disableDepthTest();
             if (blending) RenderSystem.enableBlend(); else RenderSystem.disableBlend();
         }
+    }
+
+    protected void drawBackdrop(OwoUIDrawContext context) {
+        context.fillGradient(x, y, x + width, y + height, 0xFF0B1219, 0xFF202F36);
+        context.drawRectOutline(x, y, width, height, 0xFF40515A);
     }
 
     protected void prepareCamera(Box bounds) {}

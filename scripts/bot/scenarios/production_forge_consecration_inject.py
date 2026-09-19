@@ -210,6 +210,8 @@ def run(env) -> None:
 
         # ── 起炉受理：sui_tie×3 原子扣料 → billet ────────────────────────
         anchor = last_event_time(bot)
+        from bot.scenarios._craft_helpers import stage_material
+        stage_material(bot, BLUEPRINT_ID, SUI_TIE_ITEM_ID, station_pos)
         _forge_start_session(bot, station_pos, BLUEPRINT_ID, [(SUI_TIE_ID, 3)])
         session_payload = _wait_forge_payload_after(
             bot,

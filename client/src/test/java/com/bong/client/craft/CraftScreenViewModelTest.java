@@ -35,6 +35,7 @@ class CraftScreenViewModelTest {
     void rejectsInvalidIdentityAndNullStateParts() {
         assertThrows(IllegalArgumentException.class, () -> new CraftScreenViewModel(
             -1L,
+            0L,
             CraftScreenViewModel.Change.INITIAL,
             List.of(),
             InventoryModel.empty(),
@@ -43,6 +44,7 @@ class CraftScreenViewModelTest {
             Optional.empty()
         ));
         assertThrows(NullPointerException.class, () -> new CraftScreenViewModel(
+            0L,
             0L,
             null,
             List.of(),
@@ -56,6 +58,7 @@ class CraftScreenViewModelTest {
     private static CraftScreenViewModel model(long revision, List<CraftRecipe> recipes) {
         return new CraftScreenViewModel(
             revision,
+            0L,
             CraftScreenViewModel.Change.INITIAL,
             recipes,
             InventoryModel.empty(),

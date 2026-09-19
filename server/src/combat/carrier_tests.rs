@@ -82,6 +82,7 @@ fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
         SlotContents::held_single(item(7, template_id)),
     );
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: Vec::new(),

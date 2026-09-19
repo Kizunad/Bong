@@ -15,6 +15,9 @@
                                     <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
                                     <text> </text><color>#A6AFA8</color>
                                 </label>
+                                <flow-layout id="container-preparation" direction="vertical">
+                                    <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                                </flow-layout>
                                 <scroll id="container-horizontal" direction="horizontal">
                                     <flow-layout id="container-grid" direction="vertical">
                                         <sizing><horizontal method="content" /><vertical method="content" /></sizing>

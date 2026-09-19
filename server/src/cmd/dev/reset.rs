@@ -521,6 +521,7 @@ mod tests {
         );
 
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![ContainerState {

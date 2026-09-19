@@ -953,6 +953,7 @@ mod tests {
 
     fn empty_inventory_8x8() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -1001,6 +1002,7 @@ mod tests {
     /// `add_item_to_player_inventory_or_ground` 的地面 fallback 分支。
     fn full_1x1_inventory_blocking(occupant_template_id: &str) -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -1877,6 +1879,7 @@ mod tests {
         // 与正常收获走同一套 add_item_to_player_inventory_inner，保证 merge 字段完全对齐,
         // 从而真正测的是"已满且无法再合并"而不是"模板不同没法合并"。
         let mut inventory = PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {

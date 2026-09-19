@@ -58,6 +58,7 @@ fn inv_with(items: &[(&str, u32)]) -> PlayerInventory {
         })
         .collect();
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers: vec![ContainerState {
@@ -717,6 +718,16 @@ fn crafting_pending_then_heartbeat_zone_inflow_preserves_total_and_skips_full_zo
         .insert(QiColor::default())
         .remove::<Position>();
     let player = player_entity.id();
+    {
+        let recipe = app
+            .world()
+            .resource::<CraftRegistry>()
+            .get(&RecipeId::new("craft.tool.workbench"))
+            .unwrap()
+            .clone();
+        let mut inventory = app.world_mut().get_mut::<PlayerInventory>(player).unwrap();
+        crate::craft::preparation::stage_material(&mut inventory, &recipe, 1).unwrap();
+    }
     let player_account = QiAccountId::player(canonical_player_id("Azure"));
     let full_account = QiAccountId::zone("full_zone");
     let sink_account = QiAccountId::zone("craft_sink");

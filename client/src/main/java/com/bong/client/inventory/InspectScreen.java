@@ -7,7 +7,7 @@ import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.block.BlockVanillaIconMap;
-import com.bong.client.craft.CraftScreen;
+import com.bong.client.craft.CraftContext;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.hud.SwordBondHudState;
@@ -58,7 +58,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_CULTIVATION = 1;
     private static final int TAB_PRACTICE = 2;
     private static final int TAB_CRAFT = 3;
-    private static final String[] TAB_NAMES = {"随身", "修仙", "修习", "手搓"};
+    private static final String[] TAB_NAMES = {"随身", "修仙", "修习", "制作"};
     private static final int ACTION_TOAST_OK = 0xFFA8E6CF;
     private static final int ACTION_TOAST_WARN = 0xFFFFAA55;
     private static final long ACTION_TOAST_MS = 2_200L;
@@ -283,7 +283,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
 
-        // Tab 4: 手搓入口。完整三栏布局在独立 CraftScreen，避免挤进 172px 左栏。
+        // 手搓标签只负责打开窗口，业务会话不属于 Inspect Screen。
         craftTabContent = buildCraftTabEntryContent();
         leftCol.child(craftTabContent);
         craftTabContent.positioning(Positioning.absolute(-9999, -9999));
@@ -435,11 +435,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         panel.surface(Surface.flat(0xFF12121C).and(Surface.outline(0xFF4A4050)));
         panel.cursorStyle(CursorStyle.HAND);
 
-        LabelComponent title = Components.label(Text.literal("手搓台"));
+        LabelComponent title = Components.label(Text.literal("制作"));
         title.color(Color.ofArgb(0xFFE8DDC4));
         panel.child(title);
 
-        LabelComponent hint = Components.label(Text.literal("C 打开手搓台"));
+        LabelComponent hint = Components.label(Text.literal("随身制作"));
         hint.color(Color.ofArgb(0xFFA8A8B8));
         hint.maxWidth(160);
         panel.child(hint);
@@ -478,10 +478,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void openCraftScreen() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null) {
-            client.setScreen(new CraftScreen());
-        }
+        UiWindowRuntime.openCraft(CraftContext.HANDCRAFT);
     }
 
     private void hydrateQuickUseFromStore() {
@@ -1583,6 +1580,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // plan-rotate-v1 — 同样要在 drop() 复位前捕获旋转奇偶标志；仅网格落位出口透传，
         // 非网格目标（装备槽 / hotbar / 快捷栏 / 丢弃 / loot 外部容器）恒发 false。
         boolean dropRotated = dragState.draggedRotated();
+
+        if (UiWindowRuntime.dropWorkstationMaterial(mouseX, mouseY, dragState.originalDraggedItem())) {
+            // 拖起只修改了本地格子。先恢复投影，再由服务端快照原子地移到材料区。
+            returnDragToSource();
+            clearAllHighlights();
+            return;
+        }
 
         if (UiWindowRuntime.hit(mouseX, mouseY) && !UiWindowRuntime.loadoutSlotAt(mouseX, mouseY)) {
             var grid = UiWindowRuntime.containerGridAt(mouseX, mouseY);

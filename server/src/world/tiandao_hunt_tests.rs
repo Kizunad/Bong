@@ -182,6 +182,7 @@ fn tiandao_zhenfa_production_app() -> (App, Entity) {
 fn deceive_heaven_test_inventory() -> PlayerInventory {
     const ZHENFA_FLAG_ITEM_ID_FOR_TEST: &str = "array_flag";
     let mut inventory = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {

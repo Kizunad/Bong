@@ -294,8 +294,7 @@ final class UiPreviewSession {
 
     private static boolean templatesLoaded() {
         try {
-            OwoXmlTemplateRegistry.production().require("craft");
-            OwoXmlTemplateRegistry.production().require("craft-compact");
+            OwoXmlTemplateRegistry.production().require("craft-window");
             OwoXmlTemplateRegistry.production().require("terminate");
             OwoXmlTemplateRegistry.production().require("coffin-menu");
             OwoXmlTemplateRegistry.production().require("repair");

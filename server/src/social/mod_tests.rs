@@ -99,6 +99,7 @@ fn trade_test_item(instance_id: u64, name: &str) -> ItemInstance {
 
 fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {
@@ -124,6 +125,7 @@ fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
 
 fn empty_trade_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {

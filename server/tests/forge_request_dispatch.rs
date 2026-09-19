@@ -127,6 +127,7 @@ fn inscription_inventory() -> PlayerInventory {
         hotbar,
         bone_coins: 0,
         max_weight: 99.0,
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
     }
 }
@@ -144,8 +145,17 @@ fn session(id: u64, caster: Entity, step: ForgeStep, step_index: usize) -> Forge
 }
 
 #[test]
-fn forge_extractor_accepts_exactly_eight_variants_and_preserves_all_fields() {
+fn forge_extractor_preserves_request_fields() {
     let cases = [
+        (
+            ClientRequestV1::ForgeStationOpen {
+                v: 1,
+                station_pos: (-2, 64, 3),
+            },
+            ForgeRequest::StationOpen {
+                station_pos: (-2, 64, 3),
+            },
+        ),
         (
             ClientRequestV1::ForgeStationPlace {
                 v: 1,
@@ -242,6 +252,99 @@ fn forge_extractor_accepts_exactly_eight_variants_and_preserves_all_fields() {
             Some(expected),
             "Forge extractor must preserve the complete payload for every Forge variant"
         );
+    }
+}
+
+#[test]
+fn station_open_requires_reach_dimension_and_ownership_then_clears_stale_session_before_open() {
+    use bong_server::forge::station::WeaponForgeStation;
+    use bong_server::schema::proto_gen::bong::{server_data_envelope::Payload, ServerDataEnvelope};
+    use bong_server::world::dimension::{CurrentDimension, DimensionKind};
+    use prost::Message;
+    use valence::prelude::{BlockPos, Position};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::create_mock_client;
+
+    let mut app = forge_dispatch_app();
+    let (bundle, mut helper) = create_mock_client("ForgeOwner");
+    let player = app.world_mut().spawn(bundle).id();
+    app.world_mut().entity_mut(player).insert((
+        Position::new(valence::math::DVec3::new(0.0, 64.0, 0.0)),
+        CurrentDimension(DimensionKind::Overworld),
+    ));
+    let other = app.world_mut().spawn_empty().id();
+    let station = app
+        .world_mut()
+        .spawn(WeaponForgeStation::placed(
+            BlockPos::new(2, 64, 0),
+            2,
+            other,
+        ))
+        .id();
+    let stale_session_id = ForgeSessionId(7);
+    app.world_mut()
+        .get_mut::<WeaponForgeStation>(station)
+        .unwrap()
+        .session = Some(stale_session_id);
+    let mut sessions = ForgeSessions::new();
+    sessions.insert(session(7, other, ForgeStep::Done, 0));
+    app.insert_resource(sessions);
+
+    for (owner, x, dimension, allowed) in [
+        (other, 0.0, DimensionKind::Overworld, false),
+        (player, 20.0, DimensionKind::Overworld, false),
+        (player, 0.0, DimensionKind::Tsy, false),
+        (player, f64::NAN, DimensionKind::Overworld, false),
+        (player, 0.0, DimensionKind::Overworld, true),
+    ] {
+        app.world_mut()
+            .get_mut::<WeaponForgeStation>(station)
+            .unwrap()
+            .owner = Some(owner);
+        app.world_mut()
+            .get_mut::<Position>(player)
+            .unwrap()
+            .set(valence::math::DVec3::new(x, 64.0, 0.0));
+        app.world_mut()
+            .get_mut::<CurrentDimension>(player)
+            .unwrap()
+            .0 = dimension;
+        app.world_mut().resource_mut::<PendingForgeBatch>().0.push((
+            player,
+            ForgeRequest::StationOpen {
+                station_pos: (2, 64, 0),
+            },
+        ));
+        app.update();
+        app.world_mut()
+            .get_mut::<Client>(player)
+            .unwrap()
+            .flush_packets()
+            .unwrap();
+        let payloads: Vec<_> = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != "bong:server_data" {
+                    return None;
+                }
+                ServerDataEnvelope::decode(packet.data.0 .0).ok()?.payload
+            })
+            .collect();
+        if allowed {
+            assert!(
+                matches!(&payloads[0], Payload::ForgeSession(session) if session.session_id == 0 && !session.active),
+                "空工位必须先清除上个工位的会话"
+            );
+            assert!(
+                matches!(payloads.last(), Some(Payload::ForgeStation(station)) if station.open_screen),
+                "窗口只在状态全部就绪后打开"
+            );
+        } else {
+            assert!(payloads.is_empty(), "无权或不可达工位不得下发开窗数据");
+        }
     }
 }
 

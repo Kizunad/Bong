@@ -20,6 +20,7 @@ public final class CraftProgressBar {
         root.gap(2);
         label = Components.label(Text.literal("未开始"));
         label.color(Color.ofArgb(0xFFB8B8C8));
+        label.horizontalSizing(Sizing.fill(100));
         root.child(label);
 
         FlowLayout track = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(9));

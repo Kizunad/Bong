@@ -122,6 +122,16 @@ pub struct CraftCancelIntent {
     pub caster: Entity,
 }
 
+#[derive(Debug, Clone, Event)]
+pub struct MaterialMoveIntent {
+    pub caster: Entity,
+    pub recipe_id: RecipeId,
+    pub instance_id: Option<u64>,
+    pub station_pos: Option<(i32, i32, i32)>,
+    pub returning: bool,
+    pub expected_revision: u64,
+}
+
 /// plan-craft-v1 P3 §0 设计轴心 —— 三渠道解锁通用 intent。
 ///
 /// 各 source plan（inventory ItemUse / social NPC dialog / cultivation

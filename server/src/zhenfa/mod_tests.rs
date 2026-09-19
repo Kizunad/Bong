@@ -957,6 +957,7 @@ fn pearl_registry() -> ItemRegistry {
 
 fn empty_inventory() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {

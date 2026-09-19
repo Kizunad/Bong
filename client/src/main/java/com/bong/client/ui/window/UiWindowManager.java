@@ -87,7 +87,7 @@ public final class UiWindowManager {
     }
 
     private boolean startDrag(WindowState state, double x, double y) {
-        if (state == null || !state.definition().supports(UiWindowDefinition.Capability.WINDOW)) {
+        if (state == null || !editable(state)) {
             return false;
         }
         dragging = true;
@@ -162,6 +162,7 @@ public final class UiWindowManager {
     public synchronized boolean pin(WindowKey key, boolean pinned) {
         WindowState state = windows.get(key);
         if (!editable(state)) return false;
+        if (state.definition.supports(UiWindowDefinition.Capability.STATION)) return false;
         state.pinned = pinned;
         return true;
     }
@@ -194,6 +195,7 @@ public final class UiWindowManager {
     private static boolean editable(WindowState state) {
         return state != null && !state.definition.supports(UiWindowDefinition.Capability.SYSTEM)
             && (state.definition.supports(UiWindowDefinition.Capability.WINDOW)
+                || state.definition.supports(UiWindowDefinition.Capability.STATION)
                 || state.definition.supports(UiWindowDefinition.Capability.OFFER));
     }
 

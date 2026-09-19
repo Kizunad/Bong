@@ -125,6 +125,7 @@ mod tests {
 
     fn empty_inv() -> PlayerInventory {
         PlayerInventory {
+            material_preparation: Default::default(),
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),

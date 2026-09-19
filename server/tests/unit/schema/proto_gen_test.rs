@@ -1310,6 +1310,7 @@ mod tests {
 
     fn inventory_snapshot_empty_roundtrip() {
         let snapshot = InventorySnapshot {
+            material_preparation: None,
             revision: 0,
             containers: vec![ContainerSnapshot {
                 id: "body_pocket".to_string(),
@@ -1371,6 +1372,7 @@ mod tests {
         };
 
         let snapshot = InventorySnapshot {
+            material_preparation: None,
             revision: 12,
             containers: vec![
                 ContainerSnapshot {
@@ -1440,6 +1442,7 @@ mod tests {
 
     fn inventory_snapshot_envelope_roundtrip() {
         let snapshot = InventorySnapshot {
+            material_preparation: None,
             revision: 1,
             containers: vec![ContainerSnapshot {
                 id: "body_pocket".to_string(),
@@ -2214,6 +2217,7 @@ mod tests {
             station_pos_x: -12,
             station_pos_y: 64,
             station_pos_z: 38,
+            open_screen: true,
         };
         let bytes = msg.encode_to_vec();
         let decoded = ForgeStation::decode(bytes.as_slice()).expect("ForgeStation decode 失败");
@@ -2497,6 +2501,12 @@ mod tests {
                 display_name: "铁剑（测试）".to_string(),
                 tier_cap: 1,
                 step_count: 1,
+                output_item: "iron_sword".into(),
+                steps: vec!["billet".into()],
+                required_materials: vec![ForgeMaterialPair {
+                    material: "fan_tie".into(),
+                    count: 3,
+                }],
             }],
             current_index: 0,
         };
@@ -3568,6 +3578,7 @@ mod tests {
                     station_pos_x: 0,
                     station_pos_y: 64,
                     station_pos_z: 0,
+                    open_screen: false,
                 }),
             ),
             (
@@ -3985,6 +3996,7 @@ mod tests {
                 source_realm_breakthrough: false,
             }),
             server_data_envelope::Payload::InventorySnapshot(InventorySnapshot {
+                material_preparation: None,
                 revision: 1,
                 containers: vec![],
                 placed_items: vec![],
@@ -11006,6 +11018,7 @@ mod tests {
         let proto_inventory = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::InventorySnapshot(
                 InventorySnapshot {
+                    material_preparation: None,
                     revision: 42,
                     containers: vec![
                         ContainerSnapshot {

@@ -1,7 +1,6 @@
 package com.bong.client.ui;
 
 import com.bong.client.alchemy.AlchemyScreen;
-import com.bong.client.forge.ForgeScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
 import net.minecraft.client.MinecraftClient;
@@ -192,7 +191,6 @@ class ScreenTransitionTest {
         ScreenTransitionRegistry.bootstrapDefaults();
 
         assertTrue(ScreenTransitionRegistry.get(InspectScreen.class).isPresent());
-        assertTrue(ScreenTransitionRegistry.get(ForgeScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(AlchemyScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(GameMenuScreen.class).isPresent());
         assertTrue(ScreenTransitionRegistry.get(com.bong.client.social.SparringInviteScreen.class).isPresent());

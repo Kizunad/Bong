@@ -357,6 +357,8 @@ message ClientRequestEnvelope {
     // plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
     RemainsLoot                 remains_loot                  = 102;
     TechniqueBind               technique_bind                = 103;
+    MaterialMove               material_move                = 104;
+    ForgeStationOpenReq         forge_station_open            = 105;
   }
 }
 
@@ -747,6 +749,19 @@ message InventorySnapshot {
   double                      qi_current  = 9;
   double                      qi_max      = 10;
   double                      body_level  = 11;
+  MaterialPreparation            material_preparation = 12;
+}
+
+message MaterialPreparation {
+  optional string recipe_id = 1;
+  repeated InventoryItemView materials = 2;
+  MaterialStationPos station_pos = 3;
+}
+
+message MaterialStationPos {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
 }
 
 // ─── 9. CombatHudState ─────────────────────────────────────────
@@ -991,6 +1006,13 @@ message ForgeStation {
   int32  station_pos_x = 6;
   int32  station_pos_y = 7;
   int32  station_pos_z = 8;
+  bool   open_screen   = 9;
+}
+
+message ForgeStationOpenReq {
+  int32 station_pos_x = 1;
+  int32 station_pos_y = 2;
+  int32 station_pos_z = 3;
 }
 
 // 与 Rust ForgeStepV1 精确对应。
@@ -1098,6 +1120,9 @@ message ForgeBlueprintEntry {
   string display_name = 2;
   uint32 tier_cap     = 3; // Rust u8
   uint32 step_count   = 4;
+  string output_item = 5;
+  repeated string steps = 6;
+  repeated ForgeMaterialPair required_materials = 7;
 }
 
 // 与 Rust ForgeBlueprintBookDataV1 精确对应。
@@ -1312,6 +1337,14 @@ message CraftStart {
 // 与 Rust ClientRequestV1::CraftCancel 精确对应。
 message CraftCancel {
   // 无额外字段。
+}
+
+message MaterialMove {
+  string recipe_id = 1;
+  optional uint64 instance_id = 2;
+  bool returning = 3;
+  uint64 expected_revision = 4;
+  MaterialStationPos station_pos = 5;
 }
 
 // ═══════════════════════════════════════════════════════════════

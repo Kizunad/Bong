@@ -6,6 +6,7 @@
   "integrity": 0.92,
   "owner_name": "Azure",
   "has_session": true,
+  "open_screen": true,
   "station_pos_x": 12,
   "station_pos_y": 66,
   "station_pos_z": -8

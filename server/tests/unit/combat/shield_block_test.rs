@@ -62,6 +62,7 @@ fn make_item_instance(template_id: &str) -> ItemInstance {
 
 fn make_inventory_with_off_hand(template_id: &str) -> PlayerInventory {
     let mut inv = PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: bong_server::inventory::InventoryRevision(0),
         containers: vec![],
@@ -79,6 +80,7 @@ fn make_inventory_with_off_hand(template_id: &str) -> PlayerInventory {
 
 fn make_inventory_empty() -> PlayerInventory {
     PlayerInventory {
+        material_preparation: Default::default(),
         triggered_treasures: Vec::new(),
         revision: bong_server::inventory::InventoryRevision(0),
         containers: vec![],

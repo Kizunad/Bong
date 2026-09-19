@@ -48,7 +48,6 @@ public class BongHudOrchestratorTest {
         SearchHudStateStore.resetForTests();
         HudImmersionMode.resetForTests();
         HudLayoutPreferenceStore.resetForTests();
-        ForgeProgressHudPlanner.resetForTests();
         HomeSequence.resetForTests();
     }
 

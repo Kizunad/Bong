@@ -1881,6 +1881,19 @@ fn inventory_snapshot_to_proto(
         qi_current: s.qi_current,
         qi_max: s.qi_max,
         body_level: s.body_level,
+        material_preparation: Some(bong::MaterialPreparation {
+            recipe_id: s.material_preparation.recipe_id.clone(),
+            station_pos: s
+                .material_preparation
+                .station_pos
+                .map(|(x, y, z)| bong::MaterialStationPos { x, y, z }),
+            materials: s
+                .material_preparation
+                .materials
+                .iter()
+                .map(inventory_item_view_to_proto)
+                .collect(),
+        }),
     }
 }
 
@@ -2725,6 +2738,7 @@ fn forge_station_to_proto(d: &super::forge::WeaponForgeStationDataV1) -> bong::F
         integrity: d.integrity,
         owner_name: d.owner_name.clone(),
         has_session: d.has_session,
+        open_screen: d.open_screen,
         station_pos_x: d.station_pos_x,
         station_pos_y: d.station_pos_y,
         station_pos_z: d.station_pos_z,
@@ -2876,6 +2890,29 @@ fn forge_blueprint_book_to_proto(
                 display_name: e.display_name.clone(),
                 tier_cap: e.tier_cap as u32,
                 step_count: e.step_count,
+                output_item: e.output_item.clone(),
+                steps: e
+                    .steps
+                    .iter()
+                    .map(|step| {
+                        match step {
+                            super::forge::ForgeStepV1::Billet => "billet",
+                            super::forge::ForgeStepV1::Tempering => "tempering",
+                            super::forge::ForgeStepV1::Inscription => "inscription",
+                            super::forge::ForgeStepV1::Consecration => "consecration",
+                            super::forge::ForgeStepV1::Done => "done",
+                        }
+                        .to_owned()
+                    })
+                    .collect(),
+                required_materials: e
+                    .required_materials
+                    .iter()
+                    .map(|item| bong::ForgeMaterialPair {
+                        material: item.material.clone(),
+                        count: item.count,
+                    })
+                    .collect(),
             })
             .collect(),
         current_index: d.current_index,
@@ -4202,6 +4239,13 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     blueprint_id: blueprint_id.clone(),
                 })
             }
+            ClientRequestV1::ForgeStationOpen { station_pos, .. } => {
+                Payload::ForgeStationOpen(bong::ForgeStationOpenReq {
+                    station_pos_x: station_pos.0,
+                    station_pos_y: station_pos.1,
+                    station_pos_z: station_pos.2,
+                })
+            }
             ClientRequestV1::ForgeStationPlace {
                 x,
                 y,
@@ -4226,6 +4270,20 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 quantity: *quantity,
             }),
             ClientRequestV1::CraftCancel { .. } => Payload::CraftCancel(bong::CraftCancel {}),
+            ClientRequestV1::MaterialMove {
+                recipe_id,
+                instance_id,
+                station_pos,
+                returning,
+                expected_revision,
+                ..
+            } => Payload::MaterialMove(bong::MaterialMove {
+                recipe_id: recipe_id.clone(),
+                instance_id: *instance_id,
+                station_pos: station_pos.map(|(x, y, z)| bong::MaterialStationPos { x, y, z }),
+                returning: *returning,
+                expected_revision: *expected_revision,
+            }),
             // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ────────
             ClientRequestV1::ExternalContainerMove {
                 session_id,

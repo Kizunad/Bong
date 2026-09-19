@@ -1,0 +1,21 @@
+{
+  "output_dir": "forge-window-ui-preview",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    { "name": "forge-minimum", "scene_id": "forge-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "forge-window" },
+    { "name": "forge-odd", "scene_id": "forge-window", "framebuffer_width": 801, "framebuffer_height": 481, "gui_scale": 2, "expected_logical_width": 401, "expected_logical_height": 241, "expected_template_id": "forge-window" },
+    { "name": "forge-wide", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-tempering", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-billet", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-inscription", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-consecration", "scene_id": "forge-window", "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2, "expected_logical_width": 320, "expected_logical_height": 240, "expected_template_id": "forge-window" },
+    { "name": "forge-perfect", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-good", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-flawed", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-waste", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" },
+    { "name": "forge-explode", "scene_id": "forge-window", "framebuffer_width": 1366, "framebuffer_height": 900, "gui_scale": 2, "expected_logical_width": 683, "expected_logical_height": 450, "expected_template_id": "forge-window" }
+  ]
+}
