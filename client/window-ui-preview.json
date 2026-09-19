@@ -1,0 +1,69 @@
+{
+  "output_dir": "window-ui-preview",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "item-windows-minimum",
+      "scene_id": "item-windows",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-odd",
+      "scene_id": "item-windows",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-armor",
+      "scene_id": "item-windows-armor",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-pack",
+      "scene_id": "item-windows-pack",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-block",
+      "scene_id": "item-windows-block",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    },
+    {
+      "name": "item-windows-wide",
+      "scene_id": "item-windows",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "item-inspect"
+    }
+  ]
+}
