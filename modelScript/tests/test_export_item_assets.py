@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,31 @@ REFERENCE_ASSETS = {
 
 
 class ItemAssetExporterTest(unittest.TestCase):
+    def test_empty_or_missing_elements_are_rejected_at_export_boundary(self) -> None:
+        source = export.MODELS / "BambooJianSingle.bbmodel"
+        original = json.loads(source.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix="bong-invalid-item-export-") as temp:
+            temp_root = Path(temp)
+            for case_name, elements in (("empty", []), ("missing", None)):
+                malformed = dict(original)
+                if elements is None:
+                    malformed.pop("elements", None)
+                else:
+                    malformed["elements"] = elements
+                malformed_path = temp_root / f"{case_name}.bbmodel"
+                malformed_path.write_text(
+                    json.dumps(malformed),
+                    encoding="utf-8",
+                )
+                with self.subTest(case=case_name), self.assertRaisesRegex(
+                    ValueError, "elements"
+                ):
+                    export.export_asset(
+                        malformed_path,
+                        f"invalid_{case_name}",
+                        output_root=temp_root / "output",
+                    )
+
     def test_replays_all_accepted_item_assets_byte_for_byte(self) -> None:
         committed = REPO / "client" / "src" / "main" / "resources" / "assets" / "bong"
         with tempfile.TemporaryDirectory(prefix="bong-item-export-") as temp:

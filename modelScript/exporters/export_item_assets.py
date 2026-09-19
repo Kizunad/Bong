@@ -149,7 +149,11 @@ def _validate_bbmodel(bb: dict) -> None:
     if not textures or not textures[0].get("source"):
         raise ValueError("item 导出要求 textures[0].source 内嵌贴图")
 
-    for element in bb.get("elements") or []:
+    elements = bb.get("elements")
+    if not isinstance(elements, list) or not elements:
+        raise ValueError("bbmodel 的 elements 不能为空，无法导出 item 几何")
+
+    for element in elements:
         if element.get("type", "cube") != "cube":
             raise ValueError(
                 f"不支持非 cube 元素 {element.get('name')!r}；"
