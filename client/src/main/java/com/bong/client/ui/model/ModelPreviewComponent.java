@@ -189,10 +189,11 @@ public class ModelPreviewComponent extends BaseComponent implements AutoCloseabl
     }
     @Override public boolean onMouseScroll(double mouseX, double mouseY, double amount) { camera.scroll(amount); return true; }
     @Override public void close() {
-        if (clayTexture != null) client.getTextureManager().destroyTexture(clayTexture);
+        var texture = clayTexture;
         clayTexture = null;
         entity = null;
         item = null;
         mesh.clear();
+        if (texture != null) client.getTextureManager().destroyTexture(texture);
     }
 }
