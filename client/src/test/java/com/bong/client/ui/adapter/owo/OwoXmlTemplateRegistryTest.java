@@ -9,7 +9,6 @@ import java.net.JarURLConnection;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Enumeration;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -40,24 +39,27 @@ class OwoXmlTemplateRegistryTest {
                 assertNotNull(UIModel.load(stream), "owo 无法解析本地 XML: " + resource);
             }
         }
-        Set<String> packagedPaths = packagedTemplatePaths();
+        Set<String> packagedPaths = packagedTemplatePaths(registry);
         assertEquals(registeredPaths, packagedPaths,
             "注册表与随包 XML 必须双向一致：注册项和资源文件不能单边存在");
     }
 
-    private static Set<String> packagedTemplatePaths() throws Exception {
+    private static Set<String> packagedTemplatePaths(OwoXmlTemplateRegistry registry) throws Exception {
         Set<String> paths = new TreeSet<>();
-        Enumeration<URL> roots = OwoXmlTemplateRegistryTest.class.getClassLoader().getResources(RESOURCE_ROOT);
-        assertTrue(roots.hasMoreElements(), "找不到随包发布的 owo XML 资源目录: " + RESOURCE_ROOT);
-        while (roots.hasMoreElements()) {
-            URL root = roots.nextElement();
-            if ("file".equals(root.getProtocol())) {
-                collectFilePaths(Path.of(root.toURI()), paths);
-            } else if ("jar".equals(root.getProtocol())) {
-                collectJarPaths((JarURLConnection) root.openConnection(), paths);
-            } else {
-                fail("不支持扫描 owo XML 资源目录的 URL 协议: " + root);
-            }
+        String anchorTemplate = registry.templateIds().iterator().next();
+        Identifier anchor = registry.identifierFor(anchorTemplate);
+        String resource = "assets/" + anchor.getNamespace() + "/owo_ui/" + anchor.getPath() + ".xml";
+        URL anchorUrl = OwoXmlTemplateRegistryTest.class.getClassLoader().getResource(resource);
+        assertNotNull(anchorUrl, "找不到已注册 owo XML 资源锚点: " + resource);
+        if ("file".equals(anchorUrl.getProtocol())) {
+            Path anchorFile = Path.of(anchorUrl.toURI());
+            Path root = anchorFile;
+            for (int i = 0; i < anchor.getPath().split("/").length; i++) root = root.getParent();
+            collectFilePaths(root, paths);
+        } else if ("jar".equals(anchorUrl.getProtocol())) {
+            collectJarPaths((JarURLConnection) anchorUrl.openConnection(), paths);
+        } else {
+            fail("不支持扫描 owo XML 资源的 URL 协议: " + anchorUrl);
         }
         return paths;
     }
