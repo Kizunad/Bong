@@ -393,6 +393,12 @@ fn material_return_revision_policy_preserves_batch_refund_and_rejects_stale_sing
         "rejected stale single-item move must leave the material in preparation"
     );
 
+    let before_wrong_station_return = app
+        .world()
+        .get::<PlayerInventory>(player)
+        .unwrap()
+        .material_preparation
+        .clone();
     app.world_mut().send_event(MaterialMoveIntent {
         caster: player,
         recipe_id: recipe_id.clone(),
@@ -406,13 +412,17 @@ fn material_return_revision_policy_preserves_batch_refund_and_rejects_stale_sing
         app.world()
             .get::<PlayerInventory>(player)
             .unwrap()
-            .material_preparation
-            .materials
-            .len(),
-        1,
-        "revision bypass must not allow a whole-batch return from another station"
+            .material_preparation,
+        before_wrong_station_return,
+        "whole-batch return from another station must be rejected without moving staged materials"
     );
 
+    let before_wrong_recipe_return = app
+        .world()
+        .get::<PlayerInventory>(player)
+        .unwrap()
+        .material_preparation
+        .clone();
     app.world_mut().send_event(MaterialMoveIntent {
         caster: player,
         recipe_id: RecipeId::new("craft.other.recipe"),
@@ -426,11 +436,9 @@ fn material_return_revision_policy_preserves_batch_refund_and_rejects_stale_sing
         app.world()
             .get::<PlayerInventory>(player)
             .unwrap()
-            .material_preparation
-            .materials
-            .len(),
-        1,
-        "revision bypass must not allow a whole-batch return for another recipe"
+            .material_preparation,
+        before_wrong_recipe_return,
+        "whole-batch return for another recipe must be rejected without moving staged materials"
     );
 }
 
