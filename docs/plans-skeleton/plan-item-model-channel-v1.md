@@ -654,3 +654,166 @@ craft-chain skeleton 都把 vanilla 宿主当成既定路径；它们必须在�
 | 缺 OBJ/MTL/贴图 | P1 交付物 | 分别移除或破坏 OBJ、MTL、贴图后执行资源 reload/启动，必须 fail-fast 或进入可见 missing 状态并指出资源；不得静默成功、使用旧 bake 或回退 vanilla host | §8.3 #1、#2 |
 | borrow cycle | P1 交付物 | 对含环的 borrow graph 做校验时，以涉及的 `template_id` 报错并拒绝加载/lookup；不得递归卡死、静默选宿主或把环当作已完成模型 | §8.3 #2、#3 |
 | 缺 transform | P1 交付物 | model definition 缺少最终 schema 要求的 transform/context 时，校验必须拒绝或返回可见 missing；不得从借用目标、vanilla host 或默认姿态静默补齐 | §8.3 #2 |
+
+## 10. §8.3 六条的调度侧建议（待人工裁决）
+
+本节是基于 §9 P0 证据的建议，不是决议；最终以用户对 §8.3 的裁决为准。它不改变
+§8.3 原文、不代表本 skeleton 已升 active，也不授权删除任何现有 vanilla override。
+
+### §8.3 #1 — 加载入口与 FPV/TPV 绘制 API
+
+**P0 证据说了什么**：这条关于加载入口的部分已经被回答。§9.1 在实际解析的
+Fabric API 0.92.3+1.20.1 JAR 中确认了 `ModelLoadingPlugin`，并以
+`BongItemModelChannel.java:59-71` 注册模型、以 `BongItemModelChannel.java:82-122` 从当前
+`BakedModelManager` 查找；`compileJava`、定向测试和完整 `gradle test build` 均通过。
+但 §9.3 也明确记载 `BongItemModelRenderAdapter.render()` 目前没有生产调用方，真实
+FPV/TPV 画面尚未在 `runClient` 中验证，所以这不是整条运行时链路已经验收。
+
+**推荐**：固化 `ModelLoadingPlugin` + `BongItemModelChannel.lookup(template_id)` 作为
+加载和 baked lookup 的基础，并让 P1 的 FPV/TPV hook 接到同一个
+`BongItemModelRenderAdapter`；不再为获得调用入口退回 vanilla host 或另造一条模型
+选择路径。
+
+**理由**：实际 JAR 和编译结果已经回答了 API 是否存在，且 callback 会在资源 reload
+时重新加入模型，lookup 不持有过期的 baked 实例。`BongItemModelChannel.java:25` 的
+类职责和 `BongItemModelRenderAdapter.java:22-48` 的公开渲染 overload 已把两端接触面
+收窄到同一条 `template_id` 查询，不需要把加载可行性再寄托在 fake vanilla stack 上。
+
+**如果选另一条路**：继续使用旧 provider 或在 mixin 中自己画，会引入版本相关的旧
+provider 维护成本，或重新实现 ItemRenderer 的显示模式、左右手和资源 reload 语义；
+若保留 vanilla host，则直接违背本 plan 消除宿主耦合的前提。
+
+**需要用户拍板的点**：加载 API 的选择建议直接采纳，无需再在这条上做 API 二选一；
+仍需保留 §9.6 所列的 `runClient` FPV/TPV 画面验收作为 P1 交付门，而不是把编译
+通过写成运行时已验收。
+
+### §8.3 #2 — `display` 与自有 transform schema
+
+**P0 证据说了什么**：§9.2 已给出方向性证据。Bong-owned 的
+`wooden_shield.json:5-123` 自带四个手部 context 以及 `ground`、`gui`、`fixed`，
+`BongItemModelChannel.ModelHandle` 在 `BongItemModelChannel.java:117-122` 携带该
+`BakedModel.getTransformation()`；契约测试还确认模型不经 `minecraft:item/` 中转。
+这证明 transform 可以由 Bong 自己的模型定义提供，但还没有在 `runClient` 对所有
+context 做画面验收。
+
+**推荐**：把七个 context（四手部 + `ground/gui/fixed`）定为 Bong 模型定义的
+schema 基线；每个 `template_id` 自己拥有 transform，缺 context 时显式 fail-fast 或
+进入带 id 的 missing 状态，绝不从 vanilla host 或 borrow 目标静默继承 `display`。
+
+**理由**：这样把第一/第三人称 transform 的来源和 baked model 绑定在同一份
+Bong-owned 定义上，符合 §9.2 的真实 JSON 与 `ModelHandle` 证据，也保留了缺 transform
+时可诊断的边界。借用几何不等于借用姿态，分开这两层可以避免再次把宿主 JSON 当成
+隐式契约。
+
+**如果选另一条路**：继承 vanilla host 的 `display` 会重新引入宿主选择和跨模板串形；
+在各个 FPV/TPV mixin 里手写矩阵则会形成多份 transform 真源，reload、左右手和 GUI
+很容易漂移。允许缺字段静默使用默认姿态还会把错误推迟到视觉验收。
+
+**需要用户拍板的点**：方向已有证据支撑，但「七个 context 是否全部为必填」以及缺失
+时采用 fail-fast 还是可见 missing 的最终 schema 契约仍需用户拍板；P0 没有替用户
+决定这些兼容性细节。
+
+### §8.3 #3 — Bong-owned registry、ItemGroup 与 REI
+
+**P0 证据说了什么**：§9.4 证明 `ModelLoadingPlugin.addModels` 只加入 baked model，
+不注册 Item、ItemGroup 或搜索条目；因此静态接线本身不会污染创造栏。现有
+`BongItemModelChannel.java:25-68` 已是 Bong-owned 的模型定义入口，而旧的
+`BongWeaponModelRegistry.java:9-23` 仍保存 `hostItemSupplier` / `vanillaModelPath`。
+但 GUI、创造栏和 REI 的实际画面尚未在 `runClient` 验证。
+
+**推荐**：让 Bong-owned 的 `template_id -> model definition/baked lookup` 通道成为
+长期唯一 owner；把 `BongWeaponModelRegistry` 只作为迁移期兼容 facade，完成迁移后
+移除其 vanilla host 语义。默认不注册 client-only ItemGroup 或 REI 条目；若 REI
+确实需要显示可检索物品，另以显式 UI 投影接入现有 icon/tooltip owner，而不是把模型
+通道伪装成物品注册表。
+
+**理由**：P0 已证明加载模型不需要注册 Item，现有
+`ItemIconRegistry.java:12-20,75-85` 也已经承担 2D icon/tooltip 接触面。单一通道
+owner 能把旧注册表的 39 条迁移集中起来，同时避免为了绕过 GUI 问题重新引入 fake
+stack 和 vanilla 搜索入口。
+
+**如果选另一条路**：另建 `BongModelItem` 并把它们加入 ItemGroup/REI，会产生重复
+条目、创造栏污染和第二套 `template_id` 映射；让旧注册表与新通道长期并存，则会使
+host、模型路径和 transform 的真源重新分裂。
+
+**需要用户拍板的点**：是否完全禁止 REI 投影、以及迁移期兼容 facade 保留到哪个阶段，
+P0 没有运行时 UI 证据，需用户拍板。若无额外产品需求，建议采纳上述「默认不进入
+ItemGroup/REI，必要时显式投影」的基线。
+
+### §8.3 #4 — GUI、fixed、ground、掉落物与 botany 的 owner
+
+**P0 证据说了什么**：§9.4 已确认 `DroppedItemWorldRenderer.java:27-38,55-68`
+目前直接画 billboard/GUI texture，不使用本 baked-model channel；§9.6 则把 GUI、
+reload、ground/drop owner 等列为待验收项。P0 没有验证 botany 世界渲染，也没有证明
+所有 `fixed/ground` consumer 已经接入该 channel。
+
+**推荐**：先冻结一个显式 owner 边界：FPV/TPV 由本 channel 的 adapter 消费，2D
+GUI/icon 继续由现有 `ItemIconRegistry` 负责，掉落物暂留
+`DroppedItemWorldRenderer`；`fixed/ground` 只作为模型 schema 的自有 transform，
+在找到真实 consumer 并完成 `runClient` 验收前，不宣称已迁移；botany 同样保持现有
+owner，不因本 plan 的模型通道自动接管。
+
+**理由**：掉落物 owner 是 P0 实际查到的事实，其余未验证面若直接接入，会把「有一段
+transform 数据」误写成「有一条可运行的渲染链路」。先写清谁负责、谁不负责，能让
+§9.6 的每个待验证项有明确归属，并阻止多个计划各自接管同一个世界渲染入口。
+
+**如果选另一条路**：把 ground/drop/botany/GUI 一次性全部改走 channel，需要同时补
+多个真实 consumer、显示模式和资源缺失语义；在没有 runClient 证据时容易出现掉落物
+消失、GUI 图标变 3D 或 botany 与物品模型串线。反过来继续不写 owner，则会把边界
+争议留到实现时，造成重复接线。
+
+**需要用户拍板的点**：掉落物是否最终纳入本 plan、`fixed/ground` 的长期 consumer
+分别归谁，以及 botany 是否另立迁移工作，P0 都没有回答；建议先采纳现有掉落物保留
+边界，其余三类在相应 spike/active 阶段拍板，不能凭本建议提前替用户决定。
+
+### §8.3 #5 — `plan-held-item-registration-v1` 的 supersede/redirect
+
+**P0 证据说了什么**：§9.1、§9.2 和 §9.5 已证明当前通道的目标是
+`template_id -> Bong-owned BakedModel + 自有 transform`，并明确没有新增 fake vanilla
+host；同时旧 `BongWeaponModelRegistry`、`WeaponRenderBootstrap` 和
+`assets/minecraft/models/item/*.json` 仍在，说明这是迁移期的真实文件级冲突，不是
+已经完成的替换。旧 skeleton 还计划改 `BongWeaponModelRegistry.Entry`、删除 vanilla
+model path 分支、改 `held_item_common.py::write_assets`，正好覆盖本 plan 的 owner
+边界。
+
+**推荐**：在旧 skeleton 转 active 前采用「模型承载路径由本 plan supersede，非重叠
+的物品清单/图标工作另行保留或拆分」的 redirect。可供用户直接裁决的文字草案是：
+
+> `plan-item-model-channel-v1` 取代本 plan 中「注册 render-only Item、借用 vanilla
+> host、写入 `assets/minecraft/models/item/` 以及以 fake stack 进入模型渲染」的路径。
+> 模型唯一 owner 改为 `template_id → Bong-owned baked model + 自有 transform`；本
+> plan 不再新增 vanilla host 或删除/新增 override。与模型承载无关的 icon、tooltip、
+> 清单核对工作若仍需要，须拆成独立交付并引用本 plan 的 channel 契约。
+
+本 PR 只记录建议，不修改 `plan-held-item-registration-v1.md`，也不删除任何 override。
+
+**如果选另一条路**：若不写 redirect，两份 skeleton 都可能声称拥有
+`BongWeaponModelRegistry`、`WeaponRenderBootstrap`、vanilla model override 和
+`held_item_common.write_assets`，后续 active 计划会互相覆盖；若把旧 plan 全量删除，
+又会丢掉其中可能仍独立有用的 icon/清单验收工作。
+
+**需要用户拍板的点**：需要用户决定 supersede 的精确范围，以及旧 skeleton 的非模型
+部分是保留、拆分还是关闭；上述文字是最小冲突面的推荐，不是对旧 plan 的自动改写。
+
+### §8.3 #6 — 缺 `pyrender` 时的 P2 截图验收工具
+
+**P0 证据说了什么**：本条 P0 未覆盖。现有接触表来自生成器自己的几何数据渲染，
+不经过 `OBJ + MTL → SML/Minecraft loader` 的实际链路，不能验证 Minecraft 的
+`display` transform、左右手模式或 GUI/ground/fixed 姿态；§9.6 也把截图和这些
+画面验收列为后续交付，不能把接触表当成已完成的 Minecraft 视觉验收。
+
+**推荐**：先补一个能走真实 Minecraft/SML 模型加载和 `ModelTransformation` 的 spike，
+优先用 `runClient` 截图或 client-side Java 渲染 harness，对七个 context 至少各有一
+个可复核输出；在这个 spike 证明变换一致前，不选择也不宣称 Python 接触表是替代工具。
+
+**理由**：验收工具必须覆盖最终实际链路，才能发现「模型几何正确但 display 姿态错」
+这类 P0 证据明确无法发现的问题。先验证工具本身再决定是否补 `pyrender`，比为了一条
+本地命令先固定一种可能不等价的渲染实现更省返工。
+
+**如果选另一条路**：直接用当前接触表或任意非 Minecraft zip/OBJ 渲染器作放行依据，
+会漏掉 display 变换、SML 资源解析、光照和左右手差异，模型可能在工具里通过而在游戏
+里穿模或倒置；硬装 `pyrender` 也不自动证明它复现了 Minecraft 的 transform 语义。
+
+**需要用户拍板的点**：本条 P0 未覆盖，建议先补 spike 再决；用户需要决定接受
+`runClient`/Java harness 的验收成本，还是另行指定一个已证明能还原 Minecraft
+display 变换的工具。在此之前不应把第六条写成已决议。
