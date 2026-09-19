@@ -244,6 +244,10 @@ public final class BongWeaponModelRegistry {
         return Optional.ofNullable(ENTRIES.get(templateId));
     }
 
+    public static Set<String> templateIds() {
+        return ENTRIES.keySet();
+    }
+
     public static Set<String> vanillaModelPaths() {
         return VANILLA_MODEL_PATHS;
     }

@@ -13664,6 +13664,107 @@ dispatch = "direct_generic"
             assert!(matches!(bindings.slots[0], SkillSlot::Empty));
         }
 
+        #[test]
+        fn technique_binding_requires_ownership_and_compare_before_replace() {
+            use crate::schema::client_request::TechniqueBindTargetV1;
+            let mut app = App::new();
+            register_request_app(&mut app);
+            let entity = spawn_beng_quan_capable_entity(&mut app, SkillBarBindings::default());
+            let send = |app: &mut App, skill: &str, expected: &str, target| {
+                app.world_mut().send_event(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: serde_json::to_vec(&ClientRequestV1::TechniqueBind {
+                        v: 1,
+                        skill_id: skill.into(),
+                        target,
+                        expected_binding: expected.into(),
+                    })
+                    .unwrap()
+                    .into_boxed_slice(),
+                });
+                app.update();
+            };
+            let combat = || TechniqueBindTargetV1::Combat { slot: 0 };
+            send(&mut app, "movement.dash", "", combat());
+            assert!(
+                matches!(
+                    app.world().get::<SkillBarBindings>(entity).unwrap().slots[0],
+                    SkillSlot::Empty
+                ),
+                "未习得功法不能绑定"
+            );
+            send(&mut app, "burst_meridian.beng_quan", "", combat());
+            assert!(
+                matches!(&app.world().get::<SkillBarBindings>(entity).unwrap().slots[0], SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan")
+            );
+            send(&mut app, "burst_meridian.tie_shan_kao", "", combat());
+            assert!(
+                matches!(&app.world().get::<SkillBarBindings>(entity).unwrap().slots[0], SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"),
+                "旧空槽确认不能覆盖新绑定"
+            );
+            send(
+                &mut app,
+                "burst_meridian.tie_shan_kao",
+                "skill:burst_meridian.beng_quan",
+                combat(),
+            );
+            assert!(
+                matches!(&app.world().get::<SkillBarBindings>(entity).unwrap().slots[0], SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.tie_shan_kao")
+            );
+            send(
+                &mut app,
+                "burst_meridian.beng_quan",
+                "skill:movement.dash",
+                TechniqueBindTargetV1::Dash,
+            );
+            assert_eq!(
+                app.world()
+                    .get::<SkillBarBindings>(entity)
+                    .unwrap()
+                    .dash_skill_id(),
+                "movement.dash",
+                "普通攻击功法不得绑入闪避键"
+            );
+        }
+
+        #[test]
+        fn dash_combat_slot_routes_to_real_movement_consumer() {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.add_event::<MovementActionIntent>();
+            let (client, _) = create_mock_client("DashSlot");
+            let mut bindings = SkillBarBindings::default();
+            bindings.set(
+                0,
+                SkillSlot::Skill {
+                    skill_id: crate::movement::dash_proficiency::DASH_TECHNIQUE_ID.into(),
+                },
+            );
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client,
+                    bindings,
+                    empty_inventory(),
+                    known(&["movement.dash"]),
+                ))
+                .id();
+            send_skill_bar_cast(&mut app, entity);
+            let events = app
+                .world()
+                .resource::<valence::prelude::Events<MovementActionIntent>>();
+            assert_eq!(
+                events.len(),
+                1,
+                "战斗槽闪避必须进入 movement 的体力、拥有门与冷却链路"
+            );
+            assert!(
+                app.world().get::<Casting>(entity).is_none(),
+                "不得产生通用空施法"
+            );
+        }
+
         /// bughunt skillbar-rebind-cooldown-reset 返工共用：一个只要不在冷却中就一定能
         /// 把 `burst_meridian.beng_quan` 放出去的实体（Cultivation Induce+100 真元 +
         /// RIGHT_ARM_MERIDIANS opened + Position + 已学会两条技能），镜像

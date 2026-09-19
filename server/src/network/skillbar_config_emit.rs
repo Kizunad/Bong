@@ -148,12 +148,13 @@ fn build_skillbar_config(
     }
 
     SkillBarConfigV1 {
+        dash_skill_id: bindings.dash_skill_id().to_string(),
         slots,
         cooldown_until_ms,
     }
 }
 
-fn lookup_template_id(inventory: &PlayerInventory, instance_id: u64) -> Option<String> {
+pub(crate) fn lookup_template_id(inventory: &PlayerInventory, instance_id: u64) -> Option<String> {
     for container in &inventory.containers {
         if let Some(placed) = container
             .items

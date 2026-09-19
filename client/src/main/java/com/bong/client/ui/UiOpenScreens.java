@@ -1,6 +1,9 @@
 package com.bong.client.ui;
 
 import com.bong.client.BongClient;
+import com.bong.client.inventory.InspectScreen;
+import com.bong.client.inventory.component.BodyInspectComponent;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.state.UiOpenState;
 import io.wispforest.owo.ui.parsing.UIModel;
 import net.minecraft.client.gui.screen.Screen;
@@ -39,7 +42,7 @@ public final class UiOpenScreens {
     private static Screen createTemplateScreen(UiOpenState uiOpenState) {
         String templateId = uiOpenState.templateId().orElse("");
         if (isRegisteredTemplate(uiOpenState.screenId(), templateId)) {
-            return CultivationScreenBootstrap.createScreenForCurrentState();
+            return new InspectScreen(InventoryStateStore.snapshot()).withBodyWindow(BodyInspectComponent.Layer.MERIDIAN);
         }
 
         BongClient.LOGGER.warn(

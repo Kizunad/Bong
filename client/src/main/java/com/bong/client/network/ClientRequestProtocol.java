@@ -1156,6 +1156,19 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeTechniqueBind(boolean dash, int slot, String skillId, String expectedBinding) {
+        if (!dash && !com.bong.client.combat.SkillBarConfig.isAvailable(slot)) throw new IllegalArgumentException("slot unavailable");
+        if (skillId == null || skillId.isBlank() || expectedBinding == null) throw new IllegalArgumentException("invalid binding");
+        JsonObject obj = envelope("technique_bind");
+        obj.addProperty("skill_id", skillId);
+        obj.addProperty("expected_binding", expectedBinding);
+        JsonObject target = new JsonObject();
+        target.addProperty("kind", dash ? "dash" : "combat");
+        if (!dash) target.addProperty("slot", slot);
+        obj.add("target", target);
+        return obj.toString();
+    }
+
     public static String encodeSkillBarBindSkill(int slot, String skillId) {
         if (skillId == null || skillId.isBlank()) {
             throw new IllegalArgumentException("skillId must not be blank");

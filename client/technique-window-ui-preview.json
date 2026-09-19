@@ -1,0 +1,99 @@
+{
+  "output_dir": "technique-window-ui-preview",
+  "wait_client_ticks": 600,
+  "resize_timeout_ticks": 200,
+  "settle_ticks": 20,
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "technique-windows-minimum",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 640,
+      "framebuffer_height": 480,
+      "gui_scale": 2,
+      "expected_logical_width": 320,
+      "expected_logical_height": 240,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "technique-windows-odd",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 801,
+      "framebuffer_height": 481,
+      "gui_scale": 2,
+      "expected_logical_width": 401,
+      "expected_logical_height": 241,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "technique-windows-wide",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1366,
+      "framebuffer_height": 768,
+      "gui_scale": 2,
+      "expected_logical_width": 683,
+      "expected_logical_height": 384,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "practice-catalog",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1440,
+      "framebuffer_height": 1080,
+      "gui_scale": 2,
+      "expected_logical_width": 720,
+      "expected_logical_height": 540,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "practice-detail",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1440,
+      "framebuffer_height": 1080,
+      "gui_scale": 2,
+      "expected_logical_width": 720,
+      "expected_logical_height": 540,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "practice-experience",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1440,
+      "framebuffer_height": 1080,
+      "gui_scale": 2,
+      "expected_logical_width": 720,
+      "expected_logical_height": 540,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "practice-replace",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1440,
+      "framebuffer_height": 1080,
+      "gui_scale": 2,
+      "expected_logical_width": 720,
+      "expected_logical_height": 540,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "practice-compare",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1440,
+      "framebuffer_height": 1080,
+      "gui_scale": 2,
+      "expected_logical_width": 720,
+      "expected_logical_height": 540,
+      "expected_template_id": "practice-catalog"
+    },
+    {
+      "name": "practice-meridian",
+      "scene_id": "technique-windows",
+      "framebuffer_width": 1440,
+      "framebuffer_height": 1080,
+      "gui_scale": 2,
+      "expected_logical_width": 720,
+      "expected_logical_height": 540,
+      "expected_template_id": "practice-catalog"
+    }
+  ]
+}

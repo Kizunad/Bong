@@ -26,6 +26,11 @@
                         <text> </text><tooltip>一键还原布局与显隐</tooltip><text-shadow>false</text-shadow>
                         <sizing><horizontal method="fixed">24</horizontal><vertical method="fixed">22</vertical></sizing>
                     </button>
+                    <button id="workspace-model">
+                        <text>模型</text><tooltip>打开模型预览</tooltip><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fixed">36</horizontal><vertical method="fixed">22</vertical></sizing>
+                        <renderer><flat color="#FF293432" hovered-color="#FF485A51" disabled-color="#FF293432" /></renderer>
+                    </button>
                     <scroll id="workspace-restore-scroll" direction="horizontal">
                         <flow-layout id="workspace-minimized" direction="horizontal">
                             <sizing><horizontal method="content" /><vertical method="fixed">20</vertical></sizing>

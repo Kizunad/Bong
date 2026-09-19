@@ -67,16 +67,6 @@ public final class ScreenTransitionRegistry {
             TransitionConfig.OverlayStyle.FOG,
             false
         ));
-        register(CultivationScreen.class, new TransitionConfig(
-            CultivationScreen.class,
-            ScreenTransition.Type.FADE,
-            600,
-            ScreenTransition.Type.FADE,
-            600,
-            ScreenTransition.Easing.EASE_OUT_CUBIC,
-            TransitionConfig.OverlayStyle.VIGNETTE,
-            false
-        ));
         register(GameMenuScreen.class, TransitionConfig.of(
             GameMenuScreen.class, ScreenTransition.Type.FADE, 150, ScreenTransition.Type.FADE, 150
         ));

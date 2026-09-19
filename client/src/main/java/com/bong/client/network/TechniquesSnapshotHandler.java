@@ -95,7 +95,11 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
             qiCost,
             castTicks,
             cooldownTicks,
-            range
+            range,
+            (float) readDouble(obj, "stamina_cost", 0.0),
+            SkillBarConfigHandler.readString(obj, "category"),
+            SkillBarConfigHandler.readString(obj, "input_kind"),
+            SkillBarConfigHandler.readString(obj, "icon_texture")
         );
     }
 

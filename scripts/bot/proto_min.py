@@ -1216,6 +1216,9 @@ def _technique_entry(data: bytes) -> dict[str, Any]:
         "cast_ticks": _varint(fields, 12),
         "cooldown_ticks": _varint(fields, 13),
         "range": _float32(fields, 14),
+        "category": _string(fields, 15),
+        "input_kind": _string(fields, 16),
+        "icon_texture": _string(fields, 17),
     }
 
 
@@ -1580,6 +1583,7 @@ def _skill_bar_config(data: bytes) -> dict[str, Any]:
         "type": "skillbar_config",
         "slots": [_optional_skill_bar_entry(raw) for raw in _messages(fields, 1)],
         "cooldown_until_ms": _repeated_uint64(fields, 2),
+        "dash_skill_id": _string(fields, 3),
     }
 
 

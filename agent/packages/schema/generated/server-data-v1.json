@@ -16109,6 +16109,9 @@
           "const": "skillbar_config",
           "type": "string"
         },
+        "dash_skill_id": {
+          "type": "string"
+        },
         "slots": {
           "minItems": 2,
           "maxItems": 2,
@@ -16249,6 +16252,15 @@
               "range"
             ],
             "properties": {
+              "category": {
+                "type": "string"
+              },
+              "input_kind": {
+                "type": "string"
+              },
+              "icon_texture": {
+                "type": "string"
+              },
               "id": {
                 "minLength": 1,
                 "type": "string"
@@ -20441,5 +20453,5 @@
       }
     }
   ],
-  "x-bong-typebox-source-sha256": "23e1f606d4c600c6c6be7fd172a6fe0521704695ab94e7253cacfdfad4afa761"
+  "x-bong-typebox-source-sha256": "962014cbc94d37293db80785a90202d2cc2a50ef54eeafa11cb904de2e5d7dce"
 }

@@ -2120,7 +2120,7 @@ fn ui_prefs_accepts_legacy_payload_without_skill_configs() {
 #[test]
 fn ui_prefs_sanitizes_legacy_dedicated_input_bindings() {
     let registry = TechniqueRegistry::load_for_tests();
-    for invalid_id in ["movement.dash", "shield_block", "legacy.removed"] {
+    for invalid_id in ["shield_block", "legacy.removed"] {
         let mut prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
             "skill_bar": [
                 {"kind":"skill","skill_id":invalid_id},
@@ -2145,6 +2145,27 @@ fn ui_prefs_sanitizes_legacy_dedicated_input_bindings() {
             SkillSlot::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
         ));
     }
+}
+
+#[test]
+fn dash_bindings_survive_ui_prefs_roundtrip() {
+    let registry = TechniqueRegistry::load_for_tests();
+    let mut prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
+        "dash_skill_id": "movement.dash",
+        "skill_bar": [{"kind":"skill","skill_id":"movement.dash"}, {"kind":"empty"}]
+    }))
+    .unwrap();
+    assert!(
+        !prefs.sanitize_skill_bar_bindings(&registry),
+        "有真实 movement 消费者的闪避现在允许战斗槽绑定"
+    );
+    let decoded: PlayerUiPrefs =
+        serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+    let bindings = decoded.skill_bar_bindings(None, Some(&registry));
+    assert_eq!(bindings.dash_skill_id(), "movement.dash");
+    assert!(
+        matches!(&bindings.slots[0], SkillSlot::Skill { skill_id } if skill_id == "movement.dash")
+    );
 }
 
 #[test]

@@ -16,7 +16,7 @@ public enum ScreenHudVisibility {
     FULL,
     /** Native inventory / E — dim everything but keep quick-bar + event stream. */
     INVENTORY_DIMMED,
-    /** InspectScreen / CultivationScreen / Dynamic XML — HUD hidden, cast-bar kept. */
+    /** InspectScreen / Dynamic XML — HUD hidden, cast-bar kept. */
     CAST_BAR_ONLY,
     /** AgentUiScreen — only render the panel's dedicated VFX overlay. */
     AGENT_UI_ONLY,
@@ -36,7 +36,6 @@ public enum ScreenHudVisibility {
         if (AgentUiScreen.class.isAssignableFrom(screenClass)) return AGENT_UI_ONLY;
         String clsName = screenClass.getName();
         if (clsName.equals("com.bong.client.inventory.InspectScreen")
-            || clsName.equals("com.bong.client.ui.CultivationScreen")
             || clsName.equals("com.bong.client.ui.DynamicXmlScreen")
             || clsName.equals("com.bong.client.insight.InsightOfferScreen")) {
             return CAST_BAR_ONLY;

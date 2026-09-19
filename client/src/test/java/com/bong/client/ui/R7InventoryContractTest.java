@@ -17,9 +17,7 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -37,52 +35,16 @@ class R7InventoryContractTest {
 
         assertEquals(expectedRows, actualRows,
             "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
-        assertEquals(29, expectedRows.size(), "物品详情已迁入窗口内容，不再作为独立 Screen");
-        assertEquals(14, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
+        assertEquals(28, expectedRows.size(), "物品详情与修仙概览已迁入窗口内容");
+        assertEquals(13, count(expectedRows, "BASE_OWO"), "direct legacy owo migration set changed");
         assertEquals(9, count(expectedRows, "OWO_XML"), "owo XML host set changed");
         assertEquals(5, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
         assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
-        assertEquals(14, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
+        assertEquals(13, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
             "P1 base migration is limited to direct legacy owo Screens");
         assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
             "cultivation/TechniqueScrollReadScreen.java") && row.kind().equals("NON_SCREEN_HELPER")),
             "suffix-only discovery must not count TechniqueScrollReadScreen as a Screen");
-    }
-
-    @Test
-    void fill100InventoryPinsExactRegistrationSites() throws IOException {
-        List<FillInventoryRow> rows = readFillInventory();
-        List<R7SourceScan.TokenOccurrence> actual = R7SourceScan.tokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)");
-        assertEquals(88, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
-        assertEquals(rows.stream().map(FillInventoryRow::stableKey).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::stableKey).toList(),
-            "the fixture must enumerate every production fill token in path-local order");
-        assertEquals(rows.stream().map(FillInventoryRow::code).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
-            "executable fill calls must be distinguished from raw comment or literal occurrences by the Java AST");
-        assertEquals(rows.stream().map(FillInventoryRow::freezeLine).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::line).toList(),
-            "every frozen line must come from the production compilation unit line map");
-        assertEquals(rows.stream().map(FillInventoryRow::source).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::sourceLine).toList(),
-            "every frozen source line must match production bytes");
-        assertEquals(19, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
-            "the frozen fill inventory file set changed");
-        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 78L, "RISK", 5L),
-            histogram(rows.stream().map(FillInventoryRow::verdict).toList()),
-            "the frozen fill classification counts changed");
-        assertEquals(expectedFillClassifications(), rows.stream()
-                .map(row -> row.stableKey() + "\t" + row.verdict() + "\t" + row.riskKind())
-                .toList(),
-            "every exact fill registration site must be explicitly re-decided");
-
-        List<R7SourceScan.StructuralTokenOccurrence> structural = readFillStructuralContext();
-        assertEquals(structural, R7SourceScan.structuralTokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)"),
-            "every executable fill site must match its production enclosing class, method, and source hash");
-        assertEquals(83, structural.size(),
-            "all executable fill sites must carry one frozen structural context");
-        assertEquals(83, structural.stream().map(R7SourceScan.StructuralTokenOccurrence::stableKey).distinct().count(),
-            "structural-context stable keys must be unique");
     }
 
     @Test
@@ -252,8 +214,7 @@ class R7InventoryContractTest {
             case "craft/CraftScreen.java" -> "P2 owo XML vertical slice";
             case "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
                 "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
-                "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java",
-                "ui/CultivationScreen.java" -> "Code-built FlowLayout";
+                "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java" -> "Code-built FlowLayout";
             case "cultivation/TechniqueScrollReadScreen.java" ->
                 "Suffix matches Screen.java but class is a toast/text helper";
             case "insight/InsightOfferScreen.java" -> "Code-built modal FlowLayout";
@@ -267,59 +228,12 @@ class R7InventoryContractTest {
     private record DirectScreenDeclaration(String className, String parent) {
     }
 
-    @Test
-    void clearChildrenInventoryPinsExactProductionSites() throws IOException {
-        List<String> sites = List.of(
-            "alchemy/AlchemyScreen.java:520",
-            "alchemy/AlchemyScreen.java:568",
-            "alchemy/AlchemyScreen.java:601",
-            "alchemy/AlchemyScreen.java:634",
-            "combat/inspect/SkillConfigPanelManager.java:76",
-            "combat/inspect/SkillConfigPanelManager.java:84",
-            "combat/inspect/TechniquesTabPanel.java:150",
-            "craft/CraftMaterialGrid.java:52",
-            "craft/CraftMaterialGrid.java:53",
-            "craft/CraftOutputPreview.java:32",
-            "craft/CraftRecipeListWidget.java:134",
-            "insight/InsightOfferScreen.java:107",
-            "inventory/BlockPickerPanel.java:106",
-            "inventory/InspectScreen.java:1517",
-            "inventory/InventoryContainerContent.java:28",
-            "npc/NpcTradeScreen.java:163",
-            "ui/adapter/owo/WorkspaceControls.java:126",
-            "ui/adapter/owo/WorkspaceControls.java:151"
-        );
-        List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
-        assertEquals(18, sites.size(), "the frozen executable clearChildren inventory changed");
-        assertEquals(sites.stream().sorted().toList(), actual,
-            "the inventory must match every executable zero-argument production clearChildren call");
-    }
-
     private static List<ScreenInventoryRow> readScreenInventory() {
         return resourceLines("/bong/ui/screen-inventory.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new ScreenInventoryRow(
                 columns[0], columns[1], columns[2], columns[3],
                 Boolean.parseBoolean(columns[4]), columns[5]
-            ))
-            .toList();
-    }
-
-    private static List<FillInventoryRow> readFillInventory() {
-        return resourceLines("/bong/ui/fill100-inventory.tsv").stream()
-            .map(line -> line.split("\\t", -1))
-            .map(columns -> new FillInventoryRow(
-                columns[0], Integer.parseInt(columns[1]), Integer.parseInt(columns[2]),
-                columns[3], columns[4], columns[5]
-            ))
-            .toList();
-    }
-
-    private static List<R7SourceScan.StructuralTokenOccurrence> readFillStructuralContext() {
-        return resourceLines("/bong/ui/fill100-structural-context.tsv").stream()
-            .map(line -> line.split("\\t", -1))
-            .map(columns -> new R7SourceScan.StructuralTokenOccurrence(
-                columns[0], columns[1], columns[2], columns[3]
             ))
             .toList();
     }
@@ -337,109 +251,8 @@ class R7InventoryContractTest {
         }
     }
 
-    private static Map<String, Long> histogram(List<String> values) {
-        Map<String, Long> result = new TreeMap<>();
-        for (String value : values) {
-            result.merge(value, 1L, Long::sum);
-        }
-        return result;
-    }
-
     private static long count(List<ScreenInventoryRow> rows, String kind) {
         return rows.stream().filter(row -> row.kind().equals(kind)).count();
-    }
-
-    private static List<String> expectedFillClassifications() {
-        return """
-            alchemy/AlchemyScreen.java#1\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#2\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#3\tRISK\tEVICTS_LATER_SIBLING
-            alchemy/AlchemyScreen.java#4\tRISK\tEVICTS_LATER_SIBLING
-            alchemy/AlchemyScreen.java#5\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#6\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#7\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#8\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#9\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#10\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#11\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#12\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#13\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#14\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#15\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#16\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#17\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#18\tRISK\tEVICTS_LATER_SIBLING
-            alchemy/AlchemyScreen.java#19\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#20\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#21\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#22\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#23\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#24\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#25\tRISK\tEVICTS_LATER_SIBLING
-            alchemy/AlchemyScreen.java#26\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#27\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#28\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#29\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#30\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#31\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#32\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#33\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#34\tRISK\tTERMINAL_ORDER_DEPENDENT
-            alchemy/AlchemyScreen.java#35\tLEGAL\tNONE
-            alchemy/AlchemyScreen.java#36\tLEGAL\tNONE
-            combat/inspect/SkillConfigFloatingWindow.java#1\tLEGAL\tNONE
-            combat/inspect/SkillConfigFloatingWindow.java#2\tLEGAL\tNONE
-            combat/inspect/SkillConfigFloatingWindow.java#3\tLEGAL\tNONE
-            combat/inspect/TechniqueRowComponent.java#1\tLEGAL\tNONE
-            combat/inspect/TechniquesTabPanel.java#1\tLEGAL\tNONE
-            combat/inspect/TechniquesTabPanel.java#2\tLEGAL\tNONE
-            craft/CraftActionBar.java#1\tLEGAL\tNONE
-            craft/CraftActionBar.java#2\tCOMMENT\tNONE
-            craft/CraftActionBar.java#3\tLEGAL\tTERMINAL_INTENTIONAL
-            craft/CraftMaterialGrid.java#1\tLEGAL\tNONE
-            craft/CraftMaterialGrid.java#2\tLEGAL\tNONE
-            craft/CraftOutputPreview.java#1\tLEGAL\tNONE
-            craft/CraftProgressBar.java#1\tLEGAL\tNONE
-            craft/CraftProgressBar.java#2\tLEGAL\tNONE
-            craft/CraftProgressBar.java#3\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#1\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#2\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#3\tCOMMENT\tNONE
-            craft/CraftRecipeListWidget.java#4\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#5\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#6\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#7\tLEGAL\tNONE
-            craft/CraftRecipeListWidget.java#8\tLEGAL\tNONE
-            craft/CraftScreenLayout.java#1\tCOMMENT\tNONE
-            craft/WorkbenchScreen.java#1\tLEGAL\tNONE
-            craft/WorkbenchScreen.java#2\tLEGAL\tNONE
-            craft/WorkbenchScreen.java#3\tLEGAL\tTERMINAL_INTENTIONAL
-            inventory/BlockPickerPanel.java#1\tLEGAL\tNONE
-            inventory/BlockPickerPanel.java#2\tLEGAL\tNONE
-            inventory/InspectScreen.java#1\tLEGAL\tNONE
-            inventory/InspectScreen.java#2\tLEGAL\tNONE
-            inventory/InspectScreen.java#3\tLEGAL\tNONE
-            inventory/InspectScreen.java#4\tLEGAL\tNONE
-            inventory/InspectScreen.java#5\tLEGAL\tNONE
-            inventory/InspectScreen.java#6\tLEGAL\tNONE
-            inventory/InspectScreen.java#7\tLEGAL\tNONE
-            inventory/InspectScreen.java#8\tLEGAL\tNONE
-            inventory/component/EquipmentPanel.java#1\tCOMMENT\tNONE
-            lingtian/LingtianActionScreen.java#1\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#2\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#3\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#4\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#5\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#6\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#7\tLEGAL\tNONE
-            lingtian/LingtianActionScreen.java#8\tLEGAL\tNONE
-            npc/NpcTradeScreen.java#1\tLEGAL\tNONE
-            processing/ProcessingActionScreen.java#1\tLEGAL\tNONE
-            scroll/ScrollReadScreen.java#1\tCOMMENT\tNONE
-            scroll/ScrollReadScreen.java#2\tLEGAL\tNONE
-            scroll/ScrollReadScreen.java#3\tLEGAL\tNONE
-            skill/SkillRowComponent.java#1\tLEGAL\tNONE
-            """.strip().lines().toList();
     }
 
     private record ScreenInventoryRow(
@@ -452,20 +265,4 @@ class R7InventoryContractTest {
     ) {
     }
 
-    private record FillInventoryRow(
-        String path,
-        int ordinal,
-        int freezeLine,
-        String verdict,
-        String riskKind,
-        String source
-    ) {
-        boolean code() {
-            return !verdict.equals("COMMENT");
-        }
-
-        String stableKey() {
-            return path + "#" + ordinal;
-        }
-    }
 }

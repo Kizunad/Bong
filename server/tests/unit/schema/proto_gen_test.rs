@@ -4262,6 +4262,7 @@ mod tests {
 
     fn skill_bar_config_roundtrip_item_and_skill() {
         let msg = SkillBarConfig {
+            dash_skill_id: "movement.dash".into(),
             slots: vec![
                 OptionalSkillBarEntry {
                     entry: Some(SkillBarEntry {
@@ -4312,6 +4313,9 @@ mod tests {
     fn techniques_snapshot_roundtrip() {
         let msg = TechniquesSnapshot {
             entries: vec![TechniqueEntry {
+                category: "attack".into(),
+                input_kind: "skill".into(),
+                icon_texture: String::new(),
                 id: "burst_meridian.beng_quan".to_string(),
                 display_name: "崩拳".to_string(),
                 grade: "yellow".to_string(),
@@ -5448,6 +5452,7 @@ mod tests {
             ),
             (
                 server_data_envelope::Payload::SkillBarConfig(SkillBarConfig {
+                    dash_skill_id: "movement.dash".into(),
                     slots: vec![],
                     cooldown_until_ms: vec![],
                 }),

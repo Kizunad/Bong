@@ -79,7 +79,7 @@ public final class TechniqueProficiencyUpdateHandler implements ServerDataHandle
             technique.qiCost(),
             technique.castTicks(),
             technique.cooldownTicks(),
-            technique.range()
+            technique.range(), technique.staminaCost(), technique.category(), technique.inputKind(), technique.iconTexture()
         );
     }
 
