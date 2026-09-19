@@ -30,6 +30,8 @@ class OwoXmlTemplateRegistryTest {
         var registry = OwoXmlTemplateRegistry.production();
         Set<String> registeredPaths = new TreeSet<>();
         assertFalse(registry.templateIds().isEmpty(), "生产 owo 模板注册表不应为空");
+        String anchorTemplate = registry.templateIds().iterator().next();
+        Identifier anchor = registry.identifierFor(anchorTemplate);
         for (String template : registry.templateIds()) {
             var id = registry.identifierFor(template);
             assertTrue(registeredPaths.add(id.getPath()), "多个模板注册项指向同一个 XML: " + id);
@@ -39,15 +41,13 @@ class OwoXmlTemplateRegistryTest {
                 assertNotNull(UIModel.load(stream), "owo 无法解析本地 XML: " + resource);
             }
         }
-        Set<String> packagedPaths = packagedTemplatePaths(registry);
+        Set<String> packagedPaths = packagedTemplatePaths(anchor);
         assertEquals(registeredPaths, packagedPaths,
             "注册表与随包 XML 必须双向一致：注册项和资源文件不能单边存在");
     }
 
-    private static Set<String> packagedTemplatePaths(OwoXmlTemplateRegistry registry) throws Exception {
+    private static Set<String> packagedTemplatePaths(Identifier anchor) throws Exception {
         Set<String> paths = new TreeSet<>();
-        String anchorTemplate = registry.templateIds().iterator().next();
-        Identifier anchor = registry.identifierFor(anchorTemplate);
         String resource = "assets/" + anchor.getNamespace() + "/owo_ui/" + anchor.getPath() + ".xml";
         URL anchorUrl = OwoXmlTemplateRegistryTest.class.getClassLoader().getResource(resource);
         assertNotNull(anchorUrl, "找不到已注册 owo XML 资源锚点: " + resource);
