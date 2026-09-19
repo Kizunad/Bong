@@ -8743,6 +8743,103 @@ mod external_ingress_tests {
         }
 
         #[test]
+        fn quick_slot_bind_ack_is_not_blocked_by_sqlite_busy() {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("bong-quick-bind-busy-{unique}"));
+            let db_path = root.join("bong.db");
+            crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-busy-test")
+                .expect("test sqlite should bootstrap");
+            let locked = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+            locked
+                .execute_batch("BEGIN IMMEDIATE")
+                .expect("test should hold a SQLite writer lock");
+
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(
+                crate::inventory::load_item_registry().expect("item registry loads"),
+            );
+            app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
+            app.init_resource::<QuickSlotPrefsWriteQueue>();
+            app.add_systems(
+                Update,
+                flush_quick_slot_prefs_writes.after(handle_client_request_payloads),
+            );
+            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let (client_bundle, mut helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    QuickSlotBindings::default(),
+                    SkillBarBindings::default(),
+                    inventory,
+                ))
+                .id();
+
+            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "busy-bind");
+            let started = std::time::Instant::now();
+            app.update();
+            let elapsed = started.elapsed();
+            flush_all_client_packets(&mut app);
+
+            assert!(
+                elapsed < std::time::Duration::from_secs(1),
+                "SQLite BUSY must not block the ECS request frame for the normal 30s timeout; elapsed={elapsed:?}"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<QuickSlotBindings>(entity)
+                    .expect("quick-slot component should remain present")
+                    .get(1),
+                Some(88),
+                "runtime binding should be accepted while durable prefs wait for the lock"
+            );
+            assert!(collect_quickslot_configs(&mut helper).iter().any(|config| {
+                config.ack_request_id.as_deref() == Some("busy-bind")
+                    && config.bind_accepted == Some(true)
+            }));
+            assert_eq!(
+                app.world()
+                    .resource::<QuickSlotPrefsWriteQueue>()
+                    .pending
+                    .len(),
+                1,
+                "a busy durable write should be retained for a later frame"
+            );
+
+            locked
+                .execute_batch("ROLLBACK")
+                .expect("test writer lock should release");
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<QuickSlotPrefsWriteQueue>()
+                    .pending
+                    .len(),
+                0,
+                "queued prefs should flush after the SQLite writer lock releases"
+            );
+            let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
+            let prefs_json: String = connection
+                .query_row(
+                    "SELECT prefs_json FROM player_ui_prefs WHERE username = 'Azure'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("queued bind should eventually persist UI prefs");
+            let prefs: serde_json::Value =
+                serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
+            assert_eq!(prefs["quick_slots"][1], "earth_crumb");
+            drop(connection);
+            drop(locked);
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        #[test]
         fn quick_slot_bind_persists_atomic_block_mirror_for_reload() {
             let unique = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
