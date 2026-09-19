@@ -206,6 +206,11 @@ pub struct AlchemyMockState {
 /// 完整绑定请求留在这里由后续帧重试，避免阻塞当前 ECS 帧。只有持久化成功后才提交
 /// 运行时绑定并发送 `bind_accepted=true` ACK，保证 ACK 的“已持久化并提交”契约。
 /// 队列项按收到顺序处理，避免同一玩家连续绑定时旧写入覆盖新写入。
+///
+/// 队列当前有意不设容量上限：宁可保留完整请求并让客户端等待 durable 状态，也不在
+/// 数据库故障时丢请求或伪造成功/拒绝回执。永久性故障会使队列无界增长；当前运维信号
+/// 是 flush 路径每次重试产生的 `queued quick_slot_bind persistence retry failed` WARN，
+/// 因而可能逐帧刷屏。若将来要设上限，必须先定义明确的丢弃/失败回执契约。
 #[derive(Debug, Default, Resource)]
 pub(crate) struct QuickSlotPrefsWriteQueue {
     pending: VecDeque<PendingQuickSlotPrefsWrite>,
