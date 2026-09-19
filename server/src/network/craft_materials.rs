@@ -58,6 +58,12 @@ pub fn apply_craft_material_intents(
         };
         let mut staged = inventory.clone();
         let result = (|| {
+            // 整批返还（instance_id == None）是 ForgeWindows.close 的关窗路径。
+            // 这里有意不因 expected_revision 漂移拒绝它：关窗时若只是无关的背包版本
+            // 变化就拒绝，暂存材料会卡在炉里，代价高于一次同配方同工位的陈旧整批返还。
+            // 单件移动（instance_id 有值）仍必须匹配版本；紧随其后的 recipe_id / station_pos
+            // 校验也会挡住换配方或换工位的陈旧请求。未覆盖的仅是同配方同工位的陈旧关窗，
+            // 而请求按连接串行处理，这种交错实际难以发生。
             if session.is_some()
                 || (intent.instance_id.is_some()
                     && intent.expected_revision != inventory.revision.0)

@@ -277,6 +277,164 @@ fn material_transfer_persists_once_and_failed_return_keeps_custody() {
 }
 
 #[test]
+fn material_return_revision_policy_preserves_batch_refund_and_rejects_stale_single_move() {
+    use bong_server::craft::events::MaterialMoveIntent;
+    use bong_server::network::craft_materials::apply_craft_material_intents;
+
+    let recipe_id = RecipeId::new("craft.tool.workbench");
+    let mut app = craft_refund_test_app(
+        make_recipe(recipe_id.as_str(), &[("fan_tie", 1)], vec![]),
+        &[("fan_tie", 64)],
+        10,
+    );
+    app.add_event::<MaterialMoveIntent>();
+    app.add_systems(Update, apply_craft_material_intents);
+    let (bundle, _helper) = create_mock_client("Azure");
+    let player = app
+        .world_mut()
+        .spawn(bundle)
+        .insert(inv_with(&[("fan_tie", 2)]))
+        .insert(PlayerState::default())
+        .insert(Cultivation::default())
+        .insert(Position::new([0.0, 64.0, 0.0]))
+        .id();
+
+    app.world_mut().send_event(MaterialMoveIntent {
+        caster: player,
+        recipe_id: recipe_id.clone(),
+        instance_id: Some(1),
+        station_pos: None,
+        returning: false,
+        expected_revision: 1,
+    });
+    app.update();
+    let staged_revision = app
+        .world()
+        .get::<PlayerInventory>(player)
+        .unwrap()
+        .revision
+        .0;
+    assert_eq!(
+        app.world()
+            .get::<PlayerInventory>(player)
+            .unwrap()
+            .material_preparation
+            .materials
+            .len(),
+        1,
+        "fixture must begin with one material under custody"
+    );
+
+    app.world_mut()
+        .get_mut::<PlayerInventory>(player)
+        .unwrap()
+        .revision = InventoryRevision(staged_revision + 100);
+    app.world_mut().send_event(MaterialMoveIntent {
+        caster: player,
+        recipe_id: recipe_id.clone(),
+        instance_id: None,
+        station_pos: None,
+        returning: true,
+        expected_revision: staged_revision,
+    });
+    app.update();
+    let refunded = app.world().get::<PlayerInventory>(player).unwrap();
+    assert!(
+        refunded.material_preparation.materials.is_empty(),
+        "whole-batch close must return materials despite unrelated revision drift"
+    );
+    assert_eq!(
+        refunded.containers[0].items.len(),
+        1,
+        "whole-batch close must put the staged instance back in the inventory"
+    );
+    assert_eq!(
+        refunded.containers[0].items[0].instance.instance_id, 1,
+        "whole-batch close must preserve the original instance"
+    );
+
+    let before_second_stage_revision = refunded.revision.0;
+    app.world_mut().send_event(MaterialMoveIntent {
+        caster: player,
+        recipe_id: recipe_id.clone(),
+        instance_id: Some(1),
+        station_pos: None,
+        returning: false,
+        expected_revision: before_second_stage_revision,
+    });
+    app.update();
+    let single_stage_revision = app
+        .world()
+        .get::<PlayerInventory>(player)
+        .unwrap()
+        .revision
+        .0;
+    app.world_mut()
+        .get_mut::<PlayerInventory>(player)
+        .unwrap()
+        .revision = InventoryRevision(single_stage_revision + 100);
+    app.world_mut().send_event(MaterialMoveIntent {
+        caster: player,
+        recipe_id: recipe_id.clone(),
+        instance_id: Some(1),
+        station_pos: None,
+        returning: true,
+        expected_revision: single_stage_revision,
+    });
+    app.update();
+    let still_staged = app.world().get::<PlayerInventory>(player).unwrap();
+    assert_eq!(
+        still_staged.material_preparation.materials.len(),
+        1,
+        "single-item move must reject a stale revision instead of taking custody silently"
+    );
+    assert!(
+        still_staged.containers[0].items.is_empty(),
+        "rejected stale single-item move must leave the material in preparation"
+    );
+
+    app.world_mut().send_event(MaterialMoveIntent {
+        caster: player,
+        recipe_id: recipe_id.clone(),
+        instance_id: None,
+        station_pos: Some((12, 64, 12)),
+        returning: true,
+        expected_revision: 0,
+    });
+    app.update();
+    assert_eq!(
+        app.world()
+            .get::<PlayerInventory>(player)
+            .unwrap()
+            .material_preparation
+            .materials
+            .len(),
+        1,
+        "revision bypass must not allow a whole-batch return from another station"
+    );
+
+    app.world_mut().send_event(MaterialMoveIntent {
+        caster: player,
+        recipe_id: RecipeId::new("craft.other.recipe"),
+        instance_id: None,
+        station_pos: None,
+        returning: true,
+        expected_revision: 0,
+    });
+    app.update();
+    assert_eq!(
+        app.world()
+            .get::<PlayerInventory>(player)
+            .unwrap()
+            .material_preparation
+            .materials
+            .len(),
+        1,
+        "revision bypass must not allow a whole-batch return for another recipe"
+    );
+}
+
+#[test]
 fn forge_material_custody_checks_station_authority_and_survives_station_loss() {
     use bong_server::craft::events::MaterialMoveIntent;
     use bong_server::forge::{
