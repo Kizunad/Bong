@@ -98,6 +98,30 @@ class ArmorPartModelTest {
             ArmorPartModel.Mount.RIGHT_LEG, -3.16f, 4.01f);
         assertPinnedTable("straw_boots", 72, ArmorPartModel.Mount.LEFT_FOOT, -1.86f, -0.36f,
             ArmorPartModel.Mount.RIGHT_FOOT, -2.12f, 1.46f);
+        assertPinnedTable("linen_helmet", 22, ArmorPartModel.Mount.HEAD, -4.5f, 32.0f,
+            ArmorPartModel.Mount.HEAD, -0.6f, 30.62f);
+        assertPinnedTable("linen_chestplate", 54, ArmorPartModel.Mount.BODY, -4.3f, 12.6f,
+            ArmorPartModel.Mount.BODY, 2.3f, 12.05f);
+        assertPinnedTable("linen_leggings", 48, ArmorPartModel.Mount.LEFT_LEG, -1.85f, 10.4f,
+            ArmorPartModel.Mount.RIGHT_LEG, -2.3f, 4.15f);
+        assertPinnedTable("linen_boots", 52, ArmorPartModel.Mount.LEFT_FOOT, -1.55f, -0.42f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -3.29f, 2.32f);
+        assertPinnedTable("mutated_bone_helmet", 22, ArmorPartModel.Mount.HEAD, -4.55f, 29.55f,
+            ArmorPartModel.Mount.HEAD, 4.70f, 26.15f);
+        assertPinnedTable("mutated_bone_chestplate", 74, ArmorPartModel.Mount.BODY, -4.06f, 12.12f,
+            ArmorPartModel.Mount.BODY, -8.70f, 14.30f);
+        assertPinnedTable("mutated_bone_leggings", 20, ArmorPartModel.Mount.LEFT_LEG, -1.4f, 2.25f,
+            ArmorPartModel.Mount.RIGHT_LEG, -2.25f, 10.15f);
+        assertPinnedTable("mutated_bone_boots", 42, ArmorPartModel.Mount.LEFT_FOOT, -1.5f, -0.48f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -3.18f, 2.25f);
+        assertPinnedTable("spirit_cloth_helmet", 23, ArmorPartModel.Mount.HEAD, -4.55f, 31.15f,
+            ArmorPartModel.Mount.HEAD, -0.18f, 29.72f);
+        assertPinnedTable("spirit_cloth_chestplate", 30, ArmorPartModel.Mount.BODY, -4.28f, 12.42f,
+            ArmorPartModel.Mount.BODY, -8.18f, 19.2f);
+        assertPinnedTable("spirit_cloth_leggings", 30, ArmorPartModel.Mount.LEFT_LEG, -1.82f, 10.3f,
+            ArmorPartModel.Mount.RIGHT_LEG, -1.94f, 0.62f);
+        assertPinnedTable("spirit_cloth_boots", 44, ArmorPartModel.Mount.LEFT_FOOT, -1.75f, -0.48f,
+            ArmorPartModel.Mount.RIGHT_FOOT, -2.99f, 2.18f);
     }
 
     @Test
@@ -126,7 +150,19 @@ class ArmorPartModelTest {
             Map.entry("straw_helmet", "53dc18824fe7e9a5"),
             Map.entry("straw_chestplate", "7d461f27efb71cf8"),
             Map.entry("straw_leggings", "23797474dff68552"),
-            Map.entry("straw_boots", "f930f623b90bfe8d")
+            Map.entry("straw_boots", "f930f623b90bfe8d"),
+            Map.entry("linen_helmet", "cdfd9fd6ac238ce1"),
+            Map.entry("linen_chestplate", "46cff13804f0a92b"),
+            Map.entry("linen_leggings", "ab471410a37f0131"),
+            Map.entry("linen_boots", "1d2b51ccecee958c"),
+            Map.entry("mutated_bone_helmet", "0ea2ea6242f70c8f"),
+            Map.entry("mutated_bone_chestplate", "2a058cfa4a764396"),
+            Map.entry("mutated_bone_leggings", "f47aa63362b0c328"),
+            Map.entry("mutated_bone_boots", "51b834878a05e123"),
+            Map.entry("spirit_cloth_helmet", "16bb668cef6fa861"),
+            Map.entry("spirit_cloth_chestplate", "dff15d76995792eb"),
+            Map.entry("spirit_cloth_leggings", "ea3e09593196d382"),
+            Map.entry("spirit_cloth_boots", "fda07e04a3ec0f2e")
         );
 
         assertEquals(expected.keySet(), ArmorPartModel.modelKeys(), "digest 表必须覆盖全部运行时模型");

@@ -1060,6 +1060,45 @@ where
     Ok(persistence.db_path().to_path_buf())
 }
 
+/// 尝试在不等待 SQLite 写锁的情况下更新 UI 偏好。
+///
+/// 网络请求处理系统位于 ECS 主线程；这里的快速路径只能做一次零等待尝试，
+/// 否则另一个合法的持久化写事务就能把 `quick_slot_bind` 的 ACK 挡在几十秒之外。
+/// `SQLITE_BUSY` 原样保留在返回的 `io::Error` 中，调用方据此把更新排到后续帧。
+pub(crate) fn try_update_player_ui_prefs<F>(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    update: F,
+) -> io::Result<PathBuf>
+where
+    F: FnOnce(&mut PlayerUiPrefs),
+{
+    let mut connection = open_player_connection_with_timeout(persistence, Duration::ZERO)?;
+    let mut ui_prefs = load_player_ui_prefs_from_sqlite(&connection, username)?;
+    update(&mut ui_prefs);
+    persist_player_ui_prefs_slice_in_sqlite(&mut connection, username, &ui_prefs)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
+/// `io::Error::other(rusqlite::Error)` 保留底层错误作为 source；网络层只需要知道
+/// 这次失败是否可通过下一帧重试，不应依赖 rusqlite 具体错误文本。
+pub(crate) fn is_sqlite_busy_error(error: &io::Error) -> bool {
+    let Some(source) = error.get_ref() else {
+        return false;
+    };
+    let Some(sqlite_error) = source.downcast_ref::<rusqlite::Error>() else {
+        return false;
+    };
+    matches!(
+        sqlite_error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if matches!(
+                code.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
+}
+
 pub fn export_player_bundle(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -1282,6 +1321,13 @@ pub fn import_player_bundle(
 pub(crate) fn open_player_connection(
     persistence: &PlayerStatePersistence,
 ) -> io::Result<Connection> {
+    open_player_connection_with_timeout(persistence, Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))
+}
+
+fn open_player_connection_with_timeout(
+    persistence: &PlayerStatePersistence,
+    busy_timeout: Duration,
+) -> io::Result<Connection> {
     if let Some(parent) = persistence.db_path().parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1291,7 +1337,7 @@ pub(crate) fn open_player_connection(
         .execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(io::Error::other)?;
     connection
-        .busy_timeout(Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))
+        .busy_timeout(busy_timeout)
         .map_err(io::Error::other)?;
     Ok(connection)
 }
