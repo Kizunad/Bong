@@ -268,6 +268,54 @@ impl PendingQuickSlotPrefsWrite {
             }
         })
     }
+
+    fn recompute_skillbar_projection(
+        &mut self,
+        bindings_q: &mut Query<&mut QuickSlotBindings>,
+        skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
+        item_registry: &ItemRegistry,
+    ) {
+        let mirror_block_to_skillbar = self.instance_id.is_some()
+            && self
+                .item_id
+                .as_deref()
+                .and_then(|item_id| item_registry.get(item_id))
+                .is_some_and(|template| template.category == ItemCategory::Block);
+        let old_instance_id = bindings_q
+            .get_mut(self.entity)
+            .ok()
+            .and_then(|bindings| bindings.get(self.slot as u8));
+        let current_skill_slot = skillbar_bindings_q
+            .get_mut(self.entity)
+            .ok()
+            .and_then(|bindings| bindings.get(self.slot as u8).cloned())
+            .unwrap_or_default();
+        let clears_old_auto_mirror = old_instance_id.is_some_and(|old_instance_id| {
+            current_skill_slot
+                == SkillSlot::Item {
+                    instance_id: old_instance_id,
+                }
+                && (!mirror_block_to_skillbar || self.instance_id != Some(old_instance_id))
+        });
+
+        self.desired_skill_slot = if mirror_block_to_skillbar {
+            self.instance_id
+                .map(|instance_id| SkillSlot::Item { instance_id })
+        } else if clears_old_auto_mirror {
+            Some(SkillSlot::Empty)
+        } else {
+            None
+        };
+        self.skill_bar = if mirror_block_to_skillbar {
+            Some(SkillSlotPersist::Item {
+                template_id: self.item_id.clone().unwrap_or_default(),
+            })
+        } else if clears_old_auto_mirror {
+            Some(SkillSlotPersist::Empty)
+        } else {
+            None
+        };
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -346,9 +394,14 @@ pub fn flush_quick_slot_prefs_writes(
     // 一次只处理当前队列长度，避免错误数据库或持续写锁让单帧工作量无界增长。
     let attempts = queue.pending.len();
     for _ in 0..attempts {
-        let Some(pending) = queue.pending.pop_front() else {
+        let Some(mut pending) = queue.pending.pop_front() else {
             break;
         };
+        pending.recompute_skillbar_projection(
+            &mut bindings_q,
+            &mut skillbar_bindings_q,
+            &item_registry,
+        );
         match pending.persist_without_waiting(&persistence) {
             Ok(_) => {
                 let _ = apply_persisted_quick_slot_bind(
