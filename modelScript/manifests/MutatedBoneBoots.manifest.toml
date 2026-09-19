@@ -1,0 +1,20 @@
+# 异变骨甲靴子（mutated_bone_boots）Round 2 人工点名清单。
+#
+# 前方约定为 -z；点名清单特意把趾甲、脚背、后跟和胫筒分开，防止两只对称方盒
+# 被误判成靴子。
+
+facing = "-z"
+mirror_x = 0.0
+size = 260
+
+[features]
+# 分段鞋底必须在四个水平视角读出前掌/中掌/后跟的层次。
+sole_layers = { elements = ["sole_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 16, SIDE_R = 12, BACK = 16, SIDE_L = 12 }, mirror = true }
+# 趾甲和脚背骨板给出明确的 -z 前向，后跟板必须保留。
+toe_vamp_heel = { elements = ["toe_", "vamp_", "heel_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 18, SIDE_R = 14, BACK = 10, SIDE_L = 14 }, mirror = true }
+# 胫筒由前后左右片围合但顶部开口，不能退化成封闭箱体。
+shaft = { elements = ["shaft_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L", "TOP"], min_px = { FRONT = 18, SIDE_R = 12, BACK = 18, SIDE_L = 12, TOP = 8 }, mirror = true }
+# 踝部皮绳是承重固定件，不允许整圈消失。
+ankle_lash = { elements = ["ankle_"], must_show_in = ["FRONT", "SIDE_R", "BACK", "SIDE_L"], min_px = { FRONT = 8, SIDE_R = 8, BACK = 8, SIDE_L = 8 }, mirror = true }
+# 外侧骨刺是异变骨甲与普通骨甲的识别点。
+ankle_spur = { names = ["ankle_spur_left", "ankle_spur_right"], must_show_in = ["SIDE_R", "SIDE_L"], min_px = { SIDE_R = 4, SIDE_L = 4 }, mirror = true }

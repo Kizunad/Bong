@@ -7,7 +7,7 @@
 //!   - BreakthroughRequest → emit `BreakthroughRequest` Bevy event
 //!   - ForgeRequest → emit `ForgeRequest` Bevy event
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -125,8 +125,8 @@ use crate::npc::spawn::NpcMarker;
 use crate::persistence::ZoneRuntimeRecord;
 use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
-    canonical_player_id, save_player_inventory_and_delete_dropped_loot, update_player_ui_prefs,
-    PlayerState, PlayerStatePersistence,
+    canonical_player_id, is_sqlite_busy_error, save_player_inventory_and_delete_dropped_loot,
+    try_update_player_ui_prefs, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
@@ -193,6 +193,158 @@ pub(crate) use crate::network::client_request::npc::{
 pub struct AlchemyMockState {
     /// player_id → current recipe-book index
     pub recipe_index: HashMap<String, i32>,
+}
+
+/// `quick_slot_bind` 的持久化补偿队列。
+///
+/// 请求路径只做一次零等待 SQLite 写入；若数据库正被另一个合法写事务占用，
+/// 完整绑定请求留在这里由后续帧重试，避免阻塞当前 ECS 帧。只有持久化成功后才提交
+/// 运行时绑定并发送 `bind_accepted=true` ACK，保证 ACK 的“已持久化并提交”契约。
+/// 队列项按收到顺序处理，避免同一玩家连续绑定时旧写入覆盖新写入。
+///
+/// 队列当前有意不设容量上限：宁可保留完整请求并让客户端等待 durable 状态，也不在
+/// 数据库故障时丢请求或伪造成功/拒绝回执。永久性故障会使队列无界增长；非 BUSY 错误的
+/// 当前运维信号是 flush 路径每次重试产生的 `queued quick_slot_bind persistence retry failed`
+/// WARN，因而可能逐帧刷屏；BUSY/LOCKED 分支目前只重排队、不打日志，也没有专用指标，
+/// 所以永久 BUSY 的增长暂时没有这个信号。若将来要设上限，必须先定义明确的丢弃/失败回执契约。
+#[derive(Debug, Default, Resource)]
+pub(crate) struct QuickSlotPrefsWriteQueue {
+    pending: VecDeque<PendingQuickSlotPrefsWrite>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingQuickSlotPrefsWrite {
+    entity: Entity,
+    request_id: String,
+    username: String,
+    slot: usize,
+    instance_id: Option<u64>,
+}
+
+impl QuickSlotPrefsWriteQueue {
+    fn has_pending_for(&self, username: &str) -> bool {
+        self.pending
+            .iter()
+            .any(|pending| pending.username == username)
+    }
+
+    fn push(&mut self, pending: PendingQuickSlotPrefsWrite) {
+        self.pending.push_back(pending);
+    }
+}
+
+impl PendingQuickSlotPrefsWrite {
+    fn persist_without_waiting(
+        &self,
+        persistence: &PlayerStatePersistence,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let instance_id = self.instance_id;
+        try_update_player_ui_prefs(persistence, self.username.as_str(), move |prefs| {
+            prefs.quick_slots[self.slot] = instance_id;
+        })
+    }
+
+    fn persist_with_wait(
+        &self,
+        persistence: &PlayerStatePersistence,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let instance_id = self.instance_id;
+        update_player_ui_prefs(persistence, self.username.as_str(), move |prefs| {
+            prefs.quick_slots[self.slot] = instance_id;
+        })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_persisted_quick_slot_bind(
+    pending: &PendingQuickSlotPrefsWrite,
+    bindings_q: &mut Query<&mut QuickSlotBindings>,
+    inventories: &Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    item_registry: &ItemRegistry,
+    combat_clock: &CombatClock,
+) -> bool {
+    {
+        let Ok(mut bindings) = bindings_q.get_mut(pending.entity) else {
+            tracing::debug!(
+                entity = ?pending.entity,
+                request_id = %pending.request_id,
+                "dropping persisted quick_slot_bind completion for a missing entity"
+            );
+            return false;
+        };
+        let _ = bindings.set(pending.slot as u8, pending.instance_id);
+    }
+
+    send_quick_slot_bind_response(
+        pending.entity,
+        pending.request_id.clone(),
+        true,
+        bindings_q,
+        inventories,
+        item_registry,
+        combat_clock,
+        clients,
+    );
+    tracing::info!(
+        entity = ?pending.entity,
+        slot = pending.slot,
+        request_id = %pending.request_id,
+        instance = ?pending.instance_id,
+        "quick_slot_bind persisted and accepted"
+    );
+    true
+}
+
+/// 在 handler 之后运行，每帧只做零等待写入；锁仍在时保留队首，下一帧重试。
+#[allow(clippy::too_many_arguments)] // Bevy system signature: one query/resource per completion concern.
+pub fn flush_quick_slot_prefs_writes(
+    persistence: Option<Res<PlayerStatePersistence>>,
+    mut queue: Option<ResMut<QuickSlotPrefsWriteQueue>>,
+    mut bindings_q: Query<&mut QuickSlotBindings>,
+    inventories: Query<&mut PlayerInventory>,
+    mut clients: Query<(&Username, &mut Client)>,
+    item_registry: Option<Res<ItemRegistry>>,
+    combat_clock: Option<Res<CombatClock>>,
+) {
+    let (Some(persistence), Some(mut queue), Some(item_registry), Some(combat_clock)) =
+        (persistence, queue.take(), item_registry, combat_clock)
+    else {
+        return;
+    };
+
+    // 一次只处理当前队列长度，避免错误数据库或持续写锁让单帧工作量无界增长。
+    let attempts = queue.pending.len();
+    for _ in 0..attempts {
+        let Some(pending) = queue.pending.pop_front() else {
+            break;
+        };
+        match pending.persist_without_waiting(&persistence) {
+            Ok(_) => {
+                let _ = apply_persisted_quick_slot_bind(
+                    &pending,
+                    &mut bindings_q,
+                    &inventories,
+                    &mut clients,
+                    &item_registry,
+                    &combat_clock,
+                );
+            }
+            Err(error) if is_sqlite_busy_error(&error) => {
+                queue.pending.push_front(pending);
+                break;
+            }
+            Err(error) => {
+                // 非 BUSY 错误不是瞬时竞争；保留完整请求并等待数据库恢复，避免
+                // 绑定状态与 durable 偏好分叉。每帧最多尝试一次队首，故不会阻塞 ECS。
+                tracing::warn!(
+                    "[bong][network] queued quick_slot_bind persistence retry failed: {error}"
+                );
+                queue.pending.push_front(pending);
+                break;
+            }
+        }
+    }
 }
 
 type DyingElderTargetQuery<'w, 's> = Query<
@@ -390,6 +542,7 @@ type ClientRequestGateTarget<'a> = (
 pub struct ClientRequestIngressParams<'w, 's> {
     pub combat_clock: Res<'w, CombatClock>,
     pub budget: Option<ResMut<'w, ClientRequestBudget>>,
+    pub quick_slot_prefs_writes: Option<ResMut<'w, QuickSlotPrefsWriteQueue>>,
     pub lifecycles: Query<'w, 's, Option<&'static Lifecycle>>,
     pub gate_targets: Query<'w, 's, ClientRequestGateTarget<'static>>,
     pub lingtian_plot_index: Option<Res<'w, LingtianPlotIndex>>,
@@ -2326,6 +2479,7 @@ pub fn handle_client_request_payloads(
                         persistence.as_deref(),
                         combat_clock,
                     ),
+                    ingress.quick_slot_prefs_writes.as_deref_mut(),
                 );
             }
             ClientRequestV1::SkillBarCast { slot, target, .. } => {
@@ -2615,7 +2769,9 @@ fn handle_use_quick_slot(
         .filter(|template| template.is_quick_use_eligible())
         .map(|template| (template.cast_duration_ms, template.cooldown_ms))
     else {
-        tracing::debug!("[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: unavailable item");
+        tracing::debug!(
+            "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: unavailable item"
+        );
         return;
     };
     // plan §4.2 cast 状态闸门：同槽 cast 中静默忽略；异槽 cast 中 UserCancel + 启新。
@@ -2691,12 +2847,40 @@ fn handle_quick_slot_bind(
     inventories: &Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     runtime: (&ItemRegistry, Option<&PlayerStatePersistence>, &CombatClock),
+    prefs_queue: Option<&mut QuickSlotPrefsWriteQueue>,
 ) {
     let (entity, slot, instance_id, request_id) = request;
     let (item_registry, persistence, combat_clock) = runtime;
-    if request_id.is_empty() || request_id.chars().count() > 128 {
+    if request_id.chars().count() == 0 || request_id.chars().count() > 128 {
+        tracing::warn!(
+            "[bong][network] quick_slot_bind entity={entity:?} rejected invalid request_id chars={}",
+            request_id.chars().count()
+        );
         return;
     }
+    if slot as usize >= QuickSlotBindings::SLOT_COUNT {
+        tracing::warn!("[bong][network] quick_slot_bind entity={entity:?} slot={slot} unavailable");
+        send_quick_slot_bind_response(
+            entity,
+            request_id,
+            false,
+            bindings_q,
+            inventories,
+            item_registry,
+            combat_clock,
+            clients,
+        );
+        return;
+    }
+    let username = match clients.get_mut(entity) {
+        Ok((username, _)) => username.0.clone(),
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing client"
+            );
+            return;
+        }
+    };
     let eligible = instance_id.is_none_or(|id| {
         id > 0
             && id <= 9_007_199_254_740_991
@@ -2726,14 +2910,38 @@ fn handle_quick_slot_bind(
         );
         return;
     }
-    let Ok((username, _)) = clients.get_mut(entity) else {
-        return;
+    let pending_prefs_write = PendingQuickSlotPrefsWrite {
+        entity,
+        request_id: request_id.clone(),
+        username: username.clone(),
+        slot: slot as usize,
+        instance_id,
     };
     if let Some(persistence) = persistence {
-        if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
-            prefs.quick_slots[slot as usize] = instance_id;
-        }) {
-            tracing::warn!("[bong][network] quick-slot preference write failed: {error}");
+        let persistence_result = if let Some(prefs_queue) = prefs_queue {
+            if prefs_queue.has_pending_for(username.as_str()) {
+                prefs_queue.push(pending_prefs_write);
+                return;
+            } else {
+                match pending_prefs_write.persist_without_waiting(persistence) {
+                    Ok(_) => Ok(()),
+                    Err(error) if is_sqlite_busy_error(&error) => {
+                        prefs_queue.push(pending_prefs_write);
+                        return;
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+        } else {
+            pending_prefs_write
+                .persist_with_wait(persistence)
+                .map(|_| ())
+        };
+        if let Err(error) = persistence_result {
+            tracing::warn!(
+                "[bong][network] failed to persist quick_slot_bind for `{}` slot={slot}: {error}",
+                username
+            );
             send_quick_slot_bind_response(
                 entity,
                 request_id,
@@ -2747,19 +2955,13 @@ fn handle_quick_slot_bind(
             return;
         }
     }
-    // 只改使用链接，不搬动物品，也不修改独立的技能栏。
-    if let Ok(mut bindings) = bindings_q.get_mut(entity) {
-        bindings.set(slot, instance_id);
-    }
-    send_quick_slot_bind_response(
-        entity,
-        request_id,
-        true,
+    let _ = apply_persisted_quick_slot_bind(
+        &pending_prefs_write,
         bindings_q,
         inventories,
+        clients,
         item_registry,
         combat_clock,
-        clients,
     );
 }
 
