@@ -11,6 +11,7 @@ fn test_template(
     max_stack_count: u32,
 ) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: template_id.to_string(),
         display_name: template_id.to_string(),
         category,

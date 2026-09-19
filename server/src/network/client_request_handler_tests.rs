@@ -10,9 +10,7 @@ use crate::combat::events::RevivalActionIntent;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
 use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
-use crate::inventory::{
-    ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-};
+use crate::inventory::ItemInstance;
 use crate::world::dimension::{DimensionKind, DimensionLayers};
 use valence::custom_payload::CustomPayloadEvent;
 use valence::prelude::{
@@ -140,51 +138,6 @@ fn alchemy_explode_tier_three_scales_backlash_above_tier_one() {
     assert!(tier_three > tier_one);
     assert_eq!(tier_three, 80.0);
     assert!(scale_alchemy_explosion_crack(0.3, 3) > scale_alchemy_explosion_crack(0.3, 1));
-}
-
-fn lookup_item(instance_id: u64) -> ItemInstance {
-    ItemInstance {
-        instance_id,
-        template_id: "bone_whistle".to_string(),
-        display_name: "测试物品".to_string(),
-        grid_w: 1,
-        grid_h: 1,
-        weight: 0.1,
-        rarity: ItemRarity::Common,
-        description: String::new(),
-        stack_count: 1,
-        spirit_quality: 0.0,
-        durability: 1.0,
-        freshness: None,
-        mineral_id: None,
-        charges: None,
-        forge_quality: None,
-        forge_color: None,
-        forge_side_effects: Vec::new(),
-        forge_achieved_tier: None,
-        alchemy: None,
-        lingering_owner_qi: None,
-    }
-}
-
-fn lookup_inventory() -> PlayerInventory {
-    PlayerInventory {
-        revision: InventoryRevision(0),
-        containers: vec![ContainerState {
-            quick_access: false,
-            id: "main_pack".to_string(),
-            name: "main_pack".to_string(),
-            rows: 5,
-            cols: 7,
-            items: Vec::new(),
-            owner_instance_id: None,
-        }],
-        equipped: Default::default(),
-        hotbar: Default::default(),
-        bone_coins: 0,
-        max_weight: 50.0,
-        triggered_treasures: Vec::new(),
-    }
 }
 
 fn explosion_inventory_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
@@ -396,68 +349,6 @@ fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].entity, entity);
     assert!((events[0].severity - 0.15).abs() < 1e-9);
-}
-
-#[test]
-fn inventory_instance_id_by_template_prefers_containers_hotbar_then_equipped() {
-    let mut inventory = lookup_inventory();
-    inventory.containers[0].items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance: lookup_item(11),
-    });
-    inventory.hotbar[0] = Some(lookup_item(22));
-    inventory.equipped.insert(
-        crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-        crate::inventory::SlotContents::held_single(lookup_item(33)),
-    );
-    assert_eq!(
-        inventory_instance_id_by_template(&inventory, "bone_whistle"),
-        Some(11)
-    );
-    inventory.containers[0].items.clear();
-    assert_eq!(
-        inventory_instance_id_by_template(&inventory, "bone_whistle"),
-        Some(22)
-    );
-}
-
-#[test]
-fn inventory_instance_id_by_template_finds_worn_equipped_item() {
-    let mut inventory = lookup_inventory();
-    inventory.equipped.insert(
-        crate::inventory::EQUIP_SLOT_CHEST.to_string(),
-        crate::inventory::SlotContents::worn_single(lookup_item(44)),
-    );
-    assert_eq!(
-        inventory_instance_id_by_template(&inventory, "bone_whistle"),
-        Some(44)
-    );
-}
-
-#[test]
-fn inventory_instance_id_by_template_uses_stable_equipped_slot_order() {
-    let mut inventory = lookup_inventory();
-    inventory.equipped.insert(
-        crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-        crate::inventory::SlotContents::held_single(lookup_item(55)),
-    );
-    inventory.equipped.insert(
-        crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-        crate::inventory::SlotContents::held_single(lookup_item(66)),
-    );
-    assert_eq!(
-        inventory_instance_id_by_template(&inventory, "bone_whistle"),
-        Some(66)
-    );
-}
-
-#[test]
-fn inventory_instance_id_by_template_returns_none_when_missing() {
-    assert_eq!(
-        inventory_instance_id_by_template(&lookup_inventory(), "bone_whistle"),
-        None
-    );
 }
 
 #[test]
@@ -1988,6 +1879,7 @@ mod external_ingress_tests {
                 (
                     "blueprint_scroll_ling_feng".to_string(),
                     ItemTemplate {
+                        quick_use: false,
                         id: "blueprint_scroll_ling_feng".to_string(),
                         display_name: "灵锋图谱残卷".to_string(),
                         category: ItemCategory::Misc,
@@ -2021,6 +1913,7 @@ mod external_ingress_tests {
                 (
                     "inscription_scroll_sharp_v0".to_string(),
                     ItemTemplate {
+                        quick_use: false,
                         id: "inscription_scroll_sharp_v0".to_string(),
                         display_name: "锐意铭文残卷".to_string(),
                         category: ItemCategory::Misc,
@@ -2302,12 +2195,15 @@ mod external_ingress_tests {
                 return None;
             };
             Some(crate::schema::combat_hud::QuickSlotConfigV1 {
+                eligible_item_ids: data.eligible_item_ids,
                 slots: data
                     .slots
                     .into_iter()
                     .map(|slot| {
                         slot.entry
                             .map(|entry| crate::schema::combat_hud::QuickSlotEntryV1 {
+                                instance_id: entry.instance_id,
+                                stack_count: entry.stack_count,
                                 item_id: entry.item_id,
                                 display_name: entry.display_name,
                                 cast_duration_ms: entry.cast_duration_ms,
@@ -3934,14 +3830,14 @@ mod external_ingress_tests {
             app: &mut App,
             entity: Entity,
             slot: u8,
-            item_id: Option<&str>,
+            instance_id: Option<u64>,
             request_id: &str,
         ) {
             let body = serde_json::json!({
                 "type": "quick_slot_bind",
                 "v": 1,
                 "slot": slot,
-                "item_id": item_id,
+                "instance_id": instance_id,
                 "request_id": request_id,
             });
             app.world_mut()
@@ -5166,6 +5062,7 @@ mod external_ingress_tests {
             ItemRegistry::from_map(HashMap::from([(
                 "armor_straw_chestplate".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "armor_straw_chestplate".to_string(),
                     display_name: "species-gated chestplate".to_string(),
                     category: ItemCategory::Armor,
@@ -8000,6 +7897,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "bone_whistle".to_string(),
                 ItemTemplate {
+                    quick_use: true,
                     id: "bone_whistle".to_string(),
                     display_name: "骨哨".to_string(),
                     category: ItemCategory::Misc,
@@ -8011,7 +7909,7 @@ mod external_ingress_tests {
                     rarity: ItemRarity::Common,
                     spirit_quality_initial: 1.0,
                     description: String::new(),
-                    effect: None,
+                    effect: Some(ItemEffect::ComposureRestore { magnitude: 0.2 }),
                     cast_duration_ms: 250,
                     cooldown_ms: 450,
                     weapon_spec: None,
@@ -8080,6 +7978,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "guyuan_pill".to_string(),
                 ItemTemplate {
+                    quick_use: true,
                     id: "guyuan_pill".to_string(),
                     display_name: "guyuan_pill".to_string(),
                     category: ItemCategory::Misc,
@@ -8091,7 +7990,7 @@ mod external_ingress_tests {
                     rarity: ItemRarity::Common,
                     spirit_quality_initial: 1.0,
                     description: String::new(),
-                    effect: None,
+                    effect: Some(ItemEffect::ComposureRestore { magnitude: 0.2 }),
                     cast_duration_ms: 1500,
                     cooldown_ms: 1500,
                     weapon_spec: None,
@@ -8242,6 +8141,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "guyuan_pill".to_string(),
                 ItemTemplate {
+                    quick_use: true,
                     id: "guyuan_pill".to_string(),
                     display_name: "guyuan_pill".to_string(),
                     category: ItemCategory::Misc,
@@ -8253,7 +8153,7 @@ mod external_ingress_tests {
                     rarity: ItemRarity::Common,
                     spirit_quality_initial: 1.0,
                     description: String::new(),
-                    effect: None,
+                    effect: Some(ItemEffect::ComposureRestore { magnitude: 0.2 }),
                     cast_duration_ms: 1500,
                     cooldown_ms: 1500,
                     weapon_spec: None,
@@ -8344,6 +8244,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "guyuan_pill".to_string(),
                 ItemTemplate {
+                    quick_use: true,
                     id: "guyuan_pill".to_string(),
                     display_name: "guyuan_pill".to_string(),
                     category: ItemCategory::Misc,
@@ -8355,7 +8256,7 @@ mod external_ingress_tests {
                     rarity: ItemRarity::Common,
                     spirit_quality_initial: 1.0,
                     description: String::new(),
-                    effect: None,
+                    effect: Some(ItemEffect::ComposureRestore { magnitude: 0.2 }),
                     cast_duration_ms: 1500,
                     cooldown_ms: 1500,
                     weapon_spec: None,
@@ -8434,106 +8335,104 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn quick_slot_bind_resolves_equipped_template_instance() {
+        fn quick_slot_bind_links_exact_instance_without_moving_inventory_or_skill_bar() {
             let mut app = App::new();
             register_request_app(&mut app);
-            app.insert_resource(
-                crate::inventory::load_item_registry().expect("item registry loads"),
-            );
-
-            let mut inventory = empty_inventory();
-            inventory.equipped.insert(
-                crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
-                crate::inventory::SlotContents::held_single(inventory_test_item(
-                    77,
-                    "earth_crumb",
-                    1,
-                )),
-            );
-
-            let (client_bundle, _helper) = create_mock_client("Azure");
+            app.insert_resource(crate::inventory::load_item_registry().unwrap());
+            let mut inventory = inventory_with_item(inventory_test_item(77, "guyuan_pill", 2));
+            inventory.hotbar[0] = Some(inventory_test_item(88, "guyuan_pill", 3));
+            let before = serde_json::to_value(&inventory).unwrap();
+            let mut skills = SkillBarBindings::default();
+            skills.set(1, SkillSlot::Item { instance_id: 99 });
+            let (client, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
-                .spawn((
-                    client_bundle,
-                    QuickSlotBindings::default(),
-                    SkillBarBindings::default(),
-                    inventory,
-                ))
+                .spawn((client, QuickSlotBindings::default(), skills, inventory))
                 .id();
-            app.world_mut()
-            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
-            .send(CustomPayloadEvent {
-                client: entity,
-                channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"earth_crumb","request_id":"bind-equipped"}"#
-                    .to_vec()
-                    .into_boxed_slice(),
-            });
 
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "bind-instance");
             app.update();
-
-            let bindings = app
-                .world()
-                .get::<QuickSlotBindings>(entity)
-                .expect("player should keep quick slot bindings");
+            flush_all_client_packets(&mut app);
+            let configs = collect_quickslot_configs(&mut helper);
+            let config = configs
+                .iter()
+                .find(|c| c.ack_request_id.as_deref() == Some("bind-instance"))
+                .unwrap();
+            assert_eq!(config.bind_accepted, Some(true));
+            assert_eq!(config.slots[1].as_ref().unwrap().instance_id, 88);
+            assert_eq!(config.slots[1].as_ref().unwrap().stack_count, 3);
             assert_eq!(
-                bindings.get(0),
-                Some(77),
-                "quick_slot_bind must resolve template ids from equipped held/worn items"
+                serde_json::to_value(app.world().get::<PlayerInventory>(entity).unwrap()).unwrap(),
+                before
+            );
+            send_quick_slot_bind_request(&mut app, entity, 1, None, "clear-link");
+            app.update();
+            assert_eq!(
+                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
+                None
+            );
+            assert_eq!(
+                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
+                Some(&SkillSlot::Item { instance_id: 99 })
+            );
+            assert_eq!(
+                serde_json::to_value(app.world().get::<PlayerInventory>(entity).unwrap()).unwrap(),
+                before
             );
         }
 
         #[test]
-        fn quick_slot_bind_atomically_mirrors_block_item_into_skill_bar() {
-            let mut app = App::new();
-            register_request_app(&mut app);
-            app.insert_resource(
-                crate::inventory::load_item_registry().expect("item registry loads"),
-            );
-
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
-            let (client_bundle, _helper) = create_mock_client("Azure");
-            let entity = app
-                .world_mut()
-                .spawn((
-                    client_bundle,
-                    QuickSlotBindings::default(),
-                    SkillBarBindings::default(),
-                    inventory,
-                ))
-                .id();
-            app.world_mut()
-            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
-            .send(CustomPayloadEvent {
-                client: entity,
-                channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"earth_crumb","request_id":"bind-block"}"#
-                    .to_vec()
-                    .into_boxed_slice(),
-            });
-
-            app.update();
-
-            let quick = app
-                .world()
-                .get::<QuickSlotBindings>(entity)
-                .expect("player should keep quick slot bindings");
-            assert_eq!(
-                quick.get(1),
-                Some(88),
-                "expected block quick-slot intent to bind instance 88, actual {:?}",
-                quick.get(1)
-            );
-            let skillbar = app
-                .world()
-                .get::<SkillBarBindings>(entity)
-                .expect("player should keep skill bar bindings");
-            assert_eq!(
-                skillbar.get(1),
-                Some(&SkillSlot::Item { instance_id: 88 }),
-                "expected the same server intent to atomically mirror the block into skill bar"
-            );
+        fn quick_slot_bind_rejects_unmarked_and_targeted_items() {
+            for template_id in ["earth_crumb", "ningmai_powder"] {
+                let mut app = App::new();
+                register_request_app(&mut app);
+                let registry = crate::inventory::load_item_registry().unwrap();
+                let mut template = registry.get(template_id).unwrap().clone();
+                // 即便误开启配置，需选择经脉的物品仍不得走快捷消费。
+                if template_id == "ningmai_powder" {
+                    template.quick_use = true;
+                }
+                app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+                    template_id.into(),
+                    template,
+                )])));
+                let inventory = inventory_with_item(inventory_test_item(88, template_id, 1));
+                let (client, mut helper) = create_mock_client("Azure");
+                let entity = app
+                    .world_mut()
+                    .spawn((client, QuickSlotBindings::default(), inventory))
+                    .id();
+                send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "ineligible");
+                app.update();
+                flush_all_client_packets(&mut app);
+                assert_eq!(
+                    app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
+                    None
+                );
+                assert!(collect_quickslot_configs(&mut helper).iter().any(|c| c
+                    .ack_request_id
+                    .as_deref()
+                    == Some("ineligible")
+                    && c.bind_accepted == Some(false)));
+                app.world_mut()
+                    .get_mut::<QuickSlotBindings>(entity)
+                    .unwrap()
+                    .set(0, Some(88));
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                            .to_vec()
+                            .into_boxed_slice(),
+                    });
+                app.update();
+                assert!(
+                    app.world().get::<Casting>(entity).is_none(),
+                    "旧链接也必须通过使用资格校验"
+                );
+            }
         }
 
         #[test]
@@ -8553,7 +8452,7 @@ mod external_ingress_tests {
                 .spawn((client_bundle, quick, skillbar, empty_inventory()))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "reject-unheld");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "reject-unheld");
             app.update();
             flush_all_client_packets(&mut app);
 
@@ -8573,125 +8472,57 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn quick_slot_bind_missing_skillbar_rejects_before_quick_slot_mutation() {
+        fn quick_slot_inventory_changes_refresh_counts_and_clear_exhausted_instance() {
             let mut app = App::new();
             register_request_app(&mut app);
-            app.insert_resource(
-                crate::inventory::load_item_registry().expect("item registry loads"),
+            app.insert_resource(crate::inventory::load_item_registry().unwrap());
+            app.add_systems(
+                Update,
+                crate::network::quickslot_config_emit::emit_quickslot_config_payloads
+                    .after(handle_client_request_payloads),
             );
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
-            let (client_bundle, mut helper) = create_mock_client("Azure");
-            let entity = app
-                .world_mut()
-                .spawn((client_bundle, QuickSlotBindings::default(), inventory))
-                .id();
-
-            send_quick_slot_bind_request(
-                &mut app,
-                entity,
-                1,
-                Some("earth_crumb"),
-                "reject-missing-skillbar",
-            );
+            let mut inventory = inventory_with_item(inventory_test_item(77, "guyuan_pill", 2));
+            inventory.hotbar[0] = Some(inventory_test_item(88, "guyuan_pill", 1));
+            let mut bindings = QuickSlotBindings::default();
+            bindings.set(0, Some(77));
+            bindings.set(1, Some(77));
+            bindings.set_cooldown(0, 500);
+            let (client, mut helper) = create_mock_client("Azure");
+            let entity = app.world_mut().spawn((client, bindings, inventory)).id();
             app.update();
             flush_all_client_packets(&mut app);
+            collect_quickslot_configs(&mut helper);
 
-            assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
-                None
-            );
+            // 移动物品不解除链接；同一实例的新数量必须刷新到 HUD。
+            {
+                let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+                let item = inv.containers[0].items.remove(0).instance;
+                inv.hotbar[1] = Some(item);
+                crate::inventory::consume_item_instance_once(&mut inv, 77).unwrap();
+            }
+            app.update();
+            flush_all_client_packets(&mut app);
             let configs = collect_quickslot_configs(&mut helper);
-            assert!(configs.iter().any(|config| {
-                config.ack_request_id.as_deref() == Some("reject-missing-skillbar")
-                    && config.bind_accepted == Some(false)
-            }));
-        }
+            let current = configs.last().expect("库存变化必须推送快捷栏配置");
+            for entry in current.slots.iter().flatten() {
+                assert_eq!((entry.instance_id, entry.stack_count), (77, 1));
+            }
+            assert!(current.slots.iter().all(Option::is_some));
 
-        #[test]
-        fn quick_slot_bind_clears_only_the_old_auto_mirrored_item() {
-            let mut app = App::new();
-            register_request_app(&mut app);
-            app.insert_resource(
-                crate::inventory::load_item_registry().expect("item registry loads"),
-            );
-            let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
-            inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
-            let mut quick = QuickSlotBindings::default();
-            let _ = quick.set(1, Some(88));
-            let mut skillbar = SkillBarBindings::default();
-            let _ = skillbar.set(1, SkillSlot::Item { instance_id: 88 });
-            let (client_bundle, _helper) = create_mock_client("Azure");
-            let entity = app
-                .world_mut()
-                .spawn((client_bundle, quick, skillbar, inventory))
-                .id();
-
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("guyuan_pill"), "block-to-pill");
+            {
+                let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+                crate::inventory::consume_item_instance_once(&mut inv, 77).unwrap();
+            }
             app.update();
-
-            assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
-                Some(89)
+            flush_all_client_packets(&mut app);
+            let configs = collect_quickslot_configs(&mut helper);
+            assert!(
+                configs.last().unwrap().slots.iter().all(Option::is_none),
+                "最后一份耗尽后所有引用都应清空，不能串绑另一枚同名物品"
             );
-            assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
-                Some(&SkillSlot::Empty),
-                "expected block→non-block to clear only the stale automatic item mirror"
-            );
-
-            {
-                let mut quick = app
-                    .world_mut()
-                    .get_mut::<QuickSlotBindings>(entity)
-                    .unwrap();
-                let _ = quick.set(1, Some(88));
-            }
-            {
-                let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-                let _ = skillbar.set(1, SkillSlot::Item { instance_id: 88 });
-            }
-            send_quick_slot_bind_request(&mut app, entity, 1, None, "block-to-clear");
-            app.update();
-            assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
-                None
-            );
-            assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
-                Some(&SkillSlot::Empty),
-                "expected block→clear to remove the matching automatic item mirror"
-            );
-
-            {
-                let mut quick = app
-                    .world_mut()
-                    .get_mut::<QuickSlotBindings>(entity)
-                    .unwrap();
-                let _ = quick.set(1, Some(88));
-            }
-            {
-                let mut skillbar = app.world_mut().get_mut::<SkillBarBindings>(entity).unwrap();
-                let _ = skillbar.set(
-                    1,
-                    SkillSlot::Skill {
-                        skill_id: "sword.cleave".to_string(),
-                    },
-                );
-            }
-            send_quick_slot_bind_request(&mut app, entity, 1, None, "protect-independent-skill");
-            app.update();
-
-            assert_eq!(
-                app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
-                None
-            );
-            assert_eq!(
-                app.world().get::<SkillBarBindings>(entity).unwrap().get(1),
-                Some(&SkillSlot::Skill {
-                    skill_id: "sword.cleave".to_string()
-                }),
-                "expected clearing quick slot not to overwrite a later independent skill binding"
-            );
+            let bindings = app.world().get::<QuickSlotBindings>(entity).unwrap();
+            assert!(bindings.slots.iter().all(Option::is_none));
+            assert_eq!(bindings.cooldown_until_tick[0], 500, "清空链接不能消除冷却");
         }
 
         #[test]
@@ -8706,7 +8537,7 @@ mod external_ingress_tests {
                 std::env::temp_dir(),
                 invalid_db_path,
             ));
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
@@ -8718,13 +8549,7 @@ mod external_ingress_tests {
                 ))
                 .id();
 
-            send_quick_slot_bind_request(
-                &mut app,
-                entity,
-                1,
-                Some("earth_crumb"),
-                "reject-persistence",
-            );
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "reject-persistence");
             app.update();
             flush_all_client_packets(&mut app);
 
@@ -8743,7 +8568,7 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn quick_slot_bind_ack_waits_for_sqlite_busy_write_to_commit() {
+        fn quick_slot_bind_ack_waits_for_instance_link_write_to_commit() {
             let unique = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system clock should be after unix epoch")
@@ -8768,19 +8593,14 @@ mod external_ingress_tests {
                 Update,
                 flush_quick_slot_prefs_writes.after(handle_client_request_payloads),
             );
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
-                .spawn((
-                    client_bundle,
-                    QuickSlotBindings::default(),
-                    SkillBarBindings::default(),
-                    inventory,
-                ))
+                .spawn((client_bundle, QuickSlotBindings::default(), inventory))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "busy-bind");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "busy-bind");
             let started = std::time::Instant::now();
             app.update();
             let elapsed = started.elapsed();
@@ -8788,7 +8608,7 @@ mod external_ingress_tests {
 
             assert!(
                 elapsed < std::time::Duration::from_secs(1),
-                "SQLite BUSY must not block the ECS request frame for the normal 30s timeout; elapsed={elapsed:?}"
+                "SQLite BUSY must not block the ECS request frame; elapsed={elapsed:?}"
             );
             assert_eq!(
                 app.world()
@@ -8796,14 +8616,14 @@ mod external_ingress_tests {
                     .expect("quick-slot component should remain present")
                     .get(1),
                 None,
-                "runtime binding must wait until durable prefs commit after a BUSY write"
+                "runtime binding must wait until the instance link is durable"
             );
             assert!(
                 !collect_quickslot_configs(&mut helper).iter().any(|config| {
                     config.ack_request_id.as_deref() == Some("busy-bind")
                         && config.bind_accepted == Some(true)
                 }),
-                "BUSY must not emit bind_accepted=true before durable prefs commit"
+                "BUSY must not emit bind_accepted=true before durable commit"
             );
             assert_eq!(
                 app.world()
@@ -8849,21 +8669,21 @@ mod external_ingress_tests {
                 .expect("queued bind should eventually persist UI prefs");
             let prefs: serde_json::Value =
                 serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
-            assert_eq!(prefs["quick_slots"][1], "earth_crumb");
+            assert_eq!(prefs["quick_slots"][1], 88);
             drop(connection);
             drop(locked);
             let _ = std::fs::remove_dir_all(root);
         }
 
         #[test]
-        fn quick_slot_bind_queued_requests_recompute_block_mirror_in_order() {
+        fn quick_slot_bind_queued_instance_links_preserve_request_order() {
             let unique = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system clock should be after unix epoch")
                 .as_nanos();
-            let root = std::env::temp_dir().join(format!("bong-quick-bind-queue-order-{unique}"));
+            let root = std::env::temp_dir().join(format!("bong-quick-bind-queue-{unique}"));
             let db_path = root.join("bong.db");
-            crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-queue-order-test")
+            crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-queue-test")
                 .expect("test sqlite should bootstrap");
             let locked = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
             locked
@@ -8881,22 +8701,17 @@ mod external_ingress_tests {
                 Update,
                 flush_quick_slot_prefs_writes.after(handle_client_request_payloads),
             );
-            let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let mut inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
             inventory.hotbar[0] = Some(inventory_test_item(89, "guyuan_pill", 1));
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
-                .spawn((
-                    client_bundle,
-                    QuickSlotBindings::default(),
-                    SkillBarBindings::default(),
-                    inventory,
-                ))
+                .spawn((client_bundle, QuickSlotBindings::default(), inventory))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "queued-block");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "queued-first");
             app.update();
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("guyuan_pill"), "queued-pill");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(89), "queued-second");
             app.update();
             flush_all_client_packets(&mut app);
             assert_eq!(
@@ -8905,7 +8720,7 @@ mod external_ingress_tests {
                     .pending
                     .len(),
                 2,
-                "same-player requests must remain ordered while the durable writer is locked"
+                "same-player instance links must remain ordered while the writer is locked"
             );
 
             locked
@@ -8920,24 +8735,16 @@ mod external_ingress_tests {
                     .expect("quick-slot component should remain present")
                     .get(1),
                 Some(89),
-                "the later non-block request should win after queued requests flush in order"
-            );
-            assert_eq!(
-                app.world()
-                    .get::<SkillBarBindings>(entity)
-                    .expect("skill-bar component should remain present")
-                    .get(1),
-                Some(&SkillSlot::Empty),
-                "a later non-block request must clear the earlier block's automatic mirror"
+                "the later durable request should win after FIFO queue flush"
             );
             let configs = collect_quickslot_configs(&mut helper);
-            for request_id in ["queued-block", "queued-pill"] {
+            for request_id in ["queued-first", "queued-second"] {
                 assert!(
                     configs.iter().any(|config| {
                         config.ack_request_id.as_deref() == Some(request_id)
                             && config.bind_accepted == Some(true)
                     }),
-                    "queued request {request_id} should receive an ACK only after its durable write"
+                    "queued request {request_id} should receive an ACK after its durable write"
                 );
             }
 
@@ -8951,15 +8758,14 @@ mod external_ingress_tests {
                 .expect("queued requests should eventually persist UI prefs");
             let prefs: serde_json::Value =
                 serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
-            assert_eq!(prefs["quick_slots"][1], "guyuan_pill");
-            assert_eq!(prefs["skill_bar"][1]["kind"], "empty");
+            assert_eq!(prefs["quick_slots"][1], 89);
             drop(connection);
             drop(locked);
             let _ = std::fs::remove_dir_all(root);
         }
 
         #[test]
-        fn quick_slot_bind_persists_atomic_block_mirror_for_reload() {
+        fn quick_slot_bind_persists_instance_link_for_reload() {
             let unique = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system clock should be after unix epoch")
@@ -8974,7 +8780,7 @@ mod external_ingress_tests {
                 crate::inventory::load_item_registry().expect("item registry loads"),
             );
             app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
             let (client_bundle, _helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
@@ -8986,7 +8792,7 @@ mod external_ingress_tests {
                 ))
                 .id();
 
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), "persist-block");
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), "persist-block");
             app.update();
 
             let connection = rusqlite::Connection::open(&db_path).expect("test sqlite should open");
@@ -8999,9 +8805,8 @@ mod external_ingress_tests {
                 .expect("accepted bind should persist UI prefs");
             let prefs: serde_json::Value =
                 serde_json::from_str(&prefs_json).expect("persisted prefs should be valid JSON");
-            assert_eq!(prefs["quick_slots"][1], "earth_crumb");
-            assert_eq!(prefs["skill_bar"][1]["kind"], "item");
-            assert_eq!(prefs["skill_bar"][1]["template_id"], "earth_crumb");
+            assert_eq!(prefs["quick_slots"][1], 88);
+            assert_eq!(prefs["skill_bar"][1]["kind"], "empty");
             let _ = std::fs::remove_dir_all(root);
         }
 
@@ -9013,7 +8818,7 @@ mod external_ingress_tests {
                 crate::inventory::load_item_registry().expect("item registry loads"),
             );
 
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
             let (client_bundle, mut helper) = create_mock_client("Azure");
             let entity = app
                 .world_mut()
@@ -9027,7 +8832,7 @@ mod external_ingress_tests {
 
             // 128 个 '界' 字符（每个 3 字节，共 384 字节）必须被视为合法长度并接受
             let rid128 = "界".repeat(128);
-            send_quick_slot_bind_request(&mut app, entity, 1, Some("earth_crumb"), &rid128);
+            send_quick_slot_bind_request(&mut app, entity, 1, Some(88), &rid128);
             app.update();
             flush_all_client_packets(&mut app);
 
@@ -9042,7 +8847,7 @@ mod external_ingress_tests {
 
             // 129 个 '界' 字符必须被静默拒绝且不产生状态变异
             let rid129 = "界".repeat(129);
-            send_quick_slot_bind_request(&mut app, entity, 0, Some("earth_crumb"), &rid129);
+            send_quick_slot_bind_request(&mut app, entity, 0, Some(88), &rid129);
             app.update();
             flush_all_client_packets(&mut app);
 
@@ -9053,14 +8858,14 @@ mod external_ingress_tests {
         }
 
         #[test]
-        fn quick_slot_bind_rejects_empty_string_item_id_without_unbinding() {
+        fn quick_slot_bind_rejects_zero_instance_without_unbinding() {
             let mut app = App::new();
             register_request_app(&mut app);
             app.insert_resource(
                 crate::inventory::load_item_registry().expect("item registry loads"),
             );
 
-            let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+            let inventory = inventory_with_item(inventory_test_item(88, "guyuan_pill", 1));
             let mut quick_slots = QuickSlotBindings::default();
             assert!(quick_slots.set(1, Some(88)));
             let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -9074,13 +8879,13 @@ mod external_ingress_tests {
                 ))
                 .id();
 
-            // 发送 raw JSON item_id=""（非 null），必须被拒绝（bind_accepted=false）且已有绑定保持原样
+            // 发送 raw JSON instance_id=0（非 null），必须被拒绝（bind_accepted=false）且已有绑定保持原样
             app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"quick_slot_bind","v":1,"slot":1,"item_id":"","request_id":"empty-item-id"}"#
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":1,"instance_id":0,"request_id":"empty-item-id"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -9091,7 +8896,7 @@ mod external_ingress_tests {
             assert_eq!(
                 app.world().get::<QuickSlotBindings>(entity).unwrap().get(1),
                 Some(88),
-                "item_id=\"\" 畸形请求不得清空既有绑定"
+                "instance_id=0 畸形请求不得清空既有绑定"
             );
             let configs = collect_quickslot_configs(&mut helper);
             assert!(
@@ -9099,7 +8904,7 @@ mod external_ingress_tests {
                     c.ack_request_id.as_deref() == Some("empty-item-id")
                         && c.bind_accepted == Some(false)
                 }),
-                "item_id=\"\" 请求应下发 bind_accepted=false 的 quickslot_config 回执"
+                "instance_id=0 请求应下发 bind_accepted=false 的 quickslot_config 回执"
             );
         }
 
@@ -9110,6 +8915,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "spiritual_ore".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "spiritual_ore".to_string(),
                     display_name: "灵矿".to_string(),
                     category: ItemCategory::Misc,
@@ -9215,6 +9021,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "long_rod".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "long_rod".to_string(),
                     display_name: "长杆".to_string(),
                     category: ItemCategory::Misc,
@@ -9319,6 +9126,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "long_rod".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "long_rod".to_string(),
                     display_name: "长杆".to_string(),
                     category: ItemCategory::Misc,
@@ -9420,6 +9228,7 @@ mod external_ingress_tests {
             app.insert_resource(ItemRegistry::from_map(HashMap::from([(
                 "huiyuan_pill".to_string(),
                 ItemTemplate {
+                    quick_use: false,
                     id: "huiyuan_pill".to_string(),
                     display_name: "回元丹".to_string(),
                     category: ItemCategory::Pill,
@@ -14278,6 +14087,7 @@ dispatch = "direct_generic"
 
         fn readable_scroll_template(id: &str, anim_id: Option<&str>) -> ItemTemplate {
             ItemTemplate {
+                quick_use: false,
                 id: id.to_string(),
                 display_name: "《测试残卷》".to_string(),
                 category: ItemCategory::Scroll,

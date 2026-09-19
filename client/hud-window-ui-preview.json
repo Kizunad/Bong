@@ -1,0 +1,30 @@
+{
+  "output_dir": "hud-window-ui-preview",
+  "exit_on_complete": true,
+  "screenshots": [
+    {
+      "name": "hud-windows-minimum", "scene_id": "hud-windows",
+      "framebuffer_width": 640, "framebuffer_height": 480, "gui_scale": 2,
+      "expected_logical_width": 320, "expected_logical_height": 240,
+      "expected_template_id": "hud-widget"
+    },
+    {
+      "name": "hud-windows-odd", "scene_id": "hud-windows",
+      "framebuffer_width": 801, "framebuffer_height": 481, "gui_scale": 2,
+      "expected_logical_width": 401, "expected_logical_height": 241,
+      "expected_template_id": "hud-widget"
+    },
+    {
+      "name": "hud-windows-wide", "scene_id": "hud-windows",
+      "framebuffer_width": 1366, "framebuffer_height": 768, "gui_scale": 2,
+      "expected_logical_width": 683, "expected_logical_height": 384,
+      "expected_template_id": "hud-widget"
+    },
+    {
+      "name": "hud-windows-gameplay", "scene_id": "hud-windows",
+      "framebuffer_width": 1366, "framebuffer_height": 768, "gui_scale": 2,
+      "expected_logical_width": 683, "expected_logical_height": 384,
+      "expected_template_id": "hud-widget"
+    }
+  ]
+}

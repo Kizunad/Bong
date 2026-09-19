@@ -80,6 +80,7 @@ public class BongHud {
         com.bong.client.combat.screen.CombatScreenOpener.tick();
 
         Screen currentScreen = client.currentScreen;
+        if (currentScreen instanceof com.bong.client.inventory.InspectScreen) return;
         if (currentScreen == null) {
             ScreenTransitionOverlay.render(context, client, ScreenTransition.nowMillis());
         }
@@ -88,8 +89,11 @@ public class BongHud {
             nowMillis,
             () -> captureHudFrameInput(client, nowMillis),
             (commands, visibility) ->
-                renderCommands(context, client, commands, visibility, nowMillis, backend)
+                renderCommands(context, client,
+                    com.bong.client.ui.window.UiWindowRuntime.layoutHudCommands(commands), visibility, nowMillis, backend),
+            com.bong.client.ui.window.UiWindowRuntime::captureHudCommands
         );
+        com.bong.client.ui.window.UiWindowRuntime.renderHud(context, tickDelta);
     }
 
     static void render(
@@ -98,6 +102,11 @@ public class BongHud {
         Supplier<HudFrameInput> frameInputSupplier,
         HudCommandRenderer renderer
     ) {
+        render(currentScreen, nowMillis, frameInputSupplier, renderer, commands -> {});
+    }
+
+    private static void render(Screen currentScreen, long nowMillis, Supplier<HudFrameInput> frameInputSupplier,
+                               HudCommandRenderer renderer, Consumer<List<HudRenderCommand>> capture) {
         Objects.requireNonNull(frameInputSupplier, "frameInputSupplier");
         Objects.requireNonNull(renderer, "renderer");
 
@@ -107,6 +116,17 @@ public class BongHud {
         }
 
         HudFrameInput frame = Objects.requireNonNull(frameInputSupplier.get(), "frameInputSupplier.get()");
+        List<HudRenderCommand> commands = buildFrameCommands(frame, nowMillis);
+        capture.accept(commands);
+        renderer.render(filterCommandsForVisibility(commands, visibility), visibility);
+    }
+
+    public static List<HudRenderCommand> workspaceCommands() {
+        long nowMillis = System.currentTimeMillis();
+        return buildFrameCommands(captureHudFrameInput(MinecraftClient.getInstance(), nowMillis), nowMillis);
+    }
+
+    private static List<HudRenderCommand> buildFrameCommands(HudFrameInput frame, long nowMillis) {
         List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
             frame.hudSnapshot(),
             frame.combatSnapshot(),
@@ -124,10 +144,15 @@ public class BongHud {
             commands.addAll(supplementalCommands);
         }
 
-        renderer.render(
-            filterCommandsForVisibility(commands, visibility),
-            visibility
-        );
+        return commands;
+    }
+
+    /** 工作台只重用命令提交，不重放全屏效果、计时或领域状态更新。 */
+    public static void renderPanelCommands(DrawContext context, List<HudRenderCommand> commands, HudRenderBackend backend) {
+        var client = MinecraftClient.getInstance();
+        renderOrderedCommands(commands, backend::handles,
+            command -> backend.renderCommand(context, client, ScreenHudVisibility.FULL, command),
+            command -> renderGuiCommand(context, client, command), context::draw);
     }
 
     private static HudFrameInput captureHudFrameInput(MinecraftClient client, long nowMillis) {

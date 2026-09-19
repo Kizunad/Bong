@@ -221,6 +221,18 @@ public final class HudRenderCommand {
         return texturePath;
     }
 
+    /** 呈现变换不改写 planner 的原命令，也不移动屏幕染色与边缘效果。 */
+    public HudRenderCommand transformed(double offsetX, double offsetY, double scale) {
+        if (isScreenTint() || isEdgeVignette() || isEdgeInkWash() || isEdgeIndicator() || isToast()) return this;
+        if (offsetX == 0 && offsetY == 0 && scale == 1) return this;
+        Kind transformedKind = isText() && scale != 1 ? Kind.SCALED_TEXT : kind;
+        return new HudRenderCommand(layer, transformedKind, text,
+            (int) Math.round(x * scale + offsetX), (int) Math.round(y * scale + offsetY),
+            width == 0 ? 0 : Math.max(1, (int) Math.round(width * scale)),
+            height == 0 ? 0 : Math.max(1, (int) Math.round(height * scale)),
+            color, intensity, textScale * scale, texturePath);
+    }
+
     public enum Kind {
         TEXT,
         SCALED_TEXT,

@@ -2466,6 +2466,8 @@ def _server_data_quickslot_config_bytes() -> bytes:
         + _pb_varint(3, 1500)
         + _pb_varint(4, 3000)
         + _pb_string(5, "bong-client:textures/gui/items/pill.png")
+        + _pb_varint(6, 4294967338)
+        + _pb_varint(7, 2)
     )
     bound_slot = _pb_message(1, entry)
     empty_slot = b""
@@ -2484,6 +2486,7 @@ def _server_data_quickslot_config_bytes() -> bytes:
         + packed_cooldowns
         + _pb_string(3, "gap10-bind-1")
         + _pb_varint(4, 1)
+        + _pb_string(5, "guyuan_pill")
     )
     return _pb_message(35, payload)
 
@@ -2575,6 +2578,9 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         # （item_id/display_name/cast_duration_ms/cooldown_ms/icon_texture），旧测试
         # 只断言 item_id + cast_duration_ms——解码器丢弃字段 2/4/5 或返回默认值也能
         # 通过。逐字段 pin 全部 5 个可观测槽元数据。
+        self.assertEqual(bound["instance_id"], 4294967338)
+        self.assertEqual(bound["stack_count"], 2)
+        self.assertEqual(decoded["eligible_item_ids"], ["guyuan_pill"])
         self.assertEqual(bound["item_id"], "guyuan_pill")
         self.assertEqual(bound["display_name"], "固元丹")
         self.assertEqual(bound["cast_duration_ms"], 1500)

@@ -2,6 +2,8 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
+    "instance_id",
+    "stack_count",
     "item_id",
     "display_name",
     "cast_duration_ms",
@@ -9,6 +11,15 @@
     "icon_texture"
   ],
   "properties": {
+    "instance_id": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "stack_count": {
+      "minimum": 1,
+      "type": "integer"
+    },
     "item_id": {
       "minLength": 1,
       "type": "string"
@@ -31,5 +42,5 @@
       "type": "string"
     }
   },
-  "x-bong-typebox-source-sha256": "11419333b84ff5de38ec8ceb3d994c896419331ac068e5050f640ceed016f86e"
+  "x-bong-typebox-source-sha256": "e431c5dd600e3ffd0d3b0baf824e43803f27b1ed11feb499900a57abe687efd2"
 }

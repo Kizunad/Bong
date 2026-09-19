@@ -80,11 +80,7 @@ use crate::inventory::{
     InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
     InventoryMoveRejectReason, ItemInstance, PlayerInventory,
 };
-use crate::inventory::{
-    AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
-    DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
-    DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
-};
+use crate::inventory::{AlchemyItemData, ItemEffect, ItemRegistry};
 use crate::lingtian::requests::PendingLingtianRequest;
 use crate::lingtian::session::{ReplenishSource, SessionMode};
 use crate::lingtian::LingtianPlot;
@@ -131,7 +127,6 @@ use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
     canonical_player_id, is_sqlite_busy_error, save_player_inventory_and_delete_dropped_loot,
     try_update_player_ui_prefs, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
-    SkillSlotPersist,
 };
 use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
@@ -223,10 +218,7 @@ struct PendingQuickSlotPrefsWrite {
     request_id: String,
     username: String,
     slot: usize,
-    item_id: Option<String>,
-    skill_bar: Option<SkillSlotPersist>,
     instance_id: Option<u64>,
-    desired_skill_slot: Option<SkillSlot>,
 }
 
 impl QuickSlotPrefsWriteQueue {
@@ -246,13 +238,9 @@ impl PendingQuickSlotPrefsWrite {
         &self,
         persistence: &PlayerStatePersistence,
     ) -> std::io::Result<std::path::PathBuf> {
-        let item_id = self.item_id.clone();
-        let skill_bar = self.skill_bar.clone();
+        let instance_id = self.instance_id;
         try_update_player_ui_prefs(persistence, self.username.as_str(), move |prefs| {
-            prefs.quick_slots[self.slot] = item_id;
-            if let Some(skill_bar) = skill_bar {
-                prefs.skill_bar[self.slot] = skill_bar;
-            }
+            prefs.quick_slots[self.slot] = instance_id;
         })
     }
 
@@ -260,62 +248,10 @@ impl PendingQuickSlotPrefsWrite {
         &self,
         persistence: &PlayerStatePersistence,
     ) -> std::io::Result<std::path::PathBuf> {
-        let item_id = self.item_id.clone();
-        let skill_bar = self.skill_bar.clone();
+        let instance_id = self.instance_id;
         update_player_ui_prefs(persistence, self.username.as_str(), move |prefs| {
-            prefs.quick_slots[self.slot] = item_id;
-            if let Some(skill_bar) = skill_bar {
-                prefs.skill_bar[self.slot] = skill_bar;
-            }
+            prefs.quick_slots[self.slot] = instance_id;
         })
-    }
-
-    fn recompute_skillbar_projection(
-        &mut self,
-        bindings_q: &mut Query<&mut QuickSlotBindings>,
-        skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
-        item_registry: &ItemRegistry,
-    ) {
-        let mirror_block_to_skillbar = self.instance_id.is_some()
-            && self
-                .item_id
-                .as_deref()
-                .and_then(|item_id| item_registry.get(item_id))
-                .is_some_and(|template| template.category == ItemCategory::Block);
-        let old_instance_id = bindings_q
-            .get_mut(self.entity)
-            .ok()
-            .and_then(|bindings| bindings.get(self.slot as u8));
-        let current_skill_slot = skillbar_bindings_q
-            .get_mut(self.entity)
-            .ok()
-            .and_then(|bindings| bindings.get(self.slot as u8).cloned())
-            .unwrap_or_default();
-        let clears_old_auto_mirror = old_instance_id.is_some_and(|old_instance_id| {
-            current_skill_slot
-                == SkillSlot::Item {
-                    instance_id: old_instance_id,
-                }
-                && (!mirror_block_to_skillbar || self.instance_id != Some(old_instance_id))
-        });
-
-        self.desired_skill_slot = if mirror_block_to_skillbar {
-            self.instance_id
-                .map(|instance_id| SkillSlot::Item { instance_id })
-        } else if clears_old_auto_mirror {
-            Some(SkillSlot::Empty)
-        } else {
-            None
-        };
-        self.skill_bar = if mirror_block_to_skillbar {
-            Some(SkillSlotPersist::Item {
-                template_id: self.item_id.clone().unwrap_or_default(),
-            })
-        } else if clears_old_auto_mirror {
-            Some(SkillSlotPersist::Empty)
-        } else {
-            None
-        };
     }
 }
 
@@ -323,7 +259,6 @@ impl PendingQuickSlotPrefsWrite {
 fn apply_persisted_quick_slot_bind(
     pending: &PendingQuickSlotPrefsWrite,
     bindings_q: &mut Query<&mut QuickSlotBindings>,
-    skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
     inventories: &Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     item_registry: &ItemRegistry,
@@ -341,18 +276,6 @@ fn apply_persisted_quick_slot_bind(
         let _ = bindings.set(pending.slot as u8, pending.instance_id);
     }
 
-    if let Some(desired_skill_slot) = pending.desired_skill_slot.as_ref() {
-        let Ok(mut skillbar) = skillbar_bindings_q.get_mut(pending.entity) else {
-            tracing::debug!(
-                entity = ?pending.entity,
-                request_id = %pending.request_id,
-                "dropping persisted quick_slot_bind completion without a skill-bar component"
-            );
-            return false;
-        };
-        let _ = skillbar.set(pending.slot as u8, desired_skill_slot.clone());
-    }
-
     send_quick_slot_bind_response(
         pending.entity,
         pending.request_id.clone(),
@@ -367,7 +290,6 @@ fn apply_persisted_quick_slot_bind(
         entity = ?pending.entity,
         slot = pending.slot,
         request_id = %pending.request_id,
-        item_id = ?pending.item_id,
         instance = ?pending.instance_id,
         "quick_slot_bind persisted and accepted"
     );
@@ -380,7 +302,6 @@ pub fn flush_quick_slot_prefs_writes(
     persistence: Option<Res<PlayerStatePersistence>>,
     mut queue: Option<ResMut<QuickSlotPrefsWriteQueue>>,
     mut bindings_q: Query<&mut QuickSlotBindings>,
-    mut skillbar_bindings_q: Query<&mut SkillBarBindings>,
     inventories: Query<&mut PlayerInventory>,
     mut clients: Query<(&Username, &mut Client)>,
     item_registry: Option<Res<ItemRegistry>>,
@@ -395,20 +316,14 @@ pub fn flush_quick_slot_prefs_writes(
     // 一次只处理当前队列长度，避免错误数据库或持续写锁让单帧工作量无界增长。
     let attempts = queue.pending.len();
     for _ in 0..attempts {
-        let Some(mut pending) = queue.pending.pop_front() else {
+        let Some(pending) = queue.pending.pop_front() else {
             break;
         };
-        pending.recompute_skillbar_projection(
-            &mut bindings_q,
-            &mut skillbar_bindings_q,
-            &item_registry,
-        );
         match pending.persist_without_waiting(&persistence) {
             Ok(_) => {
                 let _ = apply_persisted_quick_slot_bind(
                     &pending,
                     &mut bindings_q,
-                    &mut skillbar_bindings_q,
                     &inventories,
                     &mut clients,
                     &item_registry,
@@ -2550,18 +2465,13 @@ pub fn handle_client_request_payloads(
             }
             ClientRequestV1::QuickSlotBind {
                 slot,
-                item_id,
+                instance_id,
                 request_id,
                 ..
             } => {
-                let (quick_bindings, skillbar_bindings) = (
-                    &mut combat_params.bindings_q,
-                    &mut combat_params.skillbar_bindings_q,
-                );
                 handle_quick_slot_bind(
-                    (ev.client, slot, item_id, request_id),
-                    quick_bindings,
-                    skillbar_bindings,
+                    (ev.client, slot, instance_id, request_id),
+                    &mut combat_params.bindings_q,
                     &inventories,
                     &mut clients,
                     (
@@ -2850,15 +2760,20 @@ fn handle_use_quick_slot(
         );
         return;
     };
-    // 校验绑定的物品仍在背包内（player 可能拖出去了）。
-    if let Ok(inv) = inventories.get(entity) {
-        if !inventory_has_instance(inv, instance_id) {
-            tracing::debug!(
-                "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: bound instance {instance_id} not in inventory"
-            );
-            return;
-        }
-    }
+    let Some((duration_ms, cooldown_ms)) = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inv| crate::inventory::inventory_item_by_instance_borrow(inv, instance_id))
+        .filter(|item| item.stack_count > 0)
+        .and_then(|item| combat_params.item_registry.get(&item.template_id))
+        .filter(|template| template.is_quick_use_eligible())
+        .map(|template| (template.cast_duration_ms, template.cooldown_ms))
+    else {
+        tracing::debug!(
+            "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: unavailable item"
+        );
+        return;
+    };
     // plan §4.2 cast 状态闸门：同槽 cast 中静默忽略；异槽 cast 中 UserCancel + 启新。
     if let Ok(prev) = combat_params.casting_q.get(entity) {
         if prev.source == CastSource::QuickSlot && prev.slot == slot {
@@ -2880,14 +2795,6 @@ fn handle_use_quick_slot(
         );
         // 继续到下面启动新 cast。
     }
-    // 取真实 cast_duration_ms / cooldown_ms：从背包找到 instance → template_id → registry。
-    let (duration_ms, cooldown_ms) = inventories
-        .get(entity)
-        .ok()
-        .and_then(|inv| inventory_template_id_by_instance(inv, instance_id))
-        .and_then(|template_id| combat_params.item_registry.get(&template_id).cloned())
-        .map(|t| (t.cast_duration_ms, t.cooldown_ms))
-        .unwrap_or((TEMPLATE_DEFAULT_CAST_MS, TEMPLATE_DEFAULT_COOLDOWN_MS));
     // 按共享 tick 毫秒值换算；进 1 至少跑 1 tick，避免 0 时长 cast。
     let duration_ticks = u64::from(duration_ms)
         .div_ceil(crate::time::MILLIS_PER_TICK)
@@ -2934,97 +2841,15 @@ fn handle_use_quick_slot(
     );
 }
 
-fn inventory_has_instance(inv: &PlayerInventory, instance_id: u64) -> bool {
-    for c in &inv.containers {
-        if c.items
-            .iter()
-            .any(|p| p.instance.instance_id == instance_id)
-        {
-            return true;
-        }
-    }
-    if inv
-        .equipped
-        .values()
-        .flat_map(|s| s.iter_all())
-        .any(|item| item.instance_id == instance_id)
-    {
-        return true;
-    }
-    inv.hotbar
-        .iter()
-        .flatten()
-        .any(|item| item.instance_id == instance_id)
-}
-
-fn inventory_template_id_by_instance(inv: &PlayerInventory, instance_id: u64) -> Option<String> {
-    for c in &inv.containers {
-        if let Some(p) = c
-            .items
-            .iter()
-            .find(|p| p.instance.instance_id == instance_id)
-        {
-            return Some(p.instance.template_id.clone());
-        }
-    }
-    if let Some(item) = inv
-        .equipped
-        .values()
-        .flat_map(|s| s.iter_all())
-        .find(|item| item.instance_id == instance_id)
-    {
-        return Some(item.template_id.clone());
-    }
-    inv.hotbar
-        .iter()
-        .flatten()
-        .find(|item| item.instance_id == instance_id)
-        .map(|item| item.template_id.clone())
-}
-
-const EQUIPPED_QUICK_SLOT_LOOKUP_ORDER: [&str; 8] = [
-    crate::inventory::EQUIP_SLOT_MAIN_HAND,
-    crate::inventory::EQUIP_SLOT_OFF_HAND,
-    crate::inventory::EQUIP_SLOT_EXTRA_HAND_0,
-    crate::inventory::EQUIP_SLOT_EXTRA_HAND_1,
-    crate::inventory::EQUIP_SLOT_HEAD,
-    crate::inventory::EQUIP_SLOT_CHEST,
-    crate::inventory::EQUIP_SLOT_LEGS,
-    crate::inventory::EQUIP_SLOT_FEET,
-];
-
-fn inventory_instance_id_by_template(inv: &PlayerInventory, template: &str) -> Option<u64> {
-    for c in &inv.containers {
-        if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
-            return Some(p.instance.instance_id);
-        }
-    }
-    if let Some(item) = inv
-        .hotbar
-        .iter()
-        .flatten()
-        .find(|item| item.template_id == template)
-    {
-        return Some(item.instance_id);
-    }
-    EQUIPPED_QUICK_SLOT_LOOKUP_ORDER
-        .iter()
-        .filter_map(|slot| inv.equipped.get(*slot))
-        .flat_map(|contents| contents.iter_all())
-        .find(|item| item.template_id == template)
-        .map(|item| item.instance_id)
-}
-
 fn handle_quick_slot_bind(
-    request: (valence::prelude::Entity, u8, Option<String>, String),
+    request: (valence::prelude::Entity, u8, Option<u64>, String),
     bindings_q: &mut Query<&mut QuickSlotBindings>,
-    skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
     inventories: &Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     runtime: (&ItemRegistry, Option<&PlayerStatePersistence>, &CombatClock),
     prefs_queue: Option<&mut QuickSlotPrefsWriteQueue>,
 ) {
-    let (entity, slot, item_id, request_id) = request;
+    let (entity, slot, instance_id, request_id) = request;
     let (item_registry, persistence, combat_clock) = runtime;
     if request_id.chars().count() == 0 || request_id.chars().count() > 128 {
         tracing::warn!(
@@ -3056,143 +2881,41 @@ fn handle_quick_slot_bind(
             return;
         }
     };
-    let requested_template = match item_id.as_deref() {
-        Some("") => {
-            tracing::warn!(
-                "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: empty item_id string"
-            );
-            send_quick_slot_bind_response(
-                entity,
-                request_id,
-                false,
-                bindings_q,
-                inventories,
-                item_registry,
-                combat_clock,
-                clients,
-            );
-            return;
-        }
-        Some(template) => Some(template),
-        None => None,
-    };
-    let instance_id = match requested_template {
-        None => None,
-        Some(template) => {
-            let instance_id = inventories
+    let eligible = instance_id.is_none_or(|id| {
+        id > 0
+            && id <= 9_007_199_254_740_991
+            && inventories
                 .get(entity)
                 .ok()
-                .and_then(|inventory| inventory_instance_id_by_template(inventory, template));
-            let Some(instance_id) = instance_id else {
-                tracing::warn!(
-                    "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: item template `{template}` not in inventory"
-                );
-                send_quick_slot_bind_response(
-                    entity,
-                    request_id,
-                    false,
-                    bindings_q,
-                    inventories,
-                    item_registry,
-                    combat_clock,
-                    clients,
-                );
-                return;
-            };
-            if item_registry.get(template).is_none() {
-                tracing::warn!(
-                    "[bong][network] quick_slot_bind entity={entity:?} slot={slot} rejected: unknown item template `{template}`"
-                );
-                send_quick_slot_bind_response(
-                    entity,
-                    request_id,
-                    false,
-                    bindings_q,
-                    inventories,
-                    item_registry,
-                    combat_clock,
-                    clients,
-                );
-                return;
-            }
-            Some(instance_id)
-        }
-    };
-    let mirror_block_to_skillbar = instance_id.is_some()
-        && requested_template
-            .and_then(|template| item_registry.get(template))
-            .is_some_and(|template| template.category == ItemCategory::Block);
-    let old_instance_id = match bindings_q.get_mut(entity) {
-        Ok(bindings) => bindings.get(slot),
-        Err(_) => {
-            tracing::warn!(
-                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing QuickSlotBindings"
-            );
-            send_quick_slot_bind_response(
-                entity,
-                request_id,
-                false,
-                bindings_q,
-                inventories,
-                item_registry,
-                combat_clock,
-                clients,
-            );
-            return;
-        }
-    };
-    let current_skill_slot = match skillbar_bindings_q.get_mut(entity) {
-        Ok(bindings) => bindings.get(slot).cloned().unwrap_or_default(),
-        Err(_) => {
-            tracing::warn!(
-                "[bong][network] quick_slot_bind entity={entity:?} rejected: missing SkillBarBindings"
-            );
-            send_quick_slot_bind_response(
-                entity,
-                request_id,
-                false,
-                bindings_q,
-                inventories,
-                item_registry,
-                combat_clock,
-                clients,
-            );
-            return;
-        }
-    };
-    let clears_old_auto_mirror = old_instance_id.is_some_and(|old_instance_id| {
-        current_skill_slot
-            == SkillSlot::Item {
-                instance_id: old_instance_id,
-            }
-            && (!mirror_block_to_skillbar || instance_id != Some(old_instance_id))
+                .and_then(|inventory| {
+                    crate::inventory::inventory_item_by_instance_borrow(inventory, id)
+                })
+                .filter(|item| item.stack_count > 0)
+                .and_then(|item| item_registry.get(&item.template_id))
+                .is_some_and(|template| template.is_quick_use_eligible())
     });
-    let desired_skill_slot = if mirror_block_to_skillbar {
-        instance_id.map(|instance_id| SkillSlot::Item { instance_id })
-    } else if clears_old_auto_mirror {
-        Some(SkillSlot::Empty)
-    } else {
-        None
-    };
-    let persisted_item_id = requested_template.map(str::to_string);
-    let persisted_skill_bar = if mirror_block_to_skillbar {
-        Some(SkillSlotPersist::Item {
-            template_id: persisted_item_id.clone().unwrap_or_default(),
-        })
-    } else if clears_old_auto_mirror {
-        Some(SkillSlotPersist::Empty)
-    } else {
-        None
-    };
+    let accepted = (slot as usize) < QuickSlotBindings::SLOT_COUNT
+        && bindings_q.get(entity).is_ok()
+        && eligible;
+    if !accepted {
+        send_quick_slot_bind_response(
+            entity,
+            request_id,
+            false,
+            bindings_q,
+            inventories,
+            item_registry,
+            combat_clock,
+            clients,
+        );
+        return;
+    }
     let pending_prefs_write = PendingQuickSlotPrefsWrite {
         entity,
         request_id: request_id.clone(),
         username: username.clone(),
         slot: slot as usize,
-        item_id: persisted_item_id,
-        skill_bar: persisted_skill_bar,
         instance_id,
-        desired_skill_slot: desired_skill_slot.clone(),
     };
     if let Some(persistence) = persistence {
         let persistence_result = if let Some(prefs_queue) = prefs_queue {
@@ -3235,7 +2958,6 @@ fn handle_quick_slot_bind(
     let _ = apply_persisted_quick_slot_bind(
         &pending_prefs_write,
         bindings_q,
-        skillbar_bindings_q,
         inventories,
         clients,
         item_registry,

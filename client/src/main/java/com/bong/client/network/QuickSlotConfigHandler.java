@@ -60,8 +60,17 @@ public final class QuickSlotConfigHandler implements ServerDataHandler {
 
         String ackRequestId = readString(payload, "ack_request_id");
         Boolean bindAccepted = readBoolean(payload, "bind_accepted");
+        JsonArray eligible = readArray(payload, "eligible_item_ids");
+        if (eligible == null) return ServerDataDispatch.noOp(envelope.type(), "Missing quick-use eligibility");
+        var eligibleIds = new java.util.HashSet<String>();
+        for (var id : eligible) {
+            if (!id.isJsonPrimitive() || !id.getAsJsonPrimitive().isString() || id.getAsString().isBlank()) {
+                return ServerDataDispatch.noOp(envelope.type(), "Invalid quick-use eligibility");
+            }
+            eligibleIds.add(id.getAsString());
+        }
         QuickUseSlotStore.replaceAuthoritative(
-            QuickSlotConfig.of(entries, cooldowns),
+            QuickSlotConfig.of(entries, cooldowns).withEligibleItems(eligibleIds),
             ackRequestId,
             bindAccepted
         );
@@ -70,6 +79,9 @@ public final class QuickSlotConfigHandler implements ServerDataHandler {
     }
 
     private static QuickSlotEntry parseEntry(JsonObject obj) {
+        long instanceId = readLong(obj, "instance_id", 0L);
+        long stackCount = readLong(obj, "stack_count", 0L);
+        if (instanceId <= 0 || instanceId > 9_007_199_254_740_991L || stackCount <= 0) return null;
         String itemId = readString(obj, "item_id");
         if (itemId == null || itemId.isEmpty()) return null;
         String displayName = readString(obj, "display_name");
@@ -77,6 +89,8 @@ public final class QuickSlotConfigHandler implements ServerDataHandler {
         long cooldown = readLong(obj, "cooldown_ms", 0L);
         String icon = readString(obj, "icon_texture");
         return new QuickSlotEntry(
+            instanceId,
+            (int) Math.min(stackCount, Integer.MAX_VALUE),
             itemId,
             displayName == null ? "" : displayName,
             (int) Math.min(castDuration, Integer.MAX_VALUE),

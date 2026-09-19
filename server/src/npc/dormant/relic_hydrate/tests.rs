@@ -32,6 +32,7 @@ const TEST_PLAQUE: &str = "item.relic.engraved_plaque";
 /// 成 0（而非继承 template 初始品质）。
 fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: template_id.to_string(),
         display_name: format!("display:{template_id}"),
         category: ItemCategory::Misc,

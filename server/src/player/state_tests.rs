@@ -1891,6 +1891,7 @@ fn transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload() {
 
     // 合成 registry：一个 worn chest pack 模板 + 一个可移动 misc 内含物模板。
     let pack_template = ItemTemplate {
+        quick_use: false,
         id: "tribulation_chest_pack".to_string(),
         display_name: "夺魂背包".to_string(),
         category: ItemCategory::Container,
@@ -2033,16 +2034,73 @@ fn transfer_all_inventory_contents_does_not_leave_orphan_pack_after_reload() {
 #[test]
 fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
     let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-        "quick_slots": ["tea", null]
+        "quick_slots": [42, null]
     }))
     .expect("legacy prefs should decode with default skill_bar");
 
-    assert_eq!(prefs.quick_slots[0], Some("tea".to_string()));
+    assert_eq!(prefs.quick_slots[0], Some(42));
     assert!(prefs.skill_configs.is_empty());
     assert!(prefs
         .skill_bar
         .iter()
         .all(|slot| matches!(slot, SkillSlotPersist::Empty)));
+}
+
+#[test]
+fn ui_prefs_legacy_template_slots_do_not_discard_other_preferences() {
+    let (persistence, data_dir) = sqlite_persistence("legacy-template-quick-slots");
+    save_player_state(&persistence, "Azure", &PlayerState::default())
+        .expect("player row should exist before replacing legacy UI prefs");
+
+    let legacy_prefs = serde_json::json!({
+        "quick_slots": ["earth_crumb", "guyuan_pill"],
+        "skill_bar": [
+            {"kind": "skill", "skill_id": "burst_meridian.beng_quan"},
+            {"kind": "item", "template_id": "tea"}
+        ],
+        "skill_configs": {
+            "legacy.skill": {"style": "preserve", "power": 3}
+        }
+    });
+    let connection = Connection::open(persistence.db_path()).expect("sqlite should open");
+    connection
+        .execute(
+            "UPDATE player_ui_prefs SET prefs_json = ?1 WHERE username = ?2",
+            params![legacy_prefs.to_string(), "Azure"],
+        )
+        .expect("legacy UI prefs should be written for the load test");
+
+    let loaded = load_player_slices(&persistence, "Azure");
+    assert_eq!(
+        loaded.ui_prefs.quick_slots,
+        [None, None],
+        "legacy template-id quick slots must become empty instance links without rejecting the prefs object"
+    );
+    assert!(matches!(
+        &loaded.ui_prefs.skill_bar[0],
+        SkillSlotPersist::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+    ));
+    assert!(matches!(
+        &loaded.ui_prefs.skill_bar[1],
+        SkillSlotPersist::Item { template_id } if template_id == "tea"
+    ));
+    let config = loaded
+        .ui_prefs
+        .skill_configs
+        .get("legacy.skill")
+        .expect("legacy skill config must survive a quick-slot type migration");
+    assert_eq!(
+        config.fields.get("style"),
+        Some(&serde_json::json!("preserve")),
+        "skill_configs must remain intact when only legacy quick_slots are unrepresentable"
+    );
+    assert_eq!(
+        config.fields.get("power"),
+        Some(&serde_json::json!(3)),
+        "skill_configs numeric fields must remain intact during quick-slot migration"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
 }
 
 #[test]
@@ -2092,7 +2150,7 @@ fn ui_prefs_sanitizes_legacy_dedicated_input_bindings() {
 #[test]
 fn ui_prefs_rehydrates_quick_and_skill_bindings_from_inventory() {
     let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
-        "quick_slots": ["tea", null],
+        "quick_slots": [42, null],
         "skill_bar": [
             {"kind":"skill","skill_id":"burst_meridian.beng_quan"},
             {"kind":"item","template_id":"tea"}

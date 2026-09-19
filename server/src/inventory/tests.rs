@@ -91,6 +91,7 @@ fn test_registry_from_strs(entries: &[(&str, &str)]) -> Result<ItemRegistry, Str
         templates.insert(
             (*template_id).to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: (*template_id).to_string(),
                 display_name: (*display_name).to_string(),
                 category: ItemCategory::Misc,
@@ -132,6 +133,7 @@ fn test_template(
     max_stack_count: u32,
 ) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: template_id.to_string(),
         display_name: template_id.to_string(),
         category,
@@ -164,6 +166,7 @@ fn test_template(
 
 fn raw_item_template_toml(id: &str, category: &str) -> ItemTemplateToml {
     ItemTemplateToml {
+        quick_use: false,
         id: id.to_string(),
         placeable: None,
         name: id.to_string(),
@@ -1805,6 +1808,7 @@ fn rejects_placed_item_whose_multicell_footprint_overflows_container_bounds() {
     templates.insert(
         "wide_talisman".to_string(),
         ItemTemplate {
+            quick_use: false,
             id: "wide_talisman".to_string(),
             display_name: "阔符".to_string(),
             category: ItemCategory::Misc,
@@ -1876,6 +1880,7 @@ fn rejects_overlapping_multicell_item_footprints_within_container() {
     templates.insert(
         "wide_talisman".to_string(),
         ItemTemplate {
+            quick_use: false,
             id: "wide_talisman".to_string(),
             display_name: "阔符".to_string(),
             category: ItemCategory::Misc,
@@ -2981,6 +2986,7 @@ fn validate_rehome_held_then_equip_new_held_succeeds() {
 /// 让 `equip_slot_for_item_id` 正确解析出 Chest 槽，只替换 `wearer_race`）。
 fn make_race_gated_armor_template(wearer_race: RaceGateOwned) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: "armor_straw_chestplate".to_string(),
         display_name: "race-gated chestplate".to_string(),
         category: ItemCategory::Armor,
@@ -3013,6 +3019,7 @@ fn make_race_gated_armor_template(wearer_race: RaceGateOwned) -> ItemTemplate {
 /// 构造一件挂 `wearer_race` 门的武器（手槽，`is_hand_slot` 分支）。
 fn make_race_gated_weapon_template(wearer_race: RaceGateOwned) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: "race_gated_sword".to_string(),
         display_name: "race-gated sword".to_string(),
         category: ItemCategory::Weapon,
@@ -5006,6 +5013,7 @@ fn death_drop_keeps_high_durability_equipped_weapon() {
     registry.templates.insert(
         "iron_sword".to_string(),
         ItemTemplate {
+            quick_use: false,
             id: "iron_sword".to_string(),
             display_name: "铁剑".to_string(),
             category: ItemCategory::Weapon,
@@ -5086,6 +5094,7 @@ fn death_drop_drops_low_durability_equipped_weapon() {
     registry.templates.insert(
         "iron_sword".to_string(),
         ItemTemplate {
+            quick_use: false,
             id: "iron_sword".to_string(),
             display_name: "铁剑".to_string(),
             category: ItemCategory::Weapon,
@@ -5940,6 +5949,7 @@ fn make_container_template(
     weight_capacity: f64,
 ) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.to_string(),
         display_name: id.to_string(),
         category: ItemCategory::Container,
@@ -6120,6 +6130,98 @@ fn rebuild_keeps_pack_container_when_pack_in_body_pocket() {
             "内含物 instance {cid} 应原位保留在 pack 容器内"
         );
     }
+}
+
+#[test]
+fn apply_move_unequips_grass_pouch_to_body_pocket_and_retains_contents() {
+    use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
+
+    let registry = load_item_registry().expect("real item registry should load");
+    let pack_id = 7_001;
+    let pouch_template = registry
+        .get("grass_pouch")
+        .expect("grass_pouch must be registered");
+    let pouch = runtime_instance_from_template(pouch_template, pack_id, 1, 0);
+    let mut inv = make_empty_inventory();
+    inv.containers.push(ContainerState {
+        quick_access: false,
+        id: BODY_POCKET_CONTAINER_ID.to_string(),
+        name: "暗袋".to_string(),
+        rows: BODY_POCKET_ROWS,
+        cols: BODY_POCKET_COLS,
+        items: Vec::new(),
+        owner_instance_id: None,
+    });
+    inv.containers.push(ContainerState {
+        quick_access: false,
+        id: container_id_for_worn_pack(pack_id),
+        name: "小草包".to_string(),
+        rows: 3,
+        cols: 3,
+        items: vec![PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(7_002, "spirit_grass"),
+        }],
+        owner_instance_id: Some(pack_id),
+    });
+    inv.equipped.insert(
+        EQUIP_SLOT_CHEST.to_string(),
+        SlotContents::worn_single(pouch),
+    );
+
+    let from = InventoryLocationV1::Equip {
+        slot: EquipSlotV1::Chest,
+        state: EquipStateV1::Worn,
+    };
+    let to = InventoryLocationV1::Container {
+        container_id: BODY_POCKET_CONTAINER_ID.to_string(),
+        row: 0,
+        col: 0,
+    };
+    apply_inventory_move(&mut inv, &registry, pack_id, &from, &to, false)
+        .expect("grass_pouch should move from chest worn into body_pocket");
+
+    assert!(
+        inv.equipped
+            .get(EQUIP_SLOT_CHEST)
+            .is_none_or(SlotContents::is_empty),
+        "卸下后 chest worn 应为空"
+    );
+    let pocket = inv
+        .containers
+        .iter()
+        .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+        .expect("body_pocket must exist");
+    assert_eq!(
+        pocket
+            .items
+            .iter()
+            .map(|placed| (placed.instance.instance_id, placed.row, placed.col))
+            .collect::<Vec<_>>(),
+        vec![(pack_id, 0, 0)],
+        "小草包应落在 body_pocket 的目标格"
+    );
+
+    let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+    assert!(
+        overflow.is_empty(),
+        "卸包到 body_pocket 不应 spill，实际 {overflow:?}"
+    );
+    let pack = inv
+        .containers
+        .iter()
+        .find(|container| container.id == container_id_for_worn_pack(pack_id))
+        .expect("小草包移入 body_pocket 后仍应保留其动态容器");
+    assert_eq!(pack.owner_instance_id, Some(pack_id));
+    assert_eq!(
+        pack.items
+            .iter()
+            .map(|placed| (placed.instance.instance_id, placed.row, placed.col))
+            .collect::<Vec<_>>(),
+        vec![(7_002, 0, 0)],
+        "小草包内含物应随动态容器原样保留"
+    );
 }
 
 #[test]
@@ -8873,6 +8975,7 @@ fn make_worn_grass_pouch_setup(
     with_container_items: bool,
 ) -> (ItemRegistry, PlayerInventory) {
     let template = ItemTemplate {
+        quick_use: false,
         id: "worn_grass_pouch".to_string(),
         display_name: "草编囊（磨损）".to_string(),
         category: ItemCategory::Container,
@@ -9314,6 +9417,7 @@ fn backpack_break_event_partial_eq_and_clone() {
 
 fn make_weapon_template(id: &str) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.to_string(),
         display_name: id.to_string(),
         category: ItemCategory::Weapon,
@@ -9352,6 +9456,7 @@ fn make_weapon_template(id: &str) -> ItemTemplate {
 
 fn make_misc_template(id: &str) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.to_string(),
         display_name: id.to_string(),
         category: ItemCategory::Misc,
@@ -10178,6 +10283,7 @@ fn runtime_instance_from_template_attaches_freshness_for_food_with_shelflife_pro
     // plan-food-v1 P1：runtime_instance_from_template が shelflife_profile を持つ
     // テンプレートで Freshness を自動挂する。
     let tpl = ItemTemplate {
+        quick_use: false,
         id: "food.spirit_wine.chen_jiu".to_string(),
         display_name: "陈酒".to_string(),
         category: ItemCategory::Food,
@@ -10251,6 +10357,7 @@ fn runtime_instance_from_template_attaches_freshness_for_herb_bundle() {
     // plan-gathering-tool-bind-v1 P0：herb_bundle 挂 shelflife_profile 后，
     // runtime_instance_from_template 应像 food 物品一样自动挂 Freshness。
     let tpl = ItemTemplate {
+        quick_use: false,
         id: "herb_bundle".to_string(),
         display_name: "灵草束".to_string(),
         category: ItemCategory::Herb,
@@ -10538,6 +10645,7 @@ fn herb_bundle_expiry_drives_production_spoil_check_consumption_path() {
 fn runtime_instance_from_template_no_freshness_when_no_shelflife_profile() {
     // Non-food items (or food without shelflife_profile) should have freshness=None
     let tpl = ItemTemplate {
+        quick_use: false,
         id: "misc_thing".to_string(),
         display_name: "misc".to_string(),
         category: ItemCategory::Misc,
@@ -10626,6 +10734,7 @@ fn shelflife_track_parse_invalid_rejects_with_error() {
     let path = PathBuf::from("test_path.toml");
 
     let raw = ItemTemplateToml {
+        quick_use: false,
         id: "test_item".to_string(),
         name: "Test".to_string(),
         category: "food".to_string(),
@@ -10674,6 +10783,7 @@ fn shelflife_track_defaults_to_spoil_when_not_specified() {
     let path = PathBuf::from("test_path.toml");
 
     let raw = ItemTemplateToml {
+        quick_use: false,
         id: "test_item".to_string(),
         name: "Test".to_string(),
         category: "food".to_string(),
@@ -10723,6 +10833,7 @@ fn shelflife_track_without_profile_is_rejected() {
     let path = PathBuf::from("test_path.toml");
 
     let raw = ItemTemplateToml {
+        quick_use: false,
         id: "bad_food_half_config".to_string(),
         name: "半配置食物".to_string(),
         category: "food".to_string(),
@@ -10777,6 +10888,7 @@ fn shelflife_track_and_profile_both_some_is_accepted() {
     let path = PathBuf::from("test_path.toml");
 
     let raw = ItemTemplateToml {
+        quick_use: false,
         id: "good_food_full_config".to_string(),
         name: "完整配置食物".to_string(),
         category: "food".to_string(),
@@ -11444,6 +11556,7 @@ fn shield_category_without_shield_spec_block_is_rejected() {
     use std::path::PathBuf;
     let path = PathBuf::from("test_shield.toml");
     let raw = ItemTemplateToml {
+        quick_use: false,
         id: "bad_shield_no_spec".to_string(),
         placeable: None,
         name: "无规格盾".to_string(),
@@ -11489,6 +11602,7 @@ fn non_shield_category_with_shield_spec_block_is_rejected() {
     use std::path::PathBuf;
     let path = PathBuf::from("test_sword_with_shield_spec.toml");
     let raw = ItemTemplateToml {
+        quick_use: false,
         id: "bad_sword_with_shield_spec".to_string(),
         placeable: None,
         name: "剑+盾规格冲突".to_string(),

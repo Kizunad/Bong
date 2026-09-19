@@ -198,8 +198,8 @@ public final class SvgHudPreviewHarness {
             CombatHudState.createAuthoritative(.92f, .64f, .82f, DerivedAttrFlags.none(), true)
         );
         QuickUseSlotStore.replaceLocal(QuickSlotConfig.empty()
-            .withSlot(0, new QuickSlotEntry("tie_bi_san", "铁壁散", 4000, 5000, ""))
-            .withSlot(1, new QuickSlotEntry("leg_splint", "夹板", 4000, 5000, ""))
+            .withSlot(0, new QuickSlotEntry(42L, 1, "tie_bi_san", "铁壁散", 4000, 5000, ""))
+            .withSlot(1, new QuickSlotEntry(42L, 1, "leg_splint", "夹板", 4000, 5000, ""))
             .withCooldownUntil(1, nowMs + 5000));
         SkillBarStore.replace(SkillBarConfig.of(new SkillBarEntry[]{
             SkillBarEntry.item("stone_pickaxe", "石镐", 0, 0, ""),

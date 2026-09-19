@@ -1182,35 +1182,6 @@ def _skill_xp_gain(data: bytes) -> dict[str, Any]:
     }
 
 
-def _quick_slot_entry(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
-    return {
-        "item_id": _string(fields, 1),
-        "display_name": _string(fields, 2),
-        "cast_duration_ms": _varint(fields, 3),
-        "cooldown_ms": _varint(fields, 4),
-        "icon_texture": _string(fields, 5),
-    }
-
-
-def _optional_quick_slot_entry(data: bytes) -> dict[str, Any] | None:
-    if not data:
-        return None
-    fields = _fields(data)
-    # `data` 是 repeated `OptionalQuickSlotEntry` 的一个元素（schema bong.rs）：
-    #   OptionalQuickSlotEntry { entry(1): Option<QuickSlotEntry> }
-    # 而 QuickSlotEntry { item_id(1), display_name(2), cast_duration_ms(3),
-    # cooldown_ms(4), icon_texture(5) }。proto3 repeated 不支持 optional element，
-    # 所以服务器用 wrapper 包一层——field 1 是**又一层嵌套 message**，必须先
-    # `_message(fields, 1)` 解出 QuickSlotEntry 再交给 `_quick_slot_entry`。
-    # central-review 2012 #3 的证据称调用方已传入 unwrapped 载荷、field 1 即
-    # item_id——与 prost 生成的 OptionalQuickSlotEntry 包装矛盾；此处以 schema 为
-    # 准，test_proto_quick_slot_config_payload_decodes 的 bound round-trip 断言
-    # 钉死该解码（跳过这层会把 QuickSlotEntry 原始字节误当 item_id）。
-    if not _has(fields, 1):
-        return None
-    return _quick_slot_entry(_message(fields, 1))
-
-
 def _packed_varints(data: bytes) -> list[int]:
     """解码 proto3 packed repeated 标量：length-delimited blob 内连续 varint。"""
     pos = 0
@@ -1219,32 +1190,6 @@ def _packed_varints(data: bytes) -> list[int]:
         value, pos = _read_varint(data, pos)
         values.append(int(value))
     return values
-
-
-def _quick_slot_config(data: bytes) -> dict[str, Any]:
-    fields = _fields(data)
-    # review finding [5]：`repeated uint64 cooldown_until_ms` 在 proto3 里默认
-    # **packed**（wire type 2：length-delimited blob 内连续 varint）。旧实现只读
-    # 独立 wire-0 varint（w==0），真实服务器生产的 packed 载荷被解码成空列表。
-    # 两种编码都收：packed 逐 blob 展开，unpacked 逐 varint 追加。
-    cooldowns: list[int] = []
-    for f, w, v in fields:
-        if f != 2:
-            continue
-        if w == 0:
-            cooldowns.append(int(v))
-        elif w == 2:
-            cooldowns.extend(_packed_varints(v))
-    return {
-        "v": 1,
-        "type": "quickslot_config",
-        "slots": [_optional_quick_slot_entry(raw) for raw in _messages(fields, 1)],
-        "cooldown_until_ms": cooldowns,
-        "ack_request_id": _optional_string(fields, 3),
-        "bind_accepted": (
-            bool(_varint(fields, 4)) if _has(fields, 4) else None
-        ),
-    }
 
 
 def _technique_required_meridian(data: bytes) -> dict[str, Any]:
@@ -1691,6 +1636,7 @@ def _quick_slot_config(data: bytes) -> dict[str, Any]:
     return {
         "v": 1,
         "type": "quickslot_config",
+        "eligible_item_ids": [v.decode("utf-8") for f, w, v in fields if f == 5 and w == 2],
         "slots": [
             _quick_slot_entry(raw) for raw in _messages(fields, QUICKSLOT_CONFIG_SLOTS_FIELD)
         ],
@@ -1715,6 +1661,8 @@ def _quick_slot_entry(data: bytes) -> dict[str, Any] | None:
         "cast_duration_ms": _varint(entry, QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
         "cooldown_ms": _varint(entry, QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
         "icon_texture": _string(entry, QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
+        "instance_id": _varint(entry, 6),
+        "stack_count": _varint(entry, 7),
     }
 
 

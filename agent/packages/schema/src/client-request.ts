@@ -401,7 +401,7 @@ export const QuickSlotBindRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("quick_slot_bind"),
     slot: Type.Integer({ minimum: 0, maximum: HOTBAR_SLOT_COUNT - 1 }),
-    item_id: Type.Union([Type.Null(), Type.String({ minLength: 1 })]),
+    instance_id: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
     request_id: Type.String({ minLength: 1, maxLength: 128 }),
   },
   { additionalProperties: false },

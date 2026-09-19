@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<owo-ui>
+    <components><template name="content" /></components>
+    <templates>
+        <template name="content">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                <children>
+                    <scroll id="loadout-scroll" direction="vertical">
+                        <flow-layout direction="vertical">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                            <padding><all>8</all></padding><gap>8</gap>
+                            <horizontal-alignment>center</horizontal-alignment>
+                            <children>
+                                <flow-layout id="equipment-slots" direction="vertical">
+                                    <sizing><horizontal method="content" /><vertical method="content" /></sizing>
+                                </flow-layout>
+                                <flow-layout id="equipment-status" direction="vertical">
+                                    <sizing><horizontal method="content" /><vertical method="content" /></sizing>
+                                </flow-layout>
+                            </children>
+                        </flow-layout>
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fill">100</vertical></sizing>
+                        <scrollbar-thiccness>4</scrollbar-thiccness>
+                    </scroll>
+                </children>
+            </flow-layout>
+        </template>
+        <template name="launcher">
+            <flow-layout direction="vertical">
+                <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                <gap>4</gap>
+                <children>
+                    <button id="open-equipment">
+                        <text>装备</text><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">24</vertical></sizing>
+                        <renderer><flat color="#FF303A39" hovered-color="#FF485652" disabled-color="#FF242C2B" /></renderer>
+                    </button>
+                    <button id="open-shortcuts">
+                        <text>快捷槽</text><text-shadow>false</text-shadow>
+                        <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">24</vertical></sizing>
+                        <renderer><flat color="#FF303A39" hovered-color="#FF485652" disabled-color="#FF242C2B" /></renderer>
+                    </button>
+                </children>
+            </flow-layout>
+        </template>
+    </templates>
+</owo-ui>

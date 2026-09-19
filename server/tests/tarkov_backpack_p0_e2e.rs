@@ -25,6 +25,7 @@ use bong_server::world::dimension::DimensionKind;
 
 fn container_template(id: &str, rows: u8, cols: u8, weight_capacity: f64) -> ItemTemplate {
     ItemTemplate {
+        quick_use: false,
         id: id.to_string(),
         display_name: id.to_string(),
         category: ItemCategory::Container,

@@ -48,9 +48,9 @@ class ClientStoreScopeManifestTest {
             "P0 验真基线应有 106 个 session-scoped Store；数量变化时必须连同逐 FQCN source 对拍一起显式复核"
         );
         assertEquals(
-            108,
+            109,
             ClientStoreScopeManifest.allClassifiedStores().size(),
-            "P0 验真基线应有 108 个业务 *Store.java（106 session + 1 persistent + 1 constant）"
+            "当前应有 109 个业务 *Store.java（106 session + 2 persistent + 1 constant）"
         );
     }
 
@@ -78,7 +78,8 @@ class ClientStoreScopeManifestTest {
     @Test
     void persistentPreferenceAndConstantLookupStayOutOfSessionScope() {
         assertEquals(
-            Set.of("com.bong.client.hud.HudLayoutPreferenceStore"),
+            Set.of("com.bong.client.hud.HudLayoutPreferenceStore",
+                "com.bong.client.ui.window.WindowLayoutPreferenceStore"),
             ClientStoreScopeManifest.persistentConfigStores(),
             "HUD 布局是本地用户偏好，断线必须保留，不能误归 session-scoped"
         );

@@ -4,6 +4,7 @@
   "required": [
     "v",
     "type",
+    "eligible_item_ids",
     "slots",
     "cooldown_until_ms"
   ],
@@ -16,6 +17,14 @@
       "const": "quickslot_config",
       "type": "string"
     },
+    "eligible_item_ids": {
+      "uniqueItems": true,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
     "slots": {
       "minItems": 2,
       "maxItems": 2,
@@ -26,6 +35,8 @@
             "additionalProperties": false,
             "type": "object",
             "required": [
+              "instance_id",
+              "stack_count",
               "item_id",
               "display_name",
               "cast_duration_ms",
@@ -33,6 +44,15 @@
               "icon_texture"
             ],
             "properties": {
+              "instance_id": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "stack_count": {
+                "minimum": 1,
+                "type": "integer"
+              },
               "item_id": {
                 "minLength": 1,
                 "type": "string"
@@ -80,5 +100,5 @@
       "type": "boolean"
     }
   },
-  "x-bong-typebox-source-sha256": "d9ea6777dd37d9574751c7be32788ae27ace1b6bf6b425e7100115603c6b5b0e"
+  "x-bong-typebox-source-sha256": "d28b69d6dc5c1fbbae6e79817508cd40009b81232d792430e2f720bd156da7a7"
 }

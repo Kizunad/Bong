@@ -58,6 +58,7 @@ fn make_inventory_with_stack(instance_id: u64, stack: u32) -> PlayerInventory {
 
 fn make_effect_template(template_id: &str, effect: ItemEffect) -> ItemTemplate {
     ItemTemplate {
+        quick_use: true,
         id: template_id.to_string(),
         display_name: template_id.to_string(),
         category: ItemCategory::Misc,
@@ -603,7 +604,7 @@ fn tick_casts_consumable_composure_restore_consumes_and_applies() {
 }
 
 #[test]
-fn tick_casts_consumable_wound_heal_consumes_and_applies() {
+fn tick_casts_rejects_targeted_item_even_with_stale_binding() {
     let (mut app, player) = setup_quickslot_effect_app(
         "leg_splint_test",
         ItemEffect::WoundHeal {
@@ -636,32 +637,19 @@ fn tick_casts_consumable_wound_heal_consumes_and_applies() {
 
     app.update();
 
-    let stack_count = hotbar_stack_count(&mut app, player);
     assert_eq!(
-        stack_count, 1,
-        "expected hotbar stack count 1 because QuickSlot consumable should consume one item, actual {stack_count}"
+        hotbar_stack_count(&mut app, player),
+        2,
+        "定向夹板不得在快捷消费路径扣除"
     );
-    let wounds = app
-        .world_mut()
-        .entity(player)
-        .get::<Wounds>()
-        .expect("Wounds should remain attached");
-    assert_eq!(
-        wounds.entries.len(),
-        1,
-        "expected one wound to remain because leg_splint only heals leg_l/leg_r, actual {}",
-        wounds.entries.len()
-    );
-    assert_eq!(
-        wounds.entries[0].location,
-        crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
-        "expected ArmL wound to remain because leg_splint targets only legs, actual {:?}",
-        wounds.entries[0].location
-    );
+    let wounds = app.world().get::<Wounds>(player).unwrap();
+    assert_eq!(wounds.entries.len(), 2);
     assert!(
-        (wounds.entries[0].severity - 0.40).abs() < f32::EPSILON,
-        "expected ArmL severity unchanged at 0.40 because leg_splint targets only legs, actual {}",
-        wounds.entries[0].severity
+        wounds
+            .entries
+            .iter()
+            .all(|w| (w.severity - 0.40).abs() < f32::EPSILON),
+        "过时快捷链接不得绕过部位选择直接治疗"
     );
 }
 
@@ -1175,6 +1163,7 @@ fn tick_casts_or_interrupt_critical_block_does_not_consume_inventory() {
 
     // 2) 食物 ItemTemplate（有 FoodRegen effect + shelflife_profile）
     let food_template = ItemTemplate {
+        quick_use: true,
         id: FOOD_ID.to_string(),
         display_name: "极腐食物".to_string(),
         category: crate::inventory::ItemCategory::Food,

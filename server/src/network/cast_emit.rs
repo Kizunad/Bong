@@ -378,7 +378,10 @@ pub fn tick_casts_or_interrupt(
             if casting.source == CastSource::QuickSlot {
                 if let Some(id) = casting.bound_instance_id {
                     if let Some(template_id) = lookup_template_id(&inventory, id) {
-                        if let Some(template) = item_registry.get(&template_id) {
+                        if let Some(template) = item_registry
+                            .get(&template_id)
+                            .filter(|template| template.is_quick_use_eligible())
+                        {
                             effect_to_apply = template.effect.clone();
                         }
                     }
@@ -439,7 +442,7 @@ pub fn tick_casts_or_interrupt(
                 }
             }
 
-            let consumed = if casting.source == CastSource::QuickSlot {
+            let consumed = if casting.source == CastSource::QuickSlot && effect_to_apply.is_some() {
                 casting
                     .bound_instance_id
                     .map(|id| consume_one_stack(&mut inventory, id))
@@ -448,7 +451,7 @@ pub fn tick_casts_or_interrupt(
                 false
             };
             // 2) 应用效果
-            if let Some(effect) = effect_to_apply.as_ref() {
+            if let Some(effect) = effect_to_apply.as_ref().filter(|_| consumed) {
                 apply_cast_item_effect(
                     effect,
                     CastItemEffectTargets {
@@ -984,37 +987,7 @@ fn clone_item_at_for_freshness(
 
 /// 在 inventory 内找 instance_id 并 stack-=1；归零则移除。返回是否成功扣到。
 fn consume_one_stack(inventory: &mut PlayerInventory, instance_id: u64) -> bool {
-    inventory.revision =
-        crate::inventory::InventoryRevision(inventory.revision.0.saturating_add(1));
-    for c in &mut inventory.containers {
-        if let Some(idx) = c
-            .items
-            .iter()
-            .position(|p| p.instance.instance_id == instance_id)
-        {
-            let placed = &mut c.items[idx];
-            if placed.instance.stack_count > 1 {
-                placed.instance.stack_count -= 1;
-            } else {
-                c.items.remove(idx);
-            }
-            return true;
-        }
-    }
-    for slot in inventory.hotbar.iter_mut() {
-        if let Some(item) = slot.as_mut() {
-            if item.instance_id == instance_id {
-                if item.stack_count > 1 {
-                    item.stack_count -= 1;
-                } else {
-                    *slot = None;
-                }
-                return true;
-            }
-        }
-    }
-    // 装备槽内的物品不应在这条路径出现（cast 用的是消耗品而非武器/护甲）。
-    false
+    crate::inventory::consume_item_instance_once(inventory, instance_id).is_ok()
 }
 
 pub fn push_cast_sync(client: &mut Client, state: CastSyncV1, username: &str, entity: Entity) {

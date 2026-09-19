@@ -365,6 +365,7 @@ fn make_coffin_item_registry() -> ItemRegistry {
         templates.insert(
             template_id.to_string(),
             ItemTemplate {
+                quick_use: false,
                 id: template_id.to_string(),
                 display_name: template_id.to_string(),
                 category: ItemCategory::Misc,

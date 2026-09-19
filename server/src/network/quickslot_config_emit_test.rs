@@ -11,7 +11,7 @@ use super::quickslot_config_emit::build_quickslot_config;
 use crate::combat::components::QuickSlotBindings;
 use crate::inventory::{
     ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
-    ItemTemplate, PlacedItemState, PlayerInventory, DEFAULT_CAST_DURATION_MS, DEFAULT_COOLDOWN_MS,
+    ItemTemplate, PlacedItemState, PlayerInventory,
 };
 
 const NOW_TICK: u64 = 10;
@@ -39,6 +39,7 @@ fn empty_inventory() -> PlayerInventory {
 
 fn template(id: &str, display_name: &str) -> ItemTemplate {
     ItemTemplate {
+        quick_use: true,
         id: id.to_string(),
         display_name: display_name.to_string(),
         category: ItemCategory::Pill,
@@ -50,7 +51,7 @@ fn template(id: &str, display_name: &str) -> ItemTemplate {
         rarity: ItemRarity::Common,
         spirit_quality_initial: 1.0,
         description: String::new(),
-        effect: None,
+        effect: Some(crate::inventory::ItemEffect::ComposureRestore { magnitude: 0.2 }),
         cast_duration_ms: 250,
         cooldown_ms: 1250,
         weapon_spec: None,
@@ -140,7 +141,7 @@ fn quickslot_bound_item_slot_pins_empty_icon_texture_and_template_fields() {
         .as_ref()
         .expect("绑定了背包内物品的槽 0 应下发条目");
     assert_eq!(entry.item_id, "tea");
-    assert_eq!(entry.display_name, "清茶");
+    assert_eq!(entry.display_name, "tea");
     assert_eq!(entry.cast_duration_ms, 250);
     assert_eq!(entry.cooldown_ms, 1250);
     assert!(
@@ -229,10 +230,9 @@ fn quickslot_unresolvable_instance_id_emits_none() {
     );
 }
 
-/// 物品模板不在注册表 → display_name 回退 template_id、cast/cooldown 走模板默认
-/// 常数，icon_texture 仍为空串（兜底分支不破坏契约）。
+/// 未知模板不得绕过快捷使用资格。
 #[test]
-fn quickslot_missing_template_falls_back_to_defaults_icon_still_empty() {
+fn quickslot_missing_template_emits_empty_link() {
     let mut inventory = empty_inventory();
     inventory.containers[0].items.push(PlacedItemState {
         row: 0,
@@ -252,19 +252,9 @@ fn quickslot_missing_template_falls_back_to_defaults_icon_still_empty() {
         None,
     );
 
-    let entry = config.slots[0]
-        .as_ref()
-        .expect("模板缺失不应吞掉条目，应走默认值兜底");
-    assert_eq!(
-        entry.display_name, "ghost_item",
-        "模板缺失时 display_name 应回退 template_id"
-    );
-    assert_eq!(entry.cast_duration_ms, DEFAULT_CAST_DURATION_MS);
-    assert_eq!(entry.cooldown_ms, DEFAULT_COOLDOWN_MS);
     assert!(
-        entry.icon_texture.is_empty(),
-        "模板缺失兜底分支的 icon_texture 也必须为空串，实际 `{}`",
-        entry.icon_texture
+        config.slots[0].is_none(),
+        "未知模板不可作为可用快捷链接下发"
     );
 }
 

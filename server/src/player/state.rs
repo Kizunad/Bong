@@ -60,12 +60,37 @@ impl Default for PlayerState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct PlayerUiPrefs {
-    #[serde(default)]
-    pub quick_slots: [Option<String>; QuickSlotBindings::SLOT_COUNT],
+    #[serde(default, deserialize_with = "deserialize_quick_slot_instances")]
+    pub quick_slots: [Option<u64>; QuickSlotBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_bar: [SkillSlotPersist; SkillBarBindings::SLOT_COUNT],
     #[serde(default)]
     pub skill_configs: BTreeMap<String, SkillConfig>,
+}
+
+fn deserialize_quick_slot_instances<'de, D>(
+    deserializer: D,
+) -> Result<[Option<u64>; QuickSlotBindings::SLOT_COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PersistedQuickSlot {
+        Instance(u64),
+        LegacyTemplate(String),
+    }
+
+    let entries: [Option<PersistedQuickSlot>; QuickSlotBindings::SLOT_COUNT] =
+        Deserialize::deserialize(deserializer)?;
+    Ok(entries.map(|entry| match entry {
+        Some(PersistedQuickSlot::Instance(instance_id)) => Some(instance_id),
+        Some(PersistedQuickSlot::LegacyTemplate(legacy_template)) => {
+            let _ = legacy_template;
+            None
+        }
+        None => None,
+    }))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -91,11 +116,11 @@ impl PlayerUiPrefs {
             return bindings;
         };
 
-        for (slot, template_id) in self.quick_slots.iter().enumerate() {
-            let Some(template_id) = template_id.as_deref() else {
+        for (slot, instance_id) in self.quick_slots.iter().enumerate() {
+            let Some(instance_id) = *instance_id else {
                 continue;
             };
-            if let Some(instance_id) = first_inventory_instance_for_template(inventory, template_id)
+            if crate::inventory::inventory_item_by_instance_borrow(inventory, instance_id).is_some()
             {
                 bindings.set(slot as u8, Some(instance_id));
             }

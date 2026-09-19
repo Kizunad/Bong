@@ -6,7 +6,7 @@
             <children>
                 <flow-layout id="window-header" direction="horizontal">
                     <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">22</vertical></sizing>
-                    <padding><left>9</left><right>26</right></padding>
+                    <padding><left>9</left><right>92</right></padding>
                     <vertical-alignment>center</vertical-alignment>
                     <children>
                         <label id="window-title">
@@ -15,16 +15,59 @@
                         </label>
                     </children>
                 </flow-layout>
+                <flow-layout id="window-size-slot" direction="vertical">
+                    <sizing><horizontal method="fill">100</horizontal><vertical method="content" /></sizing>
+                    <children>
+                        <flow-layout id="window-size" direction="horizontal">
+                            <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">24</vertical></sizing>
+                            <padding><left>8</left><right>8</right></padding>
+                            <gap>5</gap><vertical-alignment>center</vertical-alignment>
+                            <surface><flat>#FF151B1B</flat></surface>
+                            <children>
+                                <text-box id="window-width">
+                                    <sizing><horizontal method="fixed">46</horizontal><vertical method="fixed">16</vertical></sizing>
+                                    <max-length>10</max-length><tooltip>窗口宽度</tooltip>
+                                </text-box>
+                                <label><text>×</text><color>#A6AFA8</color></label>
+                                <text-box id="window-height">
+                                    <sizing><horizontal method="fixed">46</horizontal><vertical method="fixed">16</vertical></sizing>
+                                    <max-length>10</max-length><tooltip>窗口高度</tooltip>
+                                </text-box>
+                                <button id="window-resize">
+                                    <text>↵</text><tooltip>应用尺寸</tooltip><text-shadow>false</text-shadow>
+                                    <renderer><flat color="#00343935" hovered-color="#FF454D46" disabled-color="#FF343935" /></renderer>
+                                    <sizing><horizontal method="fixed">20</horizontal><vertical method="fixed">18</vertical></sizing>
+                                </button>
+                            </children>
+                        </flow-layout>
+                    </children>
+                </flow-layout>
                 <flow-layout id="window-content" direction="vertical">
                     <sizing><horizontal method="fill">100</horizontal><vertical method="fixed">1</vertical></sizing>
                 </flow-layout>
-                <button id="window-close">
-                    <text>×</text><tooltip>关闭窗口</tooltip>
-                    <text-shadow>false</text-shadow>
-                    <renderer><flat color="#00343935" hovered-color="#824548" disabled-color="#343935" /></renderer>
-                    <sizing><horizontal method="fixed">20</horizontal><vertical method="fixed">20</vertical></sizing>
+                <flow-layout id="window-actions" direction="horizontal">
+                    <sizing><horizontal method="content" /><vertical method="fixed">20</vertical></sizing>
                     <positioning type="relative">100,0</positioning>
-                </button>
+                    <children>
+                        <button id="window-size-toggle">
+                            <text> </text><tooltip>调整尺寸</tooltip><text-shadow>false</text-shadow>
+                            <sizing><horizontal method="fixed">22</horizontal><vertical method="fixed">20</vertical></sizing>
+                        </button>
+                        <button id="window-minimize">
+                            <text> </text><tooltip>最小化</tooltip><text-shadow>false</text-shadow>
+                            <sizing><horizontal method="fixed">22</horizontal><vertical method="fixed">20</vertical></sizing>
+                        </button>
+                        <button id="window-pin">
+                            <text> </text><tooltip>固定到 HUD</tooltip><text-shadow>false</text-shadow>
+                            <sizing><horizontal method="fixed">22</horizontal><vertical method="fixed">20</vertical></sizing>
+                        </button>
+                        <button id="window-close">
+                            <text> </text><tooltip>关闭窗口</tooltip>
+                            <text-shadow>false</text-shadow>
+                            <sizing><horizontal method="fixed">20</horizontal><vertical method="fixed">20</vertical></sizing>
+                        </button>
+                    </children>
+                </flow-layout>
             </children>
         </flow-layout>
     </components>

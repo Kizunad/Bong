@@ -36,6 +36,7 @@ public final class UiWindowManager {
         }
         WindowState existing = windows.get(key);
         if (existing != null) {
+            existing.minimized = false;
             focus(key);
             return existing;
         }
@@ -69,7 +70,7 @@ public final class UiWindowManager {
         List<WindowState> states = new ArrayList<>(windows.values());
         for (int index = states.size() - 1; index >= 0; index--) {
             WindowState state = states.get(index);
-            if (!state.closed() && state.bounds().contains(x, y)) {
+            if (!state.closed() && !state.minimized() && state.bounds().contains(x, y)) {
                 return state;
             }
         }
@@ -78,6 +79,14 @@ public final class UiWindowManager {
 
     public synchronized boolean beginDrag(double x, double y) {
         WindowState state = capture(x, y);
+        return startDrag(state, x, y);
+    }
+
+    public synchronized boolean beginDrag(WindowKey key, double x, double y) {
+        return startDrag(capture(key), x, y);
+    }
+
+    private boolean startDrag(WindowState state, double x, double y) {
         if (state == null || !state.definition().supports(UiWindowDefinition.Capability.WINDOW)) {
             return false;
         }
@@ -120,13 +129,72 @@ public final class UiWindowManager {
     }
 
     public synchronized WindowState capture(double x, double y) {
-        cancelCapture();
         WindowState state = hitTest(x, y);
+        return capture(state == null ? null : state.key());
+    }
+
+    public synchronized WindowState capture(WindowKey key) {
+        cancelCapture();
+        WindowState state = windows.get(key);
+        if (state != null && state.minimized()) return null;
         if (state != null) {
             focus(state.key());
             capturedKey = state.key();
         }
         return state;
+    }
+
+    public synchronized boolean minimize(WindowKey key) {
+        WindowState state = windows.get(key);
+        if (!editable(state)) return false;
+        state.minimized = true;
+        if (key.equals(capturedKey)) cancelCapture();
+        return true;
+    }
+
+    public synchronized boolean restore(WindowKey key) {
+        WindowState state = windows.get(key);
+        if (state == null) return false;
+        state.minimized = false;
+        return focus(key);
+    }
+
+    public synchronized boolean pin(WindowKey key, boolean pinned) {
+        WindowState state = windows.get(key);
+        if (!editable(state)) return false;
+        state.pinned = pinned;
+        return true;
+    }
+
+    /** 用户在转场中抓住窗口时，从当帧可见外框接续交互。 */
+    public synchronized void settleAt(WindowKey key, Rect displayed) {
+        WindowState state = windows.get(key);
+        if (!editable(state)) return;
+        Rect effective = clamp(displayed, state.definition);
+        state.bounds(effective);
+        state.desiredBounds = effective;
+    }
+
+    public synchronized boolean resize(WindowKey key, String width, String height) {
+        try {
+            int w = Integer.parseInt(width.strip());
+            int h = Integer.parseInt(height.strip());
+            if (w <= 0 || h <= 0) return false;
+            WindowState state = windows.get(key);
+            if (!editable(state)) return false;
+            state.desiredBounds = new Rect(state.bounds.x(), state.bounds.y(),
+                Math.max(state.definition.minimumWidth(), w), Math.max(state.definition.minimumHeight(), h));
+            state.bounds(clamp(state.desiredBounds, state.definition));
+            return true;
+        } catch (NumberFormatException | NullPointerException invalid) {
+            return false;
+        }
+    }
+
+    private static boolean editable(WindowState state) {
+        return state != null && !state.definition.supports(UiWindowDefinition.Capability.SYSTEM)
+            && (state.definition.supports(UiWindowDefinition.Capability.WINDOW)
+                || state.definition.supports(UiWindowDefinition.Capability.OFFER));
     }
 
     public synchronized boolean close(WindowKey key) {
@@ -230,6 +298,8 @@ public final class UiWindowManager {
         private Rect bounds;
         private Rect desiredBounds;
         private boolean closed;
+        private boolean minimized;
+        private boolean pinned;
 
         private WindowState(WindowKey key, UiWindowDefinition definition, Rect bounds, UiScreenScope scope) {
             this.key = key;
@@ -245,6 +315,9 @@ public final class UiWindowManager {
         public Rect bounds() { return bounds; }
         private void bounds(Rect value) { bounds = value; }
         public boolean closed() { return closed; }
+        public boolean minimized() { return minimized; }
+        public boolean pinned() { return pinned; }
+        public Rect desiredBounds() { return desiredBounds; }
 
         private void close() {
             if (!closed) {
