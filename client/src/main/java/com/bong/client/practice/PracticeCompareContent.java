@@ -18,8 +18,12 @@ public final class PracticeCompareContent {
         var reasons = entries.stream().map(TechniqueAvailability::reason).toList();
         var next = List.of(entries, reasons);
         if (next.equals(previous)) return;
-        previous = next; root.clearChildren();
-        if (entries.size() != 2 || entries.contains(null)) { root.child(PracticeStyle.label("对比功法已失效", PracticeStyle.MUTED)); return; }
+        root.clearChildren();
+        if (entries.size() != 2 || entries.contains(null)) {
+            root.child(PracticeStyle.label("对比功法已失效", PracticeStyle.MUTED));
+            previous = next;
+            return;
+        }
         var left = entries.get(0); var right = entries.get(1);
         root.child(PracticeStyle.value("原绑定", left.displayName()));
         root.child(PracticeStyle.value("候选", right.displayName()));
@@ -36,6 +40,7 @@ public final class PracticeCompareContent {
             section.child(PracticeStyle.value("状态", TechniqueAvailability.reason(t).isEmpty() ? "可用" : TechniqueAvailability.reason(t)));
             root.child(section);
         }
+        previous = next;
     }
     private static String pair(double left, double right) { return PracticeDetailContent.number(left) + "  /  " + PracticeDetailContent.number(right); }
 }
