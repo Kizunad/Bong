@@ -3330,7 +3330,7 @@ fn pack_members_share_origin_and_multiple_players_respect_remaining_budget() {
     );
 }
 
-fn pack_spawn_count_for_spirit_qi(spirit_qi: f64) -> usize {
+fn pack_spawn_count_for_zone(spirit_qi: f64, realm_collapse: bool) -> usize {
     let mut app = make_runtime_scheduler_app::<TestFaunaMarker>(
         |_| ThreatBudget {
             max_alive: 5,
@@ -3339,10 +3339,17 @@ fn pack_spawn_count_for_spirit_qi(spirit_qi: f64) -> usize {
         },
         test_pool_fn,
         true,
-        5,
+        4,
     );
-    app.world_mut().resource_mut::<ZoneRegistry>().zones[0].spirit_qi = spirit_qi;
-    app.world_mut().resource_mut::<GameTick>().0 = 200;
+    let zone = &mut app.world_mut().resource_mut::<ZoneRegistry>().zones[0];
+    zone.spirit_qi = spirit_qi;
+    if realm_collapse {
+        zone.active_events
+            .push(crate::world::calamity::EVENT_REALM_COLLAPSE.to_string());
+    }
+    // 600 is a multiple of the dead (150) and negative (200) scaled intervals,
+    // but not the normal 250-tick interval, so all three cases share one tick.
+    app.world_mut().resource_mut::<GameTick>().0 = 600;
     app.world_mut()
         .resource_mut::<AmbientSchedulerConfig<TestFaunaMarker>>()
         .pack_size = Some(|_, _| 1);
@@ -3356,13 +3363,13 @@ fn pack_spawn_count_for_spirit_qi(spirit_qi: f64) -> usize {
 
 #[test]
 fn pack_spawn_uses_dead_and_negative_zone_budget_multipliers() {
-    let normal = pack_spawn_count_for_spirit_qi(0.5);
-    let dead = pack_spawn_count_for_spirit_qi(0.0);
-    let negative = pack_spawn_count_for_spirit_qi(-0.3);
+    let normal = pack_spawn_count_for_zone(0.5, false);
+    let dead = pack_spawn_count_for_zone(0.5, true);
+    let negative = pack_spawn_count_for_zone(-0.3, false);
 
     assert_eq!(
         normal, 0,
-        "normal zone keeps the 250-tick group interval, so tick 200 must not spawn"
+        "normal zone keeps the 250-tick group interval, so tick 600 must not spawn"
     );
     assert_eq!(
         dead, 1,
