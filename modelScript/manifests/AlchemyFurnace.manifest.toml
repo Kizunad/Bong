@@ -1,0 +1,47 @@
+# 炼丹炉 AlchemyFurnace —— 特征点名清单
+#
+# 特征来源：`ref_alchemy_furnace_exploded.png` 爆炸分解图中的六大独立部件组：
+# 1. leg_assembly: 矮壮三足支撑底架（转轴方块关节 + 斜插铜支柱 + 宽阔蹄足）
+# 2. outer_shell: 八角鼓腹玄石炉身（下收托盆 + 鼓腹八角切棱 + 阻灵背梁）
+# 3. hearth_core: 炉膛火核与八角观察窗（内嵌炽热火核 + 外凸八角青铜框投药窗）
+# 4. brass_collar: 上围黄铜锁箍（四方倒角铆钉铜带 + 炉颈收缩台）
+# 5. side_handles: 双侧横挑黄铜吊耳（方槽固定座 + 中空中圆角提环）
+# 6. top_cap: 覆斗顶冠排烟阀（排烟格栅罩 + 飞檐顶盖 + 铰链扣 + 顶端宝珠提纽）
+
+facing = "+z"
+mirror_x = 0.0
+size = 260
+
+[materials]
+stone_void = [16, 16, 20]
+stone_dark = [32, 32, 38]
+stone_mid  = [52, 54, 62]
+stone_lit  = [78, 80, 92]
+brass_dark = [68, 48, 26]
+brass_base = [112, 78, 42]
+brass_mid  = [148, 106, 56]
+brass_lit  = [188, 142, 76]
+brass_high = [226, 184, 112]
+fire_deep  = [148, 38, 16]
+fire_mid   = [226, 92, 24]
+fire_lit   = [255, 172, 42]
+fire_core  = [255, 238, 140]
+
+[features]
+# 三足底架组件（支撑四足、轴承关节与托环）
+leg_assembly = { elements = ["leg_", "fl_", "fr_", "bl_", "br_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1200, SIDE_R = 1200 } }
+
+# 鼓腹玄石炉身（托盆、中腹厚板与颈台）
+outer_shell = { elements = ["shell_", "bowl_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 2500, SIDE_R = 3000 } }
+
+# 炉膛火核与八角观察窗（火核、窗框与铰链）
+hearth_core = { elements = ["hearth_", "window_"], must_show_in = ["FRONT"], min_px = { FRONT = 1000 } }
+
+# 上围黄铜锁箍（锁箍主圈、饰边压条与凸出方栓铆钉）
+brass_collar = { elements = ["collar_", "neck_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1500, SIDE_R = 1500 } }
+
+# 双侧黄铜吊耳（侧面固定基座与悬挂提环）
+side_handles = { elements = ["handle_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 200, SIDE_R = 300 } }
+
+# 覆斗顶冠排烟阀（覆斗飞檐、通风格栅楼、屋顶与宝珠提纽）
+top_cap = { elements = ["cap_"], must_show_in = ["FRONT", "SIDE_R"], min_px = { FRONT = 1600, SIDE_R = 1600 } }
