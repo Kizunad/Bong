@@ -241,12 +241,15 @@ fn actions(world: &mut bevy_ecs::world::World) {
             ActionState::Executing => {
                 if skills::interrupted(world, actor) {
                     stop(world, actor);
+                    world.entity_mut(action).insert(ActionState::Failure);
                     continue;
                 }
                 let Some(mut brain) = world.get::<WildlifeBrain>(actor).cloned() else {
+                    world.entity_mut(action).insert(ActionState::Failure);
                     continue;
                 };
                 let Some(position) = world.get::<Position>(actor).map(|p| p.get()) else {
+                    world.entity_mut(action).insert(ActionState::Failure);
                     continue;
                 };
                 act(world, actor, &mut brain, position, behavior);
@@ -546,4 +549,78 @@ pub fn register(app: &mut App) {
         Update,
         feed_after_hunt.in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::combat::components::Lifecycle;
+    use bevy_ecs::world::World;
+
+    fn execute_action(world: &mut World, actor: Entity, behavior: Option<Behavior>) -> ActionState {
+        let action = world
+            .spawn((
+                Actor(actor),
+                ActionState::Executing,
+                behavior.unwrap_or(Behavior::Wander),
+            ))
+            .id();
+        actions(world);
+        world
+            .get::<ActionState>(action)
+            .cloned()
+            .expect("wildlife action must retain its state component")
+    }
+
+    #[test]
+    fn interrupted_or_incomplete_executing_actions_fail_and_normal_actions_continue() {
+        let mut interrupted_world = World::new();
+        let interrupted_actor = interrupted_world.spawn_empty().id();
+        assert_eq!(
+            execute_action(&mut interrupted_world, interrupted_actor, None),
+            ActionState::Failure,
+            "an interrupted wildlife actor must leave Executing so BigBrain can replan"
+        );
+
+        let mut missing_brain_world = World::new();
+        let missing_brain_actor = missing_brain_world.spawn(Lifecycle::default()).id();
+        assert_eq!(
+            execute_action(&mut missing_brain_world, missing_brain_actor, None),
+            ActionState::Failure,
+            "an actor without WildlifeBrain must not strand its action in Executing"
+        );
+
+        let mut missing_position_world = World::new();
+        let definition = crate::fauna::wildlife::config::WildlifeCatalog::load()
+            .get(BeastKind::Horse)
+            .clone();
+        let missing_position_actor = missing_position_world
+            .spawn((
+                Lifecycle::default(),
+                WildlifeBrain::new(BeastKind::Horse, DVec3::ZERO, 0, definition),
+            ))
+            .id();
+        assert_eq!(
+            execute_action(&mut missing_position_world, missing_position_actor, None),
+            ActionState::Failure,
+            "an actor without Position must not strand its action in Executing"
+        );
+
+        let mut normal_world = World::new();
+        let definition = crate::fauna::wildlife::config::WildlifeCatalog::load()
+            .get(BeastKind::Horse)
+            .clone();
+        let normal_actor = normal_world
+            .spawn((
+                Lifecycle::default(),
+                Position::new([0.0, 0.0, 0.0]),
+                WildlifeBrain::new(BeastKind::Horse, DVec3::ZERO, 0, definition),
+            ))
+            .id();
+        assert_eq!(
+            execute_action(&mut normal_world, normal_actor, Some(Behavior::Wander)),
+            ActionState::Executing,
+            "a complete continuous wildlife action must remain Executing after act()"
+        );
+    }
 }
