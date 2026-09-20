@@ -6,6 +6,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FaunaPreviewCommandTest {
     @Test
@@ -52,5 +55,32 @@ class FaunaPreviewCommandTest {
             "断线清理必须让此前的每个预览实体都进入 discard 状态，不能只丢 bookkeeping 引用"
         );
         assertEquals(List.of(), previews, "断线清理完成后不得保留已 discard 预览的引用");
+    }
+
+    @Test
+    void discard_failure_still_attempts_all_previews_clears_list_and_suppresses_later_failures() {
+        List<String> previews = new ArrayList<>(List.of("first", "second", "third"));
+        List<String> attempted = new ArrayList<>();
+        RuntimeException firstFailure = new IllegalStateException("first discard failed");
+        RuntimeException laterFailure = new IllegalArgumentException("later discard failed");
+
+        RuntimeException thrown = assertThrows(
+            RuntimeException.class,
+            () -> FaunaPreviewCommand.discardAndClear(previews, preview -> {
+                attempted.add(preview);
+                if (preview.equals("first")) throw firstFailure;
+                if (preview.equals("second")) throw laterFailure;
+            })
+        );
+
+        assertSame(firstFailure, thrown, "必须重抛第一个 discard 异常，保留最早失败原因");
+        assertEquals(
+            List.of("first", "second", "third"),
+            attempted,
+            "某个实体 discard 失败后仍必须尝试列表中的每个预览实体"
+        );
+        assertTrue(previews.isEmpty(), "即使 discard 失败，清理职责也必须最终清空预览列表");
+        assertEquals(1, thrown.getSuppressed().length, "后续 discard 异常必须保留为一个 suppressed 原因");
+        assertSame(laterFailure, thrown.getSuppressed()[0], "suppressed 必须是后续实体的实际异常");
     }
 }

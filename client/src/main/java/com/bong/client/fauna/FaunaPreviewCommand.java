@@ -87,8 +87,23 @@ public final class FaunaPreviewCommand {
     }
 
     static <T> void discardAndClear(List<T> previews, Consumer<? super T> discard) {
-        previews.forEach(discard);
+        Throwable primary = null;
+        for (T preview : previews) {
+            try {
+                discard.accept(preview);
+            } catch (RuntimeException | Error failure) {
+                primary = accumulate(primary, failure);
+            }
+        }
         previews.clear();
+        if (primary instanceof RuntimeException failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
+    }
+
+    private static Throwable accumulate(Throwable primary, Throwable failure) {
+        if (primary == null) return failure;
+        if (failure != primary) primary.addSuppressed(failure);
+        return primary;
     }
 
     static <T> void evictOldestIfAtCapacity(
