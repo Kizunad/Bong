@@ -2050,6 +2050,63 @@ fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
 }
 
 #[test]
+fn ui_prefs_legacy_template_slots_do_not_discard_other_preferences() {
+    let (persistence, data_dir) = sqlite_persistence("legacy-template-quick-slots");
+    save_player_state(&persistence, "Azure", &PlayerState::default())
+        .expect("player row should exist before replacing legacy UI prefs");
+
+    let legacy_prefs = serde_json::json!({
+        "quick_slots": ["earth_crumb", "guyuan_pill"],
+        "skill_bar": [
+            {"kind": "skill", "skill_id": "burst_meridian.beng_quan"},
+            {"kind": "item", "template_id": "tea"}
+        ],
+        "skill_configs": {
+            "legacy.skill": {"style": "preserve", "power": 3}
+        }
+    });
+    let connection = Connection::open(persistence.db_path()).expect("sqlite should open");
+    connection
+        .execute(
+            "UPDATE player_ui_prefs SET prefs_json = ?1 WHERE username = ?2",
+            params![legacy_prefs.to_string(), "Azure"],
+        )
+        .expect("legacy UI prefs should be written for the load test");
+
+    let loaded = load_player_slices(&persistence, "Azure");
+    assert_eq!(
+        loaded.ui_prefs.quick_slots,
+        [None, None],
+        "legacy template-id quick slots must become empty instance links without rejecting the prefs object"
+    );
+    assert!(matches!(
+        &loaded.ui_prefs.skill_bar[0],
+        SkillSlotPersist::Skill { skill_id } if skill_id == "burst_meridian.beng_quan"
+    ));
+    assert!(matches!(
+        &loaded.ui_prefs.skill_bar[1],
+        SkillSlotPersist::Item { template_id } if template_id == "tea"
+    ));
+    let config = loaded
+        .ui_prefs
+        .skill_configs
+        .get("legacy.skill")
+        .expect("legacy skill config must survive a quick-slot type migration");
+    assert_eq!(
+        config.fields.get("style"),
+        Some(&serde_json::json!("preserve")),
+        "skill_configs must remain intact when only legacy quick_slots are unrepresentable"
+    );
+    assert_eq!(
+        config.fields.get("power"),
+        Some(&serde_json::json!(3)),
+        "skill_configs numeric fields must remain intact during quick-slot migration"
+    );
+
+    let _ = fs::remove_dir_all(&data_dir);
+}
+
+#[test]
 fn ui_prefs_accepts_legacy_payload_without_skill_configs() {
     let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({
         "quick_slots": [null, null],

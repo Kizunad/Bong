@@ -409,6 +409,7 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
 pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
     app.init_resource::<client_request_handler::ClientRequestBudget>();
     app.init_resource::<client_request_handler::LingtianPlotIndex>();
+    app.init_resource::<client_request_handler::QuickSlotPrefsWriteQueue>();
     app.add_systems(
         Update,
         client_request_handler::refresh_lingtian_plot_index
@@ -424,6 +425,11 @@ pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
         Update,
         client_request_handler::handle_client_request_payloads
             .in_set(crate::lingtian::LingtianRequestIngressSet),
+    );
+    app.add_systems(
+        Update,
+        client_request_handler::flush_quick_slot_prefs_writes
+            .after(client_request_handler::handle_client_request_payloads),
     );
 }
 

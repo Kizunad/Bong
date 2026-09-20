@@ -30,7 +30,11 @@ public final class PracticeDetailContent {
         var entry = PracticeCatalog.entries(TechniquesListPanel.snapshot(), SkillSetStore.snapshot()).stream()
             .filter(value -> value.key().equals(key)).findFirst().orElse(null);
         if (entry == null) {
-            if (!"missing".equals(previous)) { root.clearChildren(); root.child(PracticeStyle.label("此项已不在所学之中", PracticeStyle.MUTED)); previous = "missing"; }
+            if (!"missing".equals(previous)) {
+                root.clearChildren();
+                root.child(PracticeStyle.label("此项已不在所学之中", PracticeStyle.MUTED));
+                previous = "missing";
+            }
             return;
         }
         List<com.bong.client.skill.SkillRecentEventStore.Entry> events = entry.skill() == null ? List.of() : SkillExperienceView.recentEventsForSkill(entry.skill());
@@ -41,7 +45,6 @@ public final class PracticeDetailContent {
         String dashKey = com.bong.client.movement.MovementKeybindings.dashKeyLabel();
         var next = List.of(entry, events, milestones, reason, slot, dashBound, dashKey);
         if (next.equals(previous)) return;
-        previous = next;
         root.clearChildren();
         root.child(PracticeStyle.label(entry.name(), PracticeStyle.GOLD));
         var tags = PracticeStyle.column();
@@ -107,6 +110,7 @@ public final class PracticeDetailContent {
             if (events.isEmpty() && milestones.isEmpty()) history.child(PracticeStyle.label("尚无近期记录", PracticeStyle.MUTED));
             root.child(history);
         }
+        previous = next;
     }
     static String number(double value) { return String.format(Locale.ROOT, "%.1f", value); }
 }

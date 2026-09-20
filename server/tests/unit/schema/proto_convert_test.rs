@@ -3786,12 +3786,24 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
             item_instance_id: 1,
             station_tier: 1,
         }),
+        build(ClientRequestV1::ForgeStationOpen {
+            v: 1,
+            station_pos: (0, 64, 0),
+        }),
         build(ClientRequestV1::CraftStart {
             v: 1,
             recipe_id: "craft.example".to_string(),
             quantity: 1,
         }),
         build(ClientRequestV1::CraftCancel { v: 1 }),
+        build(ClientRequestV1::MaterialMove {
+            v: 1,
+            recipe_id: "craft.example".to_string(),
+            instance_id: Some(1),
+            station_pos: None,
+            returning: false,
+            expected_revision: 1,
+        }),
         build(ClientRequestV1::ExternalContainerMove {
             v: 1,
             session_id: 1,
@@ -3832,6 +3844,52 @@ fn c2s_all_fixtures() -> Vec<(bong_server::schema::client_request::ClientRequest
             params: Default::default(),
         }),
     ]
+}
+
+/// Verifies that the C2S proto fixture set remains one-per-variant (106 total).
+///
+/// `BlockPickerGive` is intentionally outside this set: it is a dev-only local request
+/// whose proto conversion arm is explicitly unreachable, not an agent-wire payload.
+#[test]
+fn c2s_fixture_count_matches_variant_count() {
+    use bong_server::schema::client_request::ClientRequestV1;
+    use std::collections::HashSet;
+    use std::mem::{discriminant, Discriminant};
+
+    let fixtures = c2s_all_fixtures();
+    let bypass_count = fixtures.iter().filter(|(_, bypass)| *bypass).count();
+    let proto_count = fixtures.iter().filter(|(_, bypass)| !*bypass).count();
+
+    assert_eq!(
+        fixtures.len(),
+        106,
+        "C2S fixture list has {} entries but the proto fixture contract has 106. \
+             Add a fixture for every new proto-backed variant in c2s_all_fixtures().",
+        fixtures.len()
+    );
+    assert_eq!(
+        bypass_count, 1,
+        "Expected exactly 1 C2S JSON-bypass variant (AgentUiResponse), got {bypass_count}. \
+             If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
+    );
+    assert_eq!(
+        proto_count, 105,
+        "Expected 105 proto-encodable C2S variants, got {proto_count}."
+    );
+
+    // `ClientRequestV1` has no payload_type() discriminant enum, so use the Rust enum
+    // discriminant to catch replacing a missing fixture with a duplicate of another variant.
+    let distinct: HashSet<Discriminant<ClientRequestV1>> = fixtures
+        .iter()
+        .map(|(variant, _)| discriminant(variant))
+        .collect();
+    assert_eq!(
+        distinct.len(),
+        106,
+        "C2S fixtures cover only {} DISTINCT proto fixture variants but there are 106. \
+             A variant's fixture was likely deleted and another duplicated.",
+        distinct.len()
+    );
 }
 
 /// 比较后替换必须跨 protobuf 保留目标和旧绑定，空槽 0 不能丢失 oneof。

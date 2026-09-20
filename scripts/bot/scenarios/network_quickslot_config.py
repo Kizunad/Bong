@@ -23,6 +23,7 @@ from bot.scenarios._inventory_helpers import (
     require_item,
     wait_inventory_contains,
 )
+from bot.scenarios._rejection_helpers import drain_event_stream
 
 DESCRIPTION = (
     "技能栏：bind 回执/槽快照、非法 request_id 静默后权威状态守恒、use 推 cast_sync、"
@@ -143,6 +144,18 @@ def _authoritative_slots(bot, probe_request_id: str, instance_id: int) -> list:
         }
     )
     return _expect_bind_response(bot, probe_request_id, True, BIND_SLOT)["slots"]
+
+
+def _settled_anchor(bot) -> float:
+    """在负向请求前排干合法 bind 的 ACK/Changed 广播，再固定事件水位。
+
+    一次合法 bind 会先发带 ack 的回执，再由 Changed<QuickSlotBindings> 发一条无
+    ack 的完整配置。``_expect_bind_response`` 只等第一条，故不能把它返回的瞬间
+    直接当作负向窗口锚点；静默窗口只排前置 in-flight 事件，负向窗口仍扫描所有
+    quickslot_config，不按 ack_request_id 放宽判据。
+    """
+    drain_event_stream(bot, quiet_s=0.3, max_s=1.5)
+    return last_event_time(bot)
 
 
 def _slot_entries(slots: list) -> list:
@@ -266,7 +279,7 @@ def run(env) -> None:
 
         # 越界绑定无回执；前后对比两格权威快照，防止错误 clamp 后静默改绑。
         baseline_slots = _authoritative_slots(bot, "gap10-probe-3-base", initial_pill_instance)
-        anchor = last_event_time(bot)
+        anchor = _settled_anchor(bot)
         bot.intent(
             {
                 "type": "quick_slot_bind",
@@ -297,7 +310,7 @@ def run(env) -> None:
         #    请求前捕获基线，请求后对比全部两格。
         baseline_slots = _authoritative_slots(bot, "gap10-probe-4-base", initial_pill_instance)
         for slot, bad_request_id in ((0, ""), (0, "x" * 129)):
-            anchor = last_event_time(bot)
+            anchor = _settled_anchor(bot)
             bot.intent(
                 {
                     "type": "quick_slot_bind",

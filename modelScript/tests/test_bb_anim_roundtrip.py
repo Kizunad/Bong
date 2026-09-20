@@ -150,7 +150,7 @@ class AxisConversionTest(unittest.TestCase):
 class GeneratorSharesTheOneConversionTest(unittest.TestCase):
     """两个生成器 + 回程读取器必须用**同一份**常量。
 
-    各自抄一份就是这次出错的根因：锏那份写反了，木棍那份一开始照抄了它。
+    各自抄一份就是这次出错的根因：竹剑那份写反了，木棍那份一开始照抄了它。
     """
 
     def test_all_three_reference_the_same_module(self):
@@ -159,7 +159,7 @@ class GeneratorSharesTheOneConversionTest(unittest.TestCase):
         self.assertIs(AX, BP.AX)
 
     def test_the_jian_generator_no_longer_defines_its_own_signs(self):
-        """锏那份现在只是把公共常量取个别名；哪天有人把本地定义加回来，这里红。"""
+        """竹剑那份现在只是把公共常量取个别名；哪天有人把本地定义加回来，这里红。"""
         self.assertIs(AX.AXIS_LAYERS, GJP.AXIS_LAYERS)
         self.assertIs(AX.bend_to_bb, GJP.bend_single_axis)
 

@@ -172,7 +172,6 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
 
     public void workspace(boolean enabled) {
         if (workspace == enabled) return;
-        workspace = enabled;
         cancelInput();
         setSizeExpanded(false);
         if (enabled) {
@@ -180,6 +179,7 @@ public final class OwoXmlWindowContentAdapter implements AutoCloseable {
         } else {
             adapter.rootComponent.removeChild(actions);
         }
+        workspace = enabled;
         applyBounds();
     }
 

@@ -8,11 +8,7 @@ import com.bong.client.hud.HudRenderLayer;
 import com.bong.client.hud.HudWidgetWindows;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.inventory.model.BodyPart;
-import com.bong.client.inventory.model.PhysicalBody;
-import com.bong.client.inventory.model.WoundLevel;
 import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.inventory.state.PhysicalBodyStore;
 import com.bong.client.lifecycle.SessionScopedStoreRegistry;
 import com.bong.client.ui.window.UiWindowRuntime;
 import net.minecraft.client.MinecraftClient;
@@ -50,15 +46,6 @@ final class UiHudWindowPreviewScene implements UiPreviewScene {
     @Override public boolean initializationFailed(Screen screen) { return ((InspectScreen) screen).windowHostFailedForPreview(); }
 
     @Override public void prepareScreenshot(Screen screen, UiPreviewShot shot) {
-        PhysicalBodyStore.replace(shot.name().contains("wounds")
-            ? PhysicalBody.builder()
-                .wound(BodyPart.CHEST, WoundLevel.BRUISE)
-                .wound(BodyPart.RIGHT_FOREARM, WoundLevel.ABRASION)
-                .wound(BodyPart.LEFT_HAND, WoundLevel.LACERATION)
-                .wound(BodyPart.RIGHT_CALF, WoundLevel.FRACTURE)
-                .wound(BodyPart.LEFT_CALF, WoundLevel.SEVERED)
-                .build()
-            : PhysicalBody.builder().build());
         var client = MinecraftClient.getInstance();
         var context = new DrawContext(client, client.getBufferBuilders().getEntityVertexConsumers());
         render(screen, context);
@@ -159,8 +146,10 @@ final class UiHudWindowPreviewScene implements UiPreviewScene {
     }
 
     @Override public void cleanup() {
-        UiWindowRuntime.manager().reset();
-        UiWindowRuntime.endPreview();
-        SessionScopedStoreRegistry.clearAllOnDisconnect();
+        UiPreviewCleanup.run(
+            () -> UiWindowRuntime.manager().reset(),
+            () -> UiWindowRuntime.endPreview(),
+            () -> SessionScopedStoreRegistry.clearAllOnDisconnect()
+        );
     }
 }
