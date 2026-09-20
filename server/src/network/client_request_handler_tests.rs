@@ -239,7 +239,7 @@ fn explosion_inventory_with_stack(template_id: &str, count: u32) -> PlayerInvent
 fn load_test_technique_registry() -> TechniqueRegistry {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/cultivation/techniques.toml");
-    TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::default())
+    TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::load_for_tests())
         .expect("checked-in technique catalog must load")
 }
 
@@ -524,7 +524,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_severed_via_required() {
     }];
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &required, &ms, Some(&severed), None),
-        Err(MeridianId::Lung)
+        Err(MeridianId::Lung.channel_id())
     );
 }
 
@@ -540,7 +540,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_low_integrity_via_requir
     }];
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
-        Err(MeridianId::Lung)
+        Err(MeridianId::Lung.channel_id())
     );
 }
 
@@ -553,7 +553,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_via_deps_table_severed()
     deps.declare("test.skill", vec![MeridianId::Heart]);
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &[], &ms, Some(&severed), Some(&deps)),
-        Err(MeridianId::Heart)
+        Err(MeridianId::Heart.channel_id())
     );
 }
 
@@ -567,7 +567,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_required(
     }];
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &required, &ms, None, None),
-        Err(MeridianId::Lung)
+        Err(MeridianId::Lung.channel_id())
     );
 }
 
@@ -578,7 +578,7 @@ fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_deps_tabl
     deps.declare("test.skill", vec![MeridianId::Stomach]);
     assert_eq!(
         check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps)),
-        Err(MeridianId::Stomach)
+        Err(MeridianId::Stomach.channel_id())
     );
 }
 
@@ -1534,7 +1534,7 @@ mod external_ingress_tests {
     fn load_test_technique_registry() -> TechniqueRegistry {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("assets/cultivation/techniques.toml");
-        TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::default())
+        TechniqueRegistry::load_from_path(path, &crate::body_plan::RaceRegistry::load_for_tests())
             .expect("checked-in technique catalog must load")
     }
 
@@ -12235,7 +12235,7 @@ dispatch = "direct_generic"
             std::fs::write(&path, source).expect("temporary technique catalog must be writable");
             let registry = TechniqueRegistry::load_from_path(
                 &path,
-                &crate::body_plan::RaceRegistry::default(),
+                &crate::body_plan::RaceRegistry::load_for_tests(),
             )
             .expect("public loader must accept the direct-generic test fixture");
             let _ = std::fs::remove_file(path);

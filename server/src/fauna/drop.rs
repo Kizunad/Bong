@@ -150,6 +150,16 @@ const RAT_DROPS: [DropEntry; 2] = [
     DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::fixed(1)),
 ];
 
+const SMALL_WILDLIFE_DROPS: [DropEntry; 1] = [DropEntry::guaranteed(
+    YI_SHOU_GU,
+    QuantityRange::between(1, 2),
+)];
+
+const LION_DROPS: [DropEntry; 1] = [DropEntry::guaranteed(
+    YI_SHOU_GU,
+    QuantityRange::between(3, 5),
+)];
+
 const SPIDER_DROPS: [DropEntry; 3] = [
     DropEntry::guaranteed(ZHU_GU, QuantityRange::between(1, 2)),
     DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::fixed(1)),
@@ -249,6 +259,8 @@ const WHALE_DROPS: [DropEntry; 5] = [
 
 pub fn drop_table_for(kind: BeastKind) -> &'static [DropEntry] {
     match kind {
+        BeastKind::DainuLion => &LION_DROPS,
+        BeastKind::FuyuVulture | BeastKind::Horse => &SMALL_WILDLIFE_DROPS,
         BeastKind::Rat => &RAT_DROPS,
         BeastKind::Spider => &SPIDER_DROPS,
         BeastKind::GreenSpider => &GREEN_SPIDER_DROPS,

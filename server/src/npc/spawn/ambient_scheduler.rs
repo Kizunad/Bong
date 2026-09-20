@@ -837,6 +837,10 @@ pub fn sample_ambient_ring_position(
 pub trait AmbientMarkerData: Component {
     fn new(spawned_at: u64, home_zone: String) -> Self;
     fn home_zone(&self) -> &str;
+    /// 能吐纳的新增物种必须在超距回收前结算活体与账本余额。
+    fn requires_qi_settlement() -> bool {
+        false
+    }
 }
 
 /// P0 定义的威胁 marker（P1 起挂在真实生成的妖兽/鼠群实体上）。
@@ -925,13 +929,38 @@ where
     M: AmbientMarkerData,
     P: SurfaceProvider + ?Sized,
 {
+    submit_ambient_pack_member::<M, P>(
+        commands,
+        layer,
+        terrain,
+        pool_fn,
+        pending_spawns_by_zone,
+        request,
+        None,
+    )
+}
+
+/// 群体的选种/归属使用共同原点，每个成员仍单独通过地表落点门。
+fn submit_ambient_pack_member<M, P>(
+    commands: &mut Commands,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    pool_fn: AmbientPoolFn,
+    pending_spawns_by_zone: &mut HashMap<String, u32>,
+    request: AmbientSpawnRequest<'_>,
+    origin: Option<DVec3>,
+) -> Option<Entity>
+where
+    M: AmbientMarkerData,
+    P: SurfaceProvider + ?Sized,
+{
     let spawn_position = resolve_ambient_ground_position(request.candidate, layer, terrain)?;
     let spawned = pool_fn(
         commands,
         request.layer,
         request.zone,
         spawn_position,
-        spawn_position,
+        origin.unwrap_or(spawn_position),
         request.season,
     )?;
     commands
@@ -949,6 +978,7 @@ where
 pub(crate) enum AmbientDevSpawnKind {
     Mundane,
     Threat,
+    Wildlife(crate::fauna::components::BeastKind),
 }
 
 impl AmbientDevSpawnKind {
@@ -956,6 +986,7 @@ impl AmbientDevSpawnKind {
         match self {
             Self::Mundane => "mundane",
             Self::Threat => "threat",
+            Self::Wildlife(kind) => kind.as_str(),
         }
     }
 }
@@ -1022,6 +1053,12 @@ pub(crate) fn submit_ambient_dev_spawn_once<P: SurfaceProvider + ?Sized>(
             &mut pending_spawns_by_zone,
             request,
         ),
+        AmbientDevSpawnKind::Wildlife(kind) => {
+            let position = resolve_ambient_ground_position(candidate, runtime_layer, terrain)?;
+            Some(crate::fauna::wildlife::spawn::spawn_at(
+                commands, layer, zone, position, kind, position,
+            ))
+        }
     }
 }
 
@@ -1034,6 +1071,8 @@ pub struct AmbientSchedulerConfig<M> {
     pub budget_fn: fn(u8) -> ThreatBudget,
     pub pool_fn: AmbientPoolFn,
     pub counts_against_threat_budget: bool,
+    /// 配置群体生成的池逐只占预算、逐点检查地面；旧池保留单只行为。
+    pub pack_size: Option<fn(&Zone, DVec3) -> u32>,
     _marker: PhantomData<fn() -> M>,
 }
 
@@ -1047,6 +1086,7 @@ impl<M> AmbientSchedulerConfig<M> {
             budget_fn,
             pool_fn,
             counts_against_threat_budget,
+            pack_size: None,
             _marker: PhantomData,
         }
     }
@@ -1208,7 +1248,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             // 结算，实体才可进入 Despawned。缺 zone 时全额进入固定 stable overflow；缺
             // ledger/identity 或事务失败时保留实体，下一轮重试，不能先删 owner 的载体。
             let mut recycle_ready = true;
-            if rat_blackboard.is_some() {
+            if rat_blackboard.is_some() || M::requires_qi_settlement() {
                 recycle_ready = match (qi_account.as_deref_mut(), life_record, cultivation) {
                     (Some(account), Some(life_record), Some(mut cultivation)) => {
                         let zone_name = registry
@@ -1322,55 +1362,82 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         // P3 §8.1 #4 — 死域/负灵域预算乘区：复用既有 `movement_zone_kind` 判定口径
         // （`on_residue_ash=false`，ambient 调度核只关心危险度地理，不关心灰烬地表微观判定）。
         let zone_kind = movement_zone_kind(Some(zone), false);
-        let outcome = decide_ambient_check(
-            now,
-            zone.danger_level,
-            zone_kind,
-            alive_count,
-            config.counts_against_threat_budget,
-            density_mul,
-            spawn_seed,
-        );
+        let outcome = if config.pack_size.is_some() {
+            let budget = (config.budget_fn)(zone.danger_level);
+            if !should_run_interval(now, budget.spawn_interval_ticks) {
+                AmbientCheckOutcome::Throttled
+            } else if alive_count >= budget.max_alive {
+                AmbientCheckOutcome::BudgetSaturated
+            } else if !era_beast_spawn_gate(density_mul, spawn_seed) {
+                AmbientCheckOutcome::EraGateBlocked
+            } else {
+                AmbientCheckOutcome::ShouldSpawn { budget }
+            }
+        } else {
+            decide_ambient_check(
+                now,
+                zone.danger_level,
+                zone_kind,
+                alive_count,
+                config.counts_against_threat_budget,
+                density_mul,
+                spawn_seed,
+            )
+        };
         let AmbientCheckOutcome::ShouldSpawn { budget } = outcome else {
             continue;
         };
-        // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项；
-        // baseline（origin/main）同样从未消费该字段，本 plan 只改地表落点门禁与提交边界，
-        // 不改刷新数量语义。
-        let _ = budget.pack_size_range;
-
         let Some(spawn_pos) =
             sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
         else {
             continue;
         };
+        let pack_size = config
+            .pack_size
+            .map(|count| count(zone, spawn_pos).min(budget.max_alive.saturating_sub(alive_count)))
+            .unwrap_or(1);
         // Raster 只能替代有效 live layer 内未加载 chunk 的 surface 数据。把 live-layer
         // 门禁限定在候选提交边界：stale、non-ChunkLayer 或 Despawned target 禁止新 spawn，
         // 但不能截断本轮前面已经执行的既有 ambient 回收与 qi 归还。
         let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
             continue;
         };
-        let spawned = submit_ambient_spawn_candidate::<M, _>(
-            &mut commands,
-            Some(overworld_chunk_layer),
-            terrain_providers
-                .as_deref()
-                .map(|providers| &providers.overworld),
-            config.pool_fn,
-            &mut pending_spawns_by_zone,
-            AmbientSpawnRequest {
-                layer: layers.overworld,
-                zone,
-                candidate: spawn_pos,
-                season,
-                now,
-            },
-        );
-        if spawned.is_none() {
-            // runtime 标准窗口与 raster fallback 都无法给出安全脚点、或 pool 拒绝时，
-            // 只丢弃本次候选；helper 保证失败分支不挂 marker、不占 pending，scheduler
-            // 下一轮自然重试。
-            continue;
+        for member in 0..pack_size {
+            let candidate = spawn_pos + DVec3::new(f64::from(member) * 3.0, 0.0, 0.0);
+            if candidate.x > zone.bounds.1.x
+                || candidate.z > zone.bounds.1.z
+                || candidate.x < zone.bounds.0.x
+                || candidate.z < zone.bounds.0.z
+                || overworld_players
+                    .iter()
+                    .any(|player| planar_distance(candidate, *player) < AMBIENT_RING_MIN_RADIUS)
+                || planar_distance(candidate, *player_pos) > AMBIENT_RING_MAX_RADIUS
+            {
+                continue;
+            }
+            let spawned = submit_ambient_pack_member::<M, _>(
+                &mut commands,
+                Some(overworld_chunk_layer),
+                terrain_providers
+                    .as_deref()
+                    .map(|providers| &providers.overworld),
+                config.pool_fn,
+                &mut pending_spawns_by_zone,
+                AmbientSpawnRequest {
+                    layer: layers.overworld,
+                    zone,
+                    candidate,
+                    season,
+                    now,
+                },
+                config.pack_size.map(|_| spawn_pos),
+            );
+            if spawned.is_none() {
+                // runtime 标准窗口与 raster fallback 都无法给出安全脚点、或 pool 拒绝时，
+                // 只丢弃本次候选；helper 保证失败分支不挂 marker、不占 pending，scheduler
+                // 下一轮自然重试。
+                continue;
+            }
         }
     }
 }

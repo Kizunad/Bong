@@ -11,7 +11,7 @@
 
 use valence::prelude::{bevy_ecs, Entity, Event, EventWriter, Query, Res};
 
-use super::components::{Cultivation, Meridian, MeridianId, MeridianSystem, Realm};
+use super::components::{Cultivation, Meridian, MeridianSystem, Realm};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 
@@ -65,6 +65,8 @@ pub fn close_meridian(m: &mut Meridian) {
 
 pub fn qi_zero_decay_tick(
     clock: Res<CultivationClock>,
+    plans: Option<Res<crate::body_plan::BodyPlanRegistry>>,
+    races: Option<Res<crate::body_plan::RaceRegistry>>,
     mut outcomes: EventWriter<RealmRegressed>,
     mut entities: Query<(
         Entity,
@@ -99,14 +101,19 @@ pub fn qi_zero_decay_tick(
                 continue;
             };
             cultivation.realm = to;
-            let keep = to.required_meridians();
+            let keep = plans
+                .as_deref()
+                .zip(races.as_deref())
+                .and_then(|(plans, races)| {
+                    crate::body_plan::resolve_race_to_plan(&cultivation.race, plans, races)
+                })
+                .and_then(|plan| plan.meridian_profile.as_ref())
+                .map(|profile| profile.realm_requirements[to.rank() as usize - 1].total as usize)
+                .unwrap_or_else(|| to.required_meridians());
             let closures = pick_closures(&meridians, keep);
             let closed_count = closures.len();
             for (is_regular, idx) in closures {
-                // plan-race-system-v1 P1a：`Meridian.id` 已换轨为 `MeridianChannelId`，
-                // `BiographyEntry::MeridianClosed.id` 仍是 legacy `MeridianId`（生平卷
-                // 持久化格式，wire 开放化留待后续 P1 子阶段）——humanoid 20 条经脉的
-                // channel id 均可逆映射回 `MeridianId`，故用 `.expect` 而非静默兜底。
+                // 闭脉针对实际构型的 channel，不要求可转换成人形枚举。
                 let channel_id = if is_regular {
                     let m = &mut meridians.regular[idx];
                     let channel_id = m.id.clone();
@@ -118,14 +125,8 @@ pub fn qi_zero_decay_tick(
                     close_meridian(m);
                     channel_id
                 };
-                let id: MeridianId = channel_id.to_meridian_id().unwrap_or_else(|| {
-                    panic!(
-                        "[bong][cultivation][qi_zero_decay] channel id {channel_id} has no \
-                         legacy MeridianId mapping — BiographyEntry::MeridianClosed cannot \
-                         represent non-humanoid channels yet"
-                    )
-                });
-                if let Some(life) = life.as_deref_mut() {
+                // 旧生平卷的 MeridianClosed 仅支持人形；非人形仍完成闭脉与降境。
+                if let (Some(life), Some(id)) = (life.as_deref_mut(), channel_id.to_meridian_id()) {
                     life.push(BiographyEntry::MeridianClosed {
                         id,
                         tick: now,

@@ -28,7 +28,14 @@ fn checked_in_technique_registry() -> &'static TechniqueRegistry {
     static REGISTRY: OnceLock<TechniqueRegistry> = OnceLock::new();
     REGISTRY.get_or_init(|| {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_TECHNIQUES_PATH);
-        TechniqueRegistry::load_from_path(path, &RaceRegistry::default())
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let plans = bong_server::body_plan::BodyPlanRegistry::load_dir(
+            root.join("assets/body_plans/plans"),
+        )
+        .unwrap();
+        let races =
+            RaceRegistry::load_file(root.join("assets/body_plans/races.json"), &plans).unwrap();
+        TechniqueRegistry::load_from_path(path, &races)
             .expect("checked-in technique catalog must load")
     })
 }
@@ -50,8 +57,9 @@ fn spawn_caster(app: &mut App, realm: Realm, qi_current: f64, position: DVec3) -
     if let Some(registry) = app.world().get_resource::<TechniqueRegistry>() {
         for definition in registry.iter() {
             for required in &definition.required_meridians {
-                let id = parse_meridian_id(&required.channel)
-                    .expect("checked-in technique meridian must parse");
+                let Some(id) = parse_meridian_id(&required.channel) else {
+                    continue;
+                };
                 let meridian = meridians.get_mut(id);
                 meridian.opened = true;
                 meridian.integrity = 1.0;

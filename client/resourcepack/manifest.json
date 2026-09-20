@@ -3,8 +3,8 @@
   "name": "bong-full",
   "version": "v1",
   "file": "bong-full-v1.zip",
-  "sha1": "6c3002d2d53b34f1c70d1328360c40bd46b28749",
-  "size": 73224181,
+  "sha1": "d55fe61499972d2abad4e0e701aa92f4349bd6ab",
+  "size": 74245686,
   "url_env": "BONG_RESOURCE_PACK_URL",
   "sha1_env": "BONG_RESOURCE_PACK_SHA1",
   "force_accept_default": false,
@@ -31,7 +31,7 @@
         "bong/textures/item",
         "bong/textures/armor"
       ],
-      "file_count": 384
+      "file_count": 413
     },
     {
       "id": "vfx",
@@ -39,9 +39,10 @@
         "bong/particles",
         "bong/textures/particle",
         "bong-client/textures/hud/effects",
-        "bong-client/textures/gui/skill"
+        "bong-client/textures/gui/skill",
+        "bong/textures/gui/skill"
       ],
-      "file_count": 136
+      "file_count": 153
     },
     {
       "id": "audio",
@@ -51,7 +52,7 @@
         "bong/sounds",
         "bong/sounds.json"
       ],
-      "file_count": 66
+      "file_count": 74
     }
   ]
 }

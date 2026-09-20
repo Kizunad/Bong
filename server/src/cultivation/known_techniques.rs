@@ -220,7 +220,7 @@ impl TechniqueRegistry {
     #[cfg(test)]
     pub fn load_for_tests() -> Self {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_TECHNIQUES_PATH);
-        Self::load_from_path(path, &RaceRegistry::default())
+        Self::load_from_path(path, &RaceRegistry::load_for_tests())
             .expect("checked-in technique catalog must load")
     }
 
@@ -685,15 +685,26 @@ fn validate_and_convert(
                 "required_meridians[].channel must not be empty",
             ));
         }
-        let Some(parsed_channel) =
-            crate::cultivation::technique_scroll::parse_meridian_id(&meridian.channel)
-        else {
+        let parsed_channel =
+            crate::cultivation::technique_scroll::technique_channel(&meridian.channel);
+        let is_legacy =
+            crate::cultivation::technique_scroll::parse_meridian_id(&meridian.channel).is_some();
+        let valid_custom = match &raw.required_race {
+            RaceGateOwned::Species { species } => {
+                !species.is_empty()
+                    && species
+                        .iter()
+                        .all(|race| races.has_channel(race, &parsed_channel))
+            }
+            _ => false,
+        };
+        if !is_legacy && !valid_custom {
             return Err(TechniqueLoadError::invalid(
                 path,
                 Some(technique_id.clone()),
                 format!("unknown required meridian {:?}", meridian.channel),
             ));
-        };
+        }
         if !seen_meridians.insert(parsed_channel) {
             return Err(TechniqueLoadError::invalid(
                 path,
@@ -895,16 +906,12 @@ fn validate_startup_relationships(
                     .required_meridians
                     .iter()
                     .map(|required| {
-                        crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
-                            .expect(
-                                "loaded technique metadata must contain known meridian channels",
-                            )
+                        crate::cultivation::technique_scroll::technique_channel(&required.channel)
                     })
                     .collect();
                 let declared_meridians: HashSet<_> = dependencies
-                    .lookup(&definition.id)
-                    .iter()
-                    .copied()
+                    .channel_dependencies(&definition.id)
+                    .into_iter()
                     .collect();
                 if metadata_meridians != declared_meridians {
                     return Err(TechniqueWiringError(format!(
@@ -963,8 +970,8 @@ mod tests {
 
     fn production_registry() -> TechniqueRegistry {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_TECHNIQUES_PATH);
-        TechniqueRegistry::load_from_path(path, &RaceRegistry::default())
-            .expect("checked-in techniques.toml must load with Any/Humanoid gates")
+        TechniqueRegistry::load_from_path(path, &RaceRegistry::load_for_tests())
+            .expect("checked-in techniques.toml must load with registered species gates")
     }
 
     fn load(text: &str) -> Result<TechniqueRegistry, TechniqueLoadError> {
@@ -1802,7 +1809,7 @@ dispatch = "metadata_backed"
             .expect_err("public startup must reject TOML drift from static resolver dependencies");
         assert!(error.to_string().contains("burst_meridian.tie_shan_kao"));
         assert!(error.to_string().contains("required_meridians mismatch"));
-        assert!(error.to_string().contains("Stomach"));
+        assert!(error.to_string().contains("stomach"));
     }
 
     #[test]
