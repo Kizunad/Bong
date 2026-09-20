@@ -9,9 +9,12 @@ import net.minecraft.util.math.Vec3d;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /** 客户端模型验收：spawn 物种、play 动作（支持 Tab）、disguise/clear，不生成服务端生物。 */
 public final class FaunaPreviewCommand {
+    // 预览是 dev 入口；有界列表避免误操作持续堆积客户端实体，影响人工验收会话。
+    private static final int MAX_PREVIEWS = 32;
     private static final List<FaunaEntity> PREVIEWS = new ArrayList<>();
     private static FaunaEntity selected;
     private static int nextId = -300_000;
@@ -32,6 +35,7 @@ public final class FaunaPreviewCommand {
                     entity.refreshPositionAndAngles(position.x, position.y, position.z, player.getYaw() + 180, 0);
                     entity.setId(nextId--);
                     world.addEntity(entity.getId(), entity);
+                    evictOldestIfAtCapacity(PREVIEWS, MAX_PREVIEWS, FaunaEntity::discard);
                     PREVIEWS.add(entity);
                     selected = entity;
                     ctx.getSource().sendFeedback(Text.literal("已预览 " + kind.path() + "；/fauna-preview play <动作> 支持 Tab"));
@@ -80,5 +84,16 @@ public final class FaunaPreviewCommand {
         PREVIEWS.clear();
         selected = null;
         nextId = -300_000;
+    }
+
+    static <T> void evictOldestIfAtCapacity(
+        List<T> previews, int maxPreviews, Consumer<? super T> discard
+    ) {
+        if (maxPreviews <= 0) {
+            throw new IllegalArgumentException("maxPreviews must be positive");
+        }
+        if (previews.size() >= maxPreviews) {
+            discard.accept(previews.remove(0));
+        }
     }
 }
