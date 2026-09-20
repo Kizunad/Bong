@@ -98,7 +98,7 @@ pub fn wildlife_thinker() -> ThinkerBuilder {
 /// 感知只在同层、可见、有效生命目标中选取。马不会主动攻击路人。
 fn sense(world: &mut bevy_ecs::world::World) {
     let tick = skills::now(world);
-    if tick % 10 != 0 {
+    if !tick.is_multiple_of(10) {
         return;
     }
     let actors: Vec<_> = world
@@ -436,7 +436,7 @@ fn act(
         Behavior::Rest => stop(world, entity),
         _ if tick >= brain.next_idle_at => {
             brain.next_idle_at = tick + 160 + u64::from(entity.index() % 60);
-            if (tick / 160 + u64::from(entity.index())) % 3 == 0 {
+            if (tick / 160 + u64::from(entity.index())).is_multiple_of(3) {
                 stop(world, entity);
                 let animation = match brain.kind {
                     BeastKind::Horse => "animation.bong.horse.graze",

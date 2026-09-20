@@ -107,7 +107,7 @@ pub fn spawn_at(
     commands.add(move |world: &mut bevy_ecs::world::World| {
         let definition = world.resource::<WildlifeCatalog>().get(kind).clone();
         let seed = wildlife_seed(&zone, position.x, position.z);
-        let higher = seed % 5 == 0 && (kind != BeastKind::DainuLion || danger >= 4);
+        let higher = seed.is_multiple_of(5) && (kind != BeastKind::DainuLion || danger >= 4);
         let stats = &definition.realms[usize::from(higher)];
         let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast, stats.realm);
         runtime.cultivation.race = RaceId::new(kind.as_str());
