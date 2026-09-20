@@ -46,11 +46,18 @@ PROMPT_TEMPLATES = {
         "dramatic rim light, centered photorealistic 3D item render, high contrast, clean silhouette, no watermark"
     ),
     "three_view_item": (
-        "Minecraft voxel style orthographic three-view reference sheet of the referenced item, "
+        "Minecraft voxel style orthographic three-view reference sheet of the referenced wearable equipment/weapon, "
         "equipped on a plain neutral matte grey featureless mannequin player biped model (纯灰色模特玩家), "
         "displaying Front view, Side view, and Back view side by side, "
         "clean Minecraft cuboid blocky aesthetic, distinct voxel armor and weapon parts, "
         "plain solid neutral background, clear proportions for 3D modeling reference"
+    ),
+    "three_view_standalone": (
+        "Minecraft voxel style orthographic three-view reference sheet of the standalone placeable apparatus / furnace / block / furniture, "
+        "completely standalone, resting sturdily on neutral floor, NOT worn on body, NO human mannequin, NO person, "
+        "displaying Front view, Side view, and Back view side by side, "
+        "clean Minecraft cuboid blocky aesthetic, distinct cuboid parts, crisp edges, "
+        "plain solid neutral grey background, clear proportions for 3D modeling reference"
     ),
     "three_view_creature": (
         "Minecraft voxel style orthographic three-view reference sheet of the referenced creature, "
@@ -228,7 +235,12 @@ def generate_single_step(
             ref_path = out_dir / f"ref_{subject_name}_concept.png"
         print(f"\n[执行步骤: MC 体素正交三视图 (Three-View)]")
         print(f"  参考图: {ref_path}")
-        template_key = "three_view_item" if target_type == "item" else "three_view_creature"
+        if target_type == "creature":
+            template_key = "three_view_creature"
+        elif target_type == "item":
+            template_key = "three_view_item"
+        else:
+            template_key = "three_view_standalone"
         full_prompt = PROMPT_TEMPLATES[template_key]
         print(f"  Prompt: {full_prompt}")
         img_bytes = client.image_to_image(full_prompt, reference_image=ref_path)
@@ -261,9 +273,9 @@ def main() -> None:
     parser.add_argument("--prompt", default="", help="概念描述（生成 concept 必需，后续步骤默认使用标准图生图模板）")
     parser.add_argument(
         "--type",
-        choices=["item", "creature"],
-        default="item",
-        help="目标类型: item (物品/装备/武器/方块，含灰色模特装备) 或 creature (生物)",
+        choices=["item", "standalone", "creature"],
+        default="standalone",
+        help="目标类型: item (人身佩戴装备/武器), standalone (独立放置设施/方块/炉子无模特), creature (生物)",
     )
     parser.add_argument("--ref", type=Path, help="图生图的参考图路径（若不提供则自动在输出目录寻找前序产物）")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT_DIR, help="输出目录")
