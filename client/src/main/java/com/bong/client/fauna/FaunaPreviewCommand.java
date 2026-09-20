@@ -81,9 +81,17 @@ public final class FaunaPreviewCommand {
     }
 
     public static void clearOnDisconnect() {
-        discardAndClear(PREVIEWS, FaunaEntity::discard);
-        selected = null;
-        nextId = -300_000;
+        Throwable failure = null;
+        try {
+            discardAndClear(PREVIEWS, FaunaEntity::discard);
+        } catch (RuntimeException | Error cleanupFailure) {
+            failure = cleanupFailure;
+        } finally {
+            selected = null;
+            nextId = -300_000;
+        }
+        if (failure instanceof RuntimeException e) throw e;
+        if (failure instanceof Error e) throw e;
     }
 
     static <T> void discardAndClear(List<T> previews, Consumer<? super T> discard) {
@@ -95,7 +103,11 @@ public final class FaunaPreviewCommand {
                 primary = accumulate(primary, failure);
             }
         }
-        previews.clear();
+        try {
+            previews.clear();
+        } catch (RuntimeException | Error cleanupFailure) {
+            primary = accumulate(primary, cleanupFailure);
+        }
         if (primary instanceof RuntimeException failure) throw failure;
         if (primary instanceof Error failure) throw failure;
     }

@@ -2,10 +2,12 @@ package com.bong.client.fauna;
 
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -82,5 +84,47 @@ class FaunaPreviewCommandTest {
         assertTrue(previews.isEmpty(), "即使 discard 失败，清理职责也必须最终清空预览列表");
         assertEquals(1, thrown.getSuppressed().length, "后续 discard 异常必须保留为一个 suppressed 原因");
         assertSame(laterFailure, thrown.getSuppressed()[0], "suppressed 必须是后续实体的实际异常");
+    }
+
+    @Test
+    void disconnect_cleanup_resets_session_state_even_when_discard_fails() throws Exception {
+        Field previewsField = field("PREVIEWS");
+        @SuppressWarnings("unchecked")
+        List<FaunaEntity> previews = (List<FaunaEntity>) previewsField.get(null);
+        Field selectedField = field("selected");
+        Field nextIdField = field("nextId");
+        sun.misc.Unsafe unsafe = unsafe();
+        Object selectedBase = unsafe.staticFieldBase(selectedField);
+        long selectedOffset = unsafe.staticFieldOffset(selectedField);
+
+        previews.clear();
+        previews.add(null);
+        unsafe.putObject(selectedBase, selectedOffset, new Object());
+        nextIdField.setInt(null, 12345);
+        try {
+            assertThrows(
+                NullPointerException.class,
+                FaunaPreviewCommand::clearOnDisconnect,
+                "discard 失败仍必须向调用方报告清理失败"
+            );
+            assertNull(selectedField.get(null), "清理失败时也必须丢弃上一会话的 selected 引用");
+            assertEquals(-300_000, nextIdField.getInt(null), "清理失败时也必须重置预览实体 ID 游标");
+        } finally {
+            previews.clear();
+            unsafe.putObject(selectedBase, selectedOffset, null);
+            nextIdField.setInt(null, -300_000);
+        }
+    }
+
+    private static Field field(String name) throws ReflectiveOperationException {
+        Field field = FaunaPreviewCommand.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
+    }
+
+    private static sun.misc.Unsafe unsafe() throws ReflectiveOperationException {
+        Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        return (sun.misc.Unsafe) field.get(null);
     }
 }
